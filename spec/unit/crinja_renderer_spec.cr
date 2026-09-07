@@ -654,6 +654,23 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
     File.delete(path)
   end
 
+  # Same `/dev/null` special case as the hand-rolled evaluator's own
+  # spec - the two lookup implementations are independent, so the
+  # regression has to be pinned in both.
+  it "renders lookup('password', '/dev/null') as a fresh unsaved password" do
+    v = Hash(String, JSON::Any).new
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+
+    first = renderer.render(%({{ lookup('password', '/dev/null') }}))
+    first.size.should eq(20)
+
+    second = renderer.render(%({{ lookup('password', '/dev/null') }}))
+    second.should_not eq(first)
+
+    renderer.render(%({{ lookup('password', '/dev/null length=12') }})).size.should eq(12)
+    File.size("/dev/null").should eq(0)
+  end
+
   it "renders lookup('url', ...) fetching lines from the controller, with and without wantlist" do
     v = Hash(String, JSON::Any).new
     renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)

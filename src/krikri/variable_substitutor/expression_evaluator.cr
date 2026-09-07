@@ -2467,6 +2467,23 @@ module Krikri
           end
         end
 
+        # `/dev/null` is real Ansible's own documented idiom for "give me
+        # a fresh random password and DON'T persist it" - its password
+        # lookup plugin special-cases that path (`if path == '/dev/null'`
+        # it skips both the read-back and the write). Without the
+        # special case the generic "file exists -> read it back" branch
+        # below wins, because /dev/null does exist and reads as the empty
+        # string, so every `lookup('password', '/dev/null')` returned ""
+        # instead of a password. Found live on imntreal.smallstep_ca,
+        # whose CA/provisioner passwords come from exactly this idiom:
+        # the role then wrote two EMPTY password files and `step ca init
+        # --password-file=<empty>` fell back to prompting for one
+        # interactively - which is what actually made that role fail
+        # under this engine while real ansible-playbook ran it clean.
+        if path == "/dev/null"
+          return Array.new(length) { PASSWORD_CHARS.sample }.join
+        end
+
         if File.exists?(resolved_path)
           return File.read(resolved_path).chomp
         end
