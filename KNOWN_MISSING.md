@@ -18,7 +18,7 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.806`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.807`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
 
 ---
@@ -554,34 +554,6 @@ below - keep the two apart, or this list stops meaning anything.
   live, so the specific line is unconfirmed - re-run this role's warm
   phase with output preserved (or `tar --compare` by hand against a
   fresh Rocky guest) before attempting a fix.
-- **`local_action:` (and its `action:` cousin) is not parsed at all** -
-  treated as an unimplemented plugin literally named `local_action`/
-  `action` instead of the legacy free-form directive it is
-  (`action: "{{ ansible_pkg_mgr }} state=present name={{ item }}"`
-  means "run whatever `ansible_pkg_mgr` resolves to, with these
-  free-form args" - `local_action:` is the same idea plus
-  `delegate_to: localhost`). Two independent, confirming roles in the
-  RHEL-family batch:
-  - `jdauphant.intellij` (round 60104): `action: "{{ ansible_pkg_mgr }}
-    state=present name={{ item }}"` installing `tar`/`unzip` - this
-    engine SKIPS the task entirely (rc=0, no failure, no packages
-    installed) where real Ansible resolves and runs the real package
-    module, installing both. Not cosmetic: the role's own later
-    "Download intellij" task then fails for a completely different
-    reason (missing `tar`/`unzip`) than real Ansible's own recap shows,
-    so the two engines' recaps diverge past this point for an
-    unrelated-looking reason unless traced back here.
-  - `mrlesmithjr.lsi-megaraid` (round 60186): `local_action: wait_for
-    port=22 ...` next to a legacy `sudo:` key hits the
-    conflicting-action-statements parser abort a real module key would
-    (rc=4 matches real Ansible - see git log), but reports the wrong
-    module name in the message (`local_action, sudo` instead of real
-    Ansible's `wait_for, sudo`, which resolves the free-form string's
-    first word) because `local_action` itself is being treated as the
-    module name rather than parsed.
-  Implementing this means parsing the free-form `"<module> k=v k=v"`
-  string (or a bare module name, or a dict form) into a real module
-  dispatch - a genuine feature gap, not attempted here.
 
 ---
 
