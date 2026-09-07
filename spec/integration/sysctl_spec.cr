@@ -126,6 +126,31 @@ describe "sysctl plugin" do
     result["failed"].as_bool.should be_false
   end
 
+  it "applies a space-separated value via sysctl_set without splitting it into two shell words" do
+    # apply_kernel_value used to build `sysctl -w name=value` with value
+    # unquoted - a space-separated value (net.ipv4.ip_local_port_range's
+    # own real shape: "32768 65535") split into two shell words, so
+    # sysctl set only the first token and then failed on the second as a
+    # bogus bare key, failing the whole task where real
+    # ansible.posix.sysctl's own quoted write succeeds. Found via
+    # juju4.harden_sysctl, round 60128. Re-applies the key's own CURRENT
+    # live value (read directly from /proc/sys first) so this is a
+    # verified no-op against the real kernel, not a mutation the spec
+    # needs to undo.
+    key_path = "/proc/sys/net/ipv4/ip_local_port_range"
+    pending! "no #{key_path} on this host" unless File.exists?(key_path)
+    pending! "sysctl -w needs root" unless LibC.getuid == 0
+    current_value = File.read(key_path).strip.split(/\s+/).join(" ")
+
+    conf = fresh_conf("space-value.conf")
+    result = PluginSpecHelper.run("sysctl", {
+      "name" => "net.ipv4.ip_local_port_range", "value" => current_value,
+      "sysctl_file" => conf, "sysctl_set" => "true", "reload" => "false",
+    })
+
+    result["failed"].as_bool.should be_false
+  end
+
   it "fails with a clear message when value is missing for state: present" do
     conf = fresh_conf("missing-value.conf")
 

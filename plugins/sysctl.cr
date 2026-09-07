@@ -172,7 +172,12 @@ module Krikri
 
     private def apply_kernel_value(name : String, value : String?) : NamedTuple(exit_code: Int32, stdout: String, stderr: String)?
       ignore_flag = true?(@params["ignoreerrors"]?) ? "-e " : ""
-      remote_exec("sysctl #{ignore_flag}-w #{name}=#{value}")
+      # Unquoted, a space-separated value (net.ipv4.ip_local_port_range:
+      # "32768 65535") splits into two shell words - sysctl sets only the
+      # first and then chokes on the second as a bogus bare key, failing
+      # the whole command where real ansible.posix.sysctl's own quoted
+      # write succeeds. Found via juju4.harden_sysctl, round 60128.
+      remote_exec("sysctl #{ignore_flag}-w #{name}=#{Process.quote(value.to_s)}")
     end
 
     private def reload_sysctl(sysctl_file : String) : Nil

@@ -18,8 +18,25 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.790`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.791`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
+
+---
+
+## Round 60128: `sysctl:` broke on a space-separated value (0.9.791)
+
+`juju4.harden_sysctl`'s own `net.ipv4.ip_local_port_range: "32768 65535"`
+task failed the live `sysctl -w` call - `apply_kernel_value` built
+`sysctl -w name=value` with `value` unquoted, so a space-separated value
+split into two shell words; sysctl set only the first token and then
+choked on the second as a bogus bare key ("invalid syntax"), failing the
+whole command where real `ansible.posix.sysctl`'s own quoted write
+succeeds. Fixed by shell-quoting the value (`Process.quote`). New spec
+re-applies the key's own current live value (read from `/proc/sys`
+first) so it's a verified no-op against the real kernel rather than a
+mutation needing undone - `pending!`s on a non-root spec run or a
+missing `/proc/sys` path, verified live as root against a Kata Rocky
+guest instead (see git log).
 
 ---
 
