@@ -86,6 +86,7 @@ module Krikri
       args = PluginHelpers::UserState.userdel_args(name, true?(@params["remove"]?))
       result = remote_exec("userdel #{args.join(" ")}")
       return command_failure("remove user", result) unless result[:exit_code] == 0
+      invalidate_shadow_cache
 
       PluginResult.new(changed: true, failed: false, msg: "User removed")
     end
@@ -150,16 +151,17 @@ module Krikri
       warn = @params["password_expire_warn"]?
       return nil unless min || max || warn
 
-      shadow = remote_exec("cat /etc/shadow")
-      return PluginResult.new(changed: false, failed: true, msg: "Could not read /etc/shadow") unless shadow[:exit_code] == 0
+      content = shadow_content
+      return PluginResult.new(changed: false, failed: true, msg: "Could not read /etc/shadow") unless content
 
-      current = PluginHelpers::UserState.shadow_ageing(shadow[:stdout], name)
+      current = PluginHelpers::UserState.shadow_ageing(content, name)
       flags = PluginHelpers::UserState.chage_flags(current, min, max, warn)
       return PluginResult.new(changed: false, failed: false, msg: "Password ageing already up to date") if flags.empty?
       return PluginResult.new(changed: true, failed: false, msg: "Would update password ageing (check mode)") if check_mode
 
       result = remote_exec("chage #{flags.join(" ")} #{shell_single_quote(name)}")
       return command_failure("update password ageing", result) unless result[:exit_code] == 0
+      invalidate_shadow_cache
 
       PluginResult.new(changed: true, failed: false, msg: "Password ageing updated")
     end
@@ -204,6 +206,7 @@ module Krikri
 
       result = remote_exec("useradd #{args.join(" ")}")
       return command_failure("create user", result) unless result[:exit_code] == 0
+      invalidate_shadow_cache
 
       PluginResult.new(changed: true, failed: false, msg: "User created")
     end
@@ -243,6 +246,7 @@ module Krikri
       unless flags.empty?
         result = remote_exec("usermod #{flags.join(" ")} #{name}")
         return command_failure("modify user", result) unless result[:exit_code] == 0
+        invalidate_shadow_cache
       end
 
       if new_home
@@ -351,16 +355,37 @@ module Krikri
       result[:stdout].strip.split(':')[2]? || group
     end
 
+    # /etc/shadow content, read at most once per invocation: password_-
+    # and_expiry_flags, shadow_password, shadow_expire_days and
+    # apply_password_ageing all used to issue their own `cat
+    # /etc/shadow` round trip (up to 3 per task). Invalidated after every
+    # successful account mutation so later reads see the task's own
+    # changes.
+    @shadow_content : String? = nil
+    @shadow_loaded = false
+
+    private def shadow_content : String?
+      unless @shadow_loaded
+        result = remote_exec("cat /etc/shadow")
+        @shadow_content = result[:exit_code] == 0 ? result[:stdout] : nil
+        @shadow_loaded = true
+      end
+      @shadow_content
+    end
+
+    private def invalidate_shadow_cache : Nil
+      @shadow_loaded = false
+      @shadow_content = nil
+    end
+
     private def shadow_password(name : String) : String?
-      result = remote_exec("cat /etc/shadow")
-      return nil unless result[:exit_code] == 0
-      PluginHelpers::UserState.shadow_password(result[:stdout], name)
+      return nil unless (content = shadow_content)
+      PluginHelpers::UserState.shadow_password(content, name)
     end
 
     private def shadow_expire_days(name : String) : Int32?
-      result = remote_exec("cat /etc/shadow")
-      return nil unless result[:exit_code] == 0
-      PluginHelpers::UserState.shadow_expire_days(result[:stdout], name)
+      return nil unless (content = shadow_content)
+      PluginHelpers::UserState.shadow_expire_days(content, name)
     end
 
     # The hash value following a "-p" flag is shell-quoted here (not
