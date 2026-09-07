@@ -18,8 +18,33 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.793`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.794`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
+
+---
+
+## Round 60100: a filtered `with_items:` source stringified instead of flattening (0.9.794)
+
+`geerlingguy.php`'s own `with_items: ["{{ php_conf_paths | flatten }}",
+"{{ php_extension_conf_paths | flatten }}"]` (RHEL-family round 60100):
+`deep_render_item`'s "whole input is one bare `{{ }}` expression,
+preserve native type" fast path only recognized a bare/dotted VARIABLE
+reference (`VariableLookup#resolve`), not one carrying a filter chain -
+a source that's a single expression but has `| flatten` fell through to
+the generic substitute path and got stringified, same as any mixed
+literal-plus-expression text would. with_items's own built-in one-level
+flatten only ever unwraps a real `Array`, so it silently no-op'd on the
+now-stringified list, and `item` ended up bound to the whole
+stringified one-element list instead of its single scalar path -
+`file: {path: "{{ item }}", state: directory}` then reported `changed`
+on an already-correct directory every single run (broken idempotency),
+where real Ansible's actually-flattened, actually-scalar `item`
+reported `ok`. Fixed by evaluating the filter chain through the
+existing expression evaluator and re-parsing the result as JSON when it
+looks like a list/dict, mirroring `resolve_loop_template`'s own
+filter-chain fallback for the single-with_items-string case. New
+integration spec verifies both the flattened item values and
+idempotency (second run reports `changed=0`).
 
 ---
 

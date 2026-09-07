@@ -139,6 +139,59 @@ describe "krikri-playbook CLI (--check mode)" do
     output.should contain("idx=2 item=blue")
   end
 
+  it "flattens each with_items: source through a filter chain, not just a bare list, one level" do
+    # geerlingguy.php's own `with_items: ["{{ php_conf_paths | flatten
+    # }}", "{{ php_extension_conf_paths | flatten }}"]` (RHEL-family
+    # round 60100): each source is a single `{{ }}` span but carries a
+    # filter (`| flatten`), so #deep_render_item's own "whole input is
+    # one bare expression, preserve native type" fast path (which only
+    # recognized a bare/dotted VARIABLE reference, not one with a
+    # filter chain) fell through to the generic substitute path and
+    # STRINGIFIED each already-list-valued source instead of keeping it
+    # a real Array - with_items's own one-level flatten only ever
+    # unwraps an actual Array, so it silently no-op'd, and each `item`
+    # ended up being the whole stringified one-element list instead of
+    # its single scalar path. Verified idempotent too: a `file:
+    # state: directory` on an existing directory must report `ok`, not
+    # `changed`, which only happens if `item` is the real scalar path.
+    dirs = [File.join(PROJECT_ROOT, "spec", "tmp", "flatten-a"),
+            File.join(PROJECT_ROOT, "spec", "tmp", "flatten-b")]
+    dirs.each { |d| FileUtils.rm_rf(d) }
+    tmp = write_notify_playbook("with_items_filter_chain.yml", <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          conf_paths: ["#{dirs[0]}"]
+          extension_conf_paths: ["#{dirs[1]}"]
+        tasks:
+          - name: make dirs
+            ansible.builtin.file:
+              path: "{{ item }}"
+              state: directory
+            with_items:
+              - "{{ conf_paths | flatten }}"
+              - "{{ extension_conf_paths | flatten }}"
+      YAML
+    begin
+      captured = IO::Memory.new
+      status = Process.run(BINARY, ["-i", "localhost,", tmp], output: captured, error: captured)
+      status.success?.should be_true
+      out1 = captured.to_s
+      out1.should contain("=> (item=#{dirs[0]})")
+      out1.should contain("=> (item=#{dirs[1]})")
+      out1.should contain("changed=1")
+
+      captured2 = IO::Memory.new
+      status2 = Process.run(BINARY, ["-i", "localhost,", tmp], output: captured2, error: captured2)
+      status2.success?.should be_true
+      captured2.to_s.should contain("changed=0")
+    ensure
+      dirs.each { |d| FileUtils.rm_rf(d) }
+      File.delete(tmp) rescue nil
+    end
+  end
+
   it "counts a looped task once in the recap (not once per item), matching Ansible" do
     # Real ansible-playbook aggregates a looped task into a single recap
     # line: a 3-item create loop reports ok=1 changed=1, never ok=3.

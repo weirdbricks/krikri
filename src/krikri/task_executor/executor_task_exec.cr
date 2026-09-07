@@ -553,6 +553,37 @@ module Krikri
             end
             return native
           end
+
+          # `native` is nil here for anything past a bare/dotted
+          # reference - notably a filter chain (`{{ some_list | flatten
+          # }}`), which #resolve doesn't attempt at all. Falling straight
+          # to the generic #substitute path below would stringify a
+          # list/dict-valued filter result the same way it stringifies
+          # everything else, losing its native type exactly like the
+          # bare-reference case above already guards against. Evaluate
+          # it through the filter-chain evaluator instead and re-parse
+          # the result as JSON when it looks like a list/dict - mirrors
+          # resolve_loop_template's own filter-chain fallback
+          # (expression_evaluator_for + parse_list_result). Found via
+          # geerlingguy.php's own `with_items: ["{{ php_conf_paths |
+          # flatten }}", "{{ php_extension_conf_paths | flatten }}"]`
+          # (RHEL-family round 60100): each item stringified to its
+          # filtered list's JSON text instead of staying a real array,
+          # so with_items's own one-level flatten (which only unwraps an
+          # actual Array) never fired - `path: "{{ item }}"` on the
+          # `file:` module then received something as a whole, so
+          # crystal reported `changed` on already-correct directories
+          # where real Ansible's actually-flattened, actually-scalar
+          # `item` reported `ok`.
+          begin
+            evaluated = expression_evaluator_for(vars_context).evaluate(stripped[2..-3].strip)
+            parsed = JSON.parse(evaluated)
+            return parsed if parsed.as_a? || parsed.as_h?
+          rescue
+            # Not a list/dict, or not even valid JSON (an ordinary
+            # rendered string) - fall through to the generic path below,
+            # unchanged.
+          end
         end
 
         substitutor = VarSubstitutor.new(vars: vars_context, host_name: host_name)
