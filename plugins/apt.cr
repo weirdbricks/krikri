@@ -575,6 +575,8 @@ module Krikri
     private def handle_install(packages : Array(String), messages : Array(String), changed : Bool, lock_timeout : Int32) : PluginResult
       to_install = [] of String
       already_installed = [] of String
+      install_stdout = ""
+      install_stderr = ""
 
       # Check which packages need installation - one batched query for
       # the whole list (see dpkg_installed_status).
@@ -609,6 +611,8 @@ module Krikri
           # apt_install_with_implicit_cache_retry).
           install_cmd = "DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold #{pkg_list}"
           install_result = apt_install_with_implicit_cache_retry(install_cmd, lock_timeout, ->remote_exec(String))
+          install_stdout = install_result[:stdout]
+          install_stderr = install_result[:stderr]
           if install_result[:exit_code] == 0
             # A requested name can be a virtual package already satisfied
             # by something else installed (`rubygems` - not a real
@@ -653,10 +657,22 @@ module Krikri
         msg += " (check mode)"
       end
 
+      # Real Ansible's ansible.builtin.apt module always registers a
+      # `stdout`/`stderr` key (the underlying apt-get invocation's raw
+      # output, "" when no apt-get command actually ran) - some roles
+      # register this task and inspect `.stdout` afterwards (found via
+      # claranet.postgresql's own `when: ... in
+      # _postgresql_packages_installation_res.stdout` checking apt's own
+      # postinst-trigger output for whether the just-installed postgres
+      # package auto-created a cluster). Without it, that `when:` failed
+      # outright ("object of type 'dict' has no attribute 'stdout'")
+      # instead of evaluating the condition like real Ansible does.
       PluginResult.new(
         changed: changed,
         failed: false,
-        msg: msg
+        msg: msg,
+        stdout: install_stdout,
+        stderr: install_stderr
       )
     end
 
