@@ -18,8 +18,111 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.836`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.839`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
+
+---
+
+## Round 71000: 200 never-before-tested roles (Galaxy top-download list), 3 real bugs (0.9.837-0.9.839)
+
+First batch since Atlantic.net's server-limit increase (10 -> 25); run at
+`--kata-hosts 8 --atlantic-hosts 20`. All 4 Kata pairs hit a new failure
+mode this round - `ctr run`/networking succeed, but SSH auth and `ctr task
+exec` both fail against the guest with `rpc error ... cgroup.procs ...
+Device or resource busy` from the kata-agent - losing 44 roles to
+`BOOT_FAILED` with no automatic cross-backend retry in
+`krikri-role-tester`. Not root-caused (not an engine bug); those 44 roles
+were successfully requeued Atlantic-only (`--backend atlantic`, no
+`--kata-hosts`) and all completed cleanly. Given the expanded Atlantic
+capacity, Kata is no longer worth defaulting to for these batches -
+`krikri-role-tester run ... --backend atlantic --atlantic-hosts N` (no
+code changes needed) is now the preferred invocation.
+
+Of 10 DIVERGENT roles from the first 200: 3 real bugs found and fixed
+below; `amtega.tftpd` is the 5th confirming role for the already-
+documented `_check_platform` role-private-module scope cut; `adfinis-
+sygroup.icinga2_agent`'s `deb822_repository`/apt-package failure did not
+reproduce in an isolated container rebuild (plugin output and apt
+resolution both correct) - inconclusive, likely a one-off Atlantic-host
+network hiccup; `antmelekhin.windows_exporter` is Windows-only, same
+scope cut as `danielweeber.windows_exporter`/`deekayen.chocolatey`;
+`Aplyca.EC2Describe` and `bodsch.k0s` are a new open-gap class (below).
+
+The 44 Kata-lost roles were then requeued Atlantic-only (round 71200+,
+all completed cleanly, no more `BOOT_FAILED`); of those, 6 more
+DIVERGENT: `bodsch.htpasswd` is a role-private `filter_plugins/`
+(`| validate`, a custom Python filter) - same already-documented scope
+cut as `oasis_roles.system_repositories`'s `filter_plugins/exclude.py`;
+`bodsch.promtail` is a 2nd confirming role for the `bodsch.scm.
+github_latest` module-resolution open gap above; `aalaesar.install_
+nextcloud` and `asg1612.dockerswarm` both fail identically on both
+engines for environment/harness reasons (a role dependency
+`geerlingguy.php-versions` the test harness's Galaxy install never
+fetched; a missing `ipaddr` Jinja filter in the harness's own real-
+ansible-core install, same class as the already-documented `buluma.*`
+rows) - real divergence masked by different downstream tasks each
+engine happens to reach afterward, not evaluated further; `bodsch.
+apparmor`'s single differing task (real Ansible found `apparmor`/
+`apparmor-utils` already dpkg-installed, krikri's paired host did not,
+despite related config files still present on disk) looks like
+Atlantic host-image variance between the two paired VMs rather than an
+engine bug - warm reruns matched byte-for-byte on both engines
+afterward. One new open gap found (below): `asg1612.gluster`.
+
+- **`bcook254.adguardhome`**: warm rerun always reinstalled the AdGuardHome
+  binary instead of detecting it was already the right version. The
+  role's own idempotency check is `when: __result is failed or __result.
+  stdout is not search(adguardhome_version)` - the `search(...)` test's
+  argument is a bare variable reference, not a quoted literal.
+  `ConditionalEvaluator`'s `is match(...)`/`is search(...)` handling ran
+  the pattern argument through `unquote_literal` alone, which only strips
+  quotes and passes an unquoted word through UNCHANGED as literal text -
+  so the regex became the literal string "adguardhome_version" instead of
+  the variable's actual value (e.g. "v0.107.63"), could never match real
+  `--version` output, and `is not search(...)` was permanently true.
+  Fixed by routing the pattern argument through `evaluate_value` (already
+  used for the left-hand side just below it), which resolves both quoted
+  literals and bare variable references correctly. Regression spec added
+  (`spec/unit/conditional_evaluator_spec.cr`).
+
+- **`bitintheskud.ansible-role-ecs-agent`**: warm rerun always re-ran the
+  role's second `iptables:` task (`match: tcp`, a NAT REDIRECT rule for
+  the ECS agent's IAM-roles-for-tasks proxy) instead of detecting it
+  already existed - and, worse, live reproduction in a `--cap-add=
+  NET_ADMIN` container showed the underlying `iptables -A`/`-C` calls
+  were failing outright every time (`Couldn't load match 'at'`), meaning
+  the NAT rule was never actually being created on the target host at
+  all, not just misreported. `IptablesCommand.construct_rule` had `"-mat"`
+  instead of `"-m"` for the `match:` param - GNU iptables' getopt_long_only
+  parses a bare `-mat` as `-m` with its value glued on (`at`), tries to
+  load a nonexistent "at" match extension, and errors on both the `-C`
+  existence check and the `-A` apply. `apply_rule` in `plugins/iptables.cr`
+  doesn't check `remote_exec`'s exit code on the apply path, so the
+  failing `-A` was silently reported as `changed: true`/"Rule applied"
+  every run, forever, without ever actually applying it. Fixed the flag
+  typo; the silent-exit-code gap on `apply_rule` is not addressed (all
+  other iptables call sites in this round matched real Ansible, so
+  narrower than the systemic fix would suggest - noted here rather than
+  widened speculatively). Regression spec added
+  (`spec/unit/iptables_command_spec.cr`).
+
+- **`claranet.postgresql`**: cold run diverged early - real Ansible's own
+  `ansible.builtin.apt` module always registers `stdout`/`stderr` (the
+  raw `apt-get` invocation output, `""` when nothing ran) even on
+  success, and the role's own "Drop the automatically created cluster
+  after installation" task depends on it: `when: ... in
+  _postgresql_packages_installation_res.stdout` (checking apt's own
+  postinst-trigger output for whether installing the postgres package
+  auto-created a cluster). `plugins/apt.cr`'s success path for
+  `handle_install` never passed `stdout:`/`stderr:` to `PluginResult` (only
+  the failure path did), so the `when:` failed outright ("object of type
+  'dict' has no attribute 'stdout'") instead of evaluating the condition
+  like real Ansible does. Fixed by capturing the install command's
+  stdout/stderr and passing them through on the success path too. No
+  spec added - real apt/dpkg mutation is out of unit-spec scope by
+  design (see this repo's own `CLAUDE.md`); verified live by rebuilding
+  the plugin and running it directly against a fresh Debian trixie
+  container, confirming a real install now returns non-empty `stdout`.
 
 ---
 
@@ -1549,6 +1652,51 @@ looped-task flow is strict with real-Ansible when:-before-loop ordering.
 Genuinely open defects: something is wrong and the fix is unknown or
 unfinished. Everything deliberate lives under "Deliberate limits"
 below - keep the two apart, or this list stops meaning anything.
+
+- **Unresolvable module/action names don't hard-stop the whole run
+  like real Ansible's do.** `Aplyca.EC2Describe` (`ec2_remote_facts`, a
+  module removed from ansible-core years ago) and `bodsch.k0s`
+  (`bodsch.scm.github_latest`, an uninstalled collection module) both
+  round71000: real `ansible-playbook` refuses to even start the play
+  (`[ERROR]: couldn't resolve module/action '...'`, rc=4, no PLAY RECAP
+  at all) the moment it can't resolve ANY task's module name, before
+  Gathering Facts even runs. This engine's per-task graceful-degradation
+  model (warn, skip that one task, keep going - the whole point for a
+  module that's simply not yet implemented HERE) doesn't distinguish
+  that case from a module that doesn't exist in real Ansible at all, so
+  it keeps executing every other task instead - `bodsch.k0s` then hits a
+  second, unrelated failure downstream ("No filter named 'bodsch'",
+  evaluating a conditional built from a task whose module was skipped)
+  that masks the real divergence shape entirely. Same underlying bug
+  class already fixed once for `ansible.builtin.include:` specifically
+  (`RemovedActionError`, round 162, 0.9.518, see `git log --grep=
+  RemovedActionError`) - widening it to any collection-qualified module
+  name that isn't a real installed collection (vs. one this engine
+  simply hasn't implemented yet) needs a way to tell those two apart,
+  which is the actual unfinished part.
+- **An undefined variable used as the LEFT operand of `in` against a
+  plain string doesn't hard-error like real Jinja2's does.**
+  `asg1612.gluster` round71000 (requeue): `when: "node_1 in
+  hostvars[inventory_hostname]['ansible_nodename']"` with `node_1`
+  never defined by the playbook - real Jinja2's `x in y` calls
+  `y.__contains__(x)`, and a plain Python `str.__contains__` requires
+  its argument to itself be a `str`; an Undefined marker isn't one, so
+  real Ansible hard-fails the task ("'in <string>' requires string as
+  left operand, not UndefinedMarker") rather than merely treating the
+  whole conditional as falsy. This engine's `evaluate_in` currently
+  treats an undefined LHS as leading to a false/skip result instead
+  of raising - masking a role bug the same way the module-resolution
+  gap above does, and (in this specific role) let execution continue
+  far enough to reach an unrelated, likely-environmental gluster mount
+  failure downstream that real Ansible never got to. Narrow edge case
+  (undefined-in-*string*, not undefined-in-list, which real Ansible
+  handles far more leniently) - not chased further this round to avoid
+  over-tightening `evaluate_in`'s much more common list/array path.
+- **`ansible.posix.acl` unimplemented.** `claranet.acl` round71000: real
+  Ansible's `ansible.posix.acl` module manages POSIX ACL entries
+  (`setfacl`/`getfacl`-equivalent); this engine has no plugin for it at
+  all, so any task using it is skipped rather than run. Only one
+  confirming role so far.
 
 Found via the 97-role fixed/divergence re-verification round and
 double-checked with a second independent re-run of every divergence
