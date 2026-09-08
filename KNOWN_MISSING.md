@@ -18,8 +18,35 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.825`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.826`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
+
+---
+
+## The last "architecturally out of scope" lookup was neither (0.9.826)
+
+`lookup('inventory_hostnames', pattern)` - the standard cross-group
+orchestration idiom (`delegate_to: "{{ lookup('inventory_hostnames',
+'kube-master[0]') }}"`, templating a peer list, running one task against
+another group's members) - was implemented, closing the last open
+lookup-plugin gap. The "Deliberate limits" entry had it (and `config`,
+already implemented since round 190) as requiring "modeling Ansible's
+own config-resolution/inventory internals"; reading the real lookup
+plugin's source showed it needs neither: it builds a throwaway
+InventoryManager purely from variables['groups'] and runs the standard
+host-pattern machinery over THAT. The `groups` magic var was already in
+every task's vars context, so the whole implementation lives in
+ExpressionEvaluator against the existing vars - no plumbing. Ported
+faithfully from lib/ansible/inventory/manager.py (comma/colon terms,
+`&`/`!` modifiers, fnmatch over groups then hosts, `~`-regexes,
+inclusive `[A:B]` subscripts, empty result as a real `[]`, query()
+returning the list form), differentially verified pattern-by-pattern
+against the locally-installed ansible-core 2.19.4
+(inventory_hostnames_lookup_spec.cr pins all 12). `groups` gained its
+missing `ungrouped` key on the way. Remaining known divergence: the
+wantlist/query list-in-msg rendering class shared with every other
+list-valued lookup (`["a","b"]` vs real Python's `['a', 'b']`),
+pre-existing and documented under Deliberate limits.
 
 ---
 
@@ -2648,9 +2675,25 @@ as bugs, not because anyone intends to fix them.
   `reset_connection` drops the host's daemons + ssh ControlMaster
   socket. Every action in real Ansible's `meta` module's choices list
   is now supported.
-- `config`/`inventory_hostnames` lookups - architecturally out of scope
-  (would require modeling Ansible's own config-resolution/inventory
-  internals, not just a data lookup).
+- `config`/`inventory_hostnames` lookups - **removed from this list in
+  0.9.826, both halves stale**: `config` had been implemented since
+  round 190 (buluma.multi's wantlist loop) without the entry being
+  updated, and `inventory_hostnames` turned out to need no inventory
+  plumbing at all - the real lookup plugin builds its throwaway
+  InventoryManager purely from variables['groups'] and runs the
+  standard host-pattern machinery over THAT, and the `groups` magic var
+  was already in every task's vars context. Ported
+  (ExpressionEvaluator#lookup_inventory_hostnames): comma/colon terms,
+  `&`/`!` modifiers, fnmatch over group names then host names,
+  `~`-regexes, `[N]`/`[A:B]` subscripts (inclusive end), empty result
+  as a real `[]`, and query() returning the list form - all 12 pattern
+  cases differentially verified against the locally-installed
+  ansible-core 2.19.4 (inventory_hostnames_lookup_spec.cr). `groups`
+  also gained its missing `ungrouped` key (real Ansible's own magic-var
+  shape). Known shared limitation: a wantlist/query list result renders
+  `["a","b"]` in debug msg where real ansible-core prints Python's
+  `['a', 'b']` repr - the same pre-existing class lookup('config',
+  ..., wantlist=True) already had.
 - `win_*` filters - Windows-only, irrelevant to this project's targets.
 - `community.crypto`'s remaining modules. **This is no longer the blanket
   scope cut it used to be**: `openssl_privatekey`, `openssl_csr`,
