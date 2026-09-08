@@ -160,6 +160,11 @@ Metrics/CyclomaticComplexity:
   # and splitting the dispatch up would obscure the correspondence the
   # corpus differential in ipaddr_spec.cr checks against.
   - src/krikri/ipaddr_core.cr
+  # plugins/py_module.cr's #execute is a flat "decode, locate python,
+  # invoke, parse" sequence whose steps are the specification (each maps
+  # 1:1 to a step of real Ansible's own module execution), not nested
+  # branching to factor.
+  - plugins/py_module.cr
   # Faithful ports of real Ansible's own long branch chains - the
   # branch count IS the specification (parse_distribution_file_Debian's
   # ordered substring tests; the debugger prompt's command set), and

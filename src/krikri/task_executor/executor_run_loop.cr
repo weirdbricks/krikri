@@ -690,7 +690,16 @@ module Krikri
       # WhenEvaluationError (an undefined var the when: itself
       # references) is treated conservatively as "can't tell, don't
       # count" rather than crashing the run over this bookkeeping.
-      if task.unavailable_module
+      #
+      # EXCEPT: an unavailable module with a role-private `library/
+      # <name>.py` source CAN run - the arbitrary-Python-module runner
+      # (PythonModuleRunner) executes it on the target with the target's
+      # own python3 - so such a task falls through to normal conditional
+      # evaluation and dispatch instead of the skip (real Ansible runs
+      # these as ordinary Python; the previous unconditional skip
+      # diverged on every role leaning on its own library/, seen
+      # repeatedly benchmarking linux-system-roles).
+      if task.unavailable_module && python_module_source_for(task).nil?
         register_reachable_unavailable_module(task, vars_context, host, shared)
       else
         return true unless when_condition = task.when_condition
@@ -1367,6 +1376,17 @@ module Krikri
         end
       end
 
+      # The arbitrary-Python-module runner: an unavailable module with a
+      # role-private `library/<name>.py` source dispatches to the
+      # py_module plugin with the source embedded (base64), running it
+      # on the target with the target's own python3. Reached only after
+      # when_passes? let it through (see its own comment), so a python
+      # module behind a false when: still skips normally.
+      if task.unavailable_module && (py_source = python_module_source_for(task))
+        result = execute_python_module(task, py_source, substituted_params, exec_host, wire_vars, substituted_become_user)
+        return apply_changed_failed_when(task, result, vars_context, host)
+      end
+
       result = PluginManager.execute_plugin(
         task.module_name,
         config,
@@ -1377,6 +1397,49 @@ module Krikri
       )
 
       apply_changed_failed_when(task, result, vars_context, host)
+    end
+
+    # Dispatches an unavailable-module task that has a role-private
+    # `library/<name>.py` source through the py_module plugin. The
+    # source travels embedded in the plugin config (base64) so the
+    # normal upload-and-execute transport works unchanged for remote
+    # hosts; the module's argument dict mirrors real Ansible's typed
+    # JSON args for new-style modules (the params the parser already
+    # JSON-encoded come back as real arrays/dicts for the module).
+    private def execute_python_module(task : Task, source_path : String, substituted_params : Hash(String, String), exec_host : Host, wire_vars : Hash(String, JSON::Any), substituted_become_user : String?) : JSON::Any
+      module_name = PythonModuleRunner.short_name(task.unavailable_module || task.module_name)
+      new_style = PythonModuleRunner.new_style?(File.read(source_path))
+      check_mode = resolve_task_check_mode(task, wire_vars)
+
+      py_params = substituted_params.dup
+      py_params["module_name"] = module_name
+      py_params["module_source"] = Base64.strict_encode(File.read(source_path))
+      py_params["new_style"] = new_style.to_s
+      py_params["check_mode"] = check_mode.to_s
+      if new_style
+        py_params["module_args"] = PythonModuleRunner.build_module_args(substituted_params, check_mode)
+      else
+        py_params["kv_argv"] = PythonModuleRunner.build_kv_argv(substituted_params).to_json
+      end
+
+      config = build_plugin_config(task, exec_host, py_params, wire_vars, substituted_become_user)
+      PluginManager.execute_plugin(
+        "ansible.builtin.py_module",
+        config,
+        exec_host,
+        wire_vars,
+        task.become?,
+        substituted_become_user
+      )
+    end
+
+    private def python_module_source_for(task : Task) : String?
+      unavailable = task.unavailable_module || return nil
+      PythonModuleRunner.find_source(
+        PythonModuleRunner.short_name(unavailable),
+        task.role_files_dir,
+        @playbook_dir
+      )
     end
 
     # async:/poll: - runs the module as a detached background OS process
