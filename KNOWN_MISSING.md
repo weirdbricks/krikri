@@ -18,8 +18,47 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.835`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.836`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
+
+---
+
+## `inmotionhosting.monit`'s open lead closed: `in`/`not in` against the `vars` magic dict did a substring search instead of a key lookup (0.9.836)
+
+The role's own "Remove nonexistent services" task filters
+`monitored_services` down to only the services whose backing variable
+(`apache_daemon`, `mysql_daemon`, etc.) was actually defined by the
+playbook: `when: item.var_name not in vars or lookup('vars', item.
+var_name) is not string or lookup('vars', item.var_name) == 0`, where
+`vars` is real Ansible's own magic dict of every variable in scope.
+None of those backing variables are defined in this benchmark, so real
+Ansible removes every entry and the later "Install service configs"
+loop runs zero iterations.
+
+`ConditionalEvaluator#evaluate_in`'s container resolution had no
+special case for a Hash-valued container - `#evaluate_value`'s own
+return union (String | Int64 | Bool | Nil | Array(String)) has no Hash
+case at all, so `vars` fell through to `#json_any_to_value`'s `else ->
+value.to_s` branch and got stringified into one big compact-JSON dump
+of every variable in scope. `evaluate_in`'s generic `container.
+includes?(item.to_s)` then did a raw SUBSTRING search over that whole
+dump instead of a real key lookup - and `monitored_services` (itself
+one of the vars in scope) holds the literal string "apache_daemon"
+nested inside its own value, so `'apache_daemon' in vars`
+substring-matched and came back true even though "apache_daemon" is
+not itself a variable name. `not in vars` inverted to false, nothing
+got removed, and "Install service configs" then failed all 5 templates
+with `'apache_daemon' is undefined` instead of skipping cleanly.
+
+Fixed by resolving the container expression via `VariableLookup#resolve`
+first and, when the raw result is a Hash, doing a real
+`.has_key?(item)` test instead of falling through to the lossy
+string/array path - every other `in`/`not in` shape (string substring,
+array membership) is untouched. Regression spec added
+(`spec/unit/conditional_evaluator_spec.cr`); verified live via an
+extracted repro matching the role's exact task shape (all 5 services
+now correctly removed, "Install service configs" now correctly skips
+instead of failing).
 
 ---
 

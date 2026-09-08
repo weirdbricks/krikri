@@ -1427,7 +1427,33 @@ module Krikri
       return false if parts.size < 2
 
       item = evaluate_value(parts[0].strip, vars, raise_undefined)
-      container = evaluate_value(parts[1..].join(" in ").strip, vars, raise_undefined)
+      container_expr = parts[1..].join(" in ").strip
+
+      # A Hash-valued container - most commonly the `vars` magic
+      # variable itself (`item.var_name not in vars`,
+      # inmotionhosting.monit's own "Remove nonexistent services" task)
+      # - needs a real KEY-membership test. #evaluate_value's own return
+      # union has no Hash case at all, so a Hash falls through to
+      # #json_any_to_value's `else -> value.to_s` branch below and gets
+      # stringified into one big compact-JSON dump; the generic
+      # `container.includes?(item.to_s)` string branch then does a raw
+      # SUBSTRING search over that whole dump instead of a key lookup -
+      # spuriously true whenever the substring happens to appear
+      # ANYWHERE inside another variable's own value, not just as a key.
+      # Found live: `monitored_services` (itself one of the vars in
+      # scope) holds the literal string "apache_daemon" nested inside
+      # it, so `'apache_daemon' in vars` substring-matched the whole
+      # vars-dump text and came back true even though "apache_daemon"
+      # is not itself a variable name - inverting `not in vars` to
+      # false and leaving the service in the list instead of removing
+      # it, so a later task's template referencing the (genuinely
+      # undefined) `apache_daemon` variable failed outright where real
+      # Ansible had already filtered it out.
+      if (resolved = VariableSubstitutor::VariableLookup.new(vars).resolve(container_expr)) && resolved.raw.is_a?(Hash)
+        return resolved.raw.as(Hash).has_key?(item.to_s)
+      end
+
+      container = evaluate_value(container_expr, vars, raise_undefined)
 
       # Check if item is in container (string or array). Every array
       # value this evaluator ever produces - whether from a literal

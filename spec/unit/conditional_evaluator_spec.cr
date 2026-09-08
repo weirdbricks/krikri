@@ -196,6 +196,32 @@ describe Krikri::ConditionalEvaluator do
       Krikri::ConditionalEvaluator.evaluate(%('already in peer list' not in probe2.stdout), v).should be_false
     end
 
+    it "checks real KEY membership against the `vars` magic dict, not a substring of its serialized dump" do
+      # Real bug found via inmotionhosting.monit's own "Remove
+      # nonexistent services" task: `item.var_name not in vars` (real
+      # Ansible's `vars` magic variable, a dict of every variable
+      # currently in scope). #evaluate_value's own return union has no
+      # Hash case, so a Hash-valued container (like `vars` itself)
+      # previously fell through to #json_any_to_value's `else ->
+      # value.to_s` branch and got stringified into one big compact-JSON
+      # dump, then #evaluate_in's generic `container.includes?(item)`
+      # did a raw SUBSTRING search over that text instead of a real key
+      # lookup - spuriously true whenever the substring happened to
+      # appear ANYWHERE inside another variable's own value. Here
+      # `monitored_services` (itself one of the vars) holds the literal
+      # string "apache_daemon" nested inside it, even though
+      # "apache_daemon" is not itself a variable name - so `'apache_
+      # daemon' in vars` substring-matched and came back true, inverting
+      # `not in vars` to false.
+      v = Hash(String, JSON::Any).new
+      v["monitored_services"] = JSON.parse(%([{"var_name": "apache_daemon", "daemon_name": "httpd"}]))
+      v["vars"] = JSON::Any.new(v.dup)
+      Krikri::ConditionalEvaluator.evaluate(%('apache_daemon' in vars), v).should be_false
+      Krikri::ConditionalEvaluator.evaluate(%('apache_daemon' not in vars), v).should be_true
+      Krikri::ConditionalEvaluator.evaluate(%('monitored_services' in vars), v).should be_true
+      Krikri::ConditionalEvaluator.evaluate(%('monitored_services' not in vars), v).should be_false
+    end
+
     it "checks membership in a literal numeric list against a real int item" do
       # Real bug found benchmarking openstack.ansible-hardening's own
       # kdump-service check: `failed_when: result.rc not in [0, 3, 4]`.
