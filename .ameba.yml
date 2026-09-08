@@ -165,6 +165,12 @@ Metrics/CyclomaticComplexity:
   # 1:1 to a step of real Ansible's own module execution), not nested
   # branching to factor.
   - plugins/py_module.cr
+  # src/krikri/plugin_helpers/x509_cert_info.cr's parse_extensions/
+  # extension_section/classify_public_key are flat per-extension and
+  # per-key-type branch chains - the branch count IS the specification
+  # (each case maps 1:1 to a field of the real community.crypto
+  # backends), not nested branching to factor.
+  - src/krikri/plugin_helpers/x509_cert_info.cr
   # Faithful ports of real Ansible's own long branch chains - the
   # branch count IS the specification (parse_distribution_file_Debian's
   # ordered substring tests; the debugger prompt's command set), and

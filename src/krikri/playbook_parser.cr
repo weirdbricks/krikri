@@ -986,6 +986,8 @@ module Krikri
       # one generator module that completes the key-generation family.
       "community.crypto.openssl_privatekey_info",
       "community.crypto.x509_certificate_info",
+      "community.crypto.openssl_publickey_info",
+      "community.crypto.openssl_csr_info",
       "community.crypto.openssl_publickey",
       "community.crypto.get_certificate",
       "community.general.modprobe",

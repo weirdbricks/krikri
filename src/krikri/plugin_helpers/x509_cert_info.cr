@@ -139,6 +139,93 @@ module Krikri
       end
     end
 
+    # The openssl_csr_info half of the family: parses a PKCS#10
+    # certificate request and returns the fields the real module
+    # (community.crypto 3.1.1, csr_info.py's get_info) returns that this
+    # openssl-CLI backend can produce: subject, subject_ordered,
+    # key_usage/extended_key_usage/basic_constraints/ocsp_must_staple/
+    # subject_alt_name (each with its _critical flag, absent exactly
+    # when the extension is absent - matching the real backend's None),
+    # public_key, public_key_type, public_key_data,
+    # public_key_fingerprints, and signature_valid (openssl's own
+    # `req -verify` - the real module asks cryptography's
+    # is_signature_valid).
+    #
+    # Same deliberate divergence as the certificate half above:
+    # extensions_by_oid, subject_key_identifier, authority_key_identifier
+    # and the name_constraints_* fields are not returned (they need an
+    # ASN.1 decoder this tree does not carry).
+    def self.parse_csr(csr_pem : String) : Hash(String, JSON::Any)?
+      pem_file = File.tempname("csrinfo")
+      File.write(pem_file, csr_pem)
+      begin
+        text = run_openssl(["req", "-in", pem_file, "-noout", "-text"])
+        return nil unless text
+
+        names = run_openssl(["req", "-in", pem_file, "-noout", "-subject", "-nameopt", "lname"])
+        pubkey_pem = run_openssl(["req", "-in", pem_file, "-noout", "-pubkey"])
+
+        spki_der = nil
+        if pubkey_pem
+          pubkey_file = File.tempname("csrpub")
+          File.write(pubkey_file, pubkey_pem)
+          begin
+            spki_der = der_bytes(["pkey", "-pubin", "-in", pubkey_file, "-outform", "DER"])
+          ensure
+            File.delete(pubkey_file) if File.exists?(pubkey_file)
+          end
+        end
+
+        result = {} of String => JSON::Any
+        parse_names(names, result)
+        # the real csr_info has no issuer fields (a CSR carries none)
+        result.delete("issuer")
+        result.delete("issuer_ordered")
+        parse_extensions(text, result)
+        parse_public_key(pubkey_pem, spki_der, result)
+        result["public_key_fingerprints"] = fingerprints_any(spki_der) if spki_der
+        result["signature_valid"] = JSON::Any.new(signature_valid?(pem_file))
+
+        # the real backend's extension getters return (None, False) for
+        # every extension the request does not carry - the keys are
+        # ALWAYS present, the values None
+        # the real csr_info's key_usage is a LIST of usage strings; the
+        # shared extension parser (matching the certificate half) emits
+        # one comma-joined string
+        if usage = result["key_usage"]?
+          if usage_s = usage.as_s?
+            result["key_usage"] = JSON::Any.new(usage_s.split(", ").map { |entry| JSON::Any.new(entry) })
+          end
+        end
+        {"basic_constraints", "key_usage", "extended_key_usage",
+         "ocsp_must_staple", "subject_alt_name"}.each do |key|
+          result[key] = JSON::Any.new(nil) unless result.has_key?(key)
+          result["#{key}_critical"] = JSON::Any.new(false) unless result.has_key?("#{key}_critical")
+        end
+        result["name_constraints_permitted"] = JSON::Any.new(nil) unless result.has_key?("name_constraints_permitted")
+        result["name_constraints_excluded"] = JSON::Any.new(nil) unless result.has_key?("name_constraints_excluded")
+        result["name_constraints_critical"] = JSON::Any.new(false) unless result.has_key?("name_constraints_critical")
+        result["subject_key_identifier"] = JSON::Any.new(nil) unless result.has_key?("subject_key_identifier")
+        result["authority_key_identifier"] = JSON::Any.new(nil) unless result.has_key?("authority_key_identifier")
+        result["authority_cert_issuer"] = JSON::Any.new(nil) unless result.has_key?("authority_cert_issuer")
+        result["authority_cert_serial_number"] = JSON::Any.new(nil) unless result.has_key?("authority_cert_serial_number")
+
+        result
+      ensure
+        File.delete(pem_file) if File.exists?(pem_file)
+      end
+    end
+
+    # `openssl req -verify` exits 0 and prints "verify OK" exactly when
+    # the request's self-signature is valid - the CLI equivalent of
+    # cryptography's is_signature_valid.
+    private def self.signature_valid?(pem_file : String) : Bool
+      stdout_io = IO::Memory.new
+      err = IO::Memory.new
+      status = Process.run("openssl", ["req", "-in", pem_file, "-noout", "-verify"], output: stdout_io, error: err)
+      status.success? && stdout_io.to_s.includes?("verify OK")
+    end
+
     def self.run_openssl(args : Array(String)) : String?
       stdout_io = IO::Memory.new
       err = IO::Memory.new
@@ -276,6 +363,32 @@ module Krikri
           when "X509v3 TLS Feature", "1.3.6.1.5.5.7.1.24"
             result["ocsp_must_staple"] = JSON::Any.new(body.includes?("Status Request"))
             result["ocsp_must_staple_critical"] = JSON::Any.new(critical)
+          when "X509v3 Subject Key Identifier"
+            result["subject_key_identifier"] = JSON::Any.new(body.split("
+").first.to_s.strip)
+          when "X509v3 Authority Key Identifier"
+            keyid = body.split("
+").map(&.strip).find(&.starts_with?("keyid:"))
+            aki = keyid ? keyid.lchop("keyid:").strip : nil
+            result["authority_key_identifier"] = JSON::Any.new(aki)
+            # issuer/serial-number forms (dirName, serial) need deeper
+            # ASN.1 reading; nothing in the corpus generates them
+            result["authority_cert_issuer"] = JSON::Any.new(nil)
+            result["authority_cert_serial_number"] = JSON::Any.new(nil)
+          when "X509v3 Name Constraints"
+            permitted = [] of JSON::Any
+            excluded = [] of JSON::Any
+            target = nil
+            body.split("
+").map(&.strip).each do |line|
+              target = permitted if line == "Permitted:"
+              target = excluded if line == "Excluded:"
+              next if line.empty? || line == "Permitted:" || line == "Excluded:"
+              target.try(&.<<(JSON::Any.new(line)))
+            end
+            result["name_constraints_permitted"] = JSON::Any.new(permitted)
+            result["name_constraints_excluded"] = JSON::Any.new(excluded)
+            result["name_constraints_critical"] = JSON::Any.new(critical)
           end
         end
       end
@@ -295,11 +408,14 @@ module Krikri
     # extension names reliably. A header may carry a trailing
     # " critical" marker ("X509v3 Basic Constraints: critical").
     private def self.extension_section(text : String) : Array(Tuple(String, String))?
-      idx = text.index("X509v3 extensions:")
+      # certificates carry the section header "X509v3 extensions:";
+      # a CSR's `openssl req -text` spells it "Requested Extensions:"
+      idx = text.index("X509v3 extensions:") || text.index("Requested Extensions:")
       return nil unless idx
       section_line_start = text.rindex('\n', idx).try { |pos| pos + 1 } || 0
       name_indent = (idx - section_line_start) + 4
-      section = text[(idx + "X509v3 extensions:".size)..]
+      marker = text.index("X509v3 extensions:") == idx ? "X509v3 extensions:" : "Requested Extensions:"
+      section = text[(idx + marker.size)..]
       entries = [] of Tuple(String, String)
       current_name = nil
       current_body = IO::Memory.new
