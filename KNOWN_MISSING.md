@@ -18,8 +18,140 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.823`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.824`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
+
+---
+
+## 97-role fixed/divergence re-verification round finds 12 real regressions, after a version mixup was caught and corrected (round 65100-65510+, 0.9.823 -> 0.9.824)
+
+Re-ran every role in `ROLES_TESTED.md` marked `✅ Fixed` (94 roles) or
+`❌ DIVERGENCE` (3 roles) against the current build, via
+`krikri-role-tester`, split into an 83-role Ubuntu batch (round
+65100-65182) and a 14-role Rocky 9.6 batch (round 65200-65213) since
+`--os` is a per-run flag, not per-role. 71 CLEAN, 20 DIVERGENT, 6
+GALAXY_MISSING (role no longer resolves on Galaxy - unrelated to the
+engine).
+
+**Version mixup, caught and corrected:** a second session was working
+directly in this same checkout concurrently (not an isolated worktree,
+contrary to what was assumed at the time) and rebuilt `bin/
+krikri-playbook` mid-round with its own uncommitted WIP changes. The
+Ubuntu batch (round 65100-65182) ran against the real, released
+`0.9.823`; the Rocky batch (round 65200-65213) unknowingly ran against
+that other session's uncommitted `0.9.824` WIP build, not a real
+release. That WIP work (an `include_vars:` strict-path-templating fix,
+two CLI alias flags, and a corrected `RemovedActionError` message - see
+the fix-phase commit below) was reviewed, its formatting fixed, `crystal
+spec` and `./build.sh` re-run clean, and committed+pushed as `79270d9a`
+(the real `0.9.824`). Every one of the 20 divergent roles was then
+**re-run a second time** against this properly-committed build (Ubuntu
+recheck: round 65300-65314; Rocky recheck: round 65400-65404; two
+stragglers retried again at round 65500+) specifically to separate real
+regressions from artifacts of the mid-round binary swap.
+
+Of the 20 original divergences, **12 reproduced deterministically across
+both independent runs** and are confirmed real regressions - see "Open
+gaps" above for the detail on each: `evrardjp.keepalived`,
+`robertdebock.update_package_cache`, `linux-system-roles.logging`,
+`buluma.bind`, `brunobenchimol.certbot_dns`, `linux-system-roles.storage`
+(Rocky), `linux-system-roles.timesync` (Rocky), `buluma.selinux` (Rocky -
+inverted, real Ansible fails where krikri succeeds), `buluma.
+checkmk_agent` (also inverted), `kyl191.openvpn`, `geerlingguy.
+kubernetes`, `linux-system-roles.network` (Rocky). None have been
+root-caused or fixed yet - this round was triage only, no engine code
+changes. One more, `buluma.confluence`, only completed on a third
+attempt (the first two hit SSH_TIMEOUT) and shows a small divergence -
+not yet confirmed by a second successful run.
+
+The second run **cleared two of the original 20** that turned out to be
+run-to-run noise, not regressions: `diodonfrost.amazon_codedeploy` (the
+original `rc=126` was a one-off plugin-upload glitch - CLEAN on retry)
+and `inmotionhosting.wordpress` (the original `ok=110` vs `ok=120` gap
+did not reproduce - the retry landed at `ok=26`/`ok=26` on both engines,
+closely matching; this huge role's own external-download-heavy early
+tasks appear to have high run-to-run variance that swamped any real
+signal in the first pass). Two remain genuinely inconclusive because
+real Ansible itself couldn't reach the host either time (reboot/SSH
+flakiness on the py side, not an engine comparison at all): `mrlesmithjr.
+change-hostname`, `robertdebock.selinux`. The rest reproduce
+already-documented, non-regression behavior (GitHub-403/rate-limit or
+long-build-timeout flakiness, or the known `delegate_to: localhost`
+ssh-reupload limitation) - full breakdown in "Open gaps" above.
+
+Two previously-known `❌ DIVERGENCE` roles (`gantsign.gitkraken`,
+`andrewrothstein.cassandra-cluster` - both a parse-time strictness
+difference where krikri used to proceed further than real Ansible's
+own rejection) now come back CLEAN: both engines reject the playbook
+identically at parse time. Whatever tightened krikri's parse-time
+strictness between the original round and now closed this gap as a
+side effect - not chased further here, but worth noting in case a
+future session wants the specific commit.
+
+`ROLES_TESTED.md` rows for the 12 confirmed regressions (plus
+`buluma.confluence`'s single-data-point divergence) have been
+updated to reflect the new divergence, with the correct version
+attribution (0.9.823 for the Ubuntu-batch findings, the properly
+committed 0.9.824 at `79270d9a` for the Rocky-batch and all re-checked
+findings).
+
+---
+
+## KNOWN_MISSING cleanup: the three cosmetic-difference entries re-examined (0.9.824)
+
+Two of the three entries under "Cosmetic differences" below turned out
+to be fixable after all, verified live against a locally-installed
+ansible-core 2.19.4 with minimal repros; the third was already accurate
+and only needed its last gap closed:
+
+- **`RemovedActionError`'s message text is now byte-identical to real
+  ansible-core 2.19.4** (rc and detection were already). The old text
+  (`[DEPRECATED]: ansible.builtin.include has been removed. ...`) was
+  the 2.16-era tombstone wording; 2.19.4 actually prints `The
+  'ansible.builtin.include' action plugin has been removed. Use
+  include_tasks or import_tasks instead. This feature was removed from
+  ansible-core in a release after 2023-05-16.` - built by
+  `plugins/loader.py`'s `_find_fq_plugin` from the
+  `ansible_builtin_runtime.yml` tombstone plus
+  `_display_utils.get_deprecation_message_with_plugin_info`'s tail. The
+  "moving target" objection stands as a description of history (2.16,
+  2.17 and 2.19 all worded it differently) but is no longer a reason to
+  stay approximate: 2.19.4 is the version this project verifies
+  against, so the text now matches it exactly, and the parser specs pin
+  the full string.
+- **`include_vars:` with a failing templated path** - the real
+  divergence was never "message wording". Live-verified against 2.19.4:
+  when the path template references an undefined variable, real Ansible
+  fails the include_vars task ITSELF ("Error while resolving value for
+  '_raw_params': 'users' is undefined", rc=2), and for the
+  `lookup('first_found', params)` form with an unresolvable nested
+  candidate (`files: ['{{ ansible_facts.os_family }}.yml',
+  'default.yml']`, no gathered facts) it fails the task with "object of
+  type 'dict' has no attribute 'os_family'" rather than falling through
+  to `default.yml`. This engine used to render the path leniently -
+  either reporting `include_vars: file not found: undefined` (failing
+  the task for the wrong reason) or, worse, silently loading the empty
+  `default.yml` fallback and letting a LATER task fail with "'x' is
+  undefined". The old entry's claim that "real ansible fails a LATER
+  task" was an artifact of the harness round it came from (there the
+  role's `users` var, not the include_vars path, was the undefined
+  thing). Fixed by making include_vars's own path substitution strict
+  (both the direct and looped forms) plus a strict pre-pass over the
+  RAW task-vars values the path expression references (they are
+  deep-rendered leniently at context-build time, before a strict check
+  could see them), and by rendering first_found lookup candidates
+  strictly (honoring the lookup's own `skip: true`). Same cause-text
+  convention as every other module's undefined-arg failure (`'users'
+  is undefined`) - real Ansible's "Finalization of task args ... "
+  wrapper is the 2.19 presentation layer this engine already drops
+  everywhere else. The happy path is unchanged (verified: the right
+  os_family file still loads).
+- **CLI flag surface**: `--inventory-file` (real Ansible's own
+  deprecated spelling of `-i`/`--inventory`) and `--vault-pass-file`
+  (alias of `--vault-password-file`) were the only two real
+  ansible-core 2.19.4 flags missing from `--help`; both now parse. The
+  flag list is otherwise identical, and the only accepted-but-inert
+  flags remain the deliberate ones documented below.
 
 ---
 
@@ -868,11 +1000,96 @@ Genuinely open defects: something is wrong and the fix is unknown or
 unfinished. Everything deliberate lives under "Deliberate limits"
 below - keep the two apart, or this list stops meaning anything.
 
-None as of 0.9.823. The three gaps found via the 100-role RHEL (Rocky
-9.6) regression round (round 65000+) are all root-caused and fixed -
-the fix-phase narrative for each lives in the 0.9.818/0.9.823 commit
-messages. `pip:`'s pip3-discovery fix (mirroring real Ansible's own
-`_get_pip` order: `python3 -m pip` when the interpreter can `import
+Found via the 97-role fixed/divergence re-verification round and
+double-checked with a second independent re-run of every divergence
+against the properly committed `0.9.824` (commit `79270d9a`) - see the
+narrative entries below for the full story, including why the first
+pass's version numbers were unreliable. Each item below reproduced
+**deterministically across two independent fresh-host runs**, which is
+why these are listed as confirmed rather than merely suspected:
+
+- **`evrardjp.keepalived`**: right after `dnf`-installing the
+  `keepalived` package (`changed: true`), the very next task fails with
+  `Error executing process: 'keepalived': No such file or directory` -
+  real Ansible finds the binary fine (`ok=12` vs krikri's `ok=3`,
+  identical both runs). Looks like a PATH-resolution gap (sbin dirs not
+  searched for a binary that was *just* installed in the same play),
+  same bug family as the `Process.new(env:)` PATH issue previously
+  fixed for `buluma.ara_api`.
+- **`robertdebock.update_package_cache`**: previously byte-identical
+  (`ok=2 changed=1` both engines, cold and warm). Now reports
+  `changed=0` on the real-Ansible side vs `changed=1` on krikri, both
+  cold AND warm, identically on both runs - a real regression, not apt
+  cache-freshness noise as first suspected.
+- **`linux-system-roles.logging`**: previously fixed to byte-identical
+  `ok=30`. Now krikri returns `rc=4`, `ok=28`, `skipped=53` against real
+  Ansible's `rc=0`, `ok=30`, `skipped=51`, identically both runs - the
+  fixed `include_role: vars:` cross-reference rendering may have
+  regressed.
+- **`buluma.bind`**: previously fixed to byte-identical `rc=0` cold and
+  warm. Now krikri fails (`rc=2`, `failed=1`) where real Ansible
+  succeeds (`rc=0`), identically both runs.
+- **`brunobenchimol.certbot_dns`**: reproduces the *exact* pre-fix bug
+  signature from 0.9.682 (`ok=9`/`skipped=39` on krikri vs real
+  Ansible's `ok=8`/`skipped=40`), identically both runs - looks like the
+  `import_role:` `when:` expansion fix regressed.
+- **`linux-system-roles.storage`** (Rocky 9.6): previously fixed,
+  proceeding to a clean `ok=18 changed=3 failed=0`. Now krikri stops
+  much earlier (`ok=13` vs real Ansible's `ok=21`) with `failed=1`,
+  identically both runs.
+- **`linux-system-roles.timesync`** (Rocky 9.6, the branch
+  ROLES_TESTED.md documents as byte-identical): now diverges
+  (`ok=23`/`skipped=39` on krikri vs real Ansible's `ok=26`/`skipped=36`),
+  identically both runs.
+- **`buluma.selinux`** (Rocky 9.6): inverted from the norm - real
+  Ansible FAILS (`failed=1`) where krikri succeeds, on a role previously
+  byte-identical both engines (`✅ Fixed and verified`, round 175).
+  Reproduced identically both runs; not yet root-caused which side is
+  actually correct here.
+- **`buluma.checkmk_agent`**: also inverted - krikri succeeds
+  (`ok=17 failed=0`) where real Ansible fails (`ok=14 failed=1`),
+  reproduced identically both runs.
+- **`kyl191.openvpn`**: small but reproducible divergence
+  (`ok=20/19 changed=14` vs real Ansible's `ok=21/19`), identically both
+  runs.
+- **`geerlingguy.kubernetes`**: small but reproducible divergence
+  (`changed=4` on krikri vs real Ansible's `changed=5`), identically
+  both runs.
+- **`linux-system-roles.network`** (Rocky 9.6): both engines fail, but
+  with an off-by-one gap (`ok=7 skipped=8` krikri vs `ok=8 skipped=7`
+  real Ansible), reproduced identically both runs.
+
+Single-data-point, not yet confirmed by a second run: `buluma.
+confluence` finally completed on a third attempt (the first two hit
+SSH_TIMEOUT) with a small divergence (`ok=27/changed=8/skipped=6` real
+Ansible vs `ok=26/changed=7/skipped=7` krikri) - close to but not
+exactly the historical `ok=25` baseline; worth a repeat run before
+treating as confirmed.
+
+Not regressions - ruled out by the second run: `diodonfrost.
+amazon_codedeploy` (came back CLEAN on retry - the original `rc=126`
+was a one-off plugin-upload glitch), `inmotionhosting.wordpress` (the
+huge `ok=110` vs `ok=120` gap from the first run did not reproduce - the
+second run landed at `ok=26`/`ok=26` on both engines, matching closely;
+the role's own external-download-heavy early tasks appear to have high
+run-to-run variance that swamped any real engine signal in the first
+pass). Inconclusive - real Ansible itself couldn't reach the host both
+times (reboot/SSH flakiness, not comparable either way):
+`mrlesmithjr.change-hostname`, `robertdebock.selinux`. Not regressions -
+matches already-documented behavior: `buluma.forensics` (known
+`delegate_to: localhost` ssh-reupload limitation), `xanmanning.k3s`
+(known GitHub-403/rate-limit flakiness on the real-Ansible side; krikri's
+own early stop at the same point both runs may be worth an isolated
+repro someday but is low priority), `buluma.netdata` (known
+long-build-role timeout/resource flakiness). `buluma.confluence` hit
+infra flakes (SSH_TIMEOUT) on both attempts to re-test it - still no
+real data either way.
+
+The three gaps found via the 100-role RHEL (Rocky 9.6) regression round
+(round 65000+, distinct from the round above) are all root-caused and
+fixed - the fix-phase narrative for each lives in the 0.9.818/0.9.823
+commit messages. `pip:`'s pip3-discovery fix (mirroring real Ansible's
+own `_get_pip` order: `python3 -m pip` when the interpreter can `import
 pip`, PATH search for the `pip3` binary only as a fallback) is
 confirmed live (0.9.823 review pass): a fresh Kata Rocky 9.6 VM with
 `python3-pip` installed but its `pip3` script moved off PATH still
@@ -2460,26 +2677,17 @@ gaps" rather than arguing with the note in place.
 ### Cosmetic differences (both engines fail; only the wording differs)
 
 These change no outcome and no recap. Listed so they aren't re-reported
-as bugs, not because anyone intends to fix them.
-
-- **`RemovedActionError`'s message text** is only approximate, and this
-  is permanent. Round 307 (`Stouts.django`): the wording was refreshed
-  in 0.9.694 to ansible-core 2.17.14's phrasing, but "correct" is a
-  moving target across minor releases (this project has hit both 2.17.14
-  and 2.19.4 on different hosts), there is no version-targeting concept
-  anywhere in this engine to hang a version-aware table off, and
-  rc=1/detection is identical either way.
-- **`include_vars:` with a failing templated path** (gantsign.oh-my-zsh,
-  harness-limited): when the path template can't resolve, this engine
-  reports `include_vars: file not found: undefined` where real ansible
-  fails a LATER task with "'users' is undefined". Both fail the role;
-  the failure point and message differ.
+as bugs, not because anyone intends to fix them. (The section's two
+former entries - `RemovedActionError`'s message text and
+`include_vars:` with a failing templated path - were re-examined and
+closed in 0.9.824; see the round narrative at the top.)
 
 ### Everything else
 
 - **`ansible-playbook`'s CLI flag surface is fully covered by name, and
   all but one flag is now behavioral.** `--help` lists every flag real
-  ansible-core 2.19.4 does.
+  ansible-core 2.19.4 does, including its own long aliases
+  (`--inventory-file`, `--vault-pass-file`).
 
   * `-M`/`--module-path` is accepted and ignored, and this one is a real
     scope cut rather than an oversight: real Ansible searches those
