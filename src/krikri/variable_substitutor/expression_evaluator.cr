@@ -1814,7 +1814,7 @@ module Krikri
         part
       end
 
-      private def evaluate_lookup(args : String) : String
+      private def evaluate_lookup(args : String, query_mode : Bool = false) : String
         parts = split_top_level_commas(args).map { |part| rerender_double_templated_literal(part) }
         lookup_type = parts[0]?.try { |part| quoted_string_literal(part.strip) }.try(&.as_s?)
 
@@ -1835,7 +1835,7 @@ module Krikri
         # falling through every dispatch to the "undefined" fallback.
         lookup_type = lookup_type.try(&.sub(/^community\.general\./, ""))
 
-        evaluate_lookup_scalar(lookup_type, parts) ||
+        evaluate_lookup_scalar(lookup_type, parts, query_mode) ||
           evaluate_lookup_file(lookup_type, parts) ||
           evaluate_lookup_list(lookup_type, parts) ||
           evaluate_lookup_misc(lookup_type, parts) ||
@@ -1860,7 +1860,7 @@ module Krikri
         end
       end
 
-      private def evaluate_lookup_scalar(lookup_type : String?, parts : Array(String)) : String?
+      private def evaluate_lookup_scalar(lookup_type : String?, parts : Array(String), query_mode : Bool = false) : String?
         case lookup_type
         when "first_found"
           params = parts[1]?.try { |part| first_found_params(part) }
@@ -1885,6 +1885,8 @@ module Krikri
           var_name ? (ENV[var_name]? || "") : "undefined"
         when "config"
           lookup_config(parts)
+        when "inventory_hostnames"
+          lookup_inventory_hostnames(parts, query_mode)
         when "url"
           lookup_url(parts)
         when "vars"
@@ -1922,6 +1924,247 @@ module Krikri
           values.to_json
         else
           values[0]
+        end
+      end
+
+      private def lookup_inventory_hostnames(parts : Array(String), query_mode : Bool = false) : String
+        # lookup('inventory_hostnames', pattern[, pattern2, ...],
+        # wantlist=True) - real Ansible's own inventory_hostnames lookup
+        # plugin. Previously unimplemented (fell through to "undefined"),
+        # the standard cross-group orchestration idiom (`delegate_to:
+        # "{{ lookup('inventory_hostnames', 'kube-master[0]') }}"`,
+        # building a peer list into a fact, running one task against
+        # another group's members).
+        #
+        # Faithful to the real plugin's OWN implementation, which is
+        # simpler than it looks: it builds a throwaway InventoryManager
+        # purely from variables['groups'] - NOT from the full inventory -
+        # and runs the standard host-pattern machinery over it. The
+        # `groups` magic var is already in every task's vars context
+        # (TaskExecutor#build_vars_context), so this needs no inventory
+        # plumbing at all. Pattern semantics ported from
+        # lib/ansible/inventory/manager.py: comma-separated (colon
+        # fallback) terms, `&` intersection / `!` exclusion applied after
+        # the regular terms, fnmatch glob over group names first and host
+        # names only when no group matched (or the pattern carries glob
+        # metacharacters), `~`-prefixed raw regexes, `[N]`/`[A:B]`
+        # subscripts (the range is INCLUSIVE of B, real Ansible's
+        # hosts[start:end + 1]), and a no-match result that is an empty
+        # list - the real lookup swallows its own AnsibleError and
+        # returns [], never failing the task.
+        wantlist = parts[2..].any? { |part| part.strip.downcase.starts_with?("wantlist=true") }
+        terms = parts[1..].reject(&.strip.downcase.starts_with?("wantlist=")).compact_map do |part|
+          evaluate(part.strip).presence
+        end
+        return "undefined" if terms.empty?
+
+        groups = @vars["groups"]?.try(&.as_h?)
+        return "undefined" unless groups
+        named = inventory_groups_from_vars(groups)
+
+        begin
+          hosts = inventory_pattern_hosts(terms, named)
+        rescue
+          # Real LookupModule: `except AnsibleError: return []` - an
+          # out-of-range subscript on matched hosts empties the whole
+          # result rather than failing the task.
+          hosts = [] of String
+        end
+        # Real lookup(): a list-shaped result is comma-joined ONLY into a
+        # scalar when the caller asked for a scalar AND got something -
+        # an EMPTY result stays a real empty list ([]), both for lookup()
+        # and query() (verified: lookup('inventory_hostnames',
+        # 'nosuchgroup') renders [] in real ansible-core 2.19.4's msg,
+        # not an empty string). query() is real Ansible's list-forcing
+        # sibling: it returns the real list even without wantlist=True
+        # (with_items/query loops must iterate hosts, not one joined
+        # string) - the same convention lookup_url already follows for
+        # its wantlist=True form.
+        list_form = wantlist || query_mode || hosts.empty?
+        list_form ? hosts.to_json : hosts.join(",")
+      end
+
+      # Normalizes the `groups` magic var into the {group => [hosts]} map
+      # the pattern matcher works over: every named group as-is, `all` =
+      # the full host list (or the deduped union when the var lacks it),
+      # and `ungrouped` = the var's own value when present, else every
+      # host in no named group - real Ansible's own groups magic var
+      # always carries both implicit groups.
+      private def inventory_groups_from_vars(groups : Hash(String, JSON::Any)) : Hash(String, Array(String))
+        named = Hash(String, Array(String)).new
+        groups.each do |name, members|
+          next if name == "all" || name == "ungrouped"
+          named[name] = members.as_a?.try(&.map(&.as_s)) || [] of String
+        end
+        all_hosts = groups["all"]?.try(&.as_a?).try(&.map(&.as_s)) ||
+                    named.values.flatten.uniq!
+        named["ungrouped"] = groups["ungrouped"]?.try(&.as_a?).try(&.map(&.as_s)) ||
+                             all_hosts.reject { |host| named.values.any?(&.includes?(host)) }
+        named["all"] = all_hosts
+        named
+      end
+
+      # The port of manager.py's split_host_pattern + order_patterns +
+      # get_hosts term application: regular terms union in order, then
+      # `&` terms intersect, then `!` terms exclude (and a pattern made
+      # ONLY of &/! terms implicitly starts from 'all').
+      private def inventory_pattern_hosts(terms : Array(String), groups : Hash(String, Array(String))) : Array(String)
+        patterns = terms.flat_map { |term| split_host_pattern_terms(term) }
+        regular = [] of String
+        intersections = [] of String
+        exclusions = [] of String
+        patterns.each do |pattern|
+          next if pattern.empty?
+          if pattern.starts_with?('!')
+            exclusions << pattern[1..]
+          elsif pattern.starts_with?('&')
+            intersections << pattern[1..]
+          else
+            regular << pattern
+          end
+        end
+        regular << "all" if regular.empty?
+
+        hosts = [] of String
+        regular.each { |pattern| inventory_match_one(pattern, groups).each { |host| hosts << host unless hosts.includes?(host) } }
+        intersections.each do |pattern|
+          allowed = inventory_match_one(pattern, groups)
+          hosts = hosts.select { |host| allowed.includes?(host) }
+        end
+        exclusions.each do |pattern|
+          excluded = inventory_match_one(pattern, groups)
+          hosts = hosts.reject { |host| excluded.includes?(host) }
+        end
+        hosts
+      end
+
+      # Real split_host_pattern: commas are the primary separator; a
+      # colon-separated list is only the fallback (and bracketed
+      # subscripts must not be split there - `web[0:2]` is one term).
+      # IPv6-literal terms are mis-split by the colon fallback in real
+      # Ansible too ("retained only for backwards compatibility", its
+      # own words), so that limitation is inherited, not introduced.
+      private def split_host_pattern_terms(pattern : String) : Array(String)
+        return pattern.split(',').map(&.strip).reject(&.empty?) if pattern.includes?(',')
+        terms = [] of String
+        current = ""
+        in_brackets = false
+        pattern.each_char do |char|
+          if char == '['
+            in_brackets = true
+          elsif char == ']'
+            in_brackets = false
+          end
+          if char == ':' && !in_brackets
+            terms << current.strip
+            current = ""
+          else
+            current += char
+          end
+        end
+        terms << current.strip
+        terms.reject(&.empty?)
+      end
+
+      # Real _match_one_pattern/_enumerate_matches/_split_subscript/
+      # _apply_subscript: subscript split off first, then fnmatch over
+      # group names, then (only when no group matched, or the pattern
+      # carries glob metacharacters / is a ~-regex) over host names,
+      # then the implicit-localhost fallback, then the subscript applied
+      # INCLUSIVELY ([A:B] keeps B; [N] picks one, negatives allowed).
+      private def inventory_match_one(pattern : String, groups : Hash(String, Array(String))) : Array(String)
+        base, subscript = split_subscript(pattern)
+        matched = inventory_enumerate_matches(base, groups)
+        apply_host_subscript(matched, subscript)
+      end
+
+      private def inventory_enumerate_matches(pattern : String, groups : Hash(String, Array(String))) : Array(String)
+        return groups["all"] || [] of String if pattern == "all"
+        return inventory_regex_matches(pattern.lchop("~"), groups) if pattern.starts_with?("~")
+
+        regex = fnmatch_regex(pattern)
+        matching_groups = groups.keys.select { |name| name != "all" && regex.matches?(name) }
+        return matching_groups.flat_map { |name| groups[name] } if matching_groups.size > 0
+
+        # No group matched, or the pattern carries glob metacharacters -
+        # real Ansible also checks host names in that case (its own
+        # "pattern might match host" branch).
+        host_regex = fnmatch_regex(pattern)
+        (groups["all"] || [] of String).select { |host| host_regex.matches?(host) }
+      end
+
+      private def inventory_regex_matches(pattern : String, groups : Hash(String, Array(String))) : Array(String)
+        regex = Regex.new("^#{pattern}$")
+        matching_groups = groups.keys.select { |name| name != "all" && regex.matches?(name) }
+        return matching_groups.flat_map { |name| groups[name] } if matching_groups.size > 0
+        (groups["all"] || [] of String).select { |host| regex.matches?(host) }
+      rescue
+        [] of String
+      end
+
+      private def split_subscript(pattern : String) : {String, {Int32, Int32?}?}
+        idx = pattern.rindex('[')
+        return {pattern, nil} unless idx && pattern.ends_with?(']') && idx > 0
+        inner = pattern[(idx + 1)..-2]
+        base = pattern[0...idx]
+        if single = inner.match(/^-?[0-9]+$/)
+          {base, {single[0].to_i, nil}}
+        elsif range = inner.match(/^([0-9]+):([0-9]*)$/)
+          start = range[1].to_i
+          # Real _split_subscript: a missing end becomes -1, which
+          # _apply_subscript then resolves to len(hosts) - 1 (inclusive).
+          end_value = range[2].empty? ? -1 : range[2].to_i
+          {base, {start, end_value}}
+        else
+          # Not a subscript at all (e.g. a fnmatch character class like
+          # `web[12]`) - the whole pattern stays the match expression.
+          {pattern, nil}
+        end
+      end
+
+      private def apply_host_subscript(hosts : Array(String), subscript : {Int32, Int32?}?) : Array(String)
+        return hosts unless subscript
+        return [] of String if hosts.empty?
+        start, end_value = subscript
+        if end_value.nil?
+          return [hosts[start]]
+        end
+        end_index = end_value == -1 ? hosts.size - 1 : end_value
+        return [] of String if end_index < start
+        hosts[start..end_index]
+      rescue IndexError
+        # Real _match_one_pattern maps IndexError to AnsibleError, which
+        # the real lookup swallows into an empty result.
+        [] of String
+      end
+
+      # Python's fnmatch.translate for the subset real host patterns use:
+      # literal text plus `*`, `?` and `[...]` character classes.
+      private def fnmatch_regex(pattern : String) : Regex
+        Regex.new("^#{fnmatch_regex_source(pattern)}$")
+      end
+
+      private def fnmatch_regex_source(pattern : String) : String
+        String.build do |str|
+          index = 0
+          while index < pattern.size
+            char = pattern[index]
+            case char
+            when '*' then str << ".*"
+            when '?' then str << "."
+            when '['
+              close = pattern.index(']', index + 1)
+              if close
+                str << pattern[index..close]
+                index = close
+              else
+                str << Regex.escape(char.to_s)
+              end
+            else
+              str << Regex.escape(char.to_s)
+            end
+            index += 1
+          end
         end
       end
 
@@ -2445,18 +2688,13 @@ module Krikri
             "undefined"
           end
         else
-          # `config`/`inventory_hostnames` deliberately NOT implemented:
-          # config reads real ansible-core's OWN configuration system
-          # (ansible.cfg + env vars + defaults across every plugin type),
-          # which this codebase has no equivalent of at all - there's
-          # nothing meaningful to look up. inventory_hostnames needs the
-          # full Inventory object (host pattern matching against every
-          # group), which ExpressionEvaluator has no access to - it's
-          # built fresh per task/vars-context from a plain Hash(String,
-          # JSON::Any), never threaded through from TaskExecutor's own
-          # @inventory. Revisit inventory_hostnames if a real role turns
-          # out to need it - would need @inventory plumbed through the
-          # VarSubstitutor/ExpressionEvaluator construction chain.
+          # Reached only by lookup types with no handler above - most
+          # commonly a role-local CUSTOM Python lookup plugin
+          # (manala.cron's own lookup_plugins/manala_cron_files_env.py,
+          # a real, understood scope limit), which real Ansible runs as
+          # ordinary Python. Previously this list also named `config`
+          # (implemented round 190) and `inventory_hostnames`
+          # (implemented 0.9.825 - both fall through here no more).
           nil
         end
       end
@@ -2482,7 +2720,7 @@ module Krikri
           return [result].to_json
         end
 
-        raw = evaluate_lookup(args)
+        raw = evaluate_lookup(args, query_mode: true)
         # The same "undefined" sentinel #evaluate_lookup falls back to
         # for any lookup type it doesn't implement (most commonly a
         # role-local CUSTOM Python lookup plugin - manala.cron's own

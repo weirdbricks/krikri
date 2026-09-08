@@ -165,6 +165,11 @@ Metrics/CyclomaticComplexity:
   # 1:1 to a step of real Ansible's own module execution), not nested
   # branching to factor.
   - plugins/py_module.cr
+  # plugins/docker_compose_v2.cr's #up_cmd is a faithful port of
+  # community.docker's get_up_cmd - a flat conditional flag chain where
+  # each `if` maps 1:1 to one argument_spec option of the real module;
+  # splitting it apart would obscure that correspondence.
+  - plugins/docker_compose_v2.cr
   # src/krikri/plugin_helpers/x509_cert_info.cr's parse_extensions/
   # extension_section/classify_public_key are flat per-extension and
   # per-key-type branch chains - the branch count IS the specification

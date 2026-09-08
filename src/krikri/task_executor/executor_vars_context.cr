@@ -430,8 +430,19 @@ module Krikri
           result[name] = JSON::Any.new(inventory.hosts_in_group(name).map { |host| JSON::Any.new(host.name) })
         end
         result["all"] = JSON::Any.new(inventory.hosts.keys.map { |hostname| JSON::Any.new(hostname) })
+        # ungrouped - real Ansible's own groups magic var always carries
+        # it (every host not in any named group), and lookup('inventory_
+        # hostnames', 'ungrouped') matches against it like any other
+        # group. Previously missing, so groups['ungrouped'] rendered
+        # "undefined".
+        result["ungrouped"] = JSON::Any.new(
+          inventory.hosts.keys.reject { |hostname|
+            inventory.groups.keys.any? { |name| name != "all" && name != "ungrouped" && inventory.hosts_in_group(name).map(&.name).includes?(hostname) }
+          }.map { |hostname| JSON::Any.new(hostname) }
+        )
       else
         result["all"] = JSON::Any.new(@hosts.map { |other_host| JSON::Any.new(other_host.name) })
+        result["ungrouped"] = JSON::Any.new(@hosts.map { |other_host| JSON::Any.new(other_host.name) })
       end
       @groups_cache = result
       @groups_cache_generation = @hv_generation

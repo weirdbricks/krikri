@@ -18,7 +18,7 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.831`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.832`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
 
 ---
@@ -473,6 +473,84 @@ and only needed its last gap closed:
   ansible-core 2.19.4 flags missing from `--help`; both now parse. The
   flag list is otherwise identical, and the only accepted-but-inert
   flags remain the deliberate ones documented below.
+
+---
+
+## The last "architecturally out of scope" lookup was neither (0.9.826)
+
+`lookup('inventory_hostnames', pattern)` - the standard cross-group
+orchestration idiom (`delegate_to: "{{ lookup('inventory_hostnames',
+'kube-master[0]') }}"`, templating a peer list, running one task against
+another group's members) - was implemented, closing the last open
+lookup-plugin gap. The "Deliberate limits" entry had it (and `config`,
+already implemented since round 190) as requiring "modeling Ansible's
+own config-resolution/inventory internals"; reading the real lookup
+plugin's source showed it needs neither: it builds a throwaway
+InventoryManager purely from variables['groups'] and runs the standard
+host-pattern machinery over THAT. The `groups` magic var was already in
+every task's vars context, so the whole implementation lives in
+ExpressionEvaluator against the existing vars - no plumbing. Ported
+faithfully from lib/ansible/inventory/manager.py (comma/colon terms,
+`&`/`!` modifiers, fnmatch over groups then hosts, `~`-regexes,
+inclusive `[A:B]` subscripts, empty result as a real `[]`, query()
+returning the list form), differentially verified pattern-by-pattern
+against the locally-installed ansible-core 2.19.4
+(inventory_hostnames_lookup_spec.cr pins all 12). `groups` gained its
+missing `ungrouped` key on the way. Remaining known divergence: the
+wantlist/query list-in-msg rendering class shared with every other
+list-valued lookup (`["a","b"]` vs real Python's `['a', 'b']`),
+pre-existing and documented under Deliberate limits.
+
+---
+
+## Scope-cut re-examination batch: one of the three "cuts" wasn't a cut at all, two were stale entries, one was real (0.9.825)
+
+Picking up the "Deliberate limits" list, the three cuts with the
+strongest live evidence behind them were re-examined; only one actually
+needed code:
+
+- **`ansible.mariadb.mariadb_db`/`mariadb_user` (fauust.mariadb,
+  round6002)** - implemented, but not by porting: pulling both
+  collections' actual sources showed ansible.mariadb's modules are
+  functionally byte-identical forks of the already-implemented
+  community.mysql `mysql_db`/`mysql_user` (same argument spec, same
+  wire-protocol implementation, same CLI dump/import flags and failure
+  messages), so they resolve through `MODULE_ALIASES` onto the existing
+  plugin binaries - the same call `raw:` -> `shell:` already made.
+  Both the FQCN spellings and the bare short names resolve; a
+  parse-time spec (`ansible_mariadb_alias_spec.cr`) pins that no
+  "uses unimplemented plugin" warning can come back. The supported
+  surface is the existing mysql plugins' surface (which was already the
+  corpus's subset); ansible.mariadb-only extras (`salt:`,
+  `resource_limits:`, `password_expire:`, `locked:`, `attributes:`)
+  share the mysql plugins' own documented not-implemented list.
+- **`community.docker.docker_compose_v2` (mrlesmithjr.blocky)** -
+  genuinely unimplemented, now ported natively
+  (`plugins/docker_compose_v2.cr`): `up` (always detached) /
+  `down` / `restart` / the two-phase `up --no-start` then conditional
+  `stop`, flag-for-flag from the real module's `get_up_cmd`/
+  `get_down_cmd`/`get_restart_cmd`/`cmd_stop`, with `changed` computed
+  from the command's own stderr events (only "working" statuses count -
+  that is what makes a warm `state: present` converge to `changed=0`),
+  the real module's file/version/project-dir validation messages, and
+  check mode via `--dry-run`. Verified structurally by specs that need
+  no daemon; the live up/stopped/absent idempotency spec
+  (`docker_compose_v2_spec.cr`) pends cleanly where the docker-compose
+  provider cannot reach a daemon and needs a real-host confirm run
+  (mrlesmithjr.blocky) before the cut counts as fully closed.
+- **Legacy free-form `action:` task syntax** - NOT implemented this
+  round because it was already implemented (round 192: free-form
+  string form, dict form, and the runtime-templated module name), and
+  the Deliberate-limits entry had simply drifted. Deleted rather than
+  re-implemented. Same for most of the "Unimplemented collection
+  modules" bullet: `community.rabbitmq.rabbitmq_plugin/_user` and
+  `community.general.redhat_subscription` were natively ported in
+  round 196 (0.9.631) and both roles re-verified clean afterwards -
+  only `ansible.mariadb.*` in that bullet was still real.
+
+`ROLES_TESTED.md`'s rows for `fauust.mariadb` and `mrlesmithjr.blocky`
+still describe the pre-fix runs; both need a confirm-phase re-run
+before their status changes.
 
 ---
 
@@ -2952,15 +3030,16 @@ gaps" rather than arguing with the note in place.
   Ubuntu 22.04; every one calls at least one of these for real logic, so
   this author's roles will keep diverging. Not worth re-testing more of
   them expecting a different outcome.
-- **Unimplemented collection modules**: `community.general.
-  redhat_subscription` (linux-system-roles.rhc),
-  `community.rabbitmq.rabbitmq_plugin/_user` (mrlesmithjr.rabbitmq),
-  `ansible.mariadb.mariadb_db/_user` (fauust.mariadb, round6002) -
-  rc=4 "unavailable modules" vs real ansible rc=0. Same class as the
-  community.crypto notes below. (`ansible.utils`'s `ipaddr` filter,
-  r_pufky.pihole round6007, used to live here too - the whole family
-  is implemented as of 0.9.818, see the scope-cut clearing batch
-  above.)
+
+  (The bullet that used to live here - `community.general.
+  redhat_subscription`, `community.rabbitmq.rabbitmq_plugin/_user`,
+  `ansible.mariadb.mariadb_db/_user` - is gone: the first two were
+  natively ported back in round 196/0.9.631 but this entry was never
+  updated (mrlesmithjr.rabbitmq and linux-system-roles.rhc have been
+  re-verified clean since), and ansible.mariadb's modules turned out to
+  be functionally identical forks of the already-implemented
+  community.mysql ones - aliased onto them as of 0.9.825, see the
+  scope-cut re-examination narrative at the top.)
 
 ### Fact caching
 
@@ -3088,7 +3167,6 @@ closed in 0.9.824; see the round narrative at the top.)
   comparison side happens to have the collection installed and never
   hits the check): `zypper` (`weareinteractive.docker` - SUSE-only, out
   of this project's Ubuntu/RHEL scope, not planned),
-  `community.docker.docker_compose_v2` (`mrlesmithjr.blocky`),
   `community.general.clustering.consul.consul_acl`
   (`mrlesmithjr.consul` - also demonstrates the "WHICH TASKS RUN
   differs" side of this same gap: real Ansible refuses at parse time
@@ -3096,14 +3174,13 @@ closed in 0.9.824; see the round narrative at the top.)
   real work, before reporting the same rc=4 - already covered by the
   role-private-custom-modules entry above, not distinct).
 - The legacy free-form `action: "<templated module name> key=val ..."`
-  task syntax (module name and args packed into one string, with the
-  module name itself resolved from a runtime variable like `{{
-  ansible_pkg_mgr }}`) isn't parsed at all - this engine treats the
-  literal YAML key `action` as the module name itself, reporting
-  `unavailable modules: action`. Pre-2.4-era idiom, found in
-  `weareinteractive.users_oh_my_zsh` (round 178). Not implemented -
-  real-world usage of this exact form is rare and every modern role
-  uses `ansible.builtin.<module>:` directly instead.
+  task syntax - REMOVED from this list in 0.9.825: it had been
+  implemented since round 192 (both the `action: <module> [k=v ...]`
+  free-form string, its `{module: ..., args: {...}}` dict form, and the
+  runtime-templated module name resolved via
+  TaskExecutor#resolve_templated_action) and this entry was simply
+  never deleted. `weareinteractive.users_oh_my_zsh`'s shape is covered
+  by playbook_parser.cr's ACTION_DIRECTIVE_KEYS branch.
 - `docker_*`'s `api_version:` pin - not implemented, not planned. The
   underlying `docr` client uses unversioned endpoint URLs throughout,
   so pinning a version means touching every endpoint in a separate
@@ -3136,9 +3213,25 @@ closed in 0.9.824; see the round narrative at the top.)
   `reset_connection` drops the host's daemons + ssh ControlMaster
   socket. Every action in real Ansible's `meta` module's choices list
   is now supported.
-- `config`/`inventory_hostnames` lookups - architecturally out of scope
-  (would require modeling Ansible's own config-resolution/inventory
-  internals, not just a data lookup).
+- `config`/`inventory_hostnames` lookups - **removed from this list in
+  0.9.826, both halves stale**: `config` had been implemented since
+  round 190 (buluma.multi's wantlist loop) without the entry being
+  updated, and `inventory_hostnames` turned out to need no inventory
+  plumbing at all - the real lookup plugin builds its throwaway
+  InventoryManager purely from variables['groups'] and runs the
+  standard host-pattern machinery over THAT, and the `groups` magic var
+  was already in every task's vars context. Ported
+  (ExpressionEvaluator#lookup_inventory_hostnames): comma/colon terms,
+  `&`/`!` modifiers, fnmatch over group names then host names,
+  `~`-regexes, `[N]`/`[A:B]` subscripts (inclusive end), empty result
+  as a real `[]`, and query() returning the list form - all 12 pattern
+  cases differentially verified against the locally-installed
+  ansible-core 2.19.4 (inventory_hostnames_lookup_spec.cr). `groups`
+  also gained its missing `ungrouped` key (real Ansible's own magic-var
+  shape). Known shared limitation: a wantlist/query list result renders
+  `["a","b"]` in debug msg where real ansible-core prints Python's
+  `['a', 'b']` repr - the same pre-existing class lookup('config',
+  ..., wantlist=True) already had.
 - `win_*` filters - Windows-only, irrelevant to this project's targets.
 - `community.crypto`'s remaining modules. **This is no longer the blanket
   scope cut it used to be**: `openssl_privatekey`, `openssl_csr`,

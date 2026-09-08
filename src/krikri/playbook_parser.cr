@@ -957,6 +957,10 @@ module Krikri
       "community.docker.docker_image",
       "community.docker.docker_network",
       "community.docker.docker_container",
+      # KNOWN_MISSING's former "unimplemented collection modules" entry
+      # (mrlesmithjr.blocky): docker_compose_v2 drives the `docker
+      # compose` v2 CLI - see plugins/docker_compose_v2.cr.
+      "community.docker.docker_compose_v2",
       "community.mysql.mysql_db",
       "community.mysql.mysql_user",
       "community.mysql.mysql_info",
@@ -1136,6 +1140,19 @@ module Krikri
       "raw"                 => "ansible.builtin.shell",
       "ansible.builtin.raw" => "ansible.builtin.shell",
       "ansible.legacy.raw"  => "ansible.builtin.shell",
+      # ansible.mariadb's mariadb_db/mariadb_user are functionally
+      # byte-identical forks of community.mysql's mysql_db/mysql_user
+      # (same argument spec, same defaults, same wire-protocol
+      # implementation, same CLI dump/import flags - verified against
+      # both collections' actual sources), so - same call as raw: above -
+      # they alias straight onto the existing plugin binaries rather
+      # than shipping near-duplicates. fauust.mariadb (round 6002) calls
+      # the FQCN forms; the bare spellings resolve the same way when the
+      # collection is installed.
+      "mariadb_db"                   => "community.mysql.mysql_db",
+      "mariadb_user"                 => "community.mysql.mysql_user",
+      "ansible.mariadb.mariadb_db"   => "community.mysql.mysql_db",
+      "ansible.mariadb.mariadb_user" => "community.mysql.mysql_user",
     }
 
     def self.resolve_module_name(raw : String) : String?
