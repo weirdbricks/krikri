@@ -23,6 +23,25 @@ narrative, newest first.
 
 ---
 
+## `linux-system-roles.logging`'s "regression" reclassified: distro-mismatch, not a code issue (no version bump)
+
+Investigating the 12 confirmed regressions in fix-priority order,
+`linux-system-roles.logging` turned out not to be a regression at all:
+its `rc=4 ok=28 skipped=53` vs real Ansible's `rc=0 ok=30 skipped=51`
+gap is entirely the role's own "Record role success fingerprint" task,
+which uses a custom Python module (`sr_fingerprint`) shipped in the
+role's own `library/` dir - the same documented custom-local-module
+scope cut `linux-system-roles.timesync`'s own row already describes
+(confirmed live via the round's own saved `cold_py.out`: real Ansible
+runs the task `ok`, krikri can't). The original round-159 `✅ Fixed`
+verification was on Rocky/RHEL, where this branch either isn't taken or
+resolves differently; this regression round happened to test Ubuntu.
+The actual `include_role: vars:` cross-reference fix from round 159 is
+unaffected and still correct - no code change needed here, just a doc
+correction (see "Open gaps" and `ROLES_TESTED.md`).
+
+---
+
 ## `robertdebock.update_package_cache` regression root-caused and fixed: package: update_cache: true hardcoded changed:true for apt (0.9.826)
 
 Second of the 12 confirmed regressions from the round below to get
@@ -1072,11 +1091,6 @@ pass's version numbers were unreliable. Each item below reproduced
 **deterministically across two independent fresh-host runs**, which is
 why these are listed as confirmed rather than merely suspected:
 
-- **`linux-system-roles.logging`**: previously fixed to byte-identical
-  `ok=30`. Now krikri returns `rc=4`, `ok=28`, `skipped=53` against real
-  Ansible's `rc=0`, `ok=30`, `skipped=51`, identically both runs - the
-  fixed `include_role: vars:` cross-reference rendering may have
-  regressed.
 - **`buluma.bind`**: previously fixed to byte-identical `rc=0` cold and
   warm. Now krikri fails (`rc=2`, `failed=1`) where real Ansible
   succeeds (`rc=0`), identically both runs.
@@ -1132,7 +1146,13 @@ matches already-documented behavior: `buluma.forensics` (known
 (known GitHub-403/rate-limit flakiness on the real-Ansible side; krikri's
 own early stop at the same point both runs may be worth an isolated
 repro someday but is low priority), `buluma.netdata` (known
-long-build-role timeout/resource flakiness). `buluma.confluence` hit
+long-build-role timeout/resource flakiness), `linux-system-roles.logging`
+(the entire `ok=28` vs `ok=30` gap is the role's own custom
+`sr_fingerprint` module from its `library/` dir - the same documented
+scope-cut `linux-system-roles.timesync`'s own row already describes;
+this round happened to hit it on Ubuntu instead of the Rocky host the
+original fix was verified on - confirmed live via `cold_py.out`, not a
+regression in the actual `include_role: vars:` fix). `buluma.confluence` hit
 infra flakes (SSH_TIMEOUT) on both attempts to re-test it - still no
 real data either way.
 
