@@ -13,12 +13,7 @@ module Krikri
   #   check_mode: dry-run (predict, don't apply)
   #
   # Real ansible.posix.selinux enforces the running SELinux mode and
-  # rewrites /etc/selinux/config so the mode survives reboot. On hosts where
-  # SELinux is not compiled in / not active (no /etc/selinux/config, e.g.
-  # stock Ubuntu), the module is effectively a no-op - it reports that
-  # nothing needed changing rather than failing, which is how os_hardening
-  # cleanly applies to both EL and Debian-family hosts. This mirrors that
-  # deliberately.
+  # rewrites /etc/selinux/config so the mode survives reboot.
   class SelinuxPlugin < BasePlugin
     property? check_mode : Bool
 
@@ -42,14 +37,25 @@ module Krikri
         )
       end
 
-      # No SELinux config on this host (SELinux absent / not installed).
-      # Real module is a no-op here; report it so the task can't fail a
-      # Debian/Ubuntu baseline.
+      # Real ansible.posix.selinux ALWAYS fails when the config file is
+      # missing - unconditionally, regardless of distro - confirmed
+      # directly against the module's own source
+      # (`if not os.path.isfile(configfile): module.fail_json(msg=
+      # "Unable to find file {0}".format(configfile), details="Please
+      # install SELinux-policy package, if this package is not
+      # installed previously.")`). There is no "SELinux not compiled
+      # in, treat as no-op" special case anywhere in it - this plugin
+      # previously assumed one (to let os_hardening "cleanly apply" to
+      # Debian-family hosts), which was simply wrong: found live via
+      # buluma.selinux on a Rocky 9.6 host missing the SELinux-policy
+      # package, where real Ansible failed with this exact message and
+      # this plugin silently reported success instead.
       unless File.exists?(CONFIG_PATH)
         return PluginResult.new(
           changed: false,
-          failed: false,
-          msg: "SELinux is not installed (no #{CONFIG_PATH})"
+          failed: true,
+          msg: "Unable to find file #{CONFIG_PATH}",
+          details: "Please install SELinux-policy package, if this package is not installed previously."
         )
       end
 

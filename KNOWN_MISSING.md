@@ -18,8 +18,35 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.829`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.830`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
+
+---
+
+## `buluma.selinux` regression root-caused and fixed: selinux: silently no-op'd instead of failing when SELinux isn't installed (0.9.830)
+
+`plugins/selinux.cr` treated a missing `/etc/selinux/config` as "SELinux
+not compiled in, report a harmless no-op" - a deliberate design choice
+per its own comment, meant to let `os_hardening`-style roles "cleanly
+apply to both EL and Debian-family hosts." Checked directly against
+`ansible.posix.selinux`'s own module source: this is simply wrong. The
+real module has no such special case anywhere - `if not os.path.isfile
+(configfile): module.fail_json(msg="Unable to find file {0}".format(
+configfile), details="Please install SELinux-policy package, if this
+package is not installed previously.")` fires unconditionally,
+regardless of distro. Found via `buluma.selinux` on a Rocky 9.6 host
+missing the SELinux-policy package (not even a Debian host - the
+"EL vs Debian" premise didn't even hold for the case that surfaced it):
+real Ansible failed with that exact message and this plugin silently
+reported success instead.
+
+Fixed by matching real Ansible's behavior and message text exactly. No
+regression spec added - the plugin hardcodes the real `/etc/selinux/
+config` system path (not parameterized), so a spec can only safely
+exercise the failure branch on a host that genuinely lacks the file,
+which isn't a safe assumption for a shared dev/CI machine; verified
+live instead (a fresh Kata Rocky VM with no SELinux-policy package
+installed) pre/post-fix.
 
 ---
 
@@ -1244,11 +1271,6 @@ why these are listed as confirmed rather than merely suspected:
   package this engine doesn't bundle, a new, separate, larger scope
   gap (see "Deliberate limits" below) than the regression this row
   originally reported.
-- **`buluma.selinux`** (Rocky 9.6): inverted from the norm - real
-  Ansible FAILS (`failed=1`) where krikri succeeds, on a role previously
-  byte-identical both engines (`✅ Fixed and verified`, round 175).
-  Reproduced identically both runs; not yet root-caused which side is
-  actually correct here.
 - **`buluma.checkmk_agent`**: also inverted - krikri succeeds
   (`ok=17 failed=0`) where real Ansible fails (`ok=14 failed=1`),
   reproduced identically both runs.
