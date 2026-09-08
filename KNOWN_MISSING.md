@@ -23,6 +23,37 @@ narrative, newest first.
 
 ---
 
+## Round 30001's apt `update_cache:` premise re-verified live - still correct, no code change (0.9.831)
+
+Investigating `geerlingguy.kubernetes`'s small `changed` divergence
+raised a scare: an initial live test (adding a genuinely new apt
+source, then `update_cache: true`) showed real Ansible reporting
+`changed: true` on a host apparently WITHOUT `python3-apt` - seemingly
+contradicting round 30001's core finding ("without python3-apt, real
+Ansible always reports `changed: false` here regardless of mtime
+movement"), which both `apt.cr`'s original fix AND the `robertdebock.
+update_package_cache` fix shipped a few commits ago (0.9.826) build on
+via the shared `apt_cache_refresh_changed?` helper.
+
+Re-verified round 30001's EXACT original methodology (delete a tracked
+lists file + age the `/var/lib/apt/lists` directory mtime) on a
+genuinely fresh, untouched Kata VM with `python3-apt` freshly confirmed
+absent: real Ansible reported `changed: false` again, reproducing round
+30001's finding precisely. The earlier contradicting result was a
+test-isolation mistake, not a real behavior change - that test reused a
+VM across several playbook runs, and an earlier task had silently
+triggered real Ansible's own python3-apt auto-install, so the
+"contradicting" run was actually exercising the WITH-python3-apt
+mtime-diff path the whole time, not the absent-python3-apt path it
+appeared to be.
+
+Conclusion: round 30001's rule stands, `apt.cr`/`package.cr`'s shared
+`apt_cache_refresh_changed?` logic is correct as shipped, no revert
+needed. `geerlingguy.kubernetes`'s own small `changed` divergence is
+something else - see "Open gaps" above for what's known about it.
+
+---
+
 ## `buluma.checkmk_agent` regression root-caused and fixed: a become/connection failure was overridable by failed_when: false (0.9.831)
 
 A `become:`/connection-level failure (no module ever ran, so there's no
@@ -1304,12 +1335,34 @@ why these are listed as confirmed rather than merely suspected:
   package this engine doesn't bundle, a new, separate, larger scope
   gap (see "Deliberate limits" below) than the regression this row
   originally reported.
-- **`kyl191.openvpn`**: small but reproducible divergence
-  (`ok=20/19 changed=14` vs real Ansible's `ok=21/19`), identically both
-  runs.
-- **`geerlingguy.kubernetes`**: small but reproducible divergence
-  (`changed=4` on krikri vs real Ansible's `changed=5`), identically
-  both runs.
+- **`kyl191.openvpn`**: NOT a regression - root-caused. The single
+  differing task is real Ansible's own `package_facts:` module failing
+  outright ("Could not detect a supported package manager... or the
+  required Python library is not installed") because `python3-apt`
+  isn't installed on this Kata image - `ignore_errors: true` lets the
+  play continue, but the role's own fallback task
+  ("Ensure packages fact exists", gated on the fact never having been
+  set) then runs on real Ansible and is skipped on krikri, since
+  krikri's own native (non-Python) `package_facts:` implementation has
+  no such dependency and succeeds where real Ansible's does not. Not
+  fixable in any meaningful sense - replicating it would mean
+  deliberately breaking krikri's `package_facts:` to match a missing
+  runtime dependency on real Ansible's own interpreter, not a real
+  behavioral gap.
+- **`geerlingguy.kubernetes`**: small reproducible divergence
+  (`changed=4` on krikri vs real Ansible's `changed=5`) in the role's
+  own `apt: {update_cache: true}, when: kubernetes_repository.changed`
+  task. Investigated at length (see the round-30001 re-verification
+  note below) - NOT the same bug class as `robertdebock.
+  update_package_cache`'s regression (that fix's premise was
+  re-confirmed correct, live, on a fresh VM). An earlier task in this
+  same role already triggers real Ansible's python3-apt auto-install,
+  so both engines should be on the WITH-python3-apt mtime-diff path by
+  this point - the 1-count gap looks like a narrower mtime-timing edge
+  case interacting with the immediately-preceding `deb822_repository:`
+  task's own side effects. Not chased further - lower priority, small
+  magnitude, and the investigation already used significant time
+  without a clean root cause.
 - **`linux-system-roles.network`** (Rocky 9.6): both engines fail, but
   with an off-by-one gap (`ok=7 skipped=8` krikri vs `ok=8 skipped=7`
   real Ansible), reproduced identically both runs.
