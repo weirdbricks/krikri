@@ -27,6 +27,15 @@ describe Krikri::PluginHelpers::FirewalldCommand do
         .should eq("firewall-offline-cmd --zone=public --query-service='http'")
     end
 
+    it "switches to the live-daemon CLI for runtime-context commands" do
+      Krikri::PluginHelpers::FirewalldCommand.query_command("public", "service", "http", "firewall-cmd")
+        .should eq("firewall-cmd --zone=public --query-service='http'")
+      Krikri::PluginHelpers::FirewalldCommand.add_command("public", "port", "8080/tcp", "firewall-cmd")
+        .should eq("firewall-cmd --zone=public --add-port='8080/tcp'")
+      Krikri::PluginHelpers::FirewalldCommand.forward_port_query_command("public", "port=8080:proto=tcp:toport=8081", "firewall-cmd")
+        .should eq("firewall-cmd --zone=public --query-forward-port='port=8080:proto=tcp:toport=8081'")
+    end
+
     it "translates rich_rule to the rich-rule flag" do
       Krikri::PluginHelpers::FirewalldCommand.query_command("public", "rich_rule", "rule accept")
         .should eq("firewall-offline-cmd --zone=public --query-rich-rule='rule accept'")

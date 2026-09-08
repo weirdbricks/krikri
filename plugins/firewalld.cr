@@ -89,6 +89,11 @@ module Krikri
   # running daemon - offline always forces it false, matching real
   # Ansible's own behavior).
   class FirewalldPlugin < BasePlugin
+    # Which change contexts the current request touches, set by
+    # #validate_permanent_immediate (see its own comment).
+    @do_runtime = false
+    @do_permanent = true
+
     def execute : PluginResult
       state = @params["state"]?
       unless state
@@ -137,6 +142,21 @@ module Krikri
     end
 
     private def run_target(zone : String, state : String, target : String) : PluginResult
+      # Real Ansible's own ZoneTargetTransaction FAILS any target change
+      # in the immediate (runtime) context - a zone's target is only
+      # settable permanently ("Zone operations must be permanent. Make
+      # sure you didn't set the 'permanent' flag to 'false' or the
+      # 'immediate' flag to 'true.'" - the real module's own
+      # tx_not_permanent_error_msg, raised by BOTH
+      # set_enabled_immediate and set_disabled_immediate). So even a
+      # bare `target:` task (immediate silently forced true) fails under
+      # real Ansible, and one with permanent+immediate fails too - the
+      # immediate transaction runs first. Only permanent-only requests
+      # proceed.
+      if @do_runtime
+        return PluginResult.new(changed: false, failed: true, msg: "Zone operations must be permanent. Make sure you didn't set the 'permanent' flag to 'false' or the 'immediate' flag to 'true'.", zone: zone)
+      end
+
       want_present = state == "enabled" || state == "present"
       desired = want_present ? target : "default"
 
@@ -164,39 +184,56 @@ module Krikri
       built = PluginHelpers::FirewalldCommand.port_forward_value(entries[0])
       return PluginResult.new(changed: false, failed: true, msg: built[:error] || "invalid port_forward value") unless value = built[:value]
 
-      present = remote_exec(PluginHelpers::FirewalldCommand.forward_port_query_command(zone, value))[:exit_code] == 0
       want_present = state == "enabled"
+      check_mode = true?(@params["check_mode"]?)
+      changed = false
 
-      return PluginResult.new(changed: false, failed: false, msg: "", zone: zone) if present == want_present
+      contexts.each do |binary|
+        present = remote_exec(PluginHelpers::FirewalldCommand.forward_port_query_command(zone, value, binary))[:exit_code] == 0
+        next if present == want_present
 
-      if true?(@params["check_mode"]?)
-        return PluginResult.new(changed: true, failed: false, msg: "", zone: zone)
+        return PluginResult.new(changed: true, failed: false, msg: "", zone: zone) if check_mode
+
+        cmd = want_present ? PluginHelpers::FirewalldCommand.forward_port_add_command(zone, value, binary) : PluginHelpers::FirewalldCommand.forward_port_remove_command(zone, value, binary)
+        result = remote_exec(cmd)
+        return PluginResult.new(changed: false, failed: true, msg: result[:stdout], zone: zone) if result[:exit_code] != 0
+        changed = true
       end
 
-      cmd = want_present ? PluginHelpers::FirewalldCommand.forward_port_add_command(zone, value) : PluginHelpers::FirewalldCommand.forward_port_remove_command(zone, value)
-      result = remote_exec(cmd)
-      PluginResult.new(changed: result[:exit_code] == 0, failed: result[:exit_code] != 0, msg: result[:stdout], zone: zone)
+      PluginResult.new(changed: changed, failed: false, msg: "", zone: zone)
     end
 
     private def run(zone : String, state : String, key : String, value : String) : PluginResult
-      present = query(zone, key, value)
       want_present = state == "enabled"
+      check_mode = true?(@params["check_mode"]?)
+      changed = false
 
-      return PluginResult.new(changed: false, failed: false, msg: "", zone: zone) if present == want_present
+      contexts.each do |binary|
+        present = remote_exec(PluginHelpers::FirewalldCommand.query_command(zone, key, value, binary))[:exit_code] == 0
+        next if present == want_present
 
-      if true?(@params["check_mode"]?)
-        return PluginResult.new(changed: true, failed: false, msg: "", zone: zone)
+        return PluginResult.new(changed: true, failed: false, msg: "", zone: zone) if check_mode
+
+        cmd = want_present ? PluginHelpers::FirewalldCommand.add_command(zone, key, value, binary) : PluginHelpers::FirewalldCommand.remove_command(zone, key, value, binary)
+        result = remote_exec(cmd)
+        return PluginResult.new(changed: false, failed: true, msg: result[:stdout], zone: zone) if result[:exit_code] != 0
+        changed = true
       end
 
-      cmd = want_present ? PluginHelpers::FirewalldCommand.add_command(zone, key, value) : PluginHelpers::FirewalldCommand.remove_command(zone, key, value)
-      result = remote_exec(cmd)
-
-      PluginResult.new(changed: result[:exit_code] == 0, failed: result[:exit_code] != 0, msg: result[:stdout], zone: zone)
+      PluginResult.new(changed: changed, failed: false, msg: "", zone: zone)
     end
 
-    private def query(zone : String, key : String, value : String) : Bool
-      cmd = PluginHelpers::FirewalldCommand.query_command(zone, key, value)
-      remote_exec(cmd)[:exit_code] == 0
+    # The CLI binaries to service this request through - `firewall-cmd`
+    # (the live-daemon D-Bus client) for an immediate action against a
+    # running firewalld, `firewall-offline-cmd` (on-disk zone XML) for a
+    # permanent one. Both when both were requested - real Ansible's own
+    # module applies each requested context separately and ORs the
+    # changed flags.
+    private def contexts : Array(String)
+      binaries = [] of String
+      binaries << "firewall-cmd" if @do_runtime
+      binaries << "firewall-offline-cmd" if @do_permanent
+      binaries
     end
 
     # `zone:` (real Ansible's own doc: "the default zone can be
@@ -209,7 +246,11 @@ module Krikri
       given = @params["zone"]?
       return given if given
 
-      zone = remote_exec("firewall-offline-cmd --get-default-zone")[:stdout].strip
+      # the LIVE daemon's own default zone when one is running (real
+      # Ansible resolves the default over its D-Bus connection), the
+      # on-disk one otherwise
+      cmd = firewalld_running? ? "firewall-cmd --get-default-zone" : "firewall-offline-cmd --get-default-zone"
+      zone = remote_exec(cmd)[:stdout].strip
       zone.empty? ? nil : zone
     rescue
       nil
@@ -258,15 +299,14 @@ module Krikri
         return PluginResult.new(changed: false, failed: true, msg: "firewall is not currently running, unable to perform immediate actions without a running firewall daemon", zone: zone)
       end
 
-      # A genuinely live firewalld daemon plus a real `immediate:` runtime
-      # change - the one combination real Ansible services over a live
-      # D-Bus connection that this plugin has no implementation for at
-      # all (see this file's own header comment). Narrower than the
-      # previous blanket requirement: only reached when firewalld is
-      # actually running AND immediate was actually requested/defaulted.
-      if immediate && !fw_offline
-        return PluginResult.new(changed: false, failed: true, msg: "immediate changes against a live firewalld daemon are not implemented (only permanent/offline-style changes are supported)", zone: zone)
-      end
+      # Which contexts this request touches: an immediate action against
+      # a live daemon goes through `firewall-cmd` (the D-Bus client CLI,
+      # the same channel real Ansible's own firewall module drives), a
+      # permanent one through `firewall-offline-cmd` (on-disk zone XML).
+      # The daemon-running + immediate combination used to be a hard
+      # "not implemented" failure - it is the backend now.
+      @do_runtime = immediate && !fw_offline
+      @do_permanent = permanent || !@do_runtime
 
       nil
     end

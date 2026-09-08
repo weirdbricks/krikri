@@ -43,17 +43,21 @@ module Krikri
         thing == "rich_rule" ? "rich-rule" : thing.gsub('_', '-')
       end
 
-      def self.query_command(zone : String, thing : String, value : String) : String
-        "firewall-offline-cmd --zone=#{zone} --query-#{flag_name(thing)}#{value_suffix(thing, value)}"
+      # *binary* selects the runtime/live-daemon CLI (`firewall-cmd`,
+      # talking to a running firewalld over D-Bus) vs the on-disk XML
+      # editor (`firewall-offline-cmd`, no daemon needed) - the flags
+      # after the binary are identical between the two.
+      def self.query_command(zone : String, thing : String, value : String, binary : String = "firewall-offline-cmd") : String
+        "#{binary} --zone=#{zone} --query-#{flag_name(thing)}#{value_suffix(thing, value)}"
       end
 
-      def self.add_command(zone : String, thing : String, value : String) : String
-        "firewall-offline-cmd --zone=#{zone} --add-#{flag_name(thing)}#{value_suffix(thing, value)}"
+      def self.add_command(zone : String, thing : String, value : String, binary : String = "firewall-offline-cmd") : String
+        "#{binary} --zone=#{zone} --add-#{flag_name(thing)}#{value_suffix(thing, value)}"
       end
 
-      def self.remove_command(zone : String, thing : String, value : String) : String
+      def self.remove_command(zone : String, thing : String, value : String, binary : String = "firewall-offline-cmd") : String
         flag = thing == "service" ? "remove-service-from-zone" : "remove-#{flag_name(thing)}"
-        "firewall-offline-cmd --zone=#{zone} --#{flag}#{value_suffix(thing, value)}"
+        "#{binary} --zone=#{zone} --#{flag}#{value_suffix(thing, value)}"
       end
 
       # Single-quoted (not double-quoted) since a rich_rule value
@@ -92,16 +96,16 @@ module Krikri
         {value: value, error: nil}
       end
 
-      def self.forward_port_query_command(zone : String, value : String) : String
-        "firewall-offline-cmd --zone=#{zone} --query-forward-port='#{value}'"
+      def self.forward_port_query_command(zone : String, value : String, binary : String = "firewall-offline-cmd") : String
+        "#{binary} --zone=#{zone} --query-forward-port='#{value}'"
       end
 
-      def self.forward_port_add_command(zone : String, value : String) : String
-        "firewall-offline-cmd --zone=#{zone} --add-forward-port='#{value}'"
+      def self.forward_port_add_command(zone : String, value : String, binary : String = "firewall-offline-cmd") : String
+        "#{binary} --zone=#{zone} --add-forward-port='#{value}'"
       end
 
-      def self.forward_port_remove_command(zone : String, value : String) : String
-        "firewall-offline-cmd --zone=#{zone} --remove-forward-port='#{value}'"
+      def self.forward_port_remove_command(zone : String, value : String, binary : String = "firewall-offline-cmd") : String
+        "#{binary} --zone=#{zone} --remove-forward-port='#{value}'"
       end
     end
   end
