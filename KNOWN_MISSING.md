@@ -18,8 +18,49 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.826`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.827`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
+
+---
+
+## `buluma.bind` regression root-caused and fixed: systemd's is-enabled check didn't replicate real Ansible's -l quirk on aliased units (0.9.827)
+
+Third of the 12 confirmed regressions to get fixed (after `linux-system-
+roles.logging` turned out not to be one). Took two live Atlantic Ubuntu
+22.04 hosts and quite a bit of digging to pin down: `bind9.service` is a
+systemd `Alias=` of `named.service`, and `systemctl enable bind9`
+genuinely refuses on real Ubuntu 22.04 ("Refusing to operate on alias
+name or linked unit file") - confirmed by running the exact command
+manually on both a real py-driven and a real krikri-driven host.
+Initially this looked like it should fail identically on both engines
+(and did, when run manually) - but real `ansible-playbook` itself
+reported success. Instrumenting ansible-core's own `systemd.py` module
+live (patched in a debug line via `ANSIBLE_LIBRARY`, bare non-FQCN
+module name to make the override apply) found the real mechanism: real
+Ansible's own `is-enabled` check runs `systemctl is-enabled '<name>' -l`
+(the `-l`/long flag) and only treats the result as "not enabled" when
+its stdout string-equals EXACTLY `"enabled-runtime"`, `"indirect"`, or
+`"alias"` - but `-l` makes an ALIASED unit's output multi-line
+(`"alias\n  /path/to/named.service\n  /path/to/bind9.service\n"`),
+which never equals the bare string `"alias"`. So real Ansible's own
+check falls through to "already enabled" for an alias and never calls
+`enable` on it at all - an accidental quirk (the code's own comment,
+"Let systemd handle the alias as we can't be sure what's needed",
+suggests a different intent), but it's the real observable behavior
+that determines whether the enable-refusal error is ever reached.
+`plugins/systemd.cr`'s own `enabled?` used a single-line `is-enabled`
+(no `-l`) and a strict `== "enabled"` check - correctly saw the bare
+"alias" and (reasonably, by itself) tried to enable anyway, hitting the
+refusal real Ansible's own multi-line quirk happens to dodge.
+
+Fixed by replicating real Ansible's exact (if quirky) `-l` + string-
+comparison logic, factored into a new `SystemdEnabledState` module
+(`src/krikri/plugin_helpers/systemd_enabled_state.cr`, same pattern as
+`AptLockRetry`) so a unit spec can exercise the pure decision logic
+without a real `systemctl`. Regression spec added
+(`spec/unit/systemd_enabled_state_spec.cr`). Live-reverified end to end
+on a real Atlantic Ubuntu 22.04 host: a clean `bind9` install+enable
+now converges with `changed=1 failed=0`, matching real Ansible.
 
 ---
 
@@ -1091,9 +1132,6 @@ pass's version numbers were unreliable. Each item below reproduced
 **deterministically across two independent fresh-host runs**, which is
 why these are listed as confirmed rather than merely suspected:
 
-- **`buluma.bind`**: previously fixed to byte-identical `rc=0` cold and
-  warm. Now krikri fails (`rc=2`, `failed=1`) where real Ansible
-  succeeds (`rc=0`), identically both runs.
 - **`brunobenchimol.certbot_dns`**: reproduces the *exact* pre-fix bug
   signature from 0.9.682 (`ok=9`/`skipped=39` on krikri vs real
   Ansible's `ok=8`/`skipped=40`), identically both runs - looks like the

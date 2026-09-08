@@ -2,6 +2,7 @@
 
 require "json"
 require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/systemd_enabled_state"
 
 module Krikri
   # Systemd Plugin - Manage systemd units
@@ -364,14 +365,14 @@ module Krikri
     end
 
     # Whether the unit is enabled on boot.
+    # See `SystemdEnabledState.enabled_from_is_enabled?`'s own comment
+    # (`src/krikri/plugin_helpers/systemd_enabled_state.cr`) for the real
+    # semantics this replicates, `-l` and all - factored into its own
+    # file (like `AptLockRetry`) so a spec can require the pure decision
+    # logic without a real `systemctl` or this plugin's STDIN entry point.
     private def enabled?(name : String) : Bool
-      # `systemctl is-enabled` exits 0 when enabled, but exits non-zero for
-      # "disabled", "masked", and "static" alike - so exit code alone can't
-      # distinguish "disabled" from "static". Parse the output word
-      # instead: only an explicit "enabled" word means boot-enabled.
-      result = remote_exec("#{scope_env_prefix}systemctl#{scope_flag} is-enabled #{name} 2>/dev/null")
-      output = result[:stdout].strip
-      (result[:exit_code] == 0) && (output == "enabled")
+      result = remote_exec("#{scope_env_prefix}systemctl#{scope_flag} is-enabled '#{name}' -l 2>/dev/null")
+      SystemdEnabledState.enabled_from_is_enabled?(result[:exit_code], result[:stdout])
     end
 
     # Whether the unit is masked.
