@@ -609,7 +609,25 @@ module Krikri
         var_expr = test_match[1].strip
         negate = !test_match[2]?.nil?
         anchored = test_match[3] == "match"
-        pattern = unquote_literal(test_match[4].strip)
+        # The pattern argument is itself a Jinja2 expression - most often
+        # a quoted literal, but just as validly a bare variable reference
+        # (`is not search(adguardhome_version)`, a real
+        # bcook254.adguardhome idempotency check comparing installed-
+        # binary `--version` output against a `adguardhome_version` var).
+        # `unquote_literal` alone only strips quotes and passes an
+        # unquoted bare word through UNCHANGED as literal text - so the
+        # regex became the four literal characters "adguardhome_version"
+        # instead of the variable's actual value, could never match real
+        # `--version` output, and `is not search(...)` was permanently
+        # true - reinstalling the binary on every single warm run.
+        # `evaluate_value` already resolves both cases correctly (quoted
+        # literal -> its text, bare word -> variable lookup), so route
+        # through it exactly like `var_expr` just below.
+        pattern = case pv = evaluate_value(test_match[4].strip, vars)
+                  when String then pv
+                  when Nil    then ""
+                  else             pv.to_s
+                  end
 
         str_value = case value = evaluate_value(var_expr, vars)
                     when String then value

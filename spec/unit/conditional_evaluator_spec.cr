@@ -628,6 +628,21 @@ describe Krikri::ConditionalEvaluator do
       # search() matches anywhere in the string (Python's re.search).
       Krikri::ConditionalEvaluator.evaluate(%(path is search("\\d+\\.\\d+\\.\\d+")), v).should be_true
       Krikri::ConditionalEvaluator.evaluate(%(path is not search("nomatch")), v).should be_true
+
+      # Real bug found benchmarking bcook254.adguardhome's own
+      # `when: __result is failed or __result.stdout is not
+      # search(adguardhome_version)` - the pattern argument is a BARE
+      # VARIABLE reference, not a quoted literal. The old code ran it
+      # through `unquote_literal` alone, which only strips quotes and
+      # passes an unquoted word through unchanged as literal text - so
+      # the regex became the four literal characters "target_version"
+      # instead of the variable's actual value, could never match, and
+      # `is not search(...)` was permanently true - reinstalling on
+      # every single warm/idempotent rerun.
+      v["stdout"] = JSON::Any.new("AdGuardHome, version v0.107.63")
+      v["target_version"] = JSON::Any.new("v0.107.63")
+      Krikri::ConditionalEvaluator.evaluate(%(stdout is search(target_version)), v).should be_true
+      Krikri::ConditionalEvaluator.evaluate(%(stdout is not search(target_version)), v).should be_false
     end
 
     it "evaluates 'is subset(...)' / 'is superset(...)' / 'is contains(...)' (plus negations)" do
