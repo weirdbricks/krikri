@@ -65,6 +65,76 @@ module Krikri
       end
     end
   end
+
+  # The per-host dicts inside `hostvars` in a Crinja render. Real Ansible
+  # wraps each host's vars in its own HostVarsVars object, whose attribute
+  # lookup RAISES on a miss (`object of type 'HostVarsVars' has no
+  # attribute 'ansible_enp0s8'` - a typo'd/computed interface fact name
+  # fails the task rather than rendering an empty value in its place;
+  # found via mrlesmithjr.ansible_consul_client's
+  # `hostvars[inventory_hostname]['ansible_' + consul_client_bind_interface]`
+  # with a bind interface that doesn't exist on the real host). Crinja's
+  # plain dict resolution (Resolver#resolve_with_hash_accessor) falls back
+  # to a lenient Undefined on the same miss, and that path can't be made
+  # blanket-strict (it is also the fallback for method-call dispatch and
+  # for this engine's own fact-coverage gaps - see
+  # Krikri::StrictTemplating's own comment). So the strictness rides on
+  # the hostvars VALUE ITSELF: the dict only reaches a render through the
+  # hostvars conversion (CrinjaRenderer.convert_hostvars), and its `[]?`
+  # raises on a miss exactly when strict templating is enabled for the
+  # rendering fiber - every non-hostvars dict stays lenient, and outside
+  # strict mode (where the lenient `{{ ... }}` hand-rolled evaluator and
+  # `when:` conditions read these values) the behavior is unchanged.
+  # A Crinja::Object wrapper rather than a Hash subclass: Crinja::Value.new
+  # NORMALIZES any Hash into a plain Crinja::Dictionary (Crinja.value's
+  # Hash case), which would silently strip a subclass - only Crinja::Object
+  # instances survive as their own raw object.
+  class HostVarsVarsDict
+    include Crinja::Object
+
+    @entries = Hash(String, Crinja::Value).new
+
+    def initialize(@entries : Hash(String, Crinja::Value))
+    end
+
+    # Both the attribute form (`hostvars[h].ansible_host`) and the
+    # subscript form (`hostvars[h]['ansible_host']`) funnel through
+    # resolve_getattr -> crinja_attribute for a Crinja::Object.
+    #
+    # The strict raise is a plain RuntimeError, NOT an UndefinedError:
+    # Crinja's own evaluator rescues UndefinedError around attribute
+    # resolution and re-raises a generic "hostvars[node1][x] is
+    # undefined" that DISCARDS the cause's message - real Ansible's
+    # failure text for this exact case is the wrapper's own
+    # "object of type 'HostVarsVars' has no attribute ..." (an
+    # AttributeError surfacing verbatim), so the detail has to survive.
+    # A RuntimeError is not swallowed anywhere in the render path and
+    # surfaces the message as the task failure.
+    def crinja_attribute(attr : Crinja::Value) : Crinja::Value
+      key = attr.to_string
+      return @entries[key] if @entries.has_key?(key)
+      raise Crinja::RuntimeError.new("object of type 'HostVarsVars' has no attribute '#{key}'") if Krikri::StrictTemplating.enabled?
+      Crinja::Value.new(Crinja::Undefined.new(key))
+    end
+
+    def crinja_call(name : String) : Crinja::Callable | Crinja::Callable::Proc | Nil
+      nil
+    end
+
+    # dict-protocol compatibility for the operations templates actually
+    # perform on a host's vars (size/iteration/key listing); the plain
+    # Hash(String, Crinja::Value) these delegate to is also what every
+    # other code path sees, since @entries stays directly readable.
+    delegate size, keys, has_key?, to: @entries
+
+    def each(&)
+      @entries.each { |key, value| yield key, value }
+    end
+
+    def to_s(io : IO) : Nil
+      io << @entries.to_s
+    end
+  end
 end
 
 module Crinja::Resolver
