@@ -1623,13 +1623,16 @@ root-causing it live on a fresh Kata VM, and the answer is not what the
   invisible-to-its-own-measurement window); with it, keep the existing
   mtime-diff logic. Also mirrors real Ansible's check-mode refusal on
   python3-apt-less hosts (fails with the same "python3-apt must be installed
-  to use check mode" message - byte-identical live). One known asymmetry
-  remains, deliberate: real Ansible's first run *installs* python3-apt, so
-  its SECOND run switches to mtime-diff semantics, while krikri never
-  installs it and stays on the prefetch-emulation path; in practice
-  indistinguishable (a warm rerun seconds later can't have new upstream
-  content), and installing a system package from a module side effect is not
-  something krikri should do.
+  to use check mode" message - byte-identical live). One asymmetry was left
+  in place here, deliberately at the time: real Ansible's first run
+  *installs* python3-apt, so its SECOND run switches to mtime-diff
+  semantics, while krikri never installed it and stayed on the
+  prefetch-emulation path. **Superseded in 0.9.835** - that asymmetry turned
+  out to be observable after all (geerlingguy.kubernetes; see the 0.9.835
+  entry above), and krikri now performs the same real install. The check-mode
+  refusal described here is unchanged, and is exactly why that install is
+  skipped under `--check` (both in `apt:` and in `package:`'s
+  cache-refresh-only path).
 
 ---
 

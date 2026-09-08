@@ -288,9 +288,20 @@ module Krikri
       # module ALSO runs its own mtime-windowed update after, so an
       # all-Hit second pass still reports changed=false (round 30001
       # semantics preserved).
+      #
+      # Check mode must never perform that auto-install - it is a real,
+      # persistent mutation of the target. Real Ansible's apt module
+      # refuses to run at all in that situation instead, and `package:`
+      # delegates to it, so mirror the same refusal apt.cr's own
+      # update-cache block already carries.
       if package_manager == "apt"
-        if failure = apt_auto_install_python_apt(false, ->remote_exec(String))
-          return PluginResult.new(changed: false, failed: true, msg: "Failed to auto-install python3-apt: #{failure[:stderr]}")
+        if refusal = apt_check_mode_python_apt_refusal(@check_mode, ->remote_exec(String))
+          return PluginResult.new(changed: false, failed: true, msg: refusal)
+        end
+        unless @check_mode
+          if failure = apt_auto_install_python_apt(false, ->remote_exec(String))
+            return PluginResult.new(changed: false, failed: true, msg: "Failed to auto-install python3-apt: #{failure[:stderr]}")
+          end
         end
       end
 

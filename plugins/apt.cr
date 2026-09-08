@@ -138,7 +138,7 @@ module Krikri
           return PluginResult.new(
             changed: false,
             failed: true,
-            msg: "python3-apt must be installed to use check mode. If run normally this module can auto-install it, see the auto_install_module_deps option."
+            msg: AptLockRetry::CHECK_MODE_NO_PYTHON_APT_MSG
           )
         end
         if should_update_cache?(cache_valid_time)

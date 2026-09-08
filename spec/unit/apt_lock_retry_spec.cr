@@ -354,4 +354,36 @@ describe "apt lock-contention retry helpers (round 153 follow-up, 0.9.502)" do
       result.not_nil![:stderr].should contain("Unable to locate package python3-apt")
     end
   end
+
+  # The auto-install above is a real, persistent host mutation, so it
+  # must never run under --check. apt.cr gates its own call with
+  # `unless @check_mode` and refuses the task outright when the
+  # bindings are absent; package.cr's cache-refresh-only path
+  # (`package: {update_cache: true}`, which real Ansible delegates to
+  # the apt module) shipped without any gate at all for one commit -
+  # a dry run would have installed python3-apt for real.
+  describe "#apt_check_mode_python_apt_refusal" do
+    it "returns nil outside check mode without probing anything" do
+      stub = StubExec.new([{exit_code: 1, stdout: "", stderr: "No module named 'apt'"}])
+      HostClass.new.apt_check_mode_python_apt_refusal(false, ->(c : String) { stub.call(c) }).should be_nil
+      stub.exec_count.should eq(0)
+    end
+
+    it "returns nil in check mode when the bindings are already present" do
+      stub = StubExec.new([{exit_code: 0, stdout: "", stderr: ""}])
+      HostClass.new.apt_check_mode_python_apt_refusal(true, ->(c : String) { stub.call(c) }).should be_nil
+      stub.exec_count.should eq(1)
+    end
+
+    it "returns real Ansible's own refusal message in check mode when the bindings are missing, without installing anything" do
+      commands = [] of String
+      msg = HostClass.new.apt_check_mode_python_apt_refusal(true, ->(c : String) {
+        commands << c
+        {exit_code: 1, stdout: "", stderr: "No module named 'apt'"}
+      })
+      msg.should eq(Krikri::AptLockRetry::CHECK_MODE_NO_PYTHON_APT_MSG)
+      msg.not_nil!.should contain("python3-apt must be installed to use check mode")
+      commands.none? { |c| c.includes?("apt-get") }.should be_true
+    end
+  end
 end

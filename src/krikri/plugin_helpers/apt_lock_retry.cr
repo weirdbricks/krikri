@@ -187,6 +187,27 @@ module Krikri
       nil
     end
 
+    # Real Ansible's apt module cannot run at all in check mode when it
+    # can't see the python3-apt bindings: its auto-install fallback
+    # (apt_auto_install_python_apt above) is a real, PERSISTENT host
+    # mutation, and check mode must never mutate the target - so the
+    # module fails fast with this exact message instead. Shared between
+    # apt.cr's own update-cache block and package.cr's cache-refresh-only
+    # path (real `package:` delegates to the apt module on apt hosts, so
+    # it refuses identically) rather than duplicating the literal in two
+    # places and letting them drift.
+    CHECK_MODE_NO_PYTHON_APT_MSG = "python3-apt must be installed to use check mode. If run normally this module can auto-install it, see the auto_install_module_deps option."
+
+    # Returns the refusal message above when a check-mode run must fail
+    # because the bindings are absent, else nil (not check mode, or the
+    # bindings are already there and nothing needs installing).
+    def apt_check_mode_python_apt_refusal(check_mode : Bool,
+                                          exec_remote : Proc(String, NamedTuple(exit_code: Int32, stdout: String, stderr: String))) : String?
+      return nil unless check_mode
+      return nil if apt_python_apt_present?(exec_remote)
+      CHECK_MODE_NO_PYTHON_APT_MSG
+    end
+
     # Real Ansible's `changed` semantics for a cache-refresh-ONLY apt
     # invocation (no name:/upgrade:/deb: alongside it): WITHOUT
     # python3-apt, real Ansible auto-installs it before its own
@@ -203,7 +224,7 @@ module Krikri
     # hardcoded `changed: true` for apt unconditionally, real Ansible's
     # `ok`/`changed: false` on an already-fresh mirror).
     def apt_cache_refresh_changed?(pre_mtime : Int32, post_mtime : Int32,
-                                    exec_remote : Proc(String, NamedTuple(exit_code: Int32, stdout: String, stderr: String)))
+                                   exec_remote : Proc(String, NamedTuple(exit_code: Int32, stdout: String, stderr: String)))
       return false unless apt_python_apt_present?(exec_remote)
       post_mtime != pre_mtime
     end
