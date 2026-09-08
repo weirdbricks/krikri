@@ -13,7 +13,20 @@ module Krikri
         append_param(rule, params["protocol"]?, "-p")
         append_param(rule, params["source"]?, "-s")
         append_param(rule, params["destination"]?, "-d")
-        each_csv(params["match"]?) { |mat| rule.concat(["-mat", mat]) }
+        # Real bug found benchmarking bitintheskud.ansible-role-ecs-agent's
+        # own `match: tcp` rule: this was "-mat" (a typo) instead of the
+        # actual iptables flag "-m" - GNU iptables' getopt_long_only
+        # parses a bare "-mat" as "-m" with its value glued on ("at"),
+        # tries to load a nonexistent netfilter match extension named
+        # "at", and errors ("Couldn't load match `at'") on BOTH the `-C`
+        # existence check and the `-A` apply - silently, since
+        # `apply_rule` doesn't check `remote_exec`'s exit code, so the
+        # failed `-A` was misreported as `changed: true`/"Rule applied"
+        # and the real NAT rule was never actually created. `-C` then
+        # failed the same way on every subsequent run, so `-A` (and the
+        # false "changed") repeated forever - never converging, and
+        # never functionally applying the redirect rule the role needs.
+        each_csv(params["match"]?) { |mat| rule.concat(["-m", mat]) }
         append_param(rule, params["jump"]?, "-j")
         append_param(rule, params["log_prefix"]?, "--log-prefix")
         append_param(rule, params["log_level"]?, "--log-level")

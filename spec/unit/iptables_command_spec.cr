@@ -49,6 +49,33 @@ describe Krikri::PluginHelpers::IptablesCommand do
       rule.should eq(["-m", "multiport", "--dports", "80,443"])
     end
 
+    it "uses the real -m flag for an explicit match: param (not a typo'd -mat)" do
+      # Real bug found benchmarking bitintheskud.ansible-role-ecs-agent's
+      # `match: tcp` NAT redirect rule: this was "-mat" instead of "-m" -
+      # GNU iptables' getopt_long_only parses a bare "-mat" as "-m" with
+      # "at" glued on as its value, tries to load a nonexistent "at"
+      # match extension, and errors on both -C and -A - so the rule was
+      # never actually applied, yet silently reported as changed=true
+      # every single run (apply_rule doesn't check remote_exec's exit
+      # code), forever.
+      rule = Krikri::PluginHelpers::IptablesCommand.construct_rule({
+        "destination"      => "169.254.170.2",
+        "protocol"         => "tcp",
+        "match"            => "tcp",
+        "destination_port" => "80",
+        "jump"             => "REDIRECT",
+        "to_ports"         => "51679",
+      })
+      rule.should eq([
+        "-p", "tcp",
+        "-d", "169.254.170.2",
+        "-m", "tcp",
+        "-j", "REDIRECT",
+        "--destination-port", "80",
+        "--to-ports", "51679",
+      ])
+    end
+
     it "adds an implicit -m conntrack when ctstate is set without an explicit match" do
       rule = Krikri::PluginHelpers::IptablesCommand.construct_rule({
         "ctstate" => "ESTABLISHED,RELATED",
