@@ -172,6 +172,25 @@ module Krikri
         # Directory exists, just update attributes if needed
         changed = update_attributes_if_needed(path, is_directory: true)
 
+        # `recurse: true` real bug found benchmarking bitintheskud.
+        # ansible-role-ecs-agent's own "Create ecs directory (volume)"
+        # (owner/group/mode: 0755 on /etc/ecs, recurse: yes) - a LATER
+        # task in the same role writes /etc/ecs/ecs.env with its own
+        # (different) mode, so on the very next run the directory
+        # itself already matched (top-level `changed` above stayed
+        # false) but the file inside did not. `changed` here only ever
+        # checked the TOP-level path, never anything nested, so the
+        # recursive apply just below (gated on `changed`) never even
+        # ran - `recurse: true` was effectively a no-op unless the
+        # directory's OWN attributes also happened to be stale, and the
+        # stale file inside was silently left wrong forever while still
+        # reporting `ok`/"Directory attributes updated" every run. Real
+        # Ansible's own file module walks the whole tree to decide
+        # `changed`, not just the top entry.
+        if !changed && true?(@params["recurse"]?)
+          changed = recursive_attributes_need_update?(path)
+        end
+
         if @check_mode
           return PluginResult.new(
             changed: changed,
@@ -682,6 +701,30 @@ module Krikri
     # intended 0640 - dev-sec os_hardening's PAM symlinks hit a
     # similar but separate issue handled by the state: link branch
     # below via skip_mode, not this one).
+    # `recurse: true`'s own `changed` check - walks the whole tree
+    # (mirroring `walk_apply_attributes`'s own walk exactly, so the
+    # decision and the eventual apply agree on what "recursive" means),
+    # short-circuiting on the first entry that needs anything. A
+    # symlink skips the mode check (`skip_mode: true`) for the same
+    # lchmod-doesn't-exist reason `update_attributes_if_needed`'s own
+    # doc comment gives for `state: link`.
+    private def recursive_attributes_need_update?(dir : String) : Bool
+      Dir.each_child(dir) do |child|
+        child_path = File.join(dir, child)
+        info = File.info?(child_path, follow_symlinks: false)
+        next unless info
+        is_symlink = info.symlink?
+        is_dir = info.directory? && !is_symlink
+        return true if update_attributes_if_needed(child_path, is_directory: is_dir, skip_mode: is_symlink)
+        return true if is_dir && recursive_attributes_need_update?(child_path)
+      end
+      false
+    rescue ex : File::Error
+      # Permission denied, etc. - matches walk_apply_attributes's own
+      # skip-rather-than-fail behavior for the same case.
+      false
+    end
+
     private def update_attributes_if_needed(path : String, is_directory : Bool, skip_mode : Bool = false) : Bool
       follow = true?(@params["follow"]?)
       changed = false

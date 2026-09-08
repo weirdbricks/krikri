@@ -225,6 +225,31 @@ describe "file plugin" do
       result["changed"].as_bool.should be_true
       result["state"].as_s.should eq("directory")
     end
+
+    it "reports changed and fixes a nested file's attributes even when the directory itself already matches (recurse: true)" do
+      # Real bug found benchmarking bitintheskud.ansible-role-ecs-agent's
+      # own "Create ecs directory (volume)" (owner/group/mode: 0755,
+      # recurse: yes on /etc/ecs) - a LATER task in the same role writes
+      # /etc/ecs/ecs.env with a different mode, so on the next run the
+      # directory's OWN attributes already matched but the file inside
+      # didn't. `changed` was decided from the top-level path alone, so
+      # the recursive fix-up (gated on `changed`) never even ran -
+      # `recurse: true` was effectively a no-op whenever the directory
+      # itself happened to already be correct, silently leaving a stale
+      # nested file wrong forever while still reporting `changed: false`.
+      path = tmp_path("recurse-nested-dir")
+      Dir.mkdir_p(path)
+      File.chmod(path, 0o755)
+      nested = File.join(path, "nested.txt")
+      File.write(nested, "hi")
+      File.chmod(nested, 0o600)
+
+      result = PluginSpecHelper.run("file", {"path" => path, "mode" => "0755", "recurse" => "yes"})
+
+      result["failed"].as_bool.should be_false
+      result["changed"].as_bool.should be_true
+      (File.info(nested).permissions.value & 0o777).should eq(0o755)
+    end
   end
 
   describe "state=link" do
