@@ -205,10 +205,27 @@ module Krikri
              (Array(String).from_json(stripped.gsub('\'', '"')) rescue nil)
       return raw unless list
 
+      # Real bug found benchmarking claranet.postgresql's own `name:
+      # "{{ _postgresql_dependencies_pip_packages }}"` (a full-value
+      # Jinja substitution of a >1-item list variable, as opposed to a
+      # LITERAL YAML `name:` list - which the parser upstream already
+      # comma-joins into a plain string before this plugin ever sees
+      # it, per #install's own comment). A bare `{{ list_var }}`
+      # indirection instead renders the array as bracketed text
+      # (`['psycopg2', 'ipaddress']`), and the `else raw` branch here
+      # returned that whole bracketed string UNCHANGED for any list
+      # with more than one entry - #install then comma-split it
+      # naively, truncating everything after the first item's own
+      # internal comma into garbage ("['psycopg2'" as one bogus
+      # "package", pip erroring "Invalid requirement"). Real Ansible's
+      # pip.py takes the parsed list directly, regardless of whether it
+      # arrived as a literal YAML list or a templated variable - so
+      # every item here gets joined the same comma-separated way
+      # #install already expects for the literal-list path.
       case list.size
       when 0 then nil
       when 1 then list[0]
-      else        raw
+      else        list.join(",")
       end
     end
 

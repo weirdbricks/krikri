@@ -40,6 +40,29 @@ describe "pip plugin" do
     result["msg"].as_s.should_not contain("[")
   end
 
+  it "joins a multi-element name: list into comma-separated packages, not the bracketed text" do
+    # Real bug found benchmarking claranet.postgresql's own `name: "{{
+    # _postgresql_dependencies_pip_packages }}"` - a full-value Jinja
+    # substitution of a real multi-item list variable renders as
+    # bracketed text (`['psycopg2', 'ipaddress']`), and normalize_name
+    # only unwrapped the SINGLE-element case, returning a >1-item list's
+    # bracketed text unchanged - #install then comma-split THAT text
+    # naively, truncating everything after the first item's own
+    # internal comma into a bogus "package" ("['psycopg2'"), and pip
+    # errored "Invalid requirement" instead of ever seeing two real
+    # package names. state: absent on two not-installed packages only
+    # ever calls `pip show` per package (no real install/network call)
+    # - safe to run for real, matching this file's own convention.
+    result = PluginSpecHelper.run("pip", {
+      "name"  => "['definitely-not-a-real-package-xyz', 'also-not-a-real-package-abc']",
+      "state" => "absent",
+    })
+
+    result["failed"]?.try(&.as_bool).should_not be_true
+    result["msg"].as_s.should_not contain("[")
+    result["msg"].as_s.should_not contain("Invalid requirement")
+  end
+
   it "strips a PEP 508 extras suffix before checking pip show (regression: robertdebock.ara round 144 - pip show 'ara[server]' fails outright, extras aren't a separate installed distribution)" do
     # state: absent on a not-installed package only ever calls `pip
     # show` (no real install/network call) - safe to run for real.
