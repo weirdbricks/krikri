@@ -18,8 +18,53 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.833`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.834`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
+
+---
+
+## `RedHatOfficial.rhel8_pci_dss`'s early-stop divergence root-caused and fixed: a ternary's filter-chain branch stringified as Python-repr, not JSON (0.9.834)
+
+`ROLES_TESTED.md`'s "not yet root-caused" row (`ok=20 skipped=96` on
+krikri vs real Ansible's `ok=87 skipped=2236` - the whole rest of this
+large STIG role never ran) traced to one task: `Set gpgcheck=1 for each
+yum repo`, whose `loop:` source is `'{{ repo_grep_results.stdout |
+regex_findall(''(.+\.repo):\[(.+)\]\n?'') if repo_grep_results is not
+skipped else [] }}'` - an inline ternary whose CHOSEN branch is itself
+a filter chain producing a real Array (a list of `[repo_path, section]`
+pairs), not a scalar literal.
+
+`ExpressionEvaluator#evaluate`'s ternary handling delegated the whole
+expression to Crinja's plain `render!`, which stringifies a container
+result through Crinja's own Python-repr `Finalizer`
+(`[['a.repo', 'sec1'], ...]`, single-quoted - not valid JSON) instead
+of this codebase's JSON-compact `VariableLookup#format_value`, the
+format every loop-template caller's render-then-`JSON.parse`-back
+round trip depends on (`resolve_loop_template`'s own
+`parse_list_result`). The failed parse fell through to the
+array-wrapped scalar fallback, and the WHOLE unparsed repr string
+became ONE loop item instead of the real list - `item[0]` then indexed
+into a String, "'item[0]' is undefined", hard-failing the task (real
+Ansible's own equivalent iterates two items and continues). The
+existing code comment claiming every construct near this dispatch
+(`boolean_logic?`, comparisons, ternary, etc.) is "provably
+scalar-only" turned out to be wrong specifically for ternary, whose
+chosen branch can be an arbitrary sub-expression - the other
+constructs genuinely are scalar-only and were left untouched.
+
+Fixed with a new `render_via_crinja_container_safe` helper: computes
+the value via Crinja's structured `evaluate_value!` first, and only
+reroutes through JSON-compact formatting when the result is actually
+an Array/Hash - every scalar and genuinely-undefined case (including
+an else-less ternary's missing branch, which must render as `""`, not
+the literal text "undefined") keeps the original `render_via_crinja`
+stringification untouched. Regression specs added
+(`spec/unit/expression_evaluator_spec.cr`,
+`spec/integration/loop_ternary_filter_chain_spec.cr`, the latter
+extracting the role's exact shell/regex shape). The role itself
+(a very large STIG hardening role) has not yet been re-run end to end -
+the specific failing task is confirmed fixed via the extracted repro,
+matching the role's exact loop source byte-for-byte.
 
 ---
 

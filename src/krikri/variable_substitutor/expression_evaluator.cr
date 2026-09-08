@@ -102,6 +102,34 @@ module Krikri
         value ? @lookup.format_value(value) : "undefined"
       end
 
+      # #render_via_crinja, but re-routed through the JSON-compact
+      # `#render_via_crinja_string` path ONLY when the result is
+      # actually a container - every other case (scalar, or genuinely
+      # Undefined/missing) keeps #render_via_crinja's own stringification
+      # untouched, since #render_via_crinja_string's "undefined" sentinel
+      # for a nil value is wrong for e.g. an else-less ternary's missing
+      # branch (real Jinja renders that as "", not the literal text
+      # "undefined"). A ternary's chosen branch can be an arbitrary
+      # sub-expression - a filter chain producing a real Array (`x |
+      # regex_findall(...) if y else []`, RedHatOfficial.rhel8_pci_dss's
+      # own "Set gpgcheck=1 for each yum repo" loop source) is a real
+      # counter-example to this file's own "ternary is provably
+      # scalar-only" claim near #render_via_crinja_value. Plain
+      # #render_via_crinja alone stringifies a container result through
+      # Crinja's own Python-repr Finalizer (`[['a.repo', 'sec1'], ...]`,
+      # single-quoted, not valid JSON) instead of this codebase's
+      # JSON-compact `VariableLookup#format_value` - the internal
+      # render-then-`JSON.parse`-back round trip every loop-template
+      # caller relies on (`resolve_loop_template`'s own
+      # `parse_list_result`) then fails to parse it, falls through to
+      # the array-wrapped scalar fallback, and the WHOLE unparsed repr
+      # string became ONE loop item instead of the real list of tuples.
+      private def render_via_crinja_container_safe(expr : String) : String
+        value = render_via_crinja_value(expr)
+        raw = value.try(&.raw)
+        (raw.is_a?(Array) || raw.is_a?(Hash)) ? @lookup.format_value(value.not_nil!) : render_via_crinja(expr)
+      end
+
       # #evaluate, but formatting a CONTAINER result the way real Ansible
       # renders one into final text - Python's `repr` (`['a', 'b']`),
       # not this codebase's internal JSON-compact form (`["a","b"]`).
@@ -232,15 +260,17 @@ module Krikri
           # to Crinja before the FIRST construct (boolean_logic? below)
           # could safely swap - are already available here for free,
           # since they're bound in `CrinjaRenderer`'s own shared vars
-          # context, not specific to that branch.
+          # context, not specific to that branch. See
+          # #render_via_crinja_container_safe's own comment for why a
+          # ternary needs it instead of plain #render_via_crinja.
           begin
-            render_via_crinja(expr)
+            render_via_crinja_container_safe(expr)
           rescue
             evaluate_ternary(ternary)
           end
         elsif ternary_no_else = split_ternary_no_else(expr)
           begin
-            render_via_crinja(expr)
+            render_via_crinja_container_safe(expr)
           rescue
             evaluate_ternary_no_else(ternary_no_else)
           end

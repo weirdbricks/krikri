@@ -786,6 +786,27 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
     evaluator.evaluate(%('+ent' if vault_enterprise)).should eq("+ent")
   end
 
+  it "resolves a ternary whose chosen branch is a filter chain producing an Array, as JSON not Python-repr" do
+    # Real bug found via RedHatOfficial.rhel8_pci_dss's own "Set
+    # gpgcheck=1 for each yum repo" loop source: `loop: "{{
+    # repo_grep_results.stdout | regex_findall('(.+\.repo):\[(.+)\]\n?')
+    # if repo_grep_results is not skipped else [] }}"`. The chosen
+    # branch is a filter chain, not a scalar literal - #evaluate used
+    # to stringify it through Crinja's own Python-repr Finalizer
+    # (single-quoted, e.g. "[['a.repo', 'sec1']]") instead of this
+    # codebase's JSON-compact round-trip format, so
+    # resolve_loop_template's own JSON.parse of the result failed and
+    # the whole unparsed repr string became ONE loop item instead of
+    # the real list - `item[0]` then indexed into a String, "'item[0]'
+    # is undefined".
+    v = Hash(String, JSON::Any).new
+    v["haystack"] = JSON::Any.new("a.repo:[sec1]\nb.repo:[sec2]\n")
+    v["cond"] = JSON::Any.new(true)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
+    result = evaluator.evaluate(%(haystack | regex_findall('(.+\\.repo):\\[(.+)\\]\\n?') if cond else []))
+    JSON.parse(result).should eq(JSON.parse(%([["a.repo","sec1"],["b.repo","sec2"]])))
+  end
+
   it "resolves a ternary whose branches are bare boolean literals, not quoted strings" do
     # Real bug found benchmarking ansible-community.ansible-vault's own
     # `vault_tls_copy_keys: "{{ false if (vault_install_hashi_repo) else
