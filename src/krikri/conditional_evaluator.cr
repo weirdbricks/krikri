@@ -1148,6 +1148,17 @@ module Krikri
         return nil if i >= bytes.size
       end
 
+      # the ansible.utils ipaddr family's FQCN spelling - stripped only
+      # when the following name is one the family actually implements,
+      # so a genuinely-unknown `ansible.utils.foo` still pre-pass-fails
+      # and the error keeps naming the full FQCN
+      if i + 15 <= bytes.size && bytes[i, 15] == "ansible.utils.".to_slice
+        rest = filter_name_at(bytes, i + 15)
+        if rest && IpAddrCore::FAMILY_FILTERS.includes?(rest[0])
+          return rest
+        end
+      end
+
       first = bytes[i]
       is_letter = (first >= 65 && first <= 90) || (first >= 97 && first <= 122) || first == 95
       return nil unless is_letter
