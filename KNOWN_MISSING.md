@@ -774,8 +774,37 @@ Genuinely open defects: something is wrong and the fix is unknown or
 unfinished. Everything deliberate lives under "Deliberate limits"
 below - keep the two apart, or this list stops meaning anything.
 
-None - `lookup('community.general.random_string', ...)` (the last one,
-found via juju4.pocketid round 60151) is implemented as of 0.9.813.
+Three, all found via a 100-role RHEL (Rocky 9.6) regression round
+(round 65000+) - the previous rounds this queue drew from were mostly
+Ubuntu, so these are genuinely new, not reversions:
+
+- **DNF/YUM `@group name` package syntax unsupported.** Real Ansible's
+  dnf/yum modules recognize a `@`-prefixed group name (which can itself
+  contain spaces, e.g. `@Development tools`) as a group install; this
+  engine passes it through as a literal package name. `andrewrothstein.
+  couchdb`'s own `package: {name: [gcc, "@Development tools"]}` fails
+  with "Failed to install @Development tools: Error: Unable to find a
+  match: tools" (the space inside the group name gets misparsed too).
+  Real ansible-playbook installs the whole group correctly.
+
+- **`pip:`'s pip3 discovery fails on Rocky 9.6.** `geerlingguy.
+  supervisor`'s own `pip: name: supervisor` fails with "Unable to find
+  any of pip3 to use. pip needs to be installed." even though real
+  Ansible finds and uses pip3 without issue on the identical host image.
+  Root cause not yet isolated - likely a hardcoded search path/name that
+  doesn't match Rocky 9's actual pip3 layout.
+
+- **`geerlingguy.postgresql`: `postgresql.service` fails to start after
+  a successful `initdb`.** Cold run: "Ensure PostgreSQL database is
+  initialized." reports `changed` (ran fine), the subsequent config/hba-
+  template/socket-dir tasks all succeed, then "Ensure PostgreSQL is
+  started and enabled on boot." fails with "Job for postgresql.service
+  failed because the control process exited with error code." Real
+  Ansible succeeds identically through the same steps. Symptom is clear,
+  cause isn't - possibly a directory-ownership or SELinux-context gap
+  in how a prior task left `/var/lib/pgsql`'s data dir or the log/socket
+  dirs, but the round's own test host was already torn down before this
+  was dug into further; needs a fresh isolated repro.
 
 ---
 
