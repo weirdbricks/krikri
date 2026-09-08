@@ -1437,7 +1437,7 @@ module Krikri
       unavailable = task.unavailable_module || return nil
       PythonModuleRunner.find_source(
         PythonModuleRunner.short_name(unavailable),
-        task.role_files_dir,
+        task.role_path,
         @playbook_dir
       )
     end

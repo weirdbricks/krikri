@@ -18,8 +18,70 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.828`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.829`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
+
+---
+
+## Correction: `linux-system-roles.logging`'s "distro-mismatch" reclassification was itself wrong - real regression, now fixed (0.9.829)
+
+The 0.9.826-era reclassification below ("not a regression at all... the
+documented custom-local-module scope cut") was wrong on the facts: it
+assumed `sr_fingerprint` was simply unsupported cross-distro, the same
+class as `timesync_provider`'s own shell-script form. It isn't - both
+`linux-system-roles.logging` AND `.storage` AND `.timesync` ship
+`library/sr_fingerprint.py`, a plain, self-contained, new-style
+(`AnsibleModule`-based) Python module with no unusual dependencies -
+exactly the shape 0.9.819's own `PythonModuleRunner` feature claims to
+support. It should have worked. Investigating why it didn't found THREE
+independent, compounding bugs, all in the arbitrary-Python-module path
+0.9.819 added and nothing had exercised since:
+
+1. **`python_module_runner.cr`'s `find_source`** derived the role's root
+   directory from `role_files_dir` (only ever set when the role ships a
+   `files/` subdirectory - none of these three roles do), instead of
+   the always-set `task.role_path`. A role missing `files/` could never
+   resolve its own `library/*.py` at all, silently falling back to
+   "unavailable modules" for every module reference - exactly what
+   looked like a distro-scope cut resurfacing.
+2. **`plugins/py_module.cr`** passed a new-style module's args via an
+   `ANSIBLE_MODULE_ARGS` environment variable - real ansible-core 2.19's
+   own `basic.py` (`_load_params` / `_internal/_debugging.load_params`,
+   the fallback path any module hits when run outside the real
+   AnsiballZ wrapper, exactly this plugin's situation) doesn't read that
+   env var at all. It reads a JSON blob from STDIN, wrapped as
+   `{"ANSIBLE_MODULE_ARGS": {...}}` - failing with "Failed to decode
+   JSON module parameters." otherwise. This alone would have broken
+   EVERY new-style role-private module this engine has ever tried to
+   run, once (1) let it find one.
+3. **`task_batcher.cr`** had no exclusion for an `unavailable_module`
+   task at all, so a batched `sr_fingerprint:`/`blivet:` task failed
+   with "Plugin binary not found: sr_fingerprint" - the batch script
+   builder assumes every step is a normal uploaded plugin binary, with
+   no notion of the py_module runner's own dynamic-source dispatch.
+4. (Found finishing the storage repro, not logging's) **`python_module_
+   runner.cr`'s `typed_value`** couldn't parse a magic var like
+   `ansible_play_hosts_all` when a task passed it straight through as an
+   arg - real lists/dicts sometimes render as Python-repr text
+   (single-quoted), not valid JSON, the same class of shape this
+   codebase already special-cases elsewhere (`package.cr`'s own
+   `parse_package_names`) but `typed_value` never got the fallback.
+
+Fixed all four. Regression specs added/updated
+(`spec/unit/python_module_runner_spec.cr`). Live-reverified: `linux-
+system-roles.logging` now reaches byte-identical `ok=30 changed=2
+skipped=51 failed=0` on a fresh Kata VM, matching real Ansible exactly
+(was `ok=28 skipped=53`). `linux-system-roles.timesync` (Rocky) improves
+from `ok=23` to `ok=25` against real Ansible's `ok=26` - the remaining
+1-task gap is `timesync_provider`, a shell-script (not Python) custom
+module genuinely out of this runner's scope, not a regression.
+`linux-system-roles.storage` (Rocky) gets much further than before
+(`sr_fingerprint` and the package-install step both now succeed) but
+still ultimately fails: its own `blivet:` module imports a custom
+`ansible.module_utils.storage_lsr` package this engine doesn't bundle -
+a new, separate, larger scope gap (arbitrary-module-utils bundling, not
+just arbitrary-module execution), documented under "Deliberate limits"
+below rather than tackled here.
 
 ---
 
@@ -108,7 +170,7 @@ now converges with `changed=1 failed=0`, matching real Ansible.
 
 ---
 
-## `linux-system-roles.logging`'s "regression" reclassified: distro-mismatch, not a code issue (no version bump)
+## `linux-system-roles.logging`'s "regression" reclassified: distro-mismatch, not a code issue (no version bump) - SUPERSEDED, see the 0.9.829 correction above: this reclassification was itself wrong
 
 Investigating the 12 confirmed regressions in fix-priority order,
 `linux-system-roles.logging` turned out not to be a regression at all:
@@ -1176,14 +1238,12 @@ pass's version numbers were unreliable. Each item below reproduced
 **deterministically across two independent fresh-host runs**, which is
 why these are listed as confirmed rather than merely suspected:
 
-- **`linux-system-roles.storage`** (Rocky 9.6): previously fixed,
-  proceeding to a clean `ok=18 changed=3 failed=0`. Now krikri stops
-  much earlier (`ok=13` vs real Ansible's `ok=21`) with `failed=1`,
-  identically both runs.
-- **`linux-system-roles.timesync`** (Rocky 9.6, the branch
-  ROLES_TESTED.md documents as byte-identical): now diverges
-  (`ok=23`/`skipped=39` on krikri vs real Ansible's `ok=26`/`skipped=36`),
-  identically both runs.
+- **`linux-system-roles.storage`** (Rocky 9.6): partially fixed (see
+  the narrative below) - `sr_fingerprint` now runs correctly, but the
+  role's own `blivet:` module needs a custom `module_utils.storage_lsr`
+  package this engine doesn't bundle, a new, separate, larger scope
+  gap (see "Deliberate limits" below) than the regression this row
+  originally reported.
 - **`buluma.selinux`** (Rocky 9.6): inverted from the norm - real
   Ansible FAILS (`failed=1`) where krikri succeeds, on a role previously
   byte-identical both engines (`✅ Fixed and verified`, round 175).
@@ -2757,7 +2817,26 @@ gaps" rather than arguing with the note in place.
   runner can see. The exit-status half stays divergent for source-less
   modules: WHICH TASKS RUN differs (real Ansible refuses at parse time
   and runs nothing; this engine runs the rest of the play), not the
-  exit status a caller sees.
+  exit status a caller sees. **0.9.829 update**: the feature's own
+  role-root resolution, argument-passing protocol, and task-batching
+  interaction were all independently broken since 0.9.819 introduced it
+  (see the round-narrative correction above) - fixed, and confirmed live
+  for a self-contained module (`sr_fingerprint`, no unusual imports).
+- **A role-private module importing its OWN custom `ansible.module_
+  utils.*` package is still out of reach** (found via linux-system-
+  roles.storage's `blivet:`, which does `from ansible.module_utils.
+  storage_lsr.argument_validator import validate_parameters` -
+  `storage_lsr` isn't a real ansible-core module_utils package, it's
+  bundled alongside `blivet.py` the same way real Ansible's AnsiballZ
+  wrapper bundles a role/collection's own `module_utils/` tree into the
+  zipapp so the import resolves). This engine's py_module runner
+  uploads and runs only the ONE module source file with no such
+  bundling, so any module reaching for a sibling `module_utils` package
+  fails with a plain Python `ModuleNotFoundError` instead of running.
+  Fixing this needs finding and packaging the role/collection's own
+  `module_utils/` tree alongside the module source (a real, but
+  larger, follow-on to the single-file case above) - not attempted
+  here.
 - **Third-party COLLECTION modules and filters, same cut** (round 199,
   the bodsch.* author's own `bodsch.core`/`bodsch.systemd` collections -
   `bodsch.core.check_mode`, `.facts`, `.type` filter, `.upgrade` filter,

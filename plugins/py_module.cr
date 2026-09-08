@@ -69,19 +69,43 @@ module Krikri
       File.chmod(module_path, 0o500)
 
       env = ENV.to_h
-      if new_style
-        env["ANSIBLE_MODULE_ARGS"] = args_json
-        env["ANSIBLE_MODULE_NAME"] = module_name
-        env["ANSIBLE_CHECK_MODE"] = check_mode ? "1" : "0"
-      else
-        env["ANSIBLE_CHECK_MODE"] = check_mode ? "1" : "0"
-      end
+      env["ANSIBLE_MODULE_NAME"] = module_name
+      env["ANSIBLE_CHECK_MODE"] = check_mode ? "1" : "0"
 
       argv = new_style ? [python, module_path] : ([python, module_path] + parse_kv_argv(kv_argv))
 
+      # A new-style module reads its args via ansible-core's own
+      # `_debugging.load_params()` - the debug-invocation path every
+      # module falls back to when it isn't run through the real
+      # AnsiballZ wrapper (exactly this plugin's situation: it runs the
+      # raw module script directly with `python3 module.py`, argv[1]
+      # omitted). That path reads a JSON blob from STDIN - NOT an
+      # `ANSIBLE_MODULE_ARGS` environment variable, which real
+      # ansible-core 2.19's basic.py doesn't read at all - and the blob
+      # must be a WRAPPER object, `{"ANSIBLE_MODULE_ARGS": {...actual
+      # args...}}`, or `_load_params` raises "ANSIBLE_MODULE_ARGS not
+      # provided." even with real args present at the top level.
+      # Confirmed live against ansible-core 2.19.4's own
+      # `module_utils/_internal/_debugging.py` - the previous env-var
+      # approach failed EVERY new-style module invocation with "Failed
+      # to decode JSON module parameters." (no valid JSON on stdin at
+      # all), silently masking the whole 0.9.819 py_module feature for
+      # any module using the common `from ansible.module_utils.basic
+      # import AnsibleModule` shape - found re-testing linux-system-
+      # roles.storage's own `sr_fingerprint`/`blivet`.
+      stdin_payload = new_style ? %({"ANSIBLE_MODULE_ARGS": #{args_json}}) : nil
+
       stdout = IO::Memory.new
       stderr = IO::Memory.new
-      status = Process.run(argv[0], argv[1..], env: env, output: stdout, error: stderr)
+      process = Process.new(
+        argv[0], argv[1..], env: env, output: stdout, error: stderr,
+        input: stdin_payload ? Process::Redirect::Pipe : Process::Redirect::Close
+      )
+      if stdin_payload
+        process.input.print(stdin_payload)
+        process.input.close
+      end
+      status = process.wait
       rc = status.exit_code
 
       begin

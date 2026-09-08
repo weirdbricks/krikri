@@ -108,11 +108,23 @@ module Krikri
     #   later batch steps run anyway, executing real side effects on the
     #   target that should never have happened. Excluding these tasks
     #   from batches entirely avoids the whole class of bug.
+    # - unavailable_module: a role-private `library/*.py` module (see
+    #   PythonModuleRunner) dispatches through the py_module plugin with
+    #   its OWN uploaded source, not a compiled plugin binary named
+    #   after the module - the batch script builder assumes every step
+    #   maps to a normal uploaded plugin binary and has no such
+    #   resolution, so a batched sr_fingerprint:/blivet: task failed
+    #   outright with "Plugin binary not found: sr_fingerprint" instead
+    #   of ever reaching python_module_source_for's dispatch. Found
+    #   re-testing linux-system-roles.storage after fixing that
+    #   resolution's own role_files_dir bug - the module was finally
+    #   found, but batching got in the way before dispatch ever saw it.
     private def self.breaks_run?(task : Task) : Bool
       structural_or_dynamic?(task) || needs_controller_control_flow?(task) ||
         runs_off_the_target?(task) || task.run_once? || retroactive_verdict?(task) ||
         produces_ansible_facts?(task) || runs_as_action_plugin?(task) ||
         reconfigures_firewall?(task) || resolves_module_at_runtime?(task) ||
+        !!task.unavailable_module ||
         # group_by:/set_stats: - same category as reboot: above: no
         # uploaded plugin binary at all, handled entirely controller-side
         # (group_by: mutates the shared Inventory; set_stats: writes into

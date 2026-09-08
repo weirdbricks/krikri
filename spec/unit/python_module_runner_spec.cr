@@ -15,10 +15,26 @@ describe Krikri::PythonModuleRunner do
 
   it "finds a role-private library module" do
     role = File.join(Dir.tempdir, "krikri-pymod-spec-#{Random.rand(1_000_000)}")
-    Dir.mkdir_p(File.join(role, "files"))
+    Dir.mkdir_p(role)
     path = write_module(role, "sr_fingerprint.py", "# test module")
-    Krikri::PythonModuleRunner.find_source("sr_fingerprint", File.join(role, "files"), nil)
+    Krikri::PythonModuleRunner.find_source("sr_fingerprint", role, nil)
       .should eq(path)
+    FileUtils.rm_r(role)
+  end
+
+  it "finds a role-private library module even when the role ships no files/ dir at all" do
+    # Regression: linux-system-roles.storage/.logging/.timesync (none of
+    # which ship a files/ subdirectory) could never resolve their own
+    # sr_fingerprint/blivet/timesync_provider - find_source used to
+    # derive the role root from `role_files_dir` (only ever set when a
+    # files/ dir exists), silently falling back to "unavailable modules"
+    # for every role missing one. Fixed to take the role's root
+    # directory (task.role_path, always set) directly.
+    role = File.join(Dir.tempdir, "krikri-pymod-spec-#{Random.rand(1_000_000)}")
+    Dir.mkdir_p(role)
+    path = write_module(role, "blivet.py", "# test module")
+    Krikri::PythonModuleRunner.find_source("blivet", role, nil).should eq(path)
+    File.exists?(File.join(role, "files")).should be_false
     FileUtils.rm_r(role)
   end
 
@@ -45,11 +61,11 @@ describe Krikri::PythonModuleRunner do
   it "prefers the role library over the playbook library" do
     role = File.join(Dir.tempdir, "krikri-pymod-spec-#{Random.rand(1_000_000)}")
     pb = File.join(Dir.tempdir, "krikri-pymod-spec-#{Random.rand(1_000_000)}")
-    Dir.mkdir_p(File.join(role, "files"))
+    Dir.mkdir_p(role)
     Dir.mkdir_p(pb)
     role_path = write_module(role, "both.py", "# role")
     write_module(pb, "both.py", "# playbook")
-    Krikri::PythonModuleRunner.find_source("both", File.join(role, "files"), pb)
+    Krikri::PythonModuleRunner.find_source("both", role, pb)
       .should eq(role_path)
     FileUtils.rm_r(role)
     FileUtils.rm_r(pb)
@@ -121,13 +137,17 @@ describe Krikri::PythonModuleRunner do
     result["custom_field"].as_i.should eq(7)
   end
 
-  it "passes ANSIBLE_MODULE_ARGS to a new-style module" do
+  it "passes ANSIBLE_MODULE_ARGS to a new-style module via stdin, wrapped as real AnsibleModule expects" do
     pending("python3 not available") unless File.exists?("/usr/bin/python3")
-    # the textual marker makes the runner treat this as new-style; the
-    # module reads the env var the real AnsibleModule boilerplate reads
+    # Real ansible-core 2.19's basic.py (_debugging.load_params, the
+    # path any module run outside the real AnsiballZ wrapper falls back
+    # to) reads a JSON blob from STDIN shaped {"ANSIBLE_MODULE_ARGS":
+    # {...}} - NOT an ANSIBLE_MODULE_ARGS environment variable, which
+    # it doesn't read at all. The textual marker makes the runner treat
+    # this as new-style.
     source = "# from ansible.module_utils.basic import AnsibleModule\n" \
-             "import json, os\n" \
-             "args = json.loads(os.environ.get('ANSIBLE_MODULE_ARGS', '{}'))\n" \
+             "import json, sys\n" \
+             "args = json.loads(sys.stdin.read())['ANSIBLE_MODULE_ARGS']\n" \
              "print(json.dumps({'changed': False, 'msg': args.get('name', '')}))\n"
     result = PluginSpecHelper.run("py_module", {
       "module_name"   => "testmod_new",

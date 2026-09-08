@@ -34,16 +34,27 @@ module Krikri
 
     # Finds a role-private module source for *module_name*, or nil.
     # Search roots mirror real Ansible's two most-used locations: the
-    # current role's own `library/` (role_files_dir points at
-    # <role>/files, so the role root is one level up) and the
-    # playbook-adjacent `library/`. First match wins (real Ansible's
-    # own nearest-first order).
-    def find_source(module_name : String, role_files_dir : String?, playbook_dir : String?) : String?
+    # current role's own `library/` and the playbook-adjacent
+    # `library/`. First match wins (real Ansible's own nearest-first
+    # order).
+    #
+    # Takes the role's ROOT directory directly (`task.role_path`, always
+    # set - see role_loader.cr's `task.role_path = role_dir`), not
+    # `role_files_dir` (only set when the role actually ships a `files/`
+    # subdirectory - `existing_dir` returns nil otherwise). A role with
+    # no `files/` dir at all (linux-system-roles.storage/.logging/
+    # .timesync, none of them ship one) could never resolve its own
+    # `library/*.py` modules through the old files/-derived path, so
+    # `sr_fingerprint`/`blivet`/`timesync_provider` fell straight back
+    # to "unavailable modules" - the exact scope cut 0.9.819 was
+    # supposed to have already closed for role-private modules. Found
+    # re-testing linux-system-roles.storage/logging/timesync.
+    def find_source(module_name : String, role_path : String?, playbook_dir : String?) : String?
       short = short_name(module_name)
       return nil if short.empty?
 
       roots = [] of String
-      roots << File.join(File.dirname(role_files_dir), "library") if role_files_dir
+      roots << File.join(role_path, "library") if role_path
       roots << File.join(playbook_dir, "library") if playbook_dir && !playbook_dir.empty?
 
       roots.each do |root|
@@ -91,7 +102,27 @@ module Krikri
 
     private def typed_value(value : String) : JSON::Any
       stripped = value.strip
-      return JSON.parse(stripped) if stripped.starts_with?('{') || stripped.starts_with?('[')
+      if stripped.starts_with?('{') || stripped.starts_with?('[')
+        # A magic var like `ansible_play_hosts_all` (a real list) renders
+        # through the substitutor as a Python-repr string
+        # (`['10.99.1.2']`, single-quoted) rather than valid JSON when a
+        # task param references it directly - same Jinja
+        # `{% if %}...{{ [list] }}...{% endif %}`-shaped rendering
+        # already handled elsewhere in this codebase (package.cr's own
+        # `parse_package_names`). Found via linux-system-roles.storage's
+        # own `sr_fingerprint: {ansible_play_hosts_all: "{{
+        # ansible_play_hosts_all }}", ...}`.
+        parsed = begin
+          JSON.parse(stripped)
+        rescue
+          begin
+            JSON.parse(stripped.gsub('\'', '"'))
+          rescue
+            nil
+          end
+        end
+        return parsed if parsed
+      end
       return JSON::Any.new(true) if stripped == "true" || stripped == "True"
       return JSON::Any.new(false) if stripped == "false" || stripped == "False"
       return JSON::Any.new(nil) if stripped == "None" || stripped == "null"
