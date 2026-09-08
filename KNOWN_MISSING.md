@@ -18,8 +18,62 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.822`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.823`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
+
+---
+
+## RHEL-round gap triage: all 3 open gaps root-caused and fixed (0.9.818 - 0.9.823)
+
+Each of the three open gaps from round 65000+ got a root cause and a
+fix, verified live against Kata Rocky 9.6 VMs:
+
+- **`@group` package syntax** was never a dnf limitation - the OS-
+  agnostic `package:` plugin's `single_name` flag only treated a
+  space-free string as one atomic name, so the loop item
+  `@Development tools` fell into the legacy multi-name path, reached
+  `dnf install` unquoted as two tokens, and dnf rejected "tools".
+  Fixed by treating any `@`-prefixed name as atomic, quoting every
+  parsed name element individually, making `dnf group list installed`
+  matching case-insensitive (comps metadata capitalizes `Development
+  Tools`; the spec doesn't), and dropping the now-dead `shell_name`
+  helper. Confirmed live: `andrewrothstein.gcc-toolbox` cold run
+  installs the group, warm run converges to `changed=0`.
+  **0.9.823 follow-up**: the multi-element list shape
+  (`["gcc", "@Development tools"]`) was NOT actually fixed by the
+  0.9.818 pass despite the commit message's claim - `name:` from a
+  literal YAML list arrives here comma-joined
+  (`playbook_parser.cr`'s `stringify_value`), so `parts` correctly
+  split `["gcc", "@Development tools"]` apart, but the final `names`
+  array was re-derived by space-splitting the ALREADY-joined `name`
+  display string instead of using `parts` directly - refragmenting
+  the group right back into `["gcc", "@Development", "tools"]` and
+  reproducing the exact original "Unable to find a match: tools"
+  bug. Confirmed both ways live on a fresh Kata Rocky 9.6 VM (fails
+  with the pre-0.9.823 code, installs + converges to `changed=0`
+  with it) - found during review before merging this branch.
+- **`pip:` pip3 discovery**: real Ansible's `_get_pip` first runs pip
+  as `python3 -m pip` whenever the target interpreter can `import
+  pip` and only PATH-searches a `pip3` binary as a fallback; this
+  engine hard-required the binary via `which` (which minimal hosts
+  don't even ship). Discovery now mirrors `_get_pip`'s order
+  exactly (absolute `executable:` trusted as-is, bare `executable:`
+  PATH-checked, then pip-module, then `pip3`), via
+  `sh -c 'command -v ...'` so hosts without `which` still work.
+- **`geerlingguy.postgresql`'s service-start failure**: not a
+  service/daemon bug at all. The role's
+  `postgresql_auth_method: "{{ ansible_fips | ternary('scram-sha-256',
+  'md5') }}"` flows into pg_hba.conf, and `ansible_fips` was simply
+  never gathered - the ternary rendered the literal text "undefined"
+  into every host line, and postmaster refused to start with `invalid
+  authentication method "undefined"` while every earlier task looked
+  healthy. Fixed by gathering `ansible_fips` as a genuine JSON bool
+  (true iff /proc/sys/crypto/fips_enabled reads exactly "1", real
+  Ansible's FipsFactCollector shape; a "False" string would be truthy
+  under Jinja2 and flip ternary onto the FIPS branch everywhere).
+  Confirmed live: full role run on a fresh Kata VM finishes
+  `ok=27 changed=9 failed=0 skipped=11` - byte-identical to real
+  ansible-playbook's recap from the round.
 
 ---
 
@@ -814,37 +868,21 @@ Genuinely open defects: something is wrong and the fix is unknown or
 unfinished. Everything deliberate lives under "Deliberate limits"
 below - keep the two apart, or this list stops meaning anything.
 
-Three, all found via a 100-role RHEL (Rocky 9.6) regression round
-(round 65000+) - the previous rounds this queue drew from were mostly
-Ubuntu, so these are genuinely new, not reversions:
-
-- **DNF/YUM `@group name` package syntax unsupported.** Real Ansible's
-  dnf/yum modules recognize a `@`-prefixed group name (which can itself
-  contain spaces, e.g. `@Development tools`) as a group install; this
-  engine passes it through as a literal package name. `andrewrothstein.
-  couchdb`'s own `package: {name: [gcc, "@Development tools"]}` fails
-  with "Failed to install @Development tools: Error: Unable to find a
-  match: tools" (the space inside the group name gets misparsed too).
-  Real ansible-playbook installs the whole group correctly.
-
-- **`pip:`'s pip3 discovery fails on Rocky 9.6.** `geerlingguy.
-  supervisor`'s own `pip: name: supervisor` fails with "Unable to find
-  any of pip3 to use. pip needs to be installed." even though real
-  Ansible finds and uses pip3 without issue on the identical host image.
-  Root cause not yet isolated - likely a hardcoded search path/name that
-  doesn't match Rocky 9's actual pip3 layout.
-
-- **`geerlingguy.postgresql`: `postgresql.service` fails to start after
-  a successful `initdb`.** Cold run: "Ensure PostgreSQL database is
-  initialized." reports `changed` (ran fine), the subsequent config/hba-
-  template/socket-dir tasks all succeed, then "Ensure PostgreSQL is
-  started and enabled on boot." fails with "Job for postgresql.service
-  failed because the control process exited with error code." Real
-  Ansible succeeds identically through the same steps. Symptom is clear,
-  cause isn't - possibly a directory-ownership or SELinux-context gap
-  in how a prior task left `/var/lib/pgsql`'s data dir or the log/socket
-  dirs, but the round's own test host was already torn down before this
-  was dug into further; needs a fresh isolated repro.
+None as of 0.9.823. The three gaps found via the 100-role RHEL (Rocky
+9.6) regression round (round 65000+) are all root-caused and fixed -
+the fix-phase narrative for each lives in the 0.9.818/0.9.823 commit
+messages. `pip:`'s pip3-discovery fix (mirroring real Ansible's own
+`_get_pip` order: `python3 -m pip` when the interpreter can `import
+pip`, PATH search for the `pip3` binary only as a fallback) is
+confirmed live (0.9.823 review pass): a fresh Kata Rocky 9.6 VM with
+`python3-pip` installed but its `pip3` script moved off PATH still
+installs a package correctly via the `python3 -m pip` fallback, and
+fails with real Ansible's own "Unable to find any of pip3 to use"
+message on the pre-fix code in the identical scenario. The original
+divergent role (`geerlingguy.supervisor` on Atlantic's Rocky 9.6
+image specifically) itself has still not been re-run end to end,
+though the underlying discovery-order bug it hit is now directly
+confirmed.
 
 ---
 

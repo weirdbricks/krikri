@@ -81,6 +81,19 @@ module Krikri
       # packages: ["@Server with GUI"]`, RedHat's own default).
       single_name = false
       trimmed = name.strip
+      # `names` is built directly per-branch (never re-derived by
+      # re-splitting the space-joined `name` display string below) - a
+      # group spec element containing a literal space (dnf's own
+      # `@Development tools`) would otherwise get re-fragmented the
+      # instant it sits alongside another list element: `parts`/`parsed`
+      # already have the correct element boundaries the moment they're
+      # computed, but `name.split(' ')` on their space-joined re-flatten
+      # can't tell "gcc" + "@Development tools" (2 real elements) apart
+      # from "gcc" + "@Development" + "tools" (3 space-separated words) -
+      # found live testing `package: {name: [gcc, "@Development tools"]}`
+      # against this exact fix: still produced the original "Unable to
+      # find a match: tools" bug the fix otherwise closes.
+      names = [trimmed]
       if trimmed.starts_with?('[') && trimmed.ends_with?(']')
         parsed = begin
           Array(String).from_json(trimmed)
@@ -102,6 +115,7 @@ module Krikri
         end
         if parsed
           single_name = parsed.size == 1
+          names = parsed
           name = parsed.join(" ")
         end
       elsif trimmed.includes?(',')
@@ -114,10 +128,28 @@ module Krikri
         # name never contains a comma, so this can't misfire).
         parts = trimmed.split(',').map(&.strip).reject(&.empty?)
         single_name = parts.size == 1
+        names = parts
         name = parts.join(" ")
       else
-        single_name = !trimmed.includes?(' ')
+        # A dnf comps-group spec (`@Development tools`) legitimately
+        # contains a literal space and is still ONE atomic name - real
+        # Ansible's package/dnf module treats a string `name:` as a
+        # single element and passes it whole to dnf's group API. Found
+        # via andrewrothstein.gcc-toolbox's `package: {name: '{{ item }}'}`
+        # loop on Rocky 9.6 (round 65000+): the space made this look
+        # like the legacy multi-name string, the group reached dnf
+        # unquoted as two tokens (`@Development` + `tools`), and dnf
+        # rejected it with "Unable to find a match: tools" while real
+        # ansible-playbook installed the group fine.
+        single_name = trimmed.starts_with?('@') || !trimmed.includes?(' ')
+        names = single_name ? [trimmed] : trimmed.split(' ').reject(&.empty?)
       end
+
+      # Per-element shell quoting for the actual package-manager command
+      # line - each element quoted as its own atomic token, since a
+      # legit element can itself contain a space (dnf's
+      # `@Development tools` group syntax).
+      pkg_tokens = names.map { |pkg| shell_single_quote(pkg) }.join(" ")
 
       state = @params["state"]? || "present"
       # Real Ansible's package/dnf/yum modules accept "installed"/"removed"
@@ -142,9 +174,9 @@ module Krikri
       # Delegate to appropriate package manager
       case package_manager
       when "dnf", "yum"
-        handle_dnf(name, state, single_name)
+        handle_dnf(name, state, names, pkg_tokens)
       when "apt"
-        handle_apt(name, state, single_name)
+        handle_apt(name, state, names, pkg_tokens)
       else
         # Detected, but this engine ships no backend for it - say which
         # one, rather than claiming none was found. zypper/pacman/apk are
@@ -183,18 +215,10 @@ module Krikri
       statuses
     end
 
-    private def all_packages_installed?(name : String, single_name : Bool, & : String -> Bool) : Bool
-      names = single_name ? [name] : name.split(' ').reject(&.empty?)
+    # True only if *every* parsed name element is installed, not merely
+    # one of them.
+    private def all_packages_installed?(names : Array(String), & : String -> Bool) : Bool
       names.all? { |pkg| yield pkg }
-    end
-
-    # Shell-safe form of `name` for the actual install/remove/query
-    # command line: a single atomic name (may contain a literal space,
-    # e.g. a dnf `@Group Name`) must be quoted as ONE token; a legacy
-    # multi-name space-joined string is passed through unquoted exactly
-    # as before (each word its own argument).
-    private def shell_name(name : String, single_name : Bool) : String
-      single_name ? shell_single_quote(name) : name
     end
 
     # A `@Group Name` spec (dnf's own comps-group syntax, e.g. RHEL's
@@ -212,7 +236,12 @@ module Krikri
     private def dnf_group_installed?(spec : String) : Bool
       group_name = spec.lstrip('@')
       result = remote_exec("dnf group list installed 2>/dev/null")
-      result[:stdout].split("\n").any? { |line| line.strip == group_name }
+      # Case-insensitive: dnf's own group matching is, and the common
+      # real-world spec `@Development tools` doesn't share the comps
+      # metadata's own capitalization (`Development Tools`) - a
+      # case-sensitive compare made every warm rerun see the group as
+      # not installed and re-run a full `dnf install` forever.
+      result[:stdout].split("\n").any? { |line| line.strip.downcase == group_name.downcase }
     end
 
     # Mirrors dnf.cr's own `url_or_file?` - a URL/local-path package
@@ -307,7 +336,10 @@ module Krikri
     end
 
     # Handle DNF/YUM package management
-    private def handle_dnf(name : String, state : String, single_name : Bool = false) : PluginResult
+    # See #execute's `names`/`pkg_tokens` comment: commands are built
+    # from the parsed elements (each atomically quoted), messages keep
+    # the joined display form.
+    private def handle_dnf(name : String, state : String, names : Array(String), pkg_tokens : String) : PluginResult
       # Check if package is installed - each name checked individually
       # (not `rpm -q #{name}` as one combined call) so a multi-package
       # `name:` (this module's own space-joined list, from a templated
@@ -330,7 +362,7 @@ module Krikri
       # remote RPM's metadata) and silently skip the real `dnf install`
       # entirely. Matches `dnf.cr`'s own `url_or_file?`-gated "always
       # try to install" handling for the identical case.
-      is_installed = all_packages_installed?(name, single_name) do |pkg|
+      is_installed = all_packages_installed?(names) do |pkg|
         if url_or_file?(pkg)
           false
         elsif pkg.starts_with?('@')
@@ -358,7 +390,7 @@ module Krikri
             remote_exec("rpm -q --whatprovides #{pkg}")[:exit_code] == 0
         end
       end
-      shell_pkg = shell_name(name, single_name)
+      shell_pkg = pkg_tokens
 
       case state
       when "present"
@@ -490,7 +522,7 @@ module Krikri
     end
 
     # Handle APT package management
-    private def handle_apt(name : String, state : String, single_name : Bool = false) : PluginResult
+    private def handle_apt(name : String, state : String, names : Array(String), pkg_tokens : String) : PluginResult
       # Check if package is installed - each name checked individually
       # (see handle_dnf's own comment for why: a single combined `dpkg -l
       # pkg1 pkg2 | grep '^ii'` matches as soon as *any* one of them is
@@ -499,13 +531,13 @@ module Krikri
       # `dpkg -l <pkg>` per package (mirrors apt.cr's own
       # dpkg_installed_status; the two are separate plugin binaries, so
       # the helper is duplicated rather than shared).
-      apt_names = single_name ? [name] : name.split(' ').reject(&.empty?)
+      apt_names = names
       installed_status = dpkg_installed_status(apt_names)
       is_installed = apt_names.all? do |pkg|
         base_name = pkg.split('=').first
         installed_status[base_name]?.try { |pair| pair[0] } || false
       end
-      shell_pkg = shell_name(name, single_name)
+      shell_pkg = pkg_tokens
       # Matches apt.cr's own lock_timeout retry (default 60s, same
       # param name as real Ansible's apt module) - this OS-agnostic
       # package: module has its own separate apt-get call sites that

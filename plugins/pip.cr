@@ -116,23 +116,57 @@ module Krikri
       end
     end
 
-    # Verify a pip binary exists on the target (skipped for a
-    # virtualenv: target - see the caller's comment). Returns the
-    # failure result, or nil when a usable pip binary was found.
+    # Verify pip is usable on the target (skipped for a virtualenv:
+    # target - see the caller's comment). Returns the failure result,
+    # or nil when a usable pip was found. Mirrors real Ansible's
+    # pip.py `_get_pip` discovery order - see #discover_system_pip.
     private def ensure_pip_binary : PluginResult?
       return nil if @params["virtualenv"]?
 
-      candidate = @params["executable"]? || "pip3"
-      # `which`, not the shell builtin `command -v` - LocalExecutor's
-      # own no-shell-metacharacters fast path execs argv[0] directly
-      # as a real binary (skipping a `bash -c` hop), and "command" is
-      # a shell builtin with no standalone executable on this system
-      # (or most others) to exec at all.
-      unless remote_exec("which #{candidate}")[:exit_code] == 0
-        return PluginResult.new(changed: false, failed: true, msg: "Unable to find any of #{candidate} to use.  pip needs to be installed.")
+      result = discover_system_pip
+      result.is_a?(PluginResult) ? result : nil
+    end
+
+    # Real Ansible's pip.py `_get_pip` discovery order, mirrored here:
+    #
+    # 1. `executable:` given - an absolute path is trusted as-is; a
+    #    bare name must exist on PATH (get_bin_path) or the module
+    #    fails with "Unable to find any of <name> to use."
+    # 2. No executable: it first runs pip as `[sys.executable, '-m',
+    #    'pip']` whenever the interpreter can `import pip`
+    #    (_have_pip_module), and ONLY falls back to a `pip3` PATH
+    #    search when it can't. A Rocky 9.6 host with the python3-pip
+    #    module installed but no `pip3` script on PATH (found via
+    #    geerlingguy.supervisor, round 65000+) is fully usable under
+    #    real Ansible this way - this engine used to hard-require the
+    #    `pip3` binary and fail the task with real Ansible's own no-pip
+    #    message even though the very same `python3 -m pip` invocation
+    #    real Ansible runs would have worked.
+    #
+    # `sh -c 'command -v ...'` rather than a bare `which ...`: the
+    # LocalExecutor fast path execs argv[0] directly when the command
+    # carries no shell metacharacters (single quotes don't count as
+    # one - Process.parse_arguments handles them), so the shell
+    # builtin resolves correctly without a full bash hop, AND the
+    # check keeps working on hosts with no `which` binary at all.
+    private def discover_system_pip : String | PluginResult
+      if executable = @params["executable"]?
+        return executable if executable.starts_with?("/")
+
+        unless remote_exec("sh -c 'command -v #{executable}'")[:exit_code] == 0
+          return PluginResult.new(changed: false, failed: true, msg: "Unable to find any of #{executable} to use.  pip needs to be installed.")
+        end
+        return executable
       end
 
-      nil
+      if remote_exec("python3 -m pip --version 2>/dev/null")[:exit_code] == 0
+        return "python3 -m pip"
+      end
+
+      unless remote_exec("sh -c 'command -v pip3'")[:exit_code] == 0
+        return PluginResult.new(changed: false, failed: true, msg: "Unable to find any of pip3 to use.  pip needs to be installed.")
+      end
+      "pip3"
     end
 
     # The required name/requirements combination check. Returns the
@@ -216,7 +250,7 @@ module Krikri
         end
         pip_path
       else
-        @params["executable"]? || "pip3"
+        discover_system_pip
       end
     end
 
