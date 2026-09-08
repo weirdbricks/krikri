@@ -1233,6 +1233,55 @@ module Krikri
       Crinja::Value.new(result)
     end
 
+    # `lists_mergeby(list2, ..., 'key', recursive=False, list_merge=
+    # 'replace')` - community.general's own filter (pre-3.x
+    # `list_mergeby` alias kept): merges lists of dicts, resolving
+    # items sharing the same merge-key value by merging their dicts
+    # (later lists win). The Crinja side is needed alongside the
+    # hand-rolled FilterEngine version (same split as dict2items/
+    # items2dict) so a `.j2` template's `{% for %}` over the merged
+    # result routes through Crinja's own filter pipeline. Collision
+    # merging mirrors FilterEngine#combine_hash exactly: recursive=True
+    # deep-merges nested hashes via combine_merge, non-recursive
+    # replaces, and a key that's a list on both sides follows the
+    # `list_merge=` mode via list_merge_values.
+    Crinja.filter({recursive: false, list_merge: "replace"}, :lists_mergeby) do
+      recursive = arguments["recursive"].truthy?
+      list_merge = arguments["list_merge"].to_s
+      varargs = arguments.varargs
+      raise Crinja::TemplateError.new("lists_mergeby: missing merge key argument") if varargs.empty?
+      merge_key = varargs.last.to_s
+      lists = [target] + varargs[0..-2]
+      index = {} of Crinja::Value => Crinja::Value
+      lists.each do |list_value|
+        next unless list_value.raw.is_a?(Array)
+        list_value.each do |item|
+          next unless item.raw.is_a?(Hash)
+          h = item.raw.as(Hash)
+          item_key = h[merge_key]?
+          next unless item_key
+          existing = index[item_key]?
+          index[item_key] = if existing && recursive
+                              JinjaFilters.combine_merge(existing, item, list_merge)
+                            elsif existing && list_merge != "replace"
+                              merged_h = existing.raw.as(Hash).dup
+                              h.each do |key, value|
+                                ex = merged_h[key]?
+                                if ex && ex.raw.is_a?(Array) && value.raw.is_a?(Array)
+                                  merged_h[key] = JinjaFilters.list_merge_values(ex, value, list_merge)
+                                else
+                                  merged_h[key] = value
+                                end
+                              end
+                              Crinja::Value.new(merged_h)
+                            else
+                              item
+                            end
+        end
+      end
+      Crinja::Value.new(index.values)
+    end
+
     # `intersect(other)` - elements of *target* that also appear in
     # *other*, deduplicated, order taken from *target*. Real Ansible's
     # own filter (not standard Jinja2). Ported from `FilterEngine`'s own

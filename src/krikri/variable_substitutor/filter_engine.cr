@@ -68,7 +68,7 @@ module Krikri
         sha1 expanduser expandvars normpath relpath commonpath log pow
         to_uuid symmetric_difference combinations permutations
         rekey_on_member extract from_yaml_all vault unvault ternary
-        intersect difference
+        intersect difference lists_mergeby list_mergeby
         ipaddr ipwrap ipv4 ipv6 ipsubnet ipmath next_nth_usable
         previous_nth_usable network_in_network network_in_usable
         ip4_hex
@@ -171,6 +171,18 @@ module Krikri
           rest = filter_expr.lchop("ansible.utils.")
           bare = rest.match(/^(\w+)/).try(&.[1])
           filter_expr = rest if bare && IpAddrCore::FAMILY_FILTERS.includes?(bare)
+        end
+        # Same treatment for community.general's collection-qualified
+        # spellings (`| community.general.lists_mergeby`) - a community.
+        # general filter is commonly reachable both ways, so gate the
+        # strip on a bare name this dispatch actually implements (the
+        # same carve-out the ansible.utils family gets) and let a
+        # genuinely-unknown `community.general.foo` still error with the
+        # full FQCN in the message, as real Ansible names it.
+        if filter_expr.starts_with?("community.general.")
+          rest = filter_expr.lchop("community.general.")
+          bare = rest.match(/^(\w+)/).try(&.[1])
+          filter_expr = rest if bare && KNOWN_FILTER_NAMES.includes?(bare)
         end
 
         if match = filter_expr.match(REGEX_FILTER_CALL)
@@ -569,6 +581,50 @@ module Krikri
             end
           end
           positional_args.reduce(value) { |acc, arg_expr| combine_hash(acc, resolve_expression(arg_expr), recursive_arg, list_merge_arg) }
+        when "lists_mergeby", "list_mergeby"
+          # lists_mergeby(list2, list3, ..., 'key', recursive=False,
+          # list_merge='replace') - community.general's own filter (the
+          # pre-3.x `list_mergeby` spelling kept as its deprecated
+          # alias): merges two or more lists of dicts into a single
+          # list, resolving items that share the same merge-key value
+          # by merging their dicts together (later lists win on
+          # collisions, exactly like `combine`'s later-positional-wins;
+          # `recursive=` and `list_merge=` carry combine's same
+          # semantics via the shared combine_hash helper). Items whose
+          # key value appears in only one list pass through untouched;
+          # result order is first-seen key order (real CPython 3.7+ dict
+          # semantics, same ordering the Crinja-side dict2items relies
+          # on). Entirely unimplemented before - found via a real-host
+          # benchmark round where a role's own vars assembly (lists of
+          # per-source dicts keyed by name) hit the unknown-filter
+          # error and the task failed before it could reach the
+          # (pre-existing, role-side) bug real Ansible dies on further
+          # downstream.
+          recursive_arg = false
+          list_merge_arg = "replace"
+          positional_args = [] of String
+          split_top_level_args(filter_args).each do |arg|
+            part = arg.strip
+            m = part.match(/^recursive\s*=\s*(.+)$/)
+            if m
+              v = m[1].strip.downcase
+              recursive_arg = v == "true" || v == "1"
+            else
+              m = part.match(/^list_merge\s*=\s*(.+)$/)
+              if m
+                list_merge_arg = m[1].strip.delete("'\"")
+              else
+                positional_args << part
+              end
+            end
+          end
+          # Real Ansible fails the task on a missing merge key
+          # (TypeError/KeyError from the Python side) - not silently an
+          # empty list, which would hide the role's own data bug.
+          raise "lists_mergeby: missing merge key argument" if positional_args.empty?
+          merge_key = as_string(resolve_expression(positional_args.pop))
+          lists = [as_array(value)] + positional_args.map { |arg_expr| as_array(resolve_expression(arg_expr)) }
+          JSON::Any.new(lists_mergeby_lists(lists, merge_key, recursive_arg, list_merge_arg))
         when "dict2items"
           # dict2items(key_name='key', value_name='value') - real Ansible's
           # own filter (NOT standard Jinja2; the Crinja corpus confirms
@@ -1558,6 +1614,22 @@ module Krikri
           end
         end
         JSON::Any.new(merged)
+      end
+
+      # lists_mergeby's core: index every list's items by the merge
+      # key's value, merging (combine_hash semantics) on collision.
+      private def lists_mergeby_lists(lists : Array(Array(JSON::Any)), merge_key : String, recursive : Bool, list_merge : String) : Array(JSON::Any)
+        index = {} of JSON::Any => JSON::Any
+        lists.each do |list|
+          list.each do |item|
+            raise "lists_mergeby: list item is not a dict: #{item.to_json}" unless item.raw.is_a?(Hash)
+            item_h = item.as_h
+            item_key = item_h[merge_key]? || raise "lists_mergeby: merge key '#{merge_key}' not found in list item: #{item.to_json}"
+            existing = index[item_key]?
+            index[item_key] = existing ? combine_hash(existing, item, recursive, list_merge) : item
+          end
+        end
+        index.values
       end
 
       # General single-expression resolver: unlike #resolve_default_expression

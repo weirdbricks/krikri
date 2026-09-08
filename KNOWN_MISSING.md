@@ -18,12 +18,12 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.840`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.843`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
 
 ---
 
-## Round 71000: 200 never-before-tested roles (Galaxy top-download list), 4 real bugs (0.9.837-0.9.840)
+## Round 71000: 200 never-before-tested roles (Galaxy top-download list), 7 real bugs (0.9.837-0.9.843)
 
 First batch since Atlantic.net's server-limit increase (10 -> 25); run at
 `--kata-hosts 8 --atlantic-hosts 20`. All 4 Kata pairs hit a new failure
@@ -39,7 +39,15 @@ capacity, Kata is no longer worth defaulting to for these batches -
 code changes needed) is now the preferred invocation.
 
 Of 10 DIVERGENT roles from the first 200: 4 real bugs found and fixed
-below; `amtega.tftpd` is the 5th confirming role for the already-
+in the original triage pass (below), plus 3 more (also below) found
+while confirm-rerunning the fixed roles - progressing past one bug
+often exposed the next one downstream on the exact same role, most
+notably `claranet.postgresql` (apt-stdout fix -> reached a pip `name:`
+list-truncation bug -> reached a `lists_mergeby` unimplemented-filter
+gap, three fixes deep on one role before it converges to the same
+point real Ansible itself eventually fails at - the role's own
+pre-existing `item.when` string-not-boolean bug, identical on both
+engines, not chased further); `amtega.tftpd` is the 5th confirming role for the already-
 documented `_check_platform` role-private-module scope cut; `adfinis-
 sygroup.icinga2_agent`'s `deb822_repository`/apt-package failure did not
 reproduce in an isolated container rebuild (plugin output and apt
@@ -146,6 +154,65 @@ afterward. One new open gap found (below): `asg1612.gluster`.
   design (see this repo's own `CLAUDE.md`); verified live by rebuilding
   the plugin and running it directly against a fresh Debian trixie
   container, confirming a real install now returns non-empty `stdout`.
+
+- **`claranet.postgresql`, continued (found on the apt-stdout-fix
+  confirm rerun)**: past the apt fix above, `name: "{{
+  _postgresql_dependencies_pip_packages }}"` (a full-value Jinja
+  substitution of a real 2-item list variable, as opposed to a literal
+  YAML `name:` list - which the parser upstream already comma-joins
+  into a plain string before `plugins/pip.cr` ever sees it) rendered as
+  bracketed text (`['psycopg2', 'ipaddress']`), and `normalize_name`'s
+  `else raw` branch returned that bracketed text UNCHANGED for any list
+  with more than one entry (only the size==1 case was unwrapped) -
+  `#install` then comma-split THAT text naively, truncating everything
+  after the first item's own internal comma into one bogus "package"
+  (`"['psycopg2'"`), and pip errored "Invalid requirement" instead of
+  ever installing anything. Fixed by joining the already-parsed list
+  with commas for the >1-item case too. Regression spec added
+  (`spec/integration/pip_spec.cr`, `state: absent` so no real install
+  runs); verified live locally.
+
+- **`bitintheskud.ansible-role-ecs-agent`, continued (found on the
+  iptables-fix confirm rerun)**: past the iptables fix above, warm
+  rerun still showed one spurious `changed` - `file:`'s `recurse: true`
+  (owner/group/mode 0755 on `/etc/ecs`) reported `ok`/"Directory
+  attributes updated" even though a later task in the same role writes
+  `/etc/ecs/ecs.env` with a different mode. `handle_directory`'s
+  `changed` was decided from `update_attributes_if_needed` on the
+  TOP-level path alone - it never looked at anything nested - so the
+  recursive apply (gated on `changed`) never even ran once the
+  directory's own attributes already matched. `recurse: true` was
+  effectively a no-op whenever the top directory happened to already be
+  correct, silently leaving stale nested files wrong forever. Fixed by
+  adding `recursive_attributes_need_update?`, which walks the same tree
+  the existing recursive apply already does, checked whenever the
+  top-level path itself doesn't already account for a change.
+  Regression spec added (`spec/integration/file_spec.cr`); verified
+  live locally (a directory already at the right mode with one nested
+  file NOT at the right mode now correctly reports `changed: true` and
+  fixes the nested file). Confirm-rerun after this fix still shows one
+  open item on this role - see "Open gaps" below.
+
+- **`claranet.postgresql`, continued again (found on the pip-fix
+  confirm rerun)**: past the pip fix above, `community.general.
+  lists_mergeby(list, 'key')` (merging autotune/global/extra PostgreSQL
+  config-option lists by their shared `option` key, later lists
+  winning on collisions - real Ansible's own `combine()` semantics
+  applied per-item) was entirely unimplemented in both evaluators (the
+  hand-rolled `FilterEngine`, used for this exact `loop: "{{ ... }}"`
+  task-param shape, and the vendored Crinja renderer, for a `.j2`
+  template using the same filter). Implemented in both: `FilterEngine`
+  gained a `lists_mergeby`/`list_mergeby` (the pre-3.x alias) case
+  reusing `combine_hash`'s existing recursive-merge/list-merge-mode
+  logic, plus a `community.general.`-prefix strip in the FQCN-handling
+  dispatch (matching the existing `ansible.utils`/`ipaddr` carve-out);
+  `jinja_filters.cr` gained the matching Crinja-side filter. Regression
+  specs added (`spec/unit/lists_mergeby_spec.cr`: two/three-list merges,
+  both name spellings, the FQCN form, `recursive=`/`list_merge=`,
+  missing-key/non-dict error cases, a variable-reference merge key);
+  verified live locally against the role's own exact chained-filter
+  `loop:` expression (three source lists, later lists correctly winning
+  collisions, non-colliding items passing through unchanged).
 
 ---
 
@@ -3261,6 +3328,35 @@ Everything here is a decision someone already made, with the reasoning
 attached. Nothing here is waiting on anyone. Do not re-litigate without
 new evidence - and if new evidence turns up, move the entry to "Open
 gaps" rather than arguing with the note in place.
+
+### Unimplemented community.general filter long tail (usage-audited, watchlist not backlog)
+
+- The dict-key filters (`keep_keys`, `remove_keys`, `replace_keys`,
+  `dict_kv`, `groupby_as_dict`), the `lists_*` family
+  (`lists_union`, `lists_difference`, `lists_intersect`,
+  `lists_symmetric_difference`), `accumulate`, `counter`, `crc32`,
+  `version_sort`, `random_mac`, `unicode_normalize`, `from_csv`,
+  `from_ini`/`to_ini`, `from_toml`/`to_toml`, `json_diff`,
+  `json_patch`, `hashids`, `reveal_ansible_type`, the
+  `to_<time-unit>` family, and `to_prettytable` are all unimplemented.
+  They ARE reachable by a role (that is how `lists_mergeby` was found,
+  0.9.843), but a Sourcegraph audit of public GitHub YAML (2026-09)
+  showed real-world usage is almost nil: hits are dominated by the
+  collection's own docs/tests, the PacktPublishing Ansible book repo's
+  vendored copy, and vbotka/ansible-examples (a filter-tutorial repo by
+  the filters' own contributor); excluding those, the only real-role
+  hits found were one `version_sort` (splunk-platform-automator), one
+  `keep_keys` (kubespray's test-infra image-builder), one `counter`
+  (IBM's samples repo), and zero for `dict_kv`/`groupby_as_dict`/
+  `remove_keys`/`replace_keys`/`lists_*`. Calibration: the same search
+  for `dict2items` matches hundreds of genuine roles. Decision: none of
+  these go in a backlog on spec; each gets implemented on first live
+  hit by a benchmark role, like `lists_mergeby` was (0.9.843).
+- **ansible-core builtins** are effectively fully covered - the only
+  builtin names absent are `random`, `rejectattr` (deliberately
+  excluded from `KNOWN_FILTER_NAMES`, see the dispatch comment),
+  `groupby`, and the Windows-only
+  `win_basename`/`win_dirname`/`win_splitdrive`.
 
 ### Init systems and package managers
 
