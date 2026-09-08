@@ -119,6 +119,55 @@ module Krikri
       stderr.includes?("The package lists or status file could not be parsed or opened")
     end
 
+    # Same mtime probe real Ansible's `get_cache_mtime()`/
+    # `get_updated_cache_time()` use: the update-success-stamp if
+    # present, else the /var/lib/apt/lists directory's own mtime.
+    # Shared between apt.cr's own before/after cache-update comparison
+    # and this module's own `should_update_cache?` (see there).
+    def apt_cache_mtime(exec_remote : Proc(String, NamedTuple(exit_code: Int32, stdout: String, stderr: String)))
+      result = exec_remote.call(
+        "stat -c %Y /var/lib/apt/periodic/update-success-stamp 2>/dev/null || " \
+        "stat -c %Y /var/lib/apt/lists 2>/dev/null || echo 0"
+      )
+      result[:stdout].strip.to_i
+    end
+
+    # Can the target's Python see the python3-apt bindings? Same two
+    # interpreters real Ansible's apt module probes
+    # (probe_interpreters_for_module(['/usr/bin/python3', '/usr/bin/python'],
+    # 'apt')) before deciding whether to auto-install python3-apt and
+    # respawn under an interpreter that can see it - see apt.cr's own
+    # `#execute` for the long comment on which changed-reporting path
+    # that decides.
+    def apt_python_apt_present?(exec_remote : Proc(String, NamedTuple(exit_code: Int32, stdout: String, stderr: String)))
+      result = exec_remote.call(
+        "/usr/bin/python3 -c 'import apt' 2>/dev/null || " \
+        "/usr/bin/python -c 'import apt' 2>/dev/null"
+      )
+      result[:exit_code] == 0
+    end
+
+    # Real Ansible's `changed` semantics for a cache-refresh-ONLY apt
+    # invocation (no name:/upgrade:/deb: alongside it): WITHOUT
+    # python3-apt, real Ansible auto-installs it before its own
+    # measurement window opens (that auto-install runs a full `apt-get
+    # update` first, then respawns and reads mtime entirely AFTER the
+    # prefetch) - so it always reports `changed: false` here regardless
+    # of whether anything was actually fetched. WITH python3-apt, it
+    # reports `changed: true` only if the cache mtime genuinely moved.
+    # See apt.cr's own `#execute` for the live verification this
+    # mirrors (round 30001) - shared here so `package:`'s own
+    # cache-refresh path (`update_cache: true` with no `name:`) doesn't
+    # duplicate-and-drift from this logic the way it previously did
+    # (found via robertdebock.update_package_cache: this engine
+    # hardcoded `changed: true` for apt unconditionally, real Ansible's
+    # `ok`/`changed: false` on an already-fresh mirror).
+    def apt_cache_refresh_changed?(pre_mtime : Int32, post_mtime : Int32,
+                                    exec_remote : Proc(String, NamedTuple(exit_code: Int32, stdout: String, stderr: String)))
+      return false unless apt_python_apt_present?(exec_remote)
+      post_mtime != pre_mtime
+    end
+
     # Real Ansible's apt module silently recovers from an install
     # failure caused by a corrupt/unparseable on-disk package index:
     # `get_cache()` catches the `apt.Cache()` `SystemError` and retries

@@ -274,24 +274,33 @@ module Krikri
                 else            "apt-get update"
                 end
 
+      pre_update_mtime = package_manager == "apt" ? apt_cache_mtime(->remote_exec(String)) : 0
       result = package_manager == "apt" ? apt_get_update_with_retry(command, AptLockRetry::DEFAULT_UPDATE_CACHE_RETRIES, AptLockRetry::DEFAULT_UPDATE_CACHE_RETRY_MAX_DELAY, ->remote_exec(String)) : remote_exec(command)
       return PluginResult.new(changed: false, failed: true, msg: "Failed to update package cache: #{result[:stderr]}") unless result[:exit_code] == 0
 
-      # apt's own `update_cache: true` always reports changed: true
-      # (verified in prior rounds - see apt.cr's own cache_update_is_
-      # sole_operation handling for the OPPOSITE apt-specific gap, a
-      # leaked changed: true when packages were ALSO being installed in
-      # the same call). Real dnf.py's own `update_cache_only`, though,
-      # reports `changed=result.get('changed', False)` from its internal
+      # Real dnf.py's own `update_cache_only` reports
+      # `changed=result.get('changed', False)` from its internal
       # libdnf5-backed helper script - which, on the ansible-core/dnf5
       # combination verified live on a Rocky 9.6 target, never actually
       # sets a `changed` key at all, so it's always False in practice -
-      # a real, dnf-specific difference from apt's own always-true
-      # semantics, not something visible from `dnf makecache`'s own CLI
-      # stdout (which prints the identical repo-download listing whether
-      # or not anything was genuinely stale). Found via robertdebock.
+      # a real, dnf-specific difference from apt's own semantics, not
+      # something visible from `dnf makecache`'s own CLI stdout (which
+      # prints the identical repo-download listing whether or not
+      # anything was genuinely stale). Found via robertdebock.
       # update_package_cache's own single-task role.
-      changed = package_manager == "apt"
+      #
+      # apt's own `changed` here is NOT always true - it depends on
+      # python3-apt's presence and whether the cache mtime actually
+      # moved, exactly like apt.cr's own cache-refresh-only path (see
+      # AptLockRetry#apt_cache_refresh_changed? for the full real-Ansible
+      # semantics this mirrors, round 30001). This module previously
+      # hardcoded `changed: true` for apt unconditionally - an
+      # independent duplicate of apt.cr's own logic that drifted from
+      # the fix apt.cr already got, reproducing the exact false-changed
+      # regression round 30001 closed there. Found again via
+      # robertdebock.update_package_cache on a mirror that was already
+      # current: real Ansible reported `ok`, this module `changed`.
+      changed = package_manager == "apt" && apt_cache_refresh_changed?(pre_update_mtime, apt_cache_mtime(->remote_exec(String)), ->remote_exec(String))
       PluginResult.new(changed: changed, failed: false, msg: "Package cache updated")
     end
 

@@ -243,4 +243,45 @@ describe "apt lock-contention retry helpers (round 153 follow-up, 0.9.502)" do
       r[:exit_code].should eq(100)
     end
   end
+
+  # Regression spec for robertdebock.update_package_cache's 0.9.825
+  # regression: `package: {update_cache: true}` hardcoded `changed: true`
+  # for apt unconditionally instead of sharing apt.cr's own python3-apt-
+  # aware, mtime-diff-aware logic - see apt.cr's own long comment (round
+  # 30001) for the full real-Ansible semantics this mirrors.
+  describe "#apt_cache_refresh_changed?" do
+    it "is always false when python3-apt is absent, regardless of mtime movement" do
+      stub = StubExec.new([{exit_code: 1, stdout: "", stderr: ""}])
+      HostClass.new.apt_cache_refresh_changed?(100, 200, ->(c : String) { stub.call(c) }).should be_false
+    end
+
+    it "is false when python3-apt is present but the mtime did not move (an all-Hit run)" do
+      stub = StubExec.new([{exit_code: 0, stdout: "", stderr: ""}])
+      HostClass.new.apt_cache_refresh_changed?(100, 100, ->(c : String) { stub.call(c) }).should be_false
+    end
+
+    it "is true when python3-apt is present and the mtime moved" do
+      stub = StubExec.new([{exit_code: 0, stdout: "", stderr: ""}])
+      HostClass.new.apt_cache_refresh_changed?(100, 200, ->(c : String) { stub.call(c) }).should be_true
+    end
+  end
+
+  describe "#apt_python_apt_present?" do
+    it "is true when either python3 or python2 can import apt" do
+      stub = StubExec.new([{exit_code: 0, stdout: "", stderr: ""}])
+      HostClass.new.apt_python_apt_present?(->(c : String) { stub.call(c) }).should be_true
+    end
+
+    it "is false when neither interpreter can import apt" do
+      stub = StubExec.new([{exit_code: 1, stdout: "", stderr: ""}])
+      HostClass.new.apt_python_apt_present?(->(c : String) { stub.call(c) }).should be_false
+    end
+  end
+
+  describe "#apt_cache_mtime" do
+    it "parses the probe command's stdout as an integer" do
+      stub = StubExec.new([{exit_code: 0, stdout: "1735689600\n", stderr: ""}])
+      HostClass.new.apt_cache_mtime(->(c : String) { stub.call(c) }).should eq(1735689600)
+    end
+  end
 end

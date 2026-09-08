@@ -793,33 +793,21 @@ module Krikri
       age > cache_valid_time
     end
 
-    # Same mtime probe real Ansible's `get_cache_mtime()`/
-    # `get_updated_cache_time()` use: the update-success-stamp if
-    # present, else the /var/lib/apt/lists directory's own mtime.
-    # Shared by `should_update_cache?` (freshness check) and the
-    # before/after comparison around the actual `apt-get update` run
-    # (did it change anything on disk).
+    # Thin wrappers over AptLockRetry's own shared `apt_cache_mtime`/
+    # `apt_python_apt_present?` (see there) - kept here, at the same
+    # names/signatures every call site above already used, so this is
+    # the only file that changed when the logic moved to the shared
+    # module. One implementation now backs both this plugin and
+    # package.cr's own cache-refresh-only path - see AptLockRetry's own
+    # comment for why that single-source-of-truth matters (this exact
+    # class of duplicate-implementation drift is what caused
+    # robertdebock.update_package_cache's regression).
     private def cache_mtime : Int32
-      result = remote_exec(
-        "stat -c %Y /var/lib/apt/periodic/update-success-stamp 2>/dev/null || " \
-        "stat -c %Y /var/lib/apt/lists 2>/dev/null || echo 0"
-      )
-      result[:stdout].strip.to_i
+      apt_cache_mtime(->remote_exec(String))
     end
 
-    # Can the target's Python see the python3-apt bindings? Same two
-    # interpreters real Ansible's apt module probes
-    # (probe_interpreters_for_module(['/usr/bin/python3', '/usr/bin/python'],
-    # 'apt')) before deciding whether to auto-install python3-apt and
-    # respawn under an interpreter that can see it. The answer decides
-    # which changed-reporting path the cache update takes (see the long
-    # comment in #execute) and whether check mode fails outright.
     private def python_apt_present? : Bool
-      result = remote_exec(
-        "/usr/bin/python3 -c 'import apt' 2>/dev/null || " \
-        "/usr/bin/python -c 'import apt' 2>/dev/null"
-      )
-      result[:exit_code] == 0
+      apt_python_apt_present?(->remote_exec(String))
     end
 
     # Helper to convert string/bool to boolean

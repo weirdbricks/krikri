@@ -18,8 +18,40 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.825`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.826`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
+
+---
+
+## `robertdebock.update_package_cache` regression root-caused and fixed: package: update_cache: true hardcoded changed:true for apt (0.9.826)
+
+Second of the 12 confirmed regressions from the round below to get
+fixed. `plugins/package.cr`'s `update_cache_only` (the `package:
+{update_cache: true}` path with no `name:`) hardcoded
+`changed = package_manager == "apt"` - unconditionally true for apt,
+regardless of whether the cache was actually stale. Real Ansible's own
+apt module's `changed` here depends on python3-apt's presence and
+whether the cache mtime genuinely moved (round 30001's `apt.cr` fix,
+verified live back then and untouched since) - this OS-agnostic
+module's own independently-implemented apt dispatch never got that fix
+and reproduced the exact same false-`changed` bug class round 30001
+already closed once, in a different file.
+
+Fixed by extracting `apt.cr`'s own `cache_mtime`/`python_apt_present?`
+into the shared `AptLockRetry` module (already `include`d by both
+`apt.cr` and `package.cr`) as `apt_cache_mtime`/
+`apt_python_apt_present?`, plus a new `apt_cache_refresh_changed?`
+combining them the way `apt.cr`'s own before/after comparison already
+did - one implementation backing both plugins now, closing off the
+whole "duplicate apt logic silently drifts" bug class this and the
+`evrardjp.keepalived` fix above both fell into. `apt.cr` itself now
+calls the shared helpers too (its own `cache_mtime`/`python_apt_present?`
+are thin wrappers, kept for call-site compatibility). Regression spec
+added (`spec/unit/apt_lock_retry_spec.cr`) since, unlike the apt-get
+exit-code fix above, this logic is cleanly unit-testable via a stubbed
+`exec_remote`. Live-reverified on a fresh Kata VM: `changed: false` on
+both a fresh-mirror run and a rerun (no python3-apt present, matching
+real Ansible's own always-false-without-python3-apt semantics).
 
 ---
 
@@ -1040,11 +1072,6 @@ pass's version numbers were unreliable. Each item below reproduced
 **deterministically across two independent fresh-host runs**, which is
 why these are listed as confirmed rather than merely suspected:
 
-- **`robertdebock.update_package_cache`**: previously byte-identical
-  (`ok=2 changed=1` both engines, cold and warm). Now reports
-  `changed=0` on the real-Ansible side vs `changed=1` on krikri, both
-  cold AND warm, identically on both runs - a real regression, not apt
-  cache-freshness noise as first suspected.
 - **`linux-system-roles.logging`**: previously fixed to byte-identical
   `ok=30`. Now krikri returns `rc=4`, `ok=28`, `skipped=53` against real
   Ansible's `rc=0`, `ok=30`, `skipped=51`, identically both runs - the
