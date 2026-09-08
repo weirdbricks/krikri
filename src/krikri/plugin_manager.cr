@@ -976,23 +976,30 @@ module Krikri
         begin
           JSON.parse(output)
         rescue ex
-          # Parsing failed - return error with details
+          # Parsing failed - return error with details. Real Ansible's
+          # own equivalent (a become/connection failure, e.g. "Premature
+          # end of stream waiting for become success" - no module ever
+          # ran, so there's no result JSON to reinterpret) is unignorable
+          # by failed_when: - see `_connection_failure`'s own comment on
+          # apply_changed_failed_when for why this needs the same marker.
           JSON.parse({
-            "changed"     => false,
-            "failed"      => true,
-            "msg"         => "Failed to parse plugin output",
-            "stdout"      => output,
-            "stderr"      => stderr.to_s,
-            "parse_error" => ex.message,
+            "changed"             => false,
+            "failed"              => true,
+            "msg"                 => "Failed to parse plugin output",
+            "stdout"              => output,
+            "stderr"              => stderr.to_s,
+            "parse_error"         => ex.message,
+            "_connection_failure" => true,
           }.to_json)
         end
       rescue ex
         # Execution failed
         JSON.parse({
-          "changed" => false,
-          "failed"  => true,
-          "msg"     => "Plugin execution failed: #{ex.message}",
-          "stderr"  => stderr.to_s,
+          "changed"             => false,
+          "failed"              => true,
+          "msg"                 => "Plugin execution failed: #{ex.message}",
+          "stderr"              => stderr.to_s,
+          "_connection_failure" => true,
         }.to_json)
       end
     end
@@ -1326,11 +1333,12 @@ module Krikri
     def self.interpret_remote_result(exit_code : Int32, stdout : String, stderr : String) : JSON::Any
       if exit_code != 0
         return JSON.parse({
-          "changed" => false,
-          "failed"  => true,
-          "msg"     => "Plugin execution failed on remote",
-          "stdout"  => stdout,
-          "stderr"  => stderr,
+          "changed"             => false,
+          "failed"              => true,
+          "msg"                 => "Plugin execution failed on remote",
+          "stdout"              => stdout,
+          "stderr"              => stderr,
+          "_connection_failure" => true,
         }.to_json)
       end
 
@@ -1338,11 +1346,12 @@ module Krikri
         JSON.parse(stdout)
       rescue
         JSON.parse({
-          "changed" => false,
-          "failed"  => true,
-          "msg"     => "Failed to parse plugin output from remote",
-          "stdout"  => stdout,
-          "stderr"  => stderr,
+          "changed"             => false,
+          "failed"              => true,
+          "msg"                 => "Failed to parse plugin output from remote",
+          "stdout"              => stdout,
+          "stderr"              => stderr,
+          "_connection_failure" => true,
         }.to_json)
       end
     end

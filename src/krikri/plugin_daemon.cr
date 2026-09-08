@@ -110,10 +110,11 @@ module Krikri
           JSON.parse(raw)
         rescue
           JSON.parse({
-            "changed" => false,
-            "failed"  => true,
-            "msg"     => "Failed to parse plugin output in batch",
-            "stdout"  => raw,
+            "changed"             => false,
+            "failed"              => true,
+            "msg"                 => "Failed to parse plugin output in batch",
+            "stdout"              => raw,
+            "_connection_failure" => true,
           }.to_json)
         end
 

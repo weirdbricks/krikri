@@ -18,8 +18,41 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.830`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.831`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
+
+---
+
+## `buluma.checkmk_agent` regression root-caused and fixed: a become/connection failure was overridable by failed_when: false (0.9.831)
+
+A `become:`/connection-level failure (no module ever ran, so there's no
+result JSON to reinterpret - a missing sudo password, an unknown
+`become_user`, a crashed or missing plugin binary, a nonzero SSH exit)
+was routed through `apply_changed_failed_when` exactly like a genuine
+module result, so a task's own `failed_when: false` silently suppressed
+it and the play continued. Real Ansible's own equivalent - verified live
+against ansible-core 2.19.4 - aborts the WHOLE PLAY as `fatal:` in this
+case, unconditionally; `failed_when:` never even gets a chance to run,
+because there's no module result for it to reinterpret in the first
+place. Found via `buluma.checkmk_agent`'s own "Download check_mk_agent
+installer (deb)" task (`delegate_to: localhost, failed_when: false`,
+inheriting the play's `become: true`) - a sudo password requirement on
+the controller (the harness host, not the play's remote target) failed
+real Ansible outright while this engine happily continued.
+
+Fixed by tagging every "no real module result" synthetic `PluginResult`
+(`plugin_manager.cr`'s local/remote execution-failure and
+JSON-parse-failure branches, `plugin_daemon.cr`'s batch equivalent) with
+a `_connection_failure` marker, and having `apply_changed_failed_when`
+skip both `changed_when:`/`failed_when:` entirely when it's set -
+`ignore_errors:` (a genuinely different, still-untouched mechanism) is
+unaffected. Regression spec added
+(`spec/integration/connection_failure_unignorable_by_failed_when_spec.cr`,
+using an unknown `become_user` rather than a missing sudo password so
+the failure is deterministic on any machine's own sudoers config).
+Live-reverified against the real role on a fresh Kata VM: `ok=14
+changed=5 failed=1`, matching real Ansible's `ok=14 changed=6 failed=1`
+baseline (now correctly aborting at the same task, cold and warm).
 
 ---
 
@@ -1271,9 +1304,6 @@ why these are listed as confirmed rather than merely suspected:
   package this engine doesn't bundle, a new, separate, larger scope
   gap (see "Deliberate limits" below) than the regression this row
   originally reported.
-- **`buluma.checkmk_agent`**: also inverted - krikri succeeds
-  (`ok=17 failed=0`) where real Ansible fails (`ok=14 failed=1`),
-  reproduced identically both runs.
 - **`kyl191.openvpn`**: small but reproducible divergence
   (`ok=20/19 changed=14` vs real Ansible's `ok=21/19`), identically both
   runs.

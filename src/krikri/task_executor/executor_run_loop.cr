@@ -1461,6 +1461,22 @@ module Krikri
       failed_when = task.failed_when
       return result unless changed_when || failed_when
 
+      # A `_connection_failure` result (PluginManager's own marker for
+      # "no module ever ran to produce a real result" - a become
+      # failure, a crashed/missing plugin binary, an SSH-level nonzero
+      # exit) has no module JSON for failed_when:/changed_when: to
+      # reinterpret in the first place. Real Ansible's own equivalent
+      # (a become/connection failure - e.g. "Premature end of stream
+      # waiting for become success") is unignorable by failed_when: -
+      # verified live against ansible-core 2.19.4: a `delegate_to:
+      # localhost` task needing a sudo password it doesn't have aborts
+      # the whole play as `fatal:`, even with `failed_when: false` set,
+      # while this engine previously let failed_when: false suppress it
+      # and continue. Found via buluma.checkmk_agent's own "Download
+      # check_mk_agent installer (deb)" task (`delegate_to: localhost,
+      # failed_when: false`, inheriting the play's `become: true`).
+      return result if result.as_h?.try(&.["_connection_failure"]?.try(&.as_bool?))
+
       eval_context = vars_context
       if (register_name = task.register) && !register_name.empty?
         eval_context = vars_context.dup
