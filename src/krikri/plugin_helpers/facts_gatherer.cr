@@ -122,8 +122,8 @@ module Krikri
       enabled
     end
 
-    def gather_facts(subset : Array(String) = [] of String, remote_connection : Bool = false) : Hash(String, String | Int64 | Hash(String, String) | Array(String) | Array(Hash(String, String)) | Hash(String, JSON::Any))
-      facts = {} of String => (String | Int64 | Hash(String, String) | Array(String) | Array(Hash(String, String)) | Hash(String, JSON::Any))
+    def gather_facts(subset : Array(String) = [] of String, remote_connection : Bool = false) : Hash(String, String | Int64 | Bool | Hash(String, String) | Array(String) | Array(Hash(String, String)) | Hash(String, JSON::Any))
+      facts = {} of String => (String | Int64 | Bool | Hash(String, String) | Array(String) | Array(Hash(String, String)) | Hash(String, JSON::Any))
 
       # The minimal set, always gathered - hostname, OS/distribution, the
       # interpreter, the user and the clock. This is what real Ansible's
@@ -442,6 +442,25 @@ module Krikri
       apparmor_facts = {} of String => String
       apparmor_facts["status"] = Dir.exists?("/sys/kernel/security/apparmor") ? "enabled" : "disabled"
       facts["ansible_apparmor"] = apparmor_facts
+
+      # ansible_fips - real Ansible's FipsFactCollector (module_utils/
+      # facts/system/fips.py) ALWAYS populates this, as a genuine
+      # boolean: true only when /proc/sys/crypto/fips_enabled reads
+      # exactly "1", false otherwise (file missing, unreadable, any
+      # other content). Entirely missing before - found via
+      # geerlingguy.postgresql on Rocky 9.6 (round 65000+): the role's
+      # own `postgresql_auth_method: "{{ ansible_fips |
+      # ternary('scram-sha-256', 'md5') }}"` flows into the pg_hba.conf
+      # template's `{{ client.auth_method }}`, and with the fact
+      # undefined the ternary rendered the literal text "undefined"
+      # into every host line - postgresql.service then refused to start
+      # ('invalid authentication method "undefined"') after a perfectly
+      # successful initdb, while real Ansible's run of the identical
+      # role succeeded end to end. A JSON bool, not the "False"-string
+      # shape some other facts use here: a string "False" is truthy
+      # under Jinja2 semantics and ternary would then pick the FIPS
+      # branch on every host.
+      facts["ansible_fips"] = capture("cat", ["/proc/sys/crypto/fips_enabled"]).strip == "1"
 
       # ansible_selinux.status - real Ansible's SelinuxFactCollector (module_
       # utils/facts/system/selinux.py) reports 'Missing selinux Python

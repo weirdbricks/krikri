@@ -58,6 +58,21 @@ describe Krikri::FactsGatherer do
     facts["ansible_product_version"].as_s.should_not be_empty
   end
 
+  it "always sets ansible_fips as a real boolean" do
+    # Real Ansible's FipsFactCollector always populates this (true only
+    # when /proc/sys/crypto/fips_enabled reads exactly "1") - and as a
+    # genuine JSON bool, NOT a "False" string: a string "False" is
+    # truthy under Jinja2 semantics, so geerlingguy.postgresql's own
+    # `{{ ansible_fips | ternary('scram-sha-256', 'md5') }}` (flowing
+    # into pg_hba.conf) would pick the FIPS branch on every host. With
+    # the fact missing entirely, the ternary rendered the literal text
+    # "undefined" into pg_hba.conf and postgresql.service refused to
+    # start after a successful initdb (round 65000+).
+    facts = JSON.parse(Krikri::FactsGatherer.run(nil))["ansible_facts"].as_h
+    facts["ansible_fips"]?.should_not be_nil
+    facts["ansible_fips"].as_bool.should be_a(Bool)
+  end
+
   it "honours gather_subset from the config it is handed" do
     # The daemon hands over an already-parsed JSON::Any rather than a
     # STDIN string, so this is the shape that matters now.
