@@ -18,12 +18,12 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.839`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.840`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
 
 ---
 
-## Round 71000: 200 never-before-tested roles (Galaxy top-download list), 3 real bugs (0.9.837-0.9.839)
+## Round 71000: 200 never-before-tested roles (Galaxy top-download list), 4 real bugs (0.9.837-0.9.840)
 
 First batch since Atlantic.net's server-limit increase (10 -> 25); run at
 `--kata-hosts 8 --atlantic-hosts 20`. All 4 Kata pairs hit a new failure
@@ -38,7 +38,7 @@ capacity, Kata is no longer worth defaulting to for these batches -
 `krikri-role-tester run ... --backend atlantic --atlantic-hosts N` (no
 code changes needed) is now the preferred invocation.
 
-Of 10 DIVERGENT roles from the first 200: 3 real bugs found and fixed
+Of 10 DIVERGENT roles from the first 200: 4 real bugs found and fixed
 below; `amtega.tftpd` is the 5th confirming role for the already-
 documented `_check_platform` role-private-module scope cut; `adfinis-
 sygroup.icinga2_agent`'s `deb822_repository`/apt-package failure did not
@@ -105,6 +105,29 @@ afterward. One new open gap found (below): `asg1612.gluster`.
   narrower than the systemic fix would suggest - noted here rather than
   widened speculatively). Regression spec added
   (`spec/unit/iptables_command_spec.cr`).
+
+- **`bsmeding.docker`**: `groups:`/`append:` on an EXISTING user did
+  nothing - the role's own "Ensure docker users are added to the docker
+  group." (`ansible.builtin.user`, `groups: docker, append: true`
+  against `root`) always reported unchanged, even on the very first
+  run, and `root` was never actually added to the `docker` group at
+  all. `plugins/user.cr`'s `#modify` path (used for any account that
+  already exists, as opposed to `#create`'s `useradd`) built its
+  `usermod` flags from uid/group(primary)/shell/home/comment only -
+  `groups:`/`append:` were read in `#create` (`useradd -G`) but never
+  even looked at in `#modify`, so adding an existing user to a
+  supplementary group was silently a no-op regardless of `append:`.
+  Fixed by reading current group membership from `getent group`'s own
+  4th (member-list) field per line - mirroring real Ansible's own
+  `grp.getgrall()` + `name in g.gr_mem` check, rather than `id -Gn`,
+  which would also fold in the user's PRIMARY group and wrongly count
+  it as "already a member" - and adding `-G`/`-a -G` to `usermod` when
+  the requested/current sets differ. No spec added - real
+  useradd/usermod mutation is out of unit-spec scope by design (same
+  class as apt/dpkg below); verified live by rebuilding the plugin and
+  running it directly against a fresh Debian trixie container: `root`
+  added to a fresh `docker` group on the first run (`changed: true`,
+  confirmed via `getent group docker`), idempotent on the second.
 
 - **`claranet.postgresql`**: cold run diverged early - real Ansible's own
   `ansible.builtin.apt` module always registers `stdout`/`stderr` (the
