@@ -18,8 +18,48 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.817`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.822`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
+
+---
+
+## Scope-cut clearing batch: five deliberate limits turned into implementations (0.9.818 -> 0.9.822)
+
+Five entries from "Deliberate limits" below had each accumulated live
+evidence against their own "revisit only if" clauses, so they were
+implemented (each in its own commit; the per-item detail is in the
+commit messages and the specs):
+
+- **`ansible.utils`'s ipaddr filter family** (`ipaddr`, `ipwrap`,
+  `ipv4`, `ipv6`, `ipsubnet`, `ipmath`, `next_nth_usable`,
+  `previous_nth_usable`, `network_in_network`, `network_in_usable`,
+  `ip4_hex`) - every query mirrored against the installed
+  ansible-core 2.19.4 + ansible.utils + netaddr 1.3.0 probed live,
+  including the version's own bugs (queries not in the plugin's query
+  map error with the real "unknown filter type"; `::1 | ipaddr('ipv4')`
+  really is `0.0.0.1/32`). One shared core serves both templating
+  engines.
+- **Role-private `library/*.py` custom modules run on the target with
+  the target's own python3** through a new py_module plugin (the same
+  transport every other plugin uses) instead of being skipped - third
+  party COLLECTION modules remain the cut. An unavailable module's
+  params are now parsed at parse time (they are the module's argument
+  dict), and a python module behind a false `when:` still skips and
+  never pollutes the exit code.
+- **firewalld immediate changes against a live daemon** go through
+  `firewall-cmd` (a D-Bus client - no binding work needed); requests
+  split into runtime/permanent contexts like the real module, and a
+  `target:` operation in the immediate context now FAILS with the real
+  module's "Zone operations must be permanent..." (previously silently
+  serviced offline - more lenient than real Ansible).
+- **hostvars attribute misses raise in Crinja renders** under strict
+  templating, matching real Ansible's HostVarsVars wrapper (real
+  Ansible's exact failure text verified live on both engines); the
+  strictness rides on the hostvars value itself, so plain dicts stay
+  lenient even under strict.
+- **`openssl_publickey_info` and `openssl_csr_info`** - the two
+  remaining "read-only and cheap" community.crypto modules; both result
+  shapes mirrored field-by-field against real community.crypto 3.1.1.
 
 ---
 
@@ -2297,26 +2337,23 @@ gaps" rather than arguing with the note in place.
 
 ### Arbitrary Python
 
-- **Role-private custom modules** (a role's own `library/*.py`, outside the
-  `ansible.builtin`/`community.*`/etc. plugin set this engine ships as
-  native binaries) - there's no generic arbitrary-Python-module runner,
-  so these can't execute at all. The task is skipped with a
-  parse-time warning ("uses unimplemented plugin: <name>") rather than
-  crashing the run - deliberately, so a role leaning on its own
-  `library/*.py` stays benchmarkable for everything else it does - but
-  anything downstream depending on its result sees an undefined value,
-  which can cascade into broader task-status divergence for roles that
-  lean on this (seen repeatedly benchmarking `linux-system-roles`:
+- **Arbitrary-Python-module support is scoped to role-private
+  `library/*.py` sources** (plus the playbook-adjacent `library/`): a
+  module with a resolvable source now RUNS on the target with the
+  target's own python3 through the py_module plugin (0.9.819, see the
+  scope-cut clearing batch above) - previously skipped with a
+  parse-time warning (seen live repeatedly via linux-system-roles'
   `sr_fingerprint`, `timesync_provider`, `kernel_settings_get_config`,
-  `blivet`). Since `0.9.558` such a run **exits 4**, real Ansible's own
-  code for refusing a playbook it can't resolve a module for, instead of
-  the previous 0 - which reported a green run to CI for a playbook real
-  `ansible-playbook` rejects outright. What remains divergent here is
-  only WHICH TASKS RUN (real Ansible refuses at parse time and runs
-  nothing; this engine runs the rest of the play), not the exit status a
-  caller sees. Seen live repeatedly, most recently linux-system-roles'
-  own `sr_fingerprint` tasks (crypto_policies, journald), where both
-  engines otherwise agree.
+  `blivet`). What remains cut: a module reference with NO library
+  source anywhere (still parse-time-warned, still exits 4 for a
+  reachable one since 0.9.558 - real Ansible's own code for refusing a
+  playbook it can't resolve a module for) and every THIRD-PARTY
+  COLLECTION module (the bullet below) - those live inside installed
+  collections on the comparison side, not in the playbook tree the
+  runner can see. The exit-status half stays divergent for source-less
+  modules: WHICH TASKS RUN differs (real Ansible refuses at parse time
+  and runs nothing; this engine runs the rest of the play), not the
+  exit status a caller sees.
 - **Third-party COLLECTION modules and filters, same cut** (round 199,
   the bodsch.* author's own `bodsch.core`/`bodsch.systemd` collections -
   `bodsch.core.check_mode`, `.facts`, `.type` filter, `.upgrade` filter,
@@ -2335,10 +2372,10 @@ gaps" rather than arguing with the note in place.
   `community.rabbitmq.rabbitmq_plugin/_user` (mrlesmithjr.rabbitmq),
   `ansible.mariadb.mariadb_db/_user` (fauust.mariadb, round6002) -
   rc=4 "unavailable modules" vs real ansible rc=0. Same class as the
-  community.crypto notes below. The FILTER-plugin shape of the same cut
-  also confirmed: `ansible.utils`'s `ipaddr` filter (r_pufky.pihole,
-  round6007) - bundled with the full `ansible` package on the py side,
-  not implemented here.
+  community.crypto notes below. (`ansible.utils`'s `ipaddr` filter,
+  r_pufky.pihole round6007, used to live here too - the whole family
+  is implemented as of 0.9.818, see the scope-cut clearing batch
+  above.)
 
 ### Fact caching
 
@@ -2368,22 +2405,19 @@ gaps" rather than arguing with the note in place.
   deliberately avoided - for a shape nothing in the role corpus hits
   (`| string` on a tuple-bearing var read back out of storage). Revisit
   only if a real role is found relying on it.
-- **A dotted/bracketed attribute miss on a defined object stays lenient
-  in `.j2` template renders**, unlike a bare-name miss (`crinja_strict_undefined.cr`
-  only makes `Resolver#resolve`, the bare-name lookup, strict). Found via
-  `mrlesmithjr.ansible_consul_client` (RHEL-family round 60175):
-  `hostvars[inventory_hostname]['ansible_'+consul_client_bind_interface]`
-  with a bind interface (`enp0s8`, a Vagrant-style default) that doesn't
-  exist on the real host - real Ansible's `HostVarsVars` raises
-  `object of type 'HostVarsVars' has no attribute 'ansible_enp0s8'`,
-  krikri's Crinja render resolves it leniently and renders an
-  empty/wrong value instead of failing the task. The dotted-access
-  path (`Resolver.resolve_with_hash_accessor`) is also the fallback for
-  method-call dispatch and this engine's own fact-coverage gaps -
-  making it strict risks false positives across the whole template
-  corpus (per that file's own header comment), so it was deliberately
-  left lenient when the bare-name fix landed. Revisit only with a
-  hostvars-specific strict path, not a blanket change to that resolver.
+- **A dotted/bracketed attribute miss on a NON-hostvars object stays
+  lenient in `.j2` template renders** (`crinja_strict_undefined.cr`
+  only makes `Resolver#resolve`, the bare-name lookup, strict). The
+  hostvars case - the one live divergence against this cut
+  (`mrlesmithjr.ansible_consul_client`, RHEL-family round 60175:
+  real Ansible's `HostVarsVars` raises `object of type 'HostVarsVars'
+  has no attribute 'ansible_enp0s8'` where a lenient render produced an
+  empty value) - is closed as of 0.9.821 via the hostvars-specific
+  strict path the original note called for (see the scope-cut clearing
+  batch above). The blanket cut stays: `Resolver.resolve_with_hash_
+  accessor` is also the fallback for method-call dispatch and this
+  engine's own fact-coverage gaps, so a non-hostvars dict miss remains
+  lenient even under strict templating, deliberately.
 
 ### Cosmetic differences (both engines fail; only the wording differs)
 
@@ -2547,14 +2581,14 @@ as bugs, not because anyone intends to fix them.
   `x509_certificate_info`, `openssl_publickey`, `get_certificate`, and
   `openssl_pkcs12` `action: parse`.
 
-  Still unimplemented, none of them seen in a role yet: `openssl_publickey_info`,
-  `openssl_csr_info`, `luks_device`, the `acme`/`entrust` certificate
-  providers, `openssl_pkcs12` export's `encryption_level:
-  compatibility2022`, and the CRL/revocation family
+  Still unimplemented, none of them seen in a role yet: `luks_device`,
+  the `acme`/`entrust` certificate providers, `openssl_pkcs12` export's
+  `encryption_level: compatibility2022`, and the CRL/revocation family
   (all of which fail with a clear "not supported" message rather than
-  silently doing something else). The `*_info` ones are read-only and
-  cheap if a role ever needs them; `acme` means speaking ACME to a real
-  CA, which stays out of scope.
+  silently doing something else); `acme` means speaking ACME to a real
+  CA, which stays out of scope. (The `*_info` read-only half -
+  `openssl_publickey_info`, `openssl_csr_info` - is implemented as of
+  0.9.822, see the scope-cut clearing batch above.)
 - `community.general.vdo` - unimplemented; untestable so far, no real
   role sets a non-empty `vdo_devices`.
 - `gluster.gluster.gluster_volume` - unimplemented; causes a cosmetic
@@ -2568,17 +2602,15 @@ as bugs, not because anyone intends to fix them.
   `permanent`/`immediate`/`offline` validation logic is ported exactly
   (verified against `ansible/posix/plugins/modules/firewalld.py`'s own
   `main()`) rather than requiring `offline: true, permanent: true`
-  explicitly. What's left unimplemented is now only the one combination
-  real Ansible services over a live D-Bus connection that this plugin
-  has no backend for: a genuinely running firewalld daemon (auto-
-  detected via `firewall-cmd --state`, real Ansible's own detection
-  equivalent) AND an `immediate:` runtime change actually requested (or
-  defaulted - real Ansible silently forces `immediate: true` whenever
-  neither `permanent:` nor `immediate:` is given). Every other
-  combination - which is every combination likely on the containerized/
-  no-init-system hosts this project's benchmark rounds target - is
-  serviced via `firewall-offline-cmd`, matching real Ansible's own
-  auto-fallback. Verified live in a real firewalld 2.3.1 container
+  explicitly. The last combination -
+  a genuinely running firewalld daemon (auto-detected via
+  `firewall-cmd --state`, real Ansible's own detection equivalent) AND
+  an `immediate:` runtime change requested or defaulted - used to fail
+  with "not implemented"; it is serviced through `firewall-cmd` (the
+  D-Bus client CLI) as of 0.9.820, and a `target:` operation in the
+  immediate context now fails with the real module's "Zone operations
+  must be permanent..." like real Ansible instead of being silently
+  serviced offline. Verified live in a real firewalld 2.3.1 container
   (`firewall-cmd`/`firewall-offline-cmd`), byte-identical `ok=5
   changed=2 failed=0 ignored=1` against real `ansible-playbook` across
   4 scenarios (permanent-only enable, idempotent rerun, defaulted zone,

@@ -986,6 +986,8 @@ module Krikri
       # one generator module that completes the key-generation family.
       "community.crypto.openssl_privatekey_info",
       "community.crypto.x509_certificate_info",
+      "community.crypto.openssl_publickey_info",
+      "community.crypto.openssl_csr_info",
       "community.crypto.openssl_publickey",
       "community.crypto.get_certificate",
       "community.general.modprobe",
@@ -1046,6 +1048,15 @@ module Krikri
       "community.rabbitmq.rabbitmq_plugin",
       "community.rabbitmq.rabbitmq_user",
       "community.general.redhat_subscription",
+      # The arbitrary-Python-module runner's internal dispatch name -
+      # NOT a module real playbooks call. A task whose module resolves
+      # to nothing stays marked unavailable_module (still exits 4 the
+      # way real Ansible refuses an unresolvable playbook), but when a
+      # role-private `library/<name>.py` source exists for it,
+      # TaskExecutor dispatches the task to the py_module plugin with
+      # the source embedded, running it on the target with the target's
+      # own python3 - see PythonModuleRunner's own comment.
+      "ansible.builtin.py_module",
     }
 
     # The collections a bare (non-FQCN) module name resolves against, in
@@ -2003,7 +2014,12 @@ module Krikri
         task.params = (mp3 = module_params) && mp3.as_h? ? parse_module_params(mp3, module_name) : Hash(String, String).new
       else
         task.unavailable_module = unavailable_module_name
-        task.params = unavailable_module_name ? Hash(String, String).new : parse_module_params((module_params || raise "BUG: module_params missing"), module_name)
+        # Params are parsed even for an unavailable module now: a
+        # role-private `library/<name>.py` module runs through the
+        # py_module runner (see PythonModuleRunner), and its argument
+        # dict IS these params - previously they were dropped here, so
+        # the module always ran with empty args.
+        task.params = parse_module_params((module_params || raise "BUG: module_params missing"), module_name)
       end
 
       # args: - a sibling keyword (not nested inside the module's own

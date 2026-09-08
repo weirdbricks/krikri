@@ -8,6 +8,7 @@ require "uuid"
 require "openssl/digest"
 require "../vault"
 require "../jmespath"
+require "../ipaddr_core"
 require "./variable_lookup"
 require "./expression_evaluator"
 require "../variable_substitutor"
@@ -68,6 +69,9 @@ module Krikri
         to_uuid symmetric_difference combinations permutations
         rekey_on_member extract from_yaml_all vault unvault ternary
         intersect difference
+        ipaddr ipwrap ipv4 ipv6 ipsubnet ipmath next_nth_usable
+        previous_nth_usable network_in_network network_in_usable
+        ip4_hex
       ])
 
       # The pre-pass's name check: true for a name this engine's own
@@ -158,6 +162,16 @@ module Krikri
         # (round 30). Stripped once here so every filter branch below
         # matches either spelling.
         filter_expr = filter_expr.lchop("ansible.builtin.") if filter_expr.starts_with?("ansible.builtin.")
+        # same carve-out for the ansible.utils ipaddr family's FQCN
+        # spelling (`| ansible.utils.ipaddr`) - but only for a name the
+        # family actually implements, so a genuinely-unknown
+        # `ansible.utils.foo` still errors with the full FQCN in the
+        # message, as real Ansible names it.
+        if filter_expr.starts_with?("ansible.utils.")
+          rest = filter_expr.lchop("ansible.utils.")
+          bare = rest.match(/^(\w+)/).try(&.[1])
+          filter_expr = rest if bare && IpAddrCore::FAMILY_FILTERS.includes?(bare)
+        end
 
         if match = filter_expr.match(REGEX_FILTER_CALL)
           filter_name = match[1]
@@ -1136,6 +1150,47 @@ module Krikri
           # "skipped") that would recur in any role using this common
           # required-facts guard pattern.
           JSON::Any.new(FilterCore.difference(as_array(value), as_array(resolve_expression(filter_args))))
+        when "ipaddr", "ipwrap", "ipv4", "ipv6", "ipsubnet", "ipmath",
+             "next_nth_usable", "previous_nth_usable",
+             "network_in_network", "network_in_usable", "ip4_hex"
+          # ansible.utils ipaddr family - shared core in ipaddr_core.cr,
+          # mirrored against real ansible-core 2.19.4 + ansible.utils +
+          # netaddr 1.3.0 (every query probed live). Also registered on
+          # the Crinja side (jinja_filters.cr) so `.j2` template files
+          # and `{% %}` blocks resolve the same names.
+          args = split_top_level_args(filter_args)
+          case filter_name
+          when "ipaddr"
+            IpAddrCore.ipaddr(value, resolved_query_arg(args[0]?))
+          when "ipwrap"
+            IpAddrCore.ipwrap(value, resolved_query_arg(args[0]?))
+          when "ipv4"
+            IpAddrCore.ipaddr(value, resolved_query_arg(args[0]?), 4, "ipv4")
+          when "ipv6"
+            IpAddrCore.ipaddr(value, resolved_query_arg(args[0]?), 6, "ipv6")
+          when "ipsubnet"
+            IpAddrCore.ipsubnet(value, resolved_query_arg(args[0]?), args[1]?.try { |arg| resolved_query_arg(arg) })
+          when "ipmath"
+            amount = resolved_int_arg(args[0]?)
+            raise IpAddrCore::IpError.new("You must pass an integer for arithmetic; #{args[0]? ? args[0] : ""} is not a valid integer") unless amount
+            IpAddrCore.ipmath(value, amount)
+          when "next_nth_usable"
+            offset = resolved_int_arg(args[0]?)
+            raise IpAddrCore::IpError.new("Must pass in an integer") unless offset
+            IpAddrCore.next_nth_usable(value, offset)
+          when "previous_nth_usable"
+            offset = resolved_int_arg(args[0]?)
+            raise IpAddrCore::IpError.new("Must pass in an integer") unless offset
+            IpAddrCore.previous_nth_usable(value, offset)
+          when "network_in_network"
+            IpAddrCore.network_in_network(value, resolve_expression(args[0]? || ""))
+          when "network_in_usable"
+            IpAddrCore.network_in_usable(value, resolve_expression(args[0]? || ""))
+          when "ip4_hex"
+            IpAddrCore.ip4_hex(value, resolved_query_arg(args[0]?))
+          else
+            raise UnknownFilterError.new("No filter named '#{filter_name}'.")
+          end
         else
           # Unknown filter - real Ansible raises ("Syntax error in
           # template: No filter named 'bodsch.core.type'.", verified
@@ -1524,6 +1579,33 @@ module Krikri
       # exactly what happened when this used to split_chain first and only
       # checked for ternary inside #resolve_base_expression (too late to
       # matter, since the mis-split had already happened).
+      # ipaddr-family argument helpers: a query/count argument may be a
+      # quoted literal or a variable/expression reference; resolve and
+      # coerce to the core's own types.
+      private def resolved_query_arg(arg : String?) : String
+        return "" unless arg
+        resolved = resolve_expression(arg.strip)
+        case raw = resolved.raw
+        when Nil
+          ""
+        when String
+          raw
+        else
+          as_string(resolved)
+        end
+      end
+
+      private def resolved_int_arg(arg : String?) : Int64?
+        return nil unless arg
+        resolved = resolve_expression(arg.strip)
+        case raw = resolved.raw
+        when Int64   then raw
+        when Float64 then raw.to_i64
+        when String  then raw.strip.to_i64?
+        else              nil
+        end
+      end
+
       private def resolve_expression(expr : String) : JSON::Any
         expr = expr.strip
         expr = unwrap_outer_parens(expr)

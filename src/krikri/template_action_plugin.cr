@@ -684,7 +684,15 @@ module Krikri
       # re-templating at every level of a nested structure.
       @vars.each do |key, value|
         value = VariableSubstitutor::CrinjaRenderer.rerender_nested_templates(value, substitutor)
-        vars[key] = VariableSubstitutor::CrinjaRenderer.json_any_to_crinja_value(value)
+        # hostvars gets the HostVarsVars treatment (raising attribute
+        # miss under strict templating, matching real Ansible's own
+        # wrapper) - same conversion the lazy `{% %}` context uses, so
+        # a `.j2` file and a module-arg render behave identically.
+        vars[key] = if key == "hostvars"
+                      VariableSubstitutor::CrinjaRenderer.convert_hostvars(value, substitutor)
+                    else
+                      VariableSubstitutor::CrinjaRenderer.json_any_to_crinja_value(value)
+                    end
       end
 
       # Add host information

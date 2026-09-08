@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.817-blue)](https://github.com/weirdbricks/krikri)
+[![Version](https://img.shields.io/badge/version-0.9.822-blue)](https://github.com/weirdbricks/krikri)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/krikri)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 [![Homebrew](https://img.shields.io/badge/homebrew-tap-blue)](#install-via-homebrew-macoslinux-prebuilt-binaries)
@@ -53,8 +53,10 @@ in wall-clock time - see **Performance** below.
 
 ### What's structurally different (by design, not a gap)
 
-No arbitrary Python execution (a role's private `library/*.py` module
-can't run - there's no interpreter to run it in), cloud provider
+Third-party COLLECTION Python modules (`bodsch.*`, `community.*`, etc.)
+can't run - those live in installed collections this project doesn't
+ship or reimplement (a role's OWN private `library/*.py` module runs
+fine, delegated to the target's real python3). Cloud provider
 *modules* (`amazon.aws`/`azure_rm_*` resource management - `ec2_instance`,
 `s3_object`, IAM, etc.), and a handful of narrower cuts (`docker_*`'s
 `api_version:` pin). Cloud *inventory* plugins are

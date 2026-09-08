@@ -154,6 +154,23 @@ Metrics/CyclomaticComplexity:
   Description: Disallows methods with a cyclomatic complexity higher than `MaxComplexity`
   MaxComplexity: 10
   Excluded:
+  # ipaddr_core.cr is a faithful port of ansible.utils' own
+  # `ipaddr()` query_func_map dispatch - the branch count IS the
+  # specification (every query probed against real ansible-playbook),
+  # and splitting the dispatch up would obscure the correspondence the
+  # corpus differential in ipaddr_spec.cr checks against.
+  - src/krikri/ipaddr_core.cr
+  # plugins/py_module.cr's #execute is a flat "decode, locate python,
+  # invoke, parse" sequence whose steps are the specification (each maps
+  # 1:1 to a step of real Ansible's own module execution), not nested
+  # branching to factor.
+  - plugins/py_module.cr
+  # src/krikri/plugin_helpers/x509_cert_info.cr's parse_extensions/
+  # extension_section/classify_public_key are flat per-extension and
+  # per-key-type branch chains - the branch count IS the specification
+  # (each case maps 1:1 to a field of the real community.crypto
+  # backends), not nested branching to factor.
+  - src/krikri/plugin_helpers/x509_cert_info.cr
   # Faithful ports of real Ansible's own long branch chains - the
   # branch count IS the specification (parse_distribution_file_Debian's
   # ordered substring tests; the debugger prompt's command set), and

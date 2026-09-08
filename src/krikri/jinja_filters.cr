@@ -8,6 +8,7 @@ require "uri"
 require "./jmespath"
 require "./variable_substitutor/crinja_renderer"
 require "./vault"
+require "./ipaddr_core"
 
 # Custom Jinja2 filters that real Ansible's Jinja2 provides but Crinja
 # doesn't ship, registered into the global Crinja default library so they're
@@ -229,6 +230,124 @@ module Krikri
                  false_arg || Crinja::Value.new("")
                end
       Crinja::Value.new(picked)
+    end
+
+    # ansible.utils ipaddr family - the ONE shared implementation lives
+    # in ipaddr_core.cr (JSON::Any world); these registrations convert
+    # Crinja::Value in and out so `.j2` template files and `{% %}` block
+    # tags resolve the same names with the same semantics as the
+    # hand-rolled FilterEngine dispatch (filter_engine.cr). Real
+    # ansible-core 2.19.4 + ansible.utils + netaddr 1.3.0 probed live
+    # for every query - see spec/unit/ipaddr_spec.cr.
+    Crinja.filter(:ipaddr) do
+      query = arguments.varargs[0]?.try(&.to_s) || ""
+      JinjaFilters.json_any_to_value(
+        IpAddrCore.ipaddr(
+          VariableSubstitutor::CrinjaRenderer.crinja_value_to_json_any(target),
+          query,
+        )
+      )
+    end
+
+    Crinja.filter(:ipwrap) do
+      query = arguments.varargs[0]?.try(&.to_s) || ""
+      JinjaFilters.json_any_to_value(
+        IpAddrCore.ipwrap(
+          VariableSubstitutor::CrinjaRenderer.crinja_value_to_json_any(target),
+          query,
+        )
+      )
+    end
+
+    Crinja.filter(:ipv4) do
+      query = arguments.varargs[0]?.try(&.to_s) || ""
+      JinjaFilters.json_any_to_value(
+        IpAddrCore.ipaddr(
+          VariableSubstitutor::CrinjaRenderer.crinja_value_to_json_any(target),
+          query, 4, "ipv4",
+        )
+      )
+    end
+
+    Crinja.filter(:ipv6) do
+      query = arguments.varargs[0]?.try(&.to_s) || ""
+      JinjaFilters.json_any_to_value(
+        IpAddrCore.ipaddr(
+          VariableSubstitutor::CrinjaRenderer.crinja_value_to_json_any(target),
+          query, 6, "ipv6",
+        )
+      )
+    end
+
+    Crinja.filter(:ipsubnet) do
+      query = arguments.varargs[0]?.try(&.to_s) || ""
+      index = arguments.varargs[1]?.try(&.to_s)
+      JinjaFilters.json_any_to_value(
+        IpAddrCore.ipsubnet(
+          VariableSubstitutor::CrinjaRenderer.crinja_value_to_json_any(target),
+          query, index,
+        )
+      )
+    end
+
+    Crinja.filter(:ipmath) do
+      amount = arguments.varargs[0]?.try(&.to_s).try(&.to_i64?)
+      unless amount
+        raise Crinja::TemplateError.new("You must pass an integer for arithmetic")
+      end
+      JinjaFilters.json_any_to_value(
+        IpAddrCore.ipmath(VariableSubstitutor::CrinjaRenderer.crinja_value_to_json_any(target), amount)
+      )
+    end
+
+    Crinja.filter(:next_nth_usable) do
+      offset = arguments.varargs[0]?.try(&.to_s).try(&.to_i64?)
+      unless offset
+        raise Crinja::TemplateError.new("Must pass in an integer")
+      end
+      JinjaFilters.json_any_to_value(
+        IpAddrCore.next_nth_usable(VariableSubstitutor::CrinjaRenderer.crinja_value_to_json_any(target), offset)
+      )
+    end
+
+    Crinja.filter(:previous_nth_usable) do
+      offset = arguments.varargs[0]?.try(&.to_s).try(&.to_i64?)
+      unless offset
+        raise Crinja::TemplateError.new("Must pass in an integer")
+      end
+      JinjaFilters.json_any_to_value(
+        IpAddrCore.previous_nth_usable(VariableSubstitutor::CrinjaRenderer.crinja_value_to_json_any(target), offset)
+      )
+    end
+
+    Crinja.filter(:network_in_network) do
+      test = arguments.varargs[0]? || Crinja::Value.new("")
+      JinjaFilters.json_any_to_value(
+        IpAddrCore.network_in_network(
+          VariableSubstitutor::CrinjaRenderer.crinja_value_to_json_any(target),
+          VariableSubstitutor::CrinjaRenderer.crinja_value_to_json_any(test),
+        )
+      )
+    end
+
+    Crinja.filter(:network_in_usable) do
+      test = arguments.varargs[0]? || Crinja::Value.new("")
+      JinjaFilters.json_any_to_value(
+        IpAddrCore.network_in_usable(
+          VariableSubstitutor::CrinjaRenderer.crinja_value_to_json_any(target),
+          VariableSubstitutor::CrinjaRenderer.crinja_value_to_json_any(test),
+        )
+      )
+    end
+
+    Crinja.filter(:ip4_hex) do
+      delimiter = arguments.varargs[0]?.try(&.to_s) || ""
+      JinjaFilters.json_any_to_value(
+        IpAddrCore.ip4_hex(
+          VariableSubstitutor::CrinjaRenderer.crinja_value_to_json_any(target),
+          delimiter,
+        )
+      )
     end
 
     # `pytruthy` - real Python/Jinja2 truthiness, exposed as its own

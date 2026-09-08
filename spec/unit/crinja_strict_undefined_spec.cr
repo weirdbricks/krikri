@@ -11,6 +11,13 @@ private def render_strict(tpl : String, vars = Hash(String, Crinja::Value).new) 
   Krikri::StrictTemplating.strict { render(tpl, vars) }
 end
 
+private def hostvars_value : Crinja::Value
+  Krikri::VariableSubstitutor::CrinjaRenderer.convert_hostvars(
+    JSON.parse(%({"node1": {"ansible_host": "10.0.0.1", "ansible_enp0s8": "ok"}})),
+    Krikri::VarSubstitutor.new(vars: Hash(String, JSON::Any).new),
+  )
+end
+
 describe Krikri::StrictTemplating do
   it "renders an undefined variable as empty text when NOT strict (Crinja's default)" do
     render("token = {{ nope }}").should eq("token = ")
@@ -57,5 +64,57 @@ describe Krikri::StrictTemplating do
     # branch, or every registered global (range, dict, ...) would read
     # as an undefined bare name.
     render_strict("{{ range(3) | list | join(',') }}").should eq("0,1,2")
+  end
+end
+
+# hostvars' per-host dicts raise on an attribute/subscript miss under
+# strict templating - real Ansible's own HostVarsVars wrapper (found via
+# mrlesmithjr.ansible_consul_client's
+# `hostvars[inventory_hostname]['ansible_' + iface]` with an interface
+# that doesn't exist on the real host). Outside strict mode the miss
+# stays lenient (the hand-rolled evaluator and `when:` conditions read
+# these values, and a blanket-strict hash accessor was the rejected
+# approach - see HostVarsVarsDict's own comment).
+describe Krikri::HostVarsVarsDict do
+  it "resolves a present attribute/subscript" do
+    value = hostvars_value
+    Crinja.new.from_string("{{ hostvars['node1']['ansible_host'] }}").render({"hostvars" => value})
+      .should eq("10.0.0.1")
+    Crinja.new.from_string("{{ hostvars['node1'].ansible_host }}").render({"hostvars" => value})
+      .should eq("10.0.0.1")
+  end
+
+  it "stays lenient for a missing attribute when NOT strict" do
+    value = hostvars_value
+    Crinja.new.from_string("[{{ hostvars['node1']['ansible_enp1s0'] }}]").render({"hostvars" => value})
+      .should eq("[]")
+  end
+
+  it "raises with real Ansible's HostVarsVars message on a strict miss (subscript)" do
+    value = hostvars_value
+    ex = expect_raises(Crinja::RuntimeError) do
+      Krikri::StrictTemplating.strict do
+        Crinja.new.from_string("[{{ hostvars['node1']['ansible_enp1s0'] }}]").render({"hostvars" => value})
+      end
+    end
+    ex.message.should contain("object of type 'HostVarsVars' has no attribute 'ansible_enp1s0'")
+  end
+
+  it "raises with real Ansible's HostVarsVars message on a strict miss (attribute)" do
+    value = hostvars_value
+    expect_raises(Crinja::RuntimeError, "has no attribute 'ansible_enp1s0'") do
+      Krikri::StrictTemplating.strict do
+        Crinja.new.from_string("{{ hostvars['node1'].ansible_enp1s0 }}").render({"hostvars" => value})
+      end
+    end
+  end
+
+  it "leaves plain (non-hostvars) dicts lenient even under strict" do
+    # the blanket-strict hash accessor was the rejected approach - a
+    # plain dict miss must stay lenient under strict, exactly as before
+    vars = {"d" => Crinja::Value.new({"k" => Crinja::Value.new("v")})}
+    Krikri::StrictTemplating.strict do
+      Crinja.new.from_string("[{{ d.missing }}]").render(vars).should eq("[]")
+    end
   end
 end

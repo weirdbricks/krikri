@@ -2,6 +2,7 @@ require "../timing_profile"
 require "json"
 require "crinja"
 require "../variable_substitutor"
+require "../crinja_strict_undefined"
 
 module Krikri
   module VariableSubstitutor
@@ -385,6 +386,14 @@ module Krikri
       # per-instance" reasoning (see `VarSubstitutor`'s identical
       # `@@block_tag_escalation_depth` comment).
       def self.convert_var(raw_value : JSON::Any, substitutor : VarSubstitutor, name : String = "") : Crinja::Value
+        # `hostvars` gets the HostVarsVars treatment: each host's vars
+        # dict converts into a Krikri::HostVarsVarsDict whose subscript
+        # miss raises under strict templating, matching real Ansible's
+        # own raising wrapper (see HostVarsVarsDict's comment for the
+        # found-live divergence this closes). Conversion reuses the
+        # same re-render + depth guard as any other var.
+        return convert_hostvars(raw_value, substitutor) if name == "hostvars"
+
         if @@prepare_crinja_vars_depth >= MAX_PREPARE_CRINJA_VARS_DEPTH
           return json_any_to_crinja_value(raw_value)
         end
@@ -417,6 +426,44 @@ module Krikri
           json_any_to_crinja_value(rerender_nested_templates(raw_value, substitutor))
         ensure
           @@prepare_crinja_vars_depth -= 1
+        end
+      end
+
+      # Converts the `hostvars` magic variable with each host's vars
+      # dict wrapped in Krikri::HostVarsVarsDict (see that class's own
+      # comment). Shared by BOTH Crinja context builds that can carry
+      # hostvars - LazyCrinjaContext#convert (the `{% %}`/`{{ }}`
+      # evaluator's lazy context, via #convert_var) and the template
+      # module's eager env (template_action_plugin.cr) - so a raising
+      # attribute miss behaves identically in a `.j2` file and a
+      # module-arg render.
+      def self.convert_hostvars(raw_value : JSON::Any, substitutor : VarSubstitutor) : Crinja::Value
+        @@prepare_crinja_vars_depth += 1
+        begin
+          top = Hash(String, Crinja::Value).new
+          raw_value.as_h?.try do |hosts|
+            hosts.each do |host, entry|
+              top[host] = wrap_host_vars_entry(
+                json_any_to_crinja_value(rerender_nested_templates(entry, substitutor)),
+              )
+            end
+          end
+          Crinja::Value.new(top)
+        ensure
+          @@prepare_crinja_vars_depth -= 1
+        end
+      end
+
+      # json_any_to_crinja_value hands back a plain Crinja::Dictionary
+      # (Crinja.value normalizes every Hash), so the dictionary shape is
+      # what gets matched here, not Hash(String, Value).
+      private def self.wrap_host_vars_entry(converted : Crinja::Value) : Crinja::Value
+        if hash = converted.raw.as?(Crinja::Dictionary)
+          entries = Hash(String, Crinja::Value).new
+          hash.each { |key, value| entries[key.to_string] = value }
+          Crinja::Value.new(HostVarsVarsDict.new(entries))
+        else
+          converted
         end
       end
 
