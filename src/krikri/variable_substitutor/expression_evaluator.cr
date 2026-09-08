@@ -1843,10 +1843,27 @@ module Krikri
           "undefined"
       end
 
+      # first_found's dict/list params value must reach evaluate_first_found
+      # RAW (nested {{ }} intact): resolve_plus_operand's generic
+      # re-templating renders nested templates LENIENTLY, which would turn
+      # an unresolvable candidate like '{{ ansible_facts.os_family }}.yml'
+      # into the literal "undefined.yml" before the strict per-entry
+      # rendering in evaluate_first_found ever sees it. A scalar/string
+      # params (itself a template) keeps the generic path.
+      private def first_found_params(part : String) : JSON::Any
+        expr = part.strip
+        raw_resolved = @lookup.resolve(expr)
+        if raw_resolved && (raw_resolved.raw.is_a?(Array) || raw_resolved.raw.is_a?(Hash))
+          raw_resolved
+        else
+          resolve_plus_operand(expr)
+        end
+      end
+
       private def evaluate_lookup_scalar(lookup_type : String?, parts : Array(String)) : String?
         case lookup_type
         when "first_found"
-          params = parts[1]?.try { |part| resolve_plus_operand(part.strip) }
+          params = parts[1]?.try { |part| first_found_params(part) }
           return "undefined" unless params
           evaluate_first_found(params)
         when "env"
@@ -2760,14 +2777,31 @@ module Krikri
         paths = paths_raw ? lookup_array(paths_raw) : default_first_found_paths
 
         renderer = VarSubstitutor.new(vars: @vars, host_name: "localhost")
-        rendered_paths = paths.flat_map { |path_entry| resolve_first_found_roots(renderer.substitute(path_entry.as_s? || "")) }
+        # Each candidate entry renders STRICTLY (undefined variable in an
+        # entry fails the calling task, it does not silently render to the
+        # "undefined" sentinel and lose to a later `default.yml` fallback):
+        # real Ansible templates the lookup's args strictly before first_found
+        # ever sees them (verified live against 2.19.4 - `include_vars: "{{
+        # lookup('first_found', params) }}"` with `files: ['{{ ansible_facts
+        # .os_family }}.yml', 'default.yml']` and no gathered facts fails the
+        # include_vars task itself with "object of type 'dict' has no
+        # attribute 'os_family'", it does not fall through to default.yml).
+        # `skip: true` (real first_found's own skip param) is the only thing
+        # that turns any lookup error into "no match" - same rule as the
+        # with_first_found: KEYWORD form's loop_first_found_skip handling.
+        skip_errors = params_hash["skip"]?.try(&.as_bool?) == true
+        begin
+          rendered_paths = paths.flat_map { |path_entry| resolve_first_found_roots(renderer.substitute(path_entry.as_s? || "", strict: true)) }
 
-        files.each do |file_entry|
-          rendered_file = renderer.substitute(file_entry.as_s? || "")
-          rendered_paths.each do |path|
-            candidate = File.join(path, rendered_file)
-            return candidate if File.exists?(candidate)
+          files.each do |file_entry|
+            rendered_file = renderer.substitute(file_entry.as_s? || "", strict: true)
+            rendered_paths.each do |path|
+              candidate = File.join(path, rendered_file)
+              return candidate if File.exists?(candidate)
+            end
           end
+        rescue ex : UndefinedVariableError
+          raise ex unless skip_errors
         end
 
         "undefined"

@@ -70,6 +70,15 @@ describe "connection CLI flags" do
     output.should contain("c=local")
     output.should_not contain("CHECK")
   end
+
+  # Real Ansible's own long aliases (both still listed in ansible-core
+  # 2.19.4's --help) - a command line copied from a real ansible-playbook
+  # invocation must parse here too.
+  it "accepts --inventory-file and --vault-pass-file as aliases" do
+    status, output = run_with(["--inventory-file", INVENTORY, "--vault-pass-file", "/dev/null"], SHOW_VARS)
+    status.exit_code.should eq(0)
+    output.should contain("PLAY")
+  end
 end
 
 describe "--step" do

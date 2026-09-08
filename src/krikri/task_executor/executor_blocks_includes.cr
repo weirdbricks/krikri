@@ -428,7 +428,24 @@ module Krikri
           end
 
           substitutor = VarSubstitutor.new(vars: item_context, host_name: host.name)
-          candidate = substitutor.substitute(task.include_vars_file || "").strip
+          candidate = begin
+            substitutor.scan_strict_include_vars_path(task.include_vars_file || "", task.vars)
+            substitutor.substitute(task.include_vars_file || "", strict: true).strip
+          rescue ex : UndefinedVariableError
+            # Real Ansible templates include_vars's own path strictly
+            # (verified live against 2.19.4: `include_vars: "{{ users }}"`
+            # with no `users` anywhere fails THIS task - "Error while
+            # resolving value for '_raw_params': 'users' is undefined",
+            # rc=2) - it never renders the path to a literal "undefined"
+            # and then reports "file not found: undefined". Same cause-text
+            # convention as every other module's undefined-arg failure
+            # (see prepare_batch_step's own finalization rescue).
+            puts "failed: [#{host.connection_host}] => (item=#{item_label})".colorize(:red)
+            puts "  Message: #{ex.message}".colorize(:red)
+            failed = true
+            item_results << JSON::Any.new({"item" => item, "changed" => JSON::Any.new(false), "failed" => JSON::Any.new(true), "ansible_facts" => JSON::Any.new({} of String => JSON::Any)} of String => JSON::Any)
+            next
+          end
           path = resolve_include_vars_path(task, candidate)
 
           unless path
@@ -555,7 +572,24 @@ module Krikri
       end
 
       substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
-      candidate = substitutor.substitute(task.include_vars_file || "").strip
+      candidate = begin
+        substitutor.scan_strict_include_vars_path(task.include_vars_file || "", task.vars)
+        substitutor.substitute(task.include_vars_file || "", strict: true).strip
+      rescue ex : UndefinedVariableError
+        # Real Ansible fails the include_vars task ITSELF when its path
+        # template references an undefined variable ("Error while resolving
+        # value for '_raw_params': 'users' is undefined", rc=2 - verified
+        # live against 2.19.4 with a minimal repro), it does not render the
+        # path to the literal text "undefined" and fail with "file not
+        # found: undefined" (the old behavior, gantsign.oh-my-zsh round
+        # 192's cosmetic-differences entry). Cause text only - real
+        # Ansible's own "Finalization of task args ... failed: Error while
+        # resolving value for '_raw_params':" wrapper is the same 2.19
+        # presentation layer every other module's undefined-arg failure
+        # already drops (see prepare_batch_step's identical rescue).
+        finish_include_vars_failure(task, host, ex.message || "is undefined")
+        return
+      end
       path = resolve_include_vars_path(task, candidate)
 
       unless path

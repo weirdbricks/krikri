@@ -1982,8 +1982,17 @@ module Krikri
       # See RemovedActionError's own comment for why this needs to
       # bypass the normal graceful-degradation rescues.
       if module_name == "include" || module_name == "ansible.builtin.include" || module_name == "ansible.legacy.include"
+        # ansible-core 2.19.4's exact text (verified live: `- include:
+        # tasks/foo.yml` prints "[ERROR]: " + this message, rc=1). The
+        # tombstone machinery is ansible_builtin_runtime.yml's warning_text
+        # ("Use include_tasks or import_tasks instead.") run through the
+        # plugin loader's "The '<fqcn>' <type> plugin has been removed."
+        # wrapper plus the "This feature was removed from ansible-core in
+        # a release after <date>." tail - see plugins/loader.py's
+        # _find_fq_plugin and _display_utils.py's
+        # get_deprecation_message_with_plugin_info.
         raise RemovedActionError.new(
-          "[DEPRECATED]: ansible.builtin.include has been removed. " \
+          "The 'ansible.builtin.include' action plugin has been removed. " \
           "Use include_tasks or import_tasks instead. This feature was " \
           "removed from ansible-core in a release after 2023-05-16.")
       end

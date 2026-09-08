@@ -172,6 +172,14 @@ begin
       inventory_explicit = true
     end
 
+    # Real Ansible's own deprecated long spelling for -i/--inventory
+    # (still listed in ansible-core 2.19.4's --help) - a command line
+    # copied from a real ansible-playbook invocation must parse here too.
+    parser.on("--inventory-file=INVENTORY", "Alias for --inventory (real Ansible's own deprecated spelling)") do |inv|
+      inventory_file = inv
+      inventory_explicit = true
+    end
+
     parser.on("--check", "Don't make changes; predict changes instead (dry-run)") do
       check_mode = true
     end
@@ -317,6 +325,12 @@ begin
     end
 
     parser.on("--vault-password-file=FILE", "Vault password file") do |file|
+      vault_password_file = file
+    end
+
+    # Real Ansible's own alias for --vault-password-file (ansible-core
+    # 2.19.4's --help lists both spellings together).
+    parser.on("--vault-pass-file=FILE", "Alias for --vault-password-file") do |file|
       vault_password_file = file
     end
 

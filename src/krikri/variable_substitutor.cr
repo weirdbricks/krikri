@@ -1115,10 +1115,58 @@ module Krikri
 
     private def scan_inner_expression_refs(expr : String) : Nil
       regions = quoted_string_regions(expr)
-      expr.scan(/\b[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*|\[[^\[\]]+\])*/) do |mat|
+      expr.scan(STRICT_REF_IDENT_REGEX) do |mat|
         next if in_quoted_region?(regions, mat.begin(0))
         next if scan_inner_ref_skippable?(expr, mat[0], mat.end)
         scan_inner_ref_failure(mat[0])
+      end
+    end
+
+    STRICT_REF_IDENT_REGEX = /\b[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*|\[[^\[\]]+\])*/
+
+    # Strict finalization of an include_vars path expression: everything
+    # scan_strict_expression_refs checks, PLUS recursion into the RAW
+    # (unrendered) task-vars values the expression references. The recursion
+    # is needed because a task's own `vars:` dict is deep-rendered LENIENTLY
+    # when the execution context is built (render_task_vars), so by the time
+    # the path expression itself is substituted strictly, a candidate like
+    # `'{{ ansible_facts.os_family }}.yml'` has already collapsed to the
+    # literal "undefined.yml" and the strict check has nothing left to catch.
+    # Real Ansible templates the lookup's dict args strictly as part of
+    # finalizing include_vars's own `_raw_params` (verified live against
+    # 2.19.4: gantsign.oh-my-zsh's `include_vars: "{{ lookup('first_found',
+    # params) }}"` with `files: ['{{ ansible_facts.os_family }}.yml',
+    # 'default.yml']` and no gathered facts FAILS the include_vars task with
+    # "object of type 'dict' has no attribute 'os_family'" - it does not
+    # silently fall through to default.yml and load nothing).
+    def scan_strict_include_vars_path(text : String, raw_task_vars : Hash(String, JSON::Any)) : Nil
+      scan_strict_value_templates(text, raw_task_vars, Set(String).new)
+    end
+
+    private def scan_strict_value_templates(text : String, raw_task_vars : Hash(String, JSON::Any), seen : Set(String)) : Nil
+      expand_mustache_spans(text) do |inner|
+        scan_inner_expression_refs(inner)
+        regions = quoted_string_regions(inner)
+        inner.scan(STRICT_REF_IDENT_REGEX) do |mat|
+          next if in_quoted_region?(regions, mat.begin(0))
+          next if scan_inner_ref_skippable?(inner, mat[0], mat.end)
+          root = block_tag_ref_root(mat[0])
+          next if seen.includes?(root) || !raw_task_vars.has_key?(root)
+          seen << root
+          probe_raw_value_templates(raw_task_vars[root], raw_task_vars, seen)
+        end
+        inner
+      end
+    end
+
+    private def probe_raw_value_templates(value : JSON::Any, raw_task_vars : Hash(String, JSON::Any), seen : Set(String)) : Nil
+      case value.raw
+      when String
+        scan_strict_value_templates(value.as_s, raw_task_vars, seen) if value.as_s.includes?("{{")
+      when Array
+        value.as_a.each { |element| probe_raw_value_templates(element, raw_task_vars, seen) }
+      when Hash
+        value.as_h.each_value { |element| probe_raw_value_templates(element, raw_task_vars, seen) }
       end
     end
 

@@ -324,8 +324,13 @@ describe Krikri::PlaybookParser do
       # as merely "Plugin not available: include" (the same soft
       # per-task skip as any not-yet-implemented module) and kept
       # executing every task after it. Verified live against real
-      # ansible-playbook 2.19.4: byte-identical error message.
-      expect_raises(Krikri::RemovedActionError, /has been removed/) do
+      # ansible-playbook 2.19.4: byte-identical error message (the
+      # "[ERROR]: " prefix comes from krikri-playbook.cr's own handler,
+      # same as real Ansible's tombstone display).
+      expect_raises(Krikri::RemovedActionError,
+        "The 'ansible.builtin.include' action plugin has been removed. " \
+        "Use include_tasks or import_tasks instead. This feature was " \
+        "removed from ansible-core in a release after 2023-05-16.") do
         Krikri::PlaybookParser.parse_string(<<-YAML
           - hosts: all
             tasks:
@@ -338,7 +343,10 @@ describe Krikri::PlaybookParser do
     end
 
     it "also aborts for the bare (non-FQCN) include: spelling" do
-      expect_raises(Krikri::RemovedActionError, /has been removed/) do
+      expect_raises(Krikri::RemovedActionError,
+        "The 'ansible.builtin.include' action plugin has been removed. " \
+        "Use include_tasks or import_tasks instead. This feature was " \
+        "removed from ansible-core in a release after 2023-05-16.") do
         Krikri::PlaybookParser.parse_string(<<-YAML
           - hosts: all
             tasks:
