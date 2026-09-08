@@ -100,6 +100,12 @@ describe Krikri::VariableSubstitutor::FilterEngine do
     engine.apply(JSON.parse(%([1, 2, 3])), "length").as_i.should eq(3)
   end
 
+  it "raises on length of null, matching real Python's len(None)" do
+    expect_raises(Exception, "object of type 'NoneType' has no len()") do
+      engine.apply(JSON.parse("null"), "length")
+    end
+  end
+
   it "replaces substrings with replace" do
     engine.apply(s("hello world"), %(replace('world', 'there'))).as_s.should eq("hello there")
   end

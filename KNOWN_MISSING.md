@@ -18,8 +18,24 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.832`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.833`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
+
+---
+
+## `levonet.ci_github_pr_description`'s open lead closed: `length` filter tolerated `None` instead of failing (0.9.833)
+
+`FilterEngine#length_of` (the hand-rolled `{{ }}` evaluator, not
+Crinja) returned `0` for a `null`/`None` input, letting a task pass
+that real Ansible's own `length` filter (Python's `len()`) fails
+outright with `"object of type 'NoneType' has no len()"`. Found via
+`levonet.ci_github_pr_description`'s own recap divergence. The
+Crinja-side path was already correct (Crinja's `Value#size` already
+raises `TypeError` for a non-sized `Nil` target, just with different
+text - not chased further since it already fails the task, matching
+real Ansible's pass/fail shape). Fixed by raising the identical
+message from `length_of`'s `Nil` branch. Regression spec added
+(`spec/unit/filter_engine_spec.cr`).
 
 ---
 

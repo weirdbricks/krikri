@@ -1879,7 +1879,12 @@ module Krikri
         when String
           value.as_s.size
         when Nil
-          0
+          # Real Python/Jinja2's len(None) raises TypeError - found via
+          # levonet.ci_github_pr_description's `... | length` on a None
+          # input, where krikri's own leniency (returning 0) let a task
+          # pass that real Ansible fails outright with this exact
+          # message.
+          raise "object of type 'NoneType' has no len()"
         else
           as_string(value).size
         end
