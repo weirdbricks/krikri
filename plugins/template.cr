@@ -109,11 +109,18 @@ module Krikri
         end
       end
 
-      # If content is identical, just update attributes if requested
+      # If content is identical, just update attributes if requested - and
+      # report changed if that reconciliation actually fixed anything. This
+      # used to hardcode changed: false even when apply_file_attributes had
+      # just fixed a stale mode/owner/group - the same identical-content
+      # bug as copy.cr's (found on bitintheskud.ansible-role-ecs-agent:
+      # anything re-breaking the mode between runs made the task silently
+      # report ok forever while fixing it on disk; real Ansible reports
+      # `changed` once, then ok - live-verified against ansible-core 2.19).
       unless changed
-        apply_file_attributes(dest)
+        attributes_fixed = apply_file_attributes(dest)
         return PluginResult.new(
-          changed: false,
+          changed: attributes_fixed,
           failed: false,
           msg: "File already exists with identical content",
           dest: dest,
@@ -302,8 +309,13 @@ module Krikri
       {ok: result.exit_code == 0, output: output.to_s.strip}
     end
 
-    # Apply file attributes (owner, group, mode)
-    private def apply_file_attributes(path : String) : Nil
+    # Apply file attributes (owner, group, mode). Returns true if anything
+    # actually changed on disk (so the identical-content caller can report
+    # `changed` like real Ansible when it reconciles an attribute), false
+    # otherwise - including when nothing was stale or an apply failed.
+    private def apply_file_attributes(path : String) : Bool
+      before = File.info?(path, follow_symlinks: false)
+
       # Set mode (permissions) using native Crystal
       if mode = @params["mode"]?
         begin
@@ -349,6 +361,12 @@ module Krikri
       if group = @params["group"]?
         Process.run("chgrp", [group, path], output: Process::Redirect::Close, error: Process::Redirect::Close)
       end
+
+      after = File.info?(path, follow_symlinks: false)
+      return false unless before && after
+      before.permissions != after.permissions ||
+        before.owner_id != after.owner_id ||
+        before.group_id != after.group_id
     end
 
   end

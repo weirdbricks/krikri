@@ -18,12 +18,12 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.843`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.844`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
 
 ---
 
-## Round 71000: 200 never-before-tested roles (Galaxy top-download list), 7 real bugs (0.9.837-0.9.843)
+## Round 71000: 200 never-before-tested roles (Galaxy top-download list), 8 real bugs (0.9.837-0.9.844)
 
 First batch since Atlantic.net's server-limit increase (10 -> 25); run at
 `--kata-hosts 8 --atlantic-hosts 20`. All 4 Kata pairs hit a new failure
@@ -39,15 +39,19 @@ capacity, Kata is no longer worth defaulting to for these batches -
 code changes needed) is now the preferred invocation.
 
 Of 10 DIVERGENT roles from the first 200: 4 real bugs found and fixed
-in the original triage pass (below), plus 3 more (also below) found
+in the original triage pass (below), plus 4 more (also below) found
 while confirm-rerunning the fixed roles - progressing past one bug
 often exposed the next one downstream on the exact same role, most
 notably `claranet.postgresql` (apt-stdout fix -> reached a pip `name:`
 list-truncation bug -> reached a `lists_mergeby` unimplemented-filter
-gap, three fixes deep on one role before it converges to the same
-point real Ansible itself eventually fails at - the role's own
-pre-existing `item.when` string-not-boolean bug, identical on both
-engines, not chased further); `amtega.tftpd` is the 5th confirming role for the already-
+gap, three fixes deep on one role) and `bitintheskud.ansible-role-ecs-
+agent` (iptables fix -> reached a `file: recurse:` bug, two fixes deep).
+Confirmed by a subsequent live full-role rerun: `claranet.postgresql`
+now converges to EXACTLY the same point real `ansible-playbook` itself
+eventually fails at - byte-identical error message, identical recap on
+both engines - the role's own pre-existing `item.when`
+string-not-boolean bug, not an engine issue, not chased further;
+`amtega.tftpd` is the 5th confirming role for the already-
 documented `_check_platform` role-private-module scope cut; `adfinis-
 sygroup.icinga2_agent`'s `deb822_repository`/apt-package failure did not
 reproduce in an isolated container rebuild (plugin output and apt
@@ -190,8 +194,34 @@ afterward. One new open gap found (below): `asg1612.gluster`.
   Regression spec added (`spec/integration/file_spec.cr`); verified
   live locally (a directory already at the right mode with one nested
   file NOT at the right mode now correctly reports `changed: true` and
-  fixes the nested file). Confirm-rerun after this fix still shows one
-  open item on this role - see "Open gaps" below.
+  fixes the nested file).
+
+- **`bitintheskud.ansible-role-ecs-agent`, continued again (found on
+  the file-recurse-fix confirm rerun)**: past the recurse fix above,
+  the very next task ("Create ecs environment file", `copy:` on
+  `/etc/ecs/ecs.env` inside the directory the previous task just fixed)
+  still reported `ok` on warm instead of `changed`, even though the
+  file's mode WAS actually being corrected on disk each run (confirmed
+  via direct plugin invocation and a debug build) - not a stale-read/
+  batching artifact (ruled out: reproduced identically with
+  `--no-batching` and via direct compiled-plugin invocation, no
+  playbook involved at all). Root cause: `copy.cr`'s (and
+  `template.cr`'s, same shape) identical-content early-return path
+  calls `apply_file_attributes(dest)` to reconcile a stale mode/owner/
+  group, but hardcoded `changed: false` regardless of whether that
+  reconciliation actually changed anything - so any task shape where an
+  attribute gets re-broken between runs (this role's `file: recurse:`
+  immediately followed by `copy:` on a file inside that tree) silently
+  fixed the file while permanently under-reporting `changed`. Fixed by
+  having `apply_file_attributes` return whether it actually changed
+  anything (compares `File.info` before/after), threaded through both
+  identical-content return paths in both plugins. Regression specs
+  added (`spec/integration/copy_attribute_reconcile_spec.cr`: a bare
+  mode-only reconcile for both `content:` and `src:` forms, plus the
+  exact `file: recurse:` -> `copy:` sequence end to end); verified live
+  locally against the original two-task repro (both tasks now correctly
+  report `changed` on the run where the mode actually flips back and
+  forth, matching real Ansible).
 
 - **`claranet.postgresql`, continued again (found on the pip-fix
   confirm rerun)**: past the pip fix above, `community.general.

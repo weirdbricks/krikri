@@ -146,9 +146,21 @@ module Krikri
             # skip attribute reconciliation entirely, so `mode: "0600"`
             # on an already-0644-content file reported ok forever
             # (apply_file_attributes below was never reached).
-            apply_file_attributes(dest)
+            #
+            # Reconciling an attribute IS a change: real Ansible reports
+            # `changed` when an identical-content copy fixes mode/owner/
+            # group (live-verified against ansible-core 2.19: a copy: with
+            # matching content against a 0755 dest and mode: 0640 reports
+            # changed once, then ok on the next run). This path used to
+            # hardcode changed: false even when apply_file_attributes had
+            # just fixed something, so anything that re-broke the mode
+            # between copy runs (bitintheskud.ansible-role-ecs-agent's
+            # file: recurse: immediately followed by copy: on a file
+            # inside that tree) left copy: silently reporting ok forever
+            # while dutifully fixing the attribute on disk every run.
+            attributes_fixed = apply_file_attributes(dest)
             return PluginResult.new(
-              changed: false,
+              changed: attributes_fixed,
               failed: false,
               msg: "File already exists with identical content",
               dest: dest,
@@ -338,11 +350,14 @@ module Krikri
         )
       end
 
-      # If file is identical, just update attributes if requested
+      # If file is identical, just update attributes if requested - and
+      # report changed if that reconciliation actually fixed anything
+      # (same identical-content `changed: false` bug as
+      # #handle_content_copy above; see its comment for the live repro).
       unless changed
-        apply_file_attributes(dest)
+        attributes_fixed = apply_file_attributes(dest)
         return PluginResult.new(
-          changed: false,
+          changed: attributes_fixed,
           failed: false,
           msg: "File already exists with identical content",
           dest: dest,
@@ -444,7 +459,7 @@ module Krikri
         Dir.mkdir_p(File.dirname(dest_path))
 
         if File.exists?(dest_path) && File.read(dest_path) == File.read(entry)
-          apply_file_attributes(dest_path)
+          changed = true if apply_file_attributes(dest_path)
           next
         end
 
@@ -566,8 +581,13 @@ module Krikri
       backup_path
     end
 
-    # Apply file attributes (owner, group, mode)
-    private def apply_file_attributes(path : String, recursive : Bool = false) : Nil
+    # Apply file attributes (owner, group, mode). Returns true if anything
+    # actually changed on disk (so the identical-content callers can report
+    # `changed` like real Ansible when they reconcile an attribute), false
+    # otherwise - including when nothing was stale or an apply failed.
+    private def apply_file_attributes(path : String, recursive : Bool = false) : Bool
+      before = File.info?(path, follow_symlinks: false)
+
       # Set mode (permissions)
       if mode = @params["mode"]?
         begin
@@ -620,9 +640,16 @@ module Krikri
       end
 
       File.chown(path, uid: uid, gid: gid) if uid != -1 || gid != -1
+
+      after = File.info?(path, follow_symlinks: false)
+      return false unless before && after
+      before.permissions != after.permissions ||
+        before.owner_id != after.owner_id ||
+        before.group_id != after.group_id
     rescue ex : File::Error
       # A chown/chmod failure (e.g. not running as root/owner) shouldn't
       # fail the whole task - matches file.cr's own identical rescue.
+      false
     end
 
   end
