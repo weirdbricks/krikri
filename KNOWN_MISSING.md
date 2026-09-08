@@ -1363,9 +1363,6 @@ why these are listed as confirmed rather than merely suspected:
   task's own side effects. Not chased further - lower priority, small
   magnitude, and the investigation already used significant time
   without a clean root cause.
-- **`linux-system-roles.network`** (Rocky 9.6): both engines fail, but
-  with an off-by-one gap (`ok=7 skipped=8` krikri vs `ok=8 skipped=7`
-  real Ansible), reproduced identically both runs.
 
 Single-data-point, not yet confirmed by a second run: `buluma.
 confluence` finally completed on a third attempt (the first two hit
