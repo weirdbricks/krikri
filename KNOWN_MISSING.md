@@ -18,8 +18,71 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.813`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.817`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
+
+---
+
+## 200-role regression round finds 4 latent bugs (0.9.814 - 0.9.817)
+
+Ran a 200-role regression round (queue drawn from `ROLES_TESTED.md`'s
+previously-"✅ Fixed" roles, to check for reversions) via
+`krikri-role-tester`. All 4 real findings turned out to be pre-existing,
+previously-undiscovered bugs the broader role selection happened to
+exercise for the first time - not reversions of anything that used to
+work (each affected role's earlier fix addressed a *different* bug
+earlier in the same role, before ever reaching the code path below):
+
+- **`file:`'s state=file rejected any non-regular-file path** ("Path
+  exists but is neither a regular file nor a directory"), including Unix
+  sockets - `robertdebock.docker`'s own "Change group for docker socket"
+  handler failed against a real `/var/run/docker.sock`. Real Ansible's
+  `get_state()` defaults every non-directory, non-symlink path to "file"
+  and applies owner/group/mode via chown/chmod, which work on any inode
+  type. Fixed by dropping the regular-file restriction (0.9.814).
+- **`ansible_product_version` (a DMI fact) was never gathered at all** -
+  `robertdebock.bios_update`'s own rescue: block references it in a
+  debug: msg, which real Ansible resolves fine but this engine raised
+  "'ansible_product_version' is undefined". Fixed by reading
+  `/sys/class/dmi/id/product_version`, same "NA" fallback as the
+  existing `ansible_system_vendor` DMI fact (0.9.815).
+- **`changed_when:`/`failed_when:` couldn't see the task's OWN
+  `stdout_lines`/`stderr_lines`** - `register_result` adds these fields
+  to a registered variable for LATER tasks, but `apply_changed_failed_when`
+  built its own eval_context from the raw, un-augmented plugin result.
+  `buluma.netdata`/`mrlesmithjr.netdata` both hit this identically on
+  their "install | Use netdata dependencies installation." task's
+  `changed_when`. Fixed by sharing the augmentation logic between both
+  call sites (0.9.816).
+- **`loop_control.index_var` never reached an included file's own
+  tasks** - `run_include_tasks_once`/`run_include_role_once` propagated
+  the loop item and `loop_var` into each included task's own vars, but
+  never `index_var`. The including task's own name/vars: rendered fine
+  regardless (masking the gap), until `riemers.gitlab-runner`'s own
+  `config-runner.yml` referenced the index directly and got
+  "'runner_config_index' is undefined". Fixed by also copying
+  `index_var`'s bound value, in both the include_tasks and include_role
+  loop paths (0.9.817).
+
+All 4 confirmed fixed via a fresh confirm round (0.9.817) against real
+`ansible-playbook`: `robertdebock.bios_update`/`.docker`,
+`mrlesmithjr.netdata`, and `riemers.gitlab-runner` byte-identical cold
+and warm on both engines. `buluma.netdata`'s confirm run hit an
+unrelated, real `netdata-installer.sh` exit-1 failure further into the
+role (a genuine build/resource issue on this specific ~24-minute-build
+role, already documented as environment-sensitive) - the actual fixed
+task ("install | Use netdata dependencies installation.") itself
+succeeded identically to real Ansible; real Ansible's own cold run for
+this confirm didn't even finish within the harness's 900s timeout, so
+there's no valid comparison at the later step anyway.
+
+Also found (not a krikri-playbook bug): `testing/kata/kata-host.sh`'s
+`force_down` leaked orphaned qemu/virtiofsd processes on teardown,
+eventually filling the control machine's `/dev/shm` and causing every
+LOCAL `ansible-playbook` run to fail instantly with an unrelated-looking
+"No space left on device" - registering as a wall of false DIVERGENT
+results in the first regression-round attempt. Fixed in the harness
+(`2281c8fd`), unrelated to krikri-playbook's own version.
 
 ---
 
