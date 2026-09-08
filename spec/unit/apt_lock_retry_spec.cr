@@ -284,4 +284,74 @@ describe "apt lock-contention retry helpers (round 153 follow-up, 0.9.502)" do
       HostClass.new.apt_cache_mtime(->(c : String) { stub.call(c) }).should eq(1735689600)
     end
   end
+
+  # Regression spec for the geerlingguy.kubernetes changed-count gap
+  # (rounds 65166/65311, fixed 0.9.835): real Ansible's apt module
+  # auto-installs python3-apt at module start and respawns, so its host
+  # moves to the mtime-diff changed-reporting path after the first apt
+  # task; this engine previously never installed the bindings, so it
+  # stayed on the "absent → changed=false" path forever and a later
+  # `apt: {update_cache: true}` task reported ok where real Ansible
+  # reported changed.
+  describe "#apt_auto_install_python_apt" do
+    it "is a no-op when the bindings are already importable" do
+      stub = StubExec.new([{exit_code: 0, stdout: "", stderr: ""}])
+      HostClass.new.apt_auto_install_python_apt(false, ->(c : String) { stub.call(c) }).should be_nil
+      stub.exec_count.should eq(1)
+    end
+
+    it "runs the prefetch then the install when the bindings are missing" do
+      commands = [] of String
+      responses = [
+        {exit_code: 1, stdout: "", stderr: "No module named 'apt'"},
+        {exit_code: 0, stdout: "Hit:1 http://archive.ubuntu.com jammy InRelease\n", stderr: ""},
+        {exit_code: 0, stdout: "Setting up python3-apt ...\n", stderr: ""},
+      ]
+      result = HostClass.new.apt_auto_install_python_apt(false, ->(c : String) {
+        commands << c
+        responses.shift
+      })
+      result.should be_nil
+      commands.size.should eq(3)
+      commands[1].should eq("apt-get update")
+      commands[2].should contain("python3-apt")
+    end
+
+    it "skips the prefetch when the task explicitly passed update_cache: false" do
+      commands = [] of String
+      responses = [
+        {exit_code: 1, stdout: "", stderr: "No module named 'apt'"},
+        {exit_code: 0, stdout: "Setting up python3-apt ...\n", stderr: ""},
+      ]
+      result = HostClass.new.apt_auto_install_python_apt(true, ->(c : String) {
+        commands << c
+        responses.shift
+      })
+      result.should be_nil
+      commands.size.should eq(2)
+      commands[1].should contain("python3-apt")
+    end
+
+    it "returns the failed prefetch result (check_rc=True hard failure)" do
+      stub = StubExec.new([
+        {exit_code: 1, stdout: "", stderr: "No module named 'apt'"},
+        {exit_code: 100, stdout: "", stderr: "E: Some index files failed to download.\n"},
+      ])
+      result = HostClass.new.apt_auto_install_python_apt(false, ->(c : String) { stub.call(c) })
+      result.should_not be_nil
+      result.not_nil![:exit_code].should eq(100)
+      result.not_nil![:stderr].should contain("failed to download")
+    end
+
+    it "returns the failed install result" do
+      stub = StubExec.new([
+        {exit_code: 1, stdout: "", stderr: "No module named 'apt'"},
+        {exit_code: 0, stdout: "", stderr: ""},
+        {exit_code: 100, stdout: "", stderr: "E: Unable to locate package python3-apt\n"},
+      ])
+      result = HostClass.new.apt_auto_install_python_apt(false, ->(c : String) { stub.call(c) })
+      result.should_not be_nil
+      result.not_nil![:stderr].should contain("Unable to locate package python3-apt")
+    end
+  end
 end

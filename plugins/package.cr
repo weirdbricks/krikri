@@ -274,6 +274,26 @@ module Krikri
                 else            "apt-get update"
                 end
 
+      # Real Ansible's `package:` delegates to the apt module on apt
+      # hosts, whose module-start auto-install (see AptLockRetry#
+      # apt_auto_install_python_apt) puts python3-apt in place on the
+      # FIRST package: invocation - so its own cache-refresh-only
+      # changed-reporting is decided by the mtime-diff path on every
+      # subsequent one. Mirror that here or a host that starts without
+      # the bindings stays on apt_cache_refresh_changed?'s
+      # absent → changed=false path forever (the geerlingguy.kubernetes
+      # divergence class, rounds 65166/65311). `update_cache: true` is
+      # not explicitly false here, so the auto-install runs its
+      # `apt-get update` prefetch too - which real Ansible's respawned
+      # module ALSO runs its own mtime-windowed update after, so an
+      # all-Hit second pass still reports changed=false (round 30001
+      # semantics preserved).
+      if package_manager == "apt"
+        if failure = apt_auto_install_python_apt(false, ->remote_exec(String))
+          return PluginResult.new(changed: false, failed: true, msg: "Failed to auto-install python3-apt: #{failure[:stderr]}")
+        end
+      end
+
       pre_update_mtime = package_manager == "apt" ? apt_cache_mtime(->remote_exec(String)) : 0
       result = package_manager == "apt" ? apt_get_update_with_retry(command, AptLockRetry::DEFAULT_UPDATE_CACHE_RETRIES, AptLockRetry::DEFAULT_UPDATE_CACHE_RETRY_MAX_DELAY, ->remote_exec(String)) : remote_exec(command)
       return PluginResult.new(changed: false, failed: true, msg: "Failed to update package cache: #{result[:stderr]}") unless result[:exit_code] == 0

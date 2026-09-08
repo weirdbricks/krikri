@@ -18,8 +18,57 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.834`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.835`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
+
+---
+
+## `geerlingguy.kubernetes`'s changed-count gap root-caused and fixed: the python3-apt auto-install was emulated as a per-invocation behavior instead of a persistent host mutation (0.9.835)
+
+The last confirmed open gap from the 97-role re-verification round: the
+role's own `apt: {update_cache: true}, when: kubernetes_repository.changed`
+task reported `ok` on krikri where real Ansible reported `changed`
+(cold `changed=4` vs `changed=5`, everything else identical). The
+0.9.831-era investigation had ruled out the round-30001 bug class but
+concluded wrongly that an earlier role task "already triggers real
+Ansible's python3-apt auto-install, so both engines should be on the
+WITH-python3-apt mtime-diff path here" - which is true of real
+Ansible's HOST and false of this engine's, and that distinction is the
+whole bug.
+
+Real Ansible's apt module probes for the python3-apt bindings at module
+start and, when missing, auto-installs them (`apt-get update` prefetch,
+then `apt-get install -y python3-apt`, then respawn) - a real, PERSISTENT
+host mutation. On the krikri host nothing ever installed python3-apt,
+so krikri's `python_apt_present?` probe stayed false on EVERY apt task,
+and the round-30001 emulation rule ("absent → cache-refresh reports
+changed=false unconditionally") kept applying forever, while real
+Ansible's host moved to the mtime-diff path after its very first apt
+task. By the cache-refresh task, real Ansible's freshly-added pkgs.k8s.io
+repo indexes genuinely moved the lists mtime → changed=true; krikri was
+still on the absent path → ok. The earlier "both engines should be on
+the same path" premise confused which HOST was being described.
+
+Fixed by implementing the auto-install faithfully: a new shared helper
+(`AptLockRetry#apt_auto_install_python_apt`) runs the same two commands
+real Ansible does (prefetch skipped only when the task explicitly said
+`update_cache: false`, per apt.py's own guard), wired into both
+`plugins/apt.cr` (module start) and `plugins/package.cr`'s apt
+cache-refresh-only path (real `package:` delegates to the apt module,
+which auto-installs the same way). The install succeeding makes every
+later probe pass, so the with-bindings mtime-diff path takes over
+naturally - and the round-30001 first-invocation semantics are preserved
+exactly, since the respawned module's own mtime window opens entirely
+AFTER the prefetch in both engines. Check mode never performs that
+mutation - it refuses instead (a new shared
+`apt_check_mode_python_apt_refusal` helper, matching the message
+apt.cr's own update-cache block already used), on both call sites, since
+`package:` delegates to the same apt module on apt hosts. Regression
+specs added for both helpers; verified live end-to-end on a fresh Kata
+pair (round 70002): cold AND warm recaps now byte-identical between
+engines (`ok=9 changed=5 failed=1 skipped=2` cold, `ok=8 changed=0
+failed=1 skipped=3` warm, both). Times: cold py 42.8s vs cr 31.4s; warm
+py 13.0s vs cr 1.9s.
 
 ---
 
@@ -110,8 +159,10 @@ appeared to be.
 
 Conclusion: round 30001's rule stands, `apt.cr`/`package.cr`'s shared
 `apt_cache_refresh_changed?` logic is correct as shipped, no revert
-needed. `geerlingguy.kubernetes`'s own small `changed` divergence is
-something else - see "Open gaps" above for what's known about it.
+needed. `geerlingguy.kubernetes`'s own small `changed` divergence was
+something else - root-caused and fixed in 0.9.835 (see the narrative
+above): the missing piece was the python3-apt auto-install's persistent
+host mutation, which the rule's own premise assumed away.
 
 ---
 
@@ -1488,20 +1539,6 @@ why these are listed as confirmed rather than merely suspected:
   deliberately breaking krikri's `package_facts:` to match a missing
   runtime dependency on real Ansible's own interpreter, not a real
   behavioral gap.
-- **`geerlingguy.kubernetes`**: small reproducible divergence
-  (`changed=4` on krikri vs real Ansible's `changed=5`) in the role's
-  own `apt: {update_cache: true}, when: kubernetes_repository.changed`
-  task. Investigated at length (see the round-30001 re-verification
-  note below) - NOT the same bug class as `robertdebock.
-  update_package_cache`'s regression (that fix's premise was
-  re-confirmed correct, live, on a fresh VM). An earlier task in this
-  same role already triggers real Ansible's python3-apt auto-install,
-  so both engines should be on the WITH-python3-apt mtime-diff path by
-  this point - the 1-count gap looks like a narrower mtime-timing edge
-  case interacting with the immediately-preceding `deb822_repository:`
-  task's own side effects. Not chased further - lower priority, small
-  magnitude, and the investigation already used significant time
-  without a clean root cause.
 
 Single-data-point, not yet confirmed by a second run: `buluma.
 confluence` finally completed on a third attempt (the first two hit

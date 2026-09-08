@@ -147,6 +147,46 @@ module Krikri
       result[:exit_code] == 0
     end
 
+    # Emulates real Ansible's apt module module-start auto-install of the
+    # python3-apt bindings (apt.py's probe_interpreters_for_module +
+    # "Updating cache and auto-installing missing dependency" path): a
+    # real, PERSISTENT host mutation that changes every later apt
+    # invocation's changed-reporting path. When the bindings are missing
+    # this runs the same `apt-get update` prefetch (skipped only when the
+    # task explicitly passed update_cache: false, per apt.py's own
+    # `if module.params.get('update_cache') is False` guard), then
+    # `apt-get install -y python3-apt`, exactly the two commands real
+    # Ansible runs before respawning itself. Returns nil when the
+    # bindings were already present (a no-op) or the install succeeded;
+    # returns the failed command result when either command failed,
+    # mirroring real Ansible's check_rc=True hard failure.
+    #
+    # This engine previously only emulated the FIRST invocation's
+    # observable `changed` behavior (the round-30001 rule) without ever
+    # performing the install, so a host that started without the
+    # bindings stayed on the "absent → changed=false" cache-refresh path
+    # forever, while real Ansible moved to the mtime-diff path after its
+    # very first apt task. Found via geerlingguy.kubernetes (rounds
+    # 65166/65311): the role's "Ensure dependencies are installed." task
+    # triggers real Ansible's auto-install, so its later "Update Apt
+    # cache." task (immediately after deb822_repository added the
+    # pkgs.k8s.io repo, whose freshly-fetched indexes genuinely move the
+    # lists mtime) reported changed=true there, while this engine stayed
+    # on the absent path and reported ok.
+    def apt_auto_install_python_apt(skip_prefetch : Bool,
+                                    exec_remote : Proc(String, NamedTuple(exit_code: Int32, stdout: String, stderr: String))) : NamedTuple(exit_code: Int32, stdout: String, stderr: String)?
+      return nil if apt_python_apt_present?(exec_remote)
+
+      unless skip_prefetch
+        result = exec_remote.call("apt-get update")
+        return result if result[:exit_code] != 0
+      end
+
+      result = exec_remote.call("apt-get install -y python3-apt")
+      return result if result[:exit_code] != 0
+      nil
+    end
+
     # Real Ansible's `changed` semantics for a cache-refresh-ONLY apt
     # invocation (no name:/upgrade:/deb: alongside it): WITHOUT
     # python3-apt, real Ansible auto-installs it before its own

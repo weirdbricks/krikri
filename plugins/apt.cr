@@ -58,6 +58,28 @@ module Krikri
         )
       end
 
+      # Real Ansible's apt module auto-installs the python3-apt bindings
+      # (with an `apt-get update` prefetch) at module start when missing
+      # and then respawns - see AptLockRetry#apt_auto_install_python_apt
+      # for why this has to be a real, persistent host mutation rather
+      # than a per-invocation emulation: without it a host that starts
+      # without the bindings stays on the "absent → changed=false"
+      # cache-refresh path forever instead of moving to the mtime-diff
+      # path after the first apt task (found via geerlingguy.kubernetes,
+      # rounds 65166/65311). Check mode skips this - real Ansible fails
+      # fast in check mode instead (refusal mirrored inside the
+      # update-cache block below, where it has always lived here).
+      unless @check_mode
+        explicitly_no_cache = @params["update_cache"]? ? !true?(@params["update_cache"]?) : false
+        if failure = apt_auto_install_python_apt(explicitly_no_cache, ->remote_exec(String))
+          return PluginResult.new(
+            changed: false,
+            failed: true,
+            msg: "Failed to auto-install python3-apt: #{failure[:stderr]}"
+          )
+        end
+      end
+
       # Get state (default: present)
       state = @params["state"]? || "present"
       update_cache = true?(@params["update_cache"]?)
@@ -124,7 +146,12 @@ module Krikri
             messages << "Would update apt cache"
             changed = true if cache_update_is_sole_operation
           elsif !python_apt_present?
-            # On a host WITHOUT python3-apt, real Ansible auto-installs it
+            # Normal flow never reaches this branch - the module-start
+            # auto-install above either puts the bindings in place or
+            # fails the task, matching real Ansible's respawn. It is the
+            # fallback for a host where the install "succeeded" but the
+            # bindings still won't import. On a host WITHOUT python3-apt,
+            # real Ansible auto-installs it
             # before its measurement window even opens - and that auto-install
             # step runs a full `apt-get update` first (apt.py's "Updating cache
             # and auto-installing missing dependency" path), then RESPAWNS the
