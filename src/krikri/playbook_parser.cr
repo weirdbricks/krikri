@@ -1149,9 +1149,9 @@ module Krikri
       # than shipping near-duplicates. fauust.mariadb (round 6002) calls
       # the FQCN forms; the bare spellings resolve the same way when the
       # collection is installed.
-      "mariadb_db"                 => "community.mysql.mysql_db",
-      "mariadb_user"               => "community.mysql.mysql_user",
-      "ansible.mariadb.mariadb_db" => "community.mysql.mysql_db",
+      "mariadb_db"                   => "community.mysql.mysql_db",
+      "mariadb_user"                 => "community.mysql.mysql_user",
+      "ansible.mariadb.mariadb_db"   => "community.mysql.mysql_db",
       "ansible.mariadb.mariadb_user" => "community.mysql.mysql_user",
     }
 
