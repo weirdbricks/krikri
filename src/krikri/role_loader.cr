@@ -256,7 +256,8 @@ module Krikri
       # precedence than this role's own defaults, matching real
       # Ansible's own dependency-then-self load order.
       defaults = parent_defaults.merge(dependency_defaults).merge(defaults)
-      role_vars = load_vars_file_main(File.join(role_dir, "vars"))
+      own_vars = load_vars_file_main(File.join(role_dir, "vars"))
+      role_vars = own_vars.dup
       invocation_vars.each { |key, value| role_vars[key] = value } # invocation vars win over vars/main.yml
 
       # Contribute to the play-wide layers every role can see - see
@@ -265,10 +266,26 @@ module Krikri
       # later role wins a name collision, which is what real Ansible
       # answers outside any role (verified: post_tasks: sees the LAST
       # role's value for a name two roles both define).
+      #
+      # Uses `own_vars`/a freshly-reloaded `own_defaults` here, NOT
+      # `role_vars`/`defaults` (which have `invocation_vars`/ancestor
+      # defaults already merged in) - a role's own vars/main.yml and
+      # defaults/main.yml genuinely stay visible play-wide, but a
+      # PER-INVOCATION override (a `vars:` on this one `roles:` entry, or
+      # a `meta/main.yml` dependency's own inline params, e.g.
+      # `- role: dep, some_var: false`) is scoped to that ONE invocation
+      # only and must not leak into every later task in the play. Found
+      # via brunobenchimol.certbot_dns's own `meta/main.yml` dependency
+      # (`- role: geerlingguy.certbot, certbot_auto_renew: false`,
+      # overriding that value for the dependency's OWN tasks only): the
+      # declaring role's own LATER task (`when: not certbot_auto_renew`,
+      # relying on ITS OWN `certbot_auto_renew: true` default) saw the
+      # dependency's overridden `false` instead, running when real
+      # Ansible correctly skipped it.
       if play_scope
         own_defaults = load_vars_file_main(File.join(role_dir, "defaults"))
         own_defaults.each { |key, value| play.all_role_defaults[key] = value }
-        role_vars.each { |key, value| play.all_role_vars[key] = value }
+        own_vars.each { |key, value| play.all_role_vars[key] = value }
       end
 
       files_dir = existing_dir(File.join(role_dir, "files"))

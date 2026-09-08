@@ -18,8 +18,52 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.827`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.828`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
+
+---
+
+## `brunobenchimol.certbot_dns` regression root-caused and fixed: a meta/main.yml dependency's inline var override leaked play-wide (0.9.828)
+
+Fourth of the 12 confirmed regressions to get fixed. The recap shape
+(krikri's `ok` one higher, `skipped` one lower than real Ansible) looked
+enough like the ORIGINAL pre-0.9.682 `import_role: when:` bug that the
+initial triage assumed that fix had regressed - it hadn't; the existing
+`import_role_when_expansion_spec.cr` still passes unchanged, and this
+was a completely different, unrelated bug that happened to nudge the
+same two counters in the same direction.
+
+Diffing the role's own two full run logs task-by-task found the ACTUAL
+single differing task: `brunobenchimol.certbot_dns`'s own last task,
+"Remove cron job... `when: not certbot_auto_renew`", ran on krikri
+(`ok`) but was correctly skipped by real Ansible. Both
+`brunobenchimol.certbot_dns` and its `meta/main.yml` dependency,
+`geerlingguy.certbot`, default `certbot_auto_renew: true` - but that
+dependency is declared with an inline override
+(`- role: geerlingguy.certbot, certbot_auto_renew: false, ...`), scoped
+by real Ansible to that ONE dependency's own tasks only.
+
+Root cause in `role_loader.cr`'s `load_role`: when a role is loaded with
+`play_scope: true` (every `roles:` entry and `meta/main.yml`
+dependency), its `role_vars` - built by merging this ONE invocation's
+own override vars onto its plain `vars/main.yml` content - gets
+contributed wholesale into `play.all_role_vars`, a bag every LATER task
+in the play can see (this play-wide visibility is correct and
+intentional for a role's own plain `vars/main.yml`/`defaults/main.yml`
+content - see the surrounding comment - just not for a one-invocation
+override). So `geerlingguy.certbot`'s dependency-scoped
+`certbot_auto_renew: false` ended up visible to `brunobenchimol.
+certbot_dns`'s own later task, which should have seen its own
+`defaults/main.yml`'s `true`.
+
+Fixed by capturing a separate `own_vars` snapshot (freshly loaded from
+`vars/main.yml`, before `invocation_vars` merge) and contributing THAT
+to `play.all_role_vars` instead of the invocation-tainted `role_vars` -
+mirroring how `own_defaults` already re-loads fresh from disk for the
+exact same reason, two lines below. Regression spec added
+(`spec/integration/role_dependency_when_spec.cr`). Live-reverified
+against the real role on a fresh Kata VM: `ok=8 changed=5 skipped=40`,
+matching real Ansible's original baseline exactly.
 
 ---
 
@@ -1132,10 +1176,6 @@ pass's version numbers were unreliable. Each item below reproduced
 **deterministically across two independent fresh-host runs**, which is
 why these are listed as confirmed rather than merely suspected:
 
-- **`brunobenchimol.certbot_dns`**: reproduces the *exact* pre-fix bug
-  signature from 0.9.682 (`ok=9`/`skipped=39` on krikri vs real
-  Ansible's `ok=8`/`skipped=40`), identically both runs - looks like the
-  `import_role:` `when:` expansion fix regressed.
 - **`linux-system-roles.storage`** (Rocky 9.6): previously fixed,
   proceeding to a clean `ok=18 changed=3 failed=0`. Now krikri stops
   much earlier (`ok=13` vs real Ansible's `ok=21`) with `failed=1`,

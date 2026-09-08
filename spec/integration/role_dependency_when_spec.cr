@@ -137,3 +137,63 @@ describe "when: on a role entry propagates onto every task the role expands to" 
     FileUtils.rm_rf(src_dir) if src_dir
   end
 end
+
+# Regression spec for brunobenchimol.certbot_dns's 0.9.828 regression: a
+# meta/main.yml dependency's own inline var override (`- role: dep,
+# some_var: false`) is scoped to that ONE dependency invocation only -
+# real Ansible does not let it leak into the declaring role's own later
+# tasks, even though a role's plain vars/main.yml AND defaults/main.yml
+# genuinely do stay visible play-wide once loaded (see RoleLoader's own
+# `play.all_role_vars`/`all_role_defaults` comment).
+describe "a meta/main.yml dependency's inline var override doesn't leak play-wide" do
+  it "the declaring role's own later task still sees ITS OWN default, not the dependency override" do
+    src_dir = File.tempname("role-dep-var-scope-role")
+    Dir.mkdir_p(File.join(src_dir, "roles", "outer", "tasks"))
+    Dir.mkdir_p(File.join(src_dir, "roles", "outer", "defaults"))
+    Dir.mkdir_p(File.join(src_dir, "roles", "outer", "meta"))
+    Dir.mkdir_p(File.join(src_dir, "roles", "dep", "tasks"))
+    Dir.mkdir_p(File.join(src_dir, "roles", "dep", "defaults"))
+    File.write(File.join(src_dir, "roles", "outer", "defaults", "main.yml"), <<-YAML)
+      my_shared_var: true
+      YAML
+    File.write(File.join(src_dir, "roles", "outer", "meta", "main.yml"), <<-YAML)
+      dependencies:
+        - role: dep
+          my_shared_var: false
+      YAML
+    File.write(File.join(src_dir, "roles", "outer", "tasks", "main.yml"), <<-YAML)
+      - name: final task gated on the shared var
+        debug:
+          msg: SHOULD_NOT_RUN
+        when:
+          - not my_shared_var
+      YAML
+    File.write(File.join(src_dir, "roles", "dep", "defaults", "main.yml"), <<-YAML)
+      my_shared_var: true
+      YAML
+    File.write(File.join(src_dir, "roles", "dep", "tasks", "main.yml"), <<-YAML)
+      - name: dep task
+        debug:
+          msg: "dep sees my_shared_var={{ my_shared_var }}"
+      YAML
+
+    playbook = File.join(src_dir, "pb.yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        roles:
+          - outer
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output, chdir: src_dir)
+
+    status.success?.should be_true
+    output.to_s.should contain("dep sees my_shared_var=False")
+    output.to_s.should_not contain("SHOULD_NOT_RUN")
+    output.to_s.should match(/skipped=1\b/)
+  ensure
+    FileUtils.rm_rf(src_dir) if src_dir
+  end
+end
