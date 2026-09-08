@@ -18,8 +18,40 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.824`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.825`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
+
+---
+
+## `evrardjp.keepalived` regression root-caused and fixed: package: state:latest never checked apt's exit code (0.9.825)
+
+First of the 12 confirmed regressions from the round below to get fixed.
+Root-caused live: provisioned a fresh Atlantic Ubuntu 22.04 host directly
+(outside the round-tester, kept alive for inspection) and reproduced the
+exact failure with a minimal isolated task. `dpkg -l keepalived` on the
+host confirmed the package was never actually installed, despite krikri
+reporting `changed: true, "Package keepalived upgraded to latest"`.
+
+Real cause: `apt-get install -y keepalived` failed with exit 100 (a
+stale-mirror 404 on a resolved dependency, `libsnmp-base` - genuinely
+environmental, not an engine bug) - but apt prints its "N upgraded, M
+newly installed" summary line during dependency RESOLUTION, before any
+package is actually fetched, so that line was still sitting in stdout
+with a nonzero count when the later fetch failed. `plugins/package.cr`'s
+`handle_apt`'s `state: latest` branch parsed that summary line to decide
+`changed`/`failed` and never checked `upgrade_result[:exit_code]` at
+all - the exact "changed but never installed" bug class that `apt.cr`'s
+own `handle_latest` already guards against (found there via
+`cloudalchemy.grafana`), but this OS-agnostic module's independently-
+implemented duplicate never got the same fix. Fixed by adding the same
+exit-code check `apt.cr` already has. Live-reverified on the same host:
+post-fix, the identical scenario now correctly reports `failed: true`
+with apt's real error text instead of a false `changed: true`. No
+regression spec added - reproducing a genuine apt-get fetch failure
+needs a real host with a broken package dependency, the same
+practical-limits case `apt_install_with_implicit_cache_retry`'s own
+untested corrupt-lists retry path is in; verified live instead, per this
+file's own convention for that class of bug.
 
 ---
 
@@ -1008,14 +1040,6 @@ pass's version numbers were unreliable. Each item below reproduced
 **deterministically across two independent fresh-host runs**, which is
 why these are listed as confirmed rather than merely suspected:
 
-- **`evrardjp.keepalived`**: right after `dnf`-installing the
-  `keepalived` package (`changed: true`), the very next task fails with
-  `Error executing process: 'keepalived': No such file or directory` -
-  real Ansible finds the binary fine (`ok=12` vs krikri's `ok=3`,
-  identical both runs). Looks like a PATH-resolution gap (sbin dirs not
-  searched for a binary that was *just* installed in the same play),
-  same bug family as the `Process.new(env:)` PATH issue previously
-  fixed for `buluma.ara_api`.
 - **`robertdebock.update_package_cache`**: previously byte-identical
   (`ok=2 changed=1` both engines, cold and warm). Now reports
   `changed=0` on the real-Ansible side vs `changed=1` on krikri, both

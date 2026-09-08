@@ -672,6 +672,33 @@ module Krikri
         # available").
         upgrade_result = apt_install_with_implicit_cache_retry("DEBIAN_FRONTEND=noninteractive apt-get install -y #{shell_pkg}", lock_timeout, ->remote_exec(String))
 
+        # apt-get prints its "N upgraded, M newly installed" summary line
+        # during dependency RESOLUTION, before any package is actually
+        # fetched or installed - so a later fetch failure (a stale mirror
+        # 404ing on one of the resolved dependencies, e.g.) still leaves
+        # that summary line sitting in stdout with a nonzero count, and
+        # exit_code alone was never checked below. Real apt-get exits
+        # non-zero in that case ("E: Unable to fetch some archives") and
+        # nothing was actually installed - this OS-agnostic module's own
+        # separate apt dispatch reported `changed: true` regardless, the
+        # exact "changed but never installed" bug apt.cr's own
+        # handle_latest already guards against (see there) but this
+        # independently-implemented duplicate never got. Found live via
+        # evrardjp.keepalived's own "Install keepalived package(s)" task
+        # on a fresh Atlantic Ubuntu 22.04 host: a 404 on libsnmp-base (a
+        # resolved dependency) failed the real apt-get install outright,
+        # but this code still reported "Package keepalived upgraded to
+        # latest" - `dpkg -l keepalived` on the host confirmed it was
+        # never installed at all.
+        if upgrade_result[:exit_code] != 0
+          return PluginResult.new(
+            changed: false,
+            failed: true,
+            msg: "Failed to install #{name}: #{upgrade_result[:stderr]}",
+            stderr: upgrade_result[:stderr]
+          )
+        end
+
         # "N upgraded, M newly installed, ..." is apt's own reliable,
         # locale-stable summary line - checking for the English phrase
         # "already the newest version" (the previous approach) missed
