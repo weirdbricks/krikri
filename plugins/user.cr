@@ -222,6 +222,7 @@ module Krikri
       )
 
       flags += password_and_expiry_flags(name)
+      flags += group_membership_flags(name)
 
       # `usermod -d <newhome>` (already in flags above when home: changes)
       # only rewrites the passwd entry - real GNU usermod's own `-m`
@@ -256,6 +257,49 @@ module Krikri
       end
 
       PluginResult.new(changed: true, failed: false, msg: "User modified")
+    end
+
+    # `groups:`/`append:` on an EXISTING user - found benchmarking
+    # bsmeding.docker's own "Ensure docker users are added to the docker
+    # group." (`groups: docker, append: true` against `root`, an
+    # already-existing account). #modify's usermod_flags only ever
+    # covered uid/group(primary)/shell/home/comment - groups:/append:
+    # were read in #create (useradd -G) but never even looked at here,
+    # so adding an existing user to a supplementary group silently did
+    # nothing and always reported "already up to date" instead of
+    # `usermod -G`/`-a -G`, unlike real Ansible's own module.
+    #
+    # Current membership is read via `getent group` and each line's own
+    # 4th (member-list) field - mirroring real Ansible's own
+    # `grp.getgrall()` + `name in g.gr_mem` check - rather than `id -Gn`,
+    # which would also fold in the user's PRIMARY group (via passwd's
+    # own gid field) and wrongly count that as a "current supplementary
+    # group" even when the user isn't listed as an explicit member.
+    private def group_membership_flags(name : String) : Array(String)
+      groups_val = @params["groups"]?.presence
+      return [] of String unless groups_val && groups_val != "[]"
+
+      requested = groups_val.split(',').map(&.strip).reject(&.empty?)
+      current_groups = current_supplementary_groups(name)
+      append = true?(@params["append"]?)
+
+      changed = append ? !(requested - current_groups).empty? : requested.sort != current_groups.sort
+      return [] of String unless changed
+
+      flag = append ? "-a -G" : "-G"
+      ["#{flag} #{Shell.single_quote(requested.join(","))}"]
+    end
+
+    private def current_supplementary_groups(name : String) : Array(String)
+      result = remote_exec("getent group")
+      return [] of String unless result[:exit_code] == 0
+
+      result[:stdout].each_line.compact_map do |line|
+        fields = line.split(':')
+        next nil unless fields.size >= 4
+        members = fields[3].split(',').map(&.strip)
+        members.includes?(name) ? fields[0] : nil
+      end.to_a
     end
 
     # `create_home:` is real Ansible's canonical param name; `createhome:`
