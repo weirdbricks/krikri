@@ -81,6 +81,19 @@ module Krikri
       # packages: ["@Server with GUI"]`, RedHat's own default).
       single_name = false
       trimmed = name.strip
+      # `names` is built directly per-branch (never re-derived by
+      # re-splitting the space-joined `name` display string below) - a
+      # group spec element containing a literal space (dnf's own
+      # `@Development tools`) would otherwise get re-fragmented the
+      # instant it sits alongside another list element: `parts`/`parsed`
+      # already have the correct element boundaries the moment they're
+      # computed, but `name.split(' ')` on their space-joined re-flatten
+      # can't tell "gcc" + "@Development tools" (2 real elements) apart
+      # from "gcc" + "@Development" + "tools" (3 space-separated words) -
+      # found live testing `package: {name: [gcc, "@Development tools"]}`
+      # against this exact fix: still produced the original "Unable to
+      # find a match: tools" bug the fix otherwise closes.
+      names = [trimmed]
       if trimmed.starts_with?('[') && trimmed.ends_with?(']')
         parsed = begin
           Array(String).from_json(trimmed)
@@ -102,6 +115,7 @@ module Krikri
         end
         if parsed
           single_name = parsed.size == 1
+          names = parsed
           name = parsed.join(" ")
         end
       elsif trimmed.includes?(',')
@@ -114,6 +128,7 @@ module Krikri
         # name never contains a comma, so this can't misfire).
         parts = trimmed.split(',').map(&.strip).reject(&.empty?)
         single_name = parts.size == 1
+        names = parts
         name = parts.join(" ")
       else
         # A dnf comps-group spec (`@Development tools`) legitimately
@@ -127,18 +142,13 @@ module Krikri
         # rejected it with "Unable to find a match: tools" while real
         # ansible-playbook installed the group fine.
         single_name = trimmed.starts_with?('@') || !trimmed.includes?(' ')
+        names = single_name ? [trimmed] : trimmed.split(' ').reject(&.empty?)
       end
 
       # Per-element shell quoting for the actual package-manager command
-      # line. `name` (the joined display form) loses element boundaries
-      # for a parsed list, so the install/remove commands are built from
-      # the parsed elements instead - each quoted as its own atomic
-      # token, since a legit element can itself contain a space (dnf's
-      # `@Development tools` group syntax again, e.g. a literal
-      # `name: [gcc, "@Development tools"]` list). Without this, the
-      # multi-element list case passed the space-joined string through
-      # unquoted and dnf silently split the group into bogus tokens.
-      names = single_name ? [name] : name.split(' ').reject(&.empty?)
+      # line - each element quoted as its own atomic token, since a
+      # legit element can itself contain a space (dnf's
+      # `@Development tools` group syntax).
       pkg_tokens = names.map { |pkg| shell_single_quote(pkg) }.join(" ")
 
       state = @params["state"]? || "present"

@@ -18,12 +18,12 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.818`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.823`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
 
 ---
 
-## RHEL-round gap triage: all 3 open gaps root-caused and fixed (0.9.818)
+## RHEL-round gap triage: all 3 open gaps root-caused and fixed (0.9.818 - 0.9.823)
 
 Each of the three open gaps from round 65000+ got a root cause and a
 fix, verified live against Kata Rocky 9.6 VMs:
@@ -34,13 +34,24 @@ fix, verified live against Kata Rocky 9.6 VMs:
   `@Development tools` fell into the legacy multi-name path, reached
   `dnf install` unquoted as two tokens, and dnf rejected "tools".
   Fixed by treating any `@`-prefixed name as atomic, quoting every
-  parsed name element individually (the multi-element list
-  `["gcc", "@Development tools"]` shape had the same hole), making
-  `dnf group list installed` matching case-insensitive (comps
-  metadata capitalizes `Development Tools`; the spec doesn't), and
-  dropping the now-dead `shell_name` helper. Confirmed live:
-  `andrewrothstein.gcc-toolbox` cold run installs the group, warm run
-  converges to `changed=0`.
+  parsed name element individually, making `dnf group list installed`
+  matching case-insensitive (comps metadata capitalizes `Development
+  Tools`; the spec doesn't), and dropping the now-dead `shell_name`
+  helper. Confirmed live: `andrewrothstein.gcc-toolbox` cold run
+  installs the group, warm run converges to `changed=0`.
+  **0.9.823 follow-up**: the multi-element list shape
+  (`["gcc", "@Development tools"]`) was NOT actually fixed by the
+  0.9.818 pass despite the commit message's claim - `name:` from a
+  literal YAML list arrives here comma-joined
+  (`playbook_parser.cr`'s `stringify_value`), so `parts` correctly
+  split `["gcc", "@Development tools"]` apart, but the final `names`
+  array was re-derived by space-splitting the ALREADY-joined `name`
+  display string instead of using `parts` directly - refragmenting
+  the group right back into `["gcc", "@Development", "tools"]` and
+  reproducing the exact original "Unable to find a match: tools"
+  bug. Confirmed both ways live on a fresh Kata Rocky 9.6 VM (fails
+  with the pre-0.9.823 code, installs + converges to `changed=0`
+  with it) - found during review before merging this branch.
 - **`pip:` pip3 discovery**: real Ansible's `_get_pip` first runs pip
   as `python3 -m pip` whenever the target interpreter can `import
   pip` and only PATH-searches a `pip3` binary as a fallback; this
@@ -817,18 +828,21 @@ Genuinely open defects: something is wrong and the fix is unknown or
 unfinished. Everything deliberate lives under "Deliberate limits"
 below - keep the two apart, or this list stops meaning anything.
 
-None as of 0.9.818. The three gaps found via the 100-role RHEL (Rocky
+None as of 0.9.823. The three gaps found via the 100-role RHEL (Rocky
 9.6) regression round (round 65000+) are all root-caused and fixed -
-the fix-phase narrative for each lives in the 0.9.818 commit message;
-one note survives here because its confirmation is incomplete:
-`pip:`'s pip3-discovery fix (mirroring real Ansible's own
+the fix-phase narrative for each lives in the 0.9.818/0.9.823 commit
+messages. `pip:`'s pip3-discovery fix (mirroring real Ansible's own
 `_get_pip` order: `python3 -m pip` when the interpreter can `import
 pip`, PATH search for the `pip3` binary only as a fallback) is
-implemented and spec'd, but the original divergent role
-(`geerlingguy.supervisor` on Atlantic's Rocky 9.6 image) has not been
-re-run against a provisioned pair since - the local Kata Rocky image
-has no pip at all, so both engines fail identically there and there is
-nothing to compare.
+confirmed live (0.9.823 review pass): a fresh Kata Rocky 9.6 VM with
+`python3-pip` installed but its `pip3` script moved off PATH still
+installs a package correctly via the `python3 -m pip` fallback, and
+fails with real Ansible's own "Unable to find any of pip3 to use"
+message on the pre-fix code in the identical scenario. The original
+divergent role (`geerlingguy.supervisor` on Atlantic's Rocky 9.6
+image specifically) itself has still not been re-run end to end,
+though the underlying discovery-order bug it hit is now directly
+confirmed.
 
 ---
 
