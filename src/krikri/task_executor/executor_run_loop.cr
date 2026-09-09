@@ -449,8 +449,27 @@ module Krikri
       # exact context while preparing this task's own batch step
       # (execute_batch_group prepares every member up front) - reuse it
       # instead of paying for VariableContext.build + facts merge again.
-      vars_context = @batch_cache[host.name]?.try(&.[task]?).try(&.[1]) ||
-                     build_vars_context(task, host)
+      vars_context = @batch_cache[host.name]?.try(&.[task]?).try(&.[1])
+      unless vars_context
+        begin
+          vars_context = build_vars_context(task, host)
+        rescue ex : VariableSubstitutor::FilterEngine::UnknownFilterError
+          # build_vars_context renders the task's own `vars:` block
+          # (render_task_vars) - and while a vars: expression that
+          # legitimately raises is dropped raise-to-absent there, an
+          # unknown filter name is deliberately re-raised (see
+          # render_task_vars's own rescue): real Ansible hard-fails the
+          # task with "No filter named 'X'." (nephelaiio.pip /
+          # nephelaiio.gitlab's own nephelaiio.plugins.sorted_get).
+          # Nothing between here and krikri-playbook's top-level run
+          # caught it, so the whole process crashed with an unhandled
+          # exception instead of this one clean failed task (recapped
+          # failed=1), the same degrade-to-failed-task shape the loop-
+          # source resolution failure rescue below uses.
+          finish_single_task(task, host, when_error_result(WhenEvaluationError.new(ex.message || "Failed to render task vars")))
+          return
+        end
+      end
 
       # delegate_to: run the module against a different host's connection
       # while vars/facts/register/stats stay attributed to `host` - resolved
@@ -883,7 +902,19 @@ module Krikri
         vars_context = if task == trigger_task && (reused = trigger_vars_context)
                          reused
                        else
-                         build_vars_context(task, host)
+                         begin
+                           build_vars_context(task, host)
+                         rescue ex : VariableSubstitutor::FilterEngine::UnknownFilterError
+                           # Same degrade-to-one-clean-failed-task shape as
+                           # execute_task's own build_vars_context rescue: the
+                           # member's own vars: block used an unknown filter,
+                           # real Ansible fails just that task with "No filter
+                           # named 'X'." - cache the failed result so the
+                           # consumer reports it instead of the process
+                           # crashing out of execute_batch_group entirely.
+                           cache[task] = {when_error_result(WhenEvaluationError.new(ex.message || "Failed to render task vars")), Hash(String, JSON::Any).new}
+                           next
+                         end
                        end
 
         # Same sharing as the solo path: when: and the step preparation
