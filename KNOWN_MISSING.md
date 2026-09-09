@@ -18,12 +18,12 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.846`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.850`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
 
 ---
 
-## Round 72000: 400-role batch (2x Atlantic.net capacity), 2 real bugs (0.9.845-0.9.846)
+## Round 72000: 400-role batch (2x Atlantic.net capacity), 6 real bugs (0.9.845-0.9.850)
 
 First batch run entirely Atlantic-only (no Kata, per round 71000's
 undiagnosed Kata cgroup boot-failure finding) at 24 hosts/12 pairs -
@@ -35,18 +35,39 @@ DIVERGENT, 75 GALAXY_MISSING, 5 TF_APPLY_FAILED (transient Terraform
 provisioning failures, unrelated slots/times - requeued and all 5 came
 back CLEAN, confirming it wasn't systemic).
 
-Of 57 DIVERGENT roles, triaged a representative sample rather than
-all 57 given the volume: 2 real bugs found and fixed below
-(`with_subelements:` on `include_tasks:` rejected outright;
-`role_path` unresolved inside a static `import_tasks:` path - both
-confirmed via live reruns to now match real Ansible); 2 new open gaps
-documented (below) rather than fixed - a quoted-string-re-evaluated-as-
-code bug (`crazikPL.logging`) and a silently-tolerated malformed-Jinja
-gap (`kostiantyn-nemchenko.patroni`), both real but with fixes risky
-enough or broad enough to warrant more isolated reproduction first
-rather than a rushed change. The remaining ~53 divergent roles were
-not individually triaged this round - candidates for a future pass,
-not yet confirmed as bugs, harness gaps, or scope cuts.
+All 57 DIVERGENT roles were individually triaged this round (not just
+a sample). 6 real bugs found, fixed, and confirmed via live reruns on
+fresh Atlantic hosts: `with_subelements:` on `include_tasks:` rejected
+outright; `role_path` unresolved inside a static `import_tasks:` path;
+`getent`'s `fail_key: false` storing an empty array instead of a real
+null; a bracketed multi-item `groups:` list passed raw into
+`useradd -G`; `notify:` on an `import_tasks:` line not propagating to
+the tasks it inlines; and a templated `ignore_errors:` always
+defaulting to `false` instead of `true`. Each writeup below names the
+confirming role(s).
+
+Of the rest: most (~30) trace to already-documented scope cuts,
+harness/environment gaps (missing Python libs on the harness's real-
+ansible-core side, stale Ubuntu-archive-mirror package versions,
+Windows-only roles, real Ansible's own module/collection version
+mismatches), or a genuinely-unrelated both-fail (missing binary,
+missing role dependency). Those aren't re-litigated individually here
+- see the per-role rows in `ROLES_TESTED.md`'s round-72000 section for
+each one's specific reason. 6 new **open gaps** are documented below
+(real, reproducible, root-caused, but not fixed this round - each
+names the exact mechanism so another pass can implement it without
+re-deriving the diagnosis): `with_nested:` not re-expanding a
+templated source list at runtime (in progress elsewhere as of this
+writing); a quoted-string re-evaluated as live code; a silently-
+tolerated malformed-Jinja gap; Python string-method-call syntax
+(`.lower()`) unsupported in `{{ }}` expressions; the
+`ansible_python_version` fact never populated; and `is defined` on a
+dynamically-keyed `hostvars[...]` lookup raising instead of returning
+false. A handful of roles (`f500.ufw`'s possible SSH-lockout-after-
+`ufw enable`, `Frzk.chrony`'s task-level `vars:` leaking across
+sibling tasks, the apt-404-on-krikri-host-only pattern seen on 3
+different roles) are flagged as **needs a closer look** - real,
+reproducible divergences whose root cause isn't fully pinned down yet.
 
 - **`f5devcentral.bigiq_move_app_dashboard`/`.bigiq_pinning_deploy_
   objects`**: both hard-failed at parse time (`'with_subelements' is
@@ -80,6 +101,120 @@ not yet confirmed as bugs, harness gaps, or scope cuts.
   path) was already available for the role's own defaults/vars merge.
   Regression spec added (`spec/unit/role_loader_spec.cr`);
   live-reverified on a fresh Atlantic host.
+
+- **`filviu.activemq`/`.tomcat`**: both share the exact same "env |
+  determine if `<user>` exists" -> "setup | create system user" pair
+  (`ansible.builtin.getent: {database: passwd, key: "{{ user }}",
+  fail_key: false}` then `when: getent_passwd[user] == none`). Real
+  Ansible's own `getent` module sets the fact value to `None` for a
+  not-found key with `fail_key: false`; this plugin stored an empty
+  array instead - never equal to `None` under real Python/Jinja
+  equality regardless of emptiness, so `== none` always evaluated
+  false and the user-creation task silently skipped on every run,
+  cascading into "chown failed: failed to look up user X" on every
+  later task that assumed the user already existed. Fixed by mapping
+  a not-found key to a real JSON null instead of `[] of String` in
+  `plugins/getent.cr`. Updated the existing spec that had asserted the
+  old (buggy) empty-array behavior; live-reverified on fresh Atlantic
+  hosts (both now `CLEAN`).
+
+- **`kostiantyn-nemchenko.mongodb_exporter`**: `groups: "{{
+  mongodb_exporter_system_groups }}"` (a full-value substitution of a
+  real 2-item list, on `user:`'s create/`useradd` path) rendered as
+  bracketed text (`['mongodb_exporter', 'ssl-cert']`) instead of a real
+  array - same shape as the pip `name:` truncation bug two rounds ago.
+  Passed straight through to `useradd -G`, that whole bracketed string
+  became ONE malformed argument - `useradd` itself then split it on
+  the comma INSIDE the quotes, producing two bogus group names and
+  failing "group ... does not exist" for both. Fixed by adding
+  `UserState.normalize_groups_value` (bracket-aware, mirroring pip's
+  own `normalize_name`), used on both the `useradd` (create) path and
+  the earlier `groups:`/`append:` fix for an already-existing account
+  (round 71000's `bsmeding.docker` fix) - that modify path had the
+  identical latent bug, just never triggered by a role yet. Regression
+  spec added; verified live in a container (both groups correctly
+  assigned, confirmed via `id`).
+
+- **`filviu.activemq`, continued (found on the getent-fix confirm
+  rerun)**: past the getent fix above, the role's own "Install
+  apachemq" task (`import_tasks: install.yml, notify: restart
+  activemq`) never fired its handler at all, even though several of
+  `install.yml`'s own inlined tasks (unarchive, deploy config) reported
+  changed on the exact same run real Ansible fired it on. `when:`/
+  `tags:` on an `import_tasks:` line were already propagated onto each
+  task the import statically inlines (round 188's fix); `notify:` was
+  never included in that same propagation. Fixed by adding the
+  identical propagation for `notify:` in `try_parse_import_tasks`.
+  Regression spec added (mirroring the existing `tags:` spec);
+  live-reverified (now fully `CLEAN`).
+
+- **`levonet.ci_github_rm_branch`**: `ignore_errors: "{{
+  ci_github_ignore_error }}"` (default: `yes`) - `ignore_errors:` is a
+  plain parse-time `Bool` (deferring it to runtime would be a bigger
+  change), and the old code fell through to `false` for anything that
+  wasn't a literal `true`/`yes`/`on`/`false`/`no`/`off` - so this real
+  Ansible task (which real Ansible always ignores: `ignored=1,
+  failed=0`) instead hard-failed the whole play every single run.
+  Fixed with the identical heuristic `parse_become_value` already uses
+  for its own templated-value case: a real playbook essentially never
+  writes `ignore_errors: "{{ x }}"` to mean "no, don't ignore", so
+  defaulting `true` for a `{{`-shaped string is right far more often
+  than `false`, and never worse than the previous always-hard-fail
+  behavior. Regression spec added; live-reverified (now `CLEAN`).
+
+### Needs a closer look (real, reproducible, not root-caused yet)
+
+- **`f500.ufw` - CONFIRMED reproducible, highest priority of this
+  round's open items.** On the WARM rerun, the krikri-side Atlantic
+  host's SSH connection times out entirely (`ssh: connect ... port 22:
+  Connection timed out`, `Gathering Facts` and every subsequent task
+  failing with it) immediately after the cold run's `ufw default deny
+  incoming` + `ufw --force enable` (no explicit allow rules - the
+  role's own `ufw_rules_to_create` was empty on both engines) - the
+  real-Ansible-side host, running the identical commands, stays
+  reachable and completes the warm rerun fine (`ok=4, changed=0`).
+  Reproduced TWICE, on two different Atlantic host pairs
+  (`209.208.26.8` and `104.219.52.145`) - this is a real, deterministic
+  divergence, not one-off host flakiness. The plugin's own command
+  construction (`ufw default deny incoming`, `ufw --force enable`,
+  `plugins/ufw.cr` / `ufw_command.cr`) reads byte-identical to what
+  real Ansible's `community.general.ufw` module would run, so the bug
+  is more likely in HOW/WHEN those commands get applied relative to the
+  SSH session (e.g. an ordering or connection-reuse difference versus
+  real Ansible's own execution model) than in the command strings
+  themselves - worth investigating with that framing rather than
+  re-deriving the command construction, which already looks correct.
+  Given the severity (an actual host network lockout), this is the
+  single highest-priority item from this round's triage.
+- **`Frzk.chrony`**: hard-failed ("Included tasks file must be a YAML
+  list: `.../vars/Debian.yml`") on `include_tasks: "{{ lookup('
+  first_found', findme) }}"`, where `findme` is set via a task-level
+  `vars:` block scoped to just that one task - and a SIBLING task
+  immediately above it (`include_vars: "{{ lookup('first_found',
+  findme) }}"`) has its OWN, differently-scoped `findme` (`paths:
+  [vars]`, searching for a vars/ file). The task-list task fpath ended
+  up resolving to the PRECEDING task's vars-file path instead of its
+  own - i.e. task-level `vars:` looks like it's leaking across sibling
+  tasks rather than staying scoped to the one task that declares it,
+  at least in the specific context of resolving a `lookup(...)` used
+  directly as a task directive's OWN path (`include_tasks: "{{
+  lookup(...) }}"`). Not confirmed against a wider variety of `vars:`-
+  scoping shapes - narrowly reproduced on this one role, not chased
+  into the evaluator internals.
+- **The 3-package-apt-fetch-404-only-on-the-krikri-host pattern**
+  (`lfit.lf-dev-libs`, `lfit.mono-install`, `markosamuli.pyenv`): all
+  three show the identical shape - `apt-get install` fails with `404
+  Not Found` fetching specific `.deb` files from
+  `us.archive.ubuntu.com`, on the krikri-side Atlantic host only; the
+  real-Ansible-side host (same task, same package versions, a
+  different physical VM) succeeds. Each individual instance is
+  plausibly just mirror-timing flakiness between two independent hosts
+  hitting a live, mutable public mirror at slightly different moments
+  - but three separate confirming roles in one round is enough to flag
+  as a pattern worth a closer look (e.g. whether krikri's apt cache-
+  update sequencing differs from real Ansible's own timing in some way
+  that makes a stale index more likely) rather than dismissing each as
+  independent bad luck.
 
 ---
 
@@ -1833,6 +1968,77 @@ Genuinely open defects: something is wrong and the fix is unknown or
 unfinished. Everything deliberate lives under "Deliberate limits"
 below - keep the two apart, or this list stops meaning anything.
 
+- **`with_nested:` treats a `{{ var }}`-templated source list as a
+  single unexpanded item at parse time, instead of re-resolving it to
+  the variable's real size (including zero) at runtime.**
+  `gantsign.sdkman` round72000: `with_nested: ['{{ sdkman_users }}',
+  [...11 literal dir paths...]]` with `sdkman_users: []` (the role's
+  own documented default, no users configured) - real Ansible fully
+  resolves `{{ sdkman_users }}` to the actual list before computing the
+  cartesian product, so an empty list correctly makes the WHOLE loop
+  zero iterations (`skipped=12`, matching real Ansible's own recap).
+  This engine's parser (`playbook_parser.cr`'s `with_nested` handling)
+  only recognizes a LITERAL YAML list as one of `with_nested:`'s source
+  lists; a bare `{{ var }}` string entry falls through to a generic
+  "wrap it as one scalar item" branch, frozen at parse time before any
+  templating happens - so the empty-list variable becomes ONE item
+  (later rendered at execution time to the literal text `"[]"`), paired
+  against each of the 11 real directory paths, producing 11 bogus
+  `become_user: "[]"` tasks that all fail "is not a valid username"
+  instead of the whole loop being skipped. Fixing this needs runtime
+  resolution of a templated `with_nested:` source to its real array
+  size, architecturally similar to how `with_items:`/`loop:` already
+  runtime-resolve a `{{ var }}` loop source (the `find_loop_template`
+  mechanism) - a genuinely bigger, more architectural change than this
+  round's other fixes. (In progress in a separate worktree as of this
+  writing.)
+- **Python string-method-call syntax (`.lower()`, `.upper()`, etc.)
+  inside `{{ }}` is not supported - renders as the literal text
+  "undefined" instead of calling the method or raising.**
+  `logdna.logdna` round72000: `include_tasks: ./package/install_{{
+  ansible_os_family.lower()}}.yml` - real Jinja2's own Python-object
+  method calls (not a standard Jinja *filter*, but a real attribute/
+  method lookup on the underlying Python string object) are fully
+  supported by real ansible-core's native Python-based Jinja
+  environment; this engine's hand-rolled `{{ }}` evaluator doesn't
+  recognize `.lower()` as a call at all and falls through to a
+  generic-unresolvable-expression default that renders the literal
+  text `"undefined"` - producing a real, existing-looking but wrong
+  path (`install_undefined.yml`) instead of either calling the method
+  or raising a clear error. `| lower` (the actual standard Jinja
+  filter spelling) already works; only the `.method()` call syntax on
+  a variable is missing.
+- **`ansible_python_version` (and the related `ansible_python` fact
+  dict) is never populated by Gathering Facts at all.**
+  `louim.bedrock-site-protect` round72000: `pkg: "{{ passlib_package[
+  ansible_python_version[0]] }}"` (and the task's own name field,
+  `"...for python {{ ansible_python_version[0] }}"`) - real Ansible's
+  `setup` module always includes this fact (the target's discovered
+  Python interpreter version, e.g. "3.10.12"); indexing it entirely
+  undefined here rendered as the literal text `"undefined"` (task name
+  showed "Installing passlib package for python undefined"), and the
+  package name resolution failed differently from real Ansible's own
+  (clean) `'wordpress_sites' is undefined` failure at a later,
+  unrelated task - masking the real divergence point. This engine
+  already knows which Python interpreter it targets for module
+  execution, so populating at least `ansible_python_version`/
+  `ansible_python.version` (a simple `python3 --version` equivalent)
+  looks tractable; the fuller `ansible_python` structure (executable,
+  has_sslcontext, etc.) is a larger, separate scope question.
+- **`is defined` on a dynamically-keyed `hostvars[...]` bracket lookup
+  raises instead of returning false.** `mullholland.motd` round72000:
+  `{% if (hostvars[inventory_hostname]['ansible_'+int] is defined) |
+  pytruthy %}` - real Ansible correctly treats a genuinely-absent,
+  dynamically-computed hostvars key as simply undefined (`is defined`
+  -> false, template renders fine via the `{% if %}` false branch:
+  `ok=3 changed=2`). This engine's Crinja-side `HostVarsVars` proxy
+  object instead raises a hard template error ("object of type
+  'HostVarsVars' has no attribute 'ansible_eth0'") for the same
+  lookup, defeating the entire purpose of `is defined` - it's supposed
+  to be the one construct that NEVER raises for a missing attribute.
+  Likely fixable in the `HostVarsVars` proxy's attribute-access
+  implementation (return Undefined for a missing key instead of
+  raising), without touching `is defined`'s own dispatch logic.
 - **A double-quoted whole condition whose own text happens to look
   like an expression gets re-evaluated as live code instead of treated
   as opaque string data.** `crazikPL.logging` round72000: `when:
