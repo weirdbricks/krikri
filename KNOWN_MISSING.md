@@ -18,8 +18,44 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.875`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.876`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
+
+---
+
+## A templated-scalar `files:` in a first_found lookup's params was silently dropped as an EMPTY candidate list, degrading to the "undefined" sentinel (0.9.876)
+
+Found in this round's triage of `idiv_biodiversity.systemd_timesyncd`:
+its task is `include_vars: "{{ lookup('first_found',
+__systemd_timesyncd_vars_files) }}"`, and the params dict is built in the
+role's vars/main.yml with a TEMPLATED SCALAR for the candidates -
+`files: "{{ __first_found | map('regex_replace', '$', '.yml') | list }}"`
+- rather than a literal YAML list. The params dict deliberately reaches
+the lookup RAW (nested `{{ }}` intact, so the strict per-entry rendering
+can still hard-fail an unresolvable candidate), which meant `files`
+arrived as the unrendered STRING and the bare `as_a?` list guard
+silently dropped it as an EMPTY candidate list - first_found "found
+nothing" no matter what files actually existed, returned the "undefined"
+sentinel string, and include_vars: failed "file not found: undefined"
+with the sentinel as the FILENAME, where real Ansible (verified live
+against 2.19.4) templates the whole lookup term before the plugin sees
+it and finds `vars/ubuntu_22.yml`. Not the 0.9.874 mechanism (no filter
+error, no rescue-to-absent) - a third, separate path that resolves to
+the sentinel instead of raising. Fixed the same way as the sentinel
+sites before it: the `files:`/`paths:` scalar values render STRICTLY
+(an undefined variable inside one fails the task, matching real Ansible's
+own term templating) and parse back out as lists, and the no-match
+fallthrough now raises real Ansible's own error ("The lookup plugin
+'first_found' failed: No file was found when using first_found.",
+skip: true rendering `[]` instead) rather than returning "undefined" -
+in BOTH templating engines (the Crinja-backed `lookup()` function had
+the same silent-empty-list drop and its nil-on-no-match fallthrough).
+An adjacent, UNfixed gap found while probing: a first_found params dict
+written INLINE as the lookup's literal argument (`lookup('first_found',
+{'files': ['nope.yml'], 'paths': ['vars']})`) still resolves to
+"undefined" - the comma-split lookup-argument parser can't take a dict
+literal apart - so use the variable form (as every role seen so far
+does) until that's chased.
 
 ---
 

@@ -42,6 +42,16 @@ module Krikri
   class UndefinedVariableError < Exception
   end
 
+  # Raised by the first_found lookup (ExpressionEvaluator's
+  # #evaluate_first_found) when no candidate file exists and the lookup's
+  # own `skip:` param is not true - real Ansible's own failure for that
+  # shape ("The lookup plugin 'first_found' failed: No file was found when
+  # using first_found.", verified live against 2.19.4), NOT the "undefined"
+  # sentinel string the code path used to return (which became "include_
+  # vars: file not found: undefined" at the include_vars: consumer).
+  class FirstFoundLookupError < Exception
+  end
+
   # Conservative "pure variable reference" shape - letters/digits/
   # underscore, `.field` and `[0]`/`['key']` access only. No spaces,
   # pipes, parens, quotes outside of a bracket index, or keywords - those

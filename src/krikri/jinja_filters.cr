@@ -2140,8 +2140,17 @@ module Krikri
         hash = arg1.raw.is_a?(Crinja::Dictionary) ? arg1.raw.as(Crinja::Dictionary) : nil
         files_val = hash.try(&.[Crinja::Value.new("files")]?)
         paths_val = hash.try(&.[Crinja::Value.new("paths")]?)
-        files = (files_val && files_val.sequence?) ? files_val.to_a : [] of Crinja::Value
-        paths = (paths_val && paths_val.sequence?) ? paths_val.to_a : ["files", "templates", "vars", "."].map { |root| Crinja::Value.new(root) }
+        # A `files:`/`paths:` value can be a TEMPLATED SCALAR (`files: "{{
+        # candidates | map('regex_replace', '$', '.yml') | list }}"`, the
+        # idiv_biodiversity.systemd_timesyncd idiom) rather than a literal
+        # list - the dict reaches this lookup with its nested {{ }} intact,
+        # so the string form must be rendered and parsed back out, not
+        # silently dropped as an empty candidate list by the sequence?
+        # guard (same mechanism ExpressionEvaluator's
+        # #render_first_found_param fixes for the hand-rolled evaluator).
+        files = render_first_found_crinja_param(files_val, env) || [] of Crinja::Value
+        paths = render_first_found_crinja_param(paths_val, env) ||
+                ["files", "templates", "vars", "."].map { |root| Crinja::Value.new(root) }
 
         rendered_paths = paths.flat_map { |path_entry| JinjaFilters.resolve_first_found_roots(env.from_string(path_entry.to_s).render, role_path) }
 
@@ -2157,7 +2166,23 @@ module Krikri
           end
           break if found
         end
-        Crinja::Value.new(found)
+        # Real first_found's own `skip:` param: with no match and skip unset
+        # it RAISES ("No file was found when using first_found.", verified
+        # live against 2.19.4) - it does not quietly render as nil/empty and
+        # let a chained default() paper over a missing vars file
+        # (idiv_biodiversity.systemd_timesyncd). With skip: true the miss is
+        # an empty result (real renders the lookup as `[]`), not nil.
+        if found.nil?
+          skip_param = hash.try(&.[Crinja::Value.new("skip")]?)
+          if skip_param.try(&.truthy?)
+            Crinja::Value.new([] of Crinja::Value)
+          else
+            raise Krikri::FirstFoundLookupError.new(
+              "The lookup plugin 'first_found' failed: No file was found when using first_found.")
+          end
+        else
+          Crinja::Value.new(found)
+        end
       when "sequence"
         Crinja::Value.new(JinjaFilters.sequence_lookup(arg1.to_s).map { |v| Crinja::Value.new(v) })
       when "csvfile"
@@ -2210,6 +2235,23 @@ module Krikri
     def self.resolve_lookup_path(path : String, role_path : String?) : String
       return path if path.starts_with?('/')
       role_path ? File.join(role_path, "files", path) : path
+    end
+
+    # A first_found lookup params dict's `files:`/`paths:` sub-value as a
+    # candidate list: a literal list passes through, a templated scalar
+    # (raw string with its nested {{ }} intact) renders and parses back
+    # out (a scalar result wraps as a one-element list, matching real
+    # first_found's treatment of a lone filename), nil stays nil. Mirrors
+    # ExpressionEvaluator's own #render_first_found_param on this, the
+    # Crinja-backed, evaluator.
+    private def self.render_first_found_crinja_param(value : Crinja::Value?, env : Crinja) : Array(Crinja::Value)?
+      return nil unless value
+      return value.to_a if value.sequence?
+      return nil unless value.string?
+
+      rendered = Krikri.parse_json_or_python_literal(env.from_string(value.to_s).render)
+      items = rendered.as_a? || [rendered]
+      items.map { |item| Crinja::Value.new(item.raw) }
     end
 
     # A relative first_found `paths:` entry can resolve against either

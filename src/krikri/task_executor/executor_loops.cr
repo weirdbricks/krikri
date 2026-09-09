@@ -527,6 +527,11 @@ module Krikri
       # completed. Real Ansible's own AnsibleFilterError for an unknown
       # filter fails only the task.
       raise WhenEvaluationError.new(ex.message)
+    rescue ex : FirstFoundLookupError
+      # Same channel again: a templated `loop: "{{ query('first_found',
+      # params) }}"` whose lookup finds nothing (and has no skip: true)
+      # is a task failure in real Ansible, never a silent empty loop.
+      raise WhenEvaluationError.new(ex.message)
     rescue ex : UndefinedVariableError
       if when_condition = task.when_condition
         # Lenient evaluation on purpose: `item.backup is defined` with

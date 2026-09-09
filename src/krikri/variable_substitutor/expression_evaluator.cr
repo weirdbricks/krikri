@@ -2832,7 +2832,7 @@ module Krikri
           params = parts[1]?.try { |part| resolve_plus_operand(part.strip) }
           return "[]" unless params
           result = evaluate_first_found(params)
-          return "[]" if result == "undefined"
+          return "[]" if result == "undefined" || result == "[]"
           return [result].to_json
         end
 
@@ -3126,11 +3126,10 @@ module Krikri
         params_hash = params.as_h?
         return "undefined" unless params_hash
 
-        files = lookup_array(params_hash["files"]?)
-        paths_raw = params_hash["paths"]?
-        paths = paths_raw ? lookup_array(paths_raw) : nil
-
         renderer = VarSubstitutor.new(vars: @vars, host_name: "localhost")
+        files = lookup_array(render_first_found_param(params_hash["files"]?, renderer))
+        paths_raw = params_hash["paths"]?
+        paths = paths_raw ? lookup_array(render_first_found_param(paths_raw, renderer)) : nil
         # Each candidate entry renders STRICTLY (undefined variable in an
         # entry fails the calling task, it does not silently render to the
         # "undefined" sentinel and lose to a later `default.yml` fallback):
@@ -3166,7 +3165,32 @@ module Krikri
           raise ex unless skip_errors
         end
 
-        "undefined"
+        return "[]" if skip_errors
+        raise FirstFoundLookupError.new(
+          "The lookup plugin 'first_found' failed: No file was found when using first_found.")
+      end
+
+      # A first_found params dict's own `files:`/`paths:` values can be
+      # TEMPLATED SCALARS (`files: "{{ __first_found | map('regex_replace',
+      # '$', '.yml') | list }}"`, idiv_biodiversity.systemd_timesyncd's own
+      # idiom) rather than literal YAML lists. The dict deliberately reaches
+      # #first_found_params RAW (nested {{ }} intact - see its own comment),
+      # so such a value arrives here as the unrendered STRING, and the old
+      # bare `as_a?` in #lookup_array silently dropped it as an EMPTY
+      # candidate list - first_found "found nothing" no matter what files
+      # actually existed, and the include_vars: path got the "undefined"
+      # sentinel as its filename ("include_vars: file not found: undefined")
+      # where real Ansible (verified live against 2.19.4) templates the whole
+      # lookup term before the plugin sees it and finds the file. Render a
+      # string value STRICTLY (an undefined variable inside it fails the
+      # calling task, same as any other candidate) and parse the rendered
+      # list back out; a scalar that survives rendering as a plain string
+      # wraps as a one-element list, matching real first_found's treatment
+      # of a lone filename. Non-strings (real YAML lists) pass through.
+      private def render_first_found_param(value : JSON::Any?, renderer : VarSubstitutor) : JSON::Any?
+        str = value.try(&.as_s?) || return value
+        rendered = Krikri.parse_json_or_python_literal(renderer.substitute(str, strict: true))
+        rendered.as_a? ? rendered : JSON::Any.new([rendered])
       end
 
       private def lookup_array(value : JSON::Any?) : Array(JSON::Any)

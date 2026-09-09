@@ -207,6 +207,12 @@ module Krikri
           raise FilterEngine::UnknownFilterError.new("No filter named '#{feature[1]}'.")
         end
         raise e
+      rescue e : Krikri::FirstFoundLookupError
+        # Same reasoning as the unknown-filter case above: first_found's own
+        # no-match failure is a hard task failure in real Ansible, never the
+        # lenient give-back-the-text fallback (which turned it into the
+        # "undefined" sentinel string at whatever consumer came next).
+        raise e
       rescue
         # Return original text on failure
         text

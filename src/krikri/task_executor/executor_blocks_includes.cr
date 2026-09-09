@@ -438,7 +438,7 @@ module Krikri
           candidate = begin
             substitutor.scan_strict_include_vars_path(task.include_vars_file || "", task.vars)
             substitutor.substitute(task.include_vars_file || "", strict: true).strip
-          rescue ex : UndefinedVariableError
+          rescue ex : UndefinedVariableError | FirstFoundLookupError
             # Real Ansible templates include_vars's own path strictly
             # (verified live against 2.19.4: `include_vars: "{{ users }}"`
             # with no `users` anywhere fails THIS task - "Error while
@@ -582,7 +582,7 @@ module Krikri
       candidate = begin
         substitutor.scan_strict_include_vars_path(task.include_vars_file || "", task.vars)
         substitutor.substitute(task.include_vars_file || "", strict: true).strip
-      rescue ex : UndefinedVariableError
+      rescue ex : UndefinedVariableError | FirstFoundLookupError
         # Real Ansible fails the include_vars task ITSELF when its path
         # template references an undefined variable ("Error while resolving
         # value for '_raw_params': 'users' is undefined", rc=2 - verified

@@ -246,6 +246,88 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
     evaluator.evaluate("lookup('ansible.builtin.first_found', params)").should eq(File.join(role_dir, "Debian.yml"))
   end
 
+  it "accepts a TEMPLATED SCALAR files: value (renders it, does not drop it as an empty list)" do
+    # Real bug found benchmarking idiv_biodiversity.systemd_timesyncd
+    # (round 74011): the role's own vars/main.yml builds the candidates
+    # through a templated scalar - `__vars_files: { files: "{{ candidates
+    # | map('regex_replace', '$', '.yml') | list }}", paths: [vars] }` -
+    # and the task is `include_vars: "{{ lookup('first_found',
+    # __vars_files) }}"`. The params dict deliberately reaches
+    # #evaluate_first_found RAW (nested {{ }} intact, first_found_params's
+    # own doing), so `files` arrived as the unrendered STRING and the old
+    # bare `as_a?` in #lookup_array silently dropped it as an EMPTY
+    # candidate list - first_found "found nothing" no matter what files
+    # existed, and include_vars: failed "file not found: undefined" where
+    # real Ansible (verified live against 2.19.4) templates the whole term
+    # and finds vars/ubuntu_22.yml.
+    role_dir = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "first_found_templated_scalar_files_spec")
+    `rm -rf #{role_dir}`
+    Dir.mkdir_p(File.join(role_dir, "vars"))
+    File.write(File.join(role_dir, "vars", "ubuntu_22.yml"), "greeting: hello\n")
+
+    v = Hash(String, JSON::Any).new
+    v["role_path"] = JSON::Any.new(role_dir)
+    v["ansible_distribution"] = JSON::Any.new("Ubuntu")
+    v["ansible_distribution_major_version"] = JSON::Any.new("22")
+    v["candidates"] = JSON.parse(%(["{{ ansible_distribution | lower }}_{{ ansible_distribution_major_version }}", "default"]))
+    v["params"] = JSON.parse(%({"files": "{{ candidates | map('regex_replace', '$', '.yml') | list }}", "paths": ["vars"]}))
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator.evaluate("lookup('first_found', params)").should eq(File.join(role_dir, "vars", "ubuntu_22.yml"))
+  end
+
+  it "raises the real Ansible error when first_found finds nothing and skip is not set" do
+    # Verified live against ansible-core 2.19.4: a no-match first_found
+    # lookup FAILS the task ("The lookup plugin 'first_found' failed: No
+    # file was found when using first_found."); the old "undefined"
+    # sentinel return leaked that string into the consumer instead
+    # (include_vars:'s "file not found: undefined").
+    role_dir = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "first_found_no_match_spec")
+    `rm -rf #{role_dir}`
+    Dir.mkdir_p(role_dir)
+
+    v = Hash(String, JSON::Any).new
+    v["role_path"] = JSON::Any.new(role_dir)
+    v["params"] = JSON.parse(%({"files": ["Missing.yml"], "paths": ["vars"]}))
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
+    expect_raises(Krikri::FirstFoundLookupError, "No file was found when using first_found") do
+      evaluator.evaluate("lookup('first_found', params)")
+    end
+  end
+
+  it "returns [] when first_found finds nothing with skip: true" do
+    # Verified live against ansible-core 2.19.4: `X{{ lookup('first_
+    # found', {'files': ['nope.yml'], 'paths': ['vars'], 'skip': true})
+    # }}Y` renders "X[]Y" - the old code returned the "undefined" sentinel
+    # for the skip case too, so a chained default(...) never fired.
+    role_dir = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "first_found_skip_spec")
+    `rm -rf #{role_dir}`
+    Dir.mkdir_p(role_dir)
+
+    v = Hash(String, JSON::Any).new
+    v["role_path"] = JSON::Any.new(role_dir)
+    v["params"] = JSON.parse(%({"files": ["Missing.yml"], "paths": ["vars"], "skip": true}))
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator.evaluate("lookup('first_found', params)").should eq("[]")
+  end
+
+  it "strictly fails a templated scalar files: whose own expression references an undefined variable" do
+    # Real Ansible templates the lookup's term before the plugin sees it,
+    # so an undefined variable inside a templated `files:` scalar fails
+    # the calling task - the strict per-entry rendering the literal-list
+    # form already had must apply to the scalar form too.
+    role_dir = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "first_found_scalar_undefined_spec")
+    `rm -rf #{role_dir}`
+    Dir.mkdir_p(role_dir)
+
+    v = Hash(String, JSON::Any).new
+    v["role_path"] = JSON::Any.new(role_dir)
+    v["params"] = JSON.parse(%({"files": "{{ nope_var }}.yml", "paths": ["vars"]}))
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
+    expect_raises(Krikri::UndefinedVariableError) do
+      evaluator.evaluate("lookup('first_found', params)")
+    end
+  end
+
   it "resolves lookup('fileglob', ...) to a real (possibly empty) list of matching files" do
     # Real bug found via PowerDNS.pdns's own per-loop-item `when: lookup(
     # 'ansible.builtin.fileglob', role_path ~ '/vars/' ~ item, wantlist=
@@ -335,8 +417,12 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
   end
 
   it "query('first_found', ...) with no match returns an empty list, not a single undefined item" do
+    # skip: true is what makes a no-match first_found tolerate the miss
+    # (real Ansible FAILS the task without it - see the no-match spec
+    # above); without that flag this used to return the "undefined"
+    # sentinel string here instead.
     v = Hash(String, JSON::Any).new
-    v["params"] = JSON.parse(%({"files": ["NoSuchFile.yml"], "paths": ["/nonexistent"]}))
+    v["params"] = JSON.parse(%({"files": ["NoSuchFile.yml"], "paths": ["/nonexistent"], "skip": true}))
     evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
     evaluator.evaluate("query('first_found', params)").should eq("[]")
   end
