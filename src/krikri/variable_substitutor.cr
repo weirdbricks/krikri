@@ -957,15 +957,19 @@ module Krikri
     private def scan_block_tag_refs(cond_no_strings : String, loop_var : String?) : Nil
       cond_no_strings.scan(SCAN_STRICT_BLOCK_TAG_REF) do |mat|
         ident = mat[0]
-        next if SCAN_STRICT_BLOCK_TAG_KEYWORDS.includes?(ident)
-        next if SCAN_STRICT_BLOCK_TAG_BUILTIN_FILTERS.includes?(ident)
         root = block_tag_ref_root(ident)
         next if @vars.has_key?(root)
         next if loop_var == ident || loop_var == root
-        next if block_tag_ref_is_filter_call(cond_no_strings, ident)
-        next if block_tag_ref_is_function_call(cond_no_strings, mat.end)
-        next if block_tag_ref_is_kwarg_name(cond_no_strings, mat.end)
-        next if block_tag_ref_is_defaulted(cond_no_strings, mat.end)
+        # The shared tolerance chain from the `{{ }}`-span scanner
+        # (keywords, builtin filters, filter/function calls, kwarg
+        # names, `| default(...)`, and - the ruzickap.proxy_settings
+        # fix - `is defined`-family tests, which must never raise for
+        # a genuinely undefined plain variable: its blockinfile
+        # `block: "{% if proxy_settings_http_proxy is defined %}..."`
+        # with the var commented out of the role's own defaults
+        # failed here with "'proxy_settings_http_proxy' is undefined"
+        # where real Ansible takes the false branch and skips).
+        next if scan_inner_ref_skippable?(cond_no_strings, ident, mat.end)
         raise UndefinedVariableError.new("'#{root}' is undefined")
       end
     end

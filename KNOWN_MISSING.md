@@ -18,8 +18,37 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.866`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.867`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
+
+---
+
+## `{% if x is defined %}` in a task-param string raised under strict (0.9.867)
+
+Newly found in this round's triage: **ruzickap.proxy_settings** fails
+with `Message: 'proxy_settings_http_proxy' is undefined` where real
+Ansible takes the false branch and skips the block. The role's
+`blockinfile:` task passes `block:` as a task-param STRING with a
+`{% if %}` tag inline (not a `.j2` file), and the variable is
+deliberately commented out of the role's own defaults - the textbook
+"is defined is the one construct that must never raise" case.
+
+Root cause was not in Crinja at all: the strict pre-render scan for
+bare undefined references inside `{% %}` block tags
+(`scan_block_tag_refs`, written for the round-194 openjdk case)
+re-fires `raise_if_strict_undefined`'s logic in a second hand-rolled
+scanner, and that copy had no `is defined`-family tolerance - while
+the `{{ }}`-span scanner's own copy
+(`scan_inner_ref_skippable?` -> `block_tag_ref_is_defined_test`)
+already did. Conceptually the same class as the 0.9.856 HostVarsVars
+`is defined` fix, one more scanner short of full coverage. Fixed by
+routing the block-tag scan through the same shared tolerance chain
+(`scan_inner_ref_skippable?`) instead of keeping a diverging guard
+list; regression specs in
+`spec/unit/blocktag_is_defined_strict_spec.cr` cover the false branch,
+the true branch, `is not defined`/`is undefined`, and the
+no-regression case (a genuinely undefined bare variable in an
+`{% if %}` comparison still raises).
 
 ---
 
