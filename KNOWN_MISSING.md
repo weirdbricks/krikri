@@ -18,12 +18,12 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.853`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.854`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
 
 ---
 
-## Round 72000: 400-role batch (2x Atlantic.net capacity), 9 real bugs (0.9.845-0.9.853)
+## Round 72000: 400-role batch (2x Atlantic.net capacity), 10 real bugs (0.9.845-0.9.854)
 
 First batch run entirely Atlantic-only (no Kata, per round 71000's
 undiagnosed Kata cgroup boot-failure finding) at 24 hosts/12 pairs -
@@ -36,7 +36,7 @@ provisioning failures, unrelated slots/times - requeued and all 5 came
 back CLEAN, confirming it wasn't systemic).
 
 All 57 DIVERGENT roles were individually triaged this round (not just
-a sample). 9 real bugs found, fixed, and confirmed via live reruns on
+a sample). 10 real bugs found, fixed, and confirmed via live reruns on
 fresh Atlantic hosts: `with_subelements:` on `include_tasks:` rejected
 outright; `role_path` unresolved inside a static `import_tasks:` path;
 `getent`'s `fail_key: false` storing an empty array instead of a real
@@ -45,9 +45,11 @@ null; a bracketed multi-item `groups:` list passed raw into
 the tasks it inlines; a templated `ignore_errors:` always defaulting
 to `false` instead of `true`; `with_nested:` not re-expanding a
 templated source list at runtime; Python `.lower()`/`.upper()`
-method-call syntax unsupported in `{{ }}` expressions; and Crinja
-losing string integer-subscript support (`mystr[0]`) entirely on
-modern Crystal. Each writeup below names the confirming role(s).
+method-call syntax unsupported in `{{ }}` expressions; Crinja losing
+string integer-subscript support (`mystr[0]`) entirely on modern
+Crystal; and malformed Jinja2 (`{{ var }` with a missing brace)
+silently tolerated instead of hard-erroring like real Jinja2's parser.
+Each writeup below names the confirming role(s).
 
 Of the rest: most (~30) trace to already-documented scope cuts,
 harness/environment gaps (missing Python libs on the harness's real-
@@ -56,17 +58,18 @@ Windows-only roles, real Ansible's own module/collection version
 mismatches), or a genuinely-unrelated both-fail (missing binary,
 missing role dependency). Those aren't re-litigated individually here
 - see the per-role rows in `ROLES_TESTED.md`'s round-72000 section for
-each one's specific reason. 3 new **open gaps** are documented below
+each one's specific reason. 2 new **open gaps** are documented below
 (real, reproducible, root-caused, but not fixed this round - each
 names the exact mechanism so another pass can implement it without
 re-deriving the diagnosis): a quoted-string re-evaluated as live code;
-a silently-tolerated malformed-Jinja gap; and `is defined` on a
-dynamically-keyed `hostvars[...]` lookup raising instead of returning
-false. (A 4th candidate from the original triage -
-`ansible_python_version` supposedly never populated - turned out to be
-a misdiagnosis on re-investigation: the fact was fine, a Crinja
-string-indexing regression was the real cause; see the fix below.) A
-handful of roles (`f500.ufw`'s possible SSH-lockout-after-
+and `is defined` on a dynamically-keyed `hostvars[...]` lookup raising
+instead of returning false. (Two other candidates from the original
+triage turned out not to be open gaps after all: `ansible_python_
+version` supposedly never populated was a misdiagnosis on
+re-investigation - the fact was fine, a Crinja string-indexing
+regression was the real cause - and the malformed-Jinja gap got fixed
+this round instead of staying open; see the fixes below.) A handful of
+roles (`f500.ufw`'s possible SSH-lockout-after-
 `ufw enable`, `Frzk.chrony`'s task-level `vars:` leaking across
 sibling tasks, the apt-404-on-krikri-host-only pattern seen on 3
 different roles) are flagged as **needs a closer look** - real,
@@ -231,6 +234,34 @@ reproducible divergences whose root cause isn't fully pinned down yet.
   spec added; live-reverified on a fresh Atlantic host - the role is
   now fully `CLEAN` (converges to the exact same point real Ansible's
   own `'wordpress_sites' is undefined` failure does).
+
+- **`kostiantyn-nemchenko.patroni`**: the role's own
+  `postgresql_apt_filename: "{{ __postgresql_apt_filename }"` default
+  (a genuine typo in the role, missing one closing brace) was silently
+  tolerated - the hand-rolled `{{ }}` scanner found no well-formed
+  span, copied the malformed text through verbatim, and the play kept
+  going much further (`ok=19`) using whatever leftover/partial value
+  resulted, masking the real divergence point. Real ansible-core
+  hard-errors at first use (live-verified 2.19.4: "Syntax error in
+  template: unexpected '}'" for a stray single `}` inside the span;
+  "unexpected end of template, expected 'end of print statement'."
+  for a span with no closer at all) and stops right there (`ok=5`).
+  Fixed by raising a new `TemplateSyntaxError` from
+  `expand_mustache_spans` whenever `find_mustache_close` returns nil,
+  with the two real Jinja2 messages distinguished the way Jinja2's own
+  lexer does (same quote/nested-brace scan state, so a valid
+  dict-literal body like `{{ {"a": 1} }}` and the gantsign.helm
+  quoted-literal Go-template argument still parse correctly, and a
+  stray `}` in literal text outside any span still passes through
+  verbatim, exactly like real Jinja2). Regression spec added (5
+  examples, including the two valid-shape no-false-positive cases);
+  live-verified against a local playbook reproducing the patroni shape
+  (task-level failure with real Ansible's exact message, `ok=0`,
+  instead of sailing past). One known shape difference remains: real
+  Ansible rejects `command: echo '{{'` at PARSE time ("failed at
+  splitting arguments, either an unbalanced jinja2 block or quotes")
+  while this engine now fails the task at execution time - both fail,
+  only the phase and wording differ.
 
 ### Needs a closer look (real, reproducible, not root-caused yet)
 
@@ -2072,21 +2103,6 @@ below - keep the two apart, or this list stops meaning anything.
   the re-evaluation isn't isolated yet, and a broad fix to quoted-
   literal handling risks regressing legitimate re-templating elsewhere
   without much narrower reproduction first.
-- **Malformed Jinja2 (an unbalanced brace, `{{ var }` instead of `{{
-  var }}`) is silently tolerated instead of hard-erroring like real
-  Jinja2's parser does.** `kostiantyn-nemchenko.patroni` round72000:
-  the role's own `postgresql_apt_filename: "{{ __postgresql_apt_filename
-  }"` (a genuine typo in the role, missing one closing brace) - real
-  ansible-core raises "Syntax error in template: unexpected '}'" and
-  stops there (`ok=5`); this engine's regex-based `{{ }}` matcher
-  simply doesn't find a well-formed span, doesn't raise anything
-  either, and the play keeps going much further (`ok=19`) using
-  whatever leftover/partial value resulted - masking the real
-  divergence shape the same way the module-resolution and undefined-
-  in-string gaps above do. Not chased further this round: implementing
-  general brace-balance validation in the hand-rolled evaluator is a
-  bigger, higher-blast-radius change than this one role's benefit
-  justifies on its own.
 - **Unresolvable module/action names don't hard-stop the whole run
   like real Ansible's do.** `Aplyca.EC2Describe` (`ec2_remote_facts`, a
   module removed from ansible-core years ago) and `bodsch.k0s`

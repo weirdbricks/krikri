@@ -365,6 +365,17 @@ module Krikri
     class TemplateRecursionError < Exception
     end
 
+    # Raised when a `{{` span in a plain task param/var value has no
+    # closing `}}` at all (`{{ var`) or has a stray single `}` before it
+    # (`{{ var }`) - the kostiantyn-nemchenko.patroni round-72000 open
+    # gap. Real ansible-core's Jinja2 hard-errors on both shapes
+    # (live-verified 2.19.4: "Syntax error in template: unexpected '}'"
+    # and "Syntax error in template: unexpected end of template, expected
+    # 'end of print statement'."), where this engine's scanner used to
+    # copy the malformed text through verbatim and keep playing on.
+    class TemplateSyntaxError < Exception
+    end
+
     # The ONE shared dotted-path walker for plain hash navigation
     # (`result.rc`, `ansible_facts.os_family`) - resolves *parts* (the
     # split of a dotted expression) against *base* by successive Hash
@@ -1516,6 +1527,22 @@ module Krikri
 
             i = close_at + 2
             next
+          else
+            # A `{{` with no closing `}}` anywhere after it, or one whose
+            # would-be body hits a stray single `}` first (`{{ var }`,
+            # kostiantyn-nemchenko.patroni's own round-72000 default
+            # `postgresql_apt_filename: "{{ __postgresql_apt_filename }"`
+            # with a missing brace). Real ansible-core's Jinja2 hard-errors
+            # on both shapes and stops the play right there; this scanner
+            # used to copy the malformed text through verbatim and keep
+            # going, masking the divergence point the way the doc's open
+            # gap describes. Same scan state (quotes + nested-brace
+            # depth) as the successful path, so a dict-literal body like
+            # `{{ {"a": 1} }}` still parses as a valid span, and the two
+            # real Jinja2 messages are distinguished the way Jinja2
+            # itself does (a stray `}` vs. end of template with no
+            # closer at all).
+            raise VariableSubstitutor::TemplateSyntaxError.new(malformed_mustache_message(text, i + 2))
           end
         end
         result << text[i]
@@ -1538,6 +1565,31 @@ module Krikri
         j += 1
       end
       nil
+    end
+
+    # The real Jinja2 error message for a span that #find_mustache_close
+    # could not close, distinguishing the two shapes the way Jinja2's own
+    # lexer does: a stray single `}` at sub-expression depth 0 outside a
+    # quote (`{{ var }`) is "unexpected '}'", while running off the end of
+    # the template with no closer (`{{ var`) is "unexpected end of
+    # template, expected 'end of print statement'." Both get ansible-core's
+    # "Syntax error in template: " prefix, since that's what its Templar
+    # wraps TemplateSyntaxError in (live-verified against 2.19.4).
+    private def malformed_mustache_message(text : String, start : Int32) : String
+      state = MustacheScanState.new
+      j = start
+      n = text.size
+      while j < n
+        if state.closes_at?(text, j)
+          j += 2
+          next
+        end
+        if text[j] == '}' && state.quote.nil? && state.depth == 0
+          return "Syntax error in template: unexpected '}'"
+        end
+        j += 1
+      end
+      "Syntax error in template: unexpected end of template, expected 'end of print statement'."
     end
 
     # Per-character scan state for #find_mustache_close - split out so the
