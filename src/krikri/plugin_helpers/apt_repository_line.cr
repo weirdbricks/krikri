@@ -40,6 +40,38 @@ module Krikri
         part.includes?('@') ? part.split('@', 2).last : part
       end
 
+      # Resolves the actual sources.list.d file path an added repo line
+      # lands in, replicating real Ansible's own flow exactly
+      # (apt_repository.py: an explicit `filename:` param goes through
+      # `_suggest_filename` - which returns it VERBATIM and then
+      # unconditionally appends `.list` - followed by `_expand_path`,
+      # which passes anything containing '/' through as-is instead of
+      # joining sources_dir). So `filename: keydb` ->
+      # <sources_list_d>/keydb.list, but a full path like
+      # `filename: /etc/apt/sources.list.d/keydb.list` (v0112358.
+      # keydb_active_replication) intentionally lands at
+      # /etc/apt/sources.list.d/keydb.list.LIST.LIST - i.e.
+      # /etc/apt/sources.list.d/keydb.list.list: quirky, but exactly
+      # what real Ansible writes, and apt reads any *.list under
+      # sources.list.d, so the repo IS live for apt. Found via
+      # v0112358.keydb_active_replication, where joining the full-path
+      # param under sources_list_d instead produced a nested
+      # apt-never-reads path: `apt-get update` then exits 0 with no GPG
+      # warning (the repo file is simply invisible to apt), the task
+      # still reported changed/success, and the later
+      # `apt: name=keydb` failed with "Unable to locate package keydb"
+      # where real Ansible's identical sequence installed it.
+      def self.target_sources_path(filename_param : String?, filename_source : String, sources_list_d : String) : String
+        if filename_param
+          candidate = "#{filename_param}.list"
+          return candidate if candidate.includes?('/')
+
+          return File.join(sources_list_d, candidate)
+        end
+
+        File.join(sources_list_d, "#{suggested_filename(filename_source)}.list")
+      end
+
       def self.cleanup_filename(source : String) : String
         source.gsub(/[^a-zA-Z0-9]/, " ").split.reject(&.empty?).join("_")
       end

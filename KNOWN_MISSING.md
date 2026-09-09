@@ -18,8 +18,38 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.868`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.869`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
+
+---
+
+## `apt_repository:` `filename:` with a full path landed the repo where apt never reads it (0.9.869)
+
+Newly found in this round's triage:
+`v0112358.keydb_active_replication` passed
+`filename: /etc/apt/sources.list.d/keydb.list` (a FULL path) to
+`apt_repository:`. Real Ansible's own module honors that - `_expand_path`
+passes any `filename:` containing `/` through as-is, and `_suggest_filename`
+returns the param verbatim and then unconditionally appends `.list`, so the
+file real Ansible actually writes is
+`/etc/apt/sources.list.d/keydb.list.list` (quirky, but apt reads ANY
+`*.list` under sources.list.d, so the repo is live). Krikri instead joined
+the full path under sources.list.d, producing a nested
+`/etc/apt/sources.list.d//etc/apt/.../keydb.list.list` apt never sees:
+`apt-get update` exited 0 with no GPG warning (the repo file is simply
+invisible to apt, so the existing `gpg_signature_failure?` scan had nothing
+to find), the task reported `changed: true`/success, and the subsequent
+`apt: name=keydb` failed with "Unable to locate package keydb" - while real
+Ansible's identical `apt_key:`-then-`apt_repository:` sequence installed it
+fine. The initial GPG-heuristic hypothesis was wrong: the standalone
+`apt_key:` task, the keyring location, and apt's trust handling were all
+irrelevant; the divergence was purely where the sources line landed. Fixed
+by replicating real Ansible's exact flow
+(`PluginHelpers::AptRepositoryLine.target_sources_path`): explicit
+`filename:` param + `.list`, used verbatim when it contains `/`,
+joined into sources.list.d otherwise; default derivation unchanged.
+Confirmed against real Ansible's stable-2.19 module source (the version
+the round actually ran).
 
 ---
 

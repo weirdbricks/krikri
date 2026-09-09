@@ -47,4 +47,43 @@ describe Krikri::PluginHelpers::AptRepositoryLine do
         .should eq("mirror_example_com_repo")
     end
   end
+
+  describe ".target_sources_path" do
+    sources_list_d = "/etc/apt/sources.list.d"
+    repo_line = "deb https://download.keydb.dev/open-source-dist jammy main"
+
+    # Regression: v0112358.keydb_active_replication passes
+    # `filename: /etc/apt/sources.list.d/keydb.list` - a FULL path.
+    # Real Ansible's `_suggest_filename` returns the param verbatim,
+    # unconditionally appends `.list` (so `.list.list` - a genuine,
+    # verified quirk of its own source), and `_expand_path` passes any
+    # candidate containing '/' through as-is instead of joining
+    # sources.list.d. The repo file apt actually reads is therefore
+    # /etc/apt/sources.list.d/keydb.list.list (apt consumes ANY *.list
+    # under sources.list.d). Krikri previously joined the full path
+    # under sources.list.d instead, producing a nested
+    # /etc/apt/sources.list.d//etc/apt/sources.list.d/keydb.list.list
+    # apt never reads: `apt-get update` exited 0 with no GPG warning
+    # (the repo was simply invisible), the task still reported
+    # changed/success, and the later `apt: name=keydb` failed with
+    # "Unable to locate package keydb" where real Ansible's identical
+    # sequence installed it.
+    it "honors a full-path filename: param verbatim (plus real Ansible's own .list suffix quirk)" do
+      Krikri::PluginHelpers::AptRepositoryLine.target_sources_path(
+        "/etc/apt/sources.list.d/keydb.list", repo_line, sources_list_d
+      ).should eq("/etc/apt/sources.list.d/keydb.list.list")
+    end
+
+    it "joins a bare filename: param into sources.list.d with .list appended" do
+      Krikri::PluginHelpers::AptRepositoryLine.target_sources_path(
+        "keydb", repo_line, sources_list_d
+      ).should eq("/etc/apt/sources.list.d/keydb.list")
+    end
+
+    it "derives the filename from the repo line when no filename: param is given" do
+      Krikri::PluginHelpers::AptRepositoryLine.target_sources_path(
+        nil, repo_line, sources_list_d
+      ).should eq("/etc/apt/sources.list.d/download_keydb_dev_open_source_dist.list")
+    end
+  end
 end

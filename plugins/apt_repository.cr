@@ -17,7 +17,10 @@ module Krikri
   #   e.g. `ppa:owner` alone) - required
   # - state: present (default) | absent
   # - filename: base filename (without .list) to use under
-  #   /etc/apt/sources.list.d/ - defaults to a name derived from the repo
+  #   /etc/apt/sources.list.d/, or a full path (real Ansible honors
+  #   any `filename:` containing '/' as-is, verbatim + '.list' - see
+  #   PluginHelpers::AptRepositoryLine.target_sources_path) -
+  #   defaults to a name derived from the repo
   #   URL via PluginHelpers::AptRepositoryLine, replicating real
   #   Ansible's own `_suggest_filename` logic exactly (see that module
   #   for details, verified against real Ansible's actual source)
@@ -279,11 +282,7 @@ module Krikri
     end
 
     private def target_file(normalized : String, filename_source : String) : String
-      if filename = @params["filename"]?
-        return File.join(SOURCES_LIST_D, "#{filename}.list")
-      end
-
-      File.join(SOURCES_LIST_D, "#{PluginHelpers::AptRepositoryLine.suggested_filename(filename_source)}.list")
+      PluginHelpers::AptRepositoryLine.target_sources_path(@params["filename"]?, filename_source, SOURCES_LIST_D)
     end
 
     # Real ansible-playbook's own apt_repository module FAILS the task
