@@ -18,10 +18,47 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.886`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.892`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
 
 ---
+
+## Round 76000-77500: 400-role Galaxy top-download batch + triage + 6 real fixes (0.9.886 → 0.9.892)
+
+Full round: another 400 fresh roles (deduped against everything tested
+so far), triaged with no skipping. 328 clean, 16 Galaxy-404 untestable,
+49 divergent, 7 transient Terraform-apply failures (all came back
+CLEAN on requeue, confirming they were infra hiccups, not krikri
+bugs). Of the 49 divergent: most were role-side bugs, host/environment
+mismatches, or already-covered deliberate limits (unimplemented
+modules skipped gracefully); six got real fixes this round:
+`community.general.docker_service` tombstoning (0.9.887, its bare
+unqualified spelling closed at 0.9.892 after a confirm-phase re-run
+caught the gap - the same bare-name gap turned out to also affect the
+`consul_acl` tombstone from the previous round, fixed alongside it);
+five more call sites where an `UnknownFilterError` from a task's own
+`vars:` block crashed the whole process instead of failing just that
+task, across `include_tasks`/`include_role`/`include_vars` and the
+when-evaluation host-partitioning loop (0.9.888, closing what 0.9.885
+missed); the namespaced `ansible_facts.memory_mb` fact dict, never
+gathered before (0.9.889); `assemble:`'s relative `src:` resolution
+against a role's own `files/` directory, matching `copy:`/`template:`
+(0.9.890); and a `basic.py` shim so role-private Python modules
+(`library/*.py`) using `ansible.module_utils.basic` work on targets
+without ansible-core installed, the same way real Ansible's AnsiballZ
+wrapper does (0.9.891) - a bigger and more valuable fix than the
+narrower "merge_yaml should skip gracefully" bug it was originally
+dispatched to chase; the actual root cause was that `merge_yaml` is
+one of many role-private custom modules krikri already runs for real
+(`PythonModuleRunner`, since 0.9.819), not an unimplemented module at
+all. See `ROLES_TESTED.md`'s "Round 76000-77500" table for the full
+per-role breakdown, and "Open gaps" above for the newly-triaged
+defects not yet fixed: role-local `filter_plugins/*.py` custom filters
+aren't loaded at all (`MichaelRigart.interfaces`, `stackhpc.luks`),
+`newrelic.newrelic-infra`'s `merge_yaml` still fails after the
+`basic.py` shim (likely a PyYAML-availability gap, not yet isolated),
+and `apt:` doesn't validate a pinned package version against available
+candidates.
 
 ## Round 73000-75024: 400-role Galaxy top-download batch + triage + 4 real fixes (0.9.855 → 0.9.886)
 
@@ -2988,6 +3025,42 @@ looped-task flow is strict with real-Ansible when:-before-loop ordering.
 Genuinely open defects: something is wrong and the fix is unknown or
 unfinished. Everything deliberate lives under "Deliberate limits"
 below - keep the two apart, or this list stops meaning anything.
+
+- **Role-local `filter_plugins/*.py` custom filters aren't loaded at
+  all** (round 76221/76227, `MichaelRigart.interfaces`'s `bond_check`
+  and `stackhpc.luks`'s `luks_key`). Real Ansible loads a role's own
+  `filter_plugins/` directory the same way it loads `library/` custom
+  modules (see `PythonModuleRunner` for the equivalent already
+  implemented for modules); krikri has no equivalent for filters, so
+  any task referencing one hard-fails with "No filter named 'X'."
+  where real Ansible resolves and runs it. The 0.9.888 fix (rescuing
+  `UnknownFilterError` from every `vars:`-block call site) stops the
+  whole process from crashing on this, which is real progress, but the
+  affected tasks still fail where real Ansible succeeds - `stackhpc.luks`
+  remains DIVERGENT after that fix for exactly this reason (confirmed
+  live, round 77001: real ansible ok=5 failed=0, krikri ok=2 failed=1).
+
+- **`newrelic.newrelic-infra`'s `library/merge_yaml.py` still fails
+  after the 0.9.891 `ansible.module_utils.basic` shim** (round 77004
+  confirm-phase re-run: krikri failed=1, real ansible failed=0). The
+  shim fix was real and necessary (confirmed independently via its own
+  regression specs) but doesn't fully cover this specific module - it
+  `import yaml` (PyYAML) at module scope, a dependency the shim
+  doesn't address; root cause not yet isolated between a genuine
+  PyYAML-availability difference on the target and some other gap in
+  the shimmed `AnsibleModule`. Needs a live re-investigation with
+  verbose (`-vvv`) output before the next fix attempt.
+
+- **`ansible.builtin.apt`'s `name:` doesn't validate a pinned version
+  string against available candidates** (round 76017, `dj-wasabi.telegraf`:
+  `name: telegraf=1.18.2-1` where that exact version doesn't exist).
+  Real Ansible correctly hard-fails ("no available installation
+  candidate"); krikri lets it loosely "succeed" and only fails two
+  tasks later on a missing directory the never-really-installed
+  package should have created. Not yet dispatched - fixing it safely
+  needs a real (not mocked) apt-get failure path, and this repo's
+  existing apt specs' testing convention for that hasn't been
+  confirmed yet.
 
 - **`kubernetes.core.helm_repository` hard-stops the whole play instead
   of gracefully skipping (round 74000-range, `juju4.falco`).** This is
