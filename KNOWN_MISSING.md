@@ -18,8 +18,68 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.882`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.883`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
+
+---
+
+## Two evaluator bugs found together via srsp.oracle-java (nested dep of wcm_io_devops.aem_cms): a recap that looked like role-conditional chaos was really `| float` on native numbers and `| length` on numbers (0.9.883)
+
+Found in round 74007 (`wcm_io_devops.aem_cms`, Atlantic; same shape in
+73052): the recap divergence looked alarming and structural - krikri
+`ok=15 changed=2 failed=1 skipped=41` vs real ansible-core 2.19.4
+`ok=8 changed=0 failed=1 skipped=7` - and a naive line-based diff of
+the two cold runs couldn't cleanly compare them because the `=> {`
+multi-line JSON debug blocks interleave differently. The real story,
+task by task: both engines ran the same first 15 tasks identically,
+and BOTH ended rc=2 failed=1 - real Ansible just died at "Set general
+internal variables for java > 8" (`when: java_version > 8 and
+java_subversion | length == 0`, where `java_latest_subversion[13]` is
+the YAML float 0.1 that set_fact preserves natively on 2.19: real
+Python's `len()` raises "object of type '_AnsibleTaggedFloat' has no
+len()" and the task fails), while krikri's hand-rolled FilterEngine
+took the decimal string repr's length (3) as the `rescue`-fallback
+answer, evaluated the condition False, and kept going for ~40 more
+tasks before dying on a phantom downstream failure ("'jdk_file_url' is
+undefined" at "Download JDK (as tar.gz file)") that real Ansible never
+reached. Two real bugs, one per engine:
+
+1. **FilterEngine's `length`/`count` was lenient on numeric/bool
+   operands** (filter_engine.cr's `length_of` fell to the
+   string-coercion `else`), where real Python's `len()` raises for
+   int/float/bool - same parity class as the pre-existing NoneType
+   raise one case above it. Now raises Python-shaped messages
+   ("object of type 'float' has no len()"), which also makes the
+   when: path fail the task exactly where real Ansible does, instead
+   of silently continuing past it.
+
+2. **The vendored Crinja `float` filter answered its 0.0 default for
+   any already-numeric target**: its guard was
+   `raw.responds_to?(:to_f?)`, and Crystal's own Float64/Int64 have no
+   `to_f?` (only String does) - so `java_subversion | float == 0.1`
+   was False even where the filter chain survived. This one never
+   surfaced in the round's own diff (real Ansible died earlier) - it
+   only showed up when the fixed binary kept running: the role's "Set
+   internal variables for 13.0.1" task was skipped, leaving
+   `jdk_version_detail` (and from it `jdk_file_url`) undefined.
+   Overridden in `jinja_filters.cr` (the established re-registration
+   pattern; `Crinja.filter(:first)`/`(:last)` were already vendored
+   overrides there) - `{{ x | float }}` is now float(x) for
+   Number/Bool raws, unchanged for strings.
+
+Confirmed against the saved round output plus a minimal local repro
+and a full local replay of the role checkout from the round's work
+dir: after both fixes, the local replay's recap is byte-identical to
+the round's py recap (ok=8 changed=0 failed=1 skipped=7, failing at
+the same task). Note the role itself is broken on ansible-core 2.19
+(its `| length`-on-float idiom predates 2.19's native-type set_fact
+preservation) - both engines now legitimately fail it; the parity
+claim is the failure POINT and recap, not a passing run. Regression
+specs: `spec/unit/filter_engine_spec.cr` (length raises on
+int/float/bool, count alias included), `spec/unit/crinja_direct_spec.cr`
+(float filter converts native numbers; rebase canary), and
+`spec/unit/conditional_evaluator_spec.cr` (the exact oracle-java when:
+shape fails on a float operand and still passes on the string one).
 
 ---
 

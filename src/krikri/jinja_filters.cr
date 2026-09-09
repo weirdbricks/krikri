@@ -206,6 +206,33 @@ module Krikri
       )
     end
 
+    # `float` - override the vendored Crinja float filter, which answers
+    # the DEFAULT (0.0) for any already-numeric target: its guard is
+    # `raw.responds_to?(:to_f?)`, and Crystal's own Float64/Int64 have no
+    # `to_f?` (only String does), so `{{ 0.1 | float }}` on a variable
+    # holding a native YAML/JSON float rendered "0.0" (strings still
+    # parsed fine, which is why every literal-probe passed). Found via
+    # srsp.oracle-java (nested dep of wcm_io_devops.aem_cms): its
+    # `when: java_version == 13 and java_subversion | float == 0.1`
+    # skipped a task real Ansible runs, so `jdk_version_detail` (and
+    # from it `jdk_file_url`) never got composed and the role failed
+    # later with a phantom "'jdk_file_url' is undefined". Real Jinja2's
+    # float filter is float(x) - a no-op for floats, int(x).to_f for
+    # ints (Python's True is 1, so bools float too), string parsing
+    # with the `default` (0.0) fallback for anything else.
+    Crinja.filter({default: 0.0}, :float) do
+      raw = target.raw
+      if raw.is_a?(Number)
+        Crinja::Value.new(raw.to_f)
+      elsif raw.is_a?(Bool)
+        Crinja::Value.new(raw ? 1.0 : 0.0)
+      elsif raw.responds_to?(:to_f?) && (result = raw.to_f?)
+        Crinja::Value.new(result)
+      else
+        arguments["default"].to_f
+      end
+    end
+
     # `ternary(true_value, false_value)` - Jinja2's conditional value
     # selection: returns the first argument when the target is truthy, the
     # second when falsy. os_hardening writes per-boolean configs this way:

@@ -1331,6 +1331,40 @@ describe Krikri::ConditionalEvaluator do
     end
   end
 
+  describe "`| length` on a native number in a when: (srsp.oracle-java)" do
+    # Real bug found benchmarking wcm_io_devops.aem_cms (via its nested
+    # dep srsp.oracle-java) against real ansible-core 2.19.4: the role's
+    # `when: java_version > 8 and java_subversion | length == 0`, where
+    # set_fact preserved `java_latest_subversion[13]` (a YAML float,
+    # 0.1) as a native float. Real Ansible FAILS the task there ("object
+    # of type '_AnsibleTaggedFloat' has no len()"), ending the play with
+    # ok=8/skipped=7/failed=1; krikri's hand-rolled FilterEngine took
+    # the decimal string repr's length (3), so the condition evaluated
+    # False and the play kept going for ~40 more tasks before dying on
+    # a phantom downstream error (ok=15/skipped=41/failed=1). The
+    # string-branch of the float filter (the zsh_version specs above)
+    # is unaffected.
+    it "fails the condition on a float operand, like real Python's len()" do
+      v = Hash(String, JSON::Any).new
+      v["java_version"] = JSON::Any.new(13_i64)
+      v["java_subversion"] = JSON::Any.new(0.1)
+      expect_raises(Exception, "no len()") do
+        Krikri::ConditionalEvaluator.evaluate(
+          "java_version > 8 and java_subversion | length == 0", v
+        )
+      end
+    end
+
+    it "still answers a string operand's length normally" do
+      v = Hash(String, JSON::Any).new
+      v["java_version"] = JSON::Any.new(13_i64)
+      v["java_subversion"] = JSON::Any.new("0.1")
+      Krikri::ConditionalEvaluator.evaluate(
+        "java_version > 8 and java_subversion | length > 0", v
+      ).should be_true
+    end
+  end
+
   describe "round 189 regressions" do
     it "evaluates a YAML folded-scalar condition with embedded newlines from more-indented continuation lines" do
       # mrlesmithjr.network-tweaks: `(a is defined and\n  a) and (item.set is\n  #   defined and\n    item.set)` - real newlines in the condition string silently

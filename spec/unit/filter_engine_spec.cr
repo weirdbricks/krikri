@@ -330,6 +330,32 @@ describe Krikri::VariableSubstitutor::FilterEngine do
     engine.apply(s("yes"), "bool").as_bool.should eq(true)
   end
 
+  it "raises on a numeric or bool `length` operand, like Python's len()" do
+    # Real bug found via srsp.oracle-java (nested dep of
+    # wcm_io_devops.aem_cms): `when: java_version > 8 and
+    # java_subversion | length == 0` where java_subversion holds a
+    # native YAML float (0.1). Real ansible-core fails the task outright
+    # ("object of type '_AnsibleTaggedFloat' has no len()" on 2.19);
+    # this engine's old `else` coercion took the decimal string repr's
+    # length (3) instead, so the task silently skipped/ran and krikri
+    # executed ~40 more tasks before dying on a phantom downstream
+    # error, diverging the whole recap (ok=15/skipped=41 vs ok=8/
+    # skipped=7). Same Python-parity class as the NoneType raise above.
+    expect_raises(Exception, "object of type 'float' has no len()") do
+      engine.apply(JSON::Any.new(0.1), "length")
+    end
+    expect_raises(Exception, "object of type 'int' has no len()") do
+      engine.apply(JSON::Any.new(7_i64), "length")
+    end
+    expect_raises(Exception, "object of type 'bool' has no len()") do
+      engine.apply(JSON::Any.new(true), "length")
+    end
+    # count is an alias of length - same semantics.
+    expect_raises(Exception, "no len()") do
+      engine.apply(JSON::Any.new(0.1), "count")
+    end
+  end
+
   it "bool filter only recognizes real Ansible's own keyword set, not general truthiness" do
     # Real bug found benchmarking geerlingguy.gitlab's own "restart
     # gitlab" handler: `failed_when: gitlab_restart_handler_failed_when

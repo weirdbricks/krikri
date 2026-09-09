@@ -2015,6 +2015,22 @@ module Krikri
           # pass that real Ansible fails outright with this exact
           # message.
           raise "object of type 'NoneType' has no len()"
+        when Int64, Int32, Float64, Bool
+          # Same Python-parity class as the NoneType case above, found
+          # via srsp.oracle-java (nested dep of wcm_io_devops.aem_cms):
+          # `when: java_version > 8 and java_subversion | length == 0`
+          # where java_subversion holds a native YAML float (0.1). Real
+          # ansible-core fails the task outright ("object of type
+          # '_AnsibleTaggedFloat' has no len()" on 2.19; plain 'float'
+          # on <= 2.18), while the `else` coercion below happily took
+          # the decimal string repr's length (3) - and because this
+          # lenient answer only surfaced through the FALLBACK path (the
+          # Crinja-first evaluation raises, gets rescued, lands here),
+          # the task silently skipped/ran instead of failing, leaving
+          # krikri to execute ~40 more tasks before dying on a phantom
+          # downstream error and diverging the whole recap. len(int/
+          # float/bool) has no Python answer but TypeError.
+          raise "object of type '#{value.raw.is_a?(Bool) ? "bool" : value.raw.is_a?(Float64) ? "float" : "int"}' has no len()"
         else
           as_string(value).size
         end

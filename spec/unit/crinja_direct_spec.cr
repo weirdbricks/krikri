@@ -191,4 +191,21 @@ describe "raw Crinja (rebase canary)" do
     crinja_render("{{ missing | join(',') }}").should eq("")
     crinja_render("{% set x = missing | list %}{{ x }}").should eq("[]")
   end
+
+  # Real bug found via srsp.oracle-java (nested dep of
+  # wcm_io_devops.aem_cms): the vendored float filter's guard was
+  # `raw.responds_to?(:to_f?)` - Crystal's own Float64/Int64 have no
+  # `to_f?` (only String does) - so `{{ x | float }}` on a variable
+  # holding a native number answered the DEFAULT (0.0), and the role's
+  # `when: java_subversion | float == 0.1` skipped a task real Ansible
+  # runs. krikri's override lives in jinja_filters.cr; this canary pins
+  # the registration (and flags it as redundant if the fork ever fixes
+  # the guard itself).
+  it "float filter converts native numbers, not just strings" do
+    crinja_render("{{ x | float }}", {"x" => 0.1}).should eq("0.1")
+    crinja_render("{{ x | float }}", {"x" => 13}).should eq("13.0")
+    crinja_render("{{ x | float == 0.1 }}", {"x" => 0.1}).should eq("True")
+    crinja_render("{{ x | float }}", {"x" => "0.1"}).should eq("0.1")
+    crinja_render("{{ x | float }}", {"x" => "not a number"}).should eq("0.0")
+  end
 end
