@@ -260,7 +260,23 @@ module Krikri
       run_hosts = [] of Host
       skip_hosts = [] of Host
       hosts.each do |host|
-        vars_context = build_vars_context(task, host)
+        vars_context = nil
+        begin
+          vars_context = build_vars_context(task, host)
+        rescue ex : VariableSubstitutor::FilterEngine::UnknownFilterError
+          # Same degrade-to-one-clean-failed-task shape as execute_task's
+          # own build_vars_context rescue (0.9.885) and the include_
+          # tasks/include_role/include_vars paths' own rescues: the task's
+          # own `vars:` block used an unknown filter, real Ansible fails
+          # just that task with "No filter named 'X'." - a raise here only
+          # affects THIS host (same as the WhenEvaluationError rescue
+          # below); the failed host is excluded from both run_hosts and
+          # skip_hosts. (inherit_on_error's push-down-to-children doesn't
+          # apply: the error is deterministic, so every child would fail
+          # the same way - swallow once per host instead.)
+          swallow_when_error(task, host, WhenEvaluationError.new(ex.message || "Failed to render task vars"))
+        end
+        next if vars_context.nil?
         begin
           if evaluate_when(when_condition, vars_context, host)
             run_hosts << host

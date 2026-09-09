@@ -81,7 +81,21 @@ module Krikri
 
       run_groups = Hash(String, Array(Host)).new { |hash, key| hash[key] = [] of Host }
       run_hosts.each do |host|
-        vars_context = build_vars_context(task, host)
+        begin
+          vars_context = build_vars_context(task, host)
+        rescue ex : VariableSubstitutor::FilterEngine::UnknownFilterError
+          # Same degrade-to-one-clean-failed-task shape as execute_task's
+          # own build_vars_context rescue (0.9.885): the include_tasks:
+          # statement's own `vars:` block used an unknown filter (e.g. a
+          # role-local filter like stackhpc.luks's luks_key), real Ansible
+          # fails just that include task with "No filter named 'X'." -
+          # nothing here caught it, so the whole process crashed out of
+          # run_task_batch instead. Only THIS host fails; the rest of
+          # run_hosts still proceed (same per-host swallow partition_by_
+          # when's own WhenEvaluationError rescue below uses).
+          swallow_when_error(task, host, WhenEvaluationError.new(ex.message || "Failed to render task vars"))
+          next
+        end
         substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
         file_rel = substitutor.substitute(task.include_file.as(String))
         resolved_path = PlaybookParser.resolve_include_path(file_rel, task.include_file_dir.as(String))
@@ -325,7 +339,18 @@ module Krikri
     end
 
     private def execute_include_vars(task : Task, host : Host) : Nil
-      vars_context = build_vars_context(task, host)
+      begin
+        vars_context = build_vars_context(task, host)
+      rescue ex : VariableSubstitutor::FilterEngine::UnknownFilterError
+        # Same degrade-to-one-clean-failed-task shape as the include_
+        # tasks/include_role paths' own build_vars_context rescues: the
+        # include_vars: statement's own `vars:` block used an unknown
+        # filter, real Ansible fails just that task with "No filter
+        # named 'X'." - via this file's own include_vars failure shape
+        # (stats/halt/print, respecting ignore_errors:).
+        finish_include_vars_failure(task, host, ex.message || "Failed to render task vars")
+        return
+      end
 
       # A real `loop:` (as opposed to with_first_found, handled below)
       # was previously ignored entirely here - include_vars: was
@@ -845,7 +870,18 @@ module Krikri
     # play's top-level task list, so `run` never prints one for them. Stops
     # early once the host halts (a task failed without ignore_errors).
     private def execute_include_tasks(task : Task, host : Host) : Nil
-      base_vars_context = build_vars_context(task, host)
+      begin
+        base_vars_context = build_vars_context(task, host)
+      rescue ex : VariableSubstitutor::FilterEngine::UnknownFilterError
+        # Same degrade-to-one-clean-failed-task shape as the multi-host
+        # execute_include_tasks_multi path's own build_vars_context
+        # rescue: the include_tasks: statement's own `vars:` block used
+        # an unknown filter, real Ansible fails just that include task
+        # with "No filter named 'X'." instead of the whole process
+        # crashing out of execute_task's include_tasks dispatch.
+        swallow_when_error(task, host, WhenEvaluationError.new(ex.message || "Failed to render task vars"))
+        return
+      end
       # Must mirror the general task path's fallback chain (see the
       # equivalent block above execute_looped_task) - a bare `loop: "{{
       # var }}"` scalar-template loop on an include_tasks: (robertdebock.
@@ -1120,7 +1156,18 @@ module Krikri
     # prints with no `ok:` beneath it, and the meta task is absent from
     # the play recap's ok= total.
     private def execute_include_role(task : Task, host : Host) : Nil
-      base_vars_context = build_vars_context(task, host)
+      begin
+        base_vars_context = build_vars_context(task, host)
+      rescue ex : VariableSubstitutor::FilterEngine::UnknownFilterError
+        # Same degrade-to-one-clean-failed-task shape as the include_
+        # tasks paths' own build_vars_context rescues: the include_role:
+        # statement's own `vars:` block used an unknown filter, real
+        # Ansible fails just that include task with "No filter named
+        # 'X'." instead of the whole process crashing out of execute_
+        # task's include_role dispatch.
+        swallow_when_error(task, host, WhenEvaluationError.new(ex.message || "Failed to render task vars"))
+        return
+      end
       # Same scalar-template loop gap as execute_include_tasks above.
       #
       # resolve_loop_items_or_raise: round174 matrix scenario 12b - same
