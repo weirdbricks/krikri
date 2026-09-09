@@ -1220,11 +1220,24 @@ module Krikri
       # Removed from community.general in v10.0.0 (its own runtime.yml
       # tombstones the FQCN), so every controller on a current
       # collection hard-fails on it (idealista.consul-role, round 033).
+      # Both spellings: a task can reference it bare when `collections:`
+      # is set on the play (or historically, before FQCNs were the
+      # convention) - only the FQCN was tombstoned initially, so a
+      # bare-name task (like idealista.consul-role's own sibling roles
+      # might write) slipped through ungracefully-skipped instead of
+      # hard-stopped, same bug class as docker_service below.
       "community.general.consul_acl",
+      "consul_acl",
       # Removed from community.general in v2.0.0 (superseded by
       # `docker_compose`), so every controller on a current collection
-      # hard-fails on it (krzysztof-magosa.docker).
+      # hard-fails on it. krzysztof-magosa.docker writes the BARE name
+      # (`docker_service:`, no FQCN) - the exact-string match against
+      # `as_written` (raise_unresolvable_module_error, no bare/FQCN
+      # normalization there) meant only the FQCN spelling was ever
+      # caught; confirmed live against the rebuilt 0.9.891 binary still
+      # gracefully skipping the bare form instead of hard-stopping.
       "community.general.docker_service",
+      "docker_service",
     }
 
     # Raises UnresolvedModuleError for the hard-stop shape (see the

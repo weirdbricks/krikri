@@ -472,6 +472,38 @@ describe Krikri::PlaybookParser do
       end
     end
 
+    it "hard-stops the parse for a bare (unqualified) removed-module name too" do
+      # krzysztof-magosa.docker writes the BARE `docker_service:` (no
+      # FQCN) - the tombstone check is an exact string match against
+      # `as_written`, so only the FQCN spelling was tombstoned at first
+      # and a bare-name task slipped through to the graceful skip
+      # instead of hard-stopping, confirmed live against the rebuilt
+      # binary still gracefully skipping it (round 043 confirm-phase).
+      expect_raises(Krikri::UnresolvedModuleError,
+        "couldn't resolve module/action 'docker_service'. " \
+        "This often indicates a misspelling, missing collection, or incorrect module path.") do
+        Krikri::PlaybookParser.parse_string(<<-YAML
+          - hosts: all
+            tasks:
+              - name: removed module, bare name
+                docker_service:
+          YAML
+        )
+      end
+
+      expect_raises(Krikri::UnresolvedModuleError,
+        "couldn't resolve module/action 'consul_acl'. " \
+        "This often indicates a misspelling, missing collection, or incorrect module path.") do
+        Krikri::PlaybookParser.parse_string(<<-YAML
+          - hosts: all
+            tasks:
+              - name: removed module, bare name
+                consul_acl:
+          YAML
+        )
+      end
+    end
+
     it "STILL gracefully marks a module from a collection with zero krikri modules unavailable (no hard-stop)" do
       # The pre-0.9.860 behavior for this shape, restored in 0.9.861:
       # kubernetes.core (and most collections that exist) are real,
