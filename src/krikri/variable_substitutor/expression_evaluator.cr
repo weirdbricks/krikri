@@ -2849,9 +2849,25 @@ module Krikri
         lookup_type = parts[0]?.try { |part| quoted_string_literal(part.strip) }.try(&.as_s?)
 
         if lookup_type == "first_found"
-          params = parts[1]?.try { |part| resolve_plus_operand(part.strip) }
+          # kwargs split AFTER the type is read - `errors='ignore'`
+          # (nephelaiio.devtools's own loop source) is a generic lookup
+          # OPTION, not a term; the params argument must also resolve
+          # through first_found_params (not resolve_plus_operand) so a
+          # raw list value keeps its nested {{ }} candidates intact for
+          # evaluate_first_found's strict per-entry rendering.
+          terms, kwargs = split_lookup_keyword_args(parts)
+          params = terms[1]?.try { |part| first_found_params(part) }
           return "[]" unless params
-          result = evaluate_first_found(params)
+          begin
+            result = evaluate_first_found(params)
+          rescue ex : FirstFoundLookupError | UndefinedVariableError
+            # Real Ansible's generic lookup `errors='ignore'` option
+            # swallows lookup errors and returns an empty result - with
+            # the LIST term form there is no `skip:` sub-key, so this is
+            # the only way the calling role can tolerate a no-match host.
+            return "[]" if first_found_errors_ignore?(kwargs)
+            raise ex
+          end
           return "[]" if result == "undefined" || result == "[]"
           return [result].to_json
         end
@@ -2871,6 +2887,13 @@ module Krikri
 
         parsed = (JSON.parse(raw) rescue nil)
         parsed.try(&.as_a?) ? raw : [raw].to_json
+      end
+
+      private def first_found_errors_ignore?(kwargs : Array(String)) : Bool
+        kwargs.any? do |kwarg|
+          key, _, value = kwarg.strip.partition('=')
+          key.strip.downcase == "errors" && value.strip.delete("'\"").downcase == "ignore"
+        end
       end
 
       private def evaluate_csvfile_lookup(raw_arg : String) : String
@@ -3144,6 +3167,24 @@ module Krikri
       # controller, not the managed host, get found).
       private def evaluate_first_found(params : JSON::Any) : String
         params_hash = params.as_h?
+        # Real first_found accepts two more term shapes besides the
+        # {files:, paths:, skip:} DICT form: a plain LIST of candidate
+        # filenames (recursively flattened by _process_terms) and a
+        # single STRING filename (wrapped as a one-element files list).
+        # A variable name resolving to either previously hit
+        # `as_h? || return "undefined"` and first_found "found nothing"
+        # no matter what actually existed - found via nephelaiio.devtools
+        # 's own `loop: "{{ q('first_found', include_files,
+        # errors='ignore') }}"` with `vars: include_files: [...]`.
+        # Both synthesize the dict the dict-form handling below walks:
+        # a list/string term carries no paths:/skip: of its own, so the
+        # no-paths: default search stack applies.
+        unless params_hash
+          case params.raw
+          when Array, String
+            params_hash = {"files" => params} of String => JSON::Any
+          end
+        end
         return "undefined" unless params_hash
 
         renderer = VarSubstitutor.new(vars: @vars, host_name: "localhost")

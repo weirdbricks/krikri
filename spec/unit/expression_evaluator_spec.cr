@@ -736,6 +736,52 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
     evaluator.evaluate("query('first_found', params)").should eq(%([#{File.join(role_dir, "vars", "Debian.yml").to_json}]))
   end
 
+  it "resolves a first_found search-list argument that is itself a variable holding a LIST" do
+    # Real bug found benchmarking nephelaiio.devtools: its own idiom is
+    #   include_vars: "{{ item }}"
+    #   vars:
+    #     include_files:
+    #       - "vars/{{ ansible_distribution }}-{{ ... }}.yml"
+    #       - "vars/{{ ansible_os_family }}.yml"
+    #   loop: "{{ q('first_found', include_files, errors='ignore') }}"
+    # Real first_found accepts, besides the {files:, paths:, skip:} DICT
+    # form, a plain LIST term (flattened recursively into file candidates)
+    # and a single STRING filename. This engine's evaluate_first_found
+    # only handled the dict form - a list-valued variable name resolved
+    # fine, then hit `params.as_h? || return "undefined"` and first_found
+    # "found nothing" no matter what actually existed, so the loop was
+    # empty and include_vars loaded nothing.
+    role_dir = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "q_first_found_list_term_spec")
+    `rm -rf #{role_dir}`
+    Dir.mkdir_p(File.join(role_dir, "vars"))
+    File.write(File.join(role_dir, "vars", "Debian.yml"), "greeting: hello\n")
+
+    v = Hash(String, JSON::Any).new
+    v["role_path"] = JSON::Any.new(role_dir)
+    v["ansible_distribution"] = JSON::Any.new("Debian")
+    v["include_files"] = JSON.parse(%(["vars/{{ ansible_distribution }}.yml", "vars/default.yml"]))
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator.evaluate("q('first_found', include_files, errors='ignore')").should eq(%([#{File.join(role_dir, "vars", "Debian.yml").to_json}]))
+    evaluator.evaluate("query('first_found', include_files)").should eq(%([#{File.join(role_dir, "vars", "Debian.yml").to_json}]))
+    evaluator.evaluate("lookup('first_found', include_files)").should eq(File.join(role_dir, "vars", "Debian.yml"))
+  end
+
+  it "first_found with a list term and errors='ignore' returns [] on no match instead of failing" do
+    # Real Ansible's generic lookup `errors='ignore'` option swallows the
+    # no-match failure and returns an empty result - with the list term
+    # form there is no `skip:` sub-key to set, so `errors='ignore'` is
+    # the ONLY way the calling role (nephelaiio.devtools again) can
+    # tolerate a host where no candidate exists.
+    v = Hash(String, JSON::Any).new
+    v["role_path"] = JSON::Any.new("/nonexistent-role")
+    v["include_files"] = JSON.parse(%(["NoSuchFile.yml"]))
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator.evaluate("q('first_found', include_files, errors='ignore')").should eq("[]")
+    expect_raises(Krikri::FirstFoundLookupError, "No file was found when using first_found") do
+      evaluator.evaluate("q('first_found', include_files)")
+    end
+  end
+
   it "strips trailing keyword arguments from lookup(...) positional terms" do
     # Real bug found benchmarking weakcamel.loki:
     # `lookup('nested', __loki_checksums, loki_bins, wantlist=True)` fed
