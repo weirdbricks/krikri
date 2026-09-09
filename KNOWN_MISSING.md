@@ -18,8 +18,33 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.861`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.862`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
+
+---
+
+## `apt`'s `cache_updated` result key: the `changed_when: apt_cache.cache_updated` idiom hard-failed (0.9.862)
+
+Newly found in this round's triage (hifis.gitlab): the `apt` plugin's
+result JSON never carried a `cache_updated` key at all, so the very
+common `register: apt_cache` + `changed_when: apt_cache.cache_updated`
+idiom - used specifically to stop a plain `update_cache: true` task
+from always reporting `changed` - hard-failed here with
+"object of type 'dict' has no attribute 'cache_updated'" on a task
+where real Ansible succeeds and correctly reports `ok`/`changed` per
+whether the cache was actually refreshed.
+
+Real Ansible's apt module ALWAYS includes `cache_updated` in
+exit_json (false when no update was requested or nothing moved), and
+decides it from the same before/after mtime pair this engine already
+stats for its own `changed` logic (`get_updated_cache_time()`'s
+update-success-stamp/lists-dir diff). The plugin now tracks that pair
+in both cache-update branches and, via a wrapper around `execute`,
+stamps `cache_updated` onto EVERY exit path - success, failure,
+check-mode refusal - so a registered result is always safe to
+dereference. Both plugin-binary specs (via a PATH shim faking
+`apt-get`/`stat`, no root or real apt needed) and evaluator-level
+specs for the `changed_when:` idiom added.
 
 ---
 

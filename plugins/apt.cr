@@ -34,12 +34,29 @@ module Krikri
 
     property? check_mode : Bool
 
+    # Set true only when an `apt-get update` actually ran here and
+    # genuinely moved the cache mtime (the same before/after stat pair
+    # real Ansible's get_updated_cache_time() diffs); surfaced as the
+    # result's `cache_updated` key on EVERY exit path via #execute's
+    # wrapper below - real Ansible's apt module always includes the key
+    # in exit_json, and the very common
+    # `changed_when: apt_cache.cache_updated` idiom (hifis.gitlab's own
+    # cache-refresh task) hard-fails with "object of type 'dict' has no
+    # attribute 'cache_updated'" the moment a registered result lacks it.
+    @cache_updated = false
+
+    def execute : PluginResult
+      result = execute_inner
+      result.extra["cache_updated"] = JSON.parse(@cache_updated.to_json)
+      result
+    end
+
     def initialize(config : JSON::Any)
       super(config)
       @check_mode = true?(@params["check_mode"]?)
     end
 
-    def execute : PluginResult
+    def execute_inner : PluginResult
       # Real ansible's apt module on a non-Debian-family host: it first
       # auto-installs its python3-apt dependency ("Updating cache and
       # auto-installing missing dependency: python3-apt" warning) via
@@ -166,9 +183,11 @@ module Krikri
             # Ansible's observable behavior: run the update for its side
             # effects, but keep changed=false for the sole-operation case
             # regardless of mtime movement.
+            pre_update_mtime = cache_mtime
             update_result = apt_get_update_with_retry("apt-get update", update_cache_retries, update_cache_retry_max_delay, ->remote_exec(String))
             if update_result[:exit_code] == 0
               messages << "APT cache updated"
+              @cache_updated = cache_mtime != pre_update_mtime
             else
               return PluginResult.new(
                 changed: false,
@@ -207,6 +226,7 @@ module Krikri
               messages << "APT cache updated"
               post_update_mtime = cache_mtime
               changed = true if cache_update_is_sole_operation && post_update_mtime != pre_update_mtime
+              @cache_updated = post_update_mtime != pre_update_mtime
             else
               return PluginResult.new(
                 changed: false,
