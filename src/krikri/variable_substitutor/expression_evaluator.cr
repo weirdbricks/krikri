@@ -1487,7 +1487,8 @@ module Krikri
         bf = numeric_operand(b)
         return JSON::Any.new(nil) unless af && bf
 
-        both_int = a.raw.is_a?(Int64) && b.raw.is_a?(Int64)
+        both_int = (a.raw.is_a?(Int64) || a.raw.is_a?(Bool)) &&
+                   (b.raw.is_a?(Int64) || b.raw.is_a?(Bool))
 
         case op
         when "*"
@@ -1518,8 +1519,49 @@ module Krikri
           raw.to_f64
         when Float64
           raw
+        when Bool
+          # Python's bool is an int subclass (True == 1, False == 0), so
+          # `true * 2` is 2 in real Jinja2, not a type error.
+          raw ? 1.0 : 0.0
         else
           nil
+        end
+      end
+
+      # Python-equivalent numeric value of *value* for the +/- arithmetic
+      # combines: a Bool coerces to its int subclass value (True == 1,
+      # False == 0), an Int64/Float64 passes through, anything else is
+      # nil (not arithmetic at all). Found via galaxyproject.galaxy's own
+      # first task, `(galaxy_manage_clone + galaxy_manage_download +
+      # galaxy_manage_existing) <= 1` with three boolean defaults -
+      # Python sums those to 1 and the assert passes; here the Bools
+      # fell through to the string-concat fallback ("TrueFalseFalse")
+      # and the assert failed where real Ansible's succeeds.
+      private def python_number(value : JSON::Any) : Int64 | Float64 | Nil
+        case raw = value.raw
+        when Bool    then raw ? 1_i64 : 0_i64
+        when Int64   then raw
+        when Float64 then raw
+        else              nil
+        end
+      end
+
+      # Bool-in-arithmetic fast path shared by #combine_plus and
+      # #combine_minus: when either side is a Bool and both sides are
+      # numeric, operate on the Python-coerced values (int result unless
+      # a float participates, matching Python's own promotion).
+      private def combine_with_bool_coercion(a : JSON::Any, b : JSON::Any, op : Char) : JSON::Any?
+        return nil unless a.raw.is_a?(Bool) || b.raw.is_a?(Bool)
+        an = python_number(a) || return nil
+        bn = python_number(b) || return nil
+        if an.is_a?(Float64) || bn.is_a?(Float64)
+          af = an.to_f64
+          bf = bn.to_f64
+          JSON::Any.new(op == '+' ? af + bf : af - bf)
+        else
+          ai = an.to_i64
+          bi = bn.to_i64
+          JSON::Any.new(op == '+' ? ai + bi : ai - bi)
         end
       end
 
@@ -1568,7 +1610,8 @@ module Krikri
       end
 
       private def resolve_plus_operand_literal(expr : String) : JSON::Any?
-        if literal = quoted_string_literal(expr) || numeric_literal(expr)
+        if literal = quoted_string_literal(expr) || numeric_literal(expr) ||
+                     bool_literal(expr)
           return literal
         end
 
@@ -1755,6 +1798,16 @@ module Krikri
           JSON::Any.new(int_val)
         elsif float_val = expr.to_f64?
           JSON::Any.new(float_val)
+        end
+      end
+
+      # A bare `true`/`false`/`True`/`False` literal operand - real
+      # Jinja2/Python accepts both capitalizations, and a Bool operand
+      # reaches the +/- combines as its int-subclass value.
+      private def bool_literal(expr : String) : JSON::Any?
+        case expr
+        when "true", "True"   then JSON::Any.new(true)
+        when "false", "False" then JSON::Any.new(false)
         end
       end
 
@@ -3370,6 +3423,10 @@ module Krikri
       end
 
       private def combine_plus(a : JSON::Any, b : JSON::Any) : JSON::Any
+        if coerced = combine_with_bool_coercion(a, b, '+')
+          return coerced
+        end
+
         case {a.raw, b.raw}
         when {Array, Array}
           JSON::Any.new(a.as_a + b.as_a)
@@ -3486,6 +3543,10 @@ module Krikri
       private def combine_minus(a : JSON::Any, b : JSON::Any) : JSON::Any
         if (a_epoch = datetime_epoch(a)) && (b_epoch = datetime_epoch(b))
           return timedelta(a_epoch - b_epoch)
+        end
+
+        if coerced = combine_with_bool_coercion(a, b, '-')
+          return coerced
         end
 
         case {a.raw, b.raw}

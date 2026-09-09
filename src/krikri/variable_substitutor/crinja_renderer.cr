@@ -4,6 +4,7 @@ require "crinja"
 require "../variable_substitutor"
 require "../crinja_strict_undefined"
 require "../crinja_string_index"
+require "../crinja_bool_arithmetic"
 
 module Krikri
   module VariableSubstitutor

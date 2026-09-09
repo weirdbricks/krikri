@@ -18,8 +18,35 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.863`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.864`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
+
+---
+
+## Bool operands in arithmetic coerced to Python's int-subclass values; `galaxyproject.galaxy` failed its very first task (0.9.864)
+
+Newly found in this round's triage (galaxyproject.galaxy): the role's
+first task is `assert: that: "(galaxy_manage_clone + galaxy_manage_
+download + galaxy_manage_existing) <= 1"` with three boolean role
+defaults (`yes`/`no`/`no`). Real Python's `bool` is an `int` subclass,
+so `True + False + False` is `1` and the assert passes; here `+`'s
+type dispatch didn't recognize Bool at all - the hand-rolled evaluator
+fell through to its string-concat fallback, rendering
+"TrueFalseFalse", and the assert failed before any real work ran.
+
+Fixed at the coercion level in BOTH evaluators (never shared - the
+recurring pattern): the hand-rolled `+`/`-` combines and `*`/`/`
+operand coercion now treat a Bool as 0/1 with Python's own int/float
+promotion, and the vendored Crinja fork got the same semantics at the
+value level (`Value#number?`/`as_number` reopened in
+`crinja_bool_arithmetic.cr`), since the parenthesized shape the role
+writes routes through ExpressionEvaluator's Crinja-first
+leading-paren path - Crinja's `+` string-concatenated the same way
+without raising. Scoped to arithmetic operators only: truthiness,
+`and`/`or`/`not` and Bool-vs-Bool equality never consult
+`number?`/`as_number` and are unchanged. Verified against real
+ansible-core semantics (True==1 sums, `True * 2.5` is float) in
+regression specs covering both evaluators.
 
 ---
 

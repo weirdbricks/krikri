@@ -964,6 +964,68 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
     evaluator.evaluate("n / 1024 / 1024").should eq("256.0")
   end
 
+  it "coerces Bool operands to their Python int values in + arithmetic" do
+    # Real bug found benchmarking galaxyproject.galaxy: its very first
+    # task is `assert: that: "(galaxy_manage_clone + galaxy_manage_
+    # download + galaxy_manage_existing) <= 1"` with three boolean role
+    # defaults (yes/no/no). Real Python's bool is an int subclass, so
+    # `True + False + False` is 1 and the assert passes; krikri's `+`
+    # fell through to the string-concat fallback ("TrueFalseFalse") and
+    # the assert failed before any real work ran. Fixed in BOTH
+    # evaluators: the hand-rolled +/- combines (this file) and the
+    # vendored Crinja fork's Value#number?/as_number
+    # (crinja_bool_arithmetic.cr - the parenthesized shape routes
+    # through ExpressionEvaluator's Crinja-first leading-paren path).
+    v = Hash(String, JSON::Any).new
+    v["galaxy_manage_clone"] = JSON::Any.new(true)
+    v["galaxy_manage_download"] = JSON::Any.new(false)
+    v["galaxy_manage_existing"] = JSON::Any.new(false)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
+
+    evaluator.evaluate("galaxy_manage_clone + galaxy_manage_download + galaxy_manage_existing").should eq("1")
+    evaluator.evaluate("true + true").should eq("2")
+    evaluator.evaluate("true - false").should eq("1")
+    evaluator.evaluate("false + false").should eq("0")
+    evaluator.evaluate("true * 2").should eq("2")
+    evaluator.evaluate("true * 2.5").should eq("2.5")
+    evaluator.evaluate("true + 1").should eq("2")
+  end
+
+  it "passes the exact galaxyproject.galaxy mutual-exclusion assert shape" do
+    # The role's own defaults/vars shape, evaluated both the way the
+    # role writes it (parenthesized, via the Crinja-first leading-paren
+    # path) and as a bare when:/assert: condition (ConditionalEvaluator).
+    v = Hash(String, JSON::Any).new
+    v["galaxy_manage_clone"] = JSON::Any.new(true)
+    v["galaxy_manage_download"] = JSON::Any.new(false)
+    v["galaxy_manage_existing"] = JSON::Any.new(false)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
+
+    evaluator.evaluate("(galaxy_manage_clone + galaxy_manage_download + galaxy_manage_existing) <= 1").should eq("True")
+    evaluator.evaluate("(true + false + false) <= 1").should eq("True")
+    Krikri::ConditionalEvaluator.evaluate("(galaxy_manage_clone + galaxy_manage_download + galaxy_manage_existing) <= 1", v).should be_true
+    Krikri::ConditionalEvaluator.evaluate("galaxy_manage_clone - galaxy_manage_download == 1", v).should be_true
+  end
+
+  it "leaves non-arithmetic Bool handling (and/or/not, truthiness, equality) unchanged" do
+    # The bool-is-int fix is scoped to arithmetic operators - truthiness,
+    # boolean logic and Bool-vs-Bool equality keep their existing
+    # (already-correct) behavior.
+    v = Hash(String, JSON::Any).new
+    v["a"] = JSON::Any.new(true)
+    v["b"] = JSON::Any.new(false)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
+
+    evaluator.evaluate("a").should eq("True")
+    evaluator.evaluate("b").should eq("False")
+    evaluator.evaluate("a and b").should eq("False")
+    evaluator.evaluate("a or b").should eq("True")
+    evaluator.evaluate("not b").should eq("True")
+    evaluator.evaluate("a and not b").should eq("True")
+    evaluator.evaluate("a == true").should eq("True")
+    evaluator.evaluate("b == false").should eq("True")
+  end
+
   it "doesn't crash on integer floor division by zero" do
     # `10 // 0` previously raised an uncaught OverflowError (`(10.0 /
     # 0.0).floor` is Float64::INFINITY, and `Infinity.to_i64` overflows
