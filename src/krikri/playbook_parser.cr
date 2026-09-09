@@ -894,7 +894,8 @@ module Krikri
     SPECIAL_KEYS = begin
       keys = Set{
         "name", "when", "register", "ignore_errors", "check_mode",
-        "diff", "become", "become_user", "tags", "args", "listen", "with_items", "loop",
+        "diff", "become", "become_user", "become_method", "become_flags",
+        "become_pass", "become_exe", "tags", "args", "listen", "with_items", "loop",
         "with_dict", "with_fileglob", "with_file", "with_first_found", "with_nested", "with_sequence",
         "with_flattened", "with_community.general.flattened", "with_subelements", "with_indexed_items", "until", "retries", "delay",
         "loop_control", "notify", "changed_when", "failed_when", "delegate_to", "delegate_facts", "run_once", "connection",

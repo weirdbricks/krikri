@@ -18,8 +18,32 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.872`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.873`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
+
+---
+
+## `become_method:` parsed as a module name, so the task under it degraded to an unavailable-module skip (0.9.873)
+
+Re-triaged from the logdna.logdna cold run: real Ansible printed
+`changed:` for "Activating LogDNA Agent Service" (a plain `shell:`
+task with no `when:` at all) while krikri printed `skipping:` for that
+exact task - and the run ended `unavailable modules: become_method`.
+Not a batching bug at all (0.9.870's adjacent-task fix does not apply:
+the task is the FIRST task of a `service_debian.yml` file pulled in by
+a templated `include_tasks:`, and include_tasks: boundaries already
+end every batch run). The real mechanism is in the task parser's
+module-key hunt: `become_method` was missing from the special-keys
+exclusion list, and it iterates before the real module key in the
+role's YAML (`become: true` / `become_method: sudo` / `shell: ...`),
+so "become_method" itself was picked as the module name, the `shell:`
+key was silently ignored as a second action, and the task degraded to
+the graceful unavailable-module skip. Same shape as the `listen:`
+handler-key fix from an earlier round. Fixed by adding
+`become_method`/`become_flags`/`become_pass`/`become_exe` (the
+remaining become_* task keywords with the identical exposure) to the
+exclusion list; the engine has always run privilege escalation via
+sudo, so the keywords are accepted and their values ignored.
 
 ---
 

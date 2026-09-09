@@ -151,6 +151,29 @@ describe Krikri::PlaybookParser do
       handler.listen.should eq("restart thing")
     end
 
+    it "recognizes become_method: as a task keyword, not a module name" do
+      # Real bug found benchmarking logdna.logdna's cold run: its "Activating
+      # LogDNA Agent Service" task (`become: true` / `become_method: sudo` /
+      # `shell: ...`) printed "skipping:" where real Ansible printed
+      # "changed:" - become_method: wasn't in the special_keys exclusion list
+      # module detection scans, and it iterated before the real module key in
+      # the YAML, so "become_method" itself got picked as the module name
+      # (shell: silently ignored), the task degraded to an unavailable-module
+      # skip, and the run ended rc=4 "unavailable modules: become_method".
+      # Same shape as the listen: fix below/above. become_flags/become_pass/
+      # become_exe are the remaining become_* task keywords with the identical
+      # exposure.
+      task = single_task(<<-YAML)
+        - name: Activating LogDNA Agent Service
+          become: true
+          become_method: sudo
+          shell: "update-rc.d logdna-agent defaults"
+        YAML
+
+      task.module_name.should eq("ansible.builtin.shell")
+      task.unavailable_module.should be_nil
+    end
+
     it "merges args: (a sibling keyword) into a free-form module's params" do
       # Real bug found benchmarking githubixx.ansible_role_wireguard's
       # own public-key derivation: `command: "wg pubkey" / args: {stdin:
