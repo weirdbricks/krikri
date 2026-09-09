@@ -169,6 +169,28 @@ module Krikri
       # never an error there.
       validate_filter_names(condition)
 
+      # Compile-time TEST-name validation - the `is <test>`-side twin of
+      # validate_filter_names just above, with the same justification:
+      # real Jinja resolves every test name in the whole expression when
+      # it COMPILES the template, before any and/or short-circuiting.
+      # Found via sunfoxcz.dkim (round 74502): its very first `fail:`
+      # task's `when:` list is [dkim_domains is not defined,
+      # dkim_domains is not list] - and real Jinja2/ansible-core has NO
+      # `is list` TEST (there is a `list` FILTER and an `is iterable`
+      # test), so real Ansible fails the task immediately with "Syntax
+      # error in expression: No test named 'list'.". Here the first
+      # clause was already False, short-circuit evaluation never reached
+      # the invalid clause, and the role ran 6 tasks deep before failing
+      # elsewhere - a completely different failure shape and point. The
+      # scan reuses the quote-aware byte walk (a ` is ` inside a string
+      # literal is not a test) and checks each name against the ONE set
+      # of tests the evaluators can actually resolve - Crinja's own test
+      # library, which every special-cased `is` test here either registers
+      # into or mirrors - raising the same UnknownTestError a reached
+      # clause already raises, so the only behavior change is for names
+      # that would fail the task anyway the moment they were evaluated.
+      validate_test_names(condition)
+
       # Handle the Python/Jinja2 conditional (ternary) expression `X if
       # COND else Y` - grammatically the LOWEST-precedence construct
       # (lower even than `or`/`and`: `conditional_expression ::= or_test
@@ -1292,6 +1314,105 @@ module Krikri
         return {bare, after} if VariableSubstitutor::FilterEngine::KNOWN_FILTER_NAMES.includes?(bare)
       end
       {name, after}
+    end
+
+    # Quote-aware byte walk over *condition* for every `is [not] <name>`
+    # test use - the test-side twin of validate_filter_names above (see
+    # the call site's comment for the sunfoxcz.dkim motivation). Reads
+    # each name (dotted FQCN spellings allowed, `ansible.builtin.`
+    # stripped like the filter pre-pass does) and checks it against the
+    # shared Crinja environment's test library, raising
+    # VariableSubstitutor::UnknownTestError ("No test named 'x'.") for
+    # one nothing can resolve - exactly the names the generic
+    # REGEX_GENERIC_IS_TEST Crinja delegation would fail on at runtime,
+    # just at COMPILE time like real Jinja, before short-circuiting can
+    # hide them. An `is` with no identifier after it (`is (`, end of
+    # string) is left alone for the runtime paths to interpret.
+    private def self.validate_test_names(condition : String) : Nil
+      bytes = condition.to_slice
+      in_quote : UInt8? = nil
+      i = 0
+      while i < bytes.size
+        byte = bytes[i]
+        if quote = in_quote
+          if byte == '\\'.ord
+            i += 2
+            next
+          end
+          in_quote = nil if byte == quote
+        elsif byte == '\''.ord || byte == '"'.ord
+          in_quote = byte
+        elsif byte == 'i'.ord && (matched = test_name_at(bytes, i))
+          name, after = matched
+          unless VariableSubstitutor::CrinjaRenderer.known_test?(name)
+            raise VariableSubstitutor::UnknownTestError.new("No test named '#{name}'.")
+          end
+          i = after
+        end
+        i += 1
+      end
+    end
+
+    # If the bytes at offset *start* are a standalone `is` (word-
+    # delimited on both sides), reads the optional `not` and the test
+    # name that follows; returns {name, index-past-the-name}, or nil
+    # when there is no `is`-test here (wrong word, no name after it).
+    private def self.test_name_at(bytes : Bytes, start : Int32) : {String, Int32}?
+      # word-delimited: the byte before must not be an identifier char
+      # ("this"/"issue" contain "is"; neither is a test use)
+      if start > 0
+        prev = bytes[start - 1]
+        is_word_prev = (prev >= 48 && prev <= 57) || (prev >= 65 && prev <= 90) || (prev >= 97 && prev <= 122) || prev == 95
+        return nil if is_word_prev
+      end
+      return nil unless start + 2 <= bytes.size && bytes[start] == 'i'.ord && bytes[start + 1] == 's'.ord
+      after_is = start + 2
+      return nil if after_is < bytes.size && (word_byte?(bytes[after_is]) || bytes[after_is] == '.'.ord)
+
+      j = after_is
+      while j < bytes.size && (bytes[j] == 32 || bytes[j] == 9)
+        j += 1
+      end
+
+      # optional negation - `is not list`
+      if j + 4 <= bytes.size && bytes[j, 4] == "not ".to_slice
+        j += 3
+        while j < bytes.size && (bytes[j] == 32 || bytes[j] == 9)
+          j += 1
+        end
+      end
+      return nil if j >= bytes.size
+
+      first = bytes[j]
+      is_letter = (first >= 65 && first <= 90) || (first >= 97 && first <= 122) || first == 95
+      return nil unless is_letter
+
+      k = j + 1
+      last_dot = -1
+      while k < bytes.size
+        b = bytes[k]
+        if !word_byte?(b) && b == 46 && k > j && bytes[k - 1] != 46
+          last_dot = k
+          k += 1
+          next
+        end
+        break unless word_byte?(b)
+        k += 1
+      end
+
+      # a trailing dot is not part of the name
+      name_end = (last_dot + 1 == k) ? last_dot : k
+      return nil if name_end <= j
+
+      name = String.new(bytes[j, name_end - j])
+      if bare = name.lchop?("ansible.builtin.")
+        name = bare
+      end
+      {name, k}
+    end
+
+    private def self.word_byte?(b : UInt8) : Bool
+      (b >= 48 && b <= 57) || (b >= 65 && b <= 90) || (b >= 97 && b <= 122) || b == 95
     end
 
     # Quote-aware whitespace normalization for condition strings - see

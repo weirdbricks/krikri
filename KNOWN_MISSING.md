@@ -18,8 +18,36 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.874`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.875`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
+
+---
+
+## `is list` treated as a real Jinja test - a test name that does not exist (0.9.875)
+
+Found in this round's triage via `sunfoxcz.dkim` (round 74502), which
+diverged immediately: real Ansible fails the role's very first real task
+with `Syntax error in expression: No test named 'list'.` - real
+Jinja2/ansible-core has NO `is list` TEST (there is a `list` FILTER and
+an `is iterable` test, but no `is list` test), so Jinja's compiler
+rejects the whole `when:` up front. Here the role ran 6 tasks deep (5
+changed) before failing elsewhere for an unrelated reason - a
+completely different failure shape and point. Two layers were wrong:
+the evaluators never dispatch `list` as a test, so an unknown test
+reached the generic Crinja `is` delegation, whose unknown-TEST error was
+mapped onto the FILTER wording ("No filter named 'unknown'." - the test
+wording wasn't recognized, the name discarded); and a `when:` whose
+and/or short-circuit never reached the invalid clause never errored at
+all, so `when: [dkim_domains is not defined, dkim_domains is not list]`
+with the variable defined simply skipped the task where real Ansible
+hard-fails it at compile time. Fixed by mapping Crinja's unknown-test
+error to a dedicated `UnknownTestError` with real Ansible's exact "No
+test named 'X'." wording, and adding a compile-time test-name pre-pass
+to `when:` evaluation (the `is`-side twin of 0.9.874's filter-name
+pre-pass): every `is [not] <name>` in the whole condition string is
+checked against the shared Crinja environment's test library before any
+short-circuiting, quote-aware, so the only behavior change is for names
+that would fail the task anyway the moment they were evaluated.
 
 ---
 
