@@ -3042,14 +3042,25 @@ below - keep the two apart, or this list stops meaning anything.
 
 - **`newrelic.newrelic-infra`'s `library/merge_yaml.py` still fails
   after the 0.9.891 `ansible.module_utils.basic` shim** (round 77004
-  confirm-phase re-run: krikri failed=1, real ansible failed=0). The
-  shim fix was real and necessary (confirmed independently via its own
-  regression specs) but doesn't fully cover this specific module - it
-  `import yaml` (PyYAML) at module scope, a dependency the shim
-  doesn't address; root cause not yet isolated between a genuine
-  PyYAML-availability difference on the target and some other gap in
-  the shimmed `AnsibleModule`. Needs a live re-investigation with
-  verbose (`-vvv`) output before the next fix attempt.
+  confirm-phase re-run: krikri failed=1, real ansible failed=0). PyYAML
+  itself is NOT the gap - ruled out live (this machine has PyYAML
+  installed and a faithful local repro of the module against a
+  writable path succeeds cleanly end to end). The real task writes to
+  a `become:`-escalated system path (`src: /etc/newrelic-infra.yml`,
+  play-level `become: true`); reproducing that locally surfaced a
+  concrete asymmetry worth chasing: a plain `copy:` task under the same
+  `become: true` fails LOUDLY at the plugin-dispatch layer ("sudo: a
+  password is required") when this dev machine's own passwordless-sudo
+  scope doesn't cover it, but `merge_yaml` (dispatched through
+  `py_module.cr`/`PythonModuleRunner`) instead failed QUIETLY from
+  INSIDE the Python module itself ("OS error Permission denied (13)")
+  - suggesting the become escalation may not be reaching the actual
+  file-write the same way it does for other plugins, though this
+  machine's own sudo restrictions make it impossible to fully confirm
+  without a real host. Needs a live re-investigation on an actual
+  Atlantic.net host with real root access, comparing `copy:`'s and a
+  `py_module`-dispatched module's become handling directly (verbose
+  `-vvv` output on both) before the next fix attempt.
 
 - **`ansible.builtin.apt`'s `name:` doesn't validate a pinned version
   string against available candidates** (round 76017, `dj-wasabi.telegraf`:
