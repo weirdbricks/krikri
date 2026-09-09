@@ -136,17 +136,13 @@ module Krikri
             end
           end
 
-          # Task NAME substitution (e.g. a role default referenced in the
-          # included tasks' own names) uses one representative host's
-          # vars_context, same as the rest of this codebase's "first
-          # host" precedent for cosmetic-only banner rendering - it can't
-          # affect what actually runs.
-          representative = group_hosts.first
-          rep_vars_context = build_vars_context(task, representative)
-          name_substitutor = VarSubstitutor.new(vars: rep_vars_context, host_name: representative.name)
-          included_tasks.each do |included_task|
-            included_task.name = name_substitutor.substitute(included_task.name)
-          end
+          # The included tasks' own `name:` strings are NOT pre-substituted
+          # here - same rationale as run_include_tasks_once's matching note
+          # below: an eager pass baked names once per file against a
+          # representative host's include-entry context, which permanently
+          # froze any name referencing a fact the included file's own
+          # earlier tasks set (or a per-host value) to that one moment.
+          # Banners render lazily at print time instead, per host.
 
           propagate_role_context(task, included_tasks)
 
@@ -1029,10 +1025,9 @@ module Krikri
 
       # Thread this iteration's item into each included task's own scope as
       # `item` and, when loop_control.loop_var is set, under that custom name
-      # too (so `mount.path` in a name/param/when: resolves). Also render the
-      # task NAME against the loop vars, matching how python names each
-      # iteration's banner (`render for mount /boot` instead of a literal
-      # `{{ mount.path }}`) - needs the item in scope first.
+      # too (so `mount.path` in a name/param/when: resolves). The banner's
+      # own rendering of a name referencing these happens lazily at print
+      # time - see the note further below.
       if item = vars_context["item"]?
         included_tasks.each do |included_task|
           included_task.vars["item"] = item
@@ -1052,10 +1047,20 @@ module Krikri
           end
         end
       end
-      name_substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
-      included_tasks.each do |included_task|
-        included_task.name = name_substitutor.substitute(included_task.name)
-      end
+      # NOTE: the included tasks' own `name:` strings are deliberately NOT
+      # pre-substituted here anymore. The old eager pass baked every name
+      # once at include-entry time, against a context that had this
+      # iteration's `item` but none of the FACTS the included file's own
+      # earlier tasks go on to set (systemli.apt_repositories' repo.yml:
+      # "Add key by content for {{ _name }}", where `_name` comes from two
+      # set_fact: tasks earlier in the SAME iteration) - every such name
+      # baked to a permanent "... for undefined" banner, while the same
+      # task's params rendered fine. Banners now render lazily at print
+      # time (render_task_name_for_display -> build_vars_context), which
+      # sees both the threaded `item`/loop_var (into task.vars, just above)
+      # and any facts set mid-iteration - matching real Ansible, which
+      # templates each task's name at ITS OWN task-start with current
+      # task_vars (verified live against ansible-core 2.19.4).
 
       # Propagate the *role* context (defaults/vars/dirs) into each included
       # task. Included files - especially a role's task files like

@@ -18,8 +18,39 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.877`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.878`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
+
+---
+
+## A looped include_tasks: baked every included task's banner name at include-entry, freezing fact-referencing names to "... for undefined" (0.9.878)
+
+Found in round 74501 (`systemli.jitsi_meet`, via its
+`systemli.apt_repositories` dependency): the role includes
+`tasks/repo.yml` once per repo with `loop:`, and repo.yml's own earlier
+`set_fact:` tasks define the `_name` that later tasks in the SAME
+iteration reference in their `name:` ("Add key by content for
+`{{ _name }}`"). The eager name-substitution pass in both include
+paths (`run_include_tasks_once`, `execute_include_tasks_multi`) baked
+each included task's name ONCE at include-entry time - before those
+`set_fact:` tasks had ever run - so every iteration's TASK banner read
+"... for undefined" while the same task's own module params (rendered
+lazily at execution time) resolved correctly. Fixed by removing the
+eager bake entirely and letting every banner render lazily at print
+time (`render_task_name_for_display` -> `build_vars_context`), which
+sees both the threaded `item`/`loop_var` and any facts set
+mid-iteration - matching real Ansible, which templates each task's
+name at ITS OWN task-start against current task_vars (verified live
+against 2.19.4, which shows the same per-iteration values in these
+banners). Non-looped names and names referencing include-vars/
+role-defaults are unaffected (they were resolvable at either point).
+Regression spec: `spec/integration/looped_include_task_name_spec.cr`.
+
+The same round's counter divergence (krikri ok=29/skipped=8 vs real
+ok=31/skipped=10) is a SEPARATE, still-open question - see the Open
+gaps entry on the apt keyring; the arithmetic itself is fully
+explained by the early halt that GPG failure caused (real produced 4
+more task results after the point krikri's play stopped).
 
 ---
 
@@ -2760,6 +2791,24 @@ looped-task flow is strict with real-Ansible when:-before-loop ordering.
 Genuinely open defects: something is wrong and the fix is unknown or
 unfinished. Everything deliberate lives under "Deliberate limits"
 below - keep the two apart, or this list stops meaning anything.
+
+- **Round 74501 (`systemli.jitsi_meet`): the binary apt keyring the role
+  installs did not verify apt signatures under krikri on that VM, and the
+  root cause is unconfirmed.** The role's final "Update cache" failed
+  with `NO_PUBKEY F7A37EB33D0B25D7` (prosody repo) under krikri while
+  real ansible-playbook's own fresh-VM run of the identical sequence
+  succeeded, halting krikri's play 4 task-results early (the whole
+  ok=29/skipped=8 vs ok=31/skipped=10 recap divergence - the failed task
+  itself is legitimate, that "Update cache" carries no `failed_when:`
+  so failing is correct once apt errors). Locally ruled out so far:
+  `failed_when:` handling of a module-level apt failure (suppresses
+  correctly), `copy:` byte integrity inside a looped include
+  (byte-identical), and fact (`_name`/`_config`) visibility in the
+  `repo.sources.j2` Crinja render (resolves correctly). The keyring
+  install path on a REAL host (`copy:` src from the role's files/ to
+  `/usr/share/keyrings/`, become, the stat-charset ascii/binary branch)
+  remains the suspect - needs a confirm-phase re-run against the rebuilt
+  binary before touching any code.
 
 - **Unresolvable module/action names: hard-stop covers only the
   tombstoned-removed names (0.9.860, narrowed 0.9.861); a missing or
