@@ -18,8 +18,35 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.862`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.863`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
+
+---
+
+## `copy:` with a trailing-`/` dest failed "Not a directory" when the directory didn't exist yet at the basename check (0.9.863)
+
+Newly found in this round's triage (l3d.unbound, cold run): the role's
+config-fragment tasks pass `dest: /etc/unbound/unbound.conf.d/` - a
+directory created earlier in the play - and the copy plugin only
+appended the source basename when `Dir.exists?(dest)` was already true
+at that instant. A `dest` ending in `/` that didn't exist yet (or that
+the check raced against) kept its raw slash-terminated path all the way
+to the final move, failing with "Failed to move file to destination:
+... 'Not a directory'" on a task where real `ansible-playbook` succeeds
+on the identical play.
+
+Real Ansible's copy module has a second, independent directory signal:
+a `dest` that ends in a path separator means the caller INTENDS a
+directory target, so the source basename is appended whether or not the
+directory exists on disk yet (a dest without a trailing slash stays a
+literal target filename unless it's an existing directory - that path
+is unchanged). The plugin now uses that same two-signal condition
+(trailing `/` OR existing directory) at all three basename-append
+sites: the `src:` path, the content-rewrite path, and the
+precomputed-checksum early return. Verified by new integration specs
+covering all three shapes: trailing-`/` dest with the directory absent
+(the regression), trailing-less dest onto an existing directory, and
+trailing-less dest as a literal filename.
 
 ---
 

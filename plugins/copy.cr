@@ -67,7 +67,17 @@ module Krikri
         # - "Failed to write file: ... 'Is a directory'" - since only
         # handle_file_copy's OWN dest-is-directory basename-append
         # logic existed, and this path never reaches it.
-        if (basename = @params["__original_src_basename"]?.presence) && Dir.exists?(dest)
+        # Real Ansible's copy also treats a dest: ending in a path
+        # separator as an explicit "this is a directory" signal - the
+        # basename is appended whenever dest is an EXISTING directory OR
+        # ends in "/", not only the former. Real bug found benchmarking
+        # l3d.unbound, whose config-fragment tasks pass
+        # `dest: /etc/unbound/unbound.conf.d/` (trailing slash, directory
+        # created earlier in the play): without the trailing-slash
+        # branch, the raw slash-terminated dest reached the final
+        # rename/move and failed with "Not a directory". Same condition
+        # in #handle_file_copy below.
+        if (basename = @params["__original_src_basename"]?.presence) && (Dir.exists?(dest) || dest.ends_with?('/'))
           dest = File.join(dest, basename)
         end
         return handle_content_copy(content, dest)
@@ -249,7 +259,7 @@ module Krikri
       # can differ even when content matches).
       if @params["__precomputed_match"]? == "true"
         basename = @params["__original_src_basename"]?.presence || File.basename(src)
-        dest = File.join(dest, basename) if Dir.exists?(dest)
+        dest = File.join(dest, basename) if Dir.exists?(dest) || dest.ends_with?('/')
         return PluginResult.new(changed: false, failed: false, msg: "File already identical (check mode)") if @check_mode
 
         apply_file_attributes(dest)
@@ -281,8 +291,16 @@ module Krikri
       # (large) source file to, not the user's real src: value - using
       # File.basename(src) directly here would append that random
       # scratch filename instead of the real one.
+      #
+      # Trailing-"/" dest (l3d.unbound, see #execute's content-path
+      # comment) is the same explicit directory signal - basename gets
+      # appended even when the directory doesn't exist yet, matching
+      # real Ansible. A dest WITHOUT a trailing slash that doesn't
+      # exist stays a literal target filename (real Ansible likewise
+      # only falls back to the basename for an existing directory).
       basename = @params["__original_src_basename"]?.presence || File.basename(src)
-      dest = File.join(dest, basename) if Dir.exists?(dest)
+      dest_signaled_dir = dest.ends_with?('/')
+      dest = File.join(dest, basename) if Dir.exists?(dest) || dest_signaled_dir
 
       # Check if source exists
       unless File.exists?(src)
@@ -373,13 +391,30 @@ module Krikri
       # Real Ansible's copy module does NOT create a missing single-file
       # destination directory - it fails with this exact message. See
       # #handle_content_copy's identical fix above for the repro.
+      # Exception: when the caller explicitly signaled a directory dest
+      # (trailing "/"), real Ansible's atomic_move creates the missing
+      # destination directory as part of the move - so a
+      # `dest: /etc/unbound/unbound.conf.d/` whose directory the play
+      # hasn't materialized yet still succeeds (l3d.unbound repro).
       dest_dir = File.dirname(dest)
       unless Dir.exists?(dest_dir)
-        return PluginResult.new(
-          changed: false,
-          failed: true,
-          msg: "Destination directory #{dest_dir} does not exist"
-        )
+        if dest_signaled_dir
+          begin
+            Dir.mkdir_p(dest_dir)
+          rescue ex
+            return PluginResult.new(
+              changed: false,
+              failed: true,
+              msg: "Failed to create destination directory #{dest_dir}: #{ex.message}"
+            )
+          end
+        else
+          return PluginResult.new(
+            changed: false,
+            failed: true,
+            msg: "Destination directory #{dest_dir} does not exist"
+          )
+        end
       end
 
       # Copy the file (staged + validated first when validate: is given -
