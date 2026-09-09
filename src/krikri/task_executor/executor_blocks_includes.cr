@@ -1427,6 +1427,7 @@ module Krikri
       subdir = case task.module_name
                when "ansible.builtin.copy"     then "files"
                when "ansible.builtin.template" then "templates"
+               when "ansible.builtin.assemble" then "files"
                else                                 nil
                end
       return params unless subdir
@@ -1434,6 +1435,7 @@ module Krikri
       role_dir = case task.module_name
                  when "ansible.builtin.copy"     then task.role_files_dir
                  when "ansible.builtin.template" then task.role_templates_dir
+                 when "ansible.builtin.assemble" then task.role_files_dir
                  else                                 nil
                  end
       return params unless role_dir

@@ -1169,11 +1169,11 @@ module Krikri
       result
     end
 
-    # For copy:/template: tasks that came from a role, a relative src:
-    # resolves against the role's files/ or templates/ directory - the
-    # plugin subprocess itself has no concept of roles, so this has to
-    # happen here, before the config is handed off. An absolute src: (or a
-    # task not from a role) is left untouched.
+    # For copy:/template:/assemble: tasks that came from a role, a
+    # relative src: resolves against the role's files/ or templates/
+    # directory - the plugin subprocess itself has no concept of roles, so
+    # this has to happen here, before the config is handed off. An
+    # absolute src: (or a task not from a role) is left untouched.
     private def resolve_script_path(local_path : String, task : Task) : String?
       if role_dir = task.role_files_dir
         candidate = File.join(role_dir, local_path)
