@@ -1221,6 +1221,10 @@ module Krikri
       # tombstones the FQCN), so every controller on a current
       # collection hard-fails on it (idealista.consul-role, round 033).
       "community.general.consul_acl",
+      # Removed from community.general in v2.0.0 (superseded by
+      # `docker_compose`), so every controller on a current collection
+      # hard-fails on it (krzysztof-magosa.docker).
+      "community.general.docker_service",
     }
 
     # Raises UnresolvedModuleError for the hard-stop shape (see the

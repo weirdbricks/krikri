@@ -452,6 +452,26 @@ describe Krikri::PlaybookParser do
       end
     end
 
+    it "hard-stops the parse for a module removed from community.general in v2 (docker_service)" do
+      # community.general removed `docker_service` in v2.0.0
+      # (superseded by `docker_compose`), so real ansible-playbook
+      # hard-fails immediately (rc=1, no PLAY RECAP) on a playbook
+      # using it - this engine previously took the graceful per-task
+      # unavailable_module skip and kept executing the rest of the play
+      # (krzysztof-magosa.docker).
+      expect_raises(Krikri::UnresolvedModuleError,
+        "couldn't resolve module/action 'community.general.docker_service'. " \
+        "This often indicates a misspelling, missing collection, or incorrect module path.") do
+        Krikri::PlaybookParser.parse_string(<<-YAML
+          - hosts: all
+            tasks:
+              - name: removed module
+                community.general.docker_service:
+          YAML
+        )
+      end
+    end
+
     it "STILL gracefully marks a module from a collection with zero krikri modules unavailable (no hard-stop)" do
       # The pre-0.9.860 behavior for this shape, restored in 0.9.861:
       # kubernetes.core (and most collections that exist) are real,
