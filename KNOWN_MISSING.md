@@ -18,12 +18,12 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.852`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.853`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
 
 ---
 
-## Round 72000: 400-role batch (2x Atlantic.net capacity), 8 real bugs (0.9.845-0.9.852)
+## Round 72000: 400-role batch (2x Atlantic.net capacity), 9 real bugs (0.9.845-0.9.853)
 
 First batch run entirely Atlantic-only (no Kata, per round 71000's
 undiagnosed Kata cgroup boot-failure finding) at 24 hosts/12 pairs -
@@ -36,7 +36,7 @@ provisioning failures, unrelated slots/times - requeued and all 5 came
 back CLEAN, confirming it wasn't systemic).
 
 All 57 DIVERGENT roles were individually triaged this round (not just
-a sample). 8 real bugs found, fixed, and confirmed via live reruns on
+a sample). 9 real bugs found, fixed, and confirmed via live reruns on
 fresh Atlantic hosts: `with_subelements:` on `include_tasks:` rejected
 outright; `role_path` unresolved inside a static `import_tasks:` path;
 `getent`'s `fail_key: false` storing an empty array instead of a real
@@ -44,9 +44,10 @@ null; a bracketed multi-item `groups:` list passed raw into
 `useradd -G`; `notify:` on an `import_tasks:` line not propagating to
 the tasks it inlines; a templated `ignore_errors:` always defaulting
 to `false` instead of `true`; `with_nested:` not re-expanding a
-templated source list at runtime; and Python `.lower()`/`.upper()`
-method-call syntax unsupported in `{{ }}` expressions. Each writeup
-below names the confirming role(s).
+templated source list at runtime; Python `.lower()`/`.upper()`
+method-call syntax unsupported in `{{ }}` expressions; and Crinja
+losing string integer-subscript support (`mystr[0]`) entirely on
+modern Crystal. Each writeup below names the confirming role(s).
 
 Of the rest: most (~30) trace to already-documented scope cuts,
 harness/environment gaps (missing Python libs on the harness's real-
@@ -55,14 +56,17 @@ Windows-only roles, real Ansible's own module/collection version
 mismatches), or a genuinely-unrelated both-fail (missing binary,
 missing role dependency). Those aren't re-litigated individually here
 - see the per-role rows in `ROLES_TESTED.md`'s round-72000 section for
-each one's specific reason. 4 new **open gaps** are documented below
+each one's specific reason. 3 new **open gaps** are documented below
 (real, reproducible, root-caused, but not fixed this round - each
 names the exact mechanism so another pass can implement it without
 re-deriving the diagnosis): a quoted-string re-evaluated as live code;
-a silently-tolerated malformed-Jinja gap; the `ansible_python_version`
-fact never populated; and `is defined` on a dynamically-keyed
-`hostvars[...]` lookup raising instead of returning false. A handful
-of roles (`f500.ufw`'s possible SSH-lockout-after-
+a silently-tolerated malformed-Jinja gap; and `is defined` on a
+dynamically-keyed `hostvars[...]` lookup raising instead of returning
+false. (A 4th candidate from the original triage -
+`ansible_python_version` supposedly never populated - turned out to be
+a misdiagnosis on re-investigation: the fact was fine, a Crinja
+string-indexing regression was the real cause; see the fix below.) A
+handful of roles (`f500.ufw`'s possible SSH-lockout-after-
 `ufw enable`, `Frzk.chrony`'s task-level `vars:` leaking across
 sibling tasks, the apt-404-on-krikri-host-only pattern seen on 3
 different roles) are flagged as **needs a closer look** - real,
@@ -202,6 +206,31 @@ reproducible divergences whose root cause isn't fully pinned down yet.
   `.strip()`). Regression spec added (covering both `.lower()` and
   chained `.lower().upper()`); live-reverified on a fresh Atlantic host
   (the include now correctly resolves to `install_debian.yml`).
+
+- **`louim.bedrock-site-protect`, re-investigated (the original triage
+  misdiagnosed this one)**: `pkg: "{{ passlib_package[ansible_python_
+  version[0]] }}"` (and the task name `"...for python {{
+  ansible_python_version[0] }}"`) rendered "undefined" - the original
+  round-72000 triage assumed `ansible_python_version` was never
+  populated at all (it's been set since 0.9.818, well before this
+  round; that was an incomplete-grep error, not a real gap). The
+  actual root cause: string integer-subscript indexing
+  (`mystr[0]`/`mystr[-1]`) through Crinja. The hand-rolled `{{ }}`
+  evaluator's own `VariableLookup#index_into` handles this fine, but
+  the full-evaluator dispatch is Crinja-first, and the vendored
+  Crinja's index-fallback gate (`Value#indexable?`) checks
+  `@raw.is_a?(Indexable)` - which `String` satisfied on the Crystal
+  versions Crinja was originally written against, but no longer does
+  on modern Crystal (`String` was dropped from `Indexable`) - so the
+  resolver's already-correct `Value#[]?(index : Int)` String branch
+  never got a chance to run. Every `{{ string[0] }}` (variable or
+  literal, positive or negative index) silently went to Undefined.
+  Fixed by reopening `Crinja::Value#indexable?` to recognize strings
+  again (`src/krikri/crinja_string_index.cr`), required from both the
+  `.j2`-template path and the `{{ }}` full-evaluator path. Regression
+  spec added; live-reverified on a fresh Atlantic host - the role is
+  now fully `CLEAN` (converges to the exact same point real Ansible's
+  own `'wordpress_sites' is undefined` failure does).
 
 ### Needs a closer look (real, reproducible, not root-caused yet)
 
@@ -2009,23 +2038,6 @@ Genuinely open defects: something is wrong and the fix is unknown or
 unfinished. Everything deliberate lives under "Deliberate limits"
 below - keep the two apart, or this list stops meaning anything.
 
-- **`ansible_python_version` (and the related `ansible_python` fact
-  dict) is never populated by Gathering Facts at all.**
-  `louim.bedrock-site-protect` round72000: `pkg: "{{ passlib_package[
-  ansible_python_version[0]] }}"` (and the task's own name field,
-  `"...for python {{ ansible_python_version[0] }}"`) - real Ansible's
-  `setup` module always includes this fact (the target's discovered
-  Python interpreter version, e.g. "3.10.12"); indexing it entirely
-  undefined here rendered as the literal text `"undefined"` (task name
-  showed "Installing passlib package for python undefined"), and the
-  package name resolution failed differently from real Ansible's own
-  (clean) `'wordpress_sites' is undefined` failure at a later,
-  unrelated task - masking the real divergence point. This engine
-  already knows which Python interpreter it targets for module
-  execution, so populating at least `ansible_python_version`/
-  `ansible_python.version` (a simple `python3 --version` equivalent)
-  looks tractable; the fuller `ansible_python` structure (executable,
-  has_sslcontext, etc.) is a larger, separate scope question.
 - **`is defined` on a dynamically-keyed `hostvars[...]` bracket lookup
   raises instead of returning false.** `mullholland.motd` round72000:
   `{% if (hostvars[inventory_hostname]['ansible_'+int] is defined) |
