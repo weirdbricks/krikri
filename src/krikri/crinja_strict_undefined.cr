@@ -101,11 +101,24 @@ module Krikri
     # subscript form (`hostvars[h]['ansible_host']`) funnel through
     # resolve_getattr -> crinja_attribute for a Crinja::Object.
     #
-    # The strict raise is a plain RuntimeError, NOT an UndefinedError:
+    # A strict miss does NOT raise at lookup time: it returns an
+    # Undefined that only raises when actually forced (printed or
+    # compared). Raising at lookup time made `is defined` itself hard-
+    # fail the render (found via mullholland.motd round72000:
+    # `{% if hostvars[inventory_hostname]['ansible_' ~ int] is defined %}`
+    # with a genuinely-absent computed key - real Ansible takes the
+    # false branch, `ok=3 changed=2`), defeating the one construct that
+    # is supposed to never raise for a missing attribute. Deferring to
+    # force time keeps a plain `{{ hostvars[h].typo }}` failing the task
+    # with the exact message real Ansible's own HostVarsVars wrapper
+    # raises, while `is defined`, `| default(...)`, and `{% if %}` all
+    # see a genuine Undefined.
+    #
+    # The deferred raise is a plain RuntimeError, NOT an UndefinedError:
     # Crinja's own evaluator rescues UndefinedError around attribute
     # resolution and re-raises a generic "hostvars[node1][x] is
     # undefined" that DISCARDS the cause's message - real Ansible's
-    # failure text for this exact case is the wrapper's own
+    # failure text for the plain-print case is the wrapper's own
     # "object of type 'HostVarsVars' has no attribute ..." (an
     # AttributeError surfacing verbatim), so the detail has to survive.
     # A RuntimeError is not swallowed anywhere in the render path and
@@ -113,8 +126,11 @@ module Krikri
     def crinja_attribute(attr : Crinja::Value) : Crinja::Value
       key = attr.to_string
       return @entries[key] if @entries.has_key?(key)
-      raise Crinja::RuntimeError.new("object of type 'HostVarsVars' has no attribute '#{key}'") if Krikri::StrictTemplating.enabled?
-      Crinja::Value.new(Crinja::Undefined.new(key))
+      if Krikri::StrictTemplating.enabled?
+        Crinja::Value.new(StrictMissingAttribute.new(key))
+      else
+        Crinja::Value.new(Crinja::Undefined.new(key))
+      end
     end
 
     def crinja_call(name : String) : Crinja::Callable | Crinja::Callable::Proc | Nil
@@ -133,6 +149,34 @@ module Krikri
 
     def to_s(io : IO) : Nil
       io << @entries.to_s
+    end
+
+    # The strict-mode miss value (see crinja_attribute): an Undefined
+    # that raises the real-Ansible HostVarsVars message only when
+    # forced. The message lives in its own ivar because the evaluator
+    # overwrites `Undefined#name` with the full expression path
+    # ("hostvars[node1]['x']") on the way out of member/index
+    # resolution - raising off `name` would lose the wrapper detail
+    # real Ansible surfaces verbatim.
+    class StrictMissingAttribute < Crinja::Undefined
+      @message : String
+
+      def initialize(key : String)
+        super(key)
+        @message = "object of type 'HostVarsVars' has no attribute '#{key}'"
+      end
+
+      def to_s(io : IO) : Nil
+        raise Crinja::RuntimeError.new(@message)
+      end
+
+      def ==(other)
+        raise Crinja::RuntimeError.new(@message)
+      end
+
+      def <=>(other)
+        raise Crinja::RuntimeError.new(@message)
+      end
     end
   end
 end

@@ -117,4 +117,43 @@ describe Krikri::HostVarsVarsDict do
       Crinja.new.from_string("[{{ d.missing }}]").render(vars).should eq("[]")
     end
   end
+
+  it "returns false for `is defined` on a strict miss instead of raising (dynamic bracket key)" do
+    # Real bug found benchmarking mullholland.motd (round72000): the
+    # strict miss used to raise AT LOOKUP TIME, so the one construct
+    # that must never raise for a missing attribute (`is defined`)
+    # hard-failed the whole render, where real Ansible takes the false
+    # branch (`ok=3 changed=2`).
+    value = hostvars_value
+    tpl = "{% if hostvars[inventory_hostname]['ansible_' ~ iface] is defined %}yes{% else %}no{% endif %}"
+    Krikri::StrictTemplating.strict do
+      Crinja.new.from_string(tpl)
+        .render({"hostvars" => value, "inventory_hostname" => Crinja::Value.new("node1"), "iface" => Crinja::Value.new("enp1s0")})
+        .should eq("no")
+    end
+  end
+
+  it "keeps `| default(...)` working over a strict hostvars miss" do
+    value = hostvars_value
+    Krikri::StrictTemplating.strict do
+      Crinja.new.from_string("{{ hostvars['node1']['ansible_enp1s0'] | default('fallback') }}")
+        .render({"hostvars" => value}).should eq("fallback")
+    end
+  end
+
+  it "still truthy-tests a strict miss as false in a bare `{% if %}`" do
+    value = hostvars_value
+    Krikri::StrictTemplating.strict do
+      Crinja.new.from_string("{% if hostvars['node1'].ansible_enp1s0 %}yes{% else %}no{% endif %}")
+        .render({"hostvars" => value}).should eq("no")
+    end
+  end
+
+  it "names the present key as defined under strict" do
+    value = hostvars_value
+    Krikri::StrictTemplating.strict do
+      Crinja.new.from_string("{{ hostvars['node1']['ansible_enp0s8'] is defined }}")
+        .render({"hostvars" => value}).should eq("True")
+    end
+  end
 end

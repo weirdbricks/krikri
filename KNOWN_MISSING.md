@@ -18,8 +18,27 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.855`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.856`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
+
+---
+
+## `is defined` on a dynamically-keyed `hostvars[...]` bracket lookup fixed: strict misses now defer their raise to force time (0.9.856)
+
+Closes the round72000 open gap (`mullholland.motd`): a strict-mode
+`HostVarsVars` attribute/subscript miss used to raise a plain
+`Crinja::RuntimeError` immediately at lookup time, so `is defined` -
+the one construct that is supposed to never fail for a missing
+attribute - hard-failed the whole render instead of taking the false
+branch. Fixed by returning a `StrictMissingAttribute` (a
+`Crinja::Undefined` subclass) from the miss instead of raising there;
+it only raises real Ansible's own `HostVarsVars` message when actually
+forced (`to_s`/`==`/`<=>`), so `is defined`, `| default(...)`, and
+`{% if %}` truthiness checks all see a genuine Undefined and take the
+false/fallback path, while a plain `{{ hostvars[h].typo }}` print still
+fails the task with the exact same message as before. New specs cover
+the `is defined` false case, `| default()`, bare `{% if %}` truthiness,
+and the still-true `is defined` case on a present key.
 
 ---
 
@@ -2117,20 +2136,6 @@ Genuinely open defects: something is wrong and the fix is unknown or
 unfinished. Everything deliberate lives under "Deliberate limits"
 below - keep the two apart, or this list stops meaning anything.
 
-- **`is defined` on a dynamically-keyed `hostvars[...]` bracket lookup
-  raises instead of returning false.** `mullholland.motd` round72000:
-  `{% if (hostvars[inventory_hostname]['ansible_'+int] is defined) |
-  pytruthy %}` - real Ansible correctly treats a genuinely-absent,
-  dynamically-computed hostvars key as simply undefined (`is defined`
-  -> false, template renders fine via the `{% if %}` false branch:
-  `ok=3 changed=2`). This engine's Crinja-side `HostVarsVars` proxy
-  object instead raises a hard template error ("object of type
-  'HostVarsVars' has no attribute 'ansible_eth0'") for the same
-  lookup, defeating the entire purpose of `is defined` - it's supposed
-  to be the one construct that NEVER raises for a missing attribute.
-  Likely fixable in the `HostVarsVars` proxy's attribute-access
-  implementation (return Undefined for a missing key instead of
-  raising), without touching `is defined`'s own dispatch logic.
 - **A double-quoted whole condition whose own text happens to look
   like an expression gets re-evaluated as live code instead of treated
   as opaque string data.** `crazikPL.logging` round72000: `when:
