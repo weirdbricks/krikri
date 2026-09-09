@@ -18,8 +18,42 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.857`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.858`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
+
+---
+
+## Undefined-left-operand `in` a plain string now hard-errors with real Ansible's TypeError message shape (0.9.858)
+
+Closes the round71000 open gap (`asg1612.gluster` requeue): `when:
+"node_1 in hostvars[inventory_hostname]['ansible_nodename']"` with
+`node_1` never defined. Real Jinja2 evaluates `x in y` as
+`y.__contains__(x)` with the LEFT operand evaluated first, and a plain
+Python `str.__contains__` requires its argument to itself be a `str` -
+an Undefined marker isn't one (Jinja2 defers the undefined raise to
+force time, so the marker itself reaches `__contains__`), so real
+Ansible hard-fails the task with Python's own TypeError text
+("`'in <string>' requires string as left operand, not
+UndefinedMarker`"). The hand-rolled `when:` evaluator's `evaluate_in`
+already had the right failure (a strict undefined raise, added after
+the round71000 bullet was written) but the wrong message shape
+("'node_1' is undefined" surfaced first from the LHS lookup); the fix
+swaps in the exact TypeError-shaped message for the undefined-LHS +
+plain-STRING-container case only, preserving left-to-right evaluation
+order. Deliberately NOT widened: the undefined-in-*list* path (real
+Python `list.__contains__` compares by equality and returns False for
+an Undefined without raising) and every `raise_undefined=false`
+(lenient: changed_when:/failed_when:) caller keep their existing
+behavior untouched, per the original bullet's own over-tightening
+warning. The Crinja side remains open (narrowed bullet below): under
+strict templating it already hard-errors the render, but with Crinja's
+own "`node_1` is undefined" message rather than the TypeError shape,
+and under the default lenient mode it silently coerces the marker to
+`""` (a substring of everything) and returns TRUE - a proper fix means
+touching the vendored `crinja` fork's `Operator.contains?`
+(tag-pinned in `shard.yml`), not done this round. Regression specs
+cover the raise (message shape), the unchanged list path, the
+unchanged lenient path, and the defined-LHS string case.
 
 ---
 
@@ -2199,24 +2233,23 @@ below - keep the two apart, or this list stops meaning anything.
   name that isn't a real installed collection (vs. one this engine
   simply hasn't implemented yet) needs a way to tell those two apart,
   which is the actual unfinished part.
-- **An undefined variable used as the LEFT operand of `in` against a
-  plain string doesn't hard-error like real Jinja2's does.**
-  `asg1612.gluster` round71000 (requeue): `when: "node_1 in
+- **Crinja-side `in`-a-plain-string with an undefined left operand
+  still diverges (hand-rolled `when:` side fixed, 0.9.858).** The
+  original round71000 gap (`asg1612.gluster`: `when: "node_1 in
   hostvars[inventory_hostname]['ansible_nodename']"` with `node_1`
-  never defined by the playbook - real Jinja2's `x in y` calls
-  `y.__contains__(x)`, and a plain Python `str.__contains__` requires
-  its argument to itself be a `str`; an Undefined marker isn't one, so
-  real Ansible hard-fails the task ("'in <string>' requires string as
-  left operand, not UndefinedMarker") rather than merely treating the
-  whole conditional as falsy. This engine's `evaluate_in` currently
-  treats an undefined LHS as leading to a false/skip result instead
-  of raising - masking a role bug the same way the module-resolution
-  gap above does, and (in this specific role) let execution continue
-  far enough to reach an unrelated, likely-environmental gluster mount
-  failure downstream that real Ansible never got to. Narrow edge case
-  (undefined-in-*string*, not undefined-in-list, which real Ansible
-  handles far more leniently) - not chased further this round to avoid
-  over-tightening `evaluate_in`'s much more common list/array path.
+  never defined, real Ansible hard-failing with "'in <string>'
+  requires string as left operand, not UndefinedMarker") is fixed in
+  the hand-rolled `when:` evaluator - see the 0.9.858 narrative above.
+  What remains is the vendored-Crinja side (real `.j2` template files,
+  `{%` blocks): real Jinja2 raises the TypeError there, while this
+  fork's `Operator.contains?` silently coerces an Undefined marker to
+  `""` (a substring of everything) under the default lenient mode and
+  returns TRUE, and under `StrictTemplating` hard-errors with
+  Crinja's generic "`node_1` is undefined" instead of the TypeError
+  shape. Fixing either means modifying the vendored `crinja` fork
+  itself (tag-pinned via `shard.yml`, so a fork release), plus care
+  not to break the lenient mode's broader empty-string-coercion
+  conventions - not done this round.
 
 ### Needs a closer look (real, reproducible, not root-caused yet)
 

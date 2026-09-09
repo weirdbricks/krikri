@@ -1444,7 +1444,7 @@ module Krikri
       parts = split_by_operator(condition, " in ")
       return false if parts.size < 2
 
-      item = evaluate_value(parts[0].strip, vars, raise_undefined)
+      item_expr = parts[0].strip
       container_expr = parts[1..].join(" in ").strip
 
       # A Hash-valued container - most commonly the `vars` magic
@@ -1468,7 +1468,38 @@ module Krikri
       # undefined) `apache_daemon` variable failed outright where real
       # Ansible had already filtered it out.
       if (resolved = VariableSubstitutor::VariableLookup.new(vars).resolve(container_expr)) && resolved.raw.is_a?(Hash)
+        item = evaluate_value(item_expr, vars, raise_undefined)
         return resolved.raw.as(Hash).has_key?(item.to_s)
+      end
+
+      # Real Jinja2 evaluates `x in y` as `y.__contains__(x)` with the
+      # LEFT operand evaluated first - the ordering below keeps that,
+      # and the rescue only reshapes the failure message for one
+      # specific case: a plain-STRING container. A Python
+      # str.__contains__ requires its argument to itself be a `str` -
+      # an Undefined marker isn't one (Jinja2 defers the undefined
+      # raise to force time, so the marker object reaches __contains__
+      # intact) - so real Ansible hard-fails the task with Python's own
+      # TypeError text ("'in <string>' requires string as left operand,
+      # not UndefinedMarker") rather than the generic "'node_1' is
+      # undefined" the strict raise below used to surface first
+      # (asg1612.gluster round71000: `when: node_1 in
+      # hostvars[inventory_hostname]['ansible_nodename']` with `node_1`
+      # never defined). Deliberately NOT widened to the
+      # undefined-in-*list* path (list.__contains__ compares by
+      # equality and returns False for an Undefined without raising -
+      # real Ansible skips such a task) or to any raise_undefined=false
+      # (lenient) caller: both keep their existing behavior untouched.
+      begin
+        item = evaluate_value(item_expr, vars, raise_undefined)
+      rescue ex : UndefinedVariableError
+        container = raise_undefined ? (evaluate_value(container_expr, vars, false) rescue nil) : nil
+        if container.is_a?(String)
+          raise UndefinedVariableError.new(
+            "'in <string>' requires string as left operand, not UndefinedMarker"
+          )
+        end
+        raise ex
       end
 
       container = evaluate_value(container_expr, vars, raise_undefined)

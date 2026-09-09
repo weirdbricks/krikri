@@ -268,6 +268,66 @@ describe Krikri::ConditionalEvaluator do
         %(squid_cache_dir.split(" ")[0] in [ "ufs", "aufs", "diskd", "rock", "null" ]), v
       ).should be_false
     end
+
+    it "hard-errors an UNDEFINED left operand against a plain-string container with real Ansible's TypeError message shape" do
+      # Open gap closed, from asg1612.gluster round71000 (requeue):
+      # `when: "node_1 in hostvars[inventory_hostname]['ansible_nodename']"`
+      # with `node_1` never defined by the playbook. Real Jinja2's `x in
+      # y` calls `y.__contains__(x)`; a plain Python str.__contains__
+      # requires its argument to itself be a `str`, and Jinja2 defers
+      # the undefined raise to force time, so the Undefined marker
+      # itself reaches __contains__ and Python raises "'in <string>'
+      # requires string as left operand, not UndefinedMarker" - real
+      # Ansible FAILS the task rather than treating the whole
+      # conditional as falsy. (The strict raise previously surfaced
+      # first with the generic "'node_1' is undefined" instead.)
+      v = Hash(String, JSON::Any).new
+      v["inventory_hostname"] = JSON.parse(%("node1"))
+      v["hostvars"] = JSON.parse(%({"node1": {"ansible_nodename": "node1"}}))
+      expect_raises(
+        Krikri::ConditionalEvaluator::UndefinedVariableError,
+        /'in <string>' requires string as left operand, not UndefinedMarker/
+      ) do
+        Krikri::ConditionalEvaluator.evaluate(
+          %(node_1 in hostvars[inventory_hostname]['ansible_nodename']), v,
+          strict: true, raise_undefined: true
+        )
+      end
+    end
+
+    it "keeps an undefined left operand against a LIST/ARRAY container returning false (no raise)" do
+      # Deliberately not over-tightened: real Python list.__contains__
+      # compares by equality and returns False for an Undefined marker
+      # without raising, and the list path is the much more common
+      # shape - it must keep working exactly as before.
+      v = Hash(String, JSON::Any).new
+      v["os_security_users_allow"] = JSON.parse(%(["change_user"]))
+      Krikri::ConditionalEvaluator.evaluate(%(node_1 in os_security_users_allow), v).should be_false
+      Krikri::ConditionalEvaluator.evaluate(%(node_1 not in os_security_users_allow), v).should be_true
+    end
+
+    it "keeps the undefined-left-operand string case lenient (unchanged pre-fix behavior) when raise_undefined is off" do
+      # changed_when:/failed_when: and other non-strict callers keep
+      # their long-standing lenient undefined-operand handling: the
+      # undefined LHS resolves to nil, and `nil.to_s` ("" - a substring
+      # of everything) makes the membership check come back true,
+      # exactly as before this fix.
+      v = Hash(String, JSON::Any).new
+      v["inventory_hostname"] = JSON.parse(%("node1"))
+      v["hostvars"] = JSON.parse(%({"node1": {"ansible_nodename": "node1"}}))
+      Krikri::ConditionalEvaluator.evaluate(
+        %(node_1 in hostvars[inventory_hostname]['ansible_nodename']), v
+      ).should be_true
+    end
+
+    it "keeps a DEFINED left operand working against a string container" do
+      v = Hash(String, JSON::Any).new
+      v["nodename"] = JSON.parse(%("node1.example.com"))
+      Krikri::ConditionalEvaluator.evaluate(%("node1" in nodename), v,
+        strict: true, raise_undefined: true).should be_true
+      Krikri::ConditionalEvaluator.evaluate(%("node2" in nodename), v,
+        strict: true, raise_undefined: true).should be_false
+    end
   end
 
   describe "out-of-line parentheses from list-when ANDing" do
