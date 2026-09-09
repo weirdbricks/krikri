@@ -3392,13 +3392,24 @@ module Krikri
       when Bool
         yaml.as_bool
       when String
-        case yaml.as_s.strip.downcase
+        str = yaml.as_s.strip
+        case str.downcase
         when "true", "yes", "on"
           true
         when "false", "no", "off"
           false
         else
-          false
+          # A templated value (`ignore_errors: "{{ ci_github_ignore_
+          # error }}"`, levonet.ci_github_rm_branch's own idiom) - same
+          # parse-time-boolean constraint and same default-to-true
+          # heuristic as parse_become_value just below: a real playbook
+          # essentially never writes `ignore_errors: "{{ x }}"` to mean
+          # "no, don't ignore" (a literal `ignore_errors: false` is how
+          # that's actually expressed), so defaulting true here is right
+          # far more often than false - and, critically, never worse
+          # than the previous behavior of always hard-failing the task
+          # real Ansible would have silently ignored.
+          str.starts_with?("{{")
         end
       else
         false

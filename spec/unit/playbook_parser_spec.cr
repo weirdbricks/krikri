@@ -1119,6 +1119,27 @@ describe Krikri::PlaybookParser do
       task.tags.should eq(["risky"])
     end
 
+    it "defaults a templated ignore_errors: to true, same heuristic as become:'s own templated-value fix" do
+      # Real bug found benchmarking levonet.ci_github_rm_branch's own
+      # `ignore_errors: "{{ ci_github_ignore_error }}"` (default: yes) -
+      # ignore_errors: is a plain parse-time Bool, so a templated string
+      # can't be fully resolved without deferring to runtime (a bigger
+      # change than this fix, matching parse_become_value's own
+      # documented trade-off just below this code). The old code fell
+      # through to `false` for anything that wasn't a literal
+      # true/yes/on/false/no/off, so this real Ansible task that real
+      # Ansible always ignores (ignored=1, failed=0) instead hard-failed
+      # the whole play every single run.
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.debug:
+            msg: hi
+          ignore_errors: "{{ some_var }}"
+        YAML
+
+      task.ignore_errors?.should be_true
+    end
+
     it "supports nested blocks inside a block" do
       task = single_task(<<-YAML)
         - name: outer
