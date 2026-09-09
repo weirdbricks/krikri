@@ -1002,6 +1002,7 @@ module Krikri
       "ansible.builtin.async_status",
       "community.docker.docker_image",
       "community.docker.docker_network",
+      "community.docker.docker_network_info",
       "community.docker.docker_container",
       # KNOWN_MISSING's former "unimplemented collection modules" entry
       # (mrlesmithjr.blocky): docker_compose_v2 drives the `docker

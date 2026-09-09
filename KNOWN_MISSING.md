@@ -18,8 +18,35 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.879`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.880`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
+
+---
+
+## Unimplemented `community.docker.docker_network_info` silently skipped, corrupting the next task's `when: check.exists` (0.9.880)
+
+Found in round 73280 (`tigattack.frigate_docker`, cold run): on a host
+with no reachable Docker daemon, real Ansible fails at the role's
+`docker_network_info` task with a clean Docker connection error ("Error
+connecting: ..."), the play stops there, and nothing after it runs.
+Krikri had no `docker_network_info` plugin at all, so the task took the
+unimplemented-module path: parse-time warning + a silent skip - leaving
+a registered result WITHOUT `exists:` - and the role's very next task
+(`when: not docker_network_check.exists`) then hard-errored with
+"Error while evaluating conditional: object of type 'dict' has no
+attribute 'exists'". A missing-module skip produced a completely
+different (and confusing) failure shape than real Ansible's
+fail-at-the-connection-point. Fixed by implementing the module
+(plugins/docker_network_info.cr): reports `exists:`/`network:` exactly
+like real Ansible's return values, and when the daemon is unreachable
+the task now FAILS with "Error connecting: Cannot connect to the Docker
+daemon (...)" - docker modules never skip on a dead daemon. Regression
+spec: `spec/integration/docker_network_info_spec.cr`. The round's other
+two unimplemented docker info/state modules the role uses
+(`community.docker.docker_volume`, `community.docker.docker_container_info`)
+are still unimplemented and still skip - that remains an open gap (see
+Open gaps), just no longer the one that garbled this role's failure
+shape.
 
 ---
 
