@@ -2,6 +2,7 @@ require "json"
 require "digest/md5"
 require "crinja"
 require "./crinja_strict_undefined"
+require "./crinja_string_index"
 require "./jinja_filters"
 require "./base_action_plugin"
 # For the shared JSON::Any -> Crinja::Value converter (this plugin keeps

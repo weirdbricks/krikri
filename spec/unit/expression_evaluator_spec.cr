@@ -28,6 +28,27 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
     evaluator.evaluate("items[0]").should eq("a")
   end
 
+  it "resolves integer character indexing on a STRING through the full evaluator, matching real Jinja2/Python str[0]" do
+    # Real bug (round 72000 triage, louim.bedrock-site-protect): the
+    # ansible_python_version fact was already populated, but its consumer
+    # idiom `passlib_package[ansible_python_version[0]]` (and the task
+    # name `"...for python {{ ansible_python_version[0] }}"`) still
+    # rendered "undefined" - the hand-rolled VariableLookup#index_into
+    # handled String indexing fine, but the evaluate_bracket_expr
+    # dispatch is Crinja-first, and the vendored Crinja resolved a
+    # String integer-subscript to Undefined (its indexable? check no
+    # longer recognized String on modern Crystal) without ever falling
+    # back. `passlib_package` then keyed on the literal "undefined".
+    v = Hash(String, JSON::Any).new
+    v["ansible_python_version"] = JSON::Any.new("3.10.12")
+    v["passlib_package"] = JSON.parse(%({"3": "python3-passlib", "2": "python-passlib"}))
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator.evaluate("ansible_python_version[0]").should eq("3")
+    evaluator.evaluate("ansible_python_version[-1]").should eq("2")
+    evaluator.evaluate("'3.10.12'[0]").should eq("3")
+    evaluator.evaluate("passlib_package[ansible_python_version[0]]").should eq("python3-passlib")
+  end
+
   it "dispatches comparisons before filters" do
     # Real Python/Jinja2 stringifies a comparison result as "True"/
     # "False" (capitalized), not Crystal's lowercase - verified directly
