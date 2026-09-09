@@ -2583,7 +2583,7 @@ First batch since Atlantic.net's server-limit increase (10 → 25). 200 never-be
 | `filviu.telegraf` | ubuntu | ✅ clean. Times: cold py 0.48s vs cr 0.01s; warm py 1.59s vs cr 0.01s. |
 | `filviu.temurin` | ubuntu | ✅ clean. Times: cold py 81.84s vs cr 79.03s; warm py 16.17s vs cr 7.90s. |
 | `filviu.tomcat` | ubuntu | ✅ clean. Times: cold py 16.65s vs cr 7.21s; warm py 4.50s vs cr 1.44s. |
-| `galaxyproject.galaxy` | ubuntu | ⚠️ divergent - `lookup('vars', ...)` silently returns the string "undefined" for a missing key instead of raising like real Ansible's strict-undefined check, letting krikri's `set_fact` proceed 20+ tasks past where real ansible hard-fails. Times: cold py 4.79s vs cr 3.13s; warm py 2.81s vs cr 0.31s. |
+| `galaxyproject.galaxy` | ubuntu | ✅ fixed this round - `lookup('vars', ...)` now raises for a missing key with no `default=` kwarg instead of silently returning the string "undefined", matching real Ansible's strict-undefined check (0.9.894). Times: cold py 4.79s vs cr 3.13s; warm py 2.81s vs cr 0.31s. |
 | `galaxyproject.miniconda` | ubuntu | ✅ clean. Times: cold py 4.52s vs cr 4.22s; warm py 2.70s vs cr 0.80s. |
 | `galaxyproject.nginx` | ubuntu | ✅ clean. Times: cold py 7.74s vs cr 5.81s; warm py 4.87s vs cr 2.48s. |
 | `galaxyproject.slurm` | ubuntu | ✅ clean. Times: cold py 10.26s vs cr 4.87s; warm py 6.58s vs cr 1.80s. |
@@ -2640,7 +2640,7 @@ First batch since Atlantic.net's server-limit increase (10 → 25). 200 never-be
 | `jonaspammer.pip` | ubuntu | ✅ clean. Times: cold py 7.40s vs cr 5.71s; warm py 5.56s vs cr 1.87s. |
 | `jonjozwiak.bluecat-ipam-rest` | ubuntu | ✅ clean. Times: cold py 0.44s vs cr 0.01s; warm py 0.45s vs cr 0.01s. |
 | `jtyr.config_encoder_filters` | ubuntu | ✅ clean. Times: cold py 3.66s vs cr 3.18s; warm py 2.55s vs cr 0.79s. |
-| `juju4.falco` | ubuntu | ⚠️ divergent - krikri hard-crashes (`couldn't resolve module/action 'kubernetes.core.helm_repository'`, rc=4, no recap) instead of degrading gracefully like it does for other unimplemented modules; real ansible fully succeeds. Same module-resolution-hard-stop class as 009/010, not fully closed for this module. Times: cold py 121.76s vs cr 0.01s; warm py 43.36s vs cr 0.01s. |
+| `juju4.falco` | ubuntu | ✅ fixed this round - `kubernetes.core.helm_repository` was used as a HANDLER; the handler-dispatch path lacked the graceful unavailable-module skip guard regular tasks already had, crashing the whole process instead. Now mirrors the regular-task guard (0.9.895). Times: cold py 121.76s vs cr 0.01s; warm py 43.36s vs cr 0.01s. |
 | `kbrebanov.unzip` | ubuntu | ✅ clean. Times: cold py 0.44s vs cr 0.01s; warm py 0.45s vs cr 0.01s. |
 | `kevincoakley.facter` | ubuntu | ✅ clean. Times: cold py 41.49s vs cr 27.65s; warm py 10.25s vs cr 2.73s. |
 | `kostiantyn-nemchenko.mongodb_exporter` | ubuntu | ✅ clean (confirm-phase rerun after this session's fixes). Times: cold py 63.87s vs cr 4.91s; warm py 28.48s vs cr 1.13s. |
@@ -2701,7 +2701,7 @@ First batch since Atlantic.net's server-limit increase (10 → 25). 200 never-be
 | `mtchavez.consul-template` | ubuntu | ✅ clean. Times: cold py 13.36s vs cr 6.84s; warm py 8.55s vs cr 1.05s. |
 | `mtchavez.influxdb` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
 | `nephelaiio.acme_certificate_cloudflare` | ubuntu | ⚠️ divergent - role's RedHat-only dependency (`geerlingguy.repo-epel`) fails on both engines against a Debian/Ubuntu test host (no rpm/yum); not a krikri defect. Times: cold py 61.46s vs cr 84.45s; warm py 60.31s vs cr 81.76s. |
-| `nephelaiio.devtools` | ubuntu | ⚠️ divergent - `first_found`'s search-list argument, when given as a task-local `vars:` variable name (not a literal list), doesn't resolve - `include_vars` finds nothing, so a package variable falls through to the literal string "undefined" and apt fails trying to install a package named that. Times: cold py 50.68s vs cr 32.10s; warm py 7.19s vs cr 4.00s. |
+| `nephelaiio.devtools` | ubuntu | ✅ fixed this round - `first_found`'s search-list argument, given as a task-local `vars:` variable holding a plain list, now resolves - `evaluate_first_found` only ever handled the `{files:, paths:, skip:}` dict form (0.9.896). Times: cold py 50.68s vs cr 32.10s; warm py 7.19s vs cr 4.00s. |
 | `nephelaiio.docker` | ubuntu | ✅ clean. Times: cold py 6.95s vs cr 5.08s; warm py 6.04s vs cr 1.77s. |
 | `nephelaiio.gitlab` | ubuntu | ✅ fixed this round - same root cause as `nephelaiio.pip`: unknown custom filter (`nephelaiio.plugins.sorted_get`) in a task-local `vars:` block used to crash the process instead of failing just that task (0.9.885). |
 | `nephelaiio.heartbeat` | ubuntu | ✅ clean. Times: cold py 4.08s vs cr 3.04s; warm py 2.57s vs cr 0.77s. |
@@ -2738,7 +2738,7 @@ First batch since Atlantic.net's server-limit increase (10 → 25). 200 never-be
 | `osx_provisioner.homebrew_retry` | ubuntu | ✅ clean. Times: cold py 4.38s vs cr 2.96s; warm py 2.91s vs cr 0.74s. |
 | `outsideopen.bigfix_client` | ubuntu | ✅ clean. Times: cold py 13.18s vs cr 11.80s; warm py 6.58s vs cr 0.88s. |
 | `ovirt.engine-setup` | ubuntu | ⚠️ divergent - both engines fail at the same point; krikri completes one extra step first (cosmetic recap difference, not yet root-caused). Times: cold py 5.53s vs cr 3.29s; warm py 4.04s vs cr 0.49s. |
-| `ovirt.image-template` | ubuntu | ⚠️ divergent - role uses the invalid `static:` attribute on `import_tasks` (removed in modern ansible-core); real ansible hard-fails before any recap, krikri doesn't validate the attribute and continues instead. Times: cold py 5.56s vs cr 4.00s; warm py 2.98s vs cr 0.30s. |
+| `ovirt.image-template` | ubuntu | ✅ fixed this round - the invalid `static:` attribute on `import_tasks:` (removed in modern ansible-core) is now rejected at parse time, matching real ansible's hard-fail (0.9.893). Times: cold py 5.56s vs cr 4.00s; warm py 2.98s vs cr 0.30s. |
 | `ovirt.repositories` | ubuntu | ✅ clean. Times: cold py 5.16s vs cr 3.00s; warm py 3.58s vs cr 0.68s. |
 | `pescobar.katello_client` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
 | `pescobar.labkey` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
@@ -2967,7 +2967,7 @@ First batch since Atlantic.net's server-limit increase (10 → 25). 200 never-be
 | `dev-sec.ssh-hardening` | ubuntu | ✅ clean. Times: cold py 8.06s vs cr 3.73s; warm py 6.35s vs cr 0.37s. |
 | `dhoeric.aws-ssm` | ubuntu | ✅ clean. Times: cold py 0.52s vs cr 0.01s; warm py 0.48s vs cr 0.01s. |
 | `diodonfrost.amazon_ssm` | ubuntu | ⚠️ divergent - cosmetic only, both fail=1, skipped differs by one. Times: cold py 10.15s vs cr 4.39s; warm py 7.38s vs cr 0.69s. |
-| `dj-wasabi.telegraf` | ubuntu | ⚠️ divergent - `apt:` doesn't validate a pinned version string (`name: telegraf=1.18.2-1`) against available candidates; installs loosely instead of failing like real ansible's 'no available installation candidate', then fails two tasks later on a directory the package should have created (Open gap, KNOWN_MISSING). Times: cold py 57.16s vs cr 66.43s; warm py 35.31s vs cr 40.97s. |
+| `dj-wasabi.telegraf` | ubuntu | ✅ fixed this round - real root cause wasn't `apt:` (which already correctly failed the pinned-version install on both engines) but a templated `ignore_errors: "{{ ansible_check_mode }}"` whose parse-time guess defaulted to true for ANY templated value, silently swallowing the real failure on a normal run; now re-resolved at runtime (0.9.898). Times: cold py 57.16s vs cr 66.43s; warm py 35.31s vs cr 40.97s. |
 | `dj-wasabi.zabbix-agent` | ubuntu | ✅ clean. Times: cold py 5.24s vs cr 3.48s; warm py 2.95s vs cr 0.38s. |
 | `dstil.aws-cli` | ubuntu | ✅ clean. Times: cold py 1.02s vs cr 0.02s; warm py 0.48s vs cr 0.01s. |
 | `elastic.beats` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
@@ -3111,7 +3111,7 @@ First batch since Atlantic.net's server-limit increase (10 → 25). 200 never-be
 | `mbaran0v.ansible_role_prometheus_nginxlog_exporter` | ubuntu | ⚠️ divergent - `deploy_helper` module unimplemented (deliberate limit); krikri degrades gracefully but real Ansible has it and fully succeeds. Times: cold py 28.26s vs cr 3.17s; warm py 14.43s vs cr 0.35s. |
 | `mbocquet.tmpfs` | ubuntu | ✅ clean. Times: cold py 3.89s vs cr 3.34s; warm py 2.64s vs cr 0.29s. |
 | `mesaguy.prometheus` | ubuntu | ✅ clean. Times: cold py 3.95s vs cr 3.63s; warm py 2.37s vs cr 0.37s. |
-| `MichaelRigart.interfaces` | ubuntu | ⚠️ divergent - role ships its own `filter_plugins/filters.py` (custom Python filter `bond_check`); krikri doesn't load role-local Python filter plugins at all, so the task hard-fails where real ansible succeeds (Open gap, KNOWN_MISSING - same class as `stackhpc.luks`). Times: cold py 56.84s vs cr 44.08s; warm py 11.68s vs cr 0.54s. |
+| `MichaelRigart.interfaces` | ubuntu | ✅ fixed this round - role's own `filter_plugins/filters.py` (custom Python filter `bond_check`) is now loaded, mirroring `PythonModuleRunner`'s support for role-local `library/*.py` modules (0.9.897). Times: cold py 56.84s vs cr 44.08s; warm py 11.68s vs cr 0.54s. |
 | `MonolithProjects.github_actions_runner` | ubuntu | ✅ clean. Times: cold py 4.83s vs cr 3.34s; warm py 2.66s vs cr 0.31s. |
 | `mrlesmithjr.chrony` | ubuntu | ✅ clean. Times: cold py 52.32s vs cr 11.38s; warm py 8.80s vs cr 0.54s. |
 | `mrlesmithjr.domain-join` | ubuntu | ✅ clean. Times: cold py 0.99s vs cr 0.02s; warm py 0.46s vs cr 0.01s. |
@@ -3224,7 +3224,7 @@ First batch since Atlantic.net's server-limit increase (10 → 25). 200 never-be
 | `stackhpc.grafana-conf` | ubuntu | ✅ clean. Times: cold py 5.00s vs cr 5.39s; warm py 2.89s vs cr 0.29s. |
 | `stackhpc.libvirt-host` | ubuntu | ✅ clean. Times: cold py 7.96s vs cr 4.51s; warm py 5.91s vs cr 0.48s. |
 | `stackhpc.libvirt-vm` | ubuntu | ✅ clean. Times: cold py 8.07s vs cr 4.13s; warm py 6.13s vs cr 0.45s. |
-| `stackhpc.luks` | ubuntu | ⚠️ divergent - role ships its own `filter_plugins/` custom filter (`luks_key`); krikri doesn't load role-local Python filter plugins (Open gap, KNOWN_MISSING) - the 0.9.888 fix stopped the whole process from crashing on this, which is real progress, but the task itself still fails where real ansible succeeds. Times: cold py 10.96s vs cr 3.76s; warm py 8.17s vs cr 0.62s. |
+| `stackhpc.luks` | ubuntu | ✅ fixed this round - role's own `filter_plugins/` custom filter (`luks_key`) is now loaded (0.9.897), closing the gap the 0.9.888 crash-rescue fix had only partially addressed. Times: cold py 10.96s vs cr 3.76s; warm py 8.17s vs cr 0.62s. |
 | `stackhpc.os-images` | ubuntu | ✅ clean. Times: cold py 7.46s vs cr 5.74s; warm py 5.66s vs cr 1.31s. |
 | `stackhpc.os-ironic-state` | ubuntu | ✅ clean. Times: cold py 4.50s vs cr 3.32s; warm py 2.64s vs cr 0.32s. |
 | `stackhpc.os-openstackclient` | ubuntu | ✅ clean. Times: cold py 6.90s vs cr 6.13s; warm py 6.05s vs cr 1.06s. |

@@ -18,10 +18,46 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.892`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.898`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
 
 ---
+
+## Open-gaps sweep: 6 more real fixes closing 7 of the Open gaps above (0.9.892 → 0.9.898)
+
+Systematic follow-up pass through the Open gaps list itself (not a new
+benchmark round): `import_tasks`/`import_role`'s invalid `static:`
+attribute now hard-stops like real Ansible (0.9.893); `lookup('vars',
+key)` now raises for a missing key with no `default=` kwarg instead of
+silently returning the string `"undefined"` (0.9.894);
+`kubernetes.core.helm_repository` used as a HANDLER (not just a
+regular task) now gets the same graceful unavailable-module skip
+regular tasks already had - the actual root cause turned out to be a
+missing guard in the handler-dispatch path, not the module-resolution
+hard-stop the original gap description suspected (0.9.895);
+`first_found`'s search-list argument now resolves a plain list/string
+term, not just the `{files:, paths:, skip:}` dict form (0.9.896); a
+whole new feature closes the role-local `filter_plugins/*.py` custom-
+filter gap for both `MichaelRigart.interfaces` and `stackhpc.luks` at
+once, wired into all three places an unknown filter can surface - the
+hand-rolled `{{ }}` evaluator, real `.j2` template files (their own
+separate Crinja environment needed its own registration path, not just
+the shared one), and `when:` conditions' compile-time pre-pass (0.9.897);
+and `dj-wasabi.telegraf`'s divergence, originally filed as "`apt:`
+doesn't validate a pinned version," turned out to be a different bug
+entirely once live-investigated - apt's own failure detection was
+already correct (confirmed via a new stub-apt-get-shim spec proving
+`plugins/apt.cr` needed no change), the real bug was a templated
+`ignore_errors: "{{ ansible_check_mode }}"` getting a parse-time guess
+that defaults to `true` for ANY templated value - exactly backwards
+for the idiom's dominant real-world form - so a real failure got
+silently swallowed on normal runs; now re-resolved against live vars
+at every actual ignore-errors decision point (0.9.898). Two Open gaps
+remain only partially advanced, not fixed: `merge_yaml`'s residual
+failure (PyYAML ruled out; a `become`-escalation asymmetry for
+`py_module.cr`-dispatched modules is the new lead, needs a real host
+to confirm) and `systemli.jitsi_meet`'s apt-keyring signature issue
+(unchanged, still needs a confirm-phase re-run).
 
 ## Round 76000-77500: 400-role Galaxy top-download batch + triage + 6 real fixes (0.9.886 → 0.9.892)
 
@@ -3026,20 +3062,6 @@ Genuinely open defects: something is wrong and the fix is unknown or
 unfinished. Everything deliberate lives under "Deliberate limits"
 below - keep the two apart, or this list stops meaning anything.
 
-- **Role-local `filter_plugins/*.py` custom filters aren't loaded at
-  all** (round 76221/76227, `MichaelRigart.interfaces`'s `bond_check`
-  and `stackhpc.luks`'s `luks_key`). Real Ansible loads a role's own
-  `filter_plugins/` directory the same way it loads `library/` custom
-  modules (see `PythonModuleRunner` for the equivalent already
-  implemented for modules); krikri has no equivalent for filters, so
-  any task referencing one hard-fails with "No filter named 'X'."
-  where real Ansible resolves and runs it. The 0.9.888 fix (rescuing
-  `UnknownFilterError` from every `vars:`-block call site) stops the
-  whole process from crashing on this, which is real progress, but the
-  affected tasks still fail where real Ansible succeeds - `stackhpc.luks`
-  remains DIVERGENT after that fix for exactly this reason (confirmed
-  live, round 77001: real ansible ok=5 failed=0, krikri ok=2 failed=1).
-
 - **`newrelic.newrelic-infra`'s `library/merge_yaml.py` still fails
   after the 0.9.891 `ansible.module_utils.basic` shim** (round 77004
   confirm-phase re-run: krikri failed=1, real ansible failed=0). PyYAML
@@ -3061,55 +3083,6 @@ below - keep the two apart, or this list stops meaning anything.
   Atlantic.net host with real root access, comparing `copy:`'s and a
   `py_module`-dispatched module's become handling directly (verbose
   `-vvv` output on both) before the next fix attempt.
-
-- **`ansible.builtin.apt`'s `name:` doesn't validate a pinned version
-  string against available candidates** (round 76017, `dj-wasabi.telegraf`:
-  `name: telegraf=1.18.2-1` where that exact version doesn't exist).
-  Real Ansible correctly hard-fails ("no available installation
-  candidate"); krikri lets it loosely "succeed" and only fails two
-  tasks later on a missing directory the never-really-installed
-  package should have created. Not yet dispatched - fixing it safely
-  needs a real (not mocked) apt-get failure path, and this repo's
-  existing apt specs' testing convention for that hasn't been
-  confirmed yet.
-
-- **`kubernetes.core.helm_repository` hard-stops the whole play instead
-  of gracefully skipping (round 74000-range, `juju4.falco`).** This is
-  the opposite direction of the module-resolution gap documented two
-  bullets down: `kubernetes.core` is a real, zero-coverage collection
-  that should get the graceful per-task unavailable_module skip (see
-  the 0.9.861 retraction below), but krikri instead raises
-  `UnresolvedModuleError` and refuses to start the play at all (rc=4,
-  no PLAY RECAP), where real ansible-playbook fully succeeds
-  (ok=29 failed=0). Needs the module-name resolver's hard-stop
-  condition narrowed so this specific FQCN (and likely others in the
-  same collection) falls back to graceful skip.
-
-- **`lookup('vars', key)` returns the literal string `"undefined"` for
-  a missing key instead of raising (round 75002, `galaxyproject.galaxy`).**
-  Real Ansible's strict undefined-variable check makes this lookup
-  raise when the target var doesn't exist; krikri's implementation
-  (`expression_evaluator.cr`, around the `lookup('vars', ...)` handling)
-  instead returns the string `"undefined"` as a normal value, so a
-  `set_fact` built on it "succeeds" on krikri where real ansible
-  hard-fails immediately - krikri then runs 20+ tasks further before
-  diverging elsewhere.
-
-- **`first_found`'s search-list argument doesn't resolve when it's a
-  task-local `vars:` block variable name rather than a literal list**
-  (round 75012, `nephelaiio.devtools`). `q('first_found',
-  include_files, errors='ignore')` where `include_files` is set in the
-  task's own `vars:` block fails to resolve any candidates on krikri
-  (`first_found_params` in `expression_evaluator.cr`), so
-  `include_vars` silently loads nothing and a downstream variable falls
-  through to the literal string `"undefined"`, which then gets passed
-  to `apt` as a package name. Real Ansible resolves the same task fine.
-
-- **`import_tasks`'s invalid `static:` attribute isn't validated**
-  (round 73000-range, `ovirt.image-template`). Real Ansible hard-fails
-  parsing a role that uses the removed `static:` attribute on
-  `import_tasks:`; krikri doesn't validate the attribute at all and
-  silently continues, producing a normal recap instead of a hard stop.
 
 - **Round 74501 (`systemli.jitsi_meet`): the binary apt keyring the role
   installs did not verify apt signatures under krikri on that VM, and the
