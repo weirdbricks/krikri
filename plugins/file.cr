@@ -764,6 +764,12 @@ module Krikri
         changed = true if mode_changed?(info.st_mode.to_i32, mode)
       end
 
+      # attr:/attributes: - see attr_changed? below for why this mirrors
+      # real Ansible's string-comparison semantics (including its own
+      # non-idempotent `-`-prefixed quirk) rather than "smarter" per-flag
+      # checks.
+      changed = true if attr_changed?(path)
+
       changed
     end
 
@@ -943,6 +949,81 @@ module Krikri
         # shouldn't fail the whole task - matches the previous shell
         # implementation's behavior of not checking these commands' exit
         # codes either.
+      end
+
+      apply_attr(path)
+    end
+
+    # attr:/attributes: (chattr flags, real Ansible's `attributes` param
+    # and its `attr` alias). Parsed into the leading operator ('+'/'-',
+    # defaulting to '=' when bare) plus the flag letters themselves -
+    # real Ansible's set_attributes_if_different in
+    # module_utils/basic.py does exactly this split before comparing.
+    private def attr_args : {Char, String}?
+      raw = @params["attr"]? || @params["attributes"]?
+      return nil unless raw
+      raw = raw.strip
+      return nil if raw.empty?
+      if raw[0] == '-' || raw[0] == '+'
+        {raw[0], raw[1..]}
+      else
+        {'=', raw}
+      end
+    end
+
+    # The file's current chattr flags as real Ansible reads them:
+    # `lsattr -d <path>` output's first whitespace field with the
+    # dash-padding stripped (e.g. "--------------e-------" -> "e").
+    # Real Ansible (get_file_attributes) treats an lsattr failure
+    # (missing binary, unsupported filesystem like tmpfs) as empty flags
+    # rather than an error - the chattr call itself is what surfaces
+    # those as task failures later, not the read.
+    private def current_attr_flags(path : String) : String
+      result = remote_exec("lsattr -d #{shell_single_quote(path)}")
+      return "" unless result[:exit_code] == 0
+      fields = result[:stdout].strip.split
+      return "" if fields.empty?
+      fields[0].delete('-').strip
+    end
+
+    # Whether the attr:/attributes: param reports changed, mirroring real
+    # Ansible's set_attributes_if_different exactly: changed when the
+    # current lsattr flag string differs from the requested flag letters
+    # OR the request is '-'-prefixed - in which case chattr is re-run and
+    # changed reported UNCONDITIONALLY, even when the flag being removed
+    # isn't actually set. That makes real Ansible's `attr: -i` never
+    # converge (ansible/ansible#33745), and its `+i`/`i` form report
+    # changed whenever OTHER flags coexist (ext4's always-on extents `e`
+    # makes "ie" != "i"; ansible/ansible#48839). Krikri previously
+    # ignored the param entirely (reporting changed=0 forever), which is
+    # UNDER-reporting changed vs real Ansible - found on the
+    # l3d.resolvconf warm-idempotency round: real Ansible's
+    # "Resolv.conf is ino longer immutable." task (file: attr: '-i')
+    # reports changed on every run; krikri reported ok.
+    private def attr_changed?(path : String) : Bool
+      parsed = attr_args
+      return false unless parsed
+      mod, flags = parsed
+      return false if flags.empty?
+      current_attr_flags(path) != flags || mod == '-'
+    end
+
+    # Applies the attr:/attributes: param via the real chattr binary and
+    # fails the task (like real Ansible's fail_json(msg='chattr failed'))
+    # when chattr exits nonzero or writes to stderr - the cold-run form
+    # of the same l3d.resolvconf scenario, where chattr on a
+    # systemd-resolved-managed /etc/resolv.conf symlink target on tmpfs
+    # fails with "Operation not supported while reading flags".
+    private def apply_attr(path : String) : Nil
+      parsed = attr_args
+      return unless parsed
+      mod, flags = parsed
+      return if flags.empty?
+      return unless current_attr_flags(path) != flags || mod == '-'
+
+      result = remote_exec("chattr #{mod}#{flags} #{shell_single_quote(path)}")
+      if result[:exit_code] != 0 || !result[:stderr].strip.empty?
+        raise "chattr failed - Error while setting attributes: #{result[:stdout]}#{result[:stderr]}"
       end
     end
 

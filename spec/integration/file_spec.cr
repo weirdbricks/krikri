@@ -447,4 +447,59 @@ describe "file plugin" do
       (File.info(leaf, follow_symlinks: false).permissions.value & 0o777).should eq(0o700)
     end
   end
+
+  describe "attr:/attributes: (chattr flags)" do
+    # Real bug found benchmarking l3d.resolvconf (warm idempotency):
+    # real Ansible's "Resolv.conf is ino longer immutable." task
+    # (file: {path: /etc/resolv.conf, attr: '-i'}) reports changed on
+    # EVERY run - real Ansible's set_attributes_if_different
+    # (module_utils/basic.py) re-runs chattr and reports changed
+    # unconditionally for '-'-prefixed requests, whether or not the flag
+    # is actually set (ansible/ansible#33745). Krikri previously ignored
+    # the attr: param entirely, so the warm rerun under-reported
+    # changed=0 where real Ansible reports changed=1.
+    it "reports changed on every run for '-'-prefixed attr, flag set or not (real Ansible's quirk)" do
+      path = tmp_path("attr_clear_i.txt")
+      File.write(path, "x")
+
+      result = PluginSpecHelper.run("file", {"path" => path, "attr" => "-i"})
+      result["changed"].as_bool.should be_true
+      result["failed"].as_bool.should be_false
+
+      # Warm rerun - still changed, this task never converges in real
+      # Ansible either.
+      warm = PluginSpecHelper.run("file", {"path" => path, "attr" => "-i"})
+      warm["changed"].as_bool.should be_true
+    end
+
+    it "reports changed in check mode without touching the file" do
+      path = tmp_path("attr_check.txt")
+      File.write(path, "x")
+
+      result = PluginSpecHelper.run("file", {"path" => path, "attr" => "-i", "check_mode" => "true"})
+      result["changed"].as_bool.should be_true
+      result["failed"].as_bool.should be_false
+    end
+
+    it "reports changed when the requested flags differ from the current lsattr flags" do
+      # '='-mod requests compare the whole current lsattr flag string
+      # against the requested letters - a plain file's flags ("e" on
+      # ext4, "" on tmpfs) never equal "i", so changed is reported
+      # (real Ansible's own whole-string comparison, not per-flag).
+      path = tmp_path("attr_set_i.txt")
+      File.write(path, "x")
+
+      result = PluginSpecHelper.run("file", {"path" => path, "attr" => "i", "check_mode" => "true"})
+      result["changed"].as_bool.should be_true
+      result["failed"].as_bool.should be_false
+    end
+
+    it "stays idempotent for tasks without attr:" do
+      path = tmp_path("attr_absent.txt")
+      File.write(path, "x")
+
+      result = PluginSpecHelper.run("file", {"path" => path})
+      result["changed"].as_bool.should be_false
+    end
+  end
 end

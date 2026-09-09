@@ -18,8 +18,45 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.881`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.882`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
+
+---
+
+## file: `attr:` was silently ignored - krikri UNDER-reported changed on warm reruns (0.9.882)
+
+Found in round 74008 (`l3d.resolvconf`, Atlantic): the role's
+"Resolv.conf is ino longer immutable." task is
+`file: {path: /etc/resolv.conf, attr: '-i'}`, and real Ansible reports
+`changed=1` on EVERY run for it - warm included - while krikri's warm
+rerun reported `changed=0`. The opposite of the usual direction: krikri
+was being MORE idempotent than real Ansible, which is itself the
+divergence. Root cause was twofold and duller than it looked: krikri's
+file plugin never read the `attr:`/`attributes:` parameter at all (so it
+neither ran chattr nor reported anything for it), and real Ansible's own
+`set_attributes_if_different` (module_utils/basic.py) reports changed
+UNCONDITIONALLY for '-'-prefixed requests - it re-runs `chattr -i` and
+returns changed=True whether or not the flag was actually set
+(ansible/ansible#33745), and its '+i'/'i' form reports changed whenever
+the whole current lsattr flag string differs from the requested letters
+(ext4's always-on extents flag makes `"ie" != "i"`; ansible/ansible#48839).
+So the warm `changed=1` is real Ansible faithfully being non-idempotent
+by design flaw, not a timestamp-in-template artifact - the role's
+`templates/resolv.conf.j2` is fully deterministic and its template task
+reports `ok` on warm for both engines. Fixed by implementing `attr:`/
+`attributes:` in the file plugin with real Ansible's exact string-
+comparison semantics: current flags read via `lsattr -d` (failures read
+as empty flags, like real Ansible), changed when the flag strings differ
+OR the request is '-'-prefixed, chattr executed on apply, and a chattr
+failure fails the task with real Ansible's "chattr failed" shape (the
+role's cold-run path: chattr on a systemd-resolved /etc/resolv.conf
+symlink target on tmpfs fails with "Operation not supported while
+reading flags"). Regression spec: `spec/integration/file_spec.cr`
+("attr:/attributes: (chattr flags)"). Note the round's cold-run recaps
+matched only coincidentally: real Ansible cold-fails that attr task on
+the chattr call, while krikri cold-failed it earlier with "src parameter
+required for state=link" (the role passes no `src:` for an existing
+symlink) - same failed+ignored shape, different error, left as-is.
 
 ---
 
