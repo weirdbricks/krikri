@@ -281,9 +281,36 @@ module Krikri
             end
           end
         when "reloaded"
+          # real Ansible's systemd module: `state: reloaded` reloads a
+          # RUNNING service but STARTS an inactive one (its own state
+          # block: for restarted/reloaded, `if not is_running_service(
+          # ...) action = 'start'` - ActiveState not in active/activating
+          # means start, else the reload). Plain `systemctl reload` of an
+          # inactive unit fails "is not active, cannot reload".
+          # mdsketch.teleport's own "Reload_Teleport" handler
+          # (`ansible.builtin.systemd: {name: teleport, state: reloaded}`)
+          # on a fresh install exposed it: the unit file was created in
+          # the same play and the service had never started, so real
+          # Ansible started it, while krikri failed the handler. Same
+          # semantics plugins/service.cr already implements for the
+          # `service` module's `state: reloaded` (its 0.9.x nginxinc.nginx
+          # fix) - separate plugins, so the fix didn't carry over here
+          # automatically.
           if @check_mode
-            messages << "Would reload #{name}"
+            messages << (is_running ? "Would reload #{name}" : "Would start #{name}")
             changed = true
+          elsif !is_running
+            start_result = remote_exec("#{scope_env_prefix}systemctl#{scope_flag} start #{name}")
+            if start_result[:exit_code] == 0
+              messages << "Unit started"
+              changed = true
+            else
+              return PluginResult.new(
+                changed: false,
+                failed: true,
+                msg: "Failed to start #{name}: #{start_result[:stderr]}"
+              )
+            end
           else
             reload_result = remote_exec("#{scope_env_prefix}systemctl#{scope_flag} reload #{name}")
             if reload_result[:exit_code] == 0

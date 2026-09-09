@@ -82,4 +82,28 @@ describe "systemd plugin" do
     result["failed"].as_bool.should be_false
     result["changed"].as_bool.should be_true
   end
+
+  # Real bug found benchmarking mdsketch.teleport: its own
+  # "Reload_Teleport" handler (`ansible.builtin.systemd: {name: teleport,
+  # state: reloaded, daemon_reload: yes, enabled: yes}`) fired on a fresh
+  # install where the unit file was created in the same play and the
+  # service had never started. Real Ansible's systemd module STARTS an
+  # inactive unit for `state: reloaded` (plain `systemctl reload` of an
+  # inactive unit fails "is not active, cannot reload" - exactly the
+  # error krikri's handler died with); krikri ran the reload
+  # unconditionally and failed. Same semantics plugins/service.cr already
+  # implements for the `service` module's `state: reloaded`. Check mode
+  # on a nonexistent (hence inactive) unit must therefore predict a
+  # START, not a reload.
+  it "predicts a start (not a reload) for an inactive unit with state: reloaded in check mode" do
+    result = PluginSpecHelper.run("systemd", {
+      "name"       => "nonexistent-krikri-playbook-unit.service",
+      "state"      => "reloaded",
+      "check_mode" => "true",
+    })
+    result["failed"].as_bool.should be_false
+    result["changed"].as_bool.should be_true
+    result["msg"].to_s.should contain("start")
+    result["msg"].to_s.should_not contain("reload")
+  end
 end

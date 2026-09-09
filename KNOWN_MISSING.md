@@ -18,8 +18,31 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.876`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.877`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
+
+---
+
+## `systemd: {state: reloaded}` on a not-yet-running unit failed "is not active, cannot reload" where real Ansible STARTS it (0.9.877)
+
+Found in this round's `mdsketch.teleport` cold run: the role installs
+teleport and creates the unit file in the same play, and its own
+"Reload_Teleport" handler
+(`ansible.builtin.systemd: {name: teleport, state: reloaded,
+daemon_reload: yes, enabled: yes}`) fires off the config-template
+change - but the service has never started yet. Real Ansible's systemd
+module, for both `restarted` and `reloaded`, runs `start` when the
+unit's ActiveState is not active/activating (its own
+`is_running_service` check picks the action; plain `systemctl reload`
+of an inactive unit fails "is not active, cannot reload"), and only
+reloads when already running - so the handler SUCCEEDS there by
+starting teleport. Krikri's `systemd` plugin ran `systemctl reload`
+unconditionally and failed the handler with exactly that error.
+plugins/service.cr had already learned this exact lesson the hard way
+(nginxinc.nginx, its own `state: reloaded` fix) - separate plugins, so
+the fix never carried over. Now mirrored: `reloaded` starts an
+inactive unit, reloads a running one, reporting started/reloaded
+accordingly.
 
 ---
 
