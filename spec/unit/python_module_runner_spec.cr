@@ -174,4 +174,57 @@ describe Krikri::PythonModuleRunner do
     result["msg"].as_s.should contain("MODULE FAILURE")
     result["stderr"].as_s.should contain("boom")
   end
+
+  # ---- the basic.py shim (targets without ansible-core) ----
+
+  it "shims ansible.module_utils.basic for a new-style module on a target without ansible-core" do
+    pending("python3 not available") unless File.exists?("/usr/bin/python3")
+    # The exact shape that hard-failed on every fresh target
+    # (newrelic.newrelic-infra's own library/merge_yaml.py): a new-style
+    # module whose `from ansible.module_utils.basic import
+    # AnsibleModule` import dies with ModuleNotFoundError when
+    # ansible-core isn't installed. The bundle is written into the
+    # module's own directory, and the script dir is sys.path[0], so the
+    # shim resolves the import even on a controller WITH ansible-core
+    # installed - the same shadowing the plugin relies on.
+    work_dir = File.join(Dir.tempdir, "krikri-shim-spec-#{Random.rand(1_000_000)}")
+    Dir.mkdir_p(work_dir)
+    Krikri::PythonModuleRunner.write_module_utils_bundle(work_dir)
+    module_path = File.join(work_dir, "merge_yaml_spec.py")
+    File.write(module_path, "from ansible.module_utils.basic import AnsibleModule\n" \
+                            "module = AnsibleModule(argument_spec={'value': {'type': 'dict', 'required': True},\n" \
+                            "  'create': {'type': 'bool', 'default': True}}, supports_check_mode=True)\n" \
+                            "module.exit_json(changed=True, merged=module.params['value'], create=module.params['create'])\n")
+    stdout_io = IO::Memory.new
+    err = IO::Memory.new
+    status = Process.run("/usr/bin/python3", [module_path],
+      input: IO::Memory.new(%({"ANSIBLE_MODULE_ARGS": {"value": {"a": 1}, "create": false}})),
+      output: stdout_io, error: err)
+    FileUtils.rm_r(work_dir)
+    status.success?.should be_true
+    parsed = Krikri::PythonModuleRunner.parse_module_output(stdout_io.to_s).should_not be_nil
+    parsed["changed"].as_bool.should be_true
+    parsed["merged"].as_h["a"].as_i.should eq(1)
+    parsed["create"].as_bool.should be_false
+  end
+
+  it "shim fails a missing required argument through fail_json like real basic.py" do
+    pending("python3 not available") unless File.exists?("/usr/bin/python3")
+    work_dir = File.join(Dir.tempdir, "krikri-shim-spec-#{Random.rand(1_000_000)}")
+    Dir.mkdir_p(work_dir)
+    Krikri::PythonModuleRunner.write_module_utils_bundle(work_dir)
+    module_path = File.join(work_dir, "merge_yaml_spec_req.py")
+    File.write(module_path, "from ansible.module_utils.basic import AnsibleModule\n" \
+                            "module = AnsibleModule(argument_spec={'value': {'type': 'dict', 'required': True}})\n" \
+                            "module.exit_json(changed=False)\n")
+    stdout_io = IO::Memory.new
+    status = Process.run("/usr/bin/python3", [module_path],
+      input: IO::Memory.new(%({"ANSIBLE_MODULE_ARGS": {}})),
+      output: stdout_io, error: Process::Redirect::Close)
+    FileUtils.rm_r(work_dir)
+    status.success?.should be_false
+    parsed = Krikri::PythonModuleRunner.parse_module_output(stdout_io.to_s).should_not be_nil
+    parsed["failed"].as_bool.should be_true
+    parsed["msg"].as_s.should contain("missing required arguments")
+  end
 end

@@ -68,6 +68,32 @@ module Krikri
       File.write(module_path, source)
       File.chmod(module_path, 0o500)
 
+      # A new-style module's `from ansible.module_utils.basic import
+      # AnsibleModule` needs ansible-core installed ON THE TARGET - which
+      # real Ansible never requires (the AnsiballZ wrapper bundles
+      # module_utils INTO the module payload it ships). This plugin runs
+      # the raw module script instead, so on a target without
+      # ansible-core the import died with ModuleNotFoundError before any
+      # result JSON was printed - hard-FAILING the task where real
+      # ansible-playbook succeeded (found via newrelic.newrelic-infra's
+      # own "Setup agent config *NIX": the role ships its own
+      # library/merge_yaml.py, which took this path and failed on every
+      # fresh target). Probe for ansible-core first; only when it's
+      # missing, write the shim bundle into the module's own directory -
+      # Python puts the script's directory first on sys.path, so when
+      # real ansible-core IS installed (probe passed) the shim is never
+      # written and the module keeps running against the real basic.py,
+      # unchanged from pre-shim behavior.
+      probe_out = IO::Memory.new
+      probe_err = IO::Memory.new
+      probe = Process.new(
+        python, ["-c", "from ansible.module_utils.basic import AnsibleModule"],
+        output: probe_out, error: probe_err
+      )
+      unless probe.wait.success?
+        PythonModuleRunner.write_module_utils_bundle(work_dir)
+      end
+
       env = ENV.to_h
       env["ANSIBLE_MODULE_NAME"] = module_name
       env["ANSIBLE_CHECK_MODE"] = check_mode ? "1" : "0"

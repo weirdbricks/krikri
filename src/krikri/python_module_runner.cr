@@ -132,6 +132,207 @@ module Krikri
       JSON::Any.new(value)
     end
 
+    # The `ansible/module_utils` bundle a new-style module's
+    # `from ansible.module_utils.basic import AnsibleModule` import needs.
+    # Real Ansible never relies on ansible-core being installed on the
+    # target - the AnsiballZ wrapper bundles module_utils INTO the module
+    # payload it ships - so every new-style role-private module runs on
+    # any target with a python3. This engine runs the raw module script
+    # instead, so on a target with no ansible-core installed the import
+    # died with ModuleNotFoundError and the module printed no result JSON
+    # ("MODULE FAILURE") - hard-FAILING the task where real Ansible ran
+    # it successfully (found via newrelic.newrelic-infra's own
+    # "Setup agent config *NIX" task: the role ships its own
+    # library/merge_yaml.py, which took the py_module path and failed on
+    # every fresh target while real ansible-playbook succeeded). The shim
+    # covers what corpus role-private modules actually use - params
+    # parsing/validation against argument_spec (with type coercion,
+    # defaults, aliases, required), check_mode, exit_json/fail_json,
+    # warn/run_command - not the whole real basic.py surface; anything
+    # beyond that fails exactly as before this shim existed.
+    BASIC_PY_SHIM = <<-PYTHON
+      import json
+      import os
+      import subprocess
+      import sys
+      import tempfile
+
+
+      class AnsibleModule(object):
+          def __init__(self, argument_spec=None, bypass_checks=False, no_log=False,
+                       supports_check_mode=False, **kwargs):
+              self.argument_spec = argument_spec or {}
+              self.supports_check_mode = supports_check_mode
+              self._warnings = []
+              self.tmpdir = tempfile.gettempdir()
+              self.check_mode = False
+              self.params = {}
+              raw_args = self._read_args()
+              self.check_mode = bool(
+                  raw_args.pop('_ansible_check_mode', False)
+                  or os.environ.get('ANSIBLE_CHECK_MODE') == '1')
+              self._apply_argument_spec(raw_args)
+
+          def _read_args(self):
+              env_args = os.environ.get('ANSIBLE_MODULE_ARGS')
+              if env_args:
+                  try:
+                      return json.loads(env_args)
+                  except ValueError:
+                      self.fail_json(msg='ANSIBLE_MODULE_ARGS env var is not valid JSON')
+              raw = ''
+              try:
+                  if not sys.stdin.isatty():
+                      raw = sys.stdin.read()
+              except Exception:
+                  raw = ''
+              raw = raw.strip()
+              if not raw:
+                  return {}
+              try:
+                  parsed = json.loads(raw)
+              except ValueError:
+                  self.fail_json(msg='Failed to decode JSON module parameters.')
+              if isinstance(parsed, dict) and 'ANSIBLE_MODULE_ARGS' in parsed:
+                  parsed = parsed['ANSIBLE_MODULE_ARGS']
+              if not isinstance(parsed, dict):
+                  self.fail_json(msg='Module parameters must be a JSON object.')
+              return parsed
+
+          def _cast(self, name, value, spec):
+              kind = spec.get('type', 'str')
+              if kind == 'bool':
+                  if isinstance(value, bool):
+                      return value
+                  text = str(value).strip().lower()
+                  if text in ('yes', 'on', '1', 'true'):
+                      return True
+                  if text in ('no', 'off', '0', 'false', ''):
+                      return False
+                  self.fail_json(msg="argument '%s' is not a valid boolean" % name)
+              if kind == 'int':
+                  try:
+                      return int(value)
+                  except (TypeError, ValueError):
+                      self.fail_json(msg="argument '%s' is not a valid integer" % name)
+              if kind == 'float':
+                  try:
+                      return float(value)
+                  except (TypeError, ValueError):
+                      self.fail_json(msg="argument '%s' is not a valid float" % name)
+              if kind in ('dict', 'json'):
+                  if isinstance(value, dict):
+                      return value
+                  try:
+                      parsed = json.loads(value)
+                  except (TypeError, ValueError):
+                      self.fail_json(msg="argument '%s' is not valid JSON" % name)
+                  if not isinstance(parsed, dict):
+                      self.fail_json(msg="argument '%s' is not a dict" % name)
+                  return parsed
+              if kind == 'list':
+                  if isinstance(value, list):
+                      return value
+                  try:
+                      parsed = json.loads(value)
+                  except (TypeError, ValueError):
+                      parsed = str(value).split(',')
+                  return parsed
+              if kind == 'path':
+                  return os.path.expanduser(os.path.expandvars(str(value)))
+              return value
+
+          def _apply_argument_spec(self, raw_args):
+              for key, spec in self.argument_spec.items():
+                  for alias in spec.get('aliases', []) or []:
+                      if alias in raw_args and key not in raw_args:
+                          raw_args[key] = raw_args[alias]
+              missing = []
+              for key, spec in self.argument_spec.items():
+                  if key in raw_args:
+                      value = self._cast(key, raw_args[key], spec)
+                      if spec.get('type') == 'list' and spec.get('elements'):
+                          element_spec = {'type': spec['elements']}
+                          value = [self._cast(key, element, element_spec)
+                                   for element in value]
+                      self.params[key] = value
+                  elif 'default' in spec:
+                      self.params[key] = spec['default']
+                  elif spec.get('required'):
+                      missing.append(key)
+                  else:
+                      self.params[key] = None
+              if missing:
+                  self.fail_json(msg='missing required arguments: %s'
+                                 % ', '.join(sorted(missing)))
+              for key, value in raw_args.items():
+                  if key.startswith('_ansible_') or key in self.params:
+                      continue
+                  self.params[key] = value
+
+          def warn(self, message):
+              self._warnings.append(str(message))
+
+          def deprecate(self, message, **kwargs):
+              self._warnings.append('DEPRECATED: %s' % message)
+
+          def run_command(self, args, check_rc=False, cwd=None,
+                          environ_update=None, **kwargs):
+              if isinstance(args, str):
+                  argv = args.split()
+              else:
+                  argv = [str(a) for a in args]
+              env = os.environ.copy()
+              if environ_update:
+                  env.update({k: str(v) for k, v in environ_update.items()})
+              proc = subprocess.Popen(argv, cwd=cwd, stdout=subprocess.PIPE,
+                                      stderr=subprocess.PIPE, env=env)
+              out, err = proc.communicate()
+              rc = proc.returncode
+              if check_rc and rc != 0:
+                  self.fail_json(msg='Command failed with rc %d: %s'
+                                 % (rc, err.decode('utf-8', 'replace')))
+              return (rc, out.decode('utf-8', 'replace'),
+                      err.decode('utf-8', 'replace'))
+
+          def exit_json(self, **kwargs):
+              result = dict(kwargs)
+              result.setdefault('changed', False)
+              if self._warnings:
+                  result['warnings'] = self._warnings
+              sys.stdout.write(json.dumps(result) + '\\n')
+              sys.exit(0)
+
+          def fail_json(self, msg='Module failed', **kwargs):
+              result = dict(kwargs)
+              result['failed'] = True
+              result['msg'] = msg
+              if self._warnings:
+                  result['warnings'] = self._warnings
+              sys.stdout.write(json.dumps(result) + '\\n')
+              sys.exit(1)
+      PYTHON
+
+    # Writes the shim bundle above into *work_dir* as a real
+    # ansible/module_utils package tree. The module script itself sits in
+    # work_dir too, and Python puts the script's own directory first on
+    # sys.path - so the shim shadows any installed ansible-core exactly
+    # when it's written, and the import resolves to it instead of dying
+    # with ModuleNotFoundError. Written ONLY for a target where the probe
+    # import failed (see py_module.cr): where real ansible-core IS
+    # installed the module keeps running against the real basic.py,
+    # unchanged from pre-shim behavior.
+    def self.write_module_utils_bundle(work_dir : String) : Nil
+      package_init = File.join(work_dir, "ansible", "__init__.py")
+      module_utils_init = File.join(work_dir, "ansible", "module_utils", "__init__.py")
+      basic_py = File.join(work_dir, "ansible", "module_utils", "basic.py")
+      Dir.mkdir_p(File.dirname(package_init))
+      Dir.mkdir_p(File.dirname(module_utils_init))
+      File.write(package_init, "")
+      File.write(module_utils_init, "")
+      File.write(basic_py, BASIC_PY_SHIM)
+    end
+
     # Parses the module's stdout into its result JSON: real modules
     # print a JSON object (pretty or single-line), possibly preceded by
     # other output (warnings, prints) that real Ansible also strips.
