@@ -18,10 +18,33 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.883`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.886`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
 
 ---
+
+## Round 73000-75024: 400-role Galaxy top-download batch + triage + 4 real fixes (0.9.855 → 0.9.886)
+
+Full round: 400 fresh roles (all first-time-tested on this codebase),
+run cold+warm against both engines on fresh Atlantic.net Ubuntu-22.04
+host pairs, triaged with no skipping. 332 clean, 26 Galaxy-404
+untestable, 42 divergent. Of the divergent set: most were role-side
+bugs, host/environment mismatches (missing `geerlingguy.repo-epel` on
+Debian, Windows roles using `become: sudo`), or already-covered
+deliberate limits (unimplemented modules skipped gracefully); a
+smaller set were genuine krikri defects, four of which got real fixes
+this round (see their own commits): `community.general.consul_acl`
+tombstoning (0.9.884), the `UnknownFilterError`-in-task-vars: crash
+(0.9.885), and `template:`'s trailing-slash `dest:` (0.9.886). One
+apparent regression (`ricsanfre.dnsmasq`) turned out to be a stale
+pre-0.9.872 test binary, not a real bug - confirmed via a live repro
+against the current build. See `ROLES_TESTED.md`'s "Round 73000-75024"
+table for the full per-role breakdown, and "Open gaps" above for the
+handful of newly-triaged defects not yet fixed
+(`kubernetes.core.helm_repository` hard-stop, `lookup('vars', ...)`
+returning the string `"undefined"` instead of raising, `first_found`
+with a task-local `vars:` list argument, `import_tasks`'s unvalidated
+`static:` attribute).
 
 ## Two evaluator bugs found together via srsp.oracle-java (nested dep of wcm_io_devops.aem_cms): a recap that looked like role-conditional chaos was really `| float` on native numbers and `| length` on numbers (0.9.883)
 
@@ -2965,6 +2988,44 @@ looped-task flow is strict with real-Ansible when:-before-loop ordering.
 Genuinely open defects: something is wrong and the fix is unknown or
 unfinished. Everything deliberate lives under "Deliberate limits"
 below - keep the two apart, or this list stops meaning anything.
+
+- **`kubernetes.core.helm_repository` hard-stops the whole play instead
+  of gracefully skipping (round 74000-range, `juju4.falco`).** This is
+  the opposite direction of the module-resolution gap documented two
+  bullets down: `kubernetes.core` is a real, zero-coverage collection
+  that should get the graceful per-task unavailable_module skip (see
+  the 0.9.861 retraction below), but krikri instead raises
+  `UnresolvedModuleError` and refuses to start the play at all (rc=4,
+  no PLAY RECAP), where real ansible-playbook fully succeeds
+  (ok=29 failed=0). Needs the module-name resolver's hard-stop
+  condition narrowed so this specific FQCN (and likely others in the
+  same collection) falls back to graceful skip.
+
+- **`lookup('vars', key)` returns the literal string `"undefined"` for
+  a missing key instead of raising (round 75002, `galaxyproject.galaxy`).**
+  Real Ansible's strict undefined-variable check makes this lookup
+  raise when the target var doesn't exist; krikri's implementation
+  (`expression_evaluator.cr`, around the `lookup('vars', ...)` handling)
+  instead returns the string `"undefined"` as a normal value, so a
+  `set_fact` built on it "succeeds" on krikri where real ansible
+  hard-fails immediately - krikri then runs 20+ tasks further before
+  diverging elsewhere.
+
+- **`first_found`'s search-list argument doesn't resolve when it's a
+  task-local `vars:` block variable name rather than a literal list**
+  (round 75012, `nephelaiio.devtools`). `q('first_found',
+  include_files, errors='ignore')` where `include_files` is set in the
+  task's own `vars:` block fails to resolve any candidates on krikri
+  (`first_found_params` in `expression_evaluator.cr`), so
+  `include_vars` silently loads nothing and a downstream variable falls
+  through to the literal string `"undefined"`, which then gets passed
+  to `apt` as a package name. Real Ansible resolves the same task fine.
+
+- **`import_tasks`'s invalid `static:` attribute isn't validated**
+  (round 73000-range, `ovirt.image-template`). Real Ansible hard-fails
+  parsing a role that uses the removed `static:` attribute on
+  `import_tasks:`; krikri doesn't validate the attribute at all and
+  silently continues, producing a normal recap instead of a hard stop.
 
 - **Round 74501 (`systemli.jitsi_meet`): the binary apt keyring the role
   installs did not verify apt signatures under krikri on that VM, and the
