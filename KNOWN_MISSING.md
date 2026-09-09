@@ -18,12 +18,12 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.850`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.851`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
 
 ---
 
-## Round 72000: 400-role batch (2x Atlantic.net capacity), 6 real bugs (0.9.845-0.9.850)
+## Round 72000: 400-role batch (2x Atlantic.net capacity), 7 real bugs (0.9.845-0.9.851)
 
 First batch run entirely Atlantic-only (no Kata, per round 71000's
 undiagnosed Kata cgroup boot-failure finding) at 24 hosts/12 pairs -
@@ -36,14 +36,15 @@ provisioning failures, unrelated slots/times - requeued and all 5 came
 back CLEAN, confirming it wasn't systemic).
 
 All 57 DIVERGENT roles were individually triaged this round (not just
-a sample). 6 real bugs found, fixed, and confirmed via live reruns on
+a sample). 7 real bugs found, fixed, and confirmed via live reruns on
 fresh Atlantic hosts: `with_subelements:` on `include_tasks:` rejected
 outright; `role_path` unresolved inside a static `import_tasks:` path;
 `getent`'s `fail_key: false` storing an empty array instead of a real
 null; a bracketed multi-item `groups:` list passed raw into
 `useradd -G`; `notify:` on an `import_tasks:` line not propagating to
-the tasks it inlines; and a templated `ignore_errors:` always
-defaulting to `false` instead of `true`. Each writeup below names the
+the tasks it inlines; a templated `ignore_errors:` always defaulting
+to `false` instead of `true`; and `with_nested:` not re-expanding a
+templated source list at runtime. Each writeup below names the
 confirming role(s).
 
 Of the rest: most (~30) trace to already-documented scope cuts,
@@ -53,14 +54,12 @@ Windows-only roles, real Ansible's own module/collection version
 mismatches), or a genuinely-unrelated both-fail (missing binary,
 missing role dependency). Those aren't re-litigated individually here
 - see the per-role rows in `ROLES_TESTED.md`'s round-72000 section for
-each one's specific reason. 6 new **open gaps** are documented below
+each one's specific reason. 5 new **open gaps** are documented below
 (real, reproducible, root-caused, but not fixed this round - each
 names the exact mechanism so another pass can implement it without
-re-deriving the diagnosis): `with_nested:` not re-expanding a
-templated source list at runtime (in progress elsewhere as of this
-writing); a quoted-string re-evaluated as live code; a silently-
-tolerated malformed-Jinja gap; Python string-method-call syntax
-(`.lower()`) unsupported in `{{ }}` expressions; the
+re-deriving the diagnosis): a quoted-string re-evaluated as live code;
+a silently-tolerated malformed-Jinja gap; Python string-method-call
+syntax (`.lower()`) unsupported in `{{ }}` expressions; the
 `ansible_python_version` fact never populated; and `is defined` on a
 dynamically-keyed `hostvars[...]` lookup raising instead of returning
 false. A handful of roles (`f500.ufw`'s possible SSH-lockout-after-
@@ -161,6 +160,29 @@ reproducible divergences whose root cause isn't fully pinned down yet.
   defaulting `true` for a `{{`-shaped string is right far more often
   than `false`, and never worse than the previous always-hard-fail
   behavior. Regression spec added; live-reverified (now `CLEAN`).
+
+- **`gantsign.sdkman`**: "create the SDKMAN installation directories"
+  (`with_nested: ['{{ sdkman_users }}', [...11 literal dir paths...]]`
+  with `sdkman_users: []`, the role's own documented default) produced
+  11 bogus `become_user: "[]"` tasks that all failed "is not a valid
+  username", instead of the whole loop correctly running zero times
+  the way real Ansible's own fully-resolved-before-cartesian-product
+  semantics do. The parser's `with_nested` handling only recognized a
+  LITERAL YAML list as a real source list; a bare `{{ var }}` string
+  entry fell through to a generic "wrap it as one scalar item" branch
+  frozen at parse time, before any templating happened - so the
+  empty-list variable became ONE item (later rendered at execution
+  time to the literal text `"[]"`), paired against each of the 11 real
+  directory paths. Fixed by deferring a `with_nested:` array containing
+  a templated scalar source to a new `TaskExecutor#resolve_loop_nested`
+  (architecturally mirroring `resolve_loop_flattened`'s own defer-
+  until-runtime design), wired into all 4 loop-resolution call sites.
+  Regression specs added: a unit spec confirming the parser defers
+  rather than pins the loop, plus a 3-case integration spec running the
+  real compiled binary (full expansion, zero-iteration on an empty
+  source, mixed literal+templated sources). Live-reverified on a fresh
+  Atlantic host: the bogus failures are gone and the affected task now
+  skips identically on both engines.
 
 ### Needs a closer look (real, reproducible, not root-caused yet)
 
@@ -1968,30 +1990,6 @@ Genuinely open defects: something is wrong and the fix is unknown or
 unfinished. Everything deliberate lives under "Deliberate limits"
 below - keep the two apart, or this list stops meaning anything.
 
-- **`with_nested:` treats a `{{ var }}`-templated source list as a
-  single unexpanded item at parse time, instead of re-resolving it to
-  the variable's real size (including zero) at runtime.**
-  `gantsign.sdkman` round72000: `with_nested: ['{{ sdkman_users }}',
-  [...11 literal dir paths...]]` with `sdkman_users: []` (the role's
-  own documented default, no users configured) - real Ansible fully
-  resolves `{{ sdkman_users }}` to the actual list before computing the
-  cartesian product, so an empty list correctly makes the WHOLE loop
-  zero iterations (`skipped=12`, matching real Ansible's own recap).
-  This engine's parser (`playbook_parser.cr`'s `with_nested` handling)
-  only recognizes a LITERAL YAML list as one of `with_nested:`'s source
-  lists; a bare `{{ var }}` string entry falls through to a generic
-  "wrap it as one scalar item" branch, frozen at parse time before any
-  templating happens - so the empty-list variable becomes ONE item
-  (later rendered at execution time to the literal text `"[]"`), paired
-  against each of the 11 real directory paths, producing 11 bogus
-  `become_user: "[]"` tasks that all fail "is not a valid username"
-  instead of the whole loop being skipped. Fixing this needs runtime
-  resolution of a templated `with_nested:` source to its real array
-  size, architecturally similar to how `with_items:`/`loop:` already
-  runtime-resolve a `{{ var }}` loop source (the `find_loop_template`
-  mechanism) - a genuinely bigger, more architectural change than this
-  round's other fixes. (In progress in a separate worktree as of this
-  writing.)
 - **Python string-method-call syntax (`.lower()`, `.upper()`, etc.)
   inside `{{ }}` is not supported - renders as the literal text
   "undefined" instead of calling the method or raising.**
