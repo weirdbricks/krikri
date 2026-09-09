@@ -70,6 +70,15 @@ module Krikri
     property notify : Array(String)?
     property listen : String?
     property? ignore_errors : Bool
+    # Raw `{{ ... }}` text when ignore_errors: is a templated expression
+    # rather than a literal boolean (`dj-wasabi.telegraf`'s own
+    # `ignore_errors: "{{ ansible_check_mode }}"`, whose parse-time
+    # fallback guess below is wrong on real runs - see
+    # TaskExecutor#resolve_task_ignore_errors, which re-renders this
+    # against live vars (ansible_check_mode is bound there) and
+    # overrides the guess, the same deferred-evaluation shape
+    # check_mode_expr/become_expr use).
+    property ignore_errors_expr : String?
     property? check_mode : Bool?
     # Raw `{{ ... }}` text when check_mode: is a templated expression
     # rather than a literal boolean - same deferred-evaluation shape
@@ -376,6 +385,7 @@ module Krikri
       @notify = nil
       @listen = nil
       @ignore_errors = false
+      @ignore_errors_expr = nil
       @check_mode = nil
       @diff_mode = nil
       @become = false
@@ -2516,7 +2526,20 @@ module Krikri
     # include_vars's copy of this block used to honor that).
     private def self.parse_common_task_attributes(task : Task, task_hash : Hash(YAML::Any, YAML::Any)) : Nil
       task.when_condition = task_hash["when"]?.try { |v| condition_to_string(v) }
+      # A templated ignore_errors: keeps its parse-time guess in
+      # task.ignore_errors (see parse_ignore_errors below) AND its raw
+      # expression here, so the executor can re-resolve it at runtime -
+      # the guess's default-true-for-templates heuristic is exactly
+      # backwards for the idiom's dominant real-world form
+      # (`ignore_errors: "{{ ansible_check_mode }}"` = ignore only in
+      # check mode): on a normal run it made every failure on such a
+      # task silently ignored, the host never halted, and the play
+      # kept running on a host real Ansible had already stopped
+      # (dj-wasabi.telegraf round 76017: the telegraf=1.18.2-1 install
+      # correctly FAILED on both engines, krikri just ignored it and
+      # only died two tasks later on the missing /etc/telegraf).
       task.ignore_errors = parse_ignore_errors(task_hash["ignore_errors"]?)
+      task.ignore_errors_expr = template_expression(task_hash["ignore_errors"]?)
       task.no_log = parse_become_value(task_hash["no_log"]?) || false
       task.ignore_unreachable = parse_become_value(task_hash["ignore_unreachable"]?) || false
       task.throttle = task_hash["throttle"]?.try { |tv_blk| safe_yaml_to_string(tv_blk).to_i? } || 0

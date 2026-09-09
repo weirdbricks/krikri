@@ -793,19 +793,20 @@ module Krikri
     # run this task" signal every caller already treats a when:-skip as.
     private def swallow_when_error(task : Task, host : Host, ex : WhenEvaluationError, item_label : String? = nil, defer_stats : Bool = false, defer_display : Bool = false) : Bool
       msg = ex.message || "Error while evaluating conditional"
+      ignore_errors = resolve_task_ignore_errors(task)
       unless defer_stats
-        if task.ignore_errors?
+        if ignore_errors
           @results[host.name]["ok"] += 1
           @results[host.name]["ignored"] += 1
         else
           @results[host.name]["failed"] += 1
         end
       end
-      @halted_hosts.add(host.name) unless task.ignore_errors?
+      @halted_hosts.add(host.name) unless ignore_errors
       unless defer_display
         suffix = item_label ? " => (item=#{item_label})" : ""
         puts "fatal: [#{host.connection_host}]#{suffix}: FAILED! => #{msg}".colorize(:red)
-        puts "...ignoring".colorize(:red) if task.ignore_errors?
+        puts "...ignoring".colorize(:red) if ignore_errors
       end
       register_name = task.register
       unless register_name.nil? || register_name.empty?
@@ -957,7 +958,7 @@ module Krikri
         when JSON::Any
           cache[task] = {outcome, vars_context}
           failed = outcome["failed"]?.try(&.as_bool) || false
-          halted = true if failed && !task.ignore_errors?
+          halted = true if failed && !resolve_task_ignore_errors(task, vars_context)
         when BatchScript::Step
           steps << outcome
           step_tasks << task
@@ -1228,7 +1229,7 @@ module Krikri
       # a `become: true` to the user we already are needs no daemon of its
       # own, and asking for one would spawn it under a `sudo` that real
       # Ansible never runs - and that a minimal host may not even have.
-      BatchScript::Step.new(plugin_target, config_json, task.ignore_errors?,
+      BatchScript::Step.new(plugin_target, config_json, resolve_task_ignore_errors(task, vars_context),
         PluginManager.simple_plugin_name(task.module_name),
         PluginManager.become_needed?(become, become_user, host.user || "root") ? become_user : nil)
     end
@@ -1600,7 +1601,7 @@ module Krikri
     # Whether *task* on *host* should drop into the debugger, and the
     # loop that does. Returns the (possibly re-run) result.
     private def halt_if_failed(task : Task, host : Host, failed : Bool) : Nil
-      @halted_hosts.add(host.name) if failed && !task.ignore_errors?
+      @halted_hosts.add(host.name) if failed && !resolve_task_ignore_errors(task)
     end
 
     # Execute a task once per loop item, aggregating the per-item results

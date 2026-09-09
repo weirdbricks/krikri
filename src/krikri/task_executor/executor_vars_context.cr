@@ -1012,6 +1012,36 @@ module Krikri
       ConditionalEvaluator.evaluate(rendered, {} of String => JSON::Any) rescue task.become?
     end
 
+    # Runtime resolution of a templated `ignore_errors:` (Task#
+    # ignore_errors_expr, parsed alongside the eager fallback guess in
+    # PlaybookParser.parse_ignore_errors). Mirrors resolve_task_check_mode
+    # above: the parse-time guess defaults templated values to TRUE,
+    # which is exactly backwards for the idiom's dominant real-world form
+    # `ignore_errors: "{{ ansible_check_mode }}"` (= ignore only in check
+    # mode) - on a normal run every failure on such a task was silently
+    # ignored, the host never halted, and the play kept running where
+    # real Ansible had already stopped it (dj-wasabi.telegraf, round
+    # 76017: the correctly-failed telegraf=1.18.2-1 apt install got
+    # "...ignoring"-ed and the divergence only surfaced two tasks later).
+    #
+    # *vars_context* is the same live context every execution path
+    # already carries (ansible_check_mode is bound in it - see
+    # build_vars_context); callers without one in scope (controller-side
+    # failure helpers, batch-step construction, display-only paths) pass
+    # nil and get a minimal context carrying just ansible_check_mode,
+    # which is all the dominant idiom needs - an arbitrary-var template
+    # that can't resolve falls back to the parse-time guess, no worse
+    # than before this existed.
+    private def resolve_task_ignore_errors(task : Task, vars_context : Hash(String, JSON::Any)? = nil) : Bool
+      expr = task.ignore_errors_expr
+      return task.ignore_errors? unless expr
+
+      vars = vars_context || {"ansible_check_mode" => JSON::Any.new(@check_mode)} of String => JSON::Any
+      substitutor = VarSubstitutor.new(vars: vars, host_name: "")
+      rendered = substitutor.substitute(expr)
+      ConditionalEvaluator.evaluate(rendered, vars) rescue task.ignore_errors?
+    end
+
     private def substitute_task_params(
       params : Hash(String, String),
       substitutor : VarSubstitutor,

@@ -161,7 +161,7 @@ module Krikri
         puts "  Message: Validation of arguments failed:\n    #{errors.join("\n    ")}".colorize(:red)
         # Same ignore_errors: stats fix as finish_include_vars_failure -
         # an ignored failure counts as ok+ignored, not failed.
-        if task.ignore_errors?
+        if resolve_task_ignore_errors(task)
           @results[host.name]["ok"] += 1
           @results[host.name]["ignored"] += 1
         else
@@ -444,12 +444,13 @@ module Krikri
         notify_handlers(task, host, notify_list)
       end
 
+      ignore_errors = resolve_task_ignore_errors(task)
       if @adhoc
         ResultDisplay.display_adhoc_result(host, result)
       else
-        ResultDisplay.display_result(host, result, @diff_mode, ignore_errors: task.ignore_errors?, no_log: task.no_log?)
+        ResultDisplay.display_result(host, result, @diff_mode, ignore_errors: ignore_errors, no_log: task.no_log?)
       end
-      ResultDisplay.update_stats(@results[host.name], result, task.ignore_errors?)
+      ResultDisplay.update_stats(@results[host.name], result, ignore_errors)
       halt_if_failed(task, host, failed)
     end
 

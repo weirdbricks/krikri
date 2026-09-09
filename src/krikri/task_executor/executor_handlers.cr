@@ -305,7 +305,7 @@ module Krikri
       # `meta: flush_handlers` that triggered it, diverging from real
       # Ansible's own recap (extra ok:/changed:/failed: entries for
       # tasks real Ansible never even attempted).
-      halt_if_failed(handler, host, result["failed"]?.try(&.as_bool) == true) unless handler.ignore_errors?
+      halt_if_failed(handler, host, result["failed"]?.try(&.as_bool) == true) unless resolve_task_ignore_errors(handler)
 
       result
     end
@@ -366,7 +366,7 @@ module Krikri
 
         any_changed ||= result["changed"]?.try(&.as_bool) || false
         any_failed ||= result["failed"]?.try(&.as_bool) || false
-        ResultDisplay.display_result(host, result, @diff_mode, item_label: item_display(item), ignore_errors: handler.ignore_errors?, no_log: handler.no_log?)
+        ResultDisplay.display_result(host, result, @diff_mode, item_label: item_display(item), ignore_errors: resolve_task_ignore_errors(handler, base_vars_context), no_log: handler.no_log?)
       end
 
       JSON.parse({
