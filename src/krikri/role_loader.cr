@@ -296,7 +296,19 @@ module Krikri
       # constraint for what import_tasks:'s own file path may reference
       # (see try_parse_import_tasks in playbook_parser.cr). role_vars
       # wins over defaults, matching normal precedence.
+      #
+      # role_path is a magic var real Ansible always has available here
+      # (it's just this role's own directory, known as soon as parsing
+      # begins) - found via infOpen.openjdk-jre's own `import_tasks:
+      # "{{ role_path }}/tasks/manage_variables.yml"`, a real, if
+      # unusual, pattern for a role to make its own static-import
+      # target path independent of wherever the role happens to be
+      # vendored under. Without it, that path template raised
+      # StaticImportUndefinedError ("'role_path' is undefined") and
+      # refused to even start the play, where real ansible-core
+      # resolves it immediately and moves on.
       known_vars = defaults.merge(role_vars)
+      known_vars["role_path"] = JSON::Any.new(role_dir)
       # tasks_from: loads tasks/<name>.yml instead of tasks/main.yml -
       # handlers/defaults/vars still always come from their normal
       # main.yml locations regardless (matching real Ansible: only the

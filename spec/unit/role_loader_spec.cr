@@ -16,6 +16,8 @@ private def build_role(name : String, root : String = ROLES_ROOT, & : RoleBuilde
 end
 
 private class RoleBuilder
+  getter role_dir : String
+
   def initialize(@role_dir : String)
   end
 
@@ -220,6 +222,34 @@ describe Krikri::RoleLoader do
     role_path.should start_with("/")
     role_path.should eq(File.join(ROLES_ROOT, "roles", "with_files"))
     (tasks[0].role_files_dir || raise "unexpected nil").should start_with("/")
+  end
+
+  it "resolves role_path inside an import_tasks: path (known at parse time, not just execution time)" do
+    # Real bug found benchmarking infOpen.openjdk-jre's own
+    # `import_tasks: "{{ role_path }}/tasks/manage_variables.yml"` - a
+    # real, if unusual, pattern for a role to make its own static-import
+    # target independent of wherever it's vendored under. known_vars
+    # (what a static import's own path template may reference, per
+    # try_parse_import_tasks in playbook_parser.cr) never included
+    # role_path at all, even though it's just this role's own directory
+    # and trivially known as soon as parsing begins - real ansible-core
+    # resolves it immediately. Without it, this raised
+    # StaticImportUndefinedError ("'role_path' is undefined") and
+    # refused to even start the whole play.
+    build_role("with_role_path_import") do |role|
+      role.tasks(<<-YAML)
+        - import_tasks: "{{ role_path }}/tasks/other.yml"
+        YAML
+      write(File.join(role.role_dir, "tasks", "other.yml"), <<-YAML)
+        - name: t
+          ansible.builtin.debug:
+            msg: hi
+        YAML
+    end
+
+    tasks, _ = Krikri::RoleLoader.load_roles(roles_yaml("- with_role_path_import"), fresh_play, ROLES_ROOT)
+
+    tasks.map(&.name).should contain("t")
   end
 
   it "runs meta/main.yml dependencies before the role's own tasks" do
