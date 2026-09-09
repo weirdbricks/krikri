@@ -8,6 +8,7 @@ require "uuid"
 require "openssl/digest"
 require "../vault"
 require "../py_random"
+require "../python_filter_runner"
 require "../jmespath"
 require "../ipaddr_core"
 require "./variable_lookup"
@@ -1324,8 +1325,57 @@ module Krikri
           # (#render_via_crinja_value) and only falls back here when
           # that raises, so every Crinja-native filter name is resolved
           # before this branch can see it.
-          raise UnknownFilterError.new("No filter named '#{filter_name}'.")
+          #
+          # Before raising, one last chance: a role-local
+          # `filter_plugins/*.py` (or playbook-adjacent one) may define
+          # the name - real Ansible loads those on the controller the
+          # same way it loads role-private `library/*.py` modules.
+          # Delegated to the controller's own python3 (see
+          # PythonFilterRunner); any failure there (no python3, plugin
+          # error, an exception inside the filter) falls straight back
+          # to the same raise as before, so roles without custom filter
+          # plugins behave exactly as they did.
+          if custom = try_python_filter(value, filter_name, filter_args)
+            custom
+          else
+            raise UnknownFilterError.new("No filter named '#{filter_name}'.")
+          end
         end
+      end
+
+      # Runs *filter_name* from a role-local/playbook-adjacent
+      # `filter_plugins/*.py` source (if one exists and defines the
+      # name) against *value*, returning the structured result - or nil
+      # whenever the mechanism is unavailable or fails, so the caller
+      # raises the unchanged UnknownFilterError. The filter runs
+      # controller-side (real Ansible loads filter plugins during
+      # template rendering, never on the target), via the controller's
+      # own python3.
+      private def try_python_filter(value : JSON::Any, filter_name : String, filter_args : String) : JSON::Any?
+        vars = @vars
+        return nil unless vars
+        role_path = vars["role_path"]?.try(&.as_s?)
+        playbook_dir = vars["playbook_dir"]?.try(&.as_s?)
+        return nil unless role_path || playbook_dir
+
+        sources = PythonFilterRunner.find_sources(role_path, playbook_dir)
+        return nil if sources.empty?
+        return nil unless PythonFilterRunner.defines_filter?(filter_name, sources)
+
+        pos_args = [] of JSON::Any
+        kwargs = Hash(String, JSON::Any).new
+        split_top_level_args(filter_args).each do |raw|
+          if (kwarg = raw.match(/^\s*([A-Za-z_]\w*)\s*=(?!=)\s*(.*)$/m)) &&
+             !quoted_literal?(raw.strip)
+            kwargs[kwarg[1]] = resolve_expression(kwarg[2])
+          else
+            pos_args << resolve_expression(raw)
+          end
+        end
+
+        PythonFilterRunner.call_filter(filter_name, sources, value, pos_args, kwargs)
+      rescue
+        nil
       end
 
       DATETIME_TAG  = "__crystal_datetime__"

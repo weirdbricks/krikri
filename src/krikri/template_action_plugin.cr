@@ -208,7 +208,28 @@ module Krikri
       # path has its own, separate strict-undefined enforcement in
       # variable_substitutor.cr and stays untouched.
       template = env.from_string(template_content)
-      rendered = StrictTemplating.strict { template.render(template_vars) }
+      rendered = begin
+        StrictTemplating.strict { template.render(template_vars) }
+      rescue ex : Crinja::FeatureLibrary::UnknownFeatureError
+        # One last chance before the hard failure: a role-local (or
+        # playbook-adjacent) `filter_plugins/*.py` may define the
+        # filter - real Ansible loads those on the controller the same
+        # way it loads role-private `library/*.py` modules. This
+        # environment is a fresh `Crinja.new` per render (unlike the
+        # `{{ }}` task-param path's shared one), so a filter already
+        # registered there via an earlier task never reaches here - it
+        # has to be (re-)registered directly into THIS env. See
+        # CrinjaRenderer#ensure_python_filter? for the mechanism; a
+        # retry that raises the SAME unknown-feature error again means
+        # registration genuinely did not find/define it, so re-raise
+        # rather than looping.
+        filter_name = ex.message.to_s.split('"')[1]?
+        if filter_name && VariableSubstitutor::CrinjaRenderer.ensure_python_filter?(filter_name, @vars, env)
+          StrictTemplating.strict { template.render(template_vars) }
+        else
+          raise ex
+        end
+      end
 
       # Ensure rendered content ends with newline (matches Ansible behavior and file conventions)
       # This prevents idempotency issues with heredoc writes that add trailing newlines

@@ -2,6 +2,7 @@ require "../timing_profile"
 require "json"
 require "crinja"
 require "../variable_substitutor"
+require "../python_filter_runner"
 require "../crinja_strict_undefined"
 require "../crinja_string_index"
 require "../crinja_bool_arithmetic"
@@ -88,6 +89,67 @@ module Krikri
         lookup = name.downcase
         library = shared_environment.tests
         library.keys.includes?(lookup) || library.aliases.has_key?(lookup)
+      end
+
+      # If *name* is exposed by a role-local (or playbook-adjacent)
+      # `filter_plugins/*.py` for the role context in *vars*, register
+      # a dynamic Crinja filter dispatching to the controller's python3
+      # (see PythonFilterRunner) into the shared environment's filter
+      # library and return true - so both this render path and
+      # #known_filter? (ConditionalEvaluator's compile-time pre-pass)
+      # resolve it from here on. False when no plugin source defines
+      # the name (or the mechanism is unavailable), leaving the caller
+      # to raise the plain unknown-filter error.
+      def self.ensure_python_filter?(name : String, vars : Hash(String, JSON::Any), env : Crinja = shared_environment) : Bool
+        role_path = vars["role_path"]?.try(&.as_s?)
+        playbook_dir = vars["playbook_dir"]?.try(&.as_s?)
+        return false unless role_path || playbook_dir
+
+        sources = PythonFilterRunner.find_sources(role_path, playbook_dir)
+        return false if sources.empty?
+        return false unless PythonFilterRunner.defines_filter?(name, sources)
+
+        register_python_filter_instance(name, env)
+        true
+      end
+
+      # Registers the dynamic dispatching filter under *name* into
+      # *env* (the shared `{{ }}`-path environment by default, or a
+      # real `.j2` template's own standalone `Crinja.new` - see
+      # TemplateActionPlugin#render_template, which builds a fresh
+      # environment per render and never shares this class's own, so
+      # the shared-environment registration alone never reaches it).
+      # The plugin sources are re-resolved from the RENDERING
+      # environment's own context at each call (`env.context`'s
+      # role_path/playbook_dir magic vars), not captured at
+      # registration time - a shared environment outlives any single
+      # role, so a stale capture could dispatch a later role's filter
+      # to the wrong (already-finished) role's plugin file.
+      def self.register_python_filter_instance(name : String, env : Crinja = shared_environment) : Nil
+        instance = Crinja.filter do
+          target = arguments.target!
+          render_env = arguments.env
+
+          role_value = render_env.context["role_path"]
+          playbook_value = render_env.context["playbook_dir"]
+          role_path = role_value.undefined? ? nil : role_value.to_s
+          playbook_dir = playbook_value.undefined? ? nil : playbook_value.to_s
+
+          sources = Krikri::PythonFilterRunner.find_sources(role_path, playbook_dir)
+          value = crinja_value_to_json_any(target)
+          pos_args = arguments.varargs.map { |arg| crinja_value_to_json_any(arg) }
+          kwargs = arguments.kwargs.each_with_object(Hash(String, JSON::Any).new) do |(key, val), hash|
+            hash[key] = crinja_value_to_json_any(val)
+          end
+
+          if sources.empty? || !Krikri::PythonFilterRunner.defines_filter?(name, sources)
+            raise Crinja::RuntimeError.new("No filter named '#{name}'.")
+          end
+          json_any_to_crinja_value(
+            Krikri::PythonFilterRunner.call_filter(name, sources, value, pos_args, kwargs)
+          )
+        end
+        env.filters[name.downcase] = instance
       end
 
       # Crinja parses eagerly in `Template.new` (see `Crinja#from_string`
@@ -204,7 +266,27 @@ module Krikri
           if feature[0] == "test"
             raise UnknownTestError.new("No test named '#{feature[1]}'.")
           end
-          raise FilterEngine::UnknownFilterError.new("No filter named '#{feature[1]}'.")
+          # An unknown FILTER gets one last chance before the hard
+          # failure: a role-local (or playbook-adjacent)
+          # `filter_plugins/*.py` may define it - real Ansible loads
+          # those on the controller at template-compile time. If one
+          # does, register a dynamic Crinja filter dispatching to the
+          # controller's python3 (see PythonFilterRunner) and re-render
+          # once - the registration is process-wide on the shared
+          # environment, so every later render (including the cached
+          # template object, whose filter lookups re-resolve from the
+          # library at each evaluation) finds it. A re-render that
+          # STILL reports the same unknown feature means registration
+          # did not take; raise the plain error rather than looping.
+          filter_name = feature[1]
+          if self.class.ensure_python_filter?(filter_name, @vars)
+            begin
+              return render!(text)
+            rescue e : Crinja::FeatureLibrary::UnknownFeatureError
+              raise FilterEngine::UnknownFilterError.new("No filter named '#{filter_name}'.")
+            end
+          end
+          raise FilterEngine::UnknownFilterError.new("No filter named '#{filter_name}'.")
         end
         raise e
       rescue e : Krikri::FirstFoundLookupError

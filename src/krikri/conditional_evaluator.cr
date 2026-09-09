@@ -167,7 +167,7 @@ module Krikri
       # select('name') inner arguments: real Jinja resolves those at
       # RUNTIME, not compile time, so an unreachable one is genuinely
       # never an error there.
-      validate_filter_names(condition)
+      validate_filter_names(condition, vars)
 
       # Compile-time TEST-name validation - the `is <test>`-side twin of
       # validate_filter_names just above, with the same justification:
@@ -1211,7 +1211,7 @@ module Krikri
     # >= 0x80, so they can never collide with an ASCII key - a
     # non-ASCII condition (a comparison against a UTF-8 literal) scans
     # correctly without any char/byte-index juggling.
-    private def self.validate_filter_names(condition : String) : Nil
+    private def self.validate_filter_names(condition : String, vars : Hash(String, JSON::Any)) : Nil
       return unless condition.includes?("|")
 
       bytes = condition.to_slice
@@ -1230,7 +1230,9 @@ module Krikri
         elsif byte == '|'.ord
           if matched = filter_name_at(bytes, i + 1)
             name, after = matched
-            unless VariableSubstitutor::FilterEngine.known_filter_name?(name) || VariableSubstitutor::CrinjaRenderer.known_filter?(name)
+            unless VariableSubstitutor::FilterEngine.known_filter_name?(name) ||
+                   VariableSubstitutor::CrinjaRenderer.known_filter?(name) ||
+                   VariableSubstitutor::CrinjaRenderer.ensure_python_filter?(name, vars)
               raise VariableSubstitutor::FilterEngine::UnknownFilterError.new("No filter named '#{name}'.")
             end
             i = after
