@@ -64,3 +64,24 @@ describe Krikri::SSHManager do
     end
   end
 end
+
+describe Krikri::SSHManager do
+  it "uses a stable, pid-independent control-socket directory" do
+    # f500.ufw round72000 divergence: the control dir used to embed
+    # Process.pid (0.9.770's per-process isolation), so a SECOND
+    # krikri-playbook invocation (the benchmark harness's warm rerun)
+    # could never find the first run's still-alive ControlPersist master
+    # and had to dial a fresh incoming TCP connection - which a
+    # host-locking role (`ufw default deny incoming` + `ufw --force
+    # enable`, no allow rules) blocks outright, timing the warm run out
+    # where real Ansible's own warm rerun rides its stable ~/.ansible/cp
+    # master and succeeds (verified live on fresh Atlantic.net hosts:
+    # real Ansible is locked out IDENTICALLY once its own master socket
+    # is moved away - the lockout is the role's real effect, the
+    # divergence was purely connection reuse). Pin the directory itself
+    # as pid-independent; per-target socket names below it are
+    # get_control_path's own concern.
+    Krikri::SSHManager.control_path_dir.should eq("/tmp/.krikri-playbook-ssh")
+    Krikri::SSHManager.control_path_dir.should_not contain(Process.pid.to_s)
+  end
+end

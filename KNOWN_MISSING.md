@@ -18,8 +18,93 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.854`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.855`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
+
+---
+
+## `f500.ufw`'s warm-rerun SSH lockout root-caused: the control-socket directory was pid-scoped, so warm reruns dialed fresh where real Ansible reuses its master (0.9.855)
+
+Round 72000's highest-priority "needs a closer look" item - the krikri-side
+Atlantic host going completely unreachable (every task failing with
+`ssh: connect ... port 22: Connection timed out`) on the WARM rerun
+immediately after the cold run's `ufw default deny incoming` + `ufw
+--force enable` (no allow rules) - reproduced live on a fresh Atlantic
+pair and root-caused. The lockout itself is the ROLE's real effect and
+hits BOTH engines identically: with the cold run's master socket moved
+away, real ansible-playbook's own next run is unreachable exactly the
+same way (`ok=0 unreachable=1`, fresh dial, `Connection timed out`). The
+divergence was never the ufw command construction - it was SSH
+CONNECTION REUSE across processes. Real Ansible's ssh connection plugin
+uses one stable, pid-independent control-socket directory
+(`~/.ansible/cp/<hash>`) with `ControlPersist`, so a second
+ansible-playbook invocation minutes after the first rides the first
+run's still-alive multiplexed master and never needs a new incoming
+connection. krikri's control dir embedded the process pid
+(`/tmp/.krikri-playbook-ssh-<pid>/`, 0.9.770's per-process isolation for
+the concurrent-batch mux race), so every new krikri process - the warm
+rerun included - had to dial fresh, and the ufw firewall blocked it:
+`ok=0 failed=2`, the exact round-72000 warm recap, reproduced twice.
+
+Fixed by making the control-socket directory stable across processes
+(`/tmp/.krikri-playbook-ssh/`, mirroring real Ansible's own model) while
+keeping the per-(user, host, port) socket names - concurrent processes
+on different hosts never share a socket, and concurrent clients on the
+same host's mux are exactly what real Ansible does and what the ssh mux
+protocol is designed for. Verified live on a fresh Atlantic pair with
+the fixed build: warm rerun now succeeds via the persisted master
+(`ok=4 changed=0`, byte-identical to real Ansible's own warm recap),
+plus a 5-iteration two-host concurrency stress (and same-host concurrent
+pairs) with zero corruption and zero spurious UNREACHABLEs. Regression
+spec pins the pid-independence (`spec/unit/ssh_manager_timeout_spec.cr`).
+Two side observations from the same investigation: the 0.9.770-era
+per-process dirs were never cleaned up (thousands of stale
+`/tmp/.krikri-playbook-ssh-<pid>/` dirs on the control machine - the
+stable dir ends that leak; old ones are safe to `rm`); and a
+controller-only plugin's transport failure (ssh exit 255 - e.g. this
+same lockout hitting `fetch:`'s own existence check) is misreported as
+"the remote file does not exist" instead of an unreachable - a small
+error-classification gap, not chased further this round. Note the
+harness implication: a round that runs f500.ufw (or any host-locking
+role) will now keep the krikri host reachable only within
+`ControlPersist`'s window, same as real Ansible - both engines'
+subsequent runs beyond that window fail identically, which is the
+role's own doing, not a divergence.
+
+---
+
+## `Frzk.chrony`'s "task-level vars: leaking" root-caused: the lookup form's no-`paths:` first_found default searched vars/, which real Ansible never does (0.9.853)
+
+Round 72000's "needs a closer look" `Frzk.chrony` divergence
+(`include_tasks: "{{ lookup('first_found', findme) }}"` hard-failing
+"Included tasks file must be a YAML list: `.../vars/Debian.yml`") was
+NOT task-level `vars:` leaking across sibling tasks at all - the
+sibling's `findme` was a red herring; the failing task's own `findme`
+was correctly in scope the whole time. Root cause: the lookup form's
+no-`paths:` default search stack (files/, tasks/, templates/, vars/,
+".") included `vars`, so `first_found`'s candidate file `Debian.yml`
+(one of the OS-family candidates) matched the role's own
+`vars/Debian.yml` - a VARS mapping, not a task list - which the
+include then tried to run as tasks. The sibling `findme` shape only
+mattered because task 1's `paths: [vars]` file happened to exist with
+the same basename; a role with no vars file match would have diverged
+differently or not at all.
+
+Probed live against ansible-core 2.19.4 (this project's benchmark
+baseline) with a minimal one-candidate-per-probe role: the lookup
+form's no-`paths:` search stack is the role's ROOT directory first,
+then the role's own `tasks/` dir, then the play basedir (last resort) -
+and NOT `files/`, `templates/`, or `vars/` at all (that per-subdir
+behavior belongs to the `with_first_found:` KEYWORD form, which picks
+its subdir from the task's action name). Two existing
+`first_found`-default specs encoded the old wrong premise - the
+"geerlingguy.docker idiom with no paths:" spec (geerlingguy.docker
+actually specifies `paths: ['vars']`) and a "files/ has priority" spec
+whose live check contradicts the probe - both rewritten to the probed
+reality, plus new specs for role-root priority and the play-basedir
+fallback. Verified live: the full role now reaches and fails at exactly
+the same task real Ansible does (local non-root `Permission denied` on
+`/etc/chrony`, both engines identical).
 
 ---
 
@@ -73,7 +158,13 @@ roles (`f500.ufw`'s possible SSH-lockout-after-
 `ufw enable`, `Frzk.chrony`'s task-level `vars:` leaking across
 sibling tasks, the apt-404-on-krikri-host-only pattern seen on 3
 different roles) are flagged as **needs a closer look** - real,
-reproducible divergences whose root cause isn't fully pinned down yet.
+reproducible divergences whose root cause isn't fully pinned down yet;
+they are tracked in the Open gaps section's own "Needs a closer look"
+subsection (where their full writeups live), not in this round's
+narrative. (`Frzk.chrony` and `f500.ufw` have since been root-caused
+and fixed - the chrony divergence wasn't vars:-leaking at all, and the
+ufw lockout was krikri's pid-scoped SSH control-socket directory, not
+the ufw commands; see their own sections above.)
 
 - **`f5devcentral.bigiq_move_app_dashboard`/`.bigiq_pinning_deploy_
   objects`**: both hard-failed at parse time (`'with_subelements' is
@@ -265,57 +356,14 @@ reproducible divergences whose root cause isn't fully pinned down yet.
 
 ### Needs a closer look (real, reproducible, not root-caused yet)
 
-- **`f500.ufw` - CONFIRMED reproducible, highest priority of this
-  round's open items.** On the WARM rerun, the krikri-side Atlantic
-  host's SSH connection times out entirely (`ssh: connect ... port 22:
-  Connection timed out`, `Gathering Facts` and every subsequent task
-  failing with it) immediately after the cold run's `ufw default deny
-  incoming` + `ufw --force enable` (no explicit allow rules - the
-  role's own `ufw_rules_to_create` was empty on both engines) - the
-  real-Ansible-side host, running the identical commands, stays
-  reachable and completes the warm rerun fine (`ok=4, changed=0`).
-  Reproduced TWICE, on two different Atlantic host pairs
-  (`209.208.26.8` and `104.219.52.145`) - this is a real, deterministic
-  divergence, not one-off host flakiness. The plugin's own command
-  construction (`ufw default deny incoming`, `ufw --force enable`,
-  `plugins/ufw.cr` / `ufw_command.cr`) reads byte-identical to what
-  real Ansible's `community.general.ufw` module would run, so the bug
-  is more likely in HOW/WHEN those commands get applied relative to the
-  SSH session (e.g. an ordering or connection-reuse difference versus
-  real Ansible's own execution model) than in the command strings
-  themselves - worth investigating with that framing rather than
-  re-deriving the command construction, which already looks correct.
-  Given the severity (an actual host network lockout), this is the
-  single highest-priority item from this round's triage.
-- **`Frzk.chrony`**: hard-failed ("Included tasks file must be a YAML
-  list: `.../vars/Debian.yml`") on `include_tasks: "{{ lookup('
-  first_found', findme) }}"`, where `findme` is set via a task-level
-  `vars:` block scoped to just that one task - and a SIBLING task
-  immediately above it (`include_vars: "{{ lookup('first_found',
-  findme) }}"`) has its OWN, differently-scoped `findme` (`paths:
-  [vars]`, searching for a vars/ file). The task-list task fpath ended
-  up resolving to the PRECEDING task's vars-file path instead of its
-  own - i.e. task-level `vars:` looks like it's leaking across sibling
-  tasks rather than staying scoped to the one task that declares it,
-  at least in the specific context of resolving a `lookup(...)` used
-  directly as a task directive's OWN path (`include_tasks: "{{
-  lookup(...) }}"`). Not confirmed against a wider variety of `vars:`-
-  scoping shapes - narrowly reproduced on this one role, not chased
-  into the evaluator internals.
-- **The 3-package-apt-fetch-404-only-on-the-krikri-host pattern**
-  (`lfit.lf-dev-libs`, `lfit.mono-install`, `markosamuli.pyenv`): all
-  three show the identical shape - `apt-get install` fails with `404
-  Not Found` fetching specific `.deb` files from
-  `us.archive.ubuntu.com`, on the krikri-side Atlantic host only; the
-  real-Ansible-side host (same task, same package versions, a
-  different physical VM) succeeds. Each individual instance is
-  plausibly just mirror-timing flakiness between two independent hosts
-  hitting a live, mutable public mirror at slightly different moments
-  - but three separate confirming roles in one round is enough to flag
-  as a pattern worth a closer look (e.g. whether krikri's apt cache-
-  update sequencing differs from real Ansible's own timing in some way
-  that makes a stale index more likely) rather than dismissing each as
-  independent bad luck.
+One item from this round - the apt-404-on-krikri-host-only pattern seen
+on 3 roles - is tracked in the **Open gaps** section's own "Needs a
+closer look" subsection above, where the full writeup lives (kept in
+one place rather than two). The other two, `f500.ufw` (possible
+SSH-lockout-after-`ufw enable`) and `Frzk.chrony` (task-level `vars:`
+leaking across sibling tasks), have since been root-caused and fixed
+(see their own sections at the top of this file). They were not
+root-caused this round and no fixes were attempted for them here.
 
 ---
 
@@ -2147,6 +2195,28 @@ below - keep the two apart, or this list stops meaning anything.
   (`setfacl`/`getfacl`-equivalent); this engine has no plugin for it at
   all, so any task using it is skipped rather than run. Only one
   confirming role so far.
+
+### Needs a closer look (real, reproducible, not root-caused yet)
+
+Promoted from round 72000's triage so they don't get buried as later
+rounds accumulate. Real, reproducible divergences whose root cause
+isn't fully pinned down yet:
+
+- **The apt-404-on-krikri-host-only pattern across 3 roles**
+  (`lfit.lf-dev-libs`, `lfit.mono-install`, `markosamuli.pyenv`,
+  round 72000): all
+  three show the identical shape - `apt-get install` fails with `404
+  Not Found` fetching specific `.deb` files from
+  `us.archive.ubuntu.com`, on the krikri-side Atlantic host only; the
+  real-Ansible-side host (same task, same package versions, a
+  different physical VM) succeeds. Each individual instance is
+  plausibly just mirror-timing flakiness between two independent hosts
+  hitting a live, mutable public mirror at slightly different moments
+  - but three separate confirming roles in one round is enough to flag
+  as a pattern worth a closer look (e.g. whether krikri's apt cache-
+  update sequencing differs from real Ansible's own timing in some way
+  that makes a stale index more likely) rather than dismissing each as
+  independent bad luck.
 
 Found via the 97-role fixed/divergence re-verification round and
 double-checked with a second independent re-run of every divergence

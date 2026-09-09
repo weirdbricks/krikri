@@ -120,15 +120,17 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
     evaluator.evaluate("range(1, n) | list").should eq(%([1,2,3]))
   end
 
-  it "defaults lookup('first_found', ...) with no paths: to the current role's vars/ dir" do
-    # Real bug found benchmarking geerlingguy.docker/mysql/postgresql/php,
-    # which all share this exact idiom: `include_vars: "{{
-    # lookup('first_found', params) }}"` with `vars: params: {files:
-    # [...]}` and NO `paths:` at all - relying entirely on first_found's
-    # own default search roots to find an OS-specific file living in the
-    # role's own vars/ dir. Previously defaulted unconditionally to ".",
-    # ignoring role context entirely, so the task always failed with
-    # "file not found: undefined" for every role using this pattern.
+  it "defaults lookup('first_found', ...) with no paths: to the role's ROOT dir, not vars/" do
+    # Probed live against ansible-core 2.19.4 (this project's benchmark
+    # baseline): the lookup form's no-paths: search stack is the role's
+    # ROOT directory first, then role root/tasks, then the play basedir -
+    # vars/, files/, and templates/ are NOT searched at all (that
+    # per-subdir behavior belongs to the with_first_found: KEYWORD form,
+    # which picks its subdir from the task's action name). The role's
+    # own vars/Debian.yml here must NOT be found - probed: real Ansible
+    # returns [] (skip: true) in exactly this fixture. Previously this
+    # engine's default roots included "vars" and returned the vars file,
+    # which Frzk.chrony's include_tasks then tried to run as a task list.
     role_dir = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "first_found_role_spec")
     `rm -rf #{role_dir}`
     Dir.mkdir_p(File.join(role_dir, "vars"))
@@ -136,25 +138,19 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
 
     v = Hash(String, JSON::Any).new
     v["role_path"] = JSON::Any.new(role_dir)
-    v["params"] = JSON.parse(%({"files": ["Debian.yml"]}))
+    v["params"] = JSON.parse(%({"files": ["Debian.yml"], "skip": true}))
     evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
-    evaluator.evaluate("lookup('first_found', params)").should eq(File.join(role_dir, "vars", "Debian.yml"))
+    evaluator.evaluate("lookup('first_found', params)").should_not eq(File.join(role_dir, "vars", "Debian.yml"))
   end
 
   it "defaults lookup('first_found', ...) with no paths: to the role's tasks/ dir before vars/" do
-    # Real bug found via ipr-cnrs.glpi_agent's own idiom:
-    # `include_tasks: "{{ lookup('first_found', params) }}"` with
-    # `vars: params: {files: ['{{ ansible_distribution }}.yml']}` and NO
-    # `paths:`, called from the role's own tasks/main.yml. Real Ansible
-    # (DataLoader#path_dwim_relative_stack, verified live against
-    # ansible-core 2.14.18) searches the role's files/ dir first, then -
-    # only because the calling task lives in a role's tasks/ dir - the
-    # RAW tasks/ dir directly; vars/ and templates/ are NOT part of the
-    # no-paths: default at all. This engine's old files/templates/vars/.
-    # order reached vars/Debian.yml (a same-named file that happens to
-    # exist for an unrelated reason) before ever trying tasks/, then
-    # tried to run it as a tasks list and failed "Included tasks file
-    # must be a YAML list".
+    # Probed live against ansible-core 2.19.4: role root first, then the
+    # role's own tasks/ dir; vars/ is never part of the no-paths: search.
+    # ipr-cnrs.glpi_agent's own idiom (`include_tasks: "{{ lookup('
+    # first_found', params) }}"` with `params: {files: ['{{
+    # ansible_distribution }}.yml']}` and NO `paths:`, from the role's
+    # own tasks/main.yml) relies on the tasks/ entry - real Ansible
+    # resolves its own tasks/Debian.yml there.
     role_dir = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "first_found_tasks_default_spec")
     `rm -rf #{role_dir}`
     Dir.mkdir_p(File.join(role_dir, "tasks"))
@@ -169,24 +165,63 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
     evaluator.evaluate("lookup('first_found', params)").should eq(File.join(role_dir, "tasks", "Debian.yml"))
   end
 
-  it "still finds files/ before tasks/ when no paths: given (files/ has priority)" do
-    # Same DataLoader search order: role_root/files/<name> is tried
-    # BEFORE the tasks/ fallback - confirmed live (files/Debian.yml
-    # present alongside a real tasks/Debian.yml, real ansible-playbook
-    # picked files/Debian.yml, later failing on its own invalid content,
-    # not tasks/Debian.yml's valid one).
-    role_dir = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "first_found_files_priority_spec")
+  it "role ROOT beats role tasks/ in the no-paths: default search" do
+    # Probed live against ansible-core 2.19.4: with Debian.yml present at
+    # BOTH the role root and role root/tasks, the lookup form returned
+    # the ROLE ROOT copy.
+    role_dir = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "first_found_root_priority_spec")
     `rm -rf #{role_dir}`
     Dir.mkdir_p(File.join(role_dir, "tasks"))
-    Dir.mkdir_p(File.join(role_dir, "files"))
-    File.write(File.join(role_dir, "tasks", "Debian.yml"), "- debug: {msg: wrong}\n")
-    File.write(File.join(role_dir, "files", "Debian.yml"), "correct\n")
+    File.write(File.join(role_dir, "Debian.yml"), "root copy\n")
+    File.write(File.join(role_dir, "tasks", "Debian.yml"), "tasks copy\n")
 
     v = Hash(String, JSON::Any).new
     v["role_path"] = JSON::Any.new(role_dir)
     v["params"] = JSON.parse(%({"files": ["Debian.yml"]}))
     evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
-    evaluator.evaluate("lookup('first_found', params)").should eq(File.join(role_dir, "files", "Debian.yml"))
+    evaluator.evaluate("lookup('first_found', params)").should eq(File.join(role_dir, "Debian.yml"))
+  end
+
+  it "does NOT search files/ or templates/ in the no-paths: default (only the with_ keyword form does)" do
+    # Probed live against ansible-core 2.19.4: a candidate existing ONLY
+    # under role root/files/ (or templates/) is NOT found by the lookup
+    # form with no paths: (real Ansible returned [] with skip: true).
+    # The old "files has priority" default root found it here -
+    # contradicting real Ansible.
+    role_dir = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "first_found_files_priority_spec")
+    `rm -rf #{role_dir}`
+    Dir.mkdir_p(File.join(role_dir, "tasks"))
+    Dir.mkdir_p(File.join(role_dir, "files"))
+    Dir.mkdir_p(File.join(role_dir, "templates"))
+    File.write(File.join(role_dir, "files", "Debian.yml"), "wrong\n")
+    File.write(File.join(role_dir, "templates", "Debian.yml"), "wrong\n")
+
+    v = Hash(String, JSON::Any).new
+    v["role_path"] = JSON::Any.new(role_dir)
+    v["params"] = JSON.parse(%({"files": ["Debian.yml"], "skip": true}))
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator.evaluate("lookup('first_found', params)").should_not eq(File.join(role_dir, "files", "Debian.yml"))
+    evaluator.evaluate("lookup('first_found', params)").should_not eq(File.join(role_dir, "templates", "Debian.yml"))
+  end
+
+  it "no-paths: default falls back to the play basedir (playbook_dir) after the role roots" do
+    # Probed live against ansible-core 2.19.4: a role task whose candidate
+    # exists ONLY in the play basedir (the playbook's own directory) IS
+    # found - real path_dwim_relative_stack appends basedir as its last
+    # resort. Previously the role roots were the whole search and the
+    # play-dir file was missed.
+    role_dir = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "first_found_playdir_spec", "roles", "fallback_role")
+    play_dir = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "first_found_playdir_spec")
+    `rm -rf #{play_dir}`
+    Dir.mkdir_p(File.join(role_dir, "tasks"))
+    File.write(File.join(play_dir, "Debian.yml"), "play dir copy\n")
+
+    v = Hash(String, JSON::Any).new
+    v["role_path"] = JSON::Any.new(role_dir)
+    v["playbook_dir"] = JSON::Any.new(play_dir)
+    v["params"] = JSON.parse(%({"files": ["Debian.yml"]}))
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator.evaluate("lookup('first_found', params)").should eq(File.join(play_dir, "Debian.yml"))
   end
 
   it "accepts a fully-qualified lookup plugin name, not just the bare one" do
@@ -202,13 +237,13 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
     role_dir = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "first_found_fqcn_spec")
     `rm -rf #{role_dir}`
     Dir.mkdir_p(File.join(role_dir, "vars"))
-    File.write(File.join(role_dir, "vars", "Debian.yml"), "greeting: hello\n")
+    File.write(File.join(role_dir, "Debian.yml"), "greeting: hello\n")
 
     v = Hash(String, JSON::Any).new
     v["role_path"] = JSON::Any.new(role_dir)
     v["params"] = JSON.parse(%({"files": ["Debian.yml"]}))
     evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
-    evaluator.evaluate("lookup('ansible.builtin.first_found', params)").should eq(File.join(role_dir, "vars", "Debian.yml"))
+    evaluator.evaluate("lookup('ansible.builtin.first_found', params)").should eq(File.join(role_dir, "Debian.yml"))
   end
 
   it "resolves lookup('fileglob', ...) to a real (possibly empty) list of matching files" do

@@ -37,22 +37,36 @@ module Krikri
     # a truly dead connection in ~3 minutes regardless of this value.
     DEFAULT_EXEC_TIMEOUT_SECONDS = 3600
 
-    # Control socket directory - PER-PROCESS (pid-suffixed). A shared
-    # directory made concurrent krikri-playbook processes race on the
-    # same `ControlMaster=auto` handshake for different target hosts:
-    # when several processes start a batch simultaneously, two clients
-    # can find no live master and race to spawn/bind the master socket,
-    # and the loser's session reads mux-handshake garbage as transfer
-    # data - surfacing as `@@@@@@...` scp stderr and a spurious
-    # UNREACHABLE (confirmed via isolation during the 120-author kata
-    # round: concurrent batches hit it reproducibly, solo runs were
-    # clean 3/3). Cross-PROCESS mux reuse saved one TCP/TLS handshake
-    # per host per batch - not worth the corruption; each process now
-    # owns its own masters exclusively, and within a process the
-    # per-host muxing (the actual reuse that matters during a run)
-    # still works. close_all likewise only ever touches this process's
-    # own directory.
-    @@control_path_dir = "/tmp/.krikri-playbook-ssh-#{Process.pid}"
+    # Control socket directory - STABLE across processes (no pid suffix),
+    # with per-(user, host, port) socket names below it, mirroring real
+    # Ansible's own ssh.py connection plugin (a fixed ~/.ansible/cp dir,
+    # one hashed socket per target). Cross-PROCESS master reuse is real
+    # Ansible behavior: a second `ansible-playbook` invocation minutes
+    # after the first rides the first run's still-alive ControlPersist
+    # master instead of dialing a fresh incoming TCP connection - which
+    # is the ONLY thing that kept f500.ufw's warm rerun reachable (the
+    # role leaves `ufw default deny incoming` + `ufw --force enable`
+    # with no allow rules; any NEW incoming connection - krikri's warm
+    # run included - times out, and real Ansible's own warm rerun fails
+    # identically once its master socket is moved away, verified live on
+    # fresh Atlantic.net hosts). The per-process (pid-suffixed) layout
+    # this replaced (0.9.770) traded that reuse away to fix a concurrent-
+    # process mux race; the pid-scoped dir meant a new process could
+    # never find a previous run's master even when one was alive, so
+    # every krikri invocation dialed fresh. Socket names here are already
+    # per-target (get_control_path), so concurrent processes on DIFFERENT
+    # hosts never share a socket; concurrent clients on the SAME host's
+    # mux socket are exactly what real Ansible does and what the ssh mux
+    # protocol itself is designed for.
+    @@control_path_dir = "/tmp/.krikri-playbook-ssh"
+
+    # Read-only accessor for diagnostics/specs - the stable control-socket
+    # directory itself carries no secrets, and the spec suite pins its
+    # pid-independence (the exact property f500.ufw's warm-rerun lockout
+    # hinged on).
+    def self.control_path_dir : String
+      @@control_path_dir
+    end
 
     # Connection pool statistics
     @@stats = {

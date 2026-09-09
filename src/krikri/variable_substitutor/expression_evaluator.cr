@@ -3042,7 +3042,7 @@ module Krikri
 
         files = lookup_array(params_hash["files"]?)
         paths_raw = params_hash["paths"]?
-        paths = paths_raw ? lookup_array(paths_raw) : default_first_found_paths
+        paths = paths_raw ? lookup_array(paths_raw) : nil
 
         renderer = VarSubstitutor.new(vars: @vars, host_name: "localhost")
         # Each candidate entry renders STRICTLY (undefined variable in an
@@ -3059,7 +3059,15 @@ module Krikri
         # with_first_found: KEYWORD form's loop_first_found_skip handling.
         skip_errors = params_hash["skip"]?.try(&.as_bool?) == true
         begin
-          rendered_paths = paths.flat_map { |path_entry| resolve_first_found_roots(renderer.substitute(path_entry.as_s? || "", strict: true)) }
+          # An explicit paths: sub-key resolves through the usual
+          # dual-base expansion (role root + role/tasks - see
+          # resolve_first_found_roots); the NO-paths: case uses the
+          # probed real search stack instead (default_first_found_roots).
+          rendered_paths = if paths_raw
+                             paths.not_nil!.flat_map { |path_entry| resolve_first_found_roots(renderer.substitute(path_entry.as_s? || "", strict: true)) }
+                           else
+                             default_first_found_roots
+                           end
 
           files.each do |file_entry|
             rendered_file = renderer.substitute(file_entry.as_s? || "", strict: true)
@@ -3079,31 +3087,46 @@ module Krikri
         value.try(&.as_a?) || [] of JSON::Any
       end
 
-      # Matches the (files, templates, vars) root order TaskExecutor#
-      # resolve_first_found_path already uses for the with_first_found:
-      # keyword form, for the same result regardless of which of the two
-      # real Ansible `first_found` spellings a role happens to use.
+      # The lookup FORM's (not the with_first_found: keyword form's) own
+      # no-`paths:` default search stack, in order. Probed live against
+      # ansible-core 2.19.4 (this project's benchmark baseline) with a
+      # minimal role - a single `lookup('first_found', findme)` debug
+      # task, one candidate name, exactly one existing file per probe:
       #
-      # `tasks` inserted right after `files`, matching real Ansible's own
-      # `DataLoader#path_dwim_relative_stack` (ansible/parsing/dataloader.py):
-      # with no explicit `paths:`, it searches `<role_root>/files/<name>`
-      # first, then - only when the calling task lives in a role's
-      # `tasks/` dir - the RAW `<role_root>/tasks/<name>` directly, with
-      # no `templates/`/`vars/` involved in the no-`paths:` case at all.
-      # Found live via `ipr-cnrs.glpi_agent`'s own `lookup('first_found',
-      # params)` (`params: {files: ['{{ ansible_distribution }}.yml']}`,
-      # no `paths:`) inside `tasks/main.yml`, resolving its own
-      # `tasks/Debian.yml` - real Ansible correctly found that file
-      # (confirmed live against ansible-core 2.14.18, this project's
-      # benchmark baseline); this engine's old files/templates/vars/.
-      # order reached `vars/Debian.yml` (a real file that happens to
-      # share the basename) before ever considering `tasks/`, and tried
-      # to run it as a tasks list, failing "Included tasks file must be
-      # a YAML list". `resolve_first_found_roots` already resolves a
-      # bare `tasks` candidate to `role_path/tasks` as its first base,
-      # exactly matching the real search-stack entry.
-      private def default_first_found_paths : Array(JSON::Any)
-        [JSON::Any.new("files"), JSON::Any.new("tasks"), JSON::Any.new("templates"), JSON::Any.new("vars"), JSON::Any.new(".")]
+      #   role ROOT file only          -> FOUND (role root)
+      #   role tasks/ file only        -> FOUND (role root/tasks)
+      #   role root + tasks/ both      -> role ROOT wins
+      #   role vars/ file only         -> NOT FOUND
+      #   role files/ file only        -> NOT FOUND
+      #   role templates/ file only    -> NOT FOUND
+      #   play-dir file only           -> FOUND (play basedir, last resort)
+      #
+      # i.e. files/, templates/, and vars/ are NOT part of the no-paths:
+      # search at all - that per-subdir behavior belongs to the
+      # with_first_found: KEYWORD form, which picks its subdir from the
+      # task's own action name (ansible/plugins/lookup/first_found.py's
+      # `subdir` selection) and searches via the same
+      # DataLoader#path_dwim_relative_stack the keyword form's
+      # TaskExecutor#resolve_first_found_path already mirrors. The old
+      # ["files", "tasks", "templates", "vars", "."] root list made the
+      # lookup form find a same-named vars/ file real Ansible never
+      # would: Frzk.chrony's own `include_tasks: "{{ lookup('
+      # first_found', findme) }}"` (no paths:, files list containing
+      # "Debian.yml") picked up the role's vars/Debian.yml - a VARS
+      # mapping, not a task list - and died "Included tasks file must be
+      # a YAML list" where real Ansible included tasks/Linux.yml.
+      private def default_first_found_roots : Array(String)
+        roots = [] of String
+        if role_path = @vars["role_path"]?.try(&.as_s?)
+          roots << role_path
+          roots << File.join(role_path, "tasks")
+        end
+        if pb_dir = @vars["playbook_dir"]?.try(&.as_s?)
+          pb_dir = File.expand_path(pb_dir)
+          roots << pb_dir unless roots.includes?(pb_dir)
+        end
+        roots << "." if roots.empty?
+        roots
       end
 
       # A relative first_found `paths:` entry can resolve against EITHER
