@@ -516,11 +516,27 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
     evaluator.evaluate(%(lookup('vars', 'env_' + target_env + '_port'))).should eq("8080")
   end
 
-  it "evaluates lookup('vars', ...) as undefined for a name that doesn't resolve" do
+  # Real Ansible's own vars lookup plugin RAISES (AnsibleUndefinedVariable,
+  # "No variable found with this name: X") for a missing key with no
+  # `default=` kwarg - it does not silently yield a placeholder. Found via
+  # galaxyproject.galaxy's `set_fact: "{{ item }}": "{{ lookup('vars',
+  # '__' ~ item) }}"`: krikri previously returned the literal string
+  # "undefined", the set_fact "succeeded", and the play diverged 20+ tasks
+  # later instead of failing right at the lookup like real Ansible does.
+  it "raises (does not silently return 'undefined') for lookup('vars', ...) on a missing key with no default" do
     v = Hash(String, JSON::Any).new
     evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
 
-    evaluator.evaluate(%(lookup('vars', 'no_such_variable'))).should eq("undefined")
+    expect_raises(Krikri::UndefinedVariableError, /No variable found with this name: no_such_variable/) do
+      evaluator.evaluate(%(lookup('vars', 'no_such_variable')))
+    end
+  end
+
+  it "returns the evaluated default for lookup('vars', ...) on a missing key with an explicit default" do
+    v = Hash(String, JSON::Any).new
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
+
+    evaluator.evaluate(%(lookup('vars', 'no_such_variable', default='fallback_value'))).should eq("fallback_value")
   end
 
   it "evaluates lookup('file', path) reading a controller-side file, trailing newline stripped" do

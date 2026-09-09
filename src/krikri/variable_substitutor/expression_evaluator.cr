@@ -2003,16 +2003,7 @@ module Krikri
         when "url"
           lookup_url(parts, kwargs)
         when "vars"
-          # lookup('vars', 'variable_name') - real Ansible's own vars
-          # lookup plugin: an INDIRECT variable lookup, the name itself
-          # coming from an expression (commonly a computed string, e.g.
-          # `lookup('vars', 'nginx_' + ansible_distribution)`) rather
-          # than being written as a literal `{{ }}` reference. Entirely
-          # unimplemented before, fell through to "undefined".
-          var_name = parts[1]?.try { |part| evaluate(part.strip) }
-          return "undefined" unless var_name
-          resolved = @lookup.resolve(var_name)
-          resolved ? @lookup.format_value(resolved) : "undefined"
+          lookup_vars(parts, kwargs)
         end
       end
 
@@ -2319,7 +2310,7 @@ module Krikri
         (JSON.parse(lines_json).as_a?.try(&.map(&.as_s).join(",")) rescue nil) || "undefined"
       end
 
-      private def lookup_vars(parts : Array(String)) : String
+      private def lookup_vars(parts : Array(String), kwargs : Array(String)) : String
         # lookup('vars', 'variable_name') - real Ansible's own vars
         # lookup plugin: an INDIRECT variable lookup, the name itself
         # coming from an expression (commonly a computed string, e.g.
@@ -2329,7 +2320,36 @@ module Krikri
         var_name = parts[1]?.try { |part| evaluate(part.strip) }
         return "undefined" unless var_name
         resolved = @lookup.resolve(var_name)
-        resolved ? @lookup.format_value(resolved) : "undefined"
+        if resolved
+          @lookup.format_value(resolved)
+        elsif default_kwarg = kwargs.find(&.strip.downcase.starts_with?("default="))
+          # `lookup('vars', key, default=...)` - the real plugin's own
+          # escape hatch for a missing key: an explicit default is
+          # rendered (real Ansible templates the option value through
+          # the templar) and used INSTEAD of raising, so the common
+          # `lookup('vars', 'pkg_' ~ distro, default='http://...')`
+          # idiom keeps working. Only a missing key WITH a default
+          # takes this branch - an existing key never gets here.
+          evaluate(default_kwarg.split("=", 2)[1].strip)
+        else
+          # Real Ansible's own vars lookup plugin raises
+          # AnsibleUndefinedVariable ("No variable found with this
+          # name: <key>") for a missing key with no default - it does
+          # NOT fall back to a placeholder - so the whole enclosing
+          # task fails right at the lookup instead of splicing the
+          # literal text "undefined" into a fact and letting the play
+          # sail on with a bogus value (found via galaxyproject.
+          # galaxy's `set_fact: "{{ item }}": "{{ lookup('vars',
+          # '__' ~ item) }}"`, where the bogus value silently
+          # poisoned 20+ downstream tasks before the engines
+          # diverged anywhere visible). Raising UndefinedVariableError
+          # (not a bare Exception) routes through the same
+          # degrade-to-failed-task handling as the evaluator's other
+          # strict-undefined violations. NOTE: the message text is
+          # ansible-core's own vars.py wording from reading its
+          # source, NOT verified against a live ansible-playbook run.
+          raise UndefinedVariableError.new("No variable found with this name: #{var_name}")
+        end
       end
 
       private def evaluate_lookup_file(lookup_type : String?, parts : Array(String), kwargs : Array(String)) : String?
