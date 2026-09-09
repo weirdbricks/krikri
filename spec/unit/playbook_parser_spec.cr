@@ -1847,6 +1847,46 @@ describe Krikri::PlaybookParser do
       tasks[0].when_condition.should eq(%(parent_gate | bool))
       tasks[1].when_condition.should eq(%((parent_gate | bool) and (not item_stat.stat.exists)))
     end
+
+    it "rejects static: on import_tasks: like real ansible (removed pre-2.x attribute)" do
+      # Real bug found benchmarking ovirt.image-template (round 74003):
+      # the role's tasks/qcow2_image.yml carries `static: no` on an
+      # `import_tasks:` - a pre-2.x include attribute modern ansible-core
+      # removed entirely. Real ansible-playbook 2.19 constructs a
+      # TaskInclude for import_tasks: and its attribute validation
+      # hard-fails the whole run ("'static' is not a valid attribute for
+      # a TaskInclude", rc=4, no PLAY RECAP); krikri previously ignored
+      # the key and ran to a normal recap (rc=0), diverging completely.
+      expect_raises(Krikri::PlaybookParser::InvalidIncludeAttributeError, /'static' is not a valid attribute for a TaskInclude/) do
+        Krikri::PlaybookParser.parse_string(<<-YAML)
+          - name: play
+            hosts: all
+            gather_facts: false
+            tasks:
+              - name: Include prerequisites tasks for VM
+                import_tasks: prerequisites.yml
+                static: no
+          YAML
+      end
+    end
+
+    it "rejects static: on import_role: like real ansible (IncludeRole inherits TaskInclude's attribute validation)" do
+      # Same removal as import_tasks:'s static: - real ansible parses
+      # import_role: as an IncludeRole, which inherits TaskInclude's
+      # fattributes, and neither class has a static field, so the error
+      # there names IncludeRole instead of TaskInclude.
+      expect_raises(Krikri::PlaybookParser::InvalidIncludeAttributeError, /'static' is not a valid attribute for a IncludeRole/) do
+        Krikri::PlaybookParser.parse_string(<<-YAML)
+          - name: play
+            hosts: all
+            gather_facts: false
+            tasks:
+              - import_role:
+                  name: bogus
+                static: no
+          YAML
+      end
+    end
   end
 
   describe "module name resolution" do

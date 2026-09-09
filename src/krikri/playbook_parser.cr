@@ -1785,6 +1785,19 @@ module Krikri
       import_value = directive(hash, "import_tasks")
       return nil unless import_value
 
+      # `static:` is a pre-2.x Ansible include-timeout hint that modern
+      # ansible-core removed entirely. Real ansible-core 2.19 constructs a
+      # TaskInclude for `import_tasks:` before the static-import conversion
+      # and its attribute validation hard-fails the whole playbook on the
+      # key: "'static' is not a valid attribute for a TaskInclude" (rc=4,
+      # no PLAY RECAP) - ovirt.image-template's tasks/qcow2_image.yml:173
+      # (`static: no` next to an `import_tasks:`) is the live specimen.
+      # Validated here, at parse time, so the blast radius matches real
+      # Ansible's instead of silently ignoring the key and running on.
+      if hash["static"]?
+        raise InvalidIncludeAttributeError.new("static", "TaskInclude")
+      end
+
       file_rel = import_value.as_h?.try(&.["file"]?).try(&.as_s?) || import_value.as_s?
       raise "import_tasks: missing a file path" unless file_rel
 
@@ -1971,6 +1984,16 @@ module Krikri
       # silently dropped with only a yellow parse-warning (no TASK
       # header, no error surfaced in the run) - a role using it appeared
       # to just skip a step instead of failing loudly.
+      # `static:` on import_role: is rejected the same way - real ansible
+      # parses import_role: as an IncludeRole, which inherits TaskInclude's
+      # attribute validation, and neither class has a `static` field, so the
+      # error there names IncludeRole instead of TaskInclude (same shape and
+      # rc=4 whole-playbook abort). See try_parse_import_tasks's matching
+      # check for the ovirt.image-template provenance.
+      if directive(task_hash, "import_role") && task_hash["static"]?
+        raise InvalidIncludeAttributeError.new("static", "IncludeRole")
+      end
+
       if import_role_yaml = directive(task_hash, "import_role").try(&.as_h?)
         # Like import_tasks:'s path, import_role:'s NAME is static - real
         # Ansible resolves it before the run and refuses the whole
