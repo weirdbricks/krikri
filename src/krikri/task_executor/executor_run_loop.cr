@@ -542,7 +542,7 @@ module Krikri
         # ignore_errors: and all), recapping failed=1 (never reached the
         # loop, so never skipped=1 either) - matching real Ansible's own
         # degrade-to-one-clean-failed-task behavior.
-        finish_single_task(task, host, when_error_result(ex))
+        finish_single_task(task, host, when_error_result(ex), vars_context: vars_context)
         return
       end
 
@@ -557,7 +557,7 @@ module Krikri
           # (igor_nikiforov.etcd's `{{ etcd_config['data-dir'] }}` on a
           # dict missing that key), so this is one failed task, recapped
           # failed=1, with register/notify/halt/ignore_errors applied.
-          finish_single_task(task, host, when_error_result(ex))
+          finish_single_task(task, host, when_error_result(ex), vars_context: vars_context)
           return
         end
         return
@@ -585,7 +585,7 @@ module Krikri
           print_batched_skip(task, host, vars_context)
           return
         end
-        finish_single_task(task, host, batched_result)
+        finish_single_task(task, host, batched_result, vars_context: vars_context)
         return
       end
 
@@ -598,7 +598,7 @@ module Krikri
       return unless result
 
       fact_host = (task.delegate_facts? && task.delegate_to) ? exec_host : host
-      finish_single_task(task, host, result, fact_host)
+      finish_single_task(task, host, result, fact_host, vars_context: vars_context)
     end
 
     # Resolve delegate_to: to the Host whose connection the module should

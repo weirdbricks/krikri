@@ -409,7 +409,8 @@ module Krikri
     # a bare literal like "false" needs no register: at all; referencing a
     # result field like "result.rc" does). Same substitute-then-evaluate
     # pipeline as when_condition/until_condition.
-    private def finish_single_task(task : Task, host : Host, result : JSON::Any, fact_host : Host = host) : Nil
+    private def finish_single_task(task : Task, host : Host, result : JSON::Any, fact_host : Host = host,
+                                    vars_context : Hash(String, JSON::Any)? = nil) : Nil
       result = debug_if_requested(task, host, result)
       merge_ansible_facts(fact_host, result, task.module_name.ends_with?("set_fact"))
 
@@ -444,11 +445,12 @@ module Krikri
         notify_handlers(task, host, notify_list)
       end
 
-      ignore_errors = resolve_task_ignore_errors(task)
+      ignore_errors = resolve_task_ignore_errors(task, vars_context)
+      no_log = resolve_task_no_log(task, vars_context)
       if @adhoc
         ResultDisplay.display_adhoc_result(host, result)
       else
-        ResultDisplay.display_result(host, result, @diff_mode, ignore_errors: ignore_errors, no_log: task.no_log?)
+        ResultDisplay.display_result(host, result, @diff_mode, ignore_errors: ignore_errors, no_log: no_log)
       end
       ResultDisplay.update_stats(@results[host.name], result, ignore_errors)
       halt_if_failed(task, host, failed)

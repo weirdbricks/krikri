@@ -1039,7 +1039,47 @@ module Krikri
       vars = vars_context || {"ansible_check_mode" => JSON::Any.new(@check_mode)} of String => JSON::Any
       substitutor = VarSubstitutor.new(vars: vars, host_name: "")
       rendered = substitutor.substitute(expr)
+      # A reference the given *vars* can't resolve (an expression
+      # touching more than the minimal ansible_check_mode-only fallback
+      # some call sites pass) renders as the lenient-substitution
+      # sentinel "undefined" - a bare identifier ConditionalEvaluator
+      # itself does NOT raise on, it evaluates falsy, so the `rescue`
+      # below is NOT the safety net a first read suggests: it only
+      # catches a genuine parse error, never this shape. Caught
+      # explicitly instead, falling back to the parse-time guess rather
+      # than trusting an evaluation that was never really about the
+      # task's own expression at all.
+      return task.ignore_errors? if rendered == "undefined"
       ConditionalEvaluator.evaluate(rendered, vars) rescue task.ignore_errors?
+    end
+
+    # Runtime resolution of a templated `no_log:` (Task#no_log_expr).
+    # Same shape as resolve_task_ignore_errors above: the parse-time
+    # guess (parse_become_value) defaults ANY templated value to true -
+    # the safe direction for this SECURITY control (never under-hides a
+    # real secret if resolution fails), but it means a task like
+    # newrelic.newrelic-infra's own `no_log: "{{
+    # nrinfragent_hide_config_values }}"` (defaulting false) has its
+    # failure message suppressed on EVERY run regardless of the actual
+    # value - masking real errors from anyone debugging a failure.
+    #
+    # SECURITY-CRITICAL: an unresolvable reference must fall back to the
+    # safe (hide-it) guess, not to whatever a stray evaluation of the
+    # literal sentinel "undefined" happens to produce - verified live
+    # that ConditionalEvaluator.evaluate("undefined", ...) returns
+    # `false` (would SHOW a secret) without raising at all, so the
+    # `rescue` alone does not protect this the way it looks like it
+    # does; the sentinel is checked for explicitly before ever reaching
+    # the evaluator.
+    private def resolve_task_no_log(task : Task, vars_context : Hash(String, JSON::Any)? = nil) : Bool
+      expr = task.no_log_expr
+      return task.no_log? unless expr
+
+      vars = vars_context || {"ansible_check_mode" => JSON::Any.new(@check_mode)} of String => JSON::Any
+      substitutor = VarSubstitutor.new(vars: vars, host_name: "")
+      rendered = substitutor.substitute(expr)
+      return task.no_log? if rendered == "undefined"
+      ConditionalEvaluator.evaluate(rendered, vars) rescue task.no_log?
     end
 
     private def substitute_task_params(

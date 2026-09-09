@@ -233,7 +233,12 @@ module Krikri
         # no_log: a handler is as capable of holding a secret as
         # any other task, and this is the non-looped handler's
         # own display path - the looped one goes through
-        # execute_handler_loop, which passes it too.
+        # execute_handler_loop, which passes it too. This standalone
+        # HandlerRunner class has no live vars_context to re-resolve a
+        # templated no_log: against (unlike TaskExecutor's own call
+        # sites - see resolve_task_no_log there), so a templated value
+        # still falls back to the parse-time guess here specifically -
+        # same pre-existing gap as before this fix, not a regression.
         ResultDisplay.display_result(host, result, diff_mode, no_log: handler.no_log?)
         ResultDisplay.update_stats(stats, result)
       end

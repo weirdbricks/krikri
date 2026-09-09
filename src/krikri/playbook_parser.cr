@@ -52,6 +52,19 @@ module Krikri
     # of the log. Previously unparsed and unused, so every such task
     # printed its secret in full.
     property? no_log : Bool = false
+    # Raw `{{ ... }}` text when no_log: is a templated expression rather
+    # than a literal boolean (newrelic.newrelic-infra's own `no_log:
+    # "{{ nrinfragent_hide_config_values }}"`, defaulting false). The
+    # parse-time guess above (parse_become_value) defaults ANY templated
+    # value to true - the safe direction for a SECURITY control (never
+    # under-hides a real secret), but it means a task like this one has
+    # its failure message suppressed on EVERY run regardless of the
+    # real value, masking real errors for debugging (found chasing
+    # newrelic.newrelic-infra's own merge_yaml failure, whose actual
+    # message was invisible in every log because of this). Re-rendered
+    # in TaskExecutor#resolve_task_no_log against live vars, same
+    # deferred-evaluation shape ignore_errors_expr/check_mode_expr use.
+    property no_log_expr : String?
     # `ignore_unreachable: true` - an unreachable host does not fail the
     # play at this task; it is reported, counted as ignored, and the host
     # carries on to the next task (which may itself be unreachable).
@@ -2541,6 +2554,7 @@ module Krikri
       task.ignore_errors = parse_ignore_errors(task_hash["ignore_errors"]?)
       task.ignore_errors_expr = template_expression(task_hash["ignore_errors"]?)
       task.no_log = parse_become_value(task_hash["no_log"]?) || false
+      task.no_log_expr = template_expression(task_hash["no_log"]?)
       task.ignore_unreachable = parse_become_value(task_hash["ignore_unreachable"]?) || false
       task.throttle = task_hash["throttle"]?.try { |tv_blk| safe_yaml_to_string(tv_blk).to_i? } || 0
       task.remote_user = task_hash["remote_user"]?.try { |entry| safe_yaml_to_string(entry).strip }

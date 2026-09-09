@@ -927,7 +927,7 @@ module Krikri
                        item_display(item)
                      end
 
-        ResultDisplay.display_result(host, result, @diff_mode, item_label: item_label, ignore_errors: resolve_task_ignore_errors(task, base_vars_context), no_log: task.no_log?)
+        ResultDisplay.display_result(host, result, @diff_mode, item_label: item_label, ignore_errors: resolve_task_ignore_errors(task, base_vars_context), no_log: resolve_task_no_log(task, base_vars_context))
 
         result_hash = result.as_h.dup
         result_hash["item"] = item
@@ -1076,7 +1076,7 @@ module Krikri
       if @adhoc
         ResultDisplay.display_adhoc_result(host, result)
       else
-        ResultDisplay.display_result(host, result, @diff_mode, ignore_errors: resolve_task_ignore_errors(task, vars_context), no_log: task.no_log?)
+        ResultDisplay.display_result(host, result, @diff_mode, ignore_errors: resolve_task_ignore_errors(task, vars_context), no_log: resolve_task_no_log(task, vars_context))
       end
       ResultDisplay.update_stats(@results[host.name], result, resolve_task_ignore_errors(task, vars_context))
       halt_if_failed(task, host, failed)
