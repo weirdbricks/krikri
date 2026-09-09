@@ -380,6 +380,36 @@ module Krikri
     # goes through - unchanged from before loop: support was added, just
     # extracted so execute_handler_loop can call it once per item.
     private def execute_handler_plugin_once(handler : Task, host : Host, vars_context : Hash(String, JSON::Any)) : JSON::Any
+      # An unavailable-module handler (see Task#unavailable_module - a
+      # module this engine hasn't implemented, e.g. a role's
+      # kubernetes.core.helm_repository handler) skips exactly like a
+      # when:-false handler instead of reaching the plugin dispatch
+      # below, which has no plugin binary to find and crashed the whole
+      # run outright ("Plugin binary not found: <module>", unhandled
+      # exception, rc=1, no PLAY RECAP) - the same
+      # hard-crash-instead-of-graceful-skip shape the regular-task path
+      # guards against in #when_passes? (that guard is why regular
+      # unavailable-module tasks skip). Mirrors that guard's one
+      # exception too: an unavailable module backed by a role-private
+      # `library/<name>.py` source CAN run (PythonModuleRunner), so it
+      # falls through to normal dispatch. The handler is recorded into
+      # reachable_unavailable_modules (via
+      # register_reachable_unavailable_module, which re-evaluates the
+      # handler's own when: for the final exit-code decision) so a
+      # genuinely-reachable unported module still fails the run's exit
+      # code the way every other unavailable module does.
+      if handler.unavailable_module && python_module_source_for(handler).nil?
+        register_reachable_unavailable_module(handler, vars_context, host)
+        connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
+        suffix = (item = vars_context["item"]?) ? " => (item=#{item_display(item)})" : ""
+        puts "skipping: [#{connection_host}]#{suffix}".colorize(:cyan)
+        return JSON.parse({
+          "changed" => false,
+          "failed"  => false,
+          "skipped" => true,
+        }.to_json)
+      end
+
       # Evaluate the handler's own when: here (not in #execute_handler_
       # internal, before loop resolution) - real Ansible skips a
       # notified handler whose condition is false (e.g. os_hardening's

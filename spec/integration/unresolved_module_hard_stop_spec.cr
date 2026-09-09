@@ -94,4 +94,34 @@ describe "unresolvable module names hard-stop the run (UnresolvedModuleError)" d
     output.should contain("PLAY RECAP"), output
     output.should_not contain("[ERROR]: couldn't resolve module/action"), output
   end
+
+  it "gracefully skips a zero-coverage-collection module used as a HANDLER, not just as a regular task" do
+    # juju4.falco's own shape: kubernetes.core.helm_repository as a
+    # notified handler, not a regular task. The regular-task path
+    # (execute_task's #when_passes? guard) already skips an unavailable
+    # module gracefully - see the test above - but the handler dispatch
+    # path (execute_handler_plugin_once) never had the same guard, so it
+    # fell straight through to normal plugin dispatch with no plugin
+    # binary to find: "Plugin binary not found: kubernetes.core.helm_
+    # repository", an unhandled exception crashing the whole process
+    # (rc=1, no PLAY RECAP at all) where real ansible-playbook fully
+    # succeeds (it has the real module).
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: normal task that notifies the handler
+            ansible.builtin.debug: msg=hi
+            notify: unported handler
+        handlers:
+          - name: unported handler
+            kubernetes.core.helm_repository:
+              repo_name: foo
+      YAML
+    status.success?.should be_true, output
+    output.should contain("PLAY RECAP"), output
+    output.should_not contain("Plugin binary not found"), output
+    output.should_not contain("[ERROR]: couldn't resolve module/action"), output
+  end
 end
