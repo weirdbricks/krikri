@@ -815,13 +815,84 @@ module Krikri
     private def self.evaluate_short_circuit_operator(parts : Array(String), vars : Hash(String, JSON::Any), strict : Bool, raise_undefined : Bool, is_or : Bool) : Bool
       deciding = parts.last
       parts.each do |part|
-        result = evaluate(part.strip, vars, false, raise_undefined)
-        if result == is_or
+        # A quoted string LITERAL operand's own truthiness is Python's
+        # bool(<its content>) - a non-empty string is truthy regardless
+        # of what its text reads like - never the result of re-evaluating
+        # that text as a live expression (the recursive re-templating bug
+        # class this codebase's own CLAUDE.md flags as recurring). Found
+        # via crazikPL.logging's legacy double-quoted operand (round
+        # 72000): `when: (("'rsyslog_elks' in group_names") or
+        # rsyslog_use_remote)` - the inner operand is a string LITERAL
+        # whose content merely happens to read like an `in` test, but the
+        # non-strict truthiness pass below re-parsed that text as live
+        # code, so with 'rsyslog_elks' absent from group_names the
+        # literal read as falsy and the short-circuit fell through to
+        # `rsyslog_use_remote` instead - a different, silently-wrong
+        # answer than real Ansible, where Python's `or` short-circuits to
+        # the non-empty string itself and never evaluates the second
+        # operand at all.
+        part_truthy = if content = quoted_string_literal(part)
+                        !content.empty?
+                      else
+                        evaluate(part.strip, vars, false, raise_undefined)
+                      end
+        if part_truthy == is_or
           deciding = part
           break
         end
       end
+      # When the deciding operand is itself a quoted string literal, the
+      # whole expression's value IS that raw string (real Python's
+      # or/and return one operand's own value unchanged, never a bool) -
+      # returned as-is, not re-parsed. Under strict (when:/
+      # changed_when:/failed_when:) that non-bool str is exactly what
+      # ansible-core 2.19's conditional type check rejects, regardless of
+      # the string's own truthiness or whether the remaining operands
+      # would have been reached. A variable that merely RESOLVES to a
+      # string is untouched (see the deciding re-evaluation below) - the
+      # defect is specifically a string literal operand in the condition
+      # source itself.
+      if content = quoted_string_literal(deciding)
+        if strict && !allow_broken_conditionals?
+          raise ConditionalBooleanError.new(
+            "Conditional result (#{content.empty? ? "False" : "True"}) was derived from value of type 'str'. " \
+            "Conditionals must have a boolean result.")
+        end
+        return !content.empty?
+      end
       evaluate(deciding.strip, vars, strict, raise_undefined)
+    end
+
+    # If *expr* is entirely one quoted string literal (after stripping
+    # whitespace and any fully-enclosing parens - a `("'...")` operand
+    # from a parenthesized `when:` clause arrives pre-wrapped), return
+    # its raw content; otherwise nil. The content must not contain an
+    # unescaped copy of the opening quote - `"a" in x` starts and ends
+    # with a quote but is an expression, not one literal.
+    private def self.quoted_string_literal(expr : String) : String?
+      s = expr.strip
+      loop do
+        unwrapped = unwrap_outer_parens(s)
+        break if unwrapped == s
+        s = unwrapped
+      end
+      return nil if s.size < 2
+
+      quote = s[0]
+      return nil unless (quote == '"' || quote == '\'') && s[-1] == quote
+
+      inner = s[1..-2]
+      i = 0
+      while i < inner.size
+        char = inner[i]
+        if char == '\\' && i + 1 < inner.size
+          i += 2
+          next
+        end
+        return nil if char == quote
+        i += 1
+      end
+      inner
     end
 
     private def self.split_progressed?(parts : Array(String), condition : String) : Bool

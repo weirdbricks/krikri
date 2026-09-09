@@ -18,8 +18,43 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.858`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.859`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
+
+---
+
+## Quoted-string-literal operand in `or`/`and` short-circuit returned as raw string, not re-evaluated (0.9.859)
+
+Closes the round72000 open gap (`crazikPL.logging`): `when:
+(("'rsyslog_elks' in group_names") or rsyslog_use_remote)` - the inner
+operand is a legacy-style double-quoted STRING LITERAL (the old-docs
+anti-pattern) whose own content merely happens to read like an `in`
+test. Real Python's `or` short-circuits to that non-empty (truthy)
+string unchanged - never evaluating `rsyslog_use_remote` at all - and
+ansible-core 2.19's strict-conditional check then rejects the whole
+`when:` ("Conditional result (True) was derived from value of type
+'str'"). The hand-rolled evaluator's short-circuit operator instead
+re-parsed the literal's own TEXT as live code both when deciding
+truthiness (so with 'rsyslog_elks' absent from group_names the literal
+read as falsy and the chain fell through to `rsyslog_use_remote`) and
+when re-evaluating the deciding operand under strict (which then
+returned a clean Bool and never raised) - the same "recursive
+templating" bug class `CLAUDE.md` flags as recurring in both
+evaluators. The fix is scoped to `evaluate_short_circuit_operator`: an
+operand that IS a quoted string literal (parens-unwrapped, escape-
+aware - `"a" in x` is still an expression, not a literal) gets Python
+string truthiness (`bool(<content>)`, non-empty = truthy) in the
+non-strict pass, and a deciding literal operand returns its raw string
+value, which the existing strict conditional type check then rejects
+with the established message shape. Variables that merely RESOLVE to
+strings are untouched (the ANXS.postgresql `and`-chain case keeps
+passing), nested short-circuits keep strict=False for intermediate
+operands, `ANSIBLE_ALLOW_BROKEN_CONDITIONALS` relaxes to the literal's
+own truthiness as real Ansible does, and a bare fully-quoted `when:`
+condition (no or/and) keeps its existing path. Regression specs cover
+both group-membership outcomes, the undefined second operand (short-
+circuit never reaches it), the `ANSIBLE_ALLOW_BROKEN_CONDITIONALS`
+relaxation, the falsy-first-operand `and` case, and normal conditionals.
 
 ---
 
@@ -2192,26 +2227,6 @@ Genuinely open defects: something is wrong and the fix is unknown or
 unfinished. Everything deliberate lives under "Deliberate limits"
 below - keep the two apart, or this list stops meaning anything.
 
-- **A double-quoted whole condition whose own text happens to look
-  like an expression gets re-evaluated as live code instead of treated
-  as opaque string data.** `crazikPL.logging` round72000: `when:
-  (("'rsyslog_elks' in group_names") or rsyslog_use_remote)` - the
-  inner `("'rsyslog_elks' in group_names")` is a legacy-style
-  double-quoted STRING LITERAL (a known Ansible anti-pattern from
-  older docs, whose own content merely happens to read like an `in`
-  test), and Python's `or` short-circuits to it unchanged since it's a
-  non-empty (truthy) string - real ansible-core's strict-conditional
-  check then correctly rejects the whole `when:` ("Conditional result
-  (True) was derived from value of type 'str'"). This engine instead
-  re-evaluates the string's own TEXT as a live boolean expression
-  (`'rsyslog_elks' in group_names`, checking real group membership),
-  landing on a different, silently-wrong answer instead of raising -
-  the same general "recursive re-templating" bug class this codebase's
-  own `CLAUDE.md` already flags as recurring independently in both
-  evaluators. Not chased further this round: the exact code path doing
-  the re-evaluation isn't isolated yet, and a broad fix to quoted-
-  literal handling risks regressing legitimate re-templating elsewhere
-  without much narrower reproduction first.
 - **Unresolvable module/action names don't hard-stop the whole run
   like real Ansible's do.** `Aplyca.EC2Describe` (`ec2_remote_facts`, a
   module removed from ansible-core years ago) and `bodsch.k0s`

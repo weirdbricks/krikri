@@ -1430,4 +1430,96 @@ describe Krikri::ConditionalEvaluator do
     v["rhsm_username"] = JSON::Any.new("realvalue")
     Krikri::ConditionalEvaluator.evaluate("rhsm_username != omit", v).should be_true
   end
+
+  # Round 72000 (crazikPL.logging): `when: (("'rsyslog_elks' in
+  # group_names") or rsyslog_use_remote)` - the inner operand is a
+  # legacy-style double-quoted STRING LITERAL (the old-docs anti-pattern)
+  # whose own content merely happens to read like an `in` test. Real
+  # Python's `or` short-circuits to that non-empty (truthy) string
+  # unchanged - never evaluating `rsyslog_use_remote` at all - and
+  # ansible-core 2.19's strict conditional check then rejects the whole
+  # `when:` ("Conditional result (True) was derived from value of type
+  # 'str'"). This engine instead re-evaluated the literal's own TEXT as a
+  # live boolean expression (real group membership), landing on a
+  # different, silently-wrong answer depending on group membership and on
+  # whether the second operand was even defined.
+  describe "quoted string literal operand in or/and short-circuit (legacy double-quoted when:)" do
+    crazik_condition = %((("'rsyslog_elks' in group_names") or rsyslog_use_remote))
+
+    it "raises with real Ansible's 'str' message when 'rsyslog_elks' is NOT in group_names" do
+      v = Hash(String, JSON::Any).new
+      v["group_names"] = JSON.parse(%(["web", "db"]))
+      expect_raises(Krikri::ConditionalEvaluator::ConditionalBooleanError,
+        /Conditional result \(True\) was derived from value of type 'str'/) do
+        Krikri::ConditionalEvaluator.evaluate(crazik_condition, v, strict: true)
+      end
+    end
+
+    it "raises identically when 'rsyslog_elks' IS in group_names - real Ansible never gets to group membership" do
+      v = Hash(String, JSON::Any).new
+      v["group_names"] = JSON.parse(%(["rsyslog_elks", "web"]))
+      expect_raises(Krikri::ConditionalEvaluator::ConditionalBooleanError,
+        /Conditional result \(True\) was derived from value of type 'str'/) do
+        Krikri::ConditionalEvaluator.evaluate(crazik_condition, v, strict: true)
+      end
+    end
+
+    it "raises the same 'str' error even when the second operand is undefined - the short-circuit never reaches it" do
+      v = Hash(String, JSON::Any).new
+      v["group_names"] = JSON.parse(%(["web"]))
+      expect_raises(Krikri::ConditionalEvaluator::ConditionalBooleanError,
+        /type 'str'/) do
+        Krikri::ConditionalEvaluator.evaluate(crazik_condition, v, strict: true, raise_undefined: true)
+      end
+    end
+
+    it "relaxes to the literal's Python truthiness under ANSIBLE_ALLOW_BROKEN_CONDITIONALS" do
+      ENV["ANSIBLE_ALLOW_BROKEN_CONDITIONALS"] = "true"
+      v = Hash(String, JSON::Any).new
+      v["group_names"] = JSON.parse(%(["web"]))
+      begin
+        Krikri::ConditionalEvaluator.evaluate(crazik_condition, v, strict: true).should be_true
+      ensure
+        ENV.delete("ANSIBLE_ALLOW_BROKEN_CONDITIONALS")
+      end
+    end
+
+    it "treats an 'and' with a falsy first operand normally (literal never decides)" do
+      v = Hash(String, JSON::Any).new
+      v["flag"] = JSON::Any.new(false)
+      Krikri::ConditionalEvaluator.evaluate(
+        %(flag and ("'rsyslog_elks' in group_names")), v, strict: true
+      ).should be_false
+    end
+
+    it "raises when the deciding 'and' operand is itself a quoted string literal" do
+      v = Hash(String, JSON::Any).new
+      v["flag"] = JSON::Any.new(true)
+      expect_raises(Krikri::ConditionalEvaluator::ConditionalBooleanError,
+        /type 'str'/) do
+        Krikri::ConditionalEvaluator.evaluate(
+          %(flag and ("'rsyslog_elks' in group_names")), v, strict: true
+        )
+      end
+    end
+
+    it "still evaluates a NORMAL when: condition correctly - no regression to common conditionals" do
+      v = Hash(String, JSON::Any).new
+      v["group_names"] = JSON.parse(%(["rsyslog_elks", "web"]))
+      v["rsyslog_use_remote"] = JSON::Any.new(true)
+      Krikri::ConditionalEvaluator.evaluate(
+        "rsyslog_elks in group_names or rsyslog_use_remote", v, strict: true
+      ).should be_true
+      Krikri::ConditionalEvaluator.evaluate(
+        "'rsyslog_elks' in group_names", v, strict: true
+      ).should be_true
+      v["rsyslog_use_remote"] = JSON::Any.new(false)
+      Krikri::ConditionalEvaluator.evaluate(
+        "'other' in group_names or rsyslog_use_remote", v, strict: true
+      ).should be_false
+      Krikri::ConditionalEvaluator.evaluate(
+        "(x == 1) and (y == 2)", v, strict: true
+      ).should be_false
+    end
+  end
 end
