@@ -2653,6 +2653,18 @@ module Krikri
       # marathon, etc.).
       "with_first_found", "with_items", "with_dict", "with_nested",
       "with_sequence", "with_indexed_items", "with_fileglob", "with_file",
+      # `with_subelements` was missing from this list entirely -
+      # `include_tasks: with_subelements: [list, key]` is exactly as
+      # valid on real ansible-core's TaskInclude as the with_* variants
+      # already above (same lookup-based loop syntax), but was rejected
+      # here with the same "not a valid attribute" parse-time error real
+      # ansible reserves for genuinely-disallowed keys like become:.
+      # Found via f5devcentral.bigiq_move_app_dashboard/.bigiq_pinning_
+      # deploy_objects, both looping an `include_tasks:` over
+      # `with_subelements: [apps, pin]` - real ansible runs it fine
+      # (progresses further before its own unrelated failure); this
+      # engine refused to even start the play (rc=4, no recap).
+      "with_subelements",
       "listen", "environment", "changed_when",
       "failed_when", "until", "retries", "delay", "check_mode",
       "diff", "delegate_to", "delegate_facts", "connection",
@@ -2797,6 +2809,18 @@ module Krikri
         task.loop_first_found = parse_first_found(with_first_found)
         task.loop_first_found_skip = first_found_skip?(with_first_found)
         task.loop_first_found_paths = parse_first_found_paths(with_first_found)
+      elsif with_subelements = task_hash["with_subelements"]?.try(&.as_a?)
+        # f5devcentral.bigiq_move_app_dashboard/.bigiq_pinning_deploy_
+        # objects's own "Run task to move or merge and AS3 app in
+        # BIG-IQ dashboard" (`include_tasks: move-merge.yaml` looped
+        # over `with_subelements: [apps, pin]`) - now that
+        # TASK_INCLUDE_VALID_KEYWORDS accepts the key at all (see
+        # above), it still needs actually parsing here, the same way
+        # with_first_found does just above, or `item` stays unbound
+        # throughout the included file exactly like the with_first_found
+        # bug this mirrors.
+        task.loop_subelements_list = with_subelements[0]?.try { |v| safe_yaml_to_string(v) }
+        task.loop_subelements_key = with_subelements[1]?.try { |v| safe_yaml_to_string(v) }
       end
 
       # loop_control.loop_var - expose each item under the custom name

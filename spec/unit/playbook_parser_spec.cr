@@ -1730,6 +1730,29 @@ describe Krikri::PlaybookParser do
       task.loop_first_found.should eq(["setup-{{ ansible_facts['distribution'] }}.yml", "setup-default.yml"])
     end
 
+    it "parses with_subelements: on the include statement itself without rejecting it as an invalid TaskInclude attribute" do
+      # Real bug found benchmarking f5devcentral.bigiq_move_app_dashboard/
+      # .bigiq_pinning_deploy_objects, both looping an `include_tasks:`
+      # over `with_subelements: [apps, pin]` - TASK_INCLUDE_VALID_KEYWORDS
+      # had every other with_* loop-lookup variant (with_items,
+      # with_fileglob, with_first_found, ...) but not this one, so the
+      # parser raised "'with_subelements' is not a valid attribute for a
+      # TaskInclude" and refused to even start the play (rc=4, no recap)
+      # where real ansible-core runs it fine.
+      task = single_task(<<-YAML)
+        - include_tasks: move-merge.yaml
+          vars:
+            app: "{{ item.0.name }}"
+          with_subelements:
+            - "{{ apps }}"
+            - pin
+        YAML
+
+      task.include_tasks?.should be_true
+      task.loop_subelements_list.should eq("{{ apps }}")
+      task.loop_subelements_key.should eq("pin")
+    end
+
     it "does not recurse into the included file's tasks at parse time (dynamic, unlike import_tasks)" do
       task = single_task(<<-YAML)
         - include_tasks: does_not_exist_yet.yml
