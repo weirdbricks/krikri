@@ -18,8 +18,42 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.860`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.861`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
+
+---
+
+## Unresolvable-module hard-stop narrowed to tombstones only; the "uninstalled collection" heuristic was a false-positive machine (0.9.861)
+
+Honest correction to the 0.9.860 entry below: its second hard-stop
+shape (an FQCN whose collection the engine has zero AVAILABLE_PLUGINS
+modules from, `IMPLEMENTED_COLLECTIONS`) was wrong and is gone. The
+conflation was "collection never installed" vs. "collection installed
+but krikri has ported nothing from it yet" - which is most collections
+that exist, since krikri only implements modules that specific tested
+roles needed. Confirmed live: `kubernetes.core.helm_repository` (a
+completely legitimate, commonly-installed collection) got the whole
+run hard-stopped with rc=4 before any task ran, where real
+ansible-playbook would run the role fine. Blast radius was every
+zero-coverage collection, i.e. nearly all of them.
+
+The narrower fix (0.9.861) drops the collection-coverage heuristic
+entirely and keeps `UnresolvedModuleError` for
+`REMOVED_MODULE_TOMBSTONES` only (`ec2_remote_facts` in its bare/
+`ansible.builtin.`/`ansible.legacy.`/`amazon.aws.` spellings) - the
+one shape that is provably unresolvable on every real controller. An
+explicit allowlist of "real" collections was considered and rejected:
+any real collection missing from the list re-triggers the same false
+hard-stop, and niche-but-genuinely-installed collections get falsely
+treated as uninstalled - a heuristic wrong in both directions, with
+no engine-local signal to make it safe.
+
+Residual gap after this correction (stated in the "Deliberate limits"
+list below): a genuinely-uninstalled collection's module
+(`bodsch.scm.github_latest` on a controller without it) gracefully
+skips where real Ansible hard-stops - the pre-0.9.860 behavior for
+that shape, a real but much smaller gap than breaking every unported
+collection.
 
 ---
 
@@ -56,11 +90,12 @@ real Ansible's exact message and rc=4) fires for exactly two shapes:
    `amazon.aws.`-qualified spellings (real amazon.aws tombstoned the
    FQCN too, verified). Deliberately minimal; widening = adding
    entries, only names unresolvable on EVERY real controller qualify.
-2. a collection-qualified name (3+ segments) whose
-   `namespace.collection` the engine has zero AVAILABLE_PLUGINS
-   modules from (`IMPLEMENTED_COLLECTIONS`, derived from
-   AVAILABLE_PLUGINS so the two lists can't drift) - i.e. a collection
-   never installed, which real Ansible also fails to resolve.
+2. *(retracted in 0.9.861 - see the newer entry above)* an FQCN whose
+   `namespace.collection` the engine had zero AVAILABLE_PLUGINS modules
+   from (`IMPLEMENTED_COLLECTIONS`). The "zero ports here = never
+   installed" inference was false for most real collections
+   (kubernetes.core et al.) and hard-stopped roles real Ansible runs
+   fine; this shape is a graceful skip again.
 
 Everything else keeps the graceful per-task unavailable_module skip -
 most importantly an unimplemented module inside a RECOGNIZED
@@ -2276,43 +2311,49 @@ Genuinely open defects: something is wrong and the fix is unknown or
 unfinished. Everything deliberate lives under "Deliberate limits"
 below - keep the two apart, or this list stops meaning anything.
 
-- **Unresolvable module/action names: hard-stop now covers the two
-  provably-unresolvable shapes (0.9.860); a missing module inside a
-  RECOGNIZED collection still gracefully skips, where real Ansible
+- **Unresolvable module/action names: hard-stop covers only the
+  tombstoned-removed names (0.9.860, narrowed 0.9.861); a missing or
+  unported module anywhere else - including a whole collection with
+  zero krikri modules, or a module that genuinely doesn't exist inside
+  a recognized collection - still gracefully skips, where real Ansible
   hard-stops.** `Aplyca.EC2Describe` (`ec2_remote_facts`, a module
-  removed from ansible-core years ago) and `bodsch.k0s`
-  (`bodsch.scm.github_latest`, an uninstalled collection module) both
-  round71000: real `ansible-playbook` refuses to even start the play
-  (`[ERROR]: couldn't resolve module/action '...'`, rc=4, no PLAY RECAP
-  at all) the moment it can't resolve ANY task's module name, before
-  Gathering Facts even runs. Fixed (0.9.860, `UnresolvedModuleError`,
+  removed from ansible-core years ago) round71000: real
+  `ansible-playbook` refuses to even start the play (`[ERROR]:
+  couldn't resolve module/action '...'`, rc=4, no PLAY RECAP at all)
+  the moment it can't resolve ANY task's module name, before Gathering
+  Facts even runs. Fixed (0.9.860, `UnresolvedModuleError`,
   generalizing `RemovedActionError`'s round-162 mechanism): parse-time
-  hard-stop - real Ansible's exact message text and rc=4, no tasks run -
-  for exactly two shapes, verified live against ansible-core 2.19.4
-  (including that a `when:`-gated, never-reached offending task still
-  aborts the whole load): (a) a tombstoned-removed name
-  (`REMOVED_MODULE_TOMBSTONES`: bare/`ansible.builtin.`/`ansible.legacy.`/
-  `amazon.aws.`-qualified `ec2_remote_facts` - widen by adding entries,
-  only names unresolvable on EVERY real controller qualify), and (b) a
-  collection-qualified name (3+ dot-separated segments) whose
-  `namespace.collection` the engine has zero AVAILABLE_PLUGINS modules
-  from (`IMPLEMENTED_COLLECTIONS`, derived from AVAILABLE_PLUGINS so the
-  two can't drift) - i.e. a collection never installed, which real
-  Ansible also fails to resolve. Everything else keeps the graceful
-  per-task unavailable_module skip: crucially, an unimplemented module
-  inside a RECOGNIZED collection (`community.general.xyz`,
-  `ansible.builtin.xyz`, `amazon.aws.xyz`, ...), which is far more
-  likely a not-yet-ported module than a nonexistent one. **The
-  remaining known gap:** a module that genuinely doesn't exist inside a
-  RECOGNIZED collection (`community.general.doesnotexist_xyz`) still
-  skips gracefully where real ansible-core 2.19.4 hard-stops with the
-  same "couldn't resolve" error (verified live) - indistinguishable
-  from a not-yet-implemented module without a full upstream module
-  registry this engine doesn't keep; telling those apart would need
-  shipping per-collection module manifests. Also verified live: a real
-  but unimplemented builtin (`ansible.builtin.sysvinit`) resolves fine
-  on real Ansible and must stay a graceful skip here - hard-stopping
-  every unresolvable name would break the project's whole
+  hard-stop - real Ansible's exact message text and rc=4, no tasks run
+  - for a tombstoned-removed name (`REMOVED_MODULE_TOMBSTONES`:
+  bare/`ansible.builtin.`/`ansible.legacy.`/`amazon.aws.`-qualified
+  `ec2_remote_facts` - widen by adding entries, only names
+  unresolvable on EVERY real controller qualify; that part verified
+  live against ansible-core 2.19.4, including that a `when:`-gated,
+  never-reached offending task still aborts the whole load). 0.9.860
+  also hard-stopped FQCNs whose collection the engine had zero modules
+  from (`IMPLEMENTED_COLLECTIONS`) - retracted in 0.9.861: "zero krikri
+  ports" described krikri's coverage, not the controller's installs,
+  and hard-stopped real collections like `kubernetes.core` that real
+  Ansible runs fine. Everything else keeps the graceful per-task
+  unavailable_module skip: any unported module, any unimplemented
+  module inside a recognized collection (`community.general.xyz`,
+  `ansible.builtin.xyz`, `amazon.aws.xyz`, ...), and now also any
+  module of a zero-coverage collection (`kubernetes.core
+  .helm_repository`, ...). **The remaining known gaps:** (a) a module
+  that genuinely doesn't exist inside a RECOGNIZED collection
+  (`community.general.doesnotexist_xyz`) still skips gracefully where
+  real ansible-core 2.19.4 hard-stops with the same "couldn't resolve"
+  error (verified live), and (b) a genuinely-uninstalled collection's
+  module (`bodsch.scm.github_latest` where bodsch.scm was never
+  installed) also skips where real Ansible hard-stops - the pre-0.9.860
+  behavior, restored because no engine-local signal distinguishes
+  "never installed" from "real but unported" without a full upstream
+  module registry this engine doesn't keep; telling those apart would
+  need shipping per-collection module manifests. Also verified live: a
+  real but unimplemented builtin (`ansible.builtin.sysvinit`) resolves
+  fine on real Ansible and must stay a graceful skip here -
+  hard-stopping every unresolvable name would break the project's whole
+  graceful-degradation value proposition.
   graceful-degradation value proposition.
 - **Crinja-side `in`-a-plain-string with an undefined left operand
   still diverges (hand-rolled `when:` side fixed, 0.9.858).** The

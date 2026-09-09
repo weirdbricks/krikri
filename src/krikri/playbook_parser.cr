@@ -854,36 +854,30 @@ module Krikri
   end
 
   # A task whose module/action name real ansible-core cannot resolve AT
-  # ALL - either (a) a bare (or builtin/legacy/amazon.aws-qualified) name
-  # tombstoned out of every installed collection (`ec2_remote_facts`),
-  # or (b) a collection-qualified name whose COLLECTION this engine has
-  # zero modules from (`bodsch.scm.github_latest` - implying the
-  # collection was never installed, which real Ansible also fails to
-  # resolve). Real ansible-playbook refuses to even START the run for
-  # either: "[ERROR]: couldn't resolve module/action '<name>'. This
-  # often indicates a misspelling, missing collection, or incorrect
-  # module path.", rc=4, no PLAY RECAP - verified live against
-  # ansible-core 2.19.4, including with the offending task behind a
-  # `when:` that would have skipped it (the resolution check is a
-  # playbook-LOAD check there, not a per-task one).
+  # ALL - a bare (or builtin/legacy/amazon.aws-qualified) name tombstoned
+  # out of every installed collection (`ec2_remote_facts`). Real
+  # ansible-playbook refuses to even START the run for one:
+  # "[ERROR]: couldn't resolve module/action '<name>'. This often
+  # indicates a misspelling, missing collection, or incorrect module
+  # path.", rc=4, no PLAY RECAP - verified live against ansible-core
+  # 2.19.4, including with the offending task behind a `when:` that
+  # would have skipped it (the resolution check is a playbook-LOAD
+  # check there, not a per-task one).
   #
   # This is deliberately NOT raised for a module this engine simply
-  # hasn't implemented YET - a name whose collection this engine
-  # otherwise ships modules for (ansible.builtin.*, community.*,
-  # ansible.posix, ...) stays on the graceful per-task
-  # unavailable_module skip path (most of this project's whole value is
-  # running real roles despite gaps). The narrow two-bucket split is
-  # the safe boundary: within a collection the engine knows, a missing
-  # module name is far more likely a not-yet-ported module than a
-  # nonexistent one (and hard-stopping there would fail real roles for
-  # exactly the gaps they use this engine to work around); a name
-  # resolving to NO implemented collection is, the same way, far more
-  # likely an uninstalled collection - which real Ansible refuses.
-  # The known gap left open by this boundary: a missing module inside a
-  # RECOGNIZED collection (`community.general.doesnotexist_xyz`) still
-  # gracefully skips where real Ansible hard-stops - indistinguishable
-  # from a not-yet-implemented module without a full upstream module
-  # registry this engine doesn't keep. Same bug class as the
+  # hasn't implemented YET - the graceful per-task unavailable_module
+  # skip path stays (most of this project's whole value is running real
+  # roles despite gaps). The 0.9.860 version of this error also
+  # hard-stopped an FQCN whose collection the engine has zero modules
+  # from, on the theory that meant "collection never installed" - but
+  # "zero modules ported here" is true of most real collections that
+  # exist (kubernetes.core, community.docker, ...), and a live round
+  # (kubernetes.core.helm_repository) proved it hard-stopped roles real
+  # Ansible runs fine. No engine-local signal distinguishes "never
+  # installed" from "real but unported", so that shape gracefully skips
+  # now: the honest boundary is tombstones only, with a residual gap
+  # (a genuinely-uninstalled collection skips where real Ansible
+  # hard-stops) documented below. Same bug class as the
   # `ansible.builtin.include:` tombstone (RemovedActionError, round
   # 162, 0.9.518), generalized from that one hard-coded name.
   class UnresolvedModuleError < Exception
@@ -1223,30 +1217,11 @@ module Krikri
       "amazon.aws.ec2_remote_facts",
     }
 
-    # The collection namespaces (first two FQCN segments) this engine has
-    # at least one implemented module for, plus ansible.legacy (the
-    # bare-name fallback namespace, whose modules resolve through
-    # MODULE_SEARCH_COLLECTIONS). Derived from AVAILABLE_PLUGINS rather
-    # than maintained separately so the two can't drift. Drives
-    # #raise_unresolvable_module_error's collection bucket: an FQCN
-    # under one of these collections that isn't itself implemented is
-    # treated as "not yet ported here" (graceful per-task skip), while
-    # an FQCN under any OTHER namespace is treated as "collection never
-    # installed" - real Ansible's own unresolvable case (hard-stop).
-    IMPLEMENTED_COLLECTIONS = begin
-      set = Set{"ansible.legacy", "ansible.builtin"}
-      AVAILABLE_PLUGINS.each do |plugin|
-        parts = plugin.split(".")
-        set.add("#{parts[0]}.#{parts[1]}") if parts.size > 2
-      end
-      set
-    end
-
-    # Raises UnresolvedModuleError for the two hard-stop shapes (see the
-    # class's own comment), returns normally for every graceful-skip
-    # shape. as_written is the module/action name exactly as the task
-    # wrote it - real Ansible's message echoes the source spelling, not
-    # any resolved form.
+    # Raises UnresolvedModuleError for the hard-stop shape (see the
+    # class's own comment - tombstoned-removed names only), returns
+    # normally for every graceful-skip shape. as_written is the
+    # module/action name exactly as the task wrote it - real Ansible's
+    # message echoes the source spelling, not any resolved form.
     def self.raise_unresolvable_module_error(as_written : String) : Nil
       # A templated module name resolves (or fails) at run time, never
       # here - the raw `{{ }}` text is not an unresolvable name.
@@ -1257,14 +1232,6 @@ module Krikri
 
       if REMOVED_MODULE_TOMBSTONES.includes?(as_written)
         raise UnresolvedModuleError.new(message)
-      end
-
-      parts = as_written.split(".")
-      if parts.size >= 3
-        collection = "#{parts[0]}.#{parts[1]}"
-        unless IMPLEMENTED_COLLECTIONS.includes?(collection)
-          raise UnresolvedModuleError.new(message)
-        end
       end
     end
 
@@ -1671,7 +1638,7 @@ module Krikri
           # module-resolution check refuses the whole run (rc=4) for a
           # name it can't resolve anywhere, including a task behind a
           # `when:` (verified against ansible-core 2.19.4). See
-          # UnresolvedModuleError's own comment for the two-bucket
+          # UnresolvedModuleError's own comment for the tombstone-only
           # boundary that keeps not-yet-implemented modules graceful.
           raise ex
         rescue ex : ConflictingActionStatementsError
@@ -2172,16 +2139,16 @@ module Krikri
       else
         resolved_module_name = resolve_module_name(module_name)
         unavailable_module_name = resolved_module_name ? nil : module_name
-        # A name real Ansible can't resolve AT ALL (a tombstoned-removed
-        # module, or an FQCN from a collection this engine has zero
-        # modules from) hard-stops the whole run at parse time, exactly
+        # A tombstoned-removed module name (ec2_remote_facts and
+        # friends) hard-stops the whole run at parse time, exactly
         # where real ansible-playbook's own playbook-load resolution
         # check fires - NOT the graceful per-task skip below, which is
-        # reserved for modules a known collection ships but this engine
-        # hasn't implemented yet. See UnresolvedModuleError's own
-        # comment for the verified-against-2.19.4 boundary and the
-        # deliberate residual gap (missing module inside a RECOGNIZED
-        # collection still skips gracefully).
+        # reserved for modules this engine simply hasn't implemented
+        # (including every module of a collection with zero krikri
+        # ports - "unported here" is indistinguishable from "collection
+        # never installed"). See UnresolvedModuleError's own comment
+        # for the verified-against-2.19.4 boundary and the deliberate
+        # residual gap.
         raise_unresolvable_module_error(module_name) unless resolved_module_name
       end
       module_name = resolved_module_name || module_name

@@ -1,19 +1,18 @@
 require "../spec_helper"
 
 # The UnresolvedModuleError hard-stop, end to end: a task whose module
-# name real ansible-core can't resolve ANYWHERE (a tombstoned-removed
-# module like `ec2_remote_facts`, or an FQCN from a collection this
-# engine has zero modules from - i.e. an uninstalled collection) must
-# refuse to run the playbook AT ALL, printing real Ansible's
-# "[ERROR]: couldn't resolve module/action '...'" (rc=4, no PLAY RECAP,
-# nothing executes) - verified live against ansible-core 2.19.4,
-# including the when:-gated variant. Previously this engine took the
-# graceful per-task unavailable_module skip for BOTH shapes, kept
-# executing every other task, and hit unrelated downstream failures
-# that masked the divergence shape entirely (Aplyca.EC2Describe and
-# bodsch.k0s, round71000). The third spec pins the OTHER half of the
-# boundary: a module a RECOGNIZED collection ships but this engine
-# hasn't implemented yet must still gracefully skip exactly as before.
+# name real ansible-core can't resolve ANYWHERE - a tombstoned-removed
+# module like `ec2_remote_facts` - must refuse to run the playbook AT
+# ALL, printing real Ansible's "[ERROR]: couldn't resolve module/action
+# '...'" (rc=4, no PLAY RECAP, nothing executes) - verified live
+# against ansible-core 2.19.4, including the when:-gated variant.
+# Previously this engine took the graceful per-task unavailable_module
+# skip for that shape too, kept executing every other task, and hit
+# unrelated downstream failures that masked the divergence shape
+# entirely (Aplyca.EC2Describe, round71000). 0.9.860 also hard-stopped
+# FQCNs from collections with zero krikri modules; 0.9.861 narrowed
+# that back (real unported collections like kubernetes.core broke), so
+# the later specs pin the graceful-skip half of the restored boundary.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
@@ -47,7 +46,15 @@ describe "unresolvable module names hard-stop the run (UnresolvedModuleError)" d
     output.should_not contain("Gathering Facts"), output
   end
 
-  it "aborts before any task runs for an FQCN from an uninstalled collection (bodsch.scm.github_latest)" do
+  it "runs to completion for a module from a collection with zero krikri modules (graceful skip, no hard-stop)" do
+    # 0.9.861 restored this shape to the graceful skip: kubernetes.core
+    # is a real, commonly-installed collection krikri simply hasn't
+    # ported anything from - the 0.9.860 "zero modules = never
+    # installed" heuristic hard-stopped exactly such roles (live round
+    # repro) that real ansible-playbook runs fine. A when:-gated
+    # bodsch.scm FQCN (the original round71000 role's shape) keeps the
+    # same graceful path - its downstream "No filter named 'bodsch'"
+    # masking risk is the accepted residual gap now.
     status, output = run_playbook(<<-YAML)
       - hosts: localhost
         connection: local
@@ -55,15 +62,16 @@ describe "unresolvable module names hard-stop the run (UnresolvedModuleError)" d
         tasks:
           - name: normal
             ansible.builtin.debug: msg=hi
-          - name: unknown collection, when-gated like the real role's usage
-            bodsch.scm.github_latest:
-              repo: foo
+          - name: unported collection, when-gated like the real role's usage
+            kubernetes.core.helm_repository:
+              repo_name: foo
             when: ansible_os_family == "Windows"
       YAML
-    status.success?.should be_false, output
-    output.should contain("[ERROR]: couldn't resolve module/action 'bodsch.scm.github_latest'"), output
-    output.should_not contain("PLAY RECAP"), output
-    output.should_not contain("TASK ["), output
+    status.success?.should be_true, output
+    output.should contain("PLAY RECAP"), output
+    output.should contain("skipping: [localhost]"), output
+    output.should contain("uses unimplemented plugin: kubernetes.core.helm_repository"), output
+    output.should_not contain("[ERROR]: couldn't resolve module/action"), output
   end
 
   it "still gracefully skips a not-yet-implemented module from a RECOGNIZED collection, exactly as before" do

@@ -408,26 +408,33 @@ describe Krikri::PlaybookParser do
       end
     end
 
-    it "hard-stops the parse for an FQCN whose collection this engine has zero modules from (bodsch.scm.github_latest)" do
-      # bodsch.k0s, round71000: `bodsch.scm.github_latest` is an
-      # UNINSTALLED collection module - real ansible-playbook refuses to
-      # even start the play (rc=4, before Gathering Facts) the moment it
-      # can't resolve any task's module name. This engine previously
-      # skipped just that task, kept going, and then failed downstream
-      # with an unrelated "No filter named 'bodsch'" conditional error
-      # that masked the real divergence shape entirely.
-      expect_raises(Krikri::UnresolvedModuleError,
-        "couldn't resolve module/action 'bodsch.scm.github_latest'. " \
-        "This often indicates a misspelling, missing collection, or incorrect module path.") do
-        Krikri::PlaybookParser.parse_string(<<-YAML
+    it "STILL gracefully marks a module from a collection with zero krikri modules unavailable (no hard-stop)" do
+      # The pre-0.9.860 behavior for this shape, restored in 0.9.861:
+      # kubernetes.core (and most collections that exist) are real,
+      # commonly-installed collections krikri simply hasn't ported any
+      # modules from - "zero AVAILABLE_PLUGINS modules from this
+      # collection" said nothing about whether the collection is
+      # installed on a real controller, so hard-stopping every such
+      # FQCN broke real roles (kubernetes.core.helm_repository, live
+      # round) that real ansible-playbook runs fine. An
+      # allowlist-of-real-collections alternative was considered and
+      # rejected: it re-breaks any real collection missing from the
+      # list and falsely trusts obscure-but-installed ones.
+      playbook = Krikri::PlaybookParser.parse_string(<<-YAML
           - hosts: all
             tasks:
-              - name: unknown collection
+              - name: unported module in a real unported collection
+                kubernetes.core.helm_repository:
+                  repo_name: foo
+              - name: niche collection, same shape
                 bodsch.scm.github_latest:
                   repo: foo
-          YAML
-        )
-      end
+        YAML
+      )
+
+      playbook.plays[0].tasks.size.should eq(2)
+      playbook.plays[0].tasks[0].unavailable_module.should eq("kubernetes.core.helm_repository")
+      playbook.plays[0].tasks[1].unavailable_module.should eq("bodsch.scm.github_latest")
     end
 
     it "STILL gracefully marks a not-yet-implemented module from a RECOGNIZED collection unavailable (no hard-stop)" do
