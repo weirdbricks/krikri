@@ -753,8 +753,122 @@ module Krikri
       # membership test. `/sys/class/net` lists exactly the interface
       # names real Ansible's own netifaces-based collection reports.
       if Dir.exists?("/sys/class/net")
-        facts["ansible_interfaces"] = Dir.children("/sys/class/net").sort
+        interfaces = Dir.children("/sys/class/net").sort
+        facts["ansible_interfaces"] = interfaces
+
+        # Per-interface facts - real Ansible's own LinuxNetwork collector
+        # reports every interface BOTH as `ansible_interfaces` entries and
+        # as a top-level `ansible_<iface>` dict (ansible_eth0, ansible_ens3,
+        # ...) carrying device/type/mtu/macaddress/ipv4/ipv6. Real Ansible
+        # then flattens those into the variable namespace
+        # (inject_facts_as_vars), which is what makes the dynamic
+        # per-interface idiom work: ricsanfre.dnsmasq's own
+        # `vars['ansible_' + dnsmasq_interface].ipv4.address` resolves
+        # through the `vars` magic dict - which krikri's build_vars_context
+        # populates from the same flat fact keys - so all that was missing
+        # was the facts themselves: the `vars[...]` lookup failed with
+        # "object of type 'dict' has no attribute 'ansible_eth0'" because
+        # no such key was ever gathered, round 214.
+        interfaces.each do |iface|
+          interface_facts = gather_interface_facts(iface, interface, gateway)
+          facts["ansible_#{iface}"] = interface_facts
+        end
       end
+    end
+
+    # One interface's `ansible_<iface>` dict - a subset of real Ansible's
+    # LinuxNetwork collector's shape (device/type/mtu/macaddress/ipv4/
+    # ipv4_secondaries/ipv6), built from sysfs plus `ip -o addr show`.
+    # ipv4 carries gateway only on the interface holding the default
+    # route, matching real Ansible's output there.
+    private def gather_interface_facts(iface : String, default_interface : String, default_gateway : String) : Hash(String, JSON::Any)
+      iface_facts = {} of String => JSON::Any
+      iface_facts["device"] = JSON::Any.new(iface)
+      iface_facts["type"] = JSON::Any.new(iface == "lo" ? "loopback" : "ether")
+
+      if mtu = read_trimmed("/sys/class/net/#{iface}/mtu")
+        iface_facts["mtu"] = JSON::Any.new(mtu.to_i64)
+      end
+
+      mac = read_trimmed("/sys/class/net/#{iface}/address")
+      if mac && !mac.empty? && mac != "00:00:00:00:00:00"
+        iface_facts["macaddress"] = JSON::Any.new(mac)
+      end
+
+      ipv4 = nil
+      secondaries = [] of JSON::Any
+      capture("ip", ["-o", "-4", "addr", "show", "dev", iface]).each_line do |line|
+        fields = line.split(/\s+/)
+        addr_prefix = fields[3]?
+        next unless fields[2]? == "inet" && addr_prefix
+
+        address, prefix = addr_prefix.split("/", 2)
+        prefix_len = prefix.to_i?
+        next unless prefix_len
+
+        netmask = prefix_to_netmask(prefix_len)
+        entry = {
+          "address" => JSON::Any.new(address),
+          "netmask" => JSON::Any.new(netmask),
+          "network" => JSON::Any.new(u32_to_ipv4(ipv4_to_u32(address) & ipv4_to_u32(netmask))),
+        }
+        if fields[4]? == "brd" && (bcast = fields[5]?)
+          entry["broadcast"] = JSON::Any.new(bcast)
+        end
+        if ipv4.nil?
+          ipv4 = entry
+        else
+          secondaries << JSON::Any.new(entry)
+        end
+      end
+
+      if ipv4_hash = ipv4
+        if iface == default_interface && !default_gateway.empty?
+          ipv4_hash["gateway"] = JSON::Any.new(default_gateway)
+        end
+        iface_facts["ipv4"] = JSON::Any.new(ipv4_hash)
+        iface_facts["ipv4_secondaries"] = JSON::Any.new(secondaries) unless secondaries.empty?
+      end
+
+      ipv6_list = [] of JSON::Any
+      capture("ip", ["-o", "-6", "addr", "show", "dev", iface]).each_line do |line|
+        fields = line.split(/\s+/)
+        addr_prefix = fields[3]?
+        next unless fields[2]? == "inet6" && addr_prefix
+
+        address, prefix = addr_prefix.split("/", 2)
+        entry = {"address" => JSON::Any.new(address), "prefix" => JSON::Any.new(prefix)}
+        if scope = fields[5]?
+          entry["scope"] = JSON::Any.new(scope)
+        end
+        ipv6_list << JSON::Any.new(entry)
+      end
+      iface_facts["ipv6"] = JSON::Any.new(ipv6_list) unless ipv6_list.empty?
+
+      iface_facts
+    end
+
+    private def read_trimmed(path : String) : String?
+      File.read(path).strip
+    rescue File::NotFoundError
+      nil
+    end
+
+    private def prefix_to_netmask(prefix : Int32) : String
+      (0..3).map do |i|
+        remaining = prefix - i * 8
+        byte = remaining >= 8 ? 255u8 : remaining > 0 ? ((0xFF_u32 << (8 - remaining)) & 0xFF).to_u8! : 0u8
+        byte.to_s
+      end.join(".")
+    end
+
+    private def ipv4_to_u32(ip : String) : UInt32
+      parts = ip.split(".").map(&.to_u32)
+      (parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3]
+    end
+
+    private def u32_to_ipv4(value : UInt32) : String
+      [(value >> 24) & 0xFF, (value >> 16) & 0xFF, (value >> 8) & 0xFF, value & 0xFF].join(".")
     end
 
     def gather_hardware_facts(facts)

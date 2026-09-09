@@ -18,8 +18,33 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.871`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.872`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
+
+---
+
+## Per-interface `ansible_<iface>` facts were never gathered, so `vars['ansible_' + iface]` lookups failed (0.9.872)
+
+Newly found in this round's triage: `ricsanfre.dnsmasq` failed its very
+first real task ("Set the dnsmasq listen address variable",
+`vars['ansible_' + dnsmasq_interface].ipv4.address`) with "object of
+type 'dict' has no attribute 'ansible_eth0'" (interface name varies)
+while real Ansible resolved it fine. Not a `vars`-magic-dict resolution
+bug at all - krikri's `vars` self-view is built from the same flat fact
+keys the direct `ansible_eth0` reference reads, so both forms fail or
+succeed together - the per-interface facts were never GATHERED:
+`FactsGatherer` produced `ansible_interfaces` (the name list),
+`ansible_default_ipv4`, and `ansible_all_ipv4_addresses`, but no
+`ansible_eth0`-style dict, which real Ansible's own LinuxNetwork
+collector always reports and `inject_facts_as_vars` then flattens into
+the variable namespace - exactly what the dynamic `vars[...]` idiom
+reads. Fixed by gathering an `ansible_<iface>` dict for every interface
+in `/sys/class/net` (device/type/mtu/macaddress/ipv4/
+ipv4_secondaries/ipv6, built from sysfs plus `ip -o addr show`; ipv4
+carries `gateway` only on the default route's interface, matching real
+Ansible's output there). A deliberate subset of the real collector -
+`active`/`promisc`/`speed` and IPv4-gateway-per-secondary nuances are
+still not synthesized; no role tested so far has read them.
 
 ---
 
