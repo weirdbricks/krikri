@@ -18,12 +18,12 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.851`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.852`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
 
 ---
 
-## Round 72000: 400-role batch (2x Atlantic.net capacity), 7 real bugs (0.9.845-0.9.851)
+## Round 72000: 400-role batch (2x Atlantic.net capacity), 8 real bugs (0.9.845-0.9.852)
 
 First batch run entirely Atlantic-only (no Kata, per round 71000's
 undiagnosed Kata cgroup boot-failure finding) at 24 hosts/12 pairs -
@@ -36,16 +36,17 @@ provisioning failures, unrelated slots/times - requeued and all 5 came
 back CLEAN, confirming it wasn't systemic).
 
 All 57 DIVERGENT roles were individually triaged this round (not just
-a sample). 7 real bugs found, fixed, and confirmed via live reruns on
+a sample). 8 real bugs found, fixed, and confirmed via live reruns on
 fresh Atlantic hosts: `with_subelements:` on `include_tasks:` rejected
 outright; `role_path` unresolved inside a static `import_tasks:` path;
 `getent`'s `fail_key: false` storing an empty array instead of a real
 null; a bracketed multi-item `groups:` list passed raw into
 `useradd -G`; `notify:` on an `import_tasks:` line not propagating to
 the tasks it inlines; a templated `ignore_errors:` always defaulting
-to `false` instead of `true`; and `with_nested:` not re-expanding a
-templated source list at runtime. Each writeup below names the
-confirming role(s).
+to `false` instead of `true`; `with_nested:` not re-expanding a
+templated source list at runtime; and Python `.lower()`/`.upper()`
+method-call syntax unsupported in `{{ }}` expressions. Each writeup
+below names the confirming role(s).
 
 Of the rest: most (~30) trace to already-documented scope cuts,
 harness/environment gaps (missing Python libs on the harness's real-
@@ -54,15 +55,14 @@ Windows-only roles, real Ansible's own module/collection version
 mismatches), or a genuinely-unrelated both-fail (missing binary,
 missing role dependency). Those aren't re-litigated individually here
 - see the per-role rows in `ROLES_TESTED.md`'s round-72000 section for
-each one's specific reason. 5 new **open gaps** are documented below
+each one's specific reason. 4 new **open gaps** are documented below
 (real, reproducible, root-caused, but not fixed this round - each
 names the exact mechanism so another pass can implement it without
 re-deriving the diagnosis): a quoted-string re-evaluated as live code;
-a silently-tolerated malformed-Jinja gap; Python string-method-call
-syntax (`.lower()`) unsupported in `{{ }}` expressions; the
-`ansible_python_version` fact never populated; and `is defined` on a
-dynamically-keyed `hostvars[...]` lookup raising instead of returning
-false. A handful of roles (`f500.ufw`'s possible SSH-lockout-after-
+a silently-tolerated malformed-Jinja gap; the `ansible_python_version`
+fact never populated; and `is defined` on a dynamically-keyed
+`hostvars[...]` lookup raising instead of returning false. A handful
+of roles (`f500.ufw`'s possible SSH-lockout-after-
 `ufw enable`, `Frzk.chrony`'s task-level `vars:` leaking across
 sibling tasks, the apt-404-on-krikri-host-only pattern seen on 3
 different roles) are flagged as **needs a closer look** - real,
@@ -183,6 +183,25 @@ reproducible divergences whose root cause isn't fully pinned down yet.
   source, mixed literal+templated sources). Live-reverified on a fresh
   Atlantic host: the bogus failures are gone and the affected task now
   skips identically on both engines.
+
+- **`logdna.logdna`**: `include_tasks: ./package/install_{{
+  ansible_os_family.lower()}}.yml` (picking the OS-family install task
+  file) rendered as the literal path `install_undefined.yml` instead
+  of `install_debian.yml` - real Jinja2's own Python-object method
+  calls (a real attribute/method lookup on the underlying Python
+  string object, not a standard Jinja *filter*) are fully supported by
+  real ansible-core's native Python-based Jinja environment; this
+  engine's hand-rolled `{{ }}` evaluator didn't recognize `.lower()`/
+  `.upper()` as calls at all and fell through to a generic-
+  unresolvable-expression default rendering the literal text
+  `"undefined"`. `| lower`/`| upper` (the standard Jinja filter
+  spellings) already worked; only the `.method()` call syntax on a
+  variable was missing. Fixed by adding a `string_method_case_call`
+  helper to `VariableLookup`, matching the dispatch pattern already
+  used there for other Python string methods (`.find(substring)`,
+  `.strip()`). Regression spec added (covering both `.lower()` and
+  chained `.lower().upper()`); live-reverified on a fresh Atlantic host
+  (the include now correctly resolves to `install_debian.yml`).
 
 ### Needs a closer look (real, reproducible, not root-caused yet)
 
@@ -1990,22 +2009,6 @@ Genuinely open defects: something is wrong and the fix is unknown or
 unfinished. Everything deliberate lives under "Deliberate limits"
 below - keep the two apart, or this list stops meaning anything.
 
-- **Python string-method-call syntax (`.lower()`, `.upper()`, etc.)
-  inside `{{ }}` is not supported - renders as the literal text
-  "undefined" instead of calling the method or raising.**
-  `logdna.logdna` round72000: `include_tasks: ./package/install_{{
-  ansible_os_family.lower()}}.yml` - real Jinja2's own Python-object
-  method calls (not a standard Jinja *filter*, but a real attribute/
-  method lookup on the underlying Python string object) are fully
-  supported by real ansible-core's native Python-based Jinja
-  environment; this engine's hand-rolled `{{ }}` evaluator doesn't
-  recognize `.lower()` as a call at all and falls through to a
-  generic-unresolvable-expression default that renders the literal
-  text `"undefined"` - producing a real, existing-looking but wrong
-  path (`install_undefined.yml`) instead of either calling the method
-  or raising a clear error. `| lower` (the actual standard Jinja
-  filter spelling) already works; only the `.method()` call syntax on
-  a variable is missing.
 - **`ansible_python_version` (and the related `ansible_python` fact
   dict) is never populated by Gathering Facts at all.**
   `louim.bedrock-site-protect` round72000: `pkg: "{{ passlib_package[
