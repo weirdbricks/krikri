@@ -87,11 +87,23 @@ module Krikri
         # (unindexable-by-username) field list itself here instead of
         # the one real field-list entry, or "undefined" once #[] failed
         # to find an integer index - either way, `!= none` never behaved
-        # the way the role's author intended. Empty (not entirely
-        # absent) when not found and fail_key: false suppressed the
-        # failure above, matching how real Ansible's own dict is empty
-        # in that case rather than missing the key.
-        facts["getent_#{database}"] = JSON::Any.new({key => JSON::Any.new((value || [] of String).map { |field| JSON::Any.new(field) })})
+        # the way the role's author intended.
+        #
+        # A key not found with fail_key: false must map to a real JSON
+        # null, not an empty array - real Ansible's own getent module
+        # sets the value to None in that case (verified against its own
+        # source), and `getent_passwd[key] == none` is exactly how a
+        # role decides "this user doesn't exist yet, create it" (found
+        # via filviu.activemq/.tomcat's own "env | determine if <user>
+        # exists" -> "setup | create system user" pair, `when: getent_
+        # passwd[user] == none`). An empty array `!= none` under real
+        # Python/Jinja equality (arrays and None are never equal
+        # regardless of emptiness), so that `when:` always evaluated
+        # false and the user-creation task was silently skipped every
+        # single run, cascading into "chown failed: failed to look up
+        # user X" on every later task that assumed the user existed.
+        value_fact = value ? JSON::Any.new(value.map { |field| JSON::Any.new(field) }) : JSON::Any.new(nil)
+        facts["getent_#{database}"] = JSON::Any.new({key => value_fact})
       else
         dict = Hash(String, JSON::Any).new
         entries.each { |k, v| dict[k] = JSON::Any.new(v.map { |field| JSON::Any.new(field) }) }

@@ -60,9 +60,17 @@ describe "getent plugin" do
     result["msg"].as_s.should contain("could not be found")
   end
 
-  it "does not fail a missing key when fail_key is false" do
+  it "does not fail a missing key when fail_key is false, and maps it to a real null (not an empty array)" do
+    # Real bug found benchmarking filviu.activemq/.tomcat's own "env |
+    # determine if <user> exists" -> "setup | create system user" pair
+    # (when: getent_passwd[user] == none): real Ansible's own getent
+    # module sets the value to None for a not-found key with fail_key:
+    # false, not an empty list - `[] == none` is always false under
+    # real Python/Jinja equality regardless of emptiness, so storing an
+    # empty array here made that when: always evaluate false and the
+    # user-creation task silently skip every single run.
     result = PluginSpecHelper.run("getent", {"database" => "passwd", "key" => "definitely-not-a-real-user-xyz", "fail_key" => "false"})
     result["failed"].as_bool.should be_false
-    result["ansible_facts"]["getent_passwd"].as_h["definitely-not-a-real-user-xyz"].as_a.size.should eq(0)
+    result["ansible_facts"]["getent_passwd"].as_h["definitely-not-a-real-user-xyz"].raw.should be_nil
   end
 end
