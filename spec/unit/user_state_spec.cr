@@ -74,6 +74,19 @@ describe UserState do
       args = UserState.useradd_args("runner", nil, nil, "[]", nil, nil, nil, false, true)
       args.should eq(["-m", "'runner'"])
     end
+
+    it "comma-joins a multi-item bracketed groups: value instead of passing the bracket text raw to -G" do
+      # Real bug found benchmarking kostiantyn-nemchenko.mongodb_exporter's
+      # own `groups: "{{ mongodb_exporter_system_groups }}"` (a full-value
+      # substitution of a real 2-item list) - this renders as bracketed
+      # text (`['mongodb_exporter', 'ssl-cert']`) instead of a real
+      # array, and passing that whole string straight to `-G` made
+      # useradd itself split on the comma INSIDE the quotes, producing
+      # two bogus group names ("['mongodb_exporter'" and " 'ssl-cert']")
+      # and failing "group ... does not exist" for both.
+      args = UserState.useradd_args("mongodb_exporter", nil, nil, "['mongodb_exporter', 'ssl-cert']", nil, nil, nil, false, true)
+      args.should eq(["-G 'mongodb_exporter,ssl-cert'", "-m", "'mongodb_exporter'"])
+    end
   end
 
   describe ".usermod_flags" do

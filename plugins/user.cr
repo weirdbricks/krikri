@@ -279,7 +279,14 @@ module Krikri
       groups_val = @params["groups"]?.presence
       return [] of String unless groups_val && groups_val != "[]"
 
-      requested = groups_val.split(',').map(&.strip).reject(&.empty?)
+      # A full-value `groups: "{{ list_var }}"` substitution renders a
+      # real multi-item list as bracketed text (`['a', 'b']`) rather
+      # than a real array - naively splitting THAT on comma produces
+      # malformed group names ("['a'", " 'b']"). Route through the same
+      # bracket-aware normalization useradd_args's own create path uses
+      # (PluginHelpers::UserState.normalize_groups_value) before
+      # splitting.
+      requested = PluginHelpers::UserState.normalize_groups_value(groups_val).split(',').map(&.strip).reject(&.empty?)
       current_groups = current_supplementary_groups(name)
       append = true?(@params["append"]?)
 

@@ -17,6 +17,29 @@ module Krikri
         User.new(fields[0], fields[2], fields[3], fields[4], fields[5], fields[6])
       end
 
+      # `groups: "{{ list_var }}"` (a full-value bare-variable
+      # substitution of a real multi-item list, as opposed to a literal
+      # YAML `groups:` list - already comma-joined by the parser before
+      # this ever runs) renders as bracketed text (`['mongodb_exporter',
+      # 'ssl-cert']`) instead of a real array. Passed straight through
+      # into `useradd -G`, that whole bracketed string became ONE
+      # malformed group-list argument - useradd itself then split it on
+      # the comma INSIDE the quotes, producing two bogus group names
+      # ("['mongodb_exporter'" and " 'ssl-cert']") and failing "group
+      # ... does not exist" for both. Found via kostiantyn-nemchenko.
+      # mongodb_exporter's own `groups: "{{ mongodb_exporter_system_
+      # groups }}"` on `user:`'s create (useradd) path - the same
+      # bracketed-list-not-comma-joined shape pip.cr's own normalize_name
+      # already fixed for `name:`.
+      def self.normalize_groups_value(raw : String) : String
+        stripped = raw.strip
+        return raw unless stripped.starts_with?('[') && stripped.ends_with?(']')
+
+        list = (Array(String).from_json(stripped) rescue nil) ||
+               (Array(String).from_json(stripped.gsub('\'', '"')) rescue nil)
+        list ? list.join(",") : raw
+      end
+
       # useradd argument list for a brand new account. Desired values that
       # are nil are simply omitted, letting useradd apply its own defaults.
       def self.useradd_args(
@@ -72,7 +95,7 @@ module Krikri
         end
         groups_val = groups.presence
         if groups_val && groups_val != "[]"
-          args << "-G #{Shell.single_quote(groups_val)}"
+          args << "-G #{Shell.single_quote(normalize_groups_value(groups_val))}"
         end
         if sh = shell.presence
           args << "-s #{Shell.single_quote(sh)}"
