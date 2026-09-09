@@ -18,8 +18,41 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.867`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.868`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
+
+---
+
+## `apt:` `upgrade: full` warm rerun always `changed` - standalone autoremove ran before the upgrade (and ran at all) (0.9.868)
+
+Newly found in this round's triage, confirmed by two roles wrapping the
+same underlying task (`entanet_devops.common`,
+`entanet_devops.upgrade` - a single
+`apt: {upgrade: full, update_cache: yes, autoremove: yes}`): krikri's
+warm rerun always reported `changed: true` where real Ansible reported
+`ok`, on hosts where the cold dist-upgrade obsoletes auto-installed
+packages (canonical case: a new kernel ABI makes the previous kernel
+autoremovable). Real Ansible's apt module never reaches its own
+cleanup() when `upgrade:` is set - upgrade() exits the module - and
+folds the autoremove intent into the upgrade command itself
+(`dist-upgrade --auto-remove`). Krikri instead ran a standalone
+`apt-get -y autoremove` BEFORE the upgrade: on cold that autoremove had
+nothing to remove yet, the upgrade then created the leftovers, and the
+warm rerun's autoremove removed them - so warm always reported
+`changed: true`. Fixed by skipping the standalone autoremove/autoclean/
+clean block whenever `upgrade:` is given and appending `--auto-remove`
+to the upgrade command like real Ansible, which also picks up real
+Ansible's upgrade-path command shape (`DEBIAN_FRONTEND=noninteractive`,
+`force-confdef`/`force-confold`, `--with-new-pkgs` on the yes/safe
+modes). A second, latent defect in the same check was fixed alongside:
+the no-op detection lacked real Ansible's APT_GET_ZERO leading newline,
+so a genuine `"10 upgraded, 0 newly installed, 0 to remove ..."` run
+matched the zero-string at offset 1 and falsely reported a no-op.
+
+Not reproducible on the local Kata Debian trixie guest (its
+dist-upgrade obsoletes nothing) - the diagnosis comes from real
+Ansible's apt.py source structure plus the round summaries; a confirm
+round against the real roles is still owed.
 
 ---
 

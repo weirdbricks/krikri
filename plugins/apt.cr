@@ -248,8 +248,24 @@ module Krikri
       autoremove = true?(@params["autoremove"]?)
       autoclean = true?(@params["autoclean"]?)
       clean = true?(@params["clean"]?)
+      upgrade = @params["upgrade"]?
 
-      if autoremove || autoclean || clean
+      # Real Ansible's apt module NEVER reaches its own cleanup()
+      # (autoremove/autoclean) when `upgrade:` is set: upgrade() always
+      # exits the module (exit_json/fail_json) before the `if not
+      # packages: if autoclean/autoremove: cleanup(...)` tail runs, and
+      # the autoremove intent is folded INTO the upgrade command itself
+      # (`dist-upgrade --auto-remove` / `upgrade --with-new-pkgs
+      # --auto-remove`). Previously this plugin still ran the standalone
+      # `apt-get -y autoremove` - and ran it BEFORE the upgrade: on a
+      # host whose cold dist-upgrade obsoletes auto-installed packages
+      # (canonical case: a new kernel ABI makes the previous kernel
+      # autoremovable), the cold run's autoremove had nothing to remove
+      # yet, the upgrade then created the leftovers, and the WARM run's
+      # standalone autoremove removed them - so warm reruns reported
+      # `changed: true` forever where real Ansible reported `ok`
+      # (entanet_devops.common / entanet_devops.upgrade, rounds 73358+).
+      if (autoremove || autoclean || clean) && !upgrade
         {
           {autoremove, "apt-get -y autoremove", "packages removed"},
           {autoclean, "apt-get -y autoclean", "autocleaned"},
@@ -300,21 +316,29 @@ module Krikri
         end
       end
 
-      # `upgrade: safe|yes|dist|full` with no `name:` (konstruktoid-
-      # hardening's own "Run apt upgrade" task, `upgrade: safe`) - real
-      # Ansible's apt module maps safe/yes to a plain `apt-get upgrade`
-      # and dist/full to `apt-get dist-upgrade`. The task registers this
-      # result and computes its own `changed_when` from `.stdout` (`'0
-      # upgraded, 0 newly installed, 0 to remove' not in
-      # apt_upgrade_response.stdout`), so the raw command output has to
-      # actually reach the registered var's `stdout` field, not just
-      # inform `changed`/`msg` here - passed through via the `stdout:`
-      # kwarg the same way the package-install path below already does.
-      upgrade = @params["upgrade"]?
+      # `upgrade: safe|yes|dist|full` with no `name:` - real
+      # Ansible's apt module maps safe/yes to a plain
+      # `apt-get upgrade --with-new-pkgs` and dist/full to
+      # `apt-get dist-upgrade`, with `--auto-remove` appended when
+      # `autoremove: yes` is also given (see the cleanup block above).
+      # The task registers this result and computes its own
+      # `changed_when` from `.stdout` (`'0 upgraded, 0 newly installed,
+      # 0 to remove' not in apt_upgrade_response.stdout`), so the raw
+      # command output has to actually reach the registered var's
+      # `stdout` field, not just inform `changed`/`msg` here - passed
+      # through via the `stdout:` kwarg the same way the package-install
+      # path below already does.
       upgrade_stdout = ""
       if upgrade
         dist = upgrade == "dist" || upgrade == "full"
-        cmd = dist ? "apt-get -y dist-upgrade" : "apt-get -y upgrade"
+        # Same command shape real Ansible builds on its apt-get path
+        # (use_apt_get): DEBIAN_FRONTEND=noninteractive, the
+        # force-confdef/force-confold dpkg options, and `--with-new-pkgs`
+        # on the non-dist modes so new dependencies of upgraded packages
+        # install like real Ansible's `upgrade --with-new-pkgs`.
+        subcmd = dist ? "dist-upgrade" : "upgrade --with-new-pkgs"
+        auto_remove = autoremove ? " --auto-remove" : ""
+        cmd = "DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold #{subcmd}#{auto_remove}"
 
         if @check_mode
           messages << "Would run: #{cmd}"
@@ -329,7 +353,13 @@ module Krikri
           end
 
           upgrade_stdout = result[:stdout]
-          unless result[:stdout].includes?("0 upgraded, 0 newly installed, 0 to remove")
+          # Real Ansible screenscrapes APT_GET_ZERO - "\n0 upgraded, 0
+          # newly installed, 0 to remove" with a LEADING newline. The
+          # previous check here omitted the newline, so any summary
+          # whose upgraded-count ends in 0 ("10 upgraded, 0 newly
+          # installed, 0 to remove ...") matched the zero-string at
+          # offset 1 and falsely reported a no-op upgrade.
+          unless result[:stdout].includes?("\n0 upgraded, 0 newly installed, 0 to remove")
             changed = true
           end
           messages << result[:stdout]
