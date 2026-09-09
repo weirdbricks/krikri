@@ -18,8 +18,35 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.878`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.879`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
+
+---
+
+## A set_fact value whose expression ACCESSED an undefined root (`x.split(':') | map(...) | list`) rendered to `[]` and succeeded where real Ansible fatally fails arg finalization (0.9.879)
+
+Found in a real-host round (`wcm_io_devops.conga_host_facts`): the
+role's very first task is
+`_host_pattern_variants: "{{ conga_host_facts_pattern.split(':') |
+map('regex_replace', '.*conga_variants_', '') | list }}"` with the
+variable genuinely undefined - real Ansible fatally fails the task
+("Finalization of task args for 'ansible.builtin.set_fact' failed:
+Error while resolving value for '_host_pattern_variants':
+'conga_host_facts_pattern' is undefined") while this engine rendered
+the value to `[]`, reported `ok`, and only failed several tasks later
+for a different reason. The strict-undefined machinery for module-arg
+finalization covered BARE `{{ var }}` references and `var | filter`
+chains whose source is a bare reference, but the moment the source
+itself carried parens (`x.split(':')`), neither the bare-ref probe nor
+the chained-subscript probe matched, and the lenient evaluator
+silently coerced the missing root to an empty container. Fixed by a
+third strict probe (root identifier genuinely absent from vars,
+immediately followed by `.`/`[`/`(` access - Jinja's StrictUndefined
+raises on all three access shapes, before any later tolerant filter
+could see the value), deliberately ordered last so the more specific
+existing messages still win where they apply; Jinja global functions
+(`lookup`/`range`/...) and the `default`-chain/`is defined` escape
+hatches are excluded, so no lenient idiom regressed.
 
 ---
 

@@ -189,6 +189,60 @@ module Krikri
     source
   end
 
+  # Jinja2/Ansible GLOBAL names (functions/constants, not variables) - a
+  # root identifier from this set never means "look up this var", the
+  # same carve-out shape as SCAN_STRICT_BLOCK_TAG_BUILTIN_FILTERS.
+  # Everything here is callable or a constant in plain Jinja2/Ansible, so
+  # an expression rooted at one of these names (e.g. `lookup('env', ...)`)
+  # must not be reported as "'<root>' is undefined" even when no variable
+  # of that name exists. Ansible's own magic namespaces (hostvars/groups/
+  # vars) are deliberately NOT listed - those ARE real lookups in every
+  # vars context a strict finalization runs against, so a genuinely
+  # missing one SHOULD raise, like any other undefined root.
+  NON_VAR_ROOT_NAMES = Set{
+    "true", "false", "none", "omit",
+    "lookup", "query", "q", "url", "range", "dict", "list", "tuple",
+    "namespace", "now",
+  }
+
+  # The ATTRIBUTE/SUBSCRIPT/CALL companion to
+  # undefined_filter_chain_source: returns the ROOT variable name when
+  # *expr* starts with a plain identifier that is genuinely absent from
+  # *vars* and immediately accesses something off it - `root.split(':')`,
+  # `root.attr`, `root['key']`, `root(...)`, optionally piped onward
+  # (`root.split(':') | map(...) | list`). Real Ansible's strict
+  # finalization raises the moment the undefined root is ACCESSED
+  # (Jinja2's StrictUndefined raises on attribute/subscript/call), BEFORE
+  # any later tolerant filter in the chain could see it - so unlike the
+  # bare-ref chain case, no first-filter tolerance carve-out applies
+  # here: `x.split(':') | default([])` fails in real Ansible too.
+  #
+  # Why this exists (round 0.9.879, wcm_io_devops.conga_host_facts' very
+  # first task): `_host_pattern_variants: "{{ conga_host_facts_pattern
+  # .split(':') | map('regex_replace', ...) | list }}"` with the variable
+  # never defined. undefined_filter_chain_source rejected the source
+  # (`conga_host_facts_pattern.split(':')`) because it contains parens,
+  # and the chained-subscript branch rejects `(` and `|`, so the
+  # expression silently rendered to `[]` and the task succeeded where
+  # real Ansible fatally fails ("'conga_host_facts_pattern' is
+  # undefined").
+  #
+  # Deliberately narrow, same spirit as the other strict probes: the root
+  # must be a plain identifier directly followed by `.`/`[`/`(` (so
+  # binary-operator and `is defined`/`if` shapes never match), it must be
+  # absent from *vars* by a straight lookup (no evaluation), and known
+  # Jinja globals are excluded - none of this evaluator's documented
+  # expression-syntax gaps can turn into a spurious task failure here.
+  def self.undefined_access_chain_source(expr : String, vars : Hash(String, JSON::Any)) : String?
+    m = expr.match(/\A([A-Za-z_][A-Za-z0-9_]*)\s*(?:\.|\[|\()/)
+    return nil unless m
+
+    root = m[1]
+    return nil if NON_VAR_ROOT_NAMES.includes?(root)
+    return nil if VariableSubstitutor::VariableLookup.new(vars).resolve(root)
+    root
+  end
+
   # Parses *rendered* (text an evaluator's own `.evaluate`/`.evaluate_output`
   # already rendered, from a whole-value `{{ }}` template being
   # re-rendered to recover its real type - see every `rerender_if_
@@ -1342,6 +1396,19 @@ module Krikri
            !inner.includes?('(') && !inner.includes?('|') &&
            Krikri.expression_resolves_to_undefined?(inner, @vars)
           raise UndefinedVariableError.new(Krikri.strict_undefined_message(inner, @vars))
+        end
+        # Same strictness for an undefined root that is immediately
+        # ACCESSED - `root.split(':') | map(...) | list` (round 0.9.879,
+        # wcm_io_devops.conga_host_facts) where the source itself has
+        # parens, so undefined_filter_chain_source's bare-ref requirement
+        # never matched, and parens/pipes also rule the chained-subscript
+        # branch above out. Deliberately LAST: where both probes apply (a
+        # plain `root.attr`/`root[...]` chain with no parens/pipes), the
+        # chained-subscript branch's message is the more specific one (it
+        # names the whole expression or the dict-attribute miss, not just
+        # the root). See undefined_access_chain_source's own comment.
+        if undefined_name = Krikri.undefined_access_chain_source(inner, @vars)
+          raise UndefinedVariableError.new(Krikri.strict_undefined_message(undefined_name, @vars))
         end
         # Every other shape (literals, function calls, operators,
         # filter chains whose source is defined, ...) is left alone
