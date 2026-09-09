@@ -615,6 +615,50 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
     result.map { |row| row.as_a.map(&.to_s) }.should eq([["a", "1"], ["a", "2"], ["b", "1"], ["b", "2"]])
   end
 
+  it "supports q(...) as a full alias for query(...)" do
+    # Real bug found benchmarking nephelaiio.devtools: `q(...)` is real
+    # Ansible's documented short alias for `query(...)` (same lookup
+    # dispatch, always the list form) - only `query(` was matched, so
+    # `q('first_found', include_files, errors='ignore')` fell through to
+    # a plain variable-name lookup on the literal call text, "undefined".
+    role_dir = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "q_first_found_alias_spec")
+    `rm -rf #{role_dir}`
+    Dir.mkdir_p(File.join(role_dir, "vars"))
+    File.write(File.join(role_dir, "vars", "Debian.yml"), "greeting: hello\n")
+
+    v = Hash(String, JSON::Any).new
+    v["role_path"] = JSON::Any.new(role_dir)
+    v["params"] = JSON.parse(%({"files": ["Debian.yml"], "paths": ["vars"]}))
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator.evaluate("q('first_found', params)").should eq(%([#{File.join(role_dir, "vars", "Debian.yml").to_json}]))
+    evaluator.evaluate("query('first_found', params)").should eq(%([#{File.join(role_dir, "vars", "Debian.yml").to_json}]))
+  end
+
+  it "strips trailing keyword arguments from lookup(...) positional terms" do
+    # Real bug found benchmarking weakcamel.loki:
+    # `lookup('nested', __loki_checksums, loki_bins, wantlist=True)` fed
+    # the `wantlist=True` kwarg into the Cartesian product as a third
+    # "list" term - it resolved to nothing, and any list x empty = empty,
+    # collapsing the whole loop to zero iterations (real Ansible iterates
+    # the real product of the two lists).
+    v = Hash(String, JSON::Any).new
+    v["l1"] = JSON.parse(%(["a", "b"]))
+    v["l2"] = JSON.parse(%([1, 2]))
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
+
+    result = JSON.parse(evaluator.evaluate("lookup('nested', l1, l2, wantlist=True)")).as_a
+    result.map { |row| row.as_a.map(&.to_s) }.should eq([["a", "1"], ["a", "2"], ["b", "1"], ["b", "2"]])
+
+    # The common no-kwarg form must behave exactly as before.
+    no_kwarg = JSON.parse(evaluator.evaluate("lookup('nested', l1, l2)")).as_a
+    no_kwarg.map { |row| row.as_a.map(&.to_s) }.should eq([["a", "1"], ["a", "2"], ["b", "1"], ["b", "2"]])
+
+    # query()/q() take the same kwarg-stripping path (via evaluate_lookup's
+    # generic delegation).
+    result = JSON.parse(evaluator.evaluate("q('nested', l1, l2, wantlist=True)")).as_a
+    result.map { |row| row.as_a.map(&.to_s) }.should eq([["a", "1"], ["a", "2"], ["b", "1"], ["b", "2"]])
+  end
+
   it "evaluates lookup('lines', ...) splitting command output into a list of lines" do
     v = Hash(String, JSON::Any).new
     evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)

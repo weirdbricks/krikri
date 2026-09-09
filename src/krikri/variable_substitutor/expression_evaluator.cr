@@ -677,6 +677,15 @@ module Krikri
       # failed at the very first real task.
       private def evaluate_bare_query_call(expr : String) : String?
         return evaluate_query(expr[6..-2]) if bare_call?(expr, "query(")
+        # `q(...)` - real Ansible's documented short alias for `query(...)`
+        # (same lookup-plugin dispatch, always the list form). Previously
+        # unrecognized - this fell through to a plain variable-name lookup
+        # on the literal text `q('first_found', include_files, ...)`,
+        # always "undefined" - found live benchmarking nephelaiio.devtools.
+        # No prefix collision with `query(` itself ("query(" does not start
+        # with "q(") nor with any other builtin (`quote(` etc. lack the
+        # paren right after the q).
+        return evaluate_query(expr[2..-2]) if bare_call?(expr, "q(")
         nil
       end
 
@@ -1897,8 +1906,29 @@ module Krikri
         part
       end
 
+      # Splits a lookup/query call's comma-split argument list into its
+      # positional terms (including the leading lookup-type literal) and
+      # its trailing `key=value`-shaped keyword arguments (`wantlist=True`,
+      # `errors='ignore'`). Real Ansible's lookup runner pulls those
+      # kwargs out as lookup-plugin OPTIONS before the plugin ever sees
+      # its terms - previously they stayed mixed into the positional
+      # parts, so e.g. `lookup('nested', a, b, wantlist=True)` fed the
+      # non-list kwarg into the Cartesian product and collapsed it to
+      # zero rows (any list x empty = empty) - found live benchmarking
+      # weakcamel.loki. Only TRAILING kwargs are stripped (real Ansible's
+      # own restriction); index 0 (the lookup type) is never stripped.
+      private def split_lookup_keyword_args(parts : Array(String)) : Tuple(Array(String), Array(String))
+        boundary = parts.size
+        while boundary > 1 && parts[boundary - 1].strip.matches?(/^\w+\s*=/)
+          boundary -= 1
+        end
+        {parts[0, boundary], parts[boundary..]}
+      end
+
       private def evaluate_lookup(args : String, query_mode : Bool = false) : String
-        parts = split_top_level_commas(args).map { |part| rerender_double_templated_literal(part) }
+        parts, kwargs = split_lookup_keyword_args(
+          split_top_level_commas(args).map { |part| rerender_double_templated_literal(part) },
+        )
         lookup_type = parts[0]?.try { |part| quoted_string_literal(part.strip) }.try(&.as_s?)
 
         # Real Ansible accepts a lookup plugin's name either bare
@@ -1918,11 +1948,11 @@ module Krikri
         # falling through every dispatch to the "undefined" fallback.
         lookup_type = lookup_type.try(&.sub(/^community\.general\./, ""))
 
-        evaluate_lookup_scalar(lookup_type, parts, query_mode) ||
-          evaluate_lookup_file(lookup_type, parts) ||
-          evaluate_lookup_list(lookup_type, parts) ||
-          evaluate_lookup_misc(lookup_type, parts) ||
-          evaluate_lookup_file_parsers(lookup_type, parts) ||
+        evaluate_lookup_scalar(lookup_type, parts, kwargs, query_mode) ||
+          evaluate_lookup_file(lookup_type, parts, kwargs) ||
+          evaluate_lookup_list(lookup_type, parts, kwargs) ||
+          evaluate_lookup_misc(lookup_type, parts, kwargs) ||
+          evaluate_lookup_file_parsers(lookup_type, parts, kwargs) ||
           "undefined"
       end
 
@@ -1943,7 +1973,7 @@ module Krikri
         end
       end
 
-      private def evaluate_lookup_scalar(lookup_type : String?, parts : Array(String), query_mode : Bool = false) : String?
+      private def evaluate_lookup_scalar(lookup_type : String?, parts : Array(String), kwargs : Array(String), query_mode : Bool = false) : String?
         case lookup_type
         when "first_found"
           params = parts[1]?.try { |part| first_found_params(part) }
@@ -1967,11 +1997,11 @@ module Krikri
           var_name = parts[1]?.try { |part| resolve_plus_operand(part.strip) }.try(&.as_s?)
           var_name ? (ENV[var_name]? || "") : "undefined"
         when "config"
-          lookup_config(parts)
+          lookup_config(parts, kwargs)
         when "inventory_hostnames"
-          lookup_inventory_hostnames(parts, query_mode)
+          lookup_inventory_hostnames(parts, kwargs, query_mode)
         when "url"
-          lookup_url(parts)
+          lookup_url(parts, kwargs)
         when "vars"
           # lookup('vars', 'variable_name') - real Ansible's own vars
           # lookup plugin: an INDIRECT variable lookup, the name itself
@@ -1986,7 +2016,7 @@ module Krikri
         end
       end
 
-      private def lookup_config(parts : Array(String)) : String
+      private def lookup_config(parts : Array(String), kwargs : Array(String)) : String
         # lookup('config', 'OPTION'[, 'OPTION2', ...], wantlist=True) -
         # real Ansible's own config lookup plugin, returns the current
         # value of one or more ansible.cfg / ANSIBLE_* settings from the
@@ -1997,8 +2027,8 @@ module Krikri
         # loop bound `item` to nothing and the debug failed with
         # `'item' is undefined`). Defaults match ansible-core 2.19's own
         # DEFAULT_*/COLOR_* constants when no ansible.cfg override is set.
-        wantlist = parts[1..].any? { |part| part.strip.downcase.starts_with?("wantlist=true") }
-        names = parts[1..].reject(&.strip.downcase.starts_with?("wantlist=")).compact_map { |part|
+        wantlist = kwargs.any? { |part| part.strip.downcase.starts_with?("wantlist=true") }
+        names = parts[1..].compact_map { |part|
           quoted_string_literal(part.strip).try(&.as_s?) || evaluate(part.strip).presence
         }
         return "undefined" if names.empty?
@@ -2010,7 +2040,7 @@ module Krikri
         end
       end
 
-      private def lookup_inventory_hostnames(parts : Array(String), query_mode : Bool = false) : String
+      private def lookup_inventory_hostnames(parts : Array(String), kwargs : Array(String), query_mode : Bool = false) : String
         # lookup('inventory_hostnames', pattern[, pattern2, ...],
         # wantlist=True) - real Ansible's own inventory_hostnames lookup
         # plugin. Previously unimplemented (fell through to "undefined"),
@@ -2035,8 +2065,8 @@ module Krikri
         # hosts[start:end + 1]), and a no-match result that is an empty
         # list - the real lookup swallows its own AnsibleError and
         # returns [], never failing the task.
-        wantlist = parts[2..].any? { |part| part.strip.downcase.starts_with?("wantlist=true") }
-        terms = parts[1..].reject(&.strip.downcase.starts_with?("wantlist=")).compact_map do |part|
+        wantlist = kwargs.any? { |part| part.strip.downcase.starts_with?("wantlist=true") }
+        terms = parts[1..].compact_map do |part|
           evaluate(part.strip).presence
         end
         return "undefined" if terms.empty?
@@ -2251,7 +2281,7 @@ module Krikri
         end
       end
 
-      private def lookup_url(parts : Array(String)) : String
+      private def lookup_url(parts : Array(String), kwargs : Array(String)) : String
         # lookup('url', url_expr, wantlist=True) - real Ansible's own
         # url lookup plugin, fetching a URL from the CONTROLLER (same
         # controller-side rule as env/first_found above). Entirely
@@ -2282,7 +2312,7 @@ module Krikri
         # kubectl_version_url) }}/bin/..."`, fetching a single-line
         # version file - got the literal text `["v1.31.0"]` spliced
         # into the URL instead of the plain string `v1.31.0`, a 404.
-        wantlist = parts[2..].any? { |part| part.strip.downcase.starts_with?("wantlist=true") }
+        wantlist = kwargs.any? { |part| part.strip.downcase.starts_with?("wantlist=true") }
         lines_json = fetch_url_lines(url)
         return lines_json if wantlist
 
@@ -2302,14 +2332,14 @@ module Krikri
         resolved ? @lookup.format_value(resolved) : "undefined"
       end
 
-      private def evaluate_lookup_file(lookup_type : String?, parts : Array(String)) : String?
+      private def evaluate_lookup_file(lookup_type : String?, parts : Array(String), kwargs : Array(String)) : String?
         case lookup_type
         when "file"
           lookup_file(parts)
         when "pipe"
           lookup_pipe(parts)
         when "template"
-          lookup_template(parts)
+          lookup_template(parts, kwargs)
         when "password"
           # lookup('password', '/path/to/file [length=N chars=abc...]')
           # - real Ansible's own password lookup plugin: generates a
@@ -2381,7 +2411,7 @@ module Krikri
         end
       end
 
-      private def lookup_template(parts : Array(String)) : String
+      private def lookup_template(parts : Array(String), kwargs : Array(String)) : String
         # lookup('template', path[, template_vars=dict(...)]) - renders
         # a local (controller-side) `.j2` file through the same Crinja
         # pipeline `template:` tasks use, against this expression's own
@@ -2406,7 +2436,7 @@ module Krikri
         # '^' ~ app_name ~ ...)` pattern matched nothing regardless of
         # which of the 4 calls it was, silently producing an empty
         # result for all of them instead of each one's own distinct set.
-        template_vars_part = parts[2..].find(&.strip.starts_with?("template_vars="))
+        template_vars_part = kwargs.find(&.strip.starts_with?("template_vars="))
         render_vars = @vars
         if template_vars_part
           dict_expr = template_vars_part.strip.sub(/^template_vars=/, "")
@@ -2476,7 +2506,7 @@ module Krikri
         end
       end
 
-      private def evaluate_lookup_list(lookup_type : String?, parts : Array(String)) : String?
+      private def evaluate_lookup_list(lookup_type : String?, parts : Array(String), kwargs : Array(String)) : String?
         case lookup_type
         when "list"
           # lookup('list', a, b, c) - real Ansible's own list lookup:
@@ -2555,7 +2585,7 @@ module Krikri
         Dir.glob(pattern).sort!.to_json
       end
 
-      private def evaluate_lookup_misc(lookup_type : String?, parts : Array(String)) : String?
+      private def evaluate_lookup_misc(lookup_type : String?, parts : Array(String), kwargs : Array(String)) : String?
         case lookup_type
         when "sequence"
           # lookup('sequence', 'start=1 end=5 stride=1 format=web%02d')
@@ -2588,7 +2618,7 @@ module Krikri
         when "subelements"
           lookup_subelements(parts)
         when "random_string"
-          lookup_random_string(parts)
+          lookup_random_string(parts, kwargs)
         end
       end
 
@@ -2610,8 +2640,11 @@ module Krikri
       # base64. No positional terms: real Ansible's own
       # check_for_no_terms errors on them, this raises likewise rather
       # than silently ignoring the term.
-      private def lookup_random_string(parts : Array(String)) : String
-        terms = parts[1..].map(&.strip)
+      private def lookup_random_string(parts : Array(String), kwargs : Array(String)) : String
+        unless parts[1..].empty?
+          raise "The lookup plugin 'random_string' does not accept search terms, only keyword arguments"
+        end
+        terms = kwargs.map(&.strip)
         unless terms.all?(&.includes?('='))
           raise "The lookup plugin 'random_string' does not accept search terms, only keyword arguments"
         end
@@ -2734,7 +2767,7 @@ module Krikri
         result.to_json
       end
 
-      private def evaluate_lookup_file_parsers(lookup_type : String?, parts : Array(String)) : String?
+      private def evaluate_lookup_file_parsers(lookup_type : String?, parts : Array(String), kwargs : Array(String)) : String?
         case lookup_type
         when "csvfile"
           # lookup('csvfile', 'key file=data.csv delimiter=, col=1') -

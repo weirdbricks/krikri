@@ -18,8 +18,35 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.864`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.865`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
+
+---
+
+## `q()` alias unimplemented and lookup/query kwargs polluting positional terms (0.9.865)
+
+Two related dispatch bugs in the hand-rolled evaluator's
+`lookup(...)`/`query(...)` argument handling, both found in this
+round's triage. First (nephelaiio.devtools): `q(...)` is real Ansible's
+documented short alias for `query(...)`, but only the `query(` spelling
+was matched - `q('first_found', include_files, errors='ignore')` fell
+through to a plain variable-name lookup on the literal call text and
+resolved "undefined". Second (weakcamel.loki): trailing `key=value`
+keyword arguments (`wantlist=True`, `errors='ignore'`) stayed mixed
+into the positional parts after the comma split, so
+`lookup('nested', __loki_checksums, loki_bins, wantlist=True)` fed the
+kwarg into the Cartesian product as a bogus third list - it resolved to
+nothing, and any list x empty = empty collapsed the loop to zero
+iterations where real Ansible iterates the real product. Handlers that
+genuinely consume kwargs (`config`/`url`/`inventory_hostnames`
+`wantlist=True`, `template`'s `template_vars=dict(...)`,
+`random_string`'s all-kwarg option set) now receive them explicitly
+instead of re-scanning the positional parts.
+
+Fixed in `ExpressionEvaluator`: `q(` dispatches identically to
+`query(` (bare-call and filter-chain paths), and
+`split_lookup_keyword_args` strips trailing kwarg-shaped parts before
+any lookup-type dispatch runs.
 
 ---
 
