@@ -18,8 +18,30 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.856`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.857`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
+
+---
+
+## `ansible.posix.acl` implemented: full `getfacl`/`setfacl` parity incl. the `--test` idempotency check (0.9.857)
+
+Closes the round71000 open gap (`claranet.acl`): a task using
+`ansible.posix.acl` was previously dropped as "Plugin not available" -
+there was no plugin at all. New `plugins/acl.cr` replicates the real
+module's full parameter surface (`path`/`name`, `entry:` shorthand vs
+`entity:`/`etype:`/`permissions:`, `state: query|present|absent`,
+`default:` directory ACLs, `recursive:`/`recurse:`, `follow:`,
+`recalculate_mask:`, `use_nfsv4_acls:`), its exact validation error
+messages, and its command construction, whose flag ordering (including
+`-d` inserted right after the binary name) is ported field-for-field
+from `acl.py`. The one subtle piece - real Ansible's idempotency check
+- is `setfacl --test`: the would-be result lines end in `*,*` only
+when nothing would change, so changed:true is reported exactly when
+the tested entry list differs. All shapes were cross-checked against
+actual setfacl/getfacl 2.3.2 output (recursive, default, and
+already-applied cases), and the pure command/parsing half lives in
+`src/krikri/plugin_helpers/acl_command.cr` under unit spec (the spec
+sandbox has no ACL-capable filesystem, same split as ufw/iptables).
 
 ---
 
@@ -2195,11 +2217,6 @@ below - keep the two apart, or this list stops meaning anything.
   (undefined-in-*string*, not undefined-in-list, which real Ansible
   handles far more leniently) - not chased further this round to avoid
   over-tightening `evaluate_in`'s much more common list/array path.
-- **`ansible.posix.acl` unimplemented.** `claranet.acl` round71000: real
-  Ansible's `ansible.posix.acl` module manages POSIX ACL entries
-  (`setfacl`/`getfacl`-equivalent); this engine has no plugin for it at
-  all, so any task using it is skipped rather than run. Only one
-  confirming role so far.
 
 ### Needs a closer look (real, reproducible, not root-caused yet)
 

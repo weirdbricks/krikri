@@ -948,6 +948,7 @@ module Krikri
       "community.general.gem",
       "ansible.builtin.cron",
       "ansible.builtin.cronvar",
+      "ansible.posix.acl",
       "ansible.posix.authorized_key",
       "ansible.builtin.stat",
       "ansible.builtin.find",

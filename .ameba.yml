@@ -170,6 +170,13 @@ Metrics/CyclomaticComplexity:
   # each `if` maps 1:1 to one argument_spec option of the real module;
   # splitting it apart would obscure that correspondence.
   - plugins/docker_compose_v2.cr
+  # plugins/acl.cr's #execute and PluginHelpers::AclCommand's
+  # build_command are faithful ports of ansible.posix's own acl.py -
+  # every branch maps 1:1 to one of the real module's fail_json
+  # validation rules or build_command flag conditions; splitting them
+  # apart would scatter one source-level rule across several methods.
+  - plugins/acl.cr
+  - src/krikri/plugin_helpers/acl_command.cr
   # src/krikri/plugin_helpers/x509_cert_info.cr's parse_extensions/
   # extension_section/classify_public_key are flat per-extension and
   # per-key-type branch chains - the branch count IS the specification
