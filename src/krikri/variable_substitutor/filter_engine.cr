@@ -7,6 +7,7 @@ require "uri"
 require "uuid"
 require "openssl/digest"
 require "../vault"
+require "../py_random"
 require "../jmespath"
 require "../ipaddr_core"
 require "./variable_lookup"
@@ -68,7 +69,7 @@ module Krikri
         sha1 expanduser expandvars normpath relpath commonpath log pow
         to_uuid symmetric_difference combinations permutations
         rekey_on_member extract from_yaml_all vault unvault ternary
-        intersect difference lists_mergeby list_mergeby
+        intersect difference lists_mergeby list_mergeby random map_format
         ipaddr ipwrap ipv4 ipv6 ipsubnet ipmath next_nth_usable
         previous_nth_usable network_in_network network_in_usable
         ip4_hex
@@ -625,6 +626,54 @@ module Krikri
           merge_key = as_string(resolve_expression(positional_args.pop))
           lists = [as_array(value)] + positional_args.map { |arg_expr| as_array(resolve_expression(arg_expr)) }
           JSON::Any.new(lists_mergeby_lists(lists, merge_key, recursive_arg, list_merge_arg))
+        when "random"
+          # Real Jinja2's do_random: an int operand means "random int less
+          # than this" (Python's randrange), a sequence operand means
+          # "random element" (choice), and a `seed=` kwarg makes both
+          # deterministic. Found missing via lean_delivery.jenkins_slave's
+          # own password generation:
+          # `65534 | random(seed=inventory_hostname)` - a register:'d
+          # password must come out IDENTICAL on every idempotent rerun on
+          # the same host, which is exactly what the seed pins down.
+          # Seeded runs use PyRandom, a bit-exact port of CPython's
+          # random.Random (Mersenne Twister + Lib/random.py's sha512 str
+          # seeding), so krikri and real ansible-playbook produce the
+          # SAME value for the same seed - not merely a krikri-internally
+          # deterministic one (see the shuffle filter's deliberate
+          # divergence note on the Crinja side for the weaker precedent
+          # this deliberately improves on). An empty/undefined operand
+          # yields nil, matching do_random's IndexError -> undefined.
+          seed_value = parse_kwarg_expr(filter_args, "seed")
+          case raw = value.raw
+          when Int64, Int32
+            limit = raw.to_i64
+            if limit <= 0
+              JSON::Any.new(nil)
+            elsif seed_value && !seed_value.raw.nil?
+              JSON::Any.new(py_random_for_seed(seed_value).randrange(limit))
+            else
+              JSON::Any.new(Random::DEFAULT.rand(limit))
+            end
+          when Array
+            random_choice(raw, seed_value)
+          when String
+            JSON::Any.new(random_choice(raw.chars.map { |char| JSON::Any.new(char.to_s) }, seed_value).as_s)
+          else
+            JSON::Any.new(nil)
+          end
+        when "map_format"
+          # The nephelaiio.plugins collection's custom filter (NOT
+          # community.general - no such filter exists there), found
+          # missing via nephelaiio.packetbeat's own defaults/main.yml:
+          # `hosts: "{{ hosts | map('map_format', '%s:' + port) | list }}"`.
+          # Shared core in FilterCore.map_format (both evaluators use it);
+          # reachable through map() above since that recurses into #apply
+          # per item. A missing pattern argument leaves the value
+          # unchanged rather than raising (real Python's call-time
+          # TypeError surfaces as a generic task failure either way).
+          args = split_top_level_args(filter_args)
+          pattern = args[0]?.try { |arg| resolve_expression(arg) }
+          pattern ? FilterCore.map_format(value, pattern) : value
         when "dict2items"
           # dict2items(key_name='key', value_name='value') - real Ansible's
           # own filter (NOT standard Jinja2; the Crinja corpus confirms
@@ -2035,6 +2084,33 @@ module Krikri
           end
         end
         result
+      end
+
+      # A seeded `random` filter's RNG (see #py_random_for_seed). The
+      # seeded path is the one whose cross-run/cross-engine stability
+      # matters; an unseeded call never reaches here.
+      private def py_random_for_seed(seed_value : JSON::Any) : PyRandom
+        case raw = seed_value.raw
+        when String
+          PyRandom.new(raw)
+        when Int64, Int32
+          PyRandom.new(raw.to_i64)
+        else
+          PyRandom.new(as_string(seed_value))
+        end
+      end
+
+      # The list form of the `random` filter (do_random -> random.choice).
+      # An empty sequence yields nil (real Jinja2's IndexError ->
+      # undefined); a seeded pick goes through PyRandom#choice, matching
+      # Python 3.11+'s `seq[randbelow(len(seq))]` byte-for-byte.
+      private def random_choice(items : Array(JSON::Any), seed_value : JSON::Any?) : JSON::Any
+        return JSON::Any.new(nil) if items.empty?
+        if seed_value && !seed_value.raw.nil?
+          py_random_for_seed(seed_value).choice(items)
+        else
+          items[Random::DEFAULT.rand(items.size)]
+        end
       end
 
       # Stringifies a JSON::Any the way Ansible/Jinja2 would when a filter

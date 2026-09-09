@@ -437,6 +437,93 @@ module Krikri
 
         ones.to_i32
       end
+
+      # map_format(value, pattern) - the nephelaiio.plugins collection's
+      # custom filter (nephelaiio/ansible-collection-plugins,
+      # plugins/filter/custom_filter.py, "Applies Python string
+      # formatting on an object"), found missing via nephelaiio.
+      # packetbeat's own defaults/main.yml:
+      # `hosts: "{{ hosts | map('map_format', '%s:' + port) | list }}"`.
+      # NOT community.general's (a filter of that name does not exist
+      # there) - the real plugin's semantics, mirrored here:
+      #   - value and pattern BOTH dicts: recursive per-key formatting,
+      #     each value formatted with the pattern dict's same-key entry,
+      #     missing keys defaulting to "%s";
+      #   - otherwise: every "%s" occurrence in the pattern string is
+      #     replaced with the (Python-str) value - the real plugin does
+      #     `pattern % tuple([value] * pattern.count("%s"))`, Python's
+      #     `%%` escape included;
+      #   - a non-string pattern with a scalar value returns the pattern
+      #     unchanged (the real plugin's TypeError fallback).
+      def self.map_format(value : JSON::Any, pattern : JSON::Any) : JSON::Any
+        if value.raw.is_a?(Hash) && pattern.raw.is_a?(Hash)
+          result = {} of String => JSON::Any
+          value.as_h.each do |key, item|
+            item_pattern = pattern.as_h[key]? || JSON::Any.new("%s")
+            result[key] = map_format(item, item_pattern)
+          end
+          JSON::Any.new(result)
+        elsif text = pattern.as_s?
+          JSON::Any.new(percent_format(text, value))
+        else
+          pattern
+        end
+      end
+
+      # Python's `%` string-formatting operator, restricted to the two
+      # conversions the real map_format filter can hit with its
+      # tuple-of-one-value argument: `%s` (str substitution - the real
+      # plugin counts these and passes one copy of the value each) and
+      # `%%` (literal percent). Any other conversion character (%d, %r,
+      # ...) would raise TypeError in the real plugin and return the
+      # pattern unchanged - left in place literally here, same net
+      # output for the fallback path the real code takes.
+      def self.percent_format(pattern : String, value : JSON::Any) : String
+        rendered = py_str(value)
+        chars = pattern.chars
+        String.build do |str|
+          i = 0
+          while i < chars.size
+            if chars[i] == '%' && i + 1 < chars.size
+              case chars[i + 1]
+              when 's'
+                str << rendered
+                i += 2
+                next
+              when '%'
+                str << '%'
+                i += 2
+                next
+              end
+            end
+            str << chars[i]
+            i += 1
+          end
+        end
+      end
+
+      # Python str() rendering of a JSON::Any - map_format's `%s`
+      # substitution uses the same conventions as FilterEngine#as_string
+      # (capitalized True/False, Python-style dict/list repr via JSON),
+      # kept here so the Crinja side shares one implementation.
+      def self.py_str(value : JSON::Any) : String
+        case raw = value.raw
+        when Nil
+          ""
+        when String
+          raw
+        when Bool
+          raw ? "True" : "False"
+        when Int64, Int32
+          raw.to_s
+        when Float64
+          raw.to_s
+        when Array, Hash
+          value.to_json
+        else
+          raw.to_s
+        end
+      end
     end
   end
 end

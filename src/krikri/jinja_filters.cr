@@ -9,6 +9,7 @@ require "./jmespath"
 require "./variable_substitutor/crinja_renderer"
 require "./vault"
 require "./ipaddr_core"
+require "./py_random"
 
 # Custom Jinja2 filters that real Ansible's Jinja2 provides but Crinja
 # doesn't ship, registered into the global Crinja default library so they're
@@ -1717,6 +1718,69 @@ module Krikri
       items = target.each.to_a
       rng = seed_arg.raw.nil? ? Random.new : Random.new(seed_arg.to_s.hash)
       items.shuffle(random: rng)
+    end
+
+    # `random(seed=none)` - real Jinja2's do_random filter: an int operand
+    # means "random int less than this" (Python's randrange), a sequence
+    # operand means "random element" (choice). Registered on the Crinja
+    # side for real `.j2` template files and `{% %}` blocks, mirroring the
+    # hand-rolled FilterEngine copy (see that one for the full
+    # lean_delivery.jenkins_slave rationale). Unlike :shuffle's deliberate
+    # not-Python-exact decision above, the seeded path here uses PyRandom
+    # - a bit-exact port of CPython's random.Random - so a `.j2` template
+    # and real Ansible produce the SAME value for the same seed, the
+    # property a register:'d idempotent password actually depends on.
+    Crinja.filter({seed: nil}, :random) do
+      seed_arg = arguments["seed"]
+      raw = JinjaFilters.unwrap_crinja_raw(target.raw)
+      result = case raw
+               when Int32, Int64
+                 limit = raw.to_i64
+                 limit <= 0 ? Crinja::Value.new(nil) : Crinja::Value.new(JinjaFilters.py_random(seed_arg).randrange(limit))
+               when Array(Crinja::Value)
+                 raw.empty? ? Crinja::Value.new(nil) : Crinja::Value.new(JinjaFilters.py_random(seed_arg).choice(raw))
+               when String
+                 chars = raw.chars.map { |char| Crinja::Value.new(char.to_s) }
+                 chars.empty? ? Crinja::Value.new(nil) : Crinja::Value.new(JinjaFilters.py_random(seed_arg).choice(chars).to_s)
+               else
+                 target
+               end
+      result
+    end
+
+    # Converts a `seed=` kwarg (Crinja::Value) into PyRandom's seed type.
+    def self.py_random(seed_arg : Crinja::Value) : PyRandom
+      case raw = unwrap_crinja_raw(seed_arg.raw)
+      when String
+        PyRandom.new(raw)
+      when Int32, Int64
+        PyRandom.new(raw.to_i64)
+      else
+        PyRandom.new(seed_arg.to_s)
+      end
+    end
+
+    # `map_format(pattern)` - the nephelaiio.plugins collection's custom
+    # filter ("Applies Python string formatting on an object"), found
+    # missing via nephelaiio.packetbeat's own defaults/main.yml:
+    # `hosts: "{{ hosts | map('map_format', '%s:' + port) | list }}"`.
+    # NOT community.general's (no such filter exists there). The shared
+    # core lives in FilterCore.map_format (see it for the real plugin's
+    # semantics); Crinja's own map() resolves registered filter names
+    # natively, so the role's `map('map_format', ...)` shape reaches this
+    # registration directly.
+    Crinja.filter(:map_format) do
+      pattern = arguments.varargs[0]?
+      if pattern.nil?
+        target
+      else
+        JinjaFilters.json_any_to_value(
+          VariableSubstitutor::FilterCore.map_format(
+            Krikri::VariableSubstitutor::CrinjaRenderer.crinja_value_to_json_any(target),
+            Krikri::VariableSubstitutor::CrinjaRenderer.crinja_value_to_json_any(pattern),
+          )
+        )
+      end
     end
 
     # `to_datetime(format='%Y-%m-%d %H:%M:%S')` - real Ansible's own

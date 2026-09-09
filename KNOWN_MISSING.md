@@ -18,8 +18,41 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.865`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.866`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
+
+---
+
+## Missing `random` and `map_format` filters (0.9.866)
+
+Newly found in this round's triage, two independent missing filters in
+the hand-rolled `{{ }}` evaluator:
+
+- **`random`** - lean_delivery.jenkins_slave fails with "No filter
+  named 'random'." on its password-generation idiom
+  `65534 | random(seed=inventory_hostname)`: pick a pseudo-random int
+  less than 65534, deterministically seeded by a string so a
+  `register:`'d password is stable across idempotent reruns on the same
+  host. Both the int (randrange) and list (choice) operand forms are
+  implemented, and the seeded path is a bit-exact port of CPython's
+  `random.Random` (Mersenne Twister + Lib/random.py's sha512 string
+  seeding) in `src/krikri/py_random.cr`, pinned in specs against real
+  CPython 3.13 output - so krikri and real ansible-playbook produce the
+  SAME value for the same seed, not merely a krikri-internally
+  deterministic one (the `shuffle` filter's older, weaker precedent).
+  Registered on the Crinja side too (`.j2`/`{% %}` path).
+
+- **`map_format`** - nephelaiio.packetbeat fails with "No filter named
+  'map_format'." building its output-host list:
+  `hosts | map('map_format', '%s:' + port) | list`. The filter is the
+  nephelaiio.plugins collection's own custom filter (NOT
+  community.general - no such filter exists there), whose real
+  semantics are Python `%`-operator formatting: every `%s` occurrence
+  in the pattern is replaced with the value (Python's `%%` escape
+  included, dict/dict operands format per-key). Shared core in
+  FilterCore.map_format so both evaluators answer identically;
+  reachable through `map()` since that already recurses into the
+  engine's own dispatch per item. Registered on the Crinja side too.
 
 ---
 
