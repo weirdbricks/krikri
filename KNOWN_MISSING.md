@@ -18,8 +18,36 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.873`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.874`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
+
+---
+
+## An unknown collection filter silently degraded to the literal text "undefined" via the task-vars raise-to-absent rescue (0.9.874)
+
+Newly found in this round's triage, confirmed by two roles:
+`nephelaiio.pip` and `nephelaiio.gitlab` both call their own collection's
+filter (`nephelaiio.plugins.sorted_get`) from a `set_fact:` `vars:` block
+(`_pip_packages_default: "{{ pip_packages_default |
+nephelaiio.plugins.sorted_get(overrides) }}"`). The `{{ }}` evaluators
+themselves already hard-fail an unknown filter name with real Jinja2's
+own "No filter named 'X'." (since 0.9.726), but the task-vars render
+layer's blanket "raise-to-absent" rescue (keep a `vars:` expression that
+legitimately raises - an undefined variable - from crashing a task its
+own `when:` would have skipped) caught that failure too and silently
+DELETED the var. The consumer chain (`pip_packages |
+default(_pip_packages_default)`) then resolved through `default()` to the
+literal text "undefined", which became `apt install undefined` - a
+different, silently-wrong later failure instead of the immediate,
+self-describing one. Fixed by re-raising `UnknownFilterError` through
+that rescue (only that class - undefined-variable drop behavior is
+unchanged), mapping Crinja's own unknown-filter error through the lenient
+block-tag render to the same hard failure instead of returning raw
+template text, and teaching the `when:` compile-time filter-name pre-pass
+to read collection-qualified dotted names (an implemented
+`community.general.lists_mergeby` in a `when:` previously hard-failed as
+the nonexistent filter "community"; an unknown FQCN now errors under its
+complete dotted name, as real Ansible reports it).
 
 ---
 

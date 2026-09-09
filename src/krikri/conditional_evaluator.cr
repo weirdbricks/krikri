@@ -1219,11 +1219,25 @@ module Krikri
     end
 
     # Reads the filter name starting at byte offset *start* (just past a
-    # `|`): optional whitespace, one optional `ansible.builtin.` FQCN
-    # prefix (mirroring FilterEngine#apply's own lchop), then a Jinja
-    # identifier. Returns {name, index-past-the-name} for the caller to
-    # resume from, or nil when what follows the `|` is not a filter name
-    # at all (end of string, another `|`, an operator character).
+    # `|`): optional whitespace, then a Jinja identifier that may carry
+    # collection-qualification dots (`community.general.lists_mergeby`,
+    # `nephelaiio.plugins.sorted_get`). Returns {name, index-past-the-name}
+    # for the caller to resume from, or nil when what follows the `|` is
+    # not a filter name at all (end of string, another `|`, an operator
+    # character).
+    #
+    # The name is normalized through the SAME FQCN-prefix rules
+    # FilterEngine#apply dispatches under (`ansible.builtin.` always
+    # stripped; `ansible.utils.`/`community.general.` stripped only when
+    # the bare name beneath is one that engine implements) so the
+    # pre-pass and the dispatch can never disagree about a collection-
+    # qualified spelling the dispatch accepts - previously the scanner
+    # read only up to the first dot, so an implemented
+    # `community.general.lists_mergeby` in a `when:` hard-failed as the
+    # nonexistent filter "community" even though the same chain inside a
+    # task param ran fine. A genuinely-unknown dotted name is returned
+    # whole, so the error names it as real Ansible does
+    # ("No filter named 'nephelaiio.plugins.sorted_get'.").
     private def self.filter_name_at(bytes : Bytes, start : Int32) : {String, Int32}?
       i = start
       while i < bytes.size && (bytes[i] == 32 || bytes[i] == 9)
@@ -1231,36 +1245,53 @@ module Krikri
       end
       return nil if i >= bytes.size
 
-      fqcn = "ansible.builtin.".to_slice
-      if i + fqcn.size <= bytes.size && bytes[i, fqcn.size] == fqcn
-        i += fqcn.size
-        return nil if i >= bytes.size
-      end
-
-      # the ansible.utils ipaddr family's FQCN spelling - stripped only
-      # when the following name is one the family actually implements,
-      # so a genuinely-unknown `ansible.utils.foo` still pre-pass-fails
-      # and the error keeps naming the full FQCN
-      if i + 15 <= bytes.size && bytes[i, 15] == "ansible.utils.".to_slice
-        rest = filter_name_at(bytes, i + 15)
-        if rest && IpAddrCore::FAMILY_FILTERS.includes?(rest[0])
-          return rest
-        end
-      end
-
       first = bytes[i]
       is_letter = (first >= 65 && first <= 90) || (first >= 97 && first <= 122) || first == 95
       return nil unless is_letter
 
       j = i + 1
+      last_dot = -1
       while j < bytes.size
         b = bytes[j]
         is_word = (b >= 48 && b <= 57) || (b >= 65 && b <= 90) || (b >= 97 && b <= 122) || b == 95
+        if !is_word && b == 46 && j > i && bytes[j - 1] != 46
+          # a dot between identifiers - remember it and let the loop
+          # require a letter/underscore next (checked by the trailing
+          # validation below)
+          last_dot = j
+          j += 1
+          next
+        end
         break unless is_word
         j += 1
       end
 
-      {String.new(bytes[i, j - i]), j}
+      # a trailing dot (`.foo | `) is not part of the name
+      name_end = (last_dot + 1 == j) ? last_dot : j
+      return nil if name_end <= i
+
+      normalize_filter_fqcn(String.new(bytes[i, name_end - i]), j)
+    end
+
+    # Mirrors FilterEngine#apply's own FQCN-prefix strip rules for the
+    # pre-pass: returns the bare name when the dotted spelling is one the
+    # dispatch accepts, the full dotted name otherwise (so an unknown
+    # collection filter errors under its complete FQCN, as real Ansible
+    # names it). *after* is the index just past the name, unchanged for a
+    # bare name.
+    private def self.normalize_filter_fqcn(name : String, after : Int32) : {String, Int32}?
+      return {name, after} unless name.includes?(".")
+
+      if bare = name.lchop?("ansible.builtin.")
+        return {bare, after}
+      end
+      if bare = name.lchop?("ansible.utils.")
+        return {bare, after} if IpAddrCore::FAMILY_FILTERS.includes?(bare)
+      end
+      if bare = name.lchop?("community.general.")
+        return {bare, after} if VariableSubstitutor::FilterEngine::KNOWN_FILTER_NAMES.includes?(bare)
+      end
+      {name, after}
     end
 
     # Quote-aware whitespace normalization for condition strings - see

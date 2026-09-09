@@ -253,6 +253,18 @@ describe Krikri::VariableSubstitutor::FilterEngine do
     end
   end
 
+  it "raises for an unknown collection-qualified filter WITH arguments, naming the filter alone" do
+    # nephelaiio.pip / nephelaiio.gitlab's own
+    # `pip_packages_default | nephelaiio.plugins.sorted_get(overrides)`:
+    # the name regex previously only matched \w+, so a dotted unknown
+    # filter with arguments raised with the whole "name(args)" text as
+    # the "filter name" instead of the filter name real Ansible reports.
+    expect_raises(Krikri::VariableSubstitutor::FilterEngine::UnknownFilterError,
+      "No filter named 'nephelaiio.plugins.sorted_get'.") do
+      engine.apply(s("hello"), "nephelaiio.plugins.sorted_get(overrides)")
+    end
+  end
+
   it "sorts an array" do
     result = engine.apply(JSON.parse(%(["banana", "apple", "cherry"])), "sort").as_a.map(&.as_s)
     result.should eq(["apple", "banana", "cherry"])

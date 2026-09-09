@@ -36,7 +36,16 @@ module Krikri
       class UnknownFilterError < Exception
       end
 
-      REGEX_FILTER_CALL = /^(\w+)\s*\((.*)\)$/m
+      # The name part includes dots so a collection-qualified unknown
+      # filter WITH arguments (`nephelaiio.plugins.sorted_get(overrides)`)
+      # reports its full dotted name in the unknown-filter error, exactly
+      # as real Ansible names it - `\w+` alone stopped at the first dot,
+      # so the whole `name(args)` text became the "filter name" in the
+      # message. No implemented filter name contains a dot (the FQCN
+      # spellings are stripped down to bare names before this regex
+      # runs), so this only ever changes the ERROR message, never the
+      # dispatch.
+      REGEX_FILTER_CALL = /^([\w.]+)\s*\((.*)\)$/m
 
       # Every filter name the `case filter_name` dispatch inside #apply
       # below implements. Lives alongside that dispatch as the one list

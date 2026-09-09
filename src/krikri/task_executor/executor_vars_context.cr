@@ -587,6 +587,17 @@ module Krikri
         # top-level case already uses.
         begin
           vars_context[key] = render_task_var_value(raw, vars_context, host_name)
+        rescue e : VariableSubstitutor::FilterEngine::UnknownFilterError
+          # An unknown filter name is NOT a legitimate raise-to-absent
+          # case: real Ansible hard-fails the task that uses the var with
+          # "No filter named 'X'." (a real Jinja2 TemplateAssertionError -
+          # Jinja validates filter names against its registered filter set
+          # before ever calling). Silently dropping the var here fed the
+          # downstream `default(...)` chain the literal text "undefined"
+          # instead (nephelaiio.pip / nephelaiio.gitlab's own
+          # `nephelaiio.plugins.sorted_get` set_fact: - `apt install
+          # undefined`), a different, silently-wrong later failure.
+          raise e
         rescue
           # Same raise-to-absent convention as before: a vars: expression
           # that legitimately raises is dropped rather than crashing the

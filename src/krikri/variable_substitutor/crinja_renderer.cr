@@ -162,9 +162,24 @@ module Krikri
       # Render a template containing Jinja2 control structures
       def render(text : String) : String
         render!(text)
+      rescue e : Crinja::FeatureLibrary::UnknownFeatureError
+        # An unknown FILTER name must never degrade to the original
+        # unrendered text here: real Jinja2/Ansible hard-fails the task
+        # with "No filter named 'X'." (a real TemplateAssertionError - the
+        # filter set is validated before the call is attempted), while the
+        # swallow-to-original-text fallback below turned an unknown filter
+        # inside a `{% %}`-bearing value into silently-wrong downstream
+        # output. Every other failure keeps the lenient give-back-the-text
+        # behavior (a lenient-undefined `{% if %}` is deliberate here).
+        raise VariableSubstitutor::FilterEngine::UnknownFilterError.new(
+          "No filter named '#{crinja_unknown_feature_name(e)}'.")
       rescue
         # Return original text on failure
         text
+      end
+
+      private def crinja_unknown_feature_name(e : Crinja::FeatureLibrary::UnknownFeatureError) : String
+        e.message.try(&.match(/no filter with name "([^"]+)" registered/).try(&.[1])) || "unknown"
       end
 
       # Evaluates *expr* (bare Jinja expression text, no surrounding
