@@ -496,6 +496,24 @@ module Krikri
           return JSON::Any.new(strip_chars(current.as_s, chars, left: true, right: true))
         end
 
+        if result = string_method_case_call(current, part)
+          return result
+        end
+
+        nil
+      end
+
+      # Python's str.lower()/str.upper() method-call syntax - logdna.
+      # logdna's own `include_tasks: ./package/install_{{ ansible_os_
+      # family.lower()}}.yml` (picking the OS-family install task file).
+      # Only the `| lower`/`| upper` FILTER spellings were implemented
+      # before; the bare Python method-call form fell through resolve_
+      # nested entirely, collapsing the whole `{{ }}` to the literal text
+      # "undefined" and the include to the nonexistent path
+      # "install_undefined.yml".
+      private def string_method_case_call(current : JSON::Any, part : String) : JSON::Any?
+        return JSON::Any.new(current.as_s.downcase) if part =~ /^lower\(\s*\)$/ && current.raw.is_a?(String)
+        return JSON::Any.new(current.as_s.upcase) if part =~ /^upper\(\s*\)$/ && current.raw.is_a?(String)
         nil
       end
 

@@ -165,6 +165,22 @@ describe Krikri::VariableSubstitutor::VariableLookup do
     lookup.nested("padded.strip('xy')").should eq("-hello-")
   end
 
+  it "resolves Python-style .lower()/.upper() method calls on a string" do
+    # Real bug found benchmarking logdna.logdna (round 72000):
+    # `include_tasks: ./package/install_{{ ansible_os_family.lower()}}.yml`
+    # - no String method-call handling existed for lower/upper at all, so
+    # the whole `{{ }}` collapsed to the literal text "undefined" and the
+    # include tried to load the nonexistent path "install_undefined.yml"
+    # instead of "install_debian.yml". `| lower` (the Jinja filter
+    # spelling) always worked; only the Python method-call syntax was
+    # missing.
+    v = Hash(String, JSON::Any).new
+    v["os_family"] = JSON::Any.new("Debian")
+    lookup = Krikri::VariableSubstitutor::VariableLookup.new(v)
+    lookup.nested("os_family.lower()").should eq("debian")
+    lookup.nested("os_family.lower().upper()").should eq("DEBIAN")
+  end
+
   it "resolves a Python-style .find(substring) method call on a string" do
     # Real bug found benchmarking geerlingguy.clamav's own "Run freshclam
     # after ClamAV packages change." task: `failed_when: - freshclam_
