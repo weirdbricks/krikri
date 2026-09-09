@@ -60,6 +60,16 @@ module Krikri
   # larger pre-existing gap not touched in this pass. Per-package
   # `state: absent` version pinning (uninstall doesn't take a version).
   class PipPlugin < BasePlugin
+    # Set by #resolve_pip_binary when THIS task invocation itself created
+    # the target virtualenv (it didn't exist before the task ran). Real
+    # Ansible's pip module counts creating a virtualenv as a change in
+    # its own right, independent of whether the requested package then
+    # needed installing - found benchmarking claranet.postgresql, whose
+    # `pip: {name: ..., virtualenv: ...}` cold run reported ok/"Package
+    # already installed" in krikri (the fresh venv's own bootstrapped
+    # pip satisfied `pip show pip`) where real Ansible reported changed.
+    @created_virtualenv = false
+
     def execute : PluginResult
       state = @params["state"]? || "present"
       requirements = @params["requirements"]?
@@ -106,14 +116,27 @@ module Krikri
         return bad_umask
       end
 
-      case state
-      when "absent"
-        remove(pip_bin, name || raise "pip: name is required with state=absent")
-      when "latest"
-        install(pip_bin, target_spec(name, nil), upgrade: true)
-      else
-        install(pip_bin, target_spec(name, @params["version"]?), upgrade: false, requirements: requirements)
-      end
+      result = case state
+               when "absent"
+                 remove(pip_bin, name || raise "pip: name is required with state=absent")
+               when "latest"
+                 install(pip_bin, target_spec(name, nil), upgrade: true)
+               else
+                 install(pip_bin, target_spec(name, @params["version"]?), upgrade: false, requirements: requirements)
+               end
+
+      overlay_venv_creation_change(result)
+    end
+
+    # A venv this task itself created is a change regardless of what the
+    # package-install step then did - including the
+    # all_packages_satisfied? short-circuit, which for a brand-new venv
+    # can legitimately succeed (the spec is already satisfied by
+    # whatever pip bootstraps, e.g. name: pip) yet the task still
+    # materially created something on the host.
+    private def overlay_venv_creation_change(result : PluginResult) : PluginResult
+      result.changed = true if @created_virtualenv && !result.failed?
+      result
     end
 
     # Verify pip is usable on the target (skipped for a virtualenv:
@@ -264,6 +287,7 @@ module Krikri
           unless result[:exit_code] == 0
             return PluginResult.new(changed: false, failed: true, msg: "Failed to create virtualenv: #{result[:stderr]}")
           end
+          @created_virtualenv = true
         end
         pip_path
       else

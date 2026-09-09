@@ -1,4 +1,5 @@
 require "../spec_helper"
+require "file_utils"
 
 # pip: actually installing/uninstalling packages needs a real pip
 # binary and network access, and mutates the machine running the test
@@ -102,6 +103,51 @@ describe "pip plugin" do
 
     result["failed"]?.try(&.as_bool).should_not be_true
     result["changed"].as_bool.should be_false
+  end
+
+  # Real bug found benchmarking claranet.postgresql (cold run): a `pip:`
+  # task with `virtualenv:` pointing at a not-yet-existing directory
+  # creates the venv via `python3 -m venv` - and creating it is itself a
+  # change under real Ansible, independent of the package-install step's
+  # own outcome. krikri used to report ok/`changed: false` here: the
+  # fresh venv bootstraps its own pip, so `pip show <pkg>` succeeded
+  # (name: pip is the sharpest repro - the venv's bootstrapped pip IS
+  # the requested package), the all_packages_satisfied? short-circuit
+  # fired, and the venv creation was never accounted for. These two
+  # specs run a REAL `python3 -m venv` (no network, ensurepip is
+  # self-contained) under Dir.tempdir, cleaned up after.
+  describe "virtualenv:" do
+    it "reports changed: true when the task itself created the virtualenv (even if the package is already satisfied by the fresh venv)" do
+      venv = File.join(Dir.tempdir, "krikri-pip-spec-venv-#{Random::Secure.hex(8)}")
+      begin
+        result = PluginSpecHelper.run("pip", {
+          "name"       => "pip",
+          "virtualenv" => venv,
+        })
+
+        result["failed"]?.try(&.as_bool).should_not be_true
+        File.directory?(venv).should be_true
+        result["changed"].as_bool.should be_true
+      ensure
+        FileUtils.rm_rf(venv)
+      end
+    end
+
+    it "reports changed: false for an already-satisfied package in a pre-existing virtualenv" do
+      venv = File.join(Dir.tempdir, "krikri-pip-spec-venv-#{Random::Secure.hex(8)}")
+      begin
+        system("python3 -m venv #{venv}").should be_true
+        result = PluginSpecHelper.run("pip", {
+          "name"       => "pip",
+          "virtualenv" => venv,
+        })
+
+        result["failed"]?.try(&.as_bool).should_not be_true
+        result["changed"].as_bool.should be_false
+      ensure
+        FileUtils.rm_rf(venv)
+      end
+    end
   end
 
   describe "umask:" do

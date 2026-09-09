@@ -18,8 +18,32 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.870`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.871`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
+
+---
+
+## `pip:` with `virtualenv:` reported ok when the task itself had to create the virtualenv (0.9.871)
+
+Newly found in this round's triage: `claranet.postgresql`'s cold run on
+a host with no pre-existing virtualenv - a `pip:` task with
+`virtualenv:` set reported `ok`/"Package already installed"
+(`changed: false`) where real Ansible reported `changed: true`. The venv
+WAS genuinely created (`resolve_pip_binary` ran `python3 -m venv` for
+the not-yet-existing directory), but the plugin never recorded that
+creation as a change: it only looked at the package-install step's own
+outcome, and that step can legitimately short-circuit on a brand-new
+venv - a fresh venv bootstraps its own pip, so a `pip show` on the
+requested package (or `name: pip` itself, the sharpest repro) already
+succeeds and the per-package idempotency check reported "Package
+already installed". Real Ansible's pip module counts creating a
+virtualenv that didn't exist as a change in its own right, independent
+of the install step. Fixed by tracking whether this task invocation
+itself created the venv and forcing `changed: true` on the final result
+(only when the task didn't fail) regardless of the install step's own
+changed state; a pre-existing venv with an already-satisfied package
+still reports `changed: false` (regression-spec'd both ways with real
+`python3 -m venv` runs).
 
 ---
 
