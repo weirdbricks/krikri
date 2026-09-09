@@ -891,6 +891,46 @@ module Krikri
         if match = meminfo.match(/SwapFree:\s+(\d+)/)
           facts["ansible_swapfree_mb"] = match[1].to_i64 // 1024
         end
+
+        # The namespaced `ansible_memory_mb` fact (surfaces as
+        # `ansible_facts.memory_mb`), mirroring real ansible-core's Linux
+        # hardware collector: real{total,used,free}, nocache{free,used},
+        # swap{total,free,used,cached}, all MB (kB // 1024), computed
+        # values omitted when their inputs are absent. Found via
+        # geerlingguy.swap's own `when: ansible_facts.memory_mb['swap']
+        # ['total'] > 0` - the legacy flat facts above existed but this
+        # dict never did, so the condition died with "object of type
+        # 'dict' has no attribute 'memory_mb'".
+        memstats = {} of String => Int64
+        meminfo.each_line do |line|
+          key, _, val = line.partition(":")
+          next if val.empty?
+          if num = val.strip.split(" ")[0]?.try(&.to_i64?)
+            memstats[key.downcase] = num // 1024
+          end
+        end
+
+        mb_val = ->(k : String) { memstats[k]? ? JSON::Any.new(memstats[k]) : JSON::Any.new(nil) }
+
+        real = {"total" => mb_val.call("memtotal"), "free" => mb_val.call("memfree")} of String => JSON::Any
+        real["used"] = JSON::Any.new(memstats["memtotal"] - memstats["memfree"]) if memstats["memtotal"]? && memstats["memfree"]?
+
+        nocache = {} of String => JSON::Any
+        if (cached = memstats["cached"]?) && (free = memstats["memfree"]?) && (buffers = memstats["buffers"]?)
+          nocache_free = cached + free + buffers
+          nocache["free"] = JSON::Any.new(nocache_free)
+          nocache["used"] = JSON::Any.new(memstats["memtotal"] - nocache_free) if memstats["memtotal"]?
+        end
+
+        swap = {"total" => mb_val.call("swaptotal"), "free" => mb_val.call("swapfree")} of String => JSON::Any
+        swap["used"] = JSON::Any.new(memstats["swaptotal"] - memstats["swapfree"]) if memstats["swaptotal"]? && memstats["swapfree"]?
+        swap["cached"] = mb_val.call("swapcached")
+
+        facts["ansible_memory_mb"] = {
+          "real"    => JSON::Any.new(real),
+          "nocache" => JSON::Any.new(nocache),
+          "swap"    => JSON::Any.new(swap),
+        } of String => JSON::Any
       end
 
       # CPU facts

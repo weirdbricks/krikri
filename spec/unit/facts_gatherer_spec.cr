@@ -155,4 +155,36 @@ describe Krikri::FactsGatherer do
       Krikri::FactsGatherer.detect_virtualization.should_not be_empty
     end
   end
+
+  describe "ansible_memory_mb (ansible_facts.memory_mb)" do
+    it "gathers the namespaced memory dict, not just the legacy flat facts" do
+      # Found via geerlingguy.swap's "Disable swap (if configured).":
+      # `when: ansible_facts.memory_mb['swap']['total'] > 0` died with
+      # "object of type 'dict' has no attribute 'memory_mb'" - only the
+      # legacy ansible_memtotal_mb/ansible_swaptotal_mb/... flat facts
+      # existed, the namespaced dict real ansible-core's Linux hardware
+      # collector produces (real/nocache/swap) was never gathered.
+      facts = JSON.parse(Krikri::FactsGatherer.run(nil))["ansible_facts"].as_h
+
+      mem_mb = facts["ansible_memory_mb"]?.should_not be_nil
+      mem_mb = mem_mb.as_h
+      mem_mb["swap"]?.should_not be_nil
+      mem_mb["real"]?.should_not be_nil
+      mem_mb["nocache"]?.should_not be_nil
+
+      swap = mem_mb["swap"].as_h
+      swap["total"]?.should_not be_nil
+      swap["free"]?.should_not be_nil
+      swap["used"]?.should_not be_nil
+
+      # Consistency with the legacy flat facts (real Ansible derives
+      # both from the same /proc/meminfo line).
+      if (legacy_total = facts["ansible_swaptotal_mb"]?.try(&.as_i64?)) && (ns_total = swap["total"].as_i64?)
+        ns_total.should eq(legacy_total)
+      end
+      if (legacy_memtotal = facts["ansible_memtotal_mb"]?.try(&.as_i64?)) && (real_total = mem_mb["real"].as_h["total"].as_i64?)
+        real_total.should eq(legacy_memtotal)
+      end
+    end
+  end
 end

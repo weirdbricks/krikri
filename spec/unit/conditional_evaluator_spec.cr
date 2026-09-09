@@ -161,6 +161,25 @@ describe Krikri::ConditionalEvaluator do
     end
   end
 
+  describe "dotted-then-bracket chained access into ansible_facts" do
+    it "resolves ansible_facts.memory_mb['swap']['total'] > 0" do
+      # Found via geerlingguy.swap's own "Disable swap (if configured)."
+      # task: `when: ansible_facts.memory_mb['swap']['total'] > 0` -
+      # dotted attribute access into the ansible_facts dict followed by
+      # bracket-style nested-key access. Real Ansible (Jinja2) treats a
+      # dict's keys as attributes too, so this resolves; the original
+      # failure was a missing `memory_mb` fact (see facts_gatherer_spec),
+      # this pins the evaluator side of the same chain so neither half
+      # can regress independently.
+      v = Hash(String, JSON::Any).new
+      v["ansible_facts"] = JSON.parse(%({"memory_mb": {"real": {"total": 15951, "used": 10722, "free": 5229}, "nocache": {"free": 13922}, "swap": {"total": 1024, "free": 1024, "used": 0}}}))
+      Krikri::ConditionalEvaluator.evaluate("ansible_facts.memory_mb['swap']['total'] > 0", v).should be_true
+
+      v["ansible_facts"] = JSON.parse(%({"memory_mb": {"real": {"total": 15951}, "nocache": {}, "swap": {"total": 0, "free": 0, "used": 0}}}))
+      Krikri::ConditionalEvaluator.evaluate("ansible_facts.memory_mb['swap']['total'] > 0", v).should be_false
+    end
+  end
+
   describe "membership ('in')" do
     it "checks substring membership" do
       Krikri::ConditionalEvaluator.evaluate(%("ba" in "bar"), EMPTY_VARS).should be_true
