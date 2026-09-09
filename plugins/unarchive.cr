@@ -35,12 +35,16 @@ module Krikri
   #   archive's copy (default false)
   # - list_files: include the archive's member list in the result
   #   (default false)
-  # - mode / owner / group: applied RECURSIVELY to dest and every
-  #   extracted file/directory under it (`chown -R`/`chgrp -R`/
-  #   `chmod -R`) - matches real ansible-playbook's actual behavior
-  #   (verified live), even though its OWN return value shape
-  #   (`mode`/`owner`/`group`/`uid`/`gid`) only ever describes dest
-  #   itself, not each member
+  # - mode / owner / group: applied RECURSIVELY to every extracted path
+  #   under dest (`chown -R`/`chgrp -R`/`chmod -R` reaching everything
+  #   dest CONTAINS) - matches real ansible-playbook's actual behavior
+  #   (verified against unarchive.py's own post-extraction
+  #   `set_fs_attributes_if_different` walk over files_in_archive plus
+  #   the top-level archive folders, ansible#35426), even though its
+  #   OWN return value shape (`mode`/`owner`/`group`/`uid`/`gid`) only
+  #   ever describes dest itself, not each member. dest ITSELF is
+  #   never touched: real Ansible requires it to already exist and
+  #   leaves its attributes alone.
   #
   # Archive type is auto-detected by attempting to read it (`tar tf`, then
   # `unzip -l`), not by file extension - matches real Ansible's own
@@ -457,23 +461,40 @@ module Krikri
     # 'apps' directory") since the role's own permissions pass only
     # explicitly re-chowns config.php/config/data, relying on
     # unarchive's owner: for everything else (apps/, 3rdparty/, etc).
+    # Real Ansible's own unarchive module applies owner:/group:/mode: to
+    # every EXTRACTED path (dest/<member> for each archive member, plus
+    # the top-level archive folders, ansible#35426) on every run -
+    # including an already-extracted rerun - and NEVER to dest itself,
+    # which it requires to already exist and leaves at whatever
+    # attributes it had. Rooting the recursive apply AT dest (the old
+    # `chown -R owner dest`/`chmod -R mode dest`) corrupted pre-existing
+    # directories: kostiantyn-nemchenko.mongodb_exporter extracts into
+    # /usr/local/bin with `owner: mongodb_exporter`/`mode: 0750`, which
+    # chown'ed/chmod'ed /usr/local/bin itself, and the role's own later
+    # `file: state: directory` task then detected and repaired that on
+    # every warm rerun - a permanent changed=1 warm-idempotency
+    # divergence real Ansible doesn't have. `find -mindepth 1 -exec
+    # ... {} +` reaches every extracted member (nested dirs and files
+    # extracted flat into dest alike) without touching dest, and
+    # batches path arguments to survive archives with many members.
     private def apply_dest_attributes(dest : String) : PluginResult?
+      member_args = "\"#{dest}\" -mindepth 1 -exec"
       if owner = @params["owner"]?
-        result = remote_exec("chown -R #{owner} #{dest}")
+        result = remote_exec("find #{member_args} chown #{owner} {} +")
         if result[:exit_code] != 0
-          return PluginResult.new(changed: true, failed: true, msg: "Failed to set owner on #{dest}: #{result[:stderr]}")
+          return PluginResult.new(changed: true, failed: true, msg: "Failed to set owner under #{dest}: #{result[:stderr]}")
         end
       end
       if group = @params["group"]?
-        result = remote_exec("chgrp -R #{group} #{dest}")
+        result = remote_exec("find #{member_args} chgrp #{group} {} +")
         if result[:exit_code] != 0
-          return PluginResult.new(changed: true, failed: true, msg: "Failed to set group on #{dest}: #{result[:stderr]}")
+          return PluginResult.new(changed: true, failed: true, msg: "Failed to set group under #{dest}: #{result[:stderr]}")
         end
       end
       if mode = @params["mode"]?
-        result = remote_exec("chmod -R #{mode} #{dest}")
+        result = remote_exec("find #{member_args} chmod #{mode} {} +")
         if result[:exit_code] != 0
-          return PluginResult.new(changed: true, failed: true, msg: "Failed to set mode on #{dest}: #{result[:stderr]}")
+          return PluginResult.new(changed: true, failed: true, msg: "Failed to set mode under #{dest}: #{result[:stderr]}")
         end
       end
       nil

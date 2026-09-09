@@ -91,7 +91,19 @@ describe "unarchive plugin" do
     # web server user ("Cannot write into 'apps' directory"). Using
     # mode: here (not owner:/group:) since the spec runs as a normal
     # user and can't chown to an arbitrary user/group without root.
+    #
+    # The fix overcorrected for years by ALSO rooting a `chmod -R` at
+    # dest itself, which real Ansible never touches (it requires dest
+    # to exist and leaves its attributes alone) - found when
+    # kostiantyn-nemchenko.mongodb_exporter extracted into the
+    # pre-existing /usr/local/bin with `mode: 0750`/`owner:` set, and
+    # the role's later `file: state: directory` task detected and
+    # repaired the corrupted dest on every warm rerun (changed=1
+    # forever; real Ansible warm is fully idempotent). dest keeps
+    # whatever attributes it had before; only its CONTENTS get the
+    # requested attributes.
     dest = fresh_dest("tar-recursive-mode")
+    dest_mode_before = File.info(dest).permissions.value & 0o777
     result = PluginSpecHelper.run("unarchive", {
       "src"  => File.join(TMP_DIR, "archive.tar.gz"),
       "dest" => dest,
@@ -99,7 +111,20 @@ describe "unarchive plugin" do
     })
 
     result["changed"].as_bool.should be_true
-    (File.info(dest).permissions.value & 0o777).should eq(0o700)
+    (File.info(dest).permissions.value & 0o777).should eq(dest_mode_before)
+    (File.info(File.join(dest, "a.txt")).permissions.value & 0o777).should eq(0o700)
+    (File.info(File.join(dest, "sub", "b.txt")).permissions.value & 0o777).should eq(0o700)
+
+    # And a warm rerun (nothing left to extract) must leave dest's own
+    # attributes untouched too - the actual warm-idempotency shape the
+    # real-host round tripped over.
+    result = PluginSpecHelper.run("unarchive", {
+      "src"  => File.join(TMP_DIR, "archive.tar.gz"),
+      "dest" => dest,
+      "mode" => "0700",
+    })
+    result["changed"].as_bool.should be_false
+    (File.info(dest).permissions.value & 0o777).should eq(dest_mode_before)
     (File.info(File.join(dest, "a.txt")).permissions.value & 0o777).should eq(0o700)
     (File.info(File.join(dest, "sub", "b.txt")).permissions.value & 0o777).should eq(0o700)
   end

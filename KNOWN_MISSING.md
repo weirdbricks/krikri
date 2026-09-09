@@ -18,8 +18,31 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.880`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.881`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
+
+---
+
+## `unarchive:` applied its `owner:`/`group:`/`mode:` to dest itself, poisoning warm reruns of pre-existing dest dirs (0.9.881)
+
+Found in rounds 72286/73045/74005 (`kostiantyn-nemchenko.mongodb_exporter`,
+warm run only): cold matched real Ansible exactly (ok=12 changed=7), but
+real Ansible's warm rerun was fully idempotent while krikri reported
+changed=1 - the role's "Ensure directories for binary, SSL key/certs and
+env file are present" task detecting `/usr/local/bin` (a pre-existing
+root:root 0755 directory) as needing repair. Root cause in the unarchive
+plugin, not the file plugin: the role extracts into
+`/usr/local/bin` with `owner: mongodb_exporter`/`mode: 0750`, and
+`apply_dest_attributes` rooted a `chown -R`/`chgrp -R`/`chmod -R` AT
+dest - so the cold run chown'ed/chmod'ed `/usr/local/bin` itself to
+`mongodb_exporter` 0750, and the directory task then correctly detected
+and repaired the corruption on every subsequent run. Real Ansible's
+unarchive module applies its file args only to EXTRACTED paths (its
+post-extraction walk over `files_in_archive` plus the top-level archive
+folders, ansible#35426) and never touches dest itself, which it requires
+to already exist. The recursive apply now roots at dest's children
+(`find dest -mindepth 1 -exec ... +`) and dest's own attributes are left
+alone.
 
 ---
 
