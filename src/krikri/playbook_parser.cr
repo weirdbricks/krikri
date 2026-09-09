@@ -1718,6 +1718,18 @@ module Krikri
 
       import_when = hash["when"]?.try { |v| condition_to_string(v) }
       import_tags = hash["tags"]?.try(&.as_a?).try(&.map(&.as_s)) || [] of String
+      # A `notify:` on the import_tasks: line itself - like when:/tags:
+      # just below, real Ansible propagates it onto every task the
+      # import statically inlines, so each one independently notifies
+      # the handler if IT reports changed (Ansible's own handler dedup
+      # still runs it only once regardless of how many inlined tasks
+      # notify it). Found via filviu.activemq's own "Install apachemq
+      # {{ activemq_version }}" (`import_tasks: install.yml, notify:
+      # restart activemq`) - the handler never fired at all here before,
+      # even though several of install.yml's own inlined tasks (unarchive,
+      # deploy config) reported changed on the exact same run real
+      # Ansible fired it on.
+      import_notify = hash["notify"]?.try { |v| v.as_s? ? [v.as_s] : v.as_a.map(&.as_s) } || [] of String
       import_vars = Hash(String, JSON::Any).new
       if vars_yaml = hash["vars"]?.try(&.as_h?)
         vars_yaml.each { |key, value| import_vars[key.to_s] = Vault.maybe_decrypt_json(JSON.parse(value.to_json)) }
@@ -1742,6 +1754,9 @@ module Krikri
           task.when_condition = task.when_condition ? "(#{import_when}) and (#{task.when_condition})" : import_when
         end
         task.tags = (task.tags + import_tags).uniq
+        unless import_notify.empty?
+          task.notify = ((task.notify || [] of String) + import_notify).uniq
+        end
         import_vars.each { |key, value| task.vars[key] = value }
       end
 

@@ -1516,6 +1516,33 @@ describe Krikri::PlaybookParser do
       playbook.plays[0].tasks[0].tags.should eq(["imported"])
     end
 
+    it "applies the import's own notify: to each imported task individually" do
+      # Real bug found benchmarking filviu.activemq's own "Install
+      # apachemq {{ activemq_version }}" (`import_tasks: install.yml,
+      # notify: restart activemq`) - when:/tags: on the import line were
+      # already propagated onto each inlined task (see the specs just
+      # above), but notify: was not, so the handler never fired at all
+      # even when several of install.yml's own inlined tasks (unarchive,
+      # deploy config) reported changed on the exact same run real
+      # Ansible fired it on.
+      root = import_tasks_root("import_tasks_notify_spec")
+      File.write(File.join(root, "common.yml"), <<-YAML)
+        - name: t
+          ansible.builtin.debug:
+            msg: hi
+        YAML
+
+      playbook = Krikri::PlaybookParser.parse_string(<<-YAML, File.join(root, "site.yml"))
+        - name: play
+          hosts: all
+          tasks:
+            - import_tasks: common.yml
+              notify: restart thing
+        YAML
+
+      playbook.plays[0].tasks[0].notify.should eq(["restart thing"])
+    end
+
     it "resolves a nested import_tasks: relative to the file that contains it, not the top-level playbook" do
       root = import_tasks_root("import_tasks_nested_spec")
       Dir.mkdir_p(File.join(root, "sub"))
