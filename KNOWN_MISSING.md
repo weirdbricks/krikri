@@ -18,8 +18,68 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.844`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.846`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
+
+---
+
+## Round 72000: 400-role batch (2x Atlantic.net capacity), 2 real bugs (0.9.845-0.9.846)
+
+First batch run entirely Atlantic-only (no Kata, per round 71000's
+undiagnosed Kata cgroup boot-failure finding) at 24 hosts/12 pairs -
+the account's server limit is 25, not 40, so this stayed under that
+rather than doubling host count outright. 400 never-before-tested
+roles (leftover candidates from round 71000's own Galaxy top-download
+pull, deduped against the now-2114-role table). Final: 263 CLEAN, 57
+DIVERGENT, 75 GALAXY_MISSING, 5 TF_APPLY_FAILED (transient Terraform
+provisioning failures, unrelated slots/times - requeued and all 5 came
+back CLEAN, confirming it wasn't systemic).
+
+Of 57 DIVERGENT roles, triaged a representative sample rather than
+all 57 given the volume: 2 real bugs found and fixed below
+(`with_subelements:` on `include_tasks:` rejected outright;
+`role_path` unresolved inside a static `import_tasks:` path - both
+confirmed via live reruns to now match real Ansible); 2 new open gaps
+documented (below) rather than fixed - a quoted-string-re-evaluated-as-
+code bug (`crazikPL.logging`) and a silently-tolerated malformed-Jinja
+gap (`kostiantyn-nemchenko.patroni`), both real but with fixes risky
+enough or broad enough to warrant more isolated reproduction first
+rather than a rushed change. The remaining ~53 divergent roles were
+not individually triaged this round - candidates for a future pass,
+not yet confirmed as bugs, harness gaps, or scope cuts.
+
+- **`f5devcentral.bigiq_move_app_dashboard`/`.bigiq_pinning_deploy_
+  objects`**: both hard-failed at parse time (`'with_subelements' is
+  not a valid attribute for a TaskInclude`, rc=4, no recap) on a
+  completely standard `include_tasks:` looped over
+  `with_subelements: [apps, pin]`, where real ansible-core runs it
+  fine. `TASK_INCLUDE_VALID_KEYWORDS` had every other with_*
+  loop-lookup variant (`with_items`, `with_fileglob`,
+  `with_first_found`, `with_dict`, `with_nested`, `with_sequence`,
+  `with_indexed_items`, `with_file`) but not this one - a plain
+  omission, not a deliberate scope cut. Fixed by adding it to the
+  allowlist and adding actual `with_subelements:` parsing to
+  `parse_include_tasks` (previously only the generic per-task parser
+  handled it, so `item` would have stayed unbound throughout the
+  included file even past the allowlist fix - the same bug class
+  `with_first_found`'s own earlier fix addressed). Regression spec
+  added (`spec/unit/playbook_parser_spec.cr`); live-reverified on
+  fresh Atlantic hosts.
+
+- **`infOpen.openjdk-jre`**: hard-failed at parse time
+  (`StaticImportUndefinedError`: `'role_path' is undefined`, rc=4, no
+  recap) on `import_tasks: "{{ role_path }}/tasks/manage_variables.
+  yml"` - a real, if unusual, pattern for a role to make its own
+  static-import target independent of wherever it's vendored under.
+  `known_vars` (what a static import's own path template may reference
+  at parse time) never included `role_path` at all, even though it's
+  just this role's own directory and trivially known as soon as
+  parsing begins - real ansible-core resolves it immediately and moves
+  on (`ok=7`). Fixed by adding `role_path` to `known_vars` in
+  `role_loader.cr`, right next to where `role_dir` (the same absolute
+  path) was already available for the role's own defaults/vars merge.
+  Regression spec added (`spec/unit/role_loader_spec.cr`);
+  live-reverified on a fresh Atlantic host.
 
 ---
 
@@ -1773,6 +1833,41 @@ Genuinely open defects: something is wrong and the fix is unknown or
 unfinished. Everything deliberate lives under "Deliberate limits"
 below - keep the two apart, or this list stops meaning anything.
 
+- **A double-quoted whole condition whose own text happens to look
+  like an expression gets re-evaluated as live code instead of treated
+  as opaque string data.** `crazikPL.logging` round72000: `when:
+  (("'rsyslog_elks' in group_names") or rsyslog_use_remote)` - the
+  inner `("'rsyslog_elks' in group_names")` is a legacy-style
+  double-quoted STRING LITERAL (a known Ansible anti-pattern from
+  older docs, whose own content merely happens to read like an `in`
+  test), and Python's `or` short-circuits to it unchanged since it's a
+  non-empty (truthy) string - real ansible-core's strict-conditional
+  check then correctly rejects the whole `when:` ("Conditional result
+  (True) was derived from value of type 'str'"). This engine instead
+  re-evaluates the string's own TEXT as a live boolean expression
+  (`'rsyslog_elks' in group_names`, checking real group membership),
+  landing on a different, silently-wrong answer instead of raising -
+  the same general "recursive re-templating" bug class this codebase's
+  own `CLAUDE.md` already flags as recurring independently in both
+  evaluators. Not chased further this round: the exact code path doing
+  the re-evaluation isn't isolated yet, and a broad fix to quoted-
+  literal handling risks regressing legitimate re-templating elsewhere
+  without much narrower reproduction first.
+- **Malformed Jinja2 (an unbalanced brace, `{{ var }` instead of `{{
+  var }}`) is silently tolerated instead of hard-erroring like real
+  Jinja2's parser does.** `kostiantyn-nemchenko.patroni` round72000:
+  the role's own `postgresql_apt_filename: "{{ __postgresql_apt_filename
+  }"` (a genuine typo in the role, missing one closing brace) - real
+  ansible-core raises "Syntax error in template: unexpected '}'" and
+  stops there (`ok=5`); this engine's regex-based `{{ }}` matcher
+  simply doesn't find a well-formed span, doesn't raise anything
+  either, and the play keeps going much further (`ok=19`) using
+  whatever leftover/partial value resulted - masking the real
+  divergence shape the same way the module-resolution and undefined-
+  in-string gaps above do. Not chased further this round: implementing
+  general brace-balance validation in the hand-rolled evaluator is a
+  bigger, higher-blast-radius change than this one role's benefit
+  justifies on its own.
 - **Unresolvable module/action names don't hard-stop the whole run
   like real Ansible's do.** `Aplyca.EC2Describe` (`ec2_remote_facts`, a
   module removed from ansible-core years ago) and `bodsch.k0s`
