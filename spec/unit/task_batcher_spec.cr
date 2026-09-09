@@ -13,6 +13,11 @@ private def task(name : String, register : String? = nil) : Krikri::Task
   t
 end
 
+private def plan_play(plays_yaml : String) : Array(Array(String))
+  playbook = Krikri::PlaybookParser.parse_string(plays_yaml)
+  Krikri::TaskBatcher.plan(playbook.plays[0].tasks).map { |group| group.map(&.name) }
+end
+
 describe Krikri::TaskBatcher do
   it "groups a run of fully independent tasks into a single batch" do
     tasks = [task("a"), task("b"), task("c")]
@@ -269,5 +274,121 @@ describe Krikri::TaskBatcher do
     groups = Krikri::TaskBatcher.plan(tasks)
 
     groups.flat_map(&.map(&.name)).should eq(["a", "b", "c"])
+  end
+
+  # Real bug found benchmarking gantsign.sdkman (round 74, 0.9.868): a
+  # with_nested: task whose sources are `{{ var }}` references sets
+  # loop_nested_sources (not loop_items/loop_template_kind), so it was
+  # treated as an ordinary batchable step. Batched together with the next
+  # unconditional task, execute_batch_group prepared the looped member's
+  # step with `item` unbound, its strict `{{ item[1] }}` param
+  # substitution raised, and the group's fail-fast halted the batch
+  # before the next member was ever prepared - which then got no
+  # batch-cache entry and printed "skipping:" (real Ansible: "ok:"),
+  # silently dropping a real task's execution whenever an empty-list
+  # templated loop task sat directly before a non-looped one.
+  describe "runtime-resolved loop sources are never batched with their neighbors" do
+    it "keeps an empty-list with_items: loop task out of the next task's group" do
+      groups = plan_play(<<-YAML)
+        - hosts: all
+          gather_facts: false
+          tasks:
+            - name: empty loop
+              ansible.builtin.debug:
+                msg: '{{ item }}'
+              with_items: []
+
+            - name: download candidates
+              ansible.builtin.uri:
+                url: 'http://example.com/'
+        YAML
+
+      groups.map(&.size).should eq([1, 1])
+      groups.first.first.should eq("empty loop")
+      groups[1].first.should eq("download candidates")
+    end
+
+    it "keeps a templated with_nested: task (the gantsign.sdkman shape) out of the next task's group" do
+      groups = plan_play(<<-YAML)
+        - hosts: all
+          gather_facts: false
+          vars:
+            sdkman_users: []
+          tasks:
+            - name: create the SDKMAN installation directories
+              ansible.builtin.file:
+                state: directory
+                dest: '{{ item[1] }}'
+              with_nested:
+                - '{{ sdkman_users }}'
+                - - /opt/sdkman
+                  - /opt/sdkman/bin
+
+            - name: download candidates
+              ansible.builtin.uri:
+                url: 'http://example.com/'
+                return_content: yes
+        YAML
+
+      groups.map(&.size).should eq([1, 1])
+      groups.first.first.should eq("create the SDKMAN installation directories")
+      groups[1].first.should eq("download candidates")
+    end
+
+    it "keeps with_flattened:/with_subelements:/with_first_found:/with_file: tasks out of their neighbors' groups too" do
+      groups = plan_play(<<-YAML)
+        - hosts: all
+          gather_facts: false
+          tasks:
+            - name: flattened
+              ansible.builtin.debug:
+                msg: '{{ item }}'
+              with_flattened:
+                - '{{ maybe_empty_list }}'
+
+            - name: after flattened
+              ansible.builtin.uri:
+                url: 'http://example.com/'
+
+            - name: subelements
+              ansible.builtin.uri:
+                url: 'http://example.com/'
+              with_subelements:
+                - '{{ users }}'
+                - keys
+
+            - name: after subelements
+              ansible.builtin.uri:
+                url: 'http://example.com/'
+
+            - name: first found
+              ansible.builtin.include_vars:
+                file: '{{ item }}'
+              with_first_found:
+                - ../vars/packages/default.yml
+
+            - name: after first found
+              ansible.builtin.uri:
+                url: 'http://example.com/'
+
+            - name: with file
+              ansible.builtin.copy:
+                src: '{{ item }}'
+                dest: /tmp/
+              with_file:
+                - some_file
+
+            - name: after with file
+              ansible.builtin.uri:
+                url: 'http://example.com/'
+        YAML
+
+      groups.map(&.first).should eq([
+        "flattened", "after flattened",
+        "subelements", "after subelements",
+        "first found", "after first found",
+        "with file", "after with file",
+      ])
+    end
   end
 end

@@ -233,7 +233,27 @@ module Krikri
     end
 
     private def self.needs_controller_control_flow?(task : Task) : Bool
+      # loop_nested_sources/loop_flattened/loop_subelements_list/
+      # loop_first_found/loop_file: loop keywords whose SOURCE LIST only
+      # resolves once the variable context exists (a with_nested: whose
+      # entries are `{{ var }}` references, a with_flattened:/with_
+      # subelements:/with_first_found:/with_file: source) set none of the
+      # three fields originally checked here - so the task was treated as
+      # an ordinary batchable step. Real bug found benchmarking
+      # gantsign.sdkman: its "create the SDKMAN installation directories"
+      # with_nested: over an empty sdkman_users was batched together with
+      # the next task ("download candidates", a plain unconditional uri:);
+      # execute_batch_group then prepared the looped member's step with
+      # `item` unbound, its strict `{{ item[1] }}` param substitution
+      # raised, and the group's fail-fast halted the whole batch BEFORE
+      # the next member was ever prepared - which then got no batch-cache
+      # entry and printed "skipping:" (real Ansible: "ok:"), silently
+      # dropping a real task's execution. Any empty-list templated
+      # with_nested:/with_flattened: task immediately followed by a
+      # non-looped task hits this.
       !!(task.loop_items || task.loop_fileglob || task.loop_template_kind ||
+        task.loop_nested_sources || task.loop_flattened ||
+        task.loop_subelements_list || task.loop_first_found || task.loop_file ||
         task.until_condition || task.async_seconds)
     end
 

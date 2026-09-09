@@ -18,8 +18,39 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.869`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.870`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
+
+---
+
+## Batched mixed-task grouping ran a templated `with_nested:`/`with_flattened:` loop task as an ordinary batch step, skipping the unconditional task after it (0.9.870)
+
+Newly found in this round's triage: `gantsign.sdkman`'s cold run printed
+`skipping:` for its "download candidates" task (`ansible.builtin.uri:`,
+no `when:`, no loop) where real Ansible printed `ok:` - on a task that
+sits directly after "create the SDKMAN installation directories", a
+`with_nested:` loop over the empty-by-default `sdkman_users` that both
+engines correctly skip. Not a when:/skip-state leak at all: the looped
+task's sources are `{{ var }}` references, so parse time stores them in
+`loop_nested_sources` (never `loop_items`/`loop_template_kind`) -
+exactly the fields `TaskBatcher`'s own-loop exclusion did not check -
+so the empty-loop task was treated as an ordinary BATCHABLE step and
+planned into one group with the `uri:` task after it. At run time
+`execute_batch_group` then prepared the looped member's remote step with
+`item` unbound, its strict `{{ item[1] }}` param substitution raised,
+and the group's fail-fast halted the whole batch BEFORE the next member
+was ever prepared - which then got no batch-cache entry and was
+reported (wrongly) as skipped, silently dropping a real task's
+execution. Any empty-list templated `with_nested:`/`with_flattened:`
+task directly followed by a non-looped task hit this;
+`with_subelements:`/`with_first_found:`/`with_file:` were equally
+unexcluded. Fixed by teaching `needs_controller_control_flow?` the
+remaining runtime-resolved loop fields, so a loop task is always its
+own batch group (as `loop:`/`with_items:`/`with_fileglob:` tasks
+already were); loop iterations themselves keep their separate, correct,
+per-item batched path. Reproduced pre-fix and post-fix with a minimal
+parse->plan check plus regression specs; the empty-loop-over-SSH
+end-to-end shape still needs a real-host confirm round.
 
 ---
 
