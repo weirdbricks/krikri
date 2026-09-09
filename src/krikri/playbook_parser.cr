@@ -152,6 +152,20 @@ module Krikri
     # execution time once the variable context exists, so the parser stores
     # them verbatim and TaskExecutor flattens the resolved lists.
     property loop_flattened : Array(String)?
+    # with_nested: given as an array whose entries include one or more
+    # `{{ ... }}`-templated scalars (the classic
+    # `with_nested: ["{{ users }}", "{{ groups }}"]` shape). The cartesian
+    # product's FACTOR SIZES are only knowable at execution time (a source
+    # var's real length, including zero), so unlike a fully-literal
+    # with_nested array this can't be resolved by LoopResolver at parse
+    # time - the old parse-time branch wrapped every templated scalar as a
+    # ONE-element literal list, pinning each factor to size 1 and iterating
+    # once with `item` = the whole rendered list, no matter how many
+    # elements the variable actually held. Sources are kept as their raw
+    # strings (a literal sub-array entry serializes to JSON text) and
+    # resolved + multiplied by TaskExecutor#resolve_loop_nested, mirroring
+    # loop_flattened's own defer-until-runtime design.
+    property loop_nested_sources : Array(String)?
     # with_subelements: the raw list template (usually a `{{ registered_var
     # .results }}` reference) and the subelement key. Both kept verbatim and
     # resolved at execution time once the variable context + registered vars
@@ -2145,14 +2159,31 @@ module Krikri
         with_dict.each { |k, v| hash[k.to_s] = JSON.parse(v.to_json) }
         task.loop_items = LoopResolver.with_dict(hash)
       elsif with_nested = task_hash["with_nested"]?.try(&.as_a?)
-        lists = with_nested.map do |entry|
-          if entry.as_a?
-            entry.as_a.map { |item| JSON.parse(item.to_json) }
-          else
-            [JSON.parse(entry.to_json)]
+        # A scalar entry containing {{ }} is a templated SOURCE (usually a
+        # whole-list variable reference), not a literal one-item list - its
+        # real size is only knowable once the variable context exists, so
+        # defer the whole cartesian product to the executor
+        # (resolve_loop_nested). Only a fully-literal array (or one whose
+        # templated scalars are embedded in longer literals, which stay
+        # one item each after substitution) resolves at parse time below.
+        if with_nested.any? { |entry| (str = entry.as_s?) && str.includes?("{{") }
+          task.loop_nested_sources = with_nested.map do |entry|
+            if entry.as_a?
+              JSON.parse(entry.to_json).to_json
+            else
+              safe_yaml_to_string(entry)
+            end
           end
+        else
+          lists = with_nested.map do |entry|
+            if entry.as_a?
+              entry.as_a.map { |item| JSON.parse(item.to_json) }
+            else
+              [JSON.parse(entry.to_json)]
+            end
+          end
+          task.loop_items = LoopResolver.with_nested(lists)
         end
-        task.loop_items = LoopResolver.with_nested(lists)
       elsif with_sequence = task_hash["with_sequence"]?
         spec = safe_yaml_to_string(with_sequence)
         task.loop_items = LoopResolver.with_sequence(spec)

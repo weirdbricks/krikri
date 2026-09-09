@@ -496,6 +496,7 @@ module Krikri
             resolve_fileglob(task, host, vars_context, shared: shared_sub) ||
             resolve_with_file(task, host, vars_context, shared: shared_sub) ||
             resolve_loop_template(task, vars_context) ||
+            resolve_loop_nested(task, vars_context, host.name) ||
             resolve_loop_flattened(task, vars_context, host.name) ||
             resolve_loop_subelements(task, vars_context)
         end

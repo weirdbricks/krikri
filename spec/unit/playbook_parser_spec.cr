@@ -704,6 +704,24 @@ describe Krikri::PlaybookParser do
       items.map(&.as_a.map(&.as_s)).should eq([["a", "x"], ["a", "y"], ["b", "x"], ["b", "y"]])
     end
 
+    it "defers a with_nested: array with templated scalar sources to runtime" do
+      # gantsign.sdkman-shaped: each source is a whole-list variable
+      # reference, so the cartesian product's factor sizes (including
+      # zero) are only knowable at execution time - the old parse-time
+      # branch pinned every templated source to a ONE-element list.
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.debug:
+            msg: "{{ item }}"
+          with_nested:
+            - "{{ users }}"
+            - "{{ groups }}"
+        YAML
+
+      task.loop_items.should be_nil
+      task.loop_nested_sources.should eq(["{{ users }}", "{{ groups }}"])
+    end
+
     it "parses with_sequence: into a numeric range" do
       task = single_task(<<-YAML)
         - name: t

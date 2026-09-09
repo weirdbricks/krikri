@@ -358,7 +358,7 @@ module Krikri
       # own "undefined" sentinel string leaking through as a filename).
       begin
         loop_items = resolve_loop_items_or_raise(task, host, vars_context) do
-          task.loop_items || resolve_loop_template(task, vars_context) || resolve_fileglob(task, host, vars_context)
+          task.loop_items || resolve_loop_template(task, vars_context) || resolve_loop_nested(task, vars_context, host.name) || resolve_fileglob(task, host, vars_context)
         end
       rescue ex : WhenEvaluationError
         finish_include_vars_failure(task, host, ex.message || "is undefined")
@@ -863,6 +863,7 @@ module Krikri
         loop_items = resolve_loop_items_or_raise(task, host, base_vars_context) do
           task.loop_items || resolve_first_found(task, host, base_vars_context) ||
             resolve_loop_template(task, base_vars_context) ||
+            resolve_loop_nested(task, base_vars_context, host.name) ||
             resolve_loop_flattened(task, base_vars_context, host.name) ||
             resolve_loop_subelements(task, base_vars_context)
         end
@@ -1118,6 +1119,7 @@ module Krikri
         loop_items = resolve_loop_items_or_raise(task, host, base_vars_context) do
           task.loop_items ||
             resolve_loop_template(task, base_vars_context) ||
+            resolve_loop_nested(task, base_vars_context, host.name) ||
             resolve_loop_flattened(task, base_vars_context, host.name) ||
             resolve_loop_subelements(task, base_vars_context)
         end
