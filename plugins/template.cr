@@ -45,6 +45,22 @@ module Krikri
       end
       dest = expand_tilde(dest)
 
+      # Real ansible.builtin.template, like copy: a dest that signals a
+      # directory (an existing directory, or an explicit trailing "/")
+      # gets the template's own basename appended - the rendered file
+      # lands at <dest>/<basename of src>, not on the directory path
+      # itself. _rendered_from_template is the controller-side src path
+      # the action plugin sends along (src itself is stripped before
+      # upload), so its basename is the real template filename. Found
+      # benchmarking l3d.unbound, whose config-fragment tasks pass
+      # `dest: /etc/unbound/unbound.conf.d/` - previously the raw
+      # slash-terminated dest reached the final move and failed with
+      # "Not a directory" where real Ansible succeeded.
+      dest_signaled_dir = dest.ends_with?('/')
+      if (template_src = @params["_rendered_from_template"]?.presence) && (Dir.exists?(dest) || dest_signaled_dir)
+        dest = File.join(dest, File.basename(template_src))
+      end
+
       # Get content (required - should come from action plugin)
       content = @params["content"]?
       unless content
@@ -146,13 +162,27 @@ module Krikri
       # refused the task; krikri quietly created the directory and wrote
       # the file, reporting `changed` where real Ansible reported
       # `failed`.
+      # dest is already resolved past the directory-signal step above, so
+      # a trailing-"/" dest has its basename appended before this check.
       dest_dir = File.dirname(dest)
       unless Dir.exists?(dest_dir)
-        return PluginResult.new(
-          changed: false,
-          failed: true,
-          msg: "Destination directory #{dest_dir} does not exist"
-        )
+        if dest_signaled_dir
+          begin
+            Dir.mkdir_p(dest_dir)
+          rescue ex
+            return PluginResult.new(
+              changed: false,
+              failed: true,
+              msg: "Failed to create destination directory #{dest_dir}: #{ex.message}"
+            )
+          end
+        else
+          return PluginResult.new(
+            changed: false,
+            failed: true,
+            msg: "Destination directory #{dest_dir} does not exist"
+          )
+        end
       end
 
       # Write to temporary file first (for atomic write + validation).
