@@ -1217,6 +1217,10 @@ module Krikri
       "ansible.builtin.ec2_remote_facts",
       "ansible.legacy.ec2_remote_facts",
       "amazon.aws.ec2_remote_facts",
+      # Removed from community.general in v10.0.0 (its own runtime.yml
+      # tombstones the FQCN), so every controller on a current
+      # collection hard-fails on it (idealista.consul-role, round 033).
+      "community.general.consul_acl",
     }
 
     # Raises UnresolvedModuleError for the hard-stop shape (see the

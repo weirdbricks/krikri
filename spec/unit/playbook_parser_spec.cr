@@ -431,6 +431,27 @@ describe Krikri::PlaybookParser do
       end
     end
 
+    it "hard-stops the parse for a module removed from community.general in v10 (consul_acl)" do
+      # community.general removed `consul_acl` in v10.0.0 (its own
+      # runtime.yml tombstones the FQCN), so real ansible-playbook
+      # hard-fails immediately (rc=1, no PLAY RECAP) on a playbook
+      # using it - this engine previously took the graceful per-task
+      # unavailable_module skip, kept executing every other task, and
+      # produced ok=9 changed=6 failed=1 instead of the hard stop
+      # (idealista.consul-role, round 033).
+      expect_raises(Krikri::UnresolvedModuleError,
+        "couldn't resolve module/action 'community.general.consul_acl'. " \
+        "This often indicates a misspelling, missing collection, or incorrect module path.") do
+        Krikri::PlaybookParser.parse_string(<<-YAML
+          - hosts: all
+            tasks:
+              - name: removed module
+                community.general.consul_acl:
+          YAML
+        )
+      end
+    end
+
     it "STILL gracefully marks a module from a collection with zero krikri modules unavailable (no hard-stop)" do
       # The pre-0.9.860 behavior for this shape, restored in 0.9.861:
       # kubernetes.core (and most collections that exist) are real,
