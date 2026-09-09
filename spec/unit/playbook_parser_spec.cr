@@ -369,6 +369,92 @@ describe Krikri::PlaybookParser do
       result.plays[0].tasks.size.should eq(1)
     end
 
+    it "hard-stops the parse for a bare module name removed from ansible-core entirely (ec2_remote_facts)" do
+      # Verified live against real ansible-playbook 2.19.4: a playbook
+      # with an `ec2_remote_facts:` task (removed from ansible-core and
+      # from amazon.aws years ago) refuses to even start the run with
+      # "[ERROR]: couldn't resolve module/action 'ec2_remote_facts'.
+      # This often indicates a misspelling, missing collection, or
+      # incorrect module path." (rc=4, no PLAY RECAP), even with the
+      # task behind a `when:`. This engine previously took the graceful
+      # per-task unavailable_module skip, kept executing every other
+      # task, and hit unrelated downstream failures that masked the
+      # divergence shape (Aplyca.EC2Describe, round71000). The message
+      # text is real Ansible's exact wording (the "[ERROR]: " prefix
+      # comes from krikri-playbook.cr's own handler).
+      expect_raises(Krikri::UnresolvedModuleError,
+        "couldn't resolve module/action 'ec2_remote_facts'. " \
+        "This often indicates a misspelling, missing collection, or incorrect module path.") do
+        Krikri::PlaybookParser.parse_string(<<-YAML
+          - hosts: all
+            tasks:
+              - name: removed module
+                ec2_remote_facts:
+          YAML
+        )
+      end
+    end
+
+    it "hard-stops the parse for the amazon.aws-qualified spelling of the removed module too" do
+      expect_raises(Krikri::UnresolvedModuleError,
+        /couldn't resolve module\/action 'amazon\.aws\.ec2_remote_facts'/) do
+        Krikri::PlaybookParser.parse_string(<<-YAML
+          - hosts: all
+            tasks:
+              - name: removed module
+                amazon.aws.ec2_remote_facts:
+          YAML
+        )
+      end
+    end
+
+    it "hard-stops the parse for an FQCN whose collection this engine has zero modules from (bodsch.scm.github_latest)" do
+      # bodsch.k0s, round71000: `bodsch.scm.github_latest` is an
+      # UNINSTALLED collection module - real ansible-playbook refuses to
+      # even start the play (rc=4, before Gathering Facts) the moment it
+      # can't resolve any task's module name. This engine previously
+      # skipped just that task, kept going, and then failed downstream
+      # with an unrelated "No filter named 'bodsch'" conditional error
+      # that masked the real divergence shape entirely.
+      expect_raises(Krikri::UnresolvedModuleError,
+        "couldn't resolve module/action 'bodsch.scm.github_latest'. " \
+        "This often indicates a misspelling, missing collection, or incorrect module path.") do
+        Krikri::PlaybookParser.parse_string(<<-YAML
+          - hosts: all
+            tasks:
+              - name: unknown collection
+                bodsch.scm.github_latest:
+                  repo: foo
+          YAML
+        )
+      end
+    end
+
+    it "STILL gracefully marks a not-yet-implemented module from a RECOGNIZED collection unavailable (no hard-stop)" do
+      # The graceful-skip half of the UnresolvedModuleError boundary,
+      # exercised on both sides of it: a real builtin this engine
+      # hasn't implemented (ansible.builtin.mount - see the
+      # unavailable_module spec below) and an unimplemented module
+      # inside a collection the engine otherwise ships modules for
+      # (amazon.aws, via ec2_metadata_facts) must both keep the
+      # per-task skip - hard-stopping every unimplemented module would
+      # break the engine's whole value proposition for real roles.
+      playbook = Krikri::PlaybookParser.parse_string(<<-YAML
+          - hosts: all
+            tasks:
+              - name: unimplemented builtin
+                ansible.builtin.sysvinit:
+                  name: foo
+              - name: unimplemented module in an implemented collection
+                amazon.aws.s3_bucket_info_xyz:
+          YAML
+      )
+
+      playbook.plays[0].tasks.size.should eq(2)
+      playbook.plays[0].tasks[0].unavailable_module.should eq("ansible.builtin.sysvinit")
+      playbook.plays[0].tasks[1].unavailable_module.should eq("amazon.aws.s3_bucket_info_xyz")
+    end
+
     it "keeps a task that uses an unimplemented plugin (marked unavailable_module) instead of dropping it or failing the play" do
       playbook = Krikri::PlaybookParser.parse_string(<<-YAML
         - name: Uses unavailable plugin

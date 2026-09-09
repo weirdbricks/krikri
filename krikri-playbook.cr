@@ -538,6 +538,19 @@ rescue ex : Krikri::EndRoleOutsideRoleError
   # load_list_of_tasks, verified against ansible-core 2.19.4).
   puts "[ERROR]: #{ex.message}".colorize(:red)
   exit 4
+rescue ex : Krikri::UnresolvedModuleError
+  # A module/action name real Ansible can't resolve anywhere (a
+  # tombstoned-removed module like ec2_remote_facts, or an FQCN from a
+  # collection this engine has zero modules from - an uninstalled
+  # collection) is real Ansible's own playbook-load refusal: verified
+  # against ansible-core 2.19.4, same "[ERROR]: couldn't resolve
+  # module/action '...'" message, rc=4, no PLAY RECAP. NOT the same
+  # exit code path as the parser-error rescues below merely by
+  # accident - 4 is here because that's what real Ansible exits with
+  # for exactly this error. See UnresolvedModuleError's own comment
+  # for the boundary keeping not-yet-implemented modules graceful.
+  puts "[ERROR]: #{ex.message}".colorize(:red)
+  exit 4
 rescue ex : Krikri::RemovedActionError
   # A removed action plugin (`include:`) is real Ansible's own rc=1
   # (verified against ansible-core 2.19.4: same "[ERROR]: The 'ansible.
@@ -934,6 +947,16 @@ playbook.plays.each_with_index do |play, _play_index|
       # ansible-core 2.19.4) - see HandlerNotFoundError's own comment.
       puts "[ERROR]: #{ex.message}".colorize(:red)
       exit 1
+    rescue ex : Krikri::UnresolvedModuleError
+      # Same whole-run abort for a module name real Ansible can't
+      # resolve anywhere, discovered while loading a role pulled in by
+      # a runtime include_role:/include_tasks: (parse-time raises for
+      # statically-present tasks never get this far - they exit in the
+      # parse rescue above). Real Ansible's playbook-load check gives
+      # the identical message and rc=4 - see UnresolvedModuleError's
+      # own comment.
+      puts "[ERROR]: #{ex.message}".colorize(:red)
+      exit 4
     end
     unavailable_modules_found.concat(executor.reachable_unavailable_modules)
 

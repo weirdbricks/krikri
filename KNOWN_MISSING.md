@@ -18,8 +18,57 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.859`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.860`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
+
+---
+
+## Unresolvable module/action names: real Ansible's play-load hard-stop, with the graceful-skip boundary drawn by collection (0.9.860)
+
+Closes most of the round71000 open gap (`Aplyca.EC2Describe`,
+`bodsch.k0s`). Real ansible-playbook refuses to even start the play the
+moment ANY task's module name won't resolve - `[ERROR]: couldn't
+resolve module/action '...'`, rc=4, no PLAY RECAP, before Gathering
+Facts. This engine's per-task graceful skip (the whole point for a
+module simply not yet implemented HERE) couldn't tell that apart from
+a module that doesn't exist in real Ansible at all, so it kept
+executing every other task - `bodsch.k0s` then failed downstream on an
+unrelated "No filter named 'bodsch'" conditional that masked the real
+divergence shape entirely. Same bug class as the `ansible.builtin.`
+`include:` tombstone (`RemovedActionError`, round 162, 0.9.518), now
+generalized.
+
+The distinguishing signal was drawn from live verification against
+real ansible-core 2.19.4 on this machine, which settled two things the
+old notes were uncertain about: the resolution check is a
+playbook-LOAD check there (a `when:`-gated, never-reached offending
+task still aborts the whole run - so the check belongs at parse time,
+not in the lazy per-task path), and a real-but-unimplemented builtin
+(`ansible.builtin.sysvinit`) resolves fine on real Ansible and must
+stay a graceful skip here.
+
+`UnresolvedModuleError` (new, same bypass-rescue mechanism as
+`RemovedActionError`, raised from `parse_task` and hard-stopping with
+real Ansible's exact message and rc=4) fires for exactly two shapes:
+
+1. a name in `REMOVED_MODULE_TOMBSTONES` - `ec2_remote_facts` in its
+   bare, `ansible.builtin.`/`ansible.legacy.`- and
+   `amazon.aws.`-qualified spellings (real amazon.aws tombstoned the
+   FQCN too, verified). Deliberately minimal; widening = adding
+   entries, only names unresolvable on EVERY real controller qualify.
+2. a collection-qualified name (3+ segments) whose
+   `namespace.collection` the engine has zero AVAILABLE_PLUGINS
+   modules from (`IMPLEMENTED_COLLECTIONS`, derived from
+   AVAILABLE_PLUGINS so the two lists can't drift) - i.e. a collection
+   never installed, which real Ansible also fails to resolve.
+
+Everything else keeps the graceful per-task unavailable_module skip -
+most importantly an unimplemented module inside a RECOGNIZED
+collection, which is far more likely not-yet-ported-here than
+nonexistent. The residual gap stays open: a module that genuinely
+doesn't exist inside a recognized collection
+(`community.general.doesnotexist_xyz`) still skips where real Ansible
+hard-stops, indistinguishable without a full upstream module registry.
 
 ---
 
@@ -2227,27 +2276,44 @@ Genuinely open defects: something is wrong and the fix is unknown or
 unfinished. Everything deliberate lives under "Deliberate limits"
 below - keep the two apart, or this list stops meaning anything.
 
-- **Unresolvable module/action names don't hard-stop the whole run
-  like real Ansible's do.** `Aplyca.EC2Describe` (`ec2_remote_facts`, a
-  module removed from ansible-core years ago) and `bodsch.k0s`
+- **Unresolvable module/action names: hard-stop now covers the two
+  provably-unresolvable shapes (0.9.860); a missing module inside a
+  RECOGNIZED collection still gracefully skips, where real Ansible
+  hard-stops.** `Aplyca.EC2Describe` (`ec2_remote_facts`, a module
+  removed from ansible-core years ago) and `bodsch.k0s`
   (`bodsch.scm.github_latest`, an uninstalled collection module) both
   round71000: real `ansible-playbook` refuses to even start the play
   (`[ERROR]: couldn't resolve module/action '...'`, rc=4, no PLAY RECAP
   at all) the moment it can't resolve ANY task's module name, before
-  Gathering Facts even runs. This engine's per-task graceful-degradation
-  model (warn, skip that one task, keep going - the whole point for a
-  module that's simply not yet implemented HERE) doesn't distinguish
-  that case from a module that doesn't exist in real Ansible at all, so
-  it keeps executing every other task instead - `bodsch.k0s` then hits a
-  second, unrelated failure downstream ("No filter named 'bodsch'",
-  evaluating a conditional built from a task whose module was skipped)
-  that masks the real divergence shape entirely. Same underlying bug
-  class already fixed once for `ansible.builtin.include:` specifically
-  (`RemovedActionError`, round 162, 0.9.518, see `git log --grep=
-  RemovedActionError`) - widening it to any collection-qualified module
-  name that isn't a real installed collection (vs. one this engine
-  simply hasn't implemented yet) needs a way to tell those two apart,
-  which is the actual unfinished part.
+  Gathering Facts even runs. Fixed (0.9.860, `UnresolvedModuleError`,
+  generalizing `RemovedActionError`'s round-162 mechanism): parse-time
+  hard-stop - real Ansible's exact message text and rc=4, no tasks run -
+  for exactly two shapes, verified live against ansible-core 2.19.4
+  (including that a `when:`-gated, never-reached offending task still
+  aborts the whole load): (a) a tombstoned-removed name
+  (`REMOVED_MODULE_TOMBSTONES`: bare/`ansible.builtin.`/`ansible.legacy.`/
+  `amazon.aws.`-qualified `ec2_remote_facts` - widen by adding entries,
+  only names unresolvable on EVERY real controller qualify), and (b) a
+  collection-qualified name (3+ dot-separated segments) whose
+  `namespace.collection` the engine has zero AVAILABLE_PLUGINS modules
+  from (`IMPLEMENTED_COLLECTIONS`, derived from AVAILABLE_PLUGINS so the
+  two can't drift) - i.e. a collection never installed, which real
+  Ansible also fails to resolve. Everything else keeps the graceful
+  per-task unavailable_module skip: crucially, an unimplemented module
+  inside a RECOGNIZED collection (`community.general.xyz`,
+  `ansible.builtin.xyz`, `amazon.aws.xyz`, ...), which is far more
+  likely a not-yet-ported module than a nonexistent one. **The
+  remaining known gap:** a module that genuinely doesn't exist inside a
+  RECOGNIZED collection (`community.general.doesnotexist_xyz`) still
+  skips gracefully where real ansible-core 2.19.4 hard-stops with the
+  same "couldn't resolve" error (verified live) - indistinguishable
+  from a not-yet-implemented module without a full upstream module
+  registry this engine doesn't keep; telling those apart would need
+  shipping per-collection module manifests. Also verified live: a real
+  but unimplemented builtin (`ansible.builtin.sysvinit`) resolves fine
+  on real Ansible and must stay a graceful skip here - hard-stopping
+  every unresolvable name would break the project's whole
+  graceful-degradation value proposition.
 - **Crinja-side `in`-a-plain-string with an undefined left operand
   still diverges (hand-rolled `when:` side fixed, 0.9.858).** The
   original round71000 gap (`asg1612.gluster`: `when: "node_1 in

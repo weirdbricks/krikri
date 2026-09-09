@@ -163,6 +163,13 @@ module Krikri
           # is the one path that made the pre-0.9.600 parse-time check
           # miss the case entirely.
           raise ex
+        rescue ex : UnresolvedModuleError
+          # Same bypass, same reason: an included file's task naming a
+          # module real Ansible can't resolve anywhere aborts the whole
+          # run (real Ansible's playbook-load check), it must not
+          # degrade to a per-task "Failed to load included tasks"
+          # failure. See UnresolvedModuleError's own comment.
+          raise ex
         rescue ex
           group_hosts.each { |host| fail_include(task, host, "Failed to load included tasks: #{ex.message}") }
         end
@@ -1256,6 +1263,14 @@ module Krikri
           child_parent_paths,
           child_parent_defaults
         )
+      rescue ex : UnresolvedModuleError
+        # Same bypass as HandlerNotFoundError's - an include_role:'d
+        # role whose own tasks name a module real Ansible can't resolve
+        # anywhere aborts the whole run (real Ansible's playbook-load
+        # check), rather than degrading to a per-task
+        # "Failed to load role" failure. See UnresolvedModuleError's
+        # own comment for the graceful/hard-stop boundary.
+        raise ex
       rescue ex
         fail_include(task, host, "Failed to load role '#{role_name}': #{ex.message}")
         return
