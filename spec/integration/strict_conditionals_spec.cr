@@ -85,6 +85,23 @@ describe "strict boolean conditionals" do
     output.should contain("Conditional result (True) was derived from value of type 'list'")
   end
 
+  # adfinis-sygroup.network's `when: network_interfaces is defined and
+  # network_interfaces` with the var defaulting to `[]` (round 84003):
+  # the `and` chain's deciding operand is the list itself, so the whole
+  # conditional's result is list-typed (Python's `and` returns the
+  # operand, not a bool) - real Ansible fails the task with the
+  # "Task failed: " prefix this error class carries, not the generic
+  # "Error while evaluating conditional: " wrapper an undefined
+  # reference gets.
+  it "fails an `X is defined and X` chain ending in a list as 'Task failed: ...' (round 84003)" do
+    status, output = run_playbook(playbook_for("my_list is defined and my_list"))
+
+    status.exit_code.should eq(2)
+    output.should contain("Task failed: Conditional result (True) was derived from value of type 'list'")
+    output.should contain("Conditionals must have a boolean result")
+    output.should_not contain("TASK-RAN")
+  end
+
   it "accepts a genuine boolean" do
     status, output = run_playbook(playbook_for("real_bool"))
 
