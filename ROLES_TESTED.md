@@ -3330,7 +3330,7 @@ First batch since Atlantic.net's server-limit increase (10 → 25). 200 never-be
 | `20c.letsencrypt` | ubuntu | ✅ clean. Times: cold py 0.54s vs cr 0.01s; warm py 0.53s vs cr 0.01s. |
 | `21h_ssh_tunnel` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
 | `2infinite.yum-update` | ubuntu | ✅ clean. Times: cold py 6.45s vs cr 3.29s; warm py 4.20s vs cr 0.28s. |
-| `2kloc.trellis-monit` | ubuntu | ⚠️ divergent - 0.9.903 hard-stop correctly firing on unimplemented module 'openssl_certificate' (real Ansible has it via a collection this project doesn't ship). Times: cold py 13.56s vs cr 0.01s; warm py 7.18s vs cr 0.01s. |
+| `2kloc.trellis-monit` | ubuntu | ⚠️ divergent - re-verified after `openssl_certificate`/`x509_certificate` shipped (0.9.917): the module hard-stop is gone, krikri now completes the whole role (`ok=6 changed=3 failed=0`). Real Ansible instead fails mid-role with "The module interpreter '/usr/bin/python3.10' was not found" - its own target-side Python interpreter went missing partway through, an environment issue unrelated to krikri (which needs no target-side Python for its compiled-binary modules), not comparable either way. Times: cold py 16.29s vs cr 7.80s; warm py 7.25s vs cr 0.72s. |
 | `4ARMED.burp-collaborator` | ubuntu | ✅ clean. Times: cold py 11.22s vs cr 10.83s; warm py 7.69s vs cr 2.57s. |
 | `4ARMED.java8` | ubuntu | ✅ clean. Times: cold py 12.28s vs cr 8.23s; warm py 7.57s vs cr 1.84s. |
 | `4linuxdevops.mysql-server` | ubuntu | ✅ clean. Times: cold py 6.63s vs cr 3.55s; warm py 4.67s vs cr 0.48s. |
@@ -3449,7 +3449,7 @@ First batch since Atlantic.net's server-limit increase (10 → 25). 200 never-be
 | `Accelize.linux_kernel` | ubuntu | ✅ clean. Times: cold py 27.47s vs cr 20.32s; warm py 8.27s vs cr 3.72s. |
 | `acch.spectrum_scale` | ubuntu | ⚠️ divergent - 0.9.903 hard-stop correctly firing on unimplemented module 'add_host' (real Ansible has it via a collection this project doesn't ship). Times: cold py 4.78s vs cr 0.01s; warm py 2.75s vs cr 0.01s. |
 | `acehko_docker` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
-| `acez.nginx` | ubuntu | ⚠️ divergent - 0.9.903 hard-stop correctly firing on unimplemented module 'openssl_certificate' (real Ansible has it via a collection this project doesn't ship). Times: cold py 7.47s vs cr 0.01s; warm py 5.39s vs cr 0.01s. |
+| `acez.nginx` | ubuntu | ⚠️ divergent - re-verified after `openssl_certificate`/`x509_certificate` shipped (0.9.917): that hard-stop is gone, but the role also needs `acme_certificate` (Let's Encrypt/ACME provider), which is a separate, still-unimplemented module - 0.9.903 hard-stop correctly firing on it. Times: cold py 7.64s vs cr 0.01s; warm py 6.69s vs cr 0.01s. |
 | `achaussier.openjdk-jdk` | ubuntu | ✅ clean. Times: cold py 0.43s vs cr 0.01s; warm py 0.44s vs cr 0.01s. |
 | `achaussier.openjdk-jre` | ubuntu | ✅ clean. Times: cold py 0.47s vs cr 0.01s; warm py 0.44s vs cr 0.01s. |
 | `acikogun.winit` | ubuntu | ⚠️ divergent - role's own templated download URL contains a literal embedded newline (role/lookup bug, not krikri's). Times: cold py 127.20s vs cr 93.90s; warm py 29.82s vs cr 8.72s. |
