@@ -512,7 +512,35 @@ module Krikri
         shared_sub = VarSubstitutor.new(vars: vars_context, host_name: host.name)
       end
 
-      exec_host = resolve_delegate_host(task, host, vars_context, shared: shared_sub)
+      # A looped task's delegate_to: may reference the loop variable
+      # (geerlingguy.kubernetes' `delegate_to: "{{ item }}"`), which is not
+      # bound yet here - so the strict check runs on the per-item
+      # re-resolution inside execute_looped_task instead, and this
+      # pre-loop resolution stays lenient for looped tasks exactly as
+      # before.
+      exec_host = if task.delegate_to && !task_has_loop_source?(task)
+        begin
+          resolve_delegate_host(task, host, vars_context, shared: shared_sub, strict: true)
+        rescue ex : WhenEvaluationError
+          # Real Ansible evaluates when: before ever templating
+          # delegate_to:, so a when: that is False without the undefined
+          # variable bound (`when: restic_backup_destination_server is
+          # defined`) is a plain skip, not a failure. Otherwise degrade to
+          # ONE clean failed task through the normal result pipeline -
+          # never the unhandled-exception abort the "undefined" hostname
+          # used to produce at SSH time.
+          if when_skips_task?(task, vars_context, host, shared_sub)
+            @results[host.name]["skipped"] += 1
+            puts "skipping: [#{host.connection_host}]".colorize(:cyan)
+            register_skip_result(task, host)
+            return
+          end
+          finish_single_task(task, host, when_error_result(ex), vars_context: vars_context)
+          return
+        end
+      else
+        resolve_delegate_host(task, host, vars_context, shared: shared_sub)
+      end
 
       # with_fileglob/with_file need a substitutor (for {{ vars }} in the
       # pattern) and the filesystem, so they can only be resolved here,
@@ -605,12 +633,34 @@ module Krikri
     # actually run against. Variables used to substitute a templated
     # delegate_to: value are still `host`'s own (real Ansible doesn't
     # delegate variables, only the connection).
-    private def resolve_delegate_host(task : Task, host : Host, vars_context : Hash(String, JSON::Any), shared : VarSubstitutor? = nil) : Host
+    #
+    # strict: templates the delegate_to: value with module-arg strictness -
+    # a genuinely undefined bare reference raises WhenEvaluationError (the
+    # same clean task-failure channel the loop-resolution sites use)
+    # instead of the old behavior of rendering the undefined value as the
+    # literal string "undefined" and returning a Host literally named
+    # "undefined" (aheimsbakk.restic_backup's "Destination - create
+    # destination user": the subsequent plugin upload then died as an
+    # unhandled "ssh: Could not resolve hostname undefined" exception that
+    # aborted the whole run, where real Ansible fails just the task with
+    # "'restic_backup_destination_server' is undefined"). Deliberately
+    # narrow: only a bare/chain reference is strict (substitute's own
+    # strict: boundary) - compound expressions with filters keep the
+    # lenient rendering, same as everywhere else.
+    private def resolve_delegate_host(task : Task, host : Host, vars_context : Hash(String, JSON::Any), shared : VarSubstitutor? = nil, strict : Bool = false) : Host
       delegate_to = task.delegate_to
       return host unless delegate_to
 
       substitutor = shared || VarSubstitutor.new(vars: vars_context, host_name: host.name)
-      target_name = substitutor.substitute(delegate_to)
+      target_name = begin
+        substitutor.substitute(delegate_to, strict: strict)
+      rescue ex : UndefinedVariableError
+        if strict
+          raise WhenEvaluationError.new(
+            "The task includes an option with an undefined variable. The error was: #{ex.message}")
+        end
+        raise ex
+      end
 
       if (inventory = @inventory) && !(resolved = inventory.get_hosts(target_name)).empty?
         return resolved.first
@@ -619,6 +669,36 @@ module Krikri
       fallback = Host.new(target_name, ENV["USER"]? || "root", 22)
       fallback.vars["ansible_connection"] = JSON::Any.new("local") if target_name == "localhost" || target_name == "127.0.0.1"
       fallback
+    end
+
+    # Whether the task has any loop source at all - the same set
+    # resolve_loop_items_or_raise's block covers. Only used to decide
+    # WHERE delegate_to:'s strict-undefined check runs: a looped task may
+    # legitimately template delegate_to: from the loop variable, which
+    # only exists per item, so the check defers to the per-item
+    # resolution site.
+    private def task_has_loop_source?(task : Task) : Bool
+      !!task.loop_items || !!task.loop_fileglob || !!task.loop_file ||
+        !!task.loop_first_found || !!task.loop_template || !!task.loop_flattened ||
+        !!task.loop_nested_sources || !!task.loop_subelements_list
+    end
+
+    # Shared lenient when: re-check for a delegate_to: templating failure -
+    # real Ansible evaluates when: BEFORE delegate_to:, so a when: that is
+    # False without the undefined variable ever bound is a plain skip
+    # (never touches the delegate target). Same shape the loop-resolution
+    # sites use. Always evaluated leniently: a when: that is ITSELF
+    # strictly-undefined fails downstream through when_passes?'s own
+    # raise_undefined: path, not silently here.
+    private def when_skips_task?(task : Task, vars_context : Hash(String, JSON::Any), host : Host, substitutor : VarSubstitutor?) : Bool
+      return false unless when_condition = task.when_condition
+
+      sub = substitutor || VarSubstitutor.new(vars: vars_context, host_name: host.name)
+      begin
+        !ConditionalEvaluator.evaluate(sub.substitute(when_condition), vars_context)
+      rescue
+        false
+      end
     end
 
     # run_once: on every host after the first, skip execution outright but

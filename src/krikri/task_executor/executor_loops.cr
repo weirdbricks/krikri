@@ -726,7 +726,14 @@ module Krikri
                          # resolved to a host literally named "undefined"
                          # (crashing the SSH connection outright, not just
                          # producing a wrong result).
-                         item_exec_host = task.delegate_to ? resolve_delegate_host(task, host, vars_context) : exec_host
+                         # strict: true - the loop variable IS bound in this
+                         # item's vars_context, so a delegate_to:
+                         # referencing a genuinely undefined var fails the
+                         # task here (as WhenEvaluationError, caught by the
+                         # execute_looped_task call site's degrade-to-one-
+                         # clean-failed-task rescue) instead of resolving a
+                         # Host literally named "undefined".
+                         item_exec_host = task.delegate_to ? resolve_delegate_host(task, host, vars_context, strict: true) : exec_host
                          fact_hosts[idx] = item_exec_host if task.delegate_facts? && task.delegate_to
 
                          item_label = item_label_for(task, item, vars_context, host)
