@@ -650,6 +650,22 @@ module Krikri
         return params
       end
 
+      # BINARY (not valid UTF-8) source: never inline it as `content:`.
+      # The params ride to the remote plugin as JSON, and JSON is a
+      # UTF-8 format - serializing a String holding invalid byte
+      # sequences mangles them (observed live: a 4702-byte OpenPGP
+      # keyring round-tripped to 8394 bytes of U+FFFD-substituted
+      # garbage), so the file installed on the target is corrupt even
+      # though the task reports changed and every checksum comparison
+      # against the equally-corrupt destination still "passes". Real
+      # victim: systemli.apt_repositories' keyring copy
+      # (`copy: {src: prosody-debian-packages.gpg, dest:
+      # /usr/share/keyrings/...}`) - apt then failed "Update cache" with
+      # NO_PUBKEY F7A37EB33D0B25D7, because the keyring it read was
+      # garbage. Take the byte-safe SCP staging path instead, exactly
+      # like an oversized file would.
+      return stage_large_copy_source(params, src, host, vars_context) unless content.valid_encoding?
+
       resolved = params.dup
       resolved.delete("src")
       resolved["content"] = content
