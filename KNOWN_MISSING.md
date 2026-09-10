@@ -18,10 +18,39 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.898`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.900`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
 
 ---
+
+## Live investigation of the two remaining open gaps: 2 real fixes found, root cause still open (0.9.898 → 0.9.900)
+
+Provisioned a real Atlantic.net host specifically to chase
+`newrelic.newrelic-infra`'s merge_yaml failure and `systemli.jitsi_meet`'s
+apt-keyring issue with real root access (the earlier dev-machine
+investigation was limited by its own lack of passwordless sudo).
+Found and fixed two real, security/correctness-relevant bugs along the
+way that this session's own earlier `ignore_errors:`/`no_log:` fix
+pattern had missed: `no_log:` shared the exact same wrong parse-time
+guess as `ignore_errors:` (defaults ANY templated value to true) - and
+underneath that, the "safe fallback" the fix relied on didn't actually
+work, since an unresolvable expression renders as the lenient-
+substitution sentinel "undefined", which `ConditionalEvaluator.evaluate`
+returns `false` for WITHOUT raising - meaning the `rescue` a first read
+suggests protects this was dead code, a real path that could have
+under-hidden a secret (0.9.899, `TaskExecutor#resolve_task_no_log` now
+explicitly checks for the sentinel before ever reaching the evaluator,
+and `finish_single_task` gets a real vars_context threaded through
+where one was already available at every call site, not just the
+minimal `ansible_check_mode`-only fallback). A related but narrower
+inconsistency: `execute_python_module` passed a task's raw
+parse-time `become?` guess instead of the properly runtime-resolved
+value, mattering specifically for a TEMPLATED `become:` on a
+python-module task (0.9.900). Neither of these was the actual
+newrelic-infra root cause, which remains open - see its own entry
+above for what was ruled out and what the next diagnostic step needs.
+`systemli.jitsi_meet` wasn't reached this round (time went to the
+no_log/become chase instead); still open, unchanged.
 
 ## Open-gaps sweep: 6 more real fixes closing 7 of the Open gaps above (0.9.892 → 0.9.898)
 
@@ -3063,26 +3092,31 @@ unfinished. Everything deliberate lives under "Deliberate limits"
 below - keep the two apart, or this list stops meaning anything.
 
 - **`newrelic.newrelic-infra`'s `library/merge_yaml.py` still fails
-  after the 0.9.891 `ansible.module_utils.basic` shim** (round 77004
-  confirm-phase re-run: krikri failed=1, real ansible failed=0). PyYAML
-  itself is NOT the gap - ruled out live (this machine has PyYAML
-  installed and a faithful local repro of the module against a
-  writable path succeeds cleanly end to end). The real task writes to
-  a `become:`-escalated system path (`src: /etc/newrelic-infra.yml`,
-  play-level `become: true`); reproducing that locally surfaced a
-  concrete asymmetry worth chasing: a plain `copy:` task under the same
-  `become: true` fails LOUDLY at the plugin-dispatch layer ("sudo: a
-  password is required") when this dev machine's own passwordless-sudo
-  scope doesn't cover it, but `merge_yaml` (dispatched through
-  `py_module.cr`/`PythonModuleRunner`) instead failed QUIETLY from
-  INSIDE the Python module itself ("OS error Permission denied (13)")
-  - suggesting the become escalation may not be reaching the actual
-  file-write the same way it does for other plugins, though this
-  machine's own sudo restrictions make it impossible to fully confirm
-  without a real host. Needs a live re-investigation on an actual
-  Atlantic.net host with real root access, comparing `copy:`'s and a
-  `py_module`-dispatched module's become handling directly (verbose
-  `-vvv` output on both) before the next fix attempt.
+  with "OS error Permission denied (13)" writing to its become-required
+  destination (`/etc/newrelic-infra.yml`), confirmed live on a real
+  Atlantic.net host (round 79000, `-vvv`) with root/passwordless-sudo
+  already proven to work for every OTHER task in the same play.**
+  PyYAML availability was already ruled out (a faithful local repro
+  succeeds end to end). Two real leads chased and RULED OUT this round:
+  (1) `task.become?`'s play-level literal inheritance - verified live
+  with two local repros matching this role's exact shape (a flat
+  `tasks/main.yml` and its actual `import_tasks:` nesting), both
+  correctly resolve `become=true` and correctly attempt real escalation
+  - this was NOT the gap; (2) a related but genuinely different bug WAS
+  found and fixed in the process (0.9.900: `execute_python_module`
+  passed `task.become?` instead of the properly runtime-resolved
+  `become` value for a TEMPLATED `become:` expression specifically -
+  real, but not this role's shape, since `newrelic.newrelic-infra`
+  never sets `become:` on the task itself at all, only at the play
+  level, which was already correctly inherited). The remaining
+  mystery: escalation is being correctly REQUESTED and correctly
+  SUCCEEDING (proven by every other task in the play), yet this
+  specific task's python3 subprocess still can't write to `/etc/`.
+  Needs a live host with an INSTRUMENTED `py_module.cr` (e.g. print
+  `id`/`os.getuid()` immediately before the write, or run `ls -la
+  /etc/newrelic-infra.yml` right before the task) to see the actual
+  runtime UID and file state at the moment of failure - a plain
+  verbose flag doesn't surface this, already tried.
 
 - **Round 74501 (`systemli.jitsi_meet`): the binary apt keyring the role
   installs did not verify apt signatures under krikri on that VM, and the
