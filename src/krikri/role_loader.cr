@@ -318,8 +318,8 @@ module Krikri
       # different calls - `tasks_from: install.yml` as well as bare
       # names elsewhere) - append .yml only when it's not already there.
       tasks_path = resolve_role_tasks_path(role_dir, tasks_from)
-      role_tasks = load_tasks_file(tasks_path, play, known_vars)
-      role_handlers = load_tasks_file(find_main_file(File.join(role_dir, "handlers")) || File.join(role_dir, "handlers", "main.yml"), play, known_vars)
+      role_tasks = load_tasks_file(tasks_path, play, known_vars, role_dir)
+      role_handlers = load_tasks_file(find_main_file(File.join(role_dir, "handlers")) || File.join(role_dir, "handlers", "main.yml"), play, known_vars, role_dir)
 
       # The argument-spec "Validating arguments..." task only applies to
       # the role's own default ("main") entry point, not an arbitrary
@@ -652,13 +652,17 @@ module Krikri
       task
     end
 
-    private def self.load_tasks_file(path : String, play : Play, known_vars : Hash(String, JSON::Any)? = nil) : Array(Task)
+    private def self.load_tasks_file(path : String, play : Play, known_vars : Hash(String, JSON::Any)? = nil, role_dir : String? = nil) : Array(Task)
       return [] of Task unless File.exists?(path)
 
       yaml = cached_yaml(path)
       return [] of Task unless yaml.as_a?
 
-      PlaybookParser.parse_tasks(yaml.as_a, play, "task in #{path}", File.dirname(path), known_vars)
+      # role_dir is this role's own root - PythonModuleRunner's role
+      # `library/` search root, threaded through so the parse-time
+      # unimplemented-module hard-stop finds a role-private module
+      # source exactly where the executor later will.
+      PlaybookParser.parse_tasks(yaml.as_a, play, "task in #{path}", File.dirname(path), known_vars, role_dir, nil)
     end
   end
 end

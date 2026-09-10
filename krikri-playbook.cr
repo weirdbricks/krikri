@@ -539,16 +539,18 @@ rescue ex : Krikri::EndRoleOutsideRoleError
   puts "[ERROR]: #{ex.message}".colorize(:red)
   exit 4
 rescue ex : Krikri::UnresolvedModuleError
-  # A module/action name real Ansible can't resolve anywhere (a
-  # tombstoned-removed module like ec2_remote_facts, or an FQCN from a
-  # collection this engine has zero modules from - an uninstalled
-  # collection) is real Ansible's own playbook-load refusal: verified
-  # against ansible-core 2.19.4, same "[ERROR]: couldn't resolve
-  # module/action '...'" message, rc=4, no PLAY RECAP. NOT the same
-  # exit code path as the parser-error rescues below merely by
+  # A module/action name that resolves to nothing this engine can run:
+  # a tombstoned-removed module (ec2_remote_facts and friends - real
+  # Ansible's own playbook-load refusal, verified against
+  # ansible-core 2.19.4, same "[ERROR]: couldn't resolve module/action
+  # '...'" message), and since 0.9.903 ANY module krikri hasn't
+  # implemented ("krikri does not yet have module 'x' implemented") -
+  # an unconditional hard-stop, because a silently-skipped task with
+  # real consequences (a firewall rule, a security config) is worse
+  # than refusing to run. NOT the same exit code path as the
+  # parser-error rescues below merely by
   # accident - 4 is here because that's what real Ansible exits with
-  # for exactly this error. See UnresolvedModuleError's own comment
-  # for the boundary keeping not-yet-implemented modules graceful.
+  # for exactly this error. See UnresolvedModuleError's own comment.
   puts "[ERROR]: #{ex.message}".colorize(:red)
   exit 4
 rescue ex : Krikri::RemovedActionError

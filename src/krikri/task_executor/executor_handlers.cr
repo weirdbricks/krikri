@@ -498,7 +498,7 @@ module Krikri
         inherited = Play.new("", "")
         inherited.become = handler.become?
         inherited.become_user = handler.become_user
-        included_tasks = PlaybookParser.parse_tasks(yaml.as_a, inherited, "task in included #{resolved_path}", File.dirname(resolved_path))
+        included_tasks = PlaybookParser.parse_tasks(yaml.as_a, inherited, "task in included #{resolved_path}", File.dirname(resolved_path), role_path: handler.role_path, playbook_dir: @playbook_dir)
         propagate_role_context(handler, included_tasks)
 
         run_task_list(included_tasks, host)

@@ -37,7 +37,7 @@ private PLAYBOOK_WITH_BLOCK = <<-YAML
               msg: two
         always:
           - name: inner three
-            ansible.builtin.nope: {}
+            ansible.builtin.command: /bin/true
   YAML
 
 private def import_tasks_root(name : String) : String
@@ -504,76 +504,80 @@ describe Krikri::PlaybookParser do
       end
     end
 
-    it "STILL gracefully marks a module from a collection with zero krikri modules unavailable (no hard-stop)" do
-      # The pre-0.9.860 behavior for this shape, restored in 0.9.861:
-      # kubernetes.core (and most collections that exist) are real,
-      # commonly-installed collections krikri simply hasn't ported any
-      # modules from - "zero AVAILABLE_PLUGINS modules from this
-      # collection" said nothing about whether the collection is
-      # installed on a real controller, so hard-stopping every such
-      # FQCN broke real roles (kubernetes.core.helm_repository, live
-      # round) that real ansible-playbook runs fine. An
-      # allowlist-of-real-collections alternative was considered and
-      # rejected: it re-breaks any real collection missing from the
-      # list and falsely trusts obscure-but-installed ones.
-      playbook = Krikri::PlaybookParser.parse_string(<<-YAML
-          - hosts: all
-            tasks:
-              - name: unported module in a real unported collection
-                kubernetes.core.helm_repository:
-                  repo_name: foo
-              - name: niche collection, same shape
-                bodsch.scm.github_latest:
-                  repo: foo
-        YAML
-      )
-
-      playbook.plays[0].tasks.size.should eq(2)
-      playbook.plays[0].tasks[0].unavailable_module.should eq("kubernetes.core.helm_repository")
-      playbook.plays[0].tasks[1].unavailable_module.should eq("bodsch.scm.github_latest")
-    end
-
-    it "STILL gracefully marks a not-yet-implemented module from a RECOGNIZED collection unavailable (no hard-stop)" do
-      # The graceful-skip half of the UnresolvedModuleError boundary,
-      # exercised on both sides of it: a real builtin this engine
-      # hasn't implemented (ansible.builtin.mount - see the
-      # unavailable_module spec below) and an unimplemented module
-      # inside a collection the engine otherwise ships modules for
-      # (amazon.aws, via ec2_metadata_facts) must both keep the
-      # per-task skip - hard-stopping every unimplemented module would
-      # break the engine's whole value proposition for real roles.
-      playbook = Krikri::PlaybookParser.parse_string(<<-YAML
-          - hosts: all
-            tasks:
-              - name: unimplemented builtin
-                ansible.builtin.sysvinit:
-                  name: foo
-              - name: unimplemented module in an implemented collection
-                amazon.aws.s3_bucket_info_xyz:
+    it "hard-stops for a module from a collection with zero krikri modules (0.9.903, unconditional)" do
+      # Since 0.9.903 (owner decision, safety-motivated: a silently-
+      # skipped task with real consequences is worse than refusing to
+      # run) this ALSO hard-stops, unconditionally - kubernetes.core and
+      # bodsch.scm are both real collections real ansible-playbook
+      # would resolve and run fine, but krikri hasn't implemented these
+      # specific modules, so it refuses with its own wording rather than
+      # simulating real Ansible's (which would have succeeded here).
+      expect_raises(Krikri::UnresolvedModuleError, "krikri does not yet have module 'kubernetes.core.helm_repository' implemented") do
+        Krikri::PlaybookParser.parse_string(<<-YAML
+            - hosts: all
+              tasks:
+                - name: unported module in a real unported collection
+                  kubernetes.core.helm_repository:
+                    repo_name: foo
           YAML
-      )
+        )
+      end
 
-      playbook.plays[0].tasks.size.should eq(2)
-      playbook.plays[0].tasks[0].unavailable_module.should eq("ansible.builtin.sysvinit")
-      playbook.plays[0].tasks[1].unavailable_module.should eq("amazon.aws.s3_bucket_info_xyz")
+      expect_raises(Krikri::UnresolvedModuleError, "krikri does not yet have module 'bodsch.scm.github_latest' implemented") do
+        Krikri::PlaybookParser.parse_string(<<-YAML
+            - hosts: all
+              tasks:
+                - name: niche collection, same shape
+                  bodsch.scm.github_latest:
+                    repo: foo
+          YAML
+        )
+      end
     end
 
-    it "keeps a task that uses an unimplemented plugin (marked unavailable_module) instead of dropping it or failing the play" do
-      playbook = Krikri::PlaybookParser.parse_string(<<-YAML
-        - name: Uses unavailable plugin
-          hosts: all
-          tasks:
-            - name: Not implemented
-              ansible.builtin.mount:
-                path: /mnt/data
-        YAML
-      )
+    it "hard-stops for a not-yet-implemented module from a RECOGNIZED collection too (0.9.903, unconditional)" do
+      # Same unconditional hard-stop, exercised on both sides of the OLD
+      # boundary: a real builtin this engine hasn't implemented
+      # (ansible.builtin.sysvinit) and an unimplemented module inside a
+      # collection the engine otherwise ships modules for (amazon.aws)
+      # both now refuse the whole run rather than being skipped per-task.
+      expect_raises(Krikri::UnresolvedModuleError, "krikri does not yet have module 'ansible.builtin.sysvinit' implemented") do
+        Krikri::PlaybookParser.parse_string(<<-YAML
+            - hosts: all
+              tasks:
+                - name: unimplemented builtin
+                  ansible.builtin.sysvinit:
+                    name: foo
+          YAML
+        )
+      end
 
-      playbook.plays[0].tasks.size.should eq(1)
-      playbook.plays[0].tasks[0].unavailable_module.should eq("ansible.builtin.mount")
+      expect_raises(Krikri::UnresolvedModuleError, "krikri does not yet have module 'amazon.aws.s3_bucket_info_xyz' implemented") do
+        Krikri::PlaybookParser.parse_string(<<-YAML
+            - hosts: all
+              tasks:
+                - name: unimplemented module in an implemented collection
+                  amazon.aws.s3_bucket_info_xyz:
+          YAML
+        )
+      end
     end
 
-    it "marks a role-local underscore-prefixed custom module (e.g. `_check_platform:`) unavailable instead of treating it as a resolved builtin" do
+    it "hard-stops for a task using an unimplemented plugin instead of keeping it as unavailable_module (0.9.903, unconditional)" do
+      expect_raises(Krikri::UnresolvedModuleError, "krikri does not yet have module 'ansible.builtin.mount' implemented") do
+        Krikri::PlaybookParser.parse_string(<<-YAML
+          - name: Uses unavailable plugin
+            hosts: all
+            tasks:
+              - name: Not implemented
+                ansible.builtin.mount:
+                  path: /mnt/data
+          YAML
+        )
+      end
+    end
+
+    it "does NOT silently treat an underscore-prefixed name as a resolved builtin (raises UnresolvedModuleError instead)" do
       # Real bug found benchmarking amtega.check_platform/amtega.epel
       # (round814/815): resolve_module_name used to blanket-pass any
       # module name starting with '_' straight through as "resolved",
@@ -585,19 +589,22 @@ describe Krikri::PlaybookParser do
       # that bypass instead, got treated as available with no backing
       # plugin binary, and crashed the whole run outright in
       # PluginManager#get_local_plugin_path ("Plugin binary not found:
-      # _check_platform") instead of taking the graceful unavailable_module
-      # skip path already built for exactly this case.
-      playbook = Krikri::PlaybookParser.parse_string(<<-YAML
-        - name: Uses a role-local custom module
-          hosts: all
-          tasks:
-            - name: Check platform
-              _check_platform:
-        YAML
-      )
-
-      playbook.plays[0].tasks.size.should eq(1)
-      playbook.plays[0].tasks[0].unavailable_module.should eq("_check_platform")
+      # _check_platform"). This spec has no role context (no
+      # library/_check_platform.py to find), so since 0.9.903 the
+      # correct outcome is the unconditional hard-stop, not a crash from
+      # a false "resolved" bypass - see the integration-level
+      # role-private-module spec for the case where a real backing
+      # source DOES exist and the task keeps running.
+      expect_raises(Krikri::UnresolvedModuleError, "krikri does not yet have module '_check_platform' implemented") do
+        Krikri::PlaybookParser.parse_string(<<-YAML
+          - name: Uses a role-local custom module
+            hosts: all
+            tasks:
+              - name: Check platform
+                _check_platform:
+          YAML
+        )
+      end
     end
 
     it "raises when no plays parse successfully" do
@@ -1365,30 +1372,26 @@ describe Krikri::PlaybookParser do
       inner_block.block_tasks.as(Array(Krikri::Task)).map(&.name).should eq(["innermost"])
     end
 
-    it "keeps an individual bad task inside a block (marked unavailable_module) without failing the whole block" do
-      task = single_task(<<-YAML)
-        - name: my block
-          block:
-            - name: good
-              ansible.builtin.debug:
-                msg: hi
-            - name: bad
-              ansible.builtin.nope: {}
-        YAML
-
-      children = task.block_tasks.as(Array(Krikri::Task))
-      children.map(&.name).should eq(["good", "bad"])
-      children[1].unavailable_module.should eq("ansible.builtin.nope")
+    it "hard-stops parsing the WHOLE playbook when a block contains an unimplemented module (0.9.903, unconditional)" do
+      expect_raises(Krikri::UnresolvedModuleError, "krikri does not yet have module 'ansible.builtin.nope' implemented") do
+        single_task(<<-YAML)
+          - name: my block
+            block:
+              - name: good
+                ansible.builtin.debug:
+                  msg: hi
+              - name: bad
+                ansible.builtin.nope: {}
+          YAML
+      end
     end
   end
 
   describe "block/rescue/always in .validate and .stats" do
     it "counts nested block/rescue/always tasks in .stats, not the block pseudo-task itself" do
       stats = Krikri::PlaybookParser.stats(Krikri::PlaybookParser.parse_string(PLAYBOOK_WITH_BLOCK))
-      # inner one + inner two + inner three = 3 real tasks; "inner three"
-      # uses an unimplemented plugin (ansible.builtin.nope) but is kept
-      # (marked unavailable_module) rather than dropped, so it's still
-      # counted here same as any other task.
+      # inner one + inner two + inner three = 3 real tasks, across 2
+      # distinct modules (ansible.builtin.debug, ansible.builtin.command).
       stats["tasks"].should eq(3)
       stats["modules_used"].should eq(2)
     end

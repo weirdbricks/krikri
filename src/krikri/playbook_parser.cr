@@ -1,5 +1,6 @@
 require "yaml"
 require "./loop_resolver"
+require "./python_module_runner"
 require "./role_loader"
 require "./vault"
 require "./variable_substitutor"
@@ -11,9 +12,15 @@ module Krikri
   class Task
     property name : String
     property module_name : String
-    # Set when the task's module didn't resolve to any plugin this engine
-    # ships (module_name above keeps the raw requested name, e.g.
-    # "community.general.zypper_repository"). Previously such a task
+    # Set ONLY for a role-private `library/<name>.py` module (module_name
+    # above keeps the raw requested name, e.g. "sr_fingerprint") whose
+    # source parse found via PythonModuleRunner.find_source - such a task
+    # RUNS through the py_module runner (see executor_run_loop.cr), it is
+    # never gracefully skipped. Since 0.9.903 every OTHER module name
+    # that resolves to nothing this engine ships hard-stops the whole
+    # playbook at parse time (UnresolvedModuleError) - the old graceful
+    # per-task skip (task marked skipped, "uses unimplemented plugin"
+    # warning, play continued) is gone. Previously such a task
     # raised "Plugin not available" at PARSE time and was dropped
     # entirely - before its own when: was ever evaluated - so a task
     # gated behind e.g. `when: ansible_facts['pkg_mgr'] == "zypper"`
@@ -876,31 +883,35 @@ module Krikri
   class HandlerNotFoundError < Exception
   end
 
-  # A task whose module/action name real ansible-core cannot resolve AT
-  # ALL - a bare (or builtin/legacy/amazon.aws-qualified) name tombstoned
-  # out of every installed collection (`ec2_remote_facts`). Real
-  # ansible-playbook refuses to even START the run for one:
-  # "[ERROR]: couldn't resolve module/action '<name>'. This often
-  # indicates a misspelling, missing collection, or incorrect module
-  # path.", rc=4, no PLAY RECAP - verified live against ansible-core
-  # 2.19.4, including with the offending task behind a `when:` that
-  # would have skipped it (the resolution check is a playbook-LOAD
-  # check there, not a per-task one).
+  # A task whose module/action name resolves to nothing this engine can
+  # run - raised at PARSE time.
   #
-  # This is deliberately NOT raised for a module this engine simply
-  # hasn't implemented YET - the graceful per-task unavailable_module
-  # skip path stays (most of this project's whole value is running real
-  # roles despite gaps). The 0.9.860 version of this error also
-  # hard-stopped an FQCN whose collection the engine has zero modules
-  # from, on the theory that meant "collection never installed" - but
-  # "zero modules ported here" is true of most real collections that
-  # exist (kubernetes.core, community.docker, ...), and a live round
-  # (kubernetes.core.helm_repository) proved it hard-stopped roles real
-  # Ansible runs fine. No engine-local signal distinguishes "never
-  # installed" from "real but unported", so that shape gracefully skips
-  # now: the honest boundary is tombstones only, with a residual gap
-  # (a genuinely-uninstalled collection skips where real Ansible
-  # hard-stops) documented below. Same bug class as the
+  # Raised at PARSE time when a task's module/action name resolves to
+  # nothing this engine can run. Real ansible-playbook refuses to even
+  # START the run for one: "[ERROR]: couldn't resolve module/action
+  # '<name>'. This often indicates a misspelling, missing collection, or
+  # incorrect module path.", rc=4, no PLAY RECAP - verified live against
+  # ansible-core 2.19.4, including with the offending task behind a
+  # `when:` that would have skipped it (the resolution check is a
+  # playbook-LOAD check there, not a per-task one).
+  #
+  # Since 0.9.903 this hard-stop is UNCONDITIONAL for every unresolvable
+  # name (owner decision, safety-motivated): a module krikri hasn't
+  # implemented refuses the whole playbook too - "krikri does not yet
+  # have module 'x' implemented" - because a silently-skipped task (a
+  # firewall rule, a security config, anything with real consequences)
+  # can leave a system in a worse state than refusing to run at all.
+  # The ONLY exception is a role-private `library/<name>.py` module
+  # (plus the playbook-adjacent `library/`): that module genuinely runs
+  # here (PythonModuleRunner), so it keeps the graceful
+  # unavailable_module path and parse looks for its source before
+  # deciding to raise. Role-private `filter_plugins/*.py` custom filters
+  # are a separate mechanism entirely (PythonFilterRunner) and were
+  # never affected.
+  #
+  # Tombstoned-removed names (REMOVED_MODULE_TOMBSTONES) hard-stop with
+  # real Ansible's own exact wording instead - real Ansible also
+  # hard-stops there, for its own genuine reason. Same bug class as the
   # `ansible.builtin.include:` tombstone (RemovedActionError, round
   # 162, 0.9.518), generalized from that one hard-coded name.
   class UnresolvedModuleError < Exception
@@ -1124,11 +1135,13 @@ module Krikri
       "community.general.redhat_subscription",
       # The arbitrary-Python-module runner's internal dispatch name -
       # NOT a module real playbooks call. A task whose module resolves
-      # to nothing stays marked unavailable_module (still exits 4 the
-      # way real Ansible refuses an unresolvable playbook), but when a
-      # role-private `library/<name>.py` source exists for it,
-      # TaskExecutor dispatches the task to the py_module plugin with
-      # the source embedded, running it on the target with the target's
+      # to nothing hard-stops the whole parse (UnresolvedModuleError,
+      # 0.9.903), but when a role-private `library/<name>.py` source
+      # exists for it (parse runs PythonModuleRunner.find_source with
+      # the same role_path/playbook_dir roots the executor uses), the
+      # task keeps the graceful unavailable_module path instead and
+      # TaskExecutor dispatches it to the py_module plugin with the
+      # source embedded, running it on the target with the target's
       # own python3 - see PythonModuleRunner's own comment.
       "ansible.builtin.py_module",
     }
@@ -1263,11 +1276,12 @@ module Krikri
       "docker_service",
     }
 
-    # Raises UnresolvedModuleError for the hard-stop shape (see the
-    # class's own comment - tombstoned-removed names only), returns
-    # normally for every graceful-skip shape. as_written is the
-    # module/action name exactly as the task wrote it - real Ansible's
-    # message echoes the source spelling, not any resolved form.
+    # Raises UnresolvedModuleError for the tombstoned-removed hard-stop
+    # shape (real Ansible's own exact wording - real Ansible also
+    # hard-stops there, for its own genuine reason), returns normally
+    # for every other name. as_written is the module/action name exactly
+    # as the task wrote it - real Ansible's message echoes the source
+    # spelling, not any resolved form.
     def self.raise_unresolvable_module_error(as_written : String) : Nil
       # A templated module name resolves (or fails) at run time, never
       # here - the raw `{{ }}` text is not an unresolvable name.
@@ -1279,6 +1293,21 @@ module Krikri
       if REMOVED_MODULE_TOMBSTONES.includes?(as_written)
         raise UnresolvedModuleError.new(message)
       end
+    end
+
+    # Raises UnresolvedModuleError for a module krikri simply hasn't
+    # implemented - since 0.9.903 an UNCONDITIONAL hard-stop (owner
+    # decision, safety-motivated: a silently-skipped task with real
+    # consequences is worse than refusing to run). krikri's own wording,
+    # NOT real Ansible's - unlike the tombstone shape above, real Ansible
+    # would resolve (and run) most of these names fine; refusing is this
+    # engine's own safety posture, so the message says so plainly.
+    # Callers must first have ruled out a role-private `library/<name>.py`
+    # source (which runs here via PythonModuleRunner and keeps the
+    # graceful unavailable_module path).
+    def self.raise_unimplemented_module_error(as_written : String) : Nil
+      raise UnresolvedModuleError.new(
+        "krikri does not yet have module '#{as_written}' implemented")
     end
 
     def self.resolve_module_name(raw : String) : String?
@@ -1619,7 +1648,7 @@ module Krikri
       # actually broken - pre_tasks silently never ran at all) is exact.
       pre_tasks = [] of Task
       if pre_tasks_yaml = yaml["pre_tasks"]?.try(&.as_a?)
-        pre_tasks = parse_tasks(pre_tasks_yaml, play, "pre_task in play '#{name}'", playbook_dir)
+        pre_tasks = parse_tasks(pre_tasks_yaml, play, "pre_task in play '#{name}'", playbook_dir, playbook_dir: playbook_dir)
       end
 
       # Parse roles: - their tasks/handlers run BEFORE the play's own
@@ -1633,12 +1662,12 @@ module Krikri
       # Parse tasks
       own_tasks = [] of Task
       if tasks_yaml = yaml["tasks"]?.try(&.as_a?)
-        own_tasks = parse_tasks(tasks_yaml, play, "task in play '#{name}'", playbook_dir)
+        own_tasks = parse_tasks(tasks_yaml, play, "task in play '#{name}'", playbook_dir, playbook_dir: playbook_dir)
       end
 
       post_tasks = [] of Task
       if post_tasks_yaml = yaml["post_tasks"]?.try(&.as_a?)
-        post_tasks = parse_tasks(post_tasks_yaml, play, "post_task in play '#{name}'", playbook_dir)
+        post_tasks = parse_tasks(post_tasks_yaml, play, "post_task in play '#{name}'", playbook_dir, playbook_dir: playbook_dir)
       end
 
       play.tasks = pre_tasks + role_tasks + own_tasks + post_tasks
@@ -1648,7 +1677,7 @@ module Krikri
       # Parse handlers
       own_handlers = [] of Task
       if handlers_yaml = yaml["handlers"]?.try(&.as_a?)
-        own_handlers = parse_tasks(handlers_yaml, play, "handler", playbook_dir)
+        own_handlers = parse_tasks(handlers_yaml, play, "handler", playbook_dir, playbook_dir: playbook_dir)
       end
       play.handlers = role_handlers + own_handlers
 
@@ -1664,15 +1693,23 @@ module Krikri
     # include_tasks: paths relative to that file (not the top-level
     # playbook), and passed down unchanged for block/rescue/always since
     # those stay within the same file.
-    def self.parse_tasks(tasks_yaml : Array(YAML::Any), play : Play, context : String, file_dir : String, known_vars : Hash(String, JSON::Any)? = nil) : Array(Task)
+    #
+    # role_path/playbook_dir are the two `library/` search roots
+    # PythonModuleRunner uses at execution time for a role-private module
+    # (`task.role_path` and the executor's own playbook dir). Threaded
+    # through here so the unconditional unimplemented-module hard-stop
+    # can run the SAME lookup at parse time and stay graceful for exactly
+    # the tasks the runner would later execute - nil means "not
+    # knowable at this call site", never a false "source exists".
+    def self.parse_tasks(tasks_yaml : Array(YAML::Any), play : Play, context : String, file_dir : String, known_vars : Hash(String, JSON::Any)? = nil, role_path : String? = nil, playbook_dir : String? = nil) : Array(Task)
       tasks = [] of Task
 
       tasks_yaml.each_with_index do |task_yaml, index|
         begin
-          if imported = try_parse_import_tasks(task_yaml, play, file_dir, known_vars)
+          if imported = try_parse_import_tasks(task_yaml, play, file_dir, known_vars, role_path, playbook_dir)
             tasks.concat(imported)
           else
-            tasks << parse_task(task_yaml, index, play, file_dir)
+            tasks << parse_task(task_yaml, index, play, file_dir, role_path, playbook_dir)
           end
         rescue ex : RemovedActionError
           # Bypasses the graceful per-task degradation below - see its
@@ -1683,9 +1720,10 @@ module Krikri
           # Same bypass, same reason - real Ansible's playbook-load
           # module-resolution check refuses the whole run (rc=4) for a
           # name it can't resolve anywhere, including a task behind a
-          # `when:` (verified against ansible-core 2.19.4). See
-          # UnresolvedModuleError's own comment for the tombstone-only
-          # boundary that keeps not-yet-implemented modules graceful.
+          # `when:` (verified against ansible-core 2.19.4), and since
+          # 0.9.903 that hard-stop is unconditional for every
+          # unimplemented name too (see UnresolvedModuleError's own
+          # comment).
           raise ex
         rescue ex : ConflictingActionStatementsError
           # Same bypass, same reason - see that class's own comment.
@@ -1801,7 +1839,7 @@ module Krikri
       parts[0...tasks_index].join(File::SEPARATOR)
     end
 
-    private def self.try_parse_import_tasks(yaml : YAML::Any, play : Play, file_dir : String, known_vars : Hash(String, JSON::Any)? = nil) : Array(Task)?
+    private def self.try_parse_import_tasks(yaml : YAML::Any, play : Play, file_dir : String, known_vars : Hash(String, JSON::Any)? = nil, role_path : String? = nil, playbook_dir : String? = nil) : Array(Task)?
       hash = yaml.as_h?
       return nil unless hash
 
@@ -1869,7 +1907,7 @@ module Krikri
       return [] of Task if imported_yaml.raw.nil?
       raise "Imported tasks file must be a YAML list: #{resolved_path}" unless imported_yaml.as_a?
 
-      imported_tasks = parse_tasks(imported_yaml.as_a, play, "task in imported #{resolved_path}", File.dirname(resolved_path), known_vars)
+      imported_tasks = parse_tasks(imported_yaml.as_a, play, "task in imported #{resolved_path}", File.dirname(resolved_path), known_vars, role_path, playbook_dir)
 
       import_when = hash["when"]?.try { |v| condition_to_string(v) }
       import_tags = hash["tags"]?.try(&.as_a?).try(&.map(&.as_s)) || [] of String
@@ -1966,7 +2004,7 @@ module Krikri
     end
 
     # Parse a single task
-    private def self.parse_task(yaml : YAML::Any, index : Int32, play : Play, file_dir : String) : Task
+    private def self.parse_task(yaml : YAML::Any, index : Int32, play : Play, file_dir : String, role_path : String? = nil, playbook_dir : String? = nil) : Task
       unless yaml.as_h?
         raise "Task must be a YAML mapping (hash)"
       end
@@ -1983,7 +2021,7 @@ module Krikri
       name = task_hash["name"]?.try(&.as_s)
 
       if block_yaml = task_hash["block"]?.try(&.as_a?)
-        return parse_block_task(name || "block", task_hash, block_yaml, play, file_dir)
+        return parse_block_task(name || "block", task_hash, block_yaml, play, file_dir, role_path, playbook_dir)
       end
 
       if include_yaml = directive(task_hash, "include_tasks")
@@ -2208,17 +2246,25 @@ module Krikri
       else
         resolved_module_name = resolve_module_name(module_name)
         unavailable_module_name = resolved_module_name ? nil : module_name
-        # A tombstoned-removed module name (ec2_remote_facts and
-        # friends) hard-stops the whole run at parse time, exactly
-        # where real ansible-playbook's own playbook-load resolution
-        # check fires - NOT the graceful per-task skip below, which is
-        # reserved for modules this engine simply hasn't implemented
-        # (including every module of a collection with zero krikri
-        # ports - "unported here" is indistinguishable from "collection
-        # never installed"). See UnresolvedModuleError's own comment
-        # for the verified-against-2.19.4 boundary and the deliberate
-        # residual gap.
-        raise_unresolvable_module_error(module_name) unless resolved_module_name
+        unless resolved_module_name
+          # A tombstoned-removed module name (ec2_remote_facts and
+          # friends) hard-stops the whole run at parse time with real
+          # Ansible's own exact wording - the same playbook-load check
+          # real ansible-playbook runs, verified against 2.19.4.
+          raise_unresolvable_module_error(module_name)
+          # EVERY other name that resolves to nothing krikri implements
+          # now hard-stops too (0.9.903, unconditional - owner decision,
+          # safety-motivated: a silently-skipped task with real
+          # consequences is worse than refusing to run). A role-private
+          # `library/<name>.py` module is the one exception - it genuinely
+          # runs here (PythonModuleRunner), so parse runs the SAME
+          # find_source lookup the executor will and only keeps the
+          # graceful unavailable_module path when a source actually
+          # exists. Includes the playbook-adjacent `library/` root.
+          unless PythonModuleRunner.find_source(PythonModuleRunner.short_name(module_name), role_path, playbook_dir)
+            raise_unimplemented_module_error(module_name)
+          end
+        end
       end
       module_name = resolved_module_name || module_name
 
@@ -2719,7 +2765,7 @@ module Krikri
     end
 
     # naturally through parse_tasks -> parse_task -> parse_block_task).
-    private def self.parse_block_task(name : String, task_hash : Hash(YAML::Any, YAML::Any), block_yaml : Array(YAML::Any), play : Play, file_dir : String) : Task
+    private def self.parse_block_task(name : String, task_hash : Hash(YAML::Any, YAML::Any), block_yaml : Array(YAML::Any), play : Play, file_dir : String, role_path : String? = nil, playbook_dir : String? = nil) : Task
       task = Task.new(name, "_block")
 
       # Resolve this block's own become:/become_user: FIRST, then
@@ -2752,14 +2798,14 @@ module Krikri
       # restored - a clobbered play.become would silently leak the
       # block's escalation into every play section parsed AFTER it.
       begin
-        task.block_tasks = parse_tasks(block_yaml, play, "task in block '#{name}'", file_dir)
+        task.block_tasks = parse_tasks(block_yaml, play, "task in block '#{name}'", file_dir, role_path: role_path, playbook_dir: playbook_dir)
 
         if rescue_yaml = task_hash["rescue"]?.try(&.as_a?)
-          task.rescue_tasks = parse_tasks(rescue_yaml, play, "task in rescue of block '#{name}'", file_dir)
+          task.rescue_tasks = parse_tasks(rescue_yaml, play, "task in rescue of block '#{name}'", file_dir, role_path: role_path, playbook_dir: playbook_dir)
         end
 
         if always_yaml = task_hash["always"]?.try(&.as_a?)
-          task.always_tasks = parse_tasks(always_yaml, play, "task in always of block '#{name}'", file_dir)
+          task.always_tasks = parse_tasks(always_yaml, play, "task in always of block '#{name}'", file_dir, role_path: role_path, playbook_dir: playbook_dir)
         end
       ensure
         play.become = saved_become
@@ -3784,6 +3830,12 @@ module Krikri
           # run time (Task#templated_action) - the raw `{{ }}` text here is
           # expected, not an unimplemented plugin.
           next if task.templated_action
+          # An unavailable_module task is a role-private `library/<name>.py`
+          # module with a parse-found source (see Task#unavailable_module) -
+          # it RUNS through PythonModuleRunner, so "unimplemented" would be
+          # wrong. Every other unresolvable name already hard-stopped the
+          # parse (UnresolvedModuleError), so this branch is defensive.
+          next if task.unavailable_module
           unless AVAILABLE_PLUGINS.includes?(task.module_name)
             warnings << "Task '#{task.name}' uses unimplemented plugin: #{task.module_name}"
           end
