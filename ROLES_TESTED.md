@@ -3120,7 +3120,7 @@ First batch since Atlantic.net's server-limit increase (10 → 25). 200 never-be
 | `mrlesmithjr.postfix` | ubuntu | ✅ clean. Times: cold py 5.67s vs cr 5.02s; warm py 4.35s vs cr 1.08s. |
 | `mrlesmithjr.squid` | ubuntu | ✅ clean. Times: cold py 46.65s vs cr 43.73s; warm py 6.36s vs cr 0.51s. |
 | `mrlesmithjr.zfs` | ubuntu | ✅ clean. Times: cold py 40.97s vs cr 16.09s; warm py 19.87s vs cr 1.19s. |
-| `newrelic.newrelic-infra` | ubuntu | ⚠️ divergent - role's own `library/merge_yaml.py` (a role-private custom Python module, imports PyYAML) still fails after the 0.9.891 `ansible.module_utils.basic` shim fix; root cause not fully isolated (Open gap, KNOWN_MISSING). Times: cold py 59.16s vs cr 61.48s; warm py 16.75s vs cr 6.58s. |
+| `newrelic.newrelic-infra` | ubuntu | ✅ fixed this round - role-private python module dispatch (`library/merge_yaml.py`) was mistakenly routed to run unprivileged on the CONTROLLER instead of uploading to and running on the target, due to a stray forced-local vars override reaching the dispatch decision itself; now runs on the real target as intended (0.9.902). Times: cold py 59.16s vs cr 61.48s; warm py 16.75s vs cr 6.58s. |
 | `newrelic.newrelic_install` | ubuntu | ⚠️ divergent - cosmetic only, both fail=1, skipped differs by one. Times: cold py 3.87s vs cr 4.82s; warm py 2.41s vs cr 0.30s. |
 | `nginxinc.nginx` | ubuntu | ✅ clean. Times: cold py 121.47s vs cr 88.51s; warm py 22.22s vs cr 9.98s. |
 | `nginxinc.nginx_config` | ubuntu | ✅ clean. Times: cold py 5.01s vs cr 3.37s; warm py 3.66s vs cr 0.48s. |

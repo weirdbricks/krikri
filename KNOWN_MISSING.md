@@ -18,10 +18,38 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.901`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.902`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
 
 ---
+
+## newrelic.newrelic-infra's merge_yaml "Permission denied" fully root-caused and fixed (0.9.902)
+
+The last of this session's open gaps closed. Real root cause: role-
+private python module dispatch (`execute_python_module`'s final
+`PluginManager.execute_plugin` call) passed `wire_vars` - a copy of
+`vars_context` with `ansible_connection` forcibly overridden to
+`"local"`, built ONLY so a module already running on a remote host
+sees itself as local relative to its own new host once the config
+payload is serialized - instead of the real `vars_context` every OTHER
+plugin dispatch in the same method already used for this exact call.
+`PluginManager.local_connection?` falls back to reading
+`vars["ansible_connection"]` for a plain non-delegated remote host, so
+handing it the forced-local `wire_vars` made the DISPATCH DECISION
+itself see every remote role-private python module task as local -
+running it unprivileged on the CONTROLLER instead of uploading to and
+running on the actual target. This is exactly why escalation looked
+correctly requested and succeeding (every OTHER task in the play
+really was becoming root on the real target) while this one task's
+python3 process still got "Permission denied" - it was never running
+on the target at all, and the controller account genuinely can't write
+to `/etc/newrelic-infra.yml`. Two earlier hypotheses (PyYAML
+availability, `task.become?`'s play-level literal inheritance) were
+correctly ruled out along the way and were never the actual gap.
+Verified by reverting the fix and confirming a regression spec
+reproduces the exact bug shape (the module prints "ran locally" and
+succeeds against an address that should have failed with an SSH-level
+connection error instead).
 
 ## systemli.jitsi_meet's NO_PUBKEY divergence, root-caused and fixed (0.9.901)
 
@@ -3109,33 +3137,6 @@ looped-task flow is strict with real-Ansible when:-before-loop ordering.
 Genuinely open defects: something is wrong and the fix is unknown or
 unfinished. Everything deliberate lives under "Deliberate limits"
 below - keep the two apart, or this list stops meaning anything.
-
-- **`newrelic.newrelic-infra`'s `library/merge_yaml.py` still fails
-  with "OS error Permission denied (13)" writing to its become-required
-  destination (`/etc/newrelic-infra.yml`), confirmed live on a real
-  Atlantic.net host (round 79000, `-vvv`) with root/passwordless-sudo
-  already proven to work for every OTHER task in the same play.**
-  PyYAML availability was already ruled out (a faithful local repro
-  succeeds end to end). Two real leads chased and RULED OUT this round:
-  (1) `task.become?`'s play-level literal inheritance - verified live
-  with two local repros matching this role's exact shape (a flat
-  `tasks/main.yml` and its actual `import_tasks:` nesting), both
-  correctly resolve `become=true` and correctly attempt real escalation
-  - this was NOT the gap; (2) a related but genuinely different bug WAS
-  found and fixed in the process (0.9.900: `execute_python_module`
-  passed `task.become?` instead of the properly runtime-resolved
-  `become` value for a TEMPLATED `become:` expression specifically -
-  real, but not this role's shape, since `newrelic.newrelic-infra`
-  never sets `become:` on the task itself at all, only at the play
-  level, which was already correctly inherited). The remaining
-  mystery: escalation is being correctly REQUESTED and correctly
-  SUCCEEDING (proven by every other task in the play), yet this
-  specific task's python3 subprocess still can't write to `/etc/`.
-  Needs a live host with an INSTRUMENTED `py_module.cr` (e.g. print
-  `id`/`os.getuid()` immediately before the write, or run `ls -la
-  /etc/newrelic-infra.yml` right before the task) to see the actual
-  runtime UID and file state at the moment of failure - a plain
-  verbose flag doesn't surface this, already tried.
 
 - **Unresolvable module/action names: hard-stop covers only the
   tombstoned-removed names (0.9.860, narrowed 0.9.861); a missing or
