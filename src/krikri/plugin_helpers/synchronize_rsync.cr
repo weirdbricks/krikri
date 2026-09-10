@@ -90,7 +90,7 @@ module Krikri
       link_dest = parse_list(params["link_dest"]?)
 
       if needs_rsh?(src, dest)
-        has_rsh_opt = parse_list(params["rsync_opts"]?).any? { |opt| opt.includes?("--rsh") }
+        has_rsh_opt = parse_list(params["rsync_opts"]?).any?(&.includes?("--rsh"))
         # Real module: `ssh -S none` (no multiplexing by default), the
         # private key, the port, and - unless verify_host: - the same
         # no-host-key-check pair its own non-interactive runs use.

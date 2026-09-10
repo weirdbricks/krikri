@@ -48,7 +48,9 @@ module Krikri
     end
 
     private def resolve_dest_port : Int32?
-      return @params["dest_port"].not_nil!.strip.to_i if @params["dest_port"]?.try { |v| v.strip =~ /\A\d+\z/ }
+      if dest_port = @params["dest_port"]?
+        return dest_port.strip.to_i if dest_port.strip =~ /\A\d+\z/
+      end
       return @vars["ansible_port"].as_i if @vars["ansible_port"]?.try(&.as_i?)
       @host.port
     end

@@ -44,7 +44,7 @@ module Krikri
       src_param = @params["src"]?
       dest_param = @params["dest"]?
 
-      unless src_param && dest_param && !src_param.empty? && !dest_param.empty?
+      if !src_param || !dest_param || src_param.empty? || dest_param.empty?
         return ActionResult.final(ActionResult.plugin_result_json(
           false, true, "synchronize requires both src and dest parameters are set"
         ))
@@ -57,8 +57,8 @@ module Krikri
         ))
       end
 
-      src = src_param.not_nil!.to_s
-      dest = dest_param.not_nil!.to_s
+      src = src_param.to_s
+      dest = dest_param.to_s
 
       # The delegate-resolved host (@host) is the sync endpoint. When its
       # connection is local, both ends are plain local paths (rsync runs
@@ -117,7 +117,9 @@ module Krikri
     # dest_port: param, then the inventory's ansible_port var, then the
     # host's own parsed port.
     private def resolve_dest_port : Int32?
-      return @params["dest_port"].not_nil!.strip.to_i if @params["dest_port"]?.try { |v| v.strip =~ /\A\d+\z/ }
+      if dest_port = @params["dest_port"]?
+        return dest_port.strip.to_i if dest_port.strip =~ /\A\d+\z/
+      end
       return @vars["ansible_port"].as_i if @vars["ansible_port"]?.try(&.as_i?)
       @host.port
     end
