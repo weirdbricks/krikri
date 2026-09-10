@@ -641,6 +641,47 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
     evaluator.evaluate(%(lookup('pipe', 'echo hello-from-pipe'))).should eq("hello-from-pipe")
   end
 
+  it "renders a nested {{ }} span inside a lookup('pipe', ...) string argument (round 90013, ajeleznov.manage-known-hosts)" do
+    # The role's own shape: `lookup('pipe', 'ssh-keyscan -t {{ ssh_key_type
+    # }} {{ item }}{{ net_domain }}')` - real ansible-core 2.19.4 renders
+    # the inner spans before running the command (live-verified: the
+    # lookup's failure message shows the fully-rendered command text) and
+    # only WARNS about the embedded templates; this evaluator's
+    # rerender_double_templated_literal handles the same rendering.
+    v = Hash(String, JSON::Any).new
+    v["ssh_key_type"] = JSON::Any.new("rsa")
+    v["item"] = JSON::Any.new("denotsl959")
+    v["net_domain"] = JSON::Any.new(".int.kn")
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator.evaluate(
+      %(lookup('pipe', 'echo -t {{ ssh_key_type }} {{ item }}{{ net_domain }}')),
+    ).should eq("-t rsa denotsl959.int.kn")
+  end
+
+  it "raises (does not silently return 'undefined') for lookup('pipe', ...) on a non-zero exit" do
+    # Real Ansible's pipe lookup raises on ANY non-zero exit code
+    # ("The lookup plugin 'pipe' failed: lookup_plugin.pipe(<cmd>)
+    # returned <rc>", live-verified against 2.19.4, stdout discarded),
+    # failing the task's arg finalization. The old lenient "undefined"
+    # sentinel here let ajeleznov.manage-known-hosts's failing
+    # ssh-keyscan flow a literal "undefined" key into known_hosts and
+    # the play run seven tasks past real Ansible's hard stop.
+    v = Hash(String, JSON::Any).new
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
+    expect_raises(Krikri::PipeLookupError, /lookup plugin 'pipe' failed: lookup_plugin\.pipe\(echo out; exit 3\) returned 3/) do
+      evaluator.evaluate(%(lookup('pipe', 'echo out; exit 3')))
+    end
+  end
+
+  it "returns an empty result instead of raising for lookup('pipe', ...) with errors='ignore'" do
+    # Real Ansible's generic lookup errors='ignore' option swallows the
+    # failure (live-verified against 2.19.4: `lookup('pipe', 'exit 7',
+    # errors='ignore')` renders empty rather than failing).
+    v = Hash(String, JSON::Any).new
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator.evaluate(%(lookup('pipe', 'exit 7', errors='ignore'))).should eq("")
+  end
+
   it "evaluates lookup('template', path) rendering a local .j2 file against expression vars" do
     path = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "lookup_template_test.j2")
     Dir.mkdir_p(File.dirname(path))

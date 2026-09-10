@@ -289,11 +289,13 @@ module Krikri
           raise FilterEngine::UnknownFilterError.new("No filter named '#{filter_name}'.")
         end
         raise e
-      rescue e : Krikri::FirstFoundLookupError
+      rescue e : Krikri::FirstFoundLookupError | Krikri::PipeLookupError
         # Same reasoning as the unknown-filter case above: first_found's own
         # no-match failure is a hard task failure in real Ansible, never the
         # lenient give-back-the-text fallback (which turned it into the
         # "undefined" sentinel string at whatever consumer came next).
+        # PipeLookupError likewise - a non-zero pipe-command exit is real
+        # Ansible's hard task failure, never silent text passthrough.
         raise e
       rescue
         # Return original text on failure
