@@ -18,8 +18,8 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.903`.** Vendored `crinja` fork now at tag
-`crystal-play-0.9.29` (see `shard.yml`).
+**Currently at `0.9.921`.** Vendored `crinja` fork now at tag
+`crystal-play-0.9.30` (see `shard.yml`).
 
 ---
 
@@ -3172,35 +3172,94 @@ looped-task flow is strict with real-Ansible when:-before-loop ordering.
 
 ---
 
+## Round 83000-85000: 400-role batch triage, 10 real bugs fixed, plus the vendored-Crinja `in`-string gap closed (0.9.905 -> 0.9.921)
+
+A fresh 400-role Galaxy batch (round 83000, 22 Atlantic hosts + 4 Kata)
+found 74 divergences against the previous fix set; triage sorted them
+into real bugs vs. the 0.9.903 hard-stop correctly firing on genuinely
+unimplemented modules vs. role/ansible-core version mismatches vs. host
+flakes. 10 real bugs found and fixed, each independently validated
+(full `crystal spec` + `./build.sh`) before merge, then the whole
+original 74-role set re-run against the fixed build (round 85000) to
+confirm no regressions:
+
+- **`delegate_to:` with an undefined variable crashed the whole run**
+  instead of failing the one task cleanly (0.9.906) - resolved the
+  target host literally to the string `"undefined"` and died trying to
+  SSH/SCP a plugin binary to a nonexistent hostname.
+- **`package:` hard-failed on a missing/empty `name:`** even when
+  `update_cache: true` should have exempted it (real Ansible's own
+  `required_one_of` check is defeated by its `upgrade`/`autoremove`
+  defaults) - now a no-op (0.9.907), and separately **`apt:`'s own
+  cache-refresh `changed:` folding didn't recognize a present-but-
+  empty `name:`** as the sole operation (0.9.910).
+- **`apt_key:` trusted `apt-key add`'s exit code alone** - a real
+  expired signing key (acandid.jenkins' own `pkg.jenkins.io` key)
+  exits 0 without the key actually becoming usable; now verifies the
+  key against a post-add re-listing the way real Ansible does (0.9.908).
+- **A role-private `filter_plugins/*.py` filter that raised internally
+  reported "No filter named 'X'"** instead of the filter's own real
+  error - the filter WAS found and dispatched, the failure was inside
+  it (0.9.909).
+- **`include_vars` + `first_found`'s dict-literal argument form**
+  (`lookup('first_found', {'files': var_files, 'paths': [...]})`, a
+  task-local `vars:` block feeding the file list) resolved to the
+  literal string "undefined" instead of finding the real candidate
+  file (0.9.911).
+- **`user:`'s `generate_ssh_key:` param was never implemented at all**
+  - silently read nothing, generated nothing, always reported `ok`
+  (0.9.913).
+- **A non-boolean `when:` result** (real Ansible's own strict-boolean
+  check, added earlier this session) **got the wrong error prefix** -
+  "Error while evaluating conditional:" instead of real Ansible's own
+  "Task failed:" for this specific failure class (0.9.914).
+- **`ini_file:` with `state: absent` deleted a commented-out option
+  line** (`#Storage=auto`) as if it were a live option - real
+  Ansible's own absent branch only ever matches active (uncommented)
+  lines (0.9.915).
+
+Two other suspected bugs from the same triage were investigated and
+ruled out rather than force-fixed: a suspected `openssl dhparam` hang
+(code review of the actual command-execution path found no defect -
+0/40 re-tried roles reproduced it, most likely VM hardware/entropy
+variance between two independent hosts) and a suspected `wait_for`
+banner-detection bug (real Ansible had already failed an earlier,
+unrelated task in that comparison, invalidating it) and a suspected
+`package:` install-detection idempotency bug for
+adfinis-sygroup.network (live container-tested: the plugin correctly
+detected genuinely-uninstalled packages and attempted real
+installation, contradicting the original divergence).
+
+Separately, the long-standing vendored-Crinja `in`-string-with-
+undefined-left-operand gap (see the old Open gaps entry this replaces)
+was already fixed in the fork itself (`crystal-play-0.9.30`) but never
+actually pulled into `shard.yml`/`shard.lock` - the pin was bumped and
+verified live against a real `.j2` template (0.9.921), closing it for
+good; a krikri-side integration spec now covers the real-template path
+(`spec/integration/crinja_in_string_undefined_spec.cr`) alongside the
+fork's own unit coverage for the hand-rolled `when:` side.
+
+Also shipped this session, unrelated to the triage: `ansible.posix.
+synchronize` (0.9.916, an rsync wrapper - runs controller-side like
+real Ansible's own module, not uploaded to the target); `openssl_
+certificate`/`x509_certificate` (0.9.917, every real spelling
+- `openssl_certificate`, its `ansible.builtin.`/`ansible.legacy.`
+forms, and both `community.general.`/`community.crypto.` FQCNs -
+resolves onto one plugin); and a full `amazon.aws` EC2 module cluster
+(0.9.918-0.9.920: `ec2_key`, `ec2_security_group`, `ec2_vpc_subnet_
+info`, `ec2_vpc_net_info`, `ec2_ami_info`, `ec2_instance`) - a
+deliberate scope expansion past the previous cloud-module exclusion,
+scoped to "ec2_instance + the minimum cluster to actually use it."
+
+---
+
 ## Open gaps
 
 Genuinely open defects: something is wrong and the fix is unknown or
 unfinished. Everything deliberate lives under "Deliberate limits"
 below - keep the two apart, or this list stops meaning anything.
 
-- **Crinja-side `in`-a-plain-string with an undefined left operand
-  still diverges (hand-rolled `when:` side fixed, 0.9.858).** The
-  original round71000 gap (`asg1612.gluster`: `when: "node_1 in
-  hostvars[inventory_hostname]['ansible_nodename']"` with `node_1`
-  never defined, real Ansible hard-failing with "'in <string>'
-  requires string as left operand, not UndefinedMarker") is fixed in
-  the hand-rolled `when:` evaluator - see the 0.9.858 narrative above.
-  What remains is the vendored-Crinja side (real `.j2` template files,
-  `{%` blocks): real Jinja2 raises the TypeError there, while this
-  fork's `Operator.contains?` silently coerces an Undefined marker to
-  `""` (a substring of everything) under the default lenient mode and
-  returns TRUE, and under `StrictTemplating` hard-errors with
-  Crinja's generic "`node_1` is undefined" instead of the TypeError
-  shape. Fixing either means modifying the vendored `crinja` fork
-  itself (tag-pinned via `shard.yml`, so a fork release), plus care
-  not to break the lenient mode's broader empty-string-coercion
-  conventions - not done this round.
-
 ### Needs a closer look (real, reproducible, not root-caused yet)
-
-Promoted from round 72000's triage so they don't get buried as later
-rounds accumulate. Real, reproducible divergences whose root cause
-isn't fully pinned down yet:
 
 - **The apt-404-on-krikri-host-only pattern across 3 roles**
   (`lfit.lf-dev-libs`, `lfit.mono-install`, `markosamuli.pyenv`,
@@ -3217,83 +3276,6 @@ isn't fully pinned down yet:
   update sequencing differs from real Ansible's own timing in some way
   that makes a stale index more likely) rather than dismissing each as
   independent bad luck.
-
-Found via the 97-role fixed/divergence re-verification round and
-double-checked with a second independent re-run of every divergence
-against the properly committed `0.9.824` (commit `79270d9a`) - see the
-narrative entries below for the full story, including why the first
-pass's version numbers were unreliable. Each item below reproduced
-**deterministically across two independent fresh-host runs**, which is
-why these are listed as confirmed rather than merely suspected:
-
-- **`linux-system-roles.storage`** (Rocky 9.6): partially fixed (see
-  the narrative below) - `sr_fingerprint` now runs correctly, but the
-  role's own `blivet:` module needs a custom `module_utils.storage_lsr`
-  package this engine doesn't bundle, a new, separate, larger scope
-  gap (see "Deliberate limits" below) than the regression this row
-  originally reported.
-- **`kyl191.openvpn`**: NOT a regression - root-caused. The single
-  differing task is real Ansible's own `package_facts:` module failing
-  outright ("Could not detect a supported package manager... or the
-  required Python library is not installed") because `python3-apt`
-  isn't installed on this Kata image - `ignore_errors: true` lets the
-  play continue, but the role's own fallback task
-  ("Ensure packages fact exists", gated on the fact never having been
-  set) then runs on real Ansible and is skipped on krikri, since
-  krikri's own native (non-Python) `package_facts:` implementation has
-  no such dependency and succeeds where real Ansible's does not. Not
-  fixable in any meaningful sense - replicating it would mean
-  deliberately breaking krikri's `package_facts:` to match a missing
-  runtime dependency on real Ansible's own interpreter, not a real
-  behavioral gap.
-
-Single-data-point, not yet confirmed by a second run: `buluma.
-confluence` finally completed on a third attempt (the first two hit
-SSH_TIMEOUT) with a small divergence (`ok=27/changed=8/skipped=6` real
-Ansible vs `ok=26/changed=7/skipped=7` krikri) - close to but not
-exactly the historical `ok=25` baseline; worth a repeat run before
-treating as confirmed.
-
-Not regressions - ruled out by the second run: `diodonfrost.
-amazon_codedeploy` (came back CLEAN on retry - the original `rc=126`
-was a one-off plugin-upload glitch), `inmotionhosting.wordpress` (the
-huge `ok=110` vs `ok=120` gap from the first run did not reproduce - the
-second run landed at `ok=26`/`ok=26` on both engines, matching closely;
-the role's own external-download-heavy early tasks appear to have high
-run-to-run variance that swamped any real engine signal in the first
-pass). Inconclusive - real Ansible itself couldn't reach the host both
-times (reboot/SSH flakiness, not comparable either way):
-`mrlesmithjr.change-hostname`, `robertdebock.selinux`. Not regressions -
-matches already-documented behavior: `buluma.forensics` (known
-`delegate_to: localhost` ssh-reupload limitation), `xanmanning.k3s`
-(known GitHub-403/rate-limit flakiness on the real-Ansible side; krikri's
-own early stop at the same point both runs may be worth an isolated
-repro someday but is low priority), `buluma.netdata` (known
-long-build-role timeout/resource flakiness), `linux-system-roles.logging`
-(the entire `ok=28` vs `ok=30` gap is the role's own custom
-`sr_fingerprint` module from its `library/` dir - the same documented
-scope-cut `linux-system-roles.timesync`'s own row already describes;
-this round happened to hit it on Ubuntu instead of the Rocky host the
-original fix was verified on - confirmed live via `cold_py.out`, not a
-regression in the actual `include_role: vars:` fix). `buluma.confluence` hit
-infra flakes (SSH_TIMEOUT) on both attempts to re-test it - still no
-real data either way.
-
-The three gaps found via the 100-role RHEL (Rocky 9.6) regression round
-(round 65000+, distinct from the round above) are all root-caused and
-fixed - the fix-phase narrative for each lives in the 0.9.818/0.9.823
-commit messages. `pip:`'s pip3-discovery fix (mirroring real Ansible's
-own `_get_pip` order: `python3 -m pip` when the interpreter can `import
-pip`, PATH search for the `pip3` binary only as a fallback) is
-confirmed live (0.9.823 review pass): a fresh Kata Rocky 9.6 VM with
-`python3-pip` installed but its `pip3` script moved off PATH still
-installs a package correctly via the `python3 -m pip` fallback, and
-fails with real Ansible's own "Unable to find any of pip3 to use"
-message on the pre-fix code in the identical scenario. The original
-divergent role (`geerlingguy.supervisor` on Atlantic's Rocky 9.6
-image specifically) itself has still not been re-run end to end,
-though the underlying discovery-order bug it hit is now directly
-confirmed.
 
 ---
 
