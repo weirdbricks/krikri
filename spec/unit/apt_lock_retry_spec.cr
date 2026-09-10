@@ -20,6 +20,7 @@ DPKG_LOCK_STILL_HELD  = {exit_code: 100, stdout: "", stderr: DPKG_LOCK_HELD_STDE
 DPKG_BROKEN_REPO      = {exit_code: 100, stdout: "", stderr: "E: The repository 'http://example.com/debian broken Release' does not have a Release file.\n"}
 APT_LOCATE_MISS       = {exit_code: 100, stdout: "", stderr: "E: Unable to locate package w3m\n"}
 APT_CORRUPT_LISTS     = {exit_code: 100, stdout: "", stderr: "E: LZ4F: /var/lib/apt/lists/deb.debian.org_debian_dists_bookworm_main_binary-amd64_Packages.lz4 Read error (18446744073709551603: ERROR_frameType_unknown)\nE: The package lists or status file could not be parsed or opened.\n"}
+APT_UPDATE_SUCCESS    = {exit_code: 0, stdout: "Hit:1 http://us.archive.ubuntu.com/ubuntu jammy InRelease\n", stderr: ""}
 
 # Returns canned responses in order; if the list is exhausted, the
 # last response is returned repeatedly. Tracks how many times it was
@@ -383,7 +384,66 @@ describe "apt lock-contention retry helpers (round 153 follow-up, 0.9.502)" do
       })
       msg.should eq(Krikri::AptLockRetry::CHECK_MODE_NO_PYTHON_APT_MSG)
       msg.not_nil!.should contain("python3-apt must be installed to use check mode")
-      commands.none? { |c| c.includes?("apt-get") }.should be_true
+      commands.none?(&.includes?("apt-get")).should be_true
+    end
+  end
+
+  # Regression spec for the apt-404-on-krikri-host-only pattern (rounds
+  # 72311/72313/72363 - lfit.lf-dev-libs, lfit.mono-install,
+  # markosamuli.pyenv). Real Ansible's `package:` action plugin
+  # delegates to the apt module, whose main() refreshes the cache
+  # BEFORE install() whenever update_cache: is set - all three roles
+  # pass `update_cache: true` in the same task as the install. This
+  # engine's package: module used to install straight off the host
+  # image's stale package index (it only honored update_cache: on the
+  # name-less cache-refresh-only path), so apt resolved names to
+  # long-superseded versions (linux-libc-dev 5.15.0-33.34,
+  # libdpkg-perl 1.21.1ubuntu2.1 - all 2022-era) and 404'd fetching
+  # their .debs from the live mirror, which only carries current
+  # versions. Real Ansible on a simultaneously-provisioned host ran
+  # the refresh first, resolved current versions, and succeeded.
+  describe "#apt_update_cache_before_operation" do
+    it "returns nil in check mode without running anything" do
+      stub = StubExec.new([APT_UPDATE_SUCCESS])
+      HostClass.new.apt_update_cache_before_operation(true, 0, 5, 12, true, ->(c : String) { stub.call(c) }).should be_nil
+      stub.exec_count.should eq(0)
+    end
+
+    it "returns nil without running anything when update_cache is false and no cache_valid_time is given" do
+      stub = StubExec.new([APT_UPDATE_SUCCESS])
+      HostClass.new.apt_update_cache_before_operation(false, 0, 5, 12, false, ->(c : String) { stub.call(c) }).should be_nil
+      stub.exec_count.should eq(0)
+    end
+
+    it "runs apt-get update when update_cache is true (default cache_valid_time: 0 = always stale)" do
+      stub = StubExec.new([APT_UPDATE_SUCCESS])
+      HostClass.new.apt_update_cache_before_operation(true, 0, 5, 12, false, ->(c : String) { stub.call(c) }).should be_nil
+      stub.exec_count.should eq(1)
+    end
+
+    it "returns the failed update result so the caller fails the task before any install" do
+      stub = StubExec.new([DPKG_BROKEN_REPO])
+      result = HostClass.new.apt_update_cache_before_operation(true, 0, 5, 12, false, ->(c : String) { stub.call(c) })
+      result.should_not be_nil
+      result.not_nil![:exit_code].should eq(100)
+      result.not_nil![:stderr].should contain("does not have a Release file")
+    end
+
+    it "skips the refresh when a positive cache_valid_time window is still fresh" do
+      now = Time.utc.to_unix
+      stub = StubExec.new([{exit_code: 0, stdout: now.to_s, stderr: ""}])
+      HostClass.new.apt_update_cache_before_operation(false, 3600, 5, 12, false, ->(c : String) { stub.call(c) }).should be_nil
+      stub.exec_count.should eq(1) # only the mtime probe, no apt-get update
+    end
+
+    it "refreshes when a positive cache_valid_time window has gone stale" do
+      stale = Time.utc.to_unix - 7200
+      stub = StubExec.new([
+        {exit_code: 0, stdout: stale.to_s, stderr: ""},
+        APT_UPDATE_SUCCESS,
+      ])
+      HostClass.new.apt_update_cache_before_operation(false, 3600, 5, 12, false, ->(c : String) { stub.call(c) }).should be_nil
+      stub.exec_count.should eq(2)
     end
   end
 end
