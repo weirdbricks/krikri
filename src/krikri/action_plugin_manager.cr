@@ -6,6 +6,7 @@ require "./action_plugins/assert_action_plugin"
 require "./action_plugins/fail_action_plugin"
 require "./action_plugins/set_fact_action_plugin"
 require "./action_plugins/pause_action_plugin"
+require "./action_plugins/synchronize_action_plugin"
 
 module Krikri
   # Action Plugin Manager
@@ -17,14 +18,16 @@ module Krikri
     ACTION_PLUGINS = {
       "ansible.builtin.template" => TemplateActionPlugin,
       "template"                 => TemplateActionPlugin,
-      # These 5 return an ActionResult.final (see base_action_plugin.cr)
+      # These 6 return an ActionResult.final (see base_action_plugin.cr)
       # instead of modified_params - the caller never invokes a module
       # (local or remote) afterward at all. Real ansible-core's own
       # debug/assert/fail/set_fact/pause have always been action-plugin
       # only (no target-side module) - this closes that architectural
       # gap while also removing an SSH round trip + upload per task for
-      # remote hosts. See each action_plugins/*_action_plugin.cr for the
-      # per-module rationale.
+      # remote hosts. synchronize (ansible.posix) joins them with the
+      # same shape: real Ansible's own synchronize runs rsync from the
+      # controller/delegate, never on the target. See each
+      # action_plugins/*_action_plugin.cr for the per-module rationale.
       "ansible.builtin.debug"    => DebugActionPlugin,
       "debug"                    => DebugActionPlugin,
       "ansible.builtin.assert"   => AssertActionPlugin,
@@ -35,6 +38,12 @@ module Krikri
       "set_fact"                 => SetFactActionPlugin,
       "ansible.builtin.pause"    => PauseActionPlugin,
       "pause"                    => PauseActionPlugin,
+      # synchronize: controller-side action plugin (real Ansible's own
+      # synchronize runs its rsync subprocess from the controller/delegate
+      # with rsync dialing out itself - see SynchronizeActionPlugin's own
+      # comment) - ActionResult.final, no module dispatch afterward.
+      "ansible.posix.synchronize" => SynchronizeActionPlugin,
+      "synchronize"               => SynchronizeActionPlugin,
     }
 
     # Check if a module has an action plugin
@@ -47,7 +56,7 @@ module Krikri
     # whose action plugin only rewrites params before a real module still
     # executes to actually write the file). PluginManager's own
     # pre-upload pass (collect_required_plugins) uses this to skip
-    # putting these 5 in a remote host's upload set entirely - nothing
+    # putting these 6 in a remote host's upload set entirely - nothing
     # in the normal execution path ever calls get_local_plugin_path for
     # them, so uploading them was pure waste. Kept as a fixed set rather
     # than derived from ACTION_PLUGINS, since template: is a real
@@ -58,6 +67,7 @@ module Krikri
       "ansible.builtin.fail", "fail",
       "ansible.builtin.set_fact", "set_fact",
       "ansible.builtin.pause", "pause",
+      "ansible.posix.synchronize", "synchronize",
     }
 
     def self.skips_module_dispatch?(module_name : String) : Bool

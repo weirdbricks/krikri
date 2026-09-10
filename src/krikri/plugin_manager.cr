@@ -492,7 +492,7 @@ module Krikri
         next if task.module_name == "ansible.builtin.group_by" ||
                 task.module_name == "ansible.builtin.set_stats"
 
-        # debug:/assert:/fail:/set_fact:/pause: - now controller-side
+        # debug:/assert:/fail:/set_fact:/pause:/synchronize: - now controller-side
         # action plugins that always produce the whole result themselves
         # (see ActionPluginManager::CONTROLLER_ONLY_MODULES) - no module
         # ever runs, local or remote, so pre-uploading their binaries to
