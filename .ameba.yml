@@ -226,6 +226,11 @@ Metrics/CyclomaticComplexity:
   # build_keygen_command as their own methods; further fragmentation
   # would split one cohesive real-Ansible sequence for no real benefit.
   - plugins/user.cr
+  # build_argv's branch count IS real ansible.posix.synchronize's own
+  # rsync argv-construction flow (archive/checksum/compress/delete
+  # toggles, --rsh, --link-dest, rsync_opts merging) - one flag per
+  # real module param, matching its actual CLI surface one-to-one.
+  - src/krikri/plugin_helpers/synchronize_rsync.cr
   - src/krikri/inventory_parser.cr
   - src/krikri/conditional_evaluator.cr
   - src/krikri/task_executor/result_display.cr

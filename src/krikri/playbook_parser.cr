@@ -991,6 +991,12 @@ module Krikri
       "ansible.builtin.facts",
       "ansible.builtin.package_facts",
       "ansible.posix.selinux",
+      # synchronize (0.9.916): rsync-wrapper module, real Ansible's most
+      # common way to move files between hosts. Controller-side by nature
+      # (see SynchronizeActionPlugin's own comment) - listed here plus
+      # plugins/synchronize.cr/binary so the task isn't dropped at parse
+      # time and the registry cross-check spec stays consistent.
+      "ansible.posix.synchronize",
       "community.general.pam_limits",
       "community.general.apache2_module",
       "community.general.capabilities",

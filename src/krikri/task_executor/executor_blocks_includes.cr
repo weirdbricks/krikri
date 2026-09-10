@@ -1424,10 +1424,21 @@ module Krikri
       src = params["src"]?
       return params if src.nil? || src.starts_with?('/')
 
+      # synchronize (ansible.posix) shares the copy:/assemble: files/-
+      # dir dwim (real Ansible's own _get_absolute_path resolves a
+      # relative synchronize path against the role's files/). The
+      # remote-path guard matters ONLY for synchronize - pull mode's
+      # src: (and an explicit user@host:path anywhere) is an rsync
+      # remote spec, not a controller-relative path - but a ':' in a
+      # copy:/template: src is meaningless anyway, so the guard is
+      # unconditional.
+      return params if src.includes?(':') || src.starts_with?("rsync://")
+
       subdir = case task.module_name
                when "ansible.builtin.copy"     then "files"
                when "ansible.builtin.template" then "templates"
                when "ansible.builtin.assemble" then "files"
+               when "ansible.posix.synchronize" then "files"
                else                                 nil
                end
       return params unless subdir
@@ -1436,6 +1447,7 @@ module Krikri
                  when "ansible.builtin.copy"     then task.role_files_dir
                  when "ansible.builtin.template" then task.role_templates_dir
                  when "ansible.builtin.assemble" then task.role_files_dir
+                 when "ansible.posix.synchronize" then task.role_files_dir
                  else                                 nil
                  end
       return params unless role_dir
