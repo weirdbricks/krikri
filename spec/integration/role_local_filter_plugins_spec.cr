@@ -116,6 +116,40 @@ describe "role-local filter_plugins/*.py custom filters" do
     FileUtils.rm_rf(root) if root
   end
 
+  it "surfaces the filter's own failure instead of a misleading 'No filter named' error (round 83177)" do
+    root = File.tempname("filter-plugins-internal-failure")
+    Dir.mkdir_p(File.join(root, "roles", "myrole", "filter_plugins"))
+    Dir.mkdir_p(File.join(root, "roles", "myrole", "tasks"))
+    File.write(File.join(root, "roles", "myrole", "filter_plugins", "myfilters.py"), <<-PYTHON)
+      class FilterModule(object):
+          def filters(self):
+              return {"xrt_latest": self.xrt_latest}
+
+          def xrt_latest(self, x):
+              raise ValueError("No XRT version found for this OS")
+      PYTHON
+    File.write(File.join(root, "roles", "myrole", "tasks", "main.yml"), <<-YAML)
+      - name: use a filter that raises internally
+        ansible.builtin.debug:
+          msg: "{{ 'aws' | xrt_latest }}"
+      YAML
+
+    status, output = run_playbook(root, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        roles:
+          - myrole
+      YAML
+
+    status.success?.should be_false, output
+    output.should contain("The filter plugin 'xrt_latest' failed"), output
+    output.should contain("No XRT version found for this OS"), output
+    output.should_not contain("No filter named"), output
+  ensure
+    FileUtils.rm_rf(root) if root
+  end
+
   it "still raises the plain unknown-filter error when no filter_plugins source defines the name" do
     root = File.tempname("filter-plugins-none")
     Dir.mkdir_p(File.join(root, "roles", "myrole", "tasks"))

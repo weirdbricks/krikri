@@ -37,6 +37,19 @@ module Krikri
       class UnknownFilterError < Exception
       end
 
+      # Raised when a role-local `filter_plugins/*.py` filter WAS found
+      # and dispatched but the invocation itself failed (an exception
+      # raised inside the filter). Subclasses UnknownFilterError so every
+      # existing "rescue ex : UnknownFilterError" clean-task-failure site
+      # catches it unchanged - but the message carries the filter's own
+      # failure rather than the misleading "No filter named 'X'.": real
+      # Ansible fails the task with "The filter plugin 'xrt_latest'
+      # failed: No XRT version found for this OS" (live-verified against
+      # ansible-core 2.19, Accelize.aws_fpga round 83177), never with an
+      # unknown-filter error for a filter it just successfully ran.
+      class FilterFailureError < UnknownFilterError
+      end
+
       # The name part includes dots so a collection-qualified unknown
       # filter WITH arguments (`nephelaiio.plugins.sorted_get(overrides)`)
       # reports its full dotted name in the unknown-filter error, exactly
@@ -1374,6 +1387,24 @@ module Krikri
         end
 
         PythonFilterRunner.call_filter(filter_name, sources, value, pos_args, kwargs)
+      rescue ex : PythonFilterRunner::FilterError
+        # The filter was FOUND and dispatched - a failure past this point
+        # is the filter's own error (an exception it raised), never an
+        # unknown-filter condition. The blanket rescue below used to
+        # swallow this too, so Accelize.aws_fpga's round-83177 task
+        # failed as "No filter named 'xrt_latest'." where real Ansible
+        # fails the same task with the filter's actual error ("The
+        # filter plugin 'xrt_latest' failed: No XRT version found for
+        # this OS", ansible-core 2.19.4 live-verified) - report the real
+        # cause, in real Ansible's wording. Everything else (no python3,
+        # no sources, name not defined by any source) still degrades to
+        # nil -> the plain UnknownFilterError above, exactly as before.
+        raise FilterFailureError.new(
+          (ex.message || "filter failed").sub(
+            /^custom filter '#{filter_name}' failed: /,
+            "The filter plugin '#{filter_name}' failed: "
+          )
+        )
       rescue
         nil
       end
