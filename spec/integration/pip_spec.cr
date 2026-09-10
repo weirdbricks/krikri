@@ -178,4 +178,58 @@ describe "pip plugin" do
       result["msg"].as_s.should_not eq("umask must be an octal integer")
     end
   end
+
+  describe "pip-module interpreter discovery" do
+    # Real bug found benchmarking aloysius-lim.elasticsearch_api (round
+    # 91020, Atlantic Rocky 9.6): the host ships only /usr/bin/python3.9 -
+    # no unversioned `python3` command at all (common on minimal
+    # RHEL-family images) and no `pip3` script - yet real Ansible's pip
+    # module installs cleanly there, because it runs pip as
+    # `[sys.executable, '-m', 'pip']` with sys.executable being its
+    # DISCOVERED interpreter (/usr/bin/python3.9), never a literal
+    # `python3`. Krikri's discovery probed the literal name `python3`,
+    # got 127, fell through to the pip3 PATH check, also 127, and failed
+    # the task with real Ansible's own "Unable to find any of pip3 to
+    # use." message on a host where real Ansible succeeded.
+    #
+    # Simulated with a shim dir REPLACING the whole PATH (apt_key_spec.cr's
+    # established shim pattern): python3.9 (symlink to the real
+    # interpreter) present, python3 and pip3 absent. state: absent on a
+    # not-installed package only ever calls `pip show` (no real
+    # install/network call) - safe to run for real, matching this file's
+    # own no-real-execution convention.
+    it "falls back to a versioned interpreter (python3.9) when the host has no python3 or pip3 binary" do
+      python = Process.find_executable("python3") || Process.find_executable("python")
+      raise "this spec needs a working python3 -m pip on the spec machine" unless python && python_with_pip?(python)
+
+      shim_dir = File.tempname("/tmp", ".krikri-spec-pip-bin")
+      Dir.mkdir(shim_dir)
+      File.symlink(File.realpath(python), File.join(shim_dir, "python3.9"))
+      File.symlink("/bin/sh", File.join(shim_dir, "sh"))
+      old_path = ENV["PATH"]?
+      ENV["PATH"] = shim_dir
+      begin
+        result = PluginSpecHelper.run("pip", {
+          "name"  => "definitely-not-a-real-package-xyz",
+          "state" => "absent",
+        })
+
+        # Got past discovery (not the "Unable to find any of pip3"
+        # failure) and the resolved `python3.9 -m pip` command actually
+        # ran: pip show answered "not installed" ("Package already
+        # absent") rather than the module failing to find any pip at all.
+        result["failed"]?.try(&.as_bool).should_not be_true
+        result["msg"].as_s.should eq("Package already absent")
+      ensure
+        ENV["PATH"] = old_path if old_path
+        FileUtils.rm_rf(shim_dir)
+      end
+    end
+  end
+end
+
+private def python_with_pip?(python : String) : Bool
+  Process.run(python, ["-m", "pip", "--version"]).success?
+rescue
+  false
 end

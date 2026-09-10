@@ -158,13 +158,19 @@ module Krikri
     # 2. No executable: it first runs pip as `[sys.executable, '-m',
     #    'pip']` whenever the interpreter can `import pip`
     #    (_have_pip_module), and ONLY falls back to a `pip3` PATH
-    #    search when it can't. A Rocky 9.6 host with the python3-pip
-    #    module installed but no `pip3` script on PATH (found via
-    #    geerlingguy.supervisor, round 65000+) is fully usable under
-    #    real Ansible this way - this engine used to hard-require the
-    #    `pip3` binary and fail the task with real Ansible's own no-pip
-    #    message even though the very same `python3 -m pip` invocation
-    #    real Ansible runs would have worked.
+    #    search when it can't. sys.executable there is the DISCOVERED
+    #    interpreter - e.g. /usr/bin/python3.9 on a Rocky 9.6 minimal
+    #    image that ships no unversioned `python3` command at all
+    #    (found via aloysius-lim.elasticsearch_api, round 91020, where
+    #    BOTH the old literal-`python3` probe and the `pip3` PATH check
+    #    failed while real Ansible, running its module under the
+    #    discovered /usr/bin/python3.9, installed cleanly). Krikri's
+    #    plugin is a compiled binary with no module interpreter of its
+    #    own, so it probes the same candidates a `-m pip` invocation
+    #    could plausibly work under (#discover_pip_module_interpreter)
+    #    and uses the first that succeeds - also covering a host where
+    #    `python3` exists but lacks the pip module while a versioned
+    #    interpreter has it.
     #
     # `sh -c 'command -v ...'` rather than a bare `which ...`: the
     # LocalExecutor fast path execs argv[0] directly when the command
@@ -182,14 +188,41 @@ module Krikri
         return executable
       end
 
-      if remote_exec("python3 -m pip --version 2>/dev/null")[:exit_code] == 0
-        return "python3 -m pip"
+      if interpreter = discover_pip_module_interpreter
+        return "#{interpreter} -m pip"
       end
 
       unless remote_exec("sh -c 'command -v pip3'")[:exit_code] == 0
         return PluginResult.new(changed: false, failed: true, msg: "Unable to find any of pip3 to use.  pip needs to be installed.")
       end
       "pip3"
+    end
+
+    # One shell loop over the `-m pip` candidate interpreters (a single
+    # SSH round trip, not one per candidate): the host's
+    # ansible_python_interpreter when set (real Ansible runs its pip
+    # module under that interpreter, so sys.executable is exactly it),
+    # then python3, then the versioned python3.N names interpreter
+    # discovery iterates, then a bare python. Returns the winning
+    # interpreter name (sanitized to a plain path token - this string
+    # is interpolated into later shell commands), or nil when no
+    # candidate could run pip as a module.
+    private def discover_pip_module_interpreter : String?
+      candidates = [] of String
+      if interp = @vars["ansible_python_interpreter"]?.try(&.as_s?)
+        stripped = interp.strip
+        candidates << stripped unless stripped.empty?
+      end
+      candidates << "python3"
+      candidates.concat((6..14).to_a.reverse.map { |minor| "python3.#{minor}" })
+      candidates << "python"
+
+      quoted = candidates.uniq.map { |candidate| Shell.single_quote(candidate) }.join(" ")
+      result = remote_exec("for interp in #{quoted}; do if \"$interp\" -m pip --version >/dev/null 2>&1; then echo \"$interp\"; exit 0; fi; done; exit 1")
+      return nil unless result[:exit_code] == 0
+
+      interpreter = result[:stdout].strip
+      interpreter =~ /\A[A-Za-z0-9_\/.\-]+\z/ ? interpreter : nil
     end
 
     # The required name/requirements combination check. Returns the
