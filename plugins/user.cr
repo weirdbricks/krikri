@@ -50,6 +50,19 @@ module Krikri
   #     own day-level (not full-timestamp) comparison exactly - a value
   #     that maps to the same calendar day as what's already set is a
   #     no-op.
+  #   generate_ssh_key (optional, bool): after create/modify, generate a
+  #     private/public keypair for the account via ssh-keygen when it does
+  #     not exist yet - ssh_key_type (default rsa), ssh_key_file (default
+  #     `.ssh/id_<type>`, relative paths resolved against the account's
+  #     home), ssh_key_bits, ssh_key_comment, ssh_key_passphrase, force
+  #     (overwrite an existing key). Mirrors real ansible-core user.py's
+  #     own ssh_key_gen: the .ssh dir is created 0700 and chowned to the
+  #     account, an already-existing private OR public key file is a
+  #     no-op unless force:, and a relative ssh_key_file against a home
+  #     that does not exist fails the task (verified against 2.19.4's
+  #     source and live run - abaez.user's own `create a user ssh_key`
+  #     task, round 84001: previously the params were never even read, so
+  #     the key was never generated and the task always reported ok).
   #
   # Not implemented: any password-strength/format validation or warning
   # (real Ansible's own `check_password_encrypted` only ever warns, never
@@ -111,21 +124,138 @@ module Krikri
       # docker_user_info.home }}`, undefined regardless of whether the
       # user already existed.
       facts = check_mode ? current : lookup(name)
+
+      # Real Ansible's main() runs ssh_key_gen after create/modify alike
+      # (its own common tail, not inside either branch).
+      ssh_key = apply_ssh_key(name, facts, check_mode)
+      return ssh_key if ssh_key && ssh_key.failed?
+
       result = PluginResult.new(
-        changed: combine_changed?(base, ageing),
+        changed: combine_changed?(base, ageing, ssh_key),
         failed: false,
-        msg: combine_msg(base, ageing)
+        msg: combine_msg(base, ageing, ssh_key)
       )
       attach_user_facts(result, facts) if facts
+      # apply_ssh_key's own ssh_key_file/ssh_public_key/ssh_fingerprint
+      # fields (real Ansible's own returned keys for generate_ssh_key:)
+      # live on ITS PluginResult, not the merged one built above - never
+      # copied over, so a task registering the result and reading `{{
+      # user_result.ssh_public_key }}` always saw it undefined even
+      # though the key genuinely generated.
+      ssh_key.try(&.extra.each { |k, v| result.extra[k] = v })
       result
     end
 
-    private def combine_changed?(base : PluginResult, ageing : PluginResult?) : Bool
-      base.changed? || (ageing.try(&.changed?) || false)
+    private def combine_changed?(base : PluginResult, ageing : PluginResult?, ssh_key : PluginResult?) : Bool
+      base.changed? || (ageing.try(&.changed?) || false) || (ssh_key.try(&.changed?) || false)
     end
 
-    private def combine_msg(base : PluginResult, ageing : PluginResult?) : String
+    private def combine_msg(base : PluginResult, ageing : PluginResult?, ssh_key : PluginResult?) : String
+      return ssh_key.msg if ssh_key && ssh_key.changed?
       ageing && ageing.changed? ? ageing.msg : base.msg
+    end
+
+    # generate_ssh_key: + friends - real ansible-core user.py's own
+    # ssh_key_gen (Linux useradd path), called from main()'s common tail
+    # AFTER create/modify alike. Generates the account's private/public
+    # keypair via ssh-keygen when it does not exist yet:
+    #
+    # - ssh_key_file (default `.ssh/id_<ssh_key_type>`) is resolved
+    #   against the account's home directory when relative; a home that
+    #   does not exist is a task failure (real Ansible's own
+    #   get_ssh_key_path raise, non-check mode only).
+    # - The key's parent dir is created 0700 and chowned to the account
+    #   when missing (real Ansible's own os.mkdir/os.chown).
+    # - An existing private OR public key file is a no-op unless force:
+    #   overwrites it; in check mode any would-be generation reports
+    #   changed without touching anything.
+    # - On success the pair is chowned to the account and the register
+    #   result carries ssh_key_file/ssh_public_key/ssh_fingerprint,
+    #   matching real Ansible's own returned fields.
+    # Resolves ssh_key_file: against the account's home when relative -
+    # real Ansible's own get_ssh_key_path, including its home-must-exist
+    # failure (non-check-mode only). Returns {key_path, nil} on success,
+    # {nil, failure_result} when the home doesn't exist.
+    private def resolve_ssh_key_path(name : String, facts : PluginHelpers::UserState::User?, check_mode : Bool) : {String, Nil} | {Nil, PluginResult}
+      key_type = @params["ssh_key_type"]?.presence || "rsa"
+      ssh_file = @params["ssh_key_file"]?.presence || ".ssh/id_#{key_type}"
+      home = facts.try(&.home) || @params["home"]? || File.join("/home", name)
+
+      return {ssh_file, nil} if ssh_file.starts_with?('/')
+
+      unless check_mode || remote_dir_exists?(home)
+        return {nil, PluginResult.new(changed: false, failed: true,
+          msg: "User #{name} home directory does not exist")}
+      end
+      {File.join(home, ssh_file), nil}
+    end
+
+    private def build_keygen_command(key_type : String, key_path : String) : String
+      String.build do |str|
+        str << "ssh-keygen -q -t " << key_type
+        if bits = @params["ssh_key_bits"]?.try(&.to_i64?)
+          str << " -b " << bits if bits > 0
+        end
+        if comment = @params["ssh_key_comment"]?.presence
+          str << " -C " << shell_single_quote(comment)
+        end
+        str << " -f " << shell_single_quote(key_path)
+        str << " -N " << shell_single_quote(@params["ssh_key_passphrase"]?.presence || "")
+      end
+    end
+
+    private def apply_ssh_key(name : String, facts : PluginHelpers::UserState::User?, check_mode : Bool) : PluginResult?
+      return nil unless true?(@params["generate_ssh_key"]?)
+
+      key_type = @params["ssh_key_type"]?.presence || "rsa"
+      resolved_path, path_failure = resolve_ssh_key_path(name, facts, check_mode)
+      return path_failure if path_failure
+      key_path = resolved_path.as(String)
+
+      pub_path = key_path + ".pub"
+      key_dir = File.dirname(key_path)
+
+      dir_missing = !remote_dir_exists?(key_dir)
+      priv_exists = remote_file_exists?(key_path)
+      pub_exists = remote_file_exists?(pub_path)
+      overwrite = true?(@params["force"]?)
+
+      nothing_to_do = !dir_missing && (priv_exists || pub_exists) && !overwrite
+      return nil if nothing_to_do
+      return PluginResult.new(changed: true, failed: false, msg: "Would generate SSH key (check mode)") if check_mode
+
+      if dir_missing
+        uid = facts.try(&.uid)
+        gid = facts.try(&.gid)
+        mkdir = remote_exec("mkdir #{shell_single_quote(key_dir)} && chmod 0700 #{shell_single_quote(key_dir)}")
+        return command_failure("create ssh key directory", mkdir) unless mkdir[:exit_code] == 0
+        if uid && gid
+          remote_exec("chown #{shell_single_quote("#{uid}:#{gid}")} #{shell_single_quote(key_dir)}")
+        end
+      end
+
+      if overwrite && priv_exists
+        remote_exec("rm -f #{shell_single_quote(key_path)} #{shell_single_quote(pub_path)}")
+      end
+
+      command = build_keygen_command(key_type, key_path)
+      generated = remote_exec(command)
+      return command_failure("generate ssh key", generated) unless generated[:exit_code] == 0
+
+      if facts
+        owner = "#{facts.uid}:#{facts.gid}"
+        remote_exec("chown #{shell_single_quote(owner)} #{shell_single_quote(key_path)} #{shell_single_quote(pub_path)}")
+      end
+
+      result = PluginResult.new(changed: true, failed: false, msg: "SSH key generated")
+      result.extra["ssh_key_file"] = JSON::Any.new(key_path)
+      pub = remote_exec("cat #{shell_single_quote(pub_path)}")
+      result.extra["ssh_public_key"] = JSON::Any.new(pub[:stdout].strip) if pub[:exit_code] == 0
+      fingerprint = remote_exec("ssh-keygen -l -f #{shell_single_quote(key_path)}")
+      if fingerprint[:exit_code] == 0
+        result.extra["ssh_fingerprint"] = JSON::Any.new(fingerprint[:stdout].strip)
+      end
+      result
     end
 
     private def attach_user_facts(result : PluginResult, facts : PluginHelpers::UserState::User) : Nil

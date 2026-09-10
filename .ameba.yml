@@ -220,6 +220,12 @@ Metrics/CyclomaticComplexity:
   # before/after key-listing verification) - verified live against the
   # real acandid.jenkins expired-key case (round 83166).
   - plugins/apt_key.cr
+  # apply_ssh_key's branch count IS real ansible-core user.py's own
+  # ssh_key_gen flow (dir creation, overwrite cleanup, chown, result-
+  # field population) - already split out resolve_ssh_key_path/
+  # build_keygen_command as their own methods; further fragmentation
+  # would split one cohesive real-Ansible sequence for no real benefit.
+  - plugins/user.cr
   - src/krikri/inventory_parser.cr
   - src/krikri/conditional_evaluator.cr
   - src/krikri/task_executor/result_display.cr
