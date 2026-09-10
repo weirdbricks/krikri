@@ -80,6 +80,16 @@ describe "ini_file plugin" do
     content.should contain("[mysqld]")
   end
 
+  it "does not remove a commented-out option line with state=absent, matching real Ansible's match_active_opt" do
+    path = tmp_path("ini_file-absent-commented")
+    File.write(path, "[Journal]\n#Storage=auto\n#Compress=yes\n")
+
+    result = PluginSpecHelper.run("ini_file", {"path" => path, "section" => "Journal", "option" => "Storage", "state" => "absent"})
+
+    result["changed"].as_bool.should be_false
+    File.read(path).should eq("[Journal]\n#Storage=auto\n#Compress=yes\n")
+  end
+
   it "removes an option when state=absent" do
     path = tmp_path("ini_file-remove-option")
     File.write(path, "[mysqld]\nport = 3306\nbind-address = 127.0.0.1\n")

@@ -159,8 +159,21 @@ module Krikri
     # end of the section instead of uncommenting the existing one in
     # place, unlike real Ansible. Found benchmarking robertdebock.
     # systemd's own journald.conf `LineMax` setting.
-    private def option_line_index?(line : String, option : String) : Bool
-      match = line.match(/^\s*[#;]?\s*([^=;#\s][^=]*?)\s*=/)
+    #
+    # With `active_only` set, the comment marker is disallowed entirely,
+    # matching real Ansible's own `match_active_opt`: real Ansible's
+    # state=absent branch hard-codes `match_active_opt` and ignores
+    # `modify_inactive_option` completely, so a commented-out line is
+    # never a match for removal (adfinis-sygroup.systemd_journald's
+    # `Storage: absent` task on a fresh journald.conf whose `#Storage=auto`
+    # is still commented out - krikri-playbook used to delete the comment
+    # and report changed where real Ansible reports ok).
+    private def option_line_index?(line : String, option : String, active_only : Bool = false) : Bool
+      match = if active_only
+                line.match(/^\s*([^=;#\s][^=]*?)\s*=/)
+              else
+                line.match(/^\s*[#;]?\s*([^=;#\s][^=]*?)\s*=/)
+              end
       return false unless match
       match[1].strip == option
     end
@@ -204,7 +217,10 @@ module Krikri
     private def apply_option(new_lines : Array(String), option : String, value : String?,
                              state : String, block_start : Int32, block_end : Int32,
                              exclusive : Bool, no_extra_spaces : Bool) : Bool
-      matches = (block_start...block_end).select { |i| option_line_index?(new_lines[i], option) }
+      # state=absent only ever matches ACTIVE (uncommented) option lines,
+      # per real Ansible's hard-coded match_active_opt in its absent branch.
+      active_only = state == "absent"
+      matches = (block_start...block_end).select { |i| option_line_index?(new_lines[i], option, active_only) }
       changed = false
 
       if state == "present"
