@@ -27,15 +27,17 @@ module Krikri
     #   back from DescribeInstances anyway.
     # - state=present: launch (RunInstances) when no match; otherwise a
     #   no-op except for tag drift (missing tags applied via CreateTags,
-    #   extra tags deleted via DeleteTags when purge_tags is set - the
-    #   real module's default - with aws:-reserved keys left alone).
+    #   extra tags deleted via DeleteTags when both `tags` and
+    #   purge_tags are set - the real module's default - with
+    #   aws:-reserved keys left alone).
     #   Attribute drift (instance_type, user_data, ...) is deliberately
     #   not diffed: present "ensures instances exist, but does not
     #   guarantee any state".
     # - state=running/started: launch when absent, StartInstances on
     #   stopped matches, no-op when already running.
-    # - state=stopped: StopInstances on running matches; fails when no
-    #   match exists (the real module cannot stop what is not there).
+    # - state=stopped: StopInstances on matches not already stopped
+    #   (running or still stopping); fails when no match exists (the
+    #   real module cannot stop what is not there).
     # - state=restarted/rebooted: Stop then Start.
     # - state=terminated/absent: TerminateInstances, no-op when no match.
     # - count: always launches that many new instances (never reconciles).
@@ -232,10 +234,6 @@ module Krikri
         if image_id.nil? || image_id.empty?
           raise Ec2Api::Error.new("image_id is required when creating a new instance")
         end
-        instance_type = params["instance_type"]?
-        if instance_type.nil? || instance_type.empty?
-          raise Ec2Api::Error.new("instance_type is required when creating a new instance")
-        end
 
         Plan.new(
           [Ec2Api::Step.new("RunInstances", run_instances_params(params, count))],
@@ -253,7 +251,7 @@ module Krikri
           return plan_launch(params, 1, wait)
         end
 
-        purge = bool_param(params["purge_tags"]?, true)
+        purge = bool_param(params["purge_tags"]?, true) && params.has_key?("tags")
         desired = desired_tags(name, params)
         steps = existing.flat_map do |inst|
           tag_diff_steps(desired, instance_tags(inst), inst.instance_id, purge)
@@ -286,16 +284,16 @@ module Krikri
           raise Ec2Api::Error.new("state=stopped but no matching instances found")
         end
 
-        running = existing.select { |inst| inst.state_name == "running" }
-        if running.empty?
+        not_stopped = existing.reject { |inst| inst.state_name == "stopped" }
+        if not_stopped.empty?
           return Plan.new([] of Ec2Api::Step, false, "instance(s) already stopped", nil, [] of String)
         end
         Plan.new(
-          [Ec2Api::Step.new("StopInstances", id_params(running.map(&.instance_id)))],
+          [Ec2Api::Step.new("StopInstances", id_params(not_stopped.map(&.instance_id)))],
           true,
-          "stopped #{running.size} instance(s)",
+          "stopped #{not_stopped.size} instance(s)",
           wait ? "stopped" : nil,
-          running.map(&.instance_id),
+          not_stopped.map(&.instance_id),
         )
       end
 
@@ -308,7 +306,12 @@ module Krikri
         stopped = existing.select { |inst| inst.state_name == "stopped" }
         steps = [] of Ec2Api::Step
         steps << Ec2Api::Step.new("StopInstances", id_params(running.map(&.instance_id))) unless running.empty?
-        steps << Ec2Api::Step.new("StartInstances", id_params(stopped.map(&.instance_id))) unless stopped.empty?
+        # Restart = stop the running ones AND start everything: instances
+        # that were already stopped, plus the ones the Stop step above
+        # just took down (the pre-plan snapshot can't see the latter, so
+        # the Start step must cover the running slice too).
+        start_ids = (running + stopped).map(&.instance_id)
+        steps << Ec2Api::Step.new("StartInstances", id_params(start_ids)) unless start_ids.empty?
 
         if steps.empty?
           return Plan.new([] of Ec2Api::Step, false, "instance(s) already restarted", nil, [] of String)
@@ -407,10 +410,10 @@ module Krikri
                  plan_exact_count(params, exact_count, existing, wait)
                else
                  case state
-                 when "terminated", "absent" then plan_terminate(existing, wait)
-                 when "present"              then plan_present(name, params, existing, wait)
-                 when "running", "started"   then plan_running(name, params, existing, wait)
-                 when "stopped"              then plan_stopped(existing, wait)
+                 when "terminated", "absent"  then plan_terminate(existing, wait)
+                 when "present"               then plan_present(name, params, existing, wait)
+                 when "running", "started"    then plan_running(name, params, existing, wait)
+                 when "stopped"               then plan_stopped(existing, wait)
                  when "restarted", "rebooted" then plan_restarted(existing, wait)
                  else
                    raise Ec2Api::Error.new("unhandled state #{state}")

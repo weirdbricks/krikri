@@ -387,9 +387,15 @@ describe Krikri::PluginHelpers::Ec2Instance do
         action = URI::Params.parse(body)["Action"]
         if action == "DescribeInstances"
           describe_count += 1
-          # First poll sees the instance still stopping, second sees the
-          # target state - exercises the wait loop's continue path.
-          describe_count == 1 ? STOPPING : DESCRIBE_STOPPED
+          # Call 1 is the pre-stop idempotency lookup (finds the running
+          # match); call 2 is the wait loop's first poll (still
+          # stopping - exercises its continue path); call 3+ sees the
+          # target state.
+          case describe_count
+          when 1 then DESCRIBE_RUNNING
+          when 2 then STOPPING
+          else        DESCRIBE_STOPPED
+          end
         else
           DESCRIBE_STOPPED
         end
@@ -420,10 +426,19 @@ describe Krikri::PluginHelpers::Ec2Instance do
 
     it "launches the difference for exact_count below the target" do
       bodies = [] of String
+      describe_calls = 0
       handler = ->(region : String, body : String) do
         bodies << body
         action = URI::Params.parse(body)["Action"]
-        action == "DescribeInstances" ? DESCRIBE_RUNNING : RUN_PENDING
+        if action == "DescribeInstances"
+          describe_calls += 1
+          # First call is the pre-launch existing-count lookup (finds the
+          # 1 running match); the wait loop's own polls after RunInstances
+          # need to see the newly-launched instance ("i-new") running.
+          describe_calls == 1 ? DESCRIBE_RUNNING : DESCRIBE_NEW_RUNNING
+        else
+          RUN_PENDING
+        end
       end
       result = run_module({
         "name"        => "web",
