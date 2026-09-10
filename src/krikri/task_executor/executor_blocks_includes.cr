@@ -352,6 +352,15 @@ module Krikri
         return
       end
 
+      # The dir: form (load every vars file in a directory) runs through
+      # its own path below - before the loop machinery, which keys off
+      # include_vars_file and would have nothing to substitute for a
+      # dir:-mode task.
+      if task.include_vars_dir
+        execute_include_vars_dir(task, host, vars_context)
+        return
+      end
+
       # A real `loop:` (as opposed to with_first_found, handled below)
       # was previously ignored entirely here - include_vars: was
       # dispatched to this method before the generic loop-handling in
@@ -657,6 +666,191 @@ module Krikri
 
       puts "ok: [#{host.name}]".colorize(:green)
       @results[host.name]["ok"] += 1
+    end
+
+    # include_vars: with `dir:` - real Ansible's directory form
+    # (lib/ansible/plugins/action/include_vars.py, verified live against
+    # 2.19.4): loads every vars file under the directory, walking
+    # subdirectories recursively by default (depth: 0 means UNLIMITED
+    # levels - depth: 1 means top-level files only, each further level
+    # adds one). Files load in sorted order (dirs traversed in sorted
+    # path order), later files overriding earlier duplicate keys;
+    # files_matching is a regex searched against the basename,
+    # ignore_files is a list of regexes matched end-anchored against the
+    # basename, and a file whose extension isn't in `extensions:` (the
+    # default yaml/yml/json) FAILS the task unless
+    # ignore_unknown_extensions: is true (real Ansible's default -
+    # verified live: unknown extensions are a hard task failure, the
+    # module's guard for skipping the role's own vars/main.yml is dead
+    # code, so that file loads like any other). Same name:/register:
+    # result shapes as the file: form above.
+    private def execute_include_vars_dir(task : Task, host : Host, vars_context : Hash(String, JSON::Any)) : Nil
+      begin
+        return unless when_passes?(task, vars_context, host)
+      rescue ex : WhenEvaluationError
+        swallow_when_error(task, host, ex)
+        return
+      end
+
+      substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
+      raw_dir = task.include_vars_dir || ""
+      candidate = begin
+        substitutor.scan_strict_include_vars_path(raw_dir, task.vars)
+        substitutor.substitute(raw_dir, strict: true).strip
+      rescue ex : UndefinedVariableError
+        finish_include_vars_failure(task, host, ex.message || "is undefined")
+        return
+      end
+
+      dir = resolve_include_vars_dir_path(task, candidate)
+      unless dir
+        finish_include_vars_failure(task, host, "#{candidate} directory does not exist")
+        return
+      end
+      unless File.directory?(dir)
+        finish_include_vars_failure(task, host, "#{candidate} is not a directory")
+        return
+      end
+
+      depth = 0
+      if raw_depth = task.include_vars_depth
+        depth_str = substitutor.substitute(raw_depth, strict: true).strip
+        depth = depth_str.to_i?
+        unless depth
+          finish_include_vars_failure(task, host, "include_vars: invalid depth: #{depth_str}")
+          return
+        end
+      end
+
+      extensions = (task.include_vars_extensions || ["yaml", "yml", "json"]).map do |raw_ext|
+        substitutor.substitute(raw_ext, strict: true).strip
+      end
+
+      files_matching = nil
+      if raw_matching = task.include_vars_files_matching
+        rendered = substitutor.substitute(raw_matching, strict: true).strip
+        begin
+          files_matching = Regex.new(rendered)
+        rescue ex : ArgumentError
+          finish_include_vars_failure(task, host, "Invalid regular expression: #{rendered}")
+          return
+        end
+      end
+
+      ignore_patterns = (task.include_vars_ignore_files || [] of String).map do |raw_pattern|
+        rendered = substitutor.substitute(raw_pattern, strict: true).strip
+        begin
+          Regex.new(rendered + "$")
+        rescue ex : ArgumentError
+          finish_include_vars_failure(task, host, "Invalid regular expression: #{rendered}")
+          return
+        end
+      end
+
+      files = [] of String
+      if err = collect_include_vars_dir_files(dir, depth, 1, extensions, files_matching,
+        ignore_patterns, task.include_vars_ignore_unknown_extensions || false, files)
+        finish_include_vars_failure(task, host, err)
+        return
+      end
+
+      combined = Hash(String, JSON::Any).new
+      files.each do |path|
+        loaded = begin
+          RoleLoader.load_vars_file(path)
+        rescue ex
+          finish_include_vars_failure(task, host, "include_vars: could not parse #{path}: #{ex.message}")
+          return
+        end
+        loaded.each { |key, value| combined[key] = value }
+      end
+
+      store = (@included_vars[host.name] ||= Hash(String, JSON::Any).new)
+      if name = task.include_vars_name
+        store[name] = JSON::Any.new(combined)
+      else
+        combined.each { |key, value| store[key] = value }
+      end
+      @hv_generation += 1
+
+      if register_name = task.register
+        unless register_name.empty?
+          @registered_vars[host.name][register_name] = JSON::Any.new({
+            "changed"       => JSON::Any.new(false),
+            "failed"        => JSON::Any.new(false),
+            "ansible_facts" => JSON::Any.new(combined),
+          } of String => JSON::Any)
+          @hv_generation += 1
+        end
+      end
+
+      puts "ok: [#{host.name}]".colorize(:green)
+      @results[host.name]["ok"] += 1
+    end
+
+    # Depth-limited, sorted directory walk for dir:-mode include_vars: -
+    # mirrors real Ansible's _traverse_dir_depth (walk results sorted by
+    # root path, files within each dir sorted; depth 0 = unlimited, the
+    # top dir itself is depth 1). `level` starts at 1 for the top dir.
+    # Returns the first error message encountered, or nil when every
+    # candidate file was accepted (matches are appended to `files`).
+    private def collect_include_vars_dir_files(current : String, depth : Int32, level : Int32,
+                                               extensions : Array(String), files_matching : Regex?,
+                                               ignore_patterns : Array(Regex), ignore_unknown_extensions : Bool,
+                                               files : Array(String)) : String?
+      subdirs = [] of String
+      Dir.children(current).sort.each do |entry|
+        path = File.join(current, entry)
+        if File.directory?(path)
+          subdirs << path
+          next
+        end
+        next if files_matching && !files_matching.matches?(entry)
+        next if ignore_patterns.any?(&.matches?(entry))
+        ext = File.extname(entry).lstrip('.')
+        unless extensions.includes?(ext)
+          # Real Ansible's default: an unknown-extension candidate file
+          # fails the whole task - only ignore_unknown_extensions: true
+          # skips it silently.
+          next if ignore_unknown_extensions
+          return "'#{path}' does not have a valid extension: #{extensions.join(", ")}"
+        end
+        files << path
+      end
+      return nil if depth != 0 && level >= depth
+      subdirs.each do |sub|
+        if err = collect_include_vars_dir_files(sub, depth, level + 1, extensions, files_matching,
+          ignore_patterns, ignore_unknown_extensions, files)
+          return err
+        end
+      end
+      nil
+    end
+
+    # resolve_include_vars_path's directory counterpart - same search
+    # roots (role vars/, the role root above it, the including file's
+    # directory, the role root, the role's tasks/, the process cwd) but
+    # accepts a path that EXISTS at the candidate (the caller then
+    # distinguishes "missing" from "exists but not a directory", real
+    # Ansible's own two distinct error messages).
+    private def resolve_include_vars_dir_path(task : Task, candidate : String) : String?
+      return File.exists?(candidate) ? candidate : nil if candidate.starts_with?("/")
+
+      roots = [] of String
+      if vars_dir = task.role_vars_dir
+        roots << vars_dir
+        roots << File.dirname(vars_dir)
+      end
+      task.include_file_dir.try { |dir| roots << dir }
+      task.role_path.try { |role_dir| roots << role_dir }
+      task.role_path.try { |role_dir| roots << File.join(role_dir, "tasks") }
+      roots << Dir.current
+
+      roots.each do |root|
+        path = File.expand_path(candidate, root)
+        return path if File.exists?(path)
+      end
+      nil
     end
 
     private def finish_include_vars_failure(task : Task, host : Host, message : String) : Nil
