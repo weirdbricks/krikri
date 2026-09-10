@@ -1967,10 +1967,76 @@ module Krikri
         expr = part.strip
         raw_resolved = @lookup.resolve(expr)
         if raw_resolved && (raw_resolved.raw.is_a?(Array) || raw_resolved.raw.is_a?(Hash))
-          raw_resolved
-        else
-          resolve_plus_operand(expr)
+          return raw_resolved
         end
+        # An INLINE dict literal (`lookup('first_found', {'files': var_files,
+        # 'paths': ['vars']})`, AerisCloud.vault's own idiom) is neither a
+        # plain variable reference (resolve above misses) nor anything
+        # resolve_plus_operand understands (its literal branch only knows
+        # `[...]` arrays) - it used to resolve to a nil JSON::Any, which
+        # evaluate_first_found then collapsed to the literal text
+        # "undefined" ("include_vars: file not found: undefined") no matter
+        # what candidate files actually existed. Parse it ourselves,
+        # resolving each VALUE through the same machinery a `params`
+        # variable's own dict would get - which keeps nested `{{ }}`
+        # candidate templates RAW for evaluate_first_found's strict
+        # per-entry rendering (see its own comment) instead of letting
+        # them render leniently to "undefined.yml" here.
+        if expr.starts_with?('{') && expr.ends_with?('}') &&
+           (dict = first_found_dict_literal(expr))
+          return dict
+        end
+        resolve_plus_operand(expr)
+      end
+
+      # Parses a first_found params DICT LITERAL (`{'files': ...,
+      # 'paths': ...}`) from expression text, resolving every value
+      # recursively. A value can be a nested dict/list literal, a quoted
+      # string (kept RAW - a candidate like '{{ ansible_distribution
+      # }}.yml' must survive unrendered for the strict per-entry rendering
+      # in evaluate_first_found), or any plain reference/expression, which
+      # resolves through #first_found_params itself (so a task-local
+      # `var_files` list variable comes in as the real, still-templated
+      # array). nil when the text isn't a parseable dict literal - the
+      # caller then keeps its old fallback path.
+      private def first_found_dict_literal(expr : String) : JSON::Any?
+        inner = expr[1..-2].strip
+        return nil if inner.empty?
+
+        hash = Hash(String, JSON::Any).new
+        split_top_level_commas(inner).each do |entry|
+          split = split_first_top_level_colon(entry.strip)
+          return nil unless split
+          key, value = split
+
+          key = quoted_string_literal(key).try(&.as_s?) || key
+          hash[key] = first_found_params(value)
+        end
+        JSON::Any.new(hash)
+      rescue
+        nil
+      end
+
+      # Splits a dict literal's `key: value` entry on the FIRST top-level
+      # colon - one outside quotes/brackets, so a value containing a colon
+      # (a templated string, a slice) or a bracketed key never mis-splits.
+      private def split_first_top_level_colon(entry : String) : {String, String}?
+        depth = 0
+        quote : Char? = nil
+        entry.each_char_with_index do |char, i|
+          if q = quote
+            quote = nil if char == q
+            next
+          end
+          case char
+          when '\'', '"'   then quote = char
+          when '(', '[', '{' then depth += 1
+          when ')', ']', '}' then depth -= 1
+          when ':'
+            return {entry[0...i].strip, entry[(i + 1)..].strip} if depth == 0
+          end
+        end
+        nil
       end
 
       private def evaluate_lookup_scalar(lookup_type : String?, parts : Array(String), kwargs : Array(String), query_mode : Bool = false) : String?

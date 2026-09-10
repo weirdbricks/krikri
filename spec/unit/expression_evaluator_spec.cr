@@ -366,6 +366,74 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
     evaluator.evaluate("lookup('first_found', params)").should eq(File.join(role_dir, "otherdir", "x.yml"))
   end
 
+  it "parses an inline first_found DICT literal whose files: value is a variable holding the candidate list" do
+    # Real bug found benchmarking AerisCloud.vault (round 83346): the
+    # DICT form passed INLINE (not through a params variable) with a
+    # task-local vars: candidate list -
+    #
+    #   include_vars: "{{ lookup('first_found', {'files': var_files,
+    #     'paths': [ 'vars' ]}) }}"
+    #   vars:
+    #     var_files:
+    #       - "{{ ansible_distribution }}.yml"
+    #       - "{{ ansible_os_family }}.yml"
+    #
+    # first_found_params resolved the dict literal through the plain
+    # variable-reference resolver (nil) and then the +/-operand fallback
+    # (also nil, its literal branch only knows `[...]` arrays), so the
+    # whole lookup collapsed to the literal text "undefined" and
+    # include_vars failed "file not found: undefined" - without even
+    # trying the individual candidates, where vars/Debian.yml exists
+    # (real Ansible: Ubuntu.yml misses, Debian.yml is found).
+    role_dir = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "first_found_inline_dict_var_spec")
+    `rm -rf #{role_dir}`
+    Dir.mkdir_p(File.join(role_dir, "vars"))
+    File.write(File.join(role_dir, "vars", "Debian.yml"), "greeting: hello\n")
+
+    v = Hash(String, JSON::Any).new
+    v["role_path"] = JSON::Any.new(role_dir)
+    v["ansible_distribution"] = JSON::Any.new("Ubuntu")
+    v["ansible_os_family"] = JSON::Any.new("Debian")
+    v["var_files"] = JSON.parse(%(["{{ ansible_distribution }}.yml", "{{ ansible_os_family }}.yml"]))
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator.evaluate(%(lookup('first_found', {'files': var_files, 'paths': [ 'vars' ]})))
+      .should eq(File.join(role_dir, "vars", "Debian.yml"))
+  end
+
+  it "parses an inline first_found DICT literal with a fully inline files: list, nested templates included" do
+    role_dir = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "first_found_inline_dict_literal_spec")
+    `rm -rf #{role_dir}`
+    Dir.mkdir_p(File.join(role_dir, "vars"))
+    File.write(File.join(role_dir, "vars", "Debian.yml"), "greeting: hello\n")
+
+    v = Hash(String, JSON::Any).new
+    v["role_path"] = JSON::Any.new(role_dir)
+    v["ansible_distribution"] = JSON::Any.new("Ubuntu")
+    v["ansible_os_family"] = JSON::Any.new("Debian")
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator.evaluate(%(lookup('first_found', {'files': ['{{ ansible_distribution }}.yml', 'Debian.yml'], 'paths': ['vars']})))
+      .should eq(File.join(role_dir, "vars", "Debian.yml"))
+  end
+
+  it "keeps nested candidate templates RAW inside an inline dict literal so an undefined one still fails strictly" do
+    # The inline-dict parsing must not pre-render the files: entries
+    # leniently (which would turn '{{ ansible_facts.os_family }}.yml'
+    # into "undefined.yml" and silently lose to a later default.yml) -
+    # strict per-entry rendering in evaluate_first_found must still see
+    # them, same as the params-variable dict form.
+    role_dir = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "first_found_inline_dict_strict_spec")
+    `rm -rf #{role_dir}`
+    Dir.mkdir_p(File.join(role_dir, "vars"))
+    File.write(File.join(role_dir, "vars", "default.yml"), "greeting: hello\n")
+
+    v = Hash(String, JSON::Any).new
+    v["role_path"] = JSON::Any.new(role_dir)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
+    expect_raises(Krikri::UndefinedVariableError) do
+      evaluator.evaluate(%(lookup('first_found', {'files': ['{{ ansible_facts.os_family }}.yml', 'default.yml'], 'paths': ['vars']})))
+    end
+  end
+
   it "evaluates a quoted string literal piped into a filter chain" do
     # `{{ 'foo' | upper }}` - a literal, not a variable, as the chain's
     # head. Previously the base-value resolution in evaluate_with_filter
