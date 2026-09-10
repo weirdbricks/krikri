@@ -2816,7 +2816,7 @@ First batch since Atlantic.net's server-limit increase (10 → 25). 200 never-be
 | `syncrou.manageiq-automate` | ubuntu | ✅ clean. Times: cold py 4.61s vs cr 2.94s; warm py 3.07s vs cr 0.93s. |
 | `syncrou.manageiq-vmdb` | ubuntu | ✅ clean. Times: cold py 3.53s vs cr 2.68s; warm py 2.33s vs cr 0.72s. |
 | `systemli.jitsi_meet_exporter` | ubuntu | ✅ clean. Times: cold py 13.70s vs cr 5.61s; warm py 8.49s vs cr 1.25s. |
-| `systemli.jitsi_meet` | ubuntu | ⚠️ divergent - krikri's host hit a transient apt-repo GPG signing-key error unrelated to krikri itself; real ansible's separate host didn't hit it and failed later on the role's own undefined variable instead (likely environment flake, not confirmed as a krikri defect). Times: cold py 74.07s vs cr 32.22s; warm py 36.66s vs cr 11.96s. |
+| `systemli.jitsi_meet` | ubuntu | ✅ fixed this round - the NO_PUBKEY apt-signing-key error was NOT a flake: the role's binary OpenPGP keyring got corrupted in transit whenever `copy:` inlined it as a JSON `content:` param (JSON requires valid UTF-8); now routed through the byte-safe SCP staging path instead (0.9.901). Times: cold py 74.07s vs cr 32.22s; warm py 36.66s vs cr 11.96s. |
 | `systemli.letsencrypt` | ubuntu | ✅ clean. Times: cold py 43.41s vs cr 41.30s; warm py 10.08s vs cr 0.98s. |
 | `systemli.needrestart` | ubuntu | ✅ clean. Times: cold py 39.96s vs cr 24.81s; warm py 12.95s vs cr 1.44s. |
 | `tanadeau.ansible_role_rabbitmq` | ubuntu | ✅ clean. Times: cold py 0.70s vs cr 0.03s; warm py 0.52s vs cr 0.01s. |

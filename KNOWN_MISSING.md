@@ -18,10 +18,29 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.900`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.901`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
 
 ---
+
+## systemli.jitsi_meet's NO_PUBKEY divergence, root-caused and fixed (0.9.901)
+
+Delegated to Crush with real Atlantic.net host access. Root cause: the
+role's binary OpenPGP keyring (`copy: {src: prosody-debian-packages.gpg,
+dest: /usr/share/keyrings/...}`, 4702 bytes, not valid UTF-8) was
+inlined as a `content:` param, which rides to the remote plugin as
+JSON - a UTF-8 format. Serializing a String holding invalid byte
+sequences mangled them (4702 bytes round-tripped to 8394 bytes of
+U+FFFD-substituted garbage), corrupting the installed keyring - every
+task-level checksum comparison against the equally-corrupt destination
+still "passed", masking the corruption entirely until apt itself later
+failed "Update cache" with NO_PUBKEY F7A37EB33D0B25D7. All three
+earlier hypotheses (`failed_when:` suppression, looped-include byte
+integrity, `repo.sources.j2` fact visibility) were correctly ruled out
+- none touched the actual JSON-transport step where the corruption
+happened. Fixed: a source whose bytes aren't valid UTF-8 now takes the
+same byte-safe SCP staging path an oversized file already takes,
+never the JSON-embedded `content:` path.
 
 ## Live investigation of the two remaining open gaps: 2 real fixes found, root cause still open (0.9.898 → 0.9.900)
 
@@ -3117,24 +3136,6 @@ below - keep the two apart, or this list stops meaning anything.
   /etc/newrelic-infra.yml` right before the task) to see the actual
   runtime UID and file state at the moment of failure - a plain
   verbose flag doesn't surface this, already tried.
-
-- **Round 74501 (`systemli.jitsi_meet`): the binary apt keyring the role
-  installs did not verify apt signatures under krikri on that VM, and the
-  root cause is unconfirmed.** The role's final "Update cache" failed
-  with `NO_PUBKEY F7A37EB33D0B25D7` (prosody repo) under krikri while
-  real ansible-playbook's own fresh-VM run of the identical sequence
-  succeeded, halting krikri's play 4 task-results early (the whole
-  ok=29/skipped=8 vs ok=31/skipped=10 recap divergence - the failed task
-  itself is legitimate, that "Update cache" carries no `failed_when:`
-  so failing is correct once apt errors). Locally ruled out so far:
-  `failed_when:` handling of a module-level apt failure (suppresses
-  correctly), `copy:` byte integrity inside a looped include
-  (byte-identical), and fact (`_name`/`_config`) visibility in the
-  `repo.sources.j2` Crinja render (resolves correctly). The keyring
-  install path on a REAL host (`copy:` src from the role's files/ to
-  `/usr/share/keyrings/`, become, the stat-charset ascii/binary branch)
-  remains the suspect - needs a confirm-phase re-run against the rebuilt
-  binary before touching any code.
 
 - **Unresolvable module/action names: hard-stop covers only the
   tombstoned-removed names (0.9.860, narrowed 0.9.861); a missing or
