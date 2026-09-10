@@ -20,7 +20,7 @@ picture, on either the controller or the target - it's one compiled binary
 It is not a new automation DSL you have to learn, and not a "mostly
 compatible" reimplementation verified by eyeballing docs - every plugin's
 behavior is checked against real `ansible-playbook` output on real hosts,
-across **1,484 real Galaxy roles tested to date** (see
+across **1,809 real Galaxy roles tested to date** (see
 [ROLES_TESTED.md](ROLES_TESTED.md); **Differences** and **What's missing**
 below), and a Docker-based compatibility harness (`compat/`) runs the same
 playbooks through both engines side by side and diffs the resulting
@@ -59,12 +59,12 @@ this project doesn't ship or vendor a collections directory, so a
 ported into a compiled plugin binary (a role's OWN private `library/*.py`
 module is unaffected either way - that always runs fine, delegated to the
 target's real python3). But that porting isn't hypothetical or "not our
-problem": every one of the **1,484+ real Galaxy roles** this project is
+problem": every one of the **1,809+ real Galaxy roles** this project is
 benchmarked against (see **How this differs** above) surfaces whichever
 third-party modules that role's own tasks actually call, and the ones
 that show up often enough get natively ported the same way an
 `ansible.builtin` gap does - found via a real role hitting it, fixed,
-verified against real `ansible-playbook` output. **44 third-party
+verified against real `ansible-playbook` output. **62 third-party
 collection modules are natively ported as of this writing** - the most
 common `community.general`/`community.docker`/`community.crypto`/
 `community.mysql`/`community.rabbitmq` modules real-world roles reach
@@ -76,14 +76,21 @@ module 'x.y.z' implemented"`, see **What's missing** below) rather than
 silently skipping - the gap is real, but it shrinks by usage frequency,
 not by chasing collection completeness for its own sake.
 
-Cloud provider *modules* (`amazon.aws`/`azure_rm_*` resource management -
-`ec2_instance`, `s3_object`, IAM, etc.) are a genuine, deliberate
-structural exclusion - a different category from the above, since these
-model an entire cloud provider's API surface rather than a single
-host-local operation. Cloud *inventory* plugins are a partial exception:
-`aws_ec2` is implemented (real signed EC2 API calls), alongside
-`host_list`/`ini`/`yaml`/`constructed`; other providers (azure, gcp,
-openstack, ...) are not. See **What's missing** below.
+Cloud provider *modules* are a genuine, deliberate structural exclusion
+for every provider **except AWS/EC2**, which is fully supported as of
+this writing: `ec2_instance` plus the minimum cluster needed to actually
+use it - `ec2_key`, `ec2_security_group`, `ec2_vpc_net_info`,
+`ec2_vpc_subnet_info`, `ec2_ami_info` (all real, signed EC2 Query API
+calls, not stubs) - alongside the pre-existing `ec2_metadata_facts`.
+Other providers' resource-management modules (`azure_rm_*`, GCP, etc.)
+remain out of scope - these model an entire cloud provider's API surface
+rather than a single host-local operation, and AWS/EC2 was a deliberate,
+scoped exception rather than an opening of that whole category. Cloud
+*inventory* plugins are a similar partial exception: `aws_ec2` is
+implemented (real signed EC2 API calls), alongside
+`host_list`/`ini`/`yaml`/`constructed`; other providers' inventory
+plugins (azure, gcp, openstack, ...) are not. See **What's missing**
+below.
 
 ---
 
