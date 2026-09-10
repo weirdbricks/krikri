@@ -34,6 +34,28 @@ describe "replace plugin" do
     result["changed"].as_bool.should be_false
   end
 
+  it "anchors ^ and $ at line boundaries (real Ansible's re.MULTILINE)" do
+    # The inmotionhosting.wordpress round-82013 divergence: real Ansible's
+    # replace.py compiles with re.MULTILINE, so "Listen 443$" matches the
+    # tab-indented Listen lines inside <IfModule> blocks mid-file; without
+    # MULTILINE only an end-of-file match counts and the task misreports ok.
+    path = fresh_file("ports.conf", "Listen 80\n\n<IfModule ssl_module>\n\tListen 443\n</IfModule>\n\n<IfModule mod_gnutls.c>\n\tListen 443\n</IfModule>\n")
+
+    result = PluginSpecHelper.run("replace", {"path" => path, "regexp" => "Listen 443$", "replace" => "Listen 8443"})
+
+    result["changed"].as_bool.should be_true
+    File.read(path).should eq("Listen 80\n\n<IfModule ssl_module>\n\tListen 8443\n</IfModule>\n\n<IfModule mod_gnutls.c>\n\tListen 8443\n</IfModule>\n")
+  end
+
+  it "reports changed: false when the replacement is identical to the match" do
+    path = fresh_file("same.conf", "Listen 80\n\n<IfModule ssl_module>\n\tListen 443\n</IfModule>\n")
+
+    result = PluginSpecHelper.run("replace", {"path" => path, "regexp" => "Listen 443$", "replace" => "Listen 443"})
+
+    result["changed"].as_bool.should be_false
+    File.read(path).should eq("Listen 80\n\n<IfModule ssl_module>\n\tListen 443\n</IfModule>\n")
+  end
+
   it "applies mode when given" do
     path = fresh_file("mode.conf", "x=1\n")
     File.chmod(path, 0o644)

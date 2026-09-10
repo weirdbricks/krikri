@@ -78,8 +78,16 @@ module Krikri
 
       replace = @params["replace"]? || ""
 
+      # Real Ansible compiles the regexp with re.MULTILINE (replace.py), so
+      # ^ and $ anchor at every line boundary, not just the start/end of the
+      # whole file - e.g. inmotionhosting.apache's "Listen 443$" against
+      # /etc/apache2/ports.conf, whose Listen lines sit indented inside
+      # <IfModule> blocks and are not the last line of the file.
+      # MULTILINE_ONLY, not MULTILINE: Crystal's MULTILINE constant implies
+      # DOTALL (regex.cr maps it to PCRE MULTILINE | DOTALL), which would
+      # let "." cross newlines and eat trailing content on replacement.
       regex = begin
-        Regex.new(pattern)
+        Regex.new(pattern, Regex::CompileOptions::MULTILINE_ONLY)
       rescue ex
         return PluginResult.new(
           changed: false,
