@@ -238,6 +238,11 @@ Metrics/CyclomaticComplexity:
   # as apt_key.cr/user.cr's own exempted dispatch methods.
   - src/krikri/plugin_helpers/ec2_key.cr
   - src/krikri/plugin_helpers/ec2_security_group.cr
+  # parse_filters/jsonify replicate real boto3 + Ansible's own
+  # camel_dict_to_snake_dict shaping (tagSet special-case, leaf-vs-
+  # nested, list-vs-scalar, boolean-string coercion) one case at a
+  # time - the branch count IS the semantics being matched.
+  - src/krikri/plugin_helpers/ec2_info.cr
   - src/krikri/inventory_parser.cr
   - src/krikri/conditional_evaluator.cr
   - src/krikri/task_executor/result_display.cr
