@@ -32,11 +32,14 @@ private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-ex
 # Builds a throwaway role tree (roles/probe/{tasks,vars/os_family}) and
 # runs the given site playbook from it, so a first_found `paths:`
 # entry resolves the same way it does in a real role.
-private def run_in_role_tree(site_yaml : String, debian_vars = "os_specific_var: from_debian_yml\n")
+private def run_in_role_tree(site_yaml : String, debian_vars = "os_specific_var: from_debian_yml\n",
+                             tasks_yaml : String? = nil,
+                             extra_role_files : Hash(String, String) = {} of String => String)
   dir = File.tempname("include-vars-undefined-path", ".d")
   FileUtils.mkdir_p(File.join(dir, "roles", "probe", "tasks"))
   FileUtils.mkdir_p(File.join(dir, "roles", "probe", "vars", "os_family"))
-  File.write(File.join(dir, "roles", "probe", "tasks", "main.yml"), <<-YAML)
+  extra_role_files.each { |rel, content| File.write(File.join(dir, "roles", "probe", rel), content) }
+  File.write(File.join(dir, "roles", "probe", "tasks", "main.yml"), tasks_yaml || <<-YAML)
     ---
     - name: Setting OS variables
       ansible.builtin.include_vars: "{{ lookup('ansible.builtin.first_found', params) }}"
@@ -110,6 +113,49 @@ describe "include_vars: with a failing templated path" do
         roles:
           - probe
       YAML
+
+    status.success?.should be_true
+    output.should contain("from_debian_yml")
+  end
+
+  it "resolves an INLINE first_found dict literal whose files: value is a task-local variable" do
+    # AerisCloud.vault's own idiom (round 83346) - the dict form passed
+    # INLINE (not via a params variable), with the candidate list in a
+    # task-local vars: block:
+    #
+    #   include_vars: "{{lookup('first_found', {'files': var_files,
+    #     'paths': [ 'vars' ]})}}"
+    #   vars:
+    #     var_files:
+    #       - "{{ ansible_distribution }}.yml"
+    #       - "{{ ansible_os_family }}.yml"
+    #
+    # The whole lookup used to collapse to the literal text "undefined"
+    # ("include_vars: file not found: undefined") without even trying
+    # the individual candidates; real Ansible tries vars/Ubuntu.yml
+    # (miss), then vars/Debian.yml (found, on a Debian-family target).
+    status, output = run_in_role_tree(
+      <<-YAML,
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        roles:
+          - probe
+      YAML
+      tasks_yaml: <<-YAML,
+      ---
+      - name: "Load distribution variables"
+        include_vars: "{{lookup('first_found', {'files': var_files, 'paths': [ 'vars' ]})}}"
+        vars:
+          var_files:
+          - "{{ ansible_distribution }}.yml"
+          - "{{ ansible_os_family }}.yml"
+      - name: show loaded var
+        ansible.builtin.debug:
+          msg: "{{ os_specific_var }}"
+      YAML
+      extra_role_files: {"vars/Debian.yml" => "os_specific_var: from_debian_yml\n"},
+    )
 
     status.success?.should be_true
     output.should contain("from_debian_yml")
