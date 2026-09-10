@@ -114,6 +114,13 @@ module Krikri
 
       if role_name = task.role_name
         vars_context["ansible_role_name"] = JSON::Any.new(role_name)
+        # role_name (unprefixed) is real Ansible's own magic var - the
+        # sibling role_path below has always been set unprefixed, this
+        # one was only ever set under its ansible_ alias, so `{{
+        # role_name }}` inside a role's own templates/tasks raised
+        # "undefined" (akkerman.docker round 90029: `pin docker
+        # version`'s template references it directly).
+        vars_context["role_name"] = JSON::Any.new(role_name)
       end
       if parent_names = task.role_parent_names
         vars_context["ansible_parent_role_names"] = JSON::Any.new(parent_names.map { |nval| JSON::Any.new(nval) })
