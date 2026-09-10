@@ -1432,7 +1432,7 @@ module Krikri
       # when_passes? let it through (see its own comment), so a python
       # module behind a false when: still skips normally.
       if task.unavailable_module && (py_source = python_module_source_for(task))
-        result = execute_python_module(task, py_source, substituted_params, exec_host, wire_vars, substituted_become_user)
+        result = execute_python_module(task, py_source, substituted_params, exec_host, wire_vars, become, become_user, substituted_become_user)
         return apply_changed_failed_when(task, result, vars_context, host)
       end
 
@@ -1455,7 +1455,7 @@ module Krikri
     # hosts; the module's argument dict mirrors real Ansible's typed
     # JSON args for new-style modules (the params the parser already
     # JSON-encoded come back as real arrays/dicts for the module).
-    private def execute_python_module(task : Task, source_path : String, substituted_params : Hash(String, String), exec_host : Host, wire_vars : Hash(String, JSON::Any), substituted_become_user : String?) : JSON::Any
+    private def execute_python_module(task : Task, source_path : String, substituted_params : Hash(String, String), exec_host : Host, wire_vars : Hash(String, JSON::Any), become : Bool, become_user : String?, substituted_become_user : String?) : JSON::Any
       module_name = PythonModuleRunner.short_name(task.unavailable_module || task.module_name)
       new_style = PythonModuleRunner.new_style?(File.read(source_path))
       check_mode = resolve_task_check_mode(task, wire_vars)
@@ -1471,14 +1471,35 @@ module Krikri
         py_params["kv_argv"] = PythonModuleRunner.build_kv_argv(substituted_params).to_json
       end
 
+      # build_plugin_config takes the raw pre-default become_user (its
+      # OTHER two call sites - the normal plugin path and the batch
+      # path - both pass substituted_become_user unchanged too); only
+      # the actual dispatch below needs the resolved values.
+
+      # `become`/`become_user` here are the caller's already-resolved
+      # values (resolve_task_become, with the play-level become:
+      # cascade and the "root" become_user default both applied) - NOT
+      # task.become?, which is only the task's OWN explicit become: key
+      # and is false whenever a role relies on the PLAY's `become: true`
+      # to cascade down (the common shape, since repeating become: true
+      # on every task would be redundant). Using task.become? directly
+      # here silently dispatched every python-module task unprivileged
+      # whenever it inherited become from its play instead of setting
+      # its own - found via newrelic.newrelic-infra's own library/
+      # merge_yaml.py writing to a become-required system path
+      # (/etc/newrelic-infra.yml) under the play's own `become: true`:
+      # "Merge YAML failed due to OS error Permission denied (13)",
+      # confirmed live against a real host with root/passwordless-sudo
+      # already proven to work for every OTHER plugin dispatch in the
+      # same play.
       config = build_plugin_config(task, exec_host, py_params, wire_vars, substituted_become_user)
       PluginManager.execute_plugin(
         "ansible.builtin.py_module",
         config,
         exec_host,
         wire_vars,
-        task.become?,
-        substituted_become_user
+        become,
+        become_user
       )
     end
 
