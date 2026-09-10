@@ -1929,6 +1929,35 @@ describe Krikri::PlaybookParser do
       end
     end
 
+    # openssl_certificate is x509_certificate's old name (renamed when
+    # the module moved into community.crypto; ansible-core's builtin
+    # runtime still redirects the bare/builtin/legacy spellings, and
+    # community.general redirected its pre-2.0 copy there too). All five
+    # spellings real roles write must resolve onto the
+    # community.crypto.x509_certificate plugin via MODULE_ALIASES -
+    # before this, every spelling was unresolvable and the task dropped
+    # with a "uses unimplemented plugin" warning.
+    describe "openssl_certificate aliases" do
+      %w[
+        openssl_certificate
+        ansible.builtin.openssl_certificate
+        ansible.legacy.openssl_certificate
+        community.crypto.openssl_certificate
+        community.general.openssl_certificate
+      ].each do |spelling|
+        it "resolves `#{spelling}:` to community.crypto.x509_certificate" do
+          task = single_task(<<-YAML)
+            - name: t
+              #{spelling}:
+                path: /tmp/x
+                provider: selfsigned
+                csr_path: /tmp/x.csr
+            YAML
+          task.module_name.should eq("community.crypto.x509_certificate")
+        end
+      end
+    end
+
     # The other collections already in MODULE_SEARCH_COLLECTIONS
     # (ansible.builtin/legacy/posix, community.general/docker/
     # mysql/postgresql) were never broken and shouldn't have changed -

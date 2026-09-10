@@ -1242,6 +1242,29 @@ module Krikri
       "mariadb_user"                 => "community.mysql.mysql_user",
       "ansible.mariadb.mariadb_db"   => "community.mysql.mysql_db",
       "ansible.mariadb.mariadb_user" => "community.mysql.mysql_user",
+      # openssl_certificate is x509_certificate's old name: the module
+      # shipped in ansible-core <= 2.9 as `openssl_certificate`, moved to
+      # community.crypto as `x509_certificate` (1.0.0, with the old name
+      # as a deprecated redirect), and community.crypto 2.0.0 removed
+      # that FQCN redirect - but ansible-core's own builtin runtime
+      # (ansible_builtin_runtime.yml) still redirects the bare and
+      # ansible.builtin./ansible.legacy. spellings to
+      # community.crypto.x509_certificate on every current controller,
+      # and community.general redirected its pre-2.0 copy to the same
+      # place. Real roles use every one of these spellings
+      # (weareinteractive.openssl writes the bare form; round-85002-class
+      # trellis/nginx roles write the FQCNs), so all of them resolve
+      # onto the existing x509_certificate plugin binary rather than
+      # shipping a near-duplicate of it. Deliberately permissive on the
+      # community.crypto FQCN, which a current community.crypto
+      # tombstones (2.0.0+): the engine would otherwise hard-stop a role
+      # real Ansible 2.10-2.11 ran fine, and the module behind it is
+      # fully implemented either way.
+      "openssl_certificate"                     => "community.crypto.x509_certificate",
+      "ansible.builtin.openssl_certificate"     => "community.crypto.x509_certificate",
+      "ansible.legacy.openssl_certificate"      => "community.crypto.x509_certificate",
+      "community.crypto.openssl_certificate"    => "community.crypto.x509_certificate",
+      "community.general.openssl_certificate"   => "community.crypto.x509_certificate",
     }
 
     # Bare module names real ansible-core can no longer resolve in ANY
