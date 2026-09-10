@@ -52,6 +52,18 @@ module Krikri
   class FirstFoundLookupError < Exception
   end
 
+  # Raised by the pipe lookup (ExpressionEvaluator's #lookup_pipe) when
+  # the command exits non-zero - real Ansible's own failure for that
+  # shape ("The lookup plugin 'pipe' failed: lookup_plugin.pipe(<cmd>)
+  # returned <rc>.", verified live against 2.19.4), NOT the "undefined"
+  # sentinel string the code path used to return (which ajeleznov.
+  # manage-known-hosts's `lookup('pipe', 'ssh-keyscan ...')` then fed to
+  # the known_hosts module as a literal "undefined" key, letting the
+  # play run seven tasks past real Ansible's hard stop). Real Ansible
+  # raises regardless of how much stdout the command already produced.
+  class PipeLookupError < Exception
+  end
+
   # Conservative "pure variable reference" shape - letters/digits/
   # underscore, `.field` and `[0]`/`['key']` access only. No spaces,
   # pipes, parens, quotes outside of a bracket index, or keywords - those

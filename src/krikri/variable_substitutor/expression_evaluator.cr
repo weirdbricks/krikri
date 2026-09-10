@@ -2423,7 +2423,7 @@ module Krikri
         when "file"
           lookup_file(parts)
         when "pipe"
-          lookup_pipe(parts)
+          lookup_pipe(parts, kwargs)
         when "template"
           lookup_template(parts, kwargs)
         when "password"
@@ -2481,20 +2481,37 @@ module Krikri
         end
       end
 
-      private def lookup_pipe(parts : Array(String)) : String
+      private def lookup_pipe(parts : Array(String), kwargs : Array(String) = [] of String) : String
         # lookup('pipe', command) - runs *command* via the shell ON
         # THE CONTROLLER (not the target - matches real Ansible's own
         # pipe lookup plugin, which always executes locally) and
         # returns its stdout, stripped of a trailing newline.
         command = parts[1]?.try { |part| evaluate(part.strip) }
         return "undefined" unless command
-        begin
-          output = IO::Memory.new
-          status = Process.run("/bin/sh", ["-c", command], output: output, error: Process::Redirect::Close)
-          status.success? ? output.to_s.chomp : "undefined"
-        rescue
-          "undefined"
-        end
+        output = IO::Memory.new
+        status = Process.run("/bin/sh", ["-c", command], output: output, error: Process::Redirect::Close)
+        # Real Ansible's pipe lookup RAISES on a non-zero exit code
+        # ("lookup_plugin.pipe(%s) returned %d", raised regardless of
+        # how much stdout the command already flushed - its own
+        # pipe.py discards the captured output on the failure branch),
+        # failing the task's arg finalization. The old lenient
+        # "undefined" sentinel here let a failing `lookup('pipe',
+        # 'ssh-keyscan ...')` (ajeleznov.manage-known-hosts, round
+        # 90013: the scanned hostnames don't resolve) feed the literal
+        # text "undefined" into known_hosts's `key:` as if it were a
+        # real key, so the play ran seven tasks past real Ansible's
+        # hard stop. errors='ignore' - real Ansible's generic lookup
+        # error option, verified live against 2.19.4 (`lookup('pipe',
+        # 'exit 7', errors='ignore')` renders empty rather than
+        # failing) - keeps the old empty-result behavior.
+        return "" if !status.success? && first_found_errors_ignore?(kwargs)
+        raise PipeLookupError.new(
+          "The lookup plugin 'pipe' failed: lookup_plugin.pipe(#{command}) returned #{status.exit_code}") unless status.success?
+        output.to_s.chomp
+      rescue e : PipeLookupError
+        raise e
+      rescue
+        "undefined"
       end
 
       private def lookup_template(parts : Array(String), kwargs : Array(String)) : String
