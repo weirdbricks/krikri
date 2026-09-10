@@ -1,0 +1,13 @@
+# Real bug found benchmarking alivx.ansible_cis_nginx_hardening (round
+# 90192): the role has NO top-level templates/ dir - its templates live
+# under files/templates/ and its tasks pass src: "files/templates/
+# nodejs.conf". resolve_role_relative_src bailed out on the nil
+# role_templates_dir guard (role_loader only sets role_templates_dir
+# when the dir exists), so src: was never resolved and template: failed
+# with "Template file not found on controller" where real Ansible
+# resolves it via its ROLE-ROOT search entry.
+- name: "template src: in a role with no top-level templates dir"
+  hosts: testservers
+  gather_facts: false
+  roles:
+    - template_src_no_templates_dir

@@ -690,6 +690,31 @@ describe "krikri-playbook CLI (--check mode)" do
     end
   end
 
+  describe "template:/copy: src: in a role with no top-level templates dir" do
+    testservers = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-testservers-local.ini")
+
+    it "resolves template: src: via the ROLE ROOT when role_templates_dir is nil" do
+      # Real bug found benchmarking alivx.ansible_cis_nginx_hardening
+      # (round 90192): the role has no templates/ dir at all - its
+      # templates live under files/templates/ and its tasks pass
+      # src: "files/templates/nodejs.conf". resolve_role_relative_src
+      # bailed out on the nil role_templates_dir guard (role_loader only
+      # sets role_templates_dir when that dir exists), so src: was never
+      # resolved and the task failed with "Template file not found on
+      # controller" where real ansible-playbook changed the file (its
+      # search list goes <role>/templates/<src> then <role>/<src>).
+      status, output = run_playbook(
+        "test-template-src-no-templates-dir.yml", [] of String, inventory: testservers
+      )
+
+      status.success?.should be_true
+      output.should_not contain("Template file not found")
+      File.read("/tmp/template_src_no_templates_dir_output.txt").should contain("value=no-templates-dir-works")
+    ensure
+      File.delete("/tmp/template_src_no_templates_dir_output.txt") if File.exists?("/tmp/template_src_no_templates_dir_output.txt")
+    end
+  end
+
   describe "magic variables" do
     magicvars = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-ansible-host.ini")
 

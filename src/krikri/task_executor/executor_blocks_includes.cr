@@ -1639,7 +1639,21 @@ module Krikri
 
       role_dir = case task.module_name
                  when "ansible.builtin.copy"     then task.role_files_dir
-                 when "ansible.builtin.template" then task.role_templates_dir
+                 when "ansible.builtin.template"
+                   # No templates/ dir at all: real Ansible's own search
+                   # list for a relative template: src: goes from
+                   # <role>/templates/<src> straight to <role>/<src> (the
+                   # ROLE ROOT - verified against ansible-core 2.19's
+                   # "Searched in:" list; it does NOT search role files/).
+                   # A role that keeps everything under files/templates/
+                   # (alivx.ansible_cis_nginx_hardening's
+                   # src: "files/templates/nodejs.conf") resolves via that
+                   # role-root candidate, so without this the
+                   # role_templates_dir-nil guard below returned params
+                   # unresolved and the task failed with "Template file
+                   # not found on controller" where real ansible-playbook
+                   # changed the file.
+                   task.role_templates_dir || task.role_path
                  when "ansible.builtin.assemble" then task.role_files_dir
                  when "ansible.posix.synchronize" then task.role_files_dir
                  else                                 nil
