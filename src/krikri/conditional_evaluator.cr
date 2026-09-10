@@ -1098,6 +1098,22 @@ module Krikri
       VariableSubstitutor::Rerender.render_raw(vars, raw)
     end
 
+    # When this evaluation traces back to a task-level `when:`/`assert:`
+    # (raise_undefined), a resolved value whose own raw form is still
+    # unrendered Jinja must render STRICTLY - real Ansible's recursive
+    # re-templating raises the moment the value bottoms out at a name set
+    # nowhere, with the innermost missing name in the message. Every other
+    # caller keeps the long-standing lenient render (see Rerender.if_
+    # templated): `default()`/`is defined`/never-referenced leniency is
+    # correct everywhere a strict task-condition caller isn't asking.
+    private def self.strict_probe_templated_value(vars : Hash(String, JSON::Any), value : JSON::Any?, raise_undefined : Bool) : Nil
+      return unless raise_undefined
+      return unless (raw = value.try(&.raw)).is_a?(String) &&
+                    (raw.includes?("{{") || raw.includes?("{%") || raw.includes?("{#"))
+      Krikri::VarSubstitutor.new(vars: vars).strict_render(raw)
+      nil
+    end
+
     # Resolves *var_name* (a bare or dotted variable reference, the same
     # grammar #evaluate_value's own dotted-access branch handles) and
     # checks whether its real JSON type matches "mapping" (Hash) or
@@ -2030,6 +2046,17 @@ module Krikri
           raise UndefinedVariableError.new("'#{undefined_name}' is undefined")
         end
 
+        # The head is DEFINED but its own raw value is unrendered Jinja
+        # bottoming out at a name set nowhere (`site_errorlog: "/home/{
+        # { system_user }}/..."` with no system_user anywhere) - real
+        # Ansible's recursive re-templating renders that value strictly
+        # before the first filter applies, failing with the innermost
+        # missing name, where the lenient re-render inside the
+        # ExpressionEvaluator delegation below baked the "undefined"
+        # sentinel into the string and this conditional silently
+        # answered falsy (inmotionhosting.php_fpm, round 82024).
+        Krikri.raise_if_chain_source_value_undefined(expr, vars) if raise_undefined
+
         evaluator = VariableSubstitutor::ExpressionEvaluator.new(vars)
         rendered = evaluator.evaluate(expr)
 
@@ -2114,7 +2141,9 @@ module Krikri
           # path (`result.stdout`, `x.y`) whose resolved value's own
           # raw form is itself still unrendered Jinja was returned
           # as-is, un-rendered.
-          resolved = rerender_if_templated(vars, VariableSubstitutor::VariableLookup.new(vars).resolve(expr))
+          resolved = VariableSubstitutor::VariableLookup.new(vars).resolve(expr)
+          strict_probe_templated_value(vars, resolved, raise_undefined)
+          resolved = rerender_if_templated(vars, resolved)
           return json_any_to_value(resolved) if resolved
           raise UndefinedVariableError.new(undefined_reference_message(expr, vars)) if raise_undefined
           return nil
@@ -2134,6 +2163,16 @@ module Krikri
         # text itself is treated as a truthy string, so `vault_enterprise`
         # always evaluated true regardless of the real (false) default.
         if (raw = value.raw).is_a?(String) && raw.includes?("{{")
+          # Same nested-undefined strictness as the filter-chain branch:
+          # under a task-level `when:`/`assert:` (raise_undefined) the
+          # value's own unrendered Jinja must render STRICTLY - the
+          # lenient render below bakes the "undefined" sentinel into the
+          # string, so a bare `when: site_errorlog` truthiness check
+          # answered a non-boolean string (its own downstream strict
+          # check failing with the wrong message) instead of real
+          # Ansible's "'system_user' is undefined" (inmotionhosting.
+          # php_fpm, round 82024).
+          strict_probe_templated_value(vars, value, raise_undefined)
           rendered = render_raw_template_string(vars, raw)
           json_any_to_value(Krikri.parse_json_or_python_literal(rendered))
         else

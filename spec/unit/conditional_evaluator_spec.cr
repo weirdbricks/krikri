@@ -1575,4 +1575,48 @@ describe Krikri::ConditionalEvaluator do
       ).should be_false
     end
   end
+
+  # Round 82024 regression cover (inmotionhosting.php_fpm): a var whose
+  # OWN VALUE is still unrendered Jinja bottoming out at a name set
+  # nowhere (`site_errorlog: "/home/{{ system_user }}/logs/x.log"` with
+  # no system_user anywhere). Real Ansible's recursive re-templating
+  # renders that value strictly during a `when:` conditional, failing
+  # with the INNERMOST missing name; krikri's lenient re-render baked
+  # the "undefined" sentinel into the string and the conditional
+  # silently answered falsy.
+  describe "nested-undefined variable value under raise_undefined (round 82024)" do
+    it "raises with the innermost name when a filter chain renders the value" do
+      v = Hash(String, JSON::Any).new
+      v["site_errorlog"] = JSON::Any.new("/home/{{ system_user }}/logs/site.error.log")
+      expect_raises(Krikri::UndefinedVariableError, /'system_user' is undefined/) do
+        Krikri::ConditionalEvaluator.evaluate(
+          "site_errorlog | length > 0", v, raise_undefined: true
+        )
+      end
+    end
+
+    it "raises with the innermost name on a bare truthiness check" do
+      v = Hash(String, JSON::Any).new
+      v["site_errorlog"] = JSON::Any.new("/home/{{ system_user }}/logs/site.error.log")
+      expect_raises(Krikri::UndefinedVariableError, /'system_user' is undefined/) do
+        Krikri::ConditionalEvaluator.evaluate("site_errorlog", v, raise_undefined: true)
+      end
+    end
+
+    it "still tolerates the nested undefined under a tolerant first filter" do
+      v = Hash(String, JSON::Any).new
+      v["site_errorlog"] = JSON::Any.new("/home/{{ system_user }}/logs/site.error.log")
+      Krikri::ConditionalEvaluator.evaluate(
+        "site_errorlog | default('x') | length > 0", v, raise_undefined: true
+      ).should be_true
+    end
+
+    it "stays lenient when no strict task-condition caller asks" do
+      v = Hash(String, JSON::Any).new
+      v["site_errorlog"] = JSON::Any.new("/home/{{ system_user }}/logs/site.error.log")
+      Krikri::ConditionalEvaluator.evaluate(
+        "site_errorlog | length > 0", v
+      ).should be_false
+    end
+  end
 end
