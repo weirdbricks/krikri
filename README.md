@@ -53,16 +53,37 @@ in wall-clock time - see **Performance** below.
 
 ### What's structurally different (by design, not a gap)
 
-Third-party COLLECTION Python modules (`bodsch.*`, `community.*`, etc.)
-can't run - those live in installed collections this project doesn't
-ship or reimplement (a role's OWN private `library/*.py` module runs
-fine, delegated to the target's real python3). Cloud provider
-*modules* (`amazon.aws`/`azure_rm_*` resource management - `ec2_instance`,
-`s3_object`, IAM, etc.), and a handful of narrower cuts (`docker_*`'s
-`api_version:` pin). Cloud *inventory* plugins are
-a partial exception: `aws_ec2` is implemented (real signed EC2 API calls),
-alongside `host_list`/`ini`/`yaml`/`constructed`; other providers (azure,
-gcp, openstack, ...) are not. See **What's missing** below.
+Third-party COLLECTION Python modules aren't reimplemented wholesale -
+this project doesn't ship or vendor a collections directory, so a
+`community.*`/`bodsch.*`/etc. module only runs if it's been natively
+ported into a compiled plugin binary (a role's OWN private `library/*.py`
+module is unaffected either way - that always runs fine, delegated to the
+target's real python3). But that porting isn't hypothetical or "not our
+problem": every one of the **1,484+ real Galaxy roles** this project is
+benchmarked against (see **How this differs** above) surfaces whichever
+third-party modules that role's own tasks actually call, and the ones
+that show up often enough get natively ported the same way an
+`ansible.builtin` gap does - found via a real role hitting it, fixed,
+verified against real `ansible-playbook` output. **44 third-party
+collection modules are natively ported as of this writing** - the most
+common `community.general`/`community.docker`/`community.crypto`/
+`community.mysql`/`community.rabbitmq` modules real-world roles reach
+for (`docker_container`, `docker_image`, `archive`, `ufw`, `htpasswd`,
+`openssl_csr`, `mysql_db`, and more - see `AVAILABLE_PLUGINS` in
+`src/krikri/playbook_parser.cr` for the current full list). A module
+outside that set still hard-stops cleanly (`"krikri does not yet have
+module 'x.y.z' implemented"`, see **What's missing** below) rather than
+silently skipping - the gap is real, but it shrinks by usage frequency,
+not by chasing collection completeness for its own sake.
+
+Cloud provider *modules* (`amazon.aws`/`azure_rm_*` resource management -
+`ec2_instance`, `s3_object`, IAM, etc.) are a genuine, deliberate
+structural exclusion - a different category from the above, since these
+model an entire cloud provider's API surface rather than a single
+host-local operation. Cloud *inventory* plugins are a partial exception:
+`aws_ec2` is implemented (real signed EC2 API calls), alongside
+`host_list`/`ini`/`yaml`/`constructed`; other providers (azure, gcp,
+openstack, ...) are not. See **What's missing** below.
 
 ---
 
