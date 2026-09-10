@@ -3678,7 +3678,7 @@ First batch since Atlantic.net's server-limit increase (10 → 25). 200 never-be
 | `aidenkeating_install-socat` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
 | `aidenkeating_openshift_origin_client_tools` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
 | `aioue.aptly` | ubuntu | ✅ clean. Times: cold py 57.94s vs cr 62.38s; warm py 10.99s vs cr 5.52s. |
-| `aisbergg.beats` | rocky | ⚠️ divergent - needs a closer look (see KNOWN_MISSING.md Open gaps) - krikri fails a task where real Ansible only warns (`vars: name:` shadowing a reserved name) and continues. Times: cold py 58.80s vs cr 6.50s; warm py 29.52s vs cr 0.70s. |
+| `aisbergg.beats` | ubuntu | ⚠️ divergent - needs a closer look (see KNOWN_MISSING.md Open gaps) - krikri fails a task where real Ansible only warns (`vars: name:` shadowing a reserved name) and continues. Times: cold py 58.80s vs cr 6.50s; warm py 29.52s vs cr 0.70s. |
 | `aisbergg.chrony` | ubuntu | ✅ clean. Times: cold py 27.37s vs cr 10.47s; warm py 13.53s vs cr 2.11s. |
 | `aisbergg.lm_sensors` | ubuntu | ✅ clean. Times: cold py 10.07s vs cr 8.84s; warm py 4.47s vs cr 0.35s. |
 | `aisbergg.systemd_resolved` | ubuntu | ✅ clean. Times: cold py 12.63s vs cr 7.72s; warm py 10.67s vs cr 4.10s. |
