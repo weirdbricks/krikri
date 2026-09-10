@@ -43,6 +43,33 @@ module Krikri
   #   (just to the wrong file). Found benchmarking robertdebock.
   #   tailscale's own `keyring: /usr/share/keyrings/tailscale-archive-
   #   keyring.gpg`.
+  #
+  # - post-add verification: `apt-key add` can exit 0 WITHOUT the key
+  #   actually landing in the listed keyring - the real acandid.jenkins
+  #   role (round 83166) ships an EXPIRED signing key (its
+  #   pkg.jenkins.io/debian/jenkins.io.key expired 2023-03-30); the add
+  #   prints "OK" and exits 0, the key genuinely is in
+  #   /etc/apt/trusted.gpg, but `apt-key adv --list-public-keys` output
+  #   marks it expired and real ansible.builtin.apt_key's own key
+  #   parser (`parse_output_for_keys`) deliberately SKIPS pub/sub lines
+  #   containing "expired" - so its post-add re-list doesn't see the
+  #   key and it fails the task with "apt-key did not return an error,
+  #   but failed to add the key (check that the id is correct and *not*
+  #   a subkey)" (verified live against real ansible-playbook on the
+  #   round-83166 host: before == after, task failed). Previously the
+  #   add path trusted apt-key's exit code alone and reported success -
+  #   diverging both in the task result and in what ran next (real
+  #   Ansible stops at the failed apt_key: task; krikri continued into
+  #   apt_repository: and failed later with a NO_PUBKEY apt-get update
+  #   error instead). Fixed by mirroring real Ansible's whole add flow:
+  #   derive the key id from the staged material via `gpg --with-colons`
+  #   when id: isn't given (same as its get_key_id_from_file, first
+  #   parsed key wins), normalize it the way its parse_key_id does
+  #   (uppercase, optional 0x, last-16-chars fingerprint), list existing
+  #   keys the way its all_keys does (`apt-key adv --list-public-keys
+  #   --keyid-format=long`, expired lines filtered), and re-list +
+  #   verify after every add (url:/data:/file:/keyserver:) with its
+  #   exact failure message.
   class AptKeyPlugin < BasePlugin
     def execute : PluginResult
       state = @params["state"]?.try(&.downcase) || "present"
@@ -60,72 +87,88 @@ module Krikri
     end
 
     private def add_key : PluginResult
-      key_id = @params["id"]?
-
-      if key_id && key_present?(key_id)
-        return PluginResult.new(changed: false, failed: false, msg: "Key already present")
-      end
-
-      if keyserver = @params["keyserver"]?
-        return add_from_keyserver(key_id, keyserver)
-      end
-
-      add_from_url_data_or_file
-    end
-
-    private def add_from_keyserver(key_id : String?, keyserver : String) : PluginResult
-      return PluginResult.new(changed: false, failed: true, msg: "Missing key_id, required with keyserver.") unless key_id
-
-      result = remote_exec("apt-key #{keyring_flag}adv --no-tty --keyserver #{shell_single_quote(keyserver)} --recv #{shell_single_quote(key_id)}")
-      unless result[:exit_code] == 0
-        return PluginResult.new(changed: false, failed: true, msg: "Error fetching key #{key_id} from keyserver: #{result[:stderr]}")
-      end
-
-      PluginResult.new(changed: true, failed: false, msg: "Key added")
-    end
-
-    private def add_from_url_data_or_file : PluginResult
       url = @params["url"]?
       data = @params["data"]?
-      # file: - path to a key file ON THE TARGET, matching real Ansible's
-      # own apt_key:file: param (mrlesmithjr.ansible_es_apm_server's
-      # "debian | Adding Elasticsearch GPG Key" copies the key to /tmp first
-      # then points file: at it, round 190). Previously only url:/data: were
-      # accepted, so file: failed with "Missing required parameter: url or
-      # data" while real ansible imported it fine.
       file_path = @params["file"]?
-      unless url || data || file_path
+
+      key_id = @params["id"]?
+      key_id = nil if key_id.try(&.empty?)
+
+      # Real Ansible's exact check order: `if not key_id: if keyserver:
+      # fail "Missing key_id, required with keyserver."` happens before
+      # any url:/data:/file: handling.
+      keyserver = @params["keyserver"]?
+      if key_id.nil? && keyserver
+        return PluginResult.new(changed: false, failed: true, msg: "Missing key_id, required with keyserver.")
+      end
+
+      # keyserver: needs no key material at all (real Ansible's add path
+      # is `apt-key adv --keyserver ... --recv <id>`), so the url/data/
+      # file requirement below only applies to the material-based paths.
+      unless url || data || file_path || keyserver
         return PluginResult.new(changed: false, failed: true, msg: "Missing required parameter: url or data")
       end
 
       tmp_path = "/tmp/.krikri-playbook-apt-key-#{Random.rand(100000..999999)}"
+      staged = false
+      added = false
       begin
-        staged = stage_key_material(url, data, file_path, tmp_path)
-        return staged if staged
+        if key_id.nil?
+          # No id: given - real Ansible derives it from the key material
+          # itself (get_key_id_from_file, first parsed key wins), which
+          # is also what makes its idempotency + post-add verification
+          # work for the common url:-only shape.
+          staged_result = stage_key_material(url, data, file_path, tmp_path)
+          return staged_result if staged_result
+          staged = true
 
-        # Real Ansible's apt_key: is idempotent even when only url:/data:
-        # is given (no id:) - it derives the key's own fingerprint from
-        # the fetched key material itself before deciding whether to
-        # import. Previously only the id: param triggered a #key_present?
-        # check at all - url:/data: (the overwhelmingly common real-world
-        # shape, per this file's own doc comment above) always re-ran
-        # `apt-key add` and reported changed: true on every single run,
-        # never converging. Found benchmarking geerlingguy.blackfire's
-        # own "Add packagecloud apt key." task (url: only, no id:).
-        fingerprints = key_fingerprints(tmp_path)
-        if fingerprints.any? { |fpv| key_present?(fpv) }
-          return PluginResult.new(changed: false, failed: false, msg: "Key already present")
+          derived = get_key_id_from_file(tmp_path)
+          return PluginResult.new(changed: false, failed: true, msg: "Unable to extract key from #{tmp_path}") if derived[:exit_code] != 0
+          return PluginResult.new(changed: false, failed: true, msg: "Invalid key_id") unless derived_key = derived[:key_id]
+          key_id = derived_key
         end
 
-        result = remote_exec("apt-key #{keyring_flag}add #{tmp_path}")
-        unless result[:exit_code] == 0
-          return PluginResult.new(changed: false, failed: true, msg: "apt-key add failed: #{result[:stderr]}")
+        parsed = parse_key_id(key_id)
+        return PluginResult.new(changed: false, failed: true, msg: "Invalid key_id") unless parsed
+
+        before_keys = all_keys
+        return PluginResult.new(changed: false, failed: true, msg: "Unable to list public keys") unless before_keys
+
+        unless key_id_in_keys?(parsed, before_keys)
+          if keyserver
+            result = remote_exec("apt-key #{keyring_flag}adv --no-tty --keyserver #{shell_single_quote(keyserver)} --recv #{shell_single_quote(parsed[:key_id])}")
+            unless result[:exit_code] == 0
+              return PluginResult.new(changed: false, failed: true, msg: "Error fetching key #{key_id} from keyserver: #{result[:stderr]}")
+            end
+          else
+            unless staged
+              staged_result = stage_key_material(url, data, file_path, tmp_path)
+              return staged_result if staged_result
+            end
+
+            result = remote_exec("apt-key #{keyring_flag}add #{tmp_path}")
+            unless result[:exit_code] == 0
+              return PluginResult.new(changed: false, failed: true, msg: "apt-key add failed: #{result[:stderr]}")
+            end
+          end
+
+          # Verify it actually landed - apt-key add exits 0 even when the
+          # key doesn't show up in the listing (see the class doc's
+          # expired-key discussion for the real acandid.jenkins case).
+          after_keys = all_keys
+          return PluginResult.new(changed: true, failed: true, msg: "Unable to list public keys") unless after_keys
+
+          unless key_id_in_keys?(parsed, after_keys)
+            return PluginResult.new(changed: true, failed: true, msg: "apt-key did not return an error, but failed to add the key (check that the id is correct and *not* a subkey)")
+          end
+
+          added = true
         end
       ensure
         File.delete(tmp_path) rescue nil
       end
 
-      PluginResult.new(changed: true, failed: false, msg: "Key added")
+      PluginResult.new(changed: added, failed: false, msg: added ? "Key added" : "Key already present")
     end
 
     # Stage the key material (from url:/data:/file:) into tmp_path.
@@ -174,39 +217,103 @@ module Krikri
       nil
     end
 
-    # Parses every key fingerprint out of the ASCII-armored/binary key
-    # material at *path* without importing it into any keyring (`gpg
-    # --import-options show-only` is a pure dry-run parse) - a key file
-    # commonly bundles more than one key (a primary key plus one or more
-    # subkeys), so this returns all of them; #add_key treats any one
-    # already being present as the whole set already having been added.
-    private def key_fingerprints(path : String) : Array(String)
+    # Extracts the first key id from the ASCII-armored/binary key
+    # material at *path* WITHOUT importing it into any keyring, the way
+    # real ansible.builtin.apt_key's get_key_id_from_file does:
+    # `gpg --with-colons <file>`, then parse_output_for_keys on the
+    # output (its "assume we only want first key?" comment). The
+    # throwaway --homedir isolation matters as much as the parse - see
+    # the comment above it.
+    private def get_key_id_from_file(path : String) : NamedTuple(exit_code: Int32, key_id: String?)
       # A bare `gpg ...` with no `--homedir`/`--keyring` override touches
       # the SHARED default `~/.gnupg` - on a host with no prior `~/.gnupg`
       # at all, GnuPG 2.1+ auto-creates it (with an empty `pubring.kbx`,
       # KEYBOX format) as a side effect of ANY gpg invocation, even this
-      # read-only `--import-options show-only` dry-run. Once that shared
-      # homedir exists, a LATER `apt-key --keyring X add` (#add_key, right
-      # after this call) apparently inherits its keybox backend preference
-      # for the brand-new keyring file X too, instead of the classic
-      # OpenPGP binary format apt's own `trusted.gpg.d` reader requires -
+      # read-only parse. Once that shared homedir exists, a LATER
+      # `apt-key --keyring X add` (#add_key, right after this call)
+      # apparently inherits its keybox backend preference for the
+      # brand-new keyring file X too, instead of the classic OpenPGP
+      # binary format apt's own `trusted.gpg.d` reader requires -
       # producing a keyring apt rejects outright ("the key(s) ... are
       # ignored as the file has an unsupported filetype"), silently
       # breaking every subsequent `apt-get update`/`apt-add-repository`
-      # against that key. Real ansible.builtin.apt_key never calls bare
-      # `gpg` at all (uses `apt-key --keyring X adv --list-public-keys`
-      # for its own idempotency check instead - see its module source),
-      # so it never touches the shared homedir in the first place. Fixed
-      # here by giving this call its OWN throwaway `--homedir`, so it
-      # can't poison `~/.gnupg` state that #add_key's later `apt-key add`
-      # depends on staying untouched. Found benchmarking round167's
-      # buluma.gitlab_ce on Ubuntu 22.04.
+      # against that key. Found benchmarking round167's buluma.gitlab_ce
+      # on Ubuntu 22.04, so this parse gets its OWN throwaway `--homedir`
+      # it can't poison shared state through. (`rm -rf` runs before
+      # `exit`, so the shell's exit status is gpg's own.)
       tmp_home = "/tmp/.krikri-playbook-apt-key-gnupghome-#{Random.rand(100000..999999)}"
-      result = remote_exec("mkdir -p #{tmp_home} && chmod 700 #{tmp_home} && gpg --homedir #{tmp_home} --with-colons --import-options show-only --import #{path} 2>/dev/null; rm -rf #{tmp_home}")
-      result[:stdout].each_line.compact_map do |line|
-        fields = line.split(':')
-        fields[9] if fields[0]? == "fpr" && fields.size > 9 && !fields[9].empty?
-      end.to_a
+      result = remote_exec("mkdir -p #{tmp_home} && chmod 700 #{tmp_home} && gpg --homedir #{tmp_home} --with-colons #{path} 2>/dev/null; gpg_rc=$?; rm -rf #{tmp_home}; exit $gpg_rc")
+      keys = parse_output_for_keys(result[:stdout])
+      {exit_code: result[:exit_code], key_id: keys.first?}
+    end
+
+    # Real ansible.builtin.apt_key's parse_output_for_keys, mirrored:
+    # collects key ids out of both `apt-key adv --list-public-keys`
+    # output (apt's own `pub   rsa4096/<ID> ...` format, code after the
+    # slash) and plain `gpg --with-colons` output (field 4), skipping
+    # every pub/sub line that mentions "expired" - deliberately, so an
+    # expired key never counts as installed (which is exactly why real
+    # Ansible's post-add verification fails for one, see the class doc).
+    private def parse_output_for_keys(output : String) : Array(String)
+      found = [] of String
+      output.each_line do |line|
+        next unless line.starts_with?("pub") || line.starts_with?("sub")
+        next if line.includes?("expired")
+
+        tokens = line.split
+        code = tokens[1]?
+        if code && (slash = code.index('/'))
+          found << code[(slash + 1)..]
+        else
+          fields = line.split(':')
+          found << fields[4] if fields.size > 4 && !fields[4].empty?
+        end
+      end
+      found
+    end
+
+    # Real ansible.builtin.apt_key's parse_key_id, mirrored: uppercase,
+    # optional 0x prefix, must be 8, 16, or 16+ hex chars; the id apt-key
+    # subcommands take is the whole thing, the id its keyring listings
+    # can be compared against is the LAST 16 chars (fingerprint), and an
+    # 8-char id switches the whole module to short-format matching.
+    # Returns nil when real Ansible would raise ValueError (its caller
+    # fails with "Invalid key_id").
+    private def parse_key_id(raw : String) : NamedTuple(key_id: String, fingerprint: String, short_key_id: String, short_format: Bool)?
+      key_id = raw.upcase
+      key_id = key_id[2..] if key_id.starts_with?("0X")
+      return nil if key_id.empty? || !key_id.matches?(/\A[0-9A-F]+\z/)
+      return nil unless key_id.size == 8 || key_id.size >= 16
+
+      {
+        key_id:       key_id,
+        fingerprint:  key_id.size > 16 ? key_id[-16..] : key_id,
+        short_key_id: key_id[-8..],
+        short_format: key_id.size == 8,
+      }
+    end
+
+    # Real ansible.builtin.apt_key's all_keys, mirrored: every key id in
+    # the effective keyring, via `apt-key adv --list-public-keys
+    # --keyid-format=long` + parse_output_for_keys. Returns nil when the
+    # listing itself fails (real Ansible fails the task with "Unable to
+    # list public keys"). Returns an empty list without touching apt-key
+    # at all when a keyring: file doesn't exist yet - see the comment in
+    # #key_present? for the empty-keybox side effect being avoided.
+    private def all_keys : Array(String)?
+      if keyring = @params["keyring"]?
+        exists = remote_exec("test -e #{keyring}")
+        return [] of String if exists[:exit_code] != 0
+      end
+
+      result = remote_exec("apt-key #{keyring_flag}adv --list-public-keys --keyid-format=long 2>/dev/null")
+      return nil if result[:exit_code] != 0
+
+      parse_output_for_keys(result[:stdout])
+    end
+
+    private def key_id_in_keys?(parsed : NamedTuple(key_id: String, fingerprint: String, short_key_id: String, short_format: Bool), keys : Array(String)) : Bool
+      keys.includes?(parsed[:short_format] ? parsed[:short_key_id] : parsed[:fingerprint])
     end
 
     private def remove_key : PluginResult

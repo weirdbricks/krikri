@@ -215,6 +215,11 @@ Metrics/CyclomaticComplexity:
   - plugins/package.cr
   - plugins/dnf.cr
   - plugins/command.cr
+  # add_key's branch count IS real ansible.builtin.apt_key's own add
+  # flow (id: derivation, keyserver: vs. url:/data:/file: staging,
+  # before/after key-listing verification) - verified live against the
+  # real acandid.jenkins expired-key case (round 83166).
+  - plugins/apt_key.cr
   - src/krikri/inventory_parser.cr
   - src/krikri/conditional_evaluator.cr
   - src/krikri/task_executor/result_display.cr
