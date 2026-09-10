@@ -741,6 +741,19 @@ module Krikri
         # ansible-core 2.19 (see ConditionalEvaluator#evaluate_truthiness);
         # ANSIBLE_ALLOW_BROKEN_CONDITIONALS relaxes it there and here.
         ConditionalEvaluator.evaluate(substituted_condition, vars_context, strict: true, raise_undefined: true)
+      rescue ex : ConditionalEvaluator::ConditionalBooleanError
+        # A non-boolean `when:` result gets real Ansible's own "Task
+        # failed: " prefix, not this method's generic conditional-eval
+        # wrapper - verified against ansible-core 2.19.12's exact fatal
+        # msg for `when: network_interfaces is defined and network_
+        # interfaces` with the var defaulting to `[]` (adfinis-sygroup.
+        # network, round 84003): "Task failed: Conditional result (False)
+        # was derived from value of type 'list' ... Conditionals must
+        # have a boolean result." Only the non-bool-result error class
+        # gets this prefix; an undefined reference keeps the familiar
+        # "Error while evaluating conditional: " shape (assert:'s own
+        # identical split lives in assert_action_plugin.cr).
+        raise WhenEvaluationError.new("Task failed: #{ex.message}")
       rescue ex
         raise WhenEvaluationError.new("Error while evaluating conditional: #{ex.message}")
       end
