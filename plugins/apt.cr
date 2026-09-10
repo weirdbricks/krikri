@@ -143,7 +143,15 @@ module Krikri
       # found "0 upgraded, 0 newly installed, 0 to remove" and real
       # Ansible correctly reported `ok`. Found benchmarking robertdebock.
       # update's own "Update all software (apt)" task.
-      cache_update_is_sole_operation = !name_or_pkg_param? && !@params["upgrade"]? && !@params["deb"]?
+      # `name_or_pkg_param?` alone only tests whether the KEY is present -
+      # `name: '{{ php_packages_extra }}'` with the var defaulting to `[]`
+      # renders as the literal string "[]", a present-but-empty name: that
+      # is exactly as "sole operation" as no name: at all (0ta2.php_role's
+      # "Install extra package.", round 84000: real Ansible folded the
+      # cache refresh's own changed: in here; this engine saw a present
+      # name: param and never did, losing the changed: entirely).
+      no_effective_packages = (raw_name = name_or_pkg_param?).nil? || parse_package_names(raw_name).empty?
+      cache_update_is_sole_operation = no_effective_packages && !@params["upgrade"]? && !@params["deb"]?
 
       # Handle cache update
       if update_cache || has_cache_valid_time
@@ -403,6 +411,37 @@ module Krikri
 
       # Parse package names - handle both single string and comma-separated list
       packages = parse_package_names(name_param)
+
+      # A `name:` KEY present but templating down to nothing - `name:
+      # '{{ php_packages_extra }}'` with the var defaulting to `[]`
+      # renders as the literal string "[]", so `name_param` itself is
+      # truthy and the "no name: at all" branch above never fires, even
+      # though there is genuinely nothing to install/remove. Real
+      # Ansible's apt module folds a cache update's own changed: into
+      # this case too (an empty package list is exactly the same as no
+      # name: given at all to its own install()/remove() no-ops) -
+      # 0ta2.php_role's "Install extra package." (apt: {name: '{{
+      # php_packages_extra }}', update_cache: yes}, round 84000) reported
+      # changed: true from the real apt-get update alone; this engine
+      # instead fell through into the packages-present install path with
+      # an empty list and lost that changed: entirely.
+      if packages.empty?
+        if update_cache || has_cache_valid_time || autoremove || autoclean || clean || upgrade
+          msg = messages.empty? ? "Cache up to date" : messages.join(", ")
+          return PluginResult.new(
+            changed: changed,
+            failed: false,
+            msg: msg,
+            stdout: upgrade_stdout
+          )
+        else
+          return PluginResult.new(
+            changed: false,
+            failed: false,
+            msg: "Nothing to do"
+          )
+        end
+      end
 
       # Process each package based on state. Real Ansible's own apt
       # module only ever folds a cache update into the overall changed:

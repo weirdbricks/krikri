@@ -89,6 +89,35 @@ describe "apt plugin cache_updated result key" do
       result["changed"].as_bool.should be_false
     end
   end
+
+  # 0ta2.php_role's "Install extra package." (round 84000): `name: '{{
+  # php_packages_extra }}'` with the var defaulting to `[]` templates to
+  # the literal string "[]" - a `name:` KEY that IS present (so the "no
+  # name: at all" branch never fired) but parses down to an empty package
+  # list. Real Ansible's apt module folds a genuine cache refresh's own
+  # changed: into this case exactly the same as no name: given at all;
+  # this engine fell through into the packages-present install path with
+  # an empty list and lost the cache-update changed: entirely, reporting
+  # ok when real Ansible reported changed.
+  it "folds a genuine cache refresh's changed: into an empty (not absent) name: list" do
+    with_stub_path(move: true) do |path, stamp|
+      result = PluginSpecHelper.run("apt", {
+        "name"         => "[]",
+        "update_cache" => "true",
+        "_environment" => env_param(path, stamp),
+      })
+
+      result["changed"].as_bool.should be_true
+      result["cache_updated"].as_bool.should be_true
+    end
+  end
+
+  it "is a no-op for an empty name: list with no update_cache:" do
+    result = PluginSpecHelper.run("apt", {"name" => "[]"})
+
+    result["changed"].as_bool.should be_false
+    result["failed"].as_bool.should be_false
+  end
 end
 
 describe "changed_when: apt_cache.cache_updated on a registered apt result" do
