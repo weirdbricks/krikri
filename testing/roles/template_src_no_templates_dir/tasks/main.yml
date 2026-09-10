@@ -1,0 +1,6 @@
+- name: template under files/templates in a role with no templates dir
+  ansible.builtin.template:
+    src: "files/templates/marker.j2"
+    dest: "/tmp/template_src_no_templates_dir_output.txt"
+  vars:
+    marker: no-templates-dir-works
