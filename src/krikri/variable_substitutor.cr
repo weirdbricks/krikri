@@ -189,6 +189,45 @@ module Krikri
     source
   end
 
+  # The nested-undefined companion to undefined_filter_chain_source:
+  # *expr* is a filter chain whose head IS a defined bare variable, but
+  # whose stored VALUE is itself unrendered Jinja that bottoms out at a
+  # name set nowhere (`php_fpm_site_errorlog: "/home/{{ system_user }}/
+  # logs/x.log"` with `system_user` never defined - inmotionhosting.php_fpm,
+  # round 82024). Real Ansible's recursive re-templating renders the head's
+  # own value strictly BEFORE the first filter ever applies, so a `when:`
+  # using the chain fails with the innermost missing name; this engine's
+  # lenient re-render baked the "undefined" sentinel into the string and the
+  # conditional silently answered falsy instead. The same tolerant-first-
+  # filter rule as undefined_filter_chain_source applies, and it applies to
+  # the nested case too - live-verified against ansible-core 2.19.4:
+  # `site_errorlog | default('x') | length > 0` runs, `site_errorlog |
+  # length > 0` fails. Raises (rather than returning a name to raise on)
+  # because the correct message names the innermost undefined reference,
+  # which only the strict render itself knows.
+  def self.raise_if_chain_source_value_undefined(expr : String, vars : Hash(String, JSON::Any)) : Nil
+    return unless expr.includes?('|')
+
+    parts = VariableSubstitutor::FilterEngine.split_chain(expr)
+    return unless parts.size >= 2
+
+    source = parts[0].strip
+    return unless source.matches?(REGEX_BARE_VAR_REF)
+
+    first_filter = parts[1].strip.lchop("ansible.builtin.")
+    paren = first_filter.index('(')
+    filter_name = (paren ? first_filter[0, paren] : first_filter).strip
+    return if UNDEFINED_TOLERANT_FILTERS.includes?(filter_name)
+
+    resolved = VariableSubstitutor::VariableLookup.new(vars).resolve(source)
+    return unless resolved
+    raw = resolved.raw
+    return unless raw.is_a?(String) &&
+                  (raw.includes?("{{") || raw.includes?("{%") || raw.includes?("{#"))
+
+    Krikri::VarSubstitutor.new(vars: vars).strict_render(raw)
+  end
+
   # Jinja2/Ansible GLOBAL names (functions/constants, not variables) - a
   # root identifier from this set never means "look up this var", the
   # same carve-out shape as SCAN_STRICT_BLOCK_TAG_BUILTIN_FILTERS.
@@ -1474,6 +1513,19 @@ module Krikri
       false
     rescue UndefinedVariableError
       true
+    end
+
+    # The raising twin of #unresolvable_template?: renders *raw* (known to
+    # contain Jinja markers) the way a strict caller - a task-level `when:`/
+    # `assert:` - needs it rendered, raising UndefinedVariableError with real
+    # Ansible's INNERMOST-missing-name message ("'system_user' is undefined",
+    # not the outer variable that merely holds the template text) when the
+    # value bottoms out at a name set nowhere. Everything
+    # substitute_impl(raw, true) already tolerates - `default()`,
+    # `| d(...)`, `omit`, Jinja keywords, tolerant nested chains - stays
+    # tolerated here, because the strictness is substitute_impl's own.
+    def strict_render(raw : String) : String
+      substitute_impl(raw, true)
     end
 
     # Finds each `{{ ... }}` span in *text* and replaces it with the
