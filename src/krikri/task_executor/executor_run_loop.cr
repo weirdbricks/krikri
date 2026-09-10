@@ -1432,7 +1432,7 @@ module Krikri
       # when_passes? let it through (see its own comment), so a python
       # module behind a false when: still skips normally.
       if task.unavailable_module && (py_source = python_module_source_for(task))
-        result = execute_python_module(task, py_source, substituted_params, exec_host, wire_vars, become, become_user, substituted_become_user)
+        result = execute_python_module(task, py_source, substituted_params, exec_host, vars_context, wire_vars, become, become_user, substituted_become_user)
         return apply_changed_failed_when(task, result, vars_context, host)
       end
 
@@ -1455,7 +1455,7 @@ module Krikri
     # hosts; the module's argument dict mirrors real Ansible's typed
     # JSON args for new-style modules (the params the parser already
     # JSON-encoded come back as real arrays/dicts for the module).
-    private def execute_python_module(task : Task, source_path : String, substituted_params : Hash(String, String), exec_host : Host, wire_vars : Hash(String, JSON::Any), become : Bool, become_user : String?, substituted_become_user : String?) : JSON::Any
+    private def execute_python_module(task : Task, source_path : String, substituted_params : Hash(String, String), exec_host : Host, vars_context : Hash(String, JSON::Any), wire_vars : Hash(String, JSON::Any), become : Bool, become_user : String?, substituted_become_user : String?) : JSON::Any
       module_name = PythonModuleRunner.short_name(task.unavailable_module || task.module_name)
       new_style = PythonModuleRunner.new_style?(File.read(source_path))
       check_mode = resolve_task_check_mode(task, wire_vars)
@@ -1493,11 +1493,30 @@ module Krikri
       # already proven to work for every OTHER plugin dispatch in the
       # same play.
       config = build_plugin_config(task, exec_host, py_params, wire_vars, substituted_become_user)
+
+      # The DISPATCH decision gets the controller's own unflipped
+      # vars_context, mirroring the normal plugin dispatch above - NOT
+      # wire_vars, whose `ansible_connection=local` override exists only
+      # for the plugin's own internal local-vs-remote logic once it has
+      # already landed on the remote (the config JSON above carries it
+      # for exactly that purpose). execute_plugin re-runs
+      # remote_execution? against the vars it is handed, so handing it
+      # wire_vars made every remote role-private python module execute
+      # LOCALLY ON THE CONTROLLER instead of on the target: on a
+      # controller without passwordless sudo the task failed outright
+      # with "sudo: a password is required" (reproduced live against a
+      # fresh Atlantic.net host); with one it would run the module as
+      # root on the wrong machine entirely. This asymmetry (and not any
+      # privilege gap inside the python subprocess) is the actual
+      # newrelic.newrelic-infra merge_yaml "OS error Permission denied
+      # (13)" root cause the round-79 investigation kept missing: the
+      # pre-0.9.900 dispatch ran the module unprivileged on the
+      # controller, whose labros account cannot write /etc/.
       PluginManager.execute_plugin(
         "ansible.builtin.py_module",
         config,
         exec_host,
-        wire_vars,
+        vars_context,
         become,
         become_user
       )
