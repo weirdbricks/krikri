@@ -370,6 +370,19 @@ module Krikri
     # name instead of merging its keys into the context.
     property include_vars_file : String?
     property include_vars_name : String?
+    # dir:-mode parameters (real Ansible's include_vars directory form) -
+    # include_vars_dir is the (possibly templated) directory to load all
+    # vars files from; include_vars_depth is the raw `depth:` string
+    # (templated, resolved at run time - real Ansible's depth: 0 default
+    # means UNLIMITED recursion, depth: 1 means top-level files only);
+    # files_matching/ignore_files/extensions mirror the module's own
+    # options. The executor's execute_include_vars_dir owns the details.
+    property include_vars_dir : String?
+    property include_vars_depth : String?
+    property include_vars_files_matching : String?
+    property include_vars_ignore_files : Array(String)?
+    property include_vars_ignore_unknown_extensions : Bool?
+    property include_vars_extensions : Array(String)?
     # vars: on an include_tasks: statement - visible to every task in the
     # included file (unlike import_tasks:'s vars:, which is merged
     # directly into each imported task at parse time, this has to be
@@ -453,6 +466,12 @@ module Krikri
       @include_vars = nil
       @include_vars_file = nil
       @include_vars_name = nil
+      @include_vars_dir = nil
+      @include_vars_depth = nil
+      @include_vars_files_matching = nil
+      @include_vars_ignore_files = nil
+      @include_vars_ignore_unknown_extensions = nil
+      @include_vars_extensions = nil
       @include_role_name = nil
       @include_role_vars = nil
       @include_role_dir = nil
@@ -1806,6 +1825,12 @@ module Krikri
           # See InvalidIncludeAttributeError's own comment and the
           # round-194 writeup for the divergence history.
           raise ex
+        rescue ex : IncludeVarsMissingParameterError
+          # Same bypass - an include_vars: with no file:/path:/dir:
+          # must hard-stop the run per the 0.9.903 policy, not
+          # degrade to the generic warning below. See that class's
+          # own comment.
+          raise ex
         rescue ex
           puts "Warning: Skipping #{context} #{index + 1}: #{ex.message}".colorize(:yellow)
         end
@@ -2675,8 +2700,24 @@ module Krikri
 
       if hash = value.as_h?
         file = hash["file"]? || hash["path"]?
-        raise "include_vars: requires a file (or a bare filename)" unless file
-        task.include_vars_file = file.as_s
+        if dir = hash["dir"]?
+          task.include_vars_dir = safe_yaml_to_string(dir)
+          task.include_vars_depth = hash["depth"]?.try { |depth_val| safe_yaml_to_string(depth_val) }
+          task.include_vars_files_matching = hash["files_matching"]?.try { |pattern| safe_yaml_to_string(pattern) }
+          task.include_vars_ignore_files = hash["ignore_files"]?.try do |list|
+            list.as_a?.try(&.map { |entry| safe_yaml_to_string(entry) }) || [safe_yaml_to_string(list)]
+          end
+          task.include_vars_ignore_unknown_extensions = parse_become_value(hash["ignore_unknown_extensions"]?) || false
+          task.include_vars_extensions = hash["extensions"]?.try do |list|
+            list.as_a?.try(&.map { |entry| safe_yaml_to_string(entry) }) || [safe_yaml_to_string(list)]
+          end
+        else
+          # The typed class is what makes this reach the hard-stop path
+          # (per KNOWN_MISSING.md's 0.9.903 policy) instead of the
+          # generic per-task "Warning: Skipping task" graceful-skip.
+          raise IncludeVarsMissingParameterError.new unless file
+          task.include_vars_file = file.as_s
+        end
         task.include_vars_name = hash["name"]?.try(&.as_s?)
       else
         task.include_vars_file = value.as_s
@@ -3009,6 +3050,19 @@ module Krikri
 
       def initialize(@key : String, @kind : String)
         super("'#{@key}' is not a valid attribute for a #{@kind}")
+      end
+    end
+
+    # Raised by parse_include_vars_task when an include_vars: hash form
+    # has neither file:/path: nor dir: (nor a bare filename). The typed
+    # class makes parse_tasks's rescue chain propagate it as a hard
+    # stop (per KNOWN_MISSING.md's 0.9.903 policy: an unimplemented or
+    # malformed include_vars: form must refuse the whole run, not
+    # degrade to a "Warning: Skipping task" that silently loses the
+    # task) - the same bypass InvalidIncludeAttributeError etc. use.
+    class IncludeVarsMissingParameterError < Exception
+      def initialize
+        super("include_vars: requires a file or dir (or a bare filename)")
       end
     end
 
