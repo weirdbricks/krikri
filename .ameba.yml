@@ -231,6 +231,13 @@ Metrics/CyclomaticComplexity:
   # toggles, --rsh, --link-dest, rsync_opts merging) - one flag per
   # real module param, matching its actual CLI surface one-to-one.
   - src/krikri/plugin_helpers/synchronize_rsync.cr
+  # ec2_key.cr/ec2_security_group.cr's own .run dispatch (present/absent,
+  # existing-resource matching, EC2 API call, result-building) and
+  # plan_present's own rule-diff construction mirror real amazon.aws
+  # module.run() orchestration one branch per param/state - same shape
+  # as apt_key.cr/user.cr's own exempted dispatch methods.
+  - src/krikri/plugin_helpers/ec2_key.cr
+  - src/krikri/plugin_helpers/ec2_security_group.cr
   - src/krikri/inventory_parser.cr
   - src/krikri/conditional_evaluator.cr
   - src/krikri/task_executor/result_display.cr
