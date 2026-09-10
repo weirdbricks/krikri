@@ -585,6 +585,39 @@ module Krikri
 
     # Handle APT package management
     private def handle_apt(name : String, state : String, names : Array(String), pkg_tokens : String) : PluginResult
+      # Real Ansible's `package:` action plugin delegates to the apt
+      # module on Debian-family hosts, and apt.py's main() runs the cache
+      # refresh BEFORE install() whenever update_cache: is set (or any
+      # cache_valid_time: is) - unconditionally with the default
+      # cache_valid_time: 0 (only the stamp-mtime + cache_valid_time <
+      # now staleness gate can skip it), and even when every requested
+      # package is already installed. This module only honored
+      # update_cache: on the name-less cache-refresh-only path above, so
+      # `ansible.builtin.package: {name: [...], update_cache: true}`
+      # installed straight off whatever package index the host image was
+      # built with: a stale index resolves names to long-superseded
+      # versions, and apt 404s fetching their .debs from the live mirror
+      # (which only carries current versions). Found via rounds
+      # 72311/72313/72363 (lfit.lf-dev-libs, lfit.mono-install,
+      # markosamuli.pyenv) - all three hit 404s on 2022-era versions on
+      # freshly-provisioned hosts while real Ansible, which refreshed the
+      # cache first, resolved current versions and succeeded on the same
+      # task. Check mode skips the refresh: real Ansible's `if not
+      # module.check_mode: cache.update()` guard skips it too.
+      update_cache = true?(@params["update_cache"]?)
+      cache_valid_time = @params["cache_valid_time"]?.try(&.to_i) || 0
+      if failure = apt_update_cache_before_operation(
+             update_cache, cache_valid_time,
+             @params["update_cache_retries"]?.try(&.to_i) || AptLockRetry::DEFAULT_UPDATE_CACHE_RETRIES,
+             @params["update_cache_retry_max_delay"]?.try(&.to_i) || AptLockRetry::DEFAULT_UPDATE_CACHE_RETRY_MAX_DELAY,
+             @check_mode, ->remote_exec(String))
+        return PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: "Failed to update apt cache: #{failure[:stderr]}"
+        )
+      end
+
       # Check if package is installed - each name checked individually
       # (see handle_dnf's own comment for why: a single combined `dpkg -l
       # pkg1 pkg2 | grep '^ii'` matches as soon as *any* one of them is

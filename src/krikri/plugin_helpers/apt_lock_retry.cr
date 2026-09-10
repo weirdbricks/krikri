@@ -248,5 +248,44 @@ module Krikri
 
       exec_remote.call(cmd)
     end
+
+    # Real Ansible's apt.py main() runs the cache refresh BEFORE any
+    # install/remove/upgrade whenever `update_cache:` is set (or any
+    # `cache_valid_time:` is) - unconditionally with the default
+    # cache_valid_time: 0 (only the stamp-mtime + cache_valid_time < now
+    # staleness gate can skip it), and even when every requested package
+    # is already installed. Returns nil when no refresh is needed
+    # (check mode - apt.py's own `if not module.check_mode: cache.update()`
+    # guard skips it; no relevant params; still-fresh cache), else runs
+    # `apt-get update` through `apt_get_update_with_retry` with real
+    # Ansible's update_cache_retries/update_cache_retry_max_delay
+    # semantics, returning the failed result so the caller can fail the
+    # task BEFORE touching any package state.
+    def apt_update_cache_before_operation(update_cache : Bool, cache_valid_time : Int32,
+                                          update_cache_retries : Int32, update_cache_retry_max_delay : Int32,
+                                          check_mode : Bool,
+                                          exec_remote : Proc(String, NamedTuple(exit_code: Int32, stdout: String, stderr: String)))
+      return nil if check_mode
+      return nil unless update_cache || cache_valid_time > 0
+      return nil unless apt_cache_stale?(cache_valid_time, exec_remote)
+
+      result = apt_get_update_with_retry("apt-get update", update_cache_retries, update_cache_retry_max_delay, exec_remote)
+      return result if result[:exit_code] != 0
+
+      nil
+    end
+
+    # Same freshness gate apt.cr's own should_update_cache? implements
+    # (see there for the full real-Ansible apt.py rationale): with the
+    # default cache_valid_time: 0 the refresh always runs; with a
+    # positive cache_valid_time it only runs when the update-success-
+    # stamp/lists-dir mtime is older than the validity window.
+    def apt_cache_stale?(cache_valid_time : Int32,
+                         exec_remote : Proc(String, NamedTuple(exit_code: Int32, stdout: String, stderr: String)))
+      return true if cache_valid_time == 0
+
+      age = Time.utc.to_unix - apt_cache_mtime(exec_remote)
+      age > cache_valid_time
+    end
   end
 end
