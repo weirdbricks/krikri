@@ -18,10 +18,50 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.902`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.903`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.29` (see `shard.yml`).
 
 ---
+
+## DESIGN REVERSAL: unimplemented modules now hard-stop unconditionally, not graceful-skip (0.9.903)
+
+Owner decision, safety-motivated, superseding the whole graceful-skip
+design this project carried since its early rounds (see "Unresolvable
+module/action names" narrative entries below for that history - they
+stay as-is, describing what was true at the time; this entry
+supersedes the decision, not the historical record of it). The
+reasoning: a task whose module krikri hasn't implemented used to be
+silently SKIPPED (a warning printed, the task marked skipped, the play
+continued) - but a silently-skipped task with real consequences (a
+firewall rule, a security config, anything where "it didn't run" is
+worse than "the whole playbook refused to run") can leave a system in
+a more dangerous state than refusing outright. Every module name that
+resolves to nothing this engine ships now raises the same
+`UnresolvedModuleError` hard-stop the tombstoned-removed-module case
+already used (unconditional - a `when:`-gated task that would never
+actually run still aborts the whole load, matching how the tombstone
+hard-stop always worked and how real Ansible's own playbook-load
+module-resolution check behaves), with krikri's own message ("krikri
+does not yet have module 'x.y.z' implemented") rather than simulating
+real Ansible's wording - because real Ansible would often resolve and
+run these modules fine; refusing is krikri's own safety posture, not a
+parity claim.
+
+This also fully closes the "Unresolvable module/action names" Open gap
+that used to describe two shapes gracefully skipping where real
+Ansible hard-stops (a module genuinely nonexistent in a recognized
+collection; a module from a never-installed collection) - both are
+subsumed by the new unconditional rule, no module-registry manifest
+needed after all.
+
+The ONLY exception: a role-private `library/<name>.py` (or playbook-
+adjacent `library/`) module genuinely RUNS here (`PythonModuleRunner`,
+since 0.9.819) - that's not "unimplemented," it's a real module this
+engine executes, so parsing looks for that source (the same
+`find_source` roots the executor uses) before deciding to hard-stop,
+and keeps the task running normally when one exists. Role-private
+`filter_plugins/*.py` custom filters (`PythonFilterRunner`) are a
+separate, unaffected mechanism.
 
 ## newrelic.newrelic-infra's merge_yaml "Permission denied" fully root-caused and fixed (0.9.902)
 
@@ -3138,50 +3178,6 @@ Genuinely open defects: something is wrong and the fix is unknown or
 unfinished. Everything deliberate lives under "Deliberate limits"
 below - keep the two apart, or this list stops meaning anything.
 
-- **Unresolvable module/action names: hard-stop covers only the
-  tombstoned-removed names (0.9.860, narrowed 0.9.861); a missing or
-  unported module anywhere else - including a whole collection with
-  zero krikri modules, or a module that genuinely doesn't exist inside
-  a recognized collection - still gracefully skips, where real Ansible
-  hard-stops.** `Aplyca.EC2Describe` (`ec2_remote_facts`, a module
-  removed from ansible-core years ago) round71000: real
-  `ansible-playbook` refuses to even start the play (`[ERROR]:
-  couldn't resolve module/action '...'`, rc=4, no PLAY RECAP at all)
-  the moment it can't resolve ANY task's module name, before Gathering
-  Facts even runs. Fixed (0.9.860, `UnresolvedModuleError`,
-  generalizing `RemovedActionError`'s round-162 mechanism): parse-time
-  hard-stop - real Ansible's exact message text and rc=4, no tasks run
-  - for a tombstoned-removed name (`REMOVED_MODULE_TOMBSTONES`:
-  bare/`ansible.builtin.`/`ansible.legacy.`/`amazon.aws.`-qualified
-  `ec2_remote_facts` - widen by adding entries, only names
-  unresolvable on EVERY real controller qualify; that part verified
-  live against ansible-core 2.19.4, including that a `when:`-gated,
-  never-reached offending task still aborts the whole load). 0.9.860
-  also hard-stopped FQCNs whose collection the engine had zero modules
-  from (`IMPLEMENTED_COLLECTIONS`) - retracted in 0.9.861: "zero krikri
-  ports" described krikri's coverage, not the controller's installs,
-  and hard-stopped real collections like `kubernetes.core` that real
-  Ansible runs fine. Everything else keeps the graceful per-task
-  unavailable_module skip: any unported module, any unimplemented
-  module inside a recognized collection (`community.general.xyz`,
-  `ansible.builtin.xyz`, `amazon.aws.xyz`, ...), and now also any
-  module of a zero-coverage collection (`kubernetes.core
-  .helm_repository`, ...). **The remaining known gaps:** (a) a module
-  that genuinely doesn't exist inside a RECOGNIZED collection
-  (`community.general.doesnotexist_xyz`) still skips gracefully where
-  real ansible-core 2.19.4 hard-stops with the same "couldn't resolve"
-  error (verified live), and (b) a genuinely-uninstalled collection's
-  module (`bodsch.scm.github_latest` where bodsch.scm was never
-  installed) also skips where real Ansible hard-stops - the pre-0.9.860
-  behavior, restored because no engine-local signal distinguishes
-  "never installed" from "real but unported" without a full upstream
-  module registry this engine doesn't keep; telling those apart would
-  need shipping per-collection module manifests. Also verified live: a
-  real but unimplemented builtin (`ansible.builtin.sysvinit`) resolves
-  fine on real Ansible and must stay a graceful skip here -
-  hard-stopping every unresolvable name would break the project's whole
-  graceful-degradation value proposition.
-  graceful-degradation value proposition.
 - **Crinja-side `in`-a-plain-string with an undefined left operand
   still diverges (hand-rolled `when:` side fixed, 0.9.858).** The
   original round71000 gap (`asg1612.gluster`: `when: "node_1 in
