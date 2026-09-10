@@ -118,14 +118,17 @@ module Krikri
           # modules' camel_dict_to_snake_dict output carries: tagSet is
           # Tags in boto3 (and the module overwrites it with the tag
           # dict), the image item's blockDeviceMapping is
-          # BlockDeviceMappings, and the image item's imageState/
+          # BlockDeviceMappings, the image item's imageState/
           # imageOwnerId drop their image prefix in boto3 (State/
-          # ImageOwnerId -> state/owner_id).
+          # ImageOwnerId -> state/owner_id), and the instance item's
+          # instanceState is State in boto3 (state, the code/name dict
+          # ec2_instance returns).
           key = case child.name
                 when "tagSet"             then "tags"
                 when "blockDeviceMapping" then "block_device_mappings"
                 when "imageState"         then "state"
                 when "imageOwnerId"       then "owner_id"
+                when "instanceState"      then "state"
                 else                           camel_to_snake(child.name)
                 end
           object[key] = jsonify(child)

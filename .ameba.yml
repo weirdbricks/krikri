@@ -243,6 +243,13 @@ Metrics/CyclomaticComplexity:
   # nested, list-vs-scalar, boolean-string coercion) one case at a
   # time - the branch count IS the semantics being matched.
   - src/krikri/plugin_helpers/ec2_info.cr
+  # run_instances_params mirrors RunInstances' own real param surface
+  # (image/type/key/subnet/security groups/user_data/count) one field at
+  # a time; .run is the module's own full present/running/stopped/
+  # restarted/terminated dispatch + create/tag/wait orchestration - same
+  # shape as apt_key.cr/user.cr/ec2_key.cr's own exempted dispatch
+  # methods, just against a larger real API surface.
+  - src/krikri/plugin_helpers/ec2_instance.cr
   - src/krikri/inventory_parser.cr
   - src/krikri/conditional_evaluator.cr
   - src/krikri/task_executor/result_display.cr
