@@ -18,8 +18,118 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.921`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.923`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.30` (see `shard.yml`).
+
+---
+
+## Round 90000-94000: 400-role mixed Ubuntu/RHEL batch, 2 real bugs fixed, one deliberate-limit candidate found (0.9.921 -> 0.9.923)
+
+200 Ubuntu roles (round 90000) + 200 Rocky roles (round 91000), all
+fresh Atlantic.net host pairs. CLEAN=202, DIVERGENT=70,
+GALAXY_MISSING=128.
+
+**Real bugs found and fixed:**
+
+- **Unprefixed `role_name` magic var was undefined** (0.9.922,
+  `akkerman.docker` round 90029): real Ansible's own magic var for the
+  currently-executing role's name - only its `ansible_role_name` alias
+  was ever set in `executor_vars_context.cr`, even though the sibling
+  `role_path` has always been set unprefixed. A role's own template
+  referencing `{{ role_name }}` directly raised "undefined" here while
+  real Ansible resolved it fine. Fixed by also setting the unprefixed
+  key alongside the alias.
+- **`include_vars: dir:` (directory form) was entirely unimplemented**
+  (0.9.923, `almaops.vars` round 91011): only `file:`/bare-filename was
+  supported: `dir:` (with `depth:`, `files_matching:`, `ignore_files:`,
+  `ignore_unknown_extensions:`, `name:`) fell through to a silent
+  skip-with-warning instead of loading anything or hard-stopping, so a
+  role like `almaops.vars` that constructs its `dir:` path from an
+  undefined var (`{{ vars_root }}/{{ vars_group }}`) diverged: real
+  Ansible correctly hard-fails ("'vars_root' is undefined"), krikri
+  just skipped past it and kept going. Now loads every var file in the
+  directory (sorted, later files overriding earlier, same merge
+  semantics as sequential `file:` includes) and hard-stops on a
+  missing/unresolvable `dir:`/`file:`/`path:` instead of degrading to a
+  warning-skip. (First implementation attempt of this fix was merged to
+  `main` without independent validation and broke 8 of its own 9 new
+  regression-spec examples - reverted, then re-dispatched and validated
+  properly before merging.)
+
+Both confirmed CLEAN against the rebuilt binary on a real host (rounds
+93000/94000).
+
+**New deliberate-limit candidate found, not fixed:** 28 of round
+91000's 54 divergences are all one root cause - the `amtega.*`
+Galaxy collection (ansible, apache, cron, docker_engine, java, mysql,
+sshd, sysctl, and ~20 more) all depend on a sibling role,
+`amtega.check_platform`, which ships a **role-private custom
+`action_plugin`** (`action_plugins/_check_platform.py`) rather than a
+`library/*.py` module - a real, general-purpose `ActionBase` subclass
+that runs on the controller with access to `action_loader`, `templar`,
+and `connection` internals to dispatch other actions, gather facts,
+and validate distro/version support. Role-private `library/*.py`
+custom **modules** already run for real here (`PythonModuleRunner`,
+see the top design-reversal note) - custom **action plugins** are a
+different, much larger mechanism (arbitrary controller-side Python
+with access to Ansible's own internal plugin-loading APIs) and are not
+currently supported at all; krikri correctly reports the plugin name
+as an unimplemented module rather than silently skipping. Added as a
+new entry under "Deliberate limits" below rather than attempted as a
+quick fix - see that section for the reasoning.
+
+**0.9.903 hard-stop firing correctly on genuinely unimplemented
+modules** (the large majority of the remaining divergences - expected,
+not bugs): `community.docker.docker_plugin` (`almaops.docker`),
+`community.general.xml` (`alvistack.bamboo`, `alvistack.crowd`),
+`community.general.flatpak_remote` (`alvistack.flatpak`,
+`alvistack.obs_studio`), `community.general.yum_versionlock`
+(`alvistack.postgres`), `snap` (`alvistack.snapd`), `ec2_vpc_subnet`
+- the plain create/manage module, distinct from the new
+`ec2_vpc_subnet_info` lookup already shipped (`amaabca.vpc-subnets`),
+`pear` (`amestsantim.odbc_driver_for_mssql_on_ubuntu`), `zypper`
+(`amritsingh.ec2_monitor`), `community.postgresql.postgresql_schema`
+(`andrelohmann.postgresql`), `community.docker.docker_compose` (3
+roles: `AndrewGodGivens.ansible_prometheus_ipmi_exporter`,
+`.prometheus_nginx_exporter`, `.prometheus_smartctl_exporter`),
+`win_psmodule` - Windows-only (5 roles:
+`andrewrothstein.alluxio`/`.arangodb`/`.consul_k8s`/
+`.consul-template`/`.couchdb-replication`), `chocolatey.chocolatey.win_chocolatey`
+- Windows-only (`ajholanda.googlechrome`/`.vscode`/`.x2goclient`),
+`storage` (`Akrog.storage` - OpenStack os-brick, also broken on real
+Ansible independently: `python-os-brick` package unavailable), `k8s`
+(`alanbchristie.pysimple` - role also broken on real Ansible
+independently: `meta.namespace` undefined in its own defaults),
+`win_service` - Windows-only (`aleemladha.ludus_exchange` - role also
+broken on real Ansible independently: become/sudo unsupported on the
+Windows exec wrapper), and `rhsm_repository`
+(`ahuffman.satellite6_bootstrap` - RHEL-only role tested against the
+wrong OS in this batch's queue; real Ansible also fails independently
+via a dnf4/dnf5 backend-detection mismatch on the same host).
+
+**Role/ansible-core-version mismatches, broken on both engines
+independently** (not krikri bugs): `AlbanAndrieu.dropbox`/`.jboss`/
+`.jmeter` all hit the same two-sided break - krikri fails on the
+removed `ansible.builtin.include` action (real ansible-core rejected
+it after 2023-05-16, krikri still supports it), while real Ansible
+independently fails earlier on each role's own `meta/main.yml`
+(`ansigenome_info` is not a valid `RoleMetadata` attribute) - both
+engines are correctly rejecting a genuinely broken/stale role, just at
+different points.
+
+**Environmental/infra noise, not krikri bugs:** `ajeleznov.oracle-jdk`
+(role hardcodes `yum`, tested against an Ubuntu host - role/OS
+mismatch in the queue, not a code gap); `aleksanderbl29.sonos_stream`
+(krikri's faster cold-start ran further into the role before hitting a
+`wait_for`-style port timeout that real Ansible's slower path
+apparently gave the service enough wall-clock time to avoid - a timing
+flake); `amritsingh.eye` (SSH became unreachable on the krikri-side
+host specifically mid-run - host/network flake, not a code issue).
+
+Four new genuinely-open items added to "Open gaps" below:
+`alivx.ansible_cis_nginx_hardening`, `aisbergg.beats`,
+`ajeleznov.manage-known-hosts`, and `aloysius-lim.elasticsearch_api` -
+see that section for specifics.
 
 ---
 
@@ -3261,6 +3371,34 @@ below - keep the two apart, or this list stops meaning anything.
 
 ### Needs a closer look (real, reproducible, not root-caused yet)
 
+- **`alivx.ansible_cis_nginx_hardening` (round 90192):** krikri fails
+  one task real Ansible passes - `3.4 Ensure log files are rotated`
+  (logrotate-related). Not yet root-caused; also has a large cold-run
+  timing divergence in the same round (cr 69s vs py 259s) worth
+  keeping in mind while investigating in case the two are related.
+- **`aisbergg.beats` (round 91077):** krikri fails a task where real
+  Ansible only warns (about a task-local `vars: name:` shadowing a
+  reserved var name) and continues past it. Possibly krikri treating a
+  shadow warning as fatal where real Ansible degrades gracefully - not
+  yet reproduced in isolation.
+- **`ajeleznov.manage-known-hosts` (round 90013):** real Ansible
+  hard-rejects the role's own nested-`{{ }}`-inside-a-lookup-argument
+  syntax at parse time (`lookup('pipe', 'ssh-keyscan -t {{
+  ssh_key_type }} ...')`) with "Use inline expressions..." - krikri
+  accepts it and keeps running. Both eventually fail on an unrelated
+  `become`/sudo-password host-config issue, but krikri runs
+  noticeably more tasks first (`ok=11` vs real Ansible's `ok=5`)
+  before getting there, suggesting a real, separate divergence in
+  task/loop evaluation upstream of the nested-expression leniency -
+  worth an isolated repro rather than dismissing as just the
+  sudo-password issue.
+- **`aloysius-lim.elasticsearch_api` (round 91020):** krikri fails a
+  pip-related task ("Unable to find any of pip3 to use") where real
+  Ansible succeeds cleanly on the same host (its own interpreter
+  discovery found `/usr/bin/python3.9` and proceeded). Likely krikri's
+  pip-module detection looks for a literal `pip3` binary rather than
+  falling back to `python3 -m pip` the way real Ansible's `pip` module
+  does - not yet confirmed against source.
 - **The apt-404-on-krikri-host-only pattern across 3 roles**
   (`lfit.lf-dev-libs`, `lfit.mono-install`, `markosamuli.pyenv`,
   round 72000): all
@@ -4740,6 +4878,36 @@ Everything here is a decision someone already made, with the reasoning
 attached. Nothing here is waiting on anyone. Do not re-litigate without
 new evidence - and if new evidence turns up, move the entry to "Open
 gaps" rather than arguing with the note in place.
+
+### Role-private custom `action_plugin`s are not supported (module execution is; action plugins are not)
+
+- Discovered round 91000: the `amtega.*` Galaxy collection (~28 roles
+  - `amtega.ansible`, `.apache`, `.cron`, `.docker_engine`, `.java`,
+  `.mysql`, `.sshd`, `.sysctl`, and more) all depend on
+  `amtega.check_platform`, which ships a role-private
+  `action_plugins/_check_platform.py` - a real `ActionBase` subclass
+  that runs on the controller with access to `action_loader`,
+  `templar`, and `connection` internals to dispatch other actions,
+  gather facts, and validate distro/version support against role
+  vars. Role-private `library/*.py` custom **modules** already run for
+  real here (`PythonModuleRunner`, see the design-reversal note at the
+  top of this file) - that mechanism executes a self-contained module
+  on the target host via the normal module-execution pipeline. Custom
+  **action plugins** are fundamentally different: arbitrary
+  controller-side Python with direct access to Ansible's own internal
+  plugin-loading/templating/connection APIs, meant to be run inside a
+  real `ansible-core` process rather than dispatched to a target.
+  Genuinely supporting this would mean either embedding a real Python
+  interpreter with access to equivalent internal APIs, or building a
+  bespoke internal API surface krikri doesn't have any other use for -
+  a large, open-ended surface for a role feature real Ansible itself
+  treats as an advanced/rare extension point (most Galaxy roles never
+  ship one). Decision: krikri correctly reports the plugin name as an
+  unimplemented module rather than silently skipping; a role depending
+  on a custom action plugin stays out of scope for now, revisit only
+  if a genuinely common role pattern is found to need it (unlikely,
+  given `library/*.py` covers the overwhelmingly more common
+  custom-module case already).
 
 ### Unimplemented community.general filter long tail (usage-audited, watchlist not backlog)
 

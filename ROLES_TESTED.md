@@ -3668,3 +3668,406 @@ First batch since Atlantic.net's server-limit increase (10 → 25). 200 never-be
 | `ahuffman.sat6_create_hosts` | ubuntu | ✅ clean. Times: cold py 6.48s vs cr 3.46s; warm py 7.54s vs cr 0.48s. |
 | `ahuffman_aide` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
 | `ahuffman_lvm` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+
+## Round 90000-91199 (400-role mixed Ubuntu 22.04/Rocky 9.6 batch + 2-role confirm rerun against the fixed build, all on fresh Atlantic.net host pairs, 0.9.921 → 0.9.923)
+
+| `ahuffman.satellite6_bootstrap` | ubuntu | ⚠️ divergent - 0.9.903 hard-stop correctly firing on unimplemented module 'rhsm_repository'. Role is RHEL-only (tested against the wrong OS in this batch's queue); real Ansible also fails independently via a dnf4/dnf5 backend-detection mismatch on the same host. Times: cold py 7.53s vs cr 0.01s; warm py 4.01s vs cr 0.01s. |
+| `ahuffman.satellite6_manage_content_views` | ubuntu | ✅ clean. Times: cold py 6.59s vs cr 3.85s; warm py 5.80s vs cr 0.40s. |
+| `ahuffman.scan_sudoers` | ubuntu | ✅ clean. Times: cold py 7.80s vs cr 6.18s; warm py 4.20s vs cr 0.54s. |
+| `ahuffman.yp` | ubuntu | ✅ clean. Times: cold py 28.68s vs cr 14.48s; warm py 24.65s vs cr 11.27s. |
+| `aidenkeating_install-socat` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `aidenkeating_openshift_origin_client_tools` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `aioue.aptly` | ubuntu | ✅ clean. Times: cold py 57.94s vs cr 62.38s; warm py 10.99s vs cr 5.52s. |
+| `aisbergg.beats` | rocky | ⚠️ divergent - needs a closer look (see KNOWN_MISSING.md Open gaps) - krikri fails a task where real Ansible only warns (`vars: name:` shadowing a reserved name) and continues. Times: cold py 58.80s vs cr 6.50s; warm py 29.52s vs cr 0.70s. |
+| `aisbergg.chrony` | ubuntu | ✅ clean. Times: cold py 27.37s vs cr 10.47s; warm py 13.53s vs cr 2.11s. |
+| `aisbergg.lm_sensors` | ubuntu | ✅ clean. Times: cold py 10.07s vs cr 8.84s; warm py 4.47s vs cr 0.35s. |
+| `aisbergg.systemd_resolved` | ubuntu | ✅ clean. Times: cold py 12.63s vs cr 7.72s; warm py 10.67s vs cr 4.10s. |
+| `aishee.ansible_redhat_centos_7` | ubuntu | ✅ clean. Times: cold py 0.46s vs cr 0.01s; warm py 0.47s vs cr 0.01s. |
+| `AjayKumar4_zerotier` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `ajeleznov.manage-known-hosts` | ubuntu | ⚠️ divergent - needs a closer look (see KNOWN_MISSING.md Open gaps) - krikri accepts a nested `{{ }}`-inside-lookup() expression real Ansible rejects at parse time; both eventually fail on an unrelated sudo-password host-config issue, but task counts differ (ok=11 vs real Ansible's ok=5). Times: cold py 9.23s vs cr 4.76s; warm py 8.22s vs cr 1.32s. |
+| `ajeleznov.oracle-jdk` | ubuntu | ⚠️ divergent - role/OS mismatch, not a krikri bug - role hardcodes `yum`, tested against an Ubuntu host (`yum: No such file or directory`). Times: cold py 54.75s vs cr 3.86s; warm py 53.28s vs cr 0.54s. |
+| `ajgarlag.apache2` | ubuntu | ✅ clean. Times: cold py 48.18s vs cr 56.91s; warm py 9.80s vs cr 3.23s. |
+| `ajgarlag.deploy` | ubuntu | ✅ clean. Times: cold py 4.40s vs cr 4.14s; warm py 2.64s vs cr 0.32s. |
+| `ajgarlag.rollback` | ubuntu | ✅ clean. Times: cold py 5.50s vs cr 3.72s; warm py 3.75s vs cr 0.28s. |
+| `ajholanda.googlechrome` | ubuntu | ⚠️ divergent - 0.9.903 hard-stop correctly firing on unimplemented module 'chocolatey.chocolatey.win_chocolatey'. Windows-only task. Times: cold py 8.31s vs cr 0.01s; warm py 8.53s vs cr 0.01s. |
+| `ajholanda.vscode` | ubuntu | ⚠️ divergent - 0.9.903 hard-stop correctly firing on unimplemented module 'chocolatey.chocolatey.win_chocolatey'. Windows-only task. Times: cold py 26.72s vs cr 0.01s; warm py 7.48s vs cr 0.01s. |
+| `ajholanda.x2goclient` | ubuntu | ⚠️ divergent - 0.9.903 hard-stop correctly firing on unimplemented module 'chocolatey.chocolatey.win_chocolatey'. Windows-only task. Times: cold py 60.36s vs cr 0.01s; warm py 6.95s vs cr 0.01s. |
+| `ajitesh17.apache` | ubuntu | ✅ clean. Times: cold py 44.23s vs cr 44.73s; warm py 12.46s vs cr 5.03s. |
+| `A-j-K.kubernetes-centos-installer` | ubuntu | ✅ clean. Times: cold py 0.48s vs cr 0.01s; warm py 0.46s vs cr 0.01s. |
+| `ajsalminen_user_management` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `Akellacom_role-telesales-phpmyadmin` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `akhilesh9589.tomcat` | ubuntu | ✅ clean. Times: cold py 4.62s vs cr 3.34s; warm py 4.12s vs cr 0.36s. |
+| `akin-ozer_ansible_role_ssl` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `akirak.coreos-python` | ubuntu | ✅ clean. Times: cold py 6.00s vs cr 4.11s; warm py 3.56s vs cr 0.81s. |
+| `akjones.remote-desktop-role` | ubuntu | ✅ clean. Times: cold py 9.19s vs cr 34.84s; warm py 9.50s vs cr 10.92s. |
+| `akkerman.docker` | ubuntu | ✅ clean after 0.9.922's `role_name` magic-var fix (originally divergent on `{{ role_name }}` undefined). Times: cold py 45.12s vs cr 27.90s; warm py 16.11s vs cr 2.12s. |
+| `aklinkert.docker_cleanup` | ubuntu | ✅ clean. Times: cold py 14.48s vs cr 4.92s; warm py 10.60s vs cr 1.09s. |
+| `aklinkert.docker_compose_stack` | ubuntu | ✅ clean. Times: cold py 4.53s vs cr 3.50s; warm py 2.67s vs cr 0.34s. |
+| `Akman.ioncube_loader` | ubuntu | ✅ clean. Times: cold py 151.53s vs cr 85.60s; warm py 59.16s vs cr 1.33s. |
+| `Akman.memcached` | ubuntu | ✅ clean. Times: cold py 47.33s vs cr 46.10s; warm py 9.97s vs cr 0.63s. |
+| `Akrog.storage` | ubuntu | ⚠️ divergent - 0.9.903 hard-stop correctly firing on unimplemented module 'storage'. OpenStack os-brick role; also broken on real Ansible independently (`python-os-brick` package unavailable). Times: cold py 5.60s vs cr 3.80s; warm py 5.11s vs cr 0.49s. |
+| `akry.jenkins` | ubuntu | ✅ clean. Times: cold py 0.45s vs cr 0.01s; warm py 0.45s vs cr 0.01s. |
+| `akthodu_apache-kafka` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alahiff.nfs` | ubuntu | ✅ clean. Times: cold py 0.46s vs cr 0.01s; warm py 0.46s vs cr 0.01s. |
+| `alainvanhoof_alpine_nginx` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alanbchristie.pysimple` | ubuntu | ⚠️ divergent - 0.9.903 hard-stop correctly firing on unimplemented module 'k8s'. Role also broken on real Ansible independently (`meta.namespace` undefined in its own defaults). Times: cold py 5.00s vs cr 0.01s; warm py 3.15s vs cr 0.01s. |
+| `AlbanAndrieu.ansible-nabla` | ubuntu | ✅ clean. Times: cold py 4.66s vs cr 3.63s; warm py 2.29s vs cr 0.31s. |
+| `AlbanAndrieu_ansible_role_ssl_certs` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `AlbanAndrieu.cmake` | ubuntu | ✅ clean. Times: cold py 0.46s vs cr 0.01s; warm py 0.45s vs cr 0.01s. |
+| `AlbanAndrieu.dropbox` | ubuntu | ⚠️ divergent - role/ansible-core version mismatch, broken on both engines independently - krikri fails on the removed `ansible.builtin.include` action (real ansible-core rejected it after 2023-05-16); real Ansible independently fails on the role's own `meta/main.yml` (`ansigenome_info` is not a valid RoleMetadata attribute). Times: cold py 0.44s vs cr 0.01s; warm py 0.43s vs cr 0.01s. |
+| `AlbanAndrieu.eclipse` | ubuntu | ✅ clean. Times: cold py 0.44s vs cr 0.01s; warm py 0.48s vs cr 0.01s. |
+| `AlbanAndrieu_gcc` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `AlbanAndrieu.java` | ubuntu | ✅ clean. Times: cold py 0.46s vs cr 0.01s; warm py 0.45s vs cr 0.01s. |
+| `AlbanAndrieu.jboss` | ubuntu | ⚠️ divergent - role/ansible-core version mismatch, broken on both engines independently - same two-sided break as `AlbanAndrieu.dropbox` (removed `include:` on krikri's side, invalid meta/main.yml schema on real Ansible's side). Times: cold py 0.43s vs cr 0.01s; warm py 0.44s vs cr 0.01s. |
+| `AlbanAndrieu.jmeter` | ubuntu | ⚠️ divergent - role/ansible-core version mismatch, broken on both engines independently - same two-sided break as `AlbanAndrieu.dropbox` (removed `include:` on krikri's side, invalid meta/main.yml schema on real Ansible's side). Times: cold py 0.43s vs cr 0.01s; warm py 0.42s vs cr 0.01s. |
+| `AlbanAndrieu.pagespeed` | ubuntu | ✅ clean. Times: cold py 70.54s vs cr 43.98s; warm py 17.54s vs cr 1.33s. |
+| `AlbanAndrieu.selenium` | ubuntu | ✅ clean. Times: cold py 0.45s vs cr 0.01s; warm py 0.52s vs cr 0.01s. |
+| `AlbanAndrieu.webmin` | ubuntu | ✅ clean. Times: cold py 0.43s vs cr 0.01s; warm py 0.44s vs cr 0.01s. |
+| `AlbanAndrieu.windows` | ubuntu | ✅ clean. Times: cold py 0.46s vs cr 0.01s; warm py 0.46s vs cr 0.01s. |
+| `AlbanAndrieu.xvbf` | ubuntu | ✅ clean. Times: cold py 0.44s vs cr 0.01s; warm py 0.44s vs cr 0.01s. |
+| `AlberTajuelo_kerberos-server` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alecunsolo.chezmoi` | ubuntu | ✅ clean. Times: cold py 16.65s vs cr 6.50s; warm py 9.76s vs cr 1.11s. |
+| `aleemladha.ludus_exchange` | ubuntu | ⚠️ divergent - 0.9.903 hard-stop correctly firing on unimplemented module 'win_service'. Windows-only; role also broken on real Ansible independently (become/sudo unsupported on the Windows exec wrapper). Times: cold py 3.93s vs cr 0.01s; warm py 3.13s vs cr 0.01s. |
+| `aleemladha.ludus_wazuh_agent` | ubuntu | ✅ clean. Times: cold py 4.55s vs cr 3.19s; warm py 2.87s vs cr 0.28s. |
+| `aleemladha.wazuh_server_install` | ubuntu | ✅ clean. Times: cold py 105.77s vs cr 80.26s; warm py 54.97s vs cr 34.92s. |
+| `alejandrobelleza_apt-cacher-ng` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `aleksanderbl29.hyperhdr` | ubuntu | ✅ clean. Times: cold py 399.76s vs cr 256.62s; warm py 62.92s vs cr 6.89s. |
+| `aleksanderbl29.sonos_stream` | ubuntu | ⚠️ divergent - environmental/timing flake, not a krikri bug - krikri's faster cold-start ran further into the role before hitting a `wait_for`-style port-8000 timeout that real Ansible's slower path apparently avoided. Times: cold py 211.99s vs cr 431.10s; warm py 19.73s vs cr 53.60s. |
+| `alekseenkoss77.discourse` | ubuntu | ✅ clean. Times: cold py 5.66s vs cr 3.38s; warm py 3.69s vs cr 0.82s. |
+| `alekseyp.papertrail` | ubuntu | ✅ clean. Times: cold py 8.50s vs cr 4.70s; warm py 7.26s vs cr 1.29s. |
+| `alemorvan.patchmanagement` | ubuntu | ✅ clean. Times: cold py 373.18s vs cr 314.62s; warm py 71.57s vs cr 59.30s. |
+| `alemuro.mosquitto` | ubuntu | ✅ clean. Times: cold py 0.45s vs cr 0.01s; warm py 0.48s vs cr 0.01s. |
+| `alexanderjardim.oracle_jdk` | ubuntu | ✅ clean. Times: cold py 5.42s vs cr 4.80s; warm py 3.41s vs cr 0.83s. |
+| `alexanderjardim.tomcat` | ubuntu | ✅ clean. Times: cold py 5.24s vs cr 3.80s; warm py 3.65s vs cr 0.81s. |
+| `alexandrefimov_docker_role` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alexandrefimov_nginx_role` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alexandrefimov_web_role` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alexandrem.mariadb` | ubuntu | ✅ clean. Times: cold py 0.45s vs cr 0.01s; warm py 0.48s vs cr 0.01s. |
+| `AlexandreMouraIT.zabbix3server` | ubuntu | ✅ clean. Times: cold py 0.43s vs cr 0.01s; warm py 0.43s vs cr 0.01s. |
+| `alexbarcelo.loki` | ubuntu | ✅ clean. Times: cold py 46.71s vs cr 8.93s; warm py 14.39s vs cr 1.45s. |
+| `alexdesignworks_dcr` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alexdzyoba.redis` | ubuntu | ✅ clean. Times: cold py 13.30s vs cr 11.16s; warm py 12.10s vs cr 1.94s. |
+| `alexey-medvedchikov.galera` | ubuntu | ✅ clean. Times: cold py 70.92s vs cr 19.21s; warm py 53.75s vs cr 2.42s. |
+| `alexey-medvedchikov.pgbouncer` | ubuntu | ✅ clean. Times: cold py 0.47s vs cr 0.01s; warm py 0.47s vs cr 0.01s. |
+| `alexey-medvedchikov.pgpool2` | ubuntu | ✅ clean. Times: cold py 0.44s vs cr 0.01s; warm py 0.45s vs cr 0.01s. |
+| `alexey-medvedchikov.rabbitmq` | ubuntu | ✅ clean. Times: cold py 0.49s vs cr 0.01s; warm py 0.46s vs cr 0.01s. |
+| `AlexeySetevoi.clickhouse` | ubuntu | ✅ clean. Times: cold py 6.64s vs cr 5.31s; warm py 4.37s vs cr 0.31s. |
+| `alexfeig.guacamole` | ubuntu | ✅ clean. Times: cold py 9.31s vs cr 6.96s; warm py 6.50s vs cr 0.81s. |
+| `AlexGluck_postgresql` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alexinthesky.secure-docker-daemon` | ubuntu | ✅ clean. Times: cold py 0.45s vs cr 0.01s; warm py 0.47s vs cr 0.01s. |
+| `alexisfacques.ansible_module_dig` | ubuntu | ✅ clean. Times: cold py 4.03s vs cr 3.85s; warm py 2.49s vs cr 0.29s. |
+| `alexisfacques.ansible_module_s3_minio_bucket` | ubuntu | ✅ clean. Times: cold py 4.93s vs cr 3.63s; warm py 2.45s vs cr 0.23s. |
+| `AlexisFilipozzi_hawtio` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `AlexisLessard.docker-prometheus` | ubuntu | ✅ clean. Times: cold py 5.98s vs cr 2.90s; warm py 5.95s vs cr 0.43s. |
+| `alexismaior.ansible_role_manage_rancher_cluster` | ubuntu | ✅ clean. Times: cold py 4.24s vs cr 4.16s; warm py 2.94s vs cr 0.38s. |
+| `alexlapinski.raspbian_nginx` | ubuntu | ✅ clean. Times: cold py 6.37s vs cr 3.85s; warm py 4.29s vs cr 0.91s. |
+| `algosec_algosec` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `algovpn.bootstrap` | ubuntu | ✅ clean. Times: cold py 0.47s vs cr 0.01s; warm py 0.46s vs cr 0.01s. |
+| `alikins_adminer` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_air_quote` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_ansible` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_aole_role` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_apache_php_fpm` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_apache` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_aws_inspector` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_awx` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_backup` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_blackfire` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_bole_role` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_certbot` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_clamav` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_cole_role` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_collectd_signalfx` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_composer` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_daemonize` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_docker` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_dotfiles` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_drupal_console` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_drupal` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_drush` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_ecr_container_build` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_elasticsearch_curator` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_elasticsearch` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_exim` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_faux_debug` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_faux` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_filebeat` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_firewall` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_github_users` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_gitlab` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_git` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_glusterfs` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_gogs` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_haproxy` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_hdparm` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_homebrew` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_htpasswd` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_java` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_jenkins` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_k8s_manifests` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_kibana` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_kubernetes` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_logstash_forwarder` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_logstash` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_mailhog` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_mas` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_memcached` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_munin_node` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_munin` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_mysql` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_nfs` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_nginx` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_nodejs` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_ntp` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_packer_debian` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_packer_rhel` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_packer` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_passenger` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_phergie` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_php_memcached` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_phpmyadmin` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_php_mysql` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_php_pear` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_php_pecl` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_php_pgsql` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_php_redis` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_php_tideways` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_php` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_php_versions` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_php_xdebug` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_php_xhprof` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_pimpmylog` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_pip` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_postfix` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_postgresql` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_puppet` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_rabbitmq` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_raspberry_pi` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_redis` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_repo_dotdeb` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_repo_epel` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_repo_puias` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_repo_remi` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_ruby` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_security` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_solr` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_sonar_runner` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_sonar` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_ssh_chroot_jail` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_supervisor` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_svn2git` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_svn` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_swap` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_tomcat6` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_varnish` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_whatever` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alikins_zero` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alinalexandru_ansible-gitlab` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
+| `alivx.ansible_cis_nginx_hardening` | ubuntu | ⚠️ divergent - needs a closer look (see KNOWN_MISSING.md Open gaps) - krikri fails one task real Ansible passes (`3.4 Ensure log files are rotated`, logrotate-related); also a large cold-run timing divergence (cr 69s vs py 259s). Times: cold py 259.15s vs cr 69.12s; warm py 316.06s vs cr 5.35s. |
+| `alivx.cis_ubuntu_20_04_ansible` | ubuntu | ✅ clean. Times: cold py 0.47s vs cr 0.01s; warm py 0.52s vs cr 0.01s. |
+| `almaops.bind9` | ubuntu | ✅ clean. Times: cold py 14.54s vs cr 8.15s; warm py 12.14s vs cr 3.48s. |
+| `almaops.ct_docker_registry` | ubuntu | ✅ clean. Times: cold py 10.35s vs cr 3.68s; warm py 9.43s vs cr 0.49s. |
+| `almaops.ct_elasticsearch` | ubuntu | ✅ clean. Times: cold py 8.48s vs cr 3.36s; warm py 8.05s vs cr 0.35s. |
+| `almaops.ct_gitlab_runner` | ubuntu | ✅ clean. Times: cold py 6.38s vs cr 6.07s; warm py 5.64s vs cr 0.35s. |
+| `almaops.ct_keycloak` | ubuntu | ✅ clean. Times: cold py 4.60s vs cr 4.52s; warm py 3.32s vs cr 0.46s. |
+| `almaops.ct_minio` | ubuntu | ✅ clean. Times: cold py 7.79s vs cr 4.38s; warm py 8.19s vs cr 0.49s. |
+| `almaops.ct_mysqld_exporter` | rocky | ✅ clean. Times: cold py 0.49s vs cr 0.01s; warm py 0.47s vs cr 0.01s. |
+| `almaops.ct_mysql` | rocky | ✅ clean. Times: cold py 3.75s vs cr 12.40s; warm py 2.77s vs cr 0.35s. |
+| `almaops_ct_nexus` | rocky | ❌ untestable - not on Ansible Galaxy (404) |
+| `almaops.ct_postgres` | rocky | ✅ clean. Times: cold py 8.77s vs cr 14.34s; warm py 6.86s vs cr 0.52s. |
+| `almaops.ct_rabbitmq` | rocky | ✅ clean. Times: cold py 11.38s vs cr 10.97s; warm py 9.80s vs cr 0.47s. |
+| `almaops.ct_redis` | rocky | ✅ clean. Times: cold py 9.13s vs cr 8.49s; warm py 8.81s vs cr 0.50s. |
+| `almaops.docker` | rocky | ⚠️ divergent - 0.9.903 hard-stop correctly firing on unimplemented module 'community.docker.docker_plugin'. Times: cold py 5.29s vs cr 0.01s; warm py 2.55s vs cr 0.01s. |
+| `almaops.mysqld` | rocky | ✅ clean. Times: cold py 20.40s vs cr 8.71s; warm py 18.45s vs cr 0.43s. |
+| `almaops.pip_install` | rocky | ✅ clean. Times: cold py 0.49s vs cr 0.01s; warm py 0.46s vs cr 0.01s. |
+| `almaops.pkg_install` | rocky | ✅ clean. Times: cold py 0.47s vs cr 0.01s; warm py 0.47s vs cr 0.01s. |
+| `almaops.template` | rocky | ✅ clean. Times: cold py 4.37s vs cr 9.26s; warm py 2.86s vs cr 0.25s. |
+| `almaops.vars` | rocky | ✅ clean after 0.9.923's `include_vars: dir:` fix (originally divergent - krikri silently skipped instead of hard-failing on an undefined `dir:` var). Times: cold py 4.43s vs cr 9.06s; warm py 2.47s vs cr 0.33s. |
+| `almart.cobaltstrike_docker` | rocky | ✅ clean. Times: cold py 53.90s vs cr 50.39s; warm py 16.00s vs cr 0.97s. |
+| `almart.evilginx2_docker` | rocky | ✅ clean. Times: cold py 71.56s vs cr 59.84s; warm py 18.42s vs cr 1.01s. |
+| `almart.gophish_docker` | rocky | ✅ clean. Times: cold py 74.18s vs cr 60.10s; warm py 19.86s vs cr 1.67s. |
+| `almart.neo4j_docker` | rocky | ✅ clean. Times: cold py 71.60s vs cr 36.07s; warm py 20.20s vs cr 1.36s. |
+| `almart.nginx_docker` | rocky | ✅ clean. Times: cold py 58.34s vs cr 44.61s; warm py 17.89s vs cr 0.95s. |
+| `almart.swag_docker` | rocky | ✅ clean. Times: cold py 69.63s vs cr 44.97s; warm py 21.38s vs cr 2.19s. |
+| `aloisbarreras_ebs-raid-array` | rocky | ❌ untestable - not on Ansible Galaxy (404) |
+| `aloysius-lim.elasticsearch_api` | rocky | ⚠️ divergent - needs a closer look (see KNOWN_MISSING.md Open gaps) - krikri fails a pip-related task ("Unable to find any of pip3 to use") where real Ansible succeeds on the same host via its own interpreter discovery. Times: cold py 6.17s vs cr 10.35s; warm py 3.94s vs cr 0.45s. |
+| `aloysius-lim.elasticsearch` | rocky | ✅ clean. Times: cold py 0.48s vs cr 0.01s; warm py 0.51s vs cr 0.01s. |
+| `AlphaHydrae.multipass` | rocky | ✅ clean. Times: cold py 4.01s vs cr 11.76s; warm py 2.55s vs cr 0.43s. |
+| `AlphaNodes_ssh` | rocky | ❌ untestable - not on Ansible Galaxy (404) |
+| `alvarobacelar.ansible_role_kafka` | rocky | ✅ clean. Times: cold py 38.04s vs cr 47.61s; warm py 4.64s vs cr 0.61s. |
+| `alvarobacelar.ansible_role_zookeeper` | rocky | ✅ clean. Times: cold py 37.39s vs cr 51.04s; warm py 5.54s vs cr 0.59s. |
+| `alvarobacelar.install_docker` | rocky | ✅ clean. Times: cold py 0.48s vs cr 0.01s; warm py 0.51s vs cr 0.01s. |
+| `alvistack.bamboo` | rocky | ⚠️ divergent - 0.9.903 hard-stop correctly firing on unimplemented module 'community.general.xml'. Times: cold py 54.41s vs cr 0.01s; warm py 45.10s vs cr 0.01s. |
+| `alvistack.bitbucket` | rocky | ✅ clean. Times: cold py 61.44s vs cr 37.16s; warm py 53.21s vs cr 22.76s. |
+| `alvistack.bootstrap` | rocky | ✅ clean. Times: cold py 258.09s vs cr 216.38s; warm py 148.69s vs cr 97.58s. |
+| `alvistack.chrome` | rocky | ✅ clean. Times: cold py 24.63s vs cr 19.95s; warm py 23.25s vs cr 11.01s. |
+| `alvistack.chrony` | rocky | ✅ clean. Times: cold py 18.82s vs cr 12.66s; warm py 13.25s vs cr 1.58s. |
+| `alvistack.cni_plugins` | rocky | ✅ clean. Times: cold py 10.43s vs cr 10.51s; warm py 34.59s vs cr 0.48s. |
+| `alvistack.conmon` | rocky | ✅ clean. Times: cold py 14.27s vs cr 15.31s; warm py 10.50s vs cr 1.83s. |
+| `alvistack.containernetworking_plugins` | rocky | ✅ clean. Times: cold py 23.20s vs cr 25.23s; warm py 11.65s vs cr 3.29s. |
+| `alvistack.containers_common` | rocky | ✅ clean. Times: cold py 70.82s vs cr 73.45s; warm py 26.34s vs cr 6.61s. |
+| `alvistack.cri_o` | rocky | ✅ clean. Times: cold py 71.61s vs cr 43.92s; warm py 64.63s vs cr 26.68s. |
+| `alvistack.crowd` | rocky | ⚠️ divergent - 0.9.903 hard-stop correctly firing on unimplemented module 'community.general.xml'. Times: cold py 42.88s vs cr 0.01s; warm py 38.67s vs cr 0.01s. |
+| `alvistack.crun` | rocky | ✅ clean. Times: cold py 13.72s vs cr 14.97s; warm py 8.74s vs cr 1.58s. |
+| `alvistack.flatpak` | rocky | ⚠️ divergent - 0.9.903 hard-stop correctly firing on unimplemented module 'community.general.flatpak_remote'. Times: cold py 40.20s vs cr 0.01s; warm py 7.00s vs cr 0.01s. |
+| `alvistack.git` | rocky | ✅ clean. Times: cold py 54.07s vs cr 47.23s; warm py 20.74s vs cr 3.02s. |
+| `alvistack.gnome_desktop` | rocky | ⚠️ divergent - needs a closer look - both engines completed with no failures but produced different task/changed counts (py ok=7 changed=0 vs cr ok=8 changed=1). Times: cold py 172.26s vs cr 106.63s; warm py 17.03s vs cr 7.09s. |
+| `alvistack.gparted` | rocky | ✅ clean. Times: cold py 57.39s vs cr 52.46s; warm py 10.34s vs cr 2.07s. |
+| `alvistack.locales` | rocky | ⚠️ divergent - needs a closer look - both engines completed with no failures but produced different changed counts (py changed=1 vs cr changed=2). Times: cold py 26.89s vs cr 22.43s; warm py 20.66s vs cr 6.49s. |
+| `alvistack.obs_studio` | rocky | ⚠️ divergent - 0.9.903 hard-stop correctly firing on unimplemented module 'community.general.flatpak_remote'. Times: cold py 4.44s vs cr 0.01s; warm py 3.52s vs cr 0.01s. |
+| `alvistack.perforce` | rocky | ⚠️ divergent - needs a closer look - both engines completed with no failures but produced different task counts (py ok=7 failed=0 vs cr ok=6 failed=1). Times: cold py 16.04s vs cr 22.15s; warm py 7.92s vs cr 14.01s. |
+| `alvistack.postgres` | rocky | ⚠️ divergent - 0.9.903 hard-stop correctly firing on unimplemented module 'community.general.yum_versionlock'. Times: cold py 30.61s vs cr 14.96s; warm py 14.77s vs cr 0.46s. |
+| `alvistack.python` | rocky | ✅ clean. Times: cold py 28.53s vs cr 26.59s; warm py 25.52s vs cr 11.78s. |
+| `alvistack.skopeo` | rocky | ✅ clean. Times: cold py 15.08s vs cr 23.42s; warm py 7.94s vs cr 2.03s. |
+| `alvistack.snapd` | rocky | ⚠️ divergent - 0.9.903 hard-stop correctly firing on unimplemented module 'snap'. Times: cold py 3.73s vs cr 0.01s; warm py 2.46s vs cr 0.01s. |
+| `alvistack.teamviewer` | rocky | ✅ clean. Times: cold py 24.39s vs cr 21.31s; warm py 24.51s vs cr 11.05s. |
+| `alvistack.timezone` | rocky | ✅ clean. Times: cold py 11.10s vs cr 10.05s; warm py 10.09s vs cr 1.28s. |
+| `alvistack.virtualbox` | rocky | ✅ clean. Times: cold py 52.74s vs cr 39.90s; warm py 43.91s vs cr 22.48s. |
+| `alzadude_eclipse-director` | rocky | ❌ untestable - not on Ansible Galaxy (404) |
+| `alzadude.firefox-addon` | rocky | ✅ clean. Times: cold py 5.02s vs cr 9.37s; warm py 3.28s vs cr 0.38s. |
+| `alzadude.firefox` | rocky | ✅ clean. Times: cold py 0.48s vs cr 0.01s; warm py 0.47s vs cr 0.01s. |
+| `amaabca.ansible-newrelic-inode-plugin` | rocky | ✅ clean. Times: cold py 4.11s vs cr 8.46s; warm py 2.99s vs cr 0.40s. |
+| `amaabca.deb-verify` | rocky | ✅ clean. Times: cold py 5.08s vs cr 10.14s; warm py 3.67s vs cr 0.46s. |
+| `amaabca.locale` | rocky | ✅ clean. Times: cold py 6.46s vs cr 10.41s; warm py 5.34s vs cr 0.56s. |
+| `amaabca.loggly_tls` | rocky | ✅ clean. Times: cold py 0.46s vs cr 0.01s; warm py 0.44s vs cr 0.01s. |
+| `amaabca.nginx` | rocky | ✅ clean. Times: cold py 5.43s vs cr 8.21s; warm py 4.75s vs cr 0.37s. |
+| `amaabca.systemd-unicorn` | rocky | ⚠️ divergent - needs a closer look - real Ansible fails a task krikri passes (opposite-direction divergence, not yet root-caused). Times: cold py 3.69s vs cr 9.60s; warm py 4.19s vs cr 0.94s. |
+| `amaabca.vpc-subnets` | rocky | ⚠️ divergent - 0.9.903 hard-stop correctly firing on unimplemented module 'ec2_vpc_subnet'. The plain create/manage module - distinct from the `ec2_vpc_subnet_info` lookup module already shipped. Times: cold py 4.72s vs cr 0.01s; warm py 2.47s vs cr 0.01s. |
+| `amarao.get-external-ip-via-dyndns` | rocky | ✅ clean. Times: cold py 6.42s vs cr 8.24s; warm py 6.02s vs cr 0.33s. |
+| `amarao.reboot_if_needed_for_upgrade` | rocky | ✅ clean. Times: cold py 6.83s vs cr 8.87s; warm py 5.07s vs cr 0.48s. |
+| `amestsantim.odbc_driver_for_mssql_on_ubuntu` | rocky | ⚠️ divergent - 0.9.903 hard-stop correctly firing on unimplemented module 'pear'. Times: cold py 6.38s vs cr 0.01s; warm py 4.24s vs cr 0.01s. |
+| `amida-tech.duo-ssh` | rocky | ✅ clean. Times: cold py 5.12s vs cr 9.66s; warm py 4.20s vs cr 0.36s. |
+| `amine7777.minikube` | rocky | ✅ clean. Times: cold py 10.01s vs cr 13.23s; warm py 8.65s vs cr 1.20s. |
+| `amine7777.packer` | rocky | ✅ clean. Times: cold py 13.42s vs cr 12.49s; warm py 7.81s vs cr 0.86s. |
+| `amine7777.php` | rocky | ✅ clean. Times: cold py 6.70s vs cr 12.02s; warm py 19.82s vs cr 0.69s. |
+| `amine7777.solana` | rocky | ✅ clean. Times: cold py 8.09s vs cr 9.10s; warm py 7.81s vs cr 0.60s. |
+| `aminvakil.create_user` | rocky | ✅ clean. Times: cold py 14.27s vs cr 8.81s; warm py 11.96s vs cr 0.47s. |
+| `aminvakil.httpd_initial` | rocky | ✅ clean. Times: cold py 5.75s vs cr 8.97s; warm py 4.74s vs cr 0.38s. |
+| `aminvakil.mysql_initial` | rocky | ✅ clean. Times: cold py 6.80s vs cr 9.73s; warm py 4.28s vs cr 0.47s. |
+| `aminvakil.nginx_initial` | rocky | ✅ clean. Times: cold py 6.98s vs cr 9.24s; warm py 4.50s vs cr 0.35s. |
+| `aminvakil.php_initial` | rocky | ✅ clean. Times: cold py 4.89s vs cr 8.62s; warm py 4.14s vs cr 0.44s. |
+| `amritanshu-pandey_pihole_dns_ansible` | rocky | ❌ untestable - not on Ansible Galaxy (404) |
+| `amritsingh.ec2_monitor` | rocky | ⚠️ divergent - 0.9.903 hard-stop correctly firing on unimplemented module 'zypper'. Times: cold py 3.87s vs cr 0.01s; warm py 3.04s vs cr 0.01s. |
+| `amritsingh.eye` | rocky | ⚠️ divergent - host/network flake, not a krikri bug - SSH became unreachable on the krikri-side host specifically mid-run. Times: cold py 2.82s vs cr 13.42s; warm py 2.91s vs cr 9.73s. |
+| `amritsingh.mongo_s3_backup` | rocky | ✅ clean. Times: cold py 0.43s vs cr 0.01s; warm py 0.42s vs cr 0.01s. |
+| `amtega.ansible` | rocky | ⚠️ divergent - deliberate limit - depends on `amtega.check_platform`'s role-private `action_plugins/_check_platform.py` (real controller-side ActionBase Python, not a library/*.py module) - unsupported, see KNOWN_MISSING.md. Times: cold py 3.98s vs cr 0.01s; warm py 3.07s vs cr 0.01s. |
+| `amtega.apache` | rocky | ⚠️ divergent - deliberate limit - depends on `amtega.check_platform`'s role-private `action_plugins/_check_platform.py` (real controller-side ActionBase Python, not a library/*.py module) - unsupported, see KNOWN_MISSING.md. Times: cold py 4.54s vs cr 0.01s; warm py 2.50s vs cr 0.01s. |
+| `amtega.artifact` | rocky | ⚠️ divergent - deliberate limit - depends on `amtega.check_platform`'s role-private `action_plugins/_check_platform.py` (real controller-side ActionBase Python, not a library/*.py module) - unsupported, see KNOWN_MISSING.md. Times: cold py 5.42s vs cr 0.01s; warm py 2.78s vs cr 0.01s. |
+| `amtega.check_mk_agent` | rocky | ⚠️ divergent - deliberate limit - depends on `amtega.check_platform`'s role-private `action_plugins/_check_platform.py` (real controller-side ActionBase Python, not a library/*.py module) - unsupported, see KNOWN_MISSING.md. Times: cold py 4.34s vs cr 0.01s; warm py 3.68s vs cr 0.01s. |
+| `amtega.cobbler` | rocky | ⚠️ divergent - deliberate limit - depends on `amtega.check_platform`'s role-private `action_plugins/_check_platform.py` (real controller-side ActionBase Python, not a library/*.py module) - unsupported, see KNOWN_MISSING.md. Times: cold py 3.57s vs cr 0.01s; warm py 2.55s vs cr 0.01s. |
+| `amtega.cron` | rocky | ⚠️ divergent - deliberate limit - depends on `amtega.check_platform`'s role-private `action_plugins/_check_platform.py` (real controller-side ActionBase Python, not a library/*.py module) - unsupported, see KNOWN_MISSING.md. Times: cold py 3.18s vs cr 0.02s; warm py 2.39s vs cr 0.01s. |
+| `amtega.docker_engine` | rocky | ⚠️ divergent - deliberate limit - depends on `amtega.check_platform`'s role-private `action_plugins/_check_platform.py` (real controller-side ActionBase Python, not a library/*.py module) - unsupported, see KNOWN_MISSING.md. Times: cold py 66.56s vs cr 0.01s; warm py 16.38s vs cr 0.03s. |
+| `amtega.gitlab_cli` | rocky | ⚠️ divergent - deliberate limit - depends on `amtega.check_platform`'s role-private `action_plugins/_check_platform.py` (real controller-side ActionBase Python, not a library/*.py module) - unsupported, see KNOWN_MISSING.md. Times: cold py 3.44s vs cr 0.01s; warm py 2.58s vs cr 0.01s. |
+| `amtega.gitlab_mr_fact` | rocky | ✅ clean. Times: cold py 5.37s vs cr 8.68s; warm py 3.88s vs cr 0.44s. |
+| `amtega.gitlab_projects_fact` | rocky | ⚠️ divergent - deliberate limit - depends on `amtega.check_platform`'s role-private `action_plugins/_check_platform.py` (real controller-side ActionBase Python, not a library/*.py module) - unsupported, see KNOWN_MISSING.md. Times: cold py 4.75s vs cr 0.01s; warm py 4.71s vs cr 0.01s. |
+| `amtega.grub_options` | rocky | ⚠️ divergent - deliberate limit - depends on `amtega.check_platform`'s role-private `action_plugins/_check_platform.py` (real controller-side ActionBase Python, not a library/*.py module) - unsupported, see KNOWN_MISSING.md. Times: cold py 4.76s vs cr 0.01s; warm py 2.71s vs cr 0.01s. |
+| `amtega.java` | rocky | ⚠️ divergent - deliberate limit - depends on `amtega.check_platform`'s role-private `action_plugins/_check_platform.py` (real controller-side ActionBase Python, not a library/*.py module) - unsupported, see KNOWN_MISSING.md. Times: cold py 15.16s vs cr 0.01s; warm py 14.53s vs cr 0.01s. |
+| `amtega.mysql` | rocky | ⚠️ divergent - deliberate limit - depends on `amtega.check_platform`'s role-private `action_plugins/_check_platform.py` (real controller-side ActionBase Python, not a library/*.py module) - unsupported, see KNOWN_MISSING.md. Times: cold py 3.39s vs cr 0.01s; warm py 2.48s vs cr 0.01s. |
+| `amtega.openjdk` | rocky | ⚠️ divergent - deliberate limit - depends on `amtega.check_platform`'s role-private `action_plugins/_check_platform.py` (real controller-side ActionBase Python, not a library/*.py module) - unsupported, see KNOWN_MISSING.md. Times: cold py 4.10s vs cr 0.01s; warm py 2.58s vs cr 0.01s. |
+| `amtega.oracle_java` | rocky | ⚠️ divergent - deliberate limit - depends on `amtega.check_platform`'s role-private `action_plugins/_check_platform.py` (real controller-side ActionBase Python, not a library/*.py module) - unsupported, see KNOWN_MISSING.md. Times: cold py 3.44s vs cr 0.01s; warm py 3.16s vs cr 0.01s. |
+| `amtega.parted` | rocky | ⚠️ divergent - deliberate limit - depends on `amtega.check_platform`'s role-private `action_plugins/_check_platform.py` (real controller-side ActionBase Python, not a library/*.py module) - unsupported, see KNOWN_MISSING.md. Times: cold py 3.54s vs cr 0.01s; warm py 3.58s vs cr 0.01s. |
+| `amtega.php` | rocky | ⚠️ divergent - deliberate limit - depends on `amtega.check_platform`'s role-private `action_plugins/_check_platform.py` (real controller-side ActionBase Python, not a library/*.py module) - unsupported, see KNOWN_MISSING.md. Times: cold py 3.95s vs cr 0.01s; warm py 2.64s vs cr 0.01s. |
+| `amtega.python` | rocky | ⚠️ divergent - deliberate limit - depends on `amtega.check_platform`'s role-private `action_plugins/_check_platform.py` (real controller-side ActionBase Python, not a library/*.py module) - unsupported, see KNOWN_MISSING.md. Times: cold py 3.56s vs cr 0.01s; warm py 2.86s vs cr 0.01s. |
+| `amtega.python_semanage` | rocky | ⚠️ divergent - deliberate limit - depends on `amtega.check_platform`'s role-private `action_plugins/_check_platform.py` (real controller-side ActionBase Python, not a library/*.py module) - unsupported, see KNOWN_MISSING.md. Times: cold py 3.62s vs cr 0.01s; warm py 2.81s vs cr 0.01s. |
+| `amtega.reboot` | rocky | ⚠️ divergent - deliberate limit - depends on `amtega.check_platform`'s role-private `action_plugins/_check_platform.py` (real controller-side ActionBase Python, not a library/*.py module) - unsupported, see KNOWN_MISSING.md. Times: cold py 3.37s vs cr 0.01s; warm py 3.96s vs cr 0.01s. |
+| `amtega_redmine_issue` | rocky | ❌ untestable - not on Ansible Galaxy (404) |
+| `amtega.rpmfusion` | rocky | ⚠️ divergent - deliberate limit - depends on `amtega.check_platform`'s role-private `action_plugins/_check_platform.py` (real controller-side ActionBase Python, not a library/*.py module) - unsupported, see KNOWN_MISSING.md. Times: cold py 3.20s vs cr 0.01s; warm py 2.48s vs cr 0.01s. |
+| `amtega.selinux` | rocky | ⚠️ divergent - deliberate limit - depends on `amtega.check_platform`'s role-private `action_plugins/_check_platform.py` (real controller-side ActionBase Python, not a library/*.py module) - unsupported, see KNOWN_MISSING.md. Times: cold py 3.19s vs cr 0.01s; warm py 3.14s vs cr 0.01s. |
+| `amtega.sshd` | rocky | ⚠️ divergent - deliberate limit - depends on `amtega.check_platform`'s role-private `action_plugins/_check_platform.py` (real controller-side ActionBase Python, not a library/*.py module) - unsupported, see KNOWN_MISSING.md. Times: cold py 5.00s vs cr 0.01s; warm py 3.87s vs cr 0.01s. |
+| `amtega.sysctl` | rocky | ⚠️ divergent - deliberate limit - depends on `amtega.check_platform`'s role-private `action_plugins/_check_platform.py` (real controller-side ActionBase Python, not a library/*.py module) - unsupported, see KNOWN_MISSING.md. Times: cold py 3.96s vs cr 0.01s; warm py 3.99s vs cr 0.01s. |
+| `amtega.tcpwrappers` | rocky | ⚠️ divergent - deliberate limit - depends on `amtega.check_platform`'s role-private `action_plugins/_check_platform.py` (real controller-side ActionBase Python, not a library/*.py module) - unsupported, see KNOWN_MISSING.md. Times: cold py 3.65s vs cr 0.01s; warm py 2.70s vs cr 0.01s. |
+| `amtega.tomcat` | rocky | ⚠️ divergent - deliberate limit - depends on `amtega.check_platform`'s role-private `action_plugins/_check_platform.py` (real controller-side ActionBase Python, not a library/*.py module) - unsupported, see KNOWN_MISSING.md. Times: cold py 3.99s vs cr 0.01s; warm py 2.85s vs cr 0.03s. |
+| `amtega.vmware_provisioner` | rocky | ⚠️ divergent - deliberate limit - depends on `amtega.check_platform`'s role-private `action_plugins/_check_platform.py` (real controller-side ActionBase Python, not a library/*.py module) - unsupported, see KNOWN_MISSING.md. Times: cold py 3.33s vs cr 0.01s; warm py 2.61s vs cr 0.01s. |
+| `amtega.win_dns_records` | rocky | ✅ clean. Times: cold py 4.54s vs cr 8.57s; warm py 2.97s vs cr 0.33s. |
+| `amtega.xinetd` | rocky | ⚠️ divergent - deliberate limit - depends on `amtega.check_platform`'s role-private `action_plugins/_check_platform.py` (real controller-side ActionBase Python, not a library/*.py module) - unsupported, see KNOWN_MISSING.md. Times: cold py 4.10s vs cr 0.01s; warm py 3.11s vs cr 0.01s. |
+| `amtega.xinetd_service` | rocky | ⚠️ divergent - deliberate limit - depends on `amtega.check_platform`'s role-private `action_plugins/_check_platform.py` (real controller-side ActionBase Python, not a library/*.py module) - unsupported, see KNOWN_MISSING.md. Times: cold py 3.92s vs cr 0.01s; warm py 2.72s vs cr 0.01s. |
+| `anasbouzid.systemd` | rocky | ✅ clean. Times: cold py 4.66s vs cr 10.71s; warm py 3.05s vs cr 0.35s. |
+| `andock.build` | rocky | ✅ clean. Times: cold py 4.54s vs cr 10.84s; warm py 4.92s vs cr 0.43s. |
+| `andock-ci.ansible_role_ssh_keys` | rocky | ✅ clean. Times: cold py 0.45s vs cr 0.01s; warm py 0.45s vs cr 0.01s. |
+| `andock-ci.build` | rocky | ✅ clean. Times: cold py 11.02s vs cr 9.01s; warm py 9.65s vs cr 0.50s. |
+| `andock-ci.fin` | rocky | ✅ clean. Times: cold py 4.31s vs cr 8.72s; warm py 3.23s vs cr 0.42s. |
+| `andock-ci.server` | rocky | ✅ clean. Times: cold py 19.69s vs cr 19.11s; warm py 9.51s vs cr 2.70s. |
+| `andock-ci.tag` | rocky | ✅ clean. Times: cold py 3.70s vs cr 11.55s; warm py 2.94s vs cr 0.36s. |
+| `andock.environment` | rocky | ✅ clean. Times: cold py 4.47s vs cr 10.64s; warm py 4.01s vs cr 0.42s. |
+| `andock_server` | rocky | ❌ untestable - not on Ansible Galaxy (404) |
+| `andreaswolf.letsencrypt` | rocky | ✅ clean. Times: cold py 20.21s vs cr 8.88s; warm py 17.98s vs cr 0.35s. |
+| `andreazorzetto_Linux-Users-SSH-Sudo` | rocky | ❌ untestable - not on Ansible Galaxy (404) |
+| `andrelohmann.accounts` | rocky | ✅ clean. Times: cold py 3.94s vs cr 8.23s; warm py 2.79s vs cr 0.38s. |
+| `andrelohmann.apache_php` | rocky | ✅ clean. Times: cold py 6.47s vs cr 15.74s; warm py 4.68s vs cr 0.35s. |
+| `andrelohmann.awscli` | rocky | ✅ clean. Times: cold py 6.39s vs cr 13.22s; warm py 4.38s vs cr 0.37s. |
+| `andrelohmann.azurecli` | rocky | ✅ clean. Times: cold py 4.52s vs cr 11.25s; warm py 4.14s vs cr 0.43s. |
+| `andrelohmann.beats` | rocky | ✅ clean. Times: cold py 0.48s vs cr 0.01s; warm py 0.48s vs cr 0.01s. |
+| `andrelohmann.docker` | rocky | ✅ clean. Times: cold py 5.13s vs cr 8.79s; warm py 3.72s vs cr 0.33s. |
+| `andrelohmann.elasticstack` | rocky | ✅ clean. Times: cold py 6.68s vs cr 9.58s; warm py 6.49s vs cr 0.52s. |
+| `andrelohmann.gitlab_docker_runner` | rocky | ✅ clean. Times: cold py 4.61s vs cr 14.90s; warm py 4.37s vs cr 0.36s. |
+| `andrelohmann.gitlab` | rocky | ✅ clean. Times: cold py 5.68s vs cr 13.31s; warm py 4.05s vs cr 0.43s. |
+| `andrelohmann.golang` | rocky | ✅ clean. Times: cold py 5.90s vs cr 9.38s; warm py 4.78s vs cr 0.59s. |
+| `andrelohmann.grafana_oss` | rocky | ✅ clean. Times: cold py 4.57s vs cr 12.52s; warm py 4.44s vs cr 0.61s. |
+| `andrelohmann.iptables` | rocky | ✅ clean. Times: cold py 5.24s vs cr 8.66s; warm py 3.91s vs cr 0.45s. |
+| `andrelohmann.logstash` | rocky | ✅ clean. Times: cold py 0.46s vs cr 0.01s; warm py 0.46s vs cr 0.01s. |
+| `andrelohmann.mailhog` | rocky | ✅ clean. Times: cold py 18.47s vs cr 10.01s; warm py 20.26s vs cr 1.03s. |
+| `andrelohmann.mailpit` | rocky | ✅ clean. Times: cold py 5.04s vs cr 8.41s; warm py 5.00s vs cr 0.43s. |
+| `andrelohmann.mysql_grants` | rocky | ✅ clean. Times: cold py 5.70s vs cr 8.38s; warm py 4.40s vs cr 0.34s. |
+| `andrelohmann.odoo` | rocky | ✅ clean. Times: cold py 6.66s vs cr 13.66s; warm py 4.79s vs cr 0.34s. |
+| `andrelohmann.percona_mysql` | rocky | ✅ clean. Times: cold py 5.73s vs cr 14.19s; warm py 3.89s vs cr 0.33s. |
+| `andrelohmann.postgresql` | rocky | ⚠️ divergent - 0.9.903 hard-stop correctly firing on unimplemented module 'community.postgresql.postgresql_schema'. Times: cold py 8.36s vs cr 0.01s; warm py 5.58s vs cr 0.01s. |
+| `andrelohmann.prometheus_nginx_exporter` | rocky | ✅ clean. Times: cold py 12.36s vs cr 15.45s; warm py 10.80s vs cr 0.61s. |
+| `andrelohmann.prometheus_node_exporter` | rocky | ✅ clean. Times: cold py 15.36s vs cr 11.76s; warm py 12.80s vs cr 0.58s. |
+| `andrelohmann.prometheus` | rocky | ✅ clean. Times: cold py 19.22s vs cr 18.00s; warm py 16.72s vs cr 0.72s. |
+| `andrelohmann.root_colored_prompt` | rocky | ✅ clean. Times: cold py 5.24s vs cr 8.70s; warm py 3.87s vs cr 0.45s. |
+| `andrelohmann.sury_php` | rocky | ✅ clean. Times: cold py 6.71s vs cr 10.20s; warm py 6.80s vs cr 0.57s. |
+| `andrelohmann.terraform` | rocky | ✅ clean. Times: cold py 6.30s vs cr 9.16s; warm py 4.14s vs cr 0.37s. |
+| `andrelohmann.terrahelper` | rocky | ✅ clean. Times: cold py 7.88s vs cr 9.95s; warm py 4.37s vs cr 0.33s. |
+| `andrelohmann.terrahelp` | rocky | ✅ clean. Times: cold py 0.47s vs cr 0.01s; warm py 0.49s vs cr 0.01s. |
+| `andrelohmann.vagrant_centos_defaults` | rocky | ✅ clean. Times: cold py 395.81s vs cr 293.67s; warm py 9.11s vs cr 2.20s. |
+| `andrelohmann.zulu_openjdk` | rocky | ✅ clean. Times: cold py 5.20s vs cr 9.50s; warm py 3.65s vs cr 0.40s. |
+| `AndrewGodGivens.ansible_prometheus_ipmi_exporter` | rocky | ⚠️ divergent - 0.9.903 hard-stop correctly firing on unimplemented module 'community.docker.docker_compose'. Times: cold py 6.31s vs cr 11.58s; warm py 5.43s vs cr 0.45s. |
+| `AndrewGodGivens.prometheus_nginx_exporter` | rocky | ⚠️ divergent - 0.9.903 hard-stop correctly firing on unimplemented module 'community.docker.docker_compose'. Times: cold py 6.97s vs cr 13.53s; warm py 4.60s vs cr 0.42s. |
+| `AndrewGodGivens.prometheus_smartctl_exporter` | rocky | ⚠️ divergent - 0.9.903 hard-stop correctly firing on unimplemented module 'community.docker.docker_compose'. Times: cold py 3.65s vs cr 8.78s; warm py 2.56s vs cr 0.34s. |
+| `andrewmackett.splunk_common` | rocky | ✅ clean. Times: cold py 11.98s vs cr 9.86s; warm py 9.00s vs cr 0.48s. |
+| `andrewrothstein.age` | rocky | ✅ clean. Times: cold py 18.04s vs cr 19.76s; warm py 7.06s vs cr 0.69s. |
+| `andrewrothstein.alluxio` | rocky | ⚠️ divergent - 0.9.903 hard-stop correctly firing on unimplemented module 'win_psmodule'. Windows-only. Times: cold py 23.04s vs cr 14.56s; warm py 10.82s vs cr 0.73s. |
+| `andrewrothstein.arangodb` | rocky | ⚠️ divergent - 0.9.903 hard-stop correctly firing on unimplemented module 'win_psmodule'. Windows-only. Times: cold py 42.35s vs cr 0.04s; warm py 17.82s vs cr 0.01s. |
+| `andrewrothstein.argocd` | rocky | ✅ clean. Times: cold py 12.34s vs cr 14.81s; warm py 7.32s vs cr 1.63s. |
+| `andrewrothstein.argo` | rocky | ✅ clean. Times: cold py 36.19s vs cr 16.69s; warm py 4.90s vs cr 1.12s. |
+| `andrewrothstein.atom` | rocky | ✅ clean. Times: cold py 4.92s vs cr 8.74s; warm py 2.58s vs cr 0.30s. |
+| `andrewrothstein.azurecli` | rocky | ✅ clean. Times: cold py 24.74s vs cr 28.82s; warm py 6.59s vs cr 1.05s. |
+| `andrewrothstein.azure_pipelines_agent` | rocky | ✅ clean. Times: cold py 7.09s vs cr 8.79s; warm py 5.30s vs cr 0.42s. |
+| `andrewrothstein.bazel` | rocky | ✅ clean. Times: cold py 19.23s vs cr 25.12s; warm py 9.43s vs cr 0.90s. |
+| `andrewrothstein.bbr` | rocky | ✅ clean. Times: cold py 7.85s vs cr 10.47s; warm py 5.12s vs cr 0.49s. |
+| `andrewrothstein.bosh` | rocky | ✅ clean. Times: cold py 8.50s vs cr 10.14s; warm py 4.89s vs cr 0.55s. |
+| `andrewrothstein.buf` | rocky | ✅ clean. Times: cold py 13.58s vs cr 11.70s; warm py 8.57s vs cr 0.86s. |
+| `andrewrothstein.buildah` | rocky | ✅ clean. Times: cold py 6.37s vs cr 9.52s; warm py 4.13s vs cr 0.43s. |
+| `andrewrothstein.buildkit` | rocky | ✅ clean. Times: cold py 51.16s vs cr 21.22s; warm py 16.15s vs cr 0.73s. |
+| `andrewrothstein.ca-certs` | rocky | ✅ clean. Times: cold py 5.32s vs cr 11.06s; warm py 4.18s vs cr 0.37s. |
+| `andrewrothstein.ca_certs` | rocky | ✅ clean. Times: cold py 6.81s vs cr 8.18s; warm py 4.87s vs cr 0.35s. |
+| `andrewrothstein.calico-cni` | rocky | ✅ clean. Times: cold py 14.65s vs cr 10.75s; warm py 10.92s vs cr 0.71s. |
+| `andrewrothstein.carvel` | rocky | ✅ clean. Times: cold py 3.56s vs cr 8.60s; warm py 2.39s vs cr 0.32s. |
+| `andrewrothstein.cassandra-cluster` | rocky | ✅ clean. Times: cold py 0.48s vs cr 0.01s; warm py 0.47s vs cr 0.01s. |
+| `andrewrothstein.cassandra` | rocky | ✅ clean. Times: cold py 28.30s vs cr 15.82s; warm py 9.73s vs cr 0.47s. |
+| `andrewrothstein.cephadm` | rocky | ✅ clean. Times: cold py 6.27s vs cr 9.88s; warm py 4.32s vs cr 0.71s. |
+| `andrewrothstein.cfssl` | rocky | ✅ clean. Times: cold py 25.51s vs cr 12.98s; warm py 19.09s vs cr 1.09s. |
+| `andrewrothstein.cilium` | rocky | ✅ clean. Times: cold py 18.69s vs cr 17.42s; warm py 4.48s vs cr 0.79s. |
+| `andrewrothstein.cmake` | rocky | ✅ clean. Times: cold py 27.73s vs cr 23.29s; warm py 8.31s vs cr 0.59s. |
+| `andrewrothstein.coder` | rocky | ✅ clean. Times: cold py 28.85s vs cr 34.83s; warm py 6.30s vs cr 1.46s. |
+| `andrewrothstein.collectd` | rocky | ✅ clean. Times: cold py 0.46s vs cr 0.01s; warm py 0.49s vs cr 0.01s. |
+| `andrewrothstein.concourse` | rocky | ✅ clean. Times: cold py 89.64s vs cr 82.09s; warm py 11.97s vs cr 0.66s. |
+| `andrewrothstein.conda_env` | rocky | ✅ clean. Times: cold py 5.95s vs cr 8.92s; warm py 3.57s vs cr 0.35s. |
+| `andrewrothstein.confd` | rocky | ✅ clean. Times: cold py 7.91s vs cr 10.28s; warm py 5.42s vs cr 0.40s. |
+| `andrewrothstein.consul-cluster` | rocky | ✅ clean. Times: cold py 31.73s vs cr 17.85s; warm py 18.56s vs cr 0.91s. |
+| `andrewrothstein.consul_k8s` | rocky | ⚠️ divergent - 0.9.903 hard-stop correctly firing on unimplemented module 'win_psmodule'. Windows-only. Times: cold py 14.75s vs cr 0.01s; warm py 6.31s vs cr 0.01s. |
+| `andrewrothstein.consul` | rocky | ✅ clean. Times: cold py 7.87s vs cr 10.11s; warm py 5.85s vs cr 0.48s. |
+| `andrewrothstein.consul-template` | rocky | ⚠️ divergent - 0.9.903 hard-stop correctly firing on unimplemented module 'win_psmodule'. Windows-only. Times: cold py 8.78s vs cr 0.01s; warm py 6.67s vs cr 0.01s. |
+| `andrewrothstein.coredns` | rocky | ✅ clean. Times: cold py 21.42s vs cr 12.84s; warm py 8.44s vs cr 0.48s. |
+| `andrewrothstein.corkscrew` | rocky | ✅ clean. Times: cold py 62.32s vs cr 31.95s; warm py 23.25s vs cr 1.28s. |
+| `andrewrothstein.cosign` | rocky | ✅ clean. Times: cold py 9.19s vs cr 11.11s; warm py 4.86s vs cr 0.94s. |
+| `andrewrothstein.couchdb-backup` | rocky | ✅ clean. Times: cold py 13.23s vs cr 9.71s; warm py 8.80s vs cr 0.47s. |
+| `andrewrothstein.couchdb-lucene` | rocky | ✅ clean. Times: cold py 0.51s vs cr 0.01s; warm py 0.51s vs cr 0.01s. |
+| `andrewrothstein.couchdb-replication` | rocky | ⚠️ divergent - 0.9.903 hard-stop correctly firing on unimplemented module 'win_psmodule'. Windows-only. Times: cold py 6.77s vs cr 0.01s; warm py 3.97s vs cr 0.01s. |
+| `andrewrothstein.couchdb` | rocky | ✅ clean. Times: cold py 127.48s vs cr 88.63s; warm py 19.28s vs cr 2.29s. |
+| `andrewrothstein.credhub` | rocky | ✅ clean. Times: cold py 16.47s vs cr 12.55s; warm py 4.69s vs cr 0.41s. |
+| `andrewrothstein.critools` | rocky | ✅ clean. Times: cold py 30.79s vs cr 17.15s; warm py 9.02s vs cr 0.94s. |
+| `andrewrothstein.cron` | rocky | ✅ clean. Times: cold py 6.13s vs cr 8.52s; warm py 4.94s vs cr 0.45s. |
+| `andrewrothstein.curl` | rocky | ✅ clean. Times: cold py 6.83s vs cr 9.83s; warm py 5.68s vs cr 2.06s. |
+| `andrewrothstein_dagger` | rocky | ❌ untestable - not on Ansible Galaxy (404) |
+| `andrewrothstein.dcb` | rocky | ✅ clean. Times: cold py 5.68s vs cr 9.42s; warm py 3.27s vs cr 0.36s. |
