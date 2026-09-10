@@ -512,7 +512,7 @@ module Krikri
       # must go through this - a cycle can re-enter through any of them
       # (Rerender.if_templated, VariableLookup#rerender_if_templated,
       # VarSubstitutor#substitute), so the counter has to be shared.
-      def self.with_depth_guard(&)
+      def self.with_depth_guard(& : -> T) : T forall T
         enter_retemplating
         begin
           yield
@@ -641,7 +641,7 @@ module Krikri
     # N individual inserts.
     def initialize(vars : Hash(String, JSON::Any),
                    host_name : String? = nil,
-                   facts : Hash(String, JSON::Any) = {} of String => JSON::Any)
+                   facts : Hash(String, JSON::Any) = {} of String => JSON::Any) : Nil
       @vars = vars
       @host_name = host_name || @vars["inventory_hostname"]?.try(&.as_s?) || "localhost"
       @facts = facts
@@ -651,7 +651,7 @@ module Krikri
 
     def initialize(vars : Hash(String, String | JSON::Any) = {} of String => String | JSON::Any,
                    host_name : String? = nil,
-                   facts : Hash(String, JSON::Any) = {} of String => JSON::Any)
+                   facts : Hash(String, JSON::Any) = {} of String => JSON::Any) : Nil
       # Convert all vars to JSON::Any
       @vars = Hash(String, JSON::Any).new
       vars.each do |key, value|
