@@ -40,13 +40,23 @@ module Krikri
       # includes it) - buluma.bind's own `package: {pkg: "{{ item }}",
       # state: present}` always failed "Missing required parameter:
       # name" here, since only the literal `name:` key was ever read.
+      # Real Ansible's apt/dnf backends never hard-fail a missing/empty
+      # `name:`. apt's own `required_one_of` gate is dead code in practice
+      # (its `upgrade`/`autoremove` defaults are injected before the check
+      # runs), and a no-name invocation falls through to a graceful
+      # changed=false exit - verified live (`ansible localhost -m package
+      # -a "state=present"` => SUCCESS, changed: false). adfinis-sygroup.
+      # apache's own `package: {state: present}` loop task (round 83221)
+      # relied on exactly that: no `name:` key at all, and real Ansible
+      # ran it ok. A cache-refresh-only invocation still runs the
+      # update_cache path below.
       name = @params["name"]? || @params["pkg"]?
       update_cache = true?(@params["update_cache"]?)
       unless name
         return update_cache ? update_cache_only : PluginResult.new(
           changed: false,
-          failed: true,
-          msg: "Missing required parameter: name (unless using update_cache)"
+          failed: false,
+          msg: "Nothing to do"
         )
       end
 
@@ -144,6 +154,18 @@ module Krikri
         single_name = trimmed.starts_with?('@') || !trimmed.includes?(' ')
         names = single_name ? [trimmed] : trimmed.split(' ').reject(&.empty?)
       end
+
+      # A name that templates down to nothing - an empty string or an
+      # empty list (`name: '{{ ntp_packages_removed }}'` with the var
+      # defaulting to `[]`, round 83246) - is a no-op, not a package
+      # operation on the empty-string name. Real Ansible's apt backend
+      # exits changed=false for an empty package list (`install([])`
+      # returns immediately) for both state: present and state: absent;
+      # this engine instead used to run `apt-get remove` on the empty
+      # token and report "Package  removed" (double space) as changed on
+      # every run, breaking idempotency.
+      return PluginResult.new(changed: false, failed: false, msg: "Nothing to do") if
+        names.empty? || names.all?(&.strip.empty?)
 
       # Per-element shell quoting for the actual package-manager command
       # line - each element quoted as its own atomic token, since a
