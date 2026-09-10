@@ -826,6 +826,25 @@ module Krikri
         vars_context[loop_var] = item if loop_var
         vars_context[index_var] = JSON::Any.new(idx.to_i64) if index_var
         vars_context["ansible_loop"] = ansible_loop_vars(loop_items, idx) if task.loop_extended?
+
+        # Same per-item task.vars re-render the one-at-a-time path below
+        # does (aisbergg.beats round 90007, Ubuntu 22.04): build_vars_context
+        # rendered the task's own `vars:` ONCE, before "item" was bound, so
+        # a task var referencing `item` (`state: "{{ lookup('vars', item ~
+        # '_install_state') }}"`) raised there, hit render_task_vars's
+        # raise-to-absent rescue, and the key was deleted from the base
+        # context entirely - then the batched steps templated the module
+        # arg `state: "{{ state }}"` against that context and every item
+        # failed with "'state' is undefined" where real Ansible (which
+        # evaluates task vars per item) ran all six apt iterations fine.
+        # Restoring the raw task.vars values and re-rendering them with
+        # this item bound mirrors executor_loops's non-batched branch
+        # (including its inherited-outer-item skip keys) exactly.
+        task.vars.each do |key, raw_value|
+          next if key == "item" || key == loop_var || key == index_var
+          vars_context[key] = raw_value
+        end
+        render_task_vars(task, vars_context, host.name)
         item_contexts[idx] = vars_context
 
         # Per item, not per call: each iteration builds its own context
@@ -929,6 +948,21 @@ module Krikri
                          label_context[loop_var] = item
                        end
                        label_context["ansible_loop"] = ansible_loop_vars(loop_items, idx) if task.loop_extended?
+                       # Re-apply + re-render the task's own `vars:` with
+                       # this item bound, same as both execution paths do -
+                       # base_vars_context's copy was rendered once before
+                       # "item" existed (and a task var referencing item was
+                       # raise-to-absent deleted there), so a loop_control.
+                       # label referencing it rendered as literal "undefined"
+                       # (aisbergg.beats' `label: "{{ (state in ['present',
+                       # 'latest']) | ternary('install', 'uninstall') }}
+                       # {{ item }}"` showed "undefined auditbeat" instead of
+                       # real Ansible's "uninstall auditbeat").
+                       task.vars.each do |key, raw_value|
+                         next if key == "item" || key == task.loop_var || key == task.index_var
+                         label_context[key] = raw_value
+                       end
+                       render_task_vars(task, label_context, host.name)
                        item_label_for(task, item, label_context, host)
                      else
                        item_display(item)
