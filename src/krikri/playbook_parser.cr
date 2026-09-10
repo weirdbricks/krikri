@@ -1135,21 +1135,24 @@ module Krikri
       "amazon.aws.ec2_metadata_facts",
       # amazon.aws EC2 management modules (the signed-Query-API cluster
       # sharing src/krikri/plugin_helpers/ec2_api.cr): ec2_key,
-      # ec2_security_group, and the three read-only lookups
+      # ec2_security_group, the lifecycle module ec2_instance (via
+      # plugin_helpers/ec2_instance.cr), and the three read-only lookups
       # (ec2_vpc_subnet_info/ec2_vpc_net_info/ec2_ami_info via
-      # plugin_helpers/ec2_info.cr) done; ec2_instance comes in a later
-      # round. Bare short names are listed alongside the FQCNs because
+      # plugin_helpers/ec2_info.cr) - the whole cluster is now in.
+      # Bare short names are listed alongside the FQCNs because
       # roles write `ec2_key:` unqualified far more often than fully
       # qualified, and amazon.aws is not in MODULE_SEARCH_COLLECTIONS
       # (real Ansible resolves bare AWS module names through its own
       # auto-aliasing, not collection search).
       "amazon.aws.ec2_key",
       "amazon.aws.ec2_security_group",
+      "amazon.aws.ec2_instance",
       "amazon.aws.ec2_vpc_subnet_info",
       "amazon.aws.ec2_vpc_net_info",
       "amazon.aws.ec2_ami_info",
       "ec2_key",
       "ec2_security_group",
+      "ec2_instance",
       "ec2_vpc_subnet_info",
       "ec2_vpc_net_info",
       "ec2_ami_info",
