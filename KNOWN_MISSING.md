@@ -18,8 +18,81 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.923`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.928`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.30` (see `shard.yml`).
+
+---
+
+## Round 90000-94000's 5 "needs a closer look" open gaps closed (0.9.924 -> 0.9.928)
+
+All five items opened in the round 90000-94000 narrative below got a
+dedicated Crush investigation this round; every one turned out to be a
+real, fixable krikri bug (or, in one case, a test-harness bug), not
+environmental noise:
+
+- **`alivx.ansible_cis_nginx_hardening` (0.9.924):** the role has no
+  top-level `templates/` dir - its templates live under
+  `files/templates/` and its "3.4 Ensure log files are rotated" task
+  passes `src: "files/templates/logroute.conf"`. `role_templates_dir`
+  is only set when that directory exists, so the nil guard bailed out
+  and left `src:` unresolved - "Template file not found on
+  controller" where real Ansible resolves it via its own search list
+  (`<role>/templates/<src>`, then `<role>/<src>` - the role root).
+  Falls back to `role_path` when `role_templates_dir` is nil.
+- **`aisbergg.beats` (0.9.925):** a looped task's own `vars:`
+  referencing `item` (`state: "{{ lookup('vars', item ~
+  '_install_state') }}"`, plus a `loop_control.label` referencing
+  `state`) was rendered ONCE before `item` was bound, so the lookup
+  raised, the raise-to-absent rescue deleted `state` from the base
+  context, and the **batched** loop execution path (unlike the
+  non-batched path, already fixed for a similar case) never re-applied
+  it - every item failed with "'state' is undefined" where real
+  Ansible ran all six apt iterations successfully.
+- **`ajeleznov.manage-known-hosts` (0.9.926):** `lookup('pipe', ...)`
+  swallowed a non-zero exit code into the lenient `"undefined"`
+  sentinel string instead of hard-failing. A failing `ssh-keyscan` fed
+  that literal text into `known_hosts`'s `key:` as if it were real,
+  letting the play run several tasks past real Ansible's hard stop
+  (real Ansible's pipe lookup always raises on a non-zero exit
+  regardless of captured stdout). `errors='ignore'` keeps the old
+  empty-result behavior. (A related theory - that krikri is also too
+  lenient about a nested `{{ }}` span inside the same lookup's string
+  argument - was investigated and ruled out: already handled correctly
+  via `rerender_double_templated_literal`, verified live against
+  ansible-core 2.19.4.)
+- **`aloysius-lim.elasticsearch_api` (0.9.927, two-round story):**
+  krikri's `pip:` plugin only probed a literal `python3 -m pip` before
+  falling back to a bare `pip3` PATH search, so a host with neither
+  (a versioned-only `/usr/bin/python3.9`, no bare `python3`/`pip3`)
+  failed where real Ansible's own interpreter discovery succeeded
+  under the same `/usr/bin/python3.9`. Fixed by probing
+  `ansible_python_interpreter`, `python3`, every `python3.N` name,
+  then bare `python`, using whichever can run `pip` as a module. The
+  FIRST confirm attempt against a fresh host still failed identically
+  - which triggered a second live investigation that found the real
+  cause was outside the engine entirely: `krikri-role-tester`'s own
+  `host_prep` only installed `python3-pip` on the real-Ansible host
+  (a side effect of installing `ansible-core` there), never on the
+  krikri host, so every `pip:`-using role was structurally compared
+  against a pip-less krikri host and a pip-equipped real-Ansible host.
+  The 0.9.927 engine fix was correct the whole time; fixed the harness
+  itself instead (`krikri-role-tester` commit `16bf39f`, installs
+  `python3-pip` on both hosts now) and re-confirmed clean.
+- **The apt-404-on-krikri-host-only pattern, all 3 roles (0.9.928):**
+  `lfit.lf-dev-libs`/`lfit.mono-install`/`markosamuli.pyenv` (round
+  72000) were misread as external mirror flakiness - the real cause
+  was that `handle_apt` only honored `update_cache: true` on the
+  name-less cache-refresh-only path. Real Ansible's apt module always
+  refreshes the cache before install/remove/upgrade when
+  `update_cache:` (or any `cache_valid_time:`) is set, even with
+  `cache_valid_time: 0`'s default. A task combining `update_cache:
+  true` with a `name:` list installed straight off whatever index the
+  host image shipped with; a stale index resolves package names to
+  long-superseded versions, and apt 404s fetching their `.deb`s from
+  the live mirror (which only carries current versions). All three
+  roles hit exactly this shape.
+
+All five confirmed CLEAN against the rebuilt binary on real hosts.
 
 ---
 
@@ -3371,49 +3444,9 @@ below - keep the two apart, or this list stops meaning anything.
 
 ### Needs a closer look (real, reproducible, not root-caused yet)
 
-- **`alivx.ansible_cis_nginx_hardening` (round 90192):** krikri fails
-  one task real Ansible passes - `3.4 Ensure log files are rotated`
-  (logrotate-related). Not yet root-caused; also has a large cold-run
-  timing divergence in the same round (cr 69s vs py 259s) worth
-  keeping in mind while investigating in case the two are related.
-- **`aisbergg.beats` (round 91077):** krikri fails a task where real
-  Ansible only warns (about a task-local `vars: name:` shadowing a
-  reserved var name) and continues past it. Possibly krikri treating a
-  shadow warning as fatal where real Ansible degrades gracefully - not
-  yet reproduced in isolation.
-- **`ajeleznov.manage-known-hosts` (round 90013):** real Ansible
-  hard-rejects the role's own nested-`{{ }}`-inside-a-lookup-argument
-  syntax at parse time (`lookup('pipe', 'ssh-keyscan -t {{
-  ssh_key_type }} ...')`) with "Use inline expressions..." - krikri
-  accepts it and keeps running. Both eventually fail on an unrelated
-  `become`/sudo-password host-config issue, but krikri runs
-  noticeably more tasks first (`ok=11` vs real Ansible's `ok=5`)
-  before getting there, suggesting a real, separate divergence in
-  task/loop evaluation upstream of the nested-expression leniency -
-  worth an isolated repro rather than dismissing as just the
-  sudo-password issue.
-- **`aloysius-lim.elasticsearch_api` (round 91020):** krikri fails a
-  pip-related task ("Unable to find any of pip3 to use") where real
-  Ansible succeeds cleanly on the same host (its own interpreter
-  discovery found `/usr/bin/python3.9` and proceeded). Likely krikri's
-  pip-module detection looks for a literal `pip3` binary rather than
-  falling back to `python3 -m pip` the way real Ansible's `pip` module
-  does - not yet confirmed against source.
-- **The apt-404-on-krikri-host-only pattern across 3 roles**
-  (`lfit.lf-dev-libs`, `lfit.mono-install`, `markosamuli.pyenv`,
-  round 72000): all
-  three show the identical shape - `apt-get install` fails with `404
-  Not Found` fetching specific `.deb` files from
-  `us.archive.ubuntu.com`, on the krikri-side Atlantic host only; the
-  real-Ansible-side host (same task, same package versions, a
-  different physical VM) succeeds. Each individual instance is
-  plausibly just mirror-timing flakiness between two independent hosts
-  hitting a live, mutable public mirror at slightly different moments
-  - but three separate confirming roles in one round is enough to flag
-  as a pattern worth a closer look (e.g. whether krikri's apt cache-
-  update sequencing differs from real Ansible's own timing in some way
-  that makes a stale index more likely) rather than dismissing each as
-  independent bad luck.
+Empty as of 0.9.928 - the 5 items previously here (see the "Round
+90000-94000's 5 'needs a closer look' open gaps closed" narrative
+above) were all root-caused and fixed.
 
 ---
 

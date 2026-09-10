@@ -3678,13 +3678,13 @@ First batch since Atlantic.net's server-limit increase (10 → 25). 200 never-be
 | `aidenkeating_install-socat` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
 | `aidenkeating_openshift_origin_client_tools` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
 | `aioue.aptly` | ubuntu | ✅ clean. Times: cold py 57.94s vs cr 62.38s; warm py 10.99s vs cr 5.52s. |
-| `aisbergg.beats` | ubuntu | ⚠️ divergent - needs a closer look (see KNOWN_MISSING.md Open gaps) - krikri fails a task where real Ansible only warns (`vars: name:` shadowing a reserved name) and continues. Times: cold py 58.80s vs cr 6.50s; warm py 29.52s vs cr 0.70s. |
+| `aisbergg.beats` | ubuntu | ✅ clean after 0.9.925's batched-loop task.vars re-render fix (originally divergent - a looped task's own `vars:` referencing `item` wasn't re-rendered per iteration on the batched execution path). Times: cold py 52.28s vs cr 49.14s; warm py 23.99s vs cr 22.17s. |
 | `aisbergg.chrony` | ubuntu | ✅ clean. Times: cold py 27.37s vs cr 10.47s; warm py 13.53s vs cr 2.11s. |
 | `aisbergg.lm_sensors` | ubuntu | ✅ clean. Times: cold py 10.07s vs cr 8.84s; warm py 4.47s vs cr 0.35s. |
 | `aisbergg.systemd_resolved` | ubuntu | ✅ clean. Times: cold py 12.63s vs cr 7.72s; warm py 10.67s vs cr 4.10s. |
 | `aishee.ansible_redhat_centos_7` | ubuntu | ✅ clean. Times: cold py 0.46s vs cr 0.01s; warm py 0.47s vs cr 0.01s. |
 | `AjayKumar4_zerotier` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
-| `ajeleznov.manage-known-hosts` | ubuntu | ⚠️ divergent - needs a closer look (see KNOWN_MISSING.md Open gaps) - krikri accepts a nested `{{ }}`-inside-lookup() expression real Ansible rejects at parse time; both eventually fail on an unrelated sudo-password host-config issue, but task counts differ (ok=11 vs real Ansible's ok=5). Times: cold py 9.23s vs cr 4.76s; warm py 8.22s vs cr 1.32s. |
+| `ajeleznov.manage-known-hosts` | ubuntu | ✅ clean after 0.9.926's `lookup('pipe', ...)` hard-fail fix (originally divergent - a failing `ssh-keyscan` lookup silently returned the literal string "undefined" instead of hard-failing like real Ansible, letting krikri run extra tasks past real Ansible's stop point). Times: cold py 9.21s vs cr 4.77s; warm py 6.76s vs cr 0.71s. |
 | `ajeleznov.oracle-jdk` | ubuntu | ⚠️ divergent - role/OS mismatch, not a krikri bug - role hardcodes `yum`, tested against an Ubuntu host (`yum: No such file or directory`). Times: cold py 54.75s vs cr 3.86s; warm py 53.28s vs cr 0.54s. |
 | `ajgarlag.apache2` | ubuntu | ✅ clean. Times: cold py 48.18s vs cr 56.91s; warm py 9.80s vs cr 3.23s. |
 | `ajgarlag.deploy` | ubuntu | ✅ clean. Times: cold py 4.40s vs cr 4.14s; warm py 2.64s vs cr 0.32s. |
@@ -3863,7 +3863,7 @@ First batch since Atlantic.net's server-limit increase (10 → 25). 200 never-be
 | `alikins_whatever` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
 | `alikins_zero` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
 | `alinalexandru_ansible-gitlab` | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |
-| `alivx.ansible_cis_nginx_hardening` | ubuntu | ⚠️ divergent - needs a closer look (see KNOWN_MISSING.md Open gaps) - krikri fails one task real Ansible passes (`3.4 Ensure log files are rotated`, logrotate-related); also a large cold-run timing divergence (cr 69s vs py 259s). Times: cold py 259.15s vs cr 69.12s; warm py 316.06s vs cr 5.35s. |
+| `alivx.ansible_cis_nginx_hardening` | ubuntu | ✅ clean after 0.9.924's `template:`/`copy: src:` role-root resolution fix (originally divergent - the role has no top-level `templates/` dir, its "3.4 Ensure log files are rotated" task's `src: "files/templates/logroute.conf"` was never resolved). Times: cold py 107.72s vs cr 78.63s; warm py 148.38s vs cr 19.60s. |
 | `alivx.cis_ubuntu_20_04_ansible` | ubuntu | ✅ clean. Times: cold py 0.47s vs cr 0.01s; warm py 0.52s vs cr 0.01s. |
 | `almaops.bind9` | ubuntu | ✅ clean. Times: cold py 14.54s vs cr 8.15s; warm py 12.14s vs cr 3.48s. |
 | `almaops.ct_docker_registry` | ubuntu | ✅ clean. Times: cold py 10.35s vs cr 3.68s; warm py 9.43s vs cr 0.49s. |
@@ -3890,7 +3890,7 @@ First batch since Atlantic.net's server-limit increase (10 → 25). 200 never-be
 | `almart.nginx_docker` | rocky | ✅ clean. Times: cold py 58.34s vs cr 44.61s; warm py 17.89s vs cr 0.95s. |
 | `almart.swag_docker` | rocky | ✅ clean. Times: cold py 69.63s vs cr 44.97s; warm py 21.38s vs cr 2.19s. |
 | `aloisbarreras_ebs-raid-array` | rocky | ❌ untestable - not on Ansible Galaxy (404) |
-| `aloysius-lim.elasticsearch_api` | rocky | ⚠️ divergent - needs a closer look (see KNOWN_MISSING.md Open gaps) - krikri fails a pip-related task ("Unable to find any of pip3 to use") where real Ansible succeeds on the same host via its own interpreter discovery. Times: cold py 6.17s vs cr 10.35s; warm py 3.94s vs cr 0.45s. |
+| `aloysius-lim.elasticsearch_api` | rocky | ✅ clean after 0.9.927's pip-module-discovery fix (originally divergent on a versioned-only `/usr/bin/python3.9` host with no bare `python3`/`pip3` on PATH; the first confirm attempt still failed but the harness itself turned out to be at fault - see `krikri-role-tester`'s host_prep fix - the engine fix was correct throughout). Times: cold py 7.66s vs cr 13.27s; warm py 4.33s vs cr 1.64s. |
 | `aloysius-lim.elasticsearch` | rocky | ✅ clean. Times: cold py 0.48s vs cr 0.01s; warm py 0.51s vs cr 0.01s. |
 | `AlphaHydrae.multipass` | rocky | ✅ clean. Times: cold py 4.01s vs cr 11.76s; warm py 2.55s vs cr 0.43s. |
 | `AlphaNodes_ssh` | rocky | ❌ untestable - not on Ansible Galaxy (404) |
@@ -4071,3 +4071,6 @@ First batch since Atlantic.net's server-limit increase (10 → 25). 200 never-be
 | `andrewrothstein.curl` | rocky | ✅ clean. Times: cold py 6.83s vs cr 9.83s; warm py 5.68s vs cr 2.06s. |
 | `andrewrothstein_dagger` | rocky | ❌ untestable - not on Ansible Galaxy (404) |
 | `andrewrothstein.dcb` | rocky | ✅ clean. Times: cold py 5.68s vs cr 9.42s; warm py 3.27s vs cr 0.36s. |
+| `lfit.lf-dev-libs` | ubuntu | ✅ clean after 0.9.928's apt `update_cache:`+`name:` ordering fix (originally divergent at round 72311 - `apt-get install` 404'd on stale package versions since `update_cache: true` combined with `name:` never actually refreshed the cache first). Times: cold py 76.01s vs cr 96.19s; warm py 7.15s vs cr 5.02s. |
+| `lfit.mono-install` | ubuntu | ✅ clean after 0.9.928's apt `update_cache:`+`name:` ordering fix (same root cause as `lfit.lf-dev-libs`, originally divergent at round 72313). Times: cold py 115.88s vs cr 67.44s; warm py 7.18s vs cr 2.83s. |
+| `markosamuli.pyenv` | ubuntu | ✅ clean after 0.9.928's apt `update_cache:`+`name:` ordering fix (same root cause, originally divergent at round 72363 - all three roles were misread as external mirror flakiness until the real ordering bug was found). Times: cold py 434.21s vs cr 385.94s; warm py 35.39s vs cr 5.45s. |
