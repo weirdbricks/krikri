@@ -18,7 +18,7 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.928`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.929`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.30` (see `shard.yml`).
 
 ## Open gaps
@@ -58,6 +58,47 @@ back to it (`0x0i.systemd`, `igor_nikiforov.etcd`, `wezhai.minio`,
 the nine above needs its own confirmed repro before treating it as a
 real krikri bug per this file's workflow - the shortlist is at
 `testing/kata/round_new_authors/shortlist120.txt` if resuming it.
+
+---
+
+## Kata round 200xxx: 36/36 kata roles failed Gathering Facts - the rebuilt guest image lost libxml2, and the engine hid why (0.9.928 -> 0.9.929)
+
+A differential round against the kata backend failed every single role
+(36/36) the same way: `Gathering Facts` on the very first task died
+with a bare `Plugin execution failed on remote` within a second, while
+real ansible-playbook gathered facts fine on the identical host. All
+downstream "failures" (`ansible_architecture is undefined` etc.) were
+cascading symptoms of facts never gathering.
+
+Root cause was the image rebuild, not the keypair, and not the engine's
+upload path. Commit c62eb153's re-run of `testing/kata/build.sh`
+re-pulled `debian:trixie`, and the fresh base no longer carried
+`libxml2.so.2` in the dependency closure of the Containerfile's package
+list. krikri's fat plugin binary - which `facts`/`setup` is a hardlink
+of - links libxml2 for the XML-using modules compiled into it, so on
+the new image EVERY plugin died at load time: exit 127, `error while
+loading shared libraries: libxml2.so.2`, before executing a single
+instruction. Real Ansible needs only python3 on the target, so the
+failure pattern was krikri-only. The kata images now install `libxml2`
+explicitly (both Containerfiles), and `testing/kata/README.md`'s
+gotchas list documents it.
+
+Two engine-side lessons landed with it:
+
+- The failure was diagnosable only by manually SSHing into a fresh VM
+  and running the plugin by hand - `interpret_remote_result` captured
+  the remote stderr faithfully but the facts path displayed only its
+  own one-line `msg`. The Gathering Facts failure path now surfaces the
+  plugin's own stderr under the message (first 10 lines), so the next
+  load-time failure announces `stderr: ... error while loading shared
+  libraries ...` at the point of failure instead of in a debugging
+  session.
+- This is now a deliberate limit worth knowing when running against
+  non-harness targets: **any krikri target host must have
+  `libxml2.so.2` present**, because the fat plugin binary links it
+  regardless of which module a given task uses. Real Ansible's only
+  hard remote dependency remains a working Python 3; krikri's are
+  glibc (see the kata README's musl gotcha) plus libxml2.
 
 ---
 
@@ -4979,6 +5020,23 @@ gaps" rather than arguing with the note in place.
   if a genuinely common role pattern is found to need it (unlikely,
   given `library/*.py` covers the overwhelmingly more common
   custom-module case already).
+
+### Every target host needs libxml2.so.2 (the fat plugin binary links it)
+
+- krikri uploads one fat plugin binary per host - each module name is a
+  hardlink of it - so the binary carries the linkage of every module
+  compiled into it, including the XML-using ones. Any target missing
+  `libxml2.so.2` fails ALL plugin execution at load time (exit 127,
+  `error while loading shared libraries`), not just the XML modules.
+  Real Ansible's only remote hard dependency is Python 3. Accepted
+  because the realistic Ansible-managed population (Debian, Ubuntu,
+  RHEL-family, and their derivatives) ships libxml2 in base or is one
+  package away from it, and the kata harness images install it
+  explicitly after a trixie base refresh silently dropped it
+  (2026-09-10, 36/36 kata roles failed facts-gathering - see the
+  0.9.929 round narrative above). Alternative designs (trimming XML
+  modules out of the fat binary, or static linking) were not worth the
+  complexity for one library every mainstream distro has.
 
 ### Unimplemented community.general filter long tail (usage-audited, watchlist not backlog)
 

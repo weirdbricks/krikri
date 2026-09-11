@@ -146,7 +146,17 @@ module Krikri
       result = PluginManager.execute_plugin("facts", config.to_json, host, vars_context, false, nil)
 
       if result["failed"]?.try(&.as_bool)
-        return {false, result["msg"]?.try(&.as_s) || "Unknown error"}
+        msg = result["msg"]?.try(&.as_s) || "Unknown error"
+        # "Plugin execution failed on remote" alone hides WHY the plugin
+        # died - the kata round of 2026-09-10 (36/36 roles) failed facts
+        # with a bare exit 127 because the guest image lacked
+        # libxml2.so.2, and only manual SSH reproduced the loader error.
+        # Surface the plugin's own stderr so the cause is visible at the
+        # point of failure.
+        if (stderr = result["stderr"]?.try(&.as_s?)) && !stderr.empty?
+          msg += "\n  stderr: #{stderr.strip.lines[0, 10].join("\n  stderr: ")}"
+        end
+        return {false, msg}
       end
 
       if ansible_facts = result["ansible_facts"]?
