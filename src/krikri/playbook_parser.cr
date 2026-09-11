@@ -1168,6 +1168,13 @@ module Krikri
       # strips the FQCN to the same `ovirt_auth` plugin binary.
       "ovirt_auth",
       "ovirt.ovirt.ovirt_auth",
+      # virt_net (0.9.954): libvirt network management via the virsh CLI
+      # (mattgeddes.libvirt_kvm round 410102 and ovirt.hosted_engine_setup
+      # round 410038 both hard-stopped on the bare `virt_net:` spelling).
+      # Registered bare like ovirt_auth above - community.libvirt is not
+      # in simple_plugin_name's strip list - with the FQCN spelling
+      # mapped through MODULE_ALIASES.
+      "virt_net",
       # maven_artifact (0.9.934): Maven artifact download
       # (lean_delivery.jmeter round 210778 hard-stopped on it).
       "community.general.maven_artifact",
@@ -1447,6 +1454,8 @@ module Krikri
       "ansible.legacy.openssl_certificate_info"    => "community.crypto.x509_certificate_info",
       "community.crypto.openssl_certificate_info"  => "community.crypto.x509_certificate_info",
       "community.general.openssl_certificate_info" => "community.crypto.x509_certificate_info",
+      # virt_net's collection namespace (see its AVAILABLE_PLUGINS entry).
+      "community.libvirt.virt_net" => "virt_net",
     }
 
     # Bare module names real ansible-core can no longer resolve in ANY
