@@ -167,6 +167,7 @@ module Krikri
               self.tmpdir = tempfile.gettempdir()
               self.check_mode = False
               self.params = {}
+              self._name = os.path.splitext(os.path.basename(sys.argv[0]))[0]
               raw_args = self._read_args()
               self.check_mode = bool(
                   raw_args.pop('_ansible_check_mode', False)
@@ -275,6 +276,25 @@ module Krikri
 
           def deprecate(self, message, **kwargs):
               self._warnings.append('DEPRECATED: %s' % message)
+
+          # Real basic.py logs to the systemd journal (when the target has
+          # python-systemd) or syslog with the ident
+          # 'ansible-<module_name>' at LOG_INFO; where neither is reachable
+          # (containers, sandboxed exec contexts) python's syslog module
+          # itself silently no-ops. Real basic.py only raises when *msg*
+          # isn't a string; the actual syslog write never fails the module
+          # - so here a swallowed exception is the documented worst case,
+          # never an AttributeError like before (sr_fingerprint via
+          # linux-system-roles.firewall/.kdump).
+          def log(self, msg, log_args=None):
+              if isinstance(msg, bytes):
+                  msg = msg.decode('utf-8', 'replace')
+              try:
+                  import syslog
+                  syslog.openlog('ansible-%s' % self._name, 0, syslog.LOG_USER)
+                  syslog.syslog(syslog.LOG_INFO, str(msg))
+              except Exception:
+                  pass
 
           def run_command(self, args, check_rc=False, cwd=None,
                           environ_update=None, **kwargs):

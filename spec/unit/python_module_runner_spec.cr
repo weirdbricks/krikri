@@ -227,4 +227,33 @@ describe Krikri::PythonModuleRunner do
     parsed["failed"].as_bool.should be_true
     parsed["msg"].as_s.should contain("missing required arguments")
   end
+
+  it "shim supports AnsibleModule.log() for role-private modules that call it" do
+    pending("python3 not available") unless File.exists?("/usr/bin/python3")
+    # The exact shape that AttributeError'd on every fresh target
+    # (linux-system-roles.firewall/.kdump's own library/sr_fingerprint.py,
+    # whose main() calls module.log(log_message)): real basic.py logs to
+    # syslog/journal with the ident 'ansible-<module_name>' and never
+    # fails the module over it.
+    work_dir = File.join(Dir.tempdir, "krikri-shim-spec-#{Random.rand(1_000_000)}")
+    Dir.mkdir_p(work_dir)
+    Krikri::PythonModuleRunner.write_module_utils_bundle(work_dir)
+    module_path = File.join(work_dir, "sr_fingerprint.py")
+    File.write(module_path, "from ansible.module_utils.basic import AnsibleModule\n" \
+                            "module = AnsibleModule(argument_spec={'value': {'type': 'str', 'required': True}})\n" \
+                            "module.log('fingerprinting value %s' % module.params['value'])\n" \
+                            "module.log(b'bytes message too')\n" \
+                            "module.exit_json(changed=False, logged=True)\n")
+    stdout_io = IO::Memory.new
+    err = IO::Memory.new
+    status = Process.run("/usr/bin/python3", [module_path],
+      input: IO::Memory.new(%({"ANSIBLE_MODULE_ARGS": {"value": "abc"}})),
+      output: stdout_io, error: err)
+    FileUtils.rm_r(work_dir)
+    status.success?.should be_true
+    err.to_s.should_not contain("AttributeError")
+    parsed = Krikri::PythonModuleRunner.parse_module_output(stdout_io.to_s).should_not be_nil
+    parsed.as_h.has_key?("failed").should be_false
+    parsed["logged"].as_bool.should be_true
+  end
 end
