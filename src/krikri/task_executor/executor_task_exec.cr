@@ -403,6 +403,15 @@ module Krikri
       }.to_json)
     end
 
+    # Whether *result* is a connection-level (SSH transport) failure
+    # rather than a remote module failure - PluginManager's
+    # `interpret_remote_result` stamps `unreachable: true` on exactly
+    # those (see SSHManager.connection_level_failure? for what
+    # qualifies), and nothing else ever sets that key on a task result.
+    private def unreachable_task_result?(result : JSON::Any) : Bool
+      result.as_h?.try(&.["unreachable"]?.try(&.as_bool?)) == true
+    end
+
     # Override a task's own changed/failed verdict with changed_when:/
     # failed_when:, evaluated against vars_context plus the task's own result
     # (made available under its own register: name, mirroring real Ansible -
@@ -416,6 +425,28 @@ module Krikri
 
       if register_name = task.register
         register_result(host, register_name, result) unless register_name.empty?
+      end
+
+      # An SSH-transport-level failure (the result's own `unreachable`
+      # marker, set by PluginManager.interpret_remote_result when the
+      # stderr names ssh itself) is real Ansible's UNREACHABLE, not a
+      # failed task: book it the way the pre-run unreachable pass's
+      # results are booked and remove the host from the rest of the run.
+      # Without this, a host that dies mid-play (reboot that never came
+      # back, network gone) kept running every later task and each one
+      # was booked as a generic "Plugin execution failed on remote"
+      # failed - found via robertdebock.common's warm rerun against a
+      # host the cold run's reboot had killed: real ansible-playbook
+      # recap'd `unreachable=1 failed=0` and halted the host at
+      # Gathering Facts, this engine booked `failed=2` and ran on.
+      if unreachable_task_result?(result)
+        report_unreachable(task, host, result["stderr"]?.try(&.as_s?))
+        # Only a host whose unreachability is FATAL (not
+        # ignore_unreachable:'d away) is remembered: an ignored
+        # unreachable keeps being retried per task, exactly like real
+        # Ansible, so it must not be pinned into the never-retry set.
+        @unreachable_hosts << host.name unless task.ignore_unreachable?
+        return
       end
 
       # A plugin can voluntarily report itself skipped via a "skipped"

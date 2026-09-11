@@ -1332,14 +1332,25 @@ module Krikri
     # same way, instead of re-deriving this logic.
     def self.interpret_remote_result(exit_code : Int32, stdout : String, stderr : String) : JSON::Any
       if exit_code != 0
-        return JSON.parse({
+        failure = {
           "changed"             => false,
           "failed"              => true,
           "msg"                 => "Plugin execution failed on remote",
           "stdout"              => stdout,
           "stderr"              => stderr,
           "_connection_failure" => true,
-        }.to_json)
+        }
+        # A nonzero exit whose stderr names the SSH transport itself (ssh
+        # never reached or never authenticated to the host) is
+        # UNREACHABLE in real Ansible, not a failed task - TaskExecutor's
+        # facts/task booking paths check this marker and book the host
+        # exactly like the pre-run unreachable pass does. A remote plugin
+        # crash also arrives here nonzero, but its stderr names the
+        # remote failure (a loader error, a traceback), never one of
+        # SSHManager.connection_level_failure?'s transport-only shapes,
+        # so it keeps the generic failed-task booking.
+        failure["unreachable"] = true if SSHManager.connection_level_failure?(exit_code, stderr)
+        return JSON.parse(failure.to_json)
       end
 
       begin

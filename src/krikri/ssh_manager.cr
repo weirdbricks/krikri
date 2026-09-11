@@ -180,6 +180,48 @@ module Krikri
       status.normal_exit? ? status.exit_code : 128 + status.exit_signal.to_i
     end
 
+    # stderr shapes only ssh(1) itself (or this class's own rescue/
+    # timeout paths) ever produce - the transport-level failure evidence
+    # that separates "no command ever ran on the remote" from "the
+    # remote plugin crashed after a successful connection". Deliberately
+    # narrow, conservative in BOTH directions:
+    #   - A remote module crash's stderr comes from the remote bash/
+    #     plugin process (a loader error like "error while loading
+    #     shared libraries", a traceback, a plain "Permission denied"
+    #     from touching a root-owned file) - none of those match these
+    #     shapes, so it keeps its generic failed-task booking.
+    #     "Permission denied" specifically only matches with ssh's own
+    #     " (publickey..." auth-method list attached, which a remote
+    #     command's stderr never carries.
+    #   - Conversely a remote command COULD print transport-adjacent
+    #     text of its own (a curl's "Connection timed out"), so bare
+    #     phrases like that are NOT matched here - the connect-failure
+    #     shape is only recognized with ssh's own "ssh: connect to host"
+    #     prefix attached.
+    # ssh(1) exits 255 for every one of these, hence the exit-code gate.
+    private CONNECTION_FAILURE_PATTERNS = [
+      "ssh: connect to host",          # connect refused/timed out/no route/network unreachable
+      "Could not resolve hostname",    # ssh: Could not resolve hostname X ...
+      "Permission denied (publickey",  # auth never succeeded (ssh appends the method list)
+      "kex_exchange_identification",   # banner exchange failed/reset
+      "ssh_exchange_identification",
+      "Host key verification failed",
+      "SSH command timed out",         # run_with_timeout's own hung-connection synthesis
+      "SSH execution failed",          # exec's rescue path
+      "SSH script execution failed",   # exec_script's rescue path
+    ]
+
+    # True when *exit_code*/*stderr* look like the SSH transport itself
+    # failing - ssh never reached or never authenticated to the host -
+    # as opposed to a remote plugin crashing after a successful
+    # connection. Public so PluginManager's remote-result interpretation
+    # and the spec suite share one pattern list (see
+    # CONNECTION_FAILURE_PATTERNS for what deliberately does NOT match).
+    def self.connection_level_failure?(exit_code : Int32, stderr : String) : Bool
+      return false if exit_code == 0
+      CONNECTION_FAILURE_PATTERNS.any? { |pattern| stderr.includes?(pattern) }
+    end
+
     # Reset statistics
     def self.reset_stats : Nil
       @@stats.each_key do |key|

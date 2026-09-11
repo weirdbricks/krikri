@@ -58,7 +58,7 @@ module Krikri
       # `unreachable=1 failed=0`.
       live_targets = targets.reject { |host| @unreachable_hosts.includes?(host.name) }
 
-      outcomes = Hash(String, {Bool, String?}).new
+      outcomes = Hash(String, {Bool, String?, Bool}).new
       # Bounded by @forks, same as the per-task fan-out below: the `10`
       # this used to hardcode predates --forks, so `--forks 50` still
       # gathered 10 at a time and `--forks 1` (asked for precisely to get
@@ -84,6 +84,25 @@ module Krikri
 
       targets.each do |host|
         connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
+
+        # A host this pass just DISCOVERED to be unreachable (the facts
+        # plugin's own failure was an SSH transport failure, not a module
+        # failure) is remembered in @unreachable_hosts - the run-scoped
+        # set shared across plays - so later plays report every task
+        # against it as unreachable instead of re-attempting a connection
+        # that just failed. Booked below exactly like a host the
+        # pre-upload pass already knew about: same line, same counters,
+        # same halt. Without this, a host that dies between runs (the
+        # pre-upload pass short-circuits on the host-state cache without
+        # touching the network, so nothing else ever notices) kept
+        # running the whole play as generic task failures - found via
+        # robertdebock.common's warm rerun against a host the cold run
+        # had killed: real ansible-playbook recap'd `unreachable=1
+        # failed=0` and halted the host at Gathering Facts, this engine
+        # booked `failed=2` and ran on.
+        if outcomes[host.name]?.try(&.[2])
+          @unreachable_hosts << host.name
+        end
 
         if @unreachable_hosts.includes?(host.name)
           # Same wording/shape as report_unreachable's own banner - this
@@ -112,16 +131,20 @@ module Krikri
     end
 
     # Runs the facts plugin against one host and stores whatever it
-    # returns in @facts[host.name]. Returns {true, nil} on success or
-    # {false, message} on failure - stats/display are handled by the
-    # caller afterward, in deterministic host order, not here.
-    private def gather_facts_for_host(host : Host) : {Bool, String?}
+    # returns in @facts[host.name]. Returns {success, message,
+    # unreachable} - stats/display are handled by the caller afterward,
+    # in deterministic host order, not here. `unreachable` is true only
+    # when the plugin's failure was an SSH transport failure (the
+    # `unreachable` marker interpret_remote_result stamps on exactly
+    # those), which the caller books as UNREACHABLE instead of a plain
+    # failed task.
+    private def gather_facts_for_host(host : Host) : {Bool, String?, Bool}
       TimingProfile.measure("execute.facts", "execute.facts") do
         gather_facts_for_host_measured(host)
       end
     end
 
-    private def gather_facts_for_host_measured(host : Host) : {Bool, String?}
+    private def gather_facts_for_host_measured(host : Host) : {Bool, String?, Bool}
       vars_context = Hash(String, JSON::Any).new
       host.vars.each { |key, value| vars_context[key] = value }
 
@@ -182,7 +205,7 @@ module Krikri
         if (stderr = result["stderr"]?.try(&.as_s?)) && !stderr.empty?
           msg += "\n  stderr: #{stderr.strip.lines[0, 10].join("\n  stderr: ")}"
         end
-        return {false, msg}
+        return {false, msg, result["unreachable"]?.try(&.as_bool?) == true}
       end
 
       if ansible_facts = result["ansible_facts"]?
@@ -194,9 +217,9 @@ module Krikri
         FactCache.write(host.name, facts) if @smart_gathering
       end
 
-      {true, nil}
+      {true, nil, false}
     rescue ex
-      {false, ex.message}
+      {false, ex.message, false}
     end
 
     # Show execution recap

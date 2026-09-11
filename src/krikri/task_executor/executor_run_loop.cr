@@ -1219,7 +1219,26 @@ module Krikri
       batch_id = Random::Secure.hex(8)
       script = BatchScript.build(batch_id, steps)
       raw = SSHManager.exec_script(connection_host, host.user || "root", script, host.port, identity_file: host.vars["ansible_ssh_private_key_file"]?.try(&.as_s?))
-      BatchScript.parse(raw[:stdout])
+      parsed = BatchScript.parse(raw[:stdout])
+
+      # The batch transport only ever sees the SSH invocation's STDOUT -
+      # BatchScript.parse reads nothing else - so a host the SSH
+      # transport itself cannot reach comes back as an EMPTY parse (no
+      # step ran, and ssh's own "ssh: connect to host ..." evidence sits
+      # in stderr where this path used to drop it). Every member of the
+      # group would then be silently treated as skipped instead of
+      # failing. When nothing ran AND the stderr names the transport,
+      # hand every step the same failure so interpret_remote_result -
+      # via the shared pattern list - stamps it unreachable like the
+      # solo path does. A batch that RAN (any step has a result) is left
+      # untouched: its per-step rc/stdout/stderr are the real evidence.
+      if parsed.empty? && SSHManager.connection_level_failure?(raw[:exit_code], raw[:stderr])
+        steps.each_index do |idx|
+          parsed[idx] = BatchScript::StepResult.new(raw[:exit_code], raw[:stdout], raw[:stderr])
+        end
+      end
+
+      parsed
     end
 
     # Prepares one batch-group member up to (but not including) the
