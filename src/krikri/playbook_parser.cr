@@ -1288,6 +1288,14 @@ module Krikri
       # / `openssl_csr:` / `openssl_certificate:` task names: real
       # ansible-core 2.19.4 resolves them; crystal 0.9.622 warned and
       # skipped.
+      # community.rabbitmq (0.9.944): rabbitmq_plugin/rabbitmq_user are
+      # registered only under their FQCN, but real roles write the bare
+      # short names (SimpliField.rabbitmq and rockandska.rabbitmq rounds
+      # both write `rabbitmq_plugin:` unqualified) - without this entry
+      # the bare name is unresolvable and the task is dropped as
+      # "unavailable module" where real ansible resolves it through
+      # collection search.
+      "community.rabbitmq",
       "community.crypto",
     ]
 
