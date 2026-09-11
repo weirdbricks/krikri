@@ -1134,6 +1134,9 @@ module Krikri
       # ovirt_auth (0.9.933): oVirt/RHV SSO token acquisition for the
       # ovirt_vm-infra/ovirt_infra rounds (210319/210777 etc).
       "ovirt.ovirt.ovirt_auth",
+      # maven_artifact (0.9.934): Maven artifact download
+      # (lean_delivery.jmeter round 210778 hard-stopped on it).
+      "community.general.maven_artifact",
       "ansible.builtin.service_facts",
       "ansible.builtin.slurp",
       # No plugins/reboot.cr - handled entirely on the controller by
