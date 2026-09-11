@@ -29,11 +29,7 @@ module Krikri
         elsif command_available?("rpm")
           packages = rpm_packages
         end
-      when "dpkg"
-        packages = dpkg_packages
-      when "rpm"
-        packages = rpm_packages
-      when "apt"
+      when "dpkg", "apt"
         # Real Ansible's package_facts module accepts "apt" as its own
         # explicit manager value (distinct from "auto"/"dpkg" - it
         # queries via python-apt bindings instead of dpkg-query), but
@@ -42,13 +38,27 @@ module Krikri
         # `package_facts: manager: apt`, which this plugin previously
         # rejected outright as "Unsupported package manager: apt" (the
         # case dispatch only ever recognized "auto"/"dpkg"/"rpm").
+        #
+        # Unlike "auto" (which probes both tools and just gathers
+        # nothing if neither exists - matching real Ansible's own
+        # graceful "no packages found" for auto-detection), an
+        # EXPLICITLY requested manager whose backing tool isn't
+        # installed must fail the task, matching real Ansible's "Could
+        # not detect a supported package manager ... or the required
+        # library is not installed" hard error - found via
+        # oVirt.engine-setup's `package_facts: manager: rpm` on an
+        # Ubuntu host with no `rpm` binary: this plugin used to call
+        # `capture("rpm", ...)` unconditionally, and `capture` swallows
+        # the "no such executable" exception into "" (see below), so
+        # the task silently reported success with zero packages instead
+        # of failing like real Ansible does.
+        return unsupported_manager_result(manager) unless command_available?("dpkg-query")
         packages = dpkg_packages
+      when "rpm"
+        return unsupported_manager_result(manager) unless command_available?("rpm")
+        packages = rpm_packages
       else
-        return PluginResult.new(
-          changed: false,
-          failed: true,
-          msg: "Unsupported package manager: #{manager}"
-        )
+        return unsupported_manager_result(manager)
       end
 
       PluginResult.new(
@@ -61,6 +71,18 @@ module Krikri
 
     private def command_available?(cmd : String) : Bool
       !Process.find_executable(cmd).nil?
+    end
+
+    # Real Ansible's package_facts phrases both cases - an unknown manager
+    # name and a known one whose backing tool/library isn't present - as
+    # "could not detect a supported package manager", so this mirrors that
+    # rather than inventing a separate wording per case.
+    private def unsupported_manager_result(manager : String) : PluginResult
+      PluginResult.new(
+        changed: false,
+        failed: true,
+        msg: "Could not detect a supported package manager from the following list: ['#{manager}'], or the required library is not installed."
+      )
     end
 
     # dpkg-query -W -f='${Package}\t${Version}\n' prints one "pkg<TAB>ver"

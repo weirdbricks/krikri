@@ -22,6 +22,21 @@ describe "package_facts plugin" do
     result["failed"].as_bool.should be_true
   end
 
+  it "fails when an explicitly-requested manager's backing tool isn't installed, unlike auto" do
+    # Root cause of the oVirt.engine-setup DIVERGENT recap (round 601116):
+    # `package_facts: manager: rpm` on a dpkg-only host with no `rpm`
+    # binary at all. Real Ansible fails the task outright ("Could not
+    # detect a supported package manager ... or the required library is
+    # not installed"); this plugin used to call rpm_packages()
+    # unconditionally, and `capture` swallows the missing-executable
+    # exception into "", so the task silently reported success with an
+    # empty packages dict instead. "rpm" is a safe manager name to force
+    # here because the CI/dev hosts this suite runs on are dpkg-based.
+    result = PluginSpecHelper.run("package_facts", {"manager" => "rpm"})
+
+    result["failed"].as_bool.should be_true
+  end
+
   it "accepts manager: apt (real Ansible's own distinct, python-apt-backed value), not just auto/dpkg" do
     # Found via a live 100-role confirm round: nvidia.enroot's own
     # `package_facts: manager: apt` (verified live against ansible-core
