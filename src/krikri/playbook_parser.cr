@@ -1099,6 +1099,10 @@ module Krikri
       "ansible.builtin.rpm_key",
       "ansible.posix.seboolean",
       "community.general.seport",
+      # sefcontext (0.9.955): persistent SELinux file-context mapping via
+      # `semanage fcontext` (ansible-lockdown rhel8_stig round 410191
+      # hard-stopped on the FQCN spelling). See plugins/sefcontext.cr.
+      "community.general.sefcontext",
       "ansible.builtin.deb822_repository",
       "ansible.posix.mount",
       "ansible.posix.sysctl",
@@ -1132,6 +1136,12 @@ module Krikri
       "community.postgresql.postgresql_db",
       "community.postgresql.postgresql_user",
       "community.postgresql.postgresql_privs",
+      # postgresql_query (0.9.956): arbitrary SQL over the same
+      # crystal-pg wire-protocol connection as the rest of the
+      # collection (consensys.web3signer round 400078 hard-stopped on
+      # the bare `postgresql_query:` spelling). See
+      # plugins/postgresql_query.cr.
+      "community.postgresql.postgresql_query",
       "community.crypto.openssl_dhparam",
       "community.crypto.openssl_privatekey",
       "community.crypto.openssl_csr",
@@ -1149,6 +1159,11 @@ module Krikri
       "community.crypto.openssl_publickey",
       "community.crypto.get_certificate",
       "community.general.modprobe",
+      # kernel_blacklist (0.9.951): `blacklist <module>` entry management
+      # in /etc/modprobe.d/ (grycap.im round 410111 hard-stopped on it
+      # where real ansible-playbook ran 844s of the role cleanly). Pure
+      # file editing - see plugins/kernel_blacklist.cr.
+      "community.general.kernel_blacklist",
       "community.general.pamd",
       "community.general.htpasswd",
       "community.general.ini_file",
@@ -1156,6 +1171,10 @@ module Krikri
       "community.general.npm",
       "community.general.alternatives",
       "community.general.filesystem",
+      # zfs (0.9.952): ZFS dataset/volume/snapshot management via the
+      # `zfs` CLI (micxer.zfs round 400133 hard-stopped on the bare
+      # `zfs:` spelling). See plugins/zfs.cr.
+      "community.general.zfs",
       # lvol (0.9.929): LVM logical volume management, one native port
       # registered under both FQCNs seen in the wild - real roles write
       # both spellings (ansible.builtin.lvol in ome.lvm_partition,
@@ -1188,6 +1207,13 @@ module Krikri
       # strips the FQCN to the same `ovirt_auth` plugin binary.
       "ovirt_auth",
       "ovirt.ovirt.ovirt_auth",
+      # virt_net (0.9.954): libvirt network management via the virsh CLI
+      # (mattgeddes.libvirt_kvm round 410102 and ovirt.hosted_engine_setup
+      # round 410038 both hard-stopped on the bare `virt_net:` spelling).
+      # Registered bare like ovirt_auth above - community.libvirt is not
+      # in simple_plugin_name's strip list - with the FQCN spelling
+      # mapped through MODULE_ALIASES.
+      "virt_net",
       # maven_artifact (0.9.934): Maven artifact download
       # (lean_delivery.jmeter round 210778 hard-stopped on it).
       "community.general.maven_artifact",
@@ -1455,6 +1481,20 @@ module Krikri
       "ansible.legacy.openssl_certificate"      => "community.crypto.x509_certificate",
       "community.crypto.openssl_certificate"    => "community.crypto.x509_certificate",
       "community.general.openssl_certificate"   => "community.crypto.x509_certificate",
+      # openssl_certificate_info is x509_certificate_info's old name,
+      # the exact same rename story as openssl_certificate above (shipped
+      # pre-collection as openssl_certificate_info, renamed to
+      # x509_certificate_info in community.crypto 1.0.0 with the old name
+      # as a deprecated redirect). All five spellings resolve onto the
+      # existing x509_certificate_info plugin binary. ufz.zammad (round
+      # 410129) hard-stopped on the bare spelling.
+      "openssl_certificate_info"                   => "community.crypto.x509_certificate_info",
+      "ansible.builtin.openssl_certificate_info"   => "community.crypto.x509_certificate_info",
+      "ansible.legacy.openssl_certificate_info"    => "community.crypto.x509_certificate_info",
+      "community.crypto.openssl_certificate_info"  => "community.crypto.x509_certificate_info",
+      "community.general.openssl_certificate_info" => "community.crypto.x509_certificate_info",
+      # virt_net's collection namespace (see its AVAILABLE_PLUGINS entry).
+      "community.libvirt.virt_net" => "virt_net",
     }
 
     # Bare module names real ansible-core can no longer resolve in ANY
