@@ -71,26 +71,52 @@ module Krikri
       # separate remote branch needed. Message wording matches real
       # Ansible's own exactly (live-verified against ansible-core
       # 2.19.4), not just the functional result.
+      # The skip result also carries the FULL command-module shape (rc: 0,
+      # cmd, stdout_lines, empty stderr/stderr_lines, null start/end/delta)
+      # - real 2.19.4 populates all of those keys on a creates:/removes:
+      # skip (see command.cr's identical fix for the full breakdown). A
+      # bare msg/stdout result made any `register:` + changed_when:
+      # reading of `.rc` on the skip hard-fail where real Ansible
+      # evaluates cleanly (konstruktoid.docker_rootless's warm run).
       if creates = @params["creates"]?
         if path_or_glob_exists?(expand_tilde(creates))
+          skipped_stdout = "skipped, since #{creates} exists"
           return PluginResult.new(
             changed: false,
             failed: false,
             msg: "Did not run command since '#{creates}' exists",
-            stdout: "skipped, since #{creates} exists"
+            cmd: cmd,
+            rc: 0,
+            stdout: skipped_stdout,
+            stdout_lines: [skipped_stdout],
+            stderr: "",
+            stderr_lines: [] of String,
+            start: nil,
+            end: nil,
+            delta: nil
           )
         end
       end
 
       # Check removes parameter (conditional execution) - same real-
-      # Ansible message shape as creates: above.
+      # Ansible message shape as creates: above, with the same full
+      # command-module result keys (see the creates: branch).
       if removes = @params["removes"]?
         unless path_or_glob_exists?(expand_tilde(removes))
+          skipped_stdout = "skipped, since #{removes} does not exist"
           return PluginResult.new(
             changed: false,
             failed: false,
             msg: "Did not run command since '#{removes}' does not exist",
-            stdout: "skipped, since #{removes} does not exist"
+            cmd: cmd,
+            rc: 0,
+            stdout: skipped_stdout,
+            stdout_lines: [skipped_stdout],
+            stderr: "",
+            stderr_lines: [] of String,
+            start: nil,
+            end: nil,
+            delta: nil
           )
         end
       end

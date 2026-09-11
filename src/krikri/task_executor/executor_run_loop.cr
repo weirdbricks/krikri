@@ -278,7 +278,7 @@ module Krikri
         end
         next if vars_context.nil?
         begin
-          if evaluate_when(when_condition, vars_context, host)
+          if evaluate_when_items(task, vars_context, host)
             run_hosts << host
           else
             skip_hosts << host
@@ -287,9 +287,9 @@ module Krikri
           # A raise here only affects THIS host - every other host in
           # *hosts* still gets partitioned normally.
           if inherit_on_error
-            inherit_when_condition(when_condition, task.block_tasks)
-            inherit_when_condition(when_condition, task.rescue_tasks)
-            inherit_when_condition(when_condition, task.always_tasks)
+            inherit_when_condition(when_condition, task.when_condition_list, task.block_tasks)
+            inherit_when_condition(when_condition, task.when_condition_list, task.rescue_tasks)
+            inherit_when_condition(when_condition, task.when_condition_list, task.always_tasks)
             run_hosts << host
           else
             # Fails cleanly for this one host (stats/halt/register/print
@@ -760,6 +760,30 @@ module Krikri
       end
     end
 
+    # A when: LIST is real Ansible's own sequence of INDEPENDENT
+    # conditionals, each one type-checked for a boolean result separately
+    # (live-verified against 2.19.4: `when: [str_var, bool_var]` fails
+    # with "Conditional result ... was derived from value of type 'str'"
+    # while the equivalent single-string `when: str_var and bool_var`
+    # passes - Python's `and` returns the last operand, so only the whole
+    # expression's result is type-checked there). The " and "-joined
+    # `when_condition` string loses exactly that per-item boundary - the
+    # joined expression's result is the LAST clause's value, so a truthy
+    # string in an earlier clause was silently accepted
+    # (crazikpl.logging's round 400022). Evaluating the retained per-item
+    # list (Task#when_condition_list) through the same strict path, in
+    # order with early exit on the first false, restores it.
+    private def evaluate_when_items(task : Task, vars_context : Hash(String, JSON::Any), host : Host, substitutor : VarSubstitutor? = nil) : Bool
+      if items = task.when_condition_list
+        items.each do |item|
+          return false unless evaluate_when(item, vars_context, host, substitutor)
+        end
+        true
+      else
+        evaluate_when(task.when_condition.as(String), vars_context, host, substitutor)
+      end
+    end
+
     # Shared by all five loop-resolution call sites (execute_task,
     # execute_include_vars, execute_include_tasks, execute_include_role,
     # execute_handler_internal): resolves the loop source via the block,
@@ -832,9 +856,9 @@ module Krikri
       if task.unavailable_module && python_module_source_for(task).nil?
         register_reachable_unavailable_module(task, vars_context, host, shared)
       else
-        return true unless when_condition = task.when_condition
+        return true unless task.when_condition
 
-        return true if evaluate_when(when_condition, vars_context, host, shared)
+        return true if evaluate_when_items(task, vars_context, host, shared)
       end
 
       # defer_stats: loop items and batch members pass this to only skip
@@ -1662,6 +1686,19 @@ module Krikri
       # failed_when: false`, inheriting the play's `become: true`).
       return result if result.as_h?.try(&.["_connection_failure"]?.try(&.as_bool?))
 
+      # A GENUINELY-skipped result (a module returning `skipped: true` -
+      # check-mode skip markers, module-side conditional skips) never
+      # gets changed_when:/failed_when: evaluated - ansible-core 2.19.4's
+      # own guard is `if 'skipped' not in result:` (executor/task_
+      # executor.py, the comment reads "if we didn't skip this task, use
+      # the helpers to evaluate the changed/failed_when properties").
+      # Note this does NOT cover the command/shell `creates:`/`removes:`
+      # skip: that result carries no `skipped` key there (it's an
+      # ordinary ok result with the full module shape, rc: 0 included -
+      # see the plugins' own skip branches), so its changed_when: IS
+      # evaluated, exactly as in real Ansible.
+      return result if result.as_h?.try(&.["skipped"]?.try(&.as_bool?))
+
       eval_context = vars_context
       if (register_name = task.register) && !register_name.empty?
         eval_context = vars_context.dup
@@ -1744,6 +1781,10 @@ module Krikri
     # into a single registered variable (`{"changed": .., "results": [...]}`),
     # matching Ansible's shape for looped, registered tasks.
     private def inherit_when_condition(condition : String, tasks : Array(Task)?) : Nil
+      inherit_when_condition(condition, nil, tasks)
+    end
+
+    private def inherit_when_condition(condition : String, condition_list : Array(String)?, tasks : Array(Task)?) : Nil
       return unless tasks
 
       tasks.each do |nested_task|
@@ -1751,16 +1792,20 @@ module Krikri
 
         if existing.nil? || existing.empty?
           nested_task.when_condition = condition
+          nested_task.when_condition_list = condition_list if condition_list
         elsif existing != condition && !existing.starts_with?("(#{condition}) and ")
           nested_task.when_condition = "(#{condition}) and (#{existing})"
+          if condition_list
+            nested_task.when_condition_list = condition_list + (nested_task.when_condition_list || [existing])
+          end
         end
 
         # A nested block: is transparent - push through to its own
         # children, same as print_skipped_tasks does for the skip path.
         if nested_task.block?
-          inherit_when_condition(condition, nested_task.block_tasks)
-          inherit_when_condition(condition, nested_task.rescue_tasks)
-          inherit_when_condition(condition, nested_task.always_tasks)
+          inherit_when_condition(condition, condition_list, nested_task.block_tasks)
+          inherit_when_condition(condition, condition_list, nested_task.rescue_tasks)
+          inherit_when_condition(condition, condition_list, nested_task.always_tasks)
         end
       end
     end

@@ -166,7 +166,7 @@ module Krikri
         children = handler.block_tasks || [] of Task
         propagate_role_context(handler, children)
         if when_condition = handler.when_condition
-          inherit_when_condition(when_condition, children)
+          inherit_when_condition(when_condition, handler.when_condition_list, children)
         end
 
         flatten_handler_blocks(children)
@@ -428,9 +428,9 @@ module Krikri
       # `l2chroot: false` flag, which failed since `which` isn't a
       # dynamic executable). A skipped handler is not shown as changed/
       # failed and isn't counted in the recap, matching real Ansible.
-      if when_condition = handler.when_condition
+      if handler.when_condition
         begin
-          when_result = evaluate_when(when_condition, vars_context, host)
+          when_result = evaluate_when_items(handler, vars_context, host)
         rescue ex : WhenEvaluationError
           # Flows through the normal handler result pipeline (#execute_
           # handler's own halt_if_failed/notify/display, or

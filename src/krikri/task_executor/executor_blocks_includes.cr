@@ -890,13 +890,13 @@ module Krikri
       # "Flush handlers" skipped-banner shape).
       propagate_role_context(task, task.block_tasks || [] of Task)
 
-      if when_condition = task.when_condition
+      if task.when_condition
         vars_context = build_vars_context(task, host)
         when_result = false
         when_errored = false
 
         begin
-          when_result = evaluate_when(when_condition, vars_context, host)
+          when_result = evaluate_when_items(task, vars_context, host)
         rescue WhenEvaluationError
           # Real Ansible does NOT fail the block as a unit here. A
           # block's when: is inherited by each child task, so the SAME
@@ -910,9 +910,9 @@ module Krikri
           # Emulated by pushing the condition down onto the children and
           # falling through to the normal flow below, so the standard
           # halt/rescue/always/rescued accounting applies unchanged.
-          inherit_when_condition(when_condition, task.block_tasks)
-          inherit_when_condition(when_condition, task.rescue_tasks)
-          inherit_when_condition(when_condition, task.always_tasks)
+          inherit_when_condition(task.when_condition.as(String), task.when_condition_list, task.block_tasks)
+          inherit_when_condition(task.when_condition.as(String), task.when_condition_list, task.rescue_tasks)
+          inherit_when_condition(task.when_condition.as(String), task.when_condition_list, task.always_tasks)
           when_errored = true
         end
 
@@ -1185,9 +1185,9 @@ module Krikri
     end
 
     private def run_include_tasks_once(task : Task, host : Host, vars_context : Hash(String, JSON::Any), item_label : String?) : Nil
-      if when_condition = task.when_condition
+      if task.when_condition
         begin
-          when_result = evaluate_when(when_condition, vars_context, host)
+          when_result = evaluate_when_items(task, vars_context, host)
         rescue ex : WhenEvaluationError
           swallow_when_error(task, host, ex, item_label: item_label)
           return
@@ -1426,9 +1426,9 @@ module Krikri
       # early with one "skipping:" line for the include_role: task
       # itself is correct there (see the "ok" comment below for the
       # sibling true-branch rationale).
-      if (when_condition = task.when_condition) && !task.is_static_import?
+      if task.when_condition && !task.is_static_import?
         begin
-          when_result = evaluate_when(when_condition, vars_context, host)
+          when_result = evaluate_when_items(task, vars_context, host)
         rescue ex : WhenEvaluationError
           swallow_when_error(task, host, ex, item_label: item_label)
           return
@@ -1538,8 +1538,13 @@ module Krikri
         # skipped the import itself - propagating the import's when:
         # onto a handler DEFINITION would be a behavior real Ansible
         # doesn't have, not a fix for anything seen live.
+        import_when_list = task.when_condition_list
         included_tasks.each do |included_task|
           included_task.when_condition = included_task.when_condition ? "(#{import_when}) and (#{included_task.when_condition})" : import_when
+          if import_when_list
+            own_items = included_task.when_condition_list || (included_task.when_condition ? [included_task.when_condition.as(String)] : [] of String)
+            included_task.when_condition_list = import_when_list + own_items
+          end
         end
       end
 

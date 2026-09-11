@@ -95,26 +95,55 @@ module Krikri
       # confirmed live against ansible-core 2.19.4: `ok: [localhost] =>
       # {"changed": false, ..., "msg": "Did not run command since '...'
       # exists"}`, recap `ok=1 skipped=0`.
+      # The result also carries the FULL command-module shape (rc: 0, cmd,
+      # stdout_lines, empty stderr/stderr_lines, null start/end/delta) -
+      # verified live against 2.19.4 (`{"changed": false, "rc": 0, ...
+      # "stdout": "skipped, since ... exists", "stdout_lines": [...]}`).
+      # konstruktoid.docker_rootless's own "Enable lingering for the Docker
+      # user" task registers this very skip and reads `user_linger.rc` in
+      # its changed_when: (rc==0 AND stdout not containing 'skipped' ->
+      # changed: false) - with `rc` missing the attribute access hard-
+      # failed the warm run ("object of type 'dict' has no attribute
+      # 'rc'") where real Ansible evaluates cleanly.
       if creates = @params["creates"]?
         if path_or_glob_exists?(expand_tilde(creates))
+          skipped_stdout = "skipped, since #{creates} exists"
           return PluginResult.new(
             changed: false,
             failed: false,
             msg: "Did not run command since '#{creates}' exists",
-            stdout: "skipped, since #{creates} exists"
+            cmd: cmd,
+            rc: 0,
+            stdout: skipped_stdout,
+            stdout_lines: [skipped_stdout],
+            stderr: "",
+            stderr_lines: [] of String,
+            start: nil,
+            end: nil,
+            delta: nil
           )
         end
       end
 
       # Check removes parameter (conditional execution) - same real-
-      # Ansible "ok", not "skipping:", shape as creates: above.
+      # Ansible "ok", not "skipping:", shape as creates: above, with the
+      # same full command-module result keys (see the creates: branch).
       if removes = @params["removes"]?
         unless path_or_glob_exists?(expand_tilde(removes))
+          skipped_stdout = "skipped, since #{removes} does not exist"
           return PluginResult.new(
             changed: false,
             failed: false,
             msg: "Did not run command since '#{removes}' does not exist",
-            stdout: "skipped, since #{removes} does not exist"
+            cmd: cmd,
+            rc: 0,
+            stdout: skipped_stdout,
+            stdout_lines: [skipped_stdout],
+            stderr: "",
+            stderr_lines: [] of String,
+            start: nil,
+            end: nil,
+            delta: nil
           )
         end
       end

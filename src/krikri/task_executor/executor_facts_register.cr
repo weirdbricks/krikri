@@ -206,7 +206,7 @@ module Krikri
 
       would_run = begin
         when_condition = task.when_condition
-        when_condition.nil? || evaluate_when(when_condition, vars_context, host, shared)
+        when_condition.nil? || evaluate_when_items(task, vars_context, host, shared)
       rescue
         false
       end
