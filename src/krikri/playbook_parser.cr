@@ -1070,6 +1070,10 @@ module Krikri
       "ansible.builtin.rpm_key",
       "ansible.posix.seboolean",
       "community.general.seport",
+      # sefcontext (0.9.955): persistent SELinux file-context mapping via
+      # `semanage fcontext` (ansible-lockdown rhel8_stig round 410191
+      # hard-stopped on the FQCN spelling). See plugins/sefcontext.cr.
+      "community.general.sefcontext",
       "ansible.builtin.deb822_repository",
       "ansible.posix.mount",
       "ansible.posix.sysctl",
