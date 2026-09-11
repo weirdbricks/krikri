@@ -1127,6 +1127,10 @@ module Krikri
       # (Oefenweb.locales round 210720 hard-stopped on it). Drives
       # /etc/locale.gen + locale-gen on the target.
       "community.general.locale_gen",
+      # java_cert (0.9.931): Java keystore certificate management via
+      # keytool (no live round found - implemented from the real
+      # module's semantics, digest-compare import included).
+      "community.general.java_cert",
       "ansible.builtin.service_facts",
       "ansible.builtin.slurp",
       # No plugins/reboot.cr - handled entirely on the controller by
