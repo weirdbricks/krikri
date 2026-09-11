@@ -21,6 +21,44 @@ narrative, newest first.
 **Currently at `0.9.928`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.30` (see `shard.yml`).
 
+## Open gaps
+
+- **`artis3n.tailscale`** (`round_new_authors`, 2026-09-05, debian/kata): krikri
+  ends `unreachable=1` where real Ansible gets `failed=1`, both cold and warm.
+  Not yet root-caused.
+- **`evrardjp.keepalived`** (`round_new_authors`, 2026-09-05, debian/kata):
+  large recap gap (ansible `ok=12 skipped=21` vs krikri `ok=3 skipped=5`, both
+  cold and warm). Not yet root-caused.
+- **`igor_nikiforov.journald`** (`round_new_authors`, 2026-09-05, debian/kata):
+  krikri fails harder than real Ansible (`failed=2` vs `failed=1`), both cold
+  and warm. Not yet root-caused.
+- **`kyl191.openvpn`** (`round_new_authors`, 2026-09-05, debian/kata): large
+  recap gap on a 29-task role. Not yet root-caused.
+- **`lablabs.rke2`** (`round_new_authors`, 2026-09-05, debian/kata): small
+  recap gap (`ok=1` vs `ok=2`, both `failed=1`). Not yet root-caused.
+- **`nickjj.docker`** (`round_new_authors`, 2026-09-05, debian/kata): krikri
+  ends `unreachable=1` where real Ansible completes cleanly
+  (`ok=19 changed=14 failed=0`). Not yet root-caused.
+- **`riemers.gitlab-runner`** (`round_new_authors`, 2026-09-05, debian/kata):
+  39-task role; real Ansible completes cleanly where krikri fails early
+  (`ok=6 failed=1`). Not yet root-caused.
+- **`rvm.ruby`** (`round_new_authors`, 2026-09-05, debian/kata): krikri runs
+  further than real Ansible before failing on cold (`ok=7` vs `ok=1`) and
+  isn't idempotent on warm (`ok=3` vs ansible's `ok=1` both runs). Not yet
+  root-caused.
+- **`willshersystems.sshd`** / **`xanmanning.k3s`** (`round_new_authors`,
+  2026-09-05, debian/kata): divergent, not yet root-caused.
+
+These nine came from an abandoned 120-role shortlist (`testing/kata/
+round_new_authors/`, only 35 roles run before the round was left
+mid-triage); see `findings.md` there for the four divergences from that
+same batch that turned out to already be fixed by the time anyone got
+back to it (`0x0i.systemd`, `igor_nikiforov.etcd`, `wezhai.minio`,
+`nginxinc.nginx` - see `ROLES_TESTED.md` for the fix commits). Each of
+the nine above needs its own confirmed repro before treating it as a
+real krikri bug per this file's workflow - the shortlist is at
+`testing/kata/round_new_authors/shortlist120.txt` if resuming it.
+
 ---
 
 ## Round 90000-94000's 5 "needs a closer look" open gaps closed (0.9.924 -> 0.9.928)
