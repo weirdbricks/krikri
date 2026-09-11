@@ -59,6 +59,10 @@ module Krikri
     end
 
     def execute : PluginResult
+      if list_result = list_query_result
+        return list_result
+      end
+
       # Parse package name(s)
       # Can be a string, array (via list parameter), or comma-separated
       names = parse_package_names

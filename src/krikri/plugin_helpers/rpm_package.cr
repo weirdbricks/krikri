@@ -103,6 +103,119 @@ module Krikri
         end
       end
 
+      # ----- `list:` query mode -----
+        # Real ansible.builtin.dnf/yum treat a scalar `list:` value as a
+        # QUERY, never as packages to act on: `dnf: {list: updates}`
+        # lists available updates and returns {"changed": false,
+        # "results": [...]} where each result carries name/arch/epoch/
+        # version/release/repo (+ nevra/envra). This plugin family
+        # previously concatenated a scalar `list:` into the package
+        # names (parse_package_names' rescue), so `dnf: {list: updates}`
+        # ran `dnf install updates` and failed with "Error: Unable to
+        # find a match: updates" where real Ansible succeeded - found
+        # via oatakan.rhel_upgrade's own "check for missing updates
+        # (dnf)" task (round 310183). A JSON-array `list:` keeps the
+        # old package-list behavior below, so this only intercepts the
+        # scalar form.
+        private def list_query_result : PluginResult?
+        list_value = @params["list"]?
+        return nil unless list_value
+
+        begin
+          return nil if JSON.parse(list_value).as_a
+        rescue
+          # Not a JSON array - this is the scalar query spec.
+        end
+
+        query = list_value.strip
+        return nil if query.empty?
+
+        result = remote_exec("#{pkg_manager_binary} list #{shell_single_quote(query)}")
+
+        results = parse_dnf_list_output(result[:stdout])
+
+        PluginResult.new(
+          changed: false,
+          failed: result[:exit_code] != 0,
+          msg: result[:exit_code] == 0 ? "" : "Failed to list packages: #{result[:stderr]}",
+          results: results
+        )
+      end
+
+      # Parses `dnf list <spec>` / `yum list <spec>` output into result
+      # dicts shaped like real Ansible's own dnf module list results:
+      # name/arch/epoch/version/release/repo/nevra/envra. Package lines
+      # look like `name.arch  epoch:version-release  repo` (fields
+      # separated by runs of 2+ spaces; the repo column may be absent
+      # and an installed line's repo is prefixed `@`); anything else
+      # (section headers like "Available Upgrades", cache-timestamp
+      # notices) is skipped. Section headers additionally tell spec
+      # queries ("Installed Packages" vs "Available Packages") whether
+      # a match is installed or available.
+      private def parse_dnf_list_output(output : String) : Array(JSON::Any)
+        results = [] of JSON::Any
+        state : String? = nil
+
+        output.each_line do |line|
+          stripped = line.strip
+          next if stripped.empty?
+
+          lowered = stripped.downcase
+          if !stripped.starts_with?(' ') && lowered.includes?("installed")
+            state = "installed"
+            next
+          elsif !stripped.starts_with?(' ') && (lowered.includes?("available") || lowered.includes?("updated") || lowered.includes?("upgrade"))
+            state = "available"
+            next
+          end
+
+          fields = stripped.split(/ {2,}|\t+/)
+          next unless fields.size >= 2
+
+          name_arch = fields[0]
+          dot_index = name_arch.rindex('.')
+          next unless dot_index
+          name = name_arch[0...dot_index]
+          arch = name_arch[(dot_index + 1)..]
+          next unless !name.empty? && !arch.empty? && arch.matches?(/\A[A-Za-z0-9_]+\z/)
+
+          # Some listings put the epoch in the name column
+          # (`1:openssl-libs.x86_64`) - strip it; the version column is
+          # the authoritative source below.
+          if (name_colon = name.index(':')) && !name[0...name_colon].empty? && name[0...name_colon].chars.all?(&.ascii_number?)
+            name = name[(name_colon + 1)..]
+          end
+
+          version_field = fields[1]
+          epoch = nil
+          if (colon = version_field.index(':')) && !version_field[0...colon].empty? && version_field[0...colon].chars.all?(&.ascii_number?)
+            epoch = version_field[0...colon]
+            version_field = version_field[(colon + 1)..]
+          end
+
+          version, release = version_field.split("-", 2)
+
+          repo = fields[2]?.try(&.gsub(/\A@/, ""))
+          nevra = "#{name}-#{epoch ? "#{epoch}:" : ""}#{version}-#{release}.#{arch}"
+
+          entry = {
+            "name"    => JSON::Any.new(name),
+            "arch"    => JSON::Any.new(arch),
+            "epoch"   => epoch ? JSON::Any.new(epoch) : JSON::Any.new(nil),
+            "version" => JSON::Any.new(version),
+            "release" => JSON::Any.new(release),
+            "repo"    => repo ? JSON::Any.new(repo) : JSON::Any.new(nil),
+            "nevra"   => JSON::Any.new(nevra),
+            "envra"   => JSON::Any.new(nevra),
+          }
+          entry["state"] = JSON::Any.new(state) if state
+
+          results << JSON::Any.new(entry)
+        end
+
+        results
+      end
+
       private def parse_name_param_as_json(trimmed : String) : Array(String)?
         return unless trimmed.starts_with?('[') && trimmed.ends_with?(']')
 
