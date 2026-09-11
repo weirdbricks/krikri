@@ -1118,6 +1118,11 @@ module Krikri
       # `lvol` plugin binary.
       "ansible.builtin.lvol",
       "community.general.lvol",
+      # dpkg_divert (0.9.929): Debian file-diversion management
+      # (ansible-lockdown ubuntu24 CIS and MindPointGroup debian11 CIS
+      # rounds both hard-stopped on it). Debian-family only by nature -
+      # the plugin's dpkg-divert --version probe fails cleanly elsewhere.
+      "community.general.dpkg_divert",
       "ansible.builtin.service_facts",
       "ansible.builtin.slurp",
       # No plugins/reboot.cr - handled entirely on the controller by
