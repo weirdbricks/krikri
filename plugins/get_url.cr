@@ -46,7 +46,12 @@ module Krikri
         begin
           checksum = parse_checksum(checksum_param, url)
         rescue ex
-          return PluginResult.new(changed: false, failed: true, msg: "failed to resolve checksum: #{ex.message}")
+          # Real Ansible's get_url failure result carries status_code: -1
+          # when the request dies before any HTTP response (its fetch_url-
+          # based url_get fail_json spreads info['status'], initialized to
+          # -1, into status_code) - keep the same shape so a role's
+          # registered-result guards see identical keys.
+          return PluginResult.new(changed: false, failed: true, msg: "failed to resolve checksum: #{ex.message}", status_code: -1)
         end
       end
 
@@ -95,7 +100,11 @@ module Krikri
         download(url, tmp_path)
       rescue ex
         File.delete(tmp_path) if File.exists?(tmp_path)
-        return PluginResult.new(changed: false, failed: true, msg: "failed to download #{url}: #{ex.message}")
+        # Same fetch_url contract as the checksum rescue above: real Ansible
+        # includes status_code: -1 (plus url/dest/elapsed) in get_url's
+        # download-failure result, so `when: r.status_code == -1` behaves
+        # identically here.
+        return PluginResult.new(changed: false, failed: true, msg: "failed to download #{url}: #{ex.message}", status_code: -1, url: url, dest: dest, elapsed: 0)
       end
 
       if checksum

@@ -40,7 +40,14 @@ module Krikri
       begin
         status, headers, body, redirected, final_url = request(url, method)
       rescue ex
-        return PluginResult.new(changed: false, failed: true, msg: "Request failed: #{ex.message}", url: url)
+        # Real Ansible's uri result ALWAYS carries a status field, even when
+        # the request dies before any HTTP response: its fetch_url() info
+        # dict is initialized with status=-1 and stays there on connection
+        # failures (refused/DNS/timeout). Omitting it here turned a role's
+        # `when: r.status == 200` into a hard "object has no attribute
+        # 'status'" evaluation error instead of a normal skip
+        # (levonet.ci_registry_rm_container divergence).
+        return PluginResult.new(changed: false, failed: true, msg: "Request failed: #{ex.message}", url: url, status: -1, elapsed: 0, redirected: false)
       end
 
       failed = !status_codes.includes?(status)

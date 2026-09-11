@@ -170,4 +170,24 @@ describe "uri plugin" do
       File.delete(path) if File.exists?(path)
     end
   end
+
+  it "reports status: -1 when the request fails before any HTTP response, matching real Ansible" do
+    # Real bug found via levonet.ci_registry_rm_container's 400-role
+    # differential round: the exception-rescue path returned its failure
+    # result WITHOUT a status key, so a role's `when: r.status == 200`
+    # after an `ignore_errors: yes` uri task died with "object of type
+    # 'dict' has no attribute 'status'" instead of evaluating false the
+    # way real Ansible does (fetch_url initializes its info dict with
+    # status=-1 and keeps it there on connection failures).
+    # Bind-and-release a port to guarantee a fast, deterministic
+    # ECONNREFUSED instead of probing a port some other process might own.
+    probe = TCPServer.new("127.0.0.1", 0)
+    refused_port = probe.local_address.port
+    probe.close
+    result = PluginSpecHelper.run("uri", {"url" => "http://127.0.0.1:#{refused_port}/", "timeout" => "2"})
+    result["failed"].as_bool.should be_true
+    result["status"].as_i.should eq(-1)
+    result["elapsed"].as_i.should eq(0)
+    result["redirected"].as_bool.should be_false
+  end
 end
