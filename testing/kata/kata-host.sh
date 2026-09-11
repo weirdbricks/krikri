@@ -97,6 +97,18 @@ up() {
   local name="$1" octet="$2" image="${3:-$IMAGE_DEFAULT}"
   local ip; ip=$(ip_of "$name" "$octet")
 
+  # The image bakes key.pub into /root/.ssh/authorized_keys at BUILD time.
+  # If this keypair is ever regenerated (or simply missing), sshd inside the
+  # guest still comes up fine but no key can ever authenticate, and the wait
+  # loop below burns its full 80s looking like an sshd/boot failure. Fail
+  # fast with the actual remedy instead - and note that regenerating the key
+  # alone is not enough: ./build.sh must re-run so the image carries the new
+  # key.pub (containers keep the old authorized_keys until re-imported).
+  if [ ! -f "$KEY" ]; then
+    echo "SSH keypair missing at $KEY - run ./build.sh (it generates one and bakes key.pub into the image)" >&2
+    return 1
+  fi
+
   force_down "$name"
   net_up "$name" "$octet" || { echo "network setup failed" >&2; return 1; }
 
