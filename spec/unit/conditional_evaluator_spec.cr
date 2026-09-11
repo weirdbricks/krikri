@@ -68,6 +68,49 @@ describe Krikri::ConditionalEvaluator do
     end
   end
 
+  describe "defined-but-null variable vs the bare None literal through default()" do
+    # ontic.git (round 601424): its defaults/main.yml defines git_config/
+    # git_users as bare YAML nulls (defined, but None - NOT undefined)
+    # and every task in tasks/configure.yml is gated on `git_config |
+    # default(None) != None`. Real Ansible's single-argument default()
+    # substitutes only for a genuinely UNDEFINED variable, never a
+    # defined-but-null one, so the comparison is None vs None and every
+    # gated task skips. The generic path rendered the chain to empty
+    # text (a null renders as "" outside a container), reparsed that as
+    # JSON::Any::String(""), and compared it against the real nil the
+    # `None` literal resolves to - exactly backwards.
+    it "evaluates `| default(None) != None` false / `== None` true for a defined-null variable" do
+      v = vars({"git_config" => nil} of String => JSON::Any::Type)
+      Krikri::ConditionalEvaluator.evaluate("git_config | default(None) != None", v).should be_false
+      Krikri::ConditionalEvaluator.evaluate("git_config | default(None) == None", v).should be_true
+    end
+
+    it "handles the None literal on either side and the d() shorthand" do
+      v = vars({"git_users" => nil} of String => JSON::Any::Type)
+      Krikri::ConditionalEvaluator.evaluate("None != git_users | default(None)", v).should be_false
+      Krikri::ConditionalEvaluator.evaluate("git_users | d(None) == None", v).should be_true
+    end
+
+    it "evaluates `| default(None) != None` true for a defined non-null variable" do
+      v = vars({"git_config" => "present"} of String => JSON::Any::Type)
+      Krikri::ConditionalEvaluator.evaluate("git_config | default(None) != None", v).should be_true
+    end
+
+    # default() DOES substitute for a genuinely undefined variable - the
+    # chain resolves to None either way, so the comparison still answers
+    # false (verified against real ansible-playbook: `nope |
+    # default(None) != None` skips there, no undefined-variable error).
+    it "evaluates the same comparison false for a genuinely undefined variable too" do
+      Krikri::ConditionalEvaluator.evaluate("nope_var | default(None) != None", EMPTY_VARS).should be_false
+      Krikri::ConditionalEvaluator.evaluate("nope_var | default(None) == None", EMPTY_VARS).should be_true
+    end
+
+    it "does not substitute default() past a substituted None in a chain" do
+      v = EMPTY_VARS
+      Krikri::ConditionalEvaluator.evaluate("nope_var | default(None) | default('fallback') != None", v).should be_false
+    end
+  end
+
   describe "boolean operators" do
     it "evaluates 'and' requiring all parts true" do
       v = vars({"a" => true, "b" => false} of String => JSON::Any::Type)
