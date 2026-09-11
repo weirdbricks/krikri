@@ -1175,6 +1175,11 @@ module Krikri
       # docker CLI's own login; the idempotent no-op and state=absent
       # erase are pure config.json handling.
       "community.docker.docker_login",
+      # current_container_facts (0.9.945): in-container detection fact
+      # module (collivier.xtesting round 300010 calls it) - reads
+      # /proc/self/cpuset + /proc/self/mountinfo wherever the plugin
+      # process runs and sets the ansible_module_container_* facts.
+      "community.docker.current_container_facts",
       "ansible.builtin.service_facts",
       "ansible.builtin.slurp",
       # No plugins/reboot.cr - handled entirely on the controller by
