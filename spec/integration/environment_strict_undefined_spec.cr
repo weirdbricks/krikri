@@ -88,4 +88,32 @@ describe "environment: keyword strict-undefined" do
     status.success?.should be_true
     output.to_s.should contain("hello-from-env")
   end
+
+  it "treats a non-dict environment value (e.g. an empty list) as no environment, not a task failure" do
+    # ryandaniels.connectivity_test (round 601446): a role default like
+    # `proxy_env: []`, meant to be overridden by the caller with a real
+    # dict but left as an empty list otherwise. Real Ansible warns
+    # "could not parse environment value, skipping" and runs the task
+    # with no extra env; krikri used to raise
+    # "Error processing keyword 'environment': expected a dict, got []"
+    # and fail the task outright.
+    playbook = File.tempname("environment-non-dict-value", ".yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          proxy_env: []
+        tasks:
+          - name: task with a non-dict environment value
+            ansible.builtin.command: /bin/true
+            environment: "{{ proxy_env }}"
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+
+    status.success?.should be_true
+    output.to_s.should contain("failed=0")
+  end
 end
