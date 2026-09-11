@@ -1169,6 +1169,12 @@ module Krikri
       # 310090 calls it). The FQCN-stripping regex already maps both
       # community.mysql. and ansible.mysql. spellings to the binary.
       "community.mysql.mysql_variables",
+      # docker_login (0.9.943): registry authentication stored in the
+      # docker CLI config file (oasis_roles.molecule_docker_ci round
+      # 300108 calls it). Credential validation/storage goes through the
+      # docker CLI's own login; the idempotent no-op and state=absent
+      # erase are pure config.json handling.
+      "community.docker.docker_login",
       "ansible.builtin.service_facts",
       "ansible.builtin.slurp",
       # No plugins/reboot.cr - handled entirely on the controller by
