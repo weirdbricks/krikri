@@ -1123,6 +1123,10 @@ module Krikri
       # rounds both hard-stopped on it). Debian-family only by nature -
       # the plugin's dpkg-divert --version probe fails cleanly elsewhere.
       "community.general.dpkg_divert",
+      # locale_gen (0.9.931): Debian/Ubuntu locale generation
+      # (Oefenweb.locales round 210720 hard-stopped on it). Drives
+      # /etc/locale.gen + locale-gen on the target.
+      "community.general.locale_gen",
       "ansible.builtin.service_facts",
       "ansible.builtin.slurp",
       # No plugins/reboot.cr - handled entirely on the controller by
