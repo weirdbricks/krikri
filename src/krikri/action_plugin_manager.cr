@@ -7,6 +7,7 @@ require "./action_plugins/fail_action_plugin"
 require "./action_plugins/set_fact_action_plugin"
 require "./action_plugins/pause_action_plugin"
 require "./action_plugins/synchronize_action_plugin"
+require "./action_plugins/add_host_action_plugin"
 
 module Krikri
   # Action Plugin Manager
@@ -18,15 +19,15 @@ module Krikri
     ACTION_PLUGINS = {
       "ansible.builtin.template" => TemplateActionPlugin,
       "template"                 => TemplateActionPlugin,
-      # These 6 return an ActionResult.final (see base_action_plugin.cr)
+      # These 7 return an ActionResult.final (see base_action_plugin.cr)
       # instead of modified_params - the caller never invokes a module
       # (local or remote) afterward at all. Real ansible-core's own
-      # debug/assert/fail/set_fact/pause have always been action-plugin
-      # only (no target-side module) - this closes that architectural
-      # gap while also removing an SSH round trip + upload per task for
-      # remote hosts. synchronize (ansible.posix) joins them with the
-      # same shape: real Ansible's own synchronize runs rsync from the
-      # controller/delegate, never on the target. See each
+      # debug/assert/fail/set_fact/pause/add_host have always been
+      # action-plugin only (no target-side module) - this closes that
+      # architectural gap while also removing an SSH round trip + upload
+      # per task for remote hosts. synchronize (ansible.posix) joins them
+      # with the same shape: real Ansible's own synchronize runs rsync
+      # from the controller/delegate, never on the target. See each
       # action_plugins/*_action_plugin.cr for the per-module rationale.
       "ansible.builtin.debug"    => DebugActionPlugin,
       "debug"                    => DebugActionPlugin,
@@ -38,6 +39,8 @@ module Krikri
       "set_fact"                 => SetFactActionPlugin,
       "ansible.builtin.pause"    => PauseActionPlugin,
       "pause"                    => PauseActionPlugin,
+      "ansible.builtin.add_host" => AddHostActionPlugin,
+      "add_host"                 => AddHostActionPlugin,
       # synchronize: controller-side action plugin (real Ansible's own
       # synchronize runs its rsync subprocess from the controller/delegate
       # with rsync dialing out itself - see SynchronizeActionPlugin's own
@@ -56,11 +59,13 @@ module Krikri
     # whose action plugin only rewrites params before a real module still
     # executes to actually write the file). PluginManager's own
     # pre-upload pass (collect_required_plugins) uses this to skip
-    # putting these 6 in a remote host's upload set entirely - nothing
+    # putting these 7 in a remote host's upload set entirely - nothing
     # in the normal execution path ever calls get_local_plugin_path for
     # them, so uploading them was pure waste. Kept as a fixed set rather
     # than derived from ACTION_PLUGINS, since template: is a real
-    # counter-example living in the same map.
+    # counter-example living in the same map. Unlike the others, add_host
+    # has no plugins/*.cr binary at all (there is nothing a target-side
+    # add_host process could ever do), so it relies on this set.
     CONTROLLER_ONLY_MODULES = Set{
       "ansible.builtin.debug", "debug",
       "ansible.builtin.assert", "assert",
@@ -68,6 +73,7 @@ module Krikri
       "ansible.builtin.set_fact", "set_fact",
       "ansible.builtin.pause", "pause",
       "ansible.posix.synchronize", "synchronize",
+      "ansible.builtin.add_host", "add_host",
     }
 
     def self.skips_module_dispatch?(module_name : String) : Bool
@@ -76,11 +82,15 @@ module Krikri
 
     # Execute action plugin on controller
     # Returns ActionResult with modified params or error
+    # `inventory` is the run's shared Inventory, passed only so plugins
+    # that mutate run-scoped state (add_host:) reach the same object
+    # every play's hosts:-pattern resolution reads from.
     def self.execute_action(
       module_name : String,
       params : Hash(String, String),
       vars : Hash(String, JSON::Any),
       host : Host,
+      inventory : Inventory? = nil,
     ) : ActionResult
       # Get action plugin class
       plugin_class = ACTION_PLUGINS[module_name]?
@@ -103,7 +113,7 @@ module Krikri
       params["_verbosity"] = (vars["ansible_verbosity"]?.try(&.as_i64?) || 0_i64).to_s
 
       # Create and execute action plugin
-      action_plugin = plugin_class.new(params, vars, host)
+      action_plugin = plugin_class.new(params, vars, host, inventory)
 
       # Check if should run
       unless action_plugin.should_run?

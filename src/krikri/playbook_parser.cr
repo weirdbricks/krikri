@@ -1309,6 +1309,13 @@ module Krikri
       # parse time as "Plugin not available".
       "ansible.builtin.reboot",
       "ansible.builtin.set_fact",
+      # add_host (0.9.960): controller-only action plugin that mutates the
+      # run's shared in-memory inventory (like group_by:/set_stats: below,
+      # there is NO plugins/add_host.cr - real Ansible's own add_host has
+      # no target-side module either, so there is nothing to execute on a
+      # target). Listed here so the task isn't silently dropped at parse
+      # time as "Plugin not available"; see AddHostActionPlugin.
+      "ansible.builtin.add_host",
       "ansible.builtin.get_url",
       "ansible.builtin.blockinfile",
       "ansible.builtin.uri",

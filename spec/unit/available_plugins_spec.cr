@@ -14,7 +14,7 @@ PROJECT_PLUGINS_DIR = File.expand_path("../../plugins", __DIR__)
 # Controller-side pseudo-modules: deliberately listed in
 # AVAILABLE_PLUGINS with no plugins/*.cr binary (handled entirely by
 # TaskExecutor - see the comment at their AVAILABLE_PLUGINS entries).
-CONTROLLER_SIDE_MODULES = %w[reboot group_by set_stats]
+CONTROLLER_SIDE_MODULES = %w[reboot group_by set_stats add_host]
 
 describe "plugin registry consistency" do
   it "has an AVAILABLE_PLUGINS entry for every plugins/*.cr binary" do

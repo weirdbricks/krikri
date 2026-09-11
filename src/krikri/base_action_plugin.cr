@@ -15,7 +15,13 @@ module Krikri
     property vars : Hash(String, JSON::Any)
     property host : Host
 
-    def initialize(@params : Hash(String, String), @vars : Hash(String, JSON::Any), @host : Host)
+    # The run's ONE shared Inventory instance (nil only in contexts that
+    # never had one) - only meaningful for plugins that mutate controller-
+    # side state across plays (add_host:). Passed through execute_action's
+    # own optional parameter; most action plugins ignore it entirely.
+    getter inventory : Inventory?
+
+    def initialize(@params : Hash(String, String), @vars : Hash(String, JSON::Any), @host : Host, @inventory : Inventory? = nil)
     end
 
     # Execute action on controller

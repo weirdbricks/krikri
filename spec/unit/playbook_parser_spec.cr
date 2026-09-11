@@ -565,14 +565,19 @@ describe Krikri::PlaybookParser do
     end
 
     it "hard-stops for a task using an unimplemented plugin instead of keeping it as unavailable_module (0.9.903, unconditional)" do
-      expect_raises(Krikri::UnresolvedModuleError, "krikri does not yet have module 'ansible.builtin.add_host' implemented") do
+      # A fictional module name, deliberately - a real module name planted
+      # here has twice now stopped being "unimplemented" out from under
+      # this spec (first ansible.builtin.mount, then ansible.builtin.
+      # add_host, each fixed in a later round without anyone remembering
+      # this spec pinned its wording to that exact name).
+      expect_raises(Krikri::UnresolvedModuleError, "krikri does not yet have module 'ansible.builtin.totally_fake_unimplemented_module_xyz' implemented") do
         Krikri::PlaybookParser.parse_string(<<-YAML
           - name: Uses unavailable plugin
             hosts: all
             tasks:
               - name: Not implemented
-                ansible.builtin.add_host:
-                  name: dynamic_host
+                ansible.builtin.totally_fake_unimplemented_module_xyz:
+                  path: /mnt/data
           YAML
         )
       end
