@@ -18,11 +18,40 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.957`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.959`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.30` (see `shard.yml`).
 
 ## Open gaps
 
+- **`ansible.builtin.add_host`** (`oVirt.hosted_engine_setup`, round 601198,
+  2026-09-11): genuinely unimplemented - no plugin, no `AVAILABLE_PLUGINS`
+  entry, unlike the mount/timezone/alternatives legacy-FQCN gaps fixed in
+  `0.9.959` (those had a real plugin under a different FQCN; this one has
+  none at all). The one round that hit it is separately broken upstream
+  (references a nonexistent `ovirt.engine-setup` role, so real Ansible
+  fails too, earlier), but `add_host` is a real, fundamental core action
+  plugin gap worth its own entry regardless of that role.
+- **Not yet root-caused** (400-role batch, round 601000-601999, 2026-09-11,
+  ubuntu+rocky/atlantic): each shows a genuine `ok=`/`changed=`/`failed=`
+  recap mismatch on both engines, no quick repro attempted yet -
+  `GROG.reboot`, `MonolithProjects.system_update`,
+  `Tecnativa.hetzner_rescue_installimage`, `robertdebock.common`,
+  `oVirt.engine-setup`, `ontic.git`, `ryandaniels.connectivity_test`,
+  `trombik.redhat_repo`, `levonet.ci_registry_rm_container`,
+  `silverlogic.rvm` (also runs ~250s on krikri vs ~5s on real Ansible -
+  worth a perf look, not just correctness), `pluggero.upgrade`,
+  `diodonfrost.p10k`, `opendevshop.aegir-apache`, `timorunge.pmm_client`.
+- **Low-priority single-role missing modules** (round 601000-601999,
+  2026-09-11 batch, one role each unless noted): `docker_volume`,
+  `docker_stack`, `community.docker.docker_volume` (2 roles),
+  `community.mysql.mysql_replication` (3 roles combined bare+FQCN),
+  `community.postgresql.postgresql_membership`,
+  `community.rabbitmq.rabbitmq_vhost`, `community.zabbix.zabbix_group`,
+  `community.vmware.vsphere_file` (2 roles) - genuinely missing, niche,
+  not implemented. `pacman`, `apk`, `community.general.zypper`, `snap` -
+  same "is this in scope" alt-package-manager question already open for
+  portage/pkgng above. See `ROLES_TESTED.md` for the exact affected role
+  per module.
 - **`artis3n.tailscale`** (`round_new_authors`, 2026-09-05, debian/kata): krikri
   ends `unreachable=1` where real Ansible gets `failed=1`, both cold and warm.
   Not yet root-caused.
@@ -80,6 +109,47 @@ real krikri bug per this file's workflow - the shortlist is at
 `testing/kata/round_new_authors/shortlist120.txt` if resuming it.
 
 ---
+
+## Round 601000-601999: 400-role Galaxy top-download batch, 3 real bugs fixed (0.9.958 -> 0.9.959)
+
+A fourth 400-role differential round, split evenly ubuntu (round 601000,
+kata+atlantic)/rocky (round 601400, atlantic-only - kata was already
+claimed by the concurrently-running ubuntu round), run via
+`krikri-role-tester`. Candidate roles were sourced from a fresh Galaxy
+top-download query, diffed against every role already in
+`ROLES_TESTED.md`. Result: `CLEAN=197 DIVERGENT=60 GALAXY_MISSING=143`.
+
+The `GALAXY_MISSING` rate (143/400, far higher than prior batches) is a
+sourcing artifact, not a krikri issue: the candidate list was built from
+the Galaxy API's `github_user` field instead of the actual install-time
+`namespace` field, so many entries don't resolve via `ansible-galaxy role
+install` at all (plain 404s, sampled ~10 of the 143 install logs and found
+no krikri-side "module not implemented" signature in any of them).
+
+Real krikri-playbook bugs found and fixed, all one commit (same root
+cause, same fix shape):
+
+- **`ansible.builtin.mount`/`.timezone`/`.alternatives`** hard-stopped
+  when a task used the legacy ansible-core FQCN spelling, even though the
+  actual plugin was fully implemented under its real collection FQCN
+  (`ansible.posix.mount`, `community.general.timezone`,
+  `community.general.alternatives`) - real ansible-core's own
+  `ansible_builtin_runtime.yml` transparently redirects the old core name
+  on every current controller, matching the `ansible.builtin.
+  authorized_key` gap fixed earlier; krikri had no equivalent alias for
+  these three. Found in `Appsilon.mount_efs`, `jtprogru.
+  configure_timesyncd`, `T2L.php` respectively.
+
+Of the 60 DIVERGENT results, 45 were krikri's documented, intentional
+unconditional hard-stop-on-unimplemented-module behavior (0.9.903 design
+reversal, see below) rather than new defects - see the "Open gaps"
+low-priority/scope-question bullets above for the missing-module
+breakdown. One (`robertdebock.ca`) looked alarming (krikri completing
+`ok=41` vs real Ansible's `ok=22`) but was a kata-image artifact: the
+target's Python 3.13 lacks the `cryptography` library, so real Ansible's
+`openssl_privatekey`-family modules fail on a missing dependency while
+krikri's native Crystal crypto has no such dependency and runs further -
+not a comparable pair, not a krikri defect.
 
 ## Three 400-role Galaxy top-download batches (ubuntu+rocky each), ~24 real bugs fixed + 23 modules implemented (0.9.928 -> 0.9.957)
 

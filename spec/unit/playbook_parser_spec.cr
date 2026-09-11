@@ -565,14 +565,14 @@ describe Krikri::PlaybookParser do
     end
 
     it "hard-stops for a task using an unimplemented plugin instead of keeping it as unavailable_module (0.9.903, unconditional)" do
-      expect_raises(Krikri::UnresolvedModuleError, "krikri does not yet have module 'ansible.builtin.mount' implemented") do
+      expect_raises(Krikri::UnresolvedModuleError, "krikri does not yet have module 'ansible.builtin.add_host' implemented") do
         Krikri::PlaybookParser.parse_string(<<-YAML
           - name: Uses unavailable plugin
             hosts: all
             tasks:
               - name: Not implemented
-                ansible.builtin.mount:
-                  path: /mnt/data
+                ansible.builtin.add_host:
+                  name: dynamic_host
           YAML
         )
       end
@@ -2025,6 +2025,36 @@ describe Krikri::PlaybookParser do
       it "dispatches both spellings to the same `authorized_key` plugin binary" do
         Krikri::PluginManager.simple_plugin_name("ansible.posix.authorized_key").should eq("authorized_key")
         Krikri::PluginManager.simple_plugin_name("ansible.builtin.authorized_key").should eq("authorized_key")
+      end
+    end
+
+    # Same legacy-core-FQCN redirect story as authorized_key above, for
+    # three more modules that moved out of ansible-core into a separate
+    # collection years ago: real ansible-core's own
+    # ansible_builtin_runtime.yml still transparently redirects the old
+    # `ansible.builtin.` spelling, but krikri had no equivalent alias, so
+    # a task spelling out the legacy name hard-stopped even though the
+    # plugin is fully implemented under its real FQCN. Found in the
+    # 400-new-role batch (rounds 601000-601999): Appsilon.mount_efs
+    # (ansible.builtin.mount), jtprogru.configure_timesyncd
+    # (ansible.builtin.timezone), T2L.php (ansible.builtin.alternatives).
+    describe "legacy-core-FQCN redirects for mount/timezone/alternatives" do
+      it "resolves ansible.builtin.mount to the ansible.posix.mount plugin" do
+        Krikri::PlaybookParser.resolve_module_name("ansible.builtin.mount").should eq("ansible.builtin.mount")
+        Krikri::PluginManager.simple_plugin_name("ansible.builtin.mount").should eq("mount")
+        Krikri::PluginManager.simple_plugin_name("ansible.posix.mount").should eq("mount")
+      end
+
+      it "resolves ansible.builtin.timezone to the community.general.timezone plugin" do
+        Krikri::PlaybookParser.resolve_module_name("ansible.builtin.timezone").should eq("ansible.builtin.timezone")
+        Krikri::PluginManager.simple_plugin_name("ansible.builtin.timezone").should eq("timezone")
+        Krikri::PluginManager.simple_plugin_name("community.general.timezone").should eq("timezone")
+      end
+
+      it "resolves ansible.builtin.alternatives to the community.general.alternatives plugin" do
+        Krikri::PlaybookParser.resolve_module_name("ansible.builtin.alternatives").should eq("ansible.builtin.alternatives")
+        Krikri::PluginManager.simple_plugin_name("ansible.builtin.alternatives").should eq("alternatives")
+        Krikri::PluginManager.simple_plugin_name("community.general.alternatives").should eq("alternatives")
       end
     end
 

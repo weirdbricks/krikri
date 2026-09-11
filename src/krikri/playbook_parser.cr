@@ -1111,6 +1111,15 @@ module Krikri
       "community.general.xml",
       "ansible.builtin.deb822_repository",
       "ansible.posix.mount",
+      # ansible.builtin.mount (round 601105, Appsilon.mount_efs): mount
+      # moved out of ansible-core into ansible.posix years ago, and real
+      # ansible-core's own ansible_builtin_runtime.yml transparently
+      # redirects the old core FQCN to ansible.posix.mount on every
+      # current controller - krikri had no equivalent alias, so a task
+      # spelling out the legacy name hard-stopped even though the
+      # plugin (mount.cr) is fully implemented under the other FQCN.
+      # Same fix shape as ansible.builtin.authorized_key above.
+      "ansible.builtin.mount",
       "ansible.posix.sysctl",
       "community.general.ufw",
       "ansible.posix.firewalld",
@@ -1174,8 +1183,18 @@ module Krikri
       "community.general.htpasswd",
       "community.general.ini_file",
       "community.general.timezone",
+      # ansible.builtin.timezone (round 601463, jtprogru.configure_timesyncd):
+      # same legacy-core-FQCN redirect story as ansible.builtin.mount
+      # above - timezone moved to community.general years ago and real
+      # ansible-core still redirects the old core spelling to it.
+      "ansible.builtin.timezone",
       "community.general.npm",
       "community.general.alternatives",
+      # ansible.builtin.alternatives (round 601430, T2L.php): same
+      # legacy-core-FQCN redirect story as ansible.builtin.mount above -
+      # alternatives moved to community.general years ago and real
+      # ansible-core still redirects the old core spelling to it.
+      "ansible.builtin.alternatives",
       "community.general.filesystem",
       # zfs (0.9.952): ZFS dataset/volume/snapshot management via the
       # `zfs` CLI (micxer.zfs round 400133 hard-stopped on the bare
