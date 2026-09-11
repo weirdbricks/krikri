@@ -1258,6 +1258,52 @@ module Krikri
       result
     end
 
+    # environment: - strict-undefined substitution for both accepted
+    # forms, meant to run inside the same protected "finalization of task
+    # args" block as substitute_task_params so a referenced-but-undefined
+    # variable FAILS the task (real Ansible: "Error processing keyword
+    # 'environment': 'proxy_env' is undefined") instead of rendering the
+    # lenient "undefined" sentinel into an env var, ryandaniels.
+    # server_update_reboot round 300094. Dict form: keys and values are
+    # each templated strictly (real Ansible templates the keyword's whole
+    # value). String form (`environment: "{{ proxy_env }}"`): a single
+    # bare {{ }} span resolves natively so a variable holding a dict
+    # stays a dict; anything else must render to a JSON object.
+    private def substitute_task_environment(task : Task, substitutor : VarSubstitutor) : Hash(String, String)?
+      return nil unless task.environment || task.environment_raw
+
+      begin
+        if env = task.environment
+          substituted = Hash(String, String).new
+          env.each do |key, value|
+            substituted[substitutor.substitute(key, strict: true)] = substitutor.substitute(value, strict: true)
+          end
+          substituted
+        elsif raw = task.environment_raw
+          stripped = raw.strip
+          native = if stripped.starts_with?("{{") && stripped.ends_with?("}}") && stripped.scan("{{").size == 1
+                     VariableSubstitutor::VariableLookup.new(substitutor.vars).resolve(stripped[2..-3].strip)
+                   end
+
+          resolved_object = native.try(&.as_h?)
+          unless resolved_object
+            rendered = native ? native.to_s : substitutor.substitute(raw, strict: true)
+            parsed = JSON.parse(rendered)
+            raise "Error processing keyword 'environment': expected a dict, got #{rendered.inspect}" unless object = parsed.as_h?
+            resolved_object = object
+          end
+
+          stringified = Hash(String, String).new
+          resolved_object.each { |key, value| stringified[key] = value.as_s? ? value.as_s : value.to_s }
+          stringified
+        else
+          nil
+        end
+      rescue e : UndefinedVariableError
+        raise UndefinedVariableError.new("Error processing keyword 'environment': #{e.message}")
+      end
+    end
+
     # For copy:/template:/assemble: tasks that came from a role, a
     # relative src: resolves against the role's files/ or templates/
     # directory - the plugin subprocess itself has no concept of roles, so

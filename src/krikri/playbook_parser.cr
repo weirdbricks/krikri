@@ -54,6 +54,15 @@ module Krikri
     # executor substitutes them at run time and forwards the result to
     # the plugin, which applies them around its own shelled-out commands.
     property environment : Hash(String, String)?
+    # Raw `{{ ... }}` string form of environment: (`environment:
+    # "{{ proxy_env }}"`, ryandaniels.server_update_reboot's own apt/yum
+    # tasks). Real Ansible accepts a single templated value here and
+    # evaluates it to the env-var dict at task finalization - failing the
+    # task when the referenced variable is undefined ("Error processing
+    # keyword 'environment': 'proxy_env' is undefined"). The parser has
+    # no vars context to resolve it against, so the raw text is stashed
+    # here and the executor substitutes it strictly at run time.
+    property environment_raw : String?
     # `no_log: true` - suppress this task's result detail. A SECURITY
     # control: it is how a playbook keeps a password, token or key out
     # of the log. Previously unparsed and unused, so every such task
@@ -2445,6 +2454,14 @@ module Krikri
         env_hash = Hash(String, String).new
         env_yaml.each { |key, value| env_hash[key.to_s] = stringify_value(value) }
         task.environment = env_hash
+      elsif env_raw = task_hash["environment"]?
+        # String form - a single template that must evaluate to the
+        # env-var dict at run time (see Task#environment_raw). A literal
+        # non-hash here used to be silently DROPPED (as_h? returned nil),
+        # so a role setting `environment: "{{ proxy_env }}"` never had
+        # the variable substituted - and never failed the way real
+        # Ansible fails when that variable is undefined.
+        task.environment_raw = safe_yaml_to_string(env_raw)
       end
 
       # Parse notify (can be string or array)
