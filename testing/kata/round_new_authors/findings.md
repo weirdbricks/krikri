@@ -2,6 +2,18 @@
 
 Do not fix yet - collecting per CLAUDE.md workflow. One-line diagnosis per divergence.
 
+**Status update (2026-09-10): all four confirmed divergences below were already
+fixed on this branch after the round was recorded. Do not re-fix.**
+
+- 0x0i.systemd -> fixed in 9a4a0d59 (skipped-block role prefix + meta-task
+  recap counting; spec testing/test-block-skip-prefix.yml)
+- igor_nikiforov.etcd -> fixed in d93ca1cd (strict-undefined dict-subscript
+  misses for loop items/sources, 0.9.786; KNOWN_MISSING.md round 43000)
+- wezhai.minio -> fixed in 44e56427 (unarchive resolves bare relative src
+  from the role's files/ dir; spec spec/integration/cli_spec.cr)
+- nginxinc.nginx -> fixed in 3cee0a56 (systemd/service state: reloaded
+  starts an inactive unit, 0.9.877; spec spec/integration/systemd_spec.cr)
+
 ## Divergences found so far
 
 - **0x0i.systemd**: krikri skipped=9 vs ansible skipped=8 (cold+warm both). Diff shows
