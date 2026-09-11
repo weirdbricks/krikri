@@ -41,6 +41,24 @@ module Krikri
           )
         end
 
+        # A `name:`/`pkg:` KEY present but templating down to nothing -
+        # `name: "{{ redhat_repo_extra_packages }}"` with the var
+        # defaulting to `[]` renders as the literal string "[]", which
+        # `names_from_name_param` parses down to an empty array. That's
+        # exactly as "nothing to install" as no name: at all, and real
+        # ansible-core's yum/dnf module reports ok/changed: false for it,
+        # not a missing-parameter failure - found via trombik.redhat_repo's
+        # "Install extra packages" task (round 601447), which failed here
+        # outright while real ansible-playbook reported ok. Mirrors
+        # apt.cr's identical fix for the same bug class (round 84000).
+        if @params["name"]? || @params["pkg"]?
+          return PluginResult.new(
+            changed: false,
+            failed: false,
+            msg: "Nothing to do"
+          )
+        end
+
         PluginResult.new(
           changed: false,
           failed: true,
