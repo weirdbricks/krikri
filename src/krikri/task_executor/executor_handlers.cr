@@ -518,6 +518,7 @@ module Krikri
       # strict: UndefinedVariableError would have crashed the whole run.
       begin
         substituted_params = substitute_task_params(handler.params, substitutor, native_containers: handler.module_name.ends_with?("set_fact"), module_name: handler.module_name)
+        substituted_env = substitute_task_environment(handler, substitutor)
       rescue ex
         result = JSON.parse({
           "changed" => false,
@@ -605,7 +606,7 @@ module Krikri
         wire_vars["ansible_connection"] = JSON::Any.new("local")
       end
 
-      config = build_plugin_config(handler, host, substituted_params, wire_vars, substituted_become_user)
+      config = build_plugin_config(handler, host, substituted_params, wire_vars, substituted_become_user, substituted_env)
 
       become = resolve_task_become(handler, substitutor)
       become_user = nil

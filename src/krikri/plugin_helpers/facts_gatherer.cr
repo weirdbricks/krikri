@@ -122,8 +122,8 @@ module Krikri
       enabled
     end
 
-    def gather_facts(subset : Array(String) = [] of String, remote_connection : Bool = false) : Hash(String, String | Int64 | Bool | Hash(String, String) | Array(String) | Array(Hash(String, String)) | Hash(String, JSON::Any))
-      facts = {} of String => (String | Int64 | Bool | Hash(String, String) | Array(String) | Array(Hash(String, String)) | Hash(String, JSON::Any))
+    def gather_facts(subset : Array(String) = [] of String, remote_connection : Bool = false) : Hash(String, String | Int64 | Bool | Hash(String, String) | Array(String) | Array(Hash(String, String)) | Hash(String, JSON::Any) | Hash(String, Int64 | String) | Array(Hash(String, Int64 | String)))
+      facts = {} of String => (String | Int64 | Bool | Hash(String, String) | Array(String) | Array(Hash(String, String)) | Hash(String, JSON::Any) | Hash(String, Int64 | String) | Array(Hash(String, Int64 | String)))
 
       # The minimal set, always gathered - hostname, OS/distribution, the
       # interpreter, the user and the clock. This is what real Ansible's
@@ -963,7 +963,7 @@ module Krikri
     # than forking `mount`, and bounded to real bind/devtmpfs noise that roles
     # filter on themselves.
     def gather_mount_facts(facts)
-      mounts = [] of Hash(String, String)
+      mounts = [] of Hash(String, Int64 | String)
 
       begin
         File.read_lines("/proc/self/mountinfo").each do |line|
@@ -990,7 +990,7 @@ module Krikri
             "device" => source,
             "fstype" => fstype,
             "opts"   => opts || "",
-          }
+          } of String => Int64 | String
           entry.merge!(gather_mount_space_stats(fields[4]))
           mounts << entry
         end
@@ -1005,7 +1005,7 @@ module Krikri
               "device" => parts[0],
               "fstype" => parts[2],
               "opts"   => parts[3]? || "",
-            }
+            } of String => Int64 | String
             entry.merge!(gather_mount_space_stats(parts[1]))
             mounts << entry
           end
@@ -1038,31 +1038,38 @@ module Krikri
     # mount-entry shape) - real Ansible's own `| int` filter chain in the
     # role already coerces the field before comparing, so a numeric-looking
     # string round-trips identically to a real int for that purpose.
-    def gather_mount_space_stats(mountpoint : String) : Hash(String, String)
+    def gather_mount_space_stats(mountpoint : String) : Hash(String, Int64 | String)
       output = IO::Memory.new
       status = Process.run("stat", ["-f", "--format=%S %b %f %a %c %d", mountpoint], output: output, error: Process::Redirect::Close)
-      return {} of String => String unless status.success?
+      return {} of String => Int64 | String unless status.success?
 
       parts = output.to_s.strip.split(" ")
-      return {} of String => String unless parts.size == 6
+      return {} of String => Int64 | String unless parts.size == 6
 
       block_size, block_total, block_free, block_available, inode_total, inode_free =
         parts.map(&.to_i64?)
 
-      return {} of String => String if block_size.nil? || block_total.nil? || block_free.nil? ||
+      return {} of String => Int64 | String if block_size.nil? || block_total.nil? || block_free.nil? ||
                                        block_available.nil? || inode_total.nil? || inode_free.nil?
 
+      # Real Ansible's own ansible_mounts entries carry the space/inode
+      # stats as INTEGERS, not strings - roles do real arithmetic on them
+      # (`{{ (mnt.size_total / 1024 / 1024 / 1024) | round(1) }}`,
+      # mullholland.motd's motd.j2, round 300197), which failed with
+      # Crinja's "Both operators need to be numeric" while the values
+      # were strings. The dict's own String fields (mount/device/fstype/
+      # opts) stay strings.
       {
-        "size_total"      => (block_size * block_total).to_s,
-        "size_available"  => (block_size * block_available).to_s,
-        "block_size"      => block_size.to_s,
-        "block_total"     => block_total.to_s,
-        "block_available" => block_available.to_s,
-        "block_used"      => (block_total - block_free).to_s,
-        "inode_total"     => inode_total.to_s,
-        "inode_available" => inode_free.to_s,
-        "inode_used"      => (inode_total - inode_free).to_s,
-      }
+        "size_total"      => block_size * block_total,
+        "size_available"  => block_size * block_available,
+        "block_size"      => block_size,
+        "block_total"     => block_total,
+        "block_available" => block_available,
+        "block_used"      => block_total - block_free,
+        "inode_total"     => inode_total,
+        "inode_available" => inode_free,
+        "inode_used"      => inode_total - inode_free,
+      } of String => Int64 | String
     end
 
     def gather_python_facts(facts, remote_connection : Bool = false)

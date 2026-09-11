@@ -44,6 +44,10 @@ module Krikri
     end
 
     def execute : PluginResult
+      if list_result = list_query_result
+        return list_result
+      end
+
       names = parse_package_names
 
       if early = early_result_for_empty_names(names)

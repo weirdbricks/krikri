@@ -1016,6 +1016,7 @@ module Krikri
       params : Hash(String, String),
       vars_context : Hash(String, JSON::Any),
       become_user : String? = task.become_user,
+      substituted_env : Hash(String, String)? = nil,
     ) : String
       # Add check_mode and diff_mode to params
       final_params = params.dup
@@ -1027,18 +1028,16 @@ module Krikri
       # flags (see debug.cr's own comment on `_verbosity`).
       final_params["_verbosity"] = @verbosity.to_s
 
-      # environment: - substituted here (once, with the same vars_context
-      # every other param already uses) and forwarded as a single JSON
-      # blob under a reserved param key; BasePlugin#remote_exec/#local_exec
-      # read it back out and prefix whatever command the plugin shells out
-      # with the equivalent `export K=V; ...` - applies uniformly to every
+      # environment: - substituted STRICTLY (UndefinedVariableError on an
+      # undefined reference) ahead of this call, inside the same protected
+      # "finalization of task args" block as substitute_task_params - see
+      # substitute_task_environment. Forwarded as a single JSON blob under
+      # a reserved param key; BasePlugin#remote_exec/#local_exec read it
+      # back out and prefix whatever command the plugin shells out with
+      # the equivalent `export K=V; ...` - applies uniformly to every
       # plugin that shells out (command/shell/apt/systemctl/...) rather
       # than needing separate wiring per plugin.
-      if task_env = task.environment
-        substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
-        substituted_env = task_env.transform_values { |v| substitutor.substitute(v) }
-        final_params["_environment"] = substituted_env.to_json
-      end
+      final_params["_environment"] = substituted_env.to_json if substituted_env
 
       # Only debug:/assert: actually read the vars context inside the
       # plugin process (BasePlugin itself only ever pulls 3 connection

@@ -562,7 +562,7 @@ module Krikri
       # checked above, so this is purely the loop-source failure.
       items = begin
         resolve_first_found(task, host, vars_context)
-      rescue ex : UndefinedVariableError
+      rescue ex : UndefinedVariableError | FirstFoundLookupError
         finish_include_vars_failure(task, host, ex.message || "is undefined")
         return
       end

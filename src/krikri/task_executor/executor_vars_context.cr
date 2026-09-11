@@ -707,14 +707,26 @@ module Krikri
         end
       end
 
-      # No candidate matched. `skip: true` makes that a skipped task;
-      # without it real Ansible errors ("The lookup plugin 'first_found'
-      # failed: No file was found when using first_found."). Callers
-      # decide how to surface that - execute_include_vars (the confirmed,
-      # live-verified case: robertdebock.release on Rocky 9.6) now fails
-      # the task via task.loop_first_found_skip; the general with_first_found
-      # loop path (any other module) still treats this the old
-      # skip-regardless-of-skip: way, undocumented/unverified so far.
+      # No candidate matched. `skip: true` (parsed into
+      # task.loop_first_found_skip) is the only thing that makes real
+      # Ansible tolerate a miss - it returns [] so callers skip. Without
+      # skip:, real Ansible's first_found lookup RAISES and the task
+      # FAILS ("The lookup plugin 'first_found' failed: No file was found
+      # when using first_found.") - for ANY module the with_first_found:
+      # keyword form is attached to, not just include_vars: (verified
+      # live against ansible-core 2.19.4: ccdc.cpp_gui_dev_tools's own
+      # include_tasks: + with_first_found: over "{{ ansible_distribution
+      # }}.yml"-style candidates on an OS with no matching tasks/<OS>.yml
+      # hard-fails the include task, it does not skip it). The old
+      # skip-regardless-of-skip: behavior here was the one remaining
+      # call-site gap - execute_include_vars already failed this shape
+      # correctly (robertdebock.release, Rocky 9.6). FirstFoundLookupError
+      # already flows through resolve_loop_items_or_raise (converted to
+      # WhenEvaluationError -> clean task failure) for the general loop
+      # and include_tasks paths; execute_include_vars rescues it directly.
+      raise FirstFoundLookupError.new(
+        "The lookup plugin 'first_found' failed: No file was found when using first_found."
+      ) unless task.loop_first_found_skip?
       [] of JSON::Any
     end
 
@@ -1244,6 +1256,52 @@ module Krikri
       end
 
       result
+    end
+
+    # environment: - strict-undefined substitution for both accepted
+    # forms, meant to run inside the same protected "finalization of task
+    # args" block as substitute_task_params so a referenced-but-undefined
+    # variable FAILS the task (real Ansible: "Error processing keyword
+    # 'environment': 'proxy_env' is undefined") instead of rendering the
+    # lenient "undefined" sentinel into an env var, ryandaniels.
+    # server_update_reboot round 300094. Dict form: keys and values are
+    # each templated strictly (real Ansible templates the keyword's whole
+    # value). String form (`environment: "{{ proxy_env }}"`): a single
+    # bare {{ }} span resolves natively so a variable holding a dict
+    # stays a dict; anything else must render to a JSON object.
+    private def substitute_task_environment(task : Task, substitutor : VarSubstitutor) : Hash(String, String)?
+      return nil unless task.environment || task.environment_raw
+
+      begin
+        if env = task.environment
+          substituted = Hash(String, String).new
+          env.each do |key, value|
+            substituted[substitutor.substitute(key, strict: true)] = substitutor.substitute(value, strict: true)
+          end
+          substituted
+        elsif raw = task.environment_raw
+          stripped = raw.strip
+          native = if stripped.starts_with?("{{") && stripped.ends_with?("}}") && stripped.scan("{{").size == 1
+                     VariableSubstitutor::VariableLookup.new(substitutor.vars).resolve(stripped[2..-3].strip)
+                   end
+
+          resolved_object = native.try(&.as_h?)
+          unless resolved_object
+            rendered = native ? native.to_s : substitutor.substitute(raw, strict: true)
+            parsed = JSON.parse(rendered)
+            raise "Error processing keyword 'environment': expected a dict, got #{rendered.inspect}" unless object = parsed.as_h?
+            resolved_object = object
+          end
+
+          stringified = Hash(String, String).new
+          resolved_object.each { |key, value| stringified[key] = value.as_s? ? value.as_s : value.to_s }
+          stringified
+        else
+          nil
+        end
+      rescue e : UndefinedVariableError
+        raise UndefinedVariableError.new("Error processing keyword 'environment': #{e.message}")
+      end
     end
 
     # For copy:/template:/assemble: tasks that came from a role, a

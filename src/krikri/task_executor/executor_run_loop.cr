@@ -1233,6 +1233,7 @@ module Krikri
 
       begin
         substituted_params = substitute_task_params(task.params, substitutor, native_containers: task.module_name.ends_with?("set_fact"), module_name: task.module_name)
+        substituted_env = substitute_task_environment(task, substitutor)
       rescue ex
         # Same "finalization of task args failed" handling as
         # execute_task_once's own identical rescue (see there) - this
@@ -1303,7 +1304,7 @@ module Krikri
       remote_vars_context = vars_context.dup
       remote_vars_context["ansible_connection"] = JSON::Any.new("local")
 
-      config_json = build_plugin_config(task, host, substituted_params, remote_vars_context, substituted_become_user)
+      config_json = build_plugin_config(task, host, substituted_params, remote_vars_context, substituted_become_user, substituted_env)
 
       # The batch script runs the plugin binary directly, so it must be on
       # the target before the script is built - pre-upload cannot see
@@ -1394,6 +1395,7 @@ module Krikri
       begin
         task = resolve_templated_action(task, substitutor)
         substituted_params = substitute_task_params(task.params, substitutor, native_containers: task.module_name.ends_with?("set_fact"), module_name: task.module_name)
+        substituted_env = substitute_task_environment(task, substitutor)
       rescue ex
         # A raised exception during param substitution (e.g. lookup('url',
         # ...) hitting a real HTTP error - see ExpressionEvaluator#
@@ -1484,7 +1486,7 @@ module Krikri
         wire_vars["ansible_connection"] = JSON::Any.new("local")
       end
 
-      config = build_plugin_config(task, exec_host, substituted_params, wire_vars, substituted_become_user)
+      config = build_plugin_config(task, exec_host, substituted_params, wire_vars, substituted_become_user, substituted_env)
 
       if task.async_seconds && !resolve_task_check_mode(task, wire_vars)
         # async: writes this config verbatim to a job file; the detached
@@ -1526,7 +1528,7 @@ module Krikri
       # when_passes? let it through (see its own comment), so a python
       # module behind a false when: still skips normally.
       if task.unavailable_module && (py_source = python_module_source_for(task))
-        result = execute_python_module(task, py_source, substituted_params, exec_host, vars_context, wire_vars, become, become_user, substituted_become_user)
+        result = execute_python_module(task, py_source, substituted_params, exec_host, vars_context, wire_vars, become, become_user, substituted_become_user, substituted_env)
         return apply_changed_failed_when(task, result, vars_context, host)
       end
 
@@ -1549,7 +1551,7 @@ module Krikri
     # hosts; the module's argument dict mirrors real Ansible's typed
     # JSON args for new-style modules (the params the parser already
     # JSON-encoded come back as real arrays/dicts for the module).
-    private def execute_python_module(task : Task, source_path : String, substituted_params : Hash(String, String), exec_host : Host, vars_context : Hash(String, JSON::Any), wire_vars : Hash(String, JSON::Any), become : Bool, become_user : String?, substituted_become_user : String?) : JSON::Any
+    private def execute_python_module(task : Task, source_path : String, substituted_params : Hash(String, String), exec_host : Host, vars_context : Hash(String, JSON::Any), wire_vars : Hash(String, JSON::Any), become : Bool, become_user : String?, substituted_become_user : String?, substituted_env : Hash(String, String)? = nil) : JSON::Any
       module_name = PythonModuleRunner.short_name(task.unavailable_module || task.module_name)
       new_style = PythonModuleRunner.new_style?(File.read(source_path))
       check_mode = resolve_task_check_mode(task, wire_vars)
@@ -1586,7 +1588,7 @@ module Krikri
       # confirmed live against a real host with root/passwordless-sudo
       # already proven to work for every OTHER plugin dispatch in the
       # same play.
-      config = build_plugin_config(task, exec_host, py_params, wire_vars, substituted_become_user)
+      config = build_plugin_config(task, exec_host, py_params, wire_vars, substituted_become_user, substituted_env)
 
       # The DISPATCH decision gets the controller's own unflipped
       # vars_context, mirroring the normal plugin dispatch above - NOT
