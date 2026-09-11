@@ -141,6 +141,30 @@ module Krikri
         condition = unwrapped
       end
 
+      # A condition that is ENTIRELY one quoted string literal is a
+      # Jinja CONSTANT (truthy iff its interior is non-empty), not an
+      # expression to parse - check this BEFORE any and/or/comparison
+      # splitting, which would otherwise slice on operators INSIDE the
+      # quotes and produce unbalanced-quote operands ("'mariadb_version
+      # _check.rc" from splitting `'mariadb_version_check.rc == 0'` on
+      # "==") that then fail variable resolution under raise_undefined.
+      # Real Ansible reads mrlesmithjr.mariadb_galera_cluster's own
+      # `changed_when: not 'mariadb_version_check.rc == 0'` as exactly
+      # this constant (non-empty string -> truthy -> `not` -> False ->
+      # changed=false, task ok) - verified live against ansible-core
+      # 2.19.4 (ok=1 changed=0); this engine failed the whole task with
+      # "'mariadb_version_check.rc' is undefined" (round 310053).
+      # Deliberately narrow: the interior must contain no quote
+      # character at all, so a compound condition that merely starts
+      # and ends with quotes (`'a' == 'a'`, `'x' in list`) still parses
+      # normally below.
+      if condition.size >= 2 &&
+         ((condition[0] == '\'' && condition[-1] == '\'') ||
+          (condition[0] == '"' && condition[-1] == '"')) &&
+         !condition[1..-2].includes?("'") && !condition[1..-2].includes?('"')
+        return !condition[1..-2].empty?
+      end
+
       # Compile-time filter-name validation - real Jinja resolves every
       # filter name referenced ANYWHERE in the expression when it
       # COMPILES the template, before any and/or short-circuiting
