@@ -256,4 +256,72 @@ describe Krikri::PythonModuleRunner do
     parsed.as_h.has_key?("failed").should be_false
     parsed["logged"].as_bool.should be_true
   end
+
+  it "shim supports AnsibleModule.get_bin_path for role-private modules that call it" do
+    pending("python3 not available") unless File.exists?("/usr/bin/python3")
+    # The exact shape that AttributeError'd on a real host
+    # (linux-system-roles.systemd's own library/systemd_units.py, whose
+    # units() calls self.module.get_bin_path("systemctl",
+    # opt_dirs=[...]) before anything can exit_json - so the module
+    # printed no result JSON and the task hard-FAILED while real
+    # ansible-playbook succeeded).
+    work_dir = File.join(Dir.tempdir, "krikri-shim-spec-#{Random.rand(1_000_000)}")
+    Dir.mkdir_p(work_dir)
+    Krikri::PythonModuleRunner.write_module_utils_bundle(work_dir)
+    module_path = File.join(work_dir, "systemd_units.py")
+    File.write(module_path, "from ansible.module_utils.basic import AnsibleModule\n" \
+                            "module = AnsibleModule(argument_spec={'user': {'type': 'str', 'default': 'root'}})\n" \
+                            "bin = module.get_bin_path('python3', opt_dirs=['/nowhere'])\n" \
+                            "found = bool(bin)\n" \
+                            "opt = module.get_bin_path('definitely-missing-bin-xyz', opt_dirs=['/nowhere']) if False else None\n" \
+                            "try:\n" \
+                            "    module.get_bin_path('definitely-missing-bin-xyz', opt_dirs=['/nowhere'])\n" \
+                            "    raised = False\n" \
+                            "except ValueError:\n" \
+                            "    raised = True\n" \
+                            "module.exit_json(changed=False, found=found, missing_raises_valueerror=raised)\n")
+    stdout_io = IO::Memory.new
+    err = IO::Memory.new
+    status = Process.run("/usr/bin/python3", [module_path],
+      input: IO::Memory.new(%({"ANSIBLE_MODULE_ARGS": {}})),
+      output: stdout_io, error: err)
+    FileUtils.rm_r(work_dir)
+    status.success?.should be_true
+    err.to_s.should_not contain("AttributeError")
+    parsed = Krikri::PythonModuleRunner.parse_module_output(stdout_io.to_s).should_not be_nil
+    parsed["found"].as_bool.should be_true
+    parsed["missing_raises_valueerror"].as_bool.should be_true
+  end
+
+  it "shim provides ansible.module_utils._text for modules importing to_native" do
+    pending("python3 not available") unless File.exists?("/usr/bin/python3")
+    # The exact shape that ModuleNotFoundError'd at import time on a
+    # fresh Atlantic host (linux-system-roles.nbde_server's own
+    # library/nbde_server_tang.py, which does `from
+    # ansible.module_utils._text import to_native` at module top level
+    # - before AnsibleModule is ever constructed, so nothing could
+    # exit_json and the module printed no result JSON while real
+    # ansible-playbook succeeded).
+    work_dir = File.join(Dir.tempdir, "krikri-shim-spec-#{Random.rand(1_000_000)}")
+    Dir.mkdir_p(work_dir)
+    Krikri::PythonModuleRunner.write_module_utils_bundle(work_dir)
+    module_path = File.join(work_dir, "nbde_server_tang_spec.py")
+    File.write(module_path, "from ansible.module_utils.basic import AnsibleModule\n" \
+                            "from ansible.module_utils._text import to_native, to_bytes\n" \
+                            "native = to_native(Exception('boom'))\n" \
+                            "back = to_native(to_bytes('caf\\u00e9'))\n" \
+                            "module = AnsibleModule(argument_spec={})\n" \
+                            "module.exit_json(changed=False, native=native, roundtrip=back)\n")
+    stdout_io = IO::Memory.new
+    err = IO::Memory.new
+    status = Process.run("/usr/bin/python3", [module_path],
+      input: IO::Memory.new(%({"ANSIBLE_MODULE_ARGS": {}})),
+      output: stdout_io, error: err)
+    FileUtils.rm_r(work_dir)
+    status.success?.should be_true
+    err.to_s.should_not contain("ModuleNotFoundError")
+    parsed = Krikri::PythonModuleRunner.parse_module_output(stdout_io.to_s).should_not be_nil
+    parsed["native"].as_s.should contain("boom")
+    parsed["roundtrip"].as_s.should eq("café")
+  end
 end

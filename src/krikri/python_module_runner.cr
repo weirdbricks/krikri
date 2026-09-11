@@ -148,8 +148,10 @@ module Krikri
     # covers what corpus role-private modules actually use - params
     # parsing/validation against argument_spec (with type coercion,
     # defaults, aliases, required), check_mode, exit_json/fail_json,
-    # warn/run_command - not the whole real basic.py surface; anything
-    # beyond that fails exactly as before this shim existed.
+    # warn/run_command, log, get_bin_path - plus the
+    # ansible/module_utils/_text helpers modules import directly; not
+    # the whole real basic.py surface; anything beyond that fails
+    # exactly as before this shim existed.
     BASIC_PY_SHIM = <<-PYTHON
       import json
       import os
@@ -315,6 +317,31 @@ module Krikri
               return (rc, out.decode('utf-8', 'replace'),
                       err.decode('utf-8', 'replace'))
 
+          # Mirrors real basic.py's AnsibleModule.get_bin_path
+          # (delegate to module_utils.common.process.get_bin_path):
+          # absolute paths pass through, then opt_dirs, then PATH. Not
+          # found + required fails via fail_json like real basic.py;
+          # not required raises ValueError for the caller to catch
+          # (systemd_units via linux-system-roles.systemd calls it
+          # with neither, and real ansible-playbook still succeeds
+          # there because systemctl is found).
+          def get_bin_path(self, arg, required=False, opt_dirs=None):
+              paths = []
+              if os.path.isabs(arg):
+                  paths.append(arg)
+              for d in (opt_dirs or []):
+                  paths.append(d)
+              paths.extend(os.environ.get('PATH', os.defpath).split(os.pathsep))
+              for d in paths:
+                  candidate = os.path.join(d, arg)
+                  if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+                      return candidate
+              msg = ('Failed to find required executable %s in paths: %s'
+                     % (arg, ':'.join(paths)))
+              if required:
+                  self.fail_json(msg=msg)
+              raise ValueError(msg)
+
           def exit_json(self, **kwargs):
               result = dict(kwargs)
               result.setdefault('changed', False)
@@ -351,7 +378,49 @@ module Krikri
       File.write(package_init, "")
       File.write(module_utils_init, "")
       File.write(basic_py, BASIC_PY_SHIM)
+      File.write(File.join(work_dir, "ansible", "module_utils", "_text.py"), TEXT_PY_SHIM)
     end
+
+    # The `ansible/module_utils/_text` helpers a new-style module can
+    # import DIRECTLY alongside basic (nbde_server_tang via
+    # linux-system-roles.nbde_server does
+    # `from ansible.module_utils._text import to_native`) - without
+    # this file the import dies with ModuleNotFoundError at module top
+    # level, before AnsibleModule is ever constructed. Only the
+    # to_bytes/to_text/to_native surface modules actually import; the
+    # error-handler spellings real _text.py maps (surrogate_or_strict
+    # et al) become surrogateescape on py3 like the real code.
+    TEXT_PY_SHIM = <<-PYTHON
+      def to_bytes(value, errors='surrogate_or_strict', encoding='utf-8'):
+          if isinstance(value, bytes):
+              return value
+          if errors in ('surrogate_or_strict', 'surrogate_or_replace',
+                        'surrogate_or_xmltext', 'surrogate_then_replace'):
+              errors = 'surrogateescape'
+          try:
+              return str(value).encode(encoding, errors)
+          except (UnicodeEncodeError, LookupError):
+              return str(value).encode(encoding, 'replace')
+
+      def to_text(value, errors='surrogate_or_strict', encoding='utf-8'):
+          if isinstance(value, bytes):
+              if errors in ('surrogate_or_strict', 'surrogate_or_replace',
+                            'surrogate_or_xmltext', 'surrogate_then_replace'):
+                  errors = 'surrogateescape'
+              try:
+                  return value.decode(encoding, errors)
+              except (UnicodeDecodeError, LookupError):
+                  return value.decode(encoding, 'replace')
+          if isinstance(value, str):
+              return value
+          return str(value)
+
+      def to_native(value, errors='surrogate_or_strict', encoding='utf-8'):
+          return to_text(value, errors, encoding)
+
+      def to_basestring(value):
+          return to_text(value)
+      PYTHON
 
     # Parses the module's stdout into its result JSON: real modules
     # print a JSON object (pretty or single-line), possibly preceded by
