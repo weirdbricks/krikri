@@ -260,7 +260,8 @@ module Krikri
             resolve_loop_template(handler, vars_context) ||
             resolve_loop_nested(handler, vars_context, host.name) ||
             resolve_loop_flattened(handler, vars_context, host.name) ||
-            resolve_loop_subelements(handler, vars_context)
+            resolve_loop_subelements(handler, vars_context) ||
+            resolve_loop_filetree(handler, host, vars_context)
         end
       rescue ex : WhenEvaluationError
         when_error = ex

@@ -1215,4 +1215,28 @@ describe "CrinjaRenderer.rerender_nested_templates (round 170 - scalar-vs-contai
   ensure
     ENV.delete("KRIKRI_SPEC_ENV_PROBE")
   end
+
+  it "keeps the newline after a `{%+ if ... +%}` tag (whitespace-control `+` modifier)" do
+    # Regression: gzevd.docuum's docuum.service.j2 uses `{%+ if ... +%}`
+    # around its optional service directives. A previous renderer
+    # workaround pre-stripped the `+` markers (`{%+`/`+%}` -> `{%`/`%}`)
+    # because Crinja 0.9.0 couldn't parse them; with trim_blocks on that
+    # ate the newline the `+%}` was there to preserve, joining
+    # `ExecStart=...` and `StandardOutput=syslog` onto ONE line - systemd
+    # then fed "StandardOutput=syslog" to docuum as a CLI argument, the
+    # service crash-looped, and the warm rerun's state=started failed.
+    # The vendored Crinja fork now parses `+` natively, so the newline
+    # must survive (real Jinja2: `{%+ ... +%}` keeps the whitespace
+    # trim_blocks/lstrip_blocks would otherwise strip on both sides).
+    v = Hash(String, JSON::Any).new
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    rendered = renderer.render(
+      "ExecStart=/usr/bin/docuum {%+ if true +%}\n" \
+      "StandardOutput=syslog\n" \
+      "{%+ endif +%}\n" \
+      "Restart=on-failure"
+    )
+
+    rendered.should eq("ExecStart=/usr/bin/docuum \nStandardOutput=syslog\n\nRestart=on-failure")
+  end
 end

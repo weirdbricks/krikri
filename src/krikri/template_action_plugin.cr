@@ -60,29 +60,32 @@ module Krikri
     # Render Jinja2 template with variables
     private def render_template(template_content : String, template_path : String) : String?
       # Jinja2's `{%+ ... %}`/`{% ... +%}` whitespace-control modifier
-      # (explicitly keeping whitespace trim_blocks/lstrip_blocks would
-      # otherwise strip around this one tag) - Crinja's parser doesn't
-      # recognize `+` as a modifier at all here, and fails outright with
-      # "no tag with name '+' registered", failing the whole template
-      # render. konstruktoid-hardening's sshd_config.j2 uses this around
-      # its `Match Address/Group/User` section headers. Since this
-      # renderer already forces lstrip_blocks off unconditionally (see
-      # below), the left-side `+` is always a no-op here already; the
-      # right-side `+%}` losing its trim_blocks override (when
-      # trim_blocks is on) is an imperfect but acceptable trade against
-      # the alternative of failing the entire render.
+      # (explicitly KEEPING the whitespace that trim_blocks/lstrip_blocks
+      # would otherwise strip around this one tag) is handled natively by
+      # the vendored Crinja fork (`lib/crinja/src/parser/template_lexer.cr`'s
+      # Symbol::PLUS handling + `template_parser.cr`'s no_trim_left/
+      # no_lstrip_right wiring + `runtime/renderer.cr`'s no_trim_left
+      # trim_blocks suppression), so the tags pass through UNREWRITTEN.
       #
-      # MUST run before #rewrite_inline_ternaries: TAG_IF_ELIF's own
-      # regex only recognizes a bare `{%`/plain `-` prefix, not `{%+` -
-      # so a `{%+ if X +%}` tag left unstripped skips the pytruthy
-      # rewrite entirely and reaches Crinja's *native* `{% if %}`
-      # evaluation instead, which has its own real bug (Crinja::Value#
-      # truthy? treats an empty string as truthy - see real_truthy?'s
-      # own comment in jinja_filters.cr). Found via this exact
-      # template's `{%+ if sshd_sftp_only_group +%}` (default `""`):
-      # rendered "Match Group " with the condition's own variable
-      # empty and unset, instead of skipping the block entirely.
-      template_content = template_content.gsub(/\{%\+/, "{%").gsub(/\+%\}/, "%}")
+      # A previous version of this renderer stripped the `+` markers out
+      # (`{%+`/`+%}` -> `{%`/`%}`) because Crinja 0.9.0's parser couldn't
+      # recognize them at all. With trim_blocks on (Ansible's own default)
+      # that silently turned every `{% ... +%}` into a trim_blocks-eligible
+      # `{% ... %}`, EATING the newline the `+` was there to preserve -
+      # gzevd.docuum's docuum.service.j2 rendered as
+      # `ExecStart=... StandardOutput=syslog` on ONE line (the newline
+      # between them gone), systemd then fed `StandardOutput=syslog` to
+      # docuum as a CLI argument, the service exited instantly and
+      # crash-looped into the start-limit `failed` state, and the WARM
+      # rerun's `systemd: state=started` failed outright on it while
+      # real Ansible (correct `+%}` handling, service stays up) reported
+      # ok. Now that the fork parses `+` natively, the workaround is
+      # strictly a regression - remove it and let the real modifier
+      # semantics apply.
+      #
+      # TAG_IF_ELIF below recognizes the `+` markers too (see its own
+      # comment), so a `{%+ if X +%}` condition still gets the pytruthy
+      # rewrite without this pre-strip.
 
       # Crinja 0.9.0 cannot parse Jinja2's inline conditional expression
       # `{{ A if C else B }}`. Real Ansible supports it and real roles
@@ -342,15 +345,19 @@ module Krikri
     SPLIT_METHOD = /([A-Za-z_]\w*(?:\.[A-Za-z_]\w*|\[[^\]]*\])*)\.split\(([^)]*)\)(?:\[(\d+)\])?/
 
     # A `{% if EXPR %}`/`{% elif EXPR %}` statement tag - $1/$4 are the
-    # optional whitespace-trim `-` markers (preserved as-is on rewrite),
-    # $2 the keyword, $3 the condition. Used to find the same real-Jinja2
+    # optional whitespace-control markers, either the trim `-` or the
+    # keep `+` (both preserved as-is on rewrite - the `+` must survive
+    # so the vendored Crinja fork's native `+` handling still sees it;
+    # the `+` forms used to be pre-stripped out of the whole template,
+    # see #render_template's comment for why that's gone), $2 the
+    # keyword, $3 the condition. Used to find the same real-Jinja2
     # infix `in`/`not in` operator Crinja can't parse (see
     # #rewrite_in_expr) when it's used directly in a statement condition
     # rather than nested inside an inline ternary's own condition
     # (already handled separately, since that one lives inside a `{{ }}`
     # block). Deliberately does NOT match `{% for %}` - `for x in list`
     # is valid Crinja syntax on its own and must never be touched.
-    TAG_IF_ELIF = /\{%(-?)\s*(if|elif)\s+(.*?)\s*(-?)%\}/
+    TAG_IF_ELIF = /\{%(-|\+?)\s*(if|elif)\s+(.*?)\s*(-|\+?)%\}/
 
     # `{% for (key, value) in dict.items() %}` - the idiomatic real-
     # Jinja2 way to iterate a dict's key/value pairs (mysql_hardening's

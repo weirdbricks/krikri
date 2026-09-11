@@ -1,11 +1,12 @@
 require "./executor"
+require "../filetree_lookup"
 
 module Krikri
   class TaskExecutor
     private def task_has_loop?(task : Task) : Bool
       !task.loop_items.nil? || !task.loop_fileglob.nil? || !task.loop_first_found.nil? ||
         !task.loop_template.nil? || !task.loop_flattened.nil? || !task.loop_subelements_list.nil? ||
-        !task.loop_nested_sources.nil?
+        !task.loop_nested_sources.nil? || !task.loop_filetree.nil?
     end
 
     # Runs *tasks* against *hosts* as one shared batch: one "TASK [...]"
@@ -252,6 +253,36 @@ module Krikri
         return nil unless list
         LoopResolver.with_indexed_items(list)
       end
+    end
+
+    # with_community.general.filetree: resolve each raw source string
+    # (ordinarily `{{ role_path }}/templates/<dir>`) against the variable
+    # context, then hand the resolved directories to FiletreeLookup for
+    # the real lookup plugin's recursive walk. Returns the entry list, or
+    # nil when the task has no filetree source at all. A source that
+    # resolves to one of the project's own no-value sentinels (a missing
+    # var, e.g. an optional `{{ some_dir | default(omit) }}`-style
+    # source) yields no items rather than walking a literal
+    # "undefined"/"" directory - os.walk of a nonexistent path is empty,
+    # never an error, and the sentinel strings are never real paths.
+    private def resolve_loop_filetree(task : Task, host : Host, vars_context : Hash(String, JSON::Any), shared : VarSubstitutor? = nil) : Array(JSON::Any)?
+      sources = task.loop_filetree
+      return nil unless sources
+
+      substitutor = shared || VarSubstitutor.new(vars: vars_context, host_name: host.name)
+      role_path = vars_context["role_path"]?.try(&.as_s?)
+
+      resolved = [] of String
+      sources.each do |raw|
+        substituted = substitutor.substitute(raw).strip
+        case substituted
+        when "undefined", "", "[]", "{}"
+          next
+        end
+        resolved << substituted
+      end
+
+      FiletreeLookup.resolve(resolved, role_path).map { |props| JSON.parse(props.to_json) }
     end
 
     # A shared ExpressionEvaluator for a given vars context (used to resolve

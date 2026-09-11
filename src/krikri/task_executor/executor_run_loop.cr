@@ -561,7 +561,8 @@ module Krikri
             resolve_loop_template(task, vars_context) ||
             resolve_loop_nested(task, vars_context, host.name) ||
             resolve_loop_flattened(task, vars_context, host.name) ||
-            resolve_loop_subelements(task, vars_context)
+            resolve_loop_subelements(task, vars_context) ||
+            resolve_loop_filetree(task, host, vars_context, shared: shared_sub)
         end
       rescue ex : WhenEvaluationError
         # Same shape execute_task_once's own WhenEvaluationError rescue
@@ -680,7 +681,7 @@ module Krikri
     private def task_has_loop_source?(task : Task) : Bool
       !!task.loop_items || !!task.loop_fileglob || !!task.loop_file ||
         !!task.loop_first_found || !!task.loop_template || !!task.loop_flattened ||
-        !!task.loop_nested_sources || !!task.loop_subelements_list
+        !!task.loop_nested_sources || !!task.loop_subelements_list || !!task.loop_filetree
     end
 
     # Shared lenient when: re-check for a delegate_to: templating failure -
