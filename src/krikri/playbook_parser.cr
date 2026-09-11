@@ -1180,6 +1180,12 @@ module Krikri
       # /proc/self/cpuset + /proc/self/mountinfo wherever the plugin
       # process runs and sets the ansible_module_container_* facts.
       "community.docker.current_container_facts",
+      # podman_image (0.9.946): podman image pull/remove (ikke_t
+      # .podman_container_systemd round 300134 pulls through it).
+      # containers.podman needed its own prefix strip in
+      # PluginManager.simple_plugin_name - it's not one of the
+      # collection-search namespaces below.
+      "containers.podman.podman_image",
       "ansible.builtin.service_facts",
       "ansible.builtin.slurp",
       # No plugins/reboot.cr - handled entirely on the controller by
