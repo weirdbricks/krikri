@@ -936,6 +936,7 @@ module Krikri
       results = [] of JSON::Any
       any_changed = false
       any_failed = false
+      any_unreachable = false
 
       executed_count = 0
       # The base context (everything except the per-item bindings) is
@@ -968,6 +969,7 @@ module Krikri
         failed = result["failed"]?.try(&.as_bool) || false
         any_changed ||= changed
         any_failed ||= failed
+        any_unreachable ||= unreachable_task_result?(result)
 
         # loop_control.label renders against this item, so it needs a
         # context carrying it - this method is handed only the results.
@@ -1041,11 +1043,21 @@ module Krikri
         end
         @results[host.name]["skipped"] += 1
       else
-        aggregate_result = JSON.parse({
-          "changed" => JSON::Any.new(any_changed),
-          "failed"  => JSON::Any.new(any_failed),
-        }.to_json)
-        ResultDisplay.update_stats(@results[host.name], aggregate_result, resolve_task_ignore_errors(task, base_vars_context))
+        # Any item that failed at the SSH transport level makes the whole
+        # looped task UNREACHABLE, not failed - same booking (and same
+        # ignore_unreachable: handling) as finish_single_task's
+        # non-looped path, and report_unreachable has already halted (or
+        # ignored) the host, so the failed-based halt below is skipped.
+        if any_unreachable
+          report_unreachable(task, host)
+          @unreachable_hosts << host.name unless task.ignore_unreachable?
+        else
+          aggregate_result = JSON.parse({
+            "changed" => JSON::Any.new(any_changed),
+            "failed"  => JSON::Any.new(any_failed),
+          }.to_json)
+          ResultDisplay.update_stats(@results[host.name], aggregate_result, resolve_task_ignore_errors(task, base_vars_context))
+        end
       end
 
       if any_changed && (notify_list = task.notify)
@@ -1064,7 +1076,7 @@ module Krikri
         end
       end
 
-      halt_if_failed(task, host, any_failed)
+      halt_if_failed(task, host, any_failed && !any_unreachable)
     end
 
     # Render a loop item for display purposes (Ansible shows `(item=...)`).

@@ -2,9 +2,15 @@ require "./executor"
 
 module Krikri
   class TaskExecutor
-    private def report_unreachable(task : Task, host : Host) : Nil
+    private def report_unreachable(task : Task, host : Host, ssh_error : String? = nil) : Nil
       connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
-      puts %(fatal: [#{host.name}]: UNREACHABLE! => {"changed": false, "msg": "Failed to connect to the host via ssh: #{connection_host}", "unreachable": true}).colorize(:red)
+      # Real Ansible embeds the transport's own error text in the msg
+      # ("Failed to connect to the host via ssh: ssh: connect to host
+      # ...: No route to host"); the known-unreachable paths have no
+      # fresh error to show and fall back to the connection host, which
+      # is what this always printed before.
+      detail = ssh_error.try(&.strip.lines.first?) || connection_host
+      puts %(fatal: [#{host.name}]: UNREACHABLE! => {"changed": false, "msg": "Failed to connect to the host via ssh: #{detail}", "unreachable": true}).colorize(:red)
 
       stats = @results[host.name]
       if task.ignore_unreachable?
