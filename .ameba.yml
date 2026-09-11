@@ -176,6 +176,15 @@ Metrics/CyclomaticComplexity:
   # validation rules or build_command flag conditions; splitting them
   # apart would scatter one source-level rule across several methods.
   - plugins/acl.cr
+  # plugins/xml.cr is a port of community.general.xml's own xml.py -
+  # #execute mirrors the real main()'s required_one_of/mutually_
+  # exclusive validation then its strictly-ordered dispatch chain
+  # (print_match, count, content, absent, set_children, add_children,
+  # value, ensure_xpath_exists, make_pretty - each finishing/exit_json-
+  # ing), and check_or_make_target/children_to_nodes mirror the real
+  # module's recursive node-spawning logic. The branch count IS the
+  # module's own specification.
+  - plugins/xml.cr
   - src/krikri/plugin_helpers/acl_command.cr
   # src/krikri/plugin_helpers/x509_cert_info.cr's parse_extensions/
   # extension_section/classify_public_key are flat per-extension and
@@ -380,6 +389,7 @@ Lint/NotNil:
   - plugins/package_facts.cr
   - plugins/replace.cr
   - plugins/getent.cr
+  - plugins/xml.cr
   - krikri-playbook.cr
   - src/krikri/playbook_parser.cr
   - src/krikri.cr

@@ -1103,6 +1103,12 @@ module Krikri
       # `semanage fcontext` (ansible-lockdown rhel8_stig round 410191
       # hard-stopped on the FQCN spelling). See plugins/sefcontext.cr.
       "community.general.sefcontext",
+      # community.general.xml (0.9.958): xpath-based XML file editor
+      # (alvistack/buluma Atlassian-stack roles hard-stopped on the FQCN
+      # spelling - 6 distinct roles in the tested corpus, and public
+      # GitHub code search shows ~4.5x the usage of ini_file). Bare `xml:`
+      # resolves via MODULE_SEARCH_COLLECTIONS. See plugins/xml.cr.
+      "community.general.xml",
       "ansible.builtin.deb822_repository",
       "ansible.posix.mount",
       "ansible.posix.sysctl",
