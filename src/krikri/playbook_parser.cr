@@ -1158,6 +1158,11 @@ module Krikri
       # .mas round 300047 hard-stopped on it). Runs wherever brew is
       # installed - the plugin's executable search fails cleanly elsewhere.
       "community.general.homebrew",
+      # easy_install (0.9.941): legacy Python library installs via
+      # easy_install, virtualenv support included (cchurch.virtualenv
+      # round 300033 calls it). install-only by nature - the real module
+      # has no absent state either.
+      "community.general.easy_install",
       "ansible.builtin.service_facts",
       "ansible.builtin.slurp",
       # No plugins/reboot.cr - handled entirely on the controller by
