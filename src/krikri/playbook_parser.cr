@@ -1120,6 +1120,11 @@ module Krikri
       "community.crypto.openssl_publickey",
       "community.crypto.get_certificate",
       "community.general.modprobe",
+      # kernel_blacklist (0.9.951): `blacklist <module>` entry management
+      # in /etc/modprobe.d/ (grycap.im round 410111 hard-stopped on it
+      # where real ansible-playbook ran 844s of the role cleanly). Pure
+      # file editing - see plugins/kernel_blacklist.cr.
+      "community.general.kernel_blacklist",
       "community.general.pamd",
       "community.general.htpasswd",
       "community.general.ini_file",
