@@ -1,6 +1,7 @@
 require "../spec_helper"
 require "file_utils"
 require "../../src/krikri/playbook_parser"
+require "../../src/krikri/plugin_manager"
 
 private VALID_PLAYBOOK = <<-YAML
   - name: Example play
@@ -1955,6 +1956,41 @@ describe Krikri::PlaybookParser do
             YAML
           task.module_name.should eq("community.crypto.x509_certificate")
         end
+      end
+    end
+
+    # ovirt_auth is registered under both spellings real oVirt roles
+    # write: the bare legacy short name (which the ovirt.ovirt
+    # collection keeps redirecting) and the FQCN. The cluster-upgrade /
+    # disaster-recovery / manageiq rounds (300133/300144/310133) all
+    # hard-stopped on the bare `ovirt_auth:` because only the FQCN was
+    # registered.
+    describe "ovirt_auth short name" do
+      it "resolves bare `ovirt_auth:` (registered verbatim)" do
+        task = single_task(<<-YAML)
+          - name: t
+            ovirt_auth:
+              url: https://engine.example.com/ovirt-engine/api
+              username: admin@internal
+              password: x
+          YAML
+        task.module_name.should eq("ovirt_auth")
+      end
+
+      it "resolves the FQCN `ovirt.ovirt.ovirt_auth:` unchanged" do
+        task = single_task(<<-YAML)
+          - name: t
+            ovirt.ovirt.ovirt_auth:
+              url: https://engine.example.com/ovirt-engine/api
+              username: admin@internal
+              password: x
+          YAML
+        task.module_name.should eq("ovirt.ovirt.ovirt_auth")
+      end
+
+      it "dispatches both spellings to the same `ovirt_auth` plugin binary" do
+        Krikri::PluginManager.simple_plugin_name("ovirt_auth").should eq("ovirt_auth")
+        Krikri::PluginManager.simple_plugin_name("ovirt.ovirt.ovirt_auth").should eq("ovirt_auth")
       end
     end
 

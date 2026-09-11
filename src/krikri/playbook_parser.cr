@@ -1132,7 +1132,15 @@ module Krikri
       # module's semantics, digest-compare import included).
       "community.general.java_cert",
       # ovirt_auth (0.9.933): oVirt/RHV SSO token acquisition for the
-      # ovirt_vm-infra/ovirt_infra rounds (210319/210777 etc).
+      # ovirt_vm-infra/ovirt_infra rounds (210319/210777 etc). The
+      # collection has always shipped a legacy short-name redirect for
+      # this module, and real oVirt roles write the bare spelling
+      # overwhelmingly (ovirt.cluster-upgrade 300133, ovirt
+      # disaster-recovery 300144, ovirt.manageiq 310133 all hard-stopped
+      # on the bare `ovirt_auth:` while real ansible-playbook ran them
+      # fine), so both spellings are registered - simple_plugin_name
+      # strips the FQCN to the same `ovirt_auth` plugin binary.
+      "ovirt_auth",
       "ovirt.ovirt.ovirt_auth",
       # maven_artifact (0.9.934): Maven artifact download
       # (lean_delivery.jmeter round 210778 hard-stopped on it).
