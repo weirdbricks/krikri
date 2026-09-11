@@ -95,6 +95,25 @@ module Krikri
     # Block- and task-scope `module_defaults:` - see Play#module_defaults.
     property module_defaults : Hash(String, Hash(String, String)) = Hash(String, Hash(String, String)).new
     property when_condition : String?
+    # The when: LIST's own per-item condition strings, kept alongside the
+    # " and "-joined `when_condition` so the STRICT when: evaluation path
+    # (TaskExecutor#evaluate_when) can type-check each item SEPARATELY,
+    # exactly as ansible-core 2.19 does: a list-form when: is a sequence
+    # of independent conditionals, each required to end in a real boolean
+    # - `when: [str_var, bool_var]` fails ("Conditional result ... was
+    # derived from value of type 'str'") even though the equivalent
+    # single-string `when: str_var and bool_var` PASSES there (Python's
+    # `and` returns the last operand, so the whole expression's result
+    # type is bool and only the whole result gets the strict check -
+    # both behaviors verified live against 2.19.4). Joining the list into
+    # one `and` string and strict-checking only the JOINED result made
+    # crazikpl.logging's `when: [(...or ...), use_rsyslog]` pass silently
+    # where real Ansible failed the task. nil when when: wasn't a
+    # multi-item list (single-item lists and scalars evaluate identically
+    # either way); the joined `when_condition` remains the source of
+    # truth for every non-strict consumer (loop pre-gates, register:/
+    # batcher scans, block/import inheritance display).
+    property when_condition_list : Array(String)?
     property register : String?
     property notify : Array(String)?
     property listen : String?
@@ -432,6 +451,7 @@ module Krikri
       @params = Hash(String, String).new
       @vars = Hash(String, JSON::Any).new
       @when_condition = nil
+      @when_condition_list = nil
       @register = nil
       @notify = nil
       @listen = nil
@@ -2113,6 +2133,7 @@ module Krikri
       imported_tasks = parse_tasks(imported_yaml.as_a, play, "task in imported #{resolved_path}", File.dirname(resolved_path), known_vars, role_path, playbook_dir)
 
       import_when = hash["when"]?.try { |v| condition_to_string(v) }
+      import_when_list = hash["when"]?.try { |v| condition_to_list(v) }
       import_tags = hash["tags"]?.try(&.as_a?).try(&.map(&.as_s)) || [] of String
       # A `notify:` on the import_tasks: line itself - like when:/tags:
       # just below, real Ansible propagates it onto every task the
@@ -2148,6 +2169,12 @@ module Krikri
           # Ubuntu host against the weareinteractive.vsftpd re-verify
           # (crystal 0.9.622) vs ansible-core 2.19.4.
           task.when_condition = task.when_condition ? "(#{import_when}) and (#{task.when_condition})" : import_when
+          # Same prepend in list form - the parent's per-item conditions
+          # come before the child's own (see Task#when_condition_list).
+          if import_when_list
+            own_items = task.when_condition_list || (task.when_condition ? [task.when_condition.as(String)] : [] of String)
+            task.when_condition_list = import_when_list + own_items
+          end
         end
         task.tags = (task.tags + import_tags).uniq
         unless import_notify.empty?
@@ -2807,6 +2834,7 @@ module Krikri
     # include_vars's copy of this block used to honor that).
     private def self.parse_common_task_attributes(task : Task, task_hash : Hash(YAML::Any, YAML::Any)) : Nil
       task.when_condition = task_hash["when"]?.try { |v| condition_to_string(v) }
+      task.when_condition_list = task_hash["when"]?.try { |v| condition_to_list(v) }
       # A templated ignore_errors: keeps its parse-time guess in
       # task.ignore_errors (see parse_ignore_errors below) AND its raw
       # expression here, so the executor can re-resolve it at runtime -
@@ -3007,6 +3035,7 @@ module Krikri
       # silently ran for EVERY host regardless of the condition. Verified
       # against real ansible-playbook, which does honor when: here.
       task.when_condition = task_hash["when"]?.try { |v| condition_to_string(v) }
+      task.when_condition_list = task_hash["when"]?.try { |v| condition_to_list(v) }
 
       # Task-level `vars:` on a meta: task - the same block the ordinary
       # task parser captures (parse_common_task_attributes) - was dropped
@@ -3854,6 +3883,20 @@ module Krikri
       end
 
       safe_yaml_to_string(yaml)
+    end
+
+    # The same when:-list, kept as its own per-item condition strings for
+    # the STRICT evaluation path (see Task#when_condition_list for why
+    # the joined string can't serve there). nil unless `when:` is a list
+    # with more than one non-empty item - single-item lists and scalars
+    # evaluate identically through either representation.
+    def self.condition_to_list(yaml : YAML::Any) : Array(String)?
+      return nil unless list = yaml.as_a?
+
+      clauses = list.map { |item| safe_yaml_to_string(item).strip }.reject(&.empty?)
+      return nil if clauses.size <= 1
+
+      clauses
     end
 
     # `ignore_errors:` accepts real Ansible's usual boolean-or-template

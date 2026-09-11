@@ -139,4 +139,85 @@ describe "strict boolean conditionals" do
     status.exit_code.should eq(0)
     output.should_not contain("TASK-RAN")
   end
+
+  # Round 400022 (crazikpl.logging): a LIST-form when: is real Ansible's
+  # own sequence of INDEPENDENT conditionals, each type-checked
+  # separately - `when: [(str or b2), b]` fails there ("Conditional
+  # result (True) was derived from value of type 'str'") even though the
+  # equivalent single-string `when: (str or b2) and b` PASSES (Python's
+  # `and` returns the last operand, so only the whole expression's
+  # result type is checked - verified live against 2.19.4 over both
+  # shapes). Joining the list into one `and` string and strict-checking
+  # only the JOINED result made the whole-file divergence: krikri ran
+  # the role's tasks where real ansible-playbook failed outright.
+  it "type-checks each when: LIST item separately, like the single-string whole result" do
+    yaml = <<-YAML
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          s_text: "hello"
+          real_bool: true
+        tasks:
+          - name: gated
+            ansible.builtin.debug:
+              msg: "TASK-RAN"
+            when:
+              - s_text or real_bool
+              - real_bool
+      YAML
+
+    status, output = run_playbook(yaml)
+    status.exit_code.should eq(2)
+    output.should contain("Conditional result (True) was derived from value of type 'str'")
+    output.should contain("Conditionals must have a boolean result")
+    output.should_not contain("TASK-RAN")
+  end
+
+  it "still accepts an all-boolean list-form when:" do
+    yaml = <<-YAML
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          real_bool: true
+          other_bool: false
+        tasks:
+          - name: gated
+            ansible.builtin.debug:
+              msg: "TASK-RAN"
+            when:
+              - real_bool
+              - not other_bool
+      YAML
+
+    status, output = run_playbook(yaml)
+    status.exit_code.should eq(0)
+    output.should contain("TASK-RAN")
+  end
+
+  it "short-circuits a false list item without evaluating later items" do
+    # Same left-to-right short-circuit the " and "-joined string already
+    # had - a false first item skips the task, and a later item that
+    # would raise (here: an undefined reference) must never be reached.
+    yaml = <<-YAML
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          real_bool: false
+        tasks:
+          - name: gated
+            ansible.builtin.debug:
+              msg: "TASK-RAN"
+            when:
+              - real_bool
+              - never_defined_var
+      YAML
+
+    status, output = run_playbook(yaml)
+    status.exit_code.should eq(0)
+    output.should_not contain("TASK-RAN")
+    output.should_not contain("Error while evaluating conditional")
+  end
 end
