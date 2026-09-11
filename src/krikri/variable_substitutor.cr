@@ -99,7 +99,13 @@ module Krikri
   # task-result tests (`is changed`/`is failed`/`is success`/etc.).
   # Tuned against the round-194 andrewrothstein.openjdk
   # openjdk_app==`<literal>` shape; `is defined`/`is failed` are
-  # the common two that need not flag.
+  # the common two that need not flag. `omit` is Ansible's own magic
+  # bareword sentinel ("drop this parameter entirely"), never a
+  # variable anyone sets - a strict scan flagging it (Stouts.openvpn's
+  # own `{{ ansible_lsb.codename | default(omit) }}` candidate, where
+  # the scan of the task's raw `vars:` params recursed into
+  # `default(omit)`'s ARGUMENT and raised "'omit' is undefined" there)
+  # fails a task real Ansible runs.
   SCAN_STRICT_BLOCK_TAG_KEYWORDS = Set{
     "if", "elif", "else", "endif", "for", "endfor",
     "set", "endset", "include", "extends", "block",
@@ -118,6 +124,7 @@ module Krikri
     "iterable", "callable", "sameas", "lower", "upper",
     "eq", "ne", "lt", "le", "gt", "ge",
     "failed", "changed", "succeeded", "success", "skipped", "reachable",
+    "omit",
   }
 
   # Jinja2/Ansible built-in filter names - a filter invocation never
@@ -199,6 +206,27 @@ module Krikri
 
     return nil if VariableSubstitutor::VariableLookup.new(vars).resolve(source)
     source
+  end
+
+  # Whether *expr* (a full `{{ }}` span's content, possibly a filter
+  # chain) pipes its source through an undefined-TOLERANT filter first
+  # (`x | default(y)`, `x | d(y)`, `x | type_debug`) - the shape real
+  # Ansible's own strict templating never fails, because the tolerant
+  # filter consumes the undefined before anything can choke on it.
+  # Shared by the strict-undefined checks that probe a chain's ROOT
+  # rather than the whole chain (raise_if_strict_undefined's
+  # undefined-access branch), so both agree on the tolerant-first-filter
+  # rule undefined_filter_chain_source already implements.
+  def self.undefined_tolerant_first_filter?(expr : String) : Bool
+    return false unless expr.includes?('|')
+
+    parts = VariableSubstitutor::FilterEngine.split_chain(expr)
+    return false unless parts.size >= 2
+
+    first_filter = parts[1].strip.lchop("ansible.builtin.")
+    paren = first_filter.index('(')
+    filter_name = (paren ? first_filter[0, paren] : first_filter).strip
+    UNDEFINED_TOLERANT_FILTERS.includes?(filter_name)
   end
 
   # The nested-undefined companion to undefined_filter_chain_source:
@@ -1458,8 +1486,15 @@ module Krikri
         # chained-subscript branch's message is the more specific one (it
         # names the whole expression or the dict-attribute miss, not just
         # the root). See undefined_access_chain_source's own comment.
+        # BUT an undefined-tolerant first filter (`root.attr | default(x)`)
+        # consumes the undefined exactly as the plain filter-chain probe
+        # above already honors - Stouts.openvpn's own `{{ ansible_lsb.
+        # codename | default(omit) }}` (ansible_lsb absent on hosts without
+        # lsb-release, verified live against ansible-core 2.19.4: renders
+        # to the omit marker, never raises) - so the access-chain probe
+        # must not re-flag what the tolerant-filter rule already forgave.
         if undefined_name = Krikri.undefined_access_chain_source(inner, @vars)
-          raise UndefinedVariableError.new(Krikri.strict_undefined_message(undefined_name, @vars))
+          raise UndefinedVariableError.new(Krikri.strict_undefined_message(undefined_name, @vars)) unless Krikri.undefined_tolerant_first_filter?(inner)
         end
         # Every other shape (literals, function calls, operators,
         # filter chains whose source is defined, ...) is left alone
