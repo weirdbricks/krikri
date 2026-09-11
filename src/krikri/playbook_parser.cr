@@ -1149,6 +1149,11 @@ module Krikri
       # enabled/disabled - controllers still on community.general 9.x
       # pass those through.
       "community.general.rhsm_repository",
+      # rhsm_release (0.9.939): RHSM minor-release lock via
+      # subscription-manager release --set/--unset (linux-system-roles.rhc
+      # round 300037 calls it). No state param in the real module - an
+      # omitted/null release IS the unset.
+      "community.general.rhsm_release",
       "ansible.builtin.service_facts",
       "ansible.builtin.slurp",
       # No plugins/reboot.cr - handled entirely on the controller by
