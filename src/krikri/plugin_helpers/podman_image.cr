@@ -18,7 +18,7 @@ module Krikri
 
       # --creds argument for pull: "user" alone or "user:password".
       def self.creds_argument(username : String?, password : String?) : String
-        return "" unless username && !username.empty?
+        return "" if username.nil? || username.empty?
         creds = password && !password.empty? ? "#{username}:#{password}" : username
         " --creds '#{creds.gsub("'", "'\\''")}'"
       end

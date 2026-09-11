@@ -54,12 +54,12 @@ module Krikri
       # case handling never decides a match here).
       def self.glob_match?(repo_id : String, pattern : String) : Bool
         regex = String.build do |str|
-          pattern.each_char do |ch|
-            case ch
+          pattern.each_char do |char|
+            case char
             when '*' then str << ".*"
             when '?' then str << '.'
             else
-              str << Regex.escape(ch.to_s)
+              str << Regex.escape(char.to_s)
             end
           end
         end

@@ -25,7 +25,7 @@ module Krikri
       # Decodes an auths[server]["auth"] entry ("user:pass", base64).
       # Returns nil for missing/malformed entries.
       def self.decode_auth(auth : String?) : NamedTuple(username: String, password: String)?
-        return nil unless auth && !auth.empty?
+        return nil if auth.nil? || auth.empty?
         decoded = Base64.decode_string(auth)
         user, pass = decoded.split(":", 2)
         {username: user, password: pass}

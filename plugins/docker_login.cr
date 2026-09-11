@@ -41,8 +41,8 @@ module Krikri
           msg: "value of state must be one of: present, absent, got #{state}")
       end
       config_path = expand_tilde(@params["config_path"]?.presence ||
-        @params["dockercfg_path"]?.presence ||
-        PluginHelpers::DockerLogin::DEFAULT_CONFIG_PATH)
+                                 @params["dockercfg_path"]?.presence ||
+                                 PluginHelpers::DockerLogin::DEFAULT_CONFIG_PATH)
 
       return logout(registry_url, config_path) if state == "absent"
 

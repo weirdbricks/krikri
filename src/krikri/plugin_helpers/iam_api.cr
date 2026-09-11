@@ -68,7 +68,7 @@ module Krikri
       # IsTruncated is false, following Marker. IsTruncated/Marker sit
       # under the action's Result element (not directly under the root),
       # so the search is a descendant walk.
-      def self.each_page(action : String, build_params : Proc(String?, Array(Tuple(String, String)))) : Nil
+      def self.each_page(action : String, build_params : Proc(String?, Array(Tuple(String, String))), &) : Nil
         marker = nil
         loop do
           root = call(action, build_params.call(marker))

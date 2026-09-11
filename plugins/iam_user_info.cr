@@ -133,12 +133,12 @@ module Krikri
     private def normalize_user(node : XML::Node) : Hash(String, JSON::Any)
       result = {} of String => JSON::Any
       {
-        "arn"                 => "arn",
-        "create_date"         => "create_date",
-        "password_last_used"  => "password_last_used",
-        "path"                => "path",
-        "user_id"             => "user_id",
-        "user_name"           => "user_name",
+        "arn"                => "arn",
+        "create_date"        => "create_date",
+        "password_last_used" => "password_last_used",
+        "path"               => "path",
+        "user_id"            => "user_id",
+        "user_name"          => "user_name",
       }.each do |xml_name, key|
         if value = PluginHelpers::IamApi.text(node, xml_name)
           result[key] = JSON::Any.new(value)

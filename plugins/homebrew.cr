@@ -159,11 +159,11 @@ module Krikri
 
     private def normalize_state(value : String) : String?
       case value
-      when "present", "installed"          then "installed"
-      when "latest", "upgraded"            then "upgraded"
-      when "head"                          then "head"
-      when "linked"                        then "linked"
-      when "unlinked"                      then "unlinked"
+      when "present", "installed"             then "installed"
+      when "latest", "upgraded"               then "upgraded"
+      when "head"                             then "head"
+      when "linked"                           then "linked"
+      when "unlinked"                         then "unlinked"
       when "absent", "removed", "uninstalled" then "absent"
       end
     end

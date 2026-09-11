@@ -26,9 +26,9 @@ module Krikri
       # convert_bool_setting_value_wanted).
       def self.convert_bool(value : String | Int64 | Float64) : String | Int64 | Float64
         case value.to_s.downcase
-        when "on", "1" then "ON"
+        when "on", "1"  then "ON"
         when "off", "0" then "OFF"
-        else value
+        else                 value
         end
       end
 
