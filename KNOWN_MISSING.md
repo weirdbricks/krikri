@@ -18,7 +18,7 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.929`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.957`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.30` (see `shard.yml`).
 
 ## Open gaps
@@ -48,6 +48,26 @@ narrative, newest first.
   root-caused.
 - **`willshersystems.sshd`** / **`xanmanning.k3s`** (`round_new_authors`,
   2026-09-05, debian/kata): divergent, not yet root-caused.
+- **Scope question, not yet decided** (2026-09-10/11 batches): `bigip_wait`
+  (F5 BIG-IP network-appliance family - `f5devcentral.backup_config`,
+  `.bigip_gslb`, `.bigip_onboard`, `.f5app_services_package`),
+  `cloudformation` (AWS orchestration - 4 `sansible.aws_*` roles),
+  `os_client_config` (`oasis_roles.molecule_openstack_ci`),
+  `openstack.cloud.volume_snapshot` (`ome.openstack_volume_storage`) - all
+  unimplemented; whether cloud-provider/vendor-appliance orchestration
+  modules are in scope for a host-management engine hasn't been decided
+  either way.
+- **Low-priority single-role missing modules** (2026-09-10/11 batches, one
+  role each unless noted): `slack`, `postgresql_ext`, `portage` (Gentoo -
+  likely the same package-manager scope question as zypper/pacman),
+  `pkgng` (FreeBSD - same question), `ovirt_host_info`, `nuage_vspk` (2
+  roles), `manala_files_attributes` (role-private custom module),
+  `lxc_container`, `logentries` (deprecated vendor service),
+  `k8s` (real ansible-playbook doesn't complete cleanly on the one role
+  that hits it either, low value), `django_manage`,
+  `community.grafana.grafana_datasource`, `community.general.nmcli`,
+  `community.general.cpanm`, `community.docker.docker_container_info`.
+  See `ROLES_TESTED.md` for the exact affected role per module.
 
 These nine came from an abandoned 120-role shortlist (`testing/kata/
 round_new_authors/`, only 35 roles run before the round was left
@@ -58,6 +78,89 @@ back to it (`0x0i.systemd`, `igor_nikiforov.etcd`, `wezhai.minio`,
 the nine above needs its own confirmed repro before treating it as a
 real krikri bug per this file's workflow - the shortlist is at
 `testing/kata/round_new_authors/shortlist120.txt` if resuming it.
+
+---
+
+## Three 400-role Galaxy top-download batches (ubuntu+rocky each), ~24 real bugs fixed + 23 modules implemented (0.9.928 -> 0.9.957)
+
+Three back-to-back 400-role differential rounds against real
+`ansible-playbook`, each split evenly ubuntu/rocky, run via
+`krikri-role-tester` (rounds 200000-419999 in `~/scratch/krt-results/`;
+per-role current status is in `ROLES_TESTED.md`, added in this same
+commit). The kata-backend `libxml2` false-positive wave from the first
+round (36/36 kata roles failing identically) has its own detailed
+write-up directly below this entry - not repeated here.
+
+Real krikri-playbook bugs found and fixed, each with its own commit:
+
+- **`AnsibleModule.log()`** missing from the `PythonModuleRunner` basic.py
+  shim, crashing `linux-system-roles.firewall`/`.kdump`'s `sr_fingerprint`
+  custom module - `5b91ea88`.
+- **`AnsibleModule.get_bin_path()`** missing from the same shim, crashing
+  `linux-system-roles.systemd`'s `systemd_units` module - `acb09a38`.
+- **`ansible/module_utils/_text`** (`to_native`/`to_text`/`to_bytes`) missing
+  from the shim bundle entirely, crashing any custom module importing it
+  directly (`linux-system-roles.nbde_server`'s `nbde_server_tang`) with
+  `ModuleNotFoundError` before `AnsibleModule` was even constructed -
+  `afc13b43`.
+- **`command:`/`shell:`** not expanding `~user`/`$VAR` in non-executable
+  argument tokens the way real Ansible's `run_command` does on every argv
+  token, not just the executable (`viasite-ansible.zsh`) - `9e259b22`.
+- **`ovirt_auth`** and **`ansible.builtin.authorized_key`** each needed
+  their real-Ansible legacy bare/builtin name registered alongside the
+  FQCN - `a1d873a7`, `004bc839`.
+- **`with_first_found`** silently skipping instead of failing on a genuine
+  no-match miss, for lookups outside the `include_vars` special case -
+  `0d96c526`.
+- **`omit`** Jinja bareword resolving to `undefined` instead of the real
+  omit sentinel in some evaluator contexts - `819e0056`.
+- **`changed_when`/`failed_when`** mis-splitting on operators found inside
+  a fully-quoted string literal - `2bc17ea1`.
+- **dnf/yum** not special-casing the magic `updates` package name (means
+  "install all available updates", not a literal package) - `46837016`;
+  and not handling a scalar `list:` query-mode param, instead treating it
+  as a package to install - part of the fileglob/creates fix batch below.
+- **`ansible_mounts`** fact stats (`size_total` etc) coming back as
+  strings instead of integers, breaking arithmetic Jinja templates that
+  real Ansible's integer facts support - `39da6146`.
+- **`environment:`** keyword never strict-undefined-checking its own
+  referenced variables the way task params do - `17564fd6`.
+- **`fileglob` lookup** relative patterns globbing the wrong directory,
+  breaking looped `include_tasks` over a role's own task files
+  (`pluggero.common_pkgs`/`.user_setup`) - `67a65f05`.
+- **`command`/`shell` `creates:`/`removes:`** skip results missing the
+  full module result shape (a later task's `.rc` reference on a skipped
+  result went `undefined` instead of gracefully resolving) - `d1e5a23b`.
+- **`when:` lists** not type-checking each item separately under strict
+  conditionals, accepting a non-boolean truthy value real Ansible rejects
+  - `b69f17bd` (cleanup in `0421a800`).
+- **`community.general.filetree` lookup** implemented from scratch (was
+  entirely unimplemented, silently leaving `item.state` undefined), plus
+  native Jinja `{%+`/`+%}` whitespace-control support in the vendored
+  Crinja fork, plus a meta-task `vars:` capture fix - together closing
+  `gzevd.docuum`, `arillso.docker`, `buluma.vector`, and
+  `linux-system-roles.podman`'s `__has_type_pod` idempotency mismatches -
+  `807d6b16`.
+
+23 previously-unimplemented modules across two batches (each its own
+commit/VERSION bump - see `git log --oneline` for the full list): `lvol`
+(both FQCNs), `dpkg_divert`, `locale_gen`, `java_cert`, `ovirt_auth`,
+`maven_artifact`, `nsupdate`, `rhsm_repository`, `rhsm_release`,
+`homebrew`, `easy_install`, `mysql_variables`, `docker_login`,
+`rabbitmq_plugin` (bare-name resolution fix), `current_container_facts`,
+`podman_image`, `iam_user_info`, `openssl_certificate_info` (alias of the
+existing `x509_certificate_info`), `kernel_blacklist`, `zfs`, `virt_net`,
+`sefcontext`, `postgresql_query`. `acme_certificate` was deliberately
+skipped - it's the same already-documented ACME-to-a-real-CA scope cut as
+the `openssl_pkcs12`/`entrust` entries in Deliberate limits below.
+
+Genuinely new open gaps from this round (single-role, low-priority
+missing modules and a couple of scope questions) are listed under Open
+gaps above. The much larger set of still-divergent, not-yet-root-caused
+roles from these rounds (~124) is recorded with recap detail directly in
+`ROLES_TESTED.md` rather than duplicated here - pull from there for the
+next investigation round rather than re-deriving a shortlist from
+scratch.
 
 ---
 
