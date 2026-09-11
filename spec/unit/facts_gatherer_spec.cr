@@ -1,5 +1,7 @@
 require "../spec_helper"
 require "../../src/krikri/plugin_helpers/facts_gatherer"
+require "../../src/krikri/variable_substitutor/crinja_renderer"
+require "../../src/krikri/jinja_filters"
 
 # Perf item 2 - `facts` under the daemon.
 #
@@ -185,6 +187,70 @@ describe Krikri::FactsGatherer do
       if (legacy_memtotal = facts["ansible_memtotal_mb"]?.try(&.as_i64?)) && (real_total = mem_mb["real"].as_h["total"].as_i64?)
         real_total.should eq(legacy_memtotal)
       end
+    end
+  end
+
+  describe "ansible_devices" do
+    # Found via Tecnativa.hetzner_rescue_installimage's templates/autosetup.j2:
+    # `{% for device in ansible_devices if device.startswith("sd") ... %}` died
+    # with "can't iterate over undefined" because the fact was never gathered
+    # at all - real Ansible's setup module always defines the key (even as an
+    # empty dict), so the role's "configure installation" task succeeds there.
+    it "is always present, never omitted - even when the /sys/block scan finds nothing" do
+      facts = JSON.parse(Krikri::FactsGatherer.run(nil))["ansible_facts"].as_h
+
+      devices = facts["ansible_devices"]?.should_not be_nil
+      # A dict, so `{% for device in ansible_devices %}` iterates (possibly
+      # zero times) instead of erroring.
+      devices.as_h?.should_not be_nil
+    end
+
+    it "contains real block-device names as keys on this host" do
+      # Live-environment smoke test, same convention as the virtualization
+      # facts above: the controlled-input regression is the always-set
+      # contract plus the template rendering spec below.
+      facts = JSON.parse(Krikri::FactsGatherer.run(nil))["ansible_facts"].as_h
+      devices = facts["ansible_devices"].as_h
+
+      pending! "no block devices on this host" if devices.empty?
+
+      devices.keys.each do |name|
+        # Real Ansible's DEVICE_EXCLUDE_PATTERNS drops loopback and ram.
+        name.should_not match(/^(loop|ram)/)
+      end
+      dev = devices.each_value.first.as_h
+      dev["partitions"]?.should_not be_nil
+      dev["virtual"]?.should_not be_nil
+    end
+
+    it "renders Tecnativa.hetzner_rescue_installimage's autosetup.j2 loop shape" do
+      # The empty-dict case is the shape a minimal container presents; the
+      # loop must be a zero-iteration no-op, not "can't iterate over
+      # undefined". Rendered through the real CrinjaRenderer wrapper, same
+      # pattern as ansible_mounts_numeric_stats_spec.cr.
+      vars = {"ansible_devices" => JSON.parse(%({}))}
+      renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(vars)
+
+      template = <<-TPL
+        {% for device in ansible_devices if device.startswith("sd") or device.startswith("nvme") -%}
+        DRIVE{{ loop.index }} /dev/{{ device }}
+        {% endfor %}
+        TPL
+
+      renderer.render(template).strip.should eq("")
+    end
+
+    it "renders the autosetup.j2 loop shape over a populated device dict" do
+      vars = {"ansible_devices" => JSON.parse(%({"sda": {"partitions": {}, "virtual": "0", "size": "111.79 GB", "sectors": 234441648}, "vdb": {"partitions": {}, "virtual": "0", "size": "10.00 GB", "sectors": 20971520}}))} of String => JSON::Any
+      renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(vars)
+
+      template = <<-TPL
+        {% for device in ansible_devices if device.startswith("sd") or device.startswith("nvme") -%}
+        DRIVE{{ loop.index }} /dev/{{ device }}
+        {% endfor %}
+        TPL
+
+      renderer.render(template).strip.should eq("DRIVE1 /dev/sda")
     end
   end
 end
