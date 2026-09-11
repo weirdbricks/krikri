@@ -186,6 +186,21 @@ module Krikri
         # Note: This doesn't handle quoted arguments perfectly
         # but works for most cases
         cmd_parts = argv_parts || (cmd ? parse_command(cmd) : [] of String)
+        # Real Ansible's AnsibleModule.run_command (expand_user_and_vars,
+        # driven by the command module's expand_argument_vars, default true)
+        # expands BOTH `~` (including the `~user` form, via the passwd
+        # database - not a shell, so this happens even though command: runs
+        # nothing through one) and `$VAR`/`${VAR}` on EVERY argv token, not
+        # just the executable. `command: tar -xzf /tmp/x.tar.gz -C ~root/bin
+        # starship` (viasite-ansible.zsh's "Extract starship to ~root/bin"
+        # task, round 200970) left `~root/bin` literal as tar's -C argument
+        # and failed with "tar: ~root/bin: Cannot open" where real Ansible
+        # ran it at /root/bin. Order matches Python's own
+        # os.path.expanduser(os.path.expandvars(x)): variables first, then
+        # tilde, so `~$USER` resolves.
+        if true?(@params["expand_argument_vars"]?, default: true)
+          cmd_parts = cmd_parts.map { |part| expand_user_and_vars(part) }
+        end
         command_name = cmd_parts.first
         # Real Ansible's AnsibleModule.run_command (expand_user=True, the
         # default) os.path.expanduser's the executable, so
@@ -303,6 +318,34 @@ module Krikri
     # shelled-out commands go through automatically) has nothing to attach
     # to here, so this reads the same `_environment` param directly and
     # passes it through Process.new's own `env:` instead.
+    # Per-token expansion mirroring real Ansible's
+    # `os.path.expanduser(os.path.expandvars(x))` (basic.py run_command):
+    # variables first, then tilde.
+    private def expand_user_and_vars(token : String) : String
+      expand_tilde(expand_vars(token))
+    end
+
+    # os.path.expandvars semantics: `$VAR` and `${VAR}` are replaced from
+    # the environment; an unset variable is left in place verbatim (never
+    # an error). Lookup uses the task's own `environment:` override (via
+    # the `_environment` param, same source Process.new gets) first so a
+    # `environment: PATH: ...`-style variable expands to the task's value,
+    # falling back to this process's inherited environment.
+    private def expand_vars(s : String) : String
+      task_env = task_environment
+      String.build do |out_io|
+        cursor = 0
+        s.scan(/\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))/) do |mat|
+          out_io << s[cursor...mat.begin(0)]
+          name = mat[1]? || mat[2]?
+          next unless name
+          out_io << (task_env.try(&.[]?(name)) || ENV[name]? || mat[0])
+          cursor = mat.end(0)
+        end
+        out_io << s[cursor..]
+      end
+    end
+
     private def task_environment : Process::Env
       env_json = @params["_environment"]?
       return nil unless env_json
