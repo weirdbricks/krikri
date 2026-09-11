@@ -1098,7 +1098,8 @@ module Krikri
             resolve_loop_template(task, base_vars_context) ||
             resolve_loop_nested(task, base_vars_context, host.name) ||
             resolve_loop_flattened(task, base_vars_context, host.name) ||
-            resolve_loop_subelements(task, base_vars_context)
+            resolve_loop_subelements(task, base_vars_context) ||
+            resolve_loop_filetree(task, host, base_vars_context)
         end
       rescue ex : WhenEvaluationError
         swallow_when_error(task, host, ex)
@@ -1374,7 +1375,8 @@ module Krikri
             resolve_loop_template(task, base_vars_context) ||
             resolve_loop_nested(task, base_vars_context, host.name) ||
             resolve_loop_flattened(task, base_vars_context, host.name) ||
-            resolve_loop_subelements(task, base_vars_context)
+            resolve_loop_subelements(task, base_vars_context) ||
+            resolve_loop_filetree(task, host, base_vars_context)
         end
       rescue ex : WhenEvaluationError
         swallow_when_error(task, host, ex)

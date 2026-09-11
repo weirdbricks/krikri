@@ -201,6 +201,13 @@ module Krikri
     # exist.
     property loop_subelements_list : String?
     property loop_subelements_key : String?
+    # with_community.general.filetree sources - the directories to walk,
+    # kept as their raw ({{ }}-unsubstituted) strings since a source is
+    # ordinarily `{{ role_path }}/templates/<something>` and can only be
+    # resolved at execution time once the variable context exists. See
+    # FiletreeLookup for the real lookup-plugin semantics the executor's
+    # resolve_loop_filetree hands these to.
+    property loop_filetree : Array(String)?
     # loop_control.loop_var - the variable name the loop item is exposed
     # under (Ansible default "item"). Roles like dev-sec os_hardening set
     # `loop_control: { loop_var: mount }` so an include_tasks/loop can refer
@@ -953,6 +960,7 @@ module Krikri
         "become_pass", "become_exe", "tags", "args", "listen", "with_items", "loop",
         "with_dict", "with_fileglob", "with_file", "with_first_found", "with_nested", "with_sequence",
         "with_flattened", "with_community.general.flattened", "with_subelements", "with_indexed_items", "until", "retries", "delay",
+        "with_community.general.filetree",
         "loop_control", "notify", "changed_when", "failed_when", "delegate_to", "delegate_facts", "run_once", "connection",
         "async", "poll", "vars", "environment", "no_log", "module_defaults", "ignore_unreachable", "throttle", "remote_user", "debugger",
         "block", "rescue", "always", "import_tasks", "include_tasks", "include_role",
@@ -2566,6 +2574,17 @@ module Krikri
       elsif with_subelements = task_hash["with_subelements"]?.try(&.as_a?)
         task.loop_subelements_list = with_subelements[0]?.try { |v| safe_yaml_to_string(v) }
         task.loop_subelements_key = with_subelements[1]?.try { |v| safe_yaml_to_string(v) }
+      elsif with_filetree = task_hash["with_community.general.filetree"]?
+        # The directories to walk - an array of sources, or one scalar
+        # source (real filetree accepts both, mirroring
+        # with_community.general.flattened's own scalar form). Sources are
+        # kept as raw strings and resolved at execution time; see
+        # TaskExecutor#resolve_loop_filetree.
+        task.loop_filetree = if arr = with_filetree.as_a?
+                               arr.map { |item| safe_yaml_to_string(item) }
+                             else
+                               [safe_yaml_to_string(with_filetree)]
+                             end
       elsif template_source = find_loop_template(task_hash)
         # loop:/with_items:/with_dict:/with_nested:/with_indexed_items: given
         # as a "{{ variable }}" reference: not a literal array/hash at parse
@@ -2903,6 +2922,26 @@ module Krikri
       # silently ran for EVERY host regardless of the condition. Verified
       # against real ansible-playbook, which does honor when: here.
       task.when_condition = task_hash["when"]?.try { |v| condition_to_string(v) }
+
+      # Task-level `vars:` on a meta: task - the same block the ordinary
+      # task parser captures (parse_common_task_attributes) - was dropped
+      # entirely here, so the when: condition could never see the task's
+      # OWN vars (real Ansible evaluates a task's when: against its own
+      # vars: block, lazily-rendered values included). linux-system-roles
+      # .podman's twin "Podman package version must be 5.0 or later for
+      # Pod quadlets" fail:/meta: end_host pair (round 310089) is the live
+      # shape: both tasks carry identical `vars: {__has_type_pod: "{{ ...
+      # selectattr... }}"}` blocks gating their own when:; the fail: twin
+      # (ordinary task path) evaluated fine while this one raised
+      # "'__has_type_pod' is undefined" and failed the whole run. Same
+      # parse shape as parse_common_task_attributes's own vars block -
+      # raw JSON::Any values, rendered lazily at evaluation time by
+      # ConditionalEvaluator's recursive re-templating.
+      if vars_yaml = task_hash["vars"]?.try(&.as_h?)
+        vars = Hash(String, JSON::Any).new
+        vars_yaml.each { |key, value| vars[key.to_s] = Vault.maybe_decrypt_json(JSON.parse(value.to_json)) }
+        task.vars = vars
+      end
 
       task
     end

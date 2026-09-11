@@ -2588,4 +2588,76 @@ describe Krikri::PlaybookParser do
       FileUtils.rm_rf(role_root) if role_root
     end
   end
+
+  describe "meta: task vars: parsing" do
+    # Regression: linux-system-roles.podman (round 310089) gates its twin
+    # "Podman package version must be 5.0 or later for Pod quadlets"
+    # fail:/meta: end_host pair through each task's OWN vars: block
+    # (`vars: {__has_type_pod: "{{ ... selectattr ... }}"}`, consumed by
+    # that same task's when:). parse_meta_task early-returns before
+    # parse_common_task_attributes ever runs, so a meta: task's vars:
+    # were silently dropped and its when: raised "'__has_type_pod' is
+    # undefined" - failing the whole run - while the fail: twin (an
+    # ordinary task) evaluated fine.
+    it "parses task-level vars: on a meta: task into task.vars for its own when:" do
+      task = single_task(<<-YAML)
+        - name: Verify podman version supports Pod quadlets
+          meta: end_host
+          vars:
+            __has_type_pod: "{{ __podman_podman_package | default('') }}"
+          when: __has_type_pod
+        YAML
+
+      task.meta_action.should eq("end_host")
+      task.vars["__has_type_pod"]?.try(&.as_s).should eq("{{ __podman_podman_package | default('') }}")
+      task.when_condition.should eq("__has_type_pod")
+    end
+  end
+
+  describe "with_community.general.filetree: parsing" do
+    # Regression: buluma.vector (round 300054) iterates its config
+    # skeleton with `with_community.general.filetree:` - previously an
+    # unrecognized task key, silently dropped, leaving `item` unbound so
+    # `when: item.state == 'directory'` raised "'item.state' is
+    # undefined" instead of iterating the tree.
+    it "parses an array of source directories into loop_filetree, raw" do
+      task = single_task(<<-YAML)
+        - name: Create templates config skeleton
+          ansible.builtin.copy:
+            src: "{{ item.src }}"
+            dest: "{{ item.path }}"
+          with_community.general.filetree:
+            - "{{ role_path }}/templates/config/"
+            - templates/config/
+          when: item.state == 'directory'
+        YAML
+
+      task.loop_filetree.should eq(["{{ role_path }}/templates/config/", "templates/config/"])
+    end
+
+    it "parses a single scalar source into a one-element loop_filetree" do
+      task = single_task(<<-YAML)
+        - name: Create templates config skeleton
+          ansible.builtin.copy:
+            src: "{{ item.src }}"
+            dest: "{{ item.path }}"
+          with_community.general.filetree: "{{ role_path }}/templates/config/"
+        YAML
+
+      task.loop_filetree.should eq(["{{ role_path }}/templates/config/"])
+    end
+
+    it "marks a task with a filetree loop as having a loop source" do
+      task = single_task(<<-YAML)
+        - name: Create templates config skeleton
+          ansible.builtin.copy:
+            src: "{{ item.src }}"
+            dest: "{{ item.path }}"
+          with_community.general.filetree:
+            - templates/config/
+        YAML
+
+      task.loop_filetree.should_not be_nil
+    end
+  end
 end
