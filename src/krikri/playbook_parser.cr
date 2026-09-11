@@ -1132,6 +1132,10 @@ module Krikri
       "community.general.npm",
       "community.general.alternatives",
       "community.general.filesystem",
+      # zfs (0.9.952): ZFS dataset/volume/snapshot management via the
+      # `zfs` CLI (micxer.zfs round 400133 hard-stopped on the bare
+      # `zfs:` spelling). See plugins/zfs.cr.
+      "community.general.zfs",
       # lvol (0.9.929): LVM logical volume management, one native port
       # registered under both FQCNs seen in the wild - real roles write
       # both spellings (ansible.builtin.lvol in ome.lvm_partition,
