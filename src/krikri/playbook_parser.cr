@@ -1110,6 +1110,14 @@ module Krikri
       "community.general.npm",
       "community.general.alternatives",
       "community.general.filesystem",
+      # lvol (0.9.929): LVM logical volume management, one native port
+      # registered under both FQCNs seen in the wild - real roles write
+      # both spellings (ansible.builtin.lvol in ome.lvm_partition,
+      # community.general.lvol in ome.docker, same module either way),
+      # and simple_plugin_name strips both namespaces to the same
+      # `lvol` plugin binary.
+      "ansible.builtin.lvol",
+      "community.general.lvol",
       "ansible.builtin.service_facts",
       "ansible.builtin.slurp",
       # No plugins/reboot.cr - handled entirely on the controller by
