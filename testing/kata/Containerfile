@@ -11,9 +11,19 @@ FROM docker.io/library/debian:trixie
 # via a cluster of divergences in a 150-role round where the two per-role
 # VMs' install order made this a coin flip rather than a real engine
 # difference.
+#
+# libxml2 is a HARD requirement, not a convenience: krikri's fat plugin
+# binary (which facts/setup is a hardlink of) links libxml2.so.2 for the
+# XML-using modules compiled into it, and a guest without it kills every
+# plugin at load time - exit 127, "error while loading shared libraries"
+# - which reads as "Plugin execution failed on remote" on the very first
+# Gathering Facts task of every play. Found when a re-pulled debian:trixie
+# base (rebuild after the SSH-keypair fix) no longer carried libxml2 in
+# the dependency closure of the packages below. Real ansible-playbook
+# needs only python3, so the failure looked like a krikri-only divergence.
 RUN apt-get update && apt-get install -y \
         systemd systemd-sysv dbus \
-        openssh-server python3 \
+        openssh-server python3 libxml2 \
         iproute2 kmod procps \
         curl gnupg2 unzip ca-certificates sudo \
     && mkdir -p /root/.ssh && chmod 700 /root/.ssh \
