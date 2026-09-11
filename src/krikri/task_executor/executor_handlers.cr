@@ -573,7 +573,8 @@ module Krikri
           handler.module_name,
           substituted_params,
           vars_context,
-          host
+          host,
+          @inventory
         )
 
         unless action_result.success?

@@ -1281,7 +1281,7 @@ module Krikri
       substituted_become_user = task.become_user.try { |raw_user| substitutor.substitute(raw_user) }
 
       if ActionPluginManager.has_action_plugin?(task.module_name)
-        action_result = ActionPluginManager.execute_action(task.module_name, substituted_params, vars_context, host)
+        action_result = ActionPluginManager.execute_action(task.module_name, substituted_params, vars_context, host, @inventory)
 
         unless action_result.success?
           failed = JSON.parse({
@@ -1474,7 +1474,8 @@ module Krikri
           task.module_name,
           substituted_params,
           vars_context,
-          exec_host
+          exec_host,
+          @inventory
         )
 
         unless action_result.success?
