@@ -1011,13 +1011,110 @@ module Krikri
       parts
     end
 
+    # Real Ansible's single-argument `default()` filter substitutes ONLY
+    # for a genuinely UNDEFINED variable - never for a defined-but-null
+    # one (Jinja2's `Undefined` type, not Python `None`) - so `x |
+    # default(None) != None`, the standard "is this optional param
+    # actually null" idiom, is FALSE whenever `x` exists at all, even as
+    # a bare YAML null. #evaluate_value resolves a filter chain by
+    # rendering it to TEXT via ExpressionEvaluator, and a null renders
+    # as empty text outside a container (see VariableLookup#python_repr's
+    # own note), so that "" reparsed as JSON::Any::String("") compared
+    # unequal against the real nil the bare `None` literal resolves to -
+    # the comparison answered exactly backwards. Found via ontic.git
+    # (round 601424): its defaults/main.yml defines git_config/git_users
+    # as bare nulls and every task in tasks/configure.yml is gated on
+    # `... | default(None) != None`, which real Ansible skips wholesale
+    # but krikri ran (and then failed inside the git_users loop on
+    # `'item.username' is undefined` for a None loop item real Ansible
+    # never reaches).
+    #
+    # Deliberately narrow: only fires for `==`/`!=` against the bare
+    # `None`/`none` literal with the OTHER side a chain whose base is a
+    # bare (non-dotted, non-indexed - a stricter subset of
+    # Krikri::REGEX_BARE_VAR_REF) variable name and whose every filter
+    # is a single-argument `default(...)`/`d(...)`. Resolution here
+    # never round-trips through text, so null-ness survives intact, and
+    # the single-arg default semantics are applied faithfully (substitute
+    # only when the base name is genuinely absent from vars - verified
+    # against real ansible-playbook that a genuinely-undefined base
+    # answers the same `None != None` false as a defined-null one).
+    # Anything else - other operators, other filters, the 2-arg boolean
+    # default form, exotic default arguments, a base whose own raw value
+    # is still unrendered Jinja - returns nil here and falls through to
+    # the unchanged generic path.
+    private def self.default_chain_vs_none(left_expr : String, right_expr : String, operator : String,
+                                           vars : Hash(String, JSON::Any)) : Bool?
+      return nil unless operator == "==" || operator == "!="
+
+      chain_expr = nil
+      if left_expr != "None" && left_expr != "none" && (right_expr == "None" || right_expr == "none")
+        chain_expr = left_expr
+      elsif right_expr != "None" && right_expr != "none" && (left_expr == "None" || left_expr == "none")
+        chain_expr = right_expr
+      end
+      return nil unless chain_expr
+
+      parts = VariableSubstitutor::FilterEngine.split_chain(chain_expr)
+      return nil if parts.size < 2
+
+      base = parts[0]
+      return nil unless base.matches?(/\A[A-Za-z_][A-Za-z0-9_]*\z/)
+
+      value = vars[base]?
+      # A base whose own raw value is unrendered Jinja needs real
+      # Ansible's recursive re-templating before its null-ness is
+      # meaningful - the generic path already handles that strictly, so
+      # hand the case back rather than answer from the raw template text.
+      return nil if (raw = value.try(&.raw)).is_a?(String) && raw.includes?("{{")
+
+      parts[1..].each do |filter_expr|
+        match = filter_expr.match(/\A(?:default|d)\s*\((.*)\)\z/m)
+        return nil unless match
+
+        arg_text = match[1].strip
+        # A top-level comma means the 2-arg boolean form
+        # (`default(fallback, true)` substitutes for falsy too, not just
+        # undefined) - unverified here, so the generic path keeps it.
+        return nil if arg_text.includes?(",")
+
+        arg = case arg_text
+              when "None", "none", "null" then JSON::Any.new(nil)
+              when "True", "true"         then JSON::Any.new(true)
+              when "False", "false"       then JSON::Any.new(false)
+              else
+                if int_val = arg_text.to_i64?
+                  JSON::Any.new(int_val)
+                elsif arg_text.size >= 2 && (arg_text.starts_with?('"') && arg_text.ends_with?('"')) ||
+                      (arg_text.starts_with?('\'') && arg_text.ends_with?('\''))
+                  JSON::Any.new(arg_text[1..-2])
+                end
+              end
+        return nil unless arg
+
+        # Single-arg default(): substitute only for a genuinely absent
+        # base. A substituted None is a real None, not Undefined, so a
+        # later `| default(...)` in the same chain no longer applies.
+        value = arg if value.nil?
+      end
+
+      equal = value.nil? || value.raw.nil?
+      operator == "==" ? equal : !equal
+    end
+
     # Evaluate comparison operators
     private def self.evaluate_comparison(condition : String, operator : String, vars : Hash(String, JSON::Any), raise_undefined : Bool = false) : Bool
       parts = condition.split(operator, 2)
       return false if parts.size != 2
 
-      left = evaluate_value(parts[0].strip, vars, raise_undefined)
-      right = evaluate_value(parts[1].strip, vars, raise_undefined)
+      left_expr = parts[0].strip
+      right_expr = parts[1].strip
+
+      none_result = default_chain_vs_none(left_expr, right_expr, operator, vars)
+      return none_result unless none_result.nil?
+
+      left = evaluate_value(left_expr, vars, raise_undefined)
+      right = evaluate_value(right_expr, vars, raise_undefined)
 
       case operator
       when "=="
