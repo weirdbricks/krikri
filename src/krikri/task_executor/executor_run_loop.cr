@@ -1662,6 +1662,19 @@ module Krikri
       # failed_when: false`, inheriting the play's `become: true`).
       return result if result.as_h?.try(&.["_connection_failure"]?.try(&.as_bool?))
 
+      # A GENUINELY-skipped result (a module returning `skipped: true` -
+      # check-mode skip markers, module-side conditional skips) never
+      # gets changed_when:/failed_when: evaluated - ansible-core 2.19.4's
+      # own guard is `if 'skipped' not in result:` (executor/task_
+      # executor.py, the comment reads "if we didn't skip this task, use
+      # the helpers to evaluate the changed/failed_when properties").
+      # Note this does NOT cover the command/shell `creates:`/`removes:`
+      # skip: that result carries no `skipped` key there (it's an
+      # ordinary ok result with the full module shape, rc: 0 included -
+      # see the plugins' own skip branches), so its changed_when: IS
+      # evaluated, exactly as in real Ansible.
+      return result if result.as_h?.try(&.["skipped"]?.try(&.as_bool?))
+
       eval_context = vars_context
       if (register_name = task.register) && !register_name.empty?
         eval_context = vars_context.dup

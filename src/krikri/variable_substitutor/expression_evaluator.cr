@@ -2685,7 +2685,35 @@ module Krikri
       private def evaluate_lookup_fileglob(parts : Array(String)) : String
         pattern = parts[1]?.try { |part| evaluate(part.strip) }
         return "[]" unless pattern
-        Dir.glob(pattern).sort!.to_json
+        return lookup_fileglob_glob(pattern) if pattern.starts_with?('/')
+
+        # A RELATIVE pattern does not glob against the process CWD - real
+        # Ansible's fileglob lookup dwims it against the role/play search
+        # stack (ansible.plugins.lookup.fileglob's find_file_in_search_
+        # path, probed live against 2.19.4: from a role task, 'tasks/*.
+        # yml' finds <role>/tasks/*.yml, 'vars/*.yml' finds <role>/vars/*.
+        # yml, a bare 'c.yml' finds <role>/c.yml, and an unmatched name
+        # falls through to the play dir). pluggero.common_pkgs and
+        # pluggero.user_setup both drive `include_tasks:` through
+        # `lookup('ansible.builtin.fileglob', 'tasks/*.yml').split(',')
+        # | reject(...) | sort` - globbed against the CWD the list came
+        # back empty, so the whole loop collapsed to one skipped task
+        # where real Ansible expands it into the role's per-play task
+        # files. Candidates are probed files-subdir-first per root
+        # (real fileglob's own 'files' search-path preference), first
+        # root yielding matches wins.
+        roots = default_first_found_roots
+        roots.each do |root|
+          [File.join(root, "files", pattern), File.join(root, pattern)].each do |candidate|
+            found = lookup_fileglob_glob(candidate)
+            return found unless found == "[]"
+          end
+        end
+        "[]"
+      end
+
+      private def lookup_fileglob_glob(pattern : String) : String
+        Dir.glob(pattern).select { |f| File.file?(f) }.sort!.to_json
       end
 
       private def evaluate_lookup_misc(lookup_type : String?, parts : Array(String), kwargs : Array(String)) : String?

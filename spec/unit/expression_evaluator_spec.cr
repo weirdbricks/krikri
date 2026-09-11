@@ -353,6 +353,35 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
       .should eq("0")
   end
 
+  it "resolves a RELATIVE fileglob pattern against the role search path, not the process CWD" do
+    # Real bug found benchmarking pluggero.common_pkgs and pluggero.
+    # user_setup (round 400041/400044, same author): both drive a
+    # looped include_tasks through
+    # `lookup('ansible.builtin.fileglob', 'tasks/*.yml').split(',')
+    # | reject('search', 'main.yml') | reject('search', 'noauto_*')
+    # | sort` - a RELATIVE glob pattern. Real Ansible's fileglob lookup
+    # dwims relative patterns against the role search stack (probed
+    # live against 2.19.4: 'tasks/*.yml' from a role task finds
+    # <role>/tasks/*.yml), but krikri globbed against the process CWD
+    # (the playbook's directory), found nothing, and the whole loop
+    # collapsed to a single skipped task where real Ansible expanded
+    # it into the role's per-play task files. Also probed live: an
+    # unmatched relative name falls through to the play dir (here:
+    # role first, then the playbook's own directory).
+    role_dir = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "fileglob_relative_spec")
+    `rm -rf #{role_dir}`
+    Dir.mkdir_p(File.join(role_dir, "tasks"))
+    File.write(File.join(role_dir, "tasks", "01_install.yml"), "- debug: msg=hi\n")
+    File.write(File.join(role_dir, "tasks", "02_remove.yml"), "- debug: msg=hi\n")
+    File.write(File.join(role_dir, "tasks", "main.yml"), "- debug: msg=hi\n")
+
+    v = Hash(String, JSON::Any).new
+    v["role_path"] = JSON::Any.new(role_dir)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator.evaluate("lookup('ansible.builtin.fileglob', 'tasks/*.yml') | length")
+      .should eq("3")
+  end
+
   it "still honors an explicit absolute paths: entry, unaffected by role-relative resolution" do
     role_dir = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "first_found_explicit_paths_spec")
     `rm -rf #{role_dir}`
