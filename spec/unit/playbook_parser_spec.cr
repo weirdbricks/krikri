@@ -1994,6 +1994,40 @@ describe Krikri::PlaybookParser do
       end
     end
 
+    # authorized_key is registered under both spellings real playbooks
+    # write: the FQCN (ansible.posix, where the implementation lives) and
+    # `ansible.builtin.authorized_key`, which real ansible-core keeps
+    # resolving via a legacy redirect even though the module moved to
+    # ansible.posix years ago. The ome.local_accounts round (400072)
+    # hard-stopped on the builtin spelling because only the posix FQCN
+    # was registered.
+    describe "authorized_key builtin alias" do
+      it "resolves the FQCN `ansible.posix.authorized_key:` unchanged" do
+        task = single_task(<<-YAML)
+          - name: t
+            ansible.posix.authorized_key:
+              user: root
+              key: ssh-rsa AAAA test
+          YAML
+        task.module_name.should eq("ansible.posix.authorized_key")
+      end
+
+      it "resolves the legacy redirect `ansible.builtin.authorized_key:` verbatim" do
+        task = single_task(<<-YAML)
+          - name: t
+            ansible.builtin.authorized_key:
+              user: root
+              key: ssh-rsa AAAA test
+          YAML
+        task.module_name.should eq("ansible.builtin.authorized_key")
+      end
+
+      it "dispatches both spellings to the same `authorized_key` plugin binary" do
+        Krikri::PluginManager.simple_plugin_name("ansible.posix.authorized_key").should eq("authorized_key")
+        Krikri::PluginManager.simple_plugin_name("ansible.builtin.authorized_key").should eq("authorized_key")
+      end
+    end
+
     # The other collections already in MODULE_SEARCH_COLLECTIONS
     # (ansible.builtin/legacy/posix, community.general/docker/
     # mysql/postgresql) were never broken and shouldn't have changed -

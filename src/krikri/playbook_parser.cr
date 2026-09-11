@@ -1059,6 +1059,15 @@ module Krikri
       "ansible.builtin.cronvar",
       "ansible.posix.acl",
       "ansible.posix.authorized_key",
+      # ansible.builtin.authorized_key (0.9.941): real ansible-core ships a
+      # legacy redirect so the historically-core `authorized_key` module
+      # still resolves under `ansible.builtin.` even though the actual
+      # implementation moved to ansible.posix years ago - the
+      # ome.local_accounts round (400072) hard-stopped on the builtin
+      # spelling while real ansible-playbook ran it fine. Both spellings
+      # are registered; simple_plugin_name strips both prefixes to the
+      # same `authorized_key` plugin binary.
+      "ansible.builtin.authorized_key",
       "ansible.builtin.stat",
       "ansible.builtin.find",
       "ansible.builtin.getent",
