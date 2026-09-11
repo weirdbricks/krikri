@@ -1137,6 +1137,11 @@ module Krikri
       # maven_artifact (0.9.934): Maven artifact download
       # (lean_delivery.jmeter round 210778 hard-stopped on it).
       "community.general.maven_artifact",
+      # nsupdate (0.9.936): RFC2136 dynamic-DNS record management -
+      # native wire-format + TSIG port (no dnspython); talks to a real
+      # DNS server, so only the parameter-validation failures are
+      # unit-spec'd.
+      "community.general.nsupdate",
       "ansible.builtin.service_facts",
       "ansible.builtin.slurp",
       # No plugins/reboot.cr - handled entirely on the controller by
