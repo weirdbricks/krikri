@@ -461,7 +461,29 @@ module Krikri
       when "absent"
         handle_remove(packages, messages, false, lock_timeout)
       when "latest"
-        handle_latest(packages, messages, false, lock_timeout)
+        # `name: "*"` is real Ansible's apt.py spelling for "upgrade
+        # everything installed" (its own `all_installed = '*' in
+        # unfiltered_packages` check) - a DISTINCT code path from a
+        # per-package install, not a package literally named "*". See
+        # `handle_wildcard_latest` for why treating it as an ordinary
+        # package name (the previous behavior here) is a real bug, not
+        # just a style choice.
+        if packages.includes?("*")
+          if packages.size > 1
+            # apt.py's own fail_json message verbatim - real Ansible
+            # refuses to mix "*" with real package names rather than
+            # guessing which one the caller meant.
+            PluginResult.new(
+              changed: false,
+              failed: true,
+              msg: "unable to install additional packages when upgrading all installed packages"
+            )
+          else
+            handle_wildcard_latest(messages, autoremove, lock_timeout)
+          end
+        else
+          handle_latest(packages, messages, false, lock_timeout)
+        end
       else
         PluginResult.new(
           changed: false,
@@ -822,6 +844,49 @@ module Krikri
         changed: changed,
         failed: false,
         msg: msg
+      )
+    end
+
+    # `name: "*"` + `state: latest` - real Ansible's apt.py builds
+    # EXACTLY the same command as `upgrade: yes` here (its own
+    # `upgrade(module, 'yes', ...)` call in the `if latest and
+    # all_installed:` branch), never a per-package `apt-get install`.
+    # This plugin previously let `packages == ["*"]` fall straight into
+    # `handle_latest`, which joins the package list into
+    # `apt-get install -y ... *` - apt-get treats a bare `*` as a glob
+    # over EVERY package name in the archive (not just already-installed
+    # ones), so on a host with a held/conflicting package pair (e.g.
+    # jtreg6 held vs. jtreg7 available) it tries to pull in packages a
+    # real `apt-get upgrade` never touches (upgrade only touches
+    # packages that don't require installing/removing others) and fails
+    # outright with "you have held broken packages" where real Ansible
+    # reports a clean upgrade. Found via MonolithProjects.system_update's
+    # own "Update Debian/Ubuntu system" task (round 601048).
+    private def handle_wildcard_latest(messages : Array(String), autoremove : Bool, lock_timeout : Int32) : PluginResult
+      auto_remove = autoremove ? " --auto-remove" : ""
+      cmd = "DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold upgrade --with-new-pkgs#{auto_remove}"
+
+      if @check_mode
+        messages << "Would run: #{cmd}"
+        return PluginResult.new(changed: true, failed: false, msg: messages.join(", "))
+      end
+
+      result = apt_with_lock_retry(cmd, lock_timeout, ->remote_exec(String))
+      if result[:exit_code] != 0
+        return PluginResult.new(changed: false, failed: true, msg: "#{cmd} failed: #{result[:stderr]}", stdout: result[:stdout], stderr: result[:stderr])
+      end
+
+      # Same APT_GET_ZERO screenscrape as the `upgrade:` command path
+      # above - a leading-newline match so a summary whose upgraded
+      # count ends in 0 ("10 upgraded, 0 newly installed, 0 to remove")
+      # doesn't false-match at an inner offset.
+      was_upgraded = !result[:stdout].includes?("\n0 upgraded, 0 newly installed, 0 to remove")
+      messages << result[:stdout]
+      PluginResult.new(
+        changed: was_upgraded,
+        failed: false,
+        msg: messages.join(", "),
+        stdout: result[:stdout]
       )
     end
 
