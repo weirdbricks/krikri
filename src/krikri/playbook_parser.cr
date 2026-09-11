@@ -1186,6 +1186,14 @@ module Krikri
       # PluginManager.simple_plugin_name - it's not one of the
       # collection-search namespaces below.
       "containers.podman.podman_image",
+      # iam_user_info (0.9.947): IAM user lookup over the signed Query
+      # API (deekayen.iam_access_simulation round 300141 calls it) - the
+      # same direct-API contract as the ec2_* cluster, via its own
+      # plugin_helpers/iam_api.cr (iam.amazonaws.com, Version
+      # 2010-05-08, service "iam" - not EC2's host/version). No plugins/
+      # EC2-API-compatible region logic: IAM is a global service.
+      "amazon.aws.iam_user_info",
+      "iam_user_info",
       "ansible.builtin.service_facts",
       "ansible.builtin.slurp",
       # No plugins/reboot.cr - handled entirely on the controller by
