@@ -526,7 +526,7 @@ module Krikri
     # below. Shared rather than inlined per call site (was duplicated
     # once already, in collect_required_plugins, before this extraction).
     def self.simple_plugin_name(module_name : String) : String
-      module_name.sub(/^(ansible\.(builtin|legacy|posix|mysql)|community.(general|docker|mysql|postgresql|crypto|rabbitmq)|ovirt\.ovirt|amazon\.aws)\./, "")
+      module_name.sub(/^(ansible\.(builtin|legacy|posix|mysql)|community.(general|docker|mysql|postgresql|crypto|rabbitmq)|ovirt\.ovirt|amazon\.aws|containers\.podman)\./, "")
     end
 
     # Plugins that actually read the "vars" field of their config JSON -

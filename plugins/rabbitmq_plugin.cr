@@ -4,6 +4,9 @@
 # module (round 196: mrlesmithjr.rabbitmq uses it; previously unavailable
 # → rc=4 "unavailable modules" where real ansible rc=0'd).
 #
+# The module's argument is `names` (list or comma-separated string) -
+# the `name` spelling is kept as a fallback for the historical param.
+#
 # Idempotency: real module checks `rabbitmq-plugins list -E -m` (all
 # enabled plugins, minimal output - bare names, one per line) for the
 # plugin's name as an exact line match before doing anything.
@@ -13,9 +16,9 @@ require "../src/krikri/base_plugin"
 module Krikri
   class RabbitmqPluginPlugin < BasePlugin
     def execute : PluginResult
-      name = @params["name"]?
+      name = @params["names"]? || @params["name"]?
       unless name
-        return PluginResult.new(changed: false, failed: true, msg: "missing required argument: name")
+        return PluginResult.new(changed: false, failed: true, msg: "missing required arguments: names")
       end
       # the module accepts a list (YAML) or a comma-separated string
       plugins = name.split(",").map(&.strip).reject(&.empty?)

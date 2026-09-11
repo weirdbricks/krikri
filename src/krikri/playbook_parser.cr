@@ -1150,6 +1150,58 @@ module Krikri
       # DNS server, so only the parameter-validation failures are
       # unit-spec'd.
       "community.general.nsupdate",
+      # rhsm_repository (0.9.938): RHSM repository enable/disable via
+      # subscription-manager (zaxos.docker-ce-ansible-role round 310195
+      # hard-stopped on it where real ansible ran the role cleanly). The
+      # pre-10.0 present/absent state spellings are accepted alongside
+      # enabled/disabled - controllers still on community.general 9.x
+      # pass those through.
+      "community.general.rhsm_repository",
+      # rhsm_release (0.9.939): RHSM minor-release lock via
+      # subscription-manager release --set/--unset (linux-system-roles.rhc
+      # round 300037 calls it). No state param in the real module - an
+      # omitted/null release IS the unset.
+      "community.general.rhsm_release",
+      # homebrew (0.9.940): macOS/Linuxbrew package management (geerlingguy
+      # .mas round 300047 hard-stopped on it). Runs wherever brew is
+      # installed - the plugin's executable search fails cleanly elsewhere.
+      "community.general.homebrew",
+      # easy_install (0.9.941): legacy Python library installs via
+      # easy_install, virtualenv support included (cchurch.virtualenv
+      # round 300033 calls it). install-only by nature - the real module
+      # has no absent state either.
+      "community.general.easy_install",
+      # mysql_variables (0.9.942): MySQL/MariaDB global variable query/
+      # set over the wire protocol, same shared connection path as the
+      # other community.mysql plugins (Oefenweb.percona_server round
+      # 310090 calls it). The FQCN-stripping regex already maps both
+      # community.mysql. and ansible.mysql. spellings to the binary.
+      "community.mysql.mysql_variables",
+      # docker_login (0.9.943): registry authentication stored in the
+      # docker CLI config file (oasis_roles.molecule_docker_ci round
+      # 300108 calls it). Credential validation/storage goes through the
+      # docker CLI's own login; the idempotent no-op and state=absent
+      # erase are pure config.json handling.
+      "community.docker.docker_login",
+      # current_container_facts (0.9.945): in-container detection fact
+      # module (collivier.xtesting round 300010 calls it) - reads
+      # /proc/self/cpuset + /proc/self/mountinfo wherever the plugin
+      # process runs and sets the ansible_module_container_* facts.
+      "community.docker.current_container_facts",
+      # podman_image (0.9.946): podman image pull/remove (ikke_t
+      # .podman_container_systemd round 300134 pulls through it).
+      # containers.podman needed its own prefix strip in
+      # PluginManager.simple_plugin_name - it's not one of the
+      # collection-search namespaces below.
+      "containers.podman.podman_image",
+      # iam_user_info (0.9.947): IAM user lookup over the signed Query
+      # API (deekayen.iam_access_simulation round 300141 calls it) - the
+      # same direct-API contract as the ec2_* cluster, via its own
+      # plugin_helpers/iam_api.cr (iam.amazonaws.com, Version
+      # 2010-05-08, service "iam" - not EC2's host/version). No plugins/
+      # EC2-API-compatible region logic: IAM is a global service.
+      "amazon.aws.iam_user_info",
+      "iam_user_info",
       "ansible.builtin.service_facts",
       "ansible.builtin.slurp",
       # No plugins/reboot.cr - handled entirely on the controller by
@@ -1263,6 +1315,14 @@ module Krikri
       # / `openssl_csr:` / `openssl_certificate:` task names: real
       # ansible-core 2.19.4 resolves them; crystal 0.9.622 warned and
       # skipped.
+      # community.rabbitmq (0.9.944): rabbitmq_plugin/rabbitmq_user are
+      # registered only under their FQCN, but real roles write the bare
+      # short names (SimpliField.rabbitmq and rockandska.rabbitmq rounds
+      # both write `rabbitmq_plugin:` unqualified) - without this entry
+      # the bare name is unresolvable and the task is dropped as
+      # "unavailable module" where real ansible resolves it through
+      # collection search.
+      "community.rabbitmq",
       "community.crypto",
     ]
 
