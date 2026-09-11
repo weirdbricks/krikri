@@ -1426,6 +1426,18 @@ module Krikri
       "ansible.legacy.openssl_certificate"      => "community.crypto.x509_certificate",
       "community.crypto.openssl_certificate"    => "community.crypto.x509_certificate",
       "community.general.openssl_certificate"   => "community.crypto.x509_certificate",
+      # openssl_certificate_info is x509_certificate_info's old name,
+      # the exact same rename story as openssl_certificate above (shipped
+      # pre-collection as openssl_certificate_info, renamed to
+      # x509_certificate_info in community.crypto 1.0.0 with the old name
+      # as a deprecated redirect). All five spellings resolve onto the
+      # existing x509_certificate_info plugin binary. ufz.zammad (round
+      # 410129) hard-stopped on the bare spelling.
+      "openssl_certificate_info"                   => "community.crypto.x509_certificate_info",
+      "ansible.builtin.openssl_certificate_info"   => "community.crypto.x509_certificate_info",
+      "ansible.legacy.openssl_certificate_info"    => "community.crypto.x509_certificate_info",
+      "community.crypto.openssl_certificate_info"  => "community.crypto.x509_certificate_info",
+      "community.general.openssl_certificate_info" => "community.crypto.x509_certificate_info",
     }
 
     # Bare module names real ansible-core can no longer resolve in ANY
