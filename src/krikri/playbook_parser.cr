@@ -1110,6 +1110,38 @@ module Krikri
       "community.general.npm",
       "community.general.alternatives",
       "community.general.filesystem",
+      # lvol (0.9.929): LVM logical volume management, one native port
+      # registered under both FQCNs seen in the wild - real roles write
+      # both spellings (ansible.builtin.lvol in ome.lvm_partition,
+      # community.general.lvol in ome.docker, same module either way),
+      # and simple_plugin_name strips both namespaces to the same
+      # `lvol` plugin binary.
+      "ansible.builtin.lvol",
+      "community.general.lvol",
+      # dpkg_divert (0.9.929): Debian file-diversion management
+      # (ansible-lockdown ubuntu24 CIS and MindPointGroup debian11 CIS
+      # rounds both hard-stopped on it). Debian-family only by nature -
+      # the plugin's dpkg-divert --version probe fails cleanly elsewhere.
+      "community.general.dpkg_divert",
+      # locale_gen (0.9.931): Debian/Ubuntu locale generation
+      # (Oefenweb.locales round 210720 hard-stopped on it). Drives
+      # /etc/locale.gen + locale-gen on the target.
+      "community.general.locale_gen",
+      # java_cert (0.9.931): Java keystore certificate management via
+      # keytool (no live round found - implemented from the real
+      # module's semantics, digest-compare import included).
+      "community.general.java_cert",
+      # ovirt_auth (0.9.933): oVirt/RHV SSO token acquisition for the
+      # ovirt_vm-infra/ovirt_infra rounds (210319/210777 etc).
+      "ovirt.ovirt.ovirt_auth",
+      # maven_artifact (0.9.934): Maven artifact download
+      # (lean_delivery.jmeter round 210778 hard-stopped on it).
+      "community.general.maven_artifact",
+      # nsupdate (0.9.936): RFC2136 dynamic-DNS record management -
+      # native wire-format + TSIG port (no dnspython); talks to a real
+      # DNS server, so only the parameter-validation failures are
+      # unit-spec'd.
+      "community.general.nsupdate",
       "ansible.builtin.service_facts",
       "ansible.builtin.slurp",
       # No plugins/reboot.cr - handled entirely on the controller by
