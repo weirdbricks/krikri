@@ -1107,6 +1107,12 @@ module Krikri
       "community.postgresql.postgresql_db",
       "community.postgresql.postgresql_user",
       "community.postgresql.postgresql_privs",
+      # postgresql_query (0.9.956): arbitrary SQL over the same
+      # crystal-pg wire-protocol connection as the rest of the
+      # collection (consensys.web3signer round 400078 hard-stopped on
+      # the bare `postgresql_query:` spelling). See
+      # plugins/postgresql_query.cr.
+      "community.postgresql.postgresql_query",
       "community.crypto.openssl_dhparam",
       "community.crypto.openssl_privatekey",
       "community.crypto.openssl_csr",
