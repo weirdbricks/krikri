@@ -44,19 +44,33 @@ module Krikri
       puts "TASK [Gathering Facts]".colorize(:white).bold
       puts "*" * 70
 
+      # A host the pre-upload pass already found unreachable must NOT get
+      # a second live SSH attempt here - real ansible-playbook only ever
+      # tries the connection once (inside this very task, since Gathering
+      # Facts *is* its first task) and reports that single failure as
+      # unreachable=1/failed=0. Retrying produces a second, redundant
+      # connection failure that used to get booked as "failed" here AND
+      # THEN as "unreachable" again when run_task_batch's own
+      # @unreachable_hosts check hit the play's first real task -
+      # doubling the recap for what real Ansible counts once. Found via
+      # GROG.reboot going DIVERGENT on a dead kata VM: crystal's warm
+      # recap showed `unreachable=1 failed=1` against real Ansible's
+      # `unreachable=1 failed=0`.
+      live_targets = targets.reject { |host| @unreachable_hosts.includes?(host.name) }
+
       outcomes = Hash(String, {Bool, String?}).new
       # Bounded by @forks, same as the per-task fan-out below: the `10`
       # this used to hardcode predates --forks, so `--forks 50` still
       # gathered 10 at a time and `--forks 1` (asked for precisely to get
       # strictly one-host-at-a-time behavior, e.g. to debug a flaky host)
       # still got 10-way concurrency here.
-      max_parallel = Math.min(targets.size, @forks)
+      max_parallel = Math.min(live_targets.size, @forks)
       max_parallel = 1 if max_parallel < 1
       gate = Channel(Nil).new(max_parallel)
       max_parallel.times { gate.send(nil) }
       done = Channel(Nil).new
 
-      targets.each do |host|
+      live_targets.each do |host|
         spawn do
           gate.receive
           outcomes[host.name] = gather_facts_for_host(host)
@@ -66,10 +80,22 @@ module Krikri
         end
       end
 
-      targets.size.times { done.receive }
+      live_targets.size.times { done.receive }
 
       targets.each do |host|
         connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
+
+        if @unreachable_hosts.includes?(host.name)
+          # Same wording/shape as report_unreachable's own banner - this
+          # IS that host's unreachable report, just booked from the
+          # Gathering Facts task instead of a later one, matching real
+          # Ansible's single-event recap for a host that never connects.
+          puts %(fatal: [#{host.name}]: UNREACHABLE! => {"changed": false, "msg": "Failed to connect to the host via ssh: #{connection_host}", "unreachable": true}).colorize(:red)
+          @results[host.name]["unreachable"] += 1
+          @halted_hosts << host.name
+          next
+        end
+
         success, error_message = outcomes[host.name]
 
         if success

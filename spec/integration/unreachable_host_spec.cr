@@ -65,6 +65,42 @@ describe "unreachable hosts" do
   end
 end
 
+describe "unreachable host with gather_facts:" do
+  # GROG.reboot went DIVERGENT in a real batch round against a dead kata
+  # VM: real ansible-playbook recapped `unreachable=1 failed=0` (a single
+  # connection failure, inside the implicit Gathering Facts task, halts
+  # the host before any other task runs), but krikri-playbook recapped
+  # `unreachable=1 failed=1` - gather_facts_for_all_hosts didn't know the
+  # pre-upload pass had already marked this host unreachable, so it tried
+  # the SSH connection AGAIN, booked that second failure as "failed", and
+  # then run_task_batch's own @unreachable_hosts check booked "unreachable"
+  # too on top of it for the first real task. Same host, one real
+  # connection failure, double-counted.
+  it "counts the host unreachable once, not unreachable AND failed" do
+    dir = File.tempname("unreachable-gather-facts")
+    Dir.mkdir_p(dir)
+    File.write(File.join(dir, "inv.ini"), UNREACHABLE)
+    File.write(File.join(dir, "pb.yml"), <<-YAML)
+      - hosts: all
+        tasks:
+          - name: t
+            ansible.builtin.command: /bin/true
+      YAML
+
+    begin
+      stdout_io = IO::Memory.new
+      status = Process.run(BINARY, ["-i", "inv.ini", "-T", "5", "pb.yml"],
+        output: stdout_io, error: stdout_io, chdir: dir)
+      output = stdout_io.to_s
+
+      status.exit_code.should eq(4)
+      output.should match(/bogus\s+: ok=0\s+changed=0\s+unreachable=1\s+failed=0/)
+    ensure
+      FileUtils.rm_rf(dir) if Dir.exists?(dir)
+    end
+  end
+end
+
 describe "ignore_unreachable:" do
   # Real Ansible attempts the task, reports UNREACHABLE!, counts it as
   # ok AND ignored, and lets the host CARRY ON - the next task without
