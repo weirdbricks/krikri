@@ -148,8 +148,9 @@ module Krikri
     # covers what corpus role-private modules actually use - params
     # parsing/validation against argument_spec (with type coercion,
     # defaults, aliases, required), check_mode, exit_json/fail_json,
-    # warn/run_command - not the whole real basic.py surface; anything
-    # beyond that fails exactly as before this shim existed.
+    # warn/run_command, log, get_bin_path - not the whole real
+    # basic.py surface; anything beyond that fails exactly as before
+    # this shim existed.
     BASIC_PY_SHIM = <<-PYTHON
       import json
       import os
@@ -314,6 +315,31 @@ module Krikri
                                  % (rc, err.decode('utf-8', 'replace')))
               return (rc, out.decode('utf-8', 'replace'),
                       err.decode('utf-8', 'replace'))
+
+          # Mirrors real basic.py's AnsibleModule.get_bin_path
+          # (delegate to module_utils.common.process.get_bin_path):
+          # absolute paths pass through, then opt_dirs, then PATH. Not
+          # found + required fails via fail_json like real basic.py;
+          # not required raises ValueError for the caller to catch
+          # (systemd_units via linux-system-roles.systemd calls it
+          # with neither, and real ansible-playbook still succeeds
+          # there because systemctl is found).
+          def get_bin_path(self, arg, required=False, opt_dirs=None):
+              paths = []
+              if os.path.isabs(arg):
+                  paths.append(arg)
+              for d in (opt_dirs or []):
+                  paths.append(d)
+              paths.extend(os.environ.get('PATH', os.defpath).split(os.pathsep))
+              for d in paths:
+                  candidate = os.path.join(d, arg)
+                  if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+                      return candidate
+              msg = ('Failed to find required executable %s in paths: %s'
+                     % (arg, ':'.join(paths)))
+              if required:
+                  self.fail_json(msg=msg)
+              raise ValueError(msg)
 
           def exit_json(self, **kwargs):
               result = dict(kwargs)
