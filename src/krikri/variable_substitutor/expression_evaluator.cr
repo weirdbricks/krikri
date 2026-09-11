@@ -2713,7 +2713,7 @@ module Krikri
       end
 
       private def lookup_fileglob_glob(pattern : String) : String
-        Dir.glob(pattern).select { |f| File.file?(f) }.sort!.to_json
+        Dir.glob(pattern).select { |path| File.file?(path) }.sort!.to_json
       end
 
       private def evaluate_lookup_misc(lookup_type : String?, parts : Array(String), kwargs : Array(String)) : String?

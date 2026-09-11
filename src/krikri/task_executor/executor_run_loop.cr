@@ -856,7 +856,7 @@ module Krikri
       if task.unavailable_module && python_module_source_for(task).nil?
         register_reachable_unavailable_module(task, vars_context, host, shared)
       else
-        return true unless when_condition = task.when_condition
+        return true unless task.when_condition
 
         return true if evaluate_when_items(task, vars_context, host, shared)
       end

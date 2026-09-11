@@ -890,7 +890,7 @@ module Krikri
       # "Flush handlers" skipped-banner shape).
       propagate_role_context(task, task.block_tasks || [] of Task)
 
-      if when_condition = task.when_condition
+      if task.when_condition
         vars_context = build_vars_context(task, host)
         when_result = false
         when_errored = false
@@ -910,9 +910,9 @@ module Krikri
           # Emulated by pushing the condition down onto the children and
           # falling through to the normal flow below, so the standard
           # halt/rescue/always/rescued accounting applies unchanged.
-          inherit_when_condition(when_condition, task.when_condition_list, task.block_tasks)
-          inherit_when_condition(when_condition, task.when_condition_list, task.rescue_tasks)
-          inherit_when_condition(when_condition, task.when_condition_list, task.always_tasks)
+          inherit_when_condition(task.when_condition.as(String), task.when_condition_list, task.block_tasks)
+          inherit_when_condition(task.when_condition.as(String), task.when_condition_list, task.rescue_tasks)
+          inherit_when_condition(task.when_condition.as(String), task.when_condition_list, task.always_tasks)
           when_errored = true
         end
 
@@ -1185,7 +1185,7 @@ module Krikri
     end
 
     private def run_include_tasks_once(task : Task, host : Host, vars_context : Hash(String, JSON::Any), item_label : String?) : Nil
-      if when_condition = task.when_condition
+      if task.when_condition
         begin
           when_result = evaluate_when_items(task, vars_context, host)
         rescue ex : WhenEvaluationError
@@ -1426,7 +1426,7 @@ module Krikri
       # early with one "skipping:" line for the include_role: task
       # itself is correct there (see the "ok" comment below for the
       # sibling true-branch rationale).
-      if (when_condition = task.when_condition) && !task.is_static_import?
+      if task.when_condition && !task.is_static_import?
         begin
           when_result = evaluate_when_items(task, vars_context, host)
         rescue ex : WhenEvaluationError

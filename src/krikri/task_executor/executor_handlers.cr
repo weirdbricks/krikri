@@ -428,7 +428,7 @@ module Krikri
       # `l2chroot: false` flag, which failed since `which` isn't a
       # dynamic executable). A skipped handler is not shown as changed/
       # failed and isn't counted in the recap, matching real Ansible.
-      if when_condition = handler.when_condition
+      if handler.when_condition
         begin
           when_result = evaluate_when_items(handler, vars_context, host)
         rescue ex : WhenEvaluationError
