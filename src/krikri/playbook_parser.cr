@@ -1163,6 +1163,12 @@ module Krikri
       # round 300033 calls it). install-only by nature - the real module
       # has no absent state either.
       "community.general.easy_install",
+      # mysql_variables (0.9.942): MySQL/MariaDB global variable query/
+      # set over the wire protocol, same shared connection path as the
+      # other community.mysql plugins (Oefenweb.percona_server round
+      # 310090 calls it). The FQCN-stripping regex already maps both
+      # community.mysql. and ansible.mysql. spellings to the binary.
+      "community.mysql.mysql_variables",
       "ansible.builtin.service_facts",
       "ansible.builtin.slurp",
       # No plugins/reboot.cr - handled entirely on the controller by
