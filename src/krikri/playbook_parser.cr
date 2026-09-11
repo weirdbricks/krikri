@@ -1131,6 +1131,9 @@ module Krikri
       # keytool (no live round found - implemented from the real
       # module's semantics, digest-compare import included).
       "community.general.java_cert",
+      # ovirt_auth (0.9.933): oVirt/RHV SSO token acquisition for the
+      # ovirt_vm-infra/ovirt_infra rounds (210319/210777 etc).
+      "ovirt.ovirt.ovirt_auth",
       "ansible.builtin.service_facts",
       "ansible.builtin.slurp",
       # No plugins/reboot.cr - handled entirely on the controller by
