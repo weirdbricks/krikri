@@ -1289,7 +1289,18 @@ module Krikri
           unless resolved_object
             rendered = native ? native.to_s : substitutor.substitute(raw, strict: true)
             parsed = JSON.parse(rendered)
-            raise "Error processing keyword 'environment': expected a dict, got #{rendered.inspect}" unless object = parsed.as_h?
+            object = parsed.as_h?
+            # Real Ansible never fails a task over a non-dict environment
+            # value - it just warns "could not parse environment value,
+            # skipping" and treats the environment as empty. The common
+            # trigger is a role default like `proxy_env: []`, meant to be
+            # overridden by the caller with a real dict but left as an
+            # empty list otherwise (ryandaniels.connectivity_test round
+            # 601446: the whole package: task failed here in krikri while
+            # real ansible-playbook just installed the packages with no
+            # extra env). Confirmed against ansible-core 2.19 for `[]`, a
+            # non-empty list, and a plain string - none of those raise.
+            return nil unless object
             resolved_object = object
           end
 
