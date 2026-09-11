@@ -955,6 +955,100 @@ module Krikri
           facts["ansible_processor"] = [match[1].strip]
         end
       end
+
+      gather_device_facts(facts)
+    end
+
+    # Block-device facts - the `ansible_devices` dict (keyed by device name)
+    # real ansible-core's Linux hardware collector ALWAYS populates by
+    # scanning /sys/block/*. Found via Tecnativa.hetzner_rescue_installimage's
+    # templates/autosetup.j2 (`{% for device in ansible_devices if
+    # device.startswith("sd") ... %}`): with the fact never set, the loop died
+    # with "can't iterate over undefined" and killed the role's "configure
+    # installation" task, which real Ansible completes (iterating a missing
+    # fact is never the case there - its setup module defines the key even as
+    # an empty dict). Deliberately NOT conditioned on non-empty, unlike
+    # ansible_mounts above: templates need the key to exist and be iterable
+    # even when the scan finds nothing (minimal containers) - making it
+    # omit-when-empty would reintroduce exactly this bug.
+    def gather_device_facts(facts)
+      devices = {} of String => JSON::Any
+
+      begin
+        Dir.each_child("/sys/block") do |name|
+          # Real Ansible's DEVICE_EXCLUDE_PATTERNS skips loopback and ram
+          # devices entirely.
+          next if name.starts_with?("loop") || name.starts_with?("ram")
+
+          sysfs = "/sys/block/#{name}"
+          dev = {} of String => JSON::Any
+
+          # Every file below may be absent (virtual/nvme devices lack
+          # device/vendor, some lack queue/) - tolerate each miss rather
+          # than fail the whole gather.
+          if sectors = read_trimmed("#{sysfs}/size")
+            dev["sectors"] = JSON::Any.new(sectors.to_i64?)
+            dev["size"] = JSON::Any.new(human_block_size(sectors.to_i64? || 0_i64))
+          end
+          if val = read_trimmed("#{sysfs}/queue/physical_block_size")
+            dev["sectorsize"] = JSON::Any.new(val.to_i64?)
+          end
+          if val = read_trimmed("#{sysfs}/removable")
+            dev["removable"] = JSON::Any.new(val)
+          end
+          if val = read_trimmed("#{sysfs}/queue/rotational")
+            dev["rotational"] = JSON::Any.new(val)
+          end
+          if val = read_trimmed("#{sysfs}/device/vendor")
+            dev["vendor"] = JSON::Any.new(val)
+          end
+          if val = read_trimmed("#{sysfs}/device/model")
+            dev["model"] = JSON::Any.new(val)
+          end
+          dev["virtual"] = JSON::Any.new(
+            name.starts_with?("dm-") || name.starts_with?("md") || name.starts_with?("zram") ? "1" : "0")
+
+          partitions = {} of String => JSON::Any
+          Dir.each_child(sysfs) do |part_name|
+            next unless part_name.starts_with?(name)
+            pdir = "#{sysfs}/#{part_name}"
+            next unless File.directory?(pdir)
+            part = {} of String => JSON::Any
+            part["name"] = JSON::Any.new(part_name)
+            if ps = read_trimmed("#{pdir}/size")
+              part["sectors"] = JSON::Any.new(ps.to_i64?)
+              part["size"] = JSON::Any.new(human_block_size(ps.to_i64? || 0_i64))
+            end
+            if st = read_trimmed("#{pdir}/start")
+              part["start"] = JSON::Any.new(st.to_i64?)
+            end
+            partitions[part_name] = JSON::Any.new(part)
+          end
+          dev["partitions"] = JSON::Any.new(partitions)
+
+          devices[name] = JSON::Any.new(dev)
+        end
+      rescue
+        # No /sys/block at all (non-Linux, exotic container) - devices
+        # stays {} and still gets set below.
+      end
+
+      # See the comment above: even {} must be set, never omitted.
+      facts["ansible_devices"] = devices
+    end
+
+    # Real Ansible renders device/partition sizes as human strings
+    # ("111.79 GB") via its human_size() helper - 1024-based units, two
+    # decimals, starting from bytes (sysfs size is in 512-byte sectors).
+    private def human_block_size(sectors : Int64) : String
+      units = ["B", "KB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB"]
+      size = (sectors * 512).to_f
+      unit = 0
+      while size >= 1024 && unit < units.size - 1
+        size /= 1024
+        unit += 1
+      end
+      sprintf("%.2f %s", size, units[unit])
     end
 
     # Mount facts - a list of dicts, one per mounted filesystem, matching real
