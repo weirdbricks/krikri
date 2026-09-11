@@ -1142,6 +1142,13 @@ module Krikri
       # DNS server, so only the parameter-validation failures are
       # unit-spec'd.
       "community.general.nsupdate",
+      # rhsm_repository (0.9.938): RHSM repository enable/disable via
+      # subscription-manager (zaxos.docker-ce-ansible-role round 310195
+      # hard-stopped on it where real ansible ran the role cleanly). The
+      # pre-10.0 present/absent state spellings are accepted alongside
+      # enabled/disabled - controllers still on community.general 9.x
+      # pass those through.
+      "community.general.rhsm_repository",
       "ansible.builtin.service_facts",
       "ansible.builtin.slurp",
       # No plugins/reboot.cr - handled entirely on the controller by
