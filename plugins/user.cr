@@ -64,15 +64,65 @@ module Krikri
   #     task, round 84001: previously the params were never even read, so
   #     the key was never generated and the task always reported ok).
   #
+  #   password_expire_account_disable (optional, int): days after a
+  #     password expires before the account is permanently disabled -
+  #     NOT a chage param despite looking like one: real Ansible's own
+  #     create_user_useradd/modify_user_usermod pass it as useradd/
+  #     usermod's `-f <days>` (live-verified against ansible-core
+  #     2.19.4: `useradd -f 30 ...` / `usermod ... -f 30 <name>`),
+  #     independent of `expires:`'s `-e`. Real Ansible has no
+  #     idempotency comparison for it, so giving it re-issues `-f` (and
+  #     reports changed) on every run - replicated.
+  #   skeleton (optional): custom skeleton directory passed as useradd
+  #     `-k <dir>` at creation (only when create_home is on - real
+  #     Ansible ignores it silently otherwise), and used as the copy
+  #     source when the modify path has to create a relocated home (real
+  #     Ansible's own create_homedir: skeleton: if given, else
+  #     /etc/skel).
+  #   move_home (optional, default no): with `home:` changing on an
+  #     existing account, pass usermod's `-m` too (move the old home's
+  #     contents to the new location) - real Ansible only ever emits
+  #     `-m` alongside an actual `-d` change, never on its own.
+  #   non_unique (optional, default no): allow a duplicate uid -
+  #     useradd/usermod `-o`, only ever emitted together with a uid
+  #     that is being set (create) or changed (modify), matching real
+  #     Ansible's own nesting of `-o` inside its uid branch.
+  #   local (optional, default no): operate on the local account files
+  #     only, bypassing NSS - existence is checked by reading
+  #     /etc/passwd directly (never `getent`, which would find a
+  #     directory/SSSD/LDAP account), and all work goes through the
+  #     libuser tools (luseradd/lusermod/luserdel/lgroupmod/lchage)
+  #     instead of shadow-utils, with real Ansible's own per-tool
+  #     differences (no -m, no -G, `-n` instead of `-N`, expiry via
+  #     `lchage -E <days>`). Fails with real Ansible's own message when
+  #     combined with `umask:` ('umask' can not be used with 'local').
+  #   umask (optional): controls the new home directory's permission
+  #     mode at creation - passed as useradd `-K UMASK=<umask>` (only
+  #     when create_home is on). NOTE: real Ansible only threads it
+  #     through useradd this way; its own modify-path home creation
+  #     derives the mode from /etc/login.defs, not this param.
+  #
+  # Out of scope (deliberately, this is a Linux-only engine - these are
+  # BSD/macOS/SELinux-only options of the real module and are rejected
+  # by the platforms krikri targets): login_class, seuser, hidden,
+  # authorization, role, profile.
+  #
   # Not implemented: any password-strength/format validation or warning
   # (real Ansible's own `check_password_encrypted` only ever warns, never
   # fails, on a value that doesn't look hashed - this plugin passes
-  # `password:` straight through either way), `local` (lgroupmod/lchage
-  # `--local` handling for NIS/LDAP-joined systems).
+  # `password:` straight through either way).
   class UserPlugin < BasePlugin
     def execute : PluginResult
       name = @params["name"]?
       return missing_param("name") unless name
+
+      # Real Ansible's own __init__ check, exact message (live-verified:
+      # `ansible localhost -m user -a 'name=x umask=027 local=true'`
+      # fails with this before anything else runs).
+      if local? && @params["umask"]?.presence
+        return PluginResult.new(changed: false, failed: true,
+          msg: "'umask' can not be used with 'local'")
+      end
 
       state = @params["state"]? || "present"
       check_mode = true?(@params["check_mode"]?)
@@ -85,10 +135,27 @@ module Krikri
       end
     end
 
+    # `local: true` bypasses NSS for the existence check: real Ansible's
+    # own user_exists() reads /etc/passwd directly there (its own comment:
+    # "pwd ... cannot be used to determine whether or not an account
+    # exists locally"), because `getent` would happily report a
+    # directory/SSSD/LDAP account that the libuser tools cannot touch.
     private def lookup(name : String) : PluginHelpers::UserState::User?
+      if local?
+        result = remote_exec("cat /etc/passwd")
+        return nil unless result[:exit_code] == 0
+        line = result[:stdout].each_line.find(&.starts_with?("#{name}:"))
+        return nil unless line
+        return PluginHelpers::UserState.parse(line)
+      end
+
       result = remote_exec("getent passwd #{shell_single_quote(name)}")
       return nil unless result[:exit_code] == 0
       PluginHelpers::UserState.parse(result[:stdout])
+    end
+
+    private def local? : Bool
+      true?(@params["local"]?)
     end
 
     private def ensure_absent(name : String, current : PluginHelpers::UserState::User?, check_mode : Bool) : PluginResult
@@ -97,7 +164,7 @@ module Krikri
       return PluginResult.new(changed: true, failed: false, msg: "Would remove user (check mode)") if check_mode
 
       args = PluginHelpers::UserState.userdel_args(name, true?(@params["remove"]?))
-      result = remote_exec("userdel #{args.join(" ")}")
+      result = remote_exec("#{local? ? "luserdel" : "userdel"} #{args.join(" ")}")
       return command_failure("remove user", result) unless result[:exit_code] == 0
       invalidate_shadow_cache
 
@@ -299,6 +366,7 @@ module Krikri
     private def create(name : String, check_mode : Bool) : PluginResult
       return PluginResult.new(changed: true, failed: false, msg: "Would create user (check mode)") if check_mode
 
+      local = local?
       create_home = wants_create_home?
       locked = @params["password_lock"]?.try { |v| true?(v) }
       args = PluginHelpers::UserState.useradd_args(
@@ -310,7 +378,12 @@ module Krikri
         @params["home"]?,
         @params["comment"]?,
         true?(@params["system"]?),
-        create_home
+        create_home,
+        non_unique: true?(@params["non_unique"]?),
+        skeleton: @params["skeleton"]?.presence,
+        umask: @params["umask"]?.presence,
+        inactive: @params["password_expire_account_disable"]?.presence,
+        local: local
       ) + quote_password_flag(PluginHelpers::UserState.useradd_password_args(@params["password"]?, locked))
 
       # Real ansible.builtin.user's own create_user_useradd (see its
@@ -325,34 +398,64 @@ module Krikri
       # Without this, useradd fails outright: "group X exists - if you
       # want to add this user to that group, use -g." - found
       # benchmarking round167's buluma.zeppelin on Ubuntu 22.04.
+      # libuser's luseradd spells the same flag `-n` (real Ansible's own
+      # local-path branch).
       if @params["group"]?.nil? && group_exists?(name)
-        args.unshift("-N")
+        args.unshift(local ? "-n" : "-N")
       end
 
-      if expires = @params["expires"]?.try(&.to_i64?)
+      expires = @params["expires"]?.try(&.to_i64?)
+      if expires && !local
         name_arg = args.pop
         args << "-e" << "'#{PluginHelpers::UserState.expires_date(expires)}'" << name_arg
       end
 
-      result = remote_exec("useradd #{args.join(" ")}")
+      result = remote_exec("#{local ? "luseradd" : "useradd"} #{args.join(" ")}")
       return command_failure("create user", result) unless result[:exit_code] == 0
       invalidate_shadow_cache
+
+      # Real Ansible's local-path tail (create_user_useradd's post-
+      # luseradd block): expiry via a separate lchage (luseradd has no
+      # -e), supplementary groups via one lgroupmod -M per group
+      # (luseradd has no -G) - order per its own source: lchage first.
+      if local
+        if expires
+          days = PluginHelpers::UserState.local_expiry_days(expires)
+          lchage = remote_exec("lchage -E '#{days}' #{shell_single_quote(name)}")
+          return command_failure("set local account expiry", lchage) unless lchage[:exit_code] == 0
+          invalidate_shadow_cache
+        end
+
+        local_group_add_commands(name).each do |cmd|
+          lgroupmod = remote_exec(cmd)
+          return command_failure("add local group membership", lgroupmod) unless lgroupmod[:exit_code] == 0
+        end
+      end
 
       PluginResult.new(changed: true, failed: false, msg: "User created")
     end
 
     private def modify(name : String, current : PluginHelpers::UserState::User, check_mode : Bool) : PluginResult
+      local = local?
       flags = PluginHelpers::UserState.usermod_flags(
         current,
         @params["uid"]?,
         resolve_gid(@params["group"]?),
         @params["shell"]?,
         @params["home"]?,
-        @params["comment"]?
+        @params["comment"]?,
+        non_unique: true?(@params["non_unique"]?),
+        move_home: true?(@params["move_home"]?),
+        inactive: @params["password_expire_account_disable"]?.presence
       )
 
-      flags += password_and_expiry_flags(name)
-      flags += group_membership_flags(name)
+      flags += password_and_expiry_flags(name, local)
+      flags += local ? [] of String : group_membership_flags(name)
+
+      # `local: true` moves supplementary-group work out of the usermod
+      # call into one lgroupmod command per group (libuser has no -G).
+      local_group_cmds = local ? local_group_commands(name) : [] of String
+      local_expiry_days = local ? pending_local_expiry(name) : nil
 
       # `usermod -d <newhome>` (already in flags above when home: changes)
       # only rewrites the passwd entry - real GNU usermod's own `-m`
@@ -370,14 +473,29 @@ module Krikri
       # file or directory" because /home/caddy was never created.
       new_home = home_needing_creation(current)
 
-      return PluginResult.new(changed: false, failed: false, msg: "User already up to date") if flags.empty? && !new_home
+      if flags.empty? && !new_home && local_group_cmds.empty? && local_expiry_days.nil?
+        return PluginResult.new(changed: false, failed: false, msg: "User already up to date")
+      end
 
       return PluginResult.new(changed: true, failed: false, msg: "Would modify user (check mode)") if check_mode
 
       unless flags.empty?
-        result = remote_exec("usermod #{flags.join(" ")} #{name}")
+        result = remote_exec("#{local ? "lusermod" : "usermod"} #{flags.join(" ")} #{name}")
         return command_failure("modify user", result) unless result[:exit_code] == 0
         invalidate_shadow_cache
+      end
+
+      # Real Ansible's modify_user_usermod local-path tail: expiry via
+      # lchage (after lusermod), then one lgroupmod add/del per group.
+      if days = local_expiry_days
+        lchage = remote_exec("lchage -E '#{days}' #{shell_single_quote(name)}")
+        return command_failure("update local account expiry", lchage) unless lchage[:exit_code] == 0
+        invalidate_shadow_cache
+      end
+
+      local_group_cmds.each do |cmd|
+        lgroupmod = remote_exec(cmd)
+        return command_failure("update local group membership", lgroupmod) unless lgroupmod[:exit_code] == 0
       end
 
       if new_home
@@ -408,6 +526,7 @@ module Krikri
     private def group_membership_flags(name : String) : Array(String)
       groups_val = @params["groups"]?.presence
       return [] of String unless groups_val && groups_val != "[]"
+      return [] of String if local?
 
       # A full-value `groups: "{{ list_var }}"` substitution renders a
       # real multi-item list as bracketed text (`['a', 'b']`) rather
@@ -425,6 +544,38 @@ module Krikri
 
       flag = append ? "-a -G" : "-G"
       ["#{flag} #{Shell.single_quote(requested.join(","))}"]
+    end
+
+    # `local: true`'s lgroupmod equivalent of group_membership_flags -
+    # full commands, not usermod flags (libuser has no -G): one
+    # `lgroupmod -M <name> <group>` per added group, plus one
+    # `lgroupmod -m <name> <group>` per removed group when not appending
+    # (real Ansible's own modify_user_usermod local branch, adds before
+    # dels). Create path only ever needs the add half.
+    private def local_group_commands(name : String) : Array(String)
+      groups_val = @params["groups"]?.presence
+      return [] of String unless groups_val && groups_val != "[]"
+
+      requested = PluginHelpers::UserState.normalize_groups_value(groups_val).split(',').map(&.strip).reject(&.empty?)
+      current_groups = current_supplementary_groups(name)
+      adds = (requested - current_groups).map { |group| "lgroupmod -M #{shell_single_quote(name)} #{shell_single_quote(group)}" }
+      return adds if true?(@params["append"]?)
+
+      dels = (current_groups - requested).map { |group| "lgroupmod -m #{shell_single_quote(name)} #{shell_single_quote(group)}" }
+      adds + dels
+    end
+
+    # `local: true` create path: groups can't ride on luseradd (no -G),
+    # so real Ansible's create_user_useradd tail issues one
+    # `lgroupmod -M <name> <group>` per group after it.
+    private def local_group_add_commands(name : String) : Array(String)
+      groups_val = @params["groups"]?.presence
+      return [] of String unless groups_val && groups_val != "[]"
+
+      requested = PluginHelpers::UserState.normalize_groups_value(groups_val).split(',').map(&.strip).reject(&.empty?)
+      requested.map do |group|
+        "lgroupmod -M #{shell_single_quote(name)} #{shell_single_quote(group)}"
+      end
     end
 
     private def current_supplementary_groups(name : String) : Array(String)
@@ -452,7 +603,7 @@ module Krikri
       raw.nil? || true?(raw)
     end
 
-    private def password_and_expiry_flags(name : String) : Array(String)
+    private def password_and_expiry_flags(name : String, local : Bool) : Array(String)
       flags = [] of String
 
       password = @params["password"]?
@@ -464,13 +615,30 @@ module Krikri
         )
       end
 
-      if expires = @params["expires"]?.try(&.to_i64?)
-        if PluginHelpers::UserState.expires_changed?(expires, shadow_expire_days(name))
-          flags << "-e" << "'#{PluginHelpers::UserState.expires_date(expires)}'"
+      # `local: true` never puts -e on lusermod (libuser's lusermod has
+      # no expiry flag; real Ansible's own local branch routes expires:
+      # through a separate `lchage -E <days>` instead).
+      unless local
+        if expires = @params["expires"]?.try(&.to_i64?)
+          if PluginHelpers::UserState.expires_changed?(expires, shadow_expire_days(name))
+            flags << "-e" << "'#{PluginHelpers::UserState.expires_date(expires)}'"
+          end
         end
       end
 
       flags
+    end
+
+    # `local: true` modify-path expiry: nil when expires: isn't given or
+    # the shadow field already matches; the lchage -E day-count otherwise
+    # (lusermod has no expiry flag, mirroring real Ansible's own local
+    # branch). lchage takes whole DAYS since epoch, not a date.
+    private def pending_local_expiry(name : String) : Int64?
+      expires = @params["expires"]?.try(&.to_i64?)
+      return nil unless expires
+      return nil unless PluginHelpers::UserState.expires_changed?(expires, shadow_expire_days(name))
+
+      PluginHelpers::UserState.local_expiry_days(expires)
     end
 
     # The new home: dir modify() needs to create, or nil when create_home:
@@ -500,7 +668,11 @@ module Krikri
       mkdir = remote_exec("mkdir -p #{q_home}")
       return command_failure("create home directory", mkdir) unless mkdir[:exit_code] == 0
 
-      remote_exec("cp -a /etc/skel/. #{q_home}/ 2>/dev/null")
+      # Real Ansible's own create_homedir: skeleton: if given, else
+      # /etc/skel (modify-path home creation; useradd's own -k only
+      # applies at account-creation time).
+      skel = @params["skeleton"]?.presence || "/etc/skel"
+      remote_exec("cp -a #{shell_single_quote(skel)}/. #{q_home}/ 2>/dev/null")
 
       chown = remote_exec("chown -R #{q_name}:#{shell_single_quote(gid)} #{q_home}")
       return command_failure("set home directory ownership", chown) unless chown[:exit_code] == 0

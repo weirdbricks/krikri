@@ -52,6 +52,11 @@ module Krikri
         comment : String?,
         system : Bool,
         create_home : Bool,
+        non_unique : Bool = false,
+        skeleton : String? = nil,
+        umask : String? = nil,
+        inactive : String? = nil,
+        local : Bool = false,
       ) : Array(String)
         # A blank (non-nil but empty) value - e.g. `groups: "{{
         # some_var }}"` where some_var is YAML `null`, real Ansible's
@@ -89,14 +94,18 @@ module Krikri
         # comment, does NOT escape $ or backticks).
         if u = uid.presence
           args << "-u #{Shell.single_quote(u)}"
+          # non_unique: -o is only ever meaningful alongside -u (a duplicate
+          # uid is the only thing it permits) - real Ansible nests it inside
+          # its own uid branch, live-verified (the real module emits
+          # `useradd -u 60000 -o ...` and `usermod -u 60001 -o ...`, and
+          # nothing when the uid isn't (re)set).
+          args << "-o" if non_unique
         end
         if g = gid.presence
           args << "-g #{Shell.single_quote(g)}"
         end
         groups_val = groups.presence
-        if groups_val && groups_val != "[]"
-          args << "-G #{Shell.single_quote(normalize_groups_value(groups_val))}"
-        end
+        append_group_args(args, groups_val, local)
         if sh = shell.presence
           args << "-s #{Shell.single_quote(sh)}"
         end
@@ -107,9 +116,38 @@ module Krikri
           args << "-c #{Shell.single_quote(com)}"
         end
         args << "-r" if system
-        args << (create_home ? "-m" : "-M")
+        append_home_args(args, create_home, skeleton, umask, local)
+        if inact = inactive.presence
+          args << "-f #{Shell.single_quote(inact)}"
+        end
         args << Shell.single_quote(name)
         args
+      end
+
+      # Supplementary-groups flag for useradd - `local: true` never uses
+      # -G: libuser's luseradd has no supplementary-group flag, real
+      # Ansible adds each group with a separate
+      # `lgroupmod -M <name> <group>` call after luseradd instead.
+      private def self.append_group_args(args : Array(String), groups_val : String?, local : Bool) : Nil
+        return if local || groups_val.nil? || groups_val.empty? || groups_val == "[]"
+
+        args << "-G #{Shell.single_quote(normalize_groups_value(groups_val))}"
+      end
+
+      # Home-directory flags for useradd (create_home's -m/-M plus the
+      # skeleton/umask pair that real Ansible only ever threads through
+      # inside the create_home branch). `local: true` never passes -m
+      # (libuser's luseradd has no -m; real Ansible skips it, the
+      # caller's lgroupmod/lchage tail is what remains), but skeleton/
+      # umask still go through as -k/-K.
+      private def self.append_home_args(args : Array(String), create_home : Bool, skeleton : String?, umask : String?, local : Bool) : Nil
+        if create_home
+          args << "-m" unless local
+          args << "-k #{Shell.single_quote(skeleton)}" if skeleton
+          args << "-K #{Shell.single_quote("UMASK=#{umask}")}" if umask
+        else
+          args << "-M"
+        end
       end
 
       # usermod flags needed to reconcile an existing account with the
@@ -122,6 +160,9 @@ module Krikri
         shell : String?,
         home : String?,
         comment : String?,
+        non_unique : Bool = false,
+        move_home : Bool = false,
+        inactive : String? = nil,
       ) : Array(String)
         flags = [
           changed_flag("-u", uid, current.uid),
@@ -129,11 +170,25 @@ module Krikri
           changed_flag("-s", shell, current.shell),
           changed_flag("-d", home, current.home),
         ].compact
+        # -o only ever rides along with a uid that's actually changing,
+        # and -m only with an actual -d change - real Ansible nests both
+        # inside its own diff branches, never on their own.
+        flags << "-o" if non_unique && uid.presence && uid != current.uid
+        flags << "-m" if move_home && home.presence && home != current.home
         com = comment.presence
         if com && com != current.comment
           flags << "-c #{Shell.single_quote(com)}"
         end
-        flags
+        # password_expire_account_disable (usermod's -f INACTIVE) has NO
+        # idempotency comparison in real Ansible's modify_user_usermod -
+        # whenever the param is given it's appended unconditionally, so a
+        # run carrying it reports changed even when everything already
+        # matches (verified against the real module's source and live
+        # run: `usermod -u 60001 -o -d <home> -m -f 30 nobody`).
+        if inact = inactive.presence
+          flags << "-f #{Shell.single_quote(inact)}"
+        end
+        flags.compact
       end
 
       def self.userdel_args(name : String, remove_home : Bool) : Array(String)
@@ -199,6 +254,16 @@ module Krikri
         wanted_days = timestamp < 0 ? -1 : (timestamp // 86400).to_i32
         current = current_days || -1
         wanted_days != current
+      end
+
+      # `local: true`'s expires conversion - unlike the normal path's
+      # useradd/usermod `-e YYYY-MM-DD`, libuser's lchage takes whole DAYS
+      # since epoch (`-E`), real Ansible's own `int(floor(expires)) //
+      # 86400` (or -1, lchage's clear-value, for a negative timestamp).
+      # Live-verified: the real module emits `lchage -E 21915` for
+      # `expires: 1893456000`.
+      def self.local_expiry_days(timestamp : Int64) : Int64
+        timestamp < 0 ? -1_i64 : timestamp // 86400
       end
 
       # `chage -m <min> -M <max> -W <warn> <name>` flags needed to
