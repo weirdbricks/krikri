@@ -91,6 +91,30 @@ def apt_key_spec_state_file : String
 end
 
 describe "apt_key plugin" do
+  it "fails when more than one of data:/file:/keyserver:/url: is given, matching real Ansible's exact message" do
+    # Real apt_key.py's argument_spec declares mutually_exclusive=
+    # (('data', 'file', 'keyserver', 'url'),) and validates it BEFORE
+    # main() runs anything. Live-verified against ansible-core 2.19.4
+    # with a local-connection playbook: the message is the whole
+    # declaration-order tuple joined by |, regardless of which of the
+    # four were given.
+    result = PluginSpecHelper.run("apt_key", {"state" => "present", "url" => "https://example.com/key.gpg", "data" => VALID_KEY_ASC})
+
+    result["failed"].as_bool.should be_true
+    result["msg"].as_s.should eq("parameters are mutually exclusive: data|file|keyserver|url")
+  end
+
+  it "counts an explicitly empty param as given for the mutual-exclusion check (matches real Ansible's key-presence semantics)" do
+    # Real check_mutually_exclusive -> count_terms counts param KEYS
+    # (set(terms).intersection(parameters)), not truthy values, so
+    # url: "" + data: still fails - live-verified against ansible-core
+    # 2.19.4.
+    result = PluginSpecHelper.run("apt_key", {"state" => "present", "url" => "", "data" => VALID_KEY_ASC})
+
+    result["failed"].as_bool.should be_true
+    result["msg"].as_s.should eq("parameters are mutually exclusive: data|file|keyserver|url")
+  end
+
   it "requires url or data when adding a key" do
     result = PluginSpecHelper.run("apt_key", {"state" => "present"})
 

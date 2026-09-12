@@ -22,6 +22,9 @@ module Krikri
   # - validate_certs: default true; false skips TLS verification for
   #   url: (grafana's own role sets this)
   #
+  # data:/file:/keyserver:/url: are mutually exclusive (real apt_key.py's
+  # argument-spec check; giving more than one fails before anything runs).
+  #
   # - keyserver: fetches by id: from a keyserver instead of url:/data: -
   #   verified against real ansible/modules/apt_key.py's own source:
   #   `apt-key adv --no-tty --keyserver <keyserver> --recv <id>`, and
@@ -72,6 +75,22 @@ module Krikri
   #   exact failure message.
   class AptKeyPlugin < BasePlugin
     def execute : PluginResult
+      # Real Ansible's argument-spec validation (mutually_exclusive=
+      # (('data', 'file', 'keyserver', 'url'),)) runs before main() and
+      # before any param resolution, so this is deliberately the first
+      # thing here. Live-verified against ansible-core 2.19.4: the
+      # message is the whole declaration-order tuple joined by |,
+      # regardless of which of the four were given, and a param counts
+      # as given even when its value is an empty string (real
+      # check_mutually_exclusive -> count_terms intersects param KEYS
+      # via set(terms).intersection(parameters), not truthy values -
+      # url: "" + data: still fails).
+      mutex_params = %w[data file keyserver url]
+      if mutex_params.count { |param| @params[param]? } > 1
+        return PluginResult.new(changed: false, failed: true,
+          msg: "parameters are mutually exclusive: #{mutex_params.join('|')}")
+      end
+
       state = @params["state"]?.try(&.downcase) || "present"
 
       if state == "absent"
