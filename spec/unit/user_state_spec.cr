@@ -87,6 +87,40 @@ describe UserState do
       args = UserState.useradd_args("mongodb_exporter", nil, nil, "['mongodb_exporter', 'ssl-cert']", nil, nil, nil, false, true)
       args.should eq(["-G 'mongodb_exporter,ssl-cert'", "-m", "'mongodb_exporter'"])
     end
+
+    it "emits -o alongside the uid when non_unique is set (live-verified: `useradd -u 60000 -o ...`)" do
+      args = UserState.useradd_args("dup", "60000", nil, nil, nil, nil, nil, false, true, non_unique: true)
+      args.should eq(["-u '60000'", "-o", "-m", "'dup'"])
+    end
+
+    it "never emits -o without a uid (real Ansible nests it inside its own uid branch)" do
+      args = UserState.useradd_args("dup", nil, nil, nil, nil, nil, nil, false, true, non_unique: true)
+      args.should eq(["-m", "'dup'"])
+    end
+
+    it "passes skeleton/umask as -k/-K UMASK inside the create_home branch and -f for password_expire_account_disable" do
+      # Live-verified against ansible-core 2.19.4's create_user_useradd
+      # via shimmed useradd: `useradd -u 60000 -o -e 2030-01-01 -f 30
+      # -m -k /etc/skel.custom -K UMASK=027 <name>`.
+      args = UserState.useradd_args("sk", "60000", nil, nil, nil, "/home/sk", nil, false, true,
+        non_unique: true, skeleton: "/etc/skel.custom", umask: "027", inactive: "30")
+      args.should eq(["-u '60000'", "-o", "-d '/home/sk'", "-m", "-k '/etc/skel.custom'", "-K 'UMASK=027'", "-f '30'", "'sk'"])
+    end
+
+    it "silently drops skeleton/umask when create_home is off (real Ansible ignores them there too)" do
+      args = UserState.useradd_args("sk", nil, nil, nil, nil, "/home/sk", nil, false, false,
+        skeleton: "/etc/skel.custom", umask: "027")
+      args.should eq(["-d '/home/sk'", "-M", "'sk'"])
+    end
+
+    it "keeps -k/-K/-f but drops -m and -G on the local (luseradd) path" do
+      # Live-verified: `luseradd -f 30 -k /etc/skel.custom <name>` - no
+      # -m, no -G (libuser has neither; groups/expiry go through the
+      # lgroupmod/lchage tail instead).
+      args = UserState.useradd_args("loc", nil, nil, "adm", nil, "/home/loc", nil, false, true,
+        skeleton: "/etc/skel.custom", inactive: "30", local: true)
+      args.should eq(["-d '/home/loc'", "-k '/etc/skel.custom'", "-f '30'", "'loc'"])
+    end
   end
 
   describe ".usermod_flags" do
@@ -115,6 +149,25 @@ describe UserState do
     it "does not flag an empty-string desired value as a change, matching useradd_args' same fix" do
       current = SAMPLE_USER
       UserState.usermod_flags(current, "", "", "", "", "").should eq([] of String)
+    end
+
+    it "emits -o after a changing uid when non_unique is set (live-verified: `usermod -u 60001 -o ...`)" do
+      flags = UserState.usermod_flags(SAMPLE_USER, "60001", nil, nil, nil, nil, non_unique: true)
+      flags.should eq(["-u '60001'", "-o"])
+    end
+
+    it "emits -m right after -d when move_home is set and the home is changing" do
+      flags = UserState.usermod_flags(SAMPLE_USER, nil, nil, nil, "/home/alice2", nil, move_home: true)
+      flags.should eq(["-d '/home/alice2'", "-m"])
+    end
+
+    it "never emits -m when the home is not changing, even with move_home set" do
+      UserState.usermod_flags(SAMPLE_USER, nil, nil, nil, "/home/alice", nil, move_home: true).should eq([] of String)
+    end
+
+    it "emits -f for password_expire_account_disable even when everything else already matches (real Ansible has no idempotency check for it)" do
+      flags = UserState.usermod_flags(SAMPLE_USER, nil, nil, nil, nil, nil, inactive: "30")
+      flags.should eq(["-f '30'"])
     end
   end
 
@@ -240,6 +293,19 @@ describe UserState do
     it "treats a negative (remove) timestamp as unchanged only when nothing is currently set" do
       UserState.expires_changed?(-1_i64, nil).should be_false
       UserState.expires_changed?(-1_i64, 16463).should be_true
+    end
+  end
+
+  describe ".local_expiry_days" do
+    # Live-verified against the real module's local branch: expires:
+    # 1893456000 emits `lchage -E 21915` (whole days since epoch,
+    # unlike the normal path's `-e YYYY-MM-DD`).
+    it "converts a timestamp to whole days since epoch" do
+      UserState.local_expiry_days(1893456000_i64).should eq(21915)
+    end
+
+    it "maps a negative (remove) timestamp to lchage's own -1 clear value" do
+      UserState.local_expiry_days(-1_i64).should eq(-1)
     end
   end
 end
