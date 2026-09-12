@@ -5744,6 +5744,22 @@ closed in 0.9.824; see the round narrative at the top.)
   correctly failing with real Ansible's own exact error message on
   both).
 
+### getent's `service:` only ever resolves through the local files backend
+
+- Real `ansible.builtin.getent`'s `service:` param passes `-s <service>`
+  to the getent binary, restricting the lookup to one NSS backend (e.g.
+  `service: files` to bypass LDAP/SSSD and read /etc/passwd directly).
+  krikri's getent plugin reads the local database files directly instead
+  of forking getent, so it IS the files backend: `service:` is accepted
+  and any value returns the files-backed data. For `service: files` -
+  the overwhelmingly common role usage - this is exactly right. A
+  request for a genuinely remote backend (`ldap`, `sss`, ...) returns
+  local files data where real Ansible on a non-LDAP host would return
+  not-found; emulating arbitrary NSS backends is out of scope (it would
+  mean running getent or an NSS resolver). Decided in the 0.9.990
+  param-coverage audit of getent, live-verified against real
+  ansible-playbook 2.19.4 (`service: files` byte-identical facts).
+
 ---
 
 For the fixed-bug history (150+ rounds of real-host benchmarking against
