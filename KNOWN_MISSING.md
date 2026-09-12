@@ -18,7 +18,7 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.976`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.977`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.30` (see `shard.yml`).
 
 ## Open gaps
@@ -103,12 +103,10 @@ never updated to drop them; `evrardjp.keepalived` and
 `igor_nikiforov.journald` are fixed too, root cause not re-investigated
 since they're already clean). `riemers.gitlab-runner` is a missing
 module (`ansible.windows.win_command`, Windows-only), not a bug -
-folded into the missing-modules list below. `kyl191.openvpn` is a real,
-newly-confirmed, deterministic bug: `command`'s `creates:`/`removes:`
-idempotency check doesn't resolve the path relative to `chdir:` the way
-real Ansible does, so a relative `creates:` combined with `chdir:`
-never finds the file and the task never becomes idempotent - fix
-in progress.
+folded into the missing-modules list below. `kyl191.openvpn`'s real bug
+(`command`'s `creates:`/`removes:` not resolving relative to `chdir:`) is
+now FIXED and confirmed on a real host - see the round narrative below;
+removed from this list.
 - **Scope question, not yet decided** (2026-09-10/11 batches): `bigip_wait`
   (F5 BIG-IP network-appliance family - `f5devcentral.backup_config`,
   `.bigip_gslb`, `.bigip_onboard`, `.f5app_services_package`),
@@ -141,6 +139,25 @@ commits), on top of the 7 immediately above re-verified clean the same
 way. The shortlist is at
 `testing/kata/round_new_authors/shortlist120.txt` if resuming it -
 against Atlantic.net now, Kata having been retired as a backend.
+
+---
+
+## `kyl191.openvpn`'s command/shell creates:/removes: chdir bug fixed and confirmed (0.9.977)
+
+Re-checking the abandoned `round_new_authors` shortlist (see the Open
+gaps entry above) surfaced a real, deterministic bug: `command`'s (and
+`shell`'s, same bug independently implemented in each - fixed in both)
+`creates:`/`removes:` idempotency check ran before `chdir:` was applied
+and tested the relative path against the plugin process's own inherited
+cwd instead of `chdir`, so `kyl191.openvpn`'s "server_keys | Generate CA
+key" (`chdir: openvpn_key_dir`, `creates: ca-key.pem`) never became
+idempotent - re-ran on every warm pass where real Ansible correctly
+skips it. Fixed by resolving a relative `creates:`/`removes:` against
+`chdir:` (matching real Ansible) without an early `Dir.cd` - the file
+still skips cleanly with no working-directory side effect when it
+already exists. Confirmed on a real host post-fix (round 705000):
+byte-identical `ok=21 changed=15 failed=1 skipped=32` cold and
+`ok=20 changed=0 failed=1 skipped=33` warm on both engines.
 
 ---
 
