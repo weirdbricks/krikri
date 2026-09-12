@@ -1,6 +1,9 @@
 require "../spec_helper"
 require "http/server"
 require "openssl/digest"
+require "base64"
+require "compress/gzip"
+require "file_utils"
 
 # A tiny local HTTP server (Crystal stdlib HTTP::Server, no python3
 # dependency) serving fixed content + a redirect, started once for the
@@ -40,6 +43,32 @@ get_url_test_server = HTTP::Server.new do |context|
     else
       context.response.status_code = 200
       context.response.print(context.request.headers["X-Custom"]? || "no-custom-header")
+    end
+  when "/auth.txt"
+    if context.request.headers["Authorization"]? == "Basic " + Base64.strict_encode("u1:p1")
+      context.response.status_code = 200
+      context.response.print("secret-authed")
+    else
+      context.response.status_code = 401
+      context.response.headers["WWW-Authenticate"] = "Basic realm=\"x\""
+      context.response.print("denied")
+    end
+  when "/echo-auth.txt"
+    context.response.status_code = 200
+    context.response.print(context.request.headers["Authorization"]? || "no-auth-header")
+  when "/redirect-auth.txt"
+    context.response.status_code = 302
+    context.response.headers["Location"] = "/echo-auth.txt"
+  when "/gz.txt"
+    body = "gzip-body-here"
+    context.response.status_code = 200
+    if context.request.headers["Accept-Encoding"]?.try(&.includes?("gzip"))
+      context.response.headers["Content-Encoding"] = "gzip"
+      io = IO::Memory.new
+      Compress::Gzip::Writer.open(io, &.print(body))
+      context.response.print(io.to_s)
+    else
+      context.response.print(body)
     end
   else
     context.response.status_code = 404
@@ -306,5 +335,243 @@ describe "get_url plugin" do
 
     result = PluginSpecHelper.run("get_url", {"url" => "#{get_url_base}/file.txt"})
     result["failed"].as_bool.should be_true
+  end
+
+  it "retries basic auth on a 401 challenge when force_basic_auth is unset (the default)" do
+    # Real get_url's force_basic_auth default is false: the first request
+    # goes out WITHOUT Authorization and one retry is made WITH it on a
+    # 401 challenge (urllib's HTTPBasicAuthHandler) - previously this
+    # plugin always sent the header up front instead (mirroring the
+    # force_basic_auth: true flow).
+    dest = File.tempname("get-url-spec")
+    result = PluginSpecHelper.run("get_url", {
+      "url" => "#{get_url_base}/auth.txt", "dest" => dest,
+      "url_username" => "u1", "url_password" => "p1",
+    })
+
+    result["changed"].as_bool.should be_true
+    result["failed"].as_bool.should be_false
+    File.read(dest).should eq("secret-authed")
+  ensure
+    File.delete(dest) if dest && File.exists?(dest)
+  end
+
+  it "sends Basic auth on the first request when force_basic_auth is true" do
+    dest = File.tempname("get-url-spec")
+    result = PluginSpecHelper.run("get_url", {
+      "url" => "#{get_url_base}/echo-auth.txt", "dest" => dest,
+      "url_username" => "u1", "url_password" => "p1", "force_basic_auth" => "true",
+    })
+
+    result["changed"].as_bool.should be_true
+    File.read(dest).should eq("Basic " + Base64.strict_encode("u1:p1"))
+  ensure
+    File.delete(dest) if dest && File.exists?(dest)
+  end
+
+  it "fails with a 401 when the credentials are wrong" do
+    dest = File.tempname("get-url-spec")
+    result = PluginSpecHelper.run("get_url", {
+      "url" => "#{get_url_base}/auth.txt", "dest" => dest,
+      "url_username" => "u1", "url_password" => "WRONG",
+    })
+
+    result["failed"].as_bool.should be_true
+    File.exists?(dest).should be_false
+  ensure
+    File.delete(dest) if dest && File.exists?(dest)
+  end
+
+  it "requests identity encoding when decompress is false" do
+    # decompress: false (real get_url's decompress param, default true)
+    # must suppress the transparent gzip negotiation: the file gets
+    # exactly the bytes the server meant to send. The /gz.txt endpoint
+    # gzips only when the client offered gzip, so an identity request
+    # comes back un-gzipped on the wire.
+    dest = File.tempname("get-url-spec")
+    result = PluginSpecHelper.run("get_url", {
+      "url" => "#{get_url_base}/gz.txt", "dest" => dest, "decompress" => "false",
+    })
+
+    result["changed"].as_bool.should be_true
+    File.read(dest).should eq("gzip-body-here")
+  ensure
+    File.delete(dest) if dest && File.exists?(dest)
+  end
+
+  it "transparently decompresses a gzip response by default (decompress unset)" do
+    dest = File.tempname("get-url-spec")
+    result = PluginSpecHelper.run("get_url", {"url" => "#{get_url_base}/gz.txt", "dest" => dest})
+
+    result["changed"].as_bool.should be_true
+    File.read(dest).should eq("gzip-body-here")
+  ensure
+    File.delete(dest) if dest && File.exists?(dest)
+  end
+
+  it "drops unredirected_headers after a redirect hop" do
+    dest = File.tempname("get-url-spec")
+    result = PluginSpecHelper.run("get_url", {
+      "url" => "#{get_url_base}/redirect-auth.txt", "dest" => dest,
+      "headers" => %({"Authorization": "Bearer token"}),
+      "unredirected_headers" => %(["Authorization"]),
+    })
+
+    result["changed"].as_bool.should be_true
+    File.read(dest).should eq("no-auth-header")
+  ensure
+    File.delete(dest) if dest && File.exists?(dest)
+  end
+
+  it "carries ordinary headers across a redirect hop by default" do
+    dest = File.tempname("get-url-spec")
+    result = PluginSpecHelper.run("get_url", {
+      "url" => "#{get_url_base}/redirect-auth.txt", "dest" => dest,
+      "headers" => %({"Authorization": "Bearer token"}),
+    })
+
+    result["changed"].as_bool.should be_true
+    File.read(dest).should eq("Bearer token")
+  ensure
+    File.delete(dest) if dest && File.exists?(dest)
+  end
+
+  describe "tmp_dest:" do
+    it "stages the download in the given directory" do
+      staging = File.join(Dir.tempdir, "get-url-spec-staging-#{Random.rand(1_000_000)}")
+      Dir.mkdir(staging)
+      dest = File.tempname("get-url-spec")
+      result = PluginSpecHelper.run("get_url", {
+        "url" => "#{get_url_base}/file.txt", "dest" => dest, "tmp_dest" => staging,
+      })
+
+      result["changed"].as_bool.should be_true
+      result["failed"].as_bool.should be_false
+      File.read(dest).should eq(FILE_CONTENT)
+      Dir.children(staging).should be_empty
+    ensure
+      FileUtils.rm_rf(staging) if staging
+      File.delete(dest) if dest && File.exists?(dest)
+    end
+
+    it "fails with real Ansible's message when tmp_dest is a file" do
+      tmp_file = File.tempname("get-url-spec-tmpdest")
+      File.write(tmp_file, "x")
+      dest = File.tempname("get-url-spec")
+      result = PluginSpecHelper.run("get_url", {
+        "url" => "#{get_url_base}/file.txt", "dest" => dest, "tmp_dest" => tmp_file,
+      })
+
+      result["failed"].as_bool.should be_true
+      result["msg"].as_s.should eq("#{tmp_file} is a file but should be a directory.")
+      File.exists?(dest).should be_false
+    ensure
+      File.delete(tmp_file) if tmp_file && File.exists?(tmp_file)
+      File.delete(dest) if dest && File.exists?(dest)
+    end
+
+    it "fails with real Ansible's message when tmp_dest does not exist" do
+      missing = File.join(Dir.tempdir, "get-url-spec-missing-#{Random.rand(1_000_000)}")
+      dest = File.tempname("get-url-spec")
+      result = PluginSpecHelper.run("get_url", {
+        "url" => "#{get_url_base}/file.txt", "dest" => dest, "tmp_dest" => missing,
+      })
+
+      result["failed"].as_bool.should be_true
+      result["msg"].as_s.should eq("#{missing} directory does not exist.")
+      File.exists?(dest).should be_false
+    ensure
+      File.delete(dest) if dest && File.exists?(dest)
+    end
+  end
+
+  it "writes normally when unsafe_writes is given but the atomic move succeeds (param has no effect on a normal filesystem)" do
+    dest = File.tempname("get-url-spec")
+    result = PluginSpecHelper.run("get_url", {
+      "url" => "#{get_url_base}/file.txt", "dest" => dest, "unsafe_writes" => "true",
+    })
+
+    result["changed"].as_bool.should be_true
+    result["failed"].as_bool.should be_false
+    File.read(dest).should eq(FILE_CONTENT)
+  ensure
+    File.delete(dest) if dest && File.exists?(dest)
+  end
+
+  it "reconciles stale mode on the skip path and reports changed like real Ansible" do
+    # Real get_url runs set_fs_attributes_if_different even when the
+    # download is skipped (no force, checksum matches), and a stale
+    # file-common attribute flips the result to changed: true with msg
+    # "file already exists but file attributes changed" - previously the
+    # skip path applied mode/owner/group silently and always reported
+    # changed: false, and owner: was its only reconciliation (no chattr
+    # flags, no SELinux context).
+    dest = File.tempname("get-url-spec")
+    File.write(dest, FILE_CONTENT)
+    File.chmod(dest, 0o644)
+
+    result = PluginSpecHelper.run("get_url", {
+      "url" => "#{get_url_base}/file.txt", "dest" => dest,
+      "checksum" => "sha256:#{FILE_CHECKSUM}", "mode" => "0600",
+    })
+
+    result["changed"].as_bool.should be_true
+    result["msg"].as_s.should eq("file already exists but file attributes changed")
+    (File.info(dest).permissions.value & 0o777).should eq(0o600)
+  ensure
+    File.delete(dest) if dest && File.exists?(dest)
+  end
+
+  it "reports changed: false on the skip path when the file-common attributes are already correct" do
+    dest = File.tempname("get-url-spec")
+    File.write(dest, FILE_CONTENT)
+    File.chmod(dest, 0o600)
+
+    result = PluginSpecHelper.run("get_url", {
+      "url" => "#{get_url_base}/file.txt", "dest" => dest,
+      "checksum" => "sha256:#{FILE_CHECKSUM}", "mode" => "0600",
+    })
+
+    result["changed"].as_bool.should be_false
+    File.read(dest).should eq(FILE_CONTENT)
+  ensure
+    File.delete(dest) if dest && File.exists?(dest)
+  end
+
+  it "accepts '-'-prefixed attributes: (chattr flags) and reports changed like real Ansible's set_attributes_if_different" do
+    # Mirrors lineinfile_spec.cr's own attributes: spec (real Ansible
+    # reports changed unconditionally for '-'-prefixed requests,
+    # ansible/ansible#33745).
+    dest = File.tempname("get-url-spec")
+    File.write(dest, FILE_CONTENT)
+
+    result = PluginSpecHelper.run("get_url", {
+      "url" => "#{get_url_base}/file.txt", "dest" => dest, "attributes" => "-i",
+    })
+
+    result["failed"].as_bool.should be_falsey
+    result["changed"].as_bool.should be_true
+
+    warm = PluginSpecHelper.run("get_url", {
+      "url" => "#{get_url_base}/file.txt", "dest" => dest, "attributes" => "-i",
+    })
+    warm["failed"].as_bool.should be_falsey
+    warm["changed"].as_bool.should be_true
+  ensure
+    File.delete(dest) if dest && File.exists?(dest)
+  end
+
+  it "accepts the SELinux context params as a no-op on a non-SELinux host (real Ansible skips chcon entirely there)" do
+    dest = File.tempname("get-url-spec")
+    result = PluginSpecHelper.run("get_url", {
+      "url" => "#{get_url_base}/file.txt", "dest" => dest,
+      "seuser" => "system_u", "serole" => "object_r", "setype" => "etc_t", "selevel" => "s0",
+    })
+
+    result["changed"].as_bool.should be_true
+    result["failed"].as_bool.should be_false
+    File.read(dest).should eq(FILE_CONTENT)
+  ensure
+    File.delete(dest) if dest && File.exists?(dest)
   end
 end
