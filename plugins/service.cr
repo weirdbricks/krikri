@@ -14,6 +14,20 @@ module Krikri
   #                   openrc/auto) instead of auto-detecting
   #   runlevel (optional): OpenRC runlevel for enable/disable (default:
   #                        "default") - real Ansible's own param
+  #   arguments (optional): extra command-line arguments appended to the
+  #                         init system's stop/start/restart/status command
+  #                         (SysV and OpenRC forms, per real Ansible's
+  #                         LinuxService.service_control). Under systemd
+  #                         it is IGNORED with real Ansible's exact warning.
+  #   sleep (optional): seconds between the stop and start halves of a
+  #                     SysV restart (real Ansible sleeps in-process;
+  #                     this engine shells out to `sleep`). Under systemd
+  #                     it is IGNORED with real Ansible's exact warning.
+  #   pattern (optional): accepted but NOT implemented by this engine's
+  #                       SysV/OpenRC paths (real Ansible only applies it
+  #                       in a ps-output fallback used when an init script
+  #                       has no usable status). Under systemd it is
+  #                       IGNORED with real Ansible's exact warning.
   #   check_mode (optional): Dry-run mode
   #
   # Examples:
@@ -53,6 +67,23 @@ module Krikri
     TOOL_BINARIES  = %w[service chkconfig update-rc.d rc-service rc-update initctl systemctl insserv]
     EXTRA_BIN_DIRS = %w[/sbin /usr/sbin /bin /usr/bin]
 
+    # Real Ansible's service ACTION plugin (ansible/plugins/action/service.py)
+    # defines UNUSED_PARAMS['systemd'] = ['pattern', 'runlevel', 'sleep',
+    # 'arguments', 'args']: documented `service:` options the systemd module
+    # has no use for. When the resolved service-manager module is systemd,
+    # the action plugin strips each one present in the task args and emits a
+    # controller warning per param - `Ignoring "<param>" as it is not used in
+    # "systemd"` - then runs the systemd module WITHOUT them. Live-verified
+    # against ansible-core 2.19.4 on this (systemd) machine:
+    #   service: {name: cron, state: started, arguments: "--test-arg",
+    #             sleep: 5, pattern: "cron"}
+    # succeeds normally and carries warnings for all three in exactly that
+    # pattern/runlevel/sleep/arguments order. `args` is deliberately absent
+    # here: it is a task-level keyword the parser merges into the module
+    # params before this plugin ever sees it, so it can never appear as a
+    # param key the way it can't in real Ansible's action plugin either.
+    SYSTEMD_UNUSED_PARAMS = %w[pattern runlevel sleep arguments]
+
     @tools = Hash(String, String).new
     @manager : Manager = Manager::Systemd
     @svc_cmd : String? = nil
@@ -66,6 +97,47 @@ module Krikri
     def initialize(config : JSON::Any)
       super(config)
       @check_mode = true?(@params["check_mode"]?)
+    end
+
+    # Which params of #SYSTEMD_UNUSED_PARAMS were actually given, with real
+    # Ansible's exact warning text per param, in its own UNUSED_PARAMS list
+    # order. Emitted whenever the resolved manager is systemd - both
+    # auto-detected and `use: systemd` - because that is exactly when real
+    # Ansible's action plugin resolves the module name to "systemd" and
+    # strips them. (An unresolvable `use:` value is this engine's auto-detect
+    # fallback, so it warns too; real Ansible would fall back to the generic
+    # service module there, an obscure edge not worth the divergence risk.)
+    private def systemd_unused_param_warnings : Array(String)?
+      return nil unless @manager == Manager::Systemd
+
+      warnings = SYSTEMD_UNUSED_PARAMS.compact_map do |param|
+        next nil unless @params.has_key?(param)
+        "Ignoring \"#{param}\" as it is not used in \"systemd\""
+      end
+      warnings.empty? ? nil : warnings
+    end
+
+    # Attaches #systemd_unused_param_warnings to a result using the same
+    # extra["warnings"] convention command.cr's executable: warning uses.
+    # Real Ansible emits these from the action plugin BEFORE the module
+    # runs, so they surface on failure results too (a systemd unit that
+    # doesn't exist still carries the warning alongside "Could not find
+    # the requested service").
+    private def with_unused_param_warnings(result : PluginResult) : PluginResult
+      if warnings = systemd_unused_param_warnings
+        result.extra["warnings"] = JSON.parse(warnings.to_json)
+      end
+      result
+    end
+
+    # Real Ansible appends `arguments:` verbatim after the action for both
+    # its SysV (`service <name> <action> <arguments>`, or the init script
+    # directly) and OpenRC (`rc-service <name> <action> <arguments>`)
+    # command forms - including for the status probe, which goes through
+    # the same service_control() there.
+    private def init_arguments_suffix : String
+      arguments = @params["arguments"]?.to_s
+      arguments.empty? ? "" : " #{arguments}"
     end
 
     def execute : PluginResult
@@ -100,7 +172,7 @@ module Krikri
       end
 
       if error = detect_service_tools(name)
-        return PluginResult.new(changed: false, failed: true, msg: error)
+        return with_unused_param_warnings(PluginResult.new(changed: false, failed: true, msg: error))
       end
 
       changed = false
@@ -110,7 +182,7 @@ module Krikri
       if enabled
         result = set_enabled(name, true?(enabled))
         if failure = result[:failure]
-          return failure
+          return with_unused_param_warnings(failure)
         end
         changed ||= result[:changed]
         messages << result[:message] unless result[:message].empty?
@@ -120,7 +192,7 @@ module Krikri
       if state
         result = set_state(name, state)
         if failure = result[:failure]
-          return failure
+          return with_unused_param_warnings(failure)
         end
         changed ||= result[:changed]
         messages << result[:message] unless result[:message].empty?
@@ -131,11 +203,11 @@ module Krikri
         msg += " (check mode)"
       end
 
-      PluginResult.new(
+      with_unused_param_warnings(PluginResult.new(
         changed: changed,
         failed: false,
         msg: msg
-      )
+      ))
     end
 
     # ------------------------------------------------------------------
@@ -572,13 +644,20 @@ module Krikri
           remote_exec("systemctl #{action} #{shell_single_quote(name)}")
         when Manager::OpenRC
           # Every OpenRC service supports restart natively.
-          remote_exec("#{@svc_cmd} #{name} #{action}")
+          remote_exec("#{@svc_cmd} #{name} #{action}#{init_arguments_suffix}")
         else
           if action == "restart"
             # Real Ansible does NOT trust a SysV init script to implement
             # `restart` - plenty don't - and issues stop-then-start
             # instead, merging the two results the same way.
             first = run_sysv(name, "stop")
+            # Real Ansible's LinuxService.service_control: stop, sleep,
+            # start - the sleep runs unconditionally between the two
+            # halves (its `time.sleep(self.sleep)`; this engine shells
+            # out to `sleep` instead, same observable delay).
+            if sleep_for = @params["sleep"]?.try(&.to_i?)
+              remote_exec("sleep #{sleep_for}")
+            end
             second = run_sysv(name, "start")
             if first[:exit_code] != 0 && second[:exit_code] == 0
               second
@@ -601,12 +680,14 @@ module Krikri
     end
 
     # `service <name> <action>`, or the init script directly when no
-    # `service` binary exists - real Ansible's own two SysV command forms.
+    # `service` binary exists - real Ansible's own two SysV command forms,
+    # with `arguments:` appended verbatim after the action (its
+    # service_control() appends it for every action, status included).
     private def run_sysv(name : String, action : String) : NamedTuple(exit_code: Int32, stdout: String, stderr: String)
       if svc_cmd = @svc_cmd
-        remote_exec("#{svc_cmd} #{name} #{action}")
+        remote_exec("#{svc_cmd} #{name} #{action}#{init_arguments_suffix}")
       else
-        remote_exec("#{@svc_initscript} #{action}")
+        remote_exec("#{@svc_initscript} #{action}#{init_arguments_suffix}")
       end
     end
 
