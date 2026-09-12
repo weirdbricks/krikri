@@ -19,21 +19,11 @@ it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
 **Currently at `0.9.977`.** Vendored `crinja` fork now at tag
-`crystal-play-0.9.30` (see `shard.yml`).
+`crystal-play-0.9.31` (see `shard.yml`; 0.9.31 adds the six
+configurable Jinja delimiter strings).
 
 ## Open gaps
 
-- **`template:` can't customize Jinja delimiters** (proactive
-  param-coverage audit): real Ansible's `template` module documents
-  `block_start_string`/`block_end_string`/`variable_start_string`/
-  `variable_end_string`/`comment_start_string`/`comment_end_string`, but
-  krikri's vendored Crinja engine (`lib/crinja/`) hard-codes
-  `{%`/`%}`/`{{`/`}}`/`{#`/`#}` in its lexer with no config knob for
-  custom delimiters. Making these configurable means changing Crinja's
-  lexer itself - deliberately out of scope for the param-coverage pass
-  that found this gap, but worth a dedicated round: Crinja internals
-  changes are fair game when the payoff is real, not something to
-  avoid just because it's not a simple plugin-level wiring fix.
 - **`copy:` never auto-decrypts a vault-encrypted `src:`** (proactive
   param-coverage audit): real Ansible's `decrypt: true` (the default)
   transparently decodes a vault-encrypted source file on the controller

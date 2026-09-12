@@ -35,8 +35,8 @@ module Krikri
       raw_sequence = @params["newline_sequence"]?
       newline_sequence = (raw_sequence.nil? || raw_sequence.empty?) ? "\n" : raw_sequence
       case newline_sequence
-      when "\\n"  then newline_sequence = "\n"
-      when "\\r"  then newline_sequence = "\r"
+      when "\\n"    then newline_sequence = "\n"
+      when "\\r"    then newline_sequence = "\r"
       when "\\r\\n" then newline_sequence = "\r\n"
       end
       unless ["\n", "\r", "\r\n"].includes?(newline_sequence)
@@ -134,7 +134,11 @@ module Krikri
       # (`{{ C | ternary(A, B) }}`) before Crinja sees it. Only the
       # literal `X if C else Y` shape is rewritten; `{% if %}` blocks are
       # left untouched.
-      template_content = rewrite_inline_ternaries(template_content)
+      # The Jinja compat rewrites assume the classic delimiter shapes
+      # (their regexes hard-code `{%`/`{{`); with custom delimiters those
+      # byte sequences are literal template text, and rewriting them
+      # would corrupt the output - skip the whole pass for such templates.
+      template_content = rewrite_inline_ternaries(template_content) unless custom_delimiters?
 
       # A `#jinja2: key:value, key2:value2` directive on the template's
       # very first line (real Ansible's own per-template override for
@@ -216,6 +220,23 @@ module Krikri
       lstrip_blocks = directive_overrides.fetch("lstrip_blocks", true?(@params["lstrip_blocks"]?, default: false))
 
       env.config.lstrip_blocks = lstrip_blocks
+
+      # The six Jinja delimiter-string params (real Ansible's documented
+      # block_start_string/block_end_string/variable_start_string/
+      # variable_end_string/comment_start_string/comment_end_string): a
+      # template whose own native syntax already uses `{{`/`}}` for
+      # something else (a Helm chart, another Jinja-like DSL) switches
+      # delimiters instead of fighting the defaults. Consumed HERE, on
+      # the controller - they configure the Crinja environment the same
+      # way trim_blocks:/lstrip_blocks: do. Missing or empty falls back
+      # to Jinja2's own defaults (same fallback shape as newline_sequence:
+      # above; a whitespace-only delimiter is honored as-is).
+      env.config.block_start_string = delimiter_param("block_start_string", "{%")
+      env.config.block_end_string = delimiter_param("block_end_string", "%}")
+      env.config.variable_start_string = delimiter_param("variable_start_string", "{{")
+      env.config.variable_end_string = delimiter_param("variable_end_string", "}}")
+      env.config.comment_start_string = delimiter_param("comment_start_string", "{#")
+      env.config.comment_end_string = delimiter_param("comment_end_string", "#}")
 
       # Prepare template variables
       template_vars = prepare_template_vars
@@ -425,6 +446,35 @@ module Krikri
     # alone, item.motd.j2), byte-for-byte identical to real Ansible.
     FOR_TUPLE_PARENS = /(\{%-?\s*for\s+)\(([^)]+)\)(\s+in\s+)/
 
+    # Reads one of the six Jinja delimiter-string task params, falling
+    # back to Jinja2's own default when the key is missing or empty.
+    private def delimiter_param(name : String, default : String) : String
+      raw = @params[name]?
+      (raw.nil? || raw.empty?) ? default : raw
+    end
+
+    # True when any of the six Jinja delimiter-string task params (real
+    # Ansible's block_start_string/...) is set to a non-default value.
+    # The text-level Jinja compat rewrites (#rewrite_inline_ternaries'
+    # INLINE_TERNARY/TAG_IF_ELIF/FOR_TUPLE_PARENS regexes) hard-code the
+    # classic delimiter shapes; with custom delimiters those byte
+    # sequences are literal template text, and rewriting them would
+    # corrupt the output - so the whole rewrite pass is skipped for such
+    # templates.
+    private def custom_delimiters? : Bool
+      {
+        {"block_start_string", "{%"},
+        {"block_end_string", "%}"},
+        {"variable_start_string", "{{"},
+        {"variable_end_string", "}}"},
+        {"comment_start_string", "{#"},
+        {"comment_end_string", "#}"},
+      }.any? do |name, default|
+        raw = @params[name]?
+        !raw.nil? && !raw.empty? && raw != default
+      end
+    end
+
     # Parses a leading `#jinja2: key:value, key2:value2` directive line
     # (only recognized on the template's literal first line, matching
     # real Ansible) into a {key => bool} overrides hash, and returns the
@@ -432,9 +482,10 @@ module Krikri
     # lstrip_blocks are understood (the only ones any Crinja config knob
     # here maps to); an unrecognized key is ignored rather than raising -
     # real Ansible supports a couple of others (keep_trailing_newline,
-    # variable_start_string, ...) this codebase has no Crinja equivalent
-    # for. No directive line at all returns an empty overrides hash and
-    # the template unchanged.
+    # variable_start_string, ...) this directive parser doesn't map
+    # (the delimiter strings are honored as TASK params instead, see
+    # #delimiter_param). No directive line at all returns an empty
+    # overrides hash and the template unchanged.
     private def extract_jinja2_directive(template : String) : {Hash(String, Bool), String}
       overrides = Hash(String, Bool).new
       lines = template.split('\n', 2)

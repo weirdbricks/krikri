@@ -12,7 +12,8 @@ require "../spec_helper"
 # comments for what was verified); the six delimiter-string params
 # (block_start_string/block_end_string/variable_start_string/
 # variable_end_string/comment_start_string/comment_end_string) are
-# deliberately NOT implemented - see template.cr's header comment.
+# covered in their own section below (implemented in the vendored
+# Crinja fork, crystal-play-0.9.31).
 #
 # Rendering params (trim_blocks:/lstrip_blocks:/newline_sequence:) live
 # in the controller-side action plugin (src/krikri/
@@ -640,6 +641,94 @@ describe "template plugin param coverage" do
       # (real Ansible writes first, applies attrs after) - but the task
       # must fail and never report success with unapplied flags.
       result["changed"].as_bool.should be_false
+    end
+  end
+
+  describe "delimiter-string params (block/variable/comment start+end strings)" do
+    # Implemented in the vendored Crinja fork (crystal-play-0.9.31:
+    # Config grew the six delimiter-string properties, the template
+    # lexer matches configured strings instead of hard-coded
+    # `{%`/`%}`/`{{`/`}}`/`{#`/`#}` char constants); the action plugin
+    # reads the six task params into the render environment.
+    #
+    # Real behavior live-verified against ansible-core 2.19.4 (the
+    # exact templates/assertions below):
+    # - a template using `<%`/`%>` blocks, `<<`/`>>` variables and
+    #   `<#`/`#>` comments renders the loop and leaves the classic
+    #   `{{ }}`/`{% %}` shapes as literal text;
+    # - the params are independent - overriding only the variable pair
+    #   (`<<` start, `}}` end) leaves block/comment delimiters at their
+    #   defaults.
+    it "renders a template end-to-end with all six delimiters customized" do
+      src = tmp_path("delimiters_all.j2")
+      dest = tmp_path("delimiters_all.out")
+      File.write(src, <<-'TEMPLATE')
+        <% for item in items %>
+        << item >> {{ also_literal }} {% if also_literal %}X{% endif %}
+        <% endfor %>
+        <# a comment #>
+        TEMPLATE
+
+      playbook = File.tempname("template-param-spec", ".yml")
+      File.write(playbook, <<-YAML)
+        - hosts: localhost
+          connection: local
+          gather_facts: false
+          tasks:
+            - name: render
+              ansible.builtin.template:
+                src: #{src}
+                dest: #{dest}
+                block_start_string: '<%'
+                block_end_string: '%>'
+                variable_start_string: '<<'
+                variable_end_string: '>>'
+                comment_start_string: '<#'
+                comment_end_string: '#>'
+          vars:
+            items: [a, b]
+        YAML
+
+      run_playbook(playbook)
+
+      File.read(dest).should eq(
+        "a {{ also_literal }} {% if also_literal %}X{% endif %}\n" +
+        "b {{ also_literal }} {% if also_literal %}X{% endif %}\n"
+      )
+    ensure
+      File.delete(src) if src && File.exists?(src)
+      File.delete(dest) if dest && File.exists?(dest)
+      File.delete(playbook) if playbook && File.exists?(playbook)
+    end
+
+    it "honors a partial override (only the variable delimiter pair) independently" do
+      src = tmp_path("delimiters_var_only.j2")
+      dest = tmp_path("delimiters_var_only.out")
+      File.write(src, "GREETING = << greeting }}\nserver {{ also_literal }}\n")
+
+      playbook = File.tempname("template-param-spec", ".yml")
+      File.write(playbook, <<-YAML)
+        - hosts: localhost
+          connection: local
+          gather_facts: false
+          tasks:
+            - name: render
+              ansible.builtin.template:
+                src: #{src}
+                dest: #{dest}
+                variable_start_string: '<<'
+                variable_end_string: '}}'
+          vars:
+            greeting: hello
+        YAML
+
+      run_playbook(playbook)
+
+      File.read(dest).should eq("GREETING = hello\nserver {{ also_literal }}\n")
+    ensure
+      File.delete(src) if src && File.exists?(src)
+      File.delete(dest) if dest && File.exists?(dest)
+      File.delete(playbook) if playbook && File.exists?(playbook)
     end
   end
 end
