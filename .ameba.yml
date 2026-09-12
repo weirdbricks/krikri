@@ -292,6 +292,15 @@ Metrics/CyclomaticComplexity:
   # dispatch) - splitting the eval_node case chain apart would scatter
   # one grammar rule across a dozen methods for no gain.
   - src/krikri/jmespath.cr
+  # plugins/uri.cr's #execute is a faithful port of ansible.builtin.uri's
+  # own main() ordered validation/execution chain (alias resolution,
+  # body|src mutual exclusion, check-mode skip, method regex, creates/
+  # removes short-circuits, request, dest directory/filename resolution,
+  # file-common attrs) - each branch maps 1:1 to a real-module step, so
+  # splitting it apart would scatter one source-level sequence. Its
+  # request/request_headers_and_body helpers mirror the real
+  # module_utils/urls.py Request flow the same way.
+  - plugins/uri.cr
   Enabled: true
   Severity: Warning
 
