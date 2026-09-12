@@ -23,6 +23,17 @@ narrative, newest first.
 
 ## Open gaps
 
+- **`template:` can't customize Jinja delimiters** (proactive
+  param-coverage audit): real Ansible's `template` module documents
+  `block_start_string`/`block_end_string`/`variable_start_string`/
+  `variable_end_string`/`comment_start_string`/`comment_end_string`, but
+  krikri's vendored Crinja engine (`lib/crinja/`) hard-codes
+  `{%`/`%}`/`{{`/`}}`/`{#`/`#}` in its lexer with no config knob for
+  custom delimiters. Making these configurable means changing Crinja's
+  lexer itself - deliberately out of scope for the param-coverage pass
+  that found this gap, but worth a dedicated round: Crinja internals
+  changes are fair game when the payoff is real, not something to
+  avoid just because it's not a simple plugin-level wiring fix.
 - **`copy:` never auto-decrypts a vault-encrypted `src:`** (proactive
   param-coverage audit): real Ansible's `decrypt: true` (the default)
   transparently decodes a vault-encrypted source file on the controller
