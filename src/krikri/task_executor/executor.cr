@@ -385,6 +385,10 @@ module Krikri
       # See Play#gather_subset - forwarded to the facts plugin, which
       # does the actual family filtering.
       @gather_subset = [] of String,
+      # See Play#gather_timeout / Play#fact_path - the other two play
+      # keywords real Ansible feeds its implicit setup call.
+      @gather_timeout : Int64? = nil,
+      @fact_path : String? = nil,
       # See Play#remote_user.
       @remote_user : String? = nil,
       # See Play#debugger.

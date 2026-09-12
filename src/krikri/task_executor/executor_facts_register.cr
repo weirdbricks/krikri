@@ -175,6 +175,12 @@ module Krikri
       # wrong (always-defined-by-krikri) branch on a real remote host.
       params = Hash(String, String).new
       params["gather_subset"] = @gather_subset.join(",") unless @gather_subset.empty?
+      # gather_timeout/fact_path: the other two play keywords real
+      # Ansible forwards into its implicit setup call.
+      params["gather_timeout"] = @gather_timeout.to_s if @gather_timeout
+      if fact_path = @fact_path
+        params["fact_path"] = fact_path
+      end
       params["_remote_connection"] = remote.to_s
 
       config = {
