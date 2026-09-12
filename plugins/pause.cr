@@ -6,11 +6,17 @@ require "../src/krikri/base_plugin"
 module Krikri
   # pause plugin (ansible.builtin.pause) - waits, or (in real Ansible)
   # interactively prompts. krikri-playbook has no interactive TTY/prompt
-  # model, so only the countdown form (`seconds:`/`minutes:`) is
-  # implemented - the documented scope cut this entry itself called for.
-  # A bare `pause:` with neither given would block on stdin in real
-  # Ansible; since there's nothing to collect here, it's treated as an
-  # instant no-op rather than hanging the playbook run forever.
+  # model, so it never blocks on stdin - which matches real Ansible's
+  # own non-interactive behavior (verified against ansible-core: with
+  # closed stdin and no duration, real pause warns "Not waiting for
+  # response to prompt as stdin is not interactive" and continues
+  # immediately, ok). `prompt:` is therefore display-only: with a
+  # duration the result stdout stays "Paused for X seconds/minutes"
+  # (real Ansible's own result behavior), with only a prompt the prompt
+  # text is the visible output. A bare `pause:` with neither given would
+  # block on stdin in real Ansible; since there's nothing to collect
+  # here, it's treated as an instant no-op rather than hanging the
+  # playbook run forever.
   #
   # `seconds:` and `minutes:` are mutually exclusive in real Ansible
   # (verified against a real ansible-playbook run: passing both, even
@@ -24,13 +30,14 @@ module Krikri
     def execute : PluginResult
       seconds_param = @params["seconds"]?
       minutes_param = @params["minutes"]?
+      prompt_param = @params["prompt"]?
 
       if seconds_param && minutes_param
         return PluginResult.new(changed: false, failed: true, msg: "parameters are mutually exclusive: minutes|seconds")
       end
 
       start = Time.local
-      duration, stdout = duration_and_message(seconds_param, minutes_param)
+      duration, stdout = duration_and_message(seconds_param, minutes_param, prompt_param)
       sleep(duration.seconds) if duration > 0
       stop = Time.local
 
@@ -44,13 +51,15 @@ module Krikri
       )
     end
 
-    private def duration_and_message(seconds_param : String?, minutes_param : String?) : {Float64, String}
+    private def duration_and_message(seconds_param : String?, minutes_param : String?, prompt_param : String?) : {Float64, String}
       if seconds_param
         value = seconds_param.to_f
         {value, "Paused for #{format_amount(value)} seconds"}
       elsif minutes_param
         value = minutes_param.to_f
         {value * 60, "Paused for #{format_amount(value)} minutes"}
+      elsif prompt_param
+        {0.0, prompt_param}
       else
         {0.0, "Paused without an interactive prompt (not supported) - continuing immediately"}
       end
