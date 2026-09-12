@@ -132,6 +132,52 @@ describe "command plugin" do
     File.delete(marker) if marker && File.exists?(marker)
   end
 
+  it "resolves a relative creates: against chdir: when both are given, matching real Ansible" do
+    # Real divergence found benchmarking kyl191.openvpn's warm run: its
+    # "server_keys | Generate CA key" task is
+    # `argv: [openssl, req, ...]`, `chdir: "{{ openvpn_key_dir }}"`,
+    # `creates: ca-key.pem` - real ansible-playbook resolves the
+    # RELATIVE creates: path against chdir: (chdir changes what
+    # "relative" means for the whole task, not just the command's own
+    # execution), finds ca-key.pem already there, and reports the task
+    # ok with changed=0 on the warm pass. The check used to test the
+    # raw relative path against the plugin process's own inherited cwd
+    # (the SSH session's home) instead, never finding the file and
+    # re-running the task on every single warm run (changed=1). The
+    # marker file below exists ONLY in chdir, not in the spec process's
+    # cwd, so the pre-fix code could never skip here.
+    dir = File.tempname("command-creates-chdir-spec")
+    Dir.mkdir_p(dir)
+    File.write(File.join(dir, "ca-key.pem"), "")
+
+    result = PluginSpecHelper.run("command", {"cmd" => "echo should-be-skipped", "chdir" => dir, "creates" => "ca-key.pem"})
+
+    result["changed"].as_bool.should be_false
+    result["msg"].as_s.should contain("Did not run command since")
+  ensure
+    FileUtils.rm_rf(dir) if dir
+  end
+
+  it "resolves a relative removes: against chdir: the same way" do
+    # Mirror of the creates: fix above - same relative-to-chdir
+    # resolution, opposite direction (skip when the file does NOT
+    # exist). The marker file exists ONLY in chdir, so the pre-fix
+    # code (checking against the process's own cwd) would have found
+    # "nothing" there too and skipped for the wrong reason; pointing
+    # removes: at a file that DOES exist in chdir proves the check now
+    # looks in the right place (task must RUN, not skip).
+    dir = File.tempname("command-removes-chdir-spec")
+    Dir.mkdir_p(dir)
+    File.write(File.join(dir, "stale.lock"), "")
+
+    result = PluginSpecHelper.run("command", {"cmd" => "echo ran", "chdir" => dir, "removes" => "stale.lock"})
+
+    result["changed"].as_bool.should be_true
+    result["stdout"].as_s.should eq("ran")
+  ensure
+    FileUtils.rm_rf(dir) if dir
+  end
+
   it "creates: accepts a GLOB pattern, matching real Ansible's glob.glob() check" do
     # Real bug found via appsilon.mount_efs's own "install | build
     # amazon-efs-utils" (`creates: ".../build/amazon-efs-utils*deb"`,

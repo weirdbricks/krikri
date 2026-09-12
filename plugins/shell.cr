@@ -35,6 +35,17 @@ module Krikri
       @diff_mode = true?(@params["diff_mode"]?)
     end
 
+    # See command.cr's copy for the full rationale: relative
+    # creates:/removes: resolve against chdir: for the existence check,
+    # absolute paths are used as-is. Unlike command.cr, shell.cr keeps
+    # chdir raw for the `cd` itself (the shell expands ~), so the tilde
+    # expansion happens here, on the check path only.
+    private def resolve_against_chdir(path : String, chdir : String?) : String
+      expanded = expand_tilde(path)
+      return expanded if chdir.nil? || expanded.starts_with?('/')
+      File.join(expand_tilde(chdir), expanded)
+    end
+
     def execute : PluginResult
       # Same `warn:` rejection as command.cr - real ansible-core 2.19
       # rejects the removed param identically (message adjusted for the
@@ -78,8 +89,15 @@ module Krikri
       # bare msg/stdout result made any `register:` + changed_when:
       # reading of `.rc` on the skip hard-fail where real Ansible
       # evaluates cleanly (konstruktoid.docker_rootless's warm run).
+      # Read chdir here (pure parameter read, no side effect - the shell's
+      # own `cd` still happens further down) so the creates:/removes:
+      # checks below resolve a RELATIVE path against it, matching real
+      # Ansible's command/shell action plugin. Same kyl191.openvpn-shaped
+      # divergence as command.cr's copy of this fix - see that one.
+      chdir = @params["chdir"]?
+
       if creates = @params["creates"]?
-        if path_or_glob_exists?(expand_tilde(creates))
+        if path_or_glob_exists?(resolve_against_chdir(creates, chdir))
           skipped_stdout = "skipped, since #{creates} exists"
           return PluginResult.new(
             changed: false,
@@ -102,7 +120,7 @@ module Krikri
       # Ansible message shape as creates: above, with the same full
       # command-module result keys (see the creates: branch).
       if removes = @params["removes"]?
-        unless path_or_glob_exists?(expand_tilde(removes))
+        unless path_or_glob_exists?(resolve_against_chdir(removes, chdir))
           skipped_stdout = "skipped, since #{removes} does not exist"
           return PluginResult.new(
             changed: false,
@@ -152,7 +170,6 @@ module Krikri
       end
 
       # Get optional parameters
-      chdir = @params["chdir"]?
       executable = @params["executable"]? || "/bin/sh"
 
       # Build full command
