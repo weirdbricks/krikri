@@ -12,6 +12,8 @@ module Krikri
   # Parameters:
   #   name (required): Package name
   #   state (optional): present, absent, latest (default: present)
+  #   use (optional): Override the auto-detected package manager (apt,
+  #     dnf, yum) - real Ansible's documented third option
   #   check_mode (optional): Dry-run mode
   #
   # Examples:
@@ -22,12 +24,36 @@ module Krikri
     include AptLockRetry
     property? check_mode : Bool
 
+    # The backend modules this engine actually ships - what a `use:`
+    # name can resolve to. Real Ansible's package action plugin checks
+    # its CONTROLLER-side module library (not target-side presence) and
+    # fails anything not in it before the task runs: live-verified
+    # (`ansible localhost -m package -a "use=nonexistentmgr ..."` =>
+    # 'Could not find a matching action for the "nonexistentmgr"
+    # package manager.'). This engine's module set is the honest
+    # equivalent of that library, so a `use: zypper` on an engine
+    # without a zypper module fails exactly the same way real Ansible
+    # fails `use: homebrew`.
+    PACKAGE_BACKEND_MODULES = ["apt", "dnf", "yum"]
+
     def initialize(config : JSON::Any)
       super(config)
       @check_mode = true?(@params["check_mode"]?)
     end
 
     def execute : PluginResult
+      # A `use:` naming a module this engine doesn't ship fails before
+      # anything else runs - real Ansible's action plugin validates its
+      # backend selection ahead of module execution too, so even a
+      # no-name invocation with a bogus `use:` fails rather than no-ops.
+      if (use = requested_package_manager) && !PACKAGE_BACKEND_MODULES.includes?(use)
+        return PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: "Could not find a matching action for the \"#{use}\" package manager."
+        )
+      end
+
       # Validate required parameters. `name:` isn't required when
       # update_cache: true is given with nothing else - real Ansible's
       # own package:/apt: modules allow a cache-refresh-only invocation,
@@ -182,8 +208,13 @@ module Krikri
       state = "present" if state == "installed"
       state = "absent" if state == "removed"
 
-      # Detect package manager
-      package_manager = detect_package_manager()
+      # Resolve the backend: an explicit `use:` overrides auto-detection
+      # UNCONDITIONALLY - it dispatches straight to the named module and
+      # is not a fallback. Live-verified against real ansible-core
+      # 2.19.4: `use: dnf` on this apt host still dispatched to the dnf
+      # module (which then failed on-target with "Could not import the
+      # dnf python module..."), rather than silently reverting to apt.
+      package_manager = requested_package_manager || detect_package_manager()
 
       unless package_manager
         return PluginResult.new(
@@ -281,7 +312,7 @@ module Krikri
     # manager's own index, matching real Ansible's own cache-refresh-
     # only idiom for package:/apt:.
     private def update_cache_only : PluginResult
-      package_manager = detect_package_manager()
+      package_manager = requested_package_manager || detect_package_manager()
       unless package_manager
         return PluginResult.new(
           changed: false,
@@ -387,6 +418,19 @@ module Krikri
       "/sbin/apk"        => "apk",
       "/usr/sbin/pkg"    => "pkgng",
     }
+
+    # Backend resolution order, mirroring real Ansible's package action
+    # plugin: an explicit `use:` task option wins; otherwise the
+    # `ansible_package_use` variable (real Ansible 2.17+) overrides
+    # auto-detection; otherwise detection runs (real Ansible reads the
+    # `ansible_pkg_mgr` fact). An explicit `use: auto` (the documented
+    # default) participates in the same fall-through - the action plugin
+    # only consults the variable and facts when the option is "auto".
+    private def requested_package_manager : String?
+      use = @params["use"]?
+      use = nil if use == "auto"
+      use || @vars["ansible_package_use"]?.try(&.as_s?)
+    end
 
     private def detect_package_manager : String?
       probe = PKG_MGR_PATHS.keys.map { |path| "[ -x #{path} ] && echo #{path}" }.join("; ")
