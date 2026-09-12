@@ -9,15 +9,18 @@ module Krikri
   # Stat plugin - retrieves file/filesystem status.
   # Compatible with Ansible's ansible.builtin.stat module.
   #
-  # Supported parameters:
-  # - path: path to stat (required)
+  # - path: path to stat (required, aliases: dest, name - matches real
+  #   Ansible's own argument_spec)
   # - follow: follow symlinks (default: false)
   # - get_checksum: compute a checksum of the file (default: true)
-  # - checksum_algorithm: md5, sha1 (default), or sha256
+  # - checksum_algorithm: md5, sha1 (default), sha224, sha256, sha384,
+  #   or sha512 (aliases: checksum, checksum_algo); anything else fails
+  #   the task with real Ansible's own invalid-choice message
   # - get_mime: mimetype/charset via `file --mime-type --mime-encoding`
-  #   (default: true, matching real Ansible)
+  #   (default: true, matching real Ansible; aliases: mime, mime_type,
+  #   mime-type)
   # - get_attributes: lsattr flags via `lsattr -vd` (default: true,
-  #   matching real Ansible)
+  #   matching real Ansible; aliases: attr, attributes)
   #
   # get_mime/get_attributes both shell out - not a missed native-conversion
   # opportunity like stat's own core fields used to be, but the same thing
@@ -44,16 +47,48 @@ module Krikri
   # Ansible's stat, it exists to feed `register:` + `when:`, not to make
   # changes itself.
   class StatPlugin < BasePlugin
+    # Real Ansible's alias resolution (_handle_aliases in module_utils/
+    # common/parameters.py) iterates the argument_spec's aliases list in
+    # order and each present alias OVERWRITES the canonical name, so any
+    # present alias beats the canonical name, and among aliases the LAST
+    # one in the spec's list wins. Live-verified against ansible-core
+    # 2.19.4: `stat: {path: a.txt, name: b.txt}` stats b.txt (name is
+    # path's last alias), and `checksum_algorithm: sha256, checksum:
+    # md5` computes md5 (the alias wins even against the canonical).
+    private def aliased_param(canonical : String, aliases : Array(String)) : String?
+      value = @params[canonical]?
+      aliases.each do |alias_name|
+        value = @params[alias_name]? if @params.has_key?(alias_name)
+      end
+      value
+    end
+
     def execute : PluginResult
-      path = @params["path"]?
+      path = aliased_param("path", ["dest", "name"])
       unless path
-        return PluginResult.new(changed: false, failed: true, msg: "missing required argument: path")
+        return PluginResult.new(changed: false, failed: true, msg: "missing required arguments: path")
       end
       path = expand_tilde(path)
 
       follow = true?(@params["follow"]?, default: false)
       get_checksum = true?(@params["get_checksum"]?, default: true)
-      algorithm = @params["checksum_algorithm"]? || "sha1"
+      get_mime = true?(aliased_param("get_mime", ["mime", "mime_type", "mime-type"]), default: true)
+      get_attributes = true?(aliased_param("get_attributes", ["attr", "attributes"]), default: true)
+      algorithm = aliased_param("checksum_algorithm", ["checksum", "checksum_algo"]) || "sha1"
+
+      # Real Ansible's argument_spec validates checksum_algorithm against
+      # its choices list at module setup and fails the task with exactly
+      # this message (live-verified against ansible-core 2.19.4) -
+      # previously an invalid algorithm silently fell through to SHA1
+      # instead.
+      stat_algorithms = ["md5", "sha1", "sha224", "sha256", "sha384", "sha512"]
+      unless stat_algorithms.includes?(algorithm)
+        return PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: "value of checksum_algorithm must be one of: #{stat_algorithms.join(", ")}, got: #{algorithm}"
+        )
+      end
 
       stat_hash = native_stat(path, follow)
       unless stat_hash
@@ -69,8 +104,8 @@ module Krikri
 
       add_symlink_fields(stat_hash, path) if is_link
       add_checksum(stat_hash, path, algorithm) if get_checksum && is_regular
-      add_mime(stat_hash, path) if true?(@params["get_mime"]?, default: true)
-      add_attributes(stat_hash, path) if true?(@params["get_attributes"]?, default: true)
+      add_mime(stat_hash, path) if get_mime
+      add_attributes(stat_hash, path) if get_attributes
 
       PluginResult.new(changed: false, failed: false, msg: "", stat: stat_hash)
     end

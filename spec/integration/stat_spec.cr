@@ -122,7 +122,7 @@ describe "stat plugin" do
     result = PluginSpecHelper.run("stat", {} of String => String)
 
     result["failed"].as_bool.should be_true
-    result["msg"].as_s.should contain("path")
+    result["msg"].as_s.should eq("missing required arguments: path")
   end
 
   it "never reports changed, even for an existing writable file" do
@@ -178,5 +178,96 @@ describe "stat plugin" do
     result["stat"].as_h.has_key?("attr_flags").should be_false
     result["stat"].as_h.has_key?("attributes").should be_false
     result["stat"].as_h.has_key?("version").should be_false
+  end
+
+  it "accepts path's documented dest/name aliases (real Ansible's argument_spec)" do
+    target = tmp_path("stat-alias-dest.txt")
+    File.write(target, "via alias")
+
+    {"dest" => target, "name" => target}.each do |alias_name, aliased_path|
+      result = PluginSpecHelper.run("stat", {"path" => tmp_path("stat-alias-missing.txt"), alias_name => aliased_path})
+
+      result["stat"]["exists"].as_bool.should be_true
+    end
+  end
+
+  it "resolves alias precedence like real Ansible: any alias beats the canonical, last alias in the spec wins" do
+    canonical = tmp_path("stat-prec-canonical.txt")
+    last_alias = tmp_path("stat-prec-last-alias.txt")
+    File.write(canonical, "canonical")
+    File.write(last_alias, "last alias")
+
+    # Real Ansible's _handle_aliases overwrites the canonical name with
+    # each present alias in spec order, so `name` (path's last alias)
+    # beats `dest`, which beats `path`. Live-verified against
+    # ansible-core 2.19.4 with three different paths.
+    result = PluginSpecHelper.run("stat", {
+      "path" => tmp_path("stat-prec-missing.txt"),
+      "dest" => canonical,
+      "name" => last_alias,
+    })
+
+    result["stat"]["exists"].as_bool.should be_true
+    result["stat"]["checksum"].as_s.should eq(`sha1sum #{last_alias}`.split(" ").first)
+  end
+
+  it "lets a checksum alias beat the canonical checksum_algorithm (real Ansible alias precedence)" do
+    path = tmp_path("stat-checksum-alias.txt")
+    File.write(path, "alias wins")
+
+    result = PluginSpecHelper.run("stat", {
+      "path"               => path,
+      "checksum_algorithm" => "sha256",
+      "checksum"           => "md5",
+    })
+
+    result["stat"]["checksum"].as_s.should eq(`md5sum #{path}`.split(" ").first)
+  end
+
+  it "applies the get_mime mime_type alias (later in the spec's alias list than mime, so it wins)" do
+    path = tmp_path("stat-mime-alias.txt")
+    File.write(path, "hello")
+
+    result = PluginSpecHelper.run("stat", {"path" => path, "get_mime" => "false", "mime" => "false", "mime_type" => "true"})
+
+    result["stat"].as_h.has_key?("mimetype").should be_true
+  end
+
+  it "applies the get_attributes attr/attributes aliases" do
+    path = tmp_path("stat-attrs-alias.txt")
+    File.write(path, "hello")
+
+    result = PluginSpecHelper.run("stat", {"path" => path, "get_attributes" => "false", "attr" => "true"})
+    result["stat"].as_h.has_key?("attr_flags").should be_true
+
+    result = PluginSpecHelper.run("stat", {"path" => path, "get_attributes" => "false", "attributes" => "true"})
+    result["stat"].as_h.has_key?("attr_flags").should be_true
+  end
+
+  it "fails with real Ansible's invalid-choice message for an unknown checksum_algorithm" do
+    path = tmp_path("stat-bad-algo.txt")
+    File.write(path, "x")
+
+    result = PluginSpecHelper.run("stat", {"path" => path, "checksum_algorithm" => "sha3"})
+
+    result["failed"].as_bool.should be_true
+    result["msg"].as_s.should eq(
+      "value of checksum_algorithm must be one of: md5, sha1, sha224, sha256, sha384, sha512, got: sha3"
+    )
+  end
+
+  it "accepts y/n as bool spellings for follow/get_mime (real Ansible's boolean coercion)" do
+    path = tmp_path("stat-yn-bool.txt")
+    File.write(path, "yn")
+
+    result = PluginSpecHelper.run("stat", {"path" => path, "get_mime" => "n"})
+    result["stat"].as_h.has_key?("mimetype").should be_false
+
+    link = tmp_path("stat-yn-link.txt")
+    File.delete(link) if File.exists?(link)
+    File.symlink(path, link)
+    result = PluginSpecHelper.run("stat", {"path" => link, "follow" => "y"})
+    result["stat"]["islnk"].as_bool.should be_false
+    result["stat"]["isreg"].as_bool.should be_true
   end
 end
