@@ -17,6 +17,10 @@ require "file_utils"
 # reported changed. That is data loss, not a cosmetic verdict
 # difference, which is why this is pinned at the plugin level rather
 # than left to the benchmark round that caught it.
+#
+# (The spec uses a non-empty stand-in content: an empty-string content
+# is itself a task failure in real Ansible - see
+# copy_empty_content_spec.cr - so it cannot exercise the force path.)
 private def with_temp_dir(&)
   dir = File.tempname("copy-force-spec")
   Dir.mkdir_p(dir)
@@ -34,7 +38,7 @@ describe "copy: content with force: false" do
       File.write(dest, "original content\n")
 
       result = PluginSpecHelper.run("copy", {
-        "content" => "",
+        "content" => "different content\n",
         "dest"    => dest,
         "force"   => "false",
       })

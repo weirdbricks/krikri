@@ -31,16 +31,20 @@ module Krikri
       end
       dest = expand_tilde(dest)
 
-      # Check if using content or src
-      content = @params["content"]?
-      src = @params["src"]?
+      # Check if using content or src. An empty-string src or content
+      # counts as not provided: real ansible's copy action plugin
+      # truthiness-checks src, and ansible-core 2.19 (verified live on
+      # hbjydev.restic) fails `content:` templating to "" with
+      # "src (or content) is required" instead of writing an empty file.
+      content = @params["content"]?.presence
+      src = @params["src"]?.presence
 
       # Must have either src or content
       if !src && !content
         return PluginResult.new(
           changed: false,
           failed: true,
-          msg: "src or content parameter required"
+          msg: "src (or content) is required"
         )
       end
 
