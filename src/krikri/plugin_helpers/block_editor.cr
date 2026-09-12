@@ -15,7 +15,14 @@ module Krikri
     # and an unchanged run's message is the empty string (not e.g. "Block
     # already present").
     module BlockEditor
-      # Returns {new_lines, changed}.
+      # Returns {new_lines, changed}. append_newline/prepend_newline mirror
+      # real Ansible's blank-line padding around the block (present state
+      # only): prepend puts a blank line between the preceding content and
+      # the block (skipped at BOF or when the preceding line is already
+      # blank), append puts one between the block and what follows it
+      # (skipped at EOF or when that line is already blank) - both no-ops
+      # on reruns, since the blank line they add satisfies them the next
+      # time.
       def self.apply(
         lines : Array(String),
         marker_begin_line : String,
@@ -24,6 +31,8 @@ module Krikri
         state : String,
         insertafter : String?,
         insertbefore : String?,
+        append_newline : Bool = false,
+        prepend_newline : Bool = false,
       ) : {Array(String), Bool}
         begin_index, end_index = find_block(lines, marker_begin_line, marker_end_line)
 
@@ -37,18 +46,47 @@ module Krikri
         desired = [marker_begin_line] + block_lines + [marker_end_line]
 
         if begin_index && end_index
-          return {lines, false} if lines[begin_index..end_index] == desired
-
           new_lines = lines.dup
           new_lines.delete_at(begin_index, end_index - begin_index + 1)
-          new_lines.insert_all(begin_index, desired)
-          {new_lines, true}
+          new_lines = insert_with_newlines(new_lines, begin_index, desired, append_newline, prepend_newline)
+          # Real Ansible byte-compares original vs result; in the stripped-
+          # lines domain the array comparison is the same question.
+          {new_lines, new_lines != lines}
         else
-          new_lines = lines.dup
-          insert_index = LineEditor.insertion_index(new_lines, insertafter, insertbefore)
-          new_lines.insert_all(insert_index, desired)
+          insert_index = LineEditor.insertion_index(lines, insertafter, insertbefore)
+          new_lines = insert_with_newlines(lines, insert_index, desired, append_newline, prepend_newline)
           {new_lines, true}
         end
+      end
+
+      # Inserts the marker-delimited block at insert_index, honoring the
+      # append_newline/prepend_newline blank-line padding params with real
+      # Ansible's exact skip conditions (BOF/EOF and already-blank
+      # neighbors - verified against ansible-core 2.19.4's module source).
+      private def self.insert_with_newlines(
+        lines : Array(String),
+        insert_index : Int32,
+        desired : Array(String),
+        append_newline : Bool,
+        prepend_newline : Bool,
+      ) : Array(String)
+        out_lines = lines.dup
+
+        if prepend_newline && insert_index != 0 && out_lines[insert_index - 1] != ""
+          out_lines.insert(insert_index, "")
+          insert_index += 1
+        end
+
+        out_lines.insert_all(insert_index, desired)
+
+        if append_newline
+          after = insert_index + desired.size
+          if after < out_lines.size && out_lines[after] != ""
+            out_lines.insert(after, "")
+          end
+        end
+
+        out_lines
       end
 
       # Finds the first marker_begin_line, then the first marker_end_line
