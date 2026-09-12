@@ -13,6 +13,11 @@ module Krikri
   #   creates: Skip if this file exists (idempotency)
   #   removes: Skip if this file doesn't exist (idempotency)
   #   stdin: Data to send to stdin
+  #   stdin_add_newline: Append a newline to stdin: (default true)
+  #   strip_empty_ends: Rstrip trailing newlines from stdout:/stderr:
+  #     (default true)
+  #   executable: Accepted but IGNORED with a warning (real Ansible 2.4+
+  #     behavior - see #executable_warning below)
   #   check_mode: Dry-run mode (command plugin always skips in check mode)
   #
   # Examples:
@@ -50,6 +55,34 @@ module Krikri
       expanded = expand_tilde(path)
       return expanded if chdir.nil? || expanded.starts_with?('/')
       File.join(chdir, expanded)
+    end
+
+    # Real Ansible 2.19.4's command module still ACCEPTS `executable:` but
+    # ignores it entirely - main() drops it with `module.warn(...)` when
+    # _uses_shell is false, and the task succeeds normally. Live-verified:
+    # `command: {cmd: "echo hi", executable: /bin/bash}` runs `echo` via
+    # execvp (no shell) and the result carries:
+    #   "warnings": ["As of Ansible 2.4, the parameter 'executable' is no
+    #   longer supported with the 'command' module. Not using '/bin/bash'."]
+    # This engine previously never read the param at all (silent tolerance,
+    # no warning). module.warn accumulates into whatever exit_json/fail_json
+    # comes next, so the warning is attached to EVERY result after arg
+    # validation - skip (creates:/removes:), check mode, chdir failure,
+    # spawn failure, and normal execution alike.
+    private def executable_warning : Array(String)?
+      exe = @params["executable"]?
+      return nil unless exe
+      ["As of Ansible 2.4, the parameter 'executable' is no longer supported with the 'command' module. Not using '#{exe}'."]
+    end
+
+    # Attaches #executable_warning to a result using the same
+    # extra["warnings"] convention apache2_module.cr already uses
+    # (matches real Ansible's top-level result["warnings"] list).
+    private def with_executable_warning(result : PluginResult) : PluginResult
+      if warnings = executable_warning
+        result.extra["warnings"] = JSON.parse(warnings.to_json)
+      end
+      result
     end
 
     def execute : PluginResult
@@ -137,7 +170,7 @@ module Krikri
       if creates = @params["creates"]?
         if path_or_glob_exists?(resolve_against_chdir(creates, chdir))
           skipped_stdout = "skipped, since #{creates} exists"
-          return PluginResult.new(
+          return with_executable_warning(PluginResult.new(
             changed: false,
             failed: false,
             msg: "Did not run command since '#{creates}' exists",
@@ -150,7 +183,7 @@ module Krikri
             start: nil,
             end: nil,
             delta: nil
-          )
+          ))
         end
       end
 
@@ -160,7 +193,7 @@ module Krikri
       if removes = @params["removes"]?
         unless path_or_glob_exists?(resolve_against_chdir(removes, chdir))
           skipped_stdout = "skipped, since #{removes} does not exist"
-          return PluginResult.new(
+          return with_executable_warning(PluginResult.new(
             changed: false,
             failed: false,
             msg: "Did not run command since '#{removes}' does not exist",
@@ -173,7 +206,7 @@ module Krikri
             start: nil,
             end: nil,
             delta: nil
-          )
+          ))
         end
       end
 
@@ -185,7 +218,7 @@ module Krikri
       # matters now that module-arg templating is strict (verified live
       # against ansible-core 2.19.4's own `--check` output).
       if @check_mode
-        return PluginResult.new(
+        return with_executable_warning(PluginResult.new(
           changed: false,
           failed: false,
           msg: "Command would have run if not in check mode",
@@ -199,7 +232,7 @@ module Krikri
           start: nil,
           end: nil,
           delta: nil
-        )
+        ))
       end
 
       # Get optional parameters
@@ -225,11 +258,11 @@ module Krikri
         begin
           Dir.cd(chdir)
         rescue ex
-          return PluginResult.new(
+          return with_executable_warning(PluginResult.new(
             changed: false,
             failed: true,
             msg: "Failed to change directory to #{chdir}: #{ex.message}"
-          )
+          ))
         end
       end
 
@@ -307,9 +340,15 @@ module Krikri
           input: stdin_data ? Process::Redirect::Pipe : Process::Redirect::Close
         )
 
-        # Send stdin if provided
+        # Send stdin if provided. Real Ansible appends a newline to the
+        # data unless stdin_add_newline is explicitly false (its
+        # run_command: `if not binary_data: data += '\n'`, with
+        # binary_data wired to `not stdin_add_newline`) - live-verified
+        # against 2.19.4: `wc -l` fed "line1\nline2" counts 2 lines by
+        # default, 1 with stdin_add_newline: false.
         if stdin_data && process.input
-          process.input.print(stdin_data)
+          stdin_add_newline = true?(@params["stdin_add_newline"]?, default: true)
+          process.input.print(stdin_add_newline ? "#{stdin_data}\n" : stdin_data)
           process.input.close
         end
 
@@ -334,7 +373,7 @@ module Krikri
         # `when: docker_release not in rootless_docker_version.stdout`
         # hard-failed with "'rootless_docker_version.stdout' is undefined"
         # where real Ansible just evaluates `not in ''`.
-        return PluginResult.new(
+        return with_executable_warning(PluginResult.new(
           changed: true,
           failed: true,
           msg: "Failed to execute command: #{ex.message}",
@@ -342,20 +381,32 @@ module Krikri
           stderr: ex.message || "",
           exit_code: 2,
           rc: 2
-        )
+        ))
       end
+
+      # strip_empty_ends (bool, default true): when true, real Ansible
+      # rstrips ALL trailing \r/\n characters from stdout/stderr
+      # (`to_text(r['stdout']).rstrip("\r\n")` in its command.py, applied
+      # only `if strip`); when false, the raw bytes are returned untouched
+      # (live-verified: printf 'out\n\n\n' keeps all 6 bytes with
+      # strip_empty_ends: false, collapses to "out" with the default).
+      # The executor derives stdout_lines/stderr_lines centrally from
+      # whatever lands here, so the *_lines keys follow automatically.
+      # Crystal's String#rstrip(set) strips trailing chars from the set,
+      # exactly like Python's str.rstrip("\r\n").
+      strip_empty_ends = true?(@params["strip_empty_ends"]?, default: true)
 
       # Command module always reports changed (unless skipped)
       # This matches Ansible behavior
-      PluginResult.new(
+      with_executable_warning(PluginResult.new(
         changed: true,
         failed: exit_code != 0,
         msg: exit_code == 0 ? "Command executed successfully" : "Command failed with exit code #{exit_code}",
-        stdout: stdout.to_s.rstrip("\r\n"),
-        stderr: stderr.to_s.rstrip("\r\n"),
+        stdout: strip_empty_ends ? stdout.to_s.rstrip("\r\n") : stdout.to_s,
+        stderr: strip_empty_ends ? stderr.to_s.rstrip("\r\n") : stderr.to_s,
         exit_code: exit_code,
         rc: exit_code # Add rc as alias for Ansible compatibility
-      )
+      ))
     end
 
     # Parse command string into command and arguments, honoring quoted

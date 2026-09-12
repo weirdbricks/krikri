@@ -238,4 +238,82 @@ describe "command plugin" do
     result["failed"].as_bool.should be_true
     result["msg"].as_s.should eq("Missing required parameter: cmd")
   end
+
+  # Proactive param-coverage pass: real Ansible's `command` still ACCEPTS
+  # `executable:` but ignores it entirely, emitting module.warn(...) - the
+  # task succeeds normally (via execvp, no shell) and the result carries a
+  # top-level "warnings" list with exactly this message. Live-verified
+  # against ansible-core 2.19.4. Not previously implemented (the param was
+  # silently tolerated with no warning at all). The warning convention
+  # matches apache2_module.cr's extra["warnings"] usage.
+  it "accepts executable:, ignores it, and emits real Ansible's exact warning" do
+    result = PluginSpecHelper.run("command", {"cmd" => "echo hi", "executable" => "/bin/bash"})
+
+    result["failed"].as_bool.should be_false
+    result["stdout"].as_s.should eq("hi")
+    warnings = result["warnings"].as_a.map(&.as_s)
+    warnings.should eq(["As of Ansible 2.4, the parameter 'executable' is no longer supported with the 'command' module. Not using '/bin/bash'."])
+  end
+
+  it "carries the executable: warning on skip results too, like real module.warn()" do
+    # module.warn accumulates into whatever exit_json comes next, so a
+    # creates:-skip on the same task also carries the warning (real
+    # Ansible behavior - the warn happens at the top of the module's
+    # main(), long before the creates: check).
+    marker = File.tempname("command-executable-warn-skip")
+    File.write(marker, "")
+
+    result = PluginSpecHelper.run("command", {"cmd" => "echo should-be-skipped", "creates" => marker, "executable" => "/bin/bash"})
+
+    result["changed"].as_bool.should be_false
+    result["warnings"].as_a.size.should eq(1)
+  ensure
+    File.delete(marker) if marker && File.exists?(marker)
+  end
+
+  # Proactive param-coverage pass: real Ansible's `command` documents
+  # `stdin_add_newline` as "Whether to append a newline to stdin data"
+  # (bool, default yes) - run_command appends '\n' unless it is false.
+  # Live-verified against ansible-core 2.19.4: `wc -l` fed "line1\nline2"
+  # counts 2 lines by default, 1 with stdin_add_newline: false. Not
+  # previously implemented (stdin was sent verbatim, no newline ever).
+  it "appends a newline to stdin: by default (stdin_add_newline default true)" do
+    result = PluginSpecHelper.run("command", {"cmd" => "wc -l", "stdin" => "line1\nline2"})
+
+    result["stdout"].as_s.should eq("2")
+  end
+
+  it "does not append a newline when stdin_add_newline is false" do
+    result = PluginSpecHelper.run("command", {"cmd" => "wc -l", "stdin" => "line1\nline2", "stdin_add_newline" => "false"})
+
+    result["stdout"].as_s.should eq("1")
+  end
+
+  # Proactive param-coverage pass: real Ansible's `command` documents
+  # `strip_empty_ends` as "Strip empty lines from the end of stdout/stderr
+  # in result" (bool, default yes) - its command.py only rstrips
+  # "\r\n" when strip is true, so false returns the raw bytes untouched.
+  # Live-verified against ansible-core 2.19.4: printf-style output ending
+  # in several newlines keeps them all with strip_empty_ends: false and
+  # collapses to the bare text with the default. Not previously
+  # implemented (the rstrip was unconditional). The executor derives
+  # stdout_lines/stderr_lines centrally from the plugin's stdout/stderr,
+  # so the *_lines keys follow this setting automatically.
+  it "strips trailing newlines from stdout/stderr by default (strip_empty_ends default true)" do
+    result = PluginSpecHelper.run("command", {"cmd" => "seq 1 3"})
+
+    result["stdout"].as_s.should eq("1\n2\n3")
+  end
+
+  it "preserves trailing newlines when strip_empty_ends is false" do
+    result = PluginSpecHelper.run("command", {"cmd" => "seq 1 3", "strip_empty_ends" => "false"})
+
+    result["stdout"].as_s.should eq("1\n2\n3\n")
+  end
+
+  it "applies strip_empty_ends to stderr the same way" do
+    result = PluginSpecHelper.run("command", {"cmd" => "sh -c 'seq 1 2 1>&2'", "strip_empty_ends" => "false"})
+
+    result["stderr"].as_s.should eq("1\n2\n")
+  end
 end

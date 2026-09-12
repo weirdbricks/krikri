@@ -12,6 +12,12 @@ module Krikri
   #   removes (optional): Skip if this file doesn't exist
   #   chdir (optional): Change directory before executing
   #   executable (optional): Shell to use (default: /bin/sh)
+  #   argv (optional): Exact argument list, run through the shell
+  #     element-wise-quoted and joined (real Ansible behavior)
+  #   stdin (optional): Data piped to the command's stdin
+  #   stdin_add_newline (optional): Append a newline to stdin: (default true)
+  #   strip_empty_ends (optional): Rstrip trailing newlines from
+  #     stdout:/stderr: (default true)
   #   check_mode (optional): Dry-run mode (always skips for shell)
   #
   # Examples:
@@ -59,15 +65,51 @@ module Krikri
         )
       end
 
-      # Get command (supports both direct string and 'cmd' parameter)
+      # Real Ansible 2.19.4 REJECTS `expand_argument_vars:` on shell
+      # outright - live-verified: the shell module's own argspec doesn't
+      # include it (only command's does), so the task fails before the
+      # command ever runs with exactly:
+      #   {"changed": false, "msg": "Unsupported parameters for (shell)
+      #   module: expand_argument_vars"}
+      # (note: no "Supported parameters include" tail, unlike the warn:
+      # rejection above). There is therefore NO shell-side
+      # expand_argument_vars behavior to implement - rejecting it, with
+      # this exact message, IS the real-Ansible behavior. ($VAR expansion
+      # on shell's cmd:/free-form happens in the shell interpreter
+      # itself, and argv: elements are shlex_quote'd by real Ansible
+      # before the shell sees them, so nothing here is left unexpanded.)
+      if @params.has_key?("expand_argument_vars")
+        return PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: "Unsupported parameters for (shell) module: expand_argument_vars"
+        )
+      end
+
+      # Get command (supports direct string, 'cmd' parameter, or 'argv')
       cmd = @params["_raw_params"]? || @params["cmd"]?
-      unless cmd
+      argv = @params["argv"]?
+      unless cmd || argv
         return PluginResult.new(
           changed: false,
           failed: true,
           msg: "Missing required parameter: cmd"
         )
       end
+
+      # `argv:` works identically on shell to command's argv: - real
+      # 2.19.4 shares the same underlying module implementation (the
+      # shell module IS command.py with _uses_shell=True), where
+      # `args = args or argv` picks the argv list and basic.py's
+      # run_command, with use_unsafe_shell=True, shlex_quote's each
+      # element and joins them with spaces before the shell ever sees
+      # the string. Live-verified: `shell: {argv: [echo, "hello
+      # world"]}` -> stdout "hello world". (argv: isn't in shell's own
+      # public docs even though it's functional there.) Element-wise
+      # single-quoting here is shell-equivalent to shlex_quote and
+      # never whitespace-splits an element - that's the whole point of
+      # argv: over cmd:/free-form.
+      argv_parts = argv.try { |raw| parse_argv_list(raw) }
 
       # Check creates parameter (idempotency). `path_or_glob_exists?`
       # (not the old `remote_file_exists?`, which - literal-only and
@@ -172,8 +214,10 @@ module Krikri
       # Get optional parameters
       executable = @params["executable"]? || "/bin/sh"
 
-      # Build full command
-      full_cmd = cmd.to_s
+      # Build full command. argv: form is quoted element-wise and joined
+      # (see the comment above); cmd:/free-form is passed through verbatim
+      # - the shell does the splitting.
+      full_cmd = argv_parts ? argv_parts.map { |arg| shell_single_quote(arg) }.join(" ") : cmd.to_s
 
       # Add chdir if specified
       if chdir
@@ -196,9 +240,9 @@ module Krikri
       #
       # If a custom executable is specified (not /bin/sh), we need to explicitly
       # invoke it since remote_exec uses /bin/sh by default
-      result = if executable == "/bin/sh"
+      remote_command = if executable == "/bin/sh"
                  # Default shell - just pass the command directly
-                 remote_exec(full_cmd)
+                 full_cmd
                else
                  # Custom shell - invoke it explicitly. full_cmd routinely
                  # contains its own single quotes (`cut -d' ' -f2`, `tr -d
@@ -210,30 +254,83 @@ module Krikri
                  # found benchmarking that role: "cut: option requires an
                  # argument -- 'd'" with the rest of the pipeline showing
                  # up as unquoted trailing shell text.
-                 remote_exec("#{executable} -c #{shell_single_quote(full_cmd)}")
+                 "#{executable} -c #{shell_single_quote(full_cmd)}"
                end
+
+      # stdin: (+ stdin_add_newline:) - real Ansible hands `data` directly
+      # to the spawned command's stdin, appending a newline unless
+      # stdin_add_newline is explicitly false (basic.py run_command:
+      # `if not binary_data: data += '\n'`, with binary_data wired to
+      # `not stdin_add_newline`) - live-verified against 2.19.4 on shell:
+      # `wc -l` fed "line1\nline2" counts 2 lines by default, 1 with
+      # stdin_add_newline: false. This plugin executes through
+      # remote_exec (a shell string over SSH/local), so the same bytes
+      # reach the command's stdin by piping a printf; the observable
+      # behavior is identical. The `{ ...; }` group keeps operators
+      # inside full_cmd (its own pipes, the `cd X && ...` prefix) on the
+      # RIGHT side of the pipe, and propagates the command's own exit
+      # code unchanged. single-quoted printf data is literal to the
+      # shell (newlines, quotes and all) via #shell_single_quote.
+      if stdin_data = @params["stdin"]?
+        stdin_add_newline = true?(@params["stdin_add_newline"]?, default: true)
+        stdin_payload = stdin_add_newline ? "#{stdin_data}\n" : stdin_data
+        remote_command = "printf %s #{shell_single_quote(stdin_payload)} | { #{remote_command}; }"
+      end
+
+      result = remote_exec(remote_command)
 
       # Build diff data if diff mode enabled
       diff_data = nil
       if @diff_mode
         diff_hash = {
-          "prepared" => "$ #{cmd}\n#{result[:stdout]}",
+          "prepared" => "$ #{full_cmd}\n#{result[:stdout]}",
         }
         diff_data = JSON.parse(diff_hash.to_json)
       end
 
       # Shell commands always report changed (Ansible behavior)
       # unless they were skipped by creates/removes
+      #
+      # strip_empty_ends (bool, default true): when true, real Ansible
+      # rstrips ALL trailing \r/\n characters from stdout/stderr (its
+      # command.py: `if strip: r['stdout'] = to_text(r['stdout'])
+      # .rstrip("\r\n")`); when false, the raw bytes are returned
+      # untouched (live-verified: printf 'out\n\n\n' keeps all 6 bytes
+      # with strip_empty_ends: false, collapses to "out" with the
+      # default). The executor derives stdout_lines/stderr_lines
+      # centrally from whatever lands here, so the *_lines keys follow
+      # automatically. Crystal's String#rstrip(set) strips trailing
+      # chars from the set, exactly like Python's str.rstrip("\r\n").
+      strip_empty_ends = true?(@params["strip_empty_ends"]?, default: true)
+
       PluginResult.new(
         changed: true,
         failed: result[:exit_code] != 0,
         msg: result[:exit_code] == 0 ? "Command executed successfully" : "Command failed",
-        stdout: result[:stdout].rstrip("\r\n"),
-        stderr: result[:stderr].rstrip("\r\n"),
+        stdout: strip_empty_ends ? result[:stdout].rstrip("\r\n") : result[:stdout],
+        stderr: strip_empty_ends ? result[:stderr].rstrip("\r\n") : result[:stderr],
         exit_code: result[:exit_code],
         rc: result[:exit_code], # Add rc as alias for Ansible compatibility
         diff: diff_data
       )
+    end
+
+    # Parses `argv:`'s JSON-array text into its literal argument list -
+    # command.cr's own copy, shared rationale: no shell splitting/quoting
+    # at all at parse time (the elements are only shell-quoted when the
+    # full command string is assembled, mirroring real Ansible's
+    # shlex_quote + " ".join). A templated Jinja list var renders as
+    # Python's repr (single-quoted strings) rather than JSON when it
+    # comes through a `{% if %}...{{ [list] }}...{% endif %}` idiom -
+    # same fallback as rpm_package.cr's/apt.cr's own copies of this
+    # pattern.
+    private def parse_argv_list(raw : String) : Array(String)
+      trimmed = raw.strip
+      begin
+        Array(String).from_json(trimmed)
+      rescue
+        Array(String).from_json(trimmed.gsub('\'', '"'))
+      end
     end
 
     # Helper to convert string/bool to boolean
