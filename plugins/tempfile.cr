@@ -21,7 +21,7 @@ module Krikri
     def execute : PluginResult
       state = normalized_state
       unless {"file", "directory"}.includes?(state)
-        return PluginResult.new(changed: false, failed: true, msg: "state must be 'file' or 'directory', got '#{state}'")
+        return PluginResult.new(changed: false, failed: true, msg: "value of state must be one of: file, directory, got: #{state}")
       end
 
       dir = target_dir

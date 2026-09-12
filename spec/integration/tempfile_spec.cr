@@ -45,6 +45,7 @@ describe "tempfile plugin" do
     result = PluginSpecHelper.run("tempfile", {"state" => "bogus"})
 
     result["failed"].as_bool.should be_true
+    result["msg"].as_s.should eq("value of state must be one of: file, directory, got: bogus")
   end
 
   it "fails when path: doesn't exist" do
