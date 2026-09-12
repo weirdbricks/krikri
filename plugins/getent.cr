@@ -11,21 +11,49 @@ module Krikri
   # can read `ansible_facts.getent_passwd[user][1]` etc.
   #
   # The parse format is Ansible's: each entry maps to a list of the
-  # colon-separated fields *after* the key field. For passwd the key is the
-  # username and the value is `[password, uid, gid, gecos, home, shell]`, so
-  # `getent_passwd["root"][1]` is the UID and `[4]` the home directory -
+  # delimiter-separated fields *after* the key field. For passwd the key is
+  # the username and the value is `[password, uid, gid, gecos, home, shell]`,
+  # so `getent_passwd["root"][1]` is the UID and `[4]` the home directory -
   # the exact access dev-sec os_hardening makes. Reading the real system DB
   # on the target is a genuine passwd(5)-style parse; unlike the `getent`
   # binary (a libc call), it reads /etc/passwd and /etc/shadow directly as
   # files, which works for the local-database databases Ansible's module
   # targets and avoids forking a subprocess.
   #
-  # Parameters:
+  # Parameters (real argument_spec: database/key/service/split/fail_key):
   #   database (required): passwd, shadow, group, or other getent database.
   #   key (optional): a single key, returned as a plain list of its fields
-  #     rather than a dict.
+  #     rather than a dict. Lookup follows real getent's per-database
+  #     semantics: passwd/group also accept a numeric UID/GID (`getent
+  #     passwd 0` -> the root entry, fact keyed by the entry's own first
+  #     field), hosts also matches a hostname alias or IP (the fact is
+  #     keyed by the line's first field, the address), shadow/gshadow are
+  #     username-only (a numeric key there is genuinely not found).
+  #     Verified against real getent on this machine.
+  #   service (optional): accepted for param parity; see the deliberate-
+  #     limits note below.
+  #   split (optional): the field delimiter. Real Ansible does NOT always
+  #     colon-split: its default is ':' only for passwd/shadow/group/
+  #     gshadow (ansible/modules/getent.py's own `colon` list); every
+  #     other database splits on runs of whitespace, because that is how
+  #     e.g. `getent hosts localhost` ("127.0.0.1  localhost  ip6-...")
+  #     and `getent services http` ("http  80/tcp  www") actually emit.
+  #     An explicit split: value overrides the default for any database.
+  #   fail_key (optional, default true): fail when a requested key is
+  #     absent; with false, the key maps to a real JSON null.
   #   check_mode: no-op (getent only reads).
+  #
+  # Deliberate limit: krikri reads the local database files directly
+  # (equivalent to the `files` NSS backend) instead of forking getent, so
+  # `service:` cannot redirect a lookup to a non-local NSS backend (ldap,
+  # sss, ...): any service value returns the files-backed data. For the
+  # overwhelmingly common role usage (`service: files` - pin the lookup
+  # to /etc/passwd et al. and bypass LDAP/SSSD) this is exactly right.
   class GetentPlugin < BasePlugin
+    # Databases real Ansible colon-splits by default; everything else
+    # (hosts, services, protocols, ...) splits on runs of whitespace.
+    private COLON_DATABASES = ["passwd", "shadow", "group", "gshadow"]
+
     def execute : PluginResult
       database = @params["database"]?
       unless database
@@ -53,7 +81,21 @@ module Krikri
         )
       end
 
-      entries = parse_database(file, database)
+      # `service:` is accepted (real Ansible passes it to getent as `-s`,
+      # which GNU getopt reorders so it works even positioned after the
+      # database/key) but deliberately not acted on: this plugin's data
+      # source is always the local files backend - see the class comment.
+      # (Referencing the param documents that it is consumed, not dropped.)
+      @params["service"]?
+
+      # Real Ansible's split default: ':' only for the four colon-databases;
+      # whitespace runs for everything else (ansible/modules/getent.py).
+      split = @params["split"]?
+      if split.nil? && COLON_DATABASES.includes?(database)
+        split = ":"
+      end
+
+      entries = parse_database(file, database, split)
 
       key = @params["key"]?
       facts = Hash(String, JSON::Any).new
@@ -61,7 +103,19 @@ module Krikri
       fail_key = @params["fail_key"]? ? true?(@params["fail_key"]) : true
 
       if key
-        value = entries[key]?
+        # Real `getent <db> <key>` emits only the FIRST matching line - a
+        # duplicated key's second line (tcp+udp service pairs) is merged
+        # into a list-of-lists only on enumeration, never on a keyed
+        # lookup (live-verified: real `getent services domain` ->
+        # ["53/tcp"], real enumeration -> [["53/tcp"], ["53/udp"]]). So
+        # the keyed branch scans for the first matching line instead of
+        # reading the merged enumeration value.
+        value = nil
+        if resolved = resolve_key(file, database, split, key)
+          matched_key, fields = resolved
+          value = JSON::Any.new(fields.map { |field| JSON::Any.new(field) })
+          key = matched_key
+        end
         if !value && fail_key
           # Real Ansible's getent module fails outright when a specific
           # key isn't found (fail_key: true is its own default) - a
@@ -102,12 +156,10 @@ module Krikri
         # false and the user-creation task was silently skipped every
         # single run, cascading into "chown failed: failed to look up
         # user X" on every later task that assumed the user existed.
-        value_fact = value ? JSON::Any.new(value.map { |field| JSON::Any.new(field) }) : JSON::Any.new(nil)
+        value_fact = value || JSON::Any.new(nil)
         facts["getent_#{database}"] = JSON::Any.new({key => value_fact})
       else
-        dict = Hash(String, JSON::Any).new
-        entries.each { |k, v| dict[k] = JSON::Any.new(v.map { |field| JSON::Any.new(field) }) }
-        facts["getent_#{database}"] = JSON::Any.new(dict)
+        facts["getent_#{database}"] = JSON::Any.new(entries)
       end
 
       PluginResult.new(
@@ -138,21 +190,78 @@ module Krikri
       end
     end
 
-    # Parse a colon-delimited database into {key => [fields...]}, where key
-    # is the first field and the value keeps the remaining fields. This
-    # matches Ansible's getent output shape. Comments and blank lines are
-    # skipped.
-    private def parse_database(file : String, database : String) : Hash(String, Array(String))
-      result = Hash(String, Array(String)).new
+    # Key resolution for a single-key lookup: the first line whose first
+    # field equals the key wins (real `getent <db> <key>` emits only the
+    # first match); beyond that, passwd/group also accept a numeric
+    # UID/GID and non-colon databases match any field on the line (a
+    # hosts alias), mirroring real getent's per-database lookup (verified
+    # live: `getent passwd 0` -> root's entry, `getent hosts localhost`
+    # -> the 127.0.0.1 line, `getent shadow 0` -> rc 2 not-found).
+    # Returns the matched entry's first field (the real fact key) and its
+    # remaining fields.
+    private def resolve_key(file : String, database : String, split : String?, key : String) : {String, Array(String)}?
+      numeric = key.matches?(/\A\d+\Z/)
+      colon = COLON_DATABASES.includes?(database)
 
       begin
         File.read_lines(file).each do |line|
           line = line.strip
           next if line.empty? || line.starts_with?("#")
-          fields = line.split(":")
+          line = line.split("#").first.strip unless colon
+          fields = split ? line.split(split) : line.split
+          next if fields.empty?
+          first = fields.shift
+          return {first, fields} if first == key
+          if (database == "passwd" || database == "group") && numeric
+            return {first, fields} if fields[1]? == key
+          elsif !colon && fields.includes?(key)
+            return {first, fields}
+          end
+        end
+      rescue
+      end
+
+      nil
+    end
+
+    # Parse a database file into {key => fields...} JSON, where key is the
+    # first field and the value keeps the remaining fields, split on the
+    # given delimiter (nil = runs of whitespace, matching Python's
+    # str.split(None) - the real module's default for non-colon
+    # databases). This matches Ansible's getent output shape. Comments and
+    # blank lines are skipped.
+    #
+    # A key appearing more than once (e.g. a service listed for both tcp
+    # and udp in /etc/services) becomes a list of field-lists, matching
+    # real Ansible's 2.11+ enumeration handling rather than silently
+    # keeping only the last line.
+    private def parse_database(file : String, database : String, split : String?) : Hash(String, JSON::Any)
+      result = Hash(String, JSON::Any).new
+      colon = COLON_DATABASES.includes?(database)
+
+      begin
+        File.read_lines(file).each do |line|
+          line = line.strip
+          next if line.empty? || line.starts_with?("#")
+          # Non-colon database files carry trailing comments ("domain
+          # 53/tcp # Domain Name Server") that real getent's output never
+          # has - the libc files backend strips them, so krikri must too
+          # (colon-database values like a gecos field may legitimately
+          # contain '#', so those are not touched).
+          line = line.split("#").first.strip unless colon
+          fields = split ? line.split(split) : line.split
           next if fields.empty?
           key = fields.shift
-          result[key] = fields
+          value = JSON::Any.new(fields.map { |field| JSON::Any.new(field) })
+          if existing = result[key]?
+            if existing.as_a[0]?.try(&.raw.is_a?(Array))
+              result[key] = JSON::Any.new(existing.as_a + [value])
+            else
+              result[key] = JSON::Any.new([existing, value])
+            end
+          else
+            result[key] = value
+          end
         end
       rescue
         # Missing/unreadable file: leave the result empty rather than fail
