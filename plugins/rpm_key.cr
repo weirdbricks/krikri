@@ -147,9 +147,25 @@ module Krikri
       result[:exit_code] == 0 ? nil : "failed to fetch key at #{key} , error was: #{result[:stderr]}"
     end
 
+    # fingerprint: is a documented LIST param (real ansible's own
+    # argument_spec types it as list) - a real YAML list arrives here as
+    # a JSON-array-shaped string after task-param substitution, so parse
+    # it with the same convention as unarchive.cr's parse_list_param:
+    # JSON array first, Python-repr variant second, then comma-split for
+    # a plain scalar (real Ansible's check_type_list also accepts a
+    # comma-separated string for backward compat).
+    private def parse_list_param(raw : String?) : Array(String)
+      return [] of String unless raw
+      if raw.starts_with?('[')
+        (Array(String).from_json(raw) rescue nil).try { |parsed| return parsed }
+        (Array(String).from_json(raw.gsub('\'', '"')) rescue nil).try { |parsed| return parsed }
+      end
+      raw.split(",").map(&.strip).reject(&.empty?)
+    end
+
     private def fingerprint_error(pairs : Array({String, String})) : String?
       fingerprint_param = @params["fingerprint"]? || return nil
-      wanted = fingerprint_param.split(',').map(&.strip.gsub(" ", "").upcase).reject(&.empty?)
+      wanted = parse_list_param(fingerprint_param).map(&.gsub(" ", "").upcase)
       return nil if wanted.empty?
       have = pairs.map { |(_, fp)| fp }
       return nil if wanted.any? { |wval| have.includes?(wval) }
