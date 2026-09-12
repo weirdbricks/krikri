@@ -1076,8 +1076,29 @@ module Krikri
     # filters like `regex_search`) doesn't have this bug - positional
     # args bind correctly to the declared keyword names. Switched both
     # `version` and `version_compare` to that form.
+    # A structured (Hash) target - the bare `ansible_version` magic-var
+    # dict instead of its `ansible_version.string`/`.full` dotted field -
+    # is a task-failing templating error in real Ansible, not something
+    # to silently stringify and digit-scan (see the Hash guard in
+    # ConditionalEvaluator#evaluate_version_test, the when:-side twin of
+    # this one, for the full timorunge.pmm_client round evidence). Here
+    # `target.to_s` produced Crinja's repr of the whole dict,
+    # #compare_versions' digit scan then compared *something*, and a
+    # ternary built on the test silently picked the wrong branch - the
+    # play continued into tasks real Ansible never reached. Raising from
+    # inside the test fails the render, which for a `{{ }}` task param
+    # (real round hit: a ternary inside `debug:`/`package:`'s
+    # update_cache) is the same "finalization of task args failed"
+    # hard-stop real Ansible produces. Only Hash is guarded - that is the
+    # confirmed real-world shape; Arrays are deliberately left to the
+    # legacy stringification until a real role shows that case too.
+    def self.version_test_target_string(target : Crinja::Value) : String
+      raise "Version comparison failed: unsupported operand type (dict, not a scalar version string)" if target.raw.is_a?(Hash)
+      target.to_s
+    end
+
     Crinja.test({compare_to: "", operator: "=="}, :version) do
-      JinjaFilters.version_test(target.to_s, arguments["compare_to"].to_s, arguments["operator"].to_s)
+      JinjaFilters.version_test(JinjaFilters.version_test_target_string(target), arguments["compare_to"].to_s, arguments["operator"].to_s)
     end
 
     # `version_compare` - deprecated alias for `version` (identical
@@ -1091,7 +1112,7 @@ module Krikri
     # Crinja has no partial-render fallback). Found live benchmarking
     # prometheus.prometheus.alertmanager (round 26).
     Crinja.test({compare_to: "", operator: "=="}, :version_compare) do
-      JinjaFilters.version_test(target.to_s, arguments["compare_to"].to_s, arguments["operator"].to_s)
+      JinjaFilters.version_test(JinjaFilters.version_test_target_string(target), arguments["compare_to"].to_s, arguments["operator"].to_s)
     end
 
     # `regex(pattern, ignorecase=False, multiline=False)` - Ansible's own
