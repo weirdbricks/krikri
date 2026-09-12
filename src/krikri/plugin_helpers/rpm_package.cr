@@ -723,10 +723,139 @@ module Krikri
           options << "--allowerasing"
         end
 
-        # Best (default in dnf, but explicit is good)
-        options << "--best" unless true?(@params["skip_broken"]?)
+        # Best (default in dnf, but explicit is good). Real ansible-core's
+        # dnf module maps both `best:` and `nobest:` onto dnf's single
+        # `best` config switch, inverted for nobest (`conf.best = not
+        # self.nobest`, verified in ansible-core's own dnf.py
+        # _configure_base; the two are documented as mutually exclusive in
+        # the shared yumdnf argument spec), and its documented default is
+        # "set by the operating system distribution", so nothing is
+        # emitted when neither is given - the historical unconditional
+        # `--best` (dnf's own built-in default) is kept for that case.
+        if best = @params["best"]?
+          options << (true?(best) ? "--best" : "--nobest")
+        elsif nobest = @params["nobest"]?
+          options << (true?(nobest) ? "--nobest" : "--best")
+        elsif !true?(@params["skip_broken"]?)
+          options << "--best"
+        end
+
+        # Allow erasing already-installed packages to resolve dependencies
+        # (dnf's own --allowerasing transaction flag). Verified in
+        # ansible-core's dnf.py: `allowerasing` goes straight into
+        # `base.resolve(allow_erasing=self.allowerasing)`. (NB: the
+        # pre-existing `allow_downgrade:` branch above also emits
+        # --allowerasing - left as found rather than silently re-pointed,
+        # though real ansible-core implements allow_downgrade in module
+        # logic, not via this flag.)
+        if true?(@params["allowerasing"]?)
+          options << "--allowerasing"
+        end
+
+        # Run entirely from the local cache - no metadata download/update
+        # (dnf's -C/--cacheonly; real ansible-core sets conf.cacheonly,
+        # dnf.py _configure_base).
+        if true?(@params["cacheonly"]?)
+          options << "--cacheonly"
+        end
+
+        # Alternate dnf.conf path (dnf's -c/--config). Real ansible-core
+        # points conf.config_file_path at it and fails when unreadable
+        # (dnf.py _configure_base); the CLI pass-through relies on dnf's
+        # own equivalent read failure.
+        if conf_file = @params["conf_file"]?
+          options << "--config=#{shell_single_quote(conf_file)}" unless conf_file.strip.empty?
+        end
+
+        # Disable dnf.conf excludes entirely ("all"), just [main]'s
+        # ("main"), or one repo's ("<repoid>") for this transaction (dnf's
+        # --disableexcludes; real ansible-core appends to
+        # conf.disable_excludes, dnf.py _configure_base).
+        if disable_excludes = @params["disable_excludes"]?
+          options << "--disableexcludes=#{disable_excludes}" unless disable_excludes.strip.empty?
+        end
+
+        # Per-transaction plugin enable/disable (dnf's
+        # --enableplugin/--disableplugin). Real ansible-core passes these
+        # sets to base.init_plugins (dnf.py _base) - never persisted
+        # beyond the transaction, exactly like the CLI flags.
+        string_list_param("enable_plugin").each do |plugin|
+          options << "--enableplugin=#{plugin}"
+        end
+
+        string_list_param("disable_plugin").each do |plugin|
+          options << "--disableplugin=#{plugin}"
+        end
+
+        # Package name(s) to exclude from present/latest operations (dnf's
+        # --exclude; real ansible-core appends to conf.exclude, dnf.py
+        # _configure_base - a list or comma-separated string, listified
+        # exactly like enablerepo/disablerepo already are above). Quoted
+        # so a glob like `kernel*` reaches dnf without the target shell
+        # expanding it.
+        string_list_param("exclude").each do |pkg|
+          options << "--exclude=#{shell_single_quote(pkg)}"
+        end
+
+        # Alternate install root, relative to which all packages install
+        # (dnf's --installroot; real ansible-core sets conf.installroot,
+        # dnf.py _configure_base, defaulting to "/"). "/" is dnf's own
+        # default, so it isn't emitted.
+        if installroot = @params["installroot"]?
+          options << "--installroot=#{shell_single_quote(installroot)}" unless installroot.strip.empty? || installroot == "/"
+        end
+
+        # Install packages as if running a different OS release version
+        # (dnf's --releasever; real ansible-core overrides
+        # conf.substitutions['releasever'], dnf.py _configure_base).
+        if releasever = @params["releasever"]?
+          options << "--releasever=#{shell_single_quote(releasever)}" unless releasever.strip.empty?
+        end
+
+        # Disable SSL validation of the repo servers for this transaction
+        # (dnf's sslverify conf option via --setopt; real ansible-core sets
+        # conf.sslverify = sslverify, dnf.py _configure_base, default
+        # true). Only the false case needs a flag - true is dnf's default.
+        if false?(@params["sslverify"]?)
+          options << "--setopt=sslverify=False"
+        end
+
+        # Download packages without installing (dnf's --downloadonly; real
+        # ansible-core sets conf.downloadonly, dnf.py _configure_base).
+        if true?(@params["download_only"]?)
+          options << "--downloadonly"
+        end
+
+        # Alternate package-download directory - only meaningful with
+        # download_only, exactly as in real ansible-core (conf.destdir is
+        # only set when download_only is set, dnf.py _configure_base).
+        if true?(@params["download_only"]?) && (download_dir = @params["download_dir"]?)
+          options << "--downloaddir=#{shell_single_quote(download_dir)}" unless download_dir.strip.empty?
+        end
 
         options.join(" ")
+      end
+
+      # List-typed params (`exclude:`, `enable_plugin:`, `disable_plugin:`)
+      # arrive either as a JSON array string (the PluginManager serializes
+      # list params with JSON's own .to_s) or as the comma-separated string
+      # real Ansible's yumdnf.listify_comma_sep_strings_in_list still
+      # accepts for these same options ("It's possible someone passed a
+      # comma separated string since it used to be a string type"). The
+      # single-quote fallback covers a Python-repr list rendering the same
+      # way parse_name_param_as_json handles it for `name:`.
+      private def string_list_param(key : String) : Array(String)
+        raw = @params[key]?
+        return [] of String if raw.nil? || raw.strip.empty?
+
+        [raw, raw.gsub('\'', '"')].each do |candidate|
+          begin
+            return JSON.parse(candidate).as_a.map(&.as_s)
+          rescue
+          end
+        end
+
+        raw.split(",").map(&.strip).reject(&.empty?)
       end
     end
   end

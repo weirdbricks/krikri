@@ -21,6 +21,31 @@ module Krikri
   # - install_weak_deps: Install weak dependencies (default: true)
   # - skip_broken: Skip packages with broken dependencies
   # - allow_downgrade: Allow downgrading packages
+  # - allowerasing: Allow erasing installed packages to resolve deps
+  # - best / nobest: Highest-version-or-fail handling (mutually
+  #   exclusive; nobest is the inverted form kept for compatibility)
+  # - cacheonly: Run entirely from the local cache
+  # - conf_file: Alternate dnf.conf path
+  # - disable_excludes: all / main / <repoid> excludes suppression
+  # - enable_plugin / disable_plugin: Per-transaction plugin toggles
+  # - exclude: Package name(s) to exclude from present/latest
+  # - installroot: Alternate install root
+  # - releasever: Different OS release version
+  # - sslverify: Repo-server SSL validation (default true)
+  # - download_only / download_dir: Download without installing
+  # - install_repoquery: Accepted as a no-op, matching real Ansible's
+  #   own documented behavior for DNF (deprecated, removed in 2.20)
+  # - lock_timeout: Accepted as a no-op for the dnf backend, matching
+  #   real Ansible's own dnf.py (the dnf python API handles lock
+  #   waiting internally; only the retired yum backend consumed it)
+  # - use_backend: Which backend module real Ansible would dispatch to
+  #   (auto/dnf/yum/yum4/dnf4/dnf5); validated against real Ansible's
+  #   choice list, then treated as a no-op since krikri has a single
+  #   dnf implementation to select between
+  # - validate_certs: Accepted as a no-op; real Ansible only applies it
+  #   controller-side when fetching an https RPM URL before install,
+  #   which krikri doesn't do (URL rpms are installed on-target by dnf
+  #   itself, governed by sslverify instead)
   #
   # Examples:
   #   dnf:
@@ -44,6 +69,26 @@ module Krikri
     end
 
     def execute : PluginResult
+      # use_backend: real Ansible's argument spec (dnf.py:
+      # choices=['auto', 'dnf', 'yum', 'yum4', 'dnf4', 'dnf5']) rejects
+      # anything else with the standard choices-validation message
+      # before any module code runs. 'yum'/'yum4'/'dnf4' are accepted
+      # aliases ('yum'/'yum4' for compatibility - the actual yum backend
+      # was removed in ansible-core 2.17), and all choices route to this
+      # plugin's single dnf implementation: krikri has no dnf4/dnf5
+      # backend split to select between, so a valid choice is a no-op
+      # here by design.
+      if use_backend = @params["use_backend"]?
+        valid_backends = ["auto", "dnf", "yum", "yum4", "dnf4", "dnf5"]
+        unless valid_backends.includes?(use_backend)
+          return PluginResult.new(
+            changed: false,
+            failed: true,
+            msg: "value of use_backend must be one of: #{valid_backends.join(", ")}, got: #{use_backend}"
+          )
+        end
+      end
+
       if list_result = list_query_result
         return list_result
       end

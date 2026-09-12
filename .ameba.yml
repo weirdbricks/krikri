@@ -240,6 +240,14 @@ Metrics/CyclomaticComplexity:
   # toggles, --rsh, --link-dest, rsync_opts merging) - one flag per
   # real module param, matching its actual CLI surface one-to-one.
   - src/krikri/plugin_helpers/synchronize_rsync.cr
+  # build_dnf_options's branch count IS real ansible-core dnf.py's own
+  # per-param flag surface (best/nobest inversion, allowerasing,
+  # cacheonly, conf_file, disable_excludes, enable/disable_plugin,
+  # exclude, installroot, releasever, sslverify, download_only/
+  # download_dir) - one branch per real module option, matching its
+  # actual CLI surface one-to-one, same shape as synchronize_rsync's
+  # build_argv; splitting it apart would obscure that correspondence.
+  - src/krikri/plugin_helpers/rpm_package.cr
   # ec2_key.cr/ec2_security_group.cr's own .run dispatch (present/absent,
   # existing-resource matching, EC2 API call, result-building) and
   # plan_present's own rule-diff construction mirror real amazon.aws
