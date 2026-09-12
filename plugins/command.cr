@@ -39,6 +39,19 @@ module Krikri
       @check_mode = true?(@params["check_mode"]?)
     end
 
+    # Resolves a creates:/removes: path for the existence check above:
+    # a RELATIVE path is joined onto chdir: (real Ansible's own
+    # behavior), an already-absolute path is used as-is (chdir: never
+    # changes an absolute path's meaning), and a leading ~ was already
+    # expanded by #expand_tilde to an absolute home path. No Dir.cd
+    # here and no cwd side effects - when the file exists the task
+    # skips cleanly without ever needing to change directory at all.
+    private def resolve_against_chdir(path : String, chdir : String?) : String
+      expanded = expand_tilde(path)
+      return expanded if chdir.nil? || expanded.starts_with?('/')
+      File.join(chdir, expanded)
+    end
+
     def execute : PluginResult
       # Real ansible-core 2.19 removed the long-deprecated `warn:` param
       # from command/shell and now rejects it at module-arg validation
@@ -105,8 +118,24 @@ module Krikri
       # changed: false) - with `rc` missing the attribute access hard-
       # failed the warm run ("object of type 'dict' has no attribute
       # 'rc'") where real Ansible evaluates cleanly.
+      # Read chdir here (a pure parameter read, no side effect - the
+      # actual Dir.cd still only happens further down, right before
+      # executing the command) so the creates:/removes: checks below can
+      # resolve a RELATIVE path against it. Real Ansible's own
+      # command/shell action plugin resolves a relative creates:/removes:
+      # against chdir: when both are given (chdir changes what
+      # "relative" means for the whole task, not just the command's own
+      # execution). Found via kyl191.openvpn's warm run: its "Generate CA
+      # key" task (argv: openssl req ..., chdir: "{{ openvpn_key_dir }}",
+      # creates: ca-key.pem) re-ran on every single warm pass because
+      # the check below tested "ca-key.pem" against the plugin process's
+      # own inherited cwd (the SSH session's home) instead of
+      # openvpn_key_dir, never finding the file and always concluding
+      # "must run" - where real ansible-playbook reported changed=0.
+      chdir = @params["chdir"]?.try { |itm| expand_tilde(itm) }
+
       if creates = @params["creates"]?
-        if path_or_glob_exists?(expand_tilde(creates))
+        if path_or_glob_exists?(resolve_against_chdir(creates, chdir))
           skipped_stdout = "skipped, since #{creates} exists"
           return PluginResult.new(
             changed: false,
@@ -129,7 +158,7 @@ module Krikri
       # Ansible "ok", not "skipping:", shape as creates: above, with the
       # same full command-module result keys (see the creates: branch).
       if removes = @params["removes"]?
-        unless path_or_glob_exists?(expand_tilde(removes))
+        unless path_or_glob_exists?(resolve_against_chdir(removes, chdir))
           skipped_stdout = "skipped, since #{removes} does not exist"
           return PluginResult.new(
             changed: false,
@@ -174,7 +203,6 @@ module Krikri
       end
 
       # Get optional parameters
-      chdir = @params["chdir"]?.try { |itm| expand_tilde(itm) }
       stdin_data = @params["stdin"]?
 
       # Change directory if requested. No need to track/restore the
