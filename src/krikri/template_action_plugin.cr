@@ -18,6 +18,31 @@ module Krikri
     @render_error : String? = nil
 
     def execute : ActionResult
+      # newline_sequence: template-only param (real Ansible strips it from
+      # the module args - it is consumed HERE, on the controller, by the
+      # Jinja environment). Default "\n"; the three documented values are
+      # accepted, including their YAML-escaped literal forms ("\\n" typed
+      # with a backslash, which YAML/CLI quoting can hand over as a
+      # literal two-character string - real Ansible's own
+      # wrong_sequences normalization), anything else fails the task with
+      # real Ansible's exact message before any template is touched
+      # (live-verified against ansible-core 2.19.4).
+      # `.presence` is deliberately NOT used on the raw value: it treats
+      # a whitespace-only string as unset, and "\r"/"\r\n" are ALL
+      # whitespace - newline_sequence: "\r\n" silently fell back to the
+      # "\n" default and the CRLF conversion never ran. Only a missing
+      # key or a truly empty value means "use the default".
+      raw_sequence = @params["newline_sequence"]?
+      newline_sequence = (raw_sequence.nil? || raw_sequence.empty?) ? "\n" : raw_sequence
+      case newline_sequence
+      when "\\n"  then newline_sequence = "\n"
+      when "\\r"  then newline_sequence = "\r"
+      when "\\r\\n" then newline_sequence = "\r\n"
+      end
+      unless ["\n", "\r", "\r\n"].includes?(newline_sequence)
+        return ActionResult.failure("newline_sequence needs to be one of: \\n, \\r or \\r\\n")
+      end
+
       # Get source template path
       src = @params["src"]?
       unless src
@@ -45,6 +70,21 @@ module Krikri
 
       # Calculate MD5 of rendered content
       content_md5 = Digest::MD5.hexdigest(rendered_content)
+
+      # newline_sequence: real Ansible passes this to the Jinja2
+      # environment, whose lexer normalizes EVERY newline in the rendered
+      # output (the template source's own line breaks and any Jinja-emitted
+      # ones alike) to the requested sequence - verified byte-level
+      # against ansible-core 2.19.4 (newline_sequence="\r\n" turns a
+      # plain-LF template's entire output into CRLF). Crinja's lexer
+      # hard-codes "\n", so the same normalization is applied to the
+      # finished render here: split on any newline form and rejoin (the
+      # same shape Jinja2's lexer itself uses). Done AFTER
+      # render_template's own trailing-newline normalization so the
+      # appended final newline obeys the sequence too.
+      if newline_sequence != "\n"
+        rendered_content = rendered_content.split(/\r\n|\r|\n/).join(newline_sequence)
+      end
 
       # Modify params to send rendered CONTENT to remote instead of template path
       # The remote plugin will receive the rendered content, not the template
@@ -159,17 +199,23 @@ module Krikri
 
       env.config.trim_blocks = trim_blocks
 
-      # Crinja's lstrip_blocks is broken: even a bare, unindented `{% if %}`
-      # on its own line (no leading whitespace to strip) makes it eat the
-      # *preceding* line's newline too, and an indented tag eats every
-      # newline in the whole block ("A\n    {% if %}\nB\n    {% endif %}\nC\n"
-      # renders as "ABC" instead of "A\nB\nC\n"). Real templates set
-      # `lstrip_blocks: True` via the `#jinja2:` directive precisely to get
-      # clean, newline-correct output (konstruktoid-hardening's
-      # resolved.conf.j2 does), so honoring the broken implementation would
-      # produce worse output than ignoring the request - always render with
-      # it off regardless of what was requested.
-      env.config.lstrip_blocks = false
+      # lstrip_blocks: real Ansible's template module default False (the
+      # same default as Jinja2's own upstream - unlike trim_blocks, which
+      # Ansible's template module overrides to True). Honored from the
+      # task param or a #jinja2: directive override, same precedence
+      # trim_blocks: above gets. This used to be hard-wired OFF because
+      # the vendored Crinja fork's lstrip_blocks implementation was
+      # broken (it ate the PRECEDING line's newline even for a bare,
+      # unindented tag, and an indented tag swallowed every newline in
+      # the whole block); the fork now implements it correctly - the
+      # exact cases from that old comment ("A\n    {% if %}\nB\n    {%
+      # endif %}\nC\n" -> "A\nB\nC\n", bare unindented tags, {{ }} and
+      # {# #} lines left untouched) all render correctly against the
+      # shard.lock-pinned commit, and were live-verified against real
+      # ansible-core 2.19.4's output for the same inputs.
+      lstrip_blocks = directive_overrides.fetch("lstrip_blocks", true?(@params["lstrip_blocks"]?, default: false))
+
+      env.config.lstrip_blocks = lstrip_blocks
 
       # Prepare template variables
       template_vars = prepare_template_vars
