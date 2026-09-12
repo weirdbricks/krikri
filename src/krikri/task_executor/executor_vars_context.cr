@@ -688,14 +688,29 @@ module Krikri
       substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
 
       candidates.each do |raw|
-        # strict: true - round174 matrix scenario 5b: `with_first_found:
-        # "{{ undefined_var }}"` (one candidate, itself a bare template
-        # reference) must fail the task ("'undefined_var' is undefined"),
-        # not silently skip. Only a BARE/dotted `{{ }}` span raises (see
+        # SCALAR string form (`with_first_found: "{{ undefined_var }}"`):
+        # strict - round174 matrix scenario 5b: the keyword's own value is
+        # one bare template reference, real Ansible templates it strictly
+        # and fails the task ("'undefined_var' is undefined"), not silently
+        # skip. Only a BARE/dotted `{{ }}` span raises (see
         # VarSubstitutor#raise_if_strict_undefined) - an ordinary literal
         # candidate string (no templating at all, the overwhelming common
         # case) or one with a filter chain is unaffected.
-        candidate = substitutor.substitute(raw, strict: true).strip
+        #
+        # LIST/dict form: lenient (strict omitted). Verified live against
+        # ansible-core 2.19.4 (pluggero.upgrade round 601548): real Ansible
+        # hands a literal list's candidate strings to the first_found
+        # lookup plugin, which templates each term itself with undefined
+        # references rendering to nothing - so `{{ ansible_lsb.id }}` on a
+        # host without lsb_release (the fact is absent, and even an
+        # explicitly-defined empty dict's missing key behaves the same)
+        # makes the candidate simply never match, and ALL candidates
+        # missing surfaces as the clean "No file was found when using
+        # first_found." exhaustion error - NOT an "object of type 'dict'
+        # has no attribute 'id'" attribute exception. The old blanket
+        # strict: true turned that into a hard template error on the
+        # candidate, one divergence per unsupported-OS role.
+        candidate = substitutor.substitute(raw, strict: task.loop_first_found_string_form?).strip
         next if candidate.empty?
         # A leftover {{ }} means the fact it depends on is missing;
         # treating that as a filename would only produce a confusing
