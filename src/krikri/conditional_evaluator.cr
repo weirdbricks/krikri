@@ -1718,6 +1718,28 @@ module Krikri
     end
 
     private def self.evaluate_version_test(left_expr : String, compare_to_expr : String, operator_expr : String, vars : Hash(String, JSON::Any), raise_undefined : Bool = false) : Bool
+      # A structured (Hash) left operand - the bare `ansible_version`
+      # magic-var dict itself instead of its `ansible_version.string` /
+      # `.full` dotted field - is a task-failing templating error in real
+      # Ansible, not something to silently stringify and digit-scan.
+      # Found via timorunge.pmm_client's own
+      # `update_cache: "{{ omit if ((ansible_pkg_mgr == 'dnf') and
+      # (ansible_version is version('2.7', '<'))) else 'yes' }}"`: real
+      # ansible-core 2.19 str()-ifies the dict and hands it to the
+      # version comparator, which raises "Version comparison failed:
+      # '<' not supported between instances of 'str' and 'int'" -
+      # "Finalization of task args ... failed", play halts (recap
+      # ok=3 failed=1). Here json_any_to_value's else branch returned the
+      # whole compact-JSON dump as a string, compare_versions' digit
+      # extraction then compared *something*, the ternary picked a
+      # branch, and the play continued into tasks real Ansible never
+      # reached (ok=5 failed=1 skipped=1). Only Hash is guarded - that is
+      # the confirmed real-world shape (a magic-var dict used bare);
+      # Arrays are deliberately left to the legacy stringification until
+      # a real role shows that case too.
+      if (resolved = resolve_json(left_expr, vars)) && resolved.raw.is_a?(Hash)
+        raise "Version comparison failed: unsupported operand type (dict, not a scalar version string)"
+      end
       left = evaluate_value(left_expr.strip, vars, raise_undefined).to_s
       # The compare-to argument may be a VARIABLE, not just a quoted
       # literal - `x is version(role_min_version, '>=')` is the standard
