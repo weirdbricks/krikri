@@ -15,16 +15,16 @@ require "../src/krikri/base_plugin"
 
 module Krikri
   class DpkgSelectionsPlugin < BasePlugin
-    VALID_SELECTIONS = {"install", "hold", "deinstall", "purge"}
+    VALID_SELECTIONS = ["install", "hold", "deinstall", "purge"]
 
     def execute : PluginResult
       name = @params["name"]?
       selection = @params["selection"]?
-      return PluginResult.new(changed: false, failed: true, msg: "missing required argument: name") unless name
-      return PluginResult.new(changed: false, failed: true, msg: "missing required argument: selection") unless selection
+      return PluginResult.new(changed: false, failed: true, msg: "missing required arguments: name") unless name
+      return PluginResult.new(changed: false, failed: true, msg: "missing required arguments: selection") unless selection
 
       unless VALID_SELECTIONS.includes?(selection)
-        return PluginResult.new(changed: false, failed: true, msg: "selection must be one of #{VALID_SELECTIONS.join(", ")}, got '#{selection}'")
+        return PluginResult.new(changed: false, failed: true, msg: "value of selection must be one of: #{VALID_SELECTIONS.join(", ")}, got: #{selection}")
       end
 
       # Real Ansible's own module refuses to set a selection for a
