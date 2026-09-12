@@ -1676,4 +1676,54 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
       evaluator.evaluate("(list_a + list_b)[0].FQDN").should eq("myhost")
     end
   end
+
+  describe "+ accumulator appending a DICT literal (`default([]) + [{...}]`)" do
+    # Real bug found via round 601558 against diodonfrost.p10k: its
+    # `Extract only 'name', 'home' and 'group' fields from users
+    # information` task accumulates a fact across loop iterations -
+    # `p10k_users_information: "{{ p10k_users_information | default([])
+    # + [{'name': item['name'], 'home': item['home'], 'group': item[
+    # 'group']}] }}"` - the classic "grow a list of dicts" pattern.
+    # resolve_plus_operand_literal (the `+`-operand dispatch) knew
+    # quoted/numeric/bool literals and ARRAY literals but never dict
+    # literals, so the `{'name': ..., ...}` element fell through to a
+    # plain variable-name lookup, which cannot resolve it - every
+    # accumulated element silently became null, and the next task's
+    # `item['home']` failed with "'item['home']' is undefined". The
+    # dict-literal handling already existed for TOP-LEVEL dict
+    # expressions (evaluate_dict_literal); it just was never wired into
+    # the `+`-operand path.
+    it "resolves a dict-literal element inside a `+`-appended list literal to a real dict" do
+      v = Hash(String, JSON::Any).new
+      v["item"] = JSON.parse(%({"name": "root", "home": "/root", "group": 0}))
+      v["p10k_users_information"] = JSON.parse(%([]))
+      evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
+
+      rendered = evaluator
+        .evaluate("p10k_users_information | default([]) + [{'name': item['name'], 'home': item['home'], 'group': item['group']}]")
+
+      rendered.should eq(%([{"name":"root","home":"/root","group":0}]))
+    end
+
+    it "accumulates a list of dicts across loop iterations holding real dicts, not null" do
+      v = Hash(String, JSON::Any).new
+      v["p10k_users_register.results"] = JSON.parse(%([
+        {"name": "root", "home": "/root", "group": 0},
+        {"name": "deploy", "home": "/home/deploy", "group": 1000}
+      ]))
+
+      v["p10k_users_information"] = JSON.parse(%([]))
+      2.times do |i|
+        v["item"] = v["p10k_users_register.results"].as_a[i]
+        v["p10k_users_information"] = JSON.parse(Krikri::VariableSubstitutor::ExpressionEvaluator.new(v).evaluate(
+          "p10k_users_information | default([]) + [{'name': item['name'], 'home': item['home'], 'group': item['group']}]"
+        ))
+      end
+
+      evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
+      evaluator.evaluate("p10k_users_information[0]['home']").should eq("/root")
+      evaluator.evaluate("p10k_users_information[1]['home']").should eq("/home/deploy")
+      evaluator.evaluate("p10k_users_information[1]['name']").should eq("deploy")
+    end
+  end
 end
