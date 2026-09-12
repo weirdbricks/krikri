@@ -3831,20 +3831,6 @@ scoped to "ec2_instance + the minimum cluster to actually use it."
 
 ---
 
-## Open gaps
-
-Genuinely open defects: something is wrong and the fix is unknown or
-unfinished. Everything deliberate lives under "Deliberate limits"
-below - keep the two apart, or this list stops meaning anything.
-
-### Needs a closer look (real, reproducible, not root-caused yet)
-
-Empty as of 0.9.928 - the 5 items previously here (see the "Round
-90000-94000's 5 'needs a closer look' open gaps closed" narrative
-above) were all root-caused and fixed.
-
----
-
 ## Round 30001: apt `update_cache:` false-`changed` root-caused and fixed (0.9.785)
 
 Closed the long-standing `apt: {update_cache: true}` false-`changed` divergence
