@@ -78,31 +78,37 @@ narrative, newest first.
   same "is this in scope" alt-package-manager question already open for
   portage/pkgng above. See `ROLES_TESTED.md` for the exact affected role
   per module.
-- **`artis3n.tailscale`** (`round_new_authors`, 2026-09-05, debian/kata): krikri
-  ends `unreachable=1` where real Ansible gets `failed=1`, both cold and warm.
-  Not yet root-caused.
-- **`evrardjp.keepalived`** (`round_new_authors`, 2026-09-05, debian/kata):
-  large recap gap (ansible `ok=12 skipped=21` vs krikri `ok=3 skipped=5`, both
-  cold and warm). Not yet root-caused.
-- **`igor_nikiforov.journald`** (`round_new_authors`, 2026-09-05, debian/kata):
-  krikri fails harder than real Ansible (`failed=2` vs `failed=1`), both cold
-  and warm. Not yet root-caused.
-- **`kyl191.openvpn`** (`round_new_authors`, 2026-09-05, debian/kata): large
-  recap gap on a 29-task role. Not yet root-caused.
-- **`lablabs.rke2`** (`round_new_authors`, 2026-09-05, debian/kata): small
-  recap gap (`ok=1` vs `ok=2`, both `failed=1`). Not yet root-caused.
-- **`nickjj.docker`** (`round_new_authors`, 2026-09-05, debian/kata): krikri
-  ends `unreachable=1` where real Ansible completes cleanly
-  (`ok=19 changed=14 failed=0`). Not yet root-caused.
-- **`riemers.gitlab-runner`** (`round_new_authors`, 2026-09-05, debian/kata):
-  39-task role; real Ansible completes cleanly where krikri fails early
-  (`ok=6 failed=1`). Not yet root-caused.
-- **`rvm.ruby`** (`round_new_authors`, 2026-09-05, debian/kata): krikri runs
-  further than real Ansible before failing on cold (`ok=7` vs `ok=1`) and
-  isn't idempotent on warm (`ok=3` vs ansible's `ok=1` both runs). Not yet
-  root-caused.
-- **`willshersystems.sshd`** / **`xanmanning.k3s`** (`round_new_authors`,
-  2026-09-05, debian/kata): divergent, not yet root-caused.
+- **`xanmanning.k3s`** (`round_new_authors`, re-checked 2026-09-12 via
+  Atlantic.net on 0.9.976): a `uri` task downloading k3s's hashsum from
+  GitHub got a 403 on the krikri-run host but not the ansible-run host
+  (different real IPs). krikri already sends the same `User-Agent`
+  (`ansible-httpget`) real Ansible defaults to, so this looks like
+  transient GitHub anti-abuse/rate-limiting hitting one IP and not the
+  other rather than a deterministic krikri bug - needs a second
+  re-confirmation run before treating as a real gap.
+
+The other 9 items previously listed here (`artis3n.tailscale`,
+`evrardjp.keepalived`, `igor_nikiforov.journald`, `kyl191.openvpn`,
+`lablabs.rke2`, `nickjj.docker`, `riemers.gitlab-runner`, `rvm.ruby`,
+`willshersystems.sshd`) were all re-checked 2026-09-12 against current
+krikri (0.9.976) via Atlantic.net, since Kata (the backend these were
+originally tested on in 2026-09-05, v0.9.742) is now retired: 7 came
+back CLEAN (3 of them - `artis3n.tailscale`, `nickjj.docker`,
+`willshersystems.sshd` - had shown `unreachable=1` in their original
+logs, confirmed via the raw SSH-timeout messages in those old logs to
+be Kata network flakiness, not a krikri bug; `lablabs.rke2` and
+`rvm.ruby` had, it turns out, already been fixed/re-verified in earlier
+sessions per the narrative further down this file but this list was
+never updated to drop them; `evrardjp.keepalived` and
+`igor_nikiforov.journald` are fixed too, root cause not re-investigated
+since they're already clean). `riemers.gitlab-runner` is a missing
+module (`ansible.windows.win_command`, Windows-only), not a bug -
+folded into the missing-modules list below. `kyl191.openvpn` is a real,
+newly-confirmed, deterministic bug: `command`'s `creates:`/`removes:`
+idempotency check doesn't resolve the path relative to `chdir:` the way
+real Ansible does, so a relative `creates:` combined with `chdir:`
+never finds the file and the task never becomes idempotent - fix
+in progress.
 - **Scope question, not yet decided** (2026-09-10/11 batches): `bigip_wait`
   (F5 BIG-IP network-appliance family - `f5devcentral.backup_config`,
   `.bigip_gslb`, `.bigip_onboard`, `.f5app_services_package`),
@@ -121,18 +127,20 @@ narrative, newest first.
   `k8s` (real ansible-playbook doesn't complete cleanly on the one role
   that hits it either, low value), `django_manage`,
   `community.grafana.grafana_datasource`, `community.general.nmcli`,
-  `community.general.cpanm`, `community.docker.docker_container_info`.
+  `community.general.cpanm`, `community.docker.docker_container_info`,
+  `ansible.windows.win_command` (`riemers.gitlab-runner`, Windows-only).
   See `ROLES_TESTED.md` for the exact affected role per module.
 
-These nine came from an abandoned 120-role shortlist (`testing/kata/
-round_new_authors/`, only 35 roles run before the round was left
-mid-triage); see `findings.md` there for the four divergences from that
-same batch that turned out to already be fixed by the time anyone got
-back to it (`0x0i.systemd`, `igor_nikiforov.etcd`, `wezhai.minio`,
-`nginxinc.nginx` - see `ROLES_TESTED.md` for the fix commits). Each of
-the nine above needs its own confirmed repro before treating it as a
-real krikri bug per this file's workflow - the shortlist is at
-`testing/kata/round_new_authors/shortlist120.txt` if resuming it.
+The abandoned 120-role shortlist (`testing/kata/round_new_authors/`,
+only 35 roles run before the round was left mid-triage) still has 85
+roles never run - see `findings.md` there for four more divergences
+from that same batch that turned out to already be fixed by the time
+anyone got back to them (`0x0i.systemd`, `igor_nikiforov.etcd`,
+`wezhai.minio`, `nginxinc.nginx` - see `ROLES_TESTED.md` for the fix
+commits), on top of the 7 immediately above re-verified clean the same
+way. The shortlist is at
+`testing/kata/round_new_authors/shortlist120.txt` if resuming it -
+against Atlantic.net now, Kata having been retired as a backend.
 
 ---
 
