@@ -2,6 +2,7 @@
 
 require "json"
 require "digest/md5"
+require "digest/sha1"
 require "file_utils"
 require "../src/krikri/base_plugin"
 
@@ -9,6 +10,19 @@ module Krikri
   # Copy plugin - copies files to destinations
   # This version ALWAYS uses native Crystal file operations
   # The PluginManager handles uploading to remote hosts if needed
+  #
+  # Not implemented (accepted and ignored):
+  # - decrypt: (vault auto-decryption, real default true). Krikri never
+  #   auto-decrypts copy sources - the controller-side read in
+  #   TaskExecutor#inline_copy_source_content does not go through
+  #   Vault.maybe_decrypt, so a vault-encrypted src file is transferred
+  #   verbatim (ciphertext), i.e. krikri's effective behavior for every
+  #   current run already equals real Ansible's decrypt: false. Wiring
+  #   the existing controller-side vault machinery (Krikri::Vault) in
+  #   here would silently change what lands on disk for existing plays
+  #   relying on the current pass-through, so decrypt: is a no-op and
+  #   the vault-encrypted-src gap is documented in KNOWN_MISSING.md
+  #   instead.
   class CopyPlugin < BasePlugin
     property? check_mode : Bool
     property? diff_mode : Bool
@@ -56,6 +70,9 @@ module Krikri
           msg: "src and content are mutually exclusive"
         )
       end
+
+      # decrypt: (see the class comment above) is accepted and ignored -
+      # there is deliberately no param read for it at all.
 
       # Handle content-based copy
       if content
@@ -121,7 +138,9 @@ module Krikri
     end
 
     # Copy inline content to destination
-    private def handle_content_copy(content : String, dest : String) : PluginResult
+    private def handle_content_copy(content : String, dest_param : String) : PluginResult
+      dest = resolve_follow(dest_param)
+
       # Calculate MD5 of content for idempotency check
       content_md5 = Digest::MD5.hexdigest(content)
 
@@ -130,6 +149,26 @@ module Krikri
 
       # Check if file exists and compare
       if File.exists?(dest)
+        # `checksum:` - a SHA1 the caller (or, in real Ansible, the copy
+        # action plugin on behalf of src) expects the destination to
+        # already hold. When the existing dest's SHA1 matches it, real
+        # Ansible skips the transfer entirely WITHOUT comparing the
+        # content: param against the file (live-verified against
+        # ansible-core 2.19.4: a copy: whose checksum: matches dest
+        # reports changed=false even when content: differs from what's
+        # on disk). Mirrors the identical-content skip below.
+        if given_checksum = @params["checksum"]?.presence
+          if File.exists?(dest) && (sha1_of(dest) == given_checksum)
+            return PluginResult.new(
+              changed: false,
+              failed: false,
+              msg: "File already exists with matching checksum",
+              dest: dest,
+              checksum: given_checksum
+            )
+          end
+        end
+
         # force: false means "only create it if it is not there" - real
         # Ansible leaves an existing file completely alone, content and
         # all. This branch used to ignore `force` entirely (the `src:`
@@ -172,7 +211,8 @@ module Krikri
             # file: recurse: immediately followed by copy: on a file
             # inside that tree) left copy: silently reporting ok forever
             # while dutifully fixing the attribute on disk every run.
-            attributes_fixed = apply_file_attributes(dest)
+            attributes_fixed, failure = apply_extended_attributes(dest)
+            return failure if failure
             return PluginResult.new(
               changed: attributes_fixed,
               failed: false,
@@ -231,11 +271,12 @@ module Krikri
 
       # Write the file (staged + validated first when validate: is given)
       if failure = write_with_optional_validate(content, dest)
-        return PluginResult.new(changed: false, failed: true, msg: failure)
+        return failure
       end
 
       # Set file permissions if requested
-      apply_file_attributes(dest)
+      _attrs_fixed, failure = apply_extended_attributes(dest)
+      return failure if failure
 
       PluginResult.new(
         changed: changed,
@@ -266,9 +307,10 @@ module Krikri
         dest = File.join(dest, basename) if Dir.exists?(dest) || dest.ends_with?('/')
         return PluginResult.new(changed: false, failed: false, msg: "File already identical (check mode)") if @check_mode
 
-        apply_file_attributes(dest)
+        attributes_fixed, failure = apply_extended_attributes(dest)
+        return failure if failure
         return PluginResult.new(
-          changed: false,
+          changed: attributes_fixed,
           failed: false,
           msg: "File already exists with identical content",
           dest: dest,
@@ -305,13 +347,22 @@ module Krikri
       basename = @params["__original_src_basename"]?.presence || File.basename(src)
       dest_signaled_dir = dest.ends_with?('/')
       dest = File.join(dest, basename) if Dir.exists?(dest) || dest_signaled_dir
+      dest = resolve_follow(dest)
 
       # Check if source exists
       unless File.exists?(src)
+        # remote_src: true's missing-src failure comes from the module
+        # itself (the executor deliberately skips all controller-side
+        # staging for remote_src, so nothing has run before this point)
+        # - real Ansible 2.19.4's exact message is "Source <src> not
+        # found" (live-verified). The local-src variant never reaches
+        # the module in real Ansible (the controller-side action plugin
+        # fails first), so its message stays as it was.
+        missing_src_msg = true?(@params["remote_src"]?) ? "Source #{src} not found" : "Source file not found: #{src}"
         return PluginResult.new(
           changed: false,
           failed: true,
-          msg: "Source file not found: #{src}"
+          msg: missing_src_msg
         )
       end
 
@@ -341,6 +392,19 @@ module Krikri
       force = true?(@params["force"]?, default: true)
 
       if File.exists?(dest)
+        # `checksum:` skip - see #handle_content_copy's identical block.
+        if given_checksum = @params["checksum"]?.presence
+          if sha1_of(dest) == given_checksum
+            return PluginResult.new(
+              changed: false,
+              failed: false,
+              msg: "File already exists with matching checksum",
+              dest: dest,
+              checksum: given_checksum
+            )
+          end
+        end
+
         unless force
           return PluginResult.new(
             changed: false,
@@ -377,7 +441,8 @@ module Krikri
       # (same identical-content `changed: false` bug as
       # #handle_content_copy above; see its comment for the live repro).
       unless changed
-        attributes_fixed = apply_file_attributes(dest)
+        attributes_fixed, failure = apply_extended_attributes(dest)
+        return failure if failure
         return PluginResult.new(
           changed: attributes_fixed,
           failed: false,
@@ -426,22 +491,17 @@ module Krikri
       # reuses it rather than reading src a second time).
       if @params["validate"]?
         if failure = write_with_optional_validate(src_content, dest)
-          return PluginResult.new(changed: false, failed: true, msg: failure)
+          return failure
         end
       else
-        begin
-          File.copy(src, dest)
-        rescue ex
-          return PluginResult.new(
-            changed: false,
-            failed: true,
-            msg: "Failed to copy file: #{ex.message}"
-          )
+        if failure = atomic_write(src_content, dest)
+          return failure
         end
       end
 
       # Set ownership and permissions
-      apply_file_attributes(dest)
+      _attrs_fixed, failure = apply_extended_attributes(dest)
+      return failure if failure
 
       PluginResult.new(
         changed: true,
@@ -471,14 +531,36 @@ module Krikri
     private def handle_directory_copy(src : String, dest : String) : PluginResult
       dest_root = src.ends_with?('/') ? dest : File.join(dest, File.basename(src.rstrip('/')))
 
+      dest_root_preexisted = Dir.exists?(dest_root) rescue false
       begin
         Dir.mkdir_p(dest_root)
       rescue ex
         return PluginResult.new(changed: false, failed: true, msg: "Failed to create destination directory: #{ex.message}")
       end
 
+      # dest_root itself is a directory copy just created when it wasn't
+      # there before - directory_mode applies to it like any other (only
+      # when it didn't already exist: pre-existing dirs stay untouched).
+      if (directory_mode = @params["directory_mode"]?.presence) && !dest_root_preexisted
+        apply_directory_mode(dest_root, directory_mode)
+      end
+
       changed = false
       copied = 0
+
+      # directory_mode: real Ansible applies this to every directory the
+      # copy itself CREATES (live-verified against ansible-core 2.19.4:
+      # created dirs get exactly directory_mode, pre-existing dirs are
+      # left untouched, and the file's own mode: is NOT applied to
+      # created directories - they get the umask default instead).
+      directory_mode = @params["directory_mode"]?.presence
+
+      # local_follow: real Ansible's default (None) follows symlinks in
+      # the SOURCE tree - the target's content arrives as a regular file
+      # (live-verified against ansible-core 2.19.4, same result for
+      # local_follow: true). Only an explicit local_follow: false
+      # recreates the symlink at dest instead.
+      local_follow_false = false?(@params["local_follow"]?)
 
       # match_hidden: real Ansible walks the whole tree with os.walk,
       # dotfiles included - the default glob silently dropped `.env`,
@@ -487,9 +569,20 @@ module Krikri
         relative = entry.sub(src.rstrip('/') + "/", "")
         dest_path = File.join(dest_root, relative)
 
+        if File.symlink?(entry) && local_follow_false
+          # Recreate the source symlink verbatim (same link target,
+          # relative links stay relative) instead of copying its
+          # target's content.
+          File.delete(dest_path) if File.symlink?(dest_path)
+          File.symlink(File.readlink(entry), dest_path)
+          changed = true
+          next
+        end
+
         if File.directory?(entry)
           unless Dir.exists?(dest_path)
             Dir.mkdir_p(dest_path)
+            apply_directory_mode(dest_path, directory_mode) if directory_mode
             changed = true
           end
           next
@@ -498,7 +591,9 @@ module Krikri
         Dir.mkdir_p(File.dirname(dest_path))
 
         if File.exists?(dest_path) && File.read(dest_path) == File.read(entry)
-          changed = true if apply_file_attributes(dest_path)
+          attrs_fixed, failure = apply_extended_attributes(dest_path)
+          return failure if failure
+          changed = true if attrs_fixed
           next
         end
 
@@ -508,7 +603,8 @@ module Krikri
           return PluginResult.new(changed: changed, failed: true, msg: "Failed to copy #{entry}: #{ex.message}")
         end
 
-        apply_file_attributes(dest_path)
+        _attrs_fixed, failure = apply_extended_attributes(dest_path)
+        return failure if failure
         changed = true
         copied += 1
       end
@@ -537,19 +633,18 @@ module Krikri
     # directly to dest as before - this path is unchanged for the
     # overwhelmingly common no-validate: case.
     #
-    # Returns nil on success, or a failure message string.
-    private def write_with_optional_validate(content : String, dest : String) : String?
+    # Returns nil on success, or a failed PluginResult.
+    private def write_with_optional_validate(content : String, dest : String) : PluginResult?
       validate_cmd = @params["validate"]?
       unless validate_cmd
-        File.write(dest, content)
-        return nil
+        return atomic_write(content, dest)
       end
 
       temp_file = File.join("/tmp", ".krikri-playbook-copy-#{Random::Secure.hex(8)}.tmp")
       begin
         File.write(temp_file, content)
       rescue ex
-        return "Failed to write temporary file: #{ex.message}"
+        return PluginResult.new(changed: false, failed: true, msg: "Failed to write temporary file: #{ex.message}")
       end
 
       validation = validate_file(temp_file, validate_cmd)
@@ -559,14 +654,14 @@ module Krikri
         # always what's actually wrong, and this is the only surviving
         # copy of it once the real dest was never touched.
         context = extract_error_context(temp_file, validation[:output])
-        return "Validation failed: #{validation[:output]} (content left at #{temp_file} for inspection)#{context}"
+        return PluginResult.new(changed: false, failed: true, msg: "Validation failed: #{validation[:output]} (content left at #{temp_file} for inspection)#{context}")
       end
 
       begin
         FileUtils.mv(temp_file, dest)
       rescue ex
         File.delete(temp_file) if File.exists?(temp_file)
-        return "Failed to move file to destination: #{ex.message}"
+        return PluginResult.new(changed: false, failed: true, msg: "Failed to move file to destination: #{ex.message}")
       end
 
       nil
@@ -689,6 +784,258 @@ module Krikri
       # A chown/chmod failure (e.g. not running as root/owner) shouldn't
       # fail the whole task - matches file.cr's own identical rescue.
       false
+    end
+
+    # SHA1 of a file's bytes - the algorithm real Ansible's `checksum:`
+    # param (and its result field) uses. Unreadable files read as ""
+    # (never matches a provided checksum, so the copy proceeds/fails
+    # like real Ansible's own missing-src handling would).
+    private def sha1_of(path : String) : String
+      Digest::SHA1.hexdigest(File.read(path))
+    rescue File::Error
+      ""
+    end
+
+    # follow: true - write through a dest: symlink to the file it points
+    # at rather than replacing the symlink itself. Live-verified against
+    # ansible-core 2.19.4: with follow: true the symlink survives and the
+    # TARGET file's content is updated; with the default follow: false
+    # the symlink itself is replaced by a regular file. (Krikri's old
+    # File.write-based paths implicitly behaved like follow: true -
+    # matching the default follow: false is exactly what the atomic
+    # rename in #atomic_write now does, since File.rename replaces the
+    # link, not its target.)
+    private def resolve_follow(dest : String) : String
+      return dest unless true?(@params["follow"]?)
+      return dest unless File.symlink?(dest)
+      File.realpath(dest)
+    rescue File::Error
+      # A dangling symlink has no realpath - write to the literal path
+      # (the rename will replace the dangling link, like follow: false).
+      dest
+    end
+
+    # Real Ansible's copy writes atomically: the content goes to a
+    # temporary file created NEXT TO dest (same filesystem, so the final
+    # File.rename can't fail cross-device), an existing dest's
+    # permissions (and owner/group, best-effort) are copied onto the
+    # temp file first, then it's renamed into place. Live-verified
+    # against ansible-core 2.19.4: an overwrite with no explicit mode:
+    # preserves the existing dest's mode across the copy.
+    #
+    # `checksum:` - a SHA1 the copy is verified against AFTER writing
+    # but BEFORE the rename, so a mismatch fails with real Ansible's
+    # exact message and leaves dest completely untouched (live-verified:
+    # a failed checksum check leaves an absent dest absent).
+    #
+    # unsafe_writes: true is real Ansible's escape hatch for targets
+    # where the rename itself fails (docker-mounted single files
+    # returning EPERM/EBUSY, etc.): fall back to writing dest directly,
+    # in place, non-atomically. Live-verified that on a normal
+    # filesystem real Ansible does NOT change behavior with
+    # unsafe_writes: true (the rename simply succeeds) - the fallback
+    # only ever runs when the rename actually fails.
+    #
+    # Returns nil on success, or a failed PluginResult.
+    private def atomic_write(content : String, dest : String) : PluginResult?
+      temp_file = File.join(File.dirname(dest), ".krikri-playbook-copy-#{Random::Secure.hex(8)}.tmp")
+      begin
+        File.write(temp_file, content)
+      rescue ex
+        return PluginResult.new(changed: false, failed: true, msg: "Failed to write temporary file: #{ex.message}")
+      end
+
+      begin
+        # A symlink dest being REPLACED (default follow: false) has no
+        # meaningful mode to preserve - real Ansible skips the
+        # mode-copy for links too.
+        if !File.symlink?(dest) && (info = File.info?(dest, follow_symlinks: false))
+          begin
+            File.chmod(temp_file, info.permissions)
+            File.chown(temp_file, uid: info.owner_id.to_i, gid: info.group_id.to_i)
+          rescue ex : File::Error
+            # Best-effort: non-root can't chown; the rename still
+            # yields a correct file with this process's ownership.
+          end
+        end
+      rescue ex : File::Error
+        # Stat itself failed (broken dest?) - proceed without preservation.
+      end
+
+      if given_checksum = @params["checksum"]?.presence
+        actual = sha1_of(temp_file)
+        unless actual == given_checksum
+          File.delete(temp_file) if File.exists?(temp_file)
+          return PluginResult.new(
+            changed: false,
+            failed: true,
+            msg: "Copied file does not match the expected checksum. Transfer failed.",
+            checksum: actual,
+            expected_checksum: given_checksum
+          )
+        end
+      end
+
+      begin
+        File.rename(temp_file, dest)
+      rescue ex
+        File.delete(temp_file) if File.exists?(temp_file)
+        if true?(@params["unsafe_writes"]?)
+          return unsafe_write_fallback(content, dest)
+        end
+        return PluginResult.new(changed: false, failed: true, msg: "Failed to move file to destination: #{ex.message}")
+      end
+
+      nil
+    end
+
+    # unsafe_writes: the non-atomic fallback - write dest directly, in
+    # place. Returns nil on success, or a failed PluginResult.
+    private def unsafe_write_fallback(content : String, dest : String) : PluginResult?
+      File.write(dest, content)
+      nil
+    rescue ex
+      PluginResult.new(changed: false, failed: true, msg: "Failed to write #{dest} (unsafe_writes fallback): #{ex.message}")
+    end
+
+    # attributes:/attr: - chattr-style flags (e.g. "+i" for immutable),
+    # real Ansible's `attributes` param and its `attr` alias. Parsed
+    # into the leading operator ('+'/'-', defaulting to '=' when bare)
+    # plus the flag letters themselves - real Ansible's
+    # set_attributes_if_different in module_utils/basic.py does exactly
+    # this split before comparing. Mirrors file.cr's proven
+    # implementation exactly (same helper names, same semantics).
+    private def attr_args : {Char, String}?
+      raw = @params["attr"]? || @params["attributes"]?
+      return nil unless raw
+      raw = raw.strip
+      return nil if raw.empty?
+      if raw[0] == '-' || raw[0] == '+'
+        {raw[0], raw[1..]}
+      else
+        {'=', raw}
+      end
+    end
+
+    # The file's current chattr flags as real Ansible reads them:
+    # `lsattr -d <path>` output's first whitespace field with the
+    # dash-padding stripped (e.g. "--------------e-------" -> "e").
+    # Real Ansible (get_file_attributes) treats an lsattr failure
+    # (missing binary, unsupported filesystem like tmpfs) as empty flags
+    # rather than an error - the chattr call itself is what surfaces
+    # those as task failures later, not the read.
+    private def current_attr_flags(path : String) : String
+      result = remote_exec("lsattr -d #{shell_single_quote(path)}")
+      return "" unless result[:exit_code] == 0
+      fields = result[:stdout].strip.split
+      return "" if fields.empty?
+      fields[0].delete('-').strip
+    end
+
+    # Whether the attributes: param reports changed, mirroring real
+    # Ansible's set_attributes_if_different exactly: changed when the
+    # current lsattr flag string differs from the requested flag letters
+    # OR the request is '-'-prefixed - in which case chattr is re-run
+    # and changed reported UNCONDITIONALLY, even when the flag being
+    # removed isn't actually set (ansible/ansible#33745). See file.cr's
+    # own attr_changed? for the full live-verified rationale.
+    private def attr_changed?(path : String) : Bool
+      parsed = attr_args
+      return false unless parsed
+      mod, flags = parsed
+      return false if flags.empty?
+      current_attr_flags(path) != flags || mod == '-'
+    end
+
+    # Applies the attributes: param via the real chattr binary and fails
+    # the task (like real Ansible's fail_json(msg='chattr failed')) when
+    # chattr exits nonzero or writes to stderr. Returns {changed,
+    # failure}: changed is true when chattr actually ran (it reported
+    # changed via attr_changed? above), failure a failed PluginResult.
+    private def apply_attr(path : String) : {Bool, PluginResult?}
+      return {false, nil} unless attr_changed?(path)
+
+      parsed = attr_args
+      return {false, nil} unless parsed
+      mod, flags = parsed
+
+      result = remote_exec("chattr #{mod}#{flags} #{shell_single_quote(path)}")
+      if result[:exit_code] != 0 || !result[:stderr].strip.empty?
+        return {false, PluginResult.new(changed: false, failed: true, msg: "chattr failed - Error while setting attributes: #{result[:stdout]}#{result[:stderr]}")}
+      end
+
+      {true, nil}
+    end
+
+    # seuser:/serole:/setype:/selevel: - SELinux file context, applied
+    # to dest via `chcon`. Mirrors archive.cr's proven implementation
+    # exactly (verified against real AnsibleModule's own
+    # set_context_if_different/selinux_enabled source): real Ansible
+    # skips this ENTIRELY (not even attempting it) when SELinux isn't
+    # enabled on the target at all - matched here via the standard
+    # `/sys/fs/selinux/enforce` selinuxfs check, the same file
+    # `selinuxenabled(8)` itself tests. On any non-SELinux host (the
+    # overwhelming majority of real-world targets this project has ever
+    # benchmarked against) this is a verified, confirmed no-op,
+    # identical to real Ansible's own behavior - the chcon-invocation
+    # shape itself for an actually-SELinux-enabled host is implemented
+    # per `chcon(1)`'s documented flags but NOT live-verified against a
+    # real SELinux-enabled target (none available in this project's
+    # usual Ubuntu/Debian benchmark environment).
+    private def apply_selinux_context(dest : String) : PluginResult?
+      return nil unless File.exists?("/sys/fs/selinux/enforce")
+
+      flags = [] of String
+      flags << "-u #{@params["seuser"]}" if @params["seuser"]?
+      flags << "-r #{@params["serole"]}" if @params["serole"]?
+      flags << "-t #{@params["setype"]}" if @params["setype"]?
+      flags << "-l #{@params["selevel"]}" if @params["selevel"]?
+      return nil if flags.empty?
+
+      result = remote_exec("chcon #{flags.join(" ")} #{shell_single_quote(dest)}")
+      if result[:exit_code] != 0
+        return PluginResult.new(changed: false, failed: true, msg: "invalid selinux context: #{result[:stderr]}")
+      end
+
+      nil
+    end
+
+    # Combined attribute reconciliation for every path copy touches:
+    # mode/owner/group first (#apply_file_attributes), then chattr
+    # flags, then the SELinux context - the same order real Ansible's
+    # set_fs_attributes_if_different applies them. Returns {changed,
+    # failure}: changed true when anything actually changed on disk,
+    # failure a failed PluginResult when the chattr/chcon call itself
+    # errored (both fail the task like real Ansible - neither is
+    # silently swallowed the way a chmod/chown EPERM is).
+    private def apply_extended_attributes(path : String) : {Bool, PluginResult?}
+      changed = apply_file_attributes(path)
+
+      attr_changed, failure = apply_attr(path)
+      return {false, failure} if failure
+      changed = true if attr_changed
+
+      failure = apply_selinux_context(path)
+      return {false, failure} if failure
+
+      {changed, nil}
+    end
+
+    # directory_mode: - the mode given to directories copy CREATES
+    # (never pre-existing ones, never the copied files themselves).
+    # Same octal-vs-symbolic split as #apply_file_attributes' own mode
+    # branch: all-digit strings parse as octal (leading zero or not),
+    # anything symbolic goes to the real chmod binary.
+    private def apply_directory_mode(path : String, directory_mode : String) : Nil
+      if directory_mode =~ /\A0?[0-7]{3,4}\z/
+        File.chmod(path, directory_mode.to_i(8))
+      else
+        Process.run("chmod", [directory_mode, path], output: Process::Redirect::Close, error: Process::Redirect::Close)
+      end
+    rescue ex : File::Error
+      # Mode setting failed, continue anyway - matches
+      # #apply_file_attributes' own convention.
+      nil
     end
 
   end
