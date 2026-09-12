@@ -13,7 +13,7 @@ describe "hostname plugin" do
     result = PluginSpecHelper.run("hostname", {} of String => String)
 
     result["failed"].as_bool.should be_true
-    result["msg"].as_s.should contain("missing required argument: name")
+    result["msg"].as_s.should contain("missing required arguments: name")
   end
 
   it "reports no change when name already equals the current hostname (read-only)" do
