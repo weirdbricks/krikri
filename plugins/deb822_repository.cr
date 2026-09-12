@@ -30,11 +30,18 @@ module Krikri
   # real Ansible's own module supports: architectures, trusted, enabled,
   # allow_insecure, allow_downgrade_to_insecure, allow_weak, pdiffs,
   # by_hash, languages, targets, check_date, check_valid_until,
-  # date_max_future - closed in a later proactive scope-cut audit pass,
-  # verified against the real module's own source for exact field-name/
-  # value-format conversion; only `inrelease_path` remains genuinely
-  # unimplemented, a rare param for pinning a specific InRelease file
-  # path):
+  # date_max_future, exclude/include (ansible-core 2.21+), and
+  # inrelease_path - closed across a proactive scope-cut audit pass and
+  # a later param-coverage pass, verified against the real module's own
+  # source for exact field-name/value-format conversion. Note
+  # inrelease_path IS written to the file by real Ansible (as
+  # "Inrelease-Path:" - the module never pops it from params, unlike
+  # mode/state), so this plugin writes it too rather than consuming it.
+  # List-typed params (uris/suites/components/types/architectures/
+  # languages/targets/exclude/include) accept both a real YAML list
+  # (arriving as a JSON-array-shaped string after task-param
+  # substitution) and a comma-separated scalar, matching real Ansible's
+  # own check_type_list backward compat):
   # - name (required): base filename under /etc/apt/sources.list.d/,
   #   written as <name>.sources
   # - types: deb (default) | deb-src | "deb deb-src"
@@ -64,13 +71,17 @@ module Krikri
   # and reports changed based on a content diff.
   class Deb822RepositoryPlugin < BasePlugin
     SOURCES_LIST_D = "/etc/apt/sources.list.d"
+    KEYRINGS_DIR   = "/etc/apt/keyrings"
+
+    @slug : String = ""
 
     def execute : PluginResult
       name = @params["name"]?
       return PluginResult.new(changed: false, failed: true, msg: "missing required argument: name") unless name
 
       state = @params["state"]? || "present"
-      target = File.join(SOURCES_LIST_D, "#{name}.sources")
+      @slug = slug_for(name)
+      target = File.join(SOURCES_LIST_D, "#{@slug}.sources")
       check_mode = true?(@params["check_mode"]?)
 
       if state == "absent"
@@ -85,6 +96,16 @@ module Krikri
       add(target, check_mode)
     end
 
+    # Real Ansible's own filename slug: reuses a legacy-normalized
+    # <name>.sources (lowercased, [_\s]+ → '-', non-[a-z0-9-] stripped)
+    # when one already exists on disk, else name with spaces → '-'.
+    # Real Ansible never writes a filename containing a space.
+    private def slug_for(name : String) : String
+      legacy = name.downcase.gsub(/[_\s]+/, "-").gsub(/[^a-z0-9-]/, "")
+      return legacy if File.exists?(File.join(SOURCES_LIST_D, "#{legacy}.sources"))
+      name.gsub(' ', "-")
+    end
+
     BOOL_FIELDS = {
       "trusted" => "Trusted", "enabled" => "Enabled", "allow_insecure" => "Allow-Insecure",
       "allow_downgrade_to_insecure" => "Allow-Downgrade-To-Insecure", "allow_weak" => "Allow-Weak",
@@ -94,6 +115,7 @@ module Krikri
     LIST_FIELDS = {
       "types" => "Types", "uris" => "URIs", "suites" => "Suites", "components" => "Components",
       "architectures" => "Architectures", "languages" => "Languages", "targets" => "Targets",
+      "exclude" => "Exclude", "include" => "Include",
     }
 
     # Real ansible.builtin.deb822_repository writes fields in ALPHABETICAL
@@ -140,8 +162,26 @@ module Krikri
       LIST_FIELDS.each do |param, field|
         default = param == "types" ? "deb" : nil
         value = @params[param]? || default
-        fields[param] = "#{field}: #{value.gsub(',', ' ')}" if value
+        fields[param] = "#{field}: #{parse_list_param(value).join(' ')}" if value
       end
+    end
+
+    # List-typed params are documented LIST types in the real module's
+    # own argument_spec, so a real YAML list arrives here as a
+    # JSON-array-shaped string after task-param substitution - parse it
+    # with the same convention as unarchive.cr/rpm_key.cr's
+    # parse_list_param (JSON array first, Python-repr variant second,
+    # then comma-split for a plain scalar, matching real Ansible's own
+    # check_type_list backward-compat behavior). A naive comma-split or
+    # comma→space substitution mangled a real list's brackets/quotes
+    # into the rendered field.
+    private def parse_list_param(raw : String?) : Array(String)
+      return [] of String unless raw
+      if raw.starts_with?('[')
+        (Array(String).from_json(raw) rescue nil).try { |parsed| return parsed }
+        (Array(String).from_json(raw.gsub('\'', '"')) rescue nil).try { |parsed| return parsed }
+      end
+      raw.split(",").map(&.strip).reject(&.empty?)
     end
 
     # The remaining single-value fields: date_max_future, the X-Repolib-
@@ -149,6 +189,9 @@ module Krikri
     private def add_scalar_fields(fields : Hash(String, String), n : String, check_mode : Bool) : Nil
       if date_max_future = @params["date_max_future"]?
         fields["date_max_future"] = "Date-Max-Future: #{date_max_future}"
+      end
+      if (irp = @params["inrelease_path"]?) && !irp.empty?
+        fields["inrelease_path"] = "Inrelease-Path: #{irp}"
       end
       fields["name"] = "X-Repolib-Name: #{n}"
       if (sb = resolve_signed_by(check_mode)) && !sb.empty?
@@ -165,11 +208,10 @@ module Krikri
       return raw if File.exists?(raw)
 
       # 2. URL — fetch (redirect-aware), store as .asc (armored) or .gpg
-      #    (binary) under /etc/apt/keyrings/<name>{.asc,.gpg}, return the
+      #    (binary) under /etc/apt/keyrings/<slug>{.asc,.gpg}, return the
       #    local path for Signed-By:
       if (scheme = URI.parse(raw).scheme) && %w[http https].includes?(scheme.downcase)
-        name = @params["name"]? || raise "deb822_repository: name is required"
-        return resolve_url_signed_by(name, raw, check_mode)
+        return resolve_url_signed_by(@slug, raw, check_mode)
       end
 
       # 3. Inline ASCII-armored GPG key text — render as Deb822 folded
@@ -184,10 +226,9 @@ module Krikri
       raw.gsub(',', ' ').split.join(' ')
     end
 
-    private def resolve_url_signed_by(name : String, url : String, check_mode : Bool) : String
-      keyring_dir = "/etc/apt/keyrings"
-      keyring_path_asc = File.join(keyring_dir, "#{name}.asc")
-      keyring_path_gpg = File.join(keyring_dir, "#{name}.gpg")
+    private def resolve_url_signed_by(slug : String, url : String, check_mode : Bool) : String
+      keyring_path_asc = File.join(KEYRINGS_DIR, "#{slug}.asc")
+      keyring_path_gpg = File.join(KEYRINGS_DIR, "#{slug}.gpg")
 
       # In check mode, skip the network download entirely — just return
       # the expected keyring path based on any existing file (default to
@@ -199,18 +240,18 @@ module Krikri
         return keyring_path_gpg
       end
 
-      Dir.mkdir_p(keyring_dir)
-      File.chmod(keyring_dir, 0o755) if File.exists?(keyring_dir)
+      Dir.mkdir_p(KEYRINGS_DIR)
+      File.chmod(KEYRINGS_DIR, 0o755) if File.exists?(KEYRINGS_DIR)
 
       # Download to a temp file to detect armored vs binary content
-      tmp_path = "#{keyring_dir}/.#{name}.#{Process.pid}.tmp"
+      tmp_path = "#{KEYRINGS_DIR}/.#{slug}.#{Process.pid}.tmp"
       download_binary(url, tmp_path)
 
       # Detect ASCII-armored content by checking the first bytes
       armored = File.open(tmp_path, "r") { |fval| (fval.gets(60) || "").starts_with?("-----BEGIN PGP") }
 
       ext = armored ? ".asc" : ".gpg"
-      keyring_path = File.join(keyring_dir, "#{name}#{ext}")
+      keyring_path = File.join(KEYRINGS_DIR, "#{slug}#{ext}")
 
       # Check if the keyring content actually changed (idempotency) —
       # avoids rewriting the keyring on every run when the key hasn't
@@ -254,30 +295,42 @@ module Krikri
       changed = existing != new_content
 
       if check_mode
-        return PluginResult.new(changed: changed, failed: false, msg: changed ? "Would write #{target} (check mode)" : "Already up to date")
+        return PluginResult.new(changed: changed, failed: false, msg: changed ? "Would write #{target} (check mode)" : "Already up to date", repo: new_content)
       end
 
       unless changed
-        return PluginResult.new(changed: false, failed: false, msg: "Already up to date")
+        return PluginResult.new(changed: false, failed: false, msg: "Already up to date", repo: new_content)
       end
 
       Dir.mkdir_p(SOURCES_LIST_D)
       File.write(target, new_content)
       apply_owner_group_mode(target, nil, nil, @params["mode"]? || "0644")
 
-      PluginResult.new(changed: true, failed: false, msg: "Repository added", path: target)
+      PluginResult.new(changed: true, failed: false, msg: "Repository added", repo: new_content, path: target)
     end
 
     private def remove(target : String, check_mode : Bool) : PluginResult
-      unless File.exists?(target)
-        return PluginResult.new(changed: false, failed: false, msg: "Repository already absent")
+      changed = false
+
+      if File.exists?(target)
+        File.delete(target) unless check_mode
+        changed = true
       end
 
-      if check_mode
-        return PluginResult.new(changed: true, failed: false, msg: "Would remove #{target} (check mode)")
+      # Real Ansible's state=absent ALSO removes the downloaded
+      # signed_by keyrings (<slug>.asc / <slug>.gpg under
+      # /etc/apt/keyrings/) - independently of whether the .sources file
+      # itself exists - and reports changed if either side was removed.
+      {"asc", "gpg"}.each do |ext|
+        keyring = File.join(KEYRINGS_DIR, "#{@slug}.#{ext}")
+        next unless File.exists?(keyring)
+        File.delete(keyring) unless check_mode
+        changed = true
       end
 
-      File.delete(target)
+      return PluginResult.new(changed: false, failed: false, msg: "Repository already absent") unless changed
+      return PluginResult.new(changed: true, failed: false, msg: "Would remove #{target} (check mode)") if check_mode
+
       PluginResult.new(changed: true, failed: false, msg: "Repository removed", path: target)
     end
   end
