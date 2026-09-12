@@ -301,6 +301,12 @@ Metrics/CyclomaticComplexity:
   # request/request_headers_and_body helpers mirror the real
   # module_utils/urls.py Request flow the same way.
   - plugins/uri.cr
+  # plugins/get_url.cr's #apply_file_attributes is a verbatim mirror of
+  # copy.cr's own (already-excluded) mode/owner/group reconciliation -
+  # same branches, same rationale; and #download_to_dest is the real
+  # module's main() ordered chain (stage, checksum-verify, freshness
+  # compare, backup, atomic move) one branch per real-module step.
+  - plugins/get_url.cr
   Enabled: true
   Severity: Warning
 
