@@ -184,8 +184,8 @@ module Krikri::FiletreeLookup
       "group" => group_name(stat.st_gid),
       "mode"  => JSON::Any.new(sprintf("0%03o", mode & 0o777)),
       "size"  => JSON::Any.new(stat.st_size.to_i64),
-      "mtime" => JSON::Any.new(timespec_to_f(stat.st_mtim)),
-      "ctime" => JSON::Any.new(timespec_to_f(stat.st_ctim)),
+      "mtime" => JSON::Any.new(timespec_to_f(stat_mtime_ts(stat))),
+      "ctime" => JSON::Any.new(timespec_to_f(stat_ctime_ts(stat))),
     } of String => JSON::Any
 
     case state
@@ -200,6 +200,25 @@ module Krikri::FiletreeLookup
 
   private def self.timespec_to_f(ts : LibC::Timespec) : Float64
     ts.tv_sec.to_f + ts.tv_nsec / 1e9
+  end
+
+  # LibC::Stat's timestamp field names are libc-specific (st_mtim/st_ctim
+  # on glibc/Linux, st_mtimespec/st_ctimespec on Darwin), same split
+  # Krikri.stat_atime_sec et al. in base_plugin.cr already handle.
+  private def self.stat_mtime_ts(stat : LibC::Stat) : LibC::Timespec
+    {% if flag?(:darwin) %}
+      stat.st_mtimespec
+    {% else %}
+      stat.st_mtim
+    {% end %}
+  end
+
+  private def self.stat_ctime_ts(stat : LibC::Stat) : LibC::Timespec
+    {% if flag?(:darwin) %}
+      stat.st_ctimespec
+    {% else %}
+      stat.st_ctim
+    {% end %}
   end
 
   private def self.owner_name(uid : LibC::UidT) : JSON::Any
