@@ -1,8 +1,17 @@
-# Kata test hosts
+# Kata test hosts (retired, 2026-09-12)
+
+**Retired** — not enough value for the reliability cost. Kata Containers
+itself (containerd, `/opt/kata`, `containerd-shim-kata-v2`) has been
+uninstalled from the dev laptop this ran on; nothing below is runnable
+without reinstalling Kata from scratch. Kept for reference only. Use
+Atlantic.net for rounds needing a real kernel; `podman run --systemd=always`
+covers plain-systemd needs.
+
+---
 
 Real VMs — real guest kernel, real systemd — on the local machine, in
-about six seconds each. This is the local alternative to provisioning
-Atlantic.net pairs for a benchmark round, and it does things no container
+about six seconds each. This was the local alternative to provisioning
+Atlantic.net pairs for a benchmark round, and it did things no container
 can.
 
 ## Why, precisely

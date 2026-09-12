@@ -76,11 +76,14 @@ from this repo.
    (`geerlingguy.mongodb`/`.consul`/`.golang` don't exist anymore) or re-verifying already-clean
    roles as if new (unless deliberately re-checking after something made a host suspect).
 
-2. **Batch phase:** build a queue file (one role per line, optional `kata`/`atlantic` hint) from
-   the `ROLES_TESTED.md` shortlist, then run it:
+2. **Batch phase:** build a queue file (one role per line) from the
+   `ROLES_TESTED.md` shortlist, then run it (Atlantic.net only - the Kata
+   backend is retired, see below). The account's server cap is 25, with 2
+   reserved for Dirless, so use at most 22 concurrent Atlantic.net hosts
+   (11 role pairs) across all running batches combined:
 
        bin/krikri-role-tester run roles.txt \
-         --kata-hosts 8 --atlantic-hosts 8 \
+         --atlantic-hosts 22 \
          --results-dir ~/scratch/krt-results --round-start 1000
 
    The tool runs both backends' worker pools concurrently (up to 4 pairs each), provisions a
@@ -121,22 +124,19 @@ from this repo.
 7. If a run was SIGKILLed, `bin/krikri-role-tester sweep ~/scratch/krt-results` finds rounds
    whose `run.log` never reached `DONE` and tears down their leftover terraform state directly.
 
-## Local Kata test hosts (a backend of krikri-role-tester)
+## Local Kata test hosts (retired)
 
-`testing/kata/` (this repo) boots real VMs locally - real guest kernel, real
-systemd - in ~6 seconds each; `krikri-role-tester`'s `kata` backend drives it
-directly (`kata-host.sh up|down` per slot, octets `10 + 2N`/`11 + 2N`,
-`10.99.<octet>.2`). Read `testing/kata/README.md` before relying on it: the
-setup has several non-obvious failure modes, all documented there with the
-reason, and one of them (recreating a netns under a live VM) hangs `ctr`
-in a way no timeout escapes.
-
-Use the Kata backend when the round needs a real **kernel** -
-`sysctl:`/`os_hardening`, `modprobe`, netfilter below `--cap-add=NET_ADMIN`,
-filesystem modules - which is exactly what containers cannot do and what has
-left those roles unverified. For plain systemd, `podman run --systemd=always`
-is simpler and already sufficient (the 0.9.727-0.9.728
-`service:`/`service_facts:` work was verified that way).
+`testing/kata/` booted real VMs locally (real guest kernel, real systemd) as
+a `krikri-role-tester` backend. **Retired as of 2026-09-12** - not enough
+value for the reliability cost (see `testing/kata/README.md`'s failure
+modes, one of which hangs `ctr` with no timeout that escapes it). Kata
+Containers itself (containerd, `/opt/kata`, the `containerd-shim-kata-v2`
+binary) has been uninstalled from the dev laptop it ran on; the scripts
+under `testing/kata/` are left in place for reference only, not runnable
+without reinstalling Kata. Use Atlantic.net for rounds needing a real
+kernel (`sysctl:`/`os_hardening`, `modprobe`, netfilter, filesystem
+modules); for plain systemd, `podman run --systemd=always` remains
+sufficient and unaffected by this.
 
 ## Credentials for the benchmark workflow
 
