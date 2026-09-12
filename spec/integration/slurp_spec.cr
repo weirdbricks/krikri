@@ -13,7 +13,7 @@ private def tmp_path(name : String) : String
 end
 
 describe "slurp plugin" do
-  it "returns a file's content base64-encoded by default (armor: true)" do
+  it "returns a file's content base64-encoded (real Ansible always does)" do
     path = tmp_path("slurp_armored.txt")
     File.write(path, "hello slurp")
 
@@ -25,15 +25,14 @@ describe "slurp plugin" do
     result["source"].as_s.should eq(path)
   end
 
-  it "returns raw utf-8 content when armor: false" do
-    path = tmp_path("slurp_plain.txt")
+  it "rejects the fabricated armor param like real Ansible's argument-spec validation" do
+    path = tmp_path("slurp_armor_reject.txt")
     File.write(path, "plain text")
 
     result = PluginSpecHelper.run("slurp", {"src" => path, "armor" => "false"})
 
-    result["failed"].as_bool.should be_false
-    result["encoding"].as_s.should eq("utf-8")
-    result["content"].as_s.should eq("plain text")
+    result["failed"].as_bool.should be_true
+    result["msg"].as_s.should eq("Unsupported parameters for (ansible.builtin.slurp) module: armor. Supported parameters include: src (path).")
   end
 
   it "accepts the path alias for src" do
@@ -44,6 +43,13 @@ describe "slurp plugin" do
 
     result["failed"].as_bool.should be_false
     Base64.decode_string(result["content"].as_s).should eq("aliased")
+  end
+
+  it "fails with real Ansible's missing-argument message when src is absent" do
+    result = PluginSpecHelper.run("slurp", {} of String => String)
+
+    result["failed"].as_bool.should be_true
+    result["msg"].as_s.should eq("missing required arguments: src")
   end
 
   it "fails with a clear message for a missing file" do
