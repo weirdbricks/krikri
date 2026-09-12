@@ -31,6 +31,15 @@ module Krikri
   # - follow: Follow symlinks
   # - modification_time: Set modification time (now, preserve, or timestamp)
   # - access_time: Set access time (now, preserve, or timestamp)
+  # - modification_time_format: strptime format for modification_time
+  #   (default %Y%m%d%H%M.%S)
+  # - access_time_format: strptime format for access_time (default %Y%m%d%H%M.%S)
+  # - seuser/serole/setype/selevel: SELinux context parts - silently
+  #   accepted and no-op'd on non-SELinux hosts (real Ansible's own
+  #   graceful behavior), applied via chcon on SELinux-enabled hosts
+  # - unsafe_writes: accepted (real Ansible's file module takes it via
+  #   the file-common args; it has no observable effect for this module,
+  #   which never writes content atomically)
   # - check_mode: Dry-run mode
   #
   # Examples:
@@ -760,8 +769,7 @@ module Krikri
       # `system-auth`/`password-auth` symlinks are set up exactly this
       # way and never converged.
       if mode = @params["mode"]?
-        return changed if skip_mode
-        changed = true if mode_changed?(info.st_mode.to_i32, mode)
+        changed = true if mode_param_changed?(info.st_mode.to_i32, mode, skip_mode)
       end
 
       # attr:/attributes: - see attr_changed? below for why this mirrors
@@ -770,7 +778,15 @@ module Krikri
       # checks.
       changed = true if attr_changed?(path)
 
+      # seuser:/serole:/setype:/selevel: - see secontext_changed? below.
+      changed = true if secontext_changed?(path)
+
       changed
+    end
+
+    private def mode_param_changed?(current_mode_bits : Int32, mode : String, skip_mode : Bool) : Bool
+      return false if skip_mode
+      mode_changed?(current_mode_bits, mode)
     end
 
     private def owner_changed?(uid : LibC::UidT, owner : String) : Bool
@@ -877,6 +893,11 @@ module Krikri
     end
 
     private def apply_single_file_attributes(path : String) : Nil
+      # SELinux context runs FIRST, matching the order of real Ansible's
+      # set_fs_attributes_if_different (set_context_if_different ->
+      # owner -> group -> mode -> attributes).
+      apply_secontext(path)
+
       follow = true?(@params["follow"]?)
       uid = -1
       gid = -1
@@ -1027,6 +1048,119 @@ module Krikri
       end
     end
 
+    # SELinux context params (seuser:/serole:/setype:/selevel:, real
+    # Ansible's file-common args). Real Ansible accepts these on every
+    # host but only ACTS on them when SELinux is actually enabled - its
+    # set_context_if_different (module_utils/basic.py) opens with
+    # `if not self.selinux_enabled(): return changed`, a graceful no-op.
+    # Live-verified against ansible-core 2.19.4 on this non-SELinux
+    # machine: all four params are silently accepted, the result carries
+    # no SELinux keys at all, and an already-identical re-run reports
+    # ok/changed: false.
+    private def selinux_enabled? : Bool
+      # Grounded approximation of libselinux's is_selinux_enabled(): the
+      # selinuxfs mount only exists when SELinux is active in the kernel.
+      @selinux_enabled ||= Dir.exists?("/sys/fs/selinux")
+    end
+
+    # is_selinux_mls_enabled() - only an MLS-enabled policy's context has
+    # the 4th (level) part that selevel: addresses; real Ansible appends
+    # selevel to the context list only when this is true.
+    private def mls_enabled? : Bool
+      @mls_enabled ||= begin
+        File.read("/sys/fs/selinux/mls").strip == "1"
+      rescue
+        false
+      end
+    end
+
+    private def secontext_requested? : Bool
+      !!(@params["seuser"]? || @params["serole"]? || @params["setype"]? || @params["selevel"]?)
+    end
+
+    # The file's current context via `ls -Zd` (read-only stand-in for
+    # libselinux's lgetfilecon_raw; l-prefix semantics: does NOT follow
+    # symlinks). Split limited to 4 parts exactly like real Ansible's
+    # own `context.split(':', 3)` - the MLS level may itself contain
+    # ':' characters (e.g. "s0:c0.c255").
+    private def current_selinux_context(path : String) : Array(String)?
+      return nil unless selinux_enabled?
+      result = remote_exec("ls -Zd #{shell_single_quote(path)}")
+      return nil unless result[:exit_code] == 0
+      context = result[:stdout].strip.split[0]?
+      return nil unless context
+      parts = context.split(':', 3)
+      (parts.size == 3 || (mls_enabled? && parts.size == 4)) ? parts : nil
+    end
+
+    # Builds the desired context by overriding the parts the task
+    # provides, leaving the rest at their CURRENT values - mirroring
+    # set_context_if_different's iterate-over-current-context loop
+    # (a provided part wins only when it differs; an unprovided part
+    # keeps the current value). The documented "_default" value ("uses
+    # the matching portion of policy if available") is what real
+    # Ansible's load_file_common_arguments fills in from libselinux's
+    # matchpathcon(); krikri shells to the same-named CLI tool for it,
+    # and a matchpathcon failure leaves the current part - real
+    # Ansible's selinux_default_context returns an all-None context on
+    # matchpathcon failure, and a None part keeps the current value in
+    # set_context_if_different's loop.
+    private def desired_selinux_context(path : String, current : Array(String)) : Array(String)
+      desired = current.dup
+      ["seuser", "serole", "setype"].each_with_index do |param, index|
+        next unless value = @params[param]?
+        desired[index] = value == "_default" ? selinux_default_context_part(path, index, current) : value
+      end
+      # selevel only participates on an MLS-enabled policy (real
+      # Ansible only appends it to the context list then), and only when
+      # the current context actually HAS a level part.
+      if selevel = @params["selevel"]?
+        if mls_enabled? && desired.size > 3
+          desired[3] = selevel == "_default" ? selinux_default_context_part(path, 3, current) : selevel
+        end
+      end
+      desired
+    end
+
+    private def selinux_default_context_part(path : String, index : Int32, current : Array(String)) : String
+      result = remote_exec("matchpathcon -n #{shell_single_quote(path)}")
+      if result[:exit_code] == 0 && (context = result[:stdout].strip.split[0]?)
+        parts = context.split(':', 3)
+        return parts[index] if parts.size > index
+      end
+      current[index]
+    end
+
+    # The changed-check half of the SELinux handling (read-only, safe in
+    # check mode): changed when the desired context differs from the
+    # file's current one.
+    private def secontext_changed?(path : String) : Bool
+      return false unless secontext_requested?
+      current = current_selinux_context(path)
+      return false unless current
+      desired_selinux_context(path, current) != current
+    end
+
+    # The apply half: real Ansible sets the full context with
+    # selinux.lsetfilecon('<user>:<role>:<type>[:<level>]') - the
+    # l-prefix meaning it operates on the symlink itself - so this
+    # shells to `chcon -h` with the whole context string (chcon accepts
+    # a full context as its first argument) and fails the task on a
+    # nonzero exit, mirroring the real module's
+    # fail_json(msg='set selinux context failed').
+    private def apply_secontext(path : String) : Nil
+      return unless secontext_requested?
+      current = current_selinux_context(path)
+      return unless current
+      desired = desired_selinux_context(path, current)
+      return if desired == current
+
+      result = remote_exec("chcon -h #{shell_single_quote(desired.join(':'))} #{shell_single_quote(path)}")
+      if result[:exit_code] != 0
+        raise "set selinux context failed"
+      end
+    end
+
     private def resolve_uid(owner : String) : Int32
       if user = System::User.find_by?(name: owner)
         user.id.to_i
@@ -1071,8 +1205,11 @@ module Krikri
         when "preserve"
           # Don't change
         else
-          # Specific timestamp (YYYYMMDDhhmm.ss)
-          set_time(path, mtime: parse_touch_timestamp(mod_time))
+          # Specific timestamp in modification_time_format (see
+          # parse_touch_timestamp; defaults to the %Y%m%d%H%M.%S shape
+          # this plugin hard-coded before access_time_format:/
+          # modification_time_format: existed)
+          set_time(path, mtime: parse_touch_timestamp(mod_time, modification_time_format))
         end
       end
 
@@ -1084,8 +1221,8 @@ module Krikri
         when "preserve"
           # Don't change
         else
-          # Specific timestamp
-          set_time(path, atime: parse_touch_timestamp(acc_time))
+          # Specific timestamp in access_time_format
+          set_time(path, atime: parse_touch_timestamp(acc_time, access_time_format))
         end
       end
     end
@@ -1109,18 +1246,18 @@ module Krikri
       current = lstat(path)
       return true unless current
 
-      time_param_would_change?(@params["modification_time"]?, Time.unix(Krikri.stat_mtime_sec(current))) ||
-        time_param_would_change?(@params["access_time"]?, Time.unix(Krikri.stat_atime_sec(current)))
+      time_param_would_change?(@params["modification_time"]?, modification_time_format, Time.unix(Krikri.stat_mtime_sec(current))) ||
+        time_param_would_change?(@params["access_time"]?, access_time_format, Time.unix(Krikri.stat_atime_sec(current)))
     end
 
-    private def time_param_would_change?(param : String?, current_time : Time) : Bool
+    private def time_param_would_change?(param : String?, format : String, current_time : Time) : Bool
       case param
       when nil, "now"
         true
       when "preserve"
         false
       else
-        parse_touch_timestamp(param) != current_time
+        parse_touch_timestamp(param, format) != current_time
       end
     end
 
@@ -1132,19 +1269,19 @@ module Krikri
     # value" (set_time's normal contract for state=file/link callers,
     # where the other axis is genuinely never touched at all).
     private def touch_apply_times(path : String) : Nil
-      new_mtime = touch_target_time(@params["modification_time"]?)
-      new_atime = touch_target_time(@params["access_time"]?)
+      new_mtime = touch_target_time(@params["modification_time"]?, modification_time_format)
+      new_atime = touch_target_time(@params["access_time"]?, access_time_format)
       set_time(path, atime: new_atime, mtime: new_mtime)
     end
 
-    private def touch_target_time(param : String?) : Time?
+    private def touch_target_time(param : String?, format : String) : Time?
       case param
       when nil, "now"
         Time.utc
       when "preserve"
         nil
       else
-        parse_touch_timestamp(param)
+        parse_touch_timestamp(param, format)
       end
     end
 
@@ -1168,16 +1305,150 @@ module Krikri
       result == 0 ? s : nil
     end
 
-    # Parses Ansible's own `modification_time`/`access_time` timestamp
-    # format, `YYYYMMDDhhmm.ss` - the same format `touch -t` expects,
-    # interpreted in local time (matching `touch -t`, not UTC).
-    private def parse_touch_timestamp(value : String) : Time
-      match = value.match(/\A(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(?:\.(\d{2}))?\z/)
-      raise ArgumentError.new("invalid timestamp: #{value}") unless match
-      year, month, day, hour, minute = match[1].to_i, match[2].to_i, match[3].to_i, match[4].to_i, match[5].to_i
-      second = match[6]?.try(&.to_i) || 0
-      Time.local(year, month, day, hour, minute, second)
+    # Real Ansible's access_time_format:/modification_time_format: defaults
+    # (the same `touch -t`-shaped format this plugin hard-coded before
+    # those params existed).
+    private def default_touch_time_format : String
+      "%Y%m%d%H%M.%S"
     end
+
+    private def modification_time_format : String
+      @params["modification_time_format"]?.try { |v| v.empty? ? default_touch_time_format : v } || default_touch_time_format
+    end
+
+    private def access_time_format : String
+      @params["access_time_format"]?.try { |v| v.empty? ? default_touch_time_format : v } || default_touch_time_format
+    end
+
+    # Parses a timestamp using real Ansible's access_time_format:/
+    # modification_time_format: strftime/strptime grammar (Python's
+    # time.strptime is what the real module feeds both to - live-verified
+    # against ansible-core 2.19.4, including a custom
+    # `%Y-%m-%d %H:%M` format). Supports the directives real playbooks
+    # actually use (%Y %y %m %d %H %I %M %S %p %j %b %B %a %A %%), with
+    # Python strptime's own field defaults for anything the format
+    # doesn't cover (year 1900, month/day 1, times 0). A value that
+    # doesn't match its format fails the task, mirroring the real
+    # module's fail_json("Error while obtaining timestamp for time ...")
+    # raised out of get_timestamp_for_time.
+    private def parse_touch_timestamp(value : String, format : String) : Time
+      fields = {} of String => String
+      match = value.match(touch_timestamp_regex(value, format, fields))
+      raise timestamp_format_error(value, format, "time data #{value.inspect} does not match format #{format.inspect}") unless match
+
+      captured = 0
+      fields.each_key do |key|
+        fields[key] = match[captured + 1]
+        captured += 1
+      end
+
+      assemble_touch_timestamp(value, format, fields)
+    rescue ex : ArgumentError
+      raise ex if ex.message.try(&.starts_with?("Error while obtaining timestamp"))
+      raise timestamp_format_error(value, format, ex.message || "invalid timestamp")
+    rescue ex
+      raise timestamp_format_error(value, format, ex.message || "invalid timestamp")
+    end
+
+    # Each directive's capture group appends to `fields` (insertion order
+    # matches the capture order in the built regex) - the assembled
+    # pattern is returned as a Regex.
+    private def touch_timestamp_regex(value : String, format : String, fields : Hash(String, String)) : Regex
+      pattern = String.build do |io|
+        io << "\\A"
+        pos = 0
+        while pos < format.size
+          char = format[pos]
+          if char == '%' && pos + 1 < format.size
+            directive = format[pos + 1]
+            pair = regex_and_field(directive)
+            if pair
+              io << pair[0]
+              fields[pair[1]] = ""
+            elsif directive != '%'
+              raise timestamp_format_error(value, format, "unsupported format directive %{#{directive}}")
+            end
+            pos += 2
+          elsif char.whitespace?
+            io << "\\s+"
+            pos += 1
+          else
+            io << Regex.escape(char.to_s)
+            pos += 1
+          end
+        end
+        io << "\\z"
+      end
+      Regex.new(pattern)
+    end
+
+    private def regex_and_field(directive : Char) : {String, String}?
+      TOUCH_TIMESTAMP_DIRECTIVES[directive]?
+    end
+
+    TOUCH_TIMESTAMP_DIRECTIVES = {
+      'Y' => {"(\\d{4})", "year"},
+      'y' => {"(\\d{2})", "year2"},
+      'm' => {"(\\d{1,2})", "month"},
+      'd' => {"(\\d{1,2})", "day"},
+      'H' => {"(\\d{1,2})", "hour"},
+      'I' => {"(\\d{1,2})", "hour12"},
+      'M' => {"(\\d{1,2})", "minute"},
+      'S' => {"(\\d{1,2})", "second"},
+      'j' => {"(\\d{1,3})", "yday"},
+      'p' => {"([AaPp][Mm])", "ampm"},
+      'b' => {"(" + MONTH_NAMES.join("|") + ")", "month_name"},
+      'B' => {"(" + FULL_MONTH_NAMES.join("|") + ")", "full_month_name"},
+      'a' => {"(" + WEEKDAY_NAMES.join("|") + ")", "weekday"},
+      'A' => {"(" + FULL_WEEKDAY_NAMES.join("|") + ")", "full_weekday"},
+    }
+
+    # Python strptime's own field defaults for anything the format
+    # doesn't cover (year 1900, month/day 1, times 0).
+    private def assemble_touch_timestamp(value : String, format : String, fields : Hash(String, String)) : Time
+      year = fields["year"]?.try(&.to_i) || (year_from_two_digit(fields["year2"]?.try(&.to_i) || 0))
+      day = fields["day"]?.try(&.to_i) || 1
+      hour = fields["hour"]?.try(&.to_i) ||
+             twelve_hour_value(fields["hour12"]?.try(&.to_i) || 0, fields["ampm"]?)
+      minute = fields["minute"]?.try(&.to_i) || 0
+      second = fields["second"]?.try(&.to_i) || 0
+
+      # %j (day of year) replaces %m/%d when a format uses it.
+      if yday = fields["yday"]?
+        return Time.local(year, 1, 1) + (yday.to_i - 1).days + hour.hours + minute.minutes + second.seconds
+      end
+
+      Time.local(year, resolved_month(fields), day, hour, minute, second)
+    end
+
+    private def resolved_month(fields : Hash(String, String)) : Int32
+      fields["month"]?.try(&.to_i) ||
+        fields["month_name"]?.try { |name| MONTH_NAMES.index(name.downcase).try(&.+(1)) } ||
+        fields["full_month_name"]?.try { |name| FULL_MONTH_NAMES.index(name.downcase).try(&.+(1)) } ||
+        1
+    end
+
+    private def timestamp_format_error(value : String, format : String, detail : String) : ArgumentError
+      ArgumentError.new("Error while obtaining timestamp for time #{value} using format #{format}: #{detail}")
+    end
+
+    private def year_from_two_digit(two_digit : Int32) : Int32
+      # Python time.strptime's own %y mapping: 69-99 -> 19xx, 00-68 -> 20xx
+      two_digit < 69 ? 2000 + two_digit : 1900 + two_digit
+    end
+
+    private def twelve_hour_value(hour12 : Int32, ampm : String?) : Int32
+      return hour12 unless ampm
+      lower = ampm.downcase
+      return 0 if hour12 == 12 && lower == "am"
+      return 12 if hour12 == 12 && lower == "pm"
+      lower == "pm" ? hour12 + 12 : hour12
+    end
+
+    MONTH_NAMES        = %w[jan feb mar apr may jun jul aug sep oct nov dec]
+    FULL_MONTH_NAMES   = %w[january february march april may june july august september october november december]
+    WEEKDAY_NAMES      = %w[mon tue wed thu fri sat sun]
+    FULL_WEEKDAY_NAMES = %w[monday tuesday wednesday thursday friday saturday sunday]
 
     private def lstat(path : String) : LibC::Stat?
       stat = uninitialized LibC::Stat
@@ -1254,6 +1525,8 @@ module Krikri
     end
 
     @last_error : String? = nil
+    @selinux_enabled : Bool? = nil
+    @mls_enabled : Bool? = nil
   end
 end
 

@@ -14,6 +14,14 @@ private def tmp_path(name : String) : String
   File.join(TMP_DIR, name)
 end
 
+# File::Info (and File) expose modification_time but not access time -
+# read it via the same raw stat the plugin itself uses.
+private def file_atime(path : String) : Time
+  s = uninitialized LibC::Stat
+  LibC.stat(path, pointerof(s))
+  Time.unix(s.st_atim.tv_sec)
+end
+
 describe "file plugin" do
   describe "state=directory" do
     it "creates a directory that doesn't exist yet" do
@@ -499,6 +507,144 @@ describe "file plugin" do
       File.write(path, "x")
 
       result = PluginSpecHelper.run("file", {"path" => path})
+      result["changed"].as_bool.should be_false
+    end
+  end
+
+  describe "access_time_format:/modification_time_format:" do
+    # Real Ansible's file module defaults both format params to
+    # %Y%m%d%H%M.%S - the shape this plugin hard-coded before the
+    # format params existed. Live-verified against ansible-core 2.19.4
+    # (including the custom-format case below).
+    it "applies the default %Y%m%d%H%M.%S format to literal timestamps" do
+      path = tmp_path("fmt_default.txt")
+      result = PluginSpecHelper.run("file", {
+        "path"              => path,
+        "state"             => "touch",
+        "modification_time" => "202401011200.00",
+        "access_time"       => "202401011200.00",
+      })
+
+      result["failed"].as_bool.should be_false
+      File.info(path).modification_time.should eq(Time.local(2024, 1, 1, 12, 0, 0))
+      file_atime(path).should eq(Time.local(2024, 1, 1, 12, 0, 0))
+    end
+
+    it "applies a custom strptime format when one is given" do
+      # Mirrors the real module's own EXAMPLES entry:
+      # access_time: '{{ "%Y%m%d%H%M.%S" | strftime(stat.atime) }}' - but
+      # with a differently-shaped format to prove the format param is
+      # actually consulted, not just the default shape parsed.
+      path = tmp_path("fmt_custom.txt")
+      result = PluginSpecHelper.run("file", {
+        "path"               => path,
+        "state"              => "touch",
+        "access_time"        => "2024-01-01 12:00",
+        "access_time_format" => "%Y-%m-%d %H:%M",
+      })
+
+      result["failed"].as_bool.should be_false
+      file_atime(path).should eq(Time.local(2024, 1, 1, 12, 0, 0))
+    end
+
+    it "fails the task when the value doesn't match its format (real Ansible's own fail_json message shape)" do
+      # Real module: get_timestamp_for_time -> fail_json("Error while
+      # obtaining timestamp for time X using format Y: ...") - the
+      # default format can't parse "2024-01-01 12:00".
+      path = tmp_path("fmt_mismatch.txt")
+      result = PluginSpecHelper.run("file", {
+        "path"        => path,
+        "state"       => "touch",
+        "access_time" => "2024-01-01 12:00",
+      })
+
+      result["failed"].as_bool.should be_true
+      result["msg"].as_s.should contain("Error while obtaining timestamp for time 2024-01-01 12:00 using format %Y%m%d%H%M.%S")
+    end
+
+    it "honors %y (2-digit year) and %p (AM/PM) directives" do
+      path = tmp_path("fmt_directives.txt")
+      result = PluginSpecHelper.run("file", {
+        "path"                     => path,
+        "state"                    => "touch",
+        "modification_time"        => "68-01-01 11 30 pm",
+        "modification_time_format" => "%y-%m-%d %I %M %p",
+      })
+
+      result["failed"].as_bool.should be_false
+      # Python strptime's own %y mapping: 00-68 -> 20xx
+      File.info(path).modification_time.should eq(Time.local(2068, 1, 1, 23, 30, 0))
+    end
+  end
+
+  describe "seuser:/serole:/setype:/selevel: (SELinux context params)" do
+    # Real behavior live-verified against ansible-core 2.19.4 on this
+    # non-SELinux machine: all four params are silently ACCEPTED, the
+    # task reports plain ok/changed per the stat result, no error, and
+    # the result carries no SELinux-context keys at all - real Ansible's
+    # set_context_if_different opens with `if not self.selinux_enabled():
+    # return changed`, a graceful no-op, and its add_path_info only adds
+    # a `secontext` result key when SELinux is enabled.
+    it "accepts all four params as a graceful no-op on a non-SELinux host" do
+      path = tmp_path("se_nop.txt")
+      File.write(path, "x")
+
+      result = PluginSpecHelper.run("file", {
+        "path"    => path,
+        "setype"  => "httpd_sys_content_t",
+        "seuser"  => "unconfined_u",
+        "serole"  => "object_r",
+        "selevel" => "s0",
+      })
+
+      result["failed"].as_bool.should be_false
+      result["changed"].as_bool.should be_false
+      result.as_h.has_key?("secontext").should be_false
+      File.exists?(path).should be_true
+    end
+
+    it "reports no error when the params ride along with an attribute change" do
+      path = tmp_path("se_along.txt")
+      File.write(path, "x")
+
+      result = PluginSpecHelper.run("file", {
+        "path"   => path,
+        "state"  => "touch",
+        "mode"   => "0600",
+        "setype" => "httpd_sys_content_t",
+      })
+
+      result["failed"].as_bool.should be_false
+      result["changed"].as_bool.should be_true
+      (File.info(path, follow_symlinks: false).permissions.value & 0o777).should eq(0o600)
+    end
+  end
+
+  describe "unsafe_writes:" do
+    # Real Ansible's file module accepts unsafe_writes: via the file-common
+    # args (module_utils/basic.py adds it with default False), but for
+    # file: specifically it has no observable effect - file.py never calls
+    # atomic_move (the only place unsafe_writes actually changes behavior,
+    # a fallback when the atomic temp-file+rename fails). Live-verified
+    # against ansible-core 2.19.4: the param is accepted silently and the
+    # task behaves identically to without it. So: accept-and-track, no
+    # real write-path logic - matching real Ansible's own behavior for
+    # this module.
+    it "is accepted and has no observable effect (matching real Ansible's file module)" do
+      path = tmp_path("unsafe_writes.txt")
+      result = PluginSpecHelper.run("file", {"path" => path, "state" => "touch", "unsafe_writes" => "true"})
+
+      result["failed"].as_bool.should be_false
+      result["changed"].as_bool.should be_true
+      File.exists?(path).should be_true
+    end
+
+    it "leaves idempotency unchanged when given on a rerun" do
+      path = tmp_path("unsafe_writes_rerun.txt")
+      PluginSpecHelper.run("file", {"path" => path, "state" => "touch", "unsafe_writes" => "true"})
+      result = PluginSpecHelper.run("file", {"path" => path, "unsafe_writes" => "true"})
+
+      result["failed"].as_bool.should be_false
       result["changed"].as_bool.should be_false
     end
   end
