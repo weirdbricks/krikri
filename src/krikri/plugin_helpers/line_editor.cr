@@ -16,13 +16,19 @@ module Krikri
         a.strip == b.strip
       end
 
-      # state: absent - drop every line matching regexp (or, failing that,
-      # an exact match against `line`). Returns {new_lines, changed}.
-      def self.remove_matching(lines : Array(String), line : String?, regexp : String?) : {Array(String), Bool}
+      # state: absent - drop every line matching regexp, containing
+      # search_string (literal substring - real Ansible's own matcher for
+      # state=absent), or - failing both - an exact match against `line`.
+      # firstmatch does NOT apply here: real Ansible removes ALL matching
+      # lines regardless (live-verified against ansible-core 2.19.4).
+      # Returns {new_lines, changed}.
+      def self.remove_matching(lines : Array(String), line : String?, regexp : String?, search_string : String? = nil) : {Array(String), Bool}
         changed = false
         kept = lines.reject do |existing|
           should_remove = if regexp
                             matches_regexp?(existing, regexp)
+                          elsif search_string
+                            existing.includes?(search_string)
                           elsif line
                             lines_equal?(existing, line)
                           else
@@ -39,6 +45,15 @@ module Krikri
       # state: present - ensure `line` (or a regexp-matched line, optionally
       # rewritten via backrefs) exists, inserting at insertafter/insertbefore
       # if it's missing. Returns {new_lines, changed}.
+      #
+      # `search_string` is the literal-substring alternative to `regexp`
+      # (real Ansible's own argument_spec marks them mutually exclusive,
+      # so this only ever sees one of the two). `firstmatch` switches the
+      # replacement/insertion target from real Ansible's default LAST
+      # match to the FIRST (live-verified against ansible-core 2.19.4:
+      # both the regexp/search_string replacement target and the
+      # insertafter/insertbefore anchor honor it, state=absent does not -
+      # there it removes every matching line regardless).
       def self.ensure_present(
         lines : Array(String),
         line : String,
@@ -46,6 +61,8 @@ module Krikri
         backrefs : Bool,
         insertafter : String?,
         insertbefore : String?,
+        firstmatch : Bool = false,
+        search_string : String? = nil,
       ) : {Array(String), Bool}
         new_lines = lines.dup
 
@@ -61,11 +78,18 @@ module Krikri
           # final (commented) occurrence, leaving the active one alone;
           # crystal previously replaced the FIRST, leaving the template
           # commented and diverging config.inc.php byte-for-byte.
-          found_index = new_lines.rindex { |existing| matches_regexp?(existing, pattern) }
+          # firstmatch: true flips this to the FIRST matching line
+          # (live-verified against ansible-core 2.19.4).
+          found_index = match_index(new_lines, pattern, firstmatch)
+        elsif search_string
+          # search_string: literal substring containment, not a regex -
+          # same last-match-by-default / first-with-firstmatch semantics
+          # as regexp (live-verified against ansible-core 2.19.4).
+          found_index = match_index(new_lines, search_string, firstmatch, literal: true)
         end
 
-        if found_index && pattern
-          if backrefs
+        if found_index
+          if backrefs && pattern
             # Real Ansible's lineinfile backrefs mode treats `line:` as
             # a REPLACEMENT TEMPLATE for the WHOLE line (Python's
             # `match.expand(line)`, then the entire existing line is
@@ -126,20 +150,45 @@ module Krikri
         # appended on literally every single run, never converging.
         return {new_lines, false} if new_lines.any? { |existing| lines_equal?(existing, line) }
 
-        insert_index = insertion_index(new_lines, insertafter, insertbefore)
+        insert_index = insertion_index(new_lines, insertafter, insertbefore, firstmatch)
         new_lines.insert(insert_index, line)
         {new_lines, true}
       end
 
+      # Position of the line matching `pattern`: the LAST match by default
+      # (real Ansible's lineinfile/blockinfile both scan the whole file
+      # without breaking), or the FIRST when `firstmatch` is set. With
+      # `literal: true` the pattern is a plain substring to CONTAIN
+      # (real Ansible's search_string), not a regex.
+      def self.match_index(lines : Array(String), pattern : String, firstmatch : Bool, literal : Bool = false) : Int32?
+        matcher = if literal
+                    ->(existing : String) { existing.includes?(pattern) }
+                  else
+                    ->(existing : String) { matches_regexp?(existing, pattern) }
+                  end
+        firstmatch ? lines.index(&matcher) : lines.rindex(&matcher)
+      end
+
       # Shared with BlockEditor, so this is public rather than private.
-      def self.insertion_index(lines : Array(String), insertafter : String?, insertbefore : String?) : Int32
+      #
+      # Real Ansible anchors the insertion at the LAST line matching the
+      # insertafter/insertbefore pattern (its own loop keeps scanning and
+      # only stops early under firstmatch), not the first - live-verified
+      # against ansible-core 2.19.4 for both lineinfile and blockinfile
+      # (blockinfile's marker-placement loop also has no break). The
+      # previous first-match-always behavior diverged on any file where
+      # the anchor pattern occurs more than once.
+      def self.insertion_index(lines : Array(String), insertafter : String?, insertbefore : String?, firstmatch : Bool = false) : Int32
         if insertafter
           return lines.size if insertafter == "EOF" || insertafter == "END"
-          index = lines.index { |existing| matches_regexp?(existing, insertafter) }
+          # Real Ansible honors insertafter=BOF as top-of-file too (its
+          # `elif insertbefore == 'BOF' or insertafter == 'BOF'` branch).
+          return 0 if insertafter == "BOF"
+          index = match_index(lines, insertafter, firstmatch)
           index ? index + 1 : lines.size
         elsif insertbefore
           return 0 if insertbefore == "BOF" || insertbefore == "BEGIN"
-          lines.index { |existing| matches_regexp?(existing, insertbefore) } || lines.size
+          match_index(lines, insertbefore, firstmatch) || lines.size
         else
           lines.size
         end

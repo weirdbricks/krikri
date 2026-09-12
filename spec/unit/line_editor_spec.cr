@@ -147,6 +147,88 @@ describe LineEditor do
       lines.should eq(["Environment=\"JENKINS_OPTS=\""])
       changed.should be_false
     end
+
+    it "replaces the FIRST line matching the regexp when firstmatch is set (live-verified against ansible-core 2.19.4)" do
+      # Confirmed live krikri bug: real ansible-playbook 2.19.4 with
+      # regexp '^foo=' against "foo=1/bar=2/foo=3/baz=4" and
+      # firstmatch: true rewrites the FIRST "foo=" line; krikri
+      # previously ignored firstmatch entirely and always replaced the
+      # last.
+      lines, changed = LineEditor.ensure_present(["foo=1", "bar=2", "foo=3", "baz=4"], "foo=REPLACED", "^foo=", false, nil, nil, true)
+      lines.should eq(["foo=REPLACED", "bar=2", "foo=3", "baz=4"])
+      changed.should be_true
+    end
+
+    it "honors firstmatch for the insertafter anchor too, inserting after the FIRST match (live-verified against ansible-core 2.19.4)" do
+      lines, changed = LineEditor.ensure_present(["marker one", "junk", "marker two", "junk2"], "INSERTED", nil, false, "^marker", nil, true)
+      lines.should eq(["marker one", "INSERTED", "junk", "marker two", "junk2"])
+      changed.should be_true
+    end
+
+    it "anchors the insertion at the LAST insertafter match by default (live-verified against ansible-core 2.19.4)" do
+      # Real Ansible's insertafter loop keeps scanning and only stops
+      # early under firstmatch - both lineinfile and blockinfile. The
+      # previous first-match-always behavior diverged on any anchor
+      # pattern matching more than one line.
+      lines, changed = LineEditor.ensure_present(["marker one", "junk", "marker two", "junk2"], "INSERTED", nil, false, "^marker", nil)
+      lines.should eq(["marker one", "junk", "marker two", "INSERTED", "junk2"])
+      changed.should be_true
+    end
+
+    it "replaces the last line CONTAINING search_string (literal substring, not a regex)" do
+      # Live-verified against ansible-core 2.19.4: search_string is a
+      # plain substring containment check, and state=present replaces
+      # the LAST line containing it, same last-match default as regexp.
+      lines, changed = LineEditor.ensure_present(["alpha one", "beta", "alpha two"], "alpha REPLACED", nil, false, nil, nil, false, "alpha")
+      lines.should eq(["alpha one", "beta", "alpha REPLACED"])
+      changed.should be_true
+    end
+
+    it "replaces the first line CONTAINING search_string when firstmatch is set" do
+      lines, changed = LineEditor.ensure_present(["alpha one", "beta", "alpha two"], "alpha REPLACED", nil, false, nil, nil, true, "alpha")
+      lines.should eq(["alpha REPLACED", "beta", "alpha two"])
+      changed.should be_true
+    end
+
+    it "treats search_string as a literal, not a regex pattern" do
+      # "a+b" as a regexp would match "aaab"; as a search_string it
+      # only matches a literal "a+b".
+      lines, changed = LineEditor.ensure_present(["aaab", "keep a+b"], "x", nil, false, nil, nil, false, "a+b")
+      lines.should eq(["aaab", "x"])
+      changed.should be_true
+    end
+
+    it "search_string that matches nothing falls through to insertafter insertion" do
+      lines, changed = LineEditor.ensure_present(["header", "footer"], "new line", nil, false, "^header", nil, false, "nomatch")
+      lines.should eq(["header", "new line", "footer"])
+      changed.should be_true
+    end
+
+    it "search_string hit equal to the desired line reports unchanged" do
+      lines, changed = LineEditor.ensure_present(["port = 2222", "comment"], "port = 2222", nil, false, nil, nil, false, "port")
+      lines.should eq(["port = 2222", "comment"])
+      changed.should be_false
+    end
+  end
+
+  describe ".remove_matching (search_string)" do
+    it "removes every line containing search_string (firstmatch has no effect on state=absent - live-verified against ansible-core 2.19.4)" do
+      lines, changed = LineEditor.remove_matching(["keep", "alpha one", "keep2", "alpha two"], nil, nil, "alpha")
+      lines.should eq(["keep", "keep2"])
+      changed.should be_true
+    end
+
+    it "removes every line matching regexp even though firstmatch never applies to state=absent" do
+      lines, changed = LineEditor.remove_matching(["keep", "foo=1", "keep2", "foo=2"], nil, "^foo=")
+      lines.should eq(["keep", "keep2"])
+      changed.should be_true
+    end
+
+    it "when regexp is given it decides alone - search_string and line are not consulted (real Ansible's matcher chain)" do
+      lines, changed = LineEditor.remove_matching(["rx here", "substring here", "exact"], "exact", "^rx", "substring")
+      lines.should eq(["substring here", "exact"])
+      changed.should be_true
+    end
   end
 
   describe ".matches_regexp?" do
