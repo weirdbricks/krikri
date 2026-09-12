@@ -17,49 +17,119 @@ module Krikri
   # EL/RedHat-family hosts but os_hardening's package_facts usage guards on
   # os_family != Suse/Archlinux, so dpkg is the path the role actually
   # needs. Read-only, so it's safe under --check.
+  #
+  # Param coverage matches real Ansible's argument_spec
+  # (ansible/modules/package_facts.py):
+  #   manager:  type list (default ['auto']), lowercased, with aliases
+  #             (dnf/dnf5/yum/zypper -> rpm; krikri additionally accepts
+  #             dpkg -> apt since dpkg-query IS this engine's apt backend).
+  #             'auto' expands to krikri's gatherable manager set, keeping
+  #             user order (real appends the full sorted name list and drops
+  #             'auto' - same shape, restricted to managers this engine can
+  #             actually query).
+  #   strategy: 'first' (default) stops at the first manager that yielded a
+  #             NON-EMPTY package list; 'all' queries every manager in the
+  #             list. When several managers report the SAME package name,
+  #             real Ansible (package_facts.py main(), the
+  #             `packages[k].extend(packages_found[k])` branch) appends the
+  #             later manager's entries onto the existing name's list - the
+  #             package appears once in the dict, with entries from every
+  #             manager that reported it, not under a separate key and not
+  #             overwritten. strategy 'first' therefore never shows a
+  #             cross-manager collision; 'all' does. This plugin mirrors
+  #             that extend-per-name merge exactly.
+  #
+  # Failure paths also match real Ansible's wording (verified live against
+  # ansible-core 2.19.4):
+  #   - an unknown manager name fails immediately with "Unsupported package
+  #     managers requested: <names>" (real code's unsupported-set check,
+  #     before any gathering);
+  #   - known-but-unusable managers just gather nothing (real code's warn
+  #     + keep-going path), and only if NO manager yielded packages does
+  #     the task fail with "Could not detect a supported package manager
+  #     from the following list: [...], or the required Python library is
+  #     not installed. Check warnings for details."
   class PackageFactsPlugin < BasePlugin
-    def execute : PluginResult
-      manager = (@params["manager"]? || "auto").to_s
-      packages = Hash(String, JSON::Any).new
+    # krikri's gatherable set, in real Ansible's sorted-name order (apt
+    # before rpm) so 'auto' expansion order matches the real module's
+    # iteration order.
+    AUTO_DETECT_MANAGERS = ["apt", "rpm"]
 
-      case manager
-      when "auto"
-        if command_available?("dpkg-query")
-          packages = dpkg_packages
-        elsif command_available?("rpm")
-          packages = rpm_packages
-        end
-      when "dpkg", "apt"
-        # Real Ansible's package_facts module accepts "apt" as its own
-        # explicit manager value (distinct from "auto"/"dpkg" - it
-        # queries via python-apt bindings instead of dpkg-query), but
-        # produces the same {name => [{"name", "version"}]} fact shape
-        # on a Debian/Ubuntu host - found via nvidia.enroot's own
-        # `package_facts: manager: apt`, which this plugin previously
-        # rejected outright as "Unsupported package manager: apt" (the
-        # case dispatch only ever recognized "auto"/"dpkg"/"rpm").
-        #
-        # Unlike "auto" (which probes both tools and just gathers
-        # nothing if neither exists - matching real Ansible's own
-        # graceful "no packages found" for auto-detection), an
-        # EXPLICITLY requested manager whose backing tool isn't
-        # installed must fail the task, matching real Ansible's "Could
-        # not detect a supported package manager ... or the required
-        # library is not installed" hard error - found via
-        # oVirt.engine-setup's `package_facts: manager: rpm` on an
-        # Ubuntu host with no `rpm` binary: this plugin used to call
-        # `capture("rpm", ...)` unconditionally, and `capture` swallows
-        # the "no such executable" exception into "" (see below), so
-        # the task silently reported success with zero packages instead
-        # of failing like real Ansible does.
-        return unsupported_manager_result(manager) unless command_available?("dpkg-query")
-        packages = dpkg_packages
-      when "rpm"
-        return unsupported_manager_result(manager) unless command_available?("rpm")
-        packages = rpm_packages
-      else
-        return unsupported_manager_result(manager)
+    # Canonical names this engine can gather + real Ansible's ALIASES
+    # (package_facts.py) restricted to those. "dpkg" is a krikri-specific
+    # alias of apt - real Ansible has no dpkg manager (it would fail
+    # "Unsupported package managers requested: dpkg"), but this engine
+    # historically accepted it and dpkg-query is the same backend.
+    CANONICAL_MANAGERS = {
+      "apt"    => "apt",
+      "dpkg"   => "apt",
+      "rpm"    => "rpm",
+      "dnf"    => "rpm",
+      "dnf5"   => "rpm",
+      "yum"    => "rpm",
+      "zypper" => "rpm",
+    }
+
+    def execute : PluginResult
+      strategy = (@params["strategy"]? || "first").to_s
+      unless ["first", "all"].includes?(strategy)
+        # Real AnsibleModule argument_spec choices error, verified live:
+        # `value of strategy must be one of: first, all, got: bogus`.
+        return PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: "value of strategy must be one of: first, all, got: #{strategy}"
+        )
       end
+
+      requested = parse_manager_list((@params["manager"]? || "auto").to_s).map(&.downcase)
+
+      bad = requested.reject { |mgr_name| CANONICAL_MANAGERS.has_key?(mgr_name) || mgr_name == "auto" }
+      unless bad.empty?
+        # Real module fails BEFORE gathering anything, and the message
+        # differs from the not-detectable case (verified live):
+        # "Unsupported package managers requested: bogusmgr".
+        return PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: "Unsupported package managers requested: #{bad.join(", ")}"
+        )
+      end
+
+      # 'auto' expands in place: real code appends every known manager name
+      # after the user's entries then removes 'auto', preserving user order.
+      managers = requested.dup
+      if requested.includes?("auto")
+        managers.concat(AUTO_DETECT_MANAGERS)
+        managers.delete("auto")
+      end
+
+      packages = Hash(String, JSON::Any).new
+      found = 0
+      seen = Set(String).new
+      managers.each do |mgr|
+        break if strategy == "first" && found > 0
+
+        canonical = CANONICAL_MANAGERS[mgr]? || mgr
+        next if seen.includes?(canonical)
+        seen << canonical
+
+        entries = canonical == "rpm" ? rpm_packages : apt_packages
+        # Real code only counts a manager as 'found' when it yields a
+        # non-empty dict; an unusable one just warns and keeps going.
+        next if entries.empty?
+        found += 1
+
+        entries.each do |name, list|
+          if existing = packages[name]?
+            packages[name] = JSON::Any.new(existing.as_a + list.as_a)
+          else
+            packages[name] = list
+          end
+        end
+      end
+
+      return no_manager_result(managers) if found == 0
 
       PluginResult.new(
         changed: false,
@@ -69,19 +139,36 @@ module Krikri
       )
     end
 
+    # Real Ansible's `manager` is a list; in YAML a scalar string is also
+    # accepted (single element, or comma-separated - real AnsibleModule's
+    # check_type_list splits those). A templated expression that resolved
+    # to a real list reaches the plugin as a JSON-array string (same
+    # convention unarchive.cr's parse_list_param documents), and a
+    # `{% if %}`-rendered Python list reaches it as a Python-repr string.
+    private def parse_manager_list(raw : String) : Array(String)
+      return ["auto"] if raw.empty?
+      if raw.starts_with?('[')
+        (Array(String).from_json(raw) rescue nil).try { |parsed| return parsed }
+        (Array(String).from_json(raw.gsub('\'', '"')) rescue nil).try { |parsed| return parsed }
+      end
+      raw.split(",").map(&.strip).reject(&.empty?)
+    end
+
     private def command_available?(cmd : String) : Bool
       !Process.find_executable(cmd).nil?
     end
 
-    # Real Ansible's package_facts phrases both cases - an unknown manager
-    # name and a known one whose backing tool/library isn't present - as
-    # "could not detect a supported package manager", so this mirrors that
-    # rather than inventing a separate wording per case.
-    private def unsupported_manager_result(manager : String) : PluginResult
+    # Real Ansible's found==0 failure, phrased with the (post-expansion)
+    # manager list and verified live against ansible-core 2.19.4:
+    # "Could not detect a supported package manager from the following
+    # list: ['rpm'], or the required Python library is not installed.
+    # Check warnings for details."
+    private def no_manager_result(managers : Array(String)) : PluginResult
+      listed = managers.map { |mgr_name| "'#{mgr_name}'" }.join(", ")
       PluginResult.new(
         changed: false,
         failed: true,
-        msg: "Could not detect a supported package manager from the following list: ['#{manager}'], or the required library is not installed."
+        msg: "Could not detect a supported package manager from the following list: [#{listed}], or the required Python library is not installed. Check warnings for details."
       )
     end
 
@@ -89,7 +176,10 @@ module Krikri
     # per line. Repeated prefixes/architectures could yield the same name
     # again; the dict maps name -> [entry...], matching real Ansible where a
     # package present in multiple architectures/versions appears as a list.
-    private def dpkg_packages : Hash(String, JSON::Any)
+    # Real Ansible's apt manager (python-apt) also stamps every entry with
+    # source: apt (RETURN doc: name/version/source are the always-present
+    # fields) - same for rpm below.
+    private def apt_packages : Hash(String, JSON::Any)
       result = Hash(String, JSON::Any).new
       stdout = capture("dpkg-query", ["-W", "-f=${Package}\\t${Version}\\n"])
       stdout.each_line do |line|
@@ -101,6 +191,7 @@ module Krikri
         entry = JSON::Any.new({
           "name"    => JSON::Any.new(name),
           "version" => JSON::Any.new(version),
+          "source"  => JSON::Any.new("apt"),
         })
         list = result[name]?.try(&.as_a?) || [] of JSON::Any
         list << entry
@@ -122,6 +213,7 @@ module Krikri
         entry = JSON::Any.new({
           "name"    => JSON::Any.new(name),
           "version" => JSON::Any.new(version),
+          "source"  => JSON::Any.new("rpm"),
         })
         list = result[name]?.try(&.as_a?) || [] of JSON::Any
         list << entry
