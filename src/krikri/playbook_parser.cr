@@ -648,6 +648,13 @@ module Krikri
     # `gather_subset:` - which fact families the implicit fact gathering
     # collects (all, min, network, hardware, mounts, and !negations).
     property gather_subset : Array(String) = [] of String
+    # `gather_timeout:` / `fact_path:` - real play keywords feeding the
+    # implicit setup call: per-family fact-collection timeout in seconds
+    # (real default 10) and the directory *.fact custom facts are
+    # gathered into ansible_local from (real default
+    # /etc/ansible/facts.d).
+    property gather_timeout : Int64? = nil
+    property fact_path : String? = nil
     # `remote_user:` at play scope - the connection user, i.e. what
     # `ansible_user` would say. A task's own remote_user: wins over it.
     property remote_user : String? = nil
@@ -1519,11 +1526,11 @@ module Krikri
       # tombstones (2.0.0+): the engine would otherwise hard-stop a role
       # real Ansible 2.10-2.11 ran fine, and the module behind it is
       # fully implemented either way.
-      "openssl_certificate"                     => "community.crypto.x509_certificate",
-      "ansible.builtin.openssl_certificate"     => "community.crypto.x509_certificate",
-      "ansible.legacy.openssl_certificate"      => "community.crypto.x509_certificate",
-      "community.crypto.openssl_certificate"    => "community.crypto.x509_certificate",
-      "community.general.openssl_certificate"   => "community.crypto.x509_certificate",
+      "openssl_certificate"                   => "community.crypto.x509_certificate",
+      "ansible.builtin.openssl_certificate"   => "community.crypto.x509_certificate",
+      "ansible.legacy.openssl_certificate"    => "community.crypto.x509_certificate",
+      "community.crypto.openssl_certificate"  => "community.crypto.x509_certificate",
+      "community.general.openssl_certificate" => "community.crypto.x509_certificate",
       # openssl_certificate_info is x509_certificate_info's old name,
       # the exact same rename story as openssl_certificate above (shipped
       # pre-collection as openssl_certificate_info, renamed to
@@ -1893,6 +1900,13 @@ module Krikri
             safe_yaml_to_string(subset_yaml).split(',').map(&.strip)
           end
         play.gather_subset = play.gather_subset.reject(&.empty?)
+      end
+      if timeout_yaml = yaml["gather_timeout"]?
+        play.gather_timeout = safe_yaml_to_string(timeout_yaml).strip.to_i64?
+      end
+      if fact_path_yaml = yaml["fact_path"]?
+        path = safe_yaml_to_string(fact_path_yaml).strip
+        play.fact_path = path unless path.empty?
       end
       # Real Ansible REFUSES an unknown strategy - "[ERROR]: Invalid play
       # strategy specified: nonsense", exit 1 - rather than falling back

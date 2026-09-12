@@ -96,50 +96,215 @@ module Krikri
       ""
     end
 
+    # The element union of the fact hash, aliased so the timed-family
+    # scratch hash (gather_family_timed) can be the same shape without
+    # repeating the nine-member union inline.
+    alias FactValue = String | Int64 | Bool | Hash(String, String) | Array(String) | Array(Hash(String, String)) | Hash(String, JSON::Any) | Hash(String, Int64 | String) | Array(Hash(String, Int64 | String))
+    alias FactSet = Hash(String, FactValue)
+
+    # Raised for a positive gather_subset token real Ansible rejects -
+    # get_collector_names raises TypeError("Bad subset '%s' given to
+    # Ansible. ...") and setup's fail_json surfaces it as a module
+    # failure (live-verified against 2.19.4: `gather_subset=bogus` and
+    # even `gather_subset=` (empty string) both fail the module; a
+    # NEGATED unknown token like `!bogus` is silently ignored there).
+    class BadSubsetError < Exception
+    end
+
+    # Every subset name real ansible-core 2.19.4 accepts - the exact list
+    # its own Bad-subset failure message enumerates (captured live from
+    # `setup` on this machine). krikri implements only the network/
+    # hardware/mounts families plus the min bundle; names that real
+    # Ansible resolves to collectors krikri has no implementation for
+    # (virtual, dns, selinux, ...) are ACCEPTED but gather nothing extra,
+    # because failing them would break every role that uses a valid
+    # subset name this engine simply has no facts for.
+    VALID_SUBSETS = %w[
+      all_ipv4_addresses all_ipv6_addresses apparmor architecture caps
+      chroot cmdline date_time default_ipv4 default_ipv6 devices
+      distribution distribution_major_version distribution_release
+      distribution_version dns effective_group_ids effective_user_id env
+      facter fibre_channel_wwn fips hardware interfaces is_chroot iscsi
+      kernel kernel_version loadavg local lsb machine machine_id mounts
+      network nvme ohai os_family pkg_mgr platform processor
+      processor_cores processor_count python python_version real_user_id
+      selinux service_mgr ssh_host_key_dsa_public ssh_host_key_ecdsa_public
+      ssh_host_key_ed25519_public ssh_host_key_rsa_public ssh_host_pub_keys
+      ssh_pub_keys system system_capabilities system_capabilities_enforced
+      systemd user user_dir user_gecos user_gid user_id user_shell user_uid
+      virtual virtualization_role virtualization_tech_guest
+      virtualization_tech_host virtualization_type
+    ]
+
+    # Which subset tokens map to which krikri gatherer family - real
+    # Ansible's aliases_map (each collector's _fact_ids): asking for a
+    # single fact id like `all_ipv4_addresses` turns on that collector's
+    # whole family, exactly as real Ansible's fact_id -> collector map
+    # does. The min-bundle subset names (distribution, python, user, ...)
+    # are absent: they resolve to the min bundle itself, which real
+    # Ansible always gathers first anyway.
+    FAMILY_SUBSETS = {
+      "network"  => %w[network all_ipv4_addresses all_ipv6_addresses default_ipv4 default_ipv6 interfaces],
+      "hardware" => %w[hardware devices dmi processor processor_cores processor_count iscsi nvme fibre_channel_wwn loadavg],
+      "mounts"   => %w[mounts],
+    }
+
+    # The families "min" covers in this engine. Real Ansible's
+    # minimal_gather_subset also includes 'local' (the ansible_local
+    # fact_path collector), which this tracks as its own family entry so
+    # `!local` can drop just the custom-facts scan without touching the
+    # rest of min. "min" itself is the bookkeeping name for the six
+    # always-on gatherers in gather_facts.
+    MIN_FAMILIES = %w[min local]
+
+    ALL_FAMILIES           = MIN_FAMILIES + FAMILY_SUBSETS.keys
+    DEFAULT_GATHER_TIMEOUT = 10
+    DEFAULT_FACT_PATH      = "/etc/ansible/facts.d"
+
+    # Real Ansible's get_collector_names (module_utils/facts/collector.py),
+    # narrowed to the families this engine implements: 'min' is prepended
+    # unconditionally, "min"/"all" (and their negations) are special, a
+    # positive unknown token FAILS (BadSubsetError, mirroring real
+    # Ansible's TypeError), a negated unknown token is ignored, and an
+    # empty resolution widens to everything. Later tokens win. Returns
+    # the set of families to gather.
+    def resolve_enabled_families(tokens : Array(String)) : Set(String)
+      # Real get_collector_names: `gather_subset = gather_subset or
+      # ['all']` - an EMPTY list means all (Python falsy), matching the
+      # argument-spec default.
+      tokens = ["all"] if tokens.empty?
+      all_families = Set.new(ALL_FAMILIES)
+      min_only = Set.new(MIN_FAMILIES)
+
+      additional = Set(String).new
+      exclude = Set(String).new
+      explicit = Set(String).new
+
+      (["min"] + tokens).each do |token|
+        case token
+        when "min"
+          additional += min_only
+        when "all"
+          additional += all_families
+        when "!min"
+          exclude += min_only
+        when "!all"
+          exclude += (all_families - min_only)
+        else
+          if token.starts_with?('!')
+            name = token[1..]
+            # Asking to exclude an unknown subset is ignored (real
+            # behavior); known ones exclude their whole alias family.
+            FAMILY_SUBSETS.each do |family, names|
+              exclude << family if names.includes?(name)
+            end
+            exclude << "local" if name == "local"
+          else
+            unless VALID_SUBSETS.includes?(token)
+              raise BadSubsetError.new("Bad subset '#{token}' given to Ansible. gather_subset options allowed: all, #{VALID_SUBSETS.join(", ")}")
+            end
+            FAMILY_SUBSETS.each do |family, names|
+              if names.includes?(token)
+                additional << family
+                explicit << family
+              end
+            end
+          end
+        end
+      end
+
+      additional += all_families if additional.empty?
+      additional -= (exclude - explicit)
+      additional
+    end
+
     # Gather all system facts
     # `gather_subset:` - which families of facts to collect. Tokens are
-    # real Ansible's: all, min, hardware, network, virtual, plus a leading
-    # "!" to subtract. Later tokens win, and "min" is always included (real
-    # Ansible always returns the minimal set - verified: `!all,min` still
-    # yields hostname/distribution facts, just no hardware or mounts).
+    # real Ansible's: all, min, hardware, network, mounts, the per-fact
+    # aliases under FAMILY_SUBSETS, plus a leading "!" to subtract.
+    # Later tokens win, unknown positive tokens fail (BadSubsetError),
+    # and "min" is the floor exactly as in real Ansible - which means
+    # `!all` still yields the min set, while `!all,!min` (or a bare
+    # `!min`) yields nothing but the gather_subset/module_setup meta
+    # keys, live-verified against 2.19.4.
     #
     # Subsetting exists to skip the EXPENSIVE families: `!hardware` avoids
     # reading every block device, `!mounts` avoids statting every mount.
-    def subset_enabled?(subset : Array(String), family : String) : Bool
-      # min is the floor - never subtractable.
-      return true if family == "min"
+    def gather_facts(subset : Array(String) = [] of String, remote_connection : Bool = false, gather_timeout : Int64? = nil, fact_path : String? = DEFAULT_FACT_PATH) : FactSet
+      # No tokens at all means real Ansible's argument-spec default
+      # gather_subset=["all"], not a bare "min" resolution.
+      subset = ["all"] if subset.empty?
+      families = resolve_enabled_families(subset)
 
-      enabled = subset.empty? || subset.includes?("all")
-      subset.each do |token|
-        case token
-        when "all"         then enabled = true
-        when "!all"        then enabled = false
-        when family        then enabled = true
-        when "!#{family}"  then enabled = false
-        when "min", "!min" then next
-        end
+      facts = FactSet.new
+
+      # The minimal set, always gathered unless "min" itself was excluded
+      # (!min / !all,!min) - hostname, OS/distribution, the interpreter,
+      # the user, the clock and the environment. This is what real
+      # Ansible's "min" subset covers.
+      if families.includes?("min")
+        gather_hostname(facts)
+        gather_os_facts(facts)
+        gather_python_facts(facts, remote_connection)
+        gather_user_facts(facts)
+        gather_date_time_facts(facts)
+        gather_environment_facts(facts)
       end
-      enabled
-    end
 
-    def gather_facts(subset : Array(String) = [] of String, remote_connection : Bool = false) : Hash(String, String | Int64 | Bool | Hash(String, String) | Array(String) | Array(Hash(String, String)) | Hash(String, JSON::Any) | Hash(String, Int64 | String) | Array(Hash(String, Int64 | String)))
-      facts = {} of String => (String | Int64 | Bool | Hash(String, String) | Array(String) | Array(Hash(String, String)) | Hash(String, JSON::Any) | Hash(String, Int64 | String) | Array(Hash(String, Int64 | String)))
+      # ansible_local - custom *.fact files under fact_path. Part of real
+      # Ansible's minimal subset ('local'); dropped only by !local or
+      # !min.
+      if families.includes?("local")
+        facts["ansible_local"] = gather_local_facts(fact_path)
+      end
 
-      # The minimal set, always gathered - hostname, OS/distribution, the
-      # interpreter, the user and the clock. This is what real Ansible's
-      # "min" subset covers.
-      gather_hostname(facts)
-      gather_os_facts(facts)
-      gather_python_facts(facts, remote_connection)
-      gather_user_facts(facts)
-      gather_date_time_facts(facts)
-      gather_environment_facts(facts)
-
-      gather_network_facts(facts) if subset_enabled?(subset, "network")
-      gather_hardware_facts(facts) if subset_enabled?(subset, "hardware")
-      gather_mount_facts(facts) if subset_enabled?(subset, "mounts")
+      # network is NOT timeout-guarded in real Ansible either - its
+      # collector takes no gather_timeout (only hardware/mounts do, via
+      # module_utils/facts/hardware/linux.py's GATHER_TIMEOUT reads and
+      # timeout decorator), so neither does this.
+      gather_network_facts(facts) if families.includes?("network")
+      gather_family_timed(facts, "hardware", gather_timeout) { |scratch| gather_hardware_facts(scratch) } if families.includes?("hardware")
+      gather_family_timed(facts, "mounts", gather_timeout) { |scratch| gather_mount_facts(scratch) } if families.includes?("mounts")
 
       facts
+    end
+
+    # gather_timeout for the families real Ansible guards: the family
+    # collects into a scratch hash inside its own fiber, and a result
+    # that doesn't land within *gather_timeout* seconds (real default:
+    # 10, module_utils/facts/timeout.py's DEFAULT_GATHER_TIMEOUT) is
+    # dropped with a warning instead of failing the module - exactly
+    # real LinuxHardware's "No mount facts were gathered due to
+    # timeout." warning path. An overrun fiber cannot be killed in
+    # Crystal, so it keeps filling the scratch hash nobody reads.
+    private def gather_family_timed(facts : FactSet, family : String, gather_timeout : Int64?, &block : FactSet -> Nil) : Nil
+      scratch = FactSet.new
+      done = Channel(Bool).new
+      error = nil
+
+      spawn do
+        begin
+          block.call(scratch)
+          done.send(true)
+        rescue ex
+          error = ex
+          done.send(false)
+        end
+      end
+
+      timed_out = select
+      when done.receive
+        false
+      when timeout((gather_timeout || DEFAULT_GATHER_TIMEOUT).seconds)
+        true
+      end
+
+      if timed_out
+        STDERR.puts " [WARNING]: No #{family} facts were gathered due to timeout."
+      else
+        raise error.as(Exception) unless error.nil?
+        facts.merge!(scratch)
+      end
     end
 
     # Gather hostname facts
@@ -1144,7 +1309,7 @@ module Krikri
         parts.map(&.to_i64?)
 
       return {} of String => Int64 | String if block_size.nil? || block_total.nil? || block_free.nil? ||
-                                       block_available.nil? || inode_total.nil? || inode_free.nil?
+                                               block_available.nil? || inode_total.nil? || inode_free.nil?
 
       # Real Ansible's own ansible_mounts entries carry the space/inode
       # stats as INTEGERS, not strings - roles do real arithmetic on them
@@ -1323,27 +1488,210 @@ module Krikri
       facts["ansible_date_time"] = date_time
     end
 
+    # fact_path - real Ansible's local facts mechanism
+    # (module_utils/facts/system/local.py): every *.fact file in
+    # *fact_path* (real default /etc/ansible/facts.d) becomes a key under
+    # ansible_local. Executable files are RUN and their stdout parsed;
+    # the rest are read in place. Content must parse as JSON, else as
+    # ini (section-REQUIRED - a bare `key=value` with no [section] header
+    # is configparser's MissingSectionHeaderError, live-verified, and
+    # yields the same "error loading facts as JSON or ini - please check
+    # content:" error string real Ansible stores as the fact's value);
+    # unparseable content is stored as that error string, never fatal.
+    def gather_local_facts(fact_path : String?) : Hash(String, JSON::Any)
+      local = {} of String => JSON::Any
+      return local if fact_path.nil? || fact_path.empty? || !Dir.exists?(fact_path)
+
+      Dir.glob("#{fact_path}/*.fact").sort.each do |fact_file|
+        fact_base = File.basename(fact_file).chomp(".fact")
+
+        begin
+          executable = File.info(fact_file).permissions.owner_execute?
+        rescue e
+          local[fact_base] = JSON::Any.new("Could not stat fact (#{fact_file}): #{e.message}")
+          next
+        end
+
+        content = ""
+        if executable
+          err = IO::Memory.new
+          out_io = IO::Memory.new
+          begin
+            status = Process.run(fact_file, shell: false, output: out_io, error: err)
+            if status.exit_code != 0
+              local[fact_base] = JSON::Any.new("Failure executing fact script (#{fact_file}), rc: #{status.exit_code}, err: #{err}")
+              next
+            end
+            content = out_io.to_s
+          rescue e
+            local[fact_base] = JSON::Any.new("Could not execute fact script (#{fact_file}): #{e.message}")
+            next
+          end
+        else
+          content = File.read(fact_file) rescue ""
+        end
+
+        local[fact_base] = parse_local_fact(content, fact_file)
+      end
+
+      local
+    end
+
+    # One fact file's content: JSON first, then ini (sections become
+    # nested dicts, values stay strings), else the exact error string
+    # real Ansible stores. INI parsing mirrors configparser closely
+    # enough for fact files: [section] headers are REQUIRED, `key=value`
+    # (or `key: value`) pairs inside, `#`/`;` comments and blank lines
+    # skipped, whitespace around keys/values stripped.
+    private def parse_local_fact(content : String, fn : String) : JSON::Any
+      begin
+        return JSON.parse(content)
+      rescue
+      end
+
+      sections = Hash(String, Hash(String, String)).new
+      current : String? = nil
+      saw_header = false
+
+      content.each_line do |line|
+        stripped = line.strip
+        next if stripped.empty? || stripped.starts_with?("#") || stripped.starts_with?(";")
+
+        if stripped.starts_with?("[") && stripped.ends_with?("]") && stripped.size >= 3
+          current = stripped[1..-2]
+          saw_header = true
+          sections[current] ||= Hash(String, String).new
+          next
+        end
+
+        header = current
+        sep = stripped.index('=') || stripped.index(':')
+        if header.nil? || sep.nil?
+          # A key line outside any [section] is what configparser
+          # rejects the whole file over.
+          return JSON::Any.new("error loading facts as JSON or ini - please check content: #{fn}")
+        end
+        key = stripped[0...sep].strip
+        value = stripped[(sep + 1)..].strip
+        sections[header][key] = value
+      end
+
+      unless saw_header
+        return JSON::Any.new("error loading facts as JSON or ini - please check content: #{fn}")
+      end
+
+      parsed = Hash(String, JSON::Any).new
+      sections.each do |section, pairs|
+        parsed[section] = JSON.parse(pairs.to_json)
+      end
+      JSON.parse(parsed.to_json)
+    end
+
+    # filter - real Ansible's fnmatch (shell-style glob) filter over the
+    # TOP-LEVEL fact keys only, applied after gathering. Empty patterns
+    # mean no filter (live-verified: filter="" returns everything).
+    def apply_fact_filter(facts : FactSet, patterns : Array(String)) : FactSet
+      return facts if patterns.empty?
+      regexes = patterns.map { |pattern| fnmatch_to_regex(pattern) }
+
+      filtered = FactSet.new
+      facts.each do |key, value|
+        filtered[key] = value if regexes.any?(&.matches?(key))
+      end
+      filtered
+    end
+
+    # Python fnmatch.translate's glob dialect: *, ?, [seq], [!seq] -
+    # an unterminated [ is a literal. Case-sensitive (posix fnmatch).
+    def fnmatch_to_regex(pattern : String) : Regex
+      regex = IO::Memory.new
+      regex << "\\A"
+      i = 0
+      while i < pattern.size
+        c = pattern[i]
+        case c
+        when '*'
+          regex << ".*"
+          i += 1
+        when '?'
+          regex << "."
+          i += 1
+        when '['
+          close = pattern.index(']', i + 1)
+          if close && close > i + 1
+            inner = pattern[(i + 1)...close]
+            if inner.starts_with?('!')
+              regex << "[^#{Regex.escape(inner[1..])}]"
+            else
+              regex << "[#{inner}]"
+            end
+            i = close + 1
+          else
+            regex << "\\["
+            i += 1
+          end
+        else
+          regex << Regex.escape(c.to_s)
+          i += 1
+        end
+      end
+      regex << "\\Z"
+      Regex.new(regex.to_s)
+    end
+
     # The former `# Entry point` block, with the two differences that
     # make it serve both callers: *config* arrives already parsed (the
     # daemon hands over a `JSON::Any`; the standalone driver parses
     # STDIN itself), and the JSON is RETURNED rather than printed, since
     # the daemon frames the response itself. `nil` means "no config at
     # all", which the standalone path can legitimately see and which
-    # means an empty gather_subset, exactly as before.
+    # means real Ansible's argument-spec defaults (gather_subset=all,
+    # gather_timeout=10, no filter, fact_path=/etc/ansible/facts.d).
     def run(config : JSON::Any?) : String
-      requested_subset = [] of String
-      config.try(&.["params"]?).try(&.["gather_subset"]?).try(&.as_s?).try do |raw|
-        requested_subset = raw.split(',').map(&.strip).reject(&.empty?)
+      params = config.try(&.["params"]?)
+
+      # gather_subset: comma-separated in string form (type=list in real
+      # Ansible's argument spec, whose check_type_list splits on ','
+      # WITHOUT stripping - live-verified: "network, virtual" with a
+      # space FAILS the real module with "Bad subset ' virtual'"), or an
+      # actual list when the playbook passed YAML list form.
+      requested_subset = ["all"]
+      params.try(&.["gather_subset"]?).try do |raw|
+        if list = raw.as_a?
+          requested_subset = list.compact_map(&.as_s?)
+        else
+          raw.as_s?.try do |subset_string|
+            requested_subset = subset_string.split(',').reject(&.empty?)
+          end
+        end
       end
 
-      remote_connection = config.try(&.["params"]?).try(&.["_remote_connection"]?).try(&.as_s?) == "true"
+      gather_timeout = parse_gather_timeout(params)
+      filter_spec = parse_filter_spec(params)
+      fact_path = params.try(&.["fact_path"]?).try(&.as_s?) || DEFAULT_FACT_PATH
 
-      facts = gather_facts(requested_subset, remote_connection)
+      remote_connection = params.try(&.["_remote_connection"]?).try(&.as_s?) == "true"
+
+      facts = gather_facts(requested_subset, remote_connection, gather_timeout, fact_path)
+
+      # Real Ansible's own meta facts - every setup result carries the
+      # requested subset list and module_setup under ansible_facts
+      # (live-verified), filtered like every other top-level key.
+      facts["gather_subset"] = requested_subset
+      facts["module_setup"] = true
+
+      facts = apply_fact_filter(facts, filter_spec)
 
       {
         "changed"       => false,
         "failed"        => false,
         "ansible_facts" => facts,
+      }.to_json
+    rescue ex : BadSubsetError
+      {
+        "changed" => false,
+        "failed"  => true,
+        "msg"     => ex.message,
       }.to_json
     rescue ex
       STDERR.puts ex.backtrace.join("\n")
@@ -1352,6 +1700,41 @@ module Krikri
         "failed"  => true,
         "msg"     => "Facts gathering failed: #{ex.message}",
       }.to_json
+    end
+
+    # gather_timeout - type=int in real Ansible's argument spec: arrives
+    # as a JSON number or a numeric string; anything else fails the
+    # module with the exact shape real check_type_int produces
+    # (live-verified: `gather_timeout: "abc"` -> "argument
+    # 'gather_timeout' is of type str and we were unable to convert to
+    # int: ..."). Absent means real's 10-second default.
+    private def parse_gather_timeout(params : JSON::Any?) : Int64?
+      raw = params.try(&.["gather_timeout"]?) || return nil
+      if n = raw.as_i64?
+        return n
+      end
+      if s = raw.as_s?
+        if n = s.strip.to_i64?
+          return n
+        end
+        raise BadSubsetError.new("argument 'gather_timeout' is of type str and we were unable to convert to int: \"'#{s}'\" cannot be converted to an int")
+      end
+      nil
+    end
+
+    # filter - type=list in real Ansible's argument spec: a plain string
+    # is comma-split (no strip, same as gather_subset), a YAML list
+    # arrives as a JSON array. Empty/blank patterns are dropped, making
+    # an empty spec "no filter" exactly as live-verified.
+    private def parse_filter_spec(params : JSON::Any?) : Array(String)
+      raw = params.try(&.["filter"]?) || return [] of String
+      if list = raw.as_a?
+        return list.compact_map(&.as_s?).reject(&.empty?)
+      end
+      if s = raw.as_s?
+        return s.split(',').reject(&.empty?)
+      end
+      [] of String
     end
   end
 end
