@@ -2292,12 +2292,38 @@ module Krikri
           # evaluated the child operand at all. Verified on a fresh
           # Ubuntu host against the weareinteractive.vsftpd re-verify
           # (crystal 0.9.622) vs ansible-core 2.19.4.
+          # Capture the child's own string/list forms BEFORE the string
+          # prepend below overwrites it - the list rebuild needs the
+          # un-merged child conditions as its own_items suffix.
+          own_when_condition = task.when_condition
+          own_when_condition_list = task.when_condition_list
           task.when_condition = task.when_condition ? "(#{import_when}) and (#{task.when_condition})" : import_when
           # Same prepend in list form - the parent's per-item conditions
           # come before the child's own (see Task#when_condition_list).
-          if import_when_list
-            own_items = task.when_condition_list || (task.when_condition ? [task.when_condition.as(String)] : [] of String)
-            task.when_condition_list = import_when_list + own_items
+          #
+          # The list rebuild must trigger when EITHER side is (or has to
+          # become) list-strict, not only when the parent's own `when:`
+          # was a multi-item list. If the parent's `when:` is a scalar
+          # (`when: git_install_from_source | bool`) but the child has a
+          # multi-item list (`when: [a, b]`), condition_to_list returns
+          # nil for the parent and the old guard left the child's
+          # when_condition_list holding ONLY its own two items - the
+          # executor prefers the list over the joined string whenever
+          # it's non-nil, so the parent's false gate never got evaluated
+          # and the inlined task ran as `ok` where real Ansible skips it
+          # (statically-inlined import_tasks: ANDs the import-line when:
+          # onto every inlined task). Found via round 601595's
+          # opendevshop.aegir-apache divergence - geerlingguy.git's
+          # install-from-source.yml first task's own two-item when-list
+          # masking the import-line's scalar when-gate. A scalar side is
+          # folded in as a single-item prefix/suffix, which evaluates
+          # identically to the joined string; when both sides are
+          # scalars, when_condition_list stays nil for both, same as
+          # before.
+          if import_when_list || own_when_condition_list
+            parent_items = import_when_list || [import_when]
+            own_items = own_when_condition_list || (own_when_condition ? [own_when_condition.as(String)] : [] of String)
+            task.when_condition_list = parent_items + own_items
           end
         end
         task.tags = (task.tags + import_tags).uniq

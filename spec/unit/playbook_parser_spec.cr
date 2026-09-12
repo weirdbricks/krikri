@@ -1734,6 +1734,44 @@ describe Krikri::PlaybookParser do
       tasks[1].when_condition.should eq(%((foo == "bar") and (other_var == "x")))
     end
 
+    it "keeps the import's scalar when: in the imported task's when: list alongside the child's own list items" do
+      # Round 601595 (opendevshop.aegir-apache, via geerlingguy.git):
+      # the import's `when:` was a SCALAR (`git_install_from_source |
+      # bool`, default false) but the imported task's own `when:` was a
+      # two-item LIST (install-from-source.yml's OS-family check). The
+      # list rebuild only ran when the PARENT's when: was itself a
+      # multi-item list, so the child's when_condition_list kept only
+      # its own two items - and the executor prefers the list over the
+      # joined string, so the parent's false gate never got evaluated
+      # and the task ran as `ok` where real Ansible skips it.
+      root = import_tasks_root("import_tasks_scalar_parent_list_child_spec")
+      File.write(File.join(root, "common.yml"), <<-YAML)
+        - name: list-conditioned child
+          ansible.builtin.debug:
+            msg: hi
+          when:
+            - ansible_os_family == "RedHat"
+            - not is_fedora
+        YAML
+
+      playbook = Krikri::PlaybookParser.parse_string(<<-YAML, File.join(root, "site.yml"))
+        - name: play
+          hosts: all
+          vars:
+            git_install_from_source: false
+          tasks:
+            - import_tasks: common.yml
+              when: git_install_from_source | bool
+        YAML
+
+      task = playbook.plays[0].tasks[0]
+      # Parent scalar becomes a single-item prefix; the child's own
+      # two items follow it - every one now evaluated, so the false
+      # parent gate actually skips the task.
+      task.when_condition_list.should eq(["git_install_from_source | bool", %q(ansible_os_family == "RedHat"), "not is_fedora"])
+      task.when_condition.should eq(%((git_install_from_source | bool) and ((ansible_os_family == "RedHat") and (not is_fedora))))
+    end
+
     it "applies the import's own tags: to each imported task individually" do
       root = import_tasks_root("import_tasks_tags_spec")
       File.write(File.join(root, "common.yml"), <<-YAML)
