@@ -1780,6 +1780,99 @@ describe Krikri::PlaybookParser do
       playbook.plays[0].tasks[0].notify.should eq(["restart thing"])
     end
 
+    it "applies the import's own become:/become_user: to each imported task individually" do
+      # Real bug found benchmarking silverlogic.rvm's tasks/main.yml
+      # (`import_tasks: 'rvm.yml', become: yes, become_user: '{{ rvm1_user }}'`):
+      # when:/tags:/notify: on the import line were already propagated onto
+      # each inlined task (see the specs just above), but become:/
+      # become_user: were silently dropped - every rvm.yml task ran as root
+      # instead of the (nonexistent-on-target) rvm1_user. Real Ansible
+      # fatals immediately on the first inlined task's privilege-escalation
+      # temp-file setup; here the whole role actually executed (real
+      # network installer + keyserver timeouts, ~250s vs ~5s).
+      root = import_tasks_root("import_tasks_become_spec")
+      File.write(File.join(root, "common.yml"), <<-YAML)
+        - name: imported one
+          ansible.builtin.debug:
+            msg: hi
+        - name: imported two
+          ansible.builtin.debug:
+            msg: hi
+        YAML
+
+      playbook = Krikri::PlaybookParser.parse_string(<<-YAML, File.join(root, "site.yml"))
+        - name: play
+          hosts: all
+          tasks:
+            - import_tasks: common.yml
+              become: true
+              become_user: somebody
+        YAML
+
+      tasks = playbook.plays[0].tasks
+      tasks[0].become?.should be_true
+      tasks[0].become_user.should eq("somebody")
+      tasks[1].become?.should be_true
+      tasks[1].become_user.should eq("somebody")
+    end
+
+    it "lets an imported task's own become:/become_user: override the import line's" do
+      # Child wins over parent, same precedence as block: (task > block >
+      # play) - so the propagation must be ambient-fallback, not a
+      # clobbering iteration over the parsed tasks.
+      root = import_tasks_root("import_tasks_become_child_override_spec")
+      File.write(File.join(root, "common.yml"), <<-YAML)
+        - name: plain child
+          ansible.builtin.debug:
+            msg: hi
+        - name: specific child
+          ansible.builtin.debug:
+            msg: hi
+          become: false
+          become_user: otheruser
+        YAML
+
+      playbook = Krikri::PlaybookParser.parse_string(<<-YAML, File.join(root, "site.yml"))
+        - name: play
+          hosts: all
+          tasks:
+            - import_tasks: common.yml
+              become: true
+              become_user: somebody
+        YAML
+
+      tasks = playbook.plays[0].tasks
+      tasks[0].become?.should be_true
+      tasks[0].become_user.should eq("somebody")
+      tasks[1].become?.should be_false
+      tasks[1].become_user.should eq("otheruser")
+    end
+
+    it "does not leak the import line's become into sibling tasks parsed after it" do
+      root = import_tasks_root("import_tasks_become_no_leak_spec")
+      File.write(File.join(root, "common.yml"), <<-YAML)
+        - name: imported task
+          ansible.builtin.debug:
+            msg: hi
+        YAML
+
+      playbook = Krikri::PlaybookParser.parse_string(<<-YAML, File.join(root, "site.yml"))
+        - name: play
+          hosts: all
+          tasks:
+            - import_tasks: common.yml
+              become: true
+              become_user: somebody
+            - name: sibling after
+              ansible.builtin.debug:
+                msg: hi
+        YAML
+
+      sibling = playbook.plays[0].tasks[1]
+      sibling.become?.should be_false
+      sibling.become_user.should be_nil
+    end
+
     it "resolves a nested import_tasks: relative to the file that contains it, not the top-level playbook" do
       root = import_tasks_root("import_tasks_nested_spec")
       Dir.mkdir_p(File.join(root, "sub"))

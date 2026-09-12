@@ -2211,7 +2211,39 @@ module Krikri
       return [] of Task if imported_yaml.raw.nil?
       raise "Imported tasks file must be a YAML list: #{resolved_path}" unless imported_yaml.as_a?
 
-      imported_tasks = parse_tasks(imported_yaml.as_a, play, "task in imported #{resolved_path}", File.dirname(resolved_path), known_vars, role_path, playbook_dir)
+      # A `become:`/`become_user:` written directly on the import_tasks:
+      # line applies to every task the import statically inlines (same
+      # mechanism as the when:/tags:/notify:/vars: propagation just
+      # below - real Ansible applies import-line keywords to all inlined
+      # tasks). Rather than iterating the parsed tasks and clobbering
+      # each one's become (which would break a CHILD task's own more
+      # specific become:/become_user:), temporarily make them the
+      # "ambient" default via the same play save/set/restore trick
+      # parse_block_task uses: each inlined task resolves its own become
+      # through resolve_become(child_hash, play), so the task's own
+      # become wins and the import line's only fills the gap. Found via
+      # silverlogic.rvm's tasks/main.yml (`import_tasks: 'rvm.yml',
+      # become: yes, become_user: '{{ rvm1_user }}'`): the become_user
+      # was silently dropped, every rvm.yml task ran as root instead of
+      # the (nonexistent-on-target) ubuntu user - real Ansible fatals
+      # immediately on the first inlined task's privilege-escalation
+      # temp-file setup, while here the whole role actually executed
+      # (real network installer + keyserver timeouts, ~250s vs ~5s).
+      saved_become = play.become?
+      saved_become_user = play.become_user
+      play.become = resolve_become(hash, play)
+      play.become_user = hash["become_user"]?.try { |v| safe_yaml_to_string(v) } || play.become_user
+      # ensure-restore, not fall-through-restore: if the child parse
+      # raises (a parse error, or a nested import), the play's become
+      # must still be restored - a clobbered play.become would silently
+      # leak this import's escalation into every task parsed AFTER it
+      # (same reasoning as parse_block_task's own ensure-restore).
+      begin
+        imported_tasks = parse_tasks(imported_yaml.as_a, play, "task in imported #{resolved_path}", File.dirname(resolved_path), known_vars, role_path, playbook_dir)
+      ensure
+        play.become = saved_become
+        play.become_user = saved_become_user
+      end
 
       import_when = hash["when"]?.try { |v| condition_to_string(v) }
       import_when_list = hash["when"]?.try { |v| condition_to_list(v) }
