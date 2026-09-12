@@ -23,6 +23,19 @@ narrative, newest first.
 
 ## Open gaps
 
+- **`copy:` never auto-decrypts a vault-encrypted `src:`** (proactive
+  param-coverage audit): real Ansible's `decrypt: true` (the default)
+  transparently decodes a vault-encrypted source file on the controller
+  before transfer; krikri's controller-side read
+  (`TaskExecutor#inline_copy_source_content`) doesn't go through
+  `Vault.maybe_decrypt`, so the ciphertext is uploaded verbatim - i.e.
+  krikri's effective behavior equals real Ansible's `decrypt: false`
+  for every run. The `decrypt:` param itself is accepted as a no-op
+  (wiring decryption in would silently change what lands on disk for
+  existing plays relying on the pass-through); making `decrypt: true`
+  actually decrypt needs a controller-side decision about which vault
+  password applies and is unimplemented.
+
 - **Round 700000-701129 + 702000-702046 requeue: 26 single-role missing
   modules** (400-role Galaxy top-download batch, ubuntu+rocky, plus the
   47-role kata-recovery requeue): `os_nova_flavor`, `os_keypair`,
