@@ -1207,6 +1207,20 @@ module Krikri
       # actually passed.
       @results[host.name]["ok"] += 1
 
+      # A host halted by an EARLIER loop iteration's included tasks (the
+      # looped branch in #execute_include_tasks): real Ansible registers
+      # every loop iteration's include before any included task executes
+      # (all the "included:" lines print first, then the included tasks run
+      # in order - pluggero.upgrade round 601548), so this iteration's
+      # registration still counts `ok` - but its file must NOT be loaded.
+      # Loading it anyway meant a load-time failure in a LATER iteration's
+      # file (03_reboot.yml's unimplemented ansible.windows.win_reboot
+      # raising UnresolvedModuleError) surfaced as a SECOND failed= entry
+      # after the host had already failed, recapping failed=2 where real
+      # Ansible - whose own module resolution never errors there - recaps
+      # failed=1 with only the original task's error.
+      return if @halted_hosts.includes?(host.name)
+
       substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
       file_rel = substitutor.substitute(task.include_file.as(String))
       resolved_path = PlaybookParser.resolve_include_path(file_rel, task.include_file_dir.as(String))

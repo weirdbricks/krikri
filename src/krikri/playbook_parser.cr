@@ -175,6 +175,16 @@ module Krikri
     # rather than an error.
     property loop_first_found : Array(String)?
     property? loop_first_found_skip : Bool
+    # true only for the scalar string form (`with_first_found: "{{ var }}"`
+    # - parse_first_found wraps it into a one-element list, so the executor
+    # couldn't otherwise tell it apart from a one-element literal list).
+    # The distinction decides WHERE the undefined-ness of a reference is
+    # surfaced: real Ansible templates the keyword's own value strictly
+    # (a scalar `{{ undefined_var }}` source fails the task), but hands a
+    # literal list's candidate strings to the first_found lookup plugin,
+    # which templates each term leniently - an undefined reference inside a
+    # list candidate renders to nothing and just never matches a file.
+    property? loop_first_found_string_form : Bool
     # with_first_found:'s own paths: sub-key (as opposed to the
     # lookup('first_found', {files:, paths:})/query() function-call
     # idiom, which already threads paths: through via evaluate_first_found
@@ -468,6 +478,7 @@ module Krikri
       @loop_file = nil
       @loop_first_found = nil
       @loop_first_found_skip = false
+      @loop_first_found_string_form = false
       @loop_first_found_paths = nil
       @loop_template_kind = nil
       @loop_template = nil
@@ -2752,6 +2763,7 @@ module Krikri
       elsif with_first_found = task_hash["with_first_found"]?
         task.loop_first_found = parse_first_found(with_first_found)
         task.loop_first_found_skip = first_found_skip?(with_first_found)
+        task.loop_first_found_string_form = with_first_found.as_a?.nil?
         task.loop_first_found_paths = parse_first_found_paths(with_first_found)
       elsif with_fileglob = task_hash["with_fileglob"]?
         task.loop_fileglob = if with_fileglob.as_a?
@@ -3041,6 +3053,7 @@ module Krikri
       if with_first_found = task_hash["with_first_found"]?
         task.loop_first_found = parse_first_found(with_first_found)
         task.loop_first_found_skip = first_found_skip?(with_first_found)
+        task.loop_first_found_string_form = with_first_found.as_a?.nil?
         task.loop_first_found_paths = parse_first_found_paths(with_first_found)
       elsif with_fileglob = task_hash["with_fileglob"]?
         # `with_fileglob:` (geerlingguy.php_versions' own "Include OS-
@@ -3501,6 +3514,7 @@ module Krikri
       elsif with_first_found = task_hash["with_first_found"]?
         task.loop_first_found = parse_first_found(with_first_found)
         task.loop_first_found_skip = first_found_skip?(with_first_found)
+        task.loop_first_found_string_form = with_first_found.as_a?.nil?
         task.loop_first_found_paths = parse_first_found_paths(with_first_found)
       elsif with_subelements = task_hash["with_subelements"]?.try(&.as_a?)
         # f5devcentral.bigiq_move_app_dashboard/.bigiq_pinning_deploy_
