@@ -18,29 +18,11 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.959`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.974`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.30` (see `shard.yml`).
 
 ## Open gaps
 
-- **`ansible.builtin.add_host`** (`oVirt.hosted_engine_setup`, round 601198,
-  2026-09-11): genuinely unimplemented - no plugin, no `AVAILABLE_PLUGINS`
-  entry, unlike the mount/timezone/alternatives legacy-FQCN gaps fixed in
-  `0.9.959` (those had a real plugin under a different FQCN; this one has
-  none at all). The one round that hit it is separately broken upstream
-  (references a nonexistent `ovirt.engine-setup` role, so real Ansible
-  fails too, earlier), but `add_host` is a real, fundamental core action
-  plugin gap worth its own entry regardless of that role.
-- **Not yet root-caused** (400-role batch, round 601000-601999, 2026-09-11,
-  ubuntu+rocky/atlantic): each shows a genuine `ok=`/`changed=`/`failed=`
-  recap mismatch on both engines, no quick repro attempted yet -
-  `GROG.reboot`, `MonolithProjects.system_update`,
-  `Tecnativa.hetzner_rescue_installimage`, `robertdebock.common`,
-  `oVirt.engine-setup`, `ontic.git`, `ryandaniels.connectivity_test`,
-  `trombik.redhat_repo`, `levonet.ci_registry_rm_container`,
-  `silverlogic.rvm` (also runs ~250s on krikri vs ~5s on real Ansible -
-  worth a perf look, not just correctness), `pluggero.upgrade`,
-  `diodonfrost.p10k`, `opendevshop.aegir-apache`, `timorunge.pmm_client`.
 - **Low-priority single-role missing modules** (round 601000-601999,
   2026-09-11 batch, one role each unless noted): `docker_volume`,
   `docker_stack`, `community.docker.docker_volume` (2 roles),
@@ -109,6 +91,76 @@ real krikri bug per this file's workflow - the shortlist is at
 `testing/kata/round_new_authors/shortlist120.txt` if resuming it.
 
 ---
+
+## Round 601000-601999 follow-up: add_host implemented + all 14 remaining divergences root-caused, 11 more real bugs fixed (0.9.959 -> 0.9.974)
+
+Follow-up work closing out the round 601000-601999 batch's open items: the
+genuinely-missing `ansible.builtin.add_host` action plugin (real, no
+plugin/AVAILABLE_PLUGINS entry existed at all), and every one of the 14
+"not yet root-caused" divergences from that batch, each investigated via
+a Crush-implemented fix in its own git worktree, independently rebuilt/
+spec'd/linted/repro'd against real `ansible-playbook` before merging.
+
+- **`ansible.builtin.add_host`** (0.9.960): implemented as a
+  controller-side action plugin (same shape as debug/assert/fail/
+  set_fact/pause) mutating the run's shared Inventory so a later play's
+  `hosts:` pattern picks up the dynamically-added host.
+- **`GROG.reboot`** (0.9.961): Gathering Facts double-counted a host the
+  pre-upload pass had already found unreachable - one real SSH failure
+  booked as both `failed` and `unreachable`.
+- **`MonolithProjects.system_update`** (0.9.962): `apt: name: "*" state:
+  latest` routed through `apt-get install *` (a glob over the WHOLE
+  archive) instead of `apt-get upgrade`.
+- **`Tecnativa.hetzner_rescue_installimage`** (0.9.963): `ansible_devices`
+  (block-device facts) was never gathered at all - any template
+  iterating it died with "can't iterate over undefined".
+- **`oVirt.engine-setup`** (0.9.964): `package_facts` with an explicitly
+  named manager whose backing tool is missing silently reported an
+  empty success instead of failing, unlike real Ansible.
+- **`ryandaniels.connectivity_test`** (0.9.965): a non-dict
+  `environment:` value (e.g. a role default left as `[]`) failed the
+  task instead of being treated as empty, matching real Ansible.
+- **`trombik.redhat_repo`** (0.9.966): yum/dnf treated a `name:`/`pkg:`
+  key present but resolving to an empty list as a missing-parameter
+  failure instead of a no-op.
+- **`levonet.ci_registry_rm_container`** (0.9.967): `uri`/`get_url`
+  failure results omitted real Ansible's `status: -1`/`status_code: -1`
+  sentinel fields, crashing a role's `when: r.status == 200` guard.
+- **`robertdebock.common`** (0.9.969): a host that died mid-run (SSH
+  transport failure discovered outside the one-time pre-upload pass) was
+  booked as a generic failed task forever instead of UNREACHABLE with
+  the host halted - wired into facts-gathering, the per-task path, the
+  looped-task path, and the batch-script transport.
+- **`ontic.git`** (0.9.968): `x | default(None) != None` (the standard
+  "is this optional param actually null" idiom) answered backwards for a
+  defined-but-null variable, because the comparison round-tripped
+  through rendered text instead of resolving the base directly.
+- **`silverlogic.rvm`** (0.9.970): `become:`/`become_user:` on an
+  `import_tasks:` line was silently dropped instead of propagating onto
+  the inlined tasks - explains both the correctness divergence (ran as
+  root instead of failing on a nonexistent user) and the ~250s-vs-~5s
+  perf gap (real Ansible aborts at task 1; krikri ran the whole role).
+- **`pluggero.upgrade`** (0.9.971): two bugs - `with_first_found:`
+  list-form candidates were templated strict instead of leniently
+  (crashing on an undefined nested attribute instead of just not
+  matching), and a looped `include_tasks:` kept loading later
+  iterations' files after an earlier iteration had already halted the
+  host, producing a spurious second `failed=` entry.
+- **`opendevshop.aegir-apache`** (0.9.972): a scalar `import_tasks:
+  when:` was silently dropped whenever the imported task had its own
+  multi-item `when:` list - the list form was preferred over the joined
+  string wherever it was non-nil, and the merge only ever rebuilt that
+  list when the PARENT's `when:` was itself a list.
+- **`diodonfrost.p10k`** (0.9.973): a dict literal inside a `+`-appended
+  list literal (the classic Ansible loop-accumulator pattern,
+  `acc | default([]) + [{...}]`) resolved to `null` for every element.
+- **`timorunge.pmm_client`** (0.9.974): a bare `ansible_version` magic-var
+  dict (instead of its `.string`/`.full` field) passed to `is
+  version(...)` was silently stringified and digit-scanned instead of
+  failing the task the way real Ansible's version comparator does -
+  fixed in both independent evaluators (`ConditionalEvaluator` for
+  `when:`/`assert:`, Crinja's `version`/`version_compare` test
+  registrations for `{{ }}` templates).
 
 ## Round 601000-601999: 400-role Galaxy top-download batch, 3 real bugs fixed (0.9.958 -> 0.9.959)
 

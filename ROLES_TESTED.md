@@ -5434,7 +5434,7 @@ not what was seen live during the round).
 | `devshop.aegir-apache` | rocky | ❌ untestable - Galaxy install failed - install failed (see galaxy_install.log). |
 | `devshop.aegir-user` | rocky | ❌ untestable - Galaxy install failed - install failed (see galaxy_install.log). |
 | `diodonfrost.amazon_codedeploy` | ubuntu | ✅ clean. Times: cold py 29.52s vs cr 18.78s; warm py 9.31s vs cr 3.23s. |
-| `diodonfrost.p10k` | rocky | ⚠️ divergent - recap mismatch (ansible cold `ok=19 changed=9 unreachable=0 failed=0 skipped=1` vs krikri cold `ok=8 changed=1 unreachable=0 failed=1 skipped=1`); not yet root-caused. Times: cold py 61.53s vs cr 24.49s; warm py 46.66s vs cr 1.09s. |
+| `diodonfrost.p10k` | rocky | ⚠️ divergent - recap mismatch (ansible cold `ok=19 changed=9 unreachable=0 failed=0 skipped=1` vs krikri cold `ok=8 changed=1 unreachable=0 failed=1 skipped=1`); root-caused - a dict literal inside a `+`-appended list literal (loop-accumulator pattern) resolved to `null`, fixed in 0.9.973; not re-verified live. Times: cold py 61.53s vs cr 24.49s; warm py 46.66s vs cr 1.09s. |
 | `diodonfrost.puppet_agent` | rocky | ⚠️ divergent - krikri lacks `win_service` (deliberate limit - Windows modules unimplemented, host-management engine targets Linux). Times: cold py 11.73s vs cr 0.02s; warm py 9.36s vs cr 0.02s. |
 | `dokku.ansible_dokku` | ubuntu | ❌ untestable - Galaxy install failed - role not found on galaxy.ansible.com (404). |
 | `don-rumata.ansible_role_install_flatpak` | rocky | ❌ untestable - Galaxy install failed - role not found on galaxy.ansible.com (404). |
@@ -5477,7 +5477,7 @@ not what was seen live during the round).
 | `giovtorres.bash-completion` | rocky | ✅ clean. Times: cold py 8.56s vs cr 12.28s; warm py 5.96s vs cr 0.98s. |
 | `girder.mongodb` | rocky | ✅ clean. Times: cold py 7.43s vs cr 13.44s; warm py 6.83s vs cr 0.78s. |
 | `Graylog2.graylog` | ubuntu | ✅ clean. Times: cold py 479.27s vs cr 355.83s; warm py 419.24s vs cr 300.67s. |
-| `GROG.reboot` | ubuntu | ⚠️ divergent - recap mismatch on warm rerun (ansible warm `ok=0 changed=0 unreachable=1 failed=0 skipped=0` vs krikri warm `ok=0 changed=0 unreachable=1 failed=1 skipped=0`, cold matches); not yet root-caused. Times: cold py 318.48s vs cr 301.77s; warm py 4.21s vs cr 57.11s. |
+| `GROG.reboot` | ubuntu | ⚠️ divergent - recap mismatch on warm rerun (ansible warm `ok=0 changed=0 unreachable=1 failed=0 skipped=0` vs krikri warm `ok=0 changed=0 unreachable=1 failed=1 skipped=0`, cold matches); root-caused - Gathering Facts double-counted a pre-upload-detected unreachable host as both unreachable and failed, fixed in 0.9.961; not re-verified live. Times: cold py 318.48s vs cr 301.77s; warm py 4.21s vs cr 57.11s. |
 | `grycap.cri_o` | rocky | ✅ clean. Times: cold py 6.15s vs cr 13.64s; warm py 5.61s vs cr 0.43s. |
 | `gsoft-inc.azure_devops_agent` | ubuntu | ❌ untestable - Galaxy install failed - role not found on galaxy.ansible.com (404). |
 | `GzEvD.docuum` | ubuntu | ✅ clean. Times: cold py 10.27s vs cr 6.37s; warm py 4.00s vs cr 0.37s. |
@@ -5542,7 +5542,7 @@ not what was seen live during the round).
 | `lenovo.lxca-inventory` | ubuntu | ✅ clean. Times: cold py 5.34s vs cr 5.33s; warm py 3.34s vs cr 0.32s. |
 | `LeSpocky.telegraf_docker_in_docker` | ubuntu | ✅ clean. Times: cold py 6.86s vs cr 5.10s; warm py 2.23s vs cr 0.52s. |
 | `levonet.ci_get_free_port` | rocky | ✅ clean. Times: cold py 6.54s vs cr 11.73s; warm py 4.95s vs cr 0.68s. |
-| `levonet.ci_registry_rm_container` | rocky | ⚠️ divergent - recap mismatch (ansible cold `ok=2 changed=0 unreachable=0 failed=0 skipped=2` vs krikri cold `ok=2 changed=0 unreachable=0 failed=1 skipped=1`); not yet root-caused. Times: cold py 6.76s vs cr 12.03s; warm py 7.16s vs cr 0.62s. |
+| `levonet.ci_registry_rm_container` | rocky | ⚠️ divergent - recap mismatch (ansible cold `ok=2 changed=0 unreachable=0 failed=0 skipped=2` vs krikri cold `ok=2 changed=0 unreachable=0 failed=1 skipped=1`); root-caused - `uri`/`get_url` failure results omitted real Ansible's `status: -1` sentinel fields, fixed in 0.9.967; not re-verified live. Times: cold py 6.76s vs cr 12.03s; warm py 7.16s vs cr 0.62s. |
 | `libre-ops.metabase` | ubuntu | ❌ untestable - Galaxy install failed - role not found on galaxy.ansible.com (404). |
 | `linux-system-roles.pam_pwd` | rocky | ✅ clean. Times: cold py 38.42s vs cr 12.09s; warm py 40.29s vs cr 1.24s. |
 | `lukas-bednar.nested_virtualization` | rocky | ✅ clean. Times: cold py 8.15s vs cr 11.70s; warm py 5.81s vs cr 0.78s. |
@@ -5570,7 +5570,7 @@ not what was seen live during the round).
 | `MonolithProjects.hassio` | ubuntu | ✅ clean. Times: cold py 4.74s vs cr 2.48s; warm py 4.05s vs cr 0.50s. |
 | `MonolithProjects.homeassistant_compliance` | ubuntu | ✅ clean. Times: cold py 3.77s vs cr 2.06s; warm py 1.88s vs cr 0.40s. |
 | `MonolithProjects.homebrew` | ubuntu | ✅ clean. Times: cold py 46.30s vs cr 44.97s; warm py 6.05s vs cr 1.45s. |
-| `MonolithProjects.system_update` | ubuntu | ⚠️ divergent - recap mismatch (ansible cold `ok=3 changed=1 unreachable=0 failed=0 skipped=3` vs krikri cold `ok=2 changed=0 unreachable=0 failed=1 skipped=2`); not yet root-caused. Times: cold py 17.38s vs cr 31.15s; warm py 6.46s vs cr 25.35s. |
+| `MonolithProjects.system_update` | ubuntu | ⚠️ divergent - recap mismatch (ansible cold `ok=3 changed=1 unreachable=0 failed=0 skipped=3` vs krikri cold `ok=2 changed=0 unreachable=0 failed=1 skipped=2`); root-caused - `apt: name: "*" state: latest` routed through `apt-get install *` instead of `apt-get upgrade`, fixed in 0.9.962; not re-verified live. Times: cold py 17.38s vs cr 31.15s; warm py 6.46s vs cr 25.35s. |
 | `MonolithProjects.user_management` | ubuntu | ✅ clean. Times: cold py 8.76s vs cr 4.15s; warm py 5.95s vs cr 0.89s. |
 | `nephelaiio.xclip` | rocky | ✅ clean. Times: cold py 33.61s vs cr 35.98s; warm py 14.86s vs cr 0.70s. |
 | `nertwork.nextcloud_containerized` | ubuntu | ⚠️ divergent - krikri lacks `docker_volume` (low-priority open gap per KNOWN_MISSING.md). Times: cold py 7.39s vs cr 2.45s; warm py 4.93s vs cr 0.63s. |
@@ -5603,8 +5603,8 @@ not what was seen live during the round).
 | `ome.python3_virtualenv` | ubuntu | ✅ clean. Times: cold py 8.54s vs cr 7.18s; warm py 3.48s vs cr 1.50s. |
 | `ome.python_pydata` | rocky | ✅ clean. Times: cold py 20.93s vs cr 32.12s; warm py 6.82s vs cr 4.06s. |
 | `ONLYOFFICE.rabbitmq` | rocky | ⚠️ divergent - krikri lacks `community.rabbitmq.rabbitmq_vhost` (low-priority open gap per KNOWN_MISSING.md). Times: cold py 33.66s vs cr 0.02s; warm py 26.72s vs cr 0.03s. |
-| `ontic.git` | rocky | ⚠️ divergent - recap mismatch (ansible cold `ok=4 changed=1 unreachable=0 failed=0 skipped=5` vs krikri cold `ok=5 changed=2 unreachable=0 failed=1 skipped=3`); not yet root-caused. Times: cold py 11.18s vs cr 16.14s; warm py 5.34s vs cr 0.94s. |
-| `opendevshop.aegir-apache` | rocky | ⚠️ divergent - recap mismatch (ansible cold `ok=2 changed=1 unreachable=0 failed=0 skipped=12` vs krikri cold `ok=3 changed=1 unreachable=0 failed=0 skipped=11`); not yet root-caused. Times: cold py 13.75s vs cr 23.21s; warm py 8.81s vs cr 0.98s. |
+| `ontic.git` | rocky | ⚠️ divergent - recap mismatch (ansible cold `ok=4 changed=1 unreachable=0 failed=0 skipped=5` vs krikri cold `ok=5 changed=2 unreachable=0 failed=1 skipped=3`); root-caused - `default(None) != None` answered backwards for a defined-but-null variable, fixed in 0.9.968; not re-verified live. Times: cold py 11.18s vs cr 16.14s; warm py 5.34s vs cr 0.94s. |
+| `opendevshop.aegir-apache` | rocky | ⚠️ divergent - recap mismatch (ansible cold `ok=2 changed=1 unreachable=0 failed=0 skipped=12` vs krikri cold `ok=3 changed=1 unreachable=0 failed=0 skipped=11`); root-caused - a scalar `import_tasks: when:` was silently dropped whenever the imported task had its own multi-item `when:` list, fixed in 0.9.972; not re-verified live. Times: cold py 13.75s vs cr 23.21s; warm py 8.81s vs cr 0.98s. |
 | `opendevshop.aegir-user` | rocky | ✅ clean. Times: cold py 43.34s vs cr 24.41s; warm py 37.28s vs cr 8.34s. |
 | `openmicroscopy.ansible-role-prometheus-node` | rocky | ✅ clean. Times: cold py 11.86s vs cr 9.88s; warm py 18.58s vs cr 0.68s. |
 | `openmicroscopy.haproxy` | rocky | ✅ clean. Times: cold py 21.60s vs cr 15.17s; warm py 13.12s vs cr 0.97s. |
@@ -5615,8 +5615,8 @@ not what was seen live during the round).
 | `osx-provisioner.homebrew_retry` | ubuntu | ❌ untestable - Galaxy install failed - role not found on galaxy.ansible.com (404). |
 | `oVirt.cluster-upgrade` | ubuntu | ⚠️ divergent - krikri lacks `ovirt_api_info` (deliberate limit - vendor-appliance orchestration scope question, open gap). Times: cold py 4.53s vs cr 0.02s; warm py 2.04s vs cr 0.01s. |
 | `oVirt.disaster-recovery` | ubuntu | ⚠️ divergent - krikri lacks `ovirt_vm_facts` (deliberate limit - vendor-appliance orchestration scope question, open gap). Times: cold py 4.52s vs cr 3.42s; warm py 3.74s vs cr 0.48s. |
-| `oVirt.engine-setup` | ubuntu | ⚠️ divergent - recap mismatch (ansible cold `ok=2 changed=0 unreachable=0 failed=1 skipped=0` vs krikri cold `ok=3 changed=0 unreachable=0 failed=1 skipped=0`); not yet root-caused. Times: cold py 8.46s vs cr 3.90s; warm py 5.55s vs cr 0.43s. |
-| `oVirt.hosted_engine_setup` | ubuntu | ⚠️ divergent - role itself references a nonexistent `ovirt.engine-setup` role (broken upstream); krikri additionally lacks `ansible.builtin.add_host` (genuinely missing action plugin, tracked as an open gap). Times: cold py 0.98s vs cr 0.02s; warm py 0.97s vs cr 0.02s. |
+| `oVirt.engine-setup` | ubuntu | ⚠️ divergent - recap mismatch (ansible cold `ok=2 changed=0 unreachable=0 failed=1 skipped=0` vs krikri cold `ok=3 changed=0 unreachable=0 failed=1 skipped=0`); root-caused - `default(None) != None` answered backwards for a defined-but-null variable, fixed in 0.9.968; not re-verified live. Times: cold py 8.46s vs cr 3.90s; warm py 5.55s vs cr 0.43s. |
+| `oVirt.hosted_engine_setup` | ubuntu | ⚠️ divergent - role itself references a nonexistent `ovirt.engine-setup` role (broken upstream, real Ansible fails too, earlier); krikri additionally lacked `ansible.builtin.add_host`, implemented in 0.9.960; not re-verified live since the role fails for its own unrelated reason regardless. Times: cold py 0.98s vs cr 0.02s; warm py 0.97s vs cr 0.02s. |
 | `oVirt.image-template` | ubuntu | ✅ clean. Times: cold py 3.89s vs cr 2.02s; warm py 2.68s vs cr 0.67s. |
 | `oVirt.manageiq` | ubuntu | ⚠️ divergent - krikri lacks `ovirt_vm` (deliberate limit - vendor-appliance orchestration scope question, open gap). Times: cold py 0.64s vs cr 0.01s; warm py 0.51s vs cr 0.01s. |
 | `oVirt.repositories` | ubuntu | ✅ clean. Times: cold py 4.86s vs cr 2.29s; warm py 4.15s vs cr 0.56s. |
@@ -5625,7 +5625,7 @@ not what was seen live during the round).
 | `oVirt.vm-infra` | ubuntu | ✅ clean. Times: cold py 4.33s vs cr 5.57s; warm py 3.43s vs cr 0.38s. |
 | `Pandemonium1986.kubectl` | rocky | ✅ clean. Times: cold py 8.58s vs cr 11.96s; warm py 8.19s vs cr 1.26s. |
 | `pinkeen.postfix` | rocky | ✅ clean. Times: cold py 13.67s vs cr 17.87s; warm py 7.22s vs cr 0.79s. |
-| `pluggero.upgrade` | rocky | ⚠️ divergent - recap mismatch (ansible cold `ok=4 changed=0 unreachable=0 failed=1 skipped=0` vs krikri cold `ok=4 changed=0 unreachable=0 failed=2 skipped=0`); not yet root-caused. Times: cold py 4.18s vs cr 13.75s; warm py 3.72s vs cr 0.46s. |
+| `pluggero.upgrade` | rocky | ⚠️ divergent - recap mismatch (ansible cold `ok=4 changed=0 unreachable=0 failed=1 skipped=0` vs krikri cold `ok=4 changed=0 unreachable=0 failed=2 skipped=0`); root-caused - `with_first_found:` list-candidates templated too strictly, plus a looped `include_tasks:` kept loading later iterations' files after the host had already halted, both fixed in 0.9.971; not re-verified live. Times: cold py 4.18s vs cr 13.75s; warm py 3.72s vs cr 0.46s. |
 | `pluggero.virtualbox_guest` | rocky | ⚠️ divergent - krikri lacks `ansible.windows.win_reboot` (deliberate limit - Windows modules unimplemented, host-management engine targets Linux). Times: cold py 4.73s vs cr 0.02s; warm py 5.14s vs cr 0.02s. |
 | `PyratLabs.kind` | ubuntu | ❌ untestable - Galaxy install failed - role not found on galaxy.ansible.com (404). |
 | `r-pufky.pihole` | ubuntu | ❌ untestable - Galaxy install failed - role not found on galaxy.ansible.com (404). |
@@ -5639,7 +5639,7 @@ not what was seen live during the round).
 | `Rheinwerk.yedit` | rocky | ✅ clean. Times: cold py 4.82s vs cr 10.74s; warm py 3.17s vs cr 0.47s. |
 | `ricsanfre.bind9` | rocky | ✅ clean. Times: cold py 8.29s vs cr 12.37s; warm py 5.45s vs cr 0.64s. |
 | `robertdebock.ca` | ubuntu | ⚠️ divergent - kata-image artifact - target's Python 3.13 lacks the `cryptography` library, real Ansible fails on the missing dependency where krikri's native crypto has none; not a krikri defect. Times: cold py 8.17s vs cr 2.91s; warm py 8.59s vs cr 0.72s. |
-| `robertdebock.common` | ubuntu | ⚠️ divergent - recap mismatch (ansible cold `ok=8 changed=2 unreachable=1 failed=0 skipped=3` vs krikri cold `ok=8 changed=2 unreachable=0 failed=1 skipped=3`); not yet root-caused. Times: cold py 616.79s vs cr 614.29s; warm py 3.74s vs cr 18.49s. |
+| `robertdebock.common` | ubuntu | ⚠️ divergent - recap mismatch (ansible cold `ok=8 changed=2 unreachable=1 failed=0 skipped=3` vs krikri cold `ok=8 changed=2 unreachable=0 failed=1 skipped=3`); root-caused - a host that died mid-run was booked as generic failed tasks instead of UNREACHABLE, fixed in 0.9.969; not re-verified live. Times: cold py 616.79s vs cr 614.29s; warm py 3.74s vs cr 18.49s. |
 | `robertdebock.npm` | ubuntu | ✅ clean. Times: cold py 13.92s vs cr 9.80s; warm py 7.66s vs cr 1.26s. |
 | `robertdebock.openvpn` | ubuntu | ✅ clean. Times: cold py 72.90s vs cr 42.34s; warm py 36.44s vs cr 0.79s. |
 | `robertdebock.terraform` | ubuntu | ✅ clean. Times: cold py 6.69s vs cr 3.99s; warm py 4.26s vs cr 2.59s. |
@@ -5657,7 +5657,7 @@ not what was seen live during the round).
 | `roles-ansible.unbound` | ubuntu | ❌ untestable - Galaxy install failed - role not found on galaxy.ansible.com (404). |
 | `roles-ansible.xrandr_help` | ubuntu | ❌ untestable - Galaxy install failed - role not found on galaxy.ansible.com (404). |
 | `route1337.jumpcloud` | rocky | ✅ clean. Times: cold py 4.67s vs cr 9.26s; warm py 2.75s vs cr 0.38s. |
-| `ryandaniels.connectivity_test` | rocky | ⚠️ divergent - recap mismatch (ansible cold `ok=2 changed=1 unreachable=0 failed=1 skipped=3` vs krikri cold `ok=1 changed=0 unreachable=0 failed=1 skipped=1`); not yet root-caused. Times: cold py 13.30s vs cr 11.51s; warm py 11.28s vs cr 0.62s. |
+| `ryandaniels.connectivity_test` | rocky | ⚠️ divergent - recap mismatch (ansible cold `ok=2 changed=1 unreachable=0 failed=1 skipped=3` vs krikri cold `ok=1 changed=0 unreachable=0 failed=1 skipped=1`); root-caused - a non-dict `environment:` value failed the task instead of being treated as empty, fixed in 0.9.965; not re-verified live. Times: cold py 13.30s vs cr 11.51s; warm py 11.28s vs cr 0.62s. |
 | `sansible.newrelic_integration_infra` | rocky | ✅ clean. Times: cold py 0.95s vs cr 0.02s; warm py 0.87s vs cr 0.02s. |
 | `scicore-unibas-ch.biomedit_transfers_tool` | ubuntu | ❌ untestable - Galaxy install failed - role not found on galaxy.ansible.com (404). |
 | `scicore-unibas-ch.slurm` | ubuntu | ❌ untestable - Galaxy install failed - role not found on galaxy.ansible.com (404). |
@@ -5666,7 +5666,7 @@ not what was seen live during the round).
 | `shaneholloman.composer` | rocky | ❌ untestable - Galaxy install failed - install failed (see galaxy_install.log). |
 | `sicruse.powerline-fonts` | rocky | ✅ clean. Times: cold py 11.70s vs cr 13.24s; warm py 8.01s vs cr 0.85s. |
 | `silverlogic.rabbitmq` | rocky | ✅ clean. Times: cold py 0.90s vs cr 0.02s; warm py 0.90s vs cr 0.02s. |
-| `silverlogic.rvm` | rocky | ⚠️ divergent - recap mismatch (ansible cold `ok=1 changed=0 unreachable=0 failed=1 skipped=0` vs krikri cold `ok=6 changed=2 unreachable=0 failed=1 skipped=2`); not yet root-caused. Times: cold py 4.91s vs cr 251.68s; warm py 6.79s vs cr 122.23s. |
+| `silverlogic.rvm` | rocky | ⚠️ divergent - recap mismatch (ansible cold `ok=1 changed=0 unreachable=0 failed=1 skipped=0` vs krikri cold `ok=6 changed=2 unreachable=0 failed=1 skipped=2`); root-caused - `become:`/`become_user:` on an `import_tasks:` line was silently dropped (explains both the correctness gap and the perf blowup), fixed in 0.9.970; not re-verified live. Times: cold py 4.91s vs cr 251.68s; warm py 6.79s vs cr 122.23s. |
 | `SimpliField.logrotate` | rocky | ✅ clean. Times: cold py 6.94s vs cr 10.46s; warm py 5.53s vs cr 0.48s. |
 | `singleplatform-eng.awscli` | rocky | ✅ clean. Times: cold py 16.13s vs cr 23.26s; warm py 7.06s vs cr 1.82s. |
 | `Slapper.ansible_victoriametrics_cluster_role` | ubuntu | ✅ clean. Times: cold py 3.20s vs cr 1.41s; warm py 2.02s vs cr 0.32s. |
@@ -5684,7 +5684,7 @@ not what was seen live during the round).
 | `T2L.solr` | rocky | ✅ clean. Times: cold py 7.41s vs cr 16.18s; warm py 5.27s vs cr 0.42s. |
 | `tbaczynski.metricbeat` | rocky | ✅ clean. Times: cold py 7.30s vs cr 10.16s; warm py 7.21s vs cr 0.57s. |
 | `Tecnativa.docker` | ubuntu | ✅ clean. Times: cold py 173.84s vs cr 100.36s; warm py 45.19s vs cr 2.19s. |
-| `Tecnativa.hetzner_rescue_installimage` | ubuntu | ⚠️ divergent - recap mismatch (ansible cold `ok=2 changed=1 unreachable=0 failed=1 skipped=0` vs krikri cold `ok=1 changed=0 unreachable=0 failed=1 skipped=0`); not yet root-caused. Times: cold py 6.29s vs cr 1.92s; warm py 4.14s vs cr 0.57s. |
+| `Tecnativa.hetzner_rescue_installimage` | ubuntu | ⚠️ divergent - recap mismatch (ansible cold `ok=2 changed=1 unreachable=0 failed=1 skipped=0` vs krikri cold `ok=1 changed=0 unreachable=0 failed=1 skipped=0`); root-caused - `ansible_devices` (block-device facts) was never gathered at all, fixed in 0.9.963; not re-verified live. Times: cold py 6.29s vs cr 1.92s; warm py 4.14s vs cr 0.57s. |
 | `telekom-mms.grafana` | ubuntu | ❌ untestable - Galaxy install failed - role not found on galaxy.ansible.com (404). |
 | `telus.ntp` | rocky | ❌ untestable - Galaxy install failed - install failed (see galaxy_install.log). |
 | `terentev-mn.keepalived` | rocky | ❌ untestable - Galaxy install failed - download timed out (network-side), not retried. |
@@ -5692,8 +5692,8 @@ not what was seen live during the round).
 | `thomas-maurice.ansible_role_gitea` | ubuntu | ❌ untestable - Galaxy install failed - role not found on galaxy.ansible.com (404). |
 | `tigattack.immich_docker` | rocky | ✅ clean. Times: cold py 5.19s vs cr 11.03s; warm py 5.39s vs cr 0.62s. |
 | `tigattack.mergerfs` | ubuntu | ✅ clean. Times: cold py 29.36s vs cr 19.82s; warm py 16.78s vs cr 2.86s. |
-| `timorunge.pmm_client` | rocky | ⚠️ divergent - recap mismatch (ansible cold `ok=3 changed=0 unreachable=0 failed=1 skipped=0` vs krikri cold `ok=5 changed=0 unreachable=0 failed=1 skipped=1`); not yet root-caused. Times: cold py 4.83s vs cr 34.03s; warm py 4.45s vs cr 24.75s. |
-| `trombik.redhat_repo` | rocky | ⚠️ divergent - recap mismatch (ansible cold `ok=2 changed=0 unreachable=0 failed=0 skipped=1` vs krikri cold `ok=1 changed=0 unreachable=0 failed=1 skipped=0`); not yet root-caused. Times: cold py 7.37s vs cr 9.73s; warm py 7.67s vs cr 0.67s. |
+| `timorunge.pmm_client` | rocky | ⚠️ divergent - recap mismatch (ansible cold `ok=3 changed=0 unreachable=0 failed=1 skipped=0` vs krikri cold `ok=5 changed=0 unreachable=0 failed=1 skipped=1`); root-caused - a bare `ansible_version` dict passed to `is version(...)` was silently stringified instead of failing the task, fixed in 0.9.974; not re-verified live. Times: cold py 4.83s vs cr 34.03s; warm py 4.45s vs cr 24.75s. |
+| `trombik.redhat_repo` | rocky | ⚠️ divergent - recap mismatch (ansible cold `ok=2 changed=0 unreachable=0 failed=0 skipped=1` vs krikri cold `ok=1 changed=0 unreachable=0 failed=1 skipped=0`); root-caused - yum/dnf treated an empty `name:`/`pkg:` list as a missing-parameter failure instead of a no-op, fixed in 0.9.966; not re-verified live. Times: cold py 7.37s vs cr 9.73s; warm py 7.67s vs cr 0.67s. |
 | `tulibraries.ansible_role_passenger_apache` | rocky | ✅ clean. Times: cold py 99.79s vs cr 61.88s; warm py 51.04s vs cr 2.55s. |
 | `Turgon37.sudoers` | rocky | ✅ clean. Times: cold py 24.26s vs cr 12.48s; warm py 37.19s vs cr 0.87s. |
 | `uchida.docker` | rocky | ✅ clean. Times: cold py 4.92s vs cr 9.89s; warm py 3.57s vs cr 0.52s. |
