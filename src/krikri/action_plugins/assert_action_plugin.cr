@@ -16,6 +16,17 @@ module Krikri
   # for correctness, but a real remote SSH round trip + upload for every
   # assert: task was a real, avoidable cost). plugins/assert.cr is kept
   # as a real, working binary for `--async`/manual invocation.
+  #
+  # `quiet:` (bool, default false) is display-only: a passing assert
+  # with `quiet: true` still carries `msg` in its result/registered var
+  # (live-verified against real ansible-core 2.19.4), but the success
+  # message is not printed. Real Ansible implements the same thing by
+  # adding `_ansible_verbose_always` when NOT quiet; here a quiet
+  # success instead tags the result with `_ansible_quiet: true` (private
+  # `_ansible_*` keys are stripped before register, so the registered
+  # var shape matches real Ansible's exactly either way) and
+  # ResultDisplay suppresses the msg for it. Failures report
+  # msg/assertion/evaluated_to identically with or without `quiet:`.
   class AssertActionPlugin < ActionPlugin
     def execute : ActionResult
       that_json = @params["that"]?
@@ -71,8 +82,18 @@ module Krikri
         ActionResult.final(ActionResult.plugin_result_json(false, true, fail_msg, extra))
       else
         success_msg = @params["success_msg"]? || "All assertions passed"
-        ActionResult.final(ActionResult.plugin_result_json(false, false, success_msg))
+        if true?(@params["quiet"]?)
+          extra = {"_ansible_quiet" => JSON::Any.new(true)}
+          ActionResult.final(ActionResult.plugin_result_json(false, false, success_msg, extra))
+        else
+          ActionResult.final(ActionResult.plugin_result_json(false, false, success_msg))
+        end
       end
+    end
+
+    private def true?(value : String?, default : Bool = false) : Bool
+      return default unless value
+      ["true", "yes", "1", "on"].includes?(value.downcase)
     end
   end
 end

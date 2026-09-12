@@ -769,15 +769,15 @@ module Krikri
 
                          item_label = item_label_for(task, item, vars_context, host)
                          result = if (until_condition = task.until_condition) && !resolve_task_check_mode(task, vars_context)
-                           # Real Ansible retries each loop item
-                           # independently under until:/retries: - the
-                           # loop_items branch used to return before the
-                           # until branch in execute_task, silently
-                           # dropping retries for looped tasks.
-                           run_until_retries(task, host, vars_context, until_condition, item_exec_host, defer_loop_stats: true, item_label: item_label)
-                         else
-                           execute_task_once(task, host, vars_context, item_label: item_label, exec_host: item_exec_host, defer_loop_stats: true)
-                         end
+                                    # Real Ansible retries each loop item
+                                    # independently under until:/retries: - the
+                                    # loop_items branch used to return before the
+                                    # until branch in execute_task, silently
+                                    # dropping retries for looped tasks.
+                                    run_until_retries(task, host, vars_context, until_condition, item_exec_host, defer_loop_stats: true, item_label: item_label)
+                                  else
+                                    execute_task_once(task, host, vars_context, item_label: item_label, exec_host: item_exec_host, defer_loop_stats: true)
+                                  end
                          if result && (facts = result["ansible_facts"]?) && (facts_hash = facts.as_h?)
                            facts_hash.each { |key, value| running_vars_context[key] = value }
                          end
@@ -1004,6 +1004,10 @@ module Krikri
         ResultDisplay.display_result(host, result, @diff_mode, item_label: item_label, ignore_errors: resolve_task_ignore_errors(task, base_vars_context), no_log: resolve_task_no_log(task, base_vars_context))
 
         result_hash = result.as_h.dup
+        # Same private-key strip register_result does - a looped task's
+        # per-item results land in the registered aggregate, and real
+        # Ansible never exposes `_ansible_*` keys there.
+        result_hash.reject! { |key, _| key.starts_with?("_ansible_") }
         result_hash["item"] = item
         # loop_control: { loop_var: some_name } exposes the item under
         # that CUSTOM name too, in addition to "item" (real Ansible's

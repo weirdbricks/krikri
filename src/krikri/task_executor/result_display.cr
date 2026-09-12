@@ -53,7 +53,15 @@ module Krikri
 
       # Show message for successful tasks if msg is present and meaningful
       # This allows debug plugin output to be visible
-      if !failed && msg && !msg.empty? && !["ok", "Command executed successfully", "File already exists with identical content"].includes?(msg)
+      #
+      # quiet: (assert:'s own option, tagged on the result by the assert
+      # plugins as the private `_ansible_quiet` key) suppresses ONLY the
+      # passing assert's message display - a failing one still reports
+      # msg/assertion/evaluated_to exactly as without quiet:. Live-verified
+      # against real ansible-core 2.19.4 (quiet success prints a bare
+      # `ok:` line; quiet failure output is unchanged).
+      quiet_success = result["_ansible_quiet"]?.try(&.as_bool) || false
+      if !failed && msg && !msg.empty? && !quiet_success && !["ok", "Command executed successfully", "File already exists with identical content"].includes?(msg)
         # Format multi-line messages nicely
         if msg.includes?("\n")
           puts msg.split("\n").map { |line| "  #{line}" }.join("\n")

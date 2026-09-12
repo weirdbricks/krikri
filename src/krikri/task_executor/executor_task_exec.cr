@@ -419,7 +419,7 @@ module Krikri
     # result field like "result.rc" does). Same substitute-then-evaluate
     # pipeline as when_condition/until_condition.
     private def finish_single_task(task : Task, host : Host, result : JSON::Any, fact_host : Host = host,
-                                    vars_context : Hash(String, JSON::Any)? = nil) : Nil
+                                   vars_context : Hash(String, JSON::Any)? = nil) : Nil
       result = debug_if_requested(task, host, result)
       merge_ansible_facts(fact_host, result, task.module_name.ends_with?("set_fact"))
 
@@ -1163,7 +1163,14 @@ module Krikri
 
     # Register task result as a variable
     private def register_result(host : Host, register_name : String, result : JSON::Any) : Nil
-      @registered_vars[host.name][register_name] = with_command_lines_augmented(result)
+      # Strip private `_ansible_*` result keys before register: - real
+      # Ansible never lets them through (live-verified: assert:'s own
+      # `_ansible_verbose_always` is absent from the registered var), and
+      # the assert plugins' `_ansible_quiet` display marker is likewise
+      # controller-internal, not part of the registered shape.
+      result_hash = result.as_h.dup
+      result_hash.reject! { |key, _| key.starts_with?("_ansible_") }
+      @registered_vars[host.name][register_name] = with_command_lines_augmented(JSON::Any.new(result_hash))
       @hv_generation += 1
     end
 

@@ -68,4 +68,39 @@ describe "assert plugin" do
     result = PluginSpecHelper.run("assert", {"that" => that_json("true")})
     result["changed"].as_bool.should be_false
   end
+
+  describe "quiet:" do
+    # Real ansible-core 2.19.4, live-verified: quiet: is display-only. A
+    # passing assert with quiet: true still carries msg in its
+    # result/registered var (exactly {changed, failed, msg}); only the
+    # success message's *display* is suppressed. A failing assert reports
+    # msg/assertion/evaluated_to identically with or without quiet:.
+    it "tags a passing assert with the private _ansible_quiet marker while keeping msg" do
+      result = PluginSpecHelper.run("assert", {"that" => that_json("1 == 1"), "quiet" => "true"})
+      result["failed"].as_bool.should be_false
+      result["msg"].as_s.should eq("All assertions passed")
+      result["_ansible_quiet"].as_bool.should be_true
+    end
+
+    it "coerces quiet as an Ansible bool (yes/no)" do
+      result = PluginSpecHelper.run("assert", {"that" => that_json("true"), "quiet" => "yes"})
+      result["_ansible_quiet"].as_bool.should be_true
+      result = PluginSpecHelper.run("assert", {"that" => that_json("true"), "quiet" => "no"})
+      result["_ansible_quiet"]?.should be_nil
+    end
+
+    it "leaves a passing assert untagged without quiet:" do
+      result = PluginSpecHelper.run("assert", {"that" => that_json("true")})
+      result["_ansible_quiet"]?.should be_nil
+    end
+
+    it "does not suppress a failing assert's report" do
+      result = PluginSpecHelper.run("assert", {"that" => that_json("1 == 2"), "quiet" => "true"})
+      result["failed"].as_bool.should be_true
+      result["msg"].as_s.should eq("Assertion failed")
+      result["assertion"].as_s.should eq("1 == 2")
+      result["evaluated_to"].as_bool.should be_false
+      result["_ansible_quiet"]?.should be_nil
+    end
+  end
 end

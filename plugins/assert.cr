@@ -43,6 +43,18 @@ module Krikri
   # fail/success messages are exactly `"Assertion failed"` /
   # `"All assertions passed"`, and `msg:` is a real, still-working alias
   # for `fail_msg:` (renamed in Ansible 2.7, alias kept for compat).
+  #
+  # `quiet:` (bool, default false - the only other documented option) is
+  # display-only: with `quiet: true` a PASSING assert still carries
+  # `msg` in its result/registered var (live-verified - the registered
+  # var is exactly {changed, failed, msg} either way), but the success
+  # message is not printed by the task-result display. A FAILING assert
+  # reports msg/assertion/evaluated_to identically with or without
+  # `quiet:`. Implemented by tagging a quiet success result with the
+  # private `_ansible_quiet: true` key (the same convention real
+  # Ansible's own `_ansible_verbose_always` inverse uses; private
+  # `_ansible_*` keys are stripped before register, so the registered
+  # var shape stays identical to real Ansible's).
   class AssertPlugin < BasePlugin
     def execute : PluginResult
       that_json = @params["that"]?
@@ -74,7 +86,11 @@ module Krikri
         PluginResult.new(changed: false, failed: true, msg: fail_msg, assertion: failing, evaluated_to: false)
       else
         success_msg = @params["success_msg"]? || "All assertions passed"
-        PluginResult.new(changed: false, failed: false, msg: success_msg)
+        if true?(@params["quiet"]?)
+          PluginResult.new(changed: false, failed: false, msg: success_msg, _ansible_quiet: true)
+        else
+          PluginResult.new(changed: false, failed: false, msg: success_msg)
+        end
       end
     end
   end
