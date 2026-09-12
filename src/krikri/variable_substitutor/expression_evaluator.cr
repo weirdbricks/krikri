@@ -1626,6 +1626,21 @@ module Krikri
 
         return parse_literal_array(expr) if expr.starts_with?('[') && expr.ends_with?(']')
 
+        # A dict-literal operand (`{'name': item['name'], 'home': item[
+        # 'home']}` inside `acc | default([]) + [{...}]` - diodonfrost.
+        # p10k's own user-info accumulator, round 601558) needs the same
+        # treatment the array-literal case above already gets: without
+        # it the raw `{...}` text fell through to a plain variable-name
+        # lookup, which cannot resolve it, so every accumulated element
+        # came back null. Reuses evaluate_dict_literal (already the
+        # top-level dict-literal path) and parses its output back into
+        # structured data - format_value of a Hash is JSON-compact
+        # on purpose for exactly this round trip.
+        if literal_dict_expr?(expr)
+          rendered = evaluate_dict_literal(expr)
+          return (JSON.parse(rendered) rescue JSON::Any.new(rendered))
+        end
+
         nil
       end
 
