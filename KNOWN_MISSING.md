@@ -18,10 +18,54 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.974`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.976`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.30` (see `shard.yml`).
 
 ## Open gaps
+
+- **Round 700000-701129 + 702000-702046 requeue: 26 single-role missing
+  modules** (400-role Galaxy top-download batch, ubuntu+rocky, plus the
+  47-role kata-recovery requeue): `os_nova_flavor`, `os_keypair`,
+  `os_image_info`, `os_security_group`, `os_keystone_domain`,
+  `cloudflare_dns`, `cloudformation`, `mongodb_user`,
+  `elasticsearch_plugin`, `acme_certificate`, `postgresql_ext`,
+  `flatpak_remote`, `jenkins_script`, `kubevirt.core.kubevirt_vm`,
+  `win_shell`, `win_file`, `ansible.windows.win_command`,
+  `community.general.apk` (2 roles), `community.general.zypper`,
+  `community.general.zypper_repository`,
+  `community.general.dnf_config_manager`, `community.general.cronvar`,
+  `community.general.homebrew_cask`, `community.general.launchd`,
+  `community.general.dconf`, `community.general.portage` - genuinely
+  missing, one role each unless noted. See `ROLES_TESTED.md` for the
+  exact affected role per module.
+- **Round 700000-701129: 23 real divergences, not yet root-caused**
+  (400-role Galaxy top-download batch, ubuntu+rocky) - each needs its
+  own confirmed repro before treating as a real krikri bug, per this
+  file's workflow: `inverse_inc.gitlab_buildpkg_tools`,
+  `alannix_lw.lacework_agent_ansible_role`,
+  `redhat_sap.sap_hana_deployment`, `manala.environment`,
+  `grycap.clues`, `ChristopherDavenport.apache-portable-runtime`,
+  `manala.accounts`, `buluma.confluence`, `xanmanning.helm`,
+  `buluma.jira`, `HanXHX.debian_bootstrap`,
+  `reimarstier.jetbrains_installer`, `darkwizard242.packer`,
+  `openmicroscopy.upgrade-distpackages`, `buluma.gitlab_ee`,
+  `linux-system-roles.ssh`, `redhat_sap.sap_hana_hsr` - one-off recap
+  mismatches, no shared pattern found yet. Three cluster on the same
+  `first_found` lookup symptom ("No file was found when using
+  first_found" or resolving to the wrong candidate entirely -
+  `ccdc.ntp_configuration` picks `vars/Debian.yml` instead of
+  `tasks/Linux.yml`): `ccdc.ntp_configuration`, `so5.ssh_hostbased_auth`,
+  `so5.pbspro`. Two show an `undefined`-looking value leaking into
+  rendered output (`diodonfrost.vagrant`'s URL literally contains
+  `vagrant_undefined_linux_amd64`; `buluma.fish`'s repo metadata is
+  similarly broken) - possibly the recursive-re-templating bug class
+  already known elsewhere in this file, not yet confirmed.
+- **47-role kata-recovery requeue (round 702000-702046): 47 BOOT_FAILED
+  roles from the original ubuntu batch (round 700113-700197), all pure
+  Kata infra flakiness** - re-run via Atlantic.net and now reflected in
+  `ROLES_TESTED.md` under their final (mostly CLEAN) status. Not a
+  krikri gap; noted here only because it's what triggered the Kata
+  backend's retirement from `krikri-role-tester` (see `CLAUDE.md`).
 
 - **Low-priority single-role missing modules** (round 601000-601999,
   2026-09-11 batch, one role each unless noted): `docker_volume`,
@@ -89,6 +133,53 @@ back to it (`0x0i.systemd`, `igor_nikiforov.etcd`, `wezhai.minio`,
 the nine above needs its own confirmed repro before treating it as a
 real krikri bug per this file's workflow - the shortlist is at
 `testing/kata/round_new_authors/shortlist120.txt` if resuming it.
+
+---
+
+## Round 700000-702046: 400-role Galaxy batch + 47-role kata-recovery requeue, 1 real bug + 1 macOS build fix (0.9.974 -> 0.9.976)
+
+400-role Galaxy top-download batch split ubuntu (round 700000-700199) +
+rocky (round 700400-700471, then 701000-701129 after a restart), triaged
+via the new `launch-roles` Claude Code skill. Results: 222 CLEAN, 48
+DIVERGENT (26 single-role missing modules, 22 not-yet-root-caused real
+divergences - both listed under Open gaps above), 129 BLOCKED (81
+GALAXY_MISSING, 47 BOOT_FAILED, 1 STOPPED).
+
+The 47 BOOT_FAILED were all Kata, all clustered near the end of the
+ubuntu batch (round 700113-700197) - pure infra flakiness, not krikri
+signal. Re-queued and re-run via Atlantic.net alone (round 702000-702046):
+37 came back CLEAN, 3 DIVERGENT (2 more missing modules, folded into the
+Open gaps tally above; 1 real bug, below), 7 GALAXY_MISSING. This result -
+combined with the tool's own history of Kata-specific reliability issues
+(see `testing/kata/README.md`) - is what triggered retiring Kata as a
+`krikri-role-tester` backend entirely (see `CLAUDE.md`); Atlantic.net's
+`--atlantic-hosts` default was also raised to 22 (the account's actual
+usable ceiling) so a round no longer needs its concurrency manually
+re-derived at launch time.
+
+- **`hbjydev.restic`** (0.9.976): `plugins/copy.cr`'s `src`/`content`
+  presence check only caught `nil`, not an empty string - Ansible's real
+  `copy` action plugin is Python-truthiness based, so a role with
+  `restic_files: []` (the role's own default) templating `content:` to
+  `""` correctly fails with "src (or content) is required" in real
+  Ansible but silently wrote an empty file in krikri. Fixed with
+  `@params["content"]?.presence`/`@params["src"]?.presence` (`@params`
+  is `Hash(String, String)`, so Crystal's own `String#presence`/
+  `Nil#presence` already does exactly the right empty-or-nil-to-nil
+  normalization). Confirmed against real ansible-core's
+  `plugins/action/copy.py` (stable-2.19 and devel) and re-verified on
+  the real host post-fix (round 703000): CLEAN, cold and warm.
+- **macOS Release build** (0.9.975, no role - found via a failing
+  scheduled Release run, not a role-tester round):
+  `filetree_lookup.cr`'s raw `lstat` FFI read `stat.st_mtim`/`st_ctim`
+  directly, which only exist on glibc/Linux's `LibC::Stat` - Darwin
+  names the same fields `st_mtimespec`/`st_ctimespec`, breaking both
+  macOS Release jobs since v0.9.957 while Linux passed fine. Fixed with
+  the same `{% if flag?(:darwin) %}` pattern `base_plugin.cr` already
+  uses for the identical problem, confirmed against the installed
+  Crystal compiler's own Darwin bindings rather than guessed. macOS
+  correctness itself still needs confirming via the next scheduled
+  Release run - this machine is Linux-only.
 
 ---
 
