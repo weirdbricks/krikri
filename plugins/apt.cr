@@ -15,6 +15,17 @@ module Krikri
   #   cache_valid_time (optional): Cache is valid for this many seconds
   #   check_mode (optional): Dry-run mode
   #
+  #   The remaining real-Ansible apt module options (see the param
+  #   parsing in #execute_inner for each one's mapping to the real
+  #   module's behavior):
+  #   allow_change_held_packages, allow_downgrade, allow_unauthenticated,
+  #   auto_install_module_deps (no-op by architecture - a native Crystal
+  #   plugin has no python3-apt dependency for it to govern),
+  #   default_release, dpkg_options, fail_on_autoremove, force,
+  #   force_apt_get (no-op by construction - this plugin always shells
+  #   out to apt-get, it has no aptitude path to steer away from),
+  #   install_recommends, only_upgrade, policy_rc_d, purge.
+  #
   # Examples:
   #   apt:
   #     name: nginx
@@ -44,6 +55,31 @@ module Krikri
     # cache-refresh task) hard-fails with "object of type 'dict' has no
     # attribute 'cache_updated'" the moment a registered result lacks it.
     @cache_updated = false
+
+    # Real-Ansible apt module params this plugin threads into its apt-get
+    # invocations (defaults mirror apt.py's argument_spec). Booleans are
+    # parsed once here and read by the handle_* helpers below; the
+    # tri-state `install_recommends` stays nil when unset so the OS
+    # default (normally install-recommends=yes) applies untouched.
+    @dpkg_options = "force-confdef,force-confold"
+    @policy_rc_d : Int32? = nil
+    @purge = false
+    @force = false
+    @fail_on_autoremove = false
+    @only_upgrade = false
+    @allow_unauthenticated = false
+    @allow_downgrade = false
+    @allow_change_held_packages = false
+    @default_release : String? = nil
+    @install_recommends : Bool? = nil
+    @policy_rc_d_restore_failed = false
+
+    # Internal spec seam (same underscore-prefixed family as
+    # `_environment`): the policy-rc.d path is hardcoded to real
+    # Ansible's own `/usr/sbin/policy-rc.d` for real playbooks, but the
+    # lifecycle spec needs to run it against a writable temp path since
+    # the spec process is unprivileged. Never set by real playbooks.
+    @policy_rc_d_path = "/usr/sbin/policy-rc.d"
 
     def execute : PluginResult
       result = execute_inner
@@ -124,6 +160,35 @@ module Krikri
       lock_timeout = @params["lock_timeout"]?.try(&.to_i) || 60
       update_cache_retries = @params["update_cache_retries"]?.try(&.to_i) || 5
       update_cache_retry_max_delay = @params["update_cache_retry_max_delay"]?.try(&.to_i) || 12
+
+      # Proactive param-coverage pass: the remaining real-Ansible apt
+      # module options (apt.py's argument_spec), mapped onto this
+      # plugin's apt-get invocations the same way apt.py maps them onto
+      # its own. Flag-for-flag: only_upgrade/--only-upgrade, force/
+      # --force-yes, fail_on_autoremove/--no-remove,
+      # allow_unauthenticated/--allow-unauthenticated, allow_downgrade/
+      # --allow-downgrades, allow_change_held_packages/
+      # --allow-change-held-packages, purge/--purge, default_release/-t,
+      # install_recommends/-o APT::Install-Recommends=..., and
+      # dpkg_options (comma-separated, each expanded to its own -o
+      # Dpkg::Options::=--<opt> exactly like apt.py's
+      # expand_dpkg_options). `force_apt_get` and
+      # `auto_install_module_deps` are documented no-ops here (see the
+      # class comment above).
+      @dpkg_options = @params["dpkg_options"]? || "force-confdef,force-confold"
+      @policy_rc_d = @params["policy_rc_d"]?.try(&.to_i?)
+      @policy_rc_d_path = @params["_policy_rc_d_path"]? || "/usr/sbin/policy-rc.d"
+      @purge = true?(@params["purge"]?)
+      @force = true?(@params["force"]?)
+      @fail_on_autoremove = true?(@params["fail_on_autoremove"]?)
+      @only_upgrade = true?(@params["only_upgrade"]?)
+      @allow_unauthenticated = true?(@params["allow_unauthenticated"]?)
+      @allow_downgrade = true?(@params["allow_downgrade"]?)
+      @allow_change_held_packages = true?(@params["allow_change_held_packages"]?)
+      @default_release = @params["default_release"]?
+      if ir = @params["install_recommends"]?
+        @install_recommends = true?(ir)
+      end
 
       changed = false
       messages = [] of String
@@ -274,9 +339,18 @@ module Krikri
       # `changed: true` forever where real Ansible reported `ok`
       # (entanet_devops.common / entanet_devops.upgrade, rounds 73358+).
       if (autoremove || autoclean || clean) && !upgrade
+        # Real Ansible's cleanup() builds `apt-get -y <dpkg_options>
+        # <purge> <force_yes> <operation>` - the purge/force flags and
+        # the dpkg options apply to autoremove/autoclean too (`purge:
+        # true` + `autoremove: true` is its own documented idiom: "Remove
+        # dependencies that are no longer required and purge their
+        # configuration files"). `apt-get clean` is the exception: real
+        # Ansible's aptclean() runs the bare command with no options at
+        # all, so it stays bare here.
+        cleanup_flags = [expand_dpkg_options, (@purge ? "--purge" : nil), (@force ? "--force-yes" : nil)].compact.join(" ")
         {
-          {autoremove, "apt-get -y autoremove", "packages removed"},
-          {autoclean, "apt-get -y autoclean", "autocleaned"},
+          {autoremove, "apt-get -y#{cleanup_flags.empty? ? "" : " " + cleanup_flags} autoremove", "packages removed"},
+          {autoclean, "apt-get -y#{cleanup_flags.empty? ? "" : " " + cleanup_flags} autoclean", "autocleaned"},
           {clean, "apt-get clean", "cache cleaned"},
         }.each do |(enabled, cmd, label)|
           next unless enabled
@@ -290,8 +364,10 @@ module Krikri
           # `autoremove`/`autoclean` are apt-get operations that contend
           # for the dpkg lock - wrap with lock_timeout retry, matching
           # real Ansible's `apt` module behavior (see execute's param
-          # parsing comment for the full trace).
-          result = apt_with_lock_retry(cmd, lock_timeout, ->remote_exec(String))
+          # parsing comment for the full trace). Real Ansible wraps its
+          # cleanup() command in its PolicyRcD context manager like every
+          # other package operation - mirrored below.
+          result = with_policy_rc_d { apt_with_lock_retry(cmd, lock_timeout, ->remote_exec(String)) }
           if result[:exit_code] != 0
             return PluginResult.new(changed: false, failed: true, msg: "#{cmd} failed: #{result[:stderr]}")
           end
@@ -341,12 +417,18 @@ module Krikri
         dist = upgrade == "dist" || upgrade == "full"
         # Same command shape real Ansible builds on its apt-get path
         # (use_apt_get): DEBIAN_FRONTEND=noninteractive, the
-        # force-confdef/force-confold dpkg options, and `--with-new-pkgs`
-        # on the non-dist modes so new dependencies of upgraded packages
-        # install like real Ansible's `upgrade --with-new-pkgs`.
+        # force-confdef/force-confold dpkg options (overridable via
+        # dpkg_options:), and `--with-new-pkgs` on the non-dist modes so
+        # new dependencies of upgraded packages install like real
+        # Ansible's `upgrade --with-new-pkgs`. Real Ansible's upgrade()
+        # also passes force/fail_on_autoremove/allow_unauthenticated/
+        # allow_downgrade and appends -t <default_release> - mirrored in
+        # apt_upgrade_flags/upgrade_trailing_flags below (upgrade() takes
+        # no only_upgrade/install_recommends/allow_change_held_packages,
+        # so those are deliberately absent here).
         subcmd = dist ? "dist-upgrade" : "upgrade --with-new-pkgs"
         auto_remove = autoremove ? " --auto-remove" : ""
-        cmd = "DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold #{subcmd}#{auto_remove}"
+        cmd = "DEBIAN_FRONTEND=noninteractive apt-get -y #{expand_dpkg_options}#{apt_upgrade_flags} #{subcmd}#{auto_remove}#{upgrade_trailing_flags}".squeeze(' ')
 
         if @check_mode
           messages << "Would run: #{cmd}"
@@ -354,8 +436,9 @@ module Krikri
         else
           # `apt-get upgrade`/`dist-upgrade` contend for the dpkg lock -
           # wrap with lock_timeout retry (same rationale as the
-          # autoremove/autoclean wrap above).
-          result = apt_with_lock_retry(cmd, lock_timeout, ->remote_exec(String))
+          # autoremove/autoclean wrap above), inside the same
+          # policy-rc.d lifecycle real Ansible's upgrade() uses.
+          result = with_policy_rc_d { apt_with_lock_retry(cmd, lock_timeout, ->remote_exec(String)) }
           if result[:exit_code] != 0
             return PluginResult.new(changed: false, failed: true, msg: "#{cmd} failed: #{result[:stderr]}", stdout: result[:stdout], stderr: result[:stderr])
           end
@@ -572,13 +655,14 @@ module Krikri
 
     # One `dpkg-query` round trip for the WHOLE package list instead of
     # one `dpkg -l <pkg>` per package (N+1 remote commands on every
-    # multi-package apt task). Returns installed-ness and the installed
-    # version per requested base name; a name dpkg has never heard of
-    # (never installed) simply has no line. Keys are the bare name with
-    # any `:arch` suffix dpkg-query appends for multi-arch packages
-    # stripped.
-    private def dpkg_installed_status(packages : Array(String)) : Hash(String, {Bool, String?})
-      statuses = Hash(String, {Bool, String?}).new
+    # multi-package apt task). Returns installed-ness, the installed
+    # version and the raw Status-Abbrev ("ii" installed, "rc" removed
+    # with config files still on disk, ...) per requested base name; a
+    # name dpkg has never heard of (never installed) simply has no line.
+    # Keys are the bare name with any `:arch` suffix dpkg-query appends
+    # for multi-arch packages stripped.
+    private def dpkg_installed_status(packages : Array(String)) : Hash(String, {Bool, String?, String})
+      statuses = Hash(String, {Bool, String?, String}).new
       return statuses if packages.empty?
 
       name_list = packages.map { |pkg| shell_single_quote(split_name_version(pkg)[0]) }.join(" ")
@@ -590,7 +674,7 @@ module Krikri
         bare = parts[2].strip.split(":").first
         next if statuses.has_key?(bare)
         installed = parts[0].starts_with?("ii")
-        statuses[bare] = {installed, installed ? parts[1] : nil}
+        statuses[bare] = {installed, installed ? parts[1] : nil, parts[0]}
       end
       statuses
     end
@@ -669,8 +753,12 @@ module Krikri
       end
 
       # `apt-get install` of a .deb contends for the dpkg lock - wrap
-      # with lock_timeout retry, matching real Ansible's behavior.
-      install_result = apt_with_lock_retry("apt-get -y install #{path}", lock_timeout, ->remote_exec(String))
+      # with lock_timeout retry, matching real Ansible's behavior. The
+      # dpkg_options: options apply here too (real Ansible's install_deb
+      # passes them to its dependency resolution install(); its own
+      # dpkg -i invocation is below our apt-get-install abstraction),
+      # and the whole thing sits inside the policy-rc.d lifecycle.
+      install_result = with_policy_rc_d { apt_with_lock_retry("DEBIAN_FRONTEND=noninteractive apt-get -y #{expand_dpkg_options} install #{path}".squeeze(' '), lock_timeout, ->remote_exec(String)) }
       if install_result[:exit_code] != 0
         return PluginResult.new(
           changed: false,
@@ -697,6 +785,12 @@ module Krikri
         installed, installed_ver = installed_status[base_name]?.try { |pair| pair } || {false, nil}
         if installed && (pinned_version.nil? || installed_ver == pinned_version)
           already_installed << pkg
+        elsif !installed && @only_upgrade
+          # Real Ansible's install(): `if not installed and only_upgrade:
+          # continue` - only_upgrade upgrades already-installed packages
+          # and never newly installs one. The --only-upgrade flag passed
+          # below makes apt-get itself skip these the same way.
+          next
         else
           to_install << pkg
         end
@@ -712,16 +806,17 @@ module Krikri
           # `apt-get install` of named packages contends for the dpkg lock
           # - wrap with lock_timeout retry, matching real Ansible's
           # `apt` module behavior. The DEBIAN_FRONTEND=noninteractive +
-          # force-confdef/force-confold flags carry over verbatim; the
-          # retry layer only governs lock contention and leaves the
-          # actual install behavior untouched. Also wraps real Ansible's
-          # implicit recovery from a corrupt/unparseable on-disk package
-          # index: on that specific failure (not a plain locate-miss on
-          # a valid cache) the whole install is retried once behind an
-          # implicit `apt-get update` (see
+          # force-confdef/force-confold flags carry over verbatim (the
+          # latter now overridable via dpkg_options:, defaulting to
+          # exactly this pair); the retry layer only governs lock
+          # contention and leaves the actual install behavior untouched.
+          # Also wraps real Ansible's implicit recovery from a corrupt/
+          # unparseable on-disk package index: on that specific failure
+          # (not a plain locate-miss on a valid cache) the whole install
+          # is retried once behind an implicit `apt-get update` (see
           # apt_install_with_implicit_cache_retry).
-          install_cmd = "DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold #{pkg_list}"
-          install_result = apt_install_with_implicit_cache_retry(install_cmd, lock_timeout, ->remote_exec(String))
+          install_cmd = "DEBIAN_FRONTEND=noninteractive apt-get install -y #{expand_dpkg_options}#{apt_install_leading_flags} #{pkg_list}#{apt_install_trailing_flags}".squeeze(' ')
+          install_result = with_policy_rc_d { apt_install_with_implicit_cache_retry(install_cmd, lock_timeout, ->remote_exec(String)) }
           install_stdout = install_result[:stdout]
           install_stderr = install_result[:stderr]
           if install_result[:exit_code] == 0
@@ -796,11 +891,16 @@ module Krikri
       # NAME regardless of any `=version` pin (matching real apt-get
       # remove semantics), so only the base name is checked here. One
       # batched query for the whole list (see dpkg_installed_status).
+      # With purge: true, real Ansible's remove() also includes packages
+      # that aren't installed but still have files on the filesystem
+      # (dpkg 'removed but config-files remain' state - `has_files and
+      # purge` in apt.py): those still need a purge pass to drop the
+      # leftover config.
       installed_status = dpkg_installed_status(packages)
       packages.each do |pkg|
         base_name, _ = split_name_version(pkg)
-        installed, _ = installed_status[base_name]?.try { |pair| pair } || {false, nil}
-        if installed
+        installed, _, abbrev = installed_status[base_name]?.try { |triple| triple } || {false, nil, ""}
+        if installed || (@purge && !installed && abbrev.includes?('c'))
           to_remove << pkg
         else
           already_absent << pkg
@@ -815,8 +915,16 @@ module Krikri
         else
           pkg_list = to_remove.join(" ")
           # `apt-get remove` contends for the dpkg lock - wrap with
-          # lock_timeout retry, matching real Ansible's behavior.
-          remove_result = apt_with_lock_retry("DEBIAN_FRONTEND=noninteractive apt-get remove -y #{pkg_list}", lock_timeout, ->remote_exec(String))
+          # lock_timeout retry, matching real Ansible's behavior. The
+          # purge:/force:/allow_change_held_packages: flags and the
+          # dpkg_options: options mirror real Ansible's remove() command
+          # construction (apt.py: `apt-get -q -y <dpkg_options> <purge>
+          # <force_yes> ... remove <packages>` with
+          # --allow-change-held-packages), and the whole thing sits
+          # inside the policy-rc.d lifecycle.
+          remove_flags = [expand_dpkg_options, (@purge ? "--purge" : nil), (@force ? "--force-yes" : nil), (@allow_change_held_packages ? "--allow-change-held-packages" : nil)].compact.join(" ")
+          remove_cmd = "DEBIAN_FRONTEND=noninteractive apt-get remove -y#{remove_flags.empty? ? "" : " " + remove_flags} #{pkg_list}".squeeze(' ')
+          remove_result = with_policy_rc_d { apt_with_lock_retry(remove_cmd, lock_timeout, ->remote_exec(String)) }
           if remove_result[:exit_code] == 0
             messages << "Package#{to_remove.size > 1 ? "s" : ""} #{to_remove.join(", ")} removed"
             changed = true
@@ -864,14 +972,14 @@ module Krikri
     # own "Update Debian/Ubuntu system" task (round 601048).
     private def handle_wildcard_latest(messages : Array(String), autoremove : Bool, lock_timeout : Int32) : PluginResult
       auto_remove = autoremove ? " --auto-remove" : ""
-      cmd = "DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold upgrade --with-new-pkgs#{auto_remove}"
+      cmd = "DEBIAN_FRONTEND=noninteractive apt-get -y #{expand_dpkg_options}#{apt_upgrade_flags} upgrade --with-new-pkgs#{auto_remove}#{upgrade_trailing_flags}".squeeze(' ')
 
       if @check_mode
         messages << "Would run: #{cmd}"
         return PluginResult.new(changed: true, failed: false, msg: messages.join(", "))
       end
 
-      result = apt_with_lock_retry(cmd, lock_timeout, ->remote_exec(String))
+      result = with_policy_rc_d { apt_with_lock_retry(cmd, lock_timeout, ->remote_exec(String)) }
       if result[:exit_code] != 0
         return PluginResult.new(changed: false, failed: true, msg: "#{cmd} failed: #{result[:stderr]}", stdout: result[:stdout], stderr: result[:stderr])
       end
@@ -892,6 +1000,22 @@ module Krikri
 
     # Handle upgrading packages to latest
     private def handle_latest(packages : Array(String), messages : Array(String), changed : Bool, lock_timeout : Int32) : PluginResult
+      # only_upgrade: real Ansible's install() skips packages that are
+      # not installed at all when only_upgrade is set (`if not installed
+      # and only_upgrade: continue` - only upgrades, never newly
+      # installs), for state: latest the same as for state: present.
+      if @only_upgrade
+        installed_status = dpkg_installed_status(packages)
+        packages = packages.select do |pkg|
+          base_name, _ = split_name_version(pkg)
+          installed_status[base_name]?.try(&.[0]) || false
+        end
+        if packages.empty?
+          messages << "No packages upgraded (only_upgrade skips packages that are not installed)"
+          return PluginResult.new(changed: false, failed: false, msg: messages.join(", "))
+        end
+      end
+
       if @check_mode
         # `grep -i upgrade` matched the ALWAYS-present "N upgraded, M newly
         # installed" summary line of simulate output, so check mode never
@@ -922,8 +1046,14 @@ module Krikri
         # `state: latest` (apt-get install for upgrade-or-install)
         # contends for the dpkg lock - wrap with lock_timeout retry,
         # plus the same implicit cache-update retry on corrupt/
-        # unparseable lists that handle_install above gets.
-        upgrade_result = apt_install_with_implicit_cache_retry("DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold #{pkg_list}", lock_timeout, ->remote_exec(String))
+        # unparseable lists that handle_install above gets. The
+        # dpkg_options:/only_upgrade:/force:/fail_on_autoremove: flags,
+        # the -t <default_release> and the -o APT::Install-Recommends=...
+        # / --allow-* flags all mirror real Ansible's install() command
+        # construction (state: latest flows through install() there
+        # with upgrade=True), inside the policy-rc.d lifecycle.
+        latest_cmd = "DEBIAN_FRONTEND=noninteractive apt-get install -y #{expand_dpkg_options}#{apt_install_leading_flags} #{pkg_list}#{apt_install_trailing_flags}".squeeze(' ')
+        upgrade_result = with_policy_rc_d { apt_install_with_implicit_cache_retry(latest_cmd, lock_timeout, ->remote_exec(String)) }
 
         # apt-get exits 100 when a package can't be located at all
         # ("E: Unable to locate package sensu" - e.g. a repo that carries
@@ -966,6 +1096,130 @@ module Krikri
         failed: false,
         msg: msg
       )
+    end
+
+    # Real Ansible's expand_dpkg_options (apt.py): the comma-separated
+    # `dpkg_options:` list, each option becoming its own
+    # `-o Dpkg::Options::=--<option>` flag. Default
+    # "force-confdef,force-confold" reproduces the pair this plugin
+    # hardcoded before the param existed.
+    private def expand_dpkg_options : String
+      @dpkg_options.split(",").map(&.strip).reject(&.empty?)
+        .map { |opt| "-o Dpkg::Options::=--#{opt}" }.join(" ")
+    end
+
+    # The flags real Ansible's install() places BEFORE the package list
+    # (apt.py cmd construction: only_upgrade, fixed, force_yes,
+    # fail_on_autoremove all precede `install`). `fixed` has no module
+    # param (state: fixed is a separate state this plugin doesn't offer
+    # yet), so only three of the four slots can ever fire here.
+    private def apt_install_leading_flags : String
+      flags = [] of String
+      flags << "--only-upgrade" if @only_upgrade
+      flags << "--force-yes" if @force
+      flags << "--no-remove" if @fail_on_autoremove
+      flags.empty? ? "" : " " + flags.join(" ")
+    end
+
+    # The options real Ansible's install() appends AFTER the package
+    # list, in its own construction order: -t <default_release>, the
+    # APT::Install-Recommends override (only when install_recommends: is
+    # explicitly set - nil keeps apt's own default), then the three
+    # --allow-* flags.
+    private def apt_install_trailing_flags : String
+      flags = [] of String
+      if release = @default_release
+        flags << "-t #{shell_single_quote(release)}"
+      end
+      # `!= nil` (not a bare truthiness check) - false is falsy in
+      # Crystal but is exactly the case that must emit the =no override.
+      if (ir = @install_recommends) != nil
+        flags << (ir ? "-o APT::Install-Recommends=yes" : "-o APT::Install-Recommends=no")
+      end
+      flags << "--allow-unauthenticated" if @allow_unauthenticated
+      flags << "--allow-downgrades" if @allow_downgrade
+      flags << "--allow-change-held-packages" if @allow_change_held_packages
+      flags.empty? ? "" : " " + flags.join(" ")
+    end
+
+    # The flags real Ansible's upgrade() places before the upgrade
+    # subcommand (force_yes, fail_on_autoremove, allow_unauthenticated,
+    # allow_downgrades - upgrade() takes no only_upgrade/
+    # install_recommends/allow_change_held_packages, matching above).
+    private def apt_upgrade_flags : String
+      flags = [] of String
+      flags << "--force-yes" if @force
+      flags << "--no-remove" if @fail_on_autoremove
+      flags << "--allow-unauthenticated" if @allow_unauthenticated
+      flags << "--allow-downgrades" if @allow_downgrade
+      flags.empty? ? "" : " " + flags.join(" ")
+    end
+
+    # upgrade()'s trailing `-t <default_release>` (the only trailing
+    # option upgrade() appends).
+    private def upgrade_trailing_flags : String
+      release = @default_release ? " -t #{shell_single_quote(@default_release.not_nil!)}" : ""
+      release
+    end
+
+    # Real Ansible's PolicyRcD context manager (apt.py): when
+    # `policy_rc_d:` is non-null, back up any existing /usr/sbin/
+    # policy-rc.d, write one that always exits with the given code (the
+    # file dpkg's package maintainer scripts consult via invoke-rc.d to
+    # decide whether to (re)start services on install), run the apt
+    # operation inside that window, then restore the backup - or remove
+    # the written file when none existed - ALWAYS, including when the
+    # operation failed. Every package-operation command real Ansible
+    # runs (install/remove/cleanup/upgrade/deb) gets its own
+    # PolicyRcD window; the cache update does not, matching here (only
+    # the handle_*/cleanup call sites below are wrapped). Restore
+    # failure fails the task the way __exit__'s own fail_json does.
+    # The result shape every apt command helper (apt_with_lock_retry,
+    # apt_install_with_implicit_cache_retry) returns.
+    private def with_policy_rc_d(& : -> NamedTuple(exit_code: Int32, stdout: String, stderr: String)) : NamedTuple(exit_code: Int32, stdout: String, stderr: String)
+      return yield if (desired_rc = @policy_rc_d).nil?
+
+      path = @policy_rc_d_path
+      backup_path = "#{path}.krikri-backup.#{Random.rand(1_000_000)}"
+      had_existing = remote_exec("test -e #{shell_single_quote(path)}")[:exit_code] == 0
+
+      if had_existing
+        move = remote_exec("mv #{shell_single_quote(path)} #{shell_single_quote(backup_path)}")
+        if move[:exit_code] != 0
+          return {exit_code: 1, stdout: "", stderr: "Fail to move #{path} to #{backup_path}: #{move[:stderr]}"}
+        end
+      end
+
+      write = remote_exec("printf '#!/bin/sh\\nexit #{desired_rc}\\n' > #{shell_single_quote(path)} && chmod 0755 #{shell_single_quote(path)}")
+      if write[:exit_code] != 0
+        restore_policy_rc_d(had_existing, backup_path)
+        return {exit_code: 1, stdout: "", stderr: "Failed to create or chmod #{path}: #{write[:stderr]}"}
+      end
+
+      @policy_rc_d_restore_failed = false
+      inner = begin
+        yield
+      ensure
+        @policy_rc_d_restore_failed = !restore_policy_rc_d(had_existing, backup_path)
+      end
+
+      # Restore failure fails the task even when the operation itself
+      # succeeded - real Ansible's __exit__ fail_json's the same way.
+      # When the operation already failed its own error surfaces
+      # instead (the task fails either way).
+      if @policy_rc_d_restore_failed && inner[:exit_code] == 0
+        inner = {exit_code: 1, stdout: inner[:stdout], stderr: "Fail to move back #{backup_path} to #{path} (or remove the temporary policy-rc.d)"}
+      end
+
+      inner
+    end
+
+    private def restore_policy_rc_d(had_existing : Bool, backup_path : String) : Bool
+      if had_existing
+        remote_exec("mv #{shell_single_quote(backup_path)} #{shell_single_quote(@policy_rc_d_path)}")[:exit_code] == 0
+      else
+        remote_exec("rm -f #{shell_single_quote(@policy_rc_d_path)}")[:exit_code] == 0
+      end
     end
 
     # Check if cache should be updated based on validity time
