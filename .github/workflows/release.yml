@@ -82,7 +82,16 @@ jobs:
               zlib-dev zlib-static \
               gc-dev gc-static \
               libunwind-dev libunwind-static
-            shards install
+            # --without-development: skips ameba (a dev-only lint
+            # dependency, unused by the release binaries themselves) -
+            # without this its own `shards build` postinstall hook drops
+            # bin/ameba and bin/ameba.cr into bin/, which the cp -al step
+            # below then sweeps into the shipped tarball (found in a real
+            # v0.9.977 release). Matches the macOS job's own
+            # --without-development below (added there for a different
+            # reason - a Crystal-version incompatibility - but the same
+            # flag fixes this too).
+            shards install --without-development
             ./build.sh --release --static
             # -al (hardlink, not copy): bin/plugins/.fat-plugin is
             # hardlinked under 96 plugin names sharing one inode - a
