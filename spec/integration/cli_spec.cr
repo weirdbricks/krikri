@@ -1283,6 +1283,51 @@ describe "krikri-playbook CLI (--check mode)" do
     output.should contain("mysql plugins smoke test complete!")
   end
 
+  # The mysql_query/mysql_variables/mysql_info plugins need a live server
+  # to exercise; where one isn't reachable the spec pends instead of
+  # failing (same convention as the smoke test above). Server 127.0.0.1:13306,
+  # root/rootpass - the same credentials test-mysql-quick.yml expects, so
+  # the same local server covers both specs.
+  it "runs the ad-hoc mysql_query/mysql_variables/mysql_info plugins against a real server (requires a real server at 127.0.0.1:13306)" do
+    pending! "no MySQL/MariaDB server at 127.0.0.1:13306" unless daemon_reachable?("127.0.0.1", 13306)
+
+    adhoc = File.join(PROJECT_ROOT, "bin", "krikri")
+    login = "login_host=127.0.0.1 login_port=13306 login_user=root login_password=rootpass"
+
+    run_adhoc = ->(module_name : String, module_args : String) {
+      output = IO::Memory.new
+      Process.run(adhoc, ["localhost", "-c", "local", "-i", "localhost,", "-m", "community.mysql." + module_name, "-a", module_args],
+        output: output, error: output, chdir: PROJECT_ROOT)
+      output.to_s
+    }
+
+    output = run_adhoc.call("mysql_query", "#{login} query='CREATE DATABASE IF NOT EXISTS krikri_mysql_spec'")
+    output.should match(/SUCCESS|CHANGED/)
+
+    output = run_adhoc.call("mysql_query", "#{login} query='CREATE TABLE IF NOT EXISTS krikri_mysql_spec.t (id INT PRIMARY KEY, name VARCHAR(50))'")
+    output.should match(/SUCCESS|CHANGED/)
+
+    # login_db must actually be selected on connect - previously dropped
+    # entirely, so every unqualified query failed "No database selected".
+    output = run_adhoc.call("mysql_query", "#{login} login_db=krikri_mysql_spec query='SELECT * FROM t'")
+    output.should match(/SUCCESS|CHANGED/)
+
+    output = run_adhoc.call("mysql_variables", "#{login} variable=max_connections")
+    output.should match(/SUCCESS|CHANGED/)
+    match = output.match(/"msg":\s*"([^"]*)"/)
+    match.should_not be_nil
+    # The value, not the variable name echoed back.
+    (match || raise "unexpected nil")[1].should_not eq("max_connections")
+
+    output = run_adhoc.call("mysql_info", "#{login} filter=version")
+    output.should match(/SUCCESS|CHANGED/)
+    version_json = output.match(/"version":\s*\{[^\}]*\}/)
+    version_json.should_not be_nil
+    parsed = JSON.parse("{#{(version_json || raise "unexpected nil")[0]}}")
+    parsed["version"]["full"].as_s.should_not be_empty
+    parsed["version"]["suffix"].as_s.should_not start_with("-")
+  end
+
   it "manages a PostgreSQL database and role (with attribute flag diffing) end to end (requires a real server at 127.0.0.1:15432)" do
     pending! "no PostgreSQL server at 127.0.0.1:15432" unless daemon_reachable?("127.0.0.1", 15432)
     status, output = run_playbook(

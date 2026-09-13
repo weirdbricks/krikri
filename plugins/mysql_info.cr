@@ -5,6 +5,7 @@ require "mysql"
 require "../src/krikri/base_plugin"
 require "../src/krikri/plugin_helpers/db_errors"
 require "../src/krikri/plugin_helpers/mysql_connection"
+require "../src/krikri/plugin_helpers/mysql_info_version"
 
 module Krikri
   # MySQL info plugin - reads server metadata. Compatible (for the
@@ -25,11 +26,17 @@ module Krikri
   # - login_host/login_port/login_user/login_password/login_unix_socket
   #
   # Result:
-  # - version: {major, minor, release, full, suffix} - `full` is the
-  #   dotted major.minor.release numeric prefix of `SELECT VERSION()`
-  #   (e.g. "8.0.35" out of "8.0.35-0ubuntu0.22.04.1"), matching real
-  #   Ansible's own field closely enough for the `is version(...)` tests
-  #   real playbooks run against it; `suffix` is whatever text follows.
+  # - version: {major, minor, release, full, suffix} - parsed exactly the
+  #   way real Ansible's mysql_info does it (its __get_global_variables):
+  #   `full` is the ENTIRE `SELECT VERSION()` string unmodified;
+  #   major/minor are the first two dot components, `release` is the third
+  #   dot component up to its first `-`, and `suffix` is that same third
+  #   component after the first `-` (empty when there is none). Note the
+  #   real module only ever looks inside that third component, so a
+  #   version like "10.11.14-MariaDB-0ubuntu0.24.04.1" gets suffix
+  #   "MariaDB-0ubuntu0" (the ".24.04.1" tail lands in later dot
+  #   components it never reads) - reproduced here for parity, verified
+  #   against the installed module, not from memory.
   # - settings: {variable_name => value}, from `SHOW VARIABLES` - every
   #   variable, not filtered to a known subset, since callers (mysql_
   #   hardening's own configure.yml) read arbitrary keys like `datadir`/
@@ -64,16 +71,7 @@ module Krikri
     end
 
     private def fetch_version(db : DB::Database) : JSON::Any
-      raw = db.query_one("SELECT VERSION()", as: String)
-      numeric, separator, after = raw.partition(/[^0-9.]/)
-      parts = numeric.split('.')
-      JSON::Any.new({
-        "major"   => JSON::Any.new(parts[0]?.try(&.to_i64?) || 0_i64),
-        "minor"   => JSON::Any.new(parts[1]?.try(&.to_i64?) || 0_i64),
-        "release" => JSON::Any.new(parts[2]?.try(&.to_i64?) || 0_i64),
-        "full"    => JSON::Any.new(numeric),
-        "suffix"  => JSON::Any.new(separator + after),
-      })
+      JSON::Any.new(PluginHelpers::MysqlInfoVersion.parse(db.query_one("SELECT VERSION()", as: String)))
     end
 
     private def fetch_settings(db : DB::Database) : JSON::Any

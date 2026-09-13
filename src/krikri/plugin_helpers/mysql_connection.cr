@@ -51,6 +51,7 @@ module Krikri
         password : String? = nil,
         unix_socket : String? = nil,
         config_file : String? = nil,
+        db : String? = nil,
       ) : String
         defs = option_file_defaults(config_file)
 
@@ -87,7 +88,18 @@ module Krikri
         # TLS configuration anywhere in this codebase's mysql_db/mysql_user
         # plugins, so there's no way for a caller to opt out short of this -
         # explicitly disable it here instead.
-        uri.query = "ssl-mode=disabled"
+        # The initial database (login_db) rides in the query string rather
+        # than the URI path on purpose: for unix-socket connections the
+        # shard reads the socket path FROM uri.path, so a `/dbname` path
+        # component is only usable for TCP. The shard itself accepts a
+        # `database` query param for both transports (Options.from_uri).
+        # Found via an ad-hoc CLI comparison sweep against real ansible
+        # (2026-09-13): mysql_query silently dropped login_db, so every
+        # unqualified query failed with "No database selected".
+        query_params = URI::Params.new
+        query_params["ssl-mode"] = "disabled"
+        query_params["database"] = db if db && !db.empty?
+        uri.query = query_params.to_s
 
         uri.to_s
       end
