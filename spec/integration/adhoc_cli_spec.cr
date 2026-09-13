@@ -105,6 +105,58 @@ describe "krikri ad-hoc CLI" do
     end
   end
 
+  # Ad-hoc result shape for command/shell, matched against real ansible's
+  # own ad-hoc output (2026-09-13 sweep, ansible-core 2.19.4):
+  # `ansible localhost -c local -m command -a "echo hi" -t <dir>` writes
+  # {"changed": true, "cmd": ["echo", "hi"], "rc": 0, "stderr": "",
+  # "stderr_lines": [], "stdout": "hi", "stdout_lines": ["hi"], ...} -
+  # cmd is the argv LIST for command and the raw STRING for shell, the
+  # *_lines keys are present, and msg is ABSENT on success (real Ansible's
+  # command/shell never set msg on a successful run). The ad-hoc path
+  # dumps the plugin's raw result verbatim, so these plugin-side keys are
+  # what the tree file - and the SUCCESS => JSON dump for non-command-
+  # shaped results - must carry.
+  describe "command/shell ad-hoc result shape" do
+    it "command carries cmd as an argv list, stdout_lines/stderr_lines, and no msg on success" do
+      tree = File.join(PROJECT_ROOT, "spec", "tmp", "adhoc-command-shape")
+      FileUtils.rm_rf(tree)
+      status, _ = run_adhoc(["localhost", "-i", INVENTORY, "-c", "local", "-t", tree, "-m", "command", "-a", "echo hi"])
+
+      begin
+        status.success?.should be_true
+        result = JSON.parse(File.read(File.join(tree, "localhost")))
+        result["cmd"].as_a.map(&.as_s).should eq(["echo", "hi"])
+        result["stdout_lines"].as_a.map(&.as_s).should eq(["hi"])
+        result["stderr_lines"].as_a.map(&.as_s).should eq([] of String)
+        result["rc"].as_i.should eq(0)
+        result["changed"].as_bool.should be_true
+        result["msg"]?.should be_nil
+      ensure
+        FileUtils.rm_rf(tree)
+      end
+    end
+
+    it "shell carries cmd as the raw string, stdout_lines/stderr_lines, and no msg on success" do
+      tree = File.join(PROJECT_ROOT, "spec", "tmp", "adhoc-shell-shape")
+      FileUtils.rm_rf(tree)
+      status, _ = run_adhoc(["localhost", "-i", INVENTORY, "-c", "local", "-t", tree, "-m", "shell", "-a", "echo hi && echo bye"])
+
+      begin
+        status.success?.should be_true
+        result = JSON.parse(File.read(File.join(tree, "localhost")))
+        result["cmd"].as_s.should eq("echo hi && echo bye")
+        result["stdout"].as_s.should eq("hi\nbye")
+        result["stdout_lines"].as_a.map(&.as_s).should eq(["hi", "bye"])
+        result["stderr_lines"].as_a.map(&.as_s).should eq([] of String)
+        result["rc"].as_i.should eq(0)
+        result["changed"].as_bool.should be_true
+        result["msg"]?.should be_nil
+      ensure
+        FileUtils.rm_rf(tree)
+      end
+    end
+  end
+
   it "-e/--extra-vars feed the templating context" do
     status, output = run_adhoc(["localhost", "-i", INVENTORY, "-e", "greet=adhoc", "-m", "debug", "-a", "msg={{ greet }}"])
 

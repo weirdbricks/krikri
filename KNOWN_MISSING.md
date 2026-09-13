@@ -166,6 +166,32 @@ against Atlantic.net now, Kata having been retired as a backend.
 
 ---
 
+## Ad-hoc CLI `command`/`shell` result shape matched to real ansible (0.9.1020)
+
+An ad-hoc-CLI comparison sweep against real `ansible` (2026-09-13) found
+the `bin/krikri` ad-hoc path emitting a non-real-Ansible result dict for
+`command`/`shell`: missing `cmd` (real Ansible: the argv LIST for
+`command`, the raw string for `shell`), missing `stdout_lines`/
+`stderr_lines`, and carrying a nonstandard
+`msg: "Command executed successfully"` on success that real Ansible's
+command.py never sets. The ad-hoc path dumps the plugin's raw result
+verbatim, and the executor only derived the `*_lines` keys centrally for
+`register:`/`changed_when:` - so ad-hoc output showed the bare plugin
+shape. Fixed module-side (where real Ansible sets these keys too) in
+`plugins/command.cr`/`plugins/shell.cr`: the normal result now carries
+`cmd` (argv list vs raw string respectively), module-side
+`stdout_lines`/`stderr_lines` via a new shared
+`PluginHelpers::AnsibleSplitlines` (the same Python `str.splitlines()`
+semantics the executor's central derivation already used - the executor
+now delegates to that shared helper rather than keeping its own private
+copy), and an empty `msg` on success (PluginResult omits empty msg from
+the wire JSON). Both the playbook and ad-hoc paths now produce the same
+real-Ansible-shaped result for these two plugins; failure-path `msg`
+wording left as-is (real Ansible says "non-zero return code" there, a
+cosmetic difference not worth churning specs over).
+
+---
+
 ## Three plugins reported false success where real Ansible correctly fails: modprobe, service, ufw (0.9.1019)
 
 An ad-hoc CLI comparison sweep against real `ansible` in containers

@@ -271,11 +271,16 @@ module Krikri
       stderr = IO::Memory.new
       exit_code = 0
 
+      # Parse command into array (simple split on spaces)
+      # Note: This doesn't handle quoted arguments perfectly
+      # but works for most cases
+      # Declared here (not inside the begin below) so the normal-result
+      # PluginResult after the begin/rescue can carry it as the result's
+      # `cmd` key - real Ansible's command module returns the argv LIST
+      # itself (live-verified against 2.19.4: `cmd: ["echo", "hi"]`).
+      cmd_parts = argv_parts || (cmd ? parse_command(cmd) : [] of String)
+
       begin
-        # Parse command into array (simple split on spaces)
-        # Note: This doesn't handle quoted arguments perfectly
-        # but works for most cases
-        cmd_parts = argv_parts || (cmd ? parse_command(cmd) : [] of String)
         # Real Ansible's AnsibleModule.run_command (expand_user_and_vars,
         # driven by the command module's expand_argument_vars, default true)
         # expands BOTH `~` (including the `~user` form, via the passwd
@@ -390,20 +395,32 @@ module Krikri
       # only `if strip`); when false, the raw bytes are returned untouched
       # (live-verified: printf 'out\n\n\n' keeps all 6 bytes with
       # strip_empty_ends: false, collapses to "out" with the default).
-      # The executor derives stdout_lines/stderr_lines centrally from
-      # whatever lands here, so the *_lines keys follow automatically.
+      # The result carries the FULL real command-module shape: cmd is the
+      # argv LIST itself, stdout_lines/stderr_lines are derived here
+      # (module-side, exactly where real Ansible's command.py sets them)
+      # from the same splitlines() semantics the executor used to derive
+      # them centrally from (Python's str.splitlines()), and msg is left
+      # empty on success - real Ansible's command module NEVER sets msg on
+      # success (PluginResult omits an empty msg from the wire JSON), and
+      # the previous "Command executed successfully" text showed up as a
+      # nonstandard key in ad-hoc (`ansible -m command`) result output.
       # Crystal's String#rstrip(set) strips trailing chars from the set,
       # exactly like Python's str.rstrip("\r\n").
       strip_empty_ends = true?(@params["strip_empty_ends"]?, default: true)
+      final_stdout = strip_empty_ends ? stdout.to_s.rstrip("\r\n") : stdout.to_s
+      final_stderr = strip_empty_ends ? stderr.to_s.rstrip("\r\n") : stderr.to_s
 
       # Command module always reports changed (unless skipped)
       # This matches Ansible behavior
       with_executable_warning(PluginResult.new(
         changed: true,
         failed: exit_code != 0,
-        msg: exit_code == 0 ? "Command executed successfully" : "Command failed with exit code #{exit_code}",
-        stdout: strip_empty_ends ? stdout.to_s.rstrip("\r\n") : stdout.to_s,
-        stderr: strip_empty_ends ? stderr.to_s.rstrip("\r\n") : stderr.to_s,
+        msg: exit_code == 0 ? "" : "Command failed with exit code #{exit_code}",
+        cmd: cmd_parts,
+        stdout: final_stdout,
+        stdout_lines: PluginHelpers::AnsibleSplitlines.split(final_stdout),
+        stderr: final_stderr,
+        stderr_lines: PluginHelpers::AnsibleSplitlines.split(final_stderr),
         exit_code: exit_code,
         rc: exit_code # Add rc as alias for Ansible compatibility
       ))
