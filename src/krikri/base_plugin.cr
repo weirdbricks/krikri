@@ -368,6 +368,57 @@ module Krikri
       digest.final.hexstring
     end
 
+    # Real Ansible's AnsibleModule.add_path_info (module_utils/basic.py),
+    # which its _return_formatted runs over EVERY module result (both
+    # exit_json and fail_json): any result whose `path` (or `dest`) key
+    # points at a path that STILL EXISTS at module-exit time gets the
+    # file-common stat fields merged in - uid/gid/owner/group (login
+    # names, falling back to the stringified numeric id exactly like
+    # basic.py's pwd.getpwuid/grp.getgrgid KeyError rescue, NOT the
+    # empty-string orphan convention native_stat's stat-module output
+    # uses), mode (zero-padded octal of the LSTAT'd permission bits, so
+    # a symlink reports its own "0777"), state ("link"/"directory"/
+    # "hard" for a regular file with nlink > 1/"file"), and size.
+    #
+    # Existence is checked through the link (os.path.exists), so a
+    # DANGLING symlink - unstatable through the link - gets no fields
+    # at all, matching basic.py exactly.
+    #
+    # This is the shared protocol layer real Ansible's add_file_common_args
+    # machinery provides to every file-touching module (file/copy/
+    # get_url/...), so a state=absent --check on an existing file reports
+    # the file's PRE-removal stats with state "file" (the file still
+    # exists when the module exits), while the same task for real
+    # reports only state "absent" (the path is gone by exit time, so
+    # this no-ops). A result for a path that doesn't exist is left
+    # untouched - no fields added - also matching real Ansible.
+    protected def add_path_info(result : PluginResult, path : String) : Nil
+      return if path.empty?
+      return unless File.exists?(path)
+      stat_hash = native_stat(path, follow: false)
+      return unless stat_hash
+
+      result.extra["uid"] = stat_hash["uid"]
+      result.extra["gid"] = stat_hash["gid"]
+      owner = stat_hash["pw_name"].as_s
+      result.extra["owner"] = JSON::Any.new(owner.empty? ? stat_hash["uid"].as_i64.to_s : owner)
+      group = stat_hash["gr_name"].as_s
+      result.extra["group"] = JSON::Any.new(group.empty? ? stat_hash["gid"].as_i64.to_s : group)
+      result.extra["mode"] = stat_hash["mode"]
+      result.extra["state"] = JSON::Any.new(
+        if stat_hash["islnk"].as_bool
+          "link"
+        elsif stat_hash["isdir"].as_bool
+          "directory"
+        elsif stat_hash["isreg"].as_bool && stat_hash["nlink"].as_i64 > 1
+          "hard"
+        else
+          "file"
+        end
+      )
+      result.extra["size"] = stat_hash["size"]
+    end
+
     # Expands a leading `~` or `~username` the same way Python's own
     # os.path.expanduser does - real Ansible's path-type params go
     # through this before any existence check. geerlingguy.composer's

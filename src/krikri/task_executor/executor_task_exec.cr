@@ -769,7 +769,9 @@ module Krikri
     # existing directory - copy.cr's own `handle_file_copy` does the
     # same resolution once it actually runs, so this must match it
     # exactly or a mismatch would silently skip a needed copy) and
-    # md5sums it in the same script, only if it exists.
+    # sha1sums it in the same script, only if it exists (SHA1, not the
+    # MD5 this used to compare - the compared value doubles as the
+    # result's `checksum:` field, which real Ansible reports as SHA1).
     #
     # Returns the resolved params for the caller to use as-is (with
     # `src` left pointing at the untouched local file - the plugin body
@@ -788,8 +790,8 @@ module Krikri
       dest = params["dest"]?
       return nil unless dest
 
-      local_md5 = begin
-        Digest::MD5.new.file(src).hexfinal
+      local_sha1 = begin
+        Digest::SHA1.new.file(src).hexfinal
       rescue
         return nil
       end
@@ -798,7 +800,7 @@ module Krikri
       script = <<-SCRIPT
         p=#{shell_single_quote(dest)}
         [ -d "$p" ] && p="$p/#{basename.gsub("'", "'\\''")}"
-        if [ -f "$p" ]; then md5sum "$p" | cut -d' ' -f1; else echo NOFILE; fi
+        if [ -f "$p" ]; then sha1sum "$p" | cut -d' ' -f1; else echo NOFILE; fi
         SCRIPT
 
       connection_host = PluginManager.get_connection_host(host, vars_context)
@@ -809,11 +811,11 @@ module Krikri
         host.port,
         identity_file: vars_context["ansible_ssh_private_key_file"]?.try(&.as_s?)
       )
-      return nil unless result[:exit_code] == 0 && result[:stdout].strip == local_md5
+      return nil unless result[:exit_code] == 0 && result[:stdout].strip == local_sha1
 
       resolved = params.dup
       resolved["__precomputed_match"] = "true"
-      resolved["__precomputed_checksum"] = local_md5
+      resolved["__precomputed_checksum"] = local_sha1
       resolved["__original_src_basename"] = basename
       resolved
     rescue

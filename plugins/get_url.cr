@@ -44,7 +44,9 @@ module Krikri
       end
 
       if true?(@params["check_mode"]?)
-        return PluginResult.new(changed: true, failed: false, msg: "would download #{url} to #{dest} (check mode)", dest: dest)
+        result = PluginResult.new(changed: true, failed: false, msg: "would download #{url} to #{dest} (check mode)", dest: dest)
+        add_path_info(result, dest)
+        return result
       end
 
       # tmp_dest is validated up front (real get_url's url_get does it
@@ -111,9 +113,13 @@ module Krikri
       end
 
       if checksum
-        PluginResult.new(changed: attrs_changed || false, failed: false, msg: attrs_changed ? "file already exists but file attributes changed" : "file already exists", dest: dest, checksum_src: nil, checksum_dest: nil)
+        result = PluginResult.new(changed: attrs_changed || false, failed: false, msg: attrs_changed ? "file already exists but file attributes changed" : "file already exists", dest: dest, checksum_src: nil, checksum_dest: nil)
+        add_path_info(result, dest)
+        result
       else
-        PluginResult.new(changed: attrs_changed || false, failed: false, msg: attrs_changed ? "file already exists but file attributes changed" : "file already exists (use force=yes to overwrite)", dest: dest)
+        result = PluginResult.new(changed: attrs_changed || false, failed: false, msg: attrs_changed ? "file already exists but file attributes changed" : "file already exists (use force=yes to overwrite)", dest: dest)
+        add_path_info(result, dest)
+        result
       end
     end
 
@@ -127,7 +133,9 @@ module Krikri
         # includes status_code: -1 (plus url/dest/elapsed) in get_url's
         # download-failure result, so `when: r.status_code == -1` behaves
         # identically here.
-        return PluginResult.new(changed: false, failed: true, msg: "failed to download #{url}: #{ex.message}", status_code: -1, url: url, dest: dest, elapsed: 0)
+        failure_result = PluginResult.new(changed: false, failed: true, msg: "failed to download #{url}: #{ex.message}", status_code: -1, url: url, dest: dest, elapsed: 0)
+        add_path_info(failure_result, dest)
+        return failure_result
       end
 
       if checksum && (mismatch = checksum_mismatch_result(tmp_path, checksum))
@@ -152,7 +160,9 @@ module Krikri
         File.delete(tmp_path)
         attrs_changed, failure = apply_extended_attributes(dest)
         return failure if failure
-        return PluginResult.new(changed: attrs_changed, failed: false, msg: "file already exists and content matches", dest: dest)
+        result = PluginResult.new(changed: attrs_changed, failed: false, msg: "file already exists and content matches", dest: dest, md5sum: native_checksum(dest, "md5"))
+        add_path_info(result, dest)
+        return result
       end
 
       backup_dest_if_requested(dest)
@@ -162,7 +172,9 @@ module Krikri
       _attrs_changed, failure = apply_extended_attributes(dest)
       return failure if failure
 
-      PluginResult.new(changed: true, failed: false, msg: "OK", dest: dest, checksum_src: native_checksum(dest, "sha1"), checksum_dest: nil)
+      result = PluginResult.new(changed: true, failed: false, msg: "OK", dest: dest, checksum_src: native_checksum(dest, "sha1"), checksum_dest: nil, md5sum: native_checksum(dest, "md5"))
+      add_path_info(result, dest)
+      result
     end
 
     # Verifies the freshly staged download against a provided

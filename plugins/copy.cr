@@ -141,7 +141,14 @@ module Krikri
     private def handle_content_copy(content : String, dest_param : String) : PluginResult
       dest = resolve_follow(dest_param)
 
-      # Calculate MD5 of content for idempotency check
+      # Calculate the checksums the result fields carry. `checksum:` is
+      # a SHA1 (real Ansible's own checksum algorithm - module.sha1 <-
+      # module_utils/basic.py's checksum(), verified against
+      # ansible-core 2.19.4's live output: a 40-hex-char SHA1, not the
+      # 32-hex-char MD5 this used to emit) of the content, used both for
+      # the result field and the idempotency comparison; `md5sum:` is the
+      # separate backwards-compat field real copy reports alongside it.
+      content_sha1 = Digest::SHA1.hexdigest(content)
       content_md5 = Digest::MD5.hexdigest(content)
 
       # Get existing content for diff
@@ -159,13 +166,15 @@ module Krikri
         # on disk). Mirrors the identical-content skip below.
         if given_checksum = @params["checksum"]?.presence
           if File.exists?(dest) && (sha1_of(dest) == given_checksum)
-            return PluginResult.new(
+            result = PluginResult.new(
               changed: false,
               failed: false,
               msg: "File already exists with matching checksum",
               dest: dest,
               checksum: given_checksum
             )
+            add_path_info(result, dest)
+            return result
           end
         end
 
@@ -181,19 +190,21 @@ module Krikri
         # file untouched and reported ok, this truncated it to 0 bytes
         # and reported changed. Real data loss, not just a wrong verdict.
         unless true?(@params["force"]?, default: true)
-          return PluginResult.new(
+          result = PluginResult.new(
             changed: false,
             failed: false,
             msg: "File already exists (use force=yes to overwrite)",
             dest: dest
           )
+          add_path_info(result, dest)
+          return result
         end
 
         begin
           existing_content = File.read(dest)
-          existing_md5 = Digest::MD5.hexdigest(existing_content)
+          existing_sha1 = Digest::SHA1.hexdigest(existing_content)
 
-          if existing_md5 == content_md5
+          if existing_sha1 == content_sha1
             # Content is identical - reconcile mode/owner/group like the
             # src: path does, then return. The bare early-return used to
             # skip attribute reconciliation entirely, so `mode: "0600"`
@@ -213,13 +224,15 @@ module Krikri
             # while dutifully fixing the attribute on disk every run.
             attributes_fixed, failure = apply_extended_attributes(dest)
             return failure if failure
-            return PluginResult.new(
+            result = PluginResult.new(
               changed: attributes_fixed,
               failed: false,
               msg: "File already exists with identical content",
               dest: dest,
-              checksum: content_md5
+              checksum: content_sha1
             )
+            add_path_info(result, dest)
+            return result
           end
         rescue ex
           # File read failed, continue with copy
@@ -278,14 +291,17 @@ module Krikri
       _attrs_fixed, failure = apply_extended_attributes(dest)
       return failure if failure
 
-      PluginResult.new(
+      result = PluginResult.new(
         changed: changed,
         failed: false,
         msg: "Content written to file",
         diff: diff_data,
         dest: dest,
-        checksum: content_md5
+        checksum: content_sha1,
+        md5sum: content_md5
       )
+      add_path_info(result, dest)
+      result
     end
 
     # Copy file from src to dest
@@ -305,17 +321,29 @@ module Krikri
       if @params["__precomputed_match"]? == "true"
         basename = @params["__original_src_basename"]?.presence || File.basename(src)
         dest = File.join(dest, basename) if Dir.exists?(dest) || dest.ends_with?('/')
-        return PluginResult.new(changed: false, failed: false, msg: "File already identical (check mode)") if @check_mode
+        if @check_mode
+          result = PluginResult.new(
+            changed: false,
+            failed: false,
+            msg: "File already identical (check mode)",
+            dest: dest,
+            checksum: @params["__precomputed_checksum"]?.presence || ""
+          )
+          add_path_info(result, dest)
+          return result
+        end
 
         attributes_fixed, failure = apply_extended_attributes(dest)
         return failure if failure
-        return PluginResult.new(
+        result = PluginResult.new(
           changed: attributes_fixed,
           failed: false,
           msg: "File already exists with identical content",
           dest: dest,
           checksum: @params["__precomputed_checksum"]? || ""
         )
+        add_path_info(result, dest)
+        return result
       end
 
       # Directory src - dispatched before any of the file-specific dest
@@ -375,10 +403,12 @@ module Krikri
         )
       end
 
-      # Calculate source file MD5
+      # Calculate source file checksums (SHA1 for the `checksum:` result
+      # field and the idempotency comparison - real Ansible's own
+      # algorithm; MD5 for the backwards-compat `md5sum:` field).
       begin
-        src_content = File.read(src)
-        src_md5 = Digest::MD5.hexdigest(src_content)
+        src_sha1 = native_checksum(src, "sha1")
+        src_md5 = native_checksum(src, "md5")
       rescue ex
         return PluginResult.new(
           changed: false,
@@ -395,30 +425,34 @@ module Krikri
         # `checksum:` skip - see #handle_content_copy's identical block.
         if given_checksum = @params["checksum"]?.presence
           if sha1_of(dest) == given_checksum
-            return PluginResult.new(
+            result = PluginResult.new(
               changed: false,
               failed: false,
               msg: "File already exists with matching checksum",
               dest: dest,
               checksum: given_checksum
             )
+            add_path_info(result, dest)
+            return result
           end
         end
 
         unless force
-          return PluginResult.new(
+          result = PluginResult.new(
             changed: false,
             failed: false,
-            msg: "File already exists (use force=yes to overwrite)"
+            msg: "File already exists (use force=yes to overwrite)",
+            dest: dest
           )
+          add_path_info(result, dest)
+          return result
         end
 
         # Compare checksums for idempotency
         begin
-          dest_content = File.read(dest)
-          dest_md5 = Digest::MD5.hexdigest(dest_content)
+          dest_sha1 = native_checksum(dest, "sha1")
 
-          if dest_md5 == src_md5
+          if dest_sha1 == src_sha1
             # Files are identical
             changed = false
           end
@@ -429,11 +463,25 @@ module Krikri
 
       # CHECK MODE: Report what would change
       if @check_mode
-        return PluginResult.new(
+        result = PluginResult.new(
           changed: changed,
           failed: false,
           msg: changed ? "Would copy #{src} to #{dest} (check mode)" : "File already identical (check mode)"
         )
+        # A would-CHANGE check result is real Ansible's copy ACTION
+        # PLUGIN's own bare `changed: true` (no dest, no stat fields).
+        # A would-NOT-change one falls through to the file module (the
+        # action's "already correct hash" branch), whose result carries
+        # dest/path, the SHA1 checksum (added by the action's
+        # `if not module_return.get('checksum')` fill-in), and the
+        # add_path_info stat fields - all live-verified against
+        # ansible-core 2.19.4.
+        unless changed
+          result.extra["dest"] = JSON::Any.new(dest)
+          result.extra["checksum"] = JSON::Any.new(src_sha1)
+          add_path_info(result, dest)
+        end
+        return result
       end
 
       # If file is identical, just update attributes if requested - and
@@ -443,13 +491,15 @@ module Krikri
       unless changed
         attributes_fixed, failure = apply_extended_attributes(dest)
         return failure if failure
-        return PluginResult.new(
+        result = PluginResult.new(
           changed: attributes_fixed,
           failed: false,
           msg: "File already exists with identical content",
           dest: dest,
-          checksum: src_md5
+          checksum: src_sha1
         )
+        add_path_info(result, dest)
+        return result
       end
 
       # Create backup if requested
@@ -487,14 +537,14 @@ module Krikri
       end
 
       # Copy the file (staged + validated first when validate: is given -
-      # src_content was already read above for the MD5 check, so this
-      # reuses it rather than reading src a second time).
+      # src_sha1 was already computed above for the idempotency check, so
+      # this reads src a second time only on the validate: path).
       if @params["validate"]?
-        if failure = write_with_optional_validate(src_content, dest)
+        if failure = write_with_optional_validate(File.read(src), dest)
           return failure
         end
       else
-        if failure = atomic_write(src_content, dest)
+        if failure = atomic_write(File.read(src), dest)
           return failure
         end
       end
@@ -503,13 +553,16 @@ module Krikri
       _attrs_fixed, failure = apply_extended_attributes(dest)
       return failure if failure
 
-      PluginResult.new(
+      result = PluginResult.new(
         changed: true,
         failed: false,
         msg: "File copied successfully",
         dest: dest,
-        checksum: src_md5
+        checksum: src_sha1,
+        md5sum: src_md5
       )
+      add_path_info(result, dest)
+      result
     end
 
     # Directory src - real Ansible copy: "if src is a directory, it is
@@ -609,12 +662,18 @@ module Krikri
         copied += 1
       end
 
-      PluginResult.new(
+      result = PluginResult.new(
         changed: changed,
         failed: false,
         msg: changed ? "Directory copied successfully" : "Directory already up to date",
         dest: dest_root
       )
+      # Real Ansible's add_path_info runs over the directory-copy result
+      # too (dest is an existing directory at exit time) - stat fields
+      # with state "directory", no checksum (its checksum: field is the
+      # SRC file's SHA1, nil for a directory source).
+      add_path_info(result, dest_root)
+      result
     end
 
     # `validate:` support - real Ansible's `copy:` supports it identically
@@ -1037,7 +1096,6 @@ module Krikri
       # #apply_file_attributes' own convention.
       nil
     end
-
   end
 end
 

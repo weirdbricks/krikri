@@ -137,6 +137,18 @@ module Krikri
       # rather than in every handle_* branch above, since none of them
       # need to know their own state value to do their actual job.
       result.extra["state"] = JSON::Any.new(state) unless result.failed? || result.extra.has_key?("state")
+
+      # Real Ansible's AnsibleModule.add_path_info (module_utils/basic.py)
+      # merges the file-common stat fields (uid/gid/owner/group/mode/
+      # state/size) into EVERY result whose path still exists at module
+      # exit time - so a state=absent --check on an existing file reports
+      # the file's PRE-removal stats with state "file" (this overwrites
+      # the resolved-state echo above, exactly like real Ansible's own
+      # exit-time overwrite does), while the same task for real reports
+      # only state "absent" (the path is gone by exit time). No checksum
+      # here ever - real Ansible's file module result has no checksum
+      # field for any state, file or otherwise.
+      add_path_info(result, path)
       result
     end
 
@@ -407,7 +419,7 @@ module Krikri
             changed: changed,
             failed: false,
             msg: "Link already points to #{src}",
-            path: path,
+            dest: path,
             src: src
           )
         end
@@ -462,7 +474,7 @@ module Krikri
         changed: true,
         failed: false,
         msg: "Symbolic link created",
-        path: path,
+        dest: path,
         src: src
       )
     end
@@ -496,7 +508,7 @@ module Krikri
           changed: false,
           failed: false,
           msg: "Hard link already exists",
-          path: path,
+          dest: path,
           src: src
         )
       end
@@ -544,7 +556,7 @@ module Krikri
         changed: true,
         failed: false,
         msg: "Hard link created",
-        path: path,
+        dest: path,
         src: src
       )
     end
@@ -581,7 +593,7 @@ module Krikri
           changed: changed,
           failed: false,
           msg: "File touched",
-          path: path
+          dest: path
         )
       end
 
@@ -617,7 +629,7 @@ module Krikri
         changed: true,
         failed: false,
         msg: "File created",
-        path: path
+        dest: path
       )
     end
 
@@ -630,7 +642,7 @@ module Krikri
         changed: attrs_changed || times_changed,
         failed: false,
         msg: (attrs_changed || times_changed) ? "Would touch file (check mode)" : "File already up to date (check mode)",
-        path: path
+        dest: path
       )
     end
 
@@ -645,7 +657,8 @@ module Krikri
           return PluginResult.new(
             changed: false,
             failed: false,
-            msg: "Path already absent (check mode)"
+            msg: "Path already absent (check mode)",
+            path: path
           )
         end
 
@@ -659,11 +672,18 @@ module Krikri
 
       # Path exists, remove it
       if @check_mode
-        return PluginResult.new(
+        result = PluginResult.new(
           changed: true,
           failed: false,
-          msg: "Would remove path (check mode)"
+          msg: "Would remove path (check mode)",
+          path: path
         )
+        # Check mode does NOT remove - the file still exists at module
+        # exit, so real Ansible's add_path_info merges its PRE-removal
+        # stats in with state "file" (live-verified against ansible-core
+        # 2.19.4), NOT the requested state=absent. #execute's central
+        # add_path_info call handles that; nothing else needed here.
+        return result
       end
 
       # Remove files, directories, and links (like rm -rf)

@@ -1,5 +1,5 @@
 module Krikri
-  VERSION = "0.9.1001"
+  VERSION = "0.9.1002"
 
   def self.version_info : String
     String.build do |str|
