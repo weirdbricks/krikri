@@ -85,11 +85,15 @@ module Krikri
     end
 
     private def read_variable(connection : DB::Database, variable : String) : String?
-      connection.query_one?(
-        "SHOW VARIABLES WHERE Variable_name = ?",
-        variable,
-        as: String
-      )
+      # SHOW VARIABLES returns two columns (Variable_name, Value) - the
+      # value is the SECOND one. Reading column 0 with `as: String` echoed
+      # the variable's own name back as its value (ad-hoc CLI sweep vs real
+      # ansible, 2026-09-13: msg was "max_connections" instead of "151").
+      value = connection.query_one?("SHOW VARIABLES WHERE Variable_name = ?", variable) do |row|
+        row.read(String)
+        row.read(String?)
+      end
+      value.is_a?(String) ? value : nil
     rescue
       nil
     end

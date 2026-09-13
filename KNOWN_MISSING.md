@@ -156,6 +156,41 @@ against Atlantic.net now, Kata having been retired as a backend.
 
 ---
 
+## `mysql_query`/`mysql_variables`/`mysql_info` parameter and result-field bugs (0.9.1026)
+
+Found via an extended ad-hoc CLI comparison sweep against real `ansible`
+(2026-09-13), using a throwaway MariaDB server started inside a podman
+container via its init.d script (the `compat/playbooks/35-mysql-db.yml`
+approach) so both engines ran against the same live server. Three bugs,
+one per plugin:
+
+- `mysql_query` ignored `login_db` entirely - the connection was opened
+  with no database selected no matter what was passed, so every
+  unqualified query failed "No database selected". `login_db` now rides
+  to the crystal-mysql shard as its `database` connection option (a
+  query param, not a URI path - the shard reads the unix-socket path
+  FROM `uri.path`, so a `/dbname` path component would clobber it).
+- `mysql_variables` returned the variable NAME as `msg` instead of its
+  value: `SHOW VARIABLES` rows are (name, value) and the old
+  `query_one?(..., as: String)` read column 0. Now reads column 1.
+- `mysql_info`'s `version` fact mangled the version string (`full`
+  truncated to the numeric prefix, `suffix` keeping the separating
+  `-`). Parsing now mirrors the real module's own `__get_global_
+  variables` algorithm exactly, including its quirk of taking
+  `release`/`suffix` from the third dot component only - so for
+  `10.11.14-MariaDB-0ubuntu0.24.04.1` the suffix really is
+  `MariaDB-0ubuntu0` (the trailing `.24.04.1` lands in dot components
+  the real module never reads), verified against the installed module
+  rather than from memory.
+
+All three verified live against real `ansible` in the same container;
+regression coverage is `spec/unit/mysql_connection_spec.cr` (the URI
+shape), `spec/unit/mysql_info_version_spec.cr` (the parsing algorithm),
+and a new live-server spec in `spec/integration/cli_spec.cr` that
+pends without a real server at 127.0.0.1:13306 like its neighbours.
+
+---
+
 ## Two real PostgreSQL plugin bugs fixed: multi-row SELECT data loss and postgresql_user idempotency (0.9.1025)
 
 Found via an ad-hoc CLI comparison sweep against real `ansible`

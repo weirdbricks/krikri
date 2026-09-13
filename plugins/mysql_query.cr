@@ -27,6 +27,10 @@ module Krikri
   #   in one string) support, matching how every real caller in this
   #   codebase already writes it (one statement per list element).
   # - login_host/login_port/login_user/login_password/login_unix_socket
+  # - login_db: initial database selected on connect (real module: `db =
+  #   module.params['login_db']`; no separate `db` alias). Without it the
+  #   connection starts with no database selected, so an unqualified query
+  #   fails with "No database selected".
   #
   # Result:
   # - query_result: one array per statement, each holding one Hash per
@@ -77,6 +81,7 @@ module Krikri
         password: @params["login_password"]?,
         unix_socket: @params["login_unix_socket"]?,
         config_file: @params["config_file"]? || "~/.my.cnf",
+        db: @params["login_db"]?,
       )
 
       query_results = [] of JSON::Any

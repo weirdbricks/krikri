@@ -36,6 +36,25 @@ describe Krikri::PluginHelpers::MysqlConnection do
     it "always disables TLS, since the mysql shard's own default (preferred) doesn't fall back to plaintext on a failed handshake" do
       Krikri::PluginHelpers::MysqlConnection.build_uri.should contain("ssl-mode=disabled")
     end
+
+    it "passes the initial database as a query param, not a URI path" do
+      # login_db must reach the shard as `?database=`, not `/dbname` in the
+      # path: for unix-socket connections the shard reads the socket path
+      # FROM uri.path, so a path component would clobber it. Found via the
+      # 2026-09-13 ad-hoc CLI sweep: mysql_query dropped login_db entirely,
+      # so every unqualified query failed with "No database selected".
+      uri = Krikri::PluginHelpers::MysqlConnection.build_uri(host: "127.0.0.1", user: "compat", password: "pw", db: "compatdb")
+      uri.should eq("mysql://compat:pw@127.0.0.1:3306?ssl-mode=disabled&database=compatdb")
+    end
+
+    it "keeps the database param working over a unix socket" do
+      uri = Krikri::PluginHelpers::MysqlConnection.build_uri(unix_socket: "/var/run/mysqld/mysqld.sock", user: "root", db: "compatdb")
+      uri.should eq("mysql://root@/var/run/mysqld/mysqld.sock?ssl-mode=disabled&database=compatdb")
+    end
+
+    it "omits the database param when no db: is given" do
+      Krikri::PluginHelpers::MysqlConnection.build_uri(host: "127.0.0.1", user: "root").should_not contain("database=")
+    end
   end
 
   describe "option-file (config_file) fallback" do
