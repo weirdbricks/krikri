@@ -16,17 +16,22 @@ module Krikri
   # rule-construction-flag-for-flag rather than reimplementing netfilter
   # semantics.
   #
+  # All parameter flags, the command framing (rule_num only on `-I`,
+  # `-w wait` on every operation, `--numeric` on the `-L` probes) and
+  # the argument-spec validations (mutually_exclusive / required_if /
+  # required_by, including real Ansible's exact failure messages) live
+  # in `PluginHelpers::IptablesCommand`, mirroring the real module's
+  # `construct_rule()`/`push_arguments()`/argument_spec.
+  #
   # Scope-cut (matching this codebase's usual practice of covering the
   # common real-world shape rather than every flag - see `firewalld.cr`'s
-  # own doc comment for the same trade-off): NOT implemented -
-  # `tcp_flags`, `gateway`/`jump: TEE`, `goto`, `set_dscp_mark(_class)`,
-  # `src_range`/`dst_range`, `match_set(_flags)`, `uid_owner`/
-  # `gid_owner`, `wait`, `numeric`. These are all real, documented
-  # module params but rare in practice (no benchmark role touched any of
-  # them, including robertdebock.natrouter's `-t nat -A POSTROUTING -o
-  # <if> -s <net> -d <dest> -p <proto> -j MASQUERADE -m comment --comment
-  # ...` shape, which IS covered).
+  # own doc comment for the same trade-off): `wait` is passed through
+  # verbatim without real Ansible's iptables-version gating (it drops
+  # `-w` entirely below iptables 1.4.20 and seconds support below 1.6.0;
+  # every current distro ships >= 1.6.0).
   class IptablesPlugin < BasePlugin
+    @failure : String?
+
     def execute : PluginResult
       check_mode = true?(@params["check_mode"]?)
       ip_version = @params["ip_version"]? || "ipv4"
@@ -37,17 +42,42 @@ module Krikri
       chain = @params["chain"]?
       chain_management = true?(@params["chain_management"]?)
       state = @params["state"]? || "present"
+
+      # Real Ansible's argument-spec validation (mutually_exclusive /
+      # required_if / required_by), with its own failure messages.
+      if err = PluginHelpers::IptablesCommand.validate(@params)
+        return PluginResult.new(changed: false, failed: true, msg: err)
+      end
+
+      # Real Ansible's log-jump enforcement: logging options force
+      # jump=LOG when unset and fail with any other jump target.
+      if @params["log_prefix"]? || @params["log_level"]?
+        jump = @params["jump"]?
+        if jump.nil?
+          @params["jump"] = "LOG"
+        elsif jump != "LOG"
+          return PluginResult.new(
+            changed: false,
+            failed: true,
+            msg: "Logging options can only be used with the LOG jump target."
+          )
+        end
+      end
+
       rule_flags = PluginHelpers::IptablesCommand.construct_rule(@params)
 
       msgs = [] of String
 
-      # Match the original control flow: a nil `chain` only fails when
-      # neither flush: nor policy: short-circuits the per-binary branch
-      # (the rule/else branch is where the old code returned missing_param).
-      return missing_param("chain") if !flush && !policy && !chain
-
       any_changed = binaries.reduce(false) do |changed, bin|
         changed | apply_for_bin(bin, flush, policy, chain, rule_flags, state, chain_management, check_mode, msgs)
+      end
+
+      if failure = @failure
+        return PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: failure
+        )
       end
 
       PluginResult.new(
@@ -74,14 +104,20 @@ module Krikri
     end
 
     private def apply_flush(bin : String, chain : String?, check_mode : Bool, msgs : Array(String)) : Nil
-      remote_exec("#{bin} -t #{table} -F #{chain}") unless check_mode
+      remote_exec("#{push(bin, "-F", chain)} 2>/dev/null") unless check_mode
       msgs << "flushed #{chain}"
     end
 
     private def apply_policy(bin : String, chain : String?, policy : String, check_mode : Bool, msgs : Array(String)) : Bool
-      changed = current_policy(bin, chain) != policy
-      if changed
-        remote_exec("#{bin} -t #{table} -P #{chain} #{policy}") unless check_mode
+      current = current_policy(bin, chain)
+      if current.nil?
+        # Real Ansible fails here rather than guessing.
+        @failure = "Can't detect current policy"
+        return false
+      end
+      changed = current != policy
+      if changed && !check_mode
+        remote_exec("#{push(bin, "-P", chain)} #{policy}")
       end
       msgs << "policy #{policy}"
       changed
@@ -91,8 +127,8 @@ module Krikri
       present = chain_present?(bin, chain)
       changed = state == "absent" ? present : !present
       if changed
-        cmd = state == "absent" ? "-X" : "-N"
-        remote_exec("#{bin} -t #{table} #{cmd} #{chain}") if chain_management && !check_mode
+        action = state == "absent" ? "-X" : "-N"
+        remote_exec(push(bin, action, chain)) if chain_management && !check_mode
       end
       changed
     end
@@ -104,12 +140,22 @@ module Krikri
 
       return true if check_mode
       action = should_be_present ? (@params["action"]? == "insert" ? "-I" : "-A") : "-D"
-      remote_exec("#{bin} -t #{table} #{action} #{chain} #{rule_flags.join(" ")}")
+      remote_exec(push(bin, action, chain, rule: rule_flags))
       true
     end
 
-    private def missing_param(name : String) : PluginResult
-      PluginResult.new(changed: false, failed: true, msg: "Missing required parameter: #{name}")
+    # Real Ansible's push_arguments(): one shared command framing for
+    # every operation this plugin runs, including `-w wait` (when set)
+    # and the `-I`-only insert position.
+    private def push(bin : String, action : String, chain : String? = nil,
+                     rule : Array(String) = [] of String, numeric : Bool = false) : String
+      PluginHelpers::IptablesCommand.push_arguments(
+        bin, action, chain, table,
+        rule: rule,
+        rule_num: @params["rule_num"]?,
+        wait: @params["wait"]?,
+        numeric: numeric
+      )
     end
 
     private def table : String
@@ -117,7 +163,7 @@ module Krikri
     end
 
     private def current_policy(bin : String, chain : String?) : String?
-      result = remote_exec("#{bin} -t #{table} -L #{chain} 2>/dev/null")
+      result = remote_exec("#{push(bin, "-L", chain, numeric: true?(@params["numeric"]?))} 2>/dev/null")
       header = result[:stdout].split("\n").first?
       return nil unless header
       if m = header.match(/\(policy ([A-Z]+)\)/)
@@ -126,12 +172,12 @@ module Krikri
     end
 
     private def chain_present?(bin : String, chain : String?) : Bool
-      result = remote_exec("#{bin} -t #{table} -L #{chain} > /dev/null 2>&1")
+      result = remote_exec("#{push(bin, "-L", chain, numeric: true?(@params["numeric"]?))} > /dev/null 2>&1")
       result[:exit_code] == 0
     end
 
     private def rule_present?(bin : String, chain : String, rule_flags : Array(String)) : Bool
-      result = remote_exec("#{bin} -t #{table} -C #{chain} #{rule_flags.join(" ")} > /dev/null 2>&1")
+      result = remote_exec("#{push(bin, "-C", chain, rule: rule_flags)} > /dev/null 2>&1")
       result[:exit_code] == 0
     end
   end
