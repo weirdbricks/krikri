@@ -84,16 +84,58 @@ describe "authorized_key plugin" do
     File.exists?(path).should be_false
   end
 
-  it "resolves the path from a user's home directory (NSS) when no path override is given" do
+  it "resolves the keyfile path from a user's home directory (NSS) when no path override is given" do
     result = PluginSpecHelper.run("authorized_key", {"user" => "root", "key" => RSA_KEY, "check_mode" => "true"})
 
     result["failed"]?.try(&.as_bool).should be_falsey
-    result["path"].as_s.should eq("/root/.ssh/authorized_keys")
+    # Real Ansible echoes the resolved path back as `keyfile` (its own
+    # params["keyfile"] set by enforce_state); the `path` echo is the
+    # raw `path:` param, i.e. JSON null when not given.
+    result["keyfile"].as_s.should eq("/root/.ssh/authorized_keys")
+    result["path"].raw.should be_nil
   end
 
   it "fails with a clear message when neither user nor path is given" do
     result = PluginSpecHelper.run("authorized_key", {"key" => RSA_KEY})
 
     result["failed"].as_bool.should be_true
+  end
+
+  # Ad-hoc CLI comparison sweep vs real ansible (2026-09-13): real
+  # ansible.posix.authorized_key returns its ENTIRE module.params dict
+  # (with keyfile/changed merged in), so every effective parameter -
+  # including defaulted (manage_dir/exclusive/validate_certs/follow) and
+  # absent (comment/key_options/user -> JSON null) ones - is echoed back,
+  # plus AnsibleModule.add_path_info's stat fields whenever the echoed
+  # `path` param points at an existing file. Previously only
+  # changed/msg/path/state came back.
+  it "echoes the full effective parameter set plus file stat fields (real module's exit_json(**params) shape)" do
+    path = tmp_path("authorized-key-fields")
+    File.write(path, "#{RSA_KEY}\n")
+
+    result = PluginSpecHelper.run("authorized_key", {
+      "path" => path, "key" => RSA_KEY,
+      "key_options" => "no-port-forwarding", "comment" => "krikri test",
+    })
+
+    result["changed"].as_bool.should be_false
+    result["user"].raw.should be_nil
+    result["key"].as_s.should eq(RSA_KEY)
+    result["path"].as_s.should eq(path)
+    result["keyfile"].as_s.should eq(path)
+    result["manage_dir"].as_bool.should be_true
+    result["key_options"].as_s.should eq("no-port-forwarding")
+    result["exclusive"].as_bool.should be_false
+    result["comment"].as_s.should eq("krikri test")
+    result["validate_certs"].as_bool.should be_true
+    result["follow"].as_bool.should be_false
+    result["msg"]?.should be_nil
+    result["uid"].as_i64.should eq(File.info(path, follow_symlinks: false).owner_id.to_i64)
+    result["gid"].as_i64.should eq(File.info(path, follow_symlinks: false).group_id.to_i64)
+    result["owner"].as_s.should_not be_empty
+    result["group"].as_s.should_not be_empty
+    result["mode"].as_s.should match(/\A0[0-7]{3,4}\z/)
+    result["state"].as_s.should eq("file")
+    result["size"].as_i64.should eq(RSA_KEY.bytesize + 1)
   end
 end

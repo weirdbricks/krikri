@@ -156,6 +156,50 @@ against Atlantic.net now, Kata having been retired as a backend.
 
 ---
 
+## Four identity/access plugins now return real Ansible's full result field sets (0.9.1023)
+
+Found via an ad-hoc CLI comparison sweep against real `ansible`
+(2026-09-13): `authorized_key`, `user`, `capabilities`, and
+`pam_limits` all performed their underlying operations correctly but
+returned only `changed` + `msg` (occasionally `path`) where real
+Ansible hands callers a much richer structured result - any playbook
+registering the result and reading those fields got nothing. All four
+field sets were verified live against ansible-core 2.19 /
+ansible.posix 2.1.0 / community.general 12.5.0, then implemented:
+
+- `authorized_key`: real module exits `exit_json(**params)` with
+  `keyfile`/`changed` merged in, so the FULL effective parameter set
+  comes back (`user`/`key`/`state`/`path`/`keyfile`/`manage_dir`/
+  `key_options`/`exclusive`/`comment`/`validate_certs`/`follow`,
+  defaulted booleans included, absent strings as JSON null), plus
+  AnsibleModule.add_path_info's stat fields (`uid`/`gid`/`owner`/
+  `group`/`mode`/`state`/`size`) whenever the echoed `path` param
+  points at an existing file. krikri now echoes all of it; note the
+  resolved keyfile path is echoed as `keyfile` (real Ansible's own
+  name), with `path` staying the raw param (null when not given).
+- `user`: real module echoes `state` on every path,
+  `append`/`move_home` on the modify-existing-account path,
+  `system`/`create_home` on the create path, `groups` when given, and
+  masks a given `password:` as `NOT_LOGGING_PASSWORD`; `state=absent`
+  after a real removal also echoes `force`/`remove`. The resolved
+  per-account facts (uid/group/home/shell/comment, re-read from
+  /etc/passwd after the operation) were already there; the rest is
+  added.
+- `capabilities`: real module's changed exit is
+  `changed`/`state`/`msg: "capabilities changed"`/`stdout` (the
+  executor adds `stdout_lines` controller-side, as real Ansible's
+  action layer does); its unchanged exit is ONLY `changed` + `state` -
+  krikri's invented `msg: "capabilities unchanged"` is gone.
+- `pam_limits`: real result's `msg` is the EFFECTIVE limits line (the
+  new entry when changed, the existing matched line when already
+  present, trailing newline included) plus a whole-file `diff`
+  (before/after content, present regardless of diff mode, with
+  check mode showing the would-be content), and no `path` echo -
+  krikri's generic "Added or updated limit entry" msg and stray
+  `path` field are replaced by that exact shape.
+
+---
+
 ## `stat`/`find` now carry real Ansible's sub-second timestamp precision and disk-allocation fields (0.9.1022)
 
 Found via an ad-hoc CLI comparison sweep against real `ansible`

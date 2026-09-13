@@ -53,13 +53,40 @@ module Krikri
         File.chmod(path, 0o600)
       end
 
-      PluginResult.new(
-        changed: changed,
-        failed: false,
-        msg: changed ? "Key #{state == "present" ? "added" : "removed"}" : "Key already #{state}",
-        path: path,
-        state: state
-      )
+      result = PluginResult.new(changed: changed, failed: false, msg: "")
+
+      # Real Ansible's own module returns its ENTIRE module.params dict
+      # (enforce_state mutates `params` in place and main() does
+      # `exit_json(**results)`), with `keyfile` (the resolved keyfile
+      # path) and `changed` merged in - so every effective parameter is
+      # echoed back, including the ones that were defaulted (manage_dir/
+      # exclusive/validate_certs/follow) or absent (comment/key_options/
+      # path come through as JSON null). Verified live against
+      # ansible.posix.authorized_key 2.1.0 / ansible-core 2.19.
+      result.extra["user"] = json_string(@params["user"]?)
+      result.extra["key"] = JSON::Any.new(key.as(String))
+      result.extra["path"] = json_string(@params["path"]?)
+      result.extra["keyfile"] = JSON::Any.new(path)
+      result.extra["manage_dir"] = JSON::Any.new(manage_dir)
+      result.extra["state"] = JSON::Any.new(state)
+      result.extra["key_options"] = json_string(@params["key_options"]?)
+      result.extra["exclusive"] = JSON::Any.new(true?(@params["exclusive"]?))
+      result.extra["comment"] = json_string(@params["comment"]?)
+      result.extra["validate_certs"] = JSON::Any.new(@params["validate_certs"]?.nil? || true?(@params["validate_certs"]?))
+      result.extra["follow"] = JSON::Any.new(true?(@params["follow"]?))
+
+      # Real Ansible's AnsibleModule.exit_json runs add_path_info over
+      # the result dict: the stat fields appear only because the echoed
+      # `path` param (null when not given) points at an existing file -
+      # exactly what this mirrors (an absent `path:` param means no stat
+      # fields at all, even though the keyfile itself exists).
+      add_path_info(result, path) if @params["path"]?
+
+      result
+    end
+
+    private def json_string(value : String?) : JSON::Any
+      JSON::Any.new(value)
     end
 
     private def resolve_path : String?

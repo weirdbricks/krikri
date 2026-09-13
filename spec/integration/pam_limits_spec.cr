@@ -104,4 +104,41 @@ describe "pam_limits plugin" do
     result = PluginSpecHelper.run("pam_limits", {"domain" => "*"})
     result["failed"].as_bool.should be_true
   end
+
+  # Ad-hoc CLI comparison sweep vs real ansible (2026-09-13): real
+  # community.general.pam_limits' result is `msg` = the EFFECTIVE limits
+  # line (the new entry when changed, the existing matched line when
+  # already present, trailing newline included) plus a whole-file diff,
+  # and NO path echo - previously changed/msg("Added or updated limit
+  # entry")/path with no diff at all.
+  it "returns the effective line as msg plus a whole-file diff on change" do
+    dest = dest_path("result_shape_change.conf")
+    File.write(dest, "*\thard\tcore\t1\n")
+
+    result = PluginSpecHelper.run("pam_limits", {
+      "dest" => dest, "domain" => "*", "limit_type" => "hard",
+      "limit_item" => "core", "value" => "0",
+    })
+
+    result["changed"].as_bool.should be_true
+    result["msg"].as_s.should eq("*\thard\tcore\t0\n")
+    result["path"]?.should be_nil
+    diff = result["diff"].as_h
+    diff["before"].as_s.should eq("*\thard\tcore\t1\n")
+    diff["after"].as_s.should eq("*\thard\tcore\t0\n")
+  end
+
+  it "returns the existing matched line as msg on the idempotent rerun" do
+    dest = dest_path("result_shape_idem.conf")
+    File.write(dest, "*\thard\tcore\t0\n")
+    params = {"dest" => dest, "domain" => "*", "limit_type" => "hard",
+              "limit_item" => "core", "value" => "0"}
+    PluginSpecHelper.run("pam_limits", params)
+
+    result = PluginSpecHelper.run("pam_limits", params)
+
+    result["changed"].as_bool.should be_false
+    result["msg"].as_s.should eq("*\thard\tcore\t0\n")
+    result["diff"].as_h["before"].as_s.should eq(result["diff"].as_h["after"].as_s)
+  end
 end
