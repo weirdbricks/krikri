@@ -8,7 +8,7 @@ jobs:
   build-and-test:
     runs-on: ubuntu-latest
     container:
-      image: crystallang/crystal:1.20.3
+      image: crystallang/crystal:1.21.0
 
     steps:
       - uses: actions/checkout@v4
@@ -18,7 +18,7 @@ jobs:
         # openssl, pcre2, event, gmp, yaml, xml2) via pkg-config or -l
         # flags baked into its own @[Link] annotations. Every CI run
         # since v0.9.646 (17 in a row) failed at the build step because
-        # the crystallang/crystal:1.20.3 image is missing these dev
+        # the crystallang/crystal:1.21.0 image is missing these dev
         # packages - first surfaced as "cc: error: unrecognized
         # command-line option '--llzma'" (Crystal's own pkg-config-
         # fallback flag string for liblzma is a real typo, double-dash
