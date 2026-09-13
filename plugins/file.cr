@@ -136,7 +136,14 @@ module Krikri
       # `result_test_netrc.state == 'file'`) - added centrally here
       # rather than in every handle_* branch above, since none of them
       # need to know their own state value to do their actual job.
-      result.extra["state"] = JSON::Any.new(state) unless result.failed? || result.extra.has_key?("state")
+      # state=touch is excluded from the echo: real Ansible NEVER emits
+      # "state": "touch" (live-verified against ansible-core 2.19.4 for
+      # all four touch shapes - existing/new x real/check). An existing
+      # path's state arrives via add_path_info below ("file"/...), and a
+      # path that doesn't exist at exit time (check mode, new file) gets
+      # NO state key at all - echoing the resolved "touch" used to leak
+      # into exactly that shape.
+      result.extra["state"] = JSON::Any.new(state) unless state == "touch" || result.failed? || result.extra.has_key?("state")
 
       # Real Ansible's AnsibleModule.add_path_info (module_utils/basic.py)
       # merges the file-common stat fields (uid/gid/owner/group/mode/
@@ -606,16 +613,26 @@ module Krikri
 
       # File doesn't exist, create it
       if @check_mode
+        # Real Ansible's check-mode touch on an absent path reports
+        # changed + dest only - no stat fields (nothing exists to stat),
+        # no msg, no state echo (live-verified against ansible-core
+        # 2.19.4).
         return PluginResult.new(
           changed: true,
           failed: false,
-          msg: ""
+          msg: "",
+          dest: path
         )
       end
 
-      # Create file
+      # Create file. Python's open() defaults to 0666 (the process umask
+      # then trims it); Crystal's File.open defaults its perm to 0644, so
+      # the explicit 0666 here is what makes a fresh touch follow the
+      # umask like real Ansible (umask 002 -> 0664, umask 022 -> 0644).
+      # On an EXISTING path the perm arg is ignored by open(2), so a
+      # touch never rewrites an existing file's mode.
       created = begin
-        File.open(path, "w") { }
+        File.open(path, "w", 0o666) { }
         true
       rescue ex : File::Error
         false
@@ -635,7 +652,7 @@ module Krikri
       PluginResult.new(
         changed: true,
         failed: false,
-        msg: "File created",
+        msg: "",
         dest: path
       )
     end
@@ -645,10 +662,14 @@ module Krikri
     # (update_attributes_if_needed/touch_times_would_change? are both
     # read-only, so safe to run in check mode).
     private def touch_existing_result(path : String, attrs_changed : Bool, times_changed : Bool) : PluginResult
+      # No msg - real Ansible's file module never carries msg on a touch
+      # success path, check mode included (live-verified against
+      # ansible-core 2.19.4: the check-mode result is changed/dest/stat
+      # fields only).
       PluginResult.new(
         changed: attrs_changed || times_changed,
         failed: false,
-        msg: (attrs_changed || times_changed) ? "Would touch file (check mode)" : "File already up to date (check mode)",
+        msg: "",
         dest: path
       )
     end

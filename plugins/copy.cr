@@ -701,7 +701,11 @@ module Krikri
 
       temp_file = File.join("/tmp", ".krikri-playbook-copy-#{Random::Secure.hex(8)}.tmp")
       begin
-        File.write(temp_file, content)
+        # perm 0666 (not Crystal's 0644 default) so the file's final mode
+        # is 0666 & ~umask - real Ansible's atomic_move chmods a new dest
+        # to exactly that (live-verified: umask 002 -> 0664, umask 022 ->
+        # 0644). An existing dest's mode is preserved by the chmod below.
+        File.write(temp_file, content, perm: 0o666)
       rescue ex
         return PluginResult.new(changed: false, failed: true, msg: "Failed to write temporary file: #{ex.message}")
       end
@@ -899,7 +903,13 @@ module Krikri
     private def atomic_write(content : String, dest : String) : PluginResult?
       temp_file = File.join(File.dirname(dest), ".krikri-playbook-copy-#{Random::Secure.hex(8)}.tmp")
       begin
-        File.write(temp_file, content)
+        # perm 0666 (not Crystal's 0644 default): when dest doesn't exist
+        # yet, this temp file IS the final file after the rename, and real
+        # Ansible's atomic_move gives a new dest exactly 0666 & ~umask
+        # (live-verified against ansible-core 2.19.4: umask 002 -> 0664,
+        # umask 022 -> 0644). The perm arg is ignored when overwriting an
+        # existing file, whose mode the stat-preservation below handles.
+        File.write(temp_file, content, perm: 0o666)
       rescue ex
         return PluginResult.new(changed: false, failed: true, msg: "Failed to write temporary file: #{ex.message}")
       end
@@ -951,7 +961,9 @@ module Krikri
     # unsafe_writes: the non-atomic fallback - write dest directly, in
     # place. Returns nil on success, or a failed PluginResult.
     private def unsafe_write_fallback(content : String, dest : String) : PluginResult?
-      File.write(dest, content)
+      # Same umask-default contract as #atomic_write's temp file: 0666 &
+      # ~umask for a new file, existing file's mode untouched.
+      File.write(dest, content, perm: 0o666)
       nil
     rescue ex
       PluginResult.new(changed: false, failed: true, msg: "Failed to write #{dest} (unsafe_writes fallback): #{ex.message}")

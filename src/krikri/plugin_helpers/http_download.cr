@@ -80,7 +80,12 @@ module Krikri
             raise "server returned #{response.status_code} #{response.status.description}"
           end
 
-          File.open(dest, "w") do |file|
+          # perm 0666 (not Crystal's 0644 default): this staged file
+          # becomes the final dest after the rename, and real Ansible's
+          # atomic_move gives a new dest 0666 & ~umask (umask 002 ->
+          # 0664, umask 022 -> 0644). Ignored when overwriting an
+          # existing file.
+          File.open(dest, "w", 0o666) do |file|
             IO.copy(response.body_io, file)
           end
         end

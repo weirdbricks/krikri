@@ -253,7 +253,10 @@ module Krikri
     # the staging file.
     private def unsafe_move_fallback(tmp_path : String, dest : String) : Nil
       File.open(tmp_path, "r") do |src|
-        File.open(dest, "w") do |dst|
+        # perm 0666 mirrors #move_into_place's atomic path: a new dest
+        # gets 0666 & ~umask like real Ansible's atomic_move; an existing
+        # dest's mode is left alone (open(2) ignores perm on overwrite).
+        File.open(dest, "w", 0o666) do |dst|
           IO.copy(src, dst)
         end
       end
