@@ -52,6 +52,16 @@ configurable Jinja delimiter strings).
   `community.general.dconf`, `community.general.portage` - genuinely
   missing, one role each unless noted. See `ROLES_TESTED.md` for the
   exact affected role per module.
+- **`get_url` now supports `file://` URLs** (found via an ad-hoc CLI
+  comparison sweep against real `ansible`, 2026-09-13): real Ansible's
+  `get_url` (urllib's FileHandler) treats a `file://` URL as a
+  legitimate local-file source and copies it with full stat metadata,
+  while krikri failed every such URL with "Unsupported scheme: file"
+  (HTTP::Client rejects non-http(s) schemes). A local-file path now
+  stages the copy through the same pipeline the HTTP flow uses, so
+  checksum verification, content-compare idempotency, atomic move, and
+  attribute reconciliation are all shared - and `file://` checksum
+  URLs resolve the same way.
 - **Round 700000-701129: 23 real divergences, not yet root-caused**
   (400-role Galaxy top-download batch, ubuntu+rocky) - each needs its
   own confirmed repro before treating as a real krikri bug, per this

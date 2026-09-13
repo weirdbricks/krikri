@@ -160,7 +160,7 @@ module Krikri
         File.delete(tmp_path)
         attrs_changed, failure = apply_extended_attributes(dest)
         return failure if failure
-        result = PluginResult.new(changed: attrs_changed, failed: false, msg: "file already exists and content matches", dest: dest, md5sum: native_checksum(dest, "md5"))
+        result = PluginResult.new(changed: attrs_changed, failed: false, msg: "file already exists and content matches", dest: dest, md5sum: native_checksum(dest, "md5"), url: url)
         add_path_info(result, dest)
         return result
       end
@@ -172,7 +172,7 @@ module Krikri
       _attrs_changed, failure = apply_extended_attributes(dest)
       return failure if failure
 
-      result = PluginResult.new(changed: true, failed: false, msg: "OK", dest: dest, checksum_src: native_checksum(dest, "sha1"), checksum_dest: nil, md5sum: native_checksum(dest, "md5"))
+      result = PluginResult.new(changed: true, failed: false, msg: "OK", dest: dest, checksum_src: native_checksum(dest, "sha1"), checksum_dest: nil, md5sum: native_checksum(dest, "md5"), url: url)
       add_path_info(result, dest)
       result
     end
@@ -271,7 +271,7 @@ module Krikri
       algorithm, _, value = checksum_param.partition(":")
       algorithm = algorithm.downcase
 
-      if value.starts_with?("http://") || value.starts_with?("https://")
+      if value.starts_with?("http://") || value.starts_with?("https://") || value.starts_with?("file:")
         {algorithm, resolve_checksum_url(value, url)}
       else
         {algorithm, value.downcase}
@@ -281,7 +281,10 @@ module Krikri
     private def resolve_checksum_url(checksum_url : String, target_url : String) : String
       tmp_path = "#{Dir.tempdir}/get_url_checksum_#{Process.pid}_#{Random.rand(1_000_000)}.tmp"
       begin
-        PluginHelpers::HTTPDownload.download(checksum_url, tmp_path, download_options)
+        # Route through #download (not the HTTP helper directly) so a
+        # file:// checksum file - also a valid fetch_url source for real
+        # Ansible - resolves the same way as an http(s) one.
+        download(checksum_url, tmp_path)
 
         target_basename = File.basename(URI.parse(target_url).path)
         lines = File.read_lines(tmp_path).map(&.strip).reject(&.empty?)
@@ -318,12 +321,40 @@ module Krikri
     end
 
     private def download(url : String, tmp_path : String) : Nil
-      # Delegates to the shared HTTPDownload helper (also used by
-      # deb822_repository.cr) so both plugins share one redirect-following,
-      # binary-safe download implementation. get_url's own extra knobs
-      # (timeout, validate_certs, basic auth, custom headers) map onto the
-      # helper's Options.
+      # file:// is a legitimate source for real Ansible's get_url too
+      # (urllib's FileHandler): a local mirror, a previously-fetched
+      # artifact, an offline install. Found via an ad-hoc CLI comparison
+      # sweep against real ansible (2026-09-13) - krikri previously
+      # failed every file:// URL with "Unsupported scheme: file" because
+      # HTTP::Client.new rejects anything non-http(s). Copy the local
+      # file into the same staging path the HTTP flow uses, so the rest
+      # of the pipeline (checksum verification, changed-comparison,
+      # atomic move, attribute reconciliation) is shared unchanged.
+      if path = local_file_path(url)
+        raise "file not found: #{path}" unless File.exists?(path)
+        File.copy(path, tmp_path)
+        # Match the HTTP path's staging perms (perm 0666 & ~umask on the
+        # final rename) rather than inheriting the source file's mode.
+        File.chmod(tmp_path, 0o666)
+        return
+      end
+
       PluginHelpers::HTTPDownload.download(url, tmp_path, download_options)
+    end
+
+    # file:// URL to a local path: nil when the URL isn't a file:// URL
+    # (let it fall through to the HTTP helper). RFC 8089 allows an empty
+    # or "localhost" host only - anything else is an error, as is a
+    # missing path. Percent-decoding matches urllib's unquote of the
+    # path component.
+    private def local_file_path(url : String) : String?
+      return nil unless url.starts_with?("file:")
+      uri = URI.parse(url)
+      return nil unless uri.scheme == "file"
+      raise "invalid host in file URL: #{url}" unless {nil, "", "localhost"}.includes?(uri.host)
+      path = uri.path
+      raise "no path in file URL: #{url}" if path.nil? || path.empty?
+      URI.decode(path)
     end
 
     private def download_options : PluginHelpers::HTTPDownload::Options

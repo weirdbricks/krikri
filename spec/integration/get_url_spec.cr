@@ -574,4 +574,71 @@ describe "get_url plugin" do
   ensure
     File.delete(dest) if dest && File.exists?(dest)
   end
+
+  it "copies a file:// URL like real Ansible's local-file handler, with full result metadata" do
+    # Found via an ad-hoc CLI comparison sweep against real ansible
+    # (2026-09-13): `ansible -m get_url -a "url=file:///etc/hostname
+    # dest=/tmp/x"` succeeds and returns full stat metadata, while
+    # krikri previously failed with "Unsupported scheme: file".
+    src = File.tempname("get-url-spec-src")
+    dest = File.tempname("get-url-spec")
+    File.write(src, FILE_CONTENT)
+
+    result = PluginSpecHelper.run("get_url", {"url" => "file://#{src}", "dest" => dest})
+
+    result["changed"].as_bool.should be_true
+    result["failed"]?.try(&.as_bool).should be_falsey
+    File.read(dest).should eq(FILE_CONTENT)
+    %w(checksum_src dest gid group md5sum mode owner size state uid url).each do |key|
+      result[key]?.should_not be_nil, "expected #{key} in result (real Ansible's file:// get_url returns full stat metadata)"
+    end
+    result["size"].as_i.should eq(FILE_CONTENT.size)
+    result["state"].as_s.should eq("file")
+  ensure
+    File.delete(src) if src && File.exists?(src)
+    File.delete(dest) if dest && File.exists?(dest)
+  end
+
+  it "is idempotent on a second file:// run (changed: false without force)" do
+    src = File.tempname("get-url-spec-src")
+    dest = File.tempname("get-url-spec")
+    File.write(src, FILE_CONTENT)
+    File.write(dest, FILE_CONTENT)
+
+    result = PluginSpecHelper.run("get_url", {"url" => "file://#{src}", "dest" => dest})
+
+    result["changed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
+  ensure
+    File.delete(src) if src && File.exists?(src)
+    File.delete(dest) if dest && File.exists?(dest)
+  end
+
+  it "is idempotent on a second file:// run with force: true (content-compare, like the HTTP path)" do
+    src = File.tempname("get-url-spec-src")
+    dest = File.tempname("get-url-spec")
+    File.write(src, FILE_CONTENT)
+    File.write(dest, FILE_CONTENT)
+
+    result = PluginSpecHelper.run("get_url", {"url" => "file://#{src}", "dest" => dest, "force" => "true"})
+
+    result["changed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
+  ensure
+    File.delete(src) if src && File.exists?(src)
+    File.delete(dest) if dest && File.exists?(dest)
+  end
+
+  it "fails a file:// URL whose local source does not exist" do
+    src = "#{File.tempname("get-url-spec-missing")}.never-created"
+    dest = File.tempname("get-url-spec")
+
+    result = PluginSpecHelper.run("get_url", {"url" => "file://#{src}", "dest" => dest})
+
+    result["failed"].as_bool.should be_true
+    result["status_code"].as_i.should eq(-1)
+    File.exists?(dest).should be_false
+  ensure
+    File.delete(dest) if dest && File.exists?(dest)
+  end
 end
