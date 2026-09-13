@@ -86,4 +86,93 @@ describe CronTable do
       CronTable.marker("nightly backup").should eq("#Ansible: nightly backup")
     end
   end
+
+  describe ".env_decl" do
+    it "always double-quotes the value (real cron.py's decl format)" do
+      CronTable.env_decl("PATH", "/opt/bin").should eq("PATH=\"/opt/bin\"")
+    end
+  end
+
+  describe ".upsert_env" do
+    it "inserts a NEW variable at the TOP of the file (real add_env)" do
+      text, changed, missing = CronTable.upsert_env("0 1 * * * /bin/other\n", "PATH", "PATH=\"/opt/bin\"", nil, nil)
+
+      text.should eq("PATH=\"/opt/bin\"\n0 1 * * * /bin/other\n")
+      changed.should be_true
+      missing.should be_nil
+    end
+
+    it "inserts immediately after the named variable with insertafter" do
+      original = "MAILTO=root\nSHELL=/bin/sh\n0 1 * * * /bin/other\n"
+      text, changed, missing = CronTable.upsert_env(original, "PATH", "PATH=\"/opt/bin\"", "MAILTO", nil)
+
+      text.should eq("MAILTO=root\nPATH=\"/opt/bin\"\nSHELL=/bin/sh\n0 1 * * * /bin/other\n")
+      changed.should be_true
+      missing.should be_nil
+    end
+
+    it "inserts immediately before the named variable with insertbefore" do
+      original = "MAILTO=root\nSHELL=/bin/sh\n"
+      text, _, missing = CronTable.upsert_env(original, "PATH", "PATH=\"/opt/bin\"", nil, "SHELL")
+
+      text.should eq("MAILTO=root\nPATH=\"/opt/bin\"\nSHELL=/bin/sh\n")
+      missing.should be_nil
+    end
+
+    it "fails without writing when the insert target variable doesn't exist" do
+      original = "MAILTO=root\n"
+      text, changed, missing = CronTable.upsert_env(original, "PATH", "PATH=\"/opt/bin\"", "NOPE", nil)
+
+      text.should eq(original)
+      changed.should be_false
+      missing.should eq("NOPE")
+    end
+
+    it "is idempotent when the identical decl is already present" do
+      _, changed, missing = CronTable.upsert_env("PATH=\"/opt/bin\"\n", "PATH", "PATH=\"/opt/bin\"", nil, nil)
+
+      changed.should be_false
+      missing.should be_nil
+    end
+
+    it "replaces the assignment in place when the value changes" do
+      original = "PATH=\"/opt/bin\"\nMAILTO=root\n"
+      text, changed, _ = CronTable.upsert_env(original, "PATH", "PATH=\"/usr/bin\"", nil, nil)
+
+      text.should eq("PATH=\"/usr/bin\"\nMAILTO=root\n")
+      changed.should be_true
+    end
+
+    it "replaces every duplicate assignment with the decl (real update_env)" do
+      original = "PATH=\"/a\"\nMAILTO=root\nPATH=\"/b\"\n"
+      text, changed, _ = CronTable.upsert_env(original, "PATH", "PATH=\"/usr/bin\"", nil, nil)
+
+      text.should eq("PATH=\"/usr/bin\"\nMAILTO=root\nPATH=\"/usr/bin\"\n")
+      changed.should be_true
+    end
+
+    it "removes the assignment when decl is nil (state: absent)" do
+      original = "MAILTO=root\nPATH=\"/opt/bin\"\n0 1 * * * /bin/other\n"
+      text, changed, _ = CronTable.upsert_env(original, "PATH", nil, nil, nil)
+
+      text.should eq("MAILTO=root\n0 1 * * * /bin/other\n")
+      changed.should be_true
+    end
+
+    it "is a no-op removing a variable that was never there" do
+      original = "MAILTO=root\n"
+      text, changed, _ = CronTable.upsert_env(original, "PATH", nil, nil, nil)
+
+      text.should eq(original)
+      changed.should be_false
+    end
+
+    it "matches on a strict NAME= line prefix (NAMEX= is not NAME=)" do
+      original = "PATHX=/somewhere\n"
+      text, changed, _ = CronTable.upsert_env(original, "PATH", "PATH=\"/opt/bin\"", nil, nil)
+
+      text.should eq("PATH=\"/opt/bin\"\nPATHX=/somewhere\n")
+      changed.should be_true
+    end
+  end
 end
