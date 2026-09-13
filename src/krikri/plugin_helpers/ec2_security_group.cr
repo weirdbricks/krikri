@@ -118,6 +118,8 @@ module Krikri
         group_name : String,
         description : String,
         vpc_id : String,
+        owner_id : String,
+        arn : String,
         ingress : Array(Rule),
         egress : Array(Rule),
         tags : Hash(String, String)
@@ -131,34 +133,46 @@ module Krikri
             group_name: Ec2Api.text(item, "groupName") || "",
             description: Ec2Api.text(item, "groupDescription") || "",
             vpc_id: Ec2Api.text(item, "vpcId") || "",
-            ingress: parse_permissions(item, "ipPermissionsSet"),
-            egress: parse_permissions(item, "ipPermissionsEgressSet"),
+            owner_id: Ec2Api.text(item, "ownerId") || "",
+            arn: Ec2Api.text(item, "securityGroupArn") || "",
+            ingress: parse_permissions(item, "ipPermissions", "ipPermissionsSet"),
+            egress: parse_permissions(item, "ipPermissionsEgress", "ipPermissionsEgressSet"),
             tags: Ec2Api.parse_tags(item),
           )
         end
       end
 
-      private def self.parse_permissions(group_item : XML::Node, set_name : String) : Array(Rule)
-        set = Ec2Api.child(group_item, set_name) || return [] of Rule
-        set.children.select { |node| node.name == "item" }.map do |perm|
-          cidr_ips = Ec2Api.items(perm, "ipRanges").compact_map { |range| Ec2Api.text(range, "cidrIp") }
-          cidr_ipv6s = Ec2Api.items(perm, "ipv6Ranges").compact_map { |range| Ec2Api.text(range, "cidrIpv6") }
-          group_ids = Ec2Api.items(perm, "groups").compact_map { |grp| Ec2Api.text(grp, "groupId") }
-          group_names = Ec2Api.items(perm, "groups").compact_map { |grp| Ec2Api.text(grp, "groupName") }
-          prefix_ids = Ec2Api.items(perm, "prefixListIds").compact_map { |pfx| Ec2Api.text(pfx, "prefixListId") }
-          from_port = Ec2Api.text(perm, "fromPort")
-          to_port = Ec2Api.text(perm, "toPort")
-          Rule.new(
-            proto: Ec2Api.text(perm, "ipProtocol") || "-1",
-            from_port: from_port,
-            to_port: to_port,
-            cidr_ips: cidr_ips,
-            cidr_ipv6s: cidr_ipv6s,
-            group_ids: group_ids,
-            group_names: group_names,
-            prefix_list_ids: prefix_ids,
-          )
+      # The real wire (verified live, 2026-09-13) names the permission sets
+      # ipPermissions/ipPermissionsEgress; the *Set variants are accepted
+      # for safety, since they appear in older API docs.
+      private def self.parse_permissions(group_item : XML::Node, *set_names : String) : Array(Rule)
+        set_names.each do |set_name|
+          set = Ec2Api.child(group_item, set_name) || next
+          perms = set.children.select { |node| node.name == "item" }
+          next if perms.empty?
+          return perms.map { |perm| parse_permission(perm) }
         end
+        [] of Rule
+      end
+
+      private def self.parse_permission(perm : XML::Node) : Rule
+        cidr_ips = Ec2Api.items(perm, "ipRanges").compact_map { |range| Ec2Api.text(range, "cidrIp") }
+        cidr_ipv6s = Ec2Api.items(perm, "ipv6Ranges").compact_map { |range| Ec2Api.text(range, "cidrIpv6") }
+        group_ids = Ec2Api.items(perm, "groups").compact_map { |grp| Ec2Api.text(grp, "groupId") }
+        group_names = Ec2Api.items(perm, "groups").compact_map { |grp| Ec2Api.text(grp, "groupName") }
+        prefix_ids = Ec2Api.items(perm, "prefixListIds").compact_map { |pfx| Ec2Api.text(pfx, "prefixListId") }
+        from_port = Ec2Api.text(perm, "fromPort")
+        to_port = Ec2Api.text(perm, "toPort")
+        Rule.new(
+          proto: Ec2Api.text(perm, "ipProtocol") || "-1",
+          from_port: from_port,
+          to_port: to_port,
+          cidr_ips: cidr_ips,
+          cidr_ipv6s: cidr_ipv6s,
+          group_ids: group_ids,
+          group_names: group_names,
+          prefix_list_ids: prefix_ids,
+        )
       end
 
       # Nested {filter-name => values} pairs describing the name (and,
@@ -249,6 +263,10 @@ module Krikri
           end
           steps << Ec2Api::Step.new("AuthorizeSecurityGroupIngress", permission_params(ingress)) if ingress && !ingress.empty?
           steps << Ec2Api::Step.new("AuthorizeSecurityGroupEgress", permission_params(egress)) if egress && !egress.empty?
+          # Tags are applied on the create path too (real Ansible does not
+          # drop them); ResourceId is injected by #run - the group id only
+          # exists after CreateSecurityGroup returns.
+          steps << Ec2Api::Step.new("CreateTags", Ec2Api.tag_params(tags)) unless tags.empty?
           return Plan.new(steps, true, "security group #{group_name} created", "")
         end
 
@@ -304,6 +322,98 @@ module Krikri
         )
       end
 
+      # -- result shaping ----------------------------------------------------
+      # Real Ansible's ec2_security_group success result (verified live,
+      # 2026-09-13) is the described group's boto3-shaped output:
+      # description, group_id, group_name, ip_permissions,
+      # ip_permissions_egress, owner_id, security_group_arn, tags,
+      # vpc_id - no msg, no name. state: absent returns just
+      # {changed, group_id: null} (the group is gone; nothing to describe),
+      # and so does check mode against a group that doesn't exist yet.
+
+      def self.group_result_fields(sg : SecurityGroup) : Hash(String, JSON::Any)
+        JSON.parse(JSON.build do |json|
+          json.object do
+            json.field("description", sg.description)
+            json.field("group_id", sg.group_id)
+            json.field("group_name", sg.group_name)
+            json.field("ip_permissions") { json_rules(json, sg.ingress) }
+            json.field("ip_permissions_egress") { json_rules(json, sg.egress) }
+            json.field("owner_id", sg.owner_id)
+            json.field("security_group_arn", sg.arn)
+            json.field("tags") do
+              json.object do
+                sg.tags.each { |key, value| json.field(key, value) }
+              end
+            end
+            json.field("vpc_id", sg.vpc_id)
+          end
+        end).as_h
+      end
+
+      private def self.json_rules(json : JSON::Builder, rules : Array(Rule)) : Nil
+        json.array do
+          rules.each { |rule| json_rule(json, rule) }
+        end
+      end
+
+      private def self.json_rule(json : JSON::Builder, rule : Rule) : Nil
+        json.object do
+          json.field("ip_protocol", rule.proto)
+          json_port_field(json, "from_port", rule.from_port)
+          json_port_field(json, "to_port", rule.to_port)
+          json.field("ip_ranges") do
+            json.array do
+              rule.cidr_ips.each do |cidr|
+                json.object do
+                  json.field("cidr_ip", cidr)
+                end
+              end
+            end
+          end
+          json.field("ipv6_ranges") do
+            json.array do
+              rule.cidr_ipv6s.each do |cidr|
+                json.object do
+                  json.field("cidr_ipv6", cidr)
+                end
+              end
+            end
+          end
+          json.field("prefix_list_ids") do
+            json.array do
+              rule.prefix_list_ids.each do |pid|
+                json.object do
+                  json.field("prefix_list_id", pid)
+                end
+              end
+            end
+          end
+          json.field("user_id_group_pairs") do
+            json.array do
+              rule.group_ids.each_with_index do |gid, index|
+                gname = rule.group_names[index]?
+                json.object do
+                  json.field("group_id", gid)
+                  json.field("group_name", gname) if gname && !gname.empty?
+                end
+              end
+            end
+          end
+        end
+      end
+
+      # boto3 renders ports as native ints on the wire; keep strings only
+      # when the value isn't numeric.
+      private def self.json_port_field(json : JSON::Builder, name : String, port : String?) : Nil
+        value = port || return
+        if num = value.to_i64?
+          json.field(name, num)
+        else
+          json.field(name, value)
+        end
+      end
+
       # -- full module run ---------------------------------------------------
 
       def self.run(params : Hash(String, String)) : Krikri::PluginResult
@@ -339,27 +449,66 @@ module Krikri
         end
 
         check_mode = bool_param(params["check_mode"]?)
-        return Krikri::PluginResult.new(changed: plan.changed, failed: false, msg: "#{plan.msg} (check mode)") if check_mode
+
+        # state: absent never carries group fields - the group is gone (or
+        # was never there), so there's nothing to describe; real Ansible
+        # returns exactly {changed, group_id: null}. The delete step itself
+        # still runs (unless check mode).
+        if state == "absent"
+          unless check_mode
+            plan.steps.each do |step|
+              Ec2Api.call(region, step.action, Ec2Api.to_form_params(step.params), credentials)
+            end
+          end
+          result = Krikri::PluginResult.new(changed: plan.changed, failed: false)
+          result.extra["group_id"] = JSON::Any.new(nil)
+          return result
+        end
+
+        # Check mode against a group that doesn't exist yet: nothing to
+        # describe either - real Ansible returns {changed: true, group_id:
+        # null} there.
+        if check_mode && plan.group_id.empty?
+          result = Krikri::PluginResult.new(changed: plan.changed, failed: false)
+          result.extra["group_id"] = JSON::Any.new(nil)
+          return result
+        end
 
         group_id = plan.group_id
-        plan.steps.each do |step|
-          params = step.params
-          # Authorize/Revoke target the group explicitly by GroupId - the
-          # EC2 API rejects the call without it (MissingParameter), and on
-          # the create path the id only exists after CreateSecurityGroup
-          # returns, so the plan can't carry it and #run injects it here.
-          if step.action.starts_with?("AuthorizeSecurityGroup") || step.action.starts_with?("RevokeSecurityGroup")
-            params = [{"GroupId", group_id}] + params
-          end
-          root = Ec2Api.call(region, step.action, Ec2Api.to_form_params(params), credentials)
-          if step.action == "CreateSecurityGroup"
-            group_id = Ec2Api.text(root, "groupId") || group_id
+        unless check_mode
+          plan.steps.each do |step|
+            step_params = step.params
+            # Authorize/Revoke target the group explicitly by GroupId - the
+            # EC2 API rejects the call without it (MissingParameter), and on
+            # the create path the id only exists after CreateSecurityGroup
+            # returns, so the plan can't carry it and #run injects it here.
+            if step.action.starts_with?("AuthorizeSecurityGroup") || step.action.starts_with?("RevokeSecurityGroup")
+              step_params = [{"GroupId", group_id}] + step_params
+            end
+            if step.action == "CreateTags" && step_params.none? { |(key, _)| key == "ResourceId.1" }
+              step_params = [{"ResourceId.1", group_id}] + step_params
+            end
+            root = Ec2Api.call(region, step.action, Ec2Api.to_form_params(step_params), credentials)
+            if step.action == "CreateSecurityGroup"
+              group_id = Ec2Api.text(root, "groupId") || group_id
+            end
           end
         end
 
-        result = Krikri::PluginResult.new(changed: plan.changed, failed: false, msg: plan.msg)
-        result.extra["group_id"] = JSON.parse(group_id.to_json)
-        result.extra["name"] = JSON.parse(name.to_json)
+        # Real Ansible ends every present-path result with the group's
+        # current describe output - including in check mode against an
+        # existing group (describe is read-only, so it runs there too).
+        result = Krikri::PluginResult.new(changed: plan.changed, failed: false)
+        describe_root = Ec2Api.call(region, "DescribeSecurityGroups",
+          Ec2Api.to_form_params(Ec2Api.filter_params([{"group-id", [group_id]}])), credentials)
+        group = parse_security_groups(describe_root).find { |grp| grp.group_id == group_id }
+        if group
+          group_result_fields(group).each do |key, value|
+            result.extra[key] = value
+          end
+        else
+          result.extra["group_id"] = group_id.empty? ? JSON::Any.new(nil) : JSON::Any.new(group_id)
+        end
         result
       rescue ex : Ec2Api::Error
         Krikri::PluginResult.new(changed: false, failed: true, msg: ex.message.to_s)
