@@ -32,12 +32,17 @@ module Krikri
       end
 
       unless jid
-        return PluginResult.new(changed: false, failed: true, msg: "missing required argument: jid")
+        return PluginResult.new(changed: false, failed: true, msg: "missing required arguments: jid")
       end
 
       status = AsyncJobs.read_status(jid)
       unless status
-        return PluginResult.new(changed: false, failed: true, msg: "could not find job #{jid}", finished: 1)
+        # Real Ansible's own not-found shape (async_status.py's
+        # fail_json call): msg without the jid interpolated, jid carried
+        # separately as ansible_job_id, and started/finished as real
+        # JSON booleans (ansible-core 2.19+ wording).
+        return PluginResult.new(changed: false, failed: true, msg: "could not find job",
+          ansible_job_id: jid, started: true, finished: true)
       end
 
       finished = AsyncJobs.finished?(status)
