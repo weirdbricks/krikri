@@ -52,27 +52,6 @@ configurable Jinja delimiter strings).
   `community.general.dconf`, `community.general.portage` - genuinely
   missing, one role each unless noted. See `ROLES_TESTED.md` for the
   exact affected role per module.
-- **`stat` (and `find`'s per-file entries) now carry real Ansible's
-  sub-second timestamp precision and disk-allocation fields** (found via
-  an ad-hoc CLI comparison sweep against real `ansible`, 2026-09-13):
-  real Ansible's `atime`/`mtime`/`ctime` are Python's float
-  `os.stat_result` seconds (`1789308974.764945`); krikri truncated to
-  whole seconds, and its result omitted `block_size`, `blocks`,
-  `device_type`, and `disk_usage_bytes` entirely. The shared
-  `StatFields.build` helper (used by both plugins via
-  `native_stat`) now emits float-seconds timestamps and all four
-  missing fields (`disk_usage_bytes` is real Ansible's own computed
-  `st_blocks * 512`, not a syscall passthrough).
-- **`get_url` now supports `file://` URLs** (found via an ad-hoc CLI
-  comparison sweep against real `ansible`, 2026-09-13): real Ansible's
-  `get_url` (urllib's FileHandler) treats a `file://` URL as a
-  legitimate local-file source and copies it with full stat metadata,
-  while krikri failed every such URL with "Unsupported scheme: file"
-  (HTTP::Client rejects non-http(s) schemes). A local-file path now
-  stages the copy through the same pipeline the HTTP flow uses, so
-  checksum verification, content-compare idempotency, atomic move, and
-  attribute reconciliation are all shared - and `file://` checksum
-  URLs resolve the same way.
 - **Round 700000-701129: 23 real divergences, not yet root-caused**
   (400-role Galaxy top-download batch, ubuntu+rocky) - each needs its
   own confirmed repro before treating as a real krikri bug, per this
@@ -174,6 +153,34 @@ commits), on top of the 7 immediately above re-verified clean the same
 way. The shortlist is at
 `testing/kata/round_new_authors/shortlist120.txt` if resuming it -
 against Atlantic.net now, Kata having been retired as a backend.
+
+---
+
+## `stat`/`find` now carry real Ansible's sub-second timestamp precision and disk-allocation fields (0.9.1022)
+
+Found via an ad-hoc CLI comparison sweep against real `ansible`
+(2026-09-13): real Ansible's `atime`/`mtime`/`ctime` are Python's
+float `os.stat_result` seconds (`1789308974.764945`); krikri
+truncated to whole seconds, and its result omitted `block_size`,
+`blocks`, `device_type`, and `disk_usage_bytes` entirely. The shared
+`StatFields.build` helper (used by both `stat` and `find` via
+`native_stat`) now emits float-seconds timestamps and all four
+missing fields (`disk_usage_bytes` is real Ansible's own computed
+`st_blocks * 512`, not a syscall passthrough).
+
+---
+
+## `get_url` now supports `file://` URLs (0.9.1018)
+
+Found via an ad-hoc CLI comparison sweep against real `ansible`
+(2026-09-13): real Ansible's `get_url` (urllib's FileHandler) treats a
+`file://` URL as a legitimate local-file source and copies it with
+full stat metadata, while krikri failed every such URL with
+"Unsupported scheme: file" (HTTP::Client rejects non-http(s) schemes).
+A local-file path now stages the copy through the same pipeline the
+HTTP flow uses, so checksum verification, content-compare idempotency,
+atomic move, and attribute reconciliation are all shared - and
+`file://` checksum URLs resolve the same way.
 
 ---
 
