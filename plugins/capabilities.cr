@@ -48,7 +48,11 @@ module Krikri
         new_caps = current_caps.reject { |itm| itm[0] == cap_name }
         apply_caps(path, new_caps, state, check_mode)
       else
-        PluginResult.new(changed: false, failed: false, msg: "capabilities unchanged", state: state)
+        # Real module's own unchanged exit: `exit_json(changed=False,
+        # state=self.state)` - no msg at all (its wire result is just
+        # changed+state; the "capabilities changed" msg exists only on
+        # the changed path).
+        PluginResult.new(changed: false, failed: false, msg: "", state: state)
       end
     rescue ex : CapError
       PluginResult.new(changed: false, failed: true, msg: ex.message || "capabilities module error")

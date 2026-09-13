@@ -159,7 +159,14 @@ module Krikri
     end
 
     private def ensure_absent(name : String, current : PluginHelpers::UserState::User?, check_mode : Bool) : PluginResult
-      return PluginResult.new(changed: false, failed: false, msg: "User already absent") unless current
+      unless current
+        # Real Ansible echoes name/state (with changed: false) even for
+        # an account that doesn't exist - its main() sets both
+        # unconditionally before the state branches run.
+        absent = PluginResult.new(changed: false, failed: false, msg: "User already absent")
+        attach_user_identity(absent, name, "absent")
+        return absent
+      end
 
       return PluginResult.new(changed: true, failed: false, msg: "Would remove user (check mode)") if check_mode
 
@@ -168,10 +175,19 @@ module Krikri
       return command_failure("remove user", result) unless result[:exit_code] == 0
       invalidate_shadow_cache
 
-      PluginResult.new(changed: true, failed: false, msg: "User removed")
+      # Real ansible-core user.py's own state=absent result: name/state
+      # echoed always, plus force/remove only when an existing account
+      # was actually removed (live-verified result shape: no uid/home/
+      # shell after a userdel - the account no longer exists to look up).
+      removed = PluginResult.new(changed: true, failed: false, msg: "User removed")
+      attach_user_identity(removed, name, "absent")
+      removed.extra["force"] = JSON::Any.new(true?(@params["force"]?))
+      removed.extra["remove"] = JSON::Any.new(true?(@params["remove"]?))
+      removed
     end
 
     private def ensure_present(name : String, current : PluginHelpers::UserState::User?, check_mode : Bool) : PluginResult
+      state = @params["state"]? || "present"
       base = current ? modify(name, current, check_mode) : create(name, check_mode)
       return base if base.failed?
 
@@ -203,6 +219,29 @@ module Krikri
         msg: combine_msg(base, ageing, ssh_key)
       )
       attach_user_facts(result, facts) if facts
+
+      # Real ansible-core user.py's own result keys beyond the resolved
+      # identity (verified against its main() result assembly and live
+      # `ansible localhost -c local -m user` runs):
+      # - name/state are ALWAYS echoed (even state=absent)
+      # - append/move_home only on the modify-existing-account path
+      # - system/create_home only on the create path
+      # - groups (the comma-joined param) only when groups: was given
+      # - password: 'NOT_LOGGING_PASSWORD' only when password: was given
+      attach_user_identity(result, name, state)
+      if current
+        result.extra["append"] = JSON::Any.new(true?(@params["append"]?))
+        result.extra["move_home"] = JSON::Any.new(true?(@params["move_home"]?))
+      else
+        result.extra["system"] = JSON::Any.new(true?(@params["system"]?))
+        result.extra["create_home"] = JSON::Any.new(wants_create_home?)
+      end
+      if groups = @params["groups"]?.presence
+        result.extra["groups"] = JSON::Any.new(groups)
+      end
+      if @params["password"]?.presence
+        result.extra["password"] = JSON::Any.new("NOT_LOGGING_PASSWORD")
+      end
       # apply_ssh_key's own ssh_key_file/ssh_public_key/ssh_fingerprint
       # fields (real Ansible's own returned keys for generate_ssh_key:)
       # live on ITS PluginResult, not the merged one built above - never
@@ -332,6 +371,15 @@ module Krikri
       result.extra["home"] = JSON::Any.new(facts.home)
       result.extra["shell"] = JSON::Any.new(facts.shell)
       result.extra["comment"] = JSON::Any.new(facts.comment)
+    end
+
+    # Real Ansible's user module echoes `name` and `state` in its result
+    # on every path (its main() sets both unconditionally before any
+    # branch runs). The per-account resolved facts (uid/group/home/
+    # shell/comment) are attached separately by #attach_user_facts.
+    private def attach_user_identity(result : PluginResult, name : String, state : String) : Nil
+      result.extra["name"] = JSON::Any.new(name)
+      result.extra["state"] = JSON::Any.new(state)
     end
 
     # password_expire_min:/_max:/_warn: - real Ansible's user module sets

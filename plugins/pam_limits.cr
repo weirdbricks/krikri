@@ -109,30 +109,26 @@ module Krikri
                existing[2] == limit_item && existing[3] == value
         unless same
           changed = true
-          unless @check_mode
-            effective_comment = comment || old_comment
-            entry_line = build_entry(domain, limit_type, limit_item, value, effective_comment)
-            indent = lines[index][0, lines[index].size - lines[index].lstrip.size]
-            lines[index] = "#{indent}#{entry_line}"
-          end
+          effective_comment = comment || old_comment
+          entry_line = build_entry(domain, limit_type, limit_item, value, effective_comment)
+          indent = lines[index][0, lines[index].size - lines[index].lstrip.size]
+          lines[index] = "#{indent}#{entry_line}"
         end
       else
         changed = true
-        unless @check_mode
-          # Real Ansible's own module has no special-casing for a `# End
-          # of file` marker (or any other comment line) anywhere in the
-          # file - it copies every existing line through unchanged and
-          # only ever appends the new entry after the whole file,
-          # regardless of what the last lines say. This plugin
-          # previously inserted BEFORE that marker instead, an invented
-          # behavior not in the real module at all.
-          entry_line = build_entry(domain, limit_type, limit_item, value, comment)
-          # A missing trailing newline on the file's current last line
-          # would otherwise run straight into the new entry on the same
-          # line.
-          lines[-1] = "#{lines[-1]}\n" if !lines.empty? && !lines.last.ends_with?("\n")
-          lines << entry_line
-        end
+        # Real Ansible's own module has no special-casing for a `# End
+        # of file` marker (or any other comment line) anywhere in the
+        # file - it copies every existing line through unchanged and
+        # only ever appends the new entry after the whole file,
+        # regardless of what the last lines say. This plugin
+        # previously inserted BEFORE that marker instead, an invented
+        # behavior not in the real module at all.
+        entry_line = build_entry(domain, limit_type, limit_item, value, comment)
+        # A missing trailing newline on the file's current last line
+        # would otherwise run straight into the new entry on the same
+        # line.
+        lines[-1] = "#{lines[-1]}\n" if !lines.empty? && !lines.last.ends_with?("\n")
+        lines << entry_line
       end
 
       if changed && !@check_mode
@@ -147,15 +143,28 @@ module Krikri
         end
       end
 
-      msg = changed ? "Added or updated limit entry" : "Entry already present"
-      msg += " (check mode)" if @check_mode && changed
+      # Real pam_limits.py's own result shape (verified live against
+      # community.general 12.5.0 / ansible-core 2.19): `msg` is the
+      # EFFECTIVE limits line (the new entry when changed, the existing
+      # matched line when already present - trailing newline included),
+      # plus a diff of the whole file (before/after content, always
+      # present in the module's own res_args regardless of diff mode -
+      # in check mode the after-content is the would-be file content),
+      # and NO path echo. Its msg is never empty, so it always appears.
+      new_content = lines.join
+      entry_msg = if index && !changed
+                    lines[index]
+                  else
+                    build_entry(domain, limit_type, limit_item, value, changed && index ? comment || old_comment : comment)
+                  end
 
-      PluginResult.new(
+      result = PluginResult.new(
         changed: changed,
         failed: false,
-        msg: msg,
-        path: dest
+        msg: entry_msg,
+        diff: JSON.parse({before: content, after: new_content}.to_json)
       )
+      result
     end
 
     # Matches real pam_limits.py's own `f"{domain}\t{limit_type}\t

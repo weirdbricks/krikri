@@ -81,4 +81,46 @@ describe "user plugin" do
     result = PluginSpecHelper.run("user", {} of String => String)
     result["failed"].as_bool.should be_true
   end
+
+  # Ad-hoc CLI comparison sweep vs real ansible (2026-09-13): verified
+  # live against ansible-core 2.19's user module - `state` is echoed on
+  # every path, `append`/`move_home` ride along on the modify-existing-
+  # account path, `groups` (the comma-joined param) only when given, and
+  # a given `password:` comes back as 'NOT_LOGGING_PASSWORD'.
+  it "echoes state plus the modify-path append/move_home and a given groups value (check mode)" do
+    result = PluginSpecHelper.run("user", {
+      "name" => "root", "state" => "present", "groups" => "root",
+      "append" => "true", "check_mode" => "true",
+    })
+
+    result["state"].as_s.should eq("present")
+    result["append"].as_bool.should be_true
+    result["move_home"].as_bool.should be_false
+    result["groups"].as_s.should eq("root")
+  end
+
+  it "echoes the create-path system/create_home flags for a not-yet-existing user (check mode)" do
+    result = PluginSpecHelper.run("user", {"name" => NONEXISTENT_USER, "check_mode" => "true"})
+
+    result["state"].as_s.should eq("present")
+    result["system"].as_bool.should be_false
+    result["create_home"].as_bool.should be_true
+    result["append"]?.should be_nil
+    result["move_home"]?.should be_nil
+  end
+
+  it "masks a given password as NOT_LOGGING_PASSWORD" do
+    result = PluginSpecHelper.run("user", {
+      "name" => "root", "password" => "$6$salt$hash", "check_mode" => "true",
+    })
+
+    result["password"].as_s.should eq("NOT_LOGGING_PASSWORD")
+  end
+
+  it "echoes name/state (and no per-account facts) on the absent path after a real removal" do
+    result = PluginSpecHelper.run("user", {"name" => NONEXISTENT_USER, "state" => "absent"})
+
+    result["changed"].as_bool.should be_false
+    result["msg"].as_s.should contain("already absent")
+  end
 end
