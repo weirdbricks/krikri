@@ -35,10 +35,9 @@ POSTGRES_LOGIN = {
 }
 
 describe "postgresql_query/postgresql_user against a real PostgreSQL server at 127.0.0.1:15432" do
-  pending! "no PostgreSQL server at 127.0.0.1:15432" unless postgres_reachable?
-
   describe "postgresql_query" do
     it "returns the full multi-row result set as an array of typed row objects" do
+      pending! "no PostgreSQL server at 127.0.0.1:15432" unless postgres_reachable?
       PluginSpecHelper.run("postgresql_query", POSTGRES_LOGIN.merge({
         "login_db" => "postgres",
         "query"    => "DROP TABLE IF EXISTS krikri_spec_rows",
@@ -81,6 +80,7 @@ describe "postgresql_query/postgresql_user against a real PostgreSQL server at 1
     end
 
     it "coerces numeric column types to native JSON numbers" do
+      pending! "no PostgreSQL server at 127.0.0.1:15432" unless postgres_reachable?
       result = PluginSpecHelper.run("postgresql_query", POSTGRES_LOGIN.merge({
         "login_db" => "postgres",
         "query"    => "SELECT 7::int AS i, 8::bigint AS b, 2.5::float8 AS f, 1.23::numeric AS n",
@@ -97,6 +97,7 @@ describe "postgresql_query/postgresql_user against a real PostgreSQL server at 1
 
   describe "postgresql_user" do
     it "reports changed: false on an unchanged repeat call with the same password" do
+      pending! "no PostgreSQL server at 127.0.0.1:15432" unless postgres_reachable?
       created = PluginSpecHelper.run("postgresql_user", POSTGRES_LOGIN.merge({
         "name"     => "krikri_spec_role",
         "password" => "s3cretpw",
