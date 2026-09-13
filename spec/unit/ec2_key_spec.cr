@@ -16,6 +16,10 @@ private DESCRIBE_ONE = <<-XML
         <keyName>deploy</keyName>
         <keyFingerprint>aa:bb:cc</keyFingerprint>
         <keyPairId>key-123</keyPairId>
+        <keyType>rsa</keyType>
+        <tagSet>
+          <item><key>env</key><value>prod</value></item>
+        </tagSet>
       </item>
     </keyPairsSet>
   </DescribeKeyPairsResponse>
@@ -82,7 +86,7 @@ describe Krikri::PluginHelpers::Ec2Key do
   end
 
   describe ".plan_present" do
-    existing = [Krikri::PluginHelpers::Ec2Key::KeyPair.new("deploy", "aa:bb:cc")]
+    existing = [Krikri::PluginHelpers::Ec2Key::KeyPair.new("deploy", "aa:bb:cc", "key-123", {"env" => "prod"} of String => String, "rsa")]
 
     it "creates a new key pair when none exists" do
       plan = Krikri::PluginHelpers::Ec2Key.plan_present("deploy", nil, false, [] of Krikri::PluginHelpers::Ec2Key::KeyPair)
@@ -115,26 +119,29 @@ describe Krikri::PluginHelpers::Ec2Key do
       plan = Krikri::PluginHelpers::Ec2Key.plan_present("deploy", nil, true, existing)
       plan.changed.should be_true
       plan.steps.map(&.action).should eq(["DeleteKeyPair", "CreateKeyPair"])
+      plan.msg.should eq("key pair updated")
     end
   end
 
   describe ".plan_absent" do
     it "deletes an existing key" do
-      existing = [Krikri::PluginHelpers::Ec2Key::KeyPair.new("deploy", "aa:bb:cc")]
+      existing = [Krikri::PluginHelpers::Ec2Key::KeyPair.new("deploy", "aa:bb:cc", "key-123", {} of String => String, "rsa")]
       plan = Krikri::PluginHelpers::Ec2Key.plan_absent("deploy", existing)
       plan.changed.should be_true
       plan.steps.map(&.action).should eq(["DeleteKeyPair"])
+      plan.msg.should eq("key deleted")
     end
 
     it "is a no-op when absent" do
       plan = Krikri::PluginHelpers::Ec2Key.plan_absent("deploy", [] of Krikri::PluginHelpers::Ec2Key::KeyPair)
       plan.changed.should be_false
       plan.steps.should be_empty
+      plan.msg.should eq("key did not exist")
     end
   end
 
   describe ".run" do
-    it "creates a key pair and returns the private key from the create response" do
+    it "creates a key pair and returns the real module's key result shape" do
       result = run_module({"name" => "deploy", "state" => "present", "region" => "us-east-1"}, ->(region : String, body : String) do
         action = URI::Params.parse(body)["Action"]
         if action == "DescribeKeyPairs"
@@ -146,6 +153,7 @@ describe Krikri::PluginHelpers::Ec2Key do
               <keyFingerprint>de:ad:be:ef</keyFingerprint>
               <keyMaterial>RSA PRIVATE KEY</keyMaterial>
               <keyPairId>key-9</keyPairId>
+              <keyType>rsa</keyType>
             </#{action}Response>
           XML
         end
@@ -153,9 +161,36 @@ describe Krikri::PluginHelpers::Ec2Key do
 
       result["changed"].should eq(true)
       result["failed"]?.should be_falsey
-      result["private_key"].should eq("RSA PRIVATE KEY")
-      result["fingerprint"].should eq("de:ad:be:ef")
-      result["name"].should eq("deploy")
+      result["msg"].should eq("key pair created")
+      key = result["key"]
+      key["name"].should eq("deploy")
+      key["fingerprint"].should eq("de:ad:be:ef")
+      key["id"].should eq("key-9")
+      key["type"].should eq("rsa")
+      key["private_key"].should eq("RSA PRIVATE KEY")
+      key["tags"].as_h?.should eq(Hash(String, JSON::Any).new)
+    end
+
+    it "imports a key without private_key in the result" do
+      result = run_module({"name" => "deploy", "state" => "present", "key_material" => "ssh-rsa AAAA", "tags" => "{\"team\":\"ops\"}", "region" => "us-east-1"}, ->(region : String, body : String) do
+        action = URI::Params.parse(body)["Action"]
+        if action == "DescribeKeyPairs"
+          DESCRIBE_NONE
+        else
+          <<-XML
+            <#{action}Response xmlns="http://ec2.amazonaws.com/doc/2016-11-15/">
+              <keyName>deploy</keyName>
+              <keyFingerprint>de:ad:be:ef</keyFingerprint>
+              <keyPairId>key-9</keyPairId>
+            </#{action}Response>
+          XML
+        end
+      end)
+
+      key = result["key"]
+      key["private_key"]?.should be_nil
+      key["type"]?.should be_nil
+      key["tags"]["team"].should eq("ops")
     end
 
     it "sends the key-name filter on the describe call" do
@@ -173,7 +208,34 @@ describe Krikri::PluginHelpers::Ec2Key do
     it "is a no-op when the key already exists and force is not set" do
       result = run_module({"name" => "deploy", "state" => "present", "region" => "us-east-1"}, ->(region : String, body : String) { DESCRIBE_ONE })
       result["changed"].should eq(false)
-      result["fingerprint"].should eq("aa:bb:cc")
+      result["msg"].should eq("key pair already exists")
+      key = result["key"]
+      key["name"].should eq("deploy")
+      key["fingerprint"].should eq("aa:bb:cc")
+      key["id"].should eq("key-123")
+      key["type"].should eq("rsa")
+      key["tags"]["env"].should eq("prod")
+      key["private_key"]?.should be_nil
+    end
+
+    it "returns key null and the real module's msg when deleting" do
+      result = run_module({"name" => "deploy", "state" => "absent", "region" => "us-east-1"}, ->(region : String, body : String) { DESCRIBE_ONE })
+      result["changed"].should eq(true)
+      result["msg"].should eq("key deleted")
+      result["key"].should eq(nil)
+    end
+
+    it "returns key null and 'key did not exist' when deleting a missing key" do
+      result = run_module({"name" => "deploy", "state" => "absent", "region" => "us-east-1"}, ->(region : String, body : String) { DESCRIBE_NONE })
+      result["changed"].should eq(false)
+      result["msg"].should eq("key did not exist")
+      result["key"].should eq(nil)
+    end
+
+    it "returns key null in check mode" do
+      result = run_module({"name" => "deploy", "state" => "present", "region" => "us-east-1", "check_mode" => "true"}, ->(region : String, body : String) { DESCRIBE_NONE })
+      result["changed"].should eq(true)
+      result["key"].should eq(nil)
     end
 
     it "fails with the API error message when a call errors" do

@@ -13,31 +13,39 @@ private DESCRIBE_ONE = <<-XML
     <requestId>req-1</requestId>
     <securityGroupInfo>
       <item>
+        <ownerId>123456789012</ownerId>
         <groupId>sg-111</groupId>
         <groupName>web</groupName>
         <groupDescription>web group</groupDescription>
         <vpcId>vpc-1</vpcId>
-        <ipPermissionsSet>
+        <ipPermissions>
           <item>
             <ipProtocol>tcp</ipProtocol>
             <fromPort>22</fromPort>
             <toPort>22</toPort>
+            <groups/>
             <ipRanges>
               <item><cidrIp>10.0.0.0/8</cidrIp></item>
             </ipRanges>
+            <ipv6Ranges/>
+            <prefixListIds/>
           </item>
-        </ipPermissionsSet>
-        <ipPermissionsEgressSet>
+        </ipPermissions>
+        <ipPermissionsEgress>
           <item>
             <ipProtocol>-1</ipProtocol>
+            <groups/>
             <ipRanges>
               <item><cidrIp>0.0.0.0/0</cidrIp></item>
             </ipRanges>
+            <ipv6Ranges/>
+            <prefixListIds/>
           </item>
-        </ipPermissionsEgressSet>
+        </ipPermissionsEgress>
         <tagSet>
           <item><key>env</key><value>prod</value></item>
         </tagSet>
+        <securityGroupArn>arn:aws:ec2:us-east-1:123456789012:security-group/sg-111</securityGroupArn>
       </item>
     </securityGroupInfo>
   </DescribeSecurityGroupsResponse>
@@ -48,6 +56,50 @@ private DESCRIBE_NONE = <<-XML
   <DescribeSecurityGroupsResponse xmlns="http://ec2.amazonaws.com/doc/2016-11-15/">
     <requestId>req-2</requestId>
     <securityGroupInfo/>
+  </DescribeSecurityGroupsResponse>
+XML
+
+private DESCRIBE_CREATED = <<-XML
+  <?xml version="1.0" encoding="UTF-8"?>
+  <DescribeSecurityGroupsResponse xmlns="http://ec2.amazonaws.com/doc/2016-11-15/">
+    <requestId>req-3</requestId>
+    <securityGroupInfo>
+      <item>
+        <ownerId>123456789012</ownerId>
+        <groupId>sg-new</groupId>
+        <groupName>web</groupName>
+        <groupDescription>web group</groupDescription>
+        <vpcId>vpc-1</vpcId>
+        <ipPermissions>
+          <item>
+            <ipProtocol>tcp</ipProtocol>
+            <fromPort>22</fromPort>
+            <toPort>22</toPort>
+            <groups/>
+            <ipRanges>
+              <item><cidrIp>10.0.0.0/8</cidrIp></item>
+            </ipRanges>
+            <ipv6Ranges/>
+            <prefixListIds/>
+          </item>
+        </ipPermissions>
+        <ipPermissionsEgress>
+          <item>
+            <ipProtocol>-1</ipProtocol>
+            <groups/>
+            <ipRanges>
+              <item><cidrIp>0.0.0.0/0</cidrIp></item>
+            </ipRanges>
+            <ipv6Ranges/>
+            <prefixListIds/>
+          </item>
+        </ipPermissionsEgress>
+        <tagSet>
+          <item><key>env</key><value>test</value></item>
+        </tagSet>
+        <securityGroupArn>arn:aws:ec2:us-east-1:123456789012:security-group/sg-new</securityGroupArn>
+      </item>
+    </securityGroupInfo>
   </DescribeSecurityGroupsResponse>
 XML
 
@@ -99,6 +151,8 @@ describe Krikri::PluginHelpers::Ec2SecurityGroup do
       sg.group_name.should eq("web")
       sg.description.should eq("web group")
       sg.vpc_id.should eq("vpc-1")
+      sg.owner_id.should eq("123456789012")
+      sg.arn.should eq("arn:aws:ec2:us-east-1:123456789012:security-group/sg-111")
       sg.tags.should eq({"env" => "prod"})
 
       sg.ingress.size.should eq(1)
@@ -160,11 +214,48 @@ describe Krikri::PluginHelpers::Ec2SecurityGroup do
     existing = parse(DESCRIBE_ONE)[0]
 
     it "creates the group plus authorize calls when none exists" do
-      plan = Krikri::PluginHelpers::Ec2SecurityGroup.plan_present("web", "d", nil, existing.ingress, existing.egress, true, true, {} of String => String, [] of Krikri::PluginHelpers::Ec2SecurityGroup::SecurityGroup)
+      plan = Krikri::PluginHelpers::Ec2SecurityGroup.plan_present("web", "d", nil, existing.ingress, existing.egress, true, true, {"env" => "test"}, [] of Krikri::PluginHelpers::Ec2SecurityGroup::SecurityGroup)
       plan.changed.should be_true
-      plan.steps.map(&.action).should eq(["CreateSecurityGroup", "AuthorizeSecurityGroupIngress", "AuthorizeSecurityGroupEgress"])
+      plan.steps.map(&.action).should eq(["CreateSecurityGroup", "AuthorizeSecurityGroupIngress", "AuthorizeSecurityGroupEgress", "CreateTags"])
       plan.steps[0].params.should contain({"GroupName", "web"})
       plan.steps[0].params.should contain({"GroupDescription", "d"})
+    end
+
+    it "injects ResourceId on the create-path CreateTags call" do
+      bodies = [] of String
+      handler = ->(region : String, body : String) do
+        bodies << body
+        action = URI::Params.parse(body)["Action"]
+        if action == "DescribeSecurityGroups"
+          describes = bodies.count { |b| URI::Params.parse(b)["Action"] == "DescribeSecurityGroups" }
+          describes == 1 ? DESCRIBE_NONE : DESCRIBE_CREATED
+        else
+          <<-XML
+            <#{action}Response xmlns="http://ec2.amazonaws.com/doc/2016-11-15/">
+              <return>true</return>
+              <groupId>sg-new</groupId>
+            </#{action}Response>
+          XML
+        end
+      end
+      run_module({"name" => "web", "description" => "d", "state" => "present", "region" => "us-east-1", "tags" => %({"env": "test"})}, handler)
+      tags_body = bodies.find { |b| URI::Params.parse(b)["Action"] == "CreateTags" }.not_nil!
+      tags_body.should contain("ResourceId.1=sg-new")
+      tags_body.should contain("Tag.1.Key=env")
+    end
+
+    it "revokes AWS's default egress rule when creating with a rules_egress list that replaces it" do
+      tcp443 = Krikri::PluginHelpers::Ec2SecurityGroup::Rule.new("tcp", "443", "443", ["0.0.0.0/0"], [] of String, [] of String, [] of String, [] of String)
+      plan = Krikri::PluginHelpers::Ec2SecurityGroup.plan_present("web", "d", nil, existing.ingress, [tcp443], true, true, {} of String => String, [] of Krikri::PluginHelpers::Ec2SecurityGroup::SecurityGroup)
+      plan.steps.map(&.action).should eq(["CreateSecurityGroup", "RevokeSecurityGroupEgress", "AuthorizeSecurityGroupIngress", "AuthorizeSecurityGroupEgress"])
+      plan.steps[1].params.should contain({"IpPermissions.1.IpProtocol", "-1"})
+      plan.steps[1].params.should contain({"IpPermissions.1.IpRanges.1.CidrIp", "0.0.0.0/0"})
+    end
+
+    it "keeps the default egress rule when the desired create list includes it" do
+      allow_all = Krikri::PluginHelpers::Ec2SecurityGroup::Rule.new("-1", nil, nil, ["0.0.0.0/0"], [] of String, [] of String, [] of String, [] of String)
+      plan = Krikri::PluginHelpers::Ec2SecurityGroup.plan_present("web", "d", nil, nil, [allow_all], true, true, {} of String => String, [] of Krikri::PluginHelpers::Ec2SecurityGroup::SecurityGroup)
+      plan.steps.map(&.action).should eq(["CreateSecurityGroup", "AuthorizeSecurityGroupEgress"])
     end
 
     it "is a no-op when the group already matches" do
@@ -217,8 +308,58 @@ describe Krikri::PluginHelpers::Ec2SecurityGroup do
   end
 
   describe ".run" do
-    it "creates a security group and returns the new group id" do
-      result = run_module({"name" => "web", "description" => "web group", "state" => "present", "region" => "us-east-1"}, ->(region : String, body : String) do
+    it "returns the real module's full field coverage on the create path" do
+      describes = 0
+      handler = ->(region : String, body : String) do
+        action = URI::Params.parse(body)["Action"]
+        if action == "DescribeSecurityGroups"
+          describes += 1
+          describes == 1 ? DESCRIBE_NONE : DESCRIBE_CREATED
+        else
+          <<-XML
+            <#{action}Response xmlns="http://ec2.amazonaws.com/doc/2016-11-15/">
+              <return>true</return>
+              <groupId>sg-new</groupId>
+            </#{action}Response>
+          XML
+        end
+      end
+      result = run_module({"name" => "web", "description" => "web group", "state" => "present", "region" => "us-east-1"}, handler)
+
+      result["changed"].should eq(true)
+      result["failed"]?.should be_falsey
+      result["msg"]?.should be_nil
+      result["name"]?.should be_nil
+      result["group_id"].should eq("sg-new")
+      result["group_name"].should eq("web")
+      result["description"].should eq("web group")
+      result["vpc_id"].should eq("vpc-1")
+      result["owner_id"].should eq("123456789012")
+      result["security_group_arn"].should eq("arn:aws:ec2:us-east-1:123456789012:security-group/sg-new")
+      result["tags"].should eq({"env" => "test"})
+
+      ingress = result["ip_permissions"].as_a
+      ingress.size.should eq(1)
+      ingress[0]["ip_protocol"].should eq("tcp")
+      ingress[0]["from_port"].should eq(22)
+      ingress[0]["to_port"].should eq(22)
+      ingress[0]["ip_ranges"].as_a[0]["cidr_ip"].should eq("10.0.0.0/8")
+      ingress[0]["ipv6_ranges"].as_a.should be_empty
+      ingress[0]["prefix_list_ids"].as_a.should be_empty
+      ingress[0]["user_id_group_pairs"].as_a.should be_empty
+
+      egress = result["ip_permissions_egress"].as_a
+      egress.size.should eq(1)
+      egress[0]["ip_protocol"].should eq("-1")
+      egress[0]["from_port"]?.should be_nil
+      egress[0]["to_port"]?.should be_nil
+      egress[0]["ip_ranges"].as_a[0]["cidr_ip"].should eq("0.0.0.0/0")
+    end
+
+    it "targets the just-created group on the create-with-rules authorize calls" do
+      bodies = [] of String
+      handler = ->(region : String, body : String) do
+        bodies << body
         action = URI::Params.parse(body)["Action"]
         if action == "DescribeSecurityGroups"
           DESCRIBE_NONE
@@ -230,12 +371,31 @@ describe Krikri::PluginHelpers::Ec2SecurityGroup do
             </#{action}Response>
           XML
         end
-      end)
+      end
+      rules = %([{"proto": "tcp", "from_port": 22, "to_port": 22, "cidr_ip": "10.0.0.0/8"}])
+      egress = %([{"proto": "tcp", "from_port": 443, "to_port": 443, "cidr_ip": "0.0.0.0/0"}])
+      run_module({"name" => "web", "description" => "web group", "state" => "present", "region" => "us-east-1", "rules" => rules, "rules_egress" => egress}, handler)
 
-      result["changed"].should eq(true)
-      result["failed"]?.should be_falsey
-      result["group_id"].should eq("sg-new")
-      result["name"].should eq("web")
+      actions = bodies.map { |b| URI::Params.parse(b)["Action"] }
+      actions.should eq(["DescribeSecurityGroups", "CreateSecurityGroup", "RevokeSecurityGroupEgress", "AuthorizeSecurityGroupIngress", "AuthorizeSecurityGroupEgress", "DescribeSecurityGroups"])
+      authorize_body = bodies.find { |b| URI::Params.parse(b)["Action"] == "AuthorizeSecurityGroupIngress" }.not_nil!
+      authorize_body.should contain("GroupId=sg-new")
+      authorize_body.should contain("IpPermissions.1.IpProtocol=tcp")
+      revoke_body = bodies.find { |b| URI::Params.parse(b)["Action"] == "RevokeSecurityGroupEgress" }.not_nil!
+      revoke_body.should contain("GroupId=sg-new")
+      revoke_body.should contain("IpPermissions.1.IpRanges.1.CidrIp=0.0.0.0%2F0")
+    end
+
+    it "targets the existing group on update authorize calls" do
+      bodies = [] of String
+      handler = ->(region : String, body : String) do
+        bodies << body
+        DESCRIBE_ONE
+      end
+      rules = %([{"proto": "tcp", "from_port": 80, "to_port": 80, "cidr_ip": "0.0.0.0/0"}])
+      run_module({"name" => "web", "state" => "present", "region" => "us-east-1", "rules" => rules}, handler)
+      authorize_body = bodies.find { |b| URI::Params.parse(b)["Action"] == "AuthorizeSecurityGroupIngress" }.not_nil!
+      authorize_body.should contain("GroupId=sg-111")
     end
 
     it "sends the group-name filter on the describe call" do
@@ -256,9 +416,27 @@ describe Krikri::PluginHelpers::Ec2SecurityGroup do
       result = run_module({"name" => "web", "description" => "web group", "state" => "present", "region" => "us-east-1"}, ->(region : String, body : String) { DESCRIBE_ONE })
       result["changed"].should eq(false)
       result["group_id"].should eq("sg-111")
+      result["group_name"].should eq("web")
+      result["owner_id"].should eq("123456789012")
+      result["security_group_arn"].should eq("arn:aws:ec2:us-east-1:123456789012:security-group/sg-111")
+      result["msg"]?.should be_nil
     end
 
-    it "reports check mode without executing the plan" do
+    it "returns just changed and a null group_id for state absent" do
+      result = run_module({"name" => "web", "state" => "absent", "region" => "us-east-1"}, ->(region : String, body : String) { DESCRIBE_ONE })
+      result["changed"].should eq(true)
+      result["group_id"].raw.should be_nil
+      result["msg"]?.should be_nil
+      result["group_name"]?.should be_nil
+    end
+
+    it "returns just changed and a null group_id for an absent-when-absent delete" do
+      result = run_module({"name" => "web", "state" => "absent", "region" => "us-east-1"}, ->(region : String, body : String) { DESCRIBE_NONE })
+      result["changed"].should eq(false)
+      result["group_id"].raw.should be_nil
+    end
+
+    it "reports check mode against a missing group without group fields" do
       bodies = [] of String
       handler = ->(region : String, body : String) do
         bodies << body
@@ -266,7 +444,26 @@ describe Krikri::PluginHelpers::Ec2SecurityGroup do
       end
       result = run_module({"name" => "web", "state" => "present", "region" => "us-east-1", "check_mode" => "true"}, handler)
       result["changed"].should eq(true)
-      result["msg"].as_s.should contain("check mode")
+      result["group_id"].raw.should be_nil
+      result["msg"]?.should be_nil
+      result["group_name"]?.should be_nil
+      bodies.map { |b| URI::Params.parse(b)["Action"] }.uniq.should eq(["DescribeSecurityGroups"])
+    end
+
+    it "describes the existing group in check mode like real ansible" do
+      bodies = [] of String
+      handler = ->(region : String, body : String) do
+        bodies << body
+        DESCRIBE_ONE
+      end
+      rules = %([{"proto": "tcp", "from_port": 90, "to_port": 90, "cidr_ip": "0.0.0.0/0"}])
+      result = run_module({"name" => "web", "description" => "web group", "state" => "present", "region" => "us-east-1", "rules" => rules, "check_mode" => "true"}, handler)
+      result["changed"].should eq(true)
+      result["group_id"].should eq("sg-111")
+      result["group_name"].should eq("web")
+      result["description"].should eq("web group")
+      result["ip_permissions"].as_a.size.should eq(1)
+      result["msg"]?.should be_nil
       bodies.map { |b| URI::Params.parse(b)["Action"] }.uniq.should eq(["DescribeSecurityGroups"])
     end
 

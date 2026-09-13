@@ -18,7 +18,7 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.1030`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.1032`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.31` (see `shard.yml`; 0.9.31 adds the six
 configurable Jinja delimiter strings).
 
@@ -153,6 +153,60 @@ commits), on top of the 7 immediately above re-verified clean the same
 way. The shortlist is at
 `testing/kata/round_new_authors/shortlist120.txt` if resuming it -
 against Atlantic.net now, Kata having been retired as a backend.
+
+---
+
+## `ec2_key` result shape + `ec2_security_group` GroupId wiring and result field coverage (0.9.1032)
+
+Found via an ad-hoc CLI comparison sweep against real AWS (account
+567671850288, 2026-09-13), running real ansible's `amazon.aws.ec2_key`
+and `amazon.aws.ec2_security_group` side-by-side with krikri's on live
+API calls:
+
+- **`ec2_key` result shape**: real ansible returns a `key` dict (name,
+  fingerprint, id, tags; private_key/type only when AWS actually
+  returned them) with key null on absent/delete and check mode -
+  krikri was inventing top-level name/fingerprint/private_key fields.
+  Messages aligned to the real module's strings. Verified live: create,
+  re-run, delete, check mode.
+
+- **`ec2_security_group` create-with-rules GroupId wiring**: the
+  AuthorizeSecurityGroup*/RevokeSecurityGroup* calls carried no
+  GroupId (real API rejects with MissingParameter) because the group
+  id only exists after CreateSecurityGroup returns; run() now injects
+  the (possibly just-created) GroupId into every authorize/revoke
+  call, and creating with a rules_egress list that replaces AWS's
+  default allow-all egress revokes it first, matching real Ansible's
+  purge behavior.
+
+- **`ec2_security_group` result field coverage**: real ansible's
+  success result is the described group - description, group_id,
+  group_name, ip_permissions, ip_permissions_egress, owner_id,
+  security_group_arn, tags, vpc_id - with no msg and no name, on
+  create, update, idempotent no-op, and check mode against an existing
+  group (verified live in every path). state: absent and check mode
+  against a missing group return just {changed, group_id: null}.
+  krikri returned only changed/msg/group_id/name. run() now ends the
+  present path with a DescribeSecurityGroups-by-group-id call and
+  shapes the result through the same SecurityGroup record the plan's
+  diffing already uses (newly parsing ownerId/securityGroupArn), with
+  boto3-shaped ip_permissions entries (ip_protocol, native-int
+  from_port/to_port, ip_ranges, ipv6_ranges, prefix_list_ids,
+  user_id_group_pairs).
+
+- **Bonus wire-shape bug caught by the same sweep**: the existing-rule
+  parser looked for `ipPermissionsSet`/`ipPermissionsEgressSet`
+  elements, but the real DescribeSecurityGroups wire names them
+  `ipPermissions`/`ipPermissionsEgress` - so against the real API
+  every existing group looked rule-less, meaning update runs would
+  re-authorize (InvalidPermission.Duplicate on the real API) and purge
+  could never revoke anything. Both element spellings are now
+  accepted; existing-rule diffing works against the live wire.
+
+One residual gap deliberately left: user_id_group_pairs entries are
+built from the record's group_ids/group_names only (no user_id /
+vpc_id / peering_status fields), which covers cidr-sourced rules
+exactly but under-describes security-group-sourced rule sources.
 
 ---
 
