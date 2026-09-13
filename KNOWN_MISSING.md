@@ -166,7 +166,7 @@ against Atlantic.net now, Kata having been retired as a backend.
 
 ---
 
-## Three plugins reported false success where real Ansible correctly fails: modprobe, service, ufw (0.9.1017 -> 0.9.1018)
+## Three plugins reported false success where real Ansible correctly fails: modprobe, service, ufw (0.9.1019)
 
 An ad-hoc CLI comparison sweep against real `ansible` in containers
 (2026-09-13) found three plugins claiming success in situations where
