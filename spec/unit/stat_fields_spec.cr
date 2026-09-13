@@ -13,8 +13,9 @@ describe Krikri::PluginHelpers::StatFields do
         mode: REGULAR_FILE | 0o644,
         size: 12_i64, uid: 1000_i64, gid: 1000_i64,
         pw_name: "labros", gr_name: "labros",
-        atime: 1785641832_i64, mtime: 1785641814_i64, ctime: 1785641814_i64,
-        inode: 16582_i64, dev: 37_i64, nlink: 1_i64
+        atime: 1785641832.764945_f64, mtime: 1785641814.25_f64, ctime: 1785641814.0_f64,
+        inode: 16582_i64, dev: 37_i64, nlink: 1_i64,
+        block_size: 4096_i64, blocks: 8_i64, device_type: 0_i64
       )
 
       hash["exists"].as_bool.should be_true
@@ -25,16 +26,51 @@ describe Krikri::PluginHelpers::StatFields do
       hash["gid"].as_i64.should eq(1000)
       hash["pw_name"].as_s.should eq("labros")
       hash["gr_name"].as_s.should eq("labros")
+      hash["atime"].as_f.should eq(1785641832.764945)
+      hash["mtime"].as_f.should eq(1785641814.25)
+      hash["ctime"].as_f.should eq(1785641814.0)
       hash["isreg"].as_bool.should be_true
       hash["isdir"].as_bool.should be_false
       hash["islnk"].as_bool.should be_false
+    end
+
+    it "serializes sub-second timestamps as JSON floats, not ints or strings" do
+      hash = Krikri::PluginHelpers::StatFields.build(
+        "/tmp/f.txt", mode: REGULAR_FILE | 0o644,
+        size: 0_i64, uid: 0_i64, gid: 0_i64, pw_name: "root", gr_name: "root",
+        atime: 1789308974.764945_f64, mtime: 1789308974.5_f64, ctime: 1789308974.0_f64,
+        inode: 1_i64, dev: 37_i64, nlink: 1_i64,
+        block_size: 4096_i64, blocks: 8_i64, device_type: 0_i64
+      )
+
+      JSON.parse(hash["atime"].to_json).as_f.should eq(1789308974.764945)
+      JSON.parse(hash["mtime"].to_json).as_f.should eq(1789308974.5)
+      hash["ctime"].to_json.should eq("1789308974.0")
+    end
+
+    it "exposes block_size/blocks/device_type passthroughs and the computed disk_usage_bytes" do
+      hash = Krikri::PluginHelpers::StatFields.build(
+        "/tmp/f.txt", mode: REGULAR_FILE | 0o644,
+        size: 1000_i64, uid: 0_i64, gid: 0_i64, pw_name: "root", gr_name: "root",
+        atime: 0.0_f64, mtime: 0.0_f64, ctime: 0.0_f64,
+        inode: 1_i64, dev: 37_i64, nlink: 1_i64,
+        block_size: 4096_i64, blocks: 8_i64, device_type: 0_i64
+      )
+
+      # Same stat.py definitions real Ansible uses: raw st_blksize/
+      # st_blocks/st_rdev, and disk_usage_bytes = st_blocks * 512.
+      hash["block_size"].as_i64.should eq(4096)
+      hash["blocks"].as_i64.should eq(8)
+      hash["device_type"].as_i64.should eq(0)
+      hash["disk_usage_bytes"].as_i64.should eq(8 * 512)
     end
 
     it "decodes rwx permission bits from the mode" do
       hash = Krikri::PluginHelpers::StatFields.build(
         "/tmp/f.txt", mode: REGULAR_FILE | 0o750,
         size: 0_i64, uid: 0_i64, gid: 0_i64, pw_name: "root", gr_name: "root",
-        atime: 0_i64, mtime: 0_i64, ctime: 0_i64, inode: 1_i64, dev: 1_i64, nlink: 1_i64
+        atime: 0.0_f64, mtime: 0.0_f64, ctime: 0.0_f64, inode: 1_i64, dev: 1_i64, nlink: 1_i64,
+        block_size: 4096_i64, blocks: 0_i64, device_type: 0_i64
       )
 
       hash["rusr"].as_bool.should be_true
@@ -52,7 +88,8 @@ describe Krikri::PluginHelpers::StatFields do
       hash = Krikri::PluginHelpers::StatFields.build(
         "/tmp/f.txt", mode: REGULAR_FILE | 0o4755,
         size: 0_i64, uid: 0_i64, gid: 0_i64, pw_name: "root", gr_name: "root",
-        atime: 0_i64, mtime: 0_i64, ctime: 0_i64, inode: 1_i64, dev: 1_i64, nlink: 1_i64
+        atime: 0.0_f64, mtime: 0.0_f64, ctime: 0.0_f64, inode: 1_i64, dev: 1_i64, nlink: 1_i64,
+        block_size: 4096_i64, blocks: 0_i64, device_type: 0_i64
       )
 
       hash["isuid"].as_bool.should be_true
@@ -64,7 +101,8 @@ describe Krikri::PluginHelpers::StatFields do
       hash = Krikri::PluginHelpers::StatFields.build(
         "/tmp/f.txt", mode: REGULAR_FILE | 0o644,
         size: 0_i64, uid: 0_i64, gid: 0_i64, pw_name: "root", gr_name: "root",
-        atime: 0_i64, mtime: 0_i64, ctime: 0_i64, inode: 1_i64, dev: 1_i64, nlink: 1_i64
+        atime: 0.0_f64, mtime: 0.0_f64, ctime: 0.0_f64, inode: 1_i64, dev: 1_i64, nlink: 1_i64,
+        block_size: 4096_i64, blocks: 0_i64, device_type: 0_i64
       )
 
       hash["mode"].as_s.should eq("0644")
@@ -74,7 +112,8 @@ describe Krikri::PluginHelpers::StatFields do
       hash = Krikri::PluginHelpers::StatFields.build(
         "/tmp/d", mode: DIRECTORY | 0o755,
         size: 4096_i64, uid: 0_i64, gid: 0_i64, pw_name: "root", gr_name: "root",
-        atime: 0_i64, mtime: 0_i64, ctime: 0_i64, inode: 1_i64, dev: 1_i64, nlink: 2_i64
+        atime: 0.0_f64, mtime: 0.0_f64, ctime: 0.0_f64, inode: 1_i64, dev: 1_i64, nlink: 2_i64,
+        block_size: 4096_i64, blocks: 8_i64, device_type: 0_i64
       )
 
       hash["isdir"].as_bool.should be_true
@@ -85,7 +124,8 @@ describe Krikri::PluginHelpers::StatFields do
       hash = Krikri::PluginHelpers::StatFields.build(
         "/tmp/l", mode: SYMLINK | 0o777,
         size: 5_i64, uid: 0_i64, gid: 0_i64, pw_name: "root", gr_name: "root",
-        atime: 0_i64, mtime: 0_i64, ctime: 0_i64, inode: 1_i64, dev: 1_i64, nlink: 1_i64
+        atime: 0.0_f64, mtime: 0.0_f64, ctime: 0.0_f64, inode: 1_i64, dev: 1_i64, nlink: 1_i64,
+        block_size: 4096_i64, blocks: 0_i64, device_type: 0_i64
       )
 
       hash["islnk"].as_bool.should be_true
