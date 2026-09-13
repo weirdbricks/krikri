@@ -200,15 +200,15 @@ module Krikri
     #     prefix attached.
     # ssh(1) exits 255 for every one of these, hence the exit-code gate.
     private CONNECTION_FAILURE_PATTERNS = [
-      "ssh: connect to host",          # connect refused/timed out/no route/network unreachable
-      "Could not resolve hostname",    # ssh: Could not resolve hostname X ...
-      "Permission denied (publickey",  # auth never succeeded (ssh appends the method list)
-      "kex_exchange_identification",   # banner exchange failed/reset
+      "ssh: connect to host",         # connect refused/timed out/no route/network unreachable
+      "Could not resolve hostname",   # ssh: Could not resolve hostname X ...
+      "Permission denied (publickey", # auth never succeeded (ssh appends the method list)
+      "kex_exchange_identification",  # banner exchange failed/reset
       "ssh_exchange_identification",
       "Host key verification failed",
-      "SSH command timed out",         # run_with_timeout's own hung-connection synthesis
-      "SSH execution failed",          # exec's rescue path
-      "SSH script execution failed",   # exec_script's rescue path
+      "SSH command timed out",       # run_with_timeout's own hung-connection synthesis
+      "SSH execution failed",        # exec's rescue path
+      "SSH script execution failed", # exec_script's rescue path
     ]
 
     # True when *exit_code*/*stderr* look like the SSH transport itself
@@ -222,6 +222,19 @@ module Krikri
       CONNECTION_FAILURE_PATTERNS.any? { |pattern| stderr.includes?(pattern) }
     end
 
+    # Exception counterpart of #connection_level_failure? - an scp/rsync/
+    # ssh failure surfaces as a raised "Failed to upload/download ..."
+    # whose detail embeds ssh's own stderr, so the same pattern list
+    # decides whether the exception means "the transport never got
+    # there" (UNREACHABLE in real Ansible) or something else that must
+    # keep propagating (a missing local file, a staging-dir safety
+    # refusal, an engine bug). Message-only, no exit code to gate on.
+    def self.connection_level_exception?(ex : Exception) : Bool
+      message = ex.message.to_s
+      CONNECTION_FAILURE_PATTERNS.any? { |pattern| message.includes?(pattern) } ||
+        message.includes?("scp: Connection closed")
+    end
+
     # Reset statistics
     def self.reset_stats : Nil
       @@stats.each_key do |key|
@@ -230,11 +243,13 @@ module Krikri
     end
 
     # Execute command on remote host
+    # *port* nil means "let ssh resolve it" (no -p flag; ~/.ssh/config and
+    # /etc/ssh/ssh_config apply) - only an explicit port overrides.
     def self.exec(
       host : String,
       user : String,
       command : String,
-      port : Int32 = 22,
+      port : Int32? = nil,
       timeout : Int32 = DEFAULT_EXEC_TIMEOUT_SECONDS,
       identity_file : String? = nil,
     ) : NamedTuple(exit_code: Int32, stdout: String, stderr: String)
@@ -259,8 +274,7 @@ module Krikri
         "-o", "ServerAliveInterval=60",
         "-o", "ServerAliveCountMax=3",
         "-o", "StrictHostKeyChecking=#{strict_host_key_checking}",
-      ] + identity_args(identity_file) + [
-        "-p", port.to_s,
+      ] + identity_args(identity_file) + (port ? ["-p", port.to_s] : [] of String) + [
         "#{user}@#{host}",
         wrapped_command,
       ]
@@ -311,7 +325,7 @@ module Krikri
       host : String,
       user : String,
       script : String,
-      port : Int32 = 22,
+      port : Int32? = nil,
       timeout : Int32 = DEFAULT_EXEC_TIMEOUT_SECONDS,
       identity_file : String? = nil,
     ) : NamedTuple(exit_code: Int32, stdout: String, stderr: String)
@@ -329,8 +343,7 @@ module Krikri
         "-o", "ServerAliveInterval=60",
         "-o", "ServerAliveCountMax=3",
         "-o", "StrictHostKeyChecking=#{strict_host_key_checking}",
-      ] + identity_args(identity_file) + [
-        "-p", port.to_s,
+      ] + identity_args(identity_file) + (port ? ["-p", port.to_s] : [] of String) + [
         "#{user}@#{host}",
         "bash", "-s",
       ]
@@ -402,7 +415,7 @@ module Krikri
     # --daemon`. A play mixing privileged and unprivileged tasks holds
     # two resident daemons per host, which is fine. `nil` in the last
     # slot is the no-become daemon.
-    alias DaemonKey = {String, String, Int32, String?}
+    alias DaemonKey = {String, String, Int32?, String?}
 
     @@daemon_processes = Hash(DaemonKey, Process).new
 
@@ -428,7 +441,7 @@ module Krikri
     # Whether a daemon for this key is worth attempting at all. Public
     # so PluginManager can skip the attempt before building a request,
     # rather than learning about it from a raised exception.
-    def self.daemon_unavailable?(host : String, user : String, port : Int32, become_user : String?) : Bool
+    def self.daemon_unavailable?(host : String, user : String, port : Int32?, become_user : String?) : Bool
       @@daemon_failures[{host, user, port, become_user}] >= MAX_DAEMON_FAILURES
     end
 
@@ -451,7 +464,7 @@ module Krikri
     def self.daemon_send(
       host : String,
       user : String,
-      port : Int32,
+      port : Int32?,
       remote_binary_path : String,
       module_name : String,
       config : JSON::Any,
@@ -499,7 +512,7 @@ module Krikri
     def self.daemon_send_batch(
       host : String,
       user : String,
-      port : Int32,
+      port : Int32?,
       remote_binary_path : String,
       steps : Array(NamedTuple(module_name: String, config: JSON::Any, ignore_errors: Bool)),
       identity_file : String? = nil,
@@ -546,7 +559,7 @@ module Krikri
     # escalation, so a host where the one-shot become path works has a
     # daemon that works too, and one where it doesn't fails the same
     # way (loudly, at spawn, then falls back).
-    private def self.spawn_daemon(host : String, user : String, port : Int32, remote_binary_path : String, identity_file : String?, become_user : String? = nil) : Process
+    private def self.spawn_daemon(host : String, user : String, port : Int32?, remote_binary_path : String, identity_file : String?, become_user : String? = nil) : Process
       control_path = get_control_path(host, user, port)
 
       ssh_cmd = [
@@ -558,8 +571,7 @@ module Krikri
         "-o", "ServerAliveInterval=60",
         "-o", "ServerAliveCountMax=3",
         "-o", "StrictHostKeyChecking=#{strict_host_key_checking}",
-      ] + identity_args(identity_file) + [
-        "-p", port.to_s,
+      ] + identity_args(identity_file) + (port ? ["-p", port.to_s] : [] of String) + [
         "#{user}@#{host}",
         daemon_remote_command(remote_binary_path, become_user),
       ]
@@ -638,7 +650,7 @@ module Krikri
     # rescue, where something has already gone wrong and the priority is
     # dropping the stale connection so the NEXT call spawns a fresh one,
     # not waiting around for a clean exit that may never come.
-    private def self.kill_daemon(host : String, user : String, port : Int32, become_user : String? = nil) : Nil
+    private def self.kill_daemon(host : String, user : String, port : Int32?, become_user : String? = nil) : Nil
       process = @@daemon_processes.delete({host, user, port, become_user})
       return unless process
 
@@ -731,7 +743,7 @@ module Krikri
       user : String,
       local_path : String,
       remote_path : String,
-      port : Int32 = 22,
+      port : Int32? = nil,
       mode : Int32? = 0o644,
       identity_file : String? = nil,
       recursive : Bool = false,
@@ -754,8 +766,8 @@ module Krikri
         "-o", "ConnectTimeout=#{CliOptions.timeout}",
         "-o", "StrictHostKeyChecking=#{strict_host_key_checking}",
       ] + (recursive ? ["-r"] : [] of String) + identity_args(identity_file) +
+                (port ? ["-P", port.to_s] : [] of String) +
                 CliOptions.extra_scp_args + [
-        "-P", port.to_s,
         local_path,
         "#{user}@#{host}:#{remote_path}",
       ]
@@ -792,7 +804,7 @@ module Krikri
       user : String,
       remote_path : String,
       local_path : String,
-      port : Int32 = 22,
+      port : Int32? = nil,
       identity_file : String? = nil,
     )
       init
@@ -807,8 +819,8 @@ module Krikri
         "-o", "ControlPath=#{control_path}",
         "-o", "ControlPersist=600",
         "-o", "StrictHostKeyChecking=#{strict_host_key_checking}",
-      ] + identity_args(identity_file) + CliOptions.extra_scp_args + [
-        "-P", port.to_s,
+      ] + identity_args(identity_file) + (port ? ["-P", port.to_s] : [] of String) +
+                CliOptions.extra_scp_args + [
         "#{user}@#{host}:#{remote_path}",
         local_path,
       ]
@@ -854,7 +866,7 @@ module Krikri
       user : String,
       local_path : String,
       remote_path : String,
-      port : Int32 = 22,
+      port : Int32? = nil,
       mode : Int32 = 0o644,
       identity_file : String? = nil,
     ) : Bool
@@ -869,7 +881,7 @@ module Krikri
         "rsync",
         "-az",                     # archive mode, compress
         "--chmod=#{mode.to_s(8)}", # set permissions
-        "-e", "ssh -o ControlMaster=auto -o ControlPath=#{control_path} -o ControlPersist=600 -o ConnectTimeout=#{CliOptions.timeout} -o StrictHostKeyChecking=#{strict_host_key_checking}#{identity_ssh_opt(identity_file)} -p #{port}",
+        "-e", rsync_ssh_command(control_path, identity_file, port),
         local_path,
         "#{user}@#{host}:#{remote_path}",
       ]
@@ -900,7 +912,7 @@ module Krikri
       user : String,
       local_files : Array(String),
       remote_dir : String,
-      port : Int32 = 22,
+      port : Int32? = nil,
       mode : Int32 = 0o755,
       identity_file : String? = nil,
     ) : Bool
@@ -918,7 +930,7 @@ module Krikri
         "rsync",
         "-az",
         "--chmod=#{mode.to_s(8)}",
-        "-e", "ssh -o ControlMaster=auto -o ControlPath=#{control_path} -o ControlPersist=600 -o ConnectTimeout=#{CliOptions.timeout} -o StrictHostKeyChecking=#{strict_host_key_checking}#{identity_ssh_opt(identity_file)} -p #{port}",
+        "-e", rsync_ssh_command(control_path, identity_file, port),
       ] + local_files + ["#{user}@#{host}:#{remote_dir}/"]
 
       result = TimingProfile.measure("transport.rsync", "transport") do
@@ -939,7 +951,7 @@ module Krikri
     end
 
     # Close specific connection
-    def self.close_connection(host : String, user : String, port : Int32 = 22) : Nil
+    def self.close_connection(host : String, user : String, port : Int32? = nil) : Nil
       control_path = get_control_path(host, user, port)
 
       # Send exit command to close the master connection
@@ -969,10 +981,12 @@ module Krikri
     # Memoized per (host, user, port) - the gsub-over-a-regex result never
     # changes for the same triple, and every exec/upload/download/rsync
     # call on a host recomputes it.
-    @@control_path_cache = Hash({String, String, Int32}, String).new
+    @@control_path_cache = Hash({String, String, Int32?}, String).new
 
-    # Get control socket path for connection pooling
-    private def self.get_control_path(host : String, user : String, port : Int32) : String
+    # Get control socket path for connection pooling. *port* may be nil
+    # (unspecified - ssh resolves it), which keys separately from an
+    # explicit 22 so the two never share a socket.
+    private def self.get_control_path(host : String, user : String, port : Int32?) : String
       @@control_path_cache.fetch({host, user, port}) do
         # Create a unique socket path for this connection
         # Format: /tmp/.krikri-playbook-ssh/user@host:port
@@ -1025,6 +1039,16 @@ module Krikri
       parts << " -i #{shell_quote(identity_file)}" if identity_file
       CliOptions.extra_ssh_args.each { |arg| parts << " #{shell_quote(arg)}" }
       parts.join
+    end
+
+    # The `-e` value both rsync paths in this file build - shared so the
+    # nil-port omission (no -p; ssh's own config resolution applies)
+    # stays identical in both.
+    private def self.rsync_ssh_command(control_path : String, identity_file : String?, port : Int32?) : String
+      base = "ssh -o ControlMaster=auto -o ControlPath=#{control_path} -o ControlPersist=600" \
+             " -o ConnectTimeout=#{CliOptions.timeout} -o StrictHostKeyChecking=#{strict_host_key_checking}" \
+             "#{identity_ssh_opt(identity_file)}"
+      port ? "#{base} -p #{port}" : base
     end
 
     # Properly quote a string for shell execution - shared implementation

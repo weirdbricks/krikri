@@ -137,7 +137,21 @@ module Krikri
         end
       end
 
-      PluginManager.ensure_uploaded(exec_host, task.module_name, vars)
+      # Same transport-failure conversion execute_remote_plugin applies:
+      # a host that dropped off the network before its async: task gets
+      # an UNREACHABLE result, not a process-killing upload exception.
+      begin
+        PluginManager.ensure_uploaded(exec_host, task.module_name, vars)
+      rescue ex
+        raise ex unless SSHManager.connection_level_exception?(ex)
+        detail = ex.message.to_s.lines.first?.to_s
+        return JSON.parse({
+          "changed"     => false,
+          "msg"         => "Failed to connect to the host via ssh: #{detail}",
+          "stderr"      => detail,
+          "unreachable" => true,
+        }.to_json)
+      end
       target = PluginManager.remote_plugin_target(task.module_name, become, become_user, exec_host.user || "root")
       connection_host = PluginManager.get_connection_host(exec_host, vars)
       user = exec_host.user || "root"

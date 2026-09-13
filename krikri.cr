@@ -177,7 +177,14 @@ play.tasks = [task]
 play.gather_facts = false
 playbook = Krikri::Playbook.new(path: "<ad-hoc>")
 playbook.plays = [play]
-Krikri::PluginManager.batch_upload_plugins_for_playbook(playbook, inventory, forks)
+# A host the batch-upload pass cannot reach is reported (PluginManager
+# prints the UNREACHABLE! fatal line itself) and then handed to the
+# executor, which reports each task against it as unreachable without
+# re-attempting SSH - the exact contract krikri-playbook.cr already
+# uses. Discarding this return value used to leave the host in `hosts`,
+# where the per-task lazy-upload path raised an uncaught exception that
+# killed the whole process instead of reporting and skipping.
+unreachable_hosts = Krikri::PluginManager.batch_upload_plugins_for_playbook(playbook, inventory, forks)
 
 executor = Krikri::TaskExecutor.new(
   hosts: hosts,
@@ -186,10 +193,17 @@ executor = Krikri::TaskExecutor.new(
   gather_facts: false,
   inventory: inventory,
   forks: forks,
+  unreachable_hosts: unreachable_hosts.to_set,
   adhoc: true
 )
 
 executor.run
 
+# Same exit-code convention krikri-playbook.cr uses: unreachable hosts
+# exit 4 (ahead of a failed host's 2), only clean runs exit 0. A host
+# reported unreachable by the batch pass shows up here through the
+# executor's own per-task unreachable booking.
+any_unreachable = executor.results.values.any? { |host_stats| (host_stats["unreachable"]? || 0) > 0 }
 any_failed = executor.results.values.any? { |host_stats| (host_stats["failed"]? || 0) > 0 }
+exit(4) if any_unreachable
 exit(any_failed ? 2 : 0)

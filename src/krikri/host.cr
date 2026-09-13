@@ -5,10 +5,16 @@ module Krikri
   class Host
     property name : String
     property user : String?
-    property port : Int32
+    # nil means "the user never specified a port" - not the same thing as
+    # port 22. Only an explicit `ansible_port` (inventory/CLI) sets this;
+    # when nil, SSHManager omits `-p` entirely so ssh's own resolution
+    # (~/.ssh/config Port directives, /etc/ssh/ssh_config) takes over,
+    # matching real Ansible's ssh connection plugin. An explicit port
+    # still overrides ssh's config exactly as `-p` always has.
+    property port : Int32?
     property vars : Hash(String, JSON::Any)
 
-    def initialize(@name : String, @user : String? = nil, @port : Int32 = 22)
+    def initialize(@name : String, @user : String? = nil, @port : Int32? = nil)
       @vars = Hash(String, JSON::Any).new
     end
 
@@ -23,7 +29,9 @@ module Krikri
       Host.new(
         name: json["name"].as_s,
         user: json["user"]?.try(&.as_s?),
-        port: json["port"]?.try(&.as_i?) || 22
+        # JSON null (an un-set port serialized from a nilable Host) stays
+        # nil - same tri-state as the property above.
+        port: json["port"]?.try(&.as_i?)
       )
     end
 

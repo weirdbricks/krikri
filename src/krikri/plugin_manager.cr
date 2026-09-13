@@ -1008,7 +1008,39 @@ module Krikri
     # *config* is already the exact payload to send - see the String
     # entry point above for who is responsible for injecting
     # `ansible_connection=local` into it.
-    private def self.execute_remote_plugin(
+    #
+    # Transport failures never propagate as process-killing exceptions.
+    # The lazy-upload path below (and its missing-binary retry) shells
+    # out to scp/rsync, which raises when the host cannot be reached -
+    # previously that exception escaped uncaught and killed the whole
+    # run with a stack trace. A host that goes unreachable MID-play
+    # (network drops between tasks) now yields a per-task UNREACHABLE
+    # result - the same shape the pre-run batch-upload pass produces -
+    # exactly like real Ansible, which never ends a run for one bad
+    # host. Non-transport exceptions (a missing local binary, a
+    # staging-dir safety refusal, anything else) still propagate: those
+    # are engine bugs, not unreachability, and must stay loud.
+    def self.execute_remote_plugin(
+      plugin_name : String,
+      config : String,
+      host : Host,
+      vars : Hash(String, JSON::Any),
+      become : Bool,
+      become_user : String?,
+    ) : JSON::Any
+      execute_remote_plugin_transport(plugin_name, config, host, vars, become, become_user)
+    rescue ex
+      raise ex unless SSHManager.connection_level_exception?(ex)
+      detail = ex.message.to_s.lines.first?.to_s
+      JSON.parse({
+        "changed"     => false,
+        "msg"         => "Failed to connect to the host via ssh: #{detail}",
+        "stderr"      => detail,
+        "unreachable" => true,
+      }.to_json)
+    end
+
+    private def self.execute_remote_plugin_transport(
       plugin_name : String,
       config : String,
       host : Host,

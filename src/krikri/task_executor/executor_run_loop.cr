@@ -519,28 +519,28 @@ module Krikri
       # pre-loop resolution stays lenient for looped tasks exactly as
       # before.
       exec_host = if task.delegate_to && !task_has_loop_source?(task)
-        begin
-          resolve_delegate_host(task, host, vars_context, shared: shared_sub, strict: true)
-        rescue ex : WhenEvaluationError
-          # Real Ansible evaluates when: before ever templating
-          # delegate_to:, so a when: that is False without the undefined
-          # variable bound (`when: restic_backup_destination_server is
-          # defined`) is a plain skip, not a failure. Otherwise degrade to
-          # ONE clean failed task through the normal result pipeline -
-          # never the unhandled-exception abort the "undefined" hostname
-          # used to produce at SSH time.
-          if when_skips_task?(task, vars_context, host, shared_sub)
-            @results[host.name]["skipped"] += 1
-            puts "skipping: [#{host.connection_host}]".colorize(:cyan)
-            register_skip_result(task, host)
-            return
-          end
-          finish_single_task(task, host, when_error_result(ex), vars_context: vars_context)
-          return
-        end
-      else
-        resolve_delegate_host(task, host, vars_context, shared: shared_sub)
-      end
+                    begin
+                      resolve_delegate_host(task, host, vars_context, shared: shared_sub, strict: true)
+                    rescue ex : WhenEvaluationError
+                      # Real Ansible evaluates when: before ever templating
+                      # delegate_to:, so a when: that is False without the undefined
+                      # variable bound (`when: restic_backup_destination_server is
+                      # defined`) is a plain skip, not a failure. Otherwise degrade to
+                      # ONE clean failed task through the normal result pipeline -
+                      # never the unhandled-exception abort the "undefined" hostname
+                      # used to produce at SSH time.
+                      if when_skips_task?(task, vars_context, host, shared_sub)
+                        @results[host.name]["skipped"] += 1
+                        puts "skipping: [#{host.connection_host}]".colorize(:cyan)
+                        register_skip_result(task, host)
+                        return
+                      end
+                      finish_single_task(task, host, when_error_result(ex), vars_context: vars_context)
+                      return
+                    end
+                  else
+                    resolve_delegate_host(task, host, vars_context, shared: shared_sub)
+                  end
 
       # with_fileglob/with_file need a substitutor (for {{ vars }} in the
       # pattern) and the filesystem, so they can only be resolved here,
@@ -1128,7 +1128,7 @@ module Krikri
       # rebuilt behind the same address - the binary is missing and the
       # group fails.
       #
-           # Caught by deliberately deleting the remote staging dir behind the
+      # Caught by deliberately deleting the remote staging dir behind the
       # cache's back on a live host: without this the first run
       # afterwards lost a task (ok=4 failed=1) where the pre-item-6a
       # engine completed cleanly, because that engine always did the
@@ -1141,7 +1141,25 @@ module Krikri
       # the same binary, and the script fail-fasts at the first one.
       ssh_user = host.user || "root"
       if interpreted.any? { |_, step| PluginManager.missing_remote_binary_on_host?(step, "#{PluginManager.remote_plugin_dir(ssh_user)}/#{steps.first.module_name}", ssh_user) }
-        PluginManager.recover_missing_plugins!(host, steps.map(&.module_name).uniq!, host.vars)
+        # The re-upload this recovery performs fails exactly like any
+        # other upload when the host has gone unreachable mid-play -
+        # convert that to UNREACHABLE results for the whole group (the
+        # same conversion execute_remote_plugin applies to its own
+        # lazy-upload path) instead of letting the exception kill the
+        # run. Any other exception still propagates.
+        begin
+          PluginManager.recover_missing_plugins!(host, steps.map(&.module_name).uniq!, host.vars)
+        rescue ex
+          raise ex unless SSHManager.connection_level_exception?(ex)
+          detail = ex.message.to_s.lines.first?.to_s
+          unreachable = JSON.parse({
+            "changed"     => false,
+            "msg"         => "Failed to connect to the host via ssh: #{detail}",
+            "stderr"      => detail,
+            "unreachable" => true,
+          }.to_json)
+          return steps.each_index.to_h { |idx| {idx, unreachable} }
+        end
         return interpret_batch_script(host, connection_host, steps)
       end
 
@@ -1352,7 +1370,22 @@ module Krikri
       # The batch script runs the plugin binary directly, so it must be on
       # the target before the script is built - pre-upload cannot see
       # modules that only appear inside a runtime include_tasks:.
-      PluginManager.ensure_uploaded(host, task.module_name, vars_context)
+      # Same transport-failure conversion execute_remote_plugin applies:
+      # the returned unreachable result flows through the callers'
+      # JSON::Any branch into finish_single_task, which books it exactly
+      # like the pre-run unreachable pass does.
+      begin
+        PluginManager.ensure_uploaded(host, task.module_name, vars_context)
+      rescue ex
+        raise ex unless SSHManager.connection_level_exception?(ex)
+        detail = ex.message.to_s.lines.first?.to_s
+        return JSON.parse({
+          "changed"     => false,
+          "msg"         => "Failed to connect to the host via ssh: #{detail}",
+          "stderr"      => detail,
+          "unreachable" => true,
+        }.to_json)
+      end
       plugin_target = PluginManager.remote_plugin_target(task.module_name, become, become_user, host.user || "root")
 
       # The daemon transport (item 3) dispatches by module NAME inside an

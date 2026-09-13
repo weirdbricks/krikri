@@ -11,9 +11,9 @@ describe Krikri::Host do
       host.port.should eq(2222)
     end
 
-    it "defaults port to 22 when absent" do
+    it "leaves port nil (ssh config decides) when absent" do
       host = Krikri::Host.from_json(JSON.parse(%({"name": "web1", "user": "deploy"})))
-      host.port.should eq(22)
+      host.port.should be_nil
     end
 
     it "leaves user nil when the key is simply absent" do
@@ -31,9 +31,9 @@ describe Krikri::Host do
       host.name.should eq("localhost")
     end
 
-    it "defaults port to 22 when the key is present but JSON null" do
+    it "leaves port nil when the key is present but JSON null" do
       host = Krikri::Host.from_json(JSON.parse(%({"name": "localhost", "port": null})))
-      host.port.should eq(22)
+      host.port.should be_nil
     end
   end
 

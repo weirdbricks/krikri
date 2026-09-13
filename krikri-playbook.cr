@@ -722,7 +722,10 @@ end
 if verbose
   puts "Available Hosts:".colorize(:cyan).bold
   inventory.hosts.each do |_name, host|
-    puts "  - #{host.user}@#{host.connection_host}:#{host.port}".colorize(:white)
+    # An un-set port is not "22" - it's "ssh decides" (~/.ssh/config and
+    # /etc/ssh/ssh_config), so print that instead of a misleading colon.
+    port_display = host.port ? ":#{host.port}" : " (ssh default port)"
+    puts "  - #{host.user}@#{host.connection_host}#{port_display}".colorize(:white)
   end
   puts ""
 end
