@@ -140,13 +140,13 @@ module Krikri
       else
         mount_changed = false
       end
-      PluginResult.new(changed: fstab_changed || mount_changed, failed: false, msg: "", name: path, fstab: fstab, backup_file: backup_file)
+      success_result(fstab_changed || mount_changed, path, fstab, backup_file)
     end
 
     private def run_unmounted(path : String, check_mode : Bool) : PluginResult
       changed, error = ensure_unmounted(path, check_mode)
       return PluginResult.new(changed: false, failed: true, msg: error, name: path) if error
-      PluginResult.new(changed: changed, failed: false, msg: "", name: path)
+      success_result(changed, path, @params["fstab"]? || DEFAULT_FSTAB, "", include_src_fstype: false)
     end
 
     private def run_absent(path : String, state : String, fstab : String, check_mode : Bool) : PluginResult
@@ -157,7 +157,41 @@ module Krikri
       else
         unmount_changed = false
       end
-      PluginResult.new(changed: fstab_changed || unmount_changed, failed: false, msg: "", name: path, fstab: fstab, backup_file: backup_file)
+      success_result(fstab_changed || unmount_changed, path, fstab, backup_file)
+    end
+
+    # Real ansible.posix.mount echoes the effective fstab fields back in
+    # every successful result. Verified live against real ansible
+    # (ansible.posix 2.2.2 ad-hoc CLI comparison, privileged podman
+    # container, 2026-09-13): every success carries name (the mount
+    # point), fstab, backup_file ("" when none was created), boot
+    # ("yes"/"no"), opts, dump, and passno - with src and fstype
+    # included for every state EXCEPT `unmounted`, which omits both.
+    # The values are threaded through the fields the plugin already
+    # computed to build/edit the fstab entry (desired_fields), not
+    # recomputed.
+    private def result_fields(path : String, fstab : String, backup_file : String, include_src_fstype : Bool = true) : Hash(String, String)
+      desired = desired_fields(path)
+      fields = {
+        "name"        => path,
+        "fstab"       => fstab,
+        "backup_file" => backup_file,
+        "boot"        => true?(@params["boot"]?, default: true) ? "yes" : "no",
+        "opts"        => desired[3],
+        "dump"        => desired[4],
+        "passno"      => desired[5],
+      }
+      fields["src"] = desired[0] if include_src_fstype
+      fields["fstype"] = desired[2] if include_src_fstype
+      fields
+    end
+
+    private def success_result(changed : Bool, path : String, fstab : String, backup_file : String, msg : String = "", include_src_fstype : Bool = true) : PluginResult
+      result = PluginResult.new(changed: changed, failed: false, msg: msg)
+      result_fields(path, fstab, backup_file, include_src_fstype).each do |key, value|
+        result.extra[key] = JSON::Any.new(value)
+      end
+      result
     end
 
     private def desired_opts : String
@@ -263,8 +297,12 @@ module Krikri
       end
     end
 
+    # Naming matches real ansible's backup_local() helper (used by
+    # mount.py's backup): <fstab>.<file-owner-uid>.<YYYY-MM-DD@HH:MM:SS>~
+    # - live-verified against real ansible 2026-09-13.
     private def backup_fstab(fstab : String) : String
-      backup_path = "#{fstab}.#{Time.utc.to_unix}.bak"
+      uid = remote_exec("stat -c %u #{fstab}")[:stdout].strip
+      backup_path = "#{fstab}.#{uid}.#{Time.local.to_s("%Y-%m-%d@%H:%M:%S")}~"
       if local_connection?
         File.copy(fstab, backup_path)
       else
@@ -338,7 +376,7 @@ module Krikri
     # mount.py's own remount() source - see the class doc above for what
     # isn't replicated (the opts-absent-and-failed umount+mount fallback).
     private def ensure_remounted(path : String, check_mode : Bool) : PluginResult
-      return PluginResult.new(changed: true, failed: false, msg: "", name: path) if check_mode
+      return success_result(true, path, @params["fstab"]? || DEFAULT_FSTAB, "") if check_mode
 
       opts = @params["opts"]?
       custom_opts = opts && opts != "defaults"
@@ -379,7 +417,7 @@ module Krikri
         return remount_via_umount_mount(path, fstab)
       end
 
-      PluginResult.new(changed: true, failed: false, msg: "", name: path)
+      success_result(true, path, @params["fstab"]? || DEFAULT_FSTAB, "")
     end
 
     private def remount_via_umount_mount(path : String, fstab : String?) : PluginResult
@@ -407,7 +445,7 @@ module Krikri
         )
       end
 
-      PluginResult.new(changed: true, failed: false, msg: "", name: path)
+      success_result(true, path, fstab || DEFAULT_FSTAB, "")
     end
 
     # Mounts without ever touching fstab - see the class doc above for
@@ -421,7 +459,7 @@ module Krikri
         return ensure_ephemeral_remount(path, src, fstype, check_mode)
       end
 
-      return PluginResult.new(changed: true, failed: false, msg: "Would mount (check mode)", name: path) if check_mode
+      return success_result(true, path, @params["fstab"]? || DEFAULT_FSTAB, "", msg: "Would mount (check mode)") if check_mode
 
       if local_connection?
         Dir.mkdir_p(path)
@@ -434,7 +472,7 @@ module Krikri
         return PluginResult.new(changed: false, failed: true, msg: "Error mounting #{path}: #{result[:stdout]}#{result[:stderr]}", name: path)
       end
 
-      PluginResult.new(changed: true, failed: false, msg: "", name: path)
+      success_result(true, path, @params["fstab"]? || DEFAULT_FSTAB, "")
     end
 
     # Real Ansible compares the mount table's actual current source
@@ -454,14 +492,14 @@ module Krikri
         )
       end
 
-      return PluginResult.new(changed: true, failed: false, msg: "", name: path) if check_mode
+      return success_result(true, path, @params["fstab"]? || DEFAULT_FSTAB, "") if check_mode
 
       result = remote_exec(ephemeral_remount_command(path, src, fstype))
       if result[:exit_code] != 0
         return PluginResult.new(changed: false, failed: true, msg: "Error mounting #{path}: #{result[:stdout]}#{result[:stderr]}", name: path)
       end
 
-      PluginResult.new(changed: true, failed: false, msg: "", name: path)
+      success_result(true, path, @params["fstab"]? || DEFAULT_FSTAB, "")
     end
 
     # `mount -o remount -t <fstype> [-o <opts>] <src> <path>` - a

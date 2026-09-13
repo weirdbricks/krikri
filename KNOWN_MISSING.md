@@ -156,6 +156,40 @@ against Atlantic.net now, Kata having been retired as a backend.
 
 ---
 
+## `mount` and `pamd` result fields matched to real ansible (0.9.1030)
+
+Found via an ad-hoc CLI comparison sweep against real `ansible` in a
+privileged podman container (ansible.posix 2.2.2, community.general
+13.3.0, 2026-09-13). Both plugins had results whose extra fields were
+invented or missing; every scenario was run through both engines
+side-by-side and the full result dicts now match field-for-field:
+
+- `ansible.posix.mount` echoes the effective fstab fields back in every
+  successful result: `name`, `fstab`, `backup_file` (always present,
+  `""` when no backup was made), `boot` (`"yes"`/`"no"`), `opts`,
+  `dump`, `passno`, plus `src` and `fstype` for every state EXCEPT
+  `unmounted`, which omits both. krikri's mount previously returned
+  only `name`/`fstab`/`backup_file` on most paths. The echoed values
+  are threaded through the fields the plugin already computes to
+  build/edit the fstab entry (`desired_fields`), not recomputed.
+- `community.general.pamd`'s success result is exactly
+  `{changed, change_count, backupdest}` with no `msg` at all -
+  krikri used to emit invented `"No matching rule in ..."` /
+  `"Updated N rule(s)"` msgs and no `change_count`/`backupdest`.
+  An idempotent no-op and a no-such-rule case are BOTH
+  `changed: false, change_count: 0` (`change_count` counts rules
+  actually MODIFIED, not matched), and `backupdest` is only non-empty
+  when a backup was taken for an actual write. The backup is also no
+  longer taken (nor the file rewritten) for a no-op.
+- Both plugins' backup files now use real ansible's `backup_local()`
+  naming convention, `<path>.<file-owner-uid>.<YYYY-MM-DD@HH:MM:SS>~`
+  (krikri previously used ad-hoc `.to_unix.bak` /
+  `.YYYYmmdd-HHMMSS.bak` names), and pamd's `# Updated by Ansible -`
+  header timestamp now matches real `datetime.now().isoformat()`
+  (`2026-09-13T19:49:36.614103` shape, not `2026-09-13 19:49:38 UTC`).
+
+---
+
 ## `subversion` result shape: before/after pairs, no success msg (0.9.1029)
 
 Found via an ad-hoc CLI comparison sweep against real `ansible`
