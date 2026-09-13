@@ -101,6 +101,65 @@ describe Krikri::RUNTIME_DEPENDENCY_VERSIONS do
   end
 end
 
+describe "Krikri.parse_shard_yml_dependency_pins" do
+  it "extracts github/tag/branch per dependency, nil for unpinned fields" do
+    yml = <<-YML
+      name: krikri
+      version: 0.9.90
+
+      dependencies:
+        crinja:
+          github: weirdbricks/crinja
+          tag: crystal-play-0.9.31
+        docr:
+          github: weirdbricks/docr
+          branch: master
+        bz2:
+          github: weirdbricks/bz2.cr
+        pg:
+          github: will/crystal-pg
+
+      development_dependencies:
+        ameba:
+          github: crystal-ameba/ameba
+
+      crystal: ">= 1.0.0"
+      YML
+
+    pins = Krikri.parse_shard_yml_dependency_pins(yml, "dependencies")
+    pins.should eq({
+      "crinja" => {github: "weirdbricks/crinja", tag: "crystal-play-0.9.31", branch: nil},
+      "docr"   => {github: "weirdbricks/docr", tag: nil, branch: "master"},
+      "bz2"    => {github: "weirdbricks/bz2.cr", tag: nil, branch: nil},
+      "pg"     => {github: "will/crystal-pg", tag: nil, branch: nil},
+    })
+  end
+
+  it "returns an empty hash when the section is missing or has no entries" do
+    Krikri.parse_shard_yml_dependency_pins("name: krikri\n", "dependencies")
+      .should eq({} of String => Krikri::ShardYmlPin)
+    Krikri.parse_shard_yml_dependency_pins("dependencies:\ncrystal: \">= 1.0.0\"\n", "dependencies")
+      .should eq({} of String => Krikri::ShardYmlPin)
+  end
+end
+
+describe "Krikri::RUNTIME_DEPENDENCY_FORK_NOTES" do
+  it "annotates only weirdbricks-owned dependencies, with their pin" do
+    notes = Krikri::RUNTIME_DEPENDENCY_FORK_NOTES
+
+    notes["crinja"].should eq(" (weirdbricks/crinja fork, tag crystal-play-0.9.31)")
+    notes["mysql"].should eq(" (weirdbricks/crystal-mysql fork, tag crystal-ansible-0.9.340)")
+    notes["docr"].should eq(" (weirdbricks/docr fork, branch master)")
+    notes["awscr-signer"].should eq(" (weirdbricks/awscr-signer fork, branch master)")
+    notes["bz2"].should eq(" (weirdbricks/bz2.cr fork)")
+
+    notes.has_key?("pg").should be_false
+    notes.has_key?("crystar").should be_false
+    notes.has_key?("xz").should be_false
+    notes.has_key?("db").should be_false
+  end
+end
+
 describe Krikri.version_info do
   it "prints the Crystal version and one labeled line per runtime shard" do
     info = Krikri.version_info
@@ -109,5 +168,15 @@ describe Krikri.version_info do
     Krikri::RUNTIME_DEPENDENCY_VERSIONS.each do |(name, version)|
       info.should contain("  #{name}: #{version}")
     end
+  end
+
+  it "appends a fork annotation to weirdbricks-owned shards, plain version otherwise" do
+    info = Krikri.version_info
+    Krikri::RUNTIME_DEPENDENCY_VERSIONS.each do |(name, version)|
+      note = Krikri::RUNTIME_DEPENDENCY_FORK_NOTES[name]? || ""
+      info.should contain("  #{name}: #{version}#{note}")
+    end
+    info.should contain("pg: 0.30.0\n")
+    info.should_not match(/pg: [^\n]*fork/)
   end
 end
