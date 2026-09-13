@@ -89,7 +89,7 @@ module Krikri
     def initialize(
       changed : Bool,
       failed : Bool,
-      msg : String,
+      msg : String = "",
       diff : JSON::Any? = nil,
       **kwargs,
     )

@@ -30,6 +30,9 @@ require "../src/krikri/base_plugin"
 
 module Krikri
   class SubversionPlugin < BasePlugin
+    REVISION_LINE_RE = /^\w+\s?:\s+\d+$/
+    URL_LINE_RE      = /^URL\s?:/
+
     def execute : PluginResult
       repo = @params["repo"]?
       return missing_param("repo") unless repo
@@ -52,7 +55,7 @@ module Krikri
           return PluginResult.new(changed: false, failed: true, msg: "the destination directory must be specified unless checkout=no, update=no, and export=no")
         end
         after = remote_revision(svn, repo, auth)
-        return PluginResult.new(changed: false, failed: false, msg: "No checkout, update, or export requested", after: after)
+        return PluginResult.new(changed: false, failed: false, after: after)
       end
       dest = expand_tilde(dest)
 
@@ -62,10 +65,10 @@ module Krikri
       if export || !dest_exists
         # Real module reports check-mode changed before the checkout=no
         # no-op check, so checkout=no in check mode still reports changed.
-        return PluginResult.new(changed: true, failed: false, msg: "Would #{export ? "export" : "check out"} repository (check mode)") if check_mode
+        return PluginResult.new(changed: true, failed: false) if check_mode
 
         if !export && !checkout
-          return PluginResult.new(changed: false, failed: false, msg: "checkout=no: not checking out missing working copy")
+          return PluginResult.new(changed: false, failed: false)
         end
 
         if export
@@ -75,7 +78,7 @@ module Krikri
         end
       elsif is_svn_repo
         unless do_update
-          return PluginResult.new(changed: false, failed: false, msg: "update=no: skipped update")
+          return PluginResult.new(changed: false, failed: false)
         end
         update(svn, repo, dest, revision, force, auth, check_mode, do_switch)
       elsif in_place
@@ -113,7 +116,10 @@ module Krikri
       result = remote_exec("#{svn} checkout #{force_flag}#{rev_flag}#{auth} #{shell_quote(repo)} #{shell_quote(dest)}")
       return svn_failure("checkout", result) unless result[:exit_code] == 0
 
-      PluginResult.new(changed: true, failed: false, msg: "Checked out repository", after: current_revision(svn, dest, auth))
+      # Real module: a checkout into a fresh dest reports before: null
+      # plus the ["Revision: N", "URL: ..."] pair from svn info.
+      info = svn_info(svn, dest, auth)
+      PluginResult.new(changed: true, failed: false, before: nil, after: [info[:rev_line], info[:url_line]])
     end
 
     private def run_export(svn : String, repo : String, dest : String, revision : String, force : Bool, auth : String) : PluginResult
@@ -125,16 +131,26 @@ module Krikri
       result = remote_exec("#{svn} export #{force_flag}#{rev_flag}#{auth} #{shell_quote(repo)} #{shell_quote(dest)}")
       return svn_failure("export", result) unless result[:exit_code] == 0
 
-      PluginResult.new(changed: true, failed: false, msg: "Exported repository")
+      PluginResult.new(changed: true, failed: false)
     end
 
     private def update(svn : String, repo : String, dest : String, revision : String, force : Bool, auth : String, check_mode : Bool, switch : Bool) : PluginResult
-      before = current_revision(svn, dest, auth)
+      before_info = svn_info(svn, dest, auth)
+      before = before_info[:revision]
+      before_lines = [before_info[:rev_line], before_info[:url_line]]
 
       target_rev = revision == "HEAD" ? head_revision(svn, dest, auth) : revision
 
       if check_mode
-        return PluginResult.new(changed: before != target_rev, failed: false, msg: "Would update from #{before} to #{target_rev} (check mode)", before: before, after: target_rev)
+        # Real module's check-mode path (needs_update) compares parsed
+        # revision numbers and reports before/after as bare "Revision: N"
+        # strings, not the [revision, URL] pair.
+        if (b = before.to_i?) && (t = target_rev.to_i?)
+          update_needed = b < t
+        else
+          update_needed = before != target_rev
+        end
+        return PluginResult.new(changed: update_needed, failed: false, before: before_info[:rev_line], after: "Revision: #{target_rev}")
       end
 
       switch_changed = false
@@ -151,8 +167,8 @@ module Krikri
       end
 
       if before == target_rev
-        after = switch_changed ? current_revision(svn, dest, auth) : before
-        return PluginResult.new(changed: switch_changed, failed: false, msg: "already at revision #{after}", before: before, after: after)
+        after_info = switch_changed ? svn_info(svn, dest, auth) : before_info
+        return PluginResult.new(changed: switch_changed, failed: false, before: before_lines, after: [after_info[:rev_line], after_info[:url_line]])
       end
 
       rev_flag = revision == "HEAD" ? "" : "-r #{shell_quote(revision)} "
@@ -160,8 +176,8 @@ module Krikri
       result = remote_exec("#{svn} update #{force_flag}#{rev_flag}#{auth} #{shell_quote(dest)}")
       return svn_failure("update", result) unless result[:exit_code] == 0
 
-      after = current_revision(svn, dest, auth)
-      PluginResult.new(changed: switch_changed || before != after, failed: false, msg: "Updated to revision #{after}", before: before, after: after)
+      after_info = svn_info(svn, dest, auth)
+      PluginResult.new(changed: switch_changed || before != after_info[:revision], failed: false, before: before_lines, after: [after_info[:rev_line], after_info[:url_line]])
     end
 
     private def switch_to_repo(svn : String, repo : String, dest : String, revision : String, auth : String) : {changed: Bool, failure: PluginResult?}
@@ -182,10 +198,30 @@ module Krikri
       result[:stdout].strip
     end
 
+    # Mirrors real Ansible's get_revision(): one `svn info` run, parsed
+    # into the bare revision number plus the full matched "Revision: N"
+    # and "URL: ..." lines (the before/after result pair), with the real
+    # module's "Unable to get ..." fallbacks.
+    private def svn_info(svn : String, target : String, auth : String, rev : String = "") : {revision: String, rev_line: String, url_line: String}
+      rev_flag = rev.empty? ? "" : "-r #{rev == "HEAD" ? "HEAD" : shell_quote(rev)} "
+      result = remote_exec("#{svn} info #{rev_flag}#{auth} #{shell_quote(target)} 2>/dev/null")
+      revision = ""
+      rev_line = "Unable to get revision"
+      url_line = "Unable to get URL"
+      result[:stdout].each_line do |line|
+        if revision.empty? && line =~ REVISION_LINE_RE
+          revision = line.split(":").last.strip
+          rev_line = line
+        elsif url_line == "Unable to get URL" && line =~ URL_LINE_RE
+          url_line = line
+        end
+      end
+      {revision: revision, rev_line: rev_line, url_line: url_line}
+    end
+
     private def head_revision(svn : String, dest : String, auth : String) : String
-      result = remote_exec("#{svn} info #{auth} -r HEAD #{shell_quote(dest)} 2>/dev/null | grep '^Revision:' | awk '{print $2}'")
-      rev = result[:stdout].strip
-      rev.empty? ? current_revision(svn, dest, auth) : rev
+      head = svn_info(svn, dest, auth, rev: "HEAD")
+      head[:revision].empty? ? current_revision(svn, dest, auth) : head[:revision]
     end
 
     private def working_copy_url(svn : String, dest : String, auth : String) : String
@@ -194,8 +230,8 @@ module Krikri
     end
 
     private def remote_revision(svn : String, repo : String, auth : String) : String
-      result = remote_exec("#{svn} info #{auth} #{shell_quote(repo)} 2>/dev/null | grep '^Revision:' | awk '{print $2}'")
-      result[:stdout].strip
+      info = svn_info(svn, repo, auth)
+      info[:rev_line] == "Unable to get revision" ? "Unable to get remote revision" : info[:rev_line]
     end
 
     private def svn_failure(action : String, result) : PluginResult
