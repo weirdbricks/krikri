@@ -18,7 +18,7 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.1032`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.1033`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.31` (see `shard.yml`; 0.9.31 adds the six
 configurable Jinja delimiter strings).
 
@@ -153,6 +153,33 @@ commits), on top of the 7 immediately above re-verified clean the same
 way. The shortlist is at
 `testing/kata/round_new_authors/shortlist120.txt` if resuming it -
 against Atlantic.net now, Kata having been retired as a backend.
+
+---
+
+## `ec2_security_group` rule `ports:` parameter was silently ignored (0.9.1033)
+
+Found via an ad-hoc CLI comparison sweep against real AWS (account
+567671850288, 2026-09-13): a rule of the form
+`{"proto": "tcp", "ports": [22], "cidr_ip": "10.0.0.0/8"}` failed
+krikri's CreateSecurityGroup-side AuthorizeSecurityGroupIngress with
+AWS's "Invalid value for portRange. Must specify both from and to ports
+with TCP/UDP" (the `ports:` key was never read, so no FromPort/ToPort
+went on the wire), while real `amazon.aws.ec2_security_group` succeeds
+and creates from_port=22, to_port=22 (confirmed via describe-security-
+groups on both sides).
+
+Real amazon.aws (verified against its source, `expand_ports_list`/
+`expand_rule`): `ports:` (added in amazon.aws 2.4) accepts a list of
+single ports and/or `"N-M"` range strings, mutually exclusive with
+`from_port`/`to_port`; each element expands into its own IpPermission
+(single port -> from=to=port, range -> from=N to=M with the bounds
+sorted so `"8443-443"` still yields 443 first), crossed with the rule's
+source list. parse_rule_hash now returns one Rule per (ports x source)
+combination, with from_port/to_port winning when both forms are given
+like the real module's expand_ports_from_rule. Verified live against
+real AWS: `ports: [22]` (from=to=22), `ports: [22, 80, "443-8443"]`
+(three separate IpPermissions, 443-8443 as a range), all throwaway
+groups deleted afterward.
 
 ---
 

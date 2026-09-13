@@ -19,6 +19,11 @@ module Krikri
     # - rules/rules_egress are lists of {proto, from_port, to_port,
     #   cidr_ip, cidr_ipv6, group_id, group_name, prefix_list_id} dicts;
     #   a rule with no source at all defaults to 0.0.0.0/0.
+    # - a rule may instead carry `ports`, a list of single ports and/or
+    #   "N-M" range strings (real module docs, amazon.aws >= 2.4); each
+    #   element becomes its own rule (from=to=port, or from=N to=M),
+    #   expanded against the rule's source list like the real module's
+    #   expand_rule.
     # - rules present on the group but not in the desired list are
     #   revoked when purge_rules (resp. purge_rules_egress) is true
     #   (the default) - including the default allow-all egress rule AWS
@@ -60,15 +65,19 @@ module Krikri
         parsed = JSON.parse(raw_rules)
         return [] of Rule unless parsed.as_a?
 
-        parsed.as_a.compact_map do |entry|
-          next unless hash = entry.as_h?
-          parse_rule_hash(hash)
+        parsed.as_a.flat_map do |entry|
+          hash = entry.as_h?
+          hash ? parse_rule_hash(hash) : [] of Rule
         end
       rescue
         [] of Rule
       end
 
-      private def self.parse_rule_hash(hash : Hash(String, JSON::Any)) : Rule
+      # Returns one Rule per (ports x source) combination, mirroring the
+      # real module's expand_rule: from_port/to_port win over ports, and
+      # each `ports` element (a single port or an "N-M" range string)
+      # becomes its own rule sharing the rule's source list.
+      private def self.parse_rule_hash(hash : Hash(String, JSON::Any)) : Array(Rule)
         proto = string_field(hash, "proto") || "tcp"
         proto = "-1" if proto == "all"
         from_port = string_field(hash, "from_port")
@@ -76,6 +85,12 @@ module Krikri
         if to_port.nil? && from_port
           to_port = from_port
         end
+
+        port_pairs = if from_port || to_port
+                       [{from_port, to_port}]
+                     else
+                       string_list_field(hash, "ports").map { |spec| parse_ports_entry(spec) }
+                     end
 
         cidr_ips = string_list_field(hash, "cidr_ip")
         cidr_ipv6s = string_list_field(hash, "cidr_ipv6")
@@ -87,7 +102,23 @@ module Krikri
           cidr_ips = ["0.0.0.0/0"]
         end
 
-        Rule.new(proto, from_port, to_port, cidr_ips, cidr_ipv6s, group_ids, group_names, prefix_list_ids)
+        port_pairs.map do |(pair_from, pair_to)|
+          Rule.new(proto, pair_from, pair_to, cidr_ips, cidr_ipv6s, group_ids, group_names, prefix_list_ids)
+        end
+      end
+
+      # "22" -> (22, 22); "443-8443" -> (443, 8443), bounds sorted like
+      # the real module's expand_ports_list (so "8443-443" still yields
+      # 443 first).
+      private def self.parse_ports_entry(spec : String) : Tuple(String?, String?)
+        return {spec.strip, spec.strip} unless dash = spec.index('-')
+        low = spec[0...dash].strip
+        high = spec[(dash + 1)..].strip
+        if (low_num = low.to_i?) && (high_num = high.to_i?) && low_num > high_num
+          {high, low}
+        else
+          {low, high}
+        end
       end
 
       private def self.string_field(hash : Hash(String, JSON::Any), key : String) : String?
