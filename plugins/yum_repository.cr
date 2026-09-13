@@ -60,6 +60,15 @@ module Krikri
   # - file: filename without the `.repo` extension (default: `name`)
   # - reposdir: directory to write into (default: /etc/yum.repos.d)
   # - mode / owner / group: applied to the resulting .repo file
+  # - argument_spec aliases (excludepkgs -> exclude, ca_cert -> sslcacert,
+  #   client_cert -> sslclientcert, client_key -> sslclientkey,
+  #   validate_certs -> sslverify): normalized to the canonical key before
+  #   rendering, so an alias spelling never lands in the file as its own
+  #   `excludepkgs = ...`-style key (real Ansible resolves aliases through
+  #   _handle_aliases and then pops them from the params dict before the
+  #   write loop). A present alias beats the canonical name when both are
+  #   given - real Ansible's own _handle_aliases overwrite order, verified
+  #   in stat.cr against real ansible-core.
   #
   # Each run regenerates the section from scratch using only the
   # parameters given THAT run - it does not merge with whatever's already
@@ -69,8 +78,9 @@ module Krikri
   # the point.
   #
   # Not implemented: `async` (a legacy, Python-reserved-word-workaround
-  # param, essentially unused in real playbooks), `exclude:`'s
-  # `excludepkgs` alias, SELinux options, `attributes`, `unsafe_writes`.
+  # param, essentially unused in real playbooks - and removed from real
+  # Ansible's own argument_spec entirely on devel), SELinux options,
+  # `attributes`, `unsafe_writes`.
   # `no_log` redaction of `password:`/`proxy_password:` was investigated
   # (0.9.376) and found to be a non-issue as things stand: no plugin or
   # verbose mode anywhere in this codebase ever echoes raw task params to
@@ -104,6 +114,29 @@ module Krikri
       proxy proxy_password proxy_username retries sslcacert sslclientcert
       sslclientkey throttle timeout ui_repoid_vars username
     ]
+    # Real argument_spec aliases. Resolution happens in initialize: a
+    # present alias OVERWRITES the canonical name (real ansible-core's
+    # _handle_aliases order, same convention stat.cr verified), and the
+    # alias key itself is removed so it can never render as its own
+    # key in the .repo file - real Ansible pops aliases from the params
+    # dict before its write loop for exactly that reason.
+    PARAM_ALIASES = {
+      "excludepkgs"    => "exclude",
+      "ca_cert"        => "sslcacert",
+      "client_cert"    => "sslclientcert",
+      "client_key"     => "sslclientkey",
+      "validate_certs" => "sslverify",
+    }
+
+    def initialize(config : JSON::Any)
+      super(config)
+      PARAM_ALIASES.each do |alias_name, canonical|
+        if value = @params[alias_name]?
+          @params[canonical] = value
+          @params.delete(alias_name)
+        end
+      end
+    end
 
     def execute : PluginResult
       name = @params["name"]?

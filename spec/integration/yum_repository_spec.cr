@@ -164,4 +164,62 @@ describe "yum_repository plugin" do
     content.should contain("proxy = http://proxy.example.com:8080")
     content.should contain("sslverify = 0")
   end
+
+  # Real argument_spec aliases are resolved to the canonical key and the
+  # alias spelling never lands in the file as its own key (real Ansible
+  # pops aliases from the params dict before its write loop).
+  it "resolves the excludepkgs alias to exclude" do
+    PluginSpecHelper.run("yum_repository", {
+      "name"        => "aliastest",
+      "description" => "d",
+      "baseurl"     => "https://example.com",
+      "excludepkgs" => "kernel*,docker-*",
+      "reposdir"    => TMP_DIR,
+    })
+
+    content = File.read(repo_path("aliastest"))
+    content.should contain("exclude = kernel* docker-*")
+    content.should_not contain("excludepkgs")
+  end
+
+  it "resolves the TLS aliases (ca_cert/client_cert/client_key/validate_certs) to their canonical keys" do
+    PluginSpecHelper.run("yum_repository", {
+      "name"           => "tlstest",
+      "description"    => "d",
+      "baseurl"        => "https://example.com",
+      "ca_cert"        => "/etc/pki/ca.crt",
+      "client_cert"    => "/etc/pki/client.crt",
+      "client_key"     => "/etc/pki/client.key",
+      "validate_certs" => "false",
+      "reposdir"       => TMP_DIR,
+    })
+
+    content = File.read(repo_path("tlstest"))
+    content.should contain("sslcacert = /etc/pki/ca.crt")
+    content.should contain("sslclientcert = /etc/pki/client.crt")
+    content.should contain("sslclientkey = /etc/pki/client.key")
+    content.should contain("sslverify = 0")
+    content.should_not contain("ca_cert")
+    content.should_not contain("client_cert")
+    content.should_not contain("client_key")
+    content.should_not contain("validate_certs")
+  end
+
+  # A present alias beats the canonical name when both are given - real
+  # ansible-core's _handle_aliases overwrite order (same convention stat.cr
+  # verified against real Ansible).
+  it "lets a present alias win over the canonical name when both are given" do
+    PluginSpecHelper.run("yum_repository", {
+      "name"        => "bothtest",
+      "description" => "d",
+      "baseurl"     => "https://example.com",
+      "exclude"     => "canonical-pkg",
+      "excludepkgs" => "alias-pkg",
+      "reposdir"    => TMP_DIR,
+    })
+
+    content = File.read(repo_path("bothtest"))
+    content.should contain("exclude = alias-pkg")
+    content.should_not contain("canonical-pkg")
+  end
 end
