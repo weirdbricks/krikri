@@ -1,5 +1,6 @@
 require "../spec_helper"
 require "file_utils"
+require "digest/sha1"
 
 private TMP_DIR = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp")
 
@@ -102,5 +103,93 @@ describe "assemble plugin" do
     result = PluginSpecHelper.run("assemble", {"src" => as_path("no-such-dir"), "dest" => as_path("irrelevant.conf")})
 
     result["failed"].as_bool.should be_true
+  end
+
+  it "reports a SHA1 checksum (real Ansible's own checksum:, not MD5) plus an md5sum: for back-compat" do
+    src = as_path("assemble_src_checksum")
+    dest = as_path("assemble_dest_checksum.conf")
+    FileUtils.rm_rf(src)
+    Dir.mkdir_p(src)
+    File.write(File.join(src, "a"), "content\n")
+    File.delete(dest) if File.exists?(dest)
+
+    result = PluginSpecHelper.run("assemble", {"src" => src, "dest" => dest})
+
+    result["checksum"].as_s.should eq(Digest::SHA1.hexdigest("content\n"))
+    result["checksum"].as_s.size.should eq(40)
+    result["md5sum"].as_s.size.should eq(32)
+  end
+
+  it "always reports msg: OK (real Ansible never varies this message)" do
+    src = as_path("assemble_src_msg")
+    dest = as_path("assemble_dest_msg.conf")
+    FileUtils.rm_rf(src)
+    Dir.mkdir_p(src)
+    File.write(File.join(src, "a"), "same\n")
+    PluginSpecHelper.run("assemble", {"src" => src, "dest" => dest})
+
+    result = PluginSpecHelper.run("assemble", {"src" => src, "dest" => dest})
+
+    result["changed"].as_bool.should be_false
+    result["msg"].as_s.should eq("OK")
+  end
+
+  it "passes validation and writes dest (validate: with %s)" do
+    src = as_path("assemble_src_validate_ok")
+    dest = as_path("assemble_dest_validate_ok.conf")
+    FileUtils.rm_rf(src)
+    Dir.mkdir_p(src)
+    File.write(File.join(src, "a"), "value=1\n")
+    File.delete(dest) if File.exists?(dest)
+
+    result = PluginSpecHelper.run("assemble", {"src" => src, "dest" => dest, "validate" => "grep -q '^value=1' %s"})
+
+    result["failed"]?.try(&.as_bool).should be_falsey
+    result["changed"].as_bool.should be_true
+    File.read(dest).should eq("value=1\n")
+  end
+
+  it "fails validation and leaves dest untouched" do
+    src = as_path("assemble_src_validate_fail")
+    dest = as_path("assemble_dest_validate_fail.conf")
+    FileUtils.rm_rf(src)
+    Dir.mkdir_p(src)
+    File.write(File.join(src, "a"), "value=BAD\n")
+    File.write(dest, "original\n")
+
+    result = PluginSpecHelper.run("assemble", {"src" => src, "dest" => dest, "validate" => "! grep -q BAD %s"})
+
+    result["failed"].as_bool.should be_true
+    result["msg"].as_s.should contain("failed to validate")
+    File.read(dest).should eq("original\n")
+  end
+
+  it "fails when validate: does not contain %s" do
+    src = as_path("assemble_src_validate_nos")
+    dest = as_path("assemble_dest_validate_nos.conf")
+    FileUtils.rm_rf(src)
+    Dir.mkdir_p(src)
+    File.write(File.join(src, "a"), "value=1\n")
+    File.delete(dest) if File.exists?(dest)
+
+    result = PluginSpecHelper.run("assemble", {"src" => src, "dest" => dest, "validate" => "/bin/true"})
+
+    result["failed"].as_bool.should be_true
+    result["msg"].as_s.should contain("validate must contain %s")
+  end
+
+  it "applies owner/group/mode and reports add_path_info stat fields" do
+    src = as_path("assemble_src_attrs")
+    dest = as_path("assemble_dest_attrs.conf")
+    FileUtils.rm_rf(src)
+    Dir.mkdir_p(src)
+    File.write(File.join(src, "a"), "x\n")
+    File.delete(dest) if File.exists?(dest)
+
+    result = PluginSpecHelper.run("assemble", {"src" => src, "dest" => dest, "mode" => "0640"})
+
+    result["mode"].as_s.should eq("0640")
+    result["uid"].as_i64.should eq(File.info(dest, follow_symlinks: false).owner_id.to_i64)
+    result["state"].as_s.should eq("file")
   end
 end

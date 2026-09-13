@@ -20,9 +20,25 @@
 #   ignore_hidden (optional bool, default false): skip dotfiles
 #   backup (optional bool, default false)
 #   owner/group/mode (optional): applied to dest
+#   validate (optional): shell command template containing %s, run against
+#     the ASSEMBLED temp content before it's moved to dest; non-zero exit
+#     fails the task without touching dest (real assemble.py's own
+#     `validate % path` + module.run_command, matching copy.cr/replace.cr's
+#     established %s-template convention in this codebase)
+#   remote_src (optional bool, default true, accept-and-ignore): real
+#     Ansible's action plugin decides whether src needs transferring from
+#     the controller first - krikri's own TaskExecutor#stage_assemble_dir
+#     already handles the remote_src: false transfer case externally (see
+#     __cleanup_after_assemble below), so this plugin itself always just
+#     reads src wherever this process runs, matching remote_src: true's
+#     semantics inherently
+#   decrypt (optional bool, default true, accept-and-ignore): vault
+#     decryption is an action-plugin/controller-side concern with no
+#     analogous step inside this plugin
 
 require "json"
 require "digest/md5"
+require "digest/sha1"
 require "file_utils"
 require "../src/krikri/base_plugin"
 
@@ -52,8 +68,16 @@ module Krikri
       diff = diff_mode ? generate_unified_diff(existing || "", content, dest, dest) : nil
       backup_file = ""
 
-      if changed && !check_mode
-        backup_file = write_assembled(dest, content, existing)
+      if changed
+        if validate_cmd = @params["validate"]?
+          if failure = validate_assembled(content, validate_cmd)
+            return failure
+          end
+        end
+
+        unless check_mode
+          backup_file = write_assembled(dest, content, existing)
+        end
       end
 
       # __cleanup_after_assemble - set by TaskExecutor#stage_assemble_dir
@@ -64,15 +88,59 @@ module Krikri
         FileUtils.rm_rf(src) rescue nil
       end
 
-      PluginResult.new(
-        changed: changed,
+      attrs_changed = !check_mode && File.exists?(dest) && apply_owner_group_mode_changed(dest)
+
+      result = PluginResult.new(
+        changed: changed || attrs_changed,
         failed: false,
-        msg: changed ? "" : "dest already matches assembled content",
+        msg: "OK",
         diff: diff,
         dest: dest,
-        checksum: Digest::MD5.hexdigest(content),
+        checksum: Digest::SHA1.hexdigest(content),
+        md5sum: Digest::MD5.hexdigest(content),
         backup_file: backup_file
       )
+      add_path_info(result, dest) unless check_mode
+      result
+    end
+
+    # Runs validate: (with %s substituted by a temp file holding the
+    # assembled content, staged same-directory as dest so a later
+    # rename/move never crosses a filesystem boundary - see replace.cr's
+    # own write_with_optional_validate for the identical convention and
+    # the cross-device-rename bug this specifically avoids) before dest
+    # is ever touched. Returns the failure result, or nil on success.
+    private def validate_assembled(content : String, validate_cmd : String) : PluginResult?
+      dest = @params["dest"].not_nil!
+      unless validate_cmd.includes?("%s")
+        return PluginResult.new(changed: false, failed: true, msg: "validate must contain %s: #{validate_cmd}")
+      end
+
+      temp_file = File.join(File.dirname(dest), ".krikri-playbook-assemble-#{Random::Secure.hex(8)}.tmp")
+      begin
+        File.write(temp_file, content)
+        cmd = validate_cmd.gsub("%s", temp_file)
+        output = IO::Memory.new
+        result = Process.run("/bin/sh", ["-c", cmd], output: output, error: output)
+        unless result.exit_code == 0
+          return PluginResult.new(changed: false, failed: true, msg: "failed to validate: rc:#{result.exit_code} error:#{output.to_s.strip}")
+        end
+      ensure
+        File.delete(temp_file) if File.exists?(temp_file)
+      end
+      nil
+    end
+
+    # apply_owner_group_mode doesn't report whether it changed anything -
+    # compare dest's stat before/after so `changed:` reflects an
+    # attribute-only update on an otherwise-identical dest, matching real
+    # Ansible's own set_fs_attributes_if_different contribution to changed.
+    private def apply_owner_group_mode_changed(dest : String) : Bool
+      before = File.info?(dest, follow_symlinks: false)
+      apply_owner_group_mode(dest, @params["owner"]?, @params["group"]?, @params["mode"]?)
+      after = File.info?(dest, follow_symlinks: false)
+      return false unless before && after
+      before.permissions != after.permissions || before.owner_id != after.owner_id || before.group_id != after.group_id
     end
 
     # Collect the sorted fragment files from src and join their contents
@@ -100,7 +168,6 @@ module Krikri
       dest_dir = File.dirname(dest)
       Dir.mkdir_p(dest_dir) unless Dir.exists?(dest_dir)
       File.write(dest, content)
-      apply_owner_group_mode(dest, @params["owner"]?, @params["group"]?, @params["mode"]?)
       backup_file
     end
   end
