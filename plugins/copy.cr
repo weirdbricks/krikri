@@ -11,18 +11,14 @@ module Krikri
   # This version ALWAYS uses native Crystal file operations
   # The PluginManager handles uploading to remote hosts if needed
   #
-  # Not implemented (accepted and ignored):
-  # - decrypt: (vault auto-decryption, real default true). Krikri never
-  #   auto-decrypts copy sources - the controller-side read in
-  #   TaskExecutor#inline_copy_source_content does not go through
-  #   Vault.maybe_decrypt, so a vault-encrypted src file is transferred
-  #   verbatim (ciphertext), i.e. krikri's effective behavior for every
-  #   current run already equals real Ansible's decrypt: false. Wiring
-  #   the existing controller-side vault machinery (Krikri::Vault) in
-  #   here would silently change what lands on disk for existing plays
-  #   relying on the current pass-through, so decrypt: is a no-op and
-  #   the vault-encrypted-src gap is documented in KNOWN_MISSING.md
-  #   instead.
+  # decrypt: (vault auto-decryption of src, real default true) is
+  # handled CONTROLLER-side, before this plugin ever runs:
+  # TaskExecutor#inline_copy_source_content decrypts a vault-encrypted
+  # src file (unless the play passes decrypt: false) and forwards the
+  # plaintext as content: - or stages the decrypted bytes via SCP when
+  # the plaintext is oversized or binary. By the time a src: reaches
+  # this plugin it is never vault-armored, so decrypt: is still accepted
+  # and ignored here.
   class CopyPlugin < BasePlugin
     property? check_mode : Bool
     property? diff_mode : Bool
@@ -71,8 +67,9 @@ module Krikri
         )
       end
 
-      # decrypt: (see the class comment above) is accepted and ignored -
-      # there is deliberately no param read for it at all.
+      # decrypt: (see the class comment above) is handled entirely
+      # controller-side - there is deliberately no param read for it
+      # here.
 
       # Handle content-based copy
       if content

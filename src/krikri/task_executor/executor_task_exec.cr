@@ -673,6 +673,41 @@ module Krikri
       size = File.size(src) rescue nil
       return params unless size
 
+      # Real Ansible's `copy:` auto-decrypts a vault-armored src on the
+      # CONTROLLER before transfer (decrypt: true is the default;
+      # decrypt: false keeps the ciphertext) - without this the
+      # ciphertext was uploaded verbatim, i.e. krikri behaved like
+      # decrypt: false on every run. A Vault::Error (missing/wrong
+      # password) propagates, matching every other maybe_decrypt call
+      # site: it aborts via krikri-playbook.cr's top-level rescue with
+      # the clear decrypt-failure message.
+      if copy_decrypt_enabled?(params) && vault_encrypted_file?(src)
+        decrypted = Vault.maybe_decrypt(File.read(src))
+        # An oversized decrypted file - or a decrypted plaintext that is
+        # itself binary (e.g. a vaulted keyring, which JSON-transported
+        # content: would mangle the same way a plaintext binary src is
+        # mangled) - takes the byte-safe SCP staging path: the decrypted
+        # bytes are written to a scratch file NAMED AFTER the original
+        # src so the basename-derived behavior downstream (dest-is-
+        # directory appending, the checksum-first match) still sees the
+        # real name.
+        if size > INLINE_COPY_MAX_BYTES || !decrypted.valid_encoding?
+          tmpdir = File.join(Dir.tempdir, "krikri-copy-vault-#{Random::Secure.hex(8)}")
+          Dir.mkdir_p(tmpdir)
+          staged = File.join(tmpdir, File.basename(src))
+          File.write(staged, decrypted)
+          result = stage_large_copy_source(params, staged, host, vars_context)
+          FileUtils.rm_r(tmpdir)
+          return result
+        end
+
+        resolved = params.dup
+        resolved.delete("src")
+        resolved["content"] = decrypted
+        resolved["__original_src_basename"] = File.basename(src)
+        return resolved
+      end
+
       if size > INLINE_COPY_MAX_BYTES
         return stage_large_copy_source(params, src, host, vars_context)
       end
@@ -707,6 +742,23 @@ module Krikri
       # call site's own comment for the full "Is a directory" story.
       resolved["__original_src_basename"] = File.basename(src)
       resolved
+    end
+
+    # copy:'s decrypt: param (real Ansible default true): only an
+    # explicit falsy ("false"/"no"/"0"/"off") opts OUT of controller-side
+    # vault decryption of src - the inverse of remote_src's truthy check
+    # above, because the default points the other way.
+    private def copy_decrypt_enabled?(params : Hash(String, String)) : Bool
+      !["false", "no", "0", "off"].includes?(params["decrypt"]?.try(&.downcase))
+    end
+
+    # True if *path*'s first line carries the vault armor header - a
+    # one-line peek, not a full read, so a large non-vault src never pays
+    # for a whole-file read just to make the routing decision.
+    private def vault_encrypted_file?(path : String) : Bool
+      File.open(path) { |file| file.read_line.starts_with?(Vault::HEADER_PREFIX) }
+    rescue
+      false
     end
 
     # Large-file counterpart to the inline `content` path above: SCPs
@@ -839,6 +891,14 @@ module Krikri
     # `src` from wherever the plugin process is actually running, so
     # once the directory is really present on the target, no other
     # change is needed there beyond deleting the scratch copy afterward.
+    #
+    # Note what this deliberately does NOT handle: per-file vault
+    # decryption inside the tree. Real Ansible's directory copy runs each
+    # file through the same decrypt: machinery as a single-file src:, but
+    # this path `scp -r`s the directory without ever reading individual
+    # files in Crystal, so a vault-encrypted file inside a copied
+    # directory is transferred as ciphertext. Left unhandled - no real
+    # role round has hit a vaulted file inside a directory copy.
     private def stage_directory_copy_source(params : Hash(String, String), src : String, host : Host, vars_context : Hash(String, JSON::Any)) : Hash(String, String)
       connection_host = PluginManager.get_connection_host(host, vars_context)
       remote_tmp = "/tmp/.krikri-playbook-copy-dir-#{Random::Secure.hex(8)}"
