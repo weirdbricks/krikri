@@ -29,9 +29,11 @@ module Krikri
   #   rolled back at the end (matching the real module's
   #   execute-then-rollback).
   #
-  # Returns: query_result (last statement's rows as column->value
-  # dicts), query_all_results (one row-list per statement), query_list,
-  # rowcount (total produced/affected rows), query, statusmessage.
+  # Returns: query_result (the LAST statement's full result set as an
+  # array of column->value dicts, matching real Ansible - one entry per
+  # row, [] for a statement that produces no rows), query_all_results
+  # (one row-list per statement), query_list, rowcount (total
+  # produced/affected rows), query, statusmessage.
   #
   # Divergence, deliberate: statusmessage is synthesized from the
   # statement's leading keyword + affected-row count ("INSERT 0 1" /
@@ -42,7 +44,7 @@ module Krikri
   class PostgresqlQueryPlugin < BasePlugin
     private record RunOutcome,
       last_sql : String,
-      last_result : Hash(String, JSON::Any),
+      last_result : Array(Hash(String, JSON::Any)),
       all_results : Array(JSON::Any),
       rowcount : Int64,
       statusmessage : String,
@@ -97,7 +99,7 @@ module Krikri
       res = PluginResult.new(changed: outcome.changed, failed: false, msg: outcome.statusmessage)
       res.extra["query"] = JSON::Any.new(outcome.last_sql)
       res.extra["query_list"] = JSON::Any.new(queries.map { |q| JSON::Any.new(q) })
-      res.extra["query_result"] = JSON::Any.new(outcome.last_result)
+      res.extra["query_result"] = JSON::Any.new(outcome.last_result.map { |row| JSON::Any.new(row) })
       res.extra["query_all_results"] = JSON::Any.new(outcome.all_results)
       res.extra["rowcount"] = JSON::Any.new(outcome.rowcount)
       res.extra["statusmessage"] = JSON::Any.new(outcome.statusmessage)
@@ -116,7 +118,7 @@ module Krikri
       run_set_search_path(conn, search_path)
 
       all_results = [] of JSON::Any
-      last_result = Hash(String, JSON::Any).new
+      last_result = [] of Hash(String, JSON::Any)
       last_sql = ""
       rowcount = 0i64
       statusmessage = ""
@@ -129,7 +131,11 @@ module Krikri
         rowcount += affected
         statusmessage = tag
         all_results << JSON::Any.new(rows.map { |row| JSON::Any.new(row) })
-        last_result = rows.first? || Hash(String, JSON::Any).new
+        # Real Ansible's query_result is the LAST statement's whole
+        # result set (one dict per row) - not just its first row, which
+        # silently dropped every row after the first on a multi-row
+        # SELECT.
+        last_result = rows
         changed = true if PluginHelpers::PostgresqlQueryHeuristics.changed?(
           PluginHelpers::PostgresqlQueryHeuristics.leading_keyword(expanded_sql), affected
         )
@@ -184,21 +190,27 @@ module Krikri
     end
 
     # crystal-pg's bare read returns the decoder's native type (Nil,
-    # Bool, Int64, Float64, String, Time, Slice(UInt8), PG::Numeric...).
-    # JSON only carries null/bool/number/string, so everything else is
-    # rendered as text - matching how the real module's non-convertible
-    # types end up stringified in the returned dicts.
+    # Bool, Int16/Int32/Int64, Float32/Float64, String, Time,
+    # Slice(UInt8), PG::Numeric, UUID, JSON::PullParser for json/jsonb,
+    # PG::Interval...). JSON only carries null/bool/number/string, so
+    # the numeric PG types are kept as native JSON numbers (psycopg2
+    # hands real Ansible native Python ints/floats too - stringifying
+    # them was a visible type divergence), and everything else that has
+    # no JSON representation is rendered as text - matching how the real
+    # module's non-convertible types end up stringified in the returned
+    # dicts (its convert_to_supported() turns PG numeric/timedelta into
+    # float/str, so numeric becomes a native JSON number too).
     private def to_json_any(value) : JSON::Any
       case value
-      when Nil           then JSON::Any.new(nil)
-      when Bool          then JSON::Any.new(value)
-      when Int64         then JSON::Any.new(value)
-      when Float64       then JSON::Any.new(value)
-      when PG::Numeric   then JSON::Any.new(value.to_s)
-      when Time          then JSON::Any.new(value.to_s("%Y-%m-%d %H:%M:%S%:z"))
-      when Bytes         then JSON::Any.new(String.new(value))
-      when JSON::Any     then value
-      else                    JSON::Any.new(value.to_s)
+      when Nil              then JSON::Any.new(nil)
+      when Bool             then JSON::Any.new(value)
+      when Int, Float       then JSON::Any.new(value)
+      when JSON::PullParser then JSON::Any.new(value)
+      when JSON::Any        then value
+      when PG::Numeric      then JSON::Any.new(value.to_f)
+      when Time             then JSON::Any.new(value.to_s("%Y-%m-%d %H:%M:%S%:z"))
+      when Bytes            then JSON::Any.new(String.new(value))
+      else                       JSON::Any.new(value.to_s)
       end
     end
 

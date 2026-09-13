@@ -156,6 +156,55 @@ against Atlantic.net now, Kata having been retired as a backend.
 
 ---
 
+## Two real PostgreSQL plugin bugs fixed: multi-row SELECT data loss and postgresql_user idempotency (0.9.1025)
+
+Found via an ad-hoc CLI comparison sweep against real `ansible`
+(ansible-core 2.19 / community.postgresql 4.2.0 / psycopg2) running
+identical playbooks against a throwaway PostgreSQL 15 in a container
+(2026-09-13), both verified fixed live the same way:
+
+- `postgresql_query` **silently dropped all rows but the first** of a
+  multi-row result set - a `SELECT *` over a 2-row table returned
+  `query_result` as a single row object (`{"id": "1", "name": "alice"}`)
+  with `rowcount: 2`, i.e. bob vanished with no error anywhere. The
+  fetched rows were always intact (`query_all_results` even had both);
+  the bug was purely in flattening the last statement's result into the
+  single `query_result` field, which now carries real Ansible's shape:
+  the FULL result set as an array of row objects (`[]` for a statement
+  that returns no rows). Second, integer (and float) columns came back
+  as JSON strings (`"id": "1"`) - crystal-pg decodes int2/int4 as
+  Int16/Int32, which fell through the stringifier's Int64-only case -
+  and `numeric`/`json` columns were stringified too; row values now
+  coerce to native JSON numbers the way the real module's
+  convert_to_supported() does (Decimal -> float), and json/jsonb
+  columns arrive as parsed JSON.
+- `postgresql_user` reported `changed: true` on every repeat call with
+  a `password:` given - it unconditionally ran ALTER ROLE ... PASSWORD
+  instead of diffing. Now a port of real Ansible's
+  user_should_we_change_password(): the desired password is diffed
+  against the role's stored `pg_authid.rolpassword` verifier - a
+  SCRAM-SHA-256 verifier is checked by recomputing the ServerKey from
+  the plaintext and the verifier's own salt/iteration count (RFC 5802,
+  the real module's same comparison, minus saslprep: the raw password
+  bytes are what the server itself hashed when it generated the
+  verifier), a pre-hashed SCRAM/md5 input is compared verbatim, and a
+  plaintext against an md5-default server computes PostgreSQL's own
+  `'md5' + md5(password + username)` form; a genuine no-op second call
+  now reports `changed: false`. As in real Ansible, an unreadable
+  pg_authid makes the password count as different (the documented
+  reason its own idempotency is "partial").
+- Found while the sweep's throwaway server let `postgresql_db`'s
+  custom-format (.pgc/.tar/.dir) dump path execute for the first time
+  on this machine: the `> target` shell redirect was appended AFTER the
+  .pgpass cleanup clause's trailing `exit $rc`, so it bound to the
+  `exit` instead of the `pg_dump` - pg_dump's binary output went to the
+  captured stdout and the target file was left silently EMPTY while the
+  task still reported success (and the subsequent pg_restore then
+  failed with "input file is too short"). The redirect now binds to
+  pg_dump itself, before the cleanup clause.
+
+---
+
 ## `cron`/`apt_repository`/`ini_file`/`cronvar` result fields matched to real ansible (0.9.1024)
 
 Found via an ad-hoc CLI comparison sweep against real `ansible`
