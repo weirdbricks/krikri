@@ -1,16 +1,16 @@
 class Krikri < Formula
   desc "Ansible-compatible automation tool, written in Crystal"
   homepage "https://github.com/weirdbricks/krikri"
-  version "0.9.977"
+  version "0.9.1000"
   license "MIT"
 
   on_macos do
     if Hardware::CPU.arm?
-      url "https://github.com/weirdbricks/krikri/releases/download/v0.9.977/krikri-v0.9.977-darwin-arm64.tar.gz"
-      sha256 "9c38994ae458b48250350639c215724ffe647dabc69add9f223ee4b5c4f00371"
+      url "https://github.com/weirdbricks/krikri/releases/download/v0.9.1000/krikri-v0.9.1000-darwin-arm64.tar.gz"
+      sha256 "93dc2c54e7062baea348391c8919cd0458834026842010d40167d689a3102061"
     else
-      url "https://github.com/weirdbricks/krikri/releases/download/v0.9.977/krikri-v0.9.977-darwin-x86_64.tar.gz"
-      sha256 "5563822ad644e32086887029383c5821d9f44b24844beb2778b1edcfa1ee86a9"
+      url "https://github.com/weirdbricks/krikri/releases/download/v0.9.1000/krikri-v0.9.1000-darwin-x86_64.tar.gz"
+      sha256 "a9886e7879b6aa5fc5788e384ac8a5e0b9657a4a8ace81fed4445b78c89263c1"
     end
 
     # Unlike the Linux binaries (fully static musl builds, zero runtime
@@ -30,11 +30,11 @@ class Krikri < Formula
 
   on_linux do
     if Hardware::CPU.arm?
-      url "https://github.com/weirdbricks/krikri/releases/download/v0.9.977/krikri-v0.9.977-linux-arm64.tar.gz"
-      sha256 "fd6bf351ed550d721bcad7d235b5a5b9252e122b64a1605675a1a6da1e8b2952"
+      url "https://github.com/weirdbricks/krikri/releases/download/v0.9.1000/krikri-v0.9.1000-linux-arm64.tar.gz"
+      sha256 "f9f0c4ff9d6891e9d45d89a79f22908498435b0e842deeea1d1f0a44cd5927a3"
     else
-      url "https://github.com/weirdbricks/krikri/releases/download/v0.9.977/krikri-v0.9.977-linux-x86_64.tar.gz"
-      sha256 "3841f7677ab41b4c478972d2a94c7382d1bb400799f8a53307448ea0104889ea"
+      url "https://github.com/weirdbricks/krikri/releases/download/v0.9.1000/krikri-v0.9.1000-linux-x86_64.tar.gz"
+      sha256 "70fe0f629182d135a9db634ebac9db34df0aea1edee798b20cd688d3fb1b15ff"
     end
   end
 
