@@ -314,6 +314,13 @@ Metrics/CyclomaticComplexity:
   # module's main() ordered chain (stage, checksum-verify, freshness
   # compare, backup, atomic move) one branch per real-module step.
   - plugins/get_url.cr
+  # plugins/git.cr's #execute/#do_clone/#fetch_repo/#build_command_prefix
+  # are faithful ports of ansible.builtin.git's own main()/clone()/fetch()/
+  # set_git_ssh_env control flow (depth refspec selection, single-branch/
+  # bare/separate-git-dir flag assembly, remote-head resolution, ssh-option
+  # composition) - one branch per real-module decision, so splitting them
+  # apart would scatter one ordered real-module sequence.
+  - plugins/git.cr
   Enabled: true
   Severity: Warning
 
