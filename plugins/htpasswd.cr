@@ -56,6 +56,7 @@ module Krikri
       if res = missing_file_result(path, state, create)
         return res
       end
+      file_existed = File.exists?(path)
 
       entries = read_entries(path)
 
@@ -71,14 +72,26 @@ module Krikri
       content_changed = write_updated(path, entries, name, new_hash, existing_hash, check_mode)
 
       attrs_changed = apply_file_attrs(path, check_mode)
-      upsert_result(path, name, content_changed, attrs_changed)
+      upsert_result(path, name, content_changed, attrs_changed, file_existed, check_mode)
     end
 
-    private def upsert_result(path : String, name : String, content_changed : Bool, attrs_changed : Bool) : PluginResult
+    private def upsert_result(path : String, name : String, content_changed : Bool, attrs_changed : Bool,
+                              file_existed : Bool, check_mode : Bool) : PluginResult
+      # Real Ansible branches the success msg on whether this call actually
+      # created the file (its own present() says "Created {path} and added
+      # {user}" for a brand-new file, "Add/update {user}" for a change to
+      # an existing one) - a brand-new create is not an "update".
+      msg = if content_changed && !file_existed
+              check_mode ? "Create #{path}" : "Created #{path} and added #{name}"
+            elsif content_changed
+              "Add/update #{name}"
+            else
+              "#{name} already present"
+            end
       PluginResult.new(
         changed: content_changed || attrs_changed,
         failed: false,
-        msg: content_changed ? "Updating user #{name}" : "User #{name} already present with matching password",
+        msg: msg,
         path: path
       )
     end
