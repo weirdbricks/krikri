@@ -166,6 +166,29 @@ against Atlantic.net now, Kata having been retired as a backend.
 
 ---
 
+## lineinfile's per-branch `msg` and `backup` result key matched to real ansible (0.9.1021)
+
+The same ad-hoc-CLI comparison sweep against real `ansible`
+(2026-09-13) also caught `lineinfile` reporting a generic
+`msg: "Line modified"` for EVERY `changed: true` outcome - including
+when the line was newly ADDED, where real ansible-core 2.19 says
+`line added`. Real lineinfile's msg depends on which branch ran:
+`line added` (newly inserted, including into a just-created file),
+`line replaced` (an existing line matched and rewritten in place),
+`N line(s) removed` for `state: absent` (plus a `found` count of the
+removed lines), and an empty msg when nothing changed - each now
+pinned in `plugins/lineinfile.cr`, along with real Ansible's own
+`check_file_attrs` suffix (`ownership, perms or SE linux context
+changed`) when it's the file attributes rather than the line that
+drifted. Same sweep checked the backup-result key: real lineinfile
+exits with `backup` (always present, `""` when no backup was made),
+so krikri's lineinfile was renamed from `backup_file` to `backup` -
+while real BLOCKinfile genuinely exits with `backup_file` (omitted
+entirely when no backup), so `plugins/blockinfile.cr` is unchanged
+and now carries a spec pinning that name against future "unification".
+
+---
+
 ## Ad-hoc CLI `command`/`shell` result shape matched to real ansible (0.9.1020)
 
 An ad-hoc-CLI comparison sweep against real `ansible` (2026-09-13) found

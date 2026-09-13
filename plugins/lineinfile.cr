@@ -120,6 +120,8 @@ module Krikri
     # the result back (unless check_mode).
     private def apply(path : String, state : String, line : String?, regexp : String?, search_string : String?, firstmatch : Bool, being_created : Bool, check_mode : Bool) : PluginResult
       original_content = File.exists?(path) ? File.read(path) : ""
+      original_lines = original_content.split("\n")
+      original_lines.pop if original_lines.size > 0 && original_lines.last.empty?
       new_lines, changed = edit_lines(original_content, state, line, regexp, search_string, firstmatch)
       new_content = render_content(new_lines, original_content, being_created)
 
@@ -145,16 +147,62 @@ module Krikri
       end
       changed = changed || !!attrs_changed
 
-      PluginResult.new(
-        changed: changed,
-        failed: false,
-        msg: changed ? "Line modified" : "Line already present",
-        diff: diff,
-        path: path,
-        line: line || "",
-        state: state,
-        backup_file: backup_file
-      )
+      line_result(path, state, changed, line, backup_file, original_lines.size, new_lines.size, !!attrs_changed, diff)
+    end
+
+    # Real Ansible's per-branch msg strings (live-verified against
+    # ansible-core 2.19.11 ad-hoc: 'line added' when the line is
+    # newly inserted (including into a just-created file), 'line
+    # replaced' when an existing line matched and was rewritten in
+    # place, '%d line(s) removed' for state: absent, and an empty
+    # msg when nothing changed - the previous single generic 'Line
+    # modified' for every changed=true case came from an ad-hoc CLI
+    # comparison sweep against real ansible, 2026-09-13), plus real
+    # Ansible's own check_file_attrs suffix when the file's
+    # owner/group/mode/SELinux attributes were what changed. Real
+    # Ansible's state=absent exit also carries a `found` count of the
+    # removed lines (its present-path exit does not); the backup path
+    # goes out under the key `backup` ("" when none), not blockinfile's
+    # `backup_file`.
+    private def line_result(path : String, state : String, changed : Bool, line : String?, backup_file : String, original_count : Int32, new_count : Int32, attrs_changed : Bool, diff : JSON::Any?) : PluginResult
+      msg = if !changed
+              ""
+            elsif state == "absent"
+              "#{original_count - new_count} line(s) removed"
+            elsif new_count > original_count
+              "line added"
+            else
+              "line replaced"
+            end
+      if attrs_changed
+        msg += " and " unless msg.empty?
+        msg += "ownership, perms or SE linux context changed"
+      end
+
+      if state == "absent"
+        PluginResult.new(
+          changed: changed,
+          failed: false,
+          msg: msg,
+          diff: diff,
+          path: path,
+          line: line || "",
+          state: state,
+          backup: backup_file,
+          found: original_count - new_count
+        )
+      else
+        PluginResult.new(
+          changed: changed,
+          failed: false,
+          msg: msg,
+          diff: diff,
+          path: path,
+          line: line || "",
+          state: state,
+          backup: backup_file
+        )
+      end
     end
 
     private def edit_lines(original_content : String, state : String, line : String?, regexp : String?, search_string : String?, firstmatch : Bool) : {Array(String), Bool}

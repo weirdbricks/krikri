@@ -102,4 +102,23 @@ describe "blockinfile plugin" do
   ensure
     File.delete(path) if path && File.exists?(path)
   end
+
+  # Unlike lineinfile (whose key is `backup`), real Ansible's blockinfile
+  # exits with `backup_file` (blockinfile.py: exit_json(..., backup_file=...),
+  # key omitted entirely when no backup was made). Live-verified against
+  # ansible-core 2.19.11 - pinned here so nobody "unifies" the two names.
+  it "reports the backup path under the 'backup_file' key with backup: yes" do
+    path = File.tempname("blockinfile-spec")
+    File.write(path, "old\n")
+
+    result = PluginSpecHelper.run("blockinfile", {"path" => path, "block" => "new", "backup" => "yes"})
+    backup = result["backup_file"].as_s
+
+    backup.should_not be_empty
+    File.exists?(backup).should be_true
+    File.read(backup).should eq("old\n")
+
+    File.delete(path) if File.exists?(path)
+    File.delete(backup)
+  end
 end

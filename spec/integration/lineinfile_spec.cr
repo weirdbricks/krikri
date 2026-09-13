@@ -131,6 +131,68 @@ describe "lineinfile plugin" do
     result["failed"].as_bool.should be_true
     result["msg"].as_s.should contain("does not exist")
   end
+
+  it "reports msg 'line added' when the line is newly added (regression: used to say 'Line modified' for every changed case - found via an ad-hoc CLI comparison sweep against real ansible, 2026-09-13)" do
+    path = tmp_path("lineinfile-msg-added.txt")
+    File.write(path, "alpha\nbeta\n")
+
+    result = PluginSpecHelper.run("lineinfile", {"path" => path, "line" => "gamma", "state" => "present"})
+
+    result["changed"].as_bool.should be_true
+    result["msg"].as_s.should eq("line added")
+  end
+
+  it "reports msg 'line replaced' when an existing line is rewritten in place" do
+    path = tmp_path("lineinfile-msg-replaced.txt")
+    File.write(path, "alpha\nbeta\ngamma\n")
+
+    result = PluginSpecHelper.run("lineinfile", {"path" => path, "line" => "BETA", "regexp" => "^beta$"})
+
+    result["changed"].as_bool.should be_true
+    result["msg"].as_s.should eq("line replaced")
+  end
+
+  it "reports msg 'N line(s) removed' plus a found count for state: absent" do
+    path = tmp_path("lineinfile-msg-removed.txt")
+    File.write(path, "alpha\nbeta\nalpha\n")
+
+    result = PluginSpecHelper.run("lineinfile", {"path" => path, "line" => "alpha", "state" => "absent"})
+
+    result["changed"].as_bool.should be_true
+    result["msg"].as_s.should eq("2 line(s) removed")
+    result["found"].as_i.should eq(2)
+  end
+
+  it "reports an empty msg (no msg key on the wire) when nothing changed, like real ansible" do
+    path = tmp_path("lineinfile-msg-noop.txt")
+    File.write(path, "alpha\n")
+
+    result = PluginSpecHelper.run("lineinfile", {"path" => path, "line" => "alpha", "state" => "present"})
+
+    result["changed"].as_bool.should be_false
+    result["msg"]?.should be_nil
+  end
+
+  it "reports the backup path under the 'backup' key with backup: yes (regression: used to emit 'backup_file', real ansible's lineinfile exits with 'backup' - blockinfile keeps 'backup_file')" do
+    path = tmp_path("lineinfile-backup-key.txt")
+    File.write(path, "old\n")
+
+    result = PluginSpecHelper.run("lineinfile", {"path" => path, "line" => "new", "backup" => "yes"})
+
+    backup = result["backup"].as_s
+    backup.should_not be_empty
+    File.exists?(backup).should be_true
+    File.read(backup).should eq("old\n")
+  end
+
+  it "carries the 'backup' key as an empty string when no backup was requested (real ansible always includes it)" do
+    path = tmp_path("lineinfile-no-backup.txt")
+    File.write(path, "alpha\n")
+
+    result = PluginSpecHelper.run("lineinfile", {"path" => path, "line" => "beta"})
+
+    result["backup"].as_s.should be_empty
+  end
 end
 
 private def param_path(name : String) : String
