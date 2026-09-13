@@ -1,6 +1,8 @@
 #!/usr/bin/env crystal
 
 require "json"
+require "system/user"
+require "system/group"
 require "../src/krikri/base_plugin"
 
 module Krikri
@@ -9,10 +11,22 @@ module Krikri
   #
   # Parameters:
   #   path (required): File to operate on
-  #   regexp (required): Regex pattern to match
+  #   regexp (required): Regex pattern to match (re.MULTILINE semantics)
   #   replace (optional): Replacement string (default: empty, i.e. delete
   #     matches). `\1`, `\2` etc. are backreferences to capture groups.
-  #   owner/group/mode (optional): attribute changes to apply
+  #   after (optional): Only the portion AFTER the first match of this
+  #     regex is subject to the regexp substitution (re.DOTALL semantics)
+  #   before (optional): Mirror of `after` - substitution confined to the
+  #     portion BEFORE the first match (re.DOTALL). With both, the
+  #     substitution runs on the region between them.
+  #   backup (optional, default no): timestamped backup of the original
+  #     before any write, reported as `backup_file` in the result
+  #   validate (optional): shell command template containing %s run
+  #     against a staged temp copy; non-zero exit fails the task without
+  #     touching the real file
+  #   encoding (optional, default utf-8): encoding used to read/write
+  #   owner/group/mode (optional): attribute changes to apply after the
+  #     write (real replace.py's add_file_common_args=True)
   #   check_mode (optional): Dry-run mode
   #
   # Only rewrites the file when the substitution actually changes its
@@ -55,6 +69,16 @@ module Krikri
         )
       end
 
+      # Real Ansible's replace fails on a directory (rc=256) before the
+      # existence check (rc=257) - replace.py's own main() ordering.
+      if Dir.exists?(path)
+        return PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: "Path #{path} is a directory !"
+        )
+      end
+
       # Real Ansible's replace fails if the file doesn't exist (no `creates`
       # tolerance), and that failure isn't recoverable without the file
       # appearing - so it raises rather than silently no-op'ing.
@@ -66,8 +90,10 @@ module Krikri
         )
       end
 
+      encoding = @params["encoding"]?.presence || "utf-8"
+
       begin
-        content = File.read(path)
+        content = File.open(path, "r", encoding: encoding) { |f| f.gets_to_end }
       rescue ex
         return PluginResult.new(
           changed: false,
@@ -96,28 +122,84 @@ module Krikri
         )
       end
 
-      new_content = content.gsub(regex, replace)
-      changed = new_content != content
+      # before/after sectioning - replace.py builds a DOTALL wrapper regex
+      # around a (?P<subsection>...) capture and runs the substitution on
+      # the captured region only. Python's greedy `.*` under re.search
+      # matches everything up to the LAST occurrence of `before`, and the
+      # non-greedy `.*?` between both anchors stops at the FIRST `before`
+      # after the first `after` - PCRE's quantifier semantics are
+      # identical, so the same patterns are used verbatim here (DOTALL,
+      # not MULTILINE_ONLY: `.` must cross newlines in these wrappers,
+      # exactly as replace.py's re.DOTALL does).
+      after_pattern = @params["after"]?.presence
+      before_pattern = @params["before"]?.presence
+
+      section = content
+      section_start = 0
+      section_end = content.bytesize
+
+      if after_pattern || before_pattern
+        section_pattern = if after_pattern && before_pattern
+                            "#{after_pattern}(?<subsection>.*?)#{before_pattern}"
+                          elsif after_pattern
+                            "#{after_pattern}(?<subsection>.*)"
+                          else
+                            "(?<subsection>.*)#{before_pattern}"
+                          end
+
+        section_regex = begin
+          Regex.new(section_pattern, Regex::CompileOptions::DOTALL)
+        rescue ex
+          return PluginResult.new(
+            changed: false,
+            failed: true,
+            msg: "Invalid regular expression: #{ex.message}"
+          )
+        end
+
+        match = section_regex.match(content)
+        unless match
+          return PluginResult.new(
+            changed: false,
+            failed: false,
+            msg: "Pattern for before/after params did not match the given file: #{section_pattern}"
+          )
+        end
+
+        section_start = match.begin(1).not_nil!
+        section_end = match.end(1).not_nil!
+        section = content.byte_slice(section_start, section_end - section_start)
+      end
+
+      new_section = section.gsub(regex, replace)
+      changed = new_section != section
 
       if @check_mode
-        msg = changed ? "Would replace matches in #{path}" : "No matches to replace in #{path}"
-        return PluginResult.new(
+        msg = if changed
+                "Would replace matches in #{path}"
+              else
+                "No matches to replace in #{path}"
+              end
+        result = PluginResult.new(
           changed: changed,
           failed: false,
           msg: msg,
           path: path
         )
+        add_path_info(result, path)
+        return result
       end
 
+      backup_file = ""
       if changed
-        begin
-          File.write(path, new_content)
-        rescue ex
-          return PluginResult.new(
-            changed: false,
-            failed: true,
-            msg: "Failed to write #{path}: #{ex.message}"
-          )
+        # Real Ansible's backup_local runs before write_changes, so the
+        # backup always holds the PRE-substitution content.
+        if true?(@params["backup"]?)
+          backup_file = write_backup(path)
+        end
+
+        if failure = write_with_optional_validate(path, new_section, section_start, section_end, content, encoding)
+          return failure
         end
       end
 
@@ -125,12 +207,22 @@ module Krikri
       # real Ansible which also sets them even on a no-matches run.
       attr_changed = apply_attributes(path)
 
-      PluginResult.new(
+      new_content = content.byte_slice(0, section_start) + new_section +
+                    content.byte_slice(section_end, content.bytesize - section_end)
+      msg = if changed || attr_changed
+              "Replaced matches in #{path}"
+            else
+              "No matches to replace in #{path}"
+            end
+      result = PluginResult.new(
         changed: changed || attr_changed,
         failed: false,
-        msg: changed ? "Replaced matches in #{path}" : "No matches to replace in #{path}",
-        path: path
+        msg: msg,
+        path: path,
+        backup_file: backup_file
       )
+      add_path_info(result, path)
+      result
     end
 
     # Applies mode if given; returns whether it changed. owner/group would
@@ -138,19 +230,126 @@ module Krikri
     # meaningful for the local user of a local connection - the role's
     # replace tasks (os_hardening's yum gpgcheck) only request mode.
     private def apply_attributes(path : String) : Bool
-      changed = false
-      mode = @params["mode"]?
-      return false unless mode
+      before = File.info?(path, follow_symlinks: false)
 
-      begin
-        target = mode.to_i(8)
-        current = File.info(path).permissions.value & 0o777
-        unless current == target
-          File.chmod(path, target)
-          changed = true
+      mode = @params["mode"]?
+      if mode
+        begin
+          # copy.cr's own mode convention: any all-digit string parses as
+          # octal (leading zero or not); a symbolic mode (u+x) shells to a
+          # real `chmod`.
+          if mode =~ /\A0?[0-7]{3,4}\z/
+            File.chmod(path, mode.to_i(8))
+          else
+            Process.run("chmod", [mode, path], output: Process::Redirect::Close, error: Process::Redirect::Close)
+          end
+        rescue ex : File::Error
+          # Mode setting failed, continue anyway
         end
       end
-      changed
+
+      uid = -1
+      gid = -1
+
+      if (owner = @params["owner"]?) && (user = System::User.find_by?(name: owner))
+        uid = user.id.to_i
+      end
+
+      if (group = @params["group"]?) && (grp = System::Group.find_by?(name: group))
+        gid = grp.id.to_i
+      end
+
+      File.chown(path, uid: uid, gid: gid) if uid != -1 || gid != -1
+
+      after = File.info?(path, follow_symlinks: false)
+      return false unless before && after
+      before.permissions != after.permissions ||
+        before.owner_id != after.owner_id ||
+        before.group_id != after.group_id
+    rescue ex : File::Error
+      # A chown/chmod failure (e.g. not running as root/owner) shouldn't
+      # fail the whole task - matches copy.cr's own identical rescue.
+      false
+    end
+
+    # Backup of the original file before any write - lineinfile.cr's own
+    # write_backup convention (same timestamped name shape), so every
+    # file-editing module in this codebase reports backup_file the same
+    # way.
+    private def write_backup(path : String) : String
+      timestamp = Time.local.to_s("%Y%m%d-%H%M%S")
+      backup_file = "#{path}.#{timestamp}.bak"
+      File.copy(path, backup_file)
+      backup_file
+    end
+
+    # validate: support - mirrors lineinfile.cr/copy.cr's merged approach:
+    # stage the new content in a temp file, run the validate: command
+    # (with %s substituted by the staged temp path) against it, and only
+    # on a zero exit move it into place. On validation failure the temp
+    # file is discarded and the real file is left untouched.
+    #
+    # Returns nil on success, or a failed PluginResult.
+    private def write_with_optional_validate(path : String, new_section : String, section_start : Int32, section_end : Int32, original_content : String, encoding : String) : PluginResult?
+      validate_cmd = @params["validate"]?
+      if validate_cmd && !validate_cmd.includes?("%s")
+        return PluginResult.new(changed: false, failed: true, msg: "validate must contain %s: #{validate_cmd}")
+      end
+
+      new_content = original_content.byte_slice(0, section_start) + new_section +
+                    original_content.byte_slice(section_end, original_content.bytesize - section_end)
+
+      temp_file = File.join(File.dirname(path), ".krikri-playbook-replace-#{Random::Secure.hex(8)}.tmp")
+      begin
+        File.write(temp_file, new_content, encoding: encoding)
+      rescue ex
+        return PluginResult.new(changed: false, failed: true, msg: "Failed to write temporary file: #{ex.message}")
+      end
+
+      if validate_cmd
+        validation = validate_file(temp_file, validate_cmd)
+        unless validation[:ok]
+          File.delete(temp_file) if File.exists?(temp_file)
+          return PluginResult.new(changed: false, failed: true, msg: "failed to validate: rc:#{validation[:rc]} error:#{validation[:output]}")
+        end
+      end
+
+      # Preserve an existing dest's mode/ownership (a rename would
+      # otherwise reset them to the temp file's). Best-effort chown,
+      # same as lineinfile.cr.
+      if (info = File.info?(path, follow_symlinks: false))
+        begin
+          File.chmod(temp_file, info.permissions)
+          File.chown(temp_file, uid: info.owner_id.to_i, gid: info.group_id.to_i)
+        rescue ex : File::Error
+          nil
+        end
+      end
+
+      begin
+        File.rename(temp_file, path)
+      rescue ex
+        File.delete(temp_file) if File.exists?(temp_file)
+        return PluginResult.new(changed: false, failed: true, msg: "Failed to move file to destination: #{ex.message}")
+      end
+
+      nil
+    end
+
+    # Runs the validate: command (with %s substituted by the staged
+    # temp path) - identical to lineinfile.cr/copy.cr's own helpers.
+    private def validate_file(path : String, validate_cmd : String) : NamedTuple(ok: Bool, rc: Int32, output: String)
+      cmd = validate_cmd.gsub("%s", path)
+      output = IO::Memory.new
+
+      result = Process.run(
+        "/bin/sh",
+        ["-c", cmd],
+        output: output,
+        error: output
+      )
+
+      {ok: result.exit_code == 0, rc: result.exit_code, output: output.to_s.strip}
     end
   end
 end
