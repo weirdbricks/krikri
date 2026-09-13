@@ -3,6 +3,7 @@
 require "json"
 require "../src/krikri/base_plugin"
 require "../src/krikri/plugin_helpers/systemd_enabled_state"
+require "../src/krikri/plugin_helpers/systemd_cli_flags"
 
 module Krikri
   # Systemd Plugin - Manage systemd units
@@ -14,6 +15,10 @@ module Krikri
   #   masked (optional): yes/no - mask/unmask the unit
   #   daemon_reload (optional): yes/no - run `systemctl daemon-reload`
   #   daemon_reexec (optional): yes/no - run `systemctl daemon-reexec`
+  #   force (optional): yes/no - pass `--force` to the enable/disable/
+  #     mask/unmask invocations
+  #   no_block (optional): yes/no - pass `--no-block` to the state-changing
+  #     invocations (start/stop/restart/reload) so they return immediately
   #   check_mode (optional): Dry-run mode
   #
   # Matches the ansible.builtin.systemd module's semantics for the
@@ -60,28 +65,42 @@ module Krikri
       # other params at all - round 18), which failed outright instead
       # of running the reexec real ansible-playbook performs.
       daemon_reexec = true?(@params["daemon_reexec"]? || @params["daemon-reexec"]?)
+      force_flag = SystemdCliFlags.force_flag(@params["force"]?)
+      no_block_flag = SystemdCliFlags.no_block_flag(@params["no_block"]?)
 
-      # Must have at least one action. Unlike `service`, name is optional
-      # (a task may only want daemon_reload/daemon_reexec), so the "no
-      # action" guard covers every meaningful request rather than the
-      # name itself.
-      unless name || state || enabled || masked || daemon_reload || daemon_reexec
+      # Real AnsibleModule argument validation (ansible/modules/systemd.py's
+      # own required_one_of/required_by), both presence-based - a given-but-
+      # false daemon_reload still satisfies required_one_of, and a given
+      # state/enabled/masked requires a name even when falsy:
+      # required_one_of=[['state', 'enabled', 'masked', 'daemon_reload',
+      # 'daemon_reexec']], required_by={state/enabled/masked: name}. The
+      # daemon_reload/daemon_reexec aliases count because real Ansible
+      # resolves them onto the canonical params before the check. Replaces
+      # the previous ad-hoc guards (different wording, truthiness-based,
+      # and daemon_reload: false alone failed instead of succeeding as a
+      # no-op the way real Ansible does).
+      unless @params["state"]? || @params["enabled"]? || @params["masked"]? ||
+             @params["daemon_reload"]? || @params["daemon-reload"]? ||
+             @params["daemon_reexec"]? || @params["daemon-reexec"]?
         return PluginResult.new(
           changed: false,
           failed: true,
-          msg: "Must specify at least one of 'name', 'state', 'enabled', 'masked', 'daemon_reload', or 'daemon_reexec'"
+          msg: "one of the following is required: state, enabled, masked, daemon_reload, daemon_reexec"
         )
       end
 
       # systemctl only accepts units or unit paths; a bare name like
       # "nginx" is resolved by systemctl itself, so no normalization is
-      # needed. But commands that need a unit require name present.
-      if (state || enabled || masked) && name.nil?
-        return PluginResult.new(
-          changed: false,
-          failed: true,
-          msg: "Must specify 'name' when using 'state', 'enabled', or 'masked'"
-        )
+      # needed. But commands that need a unit require name present
+      # (name/service/unit aliases all satisfy real Ansible's required_by).
+      {"state", "enabled", "masked"}.each do |key|
+        if @params[key]? && name.nil?
+          return PluginResult.new(
+            changed: false,
+            failed: true,
+            msg: "missing parameter(s) required by '#{key}': name"
+          )
+        end
       end
 
       changed = false
@@ -144,7 +163,7 @@ module Krikri
             messages << "Would mask #{name}"
             changed = true
           else
-            mask_result = remote_exec("#{scope_env_prefix}systemctl#{scope_flag} mask #{name}")
+            mask_result = remote_exec("#{scope_env_prefix}systemctl#{scope_flag}#{force_flag} mask #{name}")
             if mask_result[:exit_code] == 0
               messages << "Unit masked"
               changed = true
@@ -161,7 +180,7 @@ module Krikri
             messages << "Would unmask #{name}"
             changed = true
           else
-            unmask_result = remote_exec("#{scope_env_prefix}systemctl#{scope_flag} unmask #{name}")
+            unmask_result = remote_exec("#{scope_env_prefix}systemctl#{scope_flag}#{force_flag} unmask #{name}")
             if unmask_result[:exit_code] == 0
               messages << "Unit unmasked"
               changed = true
@@ -188,7 +207,7 @@ module Krikri
             messages << "Would enable #{name}"
             changed = true
           else
-            enable_result = remote_exec("#{scope_env_prefix}systemctl#{scope_flag} enable #{name}")
+            enable_result = remote_exec("#{scope_env_prefix}systemctl#{scope_flag}#{force_flag} enable #{name}")
             if enable_result[:exit_code] == 0
               messages << "Unit enabled"
               changed = true
@@ -205,7 +224,7 @@ module Krikri
             messages << "Would disable #{name}"
             changed = true
           else
-            disable_result = remote_exec("#{scope_env_prefix}systemctl#{scope_flag} disable #{name}")
+            disable_result = remote_exec("#{scope_env_prefix}systemctl#{scope_flag}#{force_flag} disable #{name}")
             if disable_result[:exit_code] == 0
               messages << "Unit disabled"
               changed = true
@@ -231,7 +250,7 @@ module Krikri
               messages << "Would start #{name}"
               changed = true
             else
-              start_result = remote_exec("#{scope_env_prefix}systemctl#{scope_flag} start #{name}")
+              start_result = remote_exec("#{scope_env_prefix}systemctl#{scope_flag}#{no_block_flag} start #{name}")
               if start_result[:exit_code] == 0
                 messages << "Unit started"
                 changed = true
@@ -250,7 +269,7 @@ module Krikri
               messages << "Would stop #{name}"
               changed = true
             else
-              stop_result = remote_exec("#{scope_env_prefix}systemctl#{scope_flag} stop #{name}")
+              stop_result = remote_exec("#{scope_env_prefix}systemctl#{scope_flag}#{no_block_flag} stop #{name}")
               if stop_result[:exit_code] == 0
                 messages << "Unit stopped"
                 changed = true
@@ -268,7 +287,7 @@ module Krikri
             messages << "Would restart #{name}"
             changed = true
           else
-            restart_result = remote_exec("#{scope_env_prefix}systemctl#{scope_flag} restart #{name}")
+            restart_result = remote_exec("#{scope_env_prefix}systemctl#{scope_flag}#{no_block_flag} restart #{name}")
             if restart_result[:exit_code] == 0
               messages << "Unit restarted"
               changed = true
@@ -300,7 +319,7 @@ module Krikri
             messages << (is_running ? "Would reload #{name}" : "Would start #{name}")
             changed = true
           elsif !is_running
-            start_result = remote_exec("#{scope_env_prefix}systemctl#{scope_flag} start #{name}")
+            start_result = remote_exec("#{scope_env_prefix}systemctl#{scope_flag}#{no_block_flag} start #{name}")
             if start_result[:exit_code] == 0
               messages << "Unit started"
               changed = true
@@ -312,7 +331,7 @@ module Krikri
               )
             end
           else
-            reload_result = remote_exec("#{scope_env_prefix}systemctl#{scope_flag} reload #{name}")
+            reload_result = remote_exec("#{scope_env_prefix}systemctl#{scope_flag}#{no_block_flag} reload #{name}")
             if reload_result[:exit_code] == 0
               messages << "Unit reloaded"
               changed = true

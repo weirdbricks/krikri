@@ -6,15 +6,63 @@ require "../spec_helper"
 # check-mode predictions. Never run a non-check-mode state/mask/enable call
 # here; that would actually start/stop/mask a unit on the dev machine.
 describe "systemd plugin" do
-  it "fails when no action parameter is given" do
+  it "fails when no action parameter is given, with real Ansible's required_one_of message" do
+    # Real AnsibleModule validation (ansible/modules/systemd.py):
+    # required_one_of=[['state', 'enabled', 'masked', 'daemon_reload',
+    # 'daemon_reexec']]. Replaces the previous ad-hoc guard's own
+    # "Must specify at least one of ..." wording.
     result = PluginSpecHelper.run("systemd", {} of String => String)
     result["failed"].as_bool.should be_true
+    result["msg"].to_s.should eq(
+      "one of the following is required: state, enabled, masked, daemon_reload, daemon_reexec")
   end
 
-  it "fails when state is given without a name" do
+  it "fails a name-only task with real Ansible's required_one_of message (name is not one of the required options)" do
+    result = PluginSpecHelper.run("systemd", {"name" => "foo.service"})
+    result["failed"].as_bool.should be_true
+    result["msg"].to_s.should eq(
+      "one of the following is required: state, enabled, masked, daemon_reload, daemon_reexec")
+  end
+
+  it "fails when state is given without a name, with real Ansible's required_by message" do
+    # required_by={state: name, enabled: name, masked: name} - real
+    # Ansible's check_required_by wording, per-parameter. Replaces the
+    # previous "Must specify 'name' when using ..." wording.
     result = PluginSpecHelper.run("systemd", {"state" => "started"})
     result["failed"].as_bool.should be_true
-    result["msg"].to_s.should contain("name")
+    result["msg"].to_s.should eq("missing parameter(s) required by 'state': name")
+  end
+
+  {"enabled" => "true", "masked" => "true"}.each do |key, value|
+    it "fails when #{key} is given without a name, with real Ansible's required_by message" do
+      result = PluginSpecHelper.run("systemd", {key => value})
+      result["failed"].as_bool.should be_true
+      result["msg"].to_s.should eq("missing parameter(s) required by '#{key}': name")
+    end
+  end
+
+  it "accepts force: with enabled: in check mode (flags only affect the real invocations)" do
+    result = PluginSpecHelper.run("systemd", {
+      "name"       => "nonexistent-krikri-playbook-unit.service",
+      "enabled"    => "true",
+      "force"      => "true",
+      "check_mode" => "true",
+    })
+    result["failed"]?.try(&.as_bool).should be_falsey
+    result["changed"].as_bool.should be_true
+    result["msg"].to_s.should contain("enable")
+  end
+
+  it "accepts no_block: with state: started in check mode (flags only affect the real invocations)" do
+    result = PluginSpecHelper.run("systemd", {
+      "name"       => "nonexistent-krikri-playbook-unit.service",
+      "state"      => "started",
+      "no_block"   => "yes",
+      "check_mode" => "true",
+    })
+    result["failed"]?.try(&.as_bool).should be_falsey
+    result["changed"].as_bool.should be_true
+    result["msg"].to_s.should contain("start")
   end
 
   it "rejects an invalid state" do
