@@ -73,14 +73,27 @@ module Krikri
   # real Ansible's module does once the action-plugin layer has already
   # staged the file.
   #
-  # Not implemented: `copy` (the module-level `copy:` param, distinct
-  # from remote_src: above - real Ansible's own `copy: false` on
-  # unarchive means something different again, "don't copy files that
-  # already exist unmodified inside dest", not the controller-vs-target
-  # concept),
-  # `io_buffer_size`, `validate_certs`, `decrypt` (vault auto-decryption -
-  # `src` isn't read through `Vault.maybe_decrypt` here), SELinux options,
-  # `unsafe_writes`, `attributes`.
+  # Accepted without effect (all read via the same unknown-key-tolerant
+  # @params Hash every plugin already uses, so a real playbook passing
+  # any of these no longer needs param-rejection tolerance from this
+  # engine):
+  # - `copy` (the module-level `copy:` param, distinct from remote_src:
+  #   above - real Ansible's own `copy: false` on unarchive means
+  #   something different again, "don't copy files that already exist
+  #   unmodified inside dest", not the controller-vs-target concept)
+  # - `io_buffer_size` - sizes a manual byte-copy loop real Ansible's own
+  #   module uses for zip extraction; this plugin shells out to
+  #   `tar`/`unzip` entirely, so there's no Crystal-side read loop for
+  #   this to size
+  # - `validate_certs` - only relevant to real Ansible's shared
+  #   controller-side URL-fetch code path; this plugin's own #download
+  #   always validates certs (no insecure-fetch option exists here)
+  # - `decrypt` (vault auto-decryption - `src` isn't read through
+  #   `Vault.maybe_decrypt` here), SELinux options, `unsafe_writes`,
+  #   `attributes`.
+  #
+  # include:/exclude: are mutually exclusive (real Ansible's own
+  # argument-spec validation) - giving both fails immediately.
   class UnarchivePlugin < BasePlugin
     MAX_REDIRECTS = 10
 
@@ -91,6 +104,10 @@ module Krikri
         return PluginResult.new(changed: false, failed: true, msg: "missing required argument: src and dest are both required")
       end
       dest = expand_tilde(dest_param)
+
+      if @params["include"]? && @params["exclude"]?
+        return PluginResult.new(changed: false, failed: true, msg: "parameters are mutually exclusive: include|exclude")
+      end
 
       if result = creates_skip_result
         return result
