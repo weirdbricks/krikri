@@ -479,7 +479,7 @@ module Krikri
       ignore_errors = resolve_task_ignore_errors(task, vars_context)
       no_log = resolve_task_no_log(task, vars_context)
       if @adhoc
-        ResultDisplay.display_adhoc_result(host, result)
+        ResultDisplay.display_adhoc_result(host, result, @diff_mode)
       else
         ResultDisplay.display_result(host, result, @diff_mode, ignore_errors: ignore_errors, no_log: no_log)
       end

@@ -127,7 +127,24 @@ module Krikri
     # ResultDisplay.display_result - that one renders ansible-playbook's
     # own "ok: [host]" TASK-recap style, a different output convention
     # ansible's ad-hoc CLI has never used.
-    def self.display_adhoc_result(host : Host, result : JSON::Any) : Nil
+    # Ad-hoc-only output modifiers, set by krikri.cr (the `ansible`
+    # counterpart binary) from its own CLI flags:
+    #
+    # -o/--one-line switches to real Ansible's deprecated `oneline`
+    # callback shape - everything on ONE line: command-shaped results
+    # render as `host | STATUS | rc=N | (stdout) ...` with newlines
+    # escaped (verified against ansible-core 2.19.4's
+    # plugins/callback/oneline.py), everything else renders the result
+    # JSON compact (indent=0, newlines stripped) instead of pretty.
+    # There is no krikri-playbook equivalent to mirror - the playbook CLI
+    # has no -o.
+    class_property? adhoc_oneline : Bool = false
+
+    # -t/--tree DIR: additionally log each result as pretty JSON in
+    # DIR/<hostname>, like real Ansible's tree callback plugin.
+    class_property adhoc_tree_dir : String? = nil
+
+    def self.display_adhoc_result(host : Host, result : JSON::Any, diff_mode : Bool = false) : Nil
       changed = result["changed"]?.try(&.as_bool) || false
       failed = result["failed"]?.try(&.as_bool) || false
       unreachable = result["unreachable"]?.try(&.as_bool) || false
@@ -146,7 +163,18 @@ module Krikri
 
       rc = result["rc"]?.try(&.as_i?)
       stdout = result["stdout"]?.try(&.as_s?)
-      if rc && stdout
+      if adhoc_oneline?
+        if rc && stdout
+          escaped = stdout.gsub('\n', "\\n").gsub('\r', "\\r")
+          line = "#{connection_host} | #{status} | rc=#{rc} | (stdout) #{escaped}"
+          if (stderr = result["stderr"]?.try(&.as_s?)) && !stderr.empty?
+            line += " | (stderr) #{stderr.gsub('\n', "\\n").gsub('\r', "\\r")}"
+          end
+          puts line
+        else
+          puts "#{connection_host} | #{status} => #{result.to_json}"
+        end
+      elsif rc && stdout
         puts "#{connection_host} | #{status} | rc=#{rc} >>"
         puts stdout
         if (stderr = result["stderr"]?.try(&.as_s?)) && !stderr.empty?
@@ -154,6 +182,15 @@ module Krikri
         end
       else
         puts "#{connection_host} | #{status} => #{result.to_pretty_json}"
+      end
+
+      if diff_mode && result["diff"]?
+        display_diff(result["diff"])
+      end
+
+      if tree_dir = adhoc_tree_dir
+        Dir.mkdir_p(tree_dir)
+        File.write(File.join(tree_dir, host.name), "#{result.to_pretty_json}\n")
       end
     end
 
