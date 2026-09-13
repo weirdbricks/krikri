@@ -12,6 +12,14 @@ module Krikri
   # module exactly (it does the same - no python-apt/libdebconf binding
   # either). apt-only; these binaries don't exist on RHEL-family hosts.
   #
+  # required_together: real Ansible's module declares
+  # `required_together=(['question', 'vtype', 'value'],)` - passing any
+  # one of question:/vtype:/value: (aliases selection:/setting: and
+  # answer:) without the other two fails with AnsibleModule's own
+  # validation message, "parameters are required together: question,
+  # vtype, value" (ansible/module_utils/common/validation.py's exact
+  # wording).
+  #
   # Not implemented: `vtype: password`'s own idempotency read-back
   # (`get_password_value`, parsing `debconf-get-selections`'s raw tab-
   # separated dump for a password-typed question) - real Ansible's own
@@ -30,12 +38,23 @@ module Krikri
       unseen = true?(@params["unseen"]?)
       check_mode = true?(@params["check_mode"]?)
 
-      if question.nil?
-        return PluginResult.new(changed: false, failed: false, msg: "No question given, nothing to set")
+      # Real Ansible's module declares
+      # `required_together=(['question', 'vtype', 'value'],)` - if any
+      # one of the three is given, ALL three must be, or AnsibleModule's
+      # own validation fails with (validation.py's exact wording):
+      # "parameters are required together: question, vtype, value".
+      # Previously only the question-side half was checked here, so
+      # `vtype:`/`value:` alone (or question+value without vtype)
+      # silently "succeeded" as "No question given, nothing to set"
+      # instead of failing like real Ansible.
+      given_count = [question, vtype, value].count { |v| v }
+      if 0 < given_count < 3
+        return PluginResult.new(changed: false, failed: true,
+          msg: "parameters are required together: question, vtype, value")
       end
 
-      if vtype.nil? || value.nil?
-        return PluginResult.new(changed: false, failed: true, msg: "when supplying a question you must supply a valid vtype and value")
+      if question.nil? || vtype.nil? || value.nil?
+        return PluginResult.new(changed: false, failed: false, msg: "No question given, nothing to set")
       end
 
       prev = get_selections(pkg)
