@@ -166,6 +166,69 @@ against Atlantic.net now, Kata having been retired as a backend.
 
 ---
 
+## Three plugins reported false success where real Ansible correctly fails: modprobe, service, ufw (0.9.1017 -> 0.9.1018)
+
+An ad-hoc CLI comparison sweep against real `ansible` in containers
+(2026-09-13) found three plugins claiming success in situations where
+the underlying system command was missing or failing, and real Ansible
+correctly reports failure:
+
+- **modprobe** on a container with no `modprobe` binary at all:
+  `modprobe: name=nonexistentmod123 state=absent` returned `already
+  unloaded` success - the `/sys/module` idempotency check
+  short-circuited before any binary check, while real modprobe.py
+  resolves (and requires) the binary via
+  `get_bin_path("modprobe", required=True)` in its `__init__`, BEFORE
+  any state check, and fails with `Failed to find required executable
+  "modprobe" in paths: ...`. The plugin now resolves the binary first
+  and uses that resolved path for load/unload.
+
+- **service** in a container with no running init system:
+  `service: name=cron state=started` returned changed `Service
+  started` (the SysV path drove the init script directly) where real
+  Ansible fails with `Service is in unknown state` - because real
+  Ansible's service ACTION plugin dispatches on the
+  `ansible_service_mgr` fact, whose collector reports "systemd" for a
+  container with the systemd package installed but not running
+  (proc 1 unidentifiable + systemctl present + `/sbin/init` symlinked
+  to systemd), and the systemd module then fails honestly when
+  systemctl can't operate. The fact collector chain is now implemented
+  (natively in FactsGatherer, and as the same shell chain in
+  ServicePlugin's probe for the ad-hoc no-facts case), and the service
+  plugin dispatches on the fact exactly like the real action plugin:
+  fact "systemd" -> systemd module path (which already failed honestly
+  via the existing unknown-state branch), every other fact value ->
+  the generic service module's own detection. A container whose PID 1
+  is `sleep infinity` reports the fact "sleep" - real Ansible does
+  literally the same - and falls back to the generic path, so the
+  SysV behavior there is parity, not regression. Validated end-to-end
+  in both container shapes against real ansible: byte-identical facts
+  and byte-identical failure messages.
+
+- **ufw** in a container without CAP_NET_ADMIN:
+  `rule=allow port=12345 proto=tcp` returned changed `Rules
+  updated\nRules updated (v6)` where real Ansible fails with iptables'
+  `Permission denied (you must be root)` - because even `ufw status
+  verbose` exits non-zero there, and real ufw.py routes every command
+  (pre/post status probes included) through its execute() helper,
+  failing the module with `msg=err or out` plus the accumulated
+  `commands:` list the moment one exits non-zero. The plugin used to
+  read only the probes' stdout and ignore their exit codes entirely.
+  It now mirrors execute(): every ufw invocation is rc-checked,
+  failures carry the stderr (real's exact message shape plus
+  `commands:` with the resolved absolute paths, e.g.
+  `/usr/sbin/ufw status verbose`), and missing ufw/grep binaries fail
+  up front with real's get_bin_path message.
+
+All three behaviors were reproduced against real ansible (ansible-core
+2.19.11, community.general) in Debian trixie containers before fixing,
+and re-verified byte-identical after; the pure decision points are
+pinned in `spec/unit/get_bin_path_spec.cr`,
+`spec/unit/modprobe_command_spec.cr`, `spec/unit/ufw_command_spec.cr`
+and `spec/unit/service_mgr_fact_spec.cr`.
+
+---
+
 ## `kyl191.openvpn`'s command/shell creates:/removes: chdir bug fixed and confirmed (0.9.977)
 
 Re-checking the abandoned `round_new_authors` shortlist (see the Open

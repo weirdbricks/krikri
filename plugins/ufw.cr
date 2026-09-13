@@ -3,6 +3,7 @@
 require "json"
 require "../src/krikri/base_plugin"
 require "../src/krikri/plugin_helpers/ufw_command"
+require "../src/krikri/plugin_helpers/get_bin_path"
 
 module Krikri
   # Ufw plugin - manages the Uncomplicated Firewall. Compatible with
@@ -44,6 +45,19 @@ module Krikri
   # from source. Like the rest of this plugin, the arithmetic itself is
   # source-verified but not further behavior-verified end-to-end (see the
   # netfilter-access note above).
+  #
+  # Failure propagation: real ufw.py routes EVERY ufw invocation
+  # (pre/post `ufw status verbose`, the state/rule command itself)
+  # through its own execute() helper, which fails the module with
+  # `msg=err or out` plus the accumulated `commands:` list the moment a
+  # command exits non-zero. This plugin used to read only the stdout of
+  # the pre/post status probes and ignored their exit codes entirely -
+  # so in a container without CAP_NET_ADMIN (where ufw's own iptables
+  # probe fails with "Permission denied (you must be root)" and even
+  # `ufw status verbose` exits non-zero), the rule command still
+  # "succeeded" with "Rules updated" and the task reported changed:
+  # true where real Ansible failed. Found via an ad-hoc CLI comparison
+  # sweep against real ansible, 2026-09-13.
   class UfwPlugin < BasePlugin
     # real community.general.ufw's own argument_spec aliases. Only
     # `policy` (for `default`) was handled before, and the omission of
@@ -74,6 +88,29 @@ module Krikri
       "app"      => "name",
     }
 
+    # Raised by #ufw_exec when a ufw command exits non-zero, carrying
+    # real ufw.py's execute() failure payload: `msg=err or out` plus the
+    # accumulated commands list.
+    class UfwCommandFailure < Exception
+    end
+
+    # Real ufw.py resolves ufw and grep via get_bin_path(required=True)
+    # before anything runs, and its `commands:` failure/success field
+    # shows the RESOLVED absolute paths ("/usr/sbin/ufw status verbose").
+    # Same extra dirs as ServicePlugin/ModprobePlugin for the non-login
+    # shell PATH gap.
+    REQUIRED_BINARIES = %w[ufw grep]
+    EXTRA_BIN_DIRS    = %w[/sbin /usr/sbin /bin /usr/bin]
+    USER_RULES_FILES  = %w[
+      /lib/ufw/user.rules /lib/ufw/user6.rules
+      /etc/ufw/user.rules /etc/ufw/user6.rules
+      /var/lib/ufw/user.rules /var/lib/ufw/user6.rules
+    ]
+
+    @bins = Hash(String, String).new
+    @searched_paths = ""
+    @commands = [] of String
+
     def initialize(config : JSON::Any)
       super(config)
       PARAM_ALIASES.each do |alias_name, canonical|
@@ -87,6 +124,25 @@ module Krikri
       if error = validate_params
         return PluginResult.new(changed: false, failed: true, msg: error)
       end
+
+      begin
+        result = dispatch
+      rescue e : UfwCommandFailure
+        result = PluginResult.new(changed: false, failed: true, msg: e.message.to_s)
+      end
+
+      # Real ufw.py carries the accumulated commands on BOTH success
+      # (exit_json(commands=cmds)) and failure (fail_json(msg=err or
+      # out, commands=cmds)) - but a get_bin_path failure happens
+      # before anything ran, and its fail_json carries no commands.
+      unless @commands.empty?
+        result.extra["commands"] = JSON.parse(@commands.to_json)
+      end
+      result
+    end
+
+    private def dispatch : PluginResult
+      resolve_required_binaries
 
       if state = @params["state"]?
         return run_state(state)
@@ -166,20 +222,21 @@ module Krikri
                 end
 
       if true?(@params["check_mode"]?)
-        return PluginResult.new(changed: changed, failed: false, msg: "Would run: #{cmd} (check mode)")
+        return PluginResult.new(changed: changed, failed: false, msg: "Would run: #{ufw_bin_cmd(cmd)} (check mode)")
       end
 
-      result = remote_exec(cmd)
-      PluginResult.new(changed: changed, failed: result[:exit_code] != 0, msg: result[:stdout])
+      cmd_out = ufw_exec(ufw_bin_cmd(cmd))
+      PluginResult.new(changed: changed, failed: false, msg: cmd_out)
     end
 
     # "Status: active" (verbose) / a bare "active" appearing in `ufw
     # status` - matches ufw.py's own `pre_state.find(" active") != -1`
     # check (the leading space is deliberate there too: "active" alone
-    # would also match "inactive").
+    # would also match "inactive"). The probe goes through #ufw_exec,
+    # so a failing `ufw status verbose` (no CAP_NET_ADMIN, missing
+    # ufw...) fails the task instead of reading as "not enabled".
     private def ufw_currently_enabled? : Bool
-      result = remote_exec("ufw status verbose")
-      result[:stdout].includes?(" active")
+      ufw_exec("#{@bins["ufw"]} status verbose").includes?(" active")
     end
 
     private def run_simple(cmd : String, ufw_state_key : String? = nil, ufw_state_value : String? = nil) : PluginResult
@@ -197,22 +254,21 @@ module Krikri
       # only one of the two (Oefenweb.ufw round 196: warm changed=4 vs 0,
       # then cold logging changed=0 vs real 1).
       pre_status = if ufw_state_key
-                     remote_exec("ufw status verbose")[:stdout]
+                     ufw_exec("#{@bins["ufw"]} status verbose")
                    end
 
-      result = remote_exec(cmd)
-      ran_ok = result[:exit_code] == 0
+      cmd_out = ufw_exec(ufw_bin_cmd(cmd))
 
-      changed = compute_changed(ran_ok, ufw_state_key, ufw_state_value, pre_status)
+      changed = compute_changed(true, ufw_state_key, ufw_state_value, pre_status)
 
-      PluginResult.new(changed: changed, failed: !ran_ok, msg: result[:stdout])
+      PluginResult.new(changed: changed, failed: false, msg: cmd_out)
     end
 
     private def compute_changed(ran_ok : Bool, ufw_state_key : String?, ufw_state_value : String?, pre_status : String?) : Bool
       if ufw_state_key == "logging" && (value = ufw_state_value)
         logging_changed?(ran_ok, value, pre_status || "")
       elsif ufw_state_key
-        post_status = remote_exec("ufw status verbose")[:stdout]
+        post_status = ufw_exec("#{@bins["ufw"]} status verbose")
         ran_ok &&
           extract_status_fragment(pre_status || "", ufw_state_key) !=
             extract_status_fragment(post_status, ufw_state_key)
@@ -256,12 +312,6 @@ module Krikri
     # lines - the authoritative record of what ufw actually holds, and
     # the only thing that distinguishes "re-applied an identical rule"
     # from "changed one".
-    USER_RULES_FILES = %w[
-      /lib/ufw/user.rules /lib/ufw/user6.rules
-      /etc/ufw/user.rules /etc/ufw/user6.rules
-      /var/lib/ufw/user.rules /var/lib/ufw/user6.rules
-    ]
-
     private def run_rule : PluginResult
       check_mode = true?(@params["check_mode"]?)
       cmd = PluginHelpers::UfwCommand.rule_command(resolved_insert_params, dry_run: check_mode)
@@ -276,36 +326,35 @@ module Krikri
       # "Skipping adding existing rule"), which is only equivalent while
       # the rule text is byte-identical to what is already installed;
       # any difference at all, including one this engine introduced, then
-      # reads as a real change forever.
-      pre_state = check_mode ? "" : remote_exec("ufw status verbose")[:stdout].to_s
+      # reads as a real change forever. All three probes go through
+      # #ufw_exec: a failing pre/post `ufw status verbose` (no
+      # CAP_NET_ADMIN, missing ufw, ...) fails the task with real ufw.py's
+      # execute() behavior instead of reading as an empty snapshot.
+      pre_state = check_mode ? "" : ufw_exec("#{@bins["ufw"]} status verbose")
       pre_rules = check_mode ? "" : current_rule_tuples
 
-      result = remote_exec(cmd)
+      result = remote_exec(ufw_bin_cmd(cmd))
+      @commands << ufw_bin_cmd(cmd)
+      if result[:exit_code] != 0
+        raise UfwCommandFailure.new(PluginHelpers::UfwCommand.exec_failure_msg(result[:stdout].to_s, result[:stderr].to_s))
+      end
 
       changed = if check_mode
                   PluginHelpers::UfwCommand.changed_from_output?(result[:stdout])
                 else
-                  post_state = remote_exec("ufw status verbose")[:stdout].to_s
+                  post_state = ufw_exec("#{@bins["ufw"]} status verbose")
                   pre_state != post_state || pre_rules != current_rule_tuples
                 end
-      # Surface stderr on failure - real Ansible shows the ufw binary's
-      # stderr in the task failure, and dropping it (as this used to)
-      # made rule failures undiagnosable (Oefenweb.ufw, round 196:
-      # failed with an empty message because ufw wrote its error to
-      # stderr only).
-      msg = result[:stdout]
-      if result[:exit_code] != 0 && !result[:stderr].empty?
-        msg = "#{msg}\n#{result[:stderr]}".strip
-      end
-      PluginResult.new(changed: changed, failed: result[:exit_code] != 0, msg: msg)
+      PluginResult.new(changed: changed, failed: false, msg: result[:stdout])
     end
 
     # `grep -h '^### tuple' <every user.rules file>` - real Ansible's own
     # `get_current_rules()`, verbatim including the file list and the
     # `-h` (no filename prefixes, so the comparison is over rule text
-    # alone).
+    # alone). ignore_error=True there: a no-rules-yet grep exiting 1 is
+    # normal, not a failure.
     private def current_rule_tuples : String
-      remote_exec("grep -h '^### tuple' #{USER_RULES_FILES.join(' ')} 2>/dev/null")[:stdout].to_s
+      ufw_exec("#{@bins["grep"]} -h '^### tuple' #{USER_RULES_FILES.join(' ')} 2>/dev/null", ignore_error: true)
     end
 
     # `insert_relative_to:` other than the default `zero` needs to query
@@ -320,7 +369,10 @@ module Krikri
       relative_to = @params["insert_relative_to"]? || "zero"
       return @params unless insert && relative_to != "zero"
 
-      status = remote_exec("ufw status numbered")
+      # Real ufw.py reads the numbered status with a bare run_command and
+      # IGNORES its rc there - only the parsed lines matter (an empty
+      # output means "no rules yet" and takes the fallback positions).
+      status = remote_exec("#{@bins["ufw"]} status numbered")
       resolved = PluginHelpers::UfwCommand.resolve_insert(insert, relative_to, status[:stdout])
 
       params = @params.dup
@@ -330,6 +382,63 @@ module Krikri
         params.delete("insert")
       end
       params
+    end
+
+    # Rewrites a helper-built "ufw ..." command line to invoke the
+    # resolved absolute binary - real ufw.py's commands list shows
+    # "/usr/sbin/ufw status verbose", not a bare PATH lookup.
+    private def ufw_bin_cmd(cmd : String) : String
+      cmd.sub(/^ufw /, "#{@bins["ufw"]} ")
+    end
+
+    # Real ufw.py's get_bin_path("ufw"/"grep", required=True): resolve
+    # both up front and fail the module with its exact
+    # "Failed to find required executable ... in paths: ..." message when
+    # either is missing, instead of letting later commands fail with
+    # 127 (or, worse, reading an empty status snapshot as success).
+    private def resolve_required_binaries : Nil
+      script = <<-SH
+      for name in #{REQUIRED_BINARIES.join(' ')}; do
+        found=""
+        for d in $(printf '%s' "$PATH" | tr ':' ' ') #{EXTRA_BIN_DIRS.join(' ')}; do
+          if [ -z "$found" ] && [ -x "$d/$name" ]; then found="$d/$name"; fi
+        done
+        printf 'bin:%s=%s\n' "$name" "$found"
+      done
+      searched=""
+      for d in $(printf '%s' "$PATH" | tr ':' ' ') #{EXTRA_BIN_DIRS.join(' ')}; do
+        case ":$searched:" in *":$d:"*) ;; *) searched="${searched:+$searched:}$d" ;; esac
+      done
+      printf 'searched=%s\n' "$searched"
+      SH
+
+      remote_exec(script)[:stdout].to_s.each_line do |line|
+        key, _, value = line.strip.partition('=')
+        if key.starts_with?("bin:")
+          @bins[key.lchop("bin:")] = value
+        elsif key == "searched"
+          @searched_paths = value
+        end
+      end
+
+      missing = REQUIRED_BINARIES.find { |name| @bins[name]?.to_s.empty? }
+      if missing
+        raise UfwCommandFailure.new(PluginHelpers::GetBinPath.missing_executable_error(missing, @searched_paths))
+      end
+    end
+
+    # Real ufw.py's execute(): run the command, record it in the
+    # commands list, and fail the module with `msg=err or out` the
+    # moment it exits non-zero - unless ignore_error, which real
+    # applies ONLY to the rule-tuples grep (a no-rules-yet grep exits
+    # 1). Returns the command's stdout.
+    private def ufw_exec(cmd : String, ignore_error : Bool = false) : String
+      result = remote_exec(cmd)
+      @commands << cmd
+      if result[:exit_code] != 0 && !ignore_error
+        raise UfwCommandFailure.new(PluginHelpers::UfwCommand.exec_failure_msg(result[:stdout].to_s, result[:stderr].to_s))
+      end
+      result[:stdout].to_s
     end
   end
 end

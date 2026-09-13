@@ -3,6 +3,7 @@
 require "json"
 require "../src/krikri/base_plugin"
 require "../src/krikri/plugin_helpers/modprobe_command"
+require "../src/krikri/plugin_helpers/get_bin_path"
 
 module Krikri
   # modprobe plugin - loads/unloads a kernel module. Compatible (for
@@ -17,6 +18,17 @@ module Krikri
   # Idempotency: checked via /sys/module/<name>'s existence (the same
   # thing `lsmod` itself reads from) rather than shelling to `lsmod`
   # and grepping its output.
+  #
+  # Binary resolution: real modprobe.py calls
+  # `module.get_bin_path("modprobe", required=True)` in its __init__,
+  # BEFORE any state check - so even `state: absent` against a module
+  # that isn't loaded fails with `Failed to find required executable
+  # "modprobe" in paths: ...` when the binary is missing (e.g. a
+  # container without kmod). This plugin used to short-circuit on the
+  # /sys/module check first and report "already unloaded" as success in
+  # exactly that situation - a false success real Ansible doesn't
+  # produce. Found via an ad-hoc CLI comparison sweep against real
+  # ansible, 2026-09-13.
   #
   # - params: extra modprobe arguments (e.g. "numdummies=2") passed
   #   straight to `modprobe <name> <params>` at load time - verified
@@ -39,13 +51,27 @@ module Krikri
 
       state = @params["state"]? || "present"
       check_mode = true?(@params["check_mode"]?)
+
+      # Real modprobe.py resolves (and requires) the binary before
+      # looking at module state at all - reproduce that ordering, or a
+      # host without kmod gets "already unloaded" success instead of
+      # real Ansible's executable-not-found failure.
+      modprobe_path = find_modprobe_binary
+      unless modprobe_path
+        return PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: PluginHelpers::GetBinPath.missing_executable_error("modprobe", @modprobe_searched_paths)
+        )
+      end
+
       loaded = module_loaded?(name)
 
       case state
       when "present"
-        ensure_loaded(name, loaded, check_mode)
+        ensure_loaded(modprobe_path, name, loaded, check_mode)
       when "absent"
-        ensure_unloaded(name, loaded, check_mode)
+        ensure_unloaded(modprobe_path, name, loaded, check_mode)
       else
         PluginResult.new(changed: false, failed: true, msg: "state must be 'present' or 'absent', got '#{state}'")
       end
@@ -59,11 +85,45 @@ module Krikri
       File.directory?("/sys/module/#{name.gsub('-', '_')}")
     end
 
-    private def ensure_loaded(name : String, loaded : Bool, check_mode : Bool) : PluginResult
+    # Directories searched beyond $PATH for the modprobe binary. Real
+    # Ansible's get_bin_path searches the module process's PATH only,
+    # but a non-login shell's PATH routinely lacks /sbin//usr/sbin
+    # (where modprobe lives) - the same reason ServicePlugin searches
+    # these. Listed in the not-found message, mirroring real Ansible's
+    # "in paths: ...".
+    EXTRA_BIN_DIRS = %w[/sbin /usr/sbin /bin /usr/bin]
+
+    @modprobe_searched_paths = ""
+
+    # Resolves the modprobe binary the way real Ansible's
+    # get_bin_path(modprobe, required=True) does - through the shell so
+    # it works for both local and SSH connections - recording the
+    # searched directories for the failure message. Returns nil when no
+    # executable is found anywhere.
+    private def find_modprobe_binary : String?
+      dirs = %($(printf '%s' "$PATH" | tr ':' ' ') #{EXTRA_BIN_DIRS.join(' ')})
+      script = <<-SH
+      searched=""
+      found=""
+      for d in #{dirs}; do
+        case ":$searched:" in *":$d:"*) continue ;; esac
+        searched="${searched:+$searched:}$d"
+        if [ -z "$found" ] && [ -x "$d/modprobe" ]; then found="$d/modprobe"; fi
+      done
+      printf 'searched=%s\n' "$searched"
+      printf 'found=%s\n' "$found"
+      SH
+
+      parsed = PluginHelpers::ModprobeCommand.parse_bin_probe(remote_exec(script)[:stdout].to_s)
+      @modprobe_searched_paths = parsed[:searched_paths]
+      parsed[:path]
+    end
+
+    private def ensure_loaded(modprobe_path : String, name : String, loaded : Bool, check_mode : Bool) : PluginResult
       return PluginResult.new(changed: false, failed: false, msg: "#{name} already loaded") if loaded
       return PluginResult.new(changed: true, failed: false, msg: "Would load #{name}") if check_mode
 
-      result = remote_exec(PluginHelpers::ModprobeCommand.load_command(name, @params["params"]?))
+      result = remote_exec(PluginHelpers::ModprobeCommand.load_command(modprobe_path, name, @params["params"]?))
       unless result[:exit_code] == 0
         return PluginResult.new(changed: false, failed: true, msg: "Failed to load module #{name}", stderr: result[:stderr])
       end
@@ -71,11 +131,11 @@ module Krikri
       PluginResult.new(changed: true, failed: false, msg: "Loaded #{name}")
     end
 
-    private def ensure_unloaded(name : String, loaded : Bool, check_mode : Bool) : PluginResult
+    private def ensure_unloaded(modprobe_path : String, name : String, loaded : Bool, check_mode : Bool) : PluginResult
       return PluginResult.new(changed: false, failed: false, msg: "#{name} already unloaded") unless loaded
       return PluginResult.new(changed: true, failed: false, msg: "Would unload #{name}") if check_mode
 
-      result = remote_exec("modprobe -r #{name}")
+      result = remote_exec("#{modprobe_path} -r #{name}")
       unless result[:exit_code] == 0
         return PluginResult.new(changed: false, failed: true, msg: "Failed to unload module #{name}", stderr: result[:stderr])
       end
