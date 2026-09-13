@@ -9,10 +9,15 @@
 # responsibility as unarchive's stage_unarchive_remote_src/copy's
 # stage_large_copy_source.
 #
-# Parameters (all via the free-form `cmd`/bare-string task arg, same as
-# command:/shell: - RAW_COMMAND_MODULES strips creates/removes/chdir/
-# executable off the trailing end before this plugin ever sees `cmd`):
-#   cmd (required): "<path> [args...]"
+# Parameters:
+#   cmd (required) or _raw_params (required, exactly one of the two):
+#     "<path> [args...]" - `cmd:` is the explicit dict-form spelling,
+#     `_raw_params` is what the free-form/bare-string task arg arrives
+#     as. Real script.py's own action-plugin argument_spec declares
+#     required_one_of=[['_raw_params', 'cmd']] and
+#     mutually_exclusive=[['_raw_params', 'cmd']] - giving neither fails
+#     with "one of the following is required: _raw_params, cmd", giving
+#     both with "parameters are mutually exclusive: _raw_params|cmd".
 #   creates/removes (optional): idempotency guards, same as command:
 #   chdir (optional): directory to run from
 #   executable (optional): interpreter to invoke the script with
@@ -27,12 +32,16 @@ require "../src/krikri/base_plugin"
 module Krikri
   class ScriptPlugin < BasePlugin
     def execute : PluginResult
+      if @params["cmd"]? && @params["_raw_params"]?
+        return PluginResult.new(changed: false, failed: true, msg: "parameters are mutually exclusive: _raw_params|cmd")
+      end
+
       cmd = @params["cmd"]? || @params["_raw_params"]?
-      return PluginResult.new(changed: false, failed: true, msg: "missing required argument: cmd") unless cmd
+      return PluginResult.new(changed: false, failed: true, msg: "one of the following is required: _raw_params, cmd") unless cmd
 
       parts = cmd.strip.split(/\s+/, 2)
       script_path = parts[0]?
-      return PluginResult.new(changed: false, failed: true, msg: "missing required argument: cmd") if script_path.nil? || script_path.empty?
+      return PluginResult.new(changed: false, failed: true, msg: "one of the following is required: _raw_params, cmd") if script_path.nil? || script_path.empty?
       args = parts[1]?
 
       if skip = skip_reason

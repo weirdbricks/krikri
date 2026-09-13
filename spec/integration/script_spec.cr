@@ -67,6 +67,35 @@ describe "script plugin" do
     result["stdout"].as_s.should eq("via-interpreter")
   end
 
+  it "runs from _raw_params alone (free-form/bare-string form)" do
+    path = sc_path("script_raw_params.sh")
+    File.write(path, "#!/bin/sh\necho from-raw-params\n")
+    File.chmod(path, 0o755)
+
+    result = PluginSpecHelper.run("script", {"_raw_params" => path})
+
+    result["failed"]?.try(&.as_bool).should be_falsey
+    result["stdout"].as_s.should eq("from-raw-params")
+  end
+
+  it "fails with the required_one_of message when neither cmd: nor _raw_params: is given" do
+    result = PluginSpecHelper.run("script", {"chdir" => TMP_DIR})
+
+    result["failed"].as_bool.should be_true
+    result["msg"].as_s.should eq("one of the following is required: _raw_params, cmd")
+  end
+
+  it "fails with the mutually_exclusive message when both cmd: and _raw_params: are given" do
+    path = sc_path("script_both.sh")
+    File.write(path, "#!/bin/sh\necho should-never-run\n")
+    File.chmod(path, 0o755)
+
+    result = PluginSpecHelper.run("script", {"cmd" => path, "_raw_params" => path})
+
+    result["failed"].as_bool.should be_true
+    result["msg"].as_s.should eq("parameters are mutually exclusive: _raw_params|cmd")
+  end
+
   it "fails clearly when the script path doesn't exist" do
     result = PluginSpecHelper.run("script", {"cmd" => sc_path("does-not-exist.sh")})
 
