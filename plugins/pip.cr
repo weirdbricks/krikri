@@ -26,11 +26,37 @@ module Krikri
   # - virtualenv_python: python interpreter for `venv` creation
   #   (default: whatever `python3` resolves to)
   # - executable: which pip binary to use when NOT using a virtualenv
-  #   (default: "pip3")
+  #   (default: "pip3") - mutually exclusive with virtualenv:
   # - extra_args: appended verbatim to the pip command line
   # - chdir: run pip from this directory
   # - requirements: install from a requirements.txt file instead of a
-  #   single name:
+  #   single name: - mutually exclusive with name:
+  # - virtualenv_command: command used to create a new virtualenv
+  #   (default: "virtualenv", matching real Ansible's argument_spec
+  #   default - NOT hardcoded python3 -m venv). A bare name is resolved
+  #   on PATH like real Ansible's get_bin_path; a space-separated
+  #   command (e.g. `python3 -m venv`, `python -m virtualenv`) is used
+  #   as-is like real Ansible's shlex.split of the same value
+  # - virtualenv_site_packages: when CREATING a new virtualenv, pass
+  #   --system-site-packages (true) or --no-site-packages when the
+  #   chosen venv command supports it (false, the default) - mirroring
+  #   real Ansible's setup_virtualenv, which probes `<command> --help`
+  #   for the latter. No effect on an already-existing virtualenv
+  # - break_system_packages: true sets PIP_BREAK_SYSTEM_PACKAGES=1 on
+  #   the pip install/uninstall invocation (needed on PEP 668
+  #   externally-managed systems). Real Ansible sets the env var rather
+  #   than the --break-system-packages CLI flag so pip < 23.0 (which
+  #   lacks the flag) still works - the env var is honored by the same
+  #   pip versions that grew the flag
+  #
+  # Validation (mirroring real Ansible's own module-level argument
+  # checks, which run before anything else - before pip discovery or
+  # any venv creation):
+  # - required_one_of name/requirements: neither given fails with real
+  #   Ansible's "one of the following is required: name, requirements"
+  # - mutually_exclusive name/requirements and executable/virtualenv:
+  #   both of a pair given fails with real Ansible's "parameters are
+  #   mutually exclusive: <pair>"
   #
   # Idempotency: `present` (no version:) checks `pip show <pkg>` for
   # existence only - already installed at ANY version is a no-op,
@@ -71,6 +97,15 @@ module Krikri
     @created_virtualenv = false
 
     def execute : PluginResult
+      # Real Ansible's required_one_of / mutually_exclusive checks run
+      # inside AnsibleModule.__init__, before main() ever touches pip
+      # discovery or venv creation - so a pip-less host with bad
+      # arguments fails with the validation message, not the pip
+      # discovery one. Same order here.
+      if validation_error = argument_validation_error
+        return validation_error
+      end
+
       state = @params["state"]? || "present"
       requirements = @params["requirements"]?
       raw_name = @params["name"]?
@@ -225,12 +260,45 @@ module Krikri
       interpreter =~ /\A[A-Za-z0-9_\/.\-]+\z/ ? interpreter : nil
     end
 
-    # The required name/requirements combination check. Returns the
-    # early result to use, or nil when the arguments are acceptable.
+    # required_one_of + mutually_exclusive in real Ansible's own check
+    # order (mutually_exclusive first). Returns the failure result, or
+    # nil when the arguments are acceptable.
+    private def argument_validation_error : PluginResult?
+      if mutex = mutually_exclusive_error
+        return mutex
+      end
+      required_one_of_error
+    end
+
+    # Real Ansible's required_one_of counts a parameter as given when
+    # its KEY is present (even with an empty value) - the empty-value
+    # no-op is a separate, later truthiness check (#missing_name_result).
+    private def required_one_of_error : PluginResult?
+      return nil if @params["name"]? || @params["requirements"]?
+
+      PluginResult.new(changed: false, failed: true, msg: "one of the following is required: name, requirements")
+    end
+
+    # Real Ansible's mutually_exclusive message format
+    # (module_utils/common/validation.py): each violated pair joined
+    # with `|`, pairs joined with `, `.
+    private def mutually_exclusive_error : PluginResult?
+      violated = [] of String
+      violated << "name|requirements" if @params["name"]? && @params["requirements"]?
+      violated << "executable|virtualenv" if @params["executable"]? && @params["virtualenv"]?
+      return nil if violated.empty?
+
+      PluginResult.new(changed: false, failed: true, msg: "parameters are mutually exclusive: #{violated.join(", ")}")
+    end
+
+    # The name/requirements combination check. Returns the early result
+    # to use, or nil when the arguments are acceptable. (The outright
+    # required_one_of failure is #required_one_of_error, which runs
+    # earlier - this only handles the key-present-but-empty case.)
     private def missing_name_result(raw_name : String?, name : String?, requirements : String?) : PluginResult?
       return nil unless name.nil? && requirements.nil?
 
-      raw_name ? PluginResult.new(changed: false, failed: false, msg: "No valid name or requirements file found.") : PluginResult.new(changed: false, failed: true, msg: "name or requirements is required")
+      PluginResult.new(changed: false, failed: false, msg: "No valid name or requirements file found.")
     end
 
     # Validate the umask: parameter, if given. Returns the failure
@@ -315,10 +383,8 @@ module Krikri
       if venv = @params["virtualenv"]?
         pip_path = "#{venv}/bin/pip"
         unless remote_dir_exists?(venv)
-          python = @params["virtualenv_python"]? || "python3"
-          result = remote_exec("#{python} -m venv #{venv}")
-          unless result[:exit_code] == 0
-            return PluginResult.new(changed: false, failed: true, msg: "Failed to create virtualenv: #{result[:stderr]}")
+          if failure = create_virtualenv(venv)
+            return failure
           end
           @created_virtualenv = true
         end
@@ -326,6 +392,70 @@ module Krikri
       else
         discover_system_pip
       end
+    end
+
+    # Creates the virtualenv at `venv` using virtualenv_command:, or
+    # nil on success. Mirrors real Ansible's setup_virtualenv:
+    # - the command is shlex-split; a bare first token is resolved on
+    #   PATH (get_bin_path), an absolute/relative path is trusted
+    # - --system-site-packages when virtualenv_site_packages:, else
+    #   --no-site-packages ONLY if the command's own --help advertises
+    #   it (_get_cmd_options) - `python3 -m venv` never gets the flag,
+    #   the classic virtualenv tool does
+    # - a venv/pyvenv-style command gets no -p; anything else (the
+    #   virtualenv tool) does, since -p is not a venv option - and
+    #   virtualenv_python: with a venv command is a hard error
+    private def create_virtualenv(venv : String) : PluginResult?
+      command = @params["virtualenv_command"]? || "virtualenv"
+      tokens = command.split(' ').reject(&.empty?)
+      cmd0 = tokens[0]
+
+      unless cmd0.includes?('/')
+        found = remote_exec("sh -c 'command -v #{Shell.single_quote(cmd0)}'")
+        unless found[:exit_code] == 0
+          paths = remote_exec("echo $PATH")[:stdout].strip
+          return PluginResult.new(changed: false, failed: true, msg: "Failed to find required executable #{cmd0} in paths: #{paths}")
+        end
+        cmd0 = found[:stdout].strip
+      end
+
+      parts = [cmd0] + tokens[1..]
+
+      if true?(@params["virtualenv_site_packages"]?)
+        parts << "--system-site-packages"
+      else
+        help = remote_exec("#{cmd0} --help")
+        unless help[:exit_code] == 0
+          return PluginResult.new(changed: false, failed: true, msg: "Could not get output from #{cmd0} --help: #{help[:stdout]}#{help[:stderr]}")
+        end
+        parts << "--no-site-packages" if help[:stdout].includes?("--no-site-packages")
+      end
+
+      if venv_command?(command)
+        if @params["virtualenv_python"]?
+          return PluginResult.new(changed: false, failed: true, msg: "virtualenv_python should not be used when using the venv module or pyvenv as virtualenv_command")
+        end
+      else
+        parts << "-p#{@params["virtualenv_python"]? || "python3"}"
+      end
+
+      parts << venv
+      result = remote_exec(parts.join(" "))
+      unless result[:exit_code] == 0
+        return PluginResult.new(changed: false, failed: true, msg: "Failed to create virtualenv: #{result[:stderr]}")
+      end
+
+      nil
+    end
+
+    # Real Ansible's _is_venv_command: pyvenv (any argv[0] equal to it)
+    # or a `-m venv` module invocation counts as a venv-style command;
+    # the classic virtualenv tool does not (it takes -p).
+    private def venv_command?(command : String) : Bool
+      tokens = command.split(' ').reject(&.empty?)
+      return true if tokens[0] == "pyvenv"
+
+      tokens.each_with_index.any? { |token, index| token == "-m" && tokens[index + 1]? == "venv" }
     end
 
     private def with_chdir(command : String) : String
@@ -407,7 +537,7 @@ module Krikri
       # through the `elsif spec` branch above and are handled directly
       # below, one per name.
       quoted_target = requirements ? target : target.split(',').map { |tval| Process.quote(tval.strip) }.join(" ")
-      cmd = with_umask(with_chdir("#{pip_bin} install #{upgrade ? "--upgrade " : ""}#{extra} #{quoted_target}".strip))
+      cmd = with_umask(with_chdir("#{break_system_packages_env}#{pip_bin} install #{upgrade ? "--upgrade " : ""}#{extra} #{quoted_target}".strip))
       result = remote_exec(cmd)
 
       unless result[:exit_code] == 0
@@ -462,13 +592,25 @@ module Krikri
       end
     end
 
+    # PEP 668 externally-managed environments (newer Debian/Ubuntu)
+    # reject pip mutations outright unless overridden - real Ansible's
+    # pip.py sets PIP_BREAK_SYSTEM_PACKAGES=1 in the module's own
+    # environment when break_system_packages: is true (an env var, not
+    # the CLI flag, so pip < 23.0 - which lacks the flag - still
+    # works). Krikri shells out per command, so the same env var rides
+    # on the pip invocation itself. Applies to uninstall too: PEP 668
+    # blocks that just as hard.
+    private def break_system_packages_env : String
+      true?(@params["break_system_packages"]?) ? "PIP_BREAK_SYSTEM_PACKAGES=1 " : ""
+    end
+
     private def remove(pip_bin : String, name : String) : PluginResult
       bare_name = name.split(/[=<>!~]/, 2)[0]
       unless already_installed?(pip_bin, bare_name)
         return PluginResult.new(changed: false, failed: false, msg: "Package already absent")
       end
 
-      cmd = with_umask(with_chdir("#{pip_bin} uninstall -y #{bare_name}"))
+      cmd = with_umask(with_chdir("#{break_system_packages_env}#{pip_bin} uninstall -y #{bare_name}"))
       result = remote_exec(cmd)
 
       unless result[:exit_code] == 0

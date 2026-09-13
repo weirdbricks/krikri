@@ -9,11 +9,36 @@ require "file_utils"
 # haproxy-certbot-benchmark-round.md's documented rationale for why
 # cron.cr's user-crontab path has no spec either).
 describe "pip plugin" do
-  it "fails with a clear message when neither name nor requirements is given" do
+  it "fails with real Ansible's required_one_of message when neither name nor requirements is given" do
     result = PluginSpecHelper.run("pip", {} of String => String)
 
     result["failed"].as_bool.should be_true
-    result["msg"].as_s.should contain("name or requirements")
+    result["msg"].as_s.should eq("one of the following is required: name, requirements")
+  end
+
+  it "fails with real Ansible's mutually_exclusive message when both name and requirements are given" do
+    result = PluginSpecHelper.run("pip", {
+      "name"         => "six",
+      "requirements" => "/tmp/requirements.txt",
+    })
+
+    result["failed"].as_bool.should be_true
+    result["msg"].as_s.should eq("parameters are mutually exclusive: name|requirements")
+  end
+
+  it "fails with real Ansible's mutually_exclusive message when both executable and virtualenv are given" do
+    # Validation runs before anything else (real Ansible checks it in
+    # AnsibleModule.__init__), so no venv is created and no pip is
+    # discovered - safe to point virtualenv: anywhere.
+    result = PluginSpecHelper.run("pip", {
+      "name"       => "six",
+      "executable" => "pip3",
+      "virtualenv" => "/tmp/never-created-venv",
+    })
+
+    result["failed"].as_bool.should be_true
+    result["msg"].as_s.should eq("parameters are mutually exclusive: executable|virtualenv")
+    File.directory?("/tmp/never-created-venv").should be_false
   end
 
   it "no-ops cleanly when name: is present but resolves to an empty list" do
@@ -105,29 +130,66 @@ describe "pip plugin" do
     result["changed"].as_bool.should be_false
   end
 
-  # Real bug found benchmarking claranet.postgresql (cold run): a `pip:`
-  # task with `virtualenv:` pointing at a not-yet-existing directory
-  # creates the venv via `python3 -m venv` - and creating it is itself a
-  # change under real Ansible, independent of the package-install step's
-  # own outcome. krikri used to report ok/`changed: false` here: the
-  # fresh venv bootstraps its own pip, so `pip show <pkg>` succeeded
-  # (name: pip is the sharpest repro - the venv's bootstrapped pip IS
-  # the requested package), the all_packages_satisfied? short-circuit
-  # fired, and the venv creation was never accounted for. These two
-  # specs run a REAL `python3 -m venv` (no network, ensurepip is
-  # self-contained) under Dir.tempdir, cleaned up after.
+  # The plugin's default virtualenv_command is real Ansible's own
+  # argument_spec default ("virtualenv", the classic tool - often NOT
+  # installed on minimal hosts, which is real Ansible's behavior too:
+  # it would fail with "Failed to find required executable ... in
+  # paths:"). These specs pass the space-separated `python3 -m venv`
+  # form explicitly, which is itself one of the two virtualenv_command
+  # shapes real Ansible documents - and runs a REAL `python3 -m venv`
+  # (no network, ensurepip is self-contained) under Dir.tempdir,
+  # cleaned up after.
   describe "virtualenv:" do
     it "reports changed: true when the task itself created the virtualenv (even if the package is already satisfied by the fresh venv)" do
       venv = File.join(Dir.tempdir, "krikri-pip-spec-venv-#{Random::Secure.hex(8)}")
       begin
         result = PluginSpecHelper.run("pip", {
-          "name"       => "pip",
-          "virtualenv" => venv,
+          "name"               => "pip",
+          "virtualenv"         => venv,
+          "virtualenv_command" => "python3 -m venv",
         })
 
         result["failed"]?.try(&.as_bool).should_not be_true
         File.directory?(venv).should be_true
         result["changed"].as_bool.should be_true
+      ensure
+        FileUtils.rm_rf(venv)
+      end
+    end
+
+    it "fails with real Ansible's message when virtualenv_python is used with a venv-style virtualenv_command" do
+      # _is_venv_command's own rule: -p is a virtualenv option, not a
+      # venv one, so pairing virtualenv_python: with `... -m venv` is a
+      # hard validation error - checked before any creation attempt.
+      venv = File.join(Dir.tempdir, "krikri-pip-spec-venv-#{Random::Secure.hex(8)}")
+      begin
+        result = PluginSpecHelper.run("pip", {
+          "name"               => "pip",
+          "virtualenv"         => venv,
+          "virtualenv_command" => "python3 -m venv",
+          "virtualenv_python"  => "/usr/bin/python3",
+        })
+
+        result["failed"].as_bool.should be_true
+        result["msg"].as_s.should eq("virtualenv_python should not be used when using the venv module or pyvenv as virtualenv_command")
+        File.directory?(venv).should be_false
+      ensure
+        FileUtils.rm_rf(venv)
+      end
+    end
+
+    it "fails when the virtualenv_command binary is missing from PATH" do
+      venv = File.join(Dir.tempdir, "krikri-pip-spec-venv-#{Random::Secure.hex(8)}")
+      begin
+        result = PluginSpecHelper.run("pip", {
+          "name"               => "pip",
+          "virtualenv"         => venv,
+          "virtualenv_command" => "no-such-venv-tool-xyz",
+        })
+
+        result["failed"].as_bool.should be_true
+        result["msg"].as_s.should contain("Failed to find required executable no-such-venv-tool-xyz in paths:")
+        File.directory?(venv).should be_false
       ensure
         FileUtils.rm_rf(venv)
       end
@@ -226,6 +288,196 @@ describe "pip plugin" do
       end
     end
   end
+
+  # virtualenv_command / virtualenv_site_packages argument plumbing,
+  # verified with a FAKE venv-creation shim (no real virtualenv tool, no
+  # network): the shim records its argv to a marker file, fabricates a
+  # minimal <venv>/bin/pip stub (exit 0, so the post-creation
+  # already-installed check passes without touching any real pip), and
+  # mirrors the two --help shapes real Ansible's _get_cmd_options
+  # distinguishes (a virtualenv-tool-like help listing --no-site-packages
+  # vs. a venv-like one that doesn't). The PATH-replacement shim pattern
+  # is pip_spec's own interpreter-discovery spec / apt_key_spec.cr's.
+  describe "virtualenv_command + virtualenv_site_packages" do
+    it "passes --system-site-packages when virtualenv_site_packages is true" do
+      python = Process.find_executable("python3") || Process.find_executable("python")
+      raise "this spec needs a python3 on PATH" unless python
+
+      shim_dir = File.tempname("/tmp", ".krikri-spec-pip-bin")
+      Dir.mkdir(shim_dir)
+      File.symlink("/bin/sh", File.join(shim_dir, "sh"))
+      write_venv_shim(shim_dir, "fakevenv", false)
+      venv = File.join(Dir.tempdir, "krikri-pip-spec-venv-#{Random::Secure.hex(8)}")
+      old_path = ENV["PATH"]?
+      ENV["PATH"] = shim_dir
+      begin
+        result = PluginSpecHelper.run("pip", {
+          "name"                     => "pip",
+          "virtualenv"               => venv,
+          "virtualenv_command"       => "fakevenv",
+          "virtualenv_site_packages" => "true",
+        })
+
+        result["failed"]?.try(&.as_bool).should_not be_true
+        File.directory?(venv).should be_true
+        marker = File.read(File.join(shim_dir, "marker"))
+        marker.should contain("--system-site-packages")
+        marker.should_not contain("--no-site-packages")
+      ensure
+        ENV["PATH"] = old_path if old_path
+        FileUtils.rm_rf(shim_dir)
+        FileUtils.rm_rf(venv)
+      end
+    end
+
+    it "appends --no-site-packages only when the venv command's --help advertises it" do
+      python = Process.find_executable("python3") || Process.find_executable("python")
+      raise "this spec needs a python3 on PATH" unless python
+
+      shim_dir = File.tempname("/tmp", ".krikri-spec-pip-bin")
+      Dir.mkdir(shim_dir)
+      File.symlink("/bin/sh", File.join(shim_dir, "sh"))
+      # virtualenv-tool-like: --help lists --no-site-packages (the
+      # classic tool's deprecated option); venv-like: it doesn't.
+      write_venv_shim(shim_dir, "venvtool", true)
+      write_venv_shim(shim_dir, "venvtool_like", false)
+      venv = File.join(Dir.tempdir, "krikri-pip-spec-venv-#{Random::Secure.hex(8)}")
+      old_path = ENV["PATH"]?
+      ENV["PATH"] = shim_dir
+      begin
+        result = PluginSpecHelper.run("pip", {
+          "name"               => "pip",
+          "virtualenv"         => venv,
+          "virtualenv_command" => "venvtool",
+        })
+        result["failed"]?.try(&.as_bool).should_not be_true
+        File.read(File.join(shim_dir, "marker")).should contain("--no-site-packages")
+
+        FileUtils.rm_rf(venv)
+        File.delete(File.join(shim_dir, "marker"))
+
+        result = PluginSpecHelper.run("pip", {
+          "name"               => "pip",
+          "virtualenv"         => venv,
+          "virtualenv_command" => "venvtool_like",
+        })
+        result["failed"]?.try(&.as_bool).should_not be_true
+        File.read(File.join(shim_dir, "marker")).should_not contain("--no-site-packages")
+      ensure
+        ENV["PATH"] = old_path if old_path
+        FileUtils.rm_rf(shim_dir)
+        FileUtils.rm_rf(venv)
+      end
+    end
+  end
+
+  # break_system_packages: real Ansible's pip.py sets
+  # PIP_BREAK_SYSTEM_PACKAGES=1 in the module's own environment (an env
+  # var, not the --break-system-packages flag, so pip < 23.0 works).
+  # Verified with a fake pip shim on an absolute executable: path that
+  # records that env var plus its argv - `show` exits nonzero for the
+  # install-path package (forcing a real pip install invocation) and
+  # zero for the uninstall-path one (forcing the uninstall). No real
+  # pip, no network.
+  describe "break_system_packages" do
+    it "sets PIP_BREAK_SYSTEM_PACKAGES=1 on the pip install invocation when true" do
+      shim_dir = File.tempname("/tmp", ".krikri-spec-pip-bin")
+      Dir.mkdir(shim_dir)
+      pip = write_pip_shim(shim_dir)
+      begin
+        result = PluginSpecHelper.run("pip", {
+          "name"                  => "missing-pkg",
+          "executable"            => pip,
+          "break_system_packages" => "true",
+        })
+
+        result["failed"]?.try(&.as_bool).should_not be_true
+        marker = File.read(File.join(shim_dir, "marker"))
+        marker.should contain("env=1")
+        marker.should contain("install")
+      ensure
+        FileUtils.rm_rf(shim_dir)
+      end
+    end
+
+    it "leaves PIP_BREAK_SYSTEM_PACKAGES unset when the param is absent" do
+      shim_dir = File.tempname("/tmp", ".krikri-spec-pip-bin")
+      Dir.mkdir(shim_dir)
+      pip = write_pip_shim(shim_dir)
+      begin
+        result = PluginSpecHelper.run("pip", {
+          "name"       => "missing-pkg",
+          "executable" => pip,
+        })
+
+        result["failed"]?.try(&.as_bool).should_not be_true
+        marker = File.read(File.join(shim_dir, "marker"))
+        marker.should contain("env=unset")
+        marker.should contain("install")
+      ensure
+        FileUtils.rm_rf(shim_dir)
+      end
+    end
+
+    it "also sets PIP_BREAK_SYSTEM_PACKAGES=1 on the pip uninstall invocation (PEP 668 blocks that too)" do
+      shim_dir = File.tempname("/tmp", ".krikri-spec-pip-bin")
+      Dir.mkdir(shim_dir)
+      pip = write_pip_shim(shim_dir)
+      begin
+        result = PluginSpecHelper.run("pip", {
+          "name"                  => "present-pkg",
+          "state"                 => "absent",
+          "executable"            => pip,
+          "break_system_packages" => "true",
+        })
+
+        result["failed"]?.try(&.as_bool).should_not be_true
+        marker = File.read(File.join(shim_dir, "marker"))
+        marker.should contain("env=1")
+        marker.should contain("uninstall")
+      ensure
+        FileUtils.rm_rf(shim_dir)
+      end
+    end
+  end
+end
+
+private def write_venv_shim(shim_dir : String, name : String, help_lists_no_site_packages : Bool) : String
+  shim = File.join(shim_dir, name)
+  no_site = help_lists_no_site_packages ? " [--no-site-packages]" : ""
+  File.write(shim, <<-SH
+    #!/bin/sh
+    export PATH=/usr/local/bin:/usr/bin:/bin
+    if [ "$1" = "--help" ]; then
+      printf 'usage: #{name}#{no_site} ENV_DIR\\n'
+      exit 0
+    fi
+    for last in "$@"; do :; done
+    printf '%s\\n' "$@" >> #{File.join(shim_dir, "marker")}
+    mkdir -p "$last/bin"
+    printf '#!/bin/sh\\nexit 0\\n' > "$last/bin/pip"
+    chmod +x "$last/bin/pip"
+    SH
+  )
+  File.chmod(shim, 0o755)
+  shim
+end
+
+private def write_pip_shim(shim_dir : String) : String
+  shim = File.join(shim_dir, "shimmed-pip")
+  File.write(shim, <<-SH
+    #!/bin/sh
+    export PATH=/usr/local/bin:/usr/bin:/bin
+    printf 'env=%s args=%s\\n' "${PIP_BREAK_SYSTEM_PACKAGES:-unset}" "$*" >> #{File.join(shim_dir, "marker")}
+    case "$1 $2" in
+      "show present-pkg") exit 0 ;;
+      show*) exit 1 ;;
+    esac
+    exit 0
+    SH
+  )
+  File.chmod(shim, 0o755)
+  shim
 end
 
 private def python_with_pip?(python : String) : Bool
