@@ -18,7 +18,7 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.977`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.1028`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.31` (see `shard.yml`; 0.9.31 adds the six
 configurable Jinja delimiter strings).
 
@@ -153,6 +153,57 @@ commits), on top of the 7 immediately above re-verified clean the same
 way. The shortlist is at
 `testing/kata/round_new_authors/shortlist120.txt` if resuming it -
 against Atlantic.net now, Kata having been retired as a backend.
+
+---
+
+## `dnf_versionlock` no-op, phantom `ansible_hostname`, and wrong-tense create msgs (0.9.1028)
+
+Found via an ad-hoc CLI comparison sweep against real `ansible`
+(2026-09-13). Three independent fixes, no shared code:
+
+- `dnf_versionlock` was a **complete no-op on Fedora-family hosts**: its
+  NEVRA regex required a dot-free release (`[^.]+`), so a Fedora release
+  like `1.fc41` never matched, `dnf repoquery` output was silently
+  skipped, `specs_toadd` stayed empty, and no `dnf versionlock add`
+  ever ran while the result still claimed `changed: false` success.
+  The regex now matches the upstream module's own greedy release/arch
+  split; unparseable repoquery output fails the module (like upstream's
+  `fail_json`) instead of being dropped; `dnf` command failures now
+  fail instead of being swallowed; and the plugin gained upstream's
+  dnf5 support (package-manager detection plus dnf5's TOML-stanza
+  `versionlock list` output re-resolved to dnf4-style `name-evr.*`
+  entries via repoquery, and the dnf4-only `versionlock.conf`
+  precondition skipped on dnf5). Verified live in a Fedora 41 container
+  (dnf5) against real `community.general.dnf_versionlock`:
+  add/idempotent-add/absent/clean now report identical result shapes.
+  Regression specs (pended without a real dnf host) in
+  `spec/integration/dnf_versionlock_spec.cr`.
+- `ansible_hostname` resolved to the inventory host name even with
+  **zero fact-gathering**: four separate call sites (the hand-rolled
+  evaluator's magic-var fallback, vars_context, hostvars entries, and
+  the template action plugin's own prep) fabricated it from
+  `inventory_hostname`, so the idiomatic
+  `ansible_hostname | default(...)` "have facts been gathered yet"
+  guard silently produced the inventory name instead of firing. Real
+  Ansible leaves `ansible_hostname` undefined until
+  `setup:`/`gather_facts` populates it (verified live: the guard
+  renders `x` before facts, the real hostname after). All four sites
+  dropped the fabrication; `ansible_host` (inventory-derived, defaults
+  to the inventory name) is kept. Local/check-mode repro, regression
+  spec in `spec/integration/template_ansible_hostname_undefined_spec.cr`.
+- `mysql_user` and `htpasswd` said the wrong tense on a **brand-new
+  create**: `mysql_user` reported `Updated user X@H` where real
+  `community.mysql.mysql_user` says `User added` (its own user_add
+  branch), and `htpasswd` reported `Updating user X` where real
+  `community.general.htpasswd` says `Created <path> and added <user>`
+  for a new file, `Add/update <user>` for a change to an existing one,
+  and `<user> already present` when idempotent. Both now branch the
+  msg off the existence check each already does (create-vs-modify
+  decision), not off `changed`. Both verified live against the real
+  modules (MariaDB container / local passlib-backed module);
+  regression specs in `spec/integration/mysql_user_msg_spec.cr`
+  (pends without a live server, port 13306 like its neighbours) and
+  `spec/integration/htpasswd_spec.cr`.
 
 ---
 

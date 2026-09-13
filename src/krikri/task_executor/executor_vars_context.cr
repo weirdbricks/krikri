@@ -109,7 +109,11 @@ module Krikri
       if inv = @inventory
         vars_context["group_names"] = JSON::Any.new(inv.groups_for(host.name).map { |name| JSON::Any.new(name) })
       end
-      vars_context["ansible_hostname"] ||= JSON::Any.new(host.name)
+      # ansible_host is inventory-derived (defaults to the inventory name);
+      # ansible_hostname is a fact, undefined until real fact-gathering
+      # populates it (facts land in this context via base_context_b_for) -
+      # fabricating it made `ansible_hostname | default(...)` guards
+      # silently wrong before facts were gathered.
       vars_context["ansible_host"] ||= JSON::Any.new(host.name)
 
       if role_name = task.role_name
@@ -543,7 +547,6 @@ module Krikri
         @facts[other_host.name]?.try(&.each { |key, value| entry[key] = value })
         @registered_vars[other_host.name]?.try(&.each { |key, value| entry[key] = value })
         entry["inventory_hostname"] = JSON::Any.new(other_host.name)
-        entry["ansible_hostname"] ||= JSON::Any.new(other_host.name)
         entry["ansible_host"] ||= JSON::Any.new(other_host.name)
         result[other_host.name] = JSON::Any.new(entry)
       end

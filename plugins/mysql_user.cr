@@ -178,14 +178,24 @@ module Krikri
       password : String?, update_password : String, priv : String?,
       plugin : String?, plugin_hash_string : String?, plugin_auth_string : String?, check_mode : Bool,
     ) : PluginResult
-      early, changed = create_or_update_account(db, name, host, exists, password, update_password,
+      early, changed, created = create_or_update_account(db, name, host, exists, password, update_password,
         plugin, plugin_hash_string, plugin_auth_string, check_mode)
       return early if early
 
       early, changed = apply_priv_if_needed(db, name, host, exists, changed, priv, check_mode)
       return early if early
 
-      PluginResult.new(changed: changed, failed: false, msg: changed ? "Updated user #{name}@#{host}" : "User #{name}@#{host} already up to date")
+      # Real Ansible branches the success msg on create-vs-modify (its own
+      # user_add sets msg to "User added" when the account genuinely didn't
+      # exist), not on `changed` - a brand-new create is not an "update".
+      msg = if created
+              "User added"
+            elsif changed
+              "Updated user #{name}@#{host}"
+            else
+              "User #{name}@#{host} already up to date"
+            end
+      PluginResult.new(changed: changed, failed: false, msg: msg)
     end
 
     # Creates the account if it doesn't exist yet, or updates its
@@ -196,17 +206,17 @@ module Krikri
       db : DB::Database, name : String, host : String, exists : Bool,
       password : String?, update_password : String,
       plugin : String?, plugin_hash_string : String?, plugin_auth_string : String?, check_mode : Bool,
-    ) : {PluginResult?, Bool}
+    ) : {PluginResult?, Bool, Bool}
       unless exists
-        return {PluginResult.new(changed: true, failed: false, msg: "User #{name}@#{host} would be created"), false} if check_mode
+        return {PluginResult.new(changed: true, failed: false, msg: "User #{name}@#{host} would be created"), false, true} if check_mode
 
         clause = build_auth_clause(password, plugin, plugin_hash_string, plugin_auth_string)
         db.exec "CREATE USER #{quote_str(name)}@#{quote_str(host)}#{clause}"
-        return {nil, true}
+        return {nil, true, true}
       end
 
-      return {nil, false} unless update_password == "always"
-      return {nil, false} unless password || plugin
+      return {nil, false, false} unless update_password == "always"
+      return {nil, false, false} unless password || plugin
 
       if password
         plugin_or_password_update(db, name, host, password, update_password, check_mode)
@@ -216,21 +226,21 @@ module Krikri
         # desired value, ALTERing only on a real change - matching real
         # Ansible's own plugin idempotency. Bare `plugin: unix_socket`/`auth_socket`
         # (the auth_socket account pattern) compares the plugin column only.
-        pl = plugin || return {nil, false}
-        return {nil, false} if plugin_matches?(db, name, host, pl, plugin_hash_string, plugin_auth_string)
+        pl = plugin || return {nil, false, false}
+        return {nil, false, false} if plugin_matches?(db, name, host, pl, plugin_hash_string, plugin_auth_string)
 
-        return {PluginResult.new(changed: true, failed: false, msg: "User #{name}@#{host}'s authentication would be updated"), false} if check_mode
+        return {PluginResult.new(changed: true, failed: false, msg: "User #{name}@#{host}'s authentication would be updated"), false, false} if check_mode
 
         clause = build_auth_clause(nil, plugin, plugin_hash_string, plugin_auth_string)
         db.exec "ALTER USER #{quote_str(name)}@#{quote_str(host)}#{clause}"
-        {nil, true}
+        {nil, true, false}
       end
     end
 
     private def plugin_or_password_update(
       db : DB::Database, name : String, host : String, password : String,
       update_password : String, check_mode : Bool,
-    ) : {PluginResult?, Bool}
+    ) : {PluginResult?, Bool, Bool}
       # Real bug found benchmarking robertdebock.mysql's own "Create
       # users" task (round 18): update_password: always (the default,
       # matching real Ansible - the role leaves it unset) previously
@@ -247,13 +257,13 @@ module Krikri
       # where PASSWORD() doesn't apply the same way) - safe either way,
       # just not idempotent in that narrower case, same as before.
       if password_already_matches?(db, name, host, password)
-        return {nil, false}
+        return {nil, false, false}
       end
 
-      return {PluginResult.new(changed: true, failed: false, msg: "User #{name}@#{host}'s password would be updated"), false} if check_mode
+      return {PluginResult.new(changed: true, failed: false, msg: "User #{name}@#{host}'s password would be updated"), false, false} if check_mode
 
       db.exec "ALTER USER #{quote_str(name)}@#{quote_str(host)} IDENTIFIED BY #{quote_str(password)}"
-      {nil, true}
+      {nil, true, false}
     end
 
     # Builds the CREATE/ALTER USER auth clause, matching real Ansible's

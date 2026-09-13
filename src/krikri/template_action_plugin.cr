@@ -823,7 +823,11 @@ module Krikri
 
       # Add host information
       vars["inventory_hostname"] = Crinja::Value.new(@host.name)
-      vars["ansible_hostname"] = Crinja::Value.new(@host.name)
+      # ansible_host is inventory-derived (defaults to the inventory name);
+      # ansible_hostname is NOT - it is a fact, undefined until real fact-
+      # gathering populates it (it arrives via @vars once setup runs), so
+      # fabricating it here made `ansible_hostname | default(...)` guards
+      # silently wrong before facts were gathered.
       vars["ansible_host"] = Crinja::Value.new(@host.name)
 
       # `vars` magic variable - see CrinjaRenderer#prepare_crinja_vars

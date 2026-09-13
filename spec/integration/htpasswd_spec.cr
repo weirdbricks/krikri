@@ -111,4 +111,41 @@ describe "htpasswd plugin" do
     result["failed"].as_bool.should be_true
     result["msg"].as_s.should contain("crypt_scheme")
   end
+
+  # Regression spec for the ad-hoc CLI sweep (2026-09-13): the first (create)
+  # call used to say "Updating user X"; real community.general.htpasswd
+  # branches the msg on whether the call actually created the file
+  # ("Created {path} and added {user}") versus changed an existing one
+  # ("Add/update {user}"), verified live.
+  it "says \"Created <path> and added <user>\" on a brand-new file" do
+    path = tmp_path("htpasswd-create-msg")
+    File.delete(path) if File.exists?(path)
+
+    result = PluginSpecHelper.run("htpasswd", {"path" => path, "name" => "johndoe", "password" => "supersecure"})
+
+    result["changed"].as_bool.should be_true
+    result["msg"].as_s.should eq("Created #{path} and added johndoe")
+  end
+
+  it "says \"Add/update <user>\" when changing an existing file's user" do
+    path = tmp_path("htpasswd-update-msg")
+    File.delete(path) if File.exists?(path)
+    PluginSpecHelper.run("htpasswd", {"path" => path, "name" => "johndoe", "password" => "supersecure"})
+
+    result = PluginSpecHelper.run("htpasswd", {"path" => path, "name" => "johndoe", "password" => "different"})
+
+    result["changed"].as_bool.should be_true
+    result["msg"].as_s.should eq("Add/update johndoe")
+  end
+
+  it "says \"<user> already present\" when the password matches" do
+    path = tmp_path("htpasswd-idempotent-msg")
+    File.delete(path) if File.exists?(path)
+    PluginSpecHelper.run("htpasswd", {"path" => path, "name" => "johndoe", "password" => "supersecure"})
+
+    result = PluginSpecHelper.run("htpasswd", {"path" => path, "name" => "johndoe", "password" => "supersecure"})
+
+    result["changed"].as_bool.should be_false
+    result["msg"].as_s.should eq("johndoe already present")
+  end
 end

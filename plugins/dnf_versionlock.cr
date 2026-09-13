@@ -14,10 +14,17 @@ module Krikri
   #   raw: bool (default false) - use name: patterns verbatim instead of
   #     resolving to NEVRAs via `dnf repoquery`
   #   state: present (default) / excluded / absent / clean
+  class DnfVersionlockError < Exception
+  end
+
   class DnfVersionlockPlugin < BasePlugin
     DNF_BIN          = "/usr/bin/dnf"
     VERSIONLOCK_CONF = "/etc/dnf/plugins/versionlock.conf"
-    NEVRA_RE         = /^(?<name>.+)-(?<epoch>\d+):(?<version>.+)-(?<release>[^.]+)\.(?<arch>[^.]+)$/
+    # Release and arch are both greedy (.+, not [^.]+): Fedora-family
+    # releases contain dots themselves (e.g. "1.fc41"), so only the final
+    # dot separates release from arch - same pattern as the upstream
+    # module's own NEVRA_RE.
+    NEVRA_RE = /^(?<name>.+)-(?<epoch>\d+):(?<version>.+)-(?<release>.+)\.(?<arch>.+)$/
 
     def execute : PluginResult
       precondition_error = check_preconditions
@@ -32,17 +39,9 @@ module Krikri
       return param_error if param_error
 
       locklist_pre = get_package_list
-
-      specs_toadd, specs_todelete, msg = case state
-                                         when "present", "excluded"
-                                           add_or_exclude(state, patterns, locklist_pre, raw, check_mode)
-                                         when "absent"
-                                           remove(patterns, locklist_pre, raw, check_mode)
-                                         when "clean"
-                                           clean(locklist_pre, raw, check_mode)
-                                         else
-                                           return PluginResult.new(changed: false, failed: true, msg: "state must be one of present/excluded/absent/clean, got '#{state}'")
-                                         end
+      result = apply_state(state, patterns, locklist_pre, raw, check_mode)
+      return result if result.is_a?(PluginResult)
+      specs_toadd, specs_todelete, msg = result
 
       changed = !specs_toadd.empty? || !specs_todelete.empty?
       locklist_post = if check_mode
@@ -62,14 +61,37 @@ module Krikri
       )
     end
 
+    private def apply_state(state : String, patterns : Array(String), locklist_pre : Array(String),
+                            raw : Bool, check_mode : Bool) : {Array(String), Array(String), String} | PluginResult
+      case state
+      when "present", "excluded"
+        add_or_exclude(state, patterns, locklist_pre, raw, check_mode)
+      when "absent"
+        remove(patterns, locklist_pre, raw, check_mode)
+      when "clean"
+        clean(locklist_pre, raw, check_mode)
+      else
+        PluginResult.new(changed: false, failed: true, msg: "state must be one of present/excluded/absent/clean, got '#{state}'")
+      end
+    rescue e : DnfVersionlockError
+      PluginResult.new(changed: false, failed: true, msg: e.message || "dnf versionlock command failed")
+    end
+
     private def check_preconditions : PluginResult?
       unless File.exists?(DNF_BIN)
         return PluginResult.new(changed: false, failed: true, msg: "Failed to find required executable \"dnf\"")
       end
-      unless File.exists?(VERSIONLOCK_CONF)
+      # dnf5 keeps its locklist elsewhere and never reads the dnf4 plugin
+      # config, so the missing-conf failure only applies to dnf4 hosts
+      # (same gate as upstream's own main()).
+      if !dnf5? && !File.exists?(VERSIONLOCK_CONF)
         return PluginResult.new(changed: false, failed: true, msg: "plugin versionlock is required")
       end
       nil
+    end
+
+    private def dnf5? : Bool
+      File.realpath(DNF_BIN) == "/usr/bin/dnf5"
     end
 
     private def validate_state_params(state : String, patterns : Array(String)) : PluginResult?
@@ -178,7 +200,7 @@ module Krikri
 
       out.split.each do |pkg|
         m = NEVRA_RE.match(pkg)
-        next unless m
+        raise DnfVersionlockError.new("failed to parse nevra for #{pkg}") unless m
         evr = "#{m["epoch"]}:#{m["version"]}-#{m["release"]}"
         (result[m["name"]] ||= Set(String).new) << evr
       end
@@ -187,7 +209,34 @@ module Krikri
     end
 
     private def get_package_list : Array(String)
-      do_versionlock("list").split
+      output = run_dnf_bin(["-q", "versionlock", "list"])
+      return output.split if !dnf5?
+
+      # dnf5's `versionlock list` prints TOML stanzas ("Package name:",
+      # "evr = ..." pairs with leading comment/blank lines) instead of dnf4's
+      # one-entry-per-line locklist - re-resolve each stanza's name through
+      # repoquery to rebuild dnf4-style "name-evr.*" entries, same as the
+      # upstream module's own dnf5 branch.
+      package_list = [] of String
+      stanza_start = false
+      package_name = ""
+
+      output.each_line do |line|
+        next if line.starts_with?('#') || line.starts_with?(' ')
+        if line.starts_with?("Package name:")
+          stanza_start = true
+          name = line.split(':', 2)[1].strip
+          pkg_name = get_packages([name], only_installed: false)
+          package_name = "#{name}-#{pkg_name[name].first}.*"
+          package_list << package_name unless package_list.includes?(package_name)
+        end
+        if line.starts_with?("evr") && stanza_start
+          package_list << package_name unless package_list.includes?(package_name)
+          stanza_start = false
+        end
+      end
+
+      package_list
     end
 
     private def do_versionlock(command : String, patterns : Array(String)? = nil, raw : Bool = false) : String
@@ -202,7 +251,11 @@ module Krikri
 
     private def run_dnf_bin(args : Array(String)) : String
       output = IO::Memory.new
-      Process.run(DNF_BIN, args, output: output, error: Process::Redirect::Close)
+      errout = IO::Memory.new
+      rc = Process.run(DNF_BIN, args, output: output, error: errout).exit_code
+      unless rc == 0
+        raise DnfVersionlockError.new("Command '#{DNF_BIN} #{args.join(" ")}' failed with rc #{rc}: #{errout}#{output}".strip)
+      end
       output.to_s
     end
 

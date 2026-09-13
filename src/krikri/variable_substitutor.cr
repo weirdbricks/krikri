@@ -768,16 +768,17 @@ module Krikri
     # expression can never disagree about what they mean.
     #
     # Only `inventory_hostname` is unconditional - it *is* the inventory
-    # name and nothing else defines it. The other two are fallbacks:
+    # name and nothing else defines it. The other one is a fallback:
     #
     # - `ansible_host` is the connection address. An inventory line like
     #   `web1 ansible_host=192.0.2.55` must win; overwriting it with the
     #   inventory name was wrong (verified against ansible-core 2.19.4:
     #   it reports 192.0.2.55) and, in vars_context, would also redirect
     #   PluginManager#get_connection_host to the wrong machine.
-    # - `ansible_hostname` is a *fact* - the target's own hostname, which
-    #   is frequently not the inventory name at all (ansible-core reports
-    #   the real hostname). A gathered fact must win over this fallback.
+    # - `ansible_hostname` is NOT set here at all - it is a fact,
+    #   undefined until real fact-gathering populates it (below), exactly
+    #   like real Ansible; fabricating it from the inventory name made
+    #   `ansible_hostname | default(...)` guards silently wrong.
     #
     # Lazy: only fires when first needed (evaluator/renderer build).
     # #ensure_owned! runs first, so this can safely mutate @vars
@@ -786,7 +787,11 @@ module Krikri
       return if @magic_vars_added
       ensure_owned!
       @vars["inventory_hostname"] = JSON::Any.new(@host_name)
-      @vars["ansible_hostname"] ||= JSON::Any.new(@host_name)
+      # ansible_host is inventory-derived (defaults to the inventory name);
+      # ansible_hostname is a fact, undefined until real fact-gathering
+      # populates it (the @facts loop below adds ansible_* keys) - a
+      # fabricated fallback made `ansible_hostname | default(...)` guards
+      # silently wrong before facts were gathered.
       @vars["ansible_host"] ||= JSON::Any.new(@host_name)
 
       @facts.each do |key, value|
