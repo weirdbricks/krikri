@@ -201,4 +201,30 @@ describe "cronvar plugin" do
     result["failed"].as_bool.should be_true
     result["msg"].as_s.should contain("mutually exclusive")
   end
+
+  # Real community.general cronvar's result shape (live-verified against
+  # ansible-core 2.19.11): changed + vars (the full current var-name
+  # list), plus cron_file/backup_file only when they apply - a backup
+  # key is present ONLY when a backup was actually retained.
+  describe "result shape (real ansible's field set)" do
+    it "carries vars as the full current var-name list after the change" do
+      path = tmp_path("cronvar-shape.txt")
+      File.delete(path) if File.exists?(path)
+
+      PluginSpecHelper.run("cronvar", {"name" => "MAILTO", "value" => "root", "cron_file" => path})
+      result = PluginSpecHelper.run("cronvar", {"name" => "SHELL", "value" => "/bin/sh", "cron_file" => path})
+
+      result["vars"].as_a.map(&.as_s).should eq(["SHELL", "MAILTO"])
+      result["changed"].as_bool.should be_true
+    end
+
+    it "omits backup_file when no backup was made" do
+      path = tmp_path("cronvar-no-backup.txt")
+      File.delete(path) if File.exists?(path)
+
+      result = PluginSpecHelper.run("cronvar", {"name" => "MAILTO", "value" => "root", "cron_file" => path})
+
+      result["backup_file"]?.should be_nil
+    end
+  end
 end

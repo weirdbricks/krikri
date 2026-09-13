@@ -76,15 +76,19 @@ module Krikri
         File.write(path, new_content)
       end
 
-      PluginResult.new(
+      result = PluginResult.new(
         changed: changed,
         failed: false,
         msg: change_msg(changed),
         name: name,
         vars: PluginHelpers::CronVar.var_names(new_content),
-        cron_file: path,
-        backup_file: backup_file
+        cron_file: path
       )
+      # Real module includes backup_file only when a backup was actually
+      # retained (changed && backup; its None default is dropped by
+      # exit_json).
+      result.extra["backup_file"] = JSON::Any.new(backup_file) unless backup_file.empty?
+      result
     end
 
     private def execute_user_crontab(name : String, value : String?, state : String, insert_before : String?, insert_after : String?, check_mode : Bool) : PluginResult

@@ -128,7 +128,9 @@ module Krikri
         msg: changed ? "Cron entry #{state == "present" ? "added/updated" : "removed"}" : "Cron entry already up to date",
         name: name,
         cron_file: cron_file,
-        state: state
+        state: state,
+        jobs: PluginHelpers::CronTable.job_names(new_content),
+        envs: PluginHelpers::CronTable.env_names(new_content)
       )
       report_backup(result, backup_file)
     end
@@ -159,7 +161,9 @@ module Krikri
         failed: false,
         msg: changed ? "Cron entry #{state == "present" ? "added/updated" : "removed"}" : "Cron entry already up to date",
         name: name,
-        state: state
+        state: state,
+        jobs: PluginHelpers::CronTable.job_names(new_content),
+        envs: PluginHelpers::CronTable.env_names(new_content)
       )
       report_backup(result, backup_file)
     end
@@ -183,7 +187,9 @@ module Krikri
         msg: changed ? "Cron environment variable #{state == "present" ? "added/updated" : "removed"}" : "Cron environment variable already up to date",
         name: name,
         cron_file: cron_file,
-        state: state
+        state: state,
+        jobs: PluginHelpers::CronTable.job_names(new_content),
+        envs: PluginHelpers::CronTable.env_names(new_content)
       )
       report_backup(result, backup_file)
     end
@@ -209,7 +215,9 @@ module Krikri
         failed: false,
         msg: changed ? "Cron environment variable #{state == "present" ? "added/updated" : "removed"}" : "Cron environment variable already up to date",
         name: name,
-        state: state
+        state: state,
+        jobs: PluginHelpers::CronTable.job_names(new_content),
+        envs: PluginHelpers::CronTable.env_names(new_content)
       )
       report_backup(result, backup_file)
     end

@@ -7,8 +7,10 @@ module Krikri
     # arbitrary crontab text, entirely without I/O so it's unit-testable with
     # plain strings.
     module CronTable
+      MARKER_PREFIX = "#Ansible: "
+
       def self.marker(name : String) : String
-        "#Ansible: #{name}"
+        "#{MARKER_PREFIX}#{name}"
       end
 
       # Renders the 5 schedule fields, or a @special_time shorthand that
@@ -60,6 +62,30 @@ module Krikri
         new_text = result.join("\n")
         new_text += "\n" unless new_text.empty?
         {new_text, new_text != normalize(text)}
+      end
+
+      # Every job name currently marked in the text, in file order -
+      # real cron.py's get_jobnames (lines carrying the "#Ansible: "
+      # marker contribute the text after it), reported as the module
+      # result's `jobs` field. Unlike CronVar.var_names this reflects
+      # the marker comments, not a parse of the schedule lines.
+      def self.job_names(text : String) : Array(String)
+        text.split("\n").compact_map do |line|
+          line.starts_with?(MARKER_PREFIX) ? line[MARKER_PREFIX.size..] : nil
+        end
+      end
+
+      # Every environment-variable name currently assigned in the text,
+      # in file order - real cron.py's get_envnames (`^\S+=` match, the
+      # name being everything before the first '='; no comment
+      # exclusion, so a commented-out `#FOO=bar` still counts, exactly
+      # like real module), reported as the result's `envs` field.
+      def self.env_names(text : String) : Array(String)
+        text.split("\n").compact_map do |line|
+          next nil unless line.matches?(/^\S+=/)
+
+          line.split('=', 2)[0]
+        end
       end
 
       # Trailing-newline-insensitive comparison baseline for `upsert`'s

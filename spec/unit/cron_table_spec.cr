@@ -175,4 +175,45 @@ describe CronTable do
       changed.should be_true
     end
   end
+
+  # Real cron.py's get_jobnames/get_envnames - the module result's
+  # `jobs`/`envs` fields list EVERY current entry, not just the one the
+  # task touched (live-verified against ansible-core 2.19.11).
+  describe ".job_names" do
+    it "lists every marker-carried job name in file order" do
+      text = "MAILTO=root\n#Ansible: nightly backup\n0 2 * * * /usr/local/bin/backup.sh\n#Ansible: other job\n1 2 * * * /bin/true\n"
+
+      CronTable.job_names(text).should eq(["nightly backup", "other job"])
+    end
+
+    it "ignores non-marker lines (including bare crontab comments)" do
+      text = "# a regular comment\n#Ansible: only job\n* * * * * /bin/true\n"
+
+      CronTable.job_names(text).should eq(["only job"])
+    end
+
+    it "returns an empty list for text with no markers" do
+      CronTable.job_names("MAILTO=root\n* * * * * /bin/true\n").should eq([] of String)
+    end
+  end
+
+  describe ".env_names" do
+    it "lists every NAME= assignment in file order" do
+      text = "MAILTO=root\nPATH=\"/usr/bin:/bin\"\n0 2 * * * /bin/true\n"
+
+      CronTable.env_names(text).should eq(["MAILTO", "PATH"])
+    end
+
+    it "counts a commented-out assignment, like real cron.py's ^\\S+= match" do
+      text = "#MAILTO=root\nPATH=\"/bin\"\n"
+
+      CronTable.env_names(text).should eq(["#MAILTO", "PATH"])
+    end
+
+    it "ignores schedule lines and marker comments" do
+      text = "#Ansible: job\n* * * * * FOO=bar\nMAILTO=root\n"
+
+      CronTable.env_names(text).should eq(["MAILTO"])
+    end
+  end
 end
