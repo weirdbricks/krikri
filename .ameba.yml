@@ -185,6 +185,13 @@ Metrics/CyclomaticComplexity:
   # module's recursive node-spawning logic. The branch count IS the
   # module's own specification.
   - plugins/xml.cr
+  # plugins/subversion.cr's #execute/#update are faithful ports of
+  # ansible.builtin.subversion's main() dispatch chain and its update
+  # path (export/checkout/update/switch gates in the real module's
+  # exact order, the in_place escape hatch, the dest-optional rule) -
+  # the branch count IS the real module's control flow; splitting it
+  # apart would scatter that order-dependent sequence.
+  - plugins/subversion.cr
   - src/krikri/plugin_helpers/acl_command.cr
   # src/krikri/plugin_helpers/x509_cert_info.cr's parse_extensions/
   # extension_section/classify_public_key are flat per-extension and
