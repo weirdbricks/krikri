@@ -5,6 +5,7 @@ require "http/client"
 require "uri"
 require "../src/krikri/base_plugin"
 require "../src/krikri/plugin_helpers/apt_repository_line"
+require "../src/krikri/plugin_helpers/apt_repository_cache_retry"
 require "../src/krikri/plugin_helpers/apt_ppa"
 
 module Krikri
@@ -29,6 +30,13 @@ module Krikri
   #   codename - `/etc/os-release`'s `VERSION_CODENAME=`, not a shell
   #   out to `lsb_release`)
   # - update_cache: run `apt-get update` after a change (default true)
+  # - update_cache_retries / update_cache_retry_max_delay: how many
+  #   total `apt-get update` attempts (default 5) and the exponential
+  #   backoff cap in seconds (default 12) when that update fails -
+  #   real Ansible's own retry semantics, see
+  #   PluginHelpers::AptRepositoryCacheRetry
+  # - install_python_apt / validate_certs: accepted, documented no-ops
+  #   (see the class doc below for why)
   # - mode: applied to the resulting file
   # - check_mode: report what would change without writing anything
   #
@@ -70,11 +78,21 @@ module Krikri
   # traffic on an already-added PPA for meaningfully less code, and
   # real Ansible's own PPA idempotency check (a source-line match,
   # implemented below) already means the whole key-fetch path is never
-  # even reached on a rerun. `install_python_apt`, `validate_certs`
-  # (real Ansible's `apt_repository:` uses it for the Launchpad API
-  # fetch specifically; this plugin always verifies certs),
-  # `update_cache_retries`/`update_cache_retry_max_delay` are not
-  # implemented.
+  # even reached on a rerun. `install_python_apt` and `validate_certs`
+  # are accepted as documented no-ops: krikri never imports python-apt
+  # (so there's nothing for `install_python_apt` to install - the param
+  # exists in real Ansible purely to gate that auto-install), and the
+  # plugin's one HTTPS fetch (the Launchpad API call above) always
+  # verifies certificates via native `HTTP::Client`, which has no
+  # disable-TLS-verification switch wired here - real Ansible's
+  # `validate_certs: false` only relaxes its own fetches, which there's
+  # no reason to replicate for a param real playbooks pass by default.
+  # `update_cache_retries`/`update_cache_retry_max_delay` ARE wired for
+  # real: the post-change `apt-get update` retries up to
+  # `update_cache_retries` total attempts with real Ansible's own
+  # `2**retry + jitter` (capped at `update_cache_retry_max_delay +
+  # jitter`) exponential backoff - see
+  # PluginHelpers::AptRepositoryCacheRetry.
   #
   # This plugin is entirely file editing (finding/reading/writing plain
   # text `.list` files) - there's no actual `apt-get`/`dpkg` call
@@ -87,6 +105,8 @@ module Krikri
   # remaining shell calls - genuine gaps (a real system operation and a
   # binary-data-safety constraint, respectively), not oversights.
   class AptRepositoryPlugin < BasePlugin
+    include AptRepositoryCacheRetry
+
     SOURCES_LIST   = "/etc/apt/sources.list"
     SOURCES_LIST_D = "/etc/apt/sources.list.d"
     KEYSERVER      = "hkp://keyserver.ubuntu.com:80"
@@ -149,8 +169,23 @@ module Krikri
     end
 
     private def all_source_files : Array(String)
-      list_d = Dir.glob(File.join(SOURCES_LIST_D, "*.list")).sort!
-      [SOURCES_LIST] + list_d
+      list_d = Dir.glob(File.join(sources_list_d, "*.list")).sort!
+      [sources_list] + list_d
+    end
+
+    # Underscore-prefixed internal overrides of the real filesystem
+    # locations - same spec-seam family as apt.cr's `_policy_rc_d_path`,
+    # so the retry specs can drive a full add+failed-cache-update
+    # end-to-end against a scratch directory instead of mutating
+    # /etc/apt. Playbooks never see these (real Ansible has no such
+    # params, and anything unknown it would reject; here they're only
+    # read by the specs).
+    private def sources_list : String
+      @params["_sources_list"]? || SOURCES_LIST
+    end
+
+    private def sources_list_d : String
+      @params["_sources_list_d"]? || SOURCES_LIST_D
     end
 
     private def file_contains_line?(file : String, line : String) : Bool
@@ -246,7 +281,7 @@ module Krikri
 
       remaining_lines = File.read_lines(file).reject { |line| line == normalized }
       File.write(file, remaining_lines.empty? ? "" : remaining_lines.join('\n') + "\n")
-      File.delete?(file) if remaining_lines.none? { |line| !line.empty? } && file != SOURCES_LIST
+      File.delete?(file) if remaining_lines.none? { |line| !line.empty? } && file != sources_list
 
       if update_cache
         cache_result = run_update_cache
@@ -282,7 +317,7 @@ module Krikri
     end
 
     private def target_file(normalized : String, filename_source : String) : String
-      PluginHelpers::AptRepositoryLine.target_sources_path(@params["filename"]?, filename_source, SOURCES_LIST_D)
+      PluginHelpers::AptRepositoryLine.target_sources_path(@params["filename"]?, filename_source, sources_list_d)
     end
 
     # Real ansible-playbook's own apt_repository module FAILS the task
@@ -300,8 +335,23 @@ module Krikri
     # ("Unable to locate package nomad") - a real divergence from real
     # Ansible, which recovers via the rescue: at the point it's supposed
     # to. Found benchmarking robertdebock.nomad.
+    # Real ansible-playbook's own apt_repository module retries a failed
+    # `apt-get update` (python-apt's FetchFailedException) up to
+    # `update_cache_retries` total attempts with an exponential backoff
+    # (`2**retry + jitter`, capped at `update_cache_retry_max_delay +
+    # jitter`) before giving up - wired through
+    # PluginHelpers::AptRepositoryCacheRetry so the loop and the delay
+    # formula are both spec-testable via an injected exec proc.
     private def run_update_cache : NamedTuple(exit_code: Int32, stdout: String, stderr: String)
-      remote_exec("apt-get update")
+      retries = int_param("update_cache_retries", DEFAULT_UPDATE_CACHE_RETRIES)
+      max_delay = int_param("update_cache_retry_max_delay", DEFAULT_UPDATE_CACHE_RETRY_MAX_DELAY)
+      apt_repository_cache_update_with_retry(retries, max_delay, ->(command : String) { remote_exec(command) })
+    end
+
+    private def int_param(name : String, default : Int32) : Int32
+      raw = @params[name]?
+      return default unless raw
+      raw.to_i? || default
     end
 
     # `apt-get update`'s own exit code stays 0 even when a repo's
