@@ -213,8 +213,13 @@ module Krikri
     # .tar/.pgc are single files, written via a plain `>` shell redirect -
     # same distinction real Ansible's own db_dump() makes.
     private def run_dump_via_pg_dump_format(name : String, target : String, ext : String, format_letter : String) : PluginResult
-      cmd = "#{pgpassword_prefix}pg_dump #{quote(name)} #{login_flags} --format=#{format_letter}#{pgpassword_cleanup}"
+      cmd = "#{pgpassword_prefix}pg_dump #{quote(name)} #{login_flags} --format=#{format_letter}"
+      # The redirect must bind to the pg_dump itself - appending it after
+      # pgpassword_cleanup's trailing `exit $rc` left the dump file empty
+      # (pg_dump's output went to the captured stdout instead), while the
+      # task still reported success.
       cmd += ext == ".dir" ? " -f #{quote(target)}" : " > #{quote(target)}"
+      cmd += pgpassword_cleanup
 
       result = remote_exec(cmd)
       return PluginResult.new(changed: false, failed: true, msg: result[:stderr], rc: result[:exit_code]) unless result[:exit_code] == 0

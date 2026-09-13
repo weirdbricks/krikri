@@ -5,6 +5,7 @@ require "pg"
 require "../src/krikri/base_plugin"
 require "../src/krikri/plugin_helpers/db_errors"
 require "../src/krikri/plugin_helpers/postgresql_connection"
+require "../src/krikri/plugin_helpers/postgresql_password_verifier"
 require "../src/krikri/plugin_helpers/postgresql_role_flags"
 require "../src/krikri/plugin_helpers/sql_quoting"
 
@@ -26,13 +27,13 @@ module Krikri
   #
   # Supported parameters:
   # - name: role name (required)
-  # - password: applied whenever given, for both newly-created and
-  #   already-existing roles - unlike real Ansible (which can compare a
-  #   candidate password against the role's stored SCRAM/MD5 verifier to
-  #   stay idempotent), this always reissues ALTER ROLE ... PASSWORD and
-  #   reports changed: true whenever a password: is given for an existing
-  #   role. A documented simplification, not an oversight - matching this
-  #   codebase's mysql_user.cr's own update_password: always behavior.
+  # - password: idempotent, like real Ansible - the desired password is
+  #   diffed against the role's stored pg_authid.rolpassword verifier
+  #   (see PostgresqlPasswordVerifier: SCRAM verifiers compared by
+  #   recomputing the ServerKey from the plaintext, pre-hashed inputs
+  #   compared verbatim, plaintext vs. an md5-default server via
+  #   PostgreSQL's own 'md5' + md5(password + username) form), and the
+  #   ALTER ROLE ... PASSWORD only runs when they actually differ.
   # - state: present (default) / absent
   # - role_attr_flags: "LOGIN,CREATEDB,NOSUPERUSER" (comma-separated,
   #   real Ansible's own format) - via a new pure
@@ -127,10 +128,13 @@ module Krikri
       changed = false
 
       if password
-        return true if check_mode
+        pw_changing = password_should_change?(db, name, password)
+        return true if check_mode && pw_changing
 
-        db.exec "ALTER ROLE #{quote_ident(name)} PASSWORD #{quote_str(password)}"
-        changed = true
+        if pw_changing
+          db.exec "ALTER ROLE #{quote_ident(name)} PASSWORD #{quote_str(password)}"
+          changed = true
+        end
       end
 
       if desired_flags && flags_differ?(existing_flags, desired_flags)
@@ -173,6 +177,27 @@ module Krikri
 
     private def flags_differ?(existing : Hash(String, Bool), desired : Hash(String, Bool)) : Bool
       desired.any? { |flag, value| existing[flag]? != value }
+    end
+
+    # Real Ansible's user_should_we_change_password(): diff the desired
+    # password against pg_authid.rolpassword (not pg_roles - the
+    # verifier only lives there) so an unchanged repeat call is a no-op.
+    # Like the real module, a server that won't reveal the verifier (or
+    # has no row for the role) makes the password count as different.
+    private def password_should_change?(db : DB::Database, name : String, password : String) : Bool
+      current_password = begin
+        db.query_one? "SELECT rolpassword FROM pg_authid WHERE rolname = $1", name, as: String?
+      rescue
+        return true
+      end
+
+      server_encryption = begin
+        db.scalar("SHOW password_encryption").as(String)
+      rescue
+        "scram-sha-256"
+      end
+
+      PluginHelpers::PostgresqlPasswordVerifier.needs_change?(current_password, password, name, server_encryption)
     end
 
     # Returns the role's current attributes (only the flags this plugin
