@@ -54,9 +54,19 @@ module Krikri
   #   Ansible's own `os.walk()`-based "shallowest directory first"
   #   ordering, so no walk-order change was needed to support this.
   #
-  # Not implemented: encoding (used only for a `contains:` search's own
-  # file-reading encoding) - lower-value than the other two, and every
-  # real caller found so far reads plain UTF-8/ASCII text anyway.
+  # - follow: descend into symlinked directories when recursing (default:
+  #   false). Classification still uses lstat() regardless of follow (real
+  #   Ansible's own os.lstat() in its main loop), so a symlink-to-file
+  #   still only matches file_type: link/any even with follow: true -
+  #   follow only changes which directories are walked into (os.walk's
+  #   own followlinks flag).
+  # - encoding: the text encoding used when `contains:` reads a file's
+  #   content for matching (e.g. latin-1; real Ansible 2.17+'s
+  #   contentfilter opens the file with `open(..., encoding=encoding)`).
+  #   When not given, content is read as raw bytes and matched
+  #   latin-1-style, so any byte sequence is searchable without a decode
+  #   error. Encoding does NOT affect get_checksum - real Ansible's
+  #   digest_from_file hashes raw bytes regardless of encoding.
   #
   # Directory walk via Dir.each_child + native lstat()/hashlib-equivalent
   # checksums (BasePlugin#native_stat/#native_checksum) rather than
@@ -91,7 +101,9 @@ module Krikri
       now : Int64,
       mode : String?,
       exact_mode : Bool,
-      limit : Int32?
+      limit : Int32?,
+      follow : Bool,
+      encoding : String?
 
     def execute : PluginResult
       # Real Ansible's find module declares `paths` with aliases `path`
@@ -127,6 +139,8 @@ module Krikri
         mode: @params["mode"]?,
         exact_mode: true?(@params["exact_mode"]?, default: true),
         limit: @params["limit"]?.try(&.to_i?),
+        follow: true?(@params["follow"]?, default: false),
+        encoding: @params["encoding"]?,
       )
 
       files, examined, skipped_paths = collect_matches(paths, options)
@@ -163,7 +177,7 @@ module Krikri
     private def walk_path(search_path : String, options : Options, files : Array(JSON::Any)) : Int32
       examined = 0
 
-      entries = list_entries(search_path, options.recurse, options.depth)
+      entries = list_entries(search_path, options)
       entries.each do |entry_path|
         examined += 1
         next if !options.hidden && hidden_path?(entry_path, search_path)
@@ -224,7 +238,7 @@ module Krikri
       return nil unless matches_file_type?(stat_hash, options.file_type)
       return nil unless matches_size?(stat_hash, options.size_filter)
       return nil unless matches_age?(stat_hash, options.age_filter, options.age_stamp, options.now)
-      return nil if options.file_type == "file" && !matches_contains?(entry_path, options.contains, options.read_whole_file)
+      return nil if options.file_type == "file" && !matches_contains?(entry_path, options.contains, options.read_whole_file, options.encoding)
       return nil if (mode = options.mode) && !PluginHelpers::FindModeFilter.matches?(stat_hash["mode"].as_s.to_i(8), mode, options.exact_mode)
 
       add_symlink_fields(stat_hash, entry_path) if stat_hash["islnk"].as_bool
@@ -236,34 +250,41 @@ module Krikri
     # Lists every path under search_path (not including search_path
     # itself) up to the given depth - direct children are depth 1,
     # matching real `find <path> -mindepth 1 -maxdepth N`'s own
-    # numbering, which this replaces. Symlinked directories are never
-    # descended into, matching `find`'s own default (-P, physical) walk -
-    # verified this is also real Ansible's own os.walk()-based behavior.
-    # Unreadable directories are skipped silently rather than failing the
-    # whole search, matching the previous shell implementation's `2>/dev/null`.
-    private def list_entries(search_path : String, recurse : Bool, depth : Int32?) : Array(String)
-      max_depth = if !recurse
+    # numbering, which this replaces. Symlinked directories are descended
+    # into only when follow: true, matching real Ansible's own
+    # os.walk(followlinks=...) - with follow: false (the default) the
+    # symlink itself is still listed/examined (os.walk puts it in `dirs`
+    # either way), just not walked into. Unreadable directories are
+    # skipped silently rather than failing the whole search, matching the
+    # previous shell implementation's `2>/dev/null`.
+    private def list_entries(search_path : String, options : Options) : Array(String)
+      max_depth = if !options.recurse
                     1
-                  elsif depth
+                  elsif depth = options.depth
                     depth
                   else
                     Int32::MAX
                   end
 
       entries = [] of String
-      walk(search_path, 1, max_depth, entries)
+      walk(search_path, 1, max_depth, options, entries)
       entries
     end
 
-    private def walk(dir : String, current_depth : Int32, max_depth : Int32, entries : Array(String)) : Nil
+    private def walk(dir : String, current_depth : Int32, max_depth : Int32, options : Options, entries : Array(String)) : Nil
       return if current_depth > max_depth
 
       Dir.each_child(dir) do |child|
         child_path = File.join(dir, child)
         entries << child_path
 
-        if File.directory?(child_path) && !File.symlink?(child_path)
-          walk(child_path, current_depth + 1, max_depth, entries)
+        # File.directory? follows symlinks, so the follow gate keeps
+        # symlinked directories listed-but-unwalked by default - real
+        # Ansible's file_type detection lstats every entry regardless of
+        # follow, so follow only widens the walk, never re-classifies a
+        # symlink as its target type.
+        if File.directory?(child_path) && (options.follow || !File.symlink?(child_path))
+          walk(child_path, current_depth + 1, max_depth, options, entries)
         end
       end
     rescue ex : File::Error
@@ -369,14 +390,14 @@ module Krikri
     # line - Python's re.match() semantics, which \A (not multiline ^)
     # replicates in Crystal's PCRE-based Regex; read_whole_file: true
     # searches anywhere in the whole file content (Python's re.search()).
-    # A read failure (permission denied, binary/invalid encoding, etc.)
+    # A read failure (permission denied, a regex that can't compile, etc.)
     # is treated as no match, same as real Ansible's own broad `except
     # Exception: pass` around this.
-    private def matches_contains?(path : String, contains : String?, read_whole_file : Bool) : Bool
+    private def matches_contains?(path : String, contains : String?, read_whole_file : Bool, encoding : String?) : Bool
       return true unless contains
 
       pattern = Regex.new(contains)
-      content = File.read(path)
+      content = read_content(path, encoding)
 
       if read_whole_file
         !!(content =~ pattern)
@@ -386,6 +407,42 @@ module Krikri
       end
     rescue ex : File::Error | Regex::Error
       false
+    end
+
+    # `contains:`'s own file reading. An explicit encoding: selects the
+    # text decoding (real Ansible 2.17+ opens the file with
+    # `open(..., encoding=encoding)`); undecodable byte sequences are
+    # skipped rather than failing the match - real Ansible raises on the
+    # decode error and abandons the whole path, but a single bad byte
+    # shouldn't drop every other match here. With no encoding given,
+    # content is read as raw bytes and matched latin-1-style (each byte
+    # maps to the same codepoint), so any byte sequence is searchable
+    # without a decode error. Encoding affects ONLY this path:
+    # get_checksum hashes raw bytes via digest_from_file regardless of
+    # encoding.
+    private def read_content(path : String, encoding : String?) : String
+      if encoding
+        File.open(path) do |file|
+          file.set_encoding(normalize_encoding(encoding), invalid: :skip)
+          file.gets_to_end
+        end
+      else
+        raw = File.read(path)
+        raw.valid_encoding? ? raw : raw.bytes.map(&.chr).join
+      end
+    end
+
+    # Accepts Python's codec alias spellings ("latin-1", "utf8", "us-ascii")
+    # as real Ansible's `open(encoding=...)` does - Crystal's iconv-based
+    # set_encoding only knows the canonical names ("ISO-8859-1", "UTF-8",
+    # "ASCII"), so the common lowercase aliases are mapped across.
+    private def normalize_encoding(name : String) : String
+      case name.downcase
+      when "latin-1", "latin1", "iso8859-1", "iso_8859-1" then "ISO-8859-1"
+      when "utf-8", "utf8"                                then "UTF-8"
+      when "us-ascii", "ascii"                            then "ASCII"
+      else                                                     name
+      end
     end
 
     private def add_symlink_fields(stat_hash : Hash(String, JSON::Any), path : String) : Nil

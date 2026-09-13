@@ -1,5 +1,6 @@
 require "../spec_helper"
 require "file_utils"
+require "digest"
 
 private TMP_DIR = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "find")
 
@@ -15,6 +16,17 @@ end
 
 private def paths_of(result : JSON::Any) : Array(String)
   result["files"].as_a.map(&.["path"].as_s).sort!
+end
+
+private def with_follow_fixture : String
+  target = File.join(TMP_DIR, "follow_target")
+  Dir.mkdir_p(target)
+  File.write(File.join(target, "t.txt"), "t")
+
+  link = File.join(TMP_DIR, "follow_link")
+  File.delete(link) if File.symlink?(link)
+  File.symlink(target, link)
+  link
 end
 
 describe "find plugin" do
@@ -266,5 +278,72 @@ describe "find plugin" do
     result = PluginSpecHelper.run("find", {"paths" => %(["#{TMP_DIR}"]), "patterns" => "*.txt"})
 
     paths_of(result).should eq([File.join(TMP_DIR, "a.txt")])
+  end
+
+  describe "follow:" do
+    it "does not descend into symlinked directories by default" do
+      link = with_follow_fixture
+
+      result = PluginSpecHelper.run("find", {"paths" => TMP_DIR, "patterns" => "*.txt", "recurse" => "true"})
+
+      paths_of(result).should_not contain(File.join(link, "t.txt"))
+    end
+
+    it "descends into symlinked directories when follow: true" do
+      link = with_follow_fixture
+
+      result = PluginSpecHelper.run("find", {"paths" => TMP_DIR, "patterns" => "*.txt", "recurse" => "true", "follow" => "true"})
+
+      paths_of(result).should contain(File.join(link, "t.txt"))
+    end
+
+    it "still classifies a symlink as link with follow: true (real Ansible lstats every entry regardless of follow)" do
+      link = with_follow_fixture
+
+      result = PluginSpecHelper.run("find", {"paths" => TMP_DIR, "patterns" => "follow_link", "file_type" => "link", "follow" => "true"})
+
+      paths_of(result).should eq([link])
+    end
+
+    it "does not reclassify a symlink-to-directory as directory even with follow: true" do
+      link = with_follow_fixture
+
+      result = PluginSpecHelper.run("find", {"paths" => TMP_DIR, "patterns" => "follow_link", "file_type" => "directory", "recurse" => "true", "follow" => "true"})
+
+      paths_of(result).should_not contain(link)
+    end
+  end
+
+  describe "encoding:" do
+    it "decodes content with the given encoding for a contains: match" do
+      # "café latin" encoded as latin-1: bytes 0xE9/0xEF, invalid as UTF-8.
+      enc_path = File.join(TMP_DIR, "latin1.enc")
+      File.write(enc_path, "caf\xE9 lat\xEFn")
+
+      result = PluginSpecHelper.run("find", {"paths" => TMP_DIR, "patterns" => "*.enc", "contains" => "café", "encoding" => "latin-1"})
+
+      paths_of(result).should eq([enc_path])
+    end
+
+    it "matches raw non-UTF-8 bytes when no encoding is given (latin-1-style byte comparison)" do
+      raw_path = File.join(TMP_DIR, "raw.bin")
+      File.write(raw_path, "raw \xFF\xFE bytes")
+
+      result = PluginSpecHelper.run("find", {"paths" => TMP_DIR, "patterns" => "raw.bin", "contains" => "raw"})
+
+      paths_of(result).should eq([raw_path])
+    end
+
+    it "does not affect get_checksum - real Ansible hashes raw bytes regardless of encoding" do
+      bin_path = File.join(TMP_DIR, "cksum.bin")
+      File.write(bin_path, "\xFF\xFE data")
+      expected = Digest::SHA1.hexdigest("\xFF\xFE data")
+
+      without_encoding = PluginSpecHelper.run("find", {"paths" => TMP_DIR, "patterns" => "cksum.bin", "get_checksum" => "true"})
+      with_encoding = PluginSpecHelper.run("find", {"paths" => TMP_DIR, "patterns" => "cksum.bin", "get_checksum" => "true", "encoding" => "latin-1"})
+
+      without_encoding["files"][0]["checksum"].as_s.should eq(expected)
+      with_encoding["files"][0]["checksum"].as_s.should eq(expected)
+    end
   end
 end
