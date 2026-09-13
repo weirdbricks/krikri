@@ -1,5 +1,6 @@
 require "json"
 require "./distribution_facts"
+require "./service_mgr_fact"
 
 # The two C bindings stay at TOP level, outside the module below, and
 # have to: nesting them makes `lib LibC` a brand-new lib rather than a
@@ -94,6 +95,29 @@ module Krikri
       output.to_s.strip
     rescue
       ""
+    end
+
+    # Real Ansible's ServiceMgrFactCollector's filesystem-dependent
+    # fallback chain lives here natively; its PID 1 comm handling (the
+    # proc_1_map and the "init"/shell-suffix discard) is in
+    # PluginHelpers::ServiceMgrFact, shared with this file's callers.
+
+    # Directories searched beyond $PATH for service-manager binaries -
+    # /sbin and /usr/sbin are routinely absent from a non-login shell's
+    # PATH, and that is where systemctl/initctl live on some distros.
+    FACT_BINARY_EXTRA_DIRS = ["/sbin", "/usr/sbin", "/bin", "/usr/bin"]
+
+    # Real Ansible's get_bin_path for the service_mgr collector's
+    # systemctl/initctl lookups. Returns the first executable match, nil
+    # when nothing is found.
+    private def find_fact_binary(name : String) : String?
+      paths = (ENV["PATH"]?.try(&.split(':')) || [] of String) + FACT_BINARY_EXTRA_DIRS
+      paths.each do |dir|
+        next if dir.empty?
+        candidate = File.join(dir, name)
+        return candidate if File.executable?(candidate)
+      end
+      nil
     end
 
     # The element union of the fact hash, aliased so the timed-family
@@ -511,20 +535,61 @@ module Krikri
       end.find { |contents| !contents.empty? }
       facts["ansible_machine_id"] = machine_id if machine_id
 
-      # service_mgr - which init system is PID 1. Real Ansible reports this
-      # separately from os_family, and modern roles gate systemd-only tasks on
-      # it (dev-sec os_hardening's ctrl-alt-del + coredump tasks all do).
-      # systemd is detectable by its /run/systemd/system marker (present when
-      # systemd is PID 1, absent under sysvinit/upstart/openrc even if the
-      # systemctl binary exists).
-      if Dir.exists?("/run/systemd/system")
-        facts["ansible_service_mgr"] = "systemd"
+      # service_mgr - which init system manages services. Mirrors real
+      # Ansible's ServiceMgrFactCollector chain, in its own order:
+      # PID 1's comm first ("init" and anything ending in "sh" - a
+      # container's shell - is untrusted and falls through to the
+      # Linux fallbacks, per real Ansible's own comment), then its
+      # proc_1_map for custom inits, then systemctl presence + the
+      # sd_booted canaries, upstart's initctl+/etc/init, /sbin/openrc,
+      # the OFFLINE systemd check (systemctl present + /sbin/init
+      # symlinked to systemd - what makes a container with the systemd
+      # package installed but not running report "systemd", which the
+      # service action plugin then dispatches to the systemd module),
+      # /etc/init.d for sysvinit, /etc/dinit.d for dinit, and finally
+      # the generic "service" fallback. Previously this only checked
+      # the canary dir and reported "sysvinit" for every container,
+      # diverging from real Ansible in exactly the environments where
+      # roles gate systemd-only tasks on the fact. Found via an ad-hoc
+      # CLI comparison sweep against real ansible, 2026-09-13.
+      proc_1 = begin
+        File.read("/proc/1/comm").strip
+      rescue
+        ""
+      end
+      service_mgr = PluginHelpers::ServiceMgrFact.from_proc1(proc_1) || ""
+      if service_mgr.empty?
+        systemctl = find_fact_binary("systemctl")
+        if systemctl
+          {"/run/systemd/system/", "/dev/.run/systemd/", "/dev/.systemd/"}.each do |canary|
+            if File.exists?(canary)
+              service_mgr = "systemd"
+              break
+            end
+          end
+        end
+        if service_mgr.empty? && find_fact_binary("initctl") && Dir.exists?("/etc/init")
+          service_mgr = "upstart"
+        elsif service_mgr.empty? && File.exists?("/sbin/openrc")
+          service_mgr = "openrc"
+        elsif service_mgr.empty? && systemctl && File.symlink?("/sbin/init") &&
+              File.basename(File.readlink("/sbin/init")) == "systemd"
+          service_mgr = "systemd"
+        elsif service_mgr.empty? && Dir.exists?("/etc/init.d")
+          service_mgr = "sysvinit"
+        elsif service_mgr.empty? && Dir.exists?("/etc/dinit.d")
+          service_mgr = "dinit"
+        end
+        service_mgr = "service" if service_mgr.empty?
+      end
+      facts["ansible_service_mgr"] = service_mgr
 
-        # ansible_systemd.version / .features - real Ansible parses these from
-        # `systemctl --version`'s two lines (version number on line 1, feature
-        # flags on line 2+). Roles gate systemd-feature-specific config on the
-        # version (dev-sec's ssh_hardening and konstruktoid's resolved.conf.j2
-        # both do `ansible_facts.systemd.version | int >= N`).
+      # ansible_systemd.version / .features - real Ansible parses these from
+      # `systemctl --version`'s two lines (version number on line 1, feature
+      # flags on line 2+). Roles gate systemd-feature-specific config on the
+      # version (dev-sec's ssh_hardening and konstruktoid's resolved.conf.j2
+      # both do `ansible_facts.systemd.version | int >= N`).
+      if service_mgr == "systemd" && Dir.exists?("/run/systemd/system")
         version_output = capture("systemctl", ["--version"])
         unless version_output.empty?
           lines = version_output.lines
@@ -537,12 +602,6 @@ module Krikri
             end
           end
         end
-      elsif Dir.exists?("/etc/openrc")
-        facts["ansible_service_mgr"] = "openrc"
-      elsif File.exists?("/sbin/upstart") || Dir.exists?("/etc/init")
-        facts["ansible_service_mgr"] = "upstart"
-      else
-        facts["ansible_service_mgr"] = "sysvinit"
       end
 
       # virtualization_type - whether we're inside a container/VM, which roles

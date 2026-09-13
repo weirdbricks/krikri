@@ -177,4 +177,32 @@ describe Krikri::PluginHelpers::UfwCommand do
       cmd.should eq("ufw allow to 10.0.0.1 port 22")
     end
   end
+
+  # Regression anchor for the 2026-09-13 ad-hoc CLI comparison sweep:
+  # the plugin used to read only the stdout of its pre/post
+  # `ufw status verbose` probes and ignore their exit codes, so in a
+  # container without CAP_NET_ADMIN (where even `ufw status verbose`
+  # exits non-zero with iptables' permission error) a rule task
+  # reported changed: true "Rules updated" where real Ansible failed.
+  # Real ufw.py's execute() fails with `msg=err or out` - stderr wins.
+  describe ".exec_failure_msg" do
+    it "prefers stderr - real Ansible's msg=err or out" do
+      Krikri::PluginHelpers::UfwCommand.exec_failure_msg(
+        "Rules updated\nRules updated (v6)\n",
+        "ERROR: problem running iptables: iptables v1.8.11 (nf_tables): " \
+        "Could not fetch rule set generation id: Permission denied (you must be root)\n"
+      ).should eq(
+        "ERROR: problem running iptables: iptables v1.8.11 (nf_tables): " \
+        "Could not fetch rule set generation id: Permission denied (you must be root)\n"
+      )
+    end
+
+    it "falls back to stdout when the failing command wrote nothing to stderr" do
+      Krikri::PluginHelpers::UfwCommand.exec_failure_msg("some stdout\n", "").should eq("some stdout\n")
+    end
+
+    it "returns an empty msg when the command produced no output at all" do
+      Krikri::PluginHelpers::UfwCommand.exec_failure_msg("", "").should eq("")
+    end
+  end
 end

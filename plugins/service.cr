@@ -2,6 +2,7 @@
 
 require "json"
 require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/service_mgr_fact"
 
 module Krikri
   # Service Plugin - Manage system services
@@ -93,6 +94,7 @@ module Krikri
     @rc_kill_links = 0
     @systemd_load_state = ""
     @systemd_active_state = ""
+    @probe_service_mgr = ""
 
     def initialize(config : JSON::Any)
       super(config)
@@ -235,6 +237,8 @@ module Krikri
           @tools[key.lchop("bin:")] = value unless value.empty?
         when "initscript"
           @svc_initscript = value unless value.empty?
+        when "service_mgr"
+          @probe_service_mgr = value unless value.empty?
         when "rc_start_links"
           @rc_start_links = value.to_i? || 0
         when "rc_kill_links"
@@ -249,7 +253,8 @@ module Krikri
       # plugin (which strips the param before the module ever sees it).
       # "auto" is the default and means detect; anything else pins the
       # manager, so a role that knows better than the probe still wins.
-      case @params["use"]?.try(&.downcase)
+      use_param = @params["use"]?.try(&.downcase)
+      case use_param
       when "systemd"
         return use_systemd(name)
       when "sysvinit", "service"
@@ -258,6 +263,30 @@ module Krikri
         return use_openrc
       when "upstart"
         return use_upstart
+      end
+
+      # Real Ansible's service ACTION plugin dispatches on the
+      # ansible_service_mgr fact: `systemd` runs the systemd module,
+      # every other value (including ones that name no module at all -
+      # a container whose PID 1 is, say, "sleep" becomes the fact value
+      # "sleep") falls back to the generic service module, whose own
+      # detection is the chain below. The fact collector's chain -
+      # reproduced in the probe and in FactsGatherer - has a branch
+      # this engine ignored for years: when PID 1 is unidentifiable
+      # (a shell, or "init"), it checks systemctl presence + canaries,
+      # then whether /sbin/init is a symlink to systemd
+      # (is_systemd_managed_offline) - so a container with systemd
+      # INSTALLED but not running reports "systemd". Real Ansible then
+      # runs the systemd module, whose systemctl calls fail on a host
+      # with no running init, and honestly reports "Service is in
+      # unknown state". This plugin used to skip the fact entirely and
+      # auto-detect via canaries only, landing on the SysV path and
+      # "starting" the service by driving its init script directly - a
+      # changed: true success where real Ansible failed. Found via an
+      # ad-hoc CLI comparison sweep against real ansible, 2026-09-13.
+      fact_mgr = @vars["ansible_service_mgr"]?.try(&.as_s?) || @probe_service_mgr
+      if PluginHelpers::ServiceMgrFact.runs_systemd_module?(use_param, fact_mgr)
+        return use_systemd(name)
       end
 
       if systemd && @tools["systemctl"]?
@@ -372,15 +401,48 @@ module Krikri
           if [ -x "$d/$b" ]; then found="$d/$b"; break; fi
         done
         printf 'bin:%s=%s\\n' "$b" "$found"
+        if [ "$b" = systemctl ]; then systemctl_path="$found"; fi
       done
       managed=no
-      if [ -n "$(command -v systemctl 2>/dev/null)" ] || [ -x /usr/bin/systemctl ] || [ -x /bin/systemctl ]; then
+      if [ -n "$systemctl_path" ]; then
         for canary in /run/systemd/system/ /dev/.run/systemd/ /dev/.systemd/; do
           if [ -e "$canary" ]; then managed=yes; break; fi
         done
         if [ "$managed" = no ] && [ "$(cat /proc/1/comm 2>/dev/null)" = systemd ]; then managed=yes; fi
       fi
       printf 'systemd_managed=%s\\n' "$managed"
+      # ansible_service_mgr fact chain - real Ansible's
+      # ServiceMgrFactCollector, in its own order. PID 1 first
+      # ("init" and anything ending in "sh" - a container's shell -
+      # is untrusted and falls through), then the proc_1_map, then
+      # the Linux fallbacks: live-systemd canaries, upstart, openrc,
+      # the offline systemd check (systemctl present + /sbin/init
+      # symlinked to systemd), sysvinit, dinit, generic "service".
+      svc_mgr=""
+      p1="$(cat /proc/1/comm 2>/dev/null)"
+      case "$p1" in ""|init|*sh) p1="";; esac
+      case "$p1" in
+        procd) p1="openwrt_init";;
+        runit-init) p1="runit";;
+        svscan) p1="svc";;
+        openrc-init) p1="openrc";;
+      esac
+      if [ -n "$p1" ]; then
+        svc_mgr="$p1"
+      else
+        if [ -n "$systemctl_path" ]; then
+          for canary in /run/systemd/system/ /dev/.run/systemd/ /dev/.systemd/; do
+            if [ -e "$canary" ]; then svc_mgr=systemd; break; fi
+          done
+        fi
+        if [ -z "$svc_mgr" ] && command -v initctl >/dev/null 2>&1 && [ -e /etc/init ]; then svc_mgr=upstart; fi
+        if [ -z "$svc_mgr" ] && [ -e /sbin/openrc ]; then svc_mgr=openrc; fi
+        if [ -z "$svc_mgr" ] && [ -n "$systemctl_path" ] && [ -L /sbin/init ] && [ "$(basename "$(readlink /sbin/init)" 2>/dev/null)" = systemd ]; then svc_mgr=systemd; fi
+        if [ -z "$svc_mgr" ] && [ -d /etc/init.d ]; then svc_mgr=sysvinit; fi
+        if [ -z "$svc_mgr" ] && [ -d /etc/dinit.d ]; then svc_mgr=dinit; fi
+        if [ -z "$svc_mgr" ]; then svc_mgr=service; fi
+      fi
+      printf 'service_mgr=%s\\n' "$svc_mgr"
       if [ -x /etc/init.d/#{quoted} ]; then printf 'initscript=/etc/init.d/%s\\n' #{quoted}; else printf 'initscript=\\n'; fi
       if [ -e /etc/init/#{quoted}.conf ]; then printf 'upstart_conf=yes\\n'; else printf 'upstart_conf=no\\n'; fi
       printf 'rc_start_links=%s\\n' "$(ls -d /etc/rc?.d/S??#{quoted} 2>/dev/null | wc -l)"

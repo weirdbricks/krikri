@@ -151,6 +151,21 @@ module Krikri
         !output.includes?("Skipping")
       end
 
+      # Real ufw.py's execute() fails with `module.fail_json(msg=err or
+      # out, commands=cmds)` - stderr wins, stdout is the fallback when
+      # the failing command wrote nothing to stderr. Every ufw
+      # invocation (pre/post status probes, the state/rule command
+      # itself) goes through that helper, so this is the failure
+      # message real Ansible shows whenever the ufw CLI exits non-zero
+      # - e.g. a container without CAP_NET_ADMIN, where even `ufw
+      # status verbose` dies with iptables' "Permission denied (you
+      # must be root)". This engine used to read only the probes'
+      # stdout and ignore their exit codes entirely, turning that exact
+      # situation into a false "Rules updated" success.
+      def self.exec_failure_msg(stdout : String, stderr : String) : String
+        stderr.empty? ? stdout : stderr
+      end
+
       # Resolves `insert:`/`insert_relative_to:` into the actual absolute
       # `ufw insert NUM` position, given `ufw status numbered`'s own
       # output. `zero` (the default) is a pure passthrough - the caller

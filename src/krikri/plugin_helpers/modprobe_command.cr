@@ -9,9 +9,30 @@ module Krikri
       # after the module name, matching `modprobe <name> <params>` -
       # verified against the real module's source: `command.extend([
       # self.name] + shlex.split(self.params))`, only ever called when
-      # the module isn't already loaded.
-      def self.load_command(name : String, params : String?) : String
-        params && !params.empty? ? "modprobe #{name} #{params}" : "modprobe #{name}"
+      # the module isn't already loaded. Real modprobe.py also resolves
+      # the binary once via get_bin_path and invokes THAT path
+      # (self.modprobe_bin), so the resolved path is passed in rather
+      # than a bare "modprobe" hoping for $PATH lookup.
+      def self.load_command(bin_path : String, name : String, params : String?) : String
+        params && !params.empty? ? "#{bin_path} #{name} #{params}" : "#{bin_path} #{name}"
+      end
+
+      # Parses the ModprobePlugin binary-resolution probe's output
+      # (`searched=`/`found=` lines): the resolved modprobe path (nil
+      # when the binary is missing - the caller must then fail with
+      # real Ansible's get_bin_path(required=True) message BEFORE any
+      # state check, not report "already unloaded" success) and the
+      # colon-joined list of directories actually searched, for that
+      # message's "in paths: ..." tail.
+      def self.parse_bin_probe(stdout : String) : NamedTuple(path: String?, searched_paths: String)
+        path = nil
+        searched = ""
+        stdout.each_line do |line|
+          key, _, value = line.strip.partition('=')
+          path = value.empty? ? nil : value if key == "found"
+          searched = value if key == "searched"
+        end
+        {path: path, searched_paths: searched}
       end
     end
   end
