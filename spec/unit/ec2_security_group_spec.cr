@@ -181,6 +181,38 @@ describe Krikri::PluginHelpers::Ec2SecurityGroup do
       rules[0].cidr_ips.should eq(["0.0.0.0/0"])
     end
 
+    it "expands a single-element ports list into from=to (regression: ports: [22] was silently ignored)" do
+      rules = Krikri::PluginHelpers::Ec2SecurityGroup.parse_rules(%([{"proto": "tcp", "ports": [22], "cidr_ip": "10.0.0.0/8"}]))
+      rules.size.should eq(1)
+      rules[0].proto.should eq("tcp")
+      rules[0].from_port.should eq("22")
+      rules[0].to_port.should eq("22")
+      rules[0].cidr_ips.should eq(["10.0.0.0/8"])
+    end
+
+    it "expands multiple discrete ports into one rule per port" do
+      rules = Krikri::PluginHelpers::Ec2SecurityGroup.parse_rules(%([{"proto": "tcp", "ports": [80, 443], "cidr_ip": "0.0.0.0/0"}]))
+      rules.map { |r| {r.from_port, r.to_port} }.should eq([{"80", "80"}, {"443", "443"}])
+    end
+
+    it "expands a range string into from/to and sorts reversed bounds" do
+      rules = Krikri::PluginHelpers::Ec2SecurityGroup.parse_rules(%([{"proto": "tcp", "ports": ["443-8443"], "cidr_ip": "0.0.0.0/0"}]))
+      rules.size.should eq(1)
+      rules[0].from_port.should eq("443")
+      rules[0].to_port.should eq("8443")
+
+      reversed = Krikri::PluginHelpers::Ec2SecurityGroup.parse_rules(%([{"proto": "tcp", "ports": ["8443-443"], "cidr_ip": "0.0.0.0/0"}]))
+      reversed[0].from_port.should eq("443")
+      reversed[0].to_port.should eq("8443")
+    end
+
+    it "prefers from_port/to_port over ports when both are given" do
+      rules = Krikri::PluginHelpers::Ec2SecurityGroup.parse_rules(%([{"proto": "tcp", "from_port": 1, "to_port": 2, "ports": [22]}]))
+      rules.size.should eq(1)
+      rules[0].from_port.should eq("1")
+      rules[0].to_port.should eq("2")
+    end
+
     it "is empty for missing or malformed input" do
       Krikri::PluginHelpers::Ec2SecurityGroup.parse_rules(nil).should be_empty
       Krikri::PluginHelpers::Ec2SecurityGroup.parse_rules("not json").should be_empty
