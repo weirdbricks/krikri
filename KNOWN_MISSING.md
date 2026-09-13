@@ -18,7 +18,7 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.1028`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.1029`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.31` (see `shard.yml`; 0.9.31 adds the six
 configurable Jinja delimiter strings).
 
@@ -153,6 +153,41 @@ commits), on top of the 7 immediately above re-verified clean the same
 way. The shortlist is at
 `testing/kata/round_new_authors/shortlist120.txt` if resuming it -
 against Atlantic.net now, Kata having been retired as a backend.
+
+---
+
+## `subversion` result shape: before/after pairs, no success msg (0.9.1029)
+
+Found via an ad-hoc CLI comparison sweep against real `ansible`
+(2026-09-13). Functional behavior already matched byte-for-byte on all
+probed cases (fresh checkout, pinned-revision checkout, idempotent
+update, `export=yes` - including krikri correctly reproducing a
+genuine real-ansible-core limitation where a second `export=yes`
+against an existing dest fails identically on both engines); the gaps
+were purely in the JSON result shape, verified live in a podman
+container against real ansible-core with a local multi-revision
+`file://` repo:
+
+- `after` was a bare revision-number string (`"2"`) instead of real
+  Ansible's two-element `["Revision: 2", "URL: ..."]` pair - real
+  `subversion.py`'s `get_revision()` returns a (revision, URL) tuple
+  of the full matched `svn info` lines, and `before` on an update
+  carries the same pair. Check mode on an existing working copy is the
+  one exception: real `needs_update()` reports bare `"Revision: N"`
+  strings there, which krikri now matches too (and compares parsed
+  revision numbers, so a check-mode pinned downgrade reports
+  `changed: false` like real Ansible).
+- A fresh checkout omitted the `before` key entirely; real Ansible
+  explicitly includes `"before": null` (its fresh-dest branch sets
+  `before = None` unconditionally). `export=yes` on the other hand
+  returns *only* `{"changed": true}` - no before/after at all - which
+  krikri now matches.
+- Every success path carried a krikri-only `msg` ("Checked out
+  repository" / "Exported repository" / etc.); real `subversion.py`
+  only ever passes msg to `fail_json`, confirmed live on all four
+  probed cases. The info-only no-dest path's `after` is also a single
+  matched `"Revision: N"` line (not a pair, not a bare number), with
+  real Ansible's `"Unable to get remote revision"` fallback.
 
 ---
 

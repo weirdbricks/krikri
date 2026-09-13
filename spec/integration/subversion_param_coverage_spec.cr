@@ -129,7 +129,7 @@ describe "subversion plugin - parameter coverage" do
 
     result["failed"]?.try(&.as_bool).should be_falsey
     result["changed"].as_bool.should be_falsey
-    result["after"].as_s.should eq("42")
+    result["after"].as_s.should eq("Revision: 42")
   ensure
     FileUtils.rm_rf(dir) if dir
   end
