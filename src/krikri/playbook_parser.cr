@@ -3642,19 +3642,44 @@ module Krikri
     end
 
     # Parse module parameters into a hash
-    # Parses an `ansible` ad-hoc command's `-a` string into module params,
-    # using the exact same rules as a playbook's own bare-string task arg
-    # (the yaml.as_s? branch of #parse_module_params below - see that
-    # branch's own comment for the full rationale): command:/shell:/
-    # script:/raw: get the whole string as a command line plus any
-    # trailing key=value specials (creates=/removes=/chdir=/executable=)
-    # stripped off the end; every other module gets real Ansible's
-    # free-form `key=value key2="quoted value"` inline syntax.
+    # Parses an `ansible` ad-hoc command's `-a` string into module params.
+    # Two paths, matching real Ansible's own ad-hoc arg handling: a
+    # string that looks like a JSON object (starts with `{` after
+    # stripping whitespace) and actually parses as one is used as the
+    # module params directly, with nested types kept; everything else
+    # uses the exact same rules as a playbook's own bare-string task
+    # arg (the yaml.as_s? branch of #parse_module_params below - see
+    # that branch's own comment for the full rationale): command:/
+    # shell:/script:/raw: get the whole string as a command line plus
+    # any trailing key=value specials (creates=/removes=/chdir=/
+    # executable=) stripped off the end; every other module gets real
+    # Ansible's free-form `key=value key2="quoted value"` inline syntax.
+    # (verified live against ansible-core 2.19.11: a `-a` string that
+    # starts with `{` but is not valid JSON, e.g. `{bad json`, is NOT
+    # specially errored - real Ansible's ModuleArgsParser falls through
+    # to the ordinary k=v split, so the string lands in `_raw_params`
+    # and whatever the module does with raw params (debug rejects it,
+    # command tries to execute it) is the only "error" there is; the
+    # fallback below reproduces exactly that). A parsed-but-not-object
+    # value (`[1,2]`, `"str"`) falls through the same way - real
+    # Ansible 2.19.11 also treated those as free-form raw params.
+    #
+    # The JSON-object path is why genuinely dict/list-shaped module
+    # args (`expect`'s `responses`, `command`'s `argv`, `xml`'s
+    # `namespaces`) have any ad-hoc-CLI path at all: the k=v encoding
+    # cannot express a dict value, and before this path the whole `-a`
+    # string was silently ignored (module ran on its own defaults).
     def self.parse_adhoc_params(module_name : String, raw_args : String) : Hash(String, String)
       params = Hash(String, String).new
       return params if raw_args.empty?
 
-      if RAW_COMMAND_MODULES.includes?(module_name)
+      stripped = raw_args.strip
+      json_object = stripped.starts_with?("{") ? (JSON.parse(stripped) rescue nil).try(&.as_h?) : nil
+      if json_object
+        json_object.each do |key, value|
+          params[key] = stringify_json_scalar(value)
+        end
+      elsif RAW_COMMAND_MODULES.includes?(module_name)
         cmd, special = extract_command_special_params(raw_args)
         params["cmd"] = cmd
         special.each { |key, value| params[key] = value }
@@ -3670,12 +3695,35 @@ module Krikri
       # branch produces for a playbook task, not a raw string. Without
       # this, `ansible host -m assert -a 'that="1 == 1"'` crashed outright
       # (Array(String).from_json on a bare "1 == 1" - "Expected
-      # BeginArray but was Int").
-      if module_name == "ansible.builtin.assert" && (that = params["that"]?)
+      # BeginArray but was Int"). The JSON-object path above already
+      # leaves a list-valued `that` as a JSON array, so only a
+      # string-valued one needs wrapping here.
+      if module_name == "ansible.builtin.assert" && (that = params["that"]?) && !that.starts_with?("[")
         params["that"] = [that].to_json
       end
 
       params
+    end
+
+    # Stringifies one value of a JSON-object `-a` string for the
+    # String-valued #parse_adhoc_params map, mirroring
+    # #stringify_value's scalar semantics (every plugin reads String
+    # values off task.params) while preserving nested structure the
+    # way plugins already decode it: dicts/lists are JSON-encoded -
+    # the same convention the playbook-side set_fact:/assert:/
+    # mysql_query handling uses, which each plugin's own
+    # JSON.parse/leading-bracket decoding expects (expect's
+    # `responses:`, command's `argv:`) - and JSON scalars keep their
+    # types through that encoding rather than being stringified.
+    private def self.stringify_json_scalar(value : JSON::Any) : String
+      case value.raw
+      when String   then value.as_s
+      when Int64    then value.as_i64.to_s
+      when Float64  then value.as_f.to_s
+      when Bool     then value.as_bool.to_s
+      when Nil      then ""
+      else               value.to_json
+      end
     end
 
     private def self.parse_module_params(yaml : YAML::Any, module_name : String) : Hash(String, String)

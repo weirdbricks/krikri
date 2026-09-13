@@ -232,4 +232,47 @@ describe "krikri ad-hoc CLI" do
       output.should_not contain("\e[0;33m")
     end
   end
+
+  # JSON-object `-a` args: real Ansible's ad-hoc arg parsing accepts a
+  # single JSON object string as the module params (verified live
+  # against ansible-core 2.19.11, same sweep date) - before the
+  # JSON-object path in PlaybookParser.parse_adhoc_params existed, the
+  # whole string was silently ignored and the module ran on its own
+  # defaults (e.g. debug printed "Hello world!" instead of the given
+  # msg). Malformed JSON-looking strings fall through to the ordinary
+  # k=v split, exactly as real Ansible does (live-checked: `{bad json`
+  # became `_raw_params`, which command then tried to execute and
+  # failed with rc=2).
+  describe "JSON-object -a args" do
+    it "parses a JSON object as the module params" do
+      status, output = run_adhoc(["localhost", "-i", INVENTORY, "-c", "local", "-m", "debug", "-a", %({"msg":"hi"})])
+
+      status.success?.should be_true
+      output.should contain(%("msg": "hi"))
+    end
+
+    it "keeps nested dict/list types through a dict-shaped module arg" do
+      status, output = run_adhoc(["localhost", "-i", INVENTORY, "-c", "local", "-m", "command",
+                                  "-a", %({"argv":["echo","jsonargvmarker"]})])
+
+      status.success?.should be_true
+      output.should contain("jsonargvmarker")
+    end
+
+    it "still parses plain k=v args unchanged" do
+      status, output = run_adhoc(["localhost", "-i", INVENTORY, "-c", "local", "-m", "debug",
+                                  "-a", %(msg="kv marker")])
+
+      status.success?.should be_true
+      output.should contain("kv marker")
+    end
+
+    it "falls back to k=v parsing for malformed JSON-looking args, like real Ansible" do
+      status, output = run_adhoc(["localhost", "-i", INVENTORY, "-c", "local", "-m", "command", "-a", "{bad json"])
+
+      status.success?.should be_false
+      output.should contain("FAILED")
+      output.should_not contain("Hello world!")
+    end
+  end
 end
