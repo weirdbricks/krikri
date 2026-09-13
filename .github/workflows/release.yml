@@ -71,7 +71,7 @@ jobs:
       - name: Build release binaries (Alpine/musl, static)
         run: |
           PKG="krikri-${GITHUB_REF_NAME}-linux-${{ matrix.arch }}"
-          docker run --rm -v "$PWD:/repo" -w /repo crystallang/crystal:1.20.3-alpine sh -c "
+          docker run --rm -v "$PWD:/repo" -w /repo crystallang/crystal:1.21.0-alpine sh -c "
             set -e
             apk add --no-cache \
               bash git grep file binutils \

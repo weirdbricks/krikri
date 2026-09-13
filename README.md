@@ -152,7 +152,7 @@ Covers macOS (arm64/x86_64) and Linux (arm64/x86_64) - no Crystal
 toolchain needed. See **Build & Run** below to build from source instead.
 
 ### Prerequisites
-- Crystal (tested with 1.20.x - see `shard.yml` for the declared minimum)
+- Crystal (tested with 1.21.x - see `shard.yml` for the declared minimum)
   ([install guide](https://crystal-lang.org/install/))
 - The `ssh` CLI on `PATH` for remote targets (SSH connections use native
   `ssh`/`ControlMaster` under the hood, not a bundled library)
