@@ -361,7 +361,7 @@ describe "lineinfile plugin - parameter coverage (firstmatch/search_string/valid
         "validate" => "grep -q '^after$' %s",
       })
 
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
       result["changed"].as_bool.should be_true
       File.read(path).should eq("before\nafter\n")
     ensure
@@ -401,7 +401,7 @@ describe "lineinfile plugin - parameter coverage (firstmatch/search_string/valid
         "validate" => "/bin/false %s",
       })
 
-      result["failed"].as_bool.should be_falsey
+      result["failed"]?.try(&.as_bool).should be_falsey
       result["changed"].as_bool.should be_false
     ensure
       File.delete(path) if path && File.exists?(path)
@@ -456,7 +456,7 @@ describe "lineinfile plugin - parameter coverage (firstmatch/search_string/valid
 
       result = PluginSpecHelper.run("lineinfile", {"path" => link, "line" => "via symlink"})
 
-      result["failed"].as_bool.should be_falsey
+      result["failed"]?.try(&.as_bool).should be_falsey
       File.symlink?(link).should be_true
       File.read(target).should eq("target content\nvia symlink\n")
     ensure
@@ -474,7 +474,7 @@ describe "lineinfile plugin - parameter coverage (firstmatch/search_string/valid
         "unsafe_writes" => "true",
       })
 
-      result["failed"].as_bool.should be_falsey
+      result["failed"]?.try(&.as_bool).should be_falsey
       result["changed"].as_bool.should be_true
       File.read(path).should eq("a\nb\n")
     ensure
@@ -501,7 +501,7 @@ describe "lineinfile plugin - parameter coverage (firstmatch/search_string/valid
         "selevel" => "s0",
       })
 
-      result["failed"].as_bool.should be_falsey
+      result["failed"]?.try(&.as_bool).should be_falsey
       result["changed"].as_bool.should be_true
       File.read(path).should eq("before\nafter\n")
     ensure
@@ -519,11 +519,11 @@ describe "lineinfile plugin - parameter coverage (firstmatch/search_string/valid
       File.write(path, "x\n")
 
       result = PluginSpecHelper.run("lineinfile", {"path" => path, "line" => "x", "attributes" => "-i"})
-      result["failed"].as_bool.should be_falsey
+      result["failed"]?.try(&.as_bool).should be_falsey
       result["changed"].as_bool.should be_true
 
       warm = PluginSpecHelper.run("lineinfile", {"path" => path, "line" => "x", "attributes" => "-i"})
-      warm["failed"].as_bool.should be_falsey
+      warm["failed"]?.try(&.as_bool).should be_falsey
       warm["changed"].as_bool.should be_true
     ensure
       File.delete(path) if path && File.exists?(path)

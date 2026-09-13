@@ -87,8 +87,15 @@ module Krikri
     def self.plugin_result_json(changed : Bool, failed : Bool, msg : String, extra : Hash(String, JSON::Any) = Hash(String, JSON::Any).new) : JSON::Any
       h = Hash(String, JSON::Any).new
       h["changed"] = JSON::Any.new(changed)
+      # Unlike a module's own wire result (PluginResult#to_json), these
+      # controller-computed results are already in real Ansible's
+      # post-normalization shape - the executor's failed/changed-if-absent
+      # pass has no second look at them - so failed/changed are carried
+      # unconditionally, exactly like a registered var sees. msg follows
+      # the module rule: only present when the action actually passed one
+      # (real set_fact/add_host results carry no msg at all).
       h["failed"] = JSON::Any.new(failed)
-      h["msg"] = JSON::Any.new(msg)
+      h["msg"] = JSON::Any.new(msg) unless msg.empty?
       extra.each { |k, v| h[k] = v }
       JSON::Any.new(h)
     end

@@ -32,7 +32,7 @@ module Krikri
       PluginResult.new(
         changed: false,
         failed: false,
-        msg: "ok",
+        msg: "",
         ansible_facts: JSON::Any.new(facts)
       )
     end

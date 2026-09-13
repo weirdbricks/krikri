@@ -123,7 +123,7 @@ describe "sysctl plugin" do
       "reload"       => "false",
     })
 
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
   end
 
   it "applies a space-separated value via sysctl_set without splitting it into two shell words" do
@@ -148,7 +148,7 @@ describe "sysctl plugin" do
       "sysctl_file" => conf, "sysctl_set" => "true", "reload" => "false",
     })
 
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
   end
 
   it "fails with a clear message when value is missing for state: present" do

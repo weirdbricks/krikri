@@ -59,7 +59,7 @@ describe "deb822_repository plugin" do
       })
 
       result["changed"].as_bool.should be_true
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
     end
 
     it "renders with a key fingerprint on one line (check mode)" do
@@ -72,7 +72,7 @@ describe "deb822_repository plugin" do
       })
 
       result["changed"].as_bool.should be_true
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
     end
 
     it "handles an empty signed_by gracefully" do
@@ -84,7 +84,7 @@ describe "deb822_repository plugin" do
         "check_mode" => "true",
       })
 
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
     end
   end
 
@@ -97,6 +97,6 @@ describe "deb822_repository plugin" do
     })
 
     result["changed"].as_bool.should be_true
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
   end
 end

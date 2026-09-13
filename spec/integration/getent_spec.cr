@@ -9,7 +9,7 @@ require "../spec_helper"
 describe "getent plugin" do
   it "returns getent_passwd keyed by username with field lists" do
     result = PluginSpecHelper.run("getent", {"database" => "passwd"})
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     result["changed"].as_bool.should be_false
 
     facts = result["ansible_facts"]
@@ -43,7 +43,7 @@ describe "getent plugin" do
     # find an integer index - and the check behaved as if the user
     # never existed, regardless of whether it actually did.
     result = PluginSpecHelper.run("getent", {"database" => "passwd", "key" => "root"})
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     entry = result["ansible_facts"]["getent_passwd"].as_h["root"].as_a.map(&.as_s)
     entry[1].to_i.should eq(0)
   end
@@ -70,7 +70,7 @@ describe "getent plugin" do
     # empty array here made that when: always evaluate false and the
     # user-creation task silently skip every single run.
     result = PluginSpecHelper.run("getent", {"database" => "passwd", "key" => "definitely-not-a-real-user-xyz", "fail_key" => "false"})
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     result["ansible_facts"]["getent_passwd"].as_h["definitely-not-a-real-user-xyz"].raw.should be_nil
   end
 
@@ -86,7 +86,7 @@ describe "getent plugin" do
     # field list. Keys must be the first whitespace field (the IP), and
     # at least one entry must mention localhost.
     result = PluginSpecHelper.run("getent", {"database" => "hosts"})
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     hosts = result["ansible_facts"]["getent_hosts"].as_h
     hosts.size.should be > 0
     hosts.keys.each do |ip|
@@ -111,7 +111,7 @@ describe "getent plugin" do
     # ansible-playbook 2.19.4 (`getent_services["http"] == ["80/tcp",
     # "www"]` single, duplicated names -> [[...], [...]]).
     result = PluginSpecHelper.run("getent", {"database" => "services"})
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     services = result["ansible_facts"]["getent_services"].as_h
     services.size.should be > 0
 
@@ -134,7 +134,7 @@ describe "getent plugin" do
     # database). Passwd with an explicit ':' must match its own default
     # shape: root -> 6 colon fields.
     result = PluginSpecHelper.run("getent", {"database" => "passwd", "split" => ":"})
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     root = result["ansible_facts"]["getent_passwd"].as_h["root"].as_a.map(&.as_s)
     root.size.should eq(6)
   end
@@ -146,7 +146,7 @@ describe "getent plugin" do
     # ansible-playbook 2.19.4). The tcp+udp list-of-lists merge happens
     # only on enumeration, never on a keyed lookup.
     result = PluginSpecHelper.run("getent", {"database" => "services", "key" => "domain"})
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     domain = result["ansible_facts"]["getent_services"].as_h["domain"].as_a.map(&.as_s)
     domain.should eq(["53/tcp"])
   end
@@ -160,7 +160,7 @@ describe "getent plugin" do
     # non-local backend (ldap, sss, ...) is a documented deliberate limit
     # (see KNOWN_MISSING.md and the plugin's own comment), not a failure.
     result = PluginSpecHelper.run("getent", {"database" => "passwd", "key" => "root", "service" => "files"})
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     root = result["ansible_facts"]["getent_passwd"].as_h["root"].as_a.map(&.as_s)
     root[1].to_i.should eq(0)
   end
@@ -171,7 +171,7 @@ describe "getent plugin" do
     # OUTPUT's first field, so getent_passwd["root"] - not ["0"]. The old
     # literal-first-field lookup failed this outright.
     result = PluginSpecHelper.run("getent", {"database" => "passwd", "key" => "0"})
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     entry = result["ansible_facts"]["getent_passwd"].as_h["root"].as_a.map(&.as_s)
     entry[1].to_i.should eq(0)
   end
@@ -183,7 +183,7 @@ describe "getent plugin" do
     # getent_hosts["localhost"]. The old literal-first-field lookup
     # failed a plain `database: hosts, key: localhost` task outright.
     result = PluginSpecHelper.run("getent", {"database" => "hosts", "key" => "localhost"})
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     hosts = result["ansible_facts"]["getent_hosts"].as_h
     hosts.size.should eq(1)
     hosts.keys.first.should_not contain(" ")

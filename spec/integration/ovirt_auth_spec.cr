@@ -60,7 +60,7 @@ describe "ovirt_auth plugin" do
       "token" => "preexisting-token",
     })
 
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     facts = result["ansible_facts"]["ovirt_auth"]
     facts["token"].as_s.should eq("preexisting-token")
     facts["url"].as_s.should eq("https://engine.example.com/ovirt-engine/api")

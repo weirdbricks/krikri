@@ -29,7 +29,7 @@ describe "copy plugin - parameter coverage (checksum/attributes/SELinux/follow/l
       })
 
       result["changed"].as_bool.should be_false
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
       File.read(dest).should eq("on disk\n")
     ensure
       File.delete(dest) if dest && File.exists?(dest)
@@ -46,7 +46,7 @@ describe "copy plugin - parameter coverage (checksum/attributes/SELinux/follow/l
       })
 
       result["changed"].as_bool.should be_true
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
       File.read(dest).should eq(body)
     ensure
       File.delete(dest) if dest && File.exists?(dest)
@@ -89,7 +89,7 @@ describe "copy plugin - parameter coverage (checksum/attributes/SELinux/follow/l
 
       result = PluginSpecHelper.run("copy", {"content" => "x\n", "dest" => dest, "attributes" => "-i"})
       result["changed"].as_bool.should be_true
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
 
       warm = PluginSpecHelper.run("copy", {"content" => "x\n", "dest" => dest, "attributes" => "-i"})
       warm["changed"].as_bool.should be_true
@@ -135,7 +135,7 @@ describe "copy plugin - parameter coverage (checksum/attributes/SELinux/follow/l
         "setype" => "etc_t", "selevel" => "s0",
       })
 
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
       result["changed"].as_bool.should be_true
       File.read(dest).should eq("x\n")
     ensure
@@ -156,7 +156,7 @@ describe "copy plugin - parameter coverage (checksum/attributes/SELinux/follow/l
       result = PluginSpecHelper.run("copy", {"content" => "via follow\n", "dest" => link, "follow" => "true"})
 
       result["changed"].as_bool.should be_true
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
       File.symlink?(link).should be_true
       File.read(target).should eq("via follow\n")
     ensure
@@ -243,7 +243,7 @@ describe "copy plugin - parameter coverage (checksum/attributes/SELinux/follow/l
       result = PluginSpecHelper.run("copy", {"src" => src, "dest" => dest, "remote_src" => "true"})
 
       result["changed"].as_bool.should be_true
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
       File.read(dest).should eq("remote body\n")
     ensure
       File.delete(src) if src && File.exists?(src)
@@ -319,7 +319,7 @@ describe "copy plugin - parameter coverage (checksum/attributes/SELinux/follow/l
 
       result = PluginSpecHelper.run("copy", {"content" => "x\n", "dest" => dest, "unsafe_writes" => "true"})
 
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
       result["changed"].as_bool.should be_true
       File.read(dest).should eq("x\n")
     ensure

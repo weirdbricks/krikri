@@ -29,7 +29,7 @@ describe "systemd plugin" do
     # has no notion of daemon-reload "changedness" and always reports
     # `ok:`, in check mode and for real.
     result = PluginSpecHelper.run("systemd", {"daemon_reload" => "true", "check_mode" => "true"})
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     result["changed"].as_bool.should be_false
   end
 
@@ -42,7 +42,7 @@ describe "systemd plugin" do
     # ansible-playbook performs (same "no changed signal" semantics as
     # daemon_reload above).
     result = PluginSpecHelper.run("systemd", {"daemon_reexec" => "true", "check_mode" => "true"})
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     result["changed"].as_bool.should be_false
   end
 
@@ -54,7 +54,7 @@ describe "systemd plugin" do
     })
     # This is a unit that almost certainly does not exist (is-active fails),
     # so check mode predicts a change — and never actually runs systemctl.
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     result["changed"].as_bool.should be_true
   end
 
@@ -79,7 +79,7 @@ describe "systemd plugin" do
       "scope"      => "user",
       "check_mode" => "true",
     })
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     result["changed"].as_bool.should be_true
   end
 
@@ -101,7 +101,7 @@ describe "systemd plugin" do
       "state"      => "reloaded",
       "check_mode" => "true",
     })
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     result["changed"].as_bool.should be_true
     result["msg"].to_s.should contain("start")
     result["msg"].to_s.should_not contain("reload")

@@ -29,7 +29,7 @@ describe "file plugin" do
       result = PluginSpecHelper.run("file", {"path" => path, "state" => "directory", "mode" => "0750"})
 
       result["changed"].as_bool.should be_true
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
       Dir.exists?(path).should be_true
       (File.info(path, follow_symlinks: false).permissions.value & 0o777).should eq(0o750)
     end
@@ -81,7 +81,7 @@ describe "file plugin" do
         result = PluginSpecHelper.run("file", {"path" => "~/tilde_touched.txt", "state" => "touch"})
 
         result["changed"].as_bool.should be_true
-        result["failed"].as_bool.should be_false
+        result["failed"]?.try(&.as_bool).should be_falsey
         File.exists?(File.join(home, "tilde_touched.txt")).should be_true
       ensure
         FileUtils.rm_rf(home)
@@ -108,7 +108,7 @@ describe "file plugin" do
 
       result = PluginSpecHelper.run("file", {"path" => path, "state" => "file", "mode" => "0700"})
 
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
       result["changed"].as_bool.should be_true
       (File.info(path, follow_symlinks: false).permissions.value & 0o777).should eq(0o700)
     end
@@ -123,7 +123,7 @@ describe "file plugin" do
         own_gid = File.info(path, follow_symlinks: false).group_id.to_s
         result = PluginSpecHelper.run("file", {"path" => path, "state" => "file", "group" => own_gid})
 
-        result["failed"].as_bool.should be_false
+        result["failed"]?.try(&.as_bool).should be_falsey
       ensure
         server.close
         File.delete(path) if File.exists?(path)
@@ -150,7 +150,7 @@ describe "file plugin" do
 
       result = PluginSpecHelper.run("file", {"path" => path, "state" => "file", "mode" => "u+x"})
 
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
       (File.info(path, follow_symlinks: false).permissions.value & 0o100).should eq(0o100)
     end
 
@@ -175,7 +175,7 @@ describe "file plugin" do
       path = tmp_path("missing/recurse-default-dir")
       result = PluginSpecHelper.run("file", {"path" => path, "mode" => "0750", "recurse" => "yes"})
 
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
       result["changed"].as_bool.should be_true
       Dir.exists?(path).should be_true
       result["state"].as_s.should eq("directory")
@@ -194,7 +194,7 @@ describe "file plugin" do
 
       result = PluginSpecHelper.run("file", {"path" => path, "mode" => "0600"})
 
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
       (File.info(path, follow_symlinks: false).permissions.value & 0o777).should eq(0o600)
     end
 
@@ -229,7 +229,7 @@ describe "file plugin" do
 
       result = PluginSpecHelper.run("file", {"path" => path, "mode" => "0750", "recurse" => "yes"})
 
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
       result["changed"].as_bool.should be_true
       result["state"].as_s.should eq("directory")
     end
@@ -254,7 +254,7 @@ describe "file plugin" do
 
       result = PluginSpecHelper.run("file", {"path" => path, "mode" => "0755", "recurse" => "yes"})
 
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
       result["changed"].as_bool.should be_true
       (File.info(nested).permissions.value & 0o777).should eq(0o755)
     end
@@ -352,7 +352,7 @@ describe "file plugin" do
     it "reports changed: false when already absent" do
       result = PluginSpecHelper.run("file", {"path" => tmp_path("never-existed"), "state" => "absent"})
       result["changed"].as_bool.should be_false
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
     end
   end
 
@@ -382,7 +382,7 @@ describe "file plugin" do
       my_gid = `id -g`.strip
 
       result = PluginSpecHelper.run("file", {"path" => path, "state" => "file", "owner" => my_uid, "group" => my_gid})
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
       result["changed"].as_bool.should be_false
     end
 
@@ -472,7 +472,7 @@ describe "file plugin" do
 
       result = PluginSpecHelper.run("file", {"path" => path, "attr" => "-i"})
       result["changed"].as_bool.should be_true
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
 
       # Warm rerun - still changed, this task never converges in real
       # Ansible either.
@@ -486,7 +486,7 @@ describe "file plugin" do
 
       result = PluginSpecHelper.run("file", {"path" => path, "attr" => "-i", "check_mode" => "true"})
       result["changed"].as_bool.should be_true
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
     end
 
     it "reports changed when the requested flags differ from the current lsattr flags" do
@@ -499,7 +499,7 @@ describe "file plugin" do
 
       result = PluginSpecHelper.run("file", {"path" => path, "attr" => "i", "check_mode" => "true"})
       result["changed"].as_bool.should be_true
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
     end
 
     it "stays idempotent for tasks without attr:" do
@@ -525,7 +525,7 @@ describe "file plugin" do
         "access_time"       => "202401011200.00",
       })
 
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
       File.info(path).modification_time.should eq(Time.local(2024, 1, 1, 12, 0, 0))
       file_atime(path).should eq(Time.local(2024, 1, 1, 12, 0, 0))
     end
@@ -543,7 +543,7 @@ describe "file plugin" do
         "access_time_format" => "%Y-%m-%d %H:%M",
       })
 
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
       file_atime(path).should eq(Time.local(2024, 1, 1, 12, 0, 0))
     end
 
@@ -571,7 +571,7 @@ describe "file plugin" do
         "modification_time_format" => "%y-%m-%d %I %M %p",
       })
 
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
       # Python strptime's own %y mapping: 00-68 -> 20xx
       File.info(path).modification_time.should eq(Time.local(2068, 1, 1, 23, 30, 0))
     end
@@ -597,7 +597,7 @@ describe "file plugin" do
         "selevel" => "s0",
       })
 
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
       result["changed"].as_bool.should be_false
       result.as_h.has_key?("secontext").should be_false
       File.exists?(path).should be_true
@@ -614,7 +614,7 @@ describe "file plugin" do
         "setype" => "httpd_sys_content_t",
       })
 
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
       result["changed"].as_bool.should be_true
       (File.info(path, follow_symlinks: false).permissions.value & 0o777).should eq(0o600)
     end
@@ -634,7 +634,7 @@ describe "file plugin" do
       path = tmp_path("unsafe_writes.txt")
       result = PluginSpecHelper.run("file", {"path" => path, "state" => "touch", "unsafe_writes" => "true"})
 
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
       result["changed"].as_bool.should be_true
       File.exists?(path).should be_true
     end
@@ -644,7 +644,7 @@ describe "file plugin" do
       PluginSpecHelper.run("file", {"path" => path, "state" => "touch", "unsafe_writes" => "true"})
       result = PluginSpecHelper.run("file", {"path" => path, "unsafe_writes" => "true"})
 
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
       result["changed"].as_bool.should be_false
     end
   end

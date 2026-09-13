@@ -24,7 +24,7 @@ describe "x509_certificate_info plugin" do
 
     result = PluginSpecHelper.run("x509_certificate_info", {"path" => path})
 
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     result["version"].as_i.should eq(3)
     result["subject"].as_h["commonName"].as_s.should eq("www.example.com")
     result["subject"].as_h["organizationName"].as_s.should eq("Test Org")

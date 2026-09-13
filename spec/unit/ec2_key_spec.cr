@@ -152,7 +152,7 @@ describe Krikri::PluginHelpers::Ec2Key do
       end)
 
       result["changed"].should eq(true)
-      result["failed"].should eq(false)
+      result["failed"]?.should be_falsey
       result["private_key"].should eq("RSA PRIVATE KEY")
       result["fingerprint"].should eq("de:ad:be:ef")
       result["name"].should eq("deploy")

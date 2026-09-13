@@ -99,7 +99,7 @@ describe Krikri::FactsGatherer do
 
     it "returns only the meta facts for !all,!min" do
       result = JSON.parse(Krikri::FactsGatherer.run(config_with(%({"gather_subset": ["!all", "!min"]}))))
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
       facts = result["ansible_facts"].as_h
       facts.keys.sort!.should eq(["gather_subset", "module_setup"])
       facts["gather_subset"].as_a.map(&.as_s).should eq(["!all", "!min"])
@@ -161,12 +161,12 @@ describe Krikri::FactsGatherer do
     describe "gather_timeout parsing" do
       it "accepts a JSON number" do
         result = JSON.parse(Krikri::FactsGatherer.run(config_with(%({"gather_timeout": 3, "gather_subset": "min"}))))
-        result["failed"].as_bool.should be_false
+        result["failed"]?.try(&.as_bool).should be_falsey
       end
 
       it "accepts a numeric string" do
         result = JSON.parse(Krikri::FactsGatherer.run(config_with(%({"gather_timeout": "3", "gather_subset": "min"}))))
-        result["failed"].as_bool.should be_false
+        result["failed"]?.try(&.as_bool).should be_falsey
       end
 
       it "fails with real check_type_int's message shape on a non-int" do

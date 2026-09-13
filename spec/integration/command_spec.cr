@@ -228,7 +228,7 @@ describe "command plugin" do
   it "accepts argv: as an alternative to cmd:, with no shell splitting on its elements" do
     result = PluginSpecHelper.run("command", {"argv" => ["echo", "hello world with spaces"].to_json})
 
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     result["stdout"].as_s.should eq("hello world with spaces")
   end
 
@@ -249,7 +249,7 @@ describe "command plugin" do
   it "accepts executable:, ignores it, and emits real Ansible's exact warning" do
     result = PluginSpecHelper.run("command", {"cmd" => "echo hi", "executable" => "/bin/bash"})
 
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     result["stdout"].as_s.should eq("hi")
     warnings = result["warnings"].as_a.map(&.as_s)
     warnings.should eq(["As of Ansible 2.4, the parameter 'executable' is no longer supported with the 'command' module. Not using '/bin/bash'."])

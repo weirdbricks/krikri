@@ -48,7 +48,13 @@ module Krikri
                        msg.to_s
                      end
 
-      ActionResult.final(result_json(changed: false, failed: false, msg: debug_output))
+      # Real debug tags its success result _ansible_verbose_always (the
+      # key that makes the stdout callbacks dump its JSON at any
+      # verbosity, and what flips oneline/tree's indent to 4) - the
+      # executor strips it before register:, and ResultDisplay strips it
+      # from the displayed dump, so only oneline/tree's indent behavior
+      # ever sees it.
+      ActionResult.final(result_json(false, false, debug_output, {"_ansible_verbose_always" => JSON::Any.new(true)}))
     end
 
     private def format_array(value : JSON::Any) : String

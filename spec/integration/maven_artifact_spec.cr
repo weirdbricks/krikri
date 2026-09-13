@@ -113,7 +113,7 @@ describe "maven_artifact plugin" do
         "repository_url" => "file://#{repo}",
       })
 
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
       result["changed"].as_bool.should be_true
       File.read(dest).should eq(content)
 

@@ -19,7 +19,7 @@ describe "slurp plugin" do
 
     result = PluginSpecHelper.run("slurp", {"src" => path})
 
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     result["encoding"].as_s.should eq("base64")
     Base64.decode_string(result["content"].as_s).should eq("hello slurp")
     result["source"].as_s.should eq(path)
@@ -41,7 +41,7 @@ describe "slurp plugin" do
 
     result = PluginSpecHelper.run("slurp", {"path" => path})
 
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     Base64.decode_string(result["content"].as_s).should eq("aliased")
   end
 

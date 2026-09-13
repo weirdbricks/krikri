@@ -72,7 +72,7 @@ describe "dnf plugin - parameter coverage (CLI-invocation shape)" do
   it "builds the documented baseline when none of the new params are set" do
     with_recording_pkg_managers do |log|
       result = PluginSpecHelper.run("dnf", {"name" => "fake-pkg", "state" => "present"})
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
       recorded_install_command(log).should eq("install #{BASELINE_OPTIONS} fake-pkg")
     end
   end
@@ -86,7 +86,7 @@ describe "dnf plugin - parameter coverage (CLI-invocation shape)" do
         "state"        => "present",
         "allowerasing" => "true",
       })
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
       recorded_install_command(log).should eq("install #{BASELINE_OPTIONS} --allowerasing fake-pkg")
     end
   end
@@ -103,7 +103,7 @@ describe "dnf plugin - parameter coverage (CLI-invocation shape)" do
         "state" => "present",
         "best"  => "false",
       })
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
       recorded_install_command(log).should eq("install -y --setopt=localpkg_gpgcheck=1 --nobest fake-pkg")
     end
   end
@@ -115,7 +115,7 @@ describe "dnf plugin - parameter coverage (CLI-invocation shape)" do
         "state" => "present",
         "best"  => "true",
       })
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
       recorded_install_command(log).should eq("install #{BASELINE_OPTIONS} fake-pkg")
     end
   end
@@ -127,7 +127,7 @@ describe "dnf plugin - parameter coverage (CLI-invocation shape)" do
         "state"  => "present",
         "nobest" => "true",
       })
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
       recorded_install_command(log).should eq("install -y --setopt=localpkg_gpgcheck=1 --nobest fake-pkg")
     end
   end
@@ -139,7 +139,7 @@ describe "dnf plugin - parameter coverage (CLI-invocation shape)" do
         "state"  => "present",
         "nobest" => "false",
       })
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
       recorded_install_command(log).should eq("install #{BASELINE_OPTIONS} fake-pkg")
     end
   end
@@ -152,7 +152,7 @@ describe "dnf plugin - parameter coverage (CLI-invocation shape)" do
         "state"     => "present",
         "cacheonly" => "true",
       })
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
       recorded_install_command(log).should eq("install #{BASELINE_OPTIONS} --cacheonly fake-pkg")
     end
   end
@@ -166,7 +166,7 @@ describe "dnf plugin - parameter coverage (CLI-invocation shape)" do
         "state"     => "present",
         "conf_file" => "/etc/dnf/other.conf",
       })
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
       recorded_install_command(log).should eq("install #{BASELINE_OPTIONS} --config=/etc/dnf/other.conf fake-pkg")
     end
   end
@@ -180,7 +180,7 @@ describe "dnf plugin - parameter coverage (CLI-invocation shape)" do
         "state"            => "present",
         "disable_excludes" => "main",
       })
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
       recorded_install_command(log).should eq("install #{BASELINE_OPTIONS} --disableexcludes=main fake-pkg")
     end
   end
@@ -198,7 +198,7 @@ describe "dnf plugin - parameter coverage (CLI-invocation shape)" do
         "enable_plugin"  => %(["versionlock", "supspeed"]),
         "disable_plugin" => %(["fastestmirror"]),
       })
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
       recorded_install_command(log).should eq(
         "install #{BASELINE_OPTIONS} --enableplugin=versionlock --enableplugin=supspeed --disableplugin=fastestmirror fake-pkg")
     end
@@ -212,7 +212,7 @@ describe "dnf plugin - parameter coverage (CLI-invocation shape)" do
         "enable_plugin"  => "versionlock,supspeed",
         "disable_plugin" => "fastestmirror",
       })
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
       recorded_install_command(log).should eq(
         "install #{BASELINE_OPTIONS} --enableplugin=versionlock --enableplugin=supspeed --disableplugin=fastestmirror fake-pkg")
     end
@@ -227,7 +227,7 @@ describe "dnf plugin - parameter coverage (CLI-invocation shape)" do
         "state"   => "present",
         "exclude" => %(["kernel*", "vim*"]),
       })
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
       recorded_install_command(log).should eq(
         "install #{BASELINE_OPTIONS} --exclude=kernel* --exclude=vim* fake-pkg")
     end
@@ -240,7 +240,7 @@ describe "dnf plugin - parameter coverage (CLI-invocation shape)" do
         "state"   => "present",
         "exclude" => "kernel*, vim*",
       })
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
       recorded_install_command(log).should eq(
         "install #{BASELINE_OPTIONS} --exclude=kernel* --exclude=vim* fake-pkg")
     end
@@ -255,7 +255,7 @@ describe "dnf plugin - parameter coverage (CLI-invocation shape)" do
         "state"       => "present",
         "installroot" => "/mnt/sysimage",
       })
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
       recorded_install_command(log).should eq(
         "install #{BASELINE_OPTIONS} --installroot=/mnt/sysimage fake-pkg")
 
@@ -264,7 +264,7 @@ describe "dnf plugin - parameter coverage (CLI-invocation shape)" do
         "state"       => "present",
         "installroot" => "/",
       })
-      result2["failed"].as_bool.should be_false
+      result2["failed"]?.try(&.as_bool).should be_falsey
       recorded_install_command(log, 2).should eq("install #{BASELINE_OPTIONS} fake-pkg")
     end
   end
@@ -278,7 +278,7 @@ describe "dnf plugin - parameter coverage (CLI-invocation shape)" do
         "state"      => "present",
         "releasever" => "9",
       })
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
       recorded_install_command(log).should eq(
         "install #{BASELINE_OPTIONS} --releasever=9 fake-pkg")
     end
@@ -293,7 +293,7 @@ describe "dnf plugin - parameter coverage (CLI-invocation shape)" do
         "state"     => "present",
         "sslverify" => "false",
       })
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
       recorded_install_command(log).should eq(
         "install -y --setopt=localpkg_gpgcheck=1 --best --setopt=sslverify=False fake-pkg")
     end
@@ -310,7 +310,7 @@ describe "dnf plugin - parameter coverage (CLI-invocation shape)" do
         "download_only" => "true",
         "download_dir"  => "/tmp/rpms",
       })
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
       recorded_install_command(log).should eq(
         "install #{BASELINE_OPTIONS} --downloadonly --downloaddir=/tmp/rpms fake-pkg")
 
@@ -321,7 +321,7 @@ describe "dnf plugin - parameter coverage (CLI-invocation shape)" do
         "state"        => "present",
         "download_dir" => "/tmp/rpms",
       })
-      result2["failed"].as_bool.should be_false
+      result2["failed"]?.try(&.as_bool).should be_falsey
       recorded_install_command(log, 2).should eq("install #{BASELINE_OPTIONS} fake-pkg")
     end
   end
@@ -347,7 +347,7 @@ describe "dnf plugin - parameter coverage (CLI-invocation shape)" do
         "validate_certs"    => "false",
         "lock_timeout"      => "90",
       })
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
       recorded_install_command(log).should eq("install #{BASELINE_OPTIONS} fake-pkg")
     end
   end
@@ -364,7 +364,7 @@ describe "dnf plugin - parameter coverage (CLI-invocation shape)" do
         "state"       => "present",
         "use_backend" => "dnf5",
       })
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
       recorded_install_command(log).should eq("install #{BASELINE_OPTIONS} fake-pkg")
 
       bad = PluginSpecHelper.run("dnf", {

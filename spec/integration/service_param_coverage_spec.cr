@@ -110,7 +110,7 @@ describe "service plugin - parameter coverage" do
           "_environment" => env,
         })
 
-        result["failed"].as_bool.should be_false
+        result["failed"]?.try(&.as_bool).should be_falsey
         result["changed"].as_bool.should be_false
         warnings = result["warnings"].as_a.map(&.as_s)
         warnings.should eq([
@@ -153,7 +153,7 @@ describe "service plugin - parameter coverage" do
           "_environment" => env,
         })
 
-        result["failed"].as_bool.should be_false
+        result["failed"]?.try(&.as_bool).should be_falsey
         result.as_h.has_key?("warnings").should be_false
       end
     end
@@ -170,7 +170,7 @@ describe "service plugin - parameter coverage" do
           "_environment" => env,
         })
 
-        result["failed"].as_bool.should be_false
+        result["failed"]?.try(&.as_bool).should be_falsey
         result.as_h.has_key?("warnings").should be_false
       end
     end
@@ -187,7 +187,7 @@ describe "service plugin - parameter coverage" do
           "_environment" => env,
         })
 
-        result["failed"].as_bool.should be_false
+        result["failed"]?.try(&.as_bool).should be_falsey
         calls = read_calls(log)
         stop = calls.index("cron stop --my-flag")
         nap = calls.index("sleep 2")
@@ -210,7 +210,7 @@ describe "service plugin - parameter coverage" do
           "_environment" => env,
         })
 
-        result["failed"].as_bool.should be_false
+        result["failed"]?.try(&.as_bool).should be_falsey
         calls = read_calls(log)
         calls.should contain("krikri-fake-svc restart --my-flag")
         # No sleep call: real Ansible's OpenRC restart is native, no

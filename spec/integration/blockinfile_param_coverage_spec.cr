@@ -34,7 +34,7 @@ describe "blockinfile plugin - parameter coverage (destfile/insertafter/validate
 
       result = PluginSpecHelper.run("blockinfile", {"destfile" => path, "block" => "x"})
 
-      result["failed"].as_bool.should be_falsey
+      result["failed"]?.try(&.as_bool).should be_falsey
       result["changed"].as_bool.should be_true
       File.read(path).should eq("line1\n# BEGIN ANSIBLE MANAGED BLOCK\nx\n# END ANSIBLE MANAGED BLOCK\n")
     ensure
@@ -114,7 +114,7 @@ describe "blockinfile plugin - parameter coverage (destfile/insertafter/validate
 
       result = PluginSpecHelper.run("blockinfile", {"path" => path, "state" => "absent", "create" => "true"})
 
-      result["failed"].as_bool.should be_falsey
+      result["failed"]?.try(&.as_bool).should be_falsey
       result["changed"].as_bool.should be_false
       result["msg"].as_s.should eq("File #{path} not present")
       File.exists?(path).should be_false
@@ -132,7 +132,7 @@ describe "blockinfile plugin - parameter coverage (destfile/insertafter/validate
         "validate" => "grep -q '^managed$' %s",
       })
 
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
       result["changed"].as_bool.should be_true
       File.read(path).should contain("managed")
     ensure
@@ -166,7 +166,7 @@ describe "blockinfile plugin - parameter coverage (destfile/insertafter/validate
         "validate" => "/bin/false %s",
       })
 
-      result["failed"].as_bool.should be_falsey
+      result["failed"]?.try(&.as_bool).should be_falsey
       result["changed"].as_bool.should be_false
     ensure
       File.delete(path) if path && File.exists?(path)
@@ -217,7 +217,7 @@ describe "blockinfile plugin - parameter coverage (destfile/insertafter/validate
 
       result = PluginSpecHelper.run("blockinfile", {"path" => link, "block" => "via symlink"})
 
-      result["failed"].as_bool.should be_falsey
+      result["failed"]?.try(&.as_bool).should be_falsey
       File.symlink?(link).should be_true
       File.read(target).should contain("via symlink")
     ensure
@@ -235,7 +235,7 @@ describe "blockinfile plugin - parameter coverage (destfile/insertafter/validate
         "unsafe_writes" => "true",
       })
 
-      result["failed"].as_bool.should be_falsey
+      result["failed"]?.try(&.as_bool).should be_falsey
       result["changed"].as_bool.should be_true
       File.read(path).should contain("b")
     ensure
@@ -262,7 +262,7 @@ describe "blockinfile plugin - parameter coverage (destfile/insertafter/validate
         "selevel" => "s0",
       })
 
-      result["failed"].as_bool.should be_falsey
+      result["failed"]?.try(&.as_bool).should be_falsey
       result["changed"].as_bool.should be_true
       File.read(path).should contain("after")
     ensure
@@ -280,11 +280,11 @@ describe "blockinfile plugin - parameter coverage (destfile/insertafter/validate
       File.write(path, "x\n")
 
       result = PluginSpecHelper.run("blockinfile", {"path" => path, "block" => "x", "attributes" => "-i"})
-      result["failed"].as_bool.should be_falsey
+      result["failed"]?.try(&.as_bool).should be_falsey
       result["changed"].as_bool.should be_true
 
       warm = PluginSpecHelper.run("blockinfile", {"path" => path, "block" => "x", "attributes" => "-i"})
-      warm["failed"].as_bool.should be_falsey
+      warm["failed"]?.try(&.as_bool).should be_falsey
       warm["changed"].as_bool.should be_true
     ensure
       File.delete(path) if path && File.exists?(path)
@@ -308,7 +308,7 @@ describe "blockinfile plugin - parameter coverage (destfile/insertafter/validate
         "append_newline"  => "true",
       })
 
-      result["failed"].as_bool.should be_falsey
+      result["failed"]?.try(&.as_bool).should be_falsey
       File.read(path).should eq("first\nlast\n\n# BEGIN ANSIBLE MANAGED BLOCK\nmanaged\n# END ANSIBLE MANAGED BLOCK\n")
     ensure
       File.delete(path) if path && File.exists?(path)
@@ -325,7 +325,7 @@ describe "blockinfile plugin - parameter coverage (destfile/insertafter/validate
         "append_newline"  => "true",
       })
 
-      result["failed"].as_bool.should be_falsey
+      result["failed"]?.try(&.as_bool).should be_falsey
       result["changed"].as_bool.should be_false
       File.read(path).should eq("first\n\n# BEGIN ANSIBLE MANAGED BLOCK\nmanaged\n# END ANSIBLE MANAGED BLOCK\n")
     ensure
@@ -342,7 +342,7 @@ describe "blockinfile plugin - parameter coverage (destfile/insertafter/validate
         "append_newline" => "true",
       })
 
-      result["failed"].as_bool.should be_falsey
+      result["failed"]?.try(&.as_bool).should be_falsey
       File.read(path).should eq("first\n# BEGIN ANSIBLE MANAGED BLOCK\nmanaged\n# END ANSIBLE MANAGED BLOCK\n")
     ensure
       File.delete(path) if path && File.exists?(path)
@@ -358,7 +358,7 @@ describe "blockinfile plugin - parameter coverage (destfile/insertafter/validate
         "append_newline" => "true",
       })
 
-      result["failed"].as_bool.should be_falsey
+      result["failed"]?.try(&.as_bool).should be_falsey
       result["changed"].as_bool.should be_true
       File.read(path).should eq("first\n# BEGIN ANSIBLE MANAGED BLOCK\nnew\n# END ANSIBLE MANAGED BLOCK\n\nlast\n")
     ensure

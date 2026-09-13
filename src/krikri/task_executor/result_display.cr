@@ -2,6 +2,7 @@ require "json"
 require "colorize"
 require "../host"
 require "../timing_profile"
+require "../variable_substitutor/filter_core"
 
 module Krikri
   # ResultDisplay - Handles displaying task results and diffs
@@ -193,7 +194,7 @@ module Krikri
       end
     end
 
-    def self.display_adhoc_result(host : Host, result : JSON::Any, diff_mode : Bool = false) : Nil
+    def self.display_adhoc_result(host : Host, result : JSON::Any, diff_mode : Bool = false, module_name : String? = nil) : Nil
       changed = result["changed"]?.try(&.as_bool) || false
       failed = result["failed"]?.try(&.as_bool) || false
       unreachable = result["unreachable"]?.try(&.as_bool) || false
@@ -215,7 +216,7 @@ module Krikri
           end
           adhoc_display(buffer, color_code)
         else
-          adhoc_display("#{connection_host} | #{state} => #{result.to_json}", color_code)
+          adhoc_display("#{connection_host} | #{state} => #{adhoc_result_json(result, module_name, oneline: true)}", color_code)
         end
       elsif rc && stdout
         # Same shape as ansible's minimal callback `_command_generic_msg`:
@@ -230,7 +231,7 @@ module Krikri
         end
         adhoc_display("#{buffer}\n", color_code)
       else
-        adhoc_display("#{connection_host} | #{state} => #{result.to_pretty_json}", color_code)
+        adhoc_display("#{connection_host} | #{state} => #{adhoc_result_json(result, module_name)}", color_code)
       end
 
       if diff_mode && result["diff"]?
@@ -238,8 +239,122 @@ module Krikri
       end
 
       if tree_dir = adhoc_tree_dir
+        # Real tree.py writes _dump_results(result.result) with no indent
+        # override - normally a single compact, sorted line with Python's
+        # default (", "/": ") separators and no trailing newline (raw
+        # fd.write); a _ansible_verbose_always-tagged result (debug) still
+        # flips indent_conditions to indent=4, so that one dumps pretty.
+        # No debug _clean_results pop here - tree.py never calls it
+        # (verified live: the tree file keeps "changed": false for debug).
         Dir.mkdir_p(tree_dir)
-        File.write(File.join(tree_dir, host.name), "#{result.to_pretty_json}\n")
+        cleaned = clean_for_display(result)
+        tree_dump = if result["_ansible_verbose_always"]?.try(&.as_bool)
+                      dump_pretty(cleaned)
+                    else
+                      dump_compact(cleaned, ", ")
+                    end
+        File.write(File.join(tree_dir, host.name), tree_dump)
+      end
+    end
+
+    # The exact JSON string real Ansible's ad-hoc stdout callbacks dump
+    # after the `host | STATUS => ` prefix. The result dict the callbacks
+    # see has already been through real Ansible's cleaning pipeline by
+    # the time it is dumped: executor/task_result.py's
+    # as_callback_task_result strips `failed`/`skipped` for EVERY stdout
+    # callback (a real FAILED! => dump does not contain "failed": true -
+    # live-verified against 2.19.4), and _dump_results strips the private
+    # `_ansible_*` keys and dumps with sort_keys=True. A debug task
+    # additionally goes through _clean_results - but ONLY in the minimal
+    # (pretty) path: oneline.py never calls it, so an `-o` debug dump
+    # keeps its other keys (verified live). Status derivation stays with
+    # the caller - stripping here is display-only.
+    def self.adhoc_result_json(result : JSON::Any, module_name : String? = nil, oneline : Bool = false) : String
+      failed = result["failed"]?.try(&.as_bool) || false
+      unreachable = result["unreachable"]?.try(&.as_bool) || false
+      verbose_always = result["_ansible_verbose_always"]?.try(&.as_bool) || false
+      cleaned = clean_for_display(result)
+
+      if oneline
+        # Real oneline.py dumps with indent=0: Python's json.dumps then
+        # uses (",", ": ") separators - no space after commas. A result
+        # tagged _ansible_verbose_always (debug) flips _dump_results'
+        # indent_conditions to indent=4, and the callback's own
+        # .replace('\n', '') then just strips the newlines, leaving the
+        # 4-space indents in the line verbatim.
+        verbose_always ? dump_pretty(cleaned).gsub('\n', "") : dump_compact(cleaned, ",")
+      else
+        # Real minimal.py dumps with indent=4 (both the SUCCESS and the
+        # FAILED! branches), not Crystal's 2-space default - and applies
+        # its debug _clean_results pop-to-msg for a successful debug task.
+        if !failed && !unreachable && module_name.try(&.ends_with?("debug")) && cleaned["msg"]?
+          cleaned = JSON::Any.new({"msg" => cleaned["msg"]})
+        end
+        dump_pretty(cleaned)
+      end
+    end
+
+    # Real Ansible strips `failed`/`skipped` and every private `_ansible_*`
+    # key from the callback-visible result, recursively
+    # (executor/task_result.py's _IGNORE + vars/clean.py's
+    # strip_internal_keys).
+    private def self.clean_for_display(value : JSON::Any) : JSON::Any
+      case raw = value.raw
+      when Hash
+        cleaned = Hash(String, JSON::Any).new
+        raw.each do |key, v|
+          next if key == "failed" || key == "skipped" || key.starts_with?("_ansible_")
+          cleaned[key] = clean_for_display(v)
+        end
+        JSON::Any.new(cleaned)
+      when Array
+        JSON::Any.new(raw.map { |item| clean_for_display(item) })
+      else
+        value
+      end
+    end
+
+    # _dump_results(indent=4, sort_keys=True) - real minimal-callback JSON
+    # dump shape.
+    private def self.dump_pretty(result : JSON::Any) : String
+      VariableSubstitutor::FilterCore.sort_json_keys(result).to_pretty_json("    ")
+    end
+
+    # Python json.dumps' compact shapes: separators (", "/": ") when no
+    # indent is given (tree callback), (", "/": " -> ",", ": ") with
+    # indent=0 (oneline callback).
+    private def self.dump_compact(result : JSON::Any, item_sep : String) : String
+      String.build { |io| dump_compact_io(VariableSubstitutor::FilterCore.sort_json_keys(result), io, item_sep) }
+    end
+
+    private def self.dump_compact_io(value : JSON::Any, io : IO, item_sep : String) : Nil
+      case raw = value.raw
+      when Nil
+        io << "null"
+      when Bool
+        io << raw
+      when String
+        raw.to_json(io)
+      when Int64, Int32, Float64
+        io << raw
+      when Array
+        io << '['
+        raw.each_with_index do |item, index|
+          io << item_sep if index > 0
+          dump_compact_io(item, io, item_sep)
+        end
+        io << ']'
+      when Hash
+        io << '{'
+        raw.each_with_index do |(key, item), index|
+          io << item_sep if index > 0
+          key.to_s.to_json(io)
+          io << ": "
+          dump_compact_io(item, io, item_sep)
+        end
+        io << '}'
+      else
+        raw.to_s.to_json(io)
       end
     end
 

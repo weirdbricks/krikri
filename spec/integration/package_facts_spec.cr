@@ -6,7 +6,7 @@ describe "package_facts plugin" do
   it "returns ansible_facts.packages keyed by package name" do
     result = PluginSpecHelper.run("package_facts", {"manager" => "auto"})
 
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     packages = result["ansible_facts"]["packages"].as_h
     packages.size.should be > 0
 
@@ -45,7 +45,7 @@ describe "package_facts plugin" do
     # - the case dispatch only ever recognized auto/dpkg/rpm.
     result = PluginSpecHelper.run("package_facts", {"manager" => "apt"})
 
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     packages = result["ansible_facts"]["packages"].as_h
     packages.size.should be > 0
   end
@@ -72,7 +72,7 @@ describe "package_facts plugin" do
     # the same facts as the default.
     result = PluginSpecHelper.run("package_facts", {"manager" => "auto", "strategy" => "all"})
 
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     packages = result["ansible_facts"]["packages"].as_h
     packages.size.should be > 0
   end
@@ -93,7 +93,7 @@ describe "package_facts plugin" do
     # plugin used to `.to_s` the whole thing into one garbage manager name.
     result = PluginSpecHelper.run("package_facts", {"manager" => "[\"auto\"]"})
 
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     packages = result["ansible_facts"]["packages"].as_h
     packages.size.should be > 0
   end
@@ -101,7 +101,7 @@ describe "package_facts plugin" do
   it "accepts a Python-repr manager list too (Jinja-rendered list form)" do
     result = PluginSpecHelper.run("package_facts", {"manager" => "['auto']"})
 
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     packages = result["ansible_facts"]["packages"].as_h
     packages.size.should be > 0
   end
@@ -109,7 +109,7 @@ describe "package_facts plugin" do
   it "accepts a comma-separated manager string (real AnsibleModule's check_type_list split)" do
     result = PluginSpecHelper.run("package_facts", {"manager" => "apt,rpm"})
 
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     packages = result["ansible_facts"]["packages"].as_h
     packages.size.should be > 0
   end
@@ -158,7 +158,7 @@ describe "package_facts plugin" do
     # manager in the list succeeds.
     result = PluginSpecHelper.run("package_facts", {"manager" => "rpm,apt"})
 
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     packages = result["ansible_facts"]["packages"].as_h
     packages.size.should be > 0
   end
@@ -171,6 +171,6 @@ describe "package_facts plugin" do
     # pins that 'auto' itself never takes the unsupported-names shortcut.
     result = PluginSpecHelper.run("package_facts", {"manager" => "auto"})
 
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
   end
 end

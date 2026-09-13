@@ -40,7 +40,7 @@ describe "PauseActionPlugin" do
 
     result.success?.should be_true
     final = final_json(result)
-    final.as_h["failed"].as_bool.should be_false
+    final.as_h["failed"]?.try(&.as_bool).should be_falsey
     final.as_h["stdout"].as_s.should eq("Press Enter to continue")
     final.as_h["delta"].as_i64.should eq(0)
   end
@@ -49,7 +49,7 @@ describe "PauseActionPlugin" do
     result = run_pause({"prompt" => "Waiting a bit", "seconds" => "0"})
 
     final = final_json(result)
-    final.as_h["failed"].as_bool.should be_false
+    final.as_h["failed"]?.try(&.as_bool).should be_falsey
     final.as_h["stdout"].as_s.should eq("Paused for 0.0 seconds")
   end
 
@@ -57,7 +57,7 @@ describe "PauseActionPlugin" do
     result = run_pause({"prompt" => "Waiting a bit", "minutes" => "0"})
 
     final = final_json(result)
-    final.as_h["failed"].as_bool.should be_false
+    final.as_h["failed"]?.try(&.as_bool).should be_falsey
     final.as_h["stdout"].as_s.should eq("Paused for 0.0 minutes")
   end
 

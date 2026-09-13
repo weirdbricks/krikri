@@ -265,7 +265,7 @@ describe Krikri::PluginHelpers::Ec2Instance do
       }, handler)
 
       result["changed"].should eq(true)
-      result["failed"].should eq(false)
+      result["failed"]?.should be_falsey
       result["instances"][0]["instance_id"].should eq("i-new")
       result["instances"][0]["state"]["name"].should eq("running")
 

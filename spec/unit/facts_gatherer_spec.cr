@@ -25,7 +25,7 @@ describe Krikri::FactsGatherer do
 
     result.as_h.keys.sort!.should eq(["ansible_facts", "changed", "failed"])
     result["changed"].as_bool.should be_false
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     # An always-empty "msg" would be the tell-tale of a BasePlugin
     # reshape; there has never been one on the success payload.
     result["msg"]?.should be_nil
@@ -94,7 +94,7 @@ describe Krikri::FactsGatherer do
     config = JSON.parse(%({"host":{"name":"localhost","user":"root","port":22},"vars":{}}))
     result = JSON.parse(Krikri::FactsGatherer.run(config))
 
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     result["ansible_facts"].as_h.should_not be_empty
   end
 

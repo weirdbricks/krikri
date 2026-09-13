@@ -68,12 +68,12 @@ describe "fetch plugin" do
 
   it "does not fail when the source is missing and fail_on_missing is false" do
     result = PluginSpecHelper.run("fetch", {"src" => "/nonexistent/fetch-spec-src", "dest" => "/tmp/", "fail_on_missing" => "false"}, LOCAL_VARS)
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
   end
 
   it "is skipped under check_mode" do
     result = PluginSpecHelper.run("fetch", {"src" => "/etc/hostname", "dest" => "/tmp/", "check_mode" => "true"}, LOCAL_VARS)
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     result["skipped"].as_bool.should be_true
     result["msg"].as_s.should eq("check mode not (yet) supported for this module")
   end

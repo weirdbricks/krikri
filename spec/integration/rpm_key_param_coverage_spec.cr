@@ -91,7 +91,7 @@ describe "rpm_key plugin fingerprint param" do
           "key"         => key_path,
           "fingerprint" => %(["#{FPR}"]),
         })
-        result["failed"].as_bool.should be_false
+        result["failed"]?.try(&.as_bool).should be_falsey
         result["changed"].as_bool.should be_true
         result["msg"].as_s.should contain("imported")
       end
@@ -105,7 +105,7 @@ describe "rpm_key plugin fingerprint param" do
           "key"         => key_path,
           "fingerprint" => "['#{FPR}']",
         })
-        result["failed"].as_bool.should be_false
+        result["failed"]?.try(&.as_bool).should be_falsey
         result["changed"].as_bool.should be_true
       end
     end
@@ -118,7 +118,7 @@ describe "rpm_key plugin fingerprint param" do
           "key"         => key_path,
           "fingerprint" => "0000000000000000000000000000000000000000,#{FPR}",
         })
-        result["failed"].as_bool.should be_false
+        result["failed"]?.try(&.as_bool).should be_falsey
         result["changed"].as_bool.should be_true
         result["msg"].as_s.should contain("imported")
       end
@@ -133,7 +133,7 @@ describe "rpm_key plugin fingerprint param" do
           "key"         => key_path,
           "fingerprint" => spaced,
         })
-        result["failed"].as_bool.should be_false
+        result["failed"]?.try(&.as_bool).should be_falsey
         result["changed"].as_bool.should be_true
       end
     end

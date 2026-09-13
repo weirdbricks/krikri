@@ -15,7 +15,7 @@ describe "stat plugin" do
   it "reports exists: false for a missing path, with nothing else in the stat dict" do
     result = PluginSpecHelper.run("stat", {"path" => tmp_path("does-not-exist.txt")})
 
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     result["changed"].as_bool.should be_false
     result["stat"]["exists"].as_bool.should be_false
     result["stat"].as_h.size.should eq(1)

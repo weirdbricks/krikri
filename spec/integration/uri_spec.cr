@@ -102,7 +102,7 @@ describe "uri plugin" do
 
   it "performs a GET and does not include content by default" do
     result = PluginSpecHelper.run("uri", {"url" => "#{uri_base}/text"})
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     result["changed"].as_bool.should be_false
     result["status"].as_i.should eq(200)
     result.as_h.has_key?("content").should be_false
@@ -132,12 +132,12 @@ describe "uri plugin" do
 
   it "accepts a custom status_code list" do
     result = PluginSpecHelper.run("uri", {"url" => "#{uri_base}/notfound", "status_code" => "404,410"})
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
   end
 
   it "sends a POST body and reports the real status code" do
     result = PluginSpecHelper.run("uri", {"url" => "#{uri_base}/echo", "method" => "POST", "body" => "hello", "status_code" => "201"})
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     result["status"].as_i.should eq(201)
     result["json"]["received"].as_s.should eq("hello")
   end
@@ -191,7 +191,7 @@ describe "uri plugin" do
 
   it "is skipped under check_mode regardless of method" do
     result = PluginSpecHelper.run("uri", {"url" => "#{uri_base}/text", "check_mode" => "true"})
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     result["changed"].as_bool.should be_false
     result["skipped"].as_bool.should be_true
   end
@@ -207,7 +207,7 @@ describe "uri plugin" do
     path = File.tempname("uri_dest_spec")
     begin
       result = PluginSpecHelper.run("uri", {"url" => "#{uri_base}/text", "dest" => path})
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
       result["changed"].as_bool.should be_true
       File.read(path).should eq("plain text body")
     ensure
@@ -226,7 +226,7 @@ describe "uri plugin" do
     begin
       File.write(path, "plain text body")
       result = PluginSpecHelper.run("uri", {"url" => "#{uri_base}/text", "dest" => path})
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
       result["changed"].as_bool.should be_true
       result["msg"].as_s.should eq("OK (15 bytes)")
       result["path"].as_s.should eq(path)
@@ -241,7 +241,7 @@ describe "uri plugin" do
     begin
       result = PluginSpecHelper.run("uri", {"url" => "#{uri_base}/text", "creates" => marker})
       result["changed"].as_bool.should be_false
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
       result["stdout"].as_s.should eq("skipped, since '#{marker}' exists")
     ensure
       File.delete(marker)
@@ -251,32 +251,32 @@ describe "uri plugin" do
   it "skips via removes: when the file does not exist" do
     result = PluginSpecHelper.run("uri", {"url" => "#{uri_base}/text", "removes" => "/nonexistent-uri-spec-xyz"})
     result["changed"].as_bool.should be_false
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     result["stdout"].as_s.should eq("skipped, since '/nonexistent-uri-spec-xyz' does not exist")
   end
 
   it "runs when creates: points at a missing file" do
     result = PluginSpecHelper.run("uri", {"url" => "#{uri_base}/text", "creates" => "/nonexistent-uri-spec-xyz"})
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     result["status"].as_i.should eq(200)
   end
 
   it "retries basic auth on a 401 challenge when force_basic_auth is unset (the default)" do
     result = PluginSpecHelper.run("uri", {"url" => "#{uri_base}/auth", "url_username" => "u1", "url_password" => "p1", "return_content" => "true"})
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     result["status"].as_i.should eq(200)
     result["content"].as_s.should eq("secret-authed")
   end
 
   it "sends Basic auth on the first request when force_basic_auth is true" do
     result = PluginSpecHelper.run("uri", {"url" => "#{uri_base}/echo-headers", "url_username" => "u1", "url_password" => "p1", "force_basic_auth" => "true"})
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     result["json"]["authorization"].as_s.should eq("Basic " + Base64.strict_encode("u1:p1"))
   end
 
   it "accepts the documented user:/password: aliases" do
     result = PluginSpecHelper.run("uri", {"url" => "#{uri_base}/auth", "user" => "u1", "password" => "p1"})
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     result["status"].as_i.should eq(200)
   end
 
@@ -334,7 +334,7 @@ describe "uri plugin" do
     Dir.mkdir(dir)
     begin
       result = PluginSpecHelper.run("uri", {"url" => "#{uri_base}/disp", "dest" => dir})
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
       result["changed"].as_bool.should be_true
       result["path"].as_s.should eq(File.join(dir, "dl-1.2.3.tar.gz"))
       File.read(result["path"].as_s).should eq("file-content")
@@ -348,7 +348,7 @@ describe "uri plugin" do
     path = File.tempname("uri_dest_mode_spec")
     begin
       result = PluginSpecHelper.run("uri", {"url" => "#{uri_base}/filecontent", "dest" => path, "mode" => "0600"})
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
       result["changed"].as_bool.should be_true
       result["mode"].as_s.should eq("0600")
       result["state"].as_s.should eq("file")
@@ -367,7 +367,7 @@ describe "uri plugin" do
     File.write(body_file, "file payload")
     begin
       result = PluginSpecHelper.run("uri", {"url" => "#{uri_base}/src", "method" => "POST", "src" => body_file, "return_content" => "true"})
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
       result["status"].as_i.should eq(200)
       result["content"].as_s.should eq("got:file payload")
 

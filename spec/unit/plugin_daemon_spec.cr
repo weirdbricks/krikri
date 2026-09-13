@@ -199,7 +199,12 @@ describe "fat plugin binary --daemon mode" do
 
       first = daemon_send(process, "command", base_config.merge({"params" => {"_raw_params" => "echo daemon-one"}}))
       first["stdout"]?.try(&.as_s).should eq("daemon-one")
-      first["failed"]?.try(&.as_bool).should be_false
+      # The daemon returns the plugin's own WIRE result verbatim, which
+      # since the module-protocol fix no longer carries failed: false on
+      # a success (the controller's normalize_module_result backfills it
+      # after parsing - the one-shot PluginSpecHelper.run path goes
+      # through it, this direct-daemon path deliberately does not).
+      first["failed"]?.should be_falsey
 
       # A SECOND request over the identical process/pipe - the whole
       # point of the daemon: no new process spawned between these two

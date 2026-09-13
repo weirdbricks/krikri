@@ -21,7 +21,7 @@ module Krikri
       end
 
       extra = {"ansible_facts" => JSON::Any.new(facts)}
-      ActionResult.final(ActionResult.plugin_result_json(false, false, "ok", extra))
+      ActionResult.final(ActionResult.plugin_result_json(false, false, "", extra))
     end
 
     private def coerce(value : String) : JSON::Any

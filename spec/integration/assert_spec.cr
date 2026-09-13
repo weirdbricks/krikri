@@ -12,7 +12,7 @@ describe "assert plugin" do
 
   it "passes when every condition is true, with the default success message" do
     result = PluginSpecHelper.run("assert", {"that" => that_json("1 == 1", "2 == 2")})
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     result["changed"].as_bool.should be_false
     result["msg"].as_s.should eq("All assertions passed")
   end
@@ -42,7 +42,7 @@ describe "assert plugin" do
 
   it "evaluates a {{ }}-wrapped condition with dotted variable access" do
     result = PluginSpecHelper.run("assert", {"that" => that_json("{{ my_param > 100 }}")}, {"my_param" => "150"})
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
   end
 
   it "passes an 'is regex(...)' test - Crinja's custom test/filter library must be linked into this plugin's own binary" do
@@ -61,7 +61,7 @@ describe "assert plugin" do
     # something other than the literal "True". Fixed by requiring
     # jinja_filters.cr directly in assert.cr.
     result = PluginSpecHelper.run("assert", {"that" => that_json("myname is regex('^terraform')")}, {"myname" => "terraform"})
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
   end
 
   it "never reports changed" do
@@ -77,7 +77,7 @@ describe "assert plugin" do
     # msg/assertion/evaluated_to identically with or without quiet:.
     it "tags a passing assert with the private _ansible_quiet marker while keeping msg" do
       result = PluginSpecHelper.run("assert", {"that" => that_json("1 == 1"), "quiet" => "true"})
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
       result["msg"].as_s.should eq("All assertions passed")
       result["_ansible_quiet"].as_bool.should be_true
     end

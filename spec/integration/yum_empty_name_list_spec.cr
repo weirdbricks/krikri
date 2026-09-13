@@ -13,7 +13,7 @@ describe "yum: empty name: list (name: key present, resolves to [])" do
   it "is a no-op, not a missing-parameter failure" do
     result = PluginSpecHelper.run("yum", {"name" => "[]"})
 
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     result["changed"].as_bool.should be_false
   end
 

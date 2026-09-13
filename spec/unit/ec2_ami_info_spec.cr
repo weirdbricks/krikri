@@ -119,7 +119,7 @@ describe Krikri::PluginHelpers::Ec2Info do
     it "shapes images with the real module's field names" do
       result = run_module({"region" => "us-east-1"}, ->(region : String, body : String) { DESCRIBE_TWO })
 
-      result["failed"].should eq(false)
+      result["failed"]?.should be_falsey
       image = result["images"][0]
       image["image_id"].should eq("ami-older")
       image["state"].should eq("available")
@@ -167,7 +167,7 @@ describe Krikri::PluginHelpers::Ec2Info do
         URI::Params.parse(body)["Action"] == "DescribeImageAttribute" ? LAUNCH_PERMISSION : DESCRIBE_TWO
       end)
 
-      result["failed"].should eq(false)
+      result["failed"]?.should be_falsey
       permissions = result["images"][0]["launch_permissions"]
       permissions.as_a.size.should eq(2)
       permissions[0]["group"].should eq("all")
@@ -182,7 +182,7 @@ describe Krikri::PluginHelpers::Ec2Info do
         URI::Params.parse(body)["Action"] == "DescribeImageAttribute" ? raise Krikri::PluginHelpers::Ec2Api::Error.new("AuthFailure: not permitted") : DESCRIBE_TWO
       end)
 
-      result["failed"].should eq(false)
+      result["failed"]?.should be_falsey
       result["images"][0]["launch_permissions"]?.should be_nil
       result["images"][1]["launch_permissions"]?.should be_nil
     end

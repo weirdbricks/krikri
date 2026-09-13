@@ -192,7 +192,7 @@ describe "git plugin" do
     result = PluginSpecHelper.run("git", {"repo" => repo, "dest" => dest, "version" => "v1", "depth" => "1"})
 
     result["changed"].as_bool.should be_true
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     File.read(File.join(dest, "file.txt")).strip.should eq("one")
   end
 
@@ -205,7 +205,7 @@ describe "git plugin" do
     result = PluginSpecHelper.run("git", {"repo" => repo, "dest" => dest, "version" => shas["first_sha"], "depth" => "1"})
 
     result["changed"].as_bool.should be_true
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     File.read(File.join(dest, "file.txt")).strip.should eq("one")
   end
 

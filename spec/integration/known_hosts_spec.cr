@@ -20,7 +20,7 @@ describe "known_hosts plugin" do
 
     result = PluginSpecHelper.run("known_hosts", {"name" => "example.com", "key" => KEY1, "path" => path})
 
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     result["changed"].as_bool.should be_true
     File.read(path).should contain("example.com")
   end
@@ -32,7 +32,7 @@ describe "known_hosts plugin" do
 
     result = PluginSpecHelper.run("known_hosts", {"name" => "example.com", "key" => KEY1, "path" => path})
 
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     result["changed"].as_bool.should be_false
   end
 
@@ -43,7 +43,7 @@ describe "known_hosts plugin" do
 
     result = PluginSpecHelper.run("known_hosts", {"name" => "example.com", "key" => KEY2, "path" => path})
 
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     result["changed"].as_bool.should be_true
     content = File.read(path)
     content.should contain("DifferentKeyData")
@@ -57,7 +57,7 @@ describe "known_hosts plugin" do
 
     result = PluginSpecHelper.run("known_hosts", {"name" => "example.com", "state" => "absent", "path" => path})
 
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     result["changed"].as_bool.should be_true
     File.read(path).should_not contain("example.com")
   end
@@ -68,7 +68,7 @@ describe "known_hosts plugin" do
 
     result = PluginSpecHelper.run("known_hosts", {"name" => "example.com", "state" => "absent", "path" => path})
 
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     result["changed"].as_bool.should be_false
   end
 

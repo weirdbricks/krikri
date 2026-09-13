@@ -6,7 +6,7 @@ describe "wait_for_connection plugin" do
     # 113): entirely unimplemented before, silently dropped.
     result = PluginSpecHelper.run("wait_for_connection", {} of String => String)
 
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     result["changed"].as_bool.should be_false
   end
 
@@ -15,7 +15,7 @@ describe "wait_for_connection plugin" do
       "connect_timeout" => "5", "sleep" => "1", "timeout" => "60",
     })
 
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
   end
 
   # PluginSpecHelper always configures {"host" => {"name" => "localhost",

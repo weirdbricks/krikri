@@ -23,7 +23,7 @@ describe "assemble plugin" do
 
     result = PluginSpecHelper.run("assemble", {"src" => src, "dest" => dest})
 
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     result["changed"].as_bool.should be_true
     File.read(dest).should eq("first\nsecond\n")
   end

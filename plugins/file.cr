@@ -589,11 +589,15 @@ module Krikri
           touch_apply_times(path) if times_changed
         end
 
+        # Real file: never carries msg on a success path (its result is
+        # changed/dest/gid/... attribute fields only), so the wire result
+        # omits msg entirely - "File touched" used to leak into both the
+        # ad-hoc JSON dump and the playbook-style msg display line.
         return PluginResult.new(
           changed: changed,
           failed: false,
-          msg: "File touched",
-          dest: path
+          msg: "",
+          path: path
         )
       end
 
@@ -602,7 +606,7 @@ module Krikri
         return PluginResult.new(
           changed: true,
           failed: false,
-          msg: "Would create file (check mode)"
+          msg: ""
         )
       end
 

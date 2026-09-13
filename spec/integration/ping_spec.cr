@@ -4,7 +4,7 @@ describe "ping plugin" do
   it "returns ping: pong by default" do
     result = PluginSpecHelper.run("ping", {} of String => String)
 
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     result["changed"].as_bool.should be_false
     result["ping"].as_s.should eq("pong")
   end

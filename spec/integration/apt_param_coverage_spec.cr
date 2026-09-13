@@ -99,7 +99,7 @@ describe "apt plugin - parameter coverage" do
     it "keeps the real-Ansible default (force-confdef,force-confold) when unset" do
       with_apt_param_shims("un") do |env, log|
         result = PluginSpecHelper.run("apt", {"name" => "krikri-fake-pkg", "state" => "present", "_environment" => env})
-        result["failed"].as_bool.should be_false
+        result["failed"]?.try(&.as_bool).should be_falsey
         install_call(log).should eq("install -y #{DEFAULT_DPKG_OPTIONS} krikri-fake-pkg")
       end
     end
@@ -112,7 +112,7 @@ describe "apt plugin - parameter coverage" do
           "dpkg_options"  => "force-confnew,force-config",
           "_environment"  => env,
         })
-        result["failed"].as_bool.should be_false
+        result["failed"]?.try(&.as_bool).should be_falsey
         install_call(log).should eq("install -y -o Dpkg::Options::=--force-confnew -o Dpkg::Options::=--force-config krikri-fake-pkg")
       end
     end
@@ -128,7 +128,7 @@ describe "apt plugin - parameter coverage" do
           "fail_on_autoremove" => "true",
           "_environment"       => env,
         })
-        result["failed"].as_bool.should be_false
+        result["failed"]?.try(&.as_bool).should be_falsey
         install_call(log).should eq("install -y #{DEFAULT_DPKG_OPTIONS} --force-yes --no-remove krikri-fake-pkg")
       end
     end
@@ -143,7 +143,7 @@ describe "apt plugin - parameter coverage" do
           "allow_change_held_packages"   => "true",
           "_environment"                 => env,
         })
-        result["failed"].as_bool.should be_false
+        result["failed"]?.try(&.as_bool).should be_falsey
         install_call(log).should eq("install -y #{DEFAULT_DPKG_OPTIONS} krikri-fake-pkg --allow-unauthenticated --allow-downgrades --allow-change-held-packages")
       end
     end
@@ -156,7 +156,7 @@ describe "apt plugin - parameter coverage" do
           "default_release" => "stable-backports",
           "_environment"    => env,
         })
-        result["failed"].as_bool.should be_false
+        result["failed"]?.try(&.as_bool).should be_falsey
         install_call(log).should eq("install -y #{DEFAULT_DPKG_OPTIONS} krikri-fake-pkg -t stable-backports")
       end
     end
@@ -169,7 +169,7 @@ describe "apt plugin - parameter coverage" do
           "install_recommends"  => "false",
           "_environment"        => env,
         })
-        result["failed"].as_bool.should be_false
+        result["failed"]?.try(&.as_bool).should be_falsey
         install_call(log).should eq("install -y #{DEFAULT_DPKG_OPTIONS} krikri-fake-pkg -o APT::Install-Recommends=no")
       end
     end
@@ -182,7 +182,7 @@ describe "apt plugin - parameter coverage" do
           "install_recommends"  => "true",
           "_environment"        => env,
         })
-        result["failed"].as_bool.should be_false
+        result["failed"]?.try(&.as_bool).should be_falsey
         install_call(log).should eq("install -y #{DEFAULT_DPKG_OPTIONS} krikri-fake-pkg -o APT::Install-Recommends=yes")
       end
     end
@@ -190,7 +190,7 @@ describe "apt plugin - parameter coverage" do
     it "leaves apt's own recommend default alone when install_recommends is unset" do
       with_apt_param_shims("un") do |env, log|
         result = PluginSpecHelper.run("apt", {"name" => "krikri-fake-pkg", "state" => "present", "_environment" => env})
-        result["failed"].as_bool.should be_false
+        result["failed"]?.try(&.as_bool).should be_falsey
         install_call(log).not_nil!.should_not contain("APT::Install-Recommends")
       end
     end
@@ -203,7 +203,7 @@ describe "apt plugin - parameter coverage" do
           "only_upgrade"  => "true",
           "_environment"  => env,
         })
-        result["failed"].as_bool.should be_false
+        result["failed"]?.try(&.as_bool).should be_falsey
         result["changed"].as_bool.should be_false
         install_call(log).should be_nil
       end
@@ -217,7 +217,7 @@ describe "apt plugin - parameter coverage" do
           "only_upgrade"  => "true",
           "_environment"  => env,
         })
-        result["failed"].as_bool.should be_false
+        result["failed"]?.try(&.as_bool).should be_falsey
         install_call(log).should eq("install -y #{DEFAULT_DPKG_OPTIONS} --only-upgrade krikri-fake-pkg")
       end
     end
@@ -233,7 +233,7 @@ describe "apt plugin - parameter coverage" do
           "force"        => "true",
           "_environment" => env,
         })
-        result["failed"].as_bool.should be_false
+        result["failed"]?.try(&.as_bool).should be_falsey
         remove_call(log).should eq("remove -y #{DEFAULT_DPKG_OPTIONS} --purge --force-yes krikri-fake-pkg")
       end
     end
@@ -246,7 +246,7 @@ describe "apt plugin - parameter coverage" do
           "allow_change_held_packages" => "true",
           "_environment"               => env,
         })
-        result["failed"].as_bool.should be_false
+        result["failed"]?.try(&.as_bool).should be_falsey
         remove_call(log).should eq("remove -y #{DEFAULT_DPKG_OPTIONS} --allow-change-held-packages krikri-fake-pkg")
       end
     end
@@ -254,7 +254,7 @@ describe "apt plugin - parameter coverage" do
     it "treats a removed-with-config-files (rc) package as needing removal only when purge is set (apt.py: has_files and purge)" do
       with_apt_param_shims("rc") do |env, log|
         result = PluginSpecHelper.run("apt", {"name" => "krikri-fake-pkg", "state" => "absent", "_environment" => env})
-        result["failed"].as_bool.should be_false
+        result["failed"]?.try(&.as_bool).should be_falsey
         result["changed"].as_bool.should be_false
         remove_call(log).should be_nil
       end
@@ -268,7 +268,7 @@ describe "apt plugin - parameter coverage" do
           "purge"        => "true",
           "_environment" => env,
         })
-        result["failed"].as_bool.should be_false
+        result["failed"]?.try(&.as_bool).should be_falsey
         remove_call(log).should_not be_nil
         result["changed"].as_bool.should be_true
       end
@@ -286,7 +286,7 @@ describe "apt plugin - parameter coverage" do
           "default_release"    => "stable",
           "_environment"       => env,
         })
-        result["failed"].as_bool.should be_false
+        result["failed"]?.try(&.as_bool).should be_falsey
         upgrade_call(log).should eq("-y #{DEFAULT_DPKG_OPTIONS} --force-yes --no-remove --allow-downgrades dist-upgrade -t stable")
       end
     end
@@ -299,7 +299,7 @@ describe "apt plugin - parameter coverage" do
           "allow_change_held_packages" => "true",
           "_environment"               => env,
         })
-        result["failed"].as_bool.should be_false
+        result["failed"]?.try(&.as_bool).should be_falsey
         upgrade_call(log).not_nil!.should_not contain("--only-upgrade")
         upgrade_call(log).not_nil!.should_not contain("--allow-change-held-packages")
       end
@@ -316,7 +316,7 @@ describe "apt plugin - parameter coverage" do
           "force"        => "true",
           "_environment" => env,
         })
-        result["failed"].as_bool.should be_false
+        result["failed"]?.try(&.as_bool).should be_falsey
         lines = File.read_lines(log)
         lines.should contain("-y #{DEFAULT_DPKG_OPTIONS} --purge --force-yes autoremove")
         lines.should contain("-y #{DEFAULT_DPKG_OPTIONS} --purge --force-yes autoclean")
@@ -337,7 +337,7 @@ describe "apt plugin - parameter coverage" do
           "force_apt_get"  => "true",
           "_environment"   => env,
         })
-        result["failed"].as_bool.should be_false
+        result["failed"]?.try(&.as_bool).should be_falsey
         install_call(log).should eq("install -y #{DEFAULT_DPKG_OPTIONS} krikri-fake-pkg")
       end
     end
@@ -356,7 +356,7 @@ describe "apt plugin - parameter coverage" do
           "auto_install_module_deps"  => "false",
           "_environment"              => env,
         })
-        result["failed"].as_bool.should be_false
+        result["failed"]?.try(&.as_bool).should be_falsey
         install_call(log).should eq("install -y #{DEFAULT_DPKG_OPTIONS} krikri-fake-pkg")
       end
     end
@@ -374,7 +374,7 @@ describe "apt plugin - parameter coverage" do
             "_policy_rc_d_path"  => policy_path,
             "_environment"       => env,
           })
-          result["failed"].as_bool.should be_false
+          result["failed"]?.try(&.as_bool).should be_falsey
 
           # During the apt-get window the file existed with exactly the
           # content real Ansible's __enter__ writes.
@@ -399,7 +399,7 @@ describe "apt plugin - parameter coverage" do
             "_policy_rc_d_path"  => policy_path,
             "_environment"       => env,
           })
-          result["failed"].as_bool.should be_false
+          result["failed"]?.try(&.as_bool).should be_falsey
 
           File.read(log).should contain("POLICY-DURING-OP:\n#!/bin/sh\nexit 101\n")
           File.read(policy_path).should eq("#!/bin/sh\nexit 0\n# original site policy\n")
@@ -443,7 +443,7 @@ describe "apt plugin - parameter coverage" do
             "_policy_rc_d_path"  => policy_path,
             "_environment"       => env,
           })
-          result["failed"].as_bool.should be_false
+          result["failed"]?.try(&.as_bool).should be_falsey
           File.read(log).should contain("POLICY-DURING-OP:absent")
           File.exists?(policy_path).should be_false
         ensure

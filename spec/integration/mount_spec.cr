@@ -183,7 +183,7 @@ describe "mount plugin" do
     })
 
     result["changed"].as_bool.should be_true
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
   end
 
   it "fails with real Ansible's exact message when opts: is given and the remount command fails" do

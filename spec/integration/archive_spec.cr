@@ -235,7 +235,7 @@ describe "archive plugin" do
         "seuser" => "system_u", "setype" => "etc_t",
       })
 
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
       result["changed"].as_bool.should be_true
     end
   end

@@ -24,7 +24,7 @@ describe "dpkg_divert plugin" do
 
     result = PluginSpecHelper.run("dpkg_divert", {"path" => "/etc/hostname", "state" => "absent"})
 
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     result["changed"].as_bool.should be_false
   end
 end

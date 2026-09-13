@@ -18,7 +18,7 @@ describe "copy plugin - directory-style dest (trailing /)" do
 
     result = PluginSpecHelper.run("copy", {"src" => src, "dest" => "#{dest_dir}/"})
 
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     result["changed"].as_bool.should be_true
     Dir.exists?(dest_dir).should be_true
     File.read(File.join(dest_dir, File.basename(src))).should eq("fragment\n")
@@ -36,7 +36,7 @@ describe "copy plugin - directory-style dest (trailing /)" do
 
     result = PluginSpecHelper.run("copy", {"src" => src, "dest" => dest_dir})
 
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     File.read(File.join(dest_dir, File.basename(src))).should eq("existing-dir\n")
   ensure
     File.delete(src) if src && File.exists?(src)
@@ -53,7 +53,7 @@ describe "copy plugin - directory-style dest (trailing /)" do
 
     result = PluginSpecHelper.run("copy", {"src" => src, "dest" => dest})
 
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     File.read(dest).should eq("literal\n")
     Dir.children(dest_dir).size.should eq(1)
   ensure
