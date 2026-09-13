@@ -45,6 +45,39 @@ module Krikri
     {% end %}
   end
 
+  # Float-seconds variants matching Python's own os.stat_result
+  # st_atime/st_mtime/st_ctime, which are tv_sec + tv_nsec / 1e9 computed
+  # as float64 (CPython combines the two halves the same way) - real
+  # Ansible's stat and find results carry that float straight through
+  # (e.g. "atime": 1789308974.764945), so truncating to whole seconds
+  # broke sub-second timestamp comparisons against real-Ansible output.
+  # The *_sec Int64 variants above stay for Time.unix() call sites (file
+  # module touch-time change detection) that genuinely want whole
+  # seconds.
+  def self.stat_atime_f(stat : LibC::Stat) : Float64
+    {% if flag?(:darwin) %}
+      stat.st_atimespec.tv_sec.to_f + stat.st_atimespec.tv_nsec / 1e9
+    {% else %}
+      stat.st_atim.tv_sec.to_f + stat.st_atim.tv_nsec / 1e9
+    {% end %}
+  end
+
+  def self.stat_mtime_f(stat : LibC::Stat) : Float64
+    {% if flag?(:darwin) %}
+      stat.st_mtimespec.tv_sec.to_f + stat.st_mtimespec.tv_nsec / 1e9
+    {% else %}
+      stat.st_mtim.tv_sec.to_f + stat.st_mtim.tv_nsec / 1e9
+    {% end %}
+  end
+
+  def self.stat_ctime_f(stat : LibC::Stat) : Float64
+    {% if flag?(:darwin) %}
+      stat.st_ctimespec.tv_sec.to_f + stat.st_ctimespec.tv_nsec / 1e9
+    {% else %}
+      stat.st_ctim.tv_sec.to_f + stat.st_ctim.tv_nsec / 1e9
+    {% end %}
+  end
+
   # Plugin result structure with diff support
   class PluginResult
     property? changed : Bool
@@ -335,12 +368,15 @@ module Krikri
         gid: stat.st_gid.to_i64,
         pw_name: pw_name,
         gr_name: gr_name,
-        atime: Krikri.stat_atime_sec(stat),
-        mtime: Krikri.stat_mtime_sec(stat),
-        ctime: Krikri.stat_ctime_sec(stat),
+        atime: Krikri.stat_atime_f(stat),
+        mtime: Krikri.stat_mtime_f(stat),
+        ctime: Krikri.stat_ctime_f(stat),
         inode: stat.st_ino.to_i64,
         dev: stat.st_dev.to_i64,
         nlink: stat.st_nlink.to_i64,
+        block_size: stat.st_blksize.to_i64,
+        blocks: stat.st_blocks.to_i64,
+        device_type: stat.st_rdev.to_i64,
       )
     end
 

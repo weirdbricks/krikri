@@ -15,6 +15,20 @@ module Krikri
       # mode here is the *raw* st_mode (type bits + permission bits, e.g.
       # 0o100644 for a 644 regular file) - the same value `LibC::Stat#st_mode`
       # returns, not the type-stripped octal `stat -c %a` used to produce.
+      #
+      # atime/mtime/ctime are float seconds (tv_sec + tv_nsec / 1e9),
+      # matching Python's own os.stat_result st_atime/st_mtime/st_ctime
+      # float attributes that real Ansible's stat/find results carry
+      # through verbatim.
+      #
+      # block_size/blocks/device_type are the raw st_blksize/st_blocks/
+      # st_rdev passthroughs from the same stat() struct; disk_usage_bytes
+      # is NOT a syscall passthrough but real Ansible's own computed field
+      # - stat.py sets `output['disk_usage_bytes'] = st.st_blocks * 512`
+      # (number of 512-byte blocks actually allocated) - replicated here
+      # from blocks rather than read from the kernel. All four are emitted
+      # unconditionally (real Ansible only gates them on the platform
+      # exposing st_blksize/st_blocks/st_rdev, which Linux always does).
       def self.build(
         path : String,
         mode : Int32,
@@ -23,12 +37,15 @@ module Krikri
         gid : Int64,
         pw_name : String,
         gr_name : String,
-        atime : Int64,
-        mtime : Int64,
-        ctime : Int64,
+        atime : Float64,
+        mtime : Float64,
+        ctime : Float64,
         inode : Int64,
         dev : Int64,
         nlink : Int64,
+        block_size : Int64,
+        blocks : Int64,
+        device_type : Int64,
       ) : Hash(String, JSON::Any)
         special_digit = (mode >> 9) & 0o7
         owner_digit = (mode >> 6) & 0o7
@@ -51,6 +68,10 @@ module Krikri
           "atime"   => atime,
           "mtime"   => mtime,
           "ctime"   => ctime,
+          "block_size" => block_size,
+          "blocks"  => blocks,
+          "disk_usage_bytes" => blocks * 512,
+          "device_type" => device_type,
           "inode"   => inode,
           "dev"     => dev,
           "nlink"   => nlink,

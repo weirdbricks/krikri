@@ -359,8 +359,11 @@ module Krikri
       age = parse_age(age_filter)
       return true unless age
 
-      timestamp = stat_hash[age_stamp]?.try(&.as_i64) || stat_hash["mtime"].as_i64
-      elapsed = now - timestamp
+      # atime/mtime/ctime are float seconds now (matching Python's
+      # st_atime etc. that real Ansible carries through) - elapsed is
+      # compared as float, same result at whole-second age granularity.
+      timestamp = stat_hash[age_stamp]?.try(&.as_f) || stat_hash["mtime"].as_f
+      elapsed = now.to_f - timestamp
       age >= 0 ? elapsed >= age.abs : elapsed <= age.abs
     end
 

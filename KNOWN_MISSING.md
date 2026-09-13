@@ -52,6 +52,17 @@ configurable Jinja delimiter strings).
   `community.general.dconf`, `community.general.portage` - genuinely
   missing, one role each unless noted. See `ROLES_TESTED.md` for the
   exact affected role per module.
+- **`stat` (and `find`'s per-file entries) now carry real Ansible's
+  sub-second timestamp precision and disk-allocation fields** (found via
+  an ad-hoc CLI comparison sweep against real `ansible`, 2026-09-13):
+  real Ansible's `atime`/`mtime`/`ctime` are Python's float
+  `os.stat_result` seconds (`1789308974.764945`); krikri truncated to
+  whole seconds, and its result omitted `block_size`, `blocks`,
+  `device_type`, and `disk_usage_bytes` entirely. The shared
+  `StatFields.build` helper (used by both plugins via
+  `native_stat`) now emits float-seconds timestamps and all four
+  missing fields (`disk_usage_bytes` is real Ansible's own computed
+  `st_blocks * 512`, not a syscall passthrough).
 - **`get_url` now supports `file://` URLs** (found via an ad-hoc CLI
   comparison sweep against real `ansible`, 2026-09-13): real Ansible's
   `get_url` (urllib's FileHandler) treats a `file://` URL as a
