@@ -100,12 +100,26 @@ module Krikri
       changes = apply_state(lines, state, type, control, module_path)
       return changes if changes.is_a?(PluginResult)
 
-      return PluginResult.new(changed: false, failed: false, msg: "No matching rule in #{path}") if changes == 0
-      return PluginResult.new(changed: true, failed: false, msg: "Would update #{changes} rule(s) in #{path}") if check_mode
+      # Real community.general.pamd's success result is exactly
+      # {changed, change_count, backupdest} - verified live against real
+      # ansible (community.general 13.3.0 ad-hoc CLI comparison,
+      # privileged podman container, 2026-09-13) - with no msg at all:
+      # an idempotent no-op (rule matched, already had the desired
+      # value) and a genuine no-such-rule case are BOTH
+      # `changed: false, change_count: 0` (change_count counts rules
+      # actually MODIFIED, not matched). The previous "No matching rule
+      # in ..." msg therefore misreported the idempotent no-op as a
+      # no-such-rule case, and the "Updated N rule(s)" msg was invented
+      # too. backupdest is the backup file path (empty string when
+      # backup: yes wasn't given or nothing changed - the backup is
+      # only taken when the file is actually about to be written).
+      backupdest = ""
+      if changes > 0 && !check_mode
+        backupdest = backup(path)
+        write(path, lines)
+      end
 
-      backup(path)
-      write(path, lines)
-      PluginResult.new(changed: true, failed: false, msg: "Updated #{changes} rule(s) in #{path}")
+      PluginResult.new(changed: changes > 0, failed: false, msg: "", change_count: changes, backupdest: backupdest)
     end
 
     private def apply_state(lines : Array(PamdRuleLine), state : String, type : String, control : String, module_path : String) : Int32 | PluginResult
@@ -201,7 +215,7 @@ module Krikri
 
     private def write(path : String, lines : Array(PamdRuleLine)) : Nil
       rendered = lines.map(&.to_s)
-      marker = "# Updated by Ansible - #{Time.local}"
+      marker = "# Updated by Ansible - #{Time.local.to_s("%Y-%m-%dT%H:%M:%S.%6N")}"
       if rendered.size <= 1
         rendered = ["", marker] + rendered
       elsif rendered[1].starts_with?("# Updated by Ansible")
@@ -352,10 +366,17 @@ module Krikri
       found.size
     end
 
-    private def backup(path : String) : Nil
-      return unless true?(@params["backup"]?)
-      timestamp = Time.local.to_s("%Y%m%d-%H%M%S")
-      File.copy(path, "#{path}.#{timestamp}.bak")
+    # Returns the backup file path ("" when backup: yes wasn't given),
+    # so #execute can echo it as the backupdest result field. Naming
+    # matches real ansible's backup_local() helper (used by pamd's
+    # backup): <path>.<file-owner-uid>.<YYYY-MM-DD@HH:MM:SS>~ -
+    # live-verified against real ansible 2026-09-13.
+    private def backup(path : String) : String
+      return "" unless true?(@params["backup"]?)
+      timestamp = Time.local.to_s("%Y-%m-%d@%H:%M:%S")
+      backup_path = "#{path}.#{remote_exec("stat -c %u #{path}")[:stdout].strip}.#{timestamp}~"
+      File.copy(path, backup_path)
+      backup_path
     end
   end
 end
