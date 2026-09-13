@@ -42,6 +42,40 @@ module Krikri
     names
   end
 
+  # Pin info per dependency under a top-level section header (e.g.
+  # "dependencies:") of a shard.yml: {name => {github, tag, branch}} with
+  # nil for whatever the entry doesn't pin. Line-based like the parsers
+  # above so it stays a pure, fixture-testable function.
+  alias ShardYmlPin = {github: String?, tag: String?, branch: String?}
+
+  def self.parse_shard_yml_dependency_pins(content : String, section : String) : Hash(String, ShardYmlPin)
+    pins = {} of String => ShardYmlPin
+    in_section = false
+    current : String? = nil
+    content.each_line do |line|
+      if header_match = line.match(/^([^\s#].*?):\s*$/)
+        in_section = header_match[1] == section
+        current = nil
+      elsif name_match = line.match(/^  ([^\s:]+):\s*$/)
+        current = name_match[1]
+        pins[current] = {github: nil, tag: nil, branch: nil} if in_section
+      elsif field_match = line.match(/^    (github|tag|branch):\s*(\S.*?)\s*$/)
+        if in_section && (cur = current) && (existing = pins[cur]?)
+          pins[cur] = update_pin_field(existing, field_match[1], field_match[2])
+        end
+      end
+    end
+    pins
+  end
+
+  private def self.update_pin_field(pin : ShardYmlPin, field : String, value : String) : ShardYmlPin
+    case field
+    when "github" then {github: value, tag: pin[:tag], branch: pin[:branch]}
+    when "tag"    then {github: pin[:github], tag: value, branch: pin[:branch]}
+    else               {github: pin[:github], tag: pin[:tag], branch: value}
+    end
+  end
+
   # "0.9.0+git.commit.<sha>" -> "0.9.0" - the semantic version a user
   # comparing "what version of X am I running" actually wants, matching
   # how pip reports jinja2/pyyaml in real `ansible --version`.
@@ -59,6 +93,26 @@ module Krikri
       .sort_by! { |entry| entry[0] }
   end
 
+  # Fork annotation per runtime dependency, keyed by shard name. Several
+  # of the shards krikri ships are its own patched forks of upstream
+  # libraries (identified by the weirdbricks GitHub owner in shard.yml,
+  # which carries real behavioral changes, not just version pins); a
+  # deployed binary should say which repo it was actually built from.
+  RUNTIME_DEPENDENCY_FORK_NOTES = begin
+    notes = {} of String => String
+    parse_shard_yml_dependency_pins(SHARD_YML_TEXT, "dependencies").each do |name, pin|
+      next unless (github = pin[:github]) && github.starts_with?("weirdbricks/")
+      suffix = ""
+      if tag = pin[:tag]
+        suffix = ", tag #{tag}"
+      elsif branch = pin[:branch]
+        suffix = ", branch #{branch}"
+      end
+      notes[name] = " (#{github} fork#{suffix})"
+    end
+    notes
+  end
+
   def self.version_info : String
     lines = [
       "krikri #{VERSION}",
@@ -68,7 +122,7 @@ module Krikri
       "Shards:",
     ]
     RUNTIME_DEPENDENCY_VERSIONS.each do |(name, version)|
-      lines << "  #{name}: #{version}"
+      lines << "  #{name}: #{version}#{RUNTIME_DEPENDENCY_FORK_NOTES[name]? || ""}"
     end
     lines.join("\n")
   end
