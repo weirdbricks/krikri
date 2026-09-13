@@ -49,6 +49,26 @@ private DESCRIBE_NONE = <<-XML
   </DescribeSubnetsResponse>
 XML
 
+# A subnet with no tags and no ipv6 associations - the wire omits
+# tagSet entirely and carries ipv6CidrBlockAssociationSet as an empty
+# element, matching the real API's shape for a default subnet.
+private DESCRIBE_BARE = <<-XML
+  <?xml version="1.0" encoding="UTF-8"?>
+  <DescribeSubnetsResponse xmlns="http://ec2.amazonaws.com/doc/2016-11-15/">
+    <requestId>req-3</requestId>
+    <subnetSet>
+      <item>
+        <subnetId>subnet-bbbb</subnetId>
+        <vpcId>vpc-1234</vpcId>
+        <cidrBlock>10.0.2.0/24</cidrBlock>
+        <state>available</state>
+        <availableIpAddressCount>4091</availableIpAddressCount>
+        <ipv6CidrBlockAssociationSet/>
+      </item>
+    </subnetSet>
+  </DescribeSubnetsResponse>
+XML
+
 private EMPTY_PARAMS = Hash(String, String).new
 
 private def run_module(params : Hash(String, String), handler : Proc(String, String, String)) : JSON::Any
@@ -97,7 +117,7 @@ describe Krikri::PluginHelpers::Ec2Info do
       subnet["availability_zone"].should eq("us-east-1a")
       subnet["availability_zone_id"].should eq("use1-az6")
       subnet["state"].should eq("available")
-      subnet["available_ip_address_count"].should eq("251")
+      subnet["available_ip_address_count"].should eq(251)
       subnet["default_for_az"].should eq(false)
       subnet["map_public_ip_on_launch"].should eq(true)
       subnet["assign_ipv6_address_on_creation"].should eq(false)
@@ -117,6 +137,18 @@ describe Krikri::PluginHelpers::Ec2Info do
     it "returns an empty list when no subnets match" do
       result = run_module({"region" => "us-east-1"}, ->(region : String, body : String) { DESCRIBE_NONE })
       result["subnets"].as_a.should be_empty
+    end
+
+    it "defaults tags to {} and empty sets to [] when the wire response has neither" do
+      result = run_module({"region" => "us-east-1"}, ->(_region : String, _body : String) { DESCRIBE_BARE })
+      subnet = result["subnets"][0]
+      subnet["tags"].as_h.should be_empty
+      subnet["ipv6_cidr_block_association_set"].as_a.should be_empty
+    end
+
+    it "carries no msg on success (fail_json-only field)" do
+      result = run_module({"region" => "us-east-1"}, ->(_region : String, _body : String) { DESCRIBE_ONE })
+      result["msg"]?.should be_nil
     end
 
     it "sends SubnetId.N and Filter.N.Name/Value.M wire params" do

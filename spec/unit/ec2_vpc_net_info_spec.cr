@@ -43,6 +43,26 @@ private DESCRIBE_NONE = <<-XML
   </DescribeVpcsResponse>
 XML
 
+# A VPC the wire response carries no tagSet for at all (the real API
+# omits it for untagged VPCs) - the real module still returns tags: {}.
+private DESCRIBE_NO_TAGS = <<-XML
+  <?xml version="1.0" encoding="UTF-8"?>
+  <DescribeVpcsResponse xmlns="http://ec2.amazonaws.com/doc/2016-11-15/">
+    <requestId>req-4</requestId>
+    <vpcSet>
+      <item>
+        <vpcId>vpc-bare</vpcId>
+        <cidrBlock>10.1.0.0/16</cidrBlock>
+        <state>available</state>
+        <isDefault>false</isDefault>
+        <instanceTenancy>default</instanceTenancy>
+        <dhcpOptionsId>dopt-1</dhcpOptionsId>
+        <ownerId>123456789012</ownerId>
+      </item>
+    </vpcSet>
+  </DescribeVpcsResponse>
+XML
+
 private def attribute_response(attribute : String, value : String) : String
   <<-XML
     <DescribeVpcAttributeResponse xmlns="http://ec2.amazonaws.com/doc/2016-11-15/">
@@ -90,8 +110,8 @@ describe Krikri::PluginHelpers::Ec2Info do
       result = run_module({"region" => "us-east-1"}, ->(region : String, body : String) do
         action = URI::Params.parse(body)["Action"]
         case action
-        when "DescribeVpcs"                    then DESCRIBE_ONE
-        when "DescribeVpcAttribute"            then
+        when "DescribeVpcs" then DESCRIBE_ONE
+        when "DescribeVpcAttribute"
           attribute = URI::Params.parse(body)["Attribute"]
           attribute_response(attribute, attribute == "enableDnsSupport" ? "true" : "false")
         else
@@ -115,6 +135,22 @@ describe Krikri::PluginHelpers::Ec2Info do
       assoc = vpc["cidr_block_association_set"][0]
       assoc["association_id"].should eq("vpc-cidr-assoc-0")
       assoc["cidr_block_state"]["state"].should eq("associated")
+    end
+
+    it "defaults tags to {} when the VPC has no tagSet, and carries no msg on success" do
+      result = run_module({"region" => "us-east-1"}, ->(_region : String, body : String) do
+        action = URI::Params.parse(body)["Action"]
+        case action
+        when "DescribeVpcs" then DESCRIBE_NO_TAGS
+        when "DescribeVpcAttribute"
+          attribute_response(URI::Params.parse(body)["Attribute"], "true")
+        else
+          raise "unexpected action #{action}"
+        end
+      end)
+      result["failed"]?.should be_falsey
+      result["msg"]?.should be_nil
+      result["vpcs"][0]["tags"].as_h.should be_empty
     end
 
     it "makes the two per-VPC DescribeVpcAttribute calls" do

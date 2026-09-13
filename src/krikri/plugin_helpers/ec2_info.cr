@@ -101,8 +101,11 @@ module Krikri
         # Leaf elements: EC2 serializes booleans as lowercase true/false
         # and boto3 parses them into real bools before Ansible's
         # camel_dict_to_snake_dict ever sees them, so the same leaf-text
-        # coercion happens here.
+        # coercion happens here. Empty set/list elements (<fooSet/>) are
+        # empty LISTS in boto3, never empty strings - boto3's list
+        # shape defaults to [].
         if elements.empty?
+          return JSON::Any.new([] of JSON::Any) if node.name.ends_with?("Set")
           content = node.content.strip
           return JSON::Any.new(true) if content == "true"
           return JSON::Any.new(false) if content == "false"
@@ -129,12 +132,29 @@ module Krikri
                 when "imageState"         then "state"
                 when "imageOwnerId"       then "owner_id"
                 when "instanceState"      then "state"
-                else                           camel_to_snake(child.name)
+                  # The XML wire name for the image item's public flag is
+                  # isPublic, but boto3's response key is Public (the XML
+                  # differs from the boto3 model here) - real Ansible's
+                  # camel_dict_to_snake_dict output carries `public`.
+                when "isPublic" then "public"
+                else                 camel_to_snake(child.name)
                 end
-          object[key] = jsonify(child)
+          value = jsonify(child)
+          # The same wire-vs-boto3 gap hits numeric fields: boto3 parses
+          # these into real integers before Ansible's shaping ever runs,
+          # so a string like "4091" diverges from real module output.
+          numeric = value.as_s? &&
+                    INTEGER_FIELDS.includes?(child.name) &&
+                    value.as_s.matches?(/\A-?\d+\z/)
+          object[key] = numeric ? JSON::Any.new(value.as_s.to_i64) : value
         end
         JSON::Any.new(object)
       end
+
+      # EC2 wire fields that are integers in boto3's parsed response
+      # (everything else that looks numeric - OwnerId, UserId strings -
+      # stays a string, exactly like boto3).
+      private INTEGER_FIELDS = ["availableIpAddressCount", "volumeSize"]
 
       # -- shared run helpers -----------------------------------------------
 
@@ -146,10 +166,22 @@ module Krikri
         raw == "true" || raw == "True" || raw == "yes"
       end
 
+      # Real modules' success result carries only `changed` plus the list
+      # key - no msg (that's fail_json-only per the module protocol).
       private def self.result(key : String, entries : Array(JSON::Any)) : Krikri::PluginResult
-        built = Krikri::PluginResult.new(changed: false, failed: false, msg: "#{entries.size} found")
+        built = Krikri::PluginResult.new(changed: false, failed: false)
         built.extra[key] = JSON::Any.new(entries)
         built
+      end
+
+      # The real modules always set `tags` (a tag-key -> value dict, {}
+      # when there are none) even when the describe response carries no
+      # tagSet at all.
+      private def self.with_tags(item : JSON::Any) : JSON::Any
+        if object = item.as_h?
+          object["tags"] = JSON::Any.new(Hash(String, JSON::Any).new) unless object["tags"]?
+        end
+        item
       end
 
       # -- ec2_vpc_subnet_info -----------------------------------------------
@@ -163,7 +195,7 @@ module Krikri
         root = Ec2Api.call(region, "DescribeSubnets", Ec2Api.to_form_params(wire), credentials)
 
         subnets = Ec2Api.items(root, "subnetSet").map do |item|
-          subnet = jsonify(item)
+          subnet = with_tags(jsonify(item))
           if object = subnet.as_h?
             object["id"] = object["subnet_id"] if object["subnet_id"]?
           end
@@ -185,7 +217,7 @@ module Krikri
         root = Ec2Api.call(region, "DescribeVpcs", Ec2Api.to_form_params(wire), credentials)
 
         vpcs = Ec2Api.items(root, "vpcSet").map do |item|
-          vpc = jsonify(item)
+          vpc = with_tags(jsonify(item))
           next vpc unless object = vpc.as_h?
           vpc_id = object["vpc_id"]?.try(&.as_s?) || ""
 
@@ -251,7 +283,7 @@ module Krikri
         wire += Ec2Api.filter_params(filters)
         root = Ec2Api.call(region, "DescribeImages", Ec2Api.to_form_params(wire), credentials)
 
-        images = Ec2Api.items(root, "imagesSet").map { |item| jsonify(item) }
+        images = Ec2Api.items(root, "imagesSet").map { |item| with_tags(jsonify(item)) }
 
         if bool_param(params["describe_image_attributes"]?)
           images = images.map do |image|
