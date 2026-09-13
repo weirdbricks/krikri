@@ -31,29 +31,41 @@ module Krikri
       original = File.exists?(path) ? File.read(path) : ""
       lines = initial_lines(original)
 
-      new_lines, changed = apply(lines, section, option, value, state, create, exclusive, no_extra_spaces)
+      new_lines, changed, branch_msg = apply(lines, section, option, value, state, create, exclusive, no_extra_spaces)
 
-      finish_execute(path, original, new_lines, changed, check_mode)
+      finish_execute(path, original, new_lines, changed, branch_msg, check_mode)
     end
 
     private def finish_execute(path : String, original : String, new_lines : Array(String),
-                               changed : Bool, check_mode : Bool) : PluginResult
+                               changed : Bool, branch_msg : String?, check_mode : Bool) : PluginResult
       backup_file = maybe_backup(path, changed, true?(@params["backup"]?), check_mode)
 
       new_content = new_content_of(new_lines)
 
-      diff = generate_unified_diff(original, new_content, path, path) if changed && @diff_mode
+      # Real ini_file ALWAYS carries a diff dict in its result, with
+      # "<path> (content)" before/after headers (live-verified against
+      # ansible-core 2.19.11) and before/after content filled only in
+      # --diff mode - so an unchanged non-diff-mode result still carries
+      # the (empty-content) dict rather than omitting the key.
+      diff = if @diff_mode
+               generate_unified_diff(original, new_content, "#{path} (content)", "#{path} (content)")
+             else
+               generate_unified_diff("", "", "#{path} (content)", "#{path} (content)")
+             end
 
       write_new_content(path, new_content) if changed && !check_mode
 
-      PluginResult.new(
+      result = PluginResult.new(
         changed: changed,
         failed: false,
-        msg: changed ? "option changed" : "OK",
+        msg: branch_msg || "OK",
         diff: diff,
-        path: path,
-        backup_file: backup_file
+        path: path
       )
+      # Real module includes backup_file only when a backup was actually
+      # made (its None default is dropped by exit_json).
+      result.extra["backup_file"] = JSON::Any.new(backup_file) unless backup_file.empty?
+      result
     end
 
     private def initial_lines(original : String) : Array(String)
@@ -183,29 +195,49 @@ module Krikri
     end
 
     private def apply(lines : Array(String), section : String?, option : String?, value : String?,
-                      state : String, create : Bool, exclusive : Bool, no_extra_spaces : Bool) : {Array(String), Bool}
+                      state : String, create : Bool, exclusive : Bool, no_extra_spaces : Bool) : {Array(String), Bool, String?}
       new_lines = lines.dup
       changed = false
+      msg = nil
 
-      header_idx = section ? find_section_header(new_lines, section) : nil
-
-      if section && !header_idx
-        return {new_lines, false} if state == "absent"
-        header_idx = append_section(new_lines, section)
-        changed = true
-      end
+      header_idx, section_added, abort = prepare_section(new_lines, section, state)
+      return {new_lines, false, nil} if abort
 
       block_start = header_idx ? header_idx + 1 : 0
       block_end = find_block_end(new_lines, block_start)
 
       if option
-        changed = apply_option(new_lines, option, value, state, block_start, block_end, exclusive, no_extra_spaces) || changed
+        option_changed, option_msg = apply_option(new_lines, option, value, state, block_start, block_end, exclusive, no_extra_spaces)
+        if option_changed
+          changed = true
+          msg = option_msg
+        end
       elsif state == "absent" && header_idx
         (header_idx...block_end).to_a.reverse_each { |i| new_lines.delete_at(i) }
         changed = true
+        msg = "section removed"
       end
 
-      {new_lines, changed}
+      # Real do_ini overrides the msg when the section itself was newly
+      # appended (its `not within_section` branch): "section and option
+      # added" when an option line goes in with it, "only section added"
+      # otherwise.
+      msg = option ? "section and option added" : "only section added" if section_added
+
+      {new_lines, changed, msg}
+    end
+
+    # Locates (or appends, state=present only) the section header.
+    # Returns {header_idx, section_added, abort} - abort true means the
+    # real module's absent-on-missing-section no-op and nothing further
+    # should run.
+    private def prepare_section(new_lines : Array(String), section : String?, state : String) : {Int32?, Bool, Bool}
+      header_idx = section ? find_section_header(new_lines, section) : nil
+      if section && !header_idx
+        return {nil, false, true} if state == "absent"
+        return {append_section(new_lines, section), true, false}
+      end
+      {header_idx, false, false}
     end
 
     private def append_section(new_lines : Array(String), section : String) : Int32
@@ -214,43 +246,49 @@ module Krikri
       new_lines.size - 1
     end
 
+    # Returns {changed, msg} - real do_ini's per-branch msg strings
+    # (live-verified against ansible-core 2.19.11): "option added" when
+    # the option line is newly inserted, "option changed" for an
+    # in-place rewrite, a dedup removal, or a state=absent removal,
+    # nil ("OK" upstream) when nothing changed.
     private def apply_option(new_lines : Array(String), option : String, value : String?,
                              state : String, block_start : Int32, block_end : Int32,
-                             exclusive : Bool, no_extra_spaces : Bool) : Bool
+                             exclusive : Bool, no_extra_spaces : Bool) : {Bool, String?}
       # state=absent only ever matches ACTIVE (uncommented) option lines,
       # per real Ansible's hard-coded match_active_opt in its absent branch.
       active_only = state == "absent"
       matches = (block_start...block_end).select { |i| option_line_index?(new_lines[i], option, active_only) }
-      changed = false
 
       if state == "present"
         formatted = format_option(option, (value || raise "ini_file: value is required"), no_extra_spaces)
 
         if matches.empty?
           new_lines.insert(block_end, formatted)
+          return {true, "option added"}
+        end
+
+        first = matches.first
+        changed = false
+        if new_lines[first] != formatted
+          new_lines[first] = formatted
           changed = true
-        else
-          first = matches.first
-          if new_lines[first] != formatted
-            new_lines[first] = formatted
+        end
+
+        if exclusive && matches.size > 1
+          matches[1..].reverse_each do |i|
+            new_lines.delete_at(i)
             changed = true
           end
-
-          if exclusive && matches.size > 1
-            matches[1..].reverse_each do |i|
-              new_lines.delete_at(i)
-              changed = true
-            end
-          end
         end
+        return {true, "option changed"} if changed
       else
         unless matches.empty?
           matches.reverse_each { |i| new_lines.delete_at(i) }
-          changed = true
+          return {true, "option changed"}
         end
       end
 
-      changed
+      {false, nil}
     end
 
     private def write_backup(path : String) : String

@@ -158,4 +158,89 @@ describe "ini_file plugin" do
 
     result["failed"].as_bool.should be_true
   end
+
+  # Real community.general ini_file's per-branch msg strings and
+  # always-present diff dict (live-verified against ansible-core
+  # 2.19.11: "section and option added" / "option added" / "option
+  # changed" / "section removed" / "OK", and a diff dict keyed with
+  # "<path> (content)" headers whose before/after content is only
+  # filled in --diff mode).
+  describe "msg and diff shape (real ansible's field set)" do
+    it "says 'section and option added' when both are newly created" do
+      path = tmp_path("ini_file-msg-new")
+      File.delete(path) if File.exists?(path)
+
+      result = PluginSpecHelper.run("ini_file", {"path" => path, "section" => "core", "option" => "timeout", "value" => "30"})
+
+      result["msg"].as_s.should eq("section and option added")
+    end
+
+    it "says 'option added' when the option is new in an existing section" do
+      path = tmp_path("ini_file-msg-added")
+      File.write(path, "[core]\nold = 1\n")
+
+      result = PluginSpecHelper.run("ini_file", {"path" => path, "section" => "core", "option" => "added", "value" => "2"})
+
+      result["msg"].as_s.should eq("option added")
+    end
+
+    it "says 'option changed' when an existing option is rewritten" do
+      path = tmp_path("ini_file-msg-changed")
+      File.write(path, "[core]\nold = 1\n")
+
+      result = PluginSpecHelper.run("ini_file", {"path" => path, "section" => "core", "option" => "old", "value" => "2"})
+
+      result["msg"].as_s.should eq("option changed")
+    end
+
+    it "says 'option changed' for a state=absent removal" do
+      path = tmp_path("ini_file-msg-removed")
+      File.write(path, "[core]\nold = 1\n")
+
+      result = PluginSpecHelper.run("ini_file", {"path" => path, "section" => "core", "option" => "old", "state" => "absent"})
+
+      result["msg"].as_s.should eq("option changed")
+    end
+
+    it "says 'section removed' when state=absent drops the whole section" do
+      path = tmp_path("ini_file-msg-section-removed")
+      File.write(path, "[core]\nold = 1\n[extra]\nmore = 2\n")
+
+      result = PluginSpecHelper.run("ini_file", {"path" => path, "section" => "extra", "state" => "absent"})
+
+      result["msg"].as_s.should eq("section removed")
+    end
+
+    it "says 'OK' when nothing changed" do
+      path = tmp_path("ini_file-msg-ok")
+      File.write(path, "[core]\nold = 1\n")
+
+      result = PluginSpecHelper.run("ini_file", {"path" => path, "section" => "core", "option" => "old", "value" => "1"})
+
+      result["changed"].as_bool.should be_false
+      result["msg"].as_s.should eq("OK")
+    end
+
+    it "always carries a diff dict with '<path> (content)' headers, empty content outside --diff" do
+      path = tmp_path("ini_file-msg-diff")
+      File.delete(path) if File.exists?(path)
+
+      result = PluginSpecHelper.run("ini_file", {"path" => path, "section" => "core", "option" => "timeout", "value" => "30"})
+
+      diff = result["diff"].as_h
+      diff["before_header"].as_s.should eq("#{path} (content)")
+      diff["after_header"].as_s.should eq("#{path} (content)")
+      diff["before"].as_s.should be_empty
+      diff["after"].as_s.should be_empty
+    end
+
+    it "omits backup_file when no backup was made" do
+      path = tmp_path("ini_file-msg-no-backup")
+      File.delete(path) if File.exists?(path)
+
+      result = PluginSpecHelper.run("ini_file", {"path" => path, "section" => "core", "option" => "timeout", "value" => "30"})
+
+      result["backup_file"]?.should be_nil
+    end
+  end
 end

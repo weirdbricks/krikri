@@ -156,6 +156,43 @@ against Atlantic.net now, Kata having been retired as a backend.
 
 ---
 
+## `cron`/`apt_repository`/`ini_file`/`cronvar` result fields matched to real ansible (0.9.1024)
+
+Found via an ad-hoc CLI comparison sweep against real `ansible`
+(2026-09-13): these four config/file-editing plugins reported only
+`changed`+`msg` (occasionally `path`) where real Ansible returns
+structured result fields - every underlying operation already succeeded
+correctly (verified by follow-up `cat`/`crontab -l` checks), but a
+caller registering e.g. `cron_result.jobs` got nothing. All four real
+field sets were live-verified against ansible-core 2.19.11 before
+implementing:
+
+- `cron` now returns `jobs`/`envs` - real cron.py's full CURRENT list
+  of every marker-named job / env assignment in the crontab after the
+  operation, NOT just the entry the task touched (the initial sweep
+  assumption "the one entry" was wrong; the real module re-parses the
+  whole crontab on exit). Both the cron.d-file and live-crontab paths,
+  job and env variants, carry the fields.
+- `apt_repository` now returns `sources_added`/`sources_removed` -
+  real apt_repository.py computes these as the SET DIFFERENCE of the
+  sources-file paths (its `SourcesList` dump keys) before vs after:
+  a file CREATED by an add lands in `sources_added`, one EMPTIED or
+  deleted by a remove in `sources_removed`, but adding a line to an
+  already-non-empty file reports NEITHER (live-verified; the intuitive
+  "files touched" reading is not what the module does).
+- `ini_file`'s `msg` now matches real community.general's per-branch
+  strings (`section and option added` / `option added` / `option
+  changed` / `section removed` / `OK` - the old single generic `option
+  changed` for every change is gone), its `diff` dict is now always
+  present with real `"<path> (content)"` headers (before/after content
+  still only filled in --diff mode, as upstream), and `backup_file` is
+  omitted when no backup was made.
+- `cronvar`'s `vars` field (full current var-name list) already matched
+  the real module live; the only shape drift found was the same
+  always-present `backup_file: ""` key, now omitted like upstream.
+
+---
+
 ## Four identity/access plugins now return real Ansible's full result field sets (0.9.1023)
 
 Found via an ad-hoc CLI comparison sweep against real `ansible`

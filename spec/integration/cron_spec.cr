@@ -363,4 +363,63 @@ describe "cron plugin" do
       File.delete(backup_file)
     end
   end
+
+  # Real cron.py's result carries `jobs`/`envs` - the FULL current list
+  # of every marked job / env assignment in the crontab after the
+  # operation, not just the one entry the task touched (live-verified
+  # against ansible-core 2.19.11).
+  describe "jobs/envs result fields (real ansible's full post-op lists)" do
+    it "reports all current job names and env names after an add" do
+      path = tmp_path("cron-fields.txt")
+      File.delete(path) if File.exists?(path)
+
+      PluginSpecHelper.run("cron", {"name" => "first job", "job" => "/bin/true", "cron_file" => path})
+      result = PluginSpecHelper.run("cron", {"name" => "second job", "job" => "/bin/ls", "cron_file" => path})
+
+      result["jobs"].as_a.map(&.as_s).should eq(["first job", "second job"])
+      result["envs"].as_a.should be_empty
+    end
+
+    it "reports env names on the env: true path and keeps job names in sync" do
+      path = tmp_path("cron-fields-env.txt")
+      File.delete(path) if File.exists?(path)
+
+      PluginSpecHelper.run("cron", {"name" => "a job", "job" => "/bin/true", "cron_file" => path})
+      result = PluginSpecHelper.run("cron", {"name" => "MAILTO", "env" => "true", "job" => "root", "cron_file" => path})
+
+      result["envs"].as_a.map(&.as_s).should eq(["MAILTO"])
+      result["jobs"].as_a.map(&.as_s).should eq(["a job"])
+    end
+
+    it "updates the lists on state: absent" do
+      path = tmp_path("cron-fields-absent.txt")
+      File.write(path, "#Ansible: gone job\n* * * * * /bin/true\n#Ansible: stays\n1 1 1 1 1 /bin/ls\n")
+
+      result = PluginSpecHelper.run("cron", {"name" => "gone job", "state" => "absent", "cron_file" => path})
+
+      result["changed"].as_bool.should be_true
+      result["jobs"].as_a.map(&.as_s).should eq(["stays"])
+    end
+
+    it "carries the full lists on a no-op second run too (real ansible exits with them every time)" do
+      path = tmp_path("cron-fields-noop.txt")
+      params = {"name" => "a job", "job" => "/bin/true", "cron_file" => path}
+      PluginSpecHelper.run("cron", params)
+
+      result = PluginSpecHelper.run("cron", params)
+
+      result["changed"].as_bool.should be_false
+      result["jobs"].as_a.map(&.as_s).should eq(["a job"])
+    end
+
+    it "reports an empty job list for a crontab with no marked entries" do
+      path = tmp_path("cron-fields-empty.txt")
+      File.write(path, "MAILTO=root\n* * * * * /bin/true\n")
+
+      result = PluginSpecHelper.run("cron", {"name" => "brand new", "job" => "/bin/true", "cron_file" => path})
+
+      result["jobs"].as_a.map(&.as_s).should eq(["brand new"])
+      result["envs"].as_a.map(&.as_s).should eq(["MAILTO"])
+    end
+  end
 end

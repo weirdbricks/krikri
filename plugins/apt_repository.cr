@@ -207,18 +207,20 @@ module Krikri
     # equivalent would too.
     private def add(normalized : String, update_cache : Bool, check_mode : Bool, filename_source : String? = nil, & : -> PluginResult?) : PluginResult
       if find_source(normalized)
-        return PluginResult.new(changed: false, failed: false, msg: "", repo: normalized, state: "present")
+        return PluginResult.new(changed: false, failed: false, msg: "", repo: normalized, state: "present", sources_added: [] of String, sources_removed: [] of String)
       end
 
+      target = target_file(normalized, filename_source || normalized)
+      target_had_sources = file_has_sources?(target)
+
       if check_mode
-        return PluginResult.new(changed: true, failed: false, msg: "Would add repository (check mode)", repo: normalized, state: "present")
+        return PluginResult.new(changed: true, failed: false, msg: "Would add repository (check mode)", repo: normalized, state: "present", sources_added: target_had_sources ? [] of String : [target], sources_removed: [] of String)
       end
 
       if error = yield
         return error
       end
 
-      target = target_file(normalized, filename_source || normalized)
       Dir.mkdir_p(File.dirname(target))
       File.open(target, "a", &.puts(normalized))
       apply_owner_group_mode(target, nil, nil, @params["mode"]?)
@@ -266,20 +268,22 @@ module Krikri
         end
       end
 
-      PluginResult.new(changed: true, failed: false, msg: "", repo: normalized, state: "present")
+      PluginResult.new(changed: true, failed: false, msg: "", repo: normalized, state: "present", sources_added: target_had_sources ? [] of String : [target], sources_removed: [] of String)
     end
 
     private def remove(normalized : String, update_cache : Bool, check_mode : Bool) : PluginResult
       file = find_source(normalized)
       unless file
-        return PluginResult.new(changed: false, failed: false, msg: "", repo: normalized, state: "absent")
-      end
-
-      if check_mode
-        return PluginResult.new(changed: true, failed: false, msg: "Would remove repository (check mode)", repo: normalized, state: "absent")
+        return PluginResult.new(changed: false, failed: false, msg: "", repo: normalized, state: "absent", sources_added: [] of String, sources_removed: [] of String)
       end
 
       remaining_lines = File.read_lines(file).reject { |line| line == normalized }
+      file_would_lose_sources = remaining_lines.none? { |line| valid_source_line?(line) }
+
+      if check_mode
+        return PluginResult.new(changed: true, failed: false, msg: "Would remove repository (check mode)", repo: normalized, state: "absent", sources_added: [] of String, sources_removed: file_would_lose_sources ? [file] : [] of String)
+      end
+
       File.write(file, remaining_lines.empty? ? "" : remaining_lines.join('\n') + "\n")
       File.delete?(file) if remaining_lines.none? { |line| !line.empty? } && file != sources_list
 
@@ -296,7 +300,30 @@ module Krikri
         end
       end
 
-      PluginResult.new(changed: true, failed: false, msg: "", repo: normalized, state: "absent")
+      PluginResult.new(changed: true, failed: false, msg: "", repo: normalized, state: "absent", sources_added: [] of String, sources_removed: file_would_lose_sources ? [file] : [] of String)
+    end
+
+    # Real apt_repository computes sources_added/sources_removed as the
+    # set difference of the filenames (full paths) carrying at least one
+    # valid source line before vs after the operation (its SourcesList
+    # dump keys, live-verified against ansible-core 2.19.11: adding a
+    # line to an EXISTING non-empty file reports neither field; a file
+    # created by the add shows up in sources_added, one emptied/deleted
+    # by the remove in sources_removed). "Valid source line" here means
+    # a non-blank, non-comment line - a real dump key skips files with
+    # none. The cache-update failure paths keep the fields out entirely
+    # (real module's fail_json exit carries only msg).
+    private def file_has_sources?(file : String) : Bool
+      return false unless File.exists?(file)
+      File.each_line(file) { |line| return true if valid_source_line?(line) }
+      false
+    rescue
+      false
+    end
+
+    private def valid_source_line?(line : String) : Bool
+      stripped = line.strip
+      !stripped.empty? && !stripped.starts_with?('#')
     end
 
     # Undoes the just-appended line from #add's own File.open(target,
