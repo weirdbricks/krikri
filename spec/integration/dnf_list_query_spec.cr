@@ -50,7 +50,7 @@ describe "dnf/yum list: query mode" do
       })
 
       result["changed"].as_bool.should be_false
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
       results = result["results"].as_a
       results.size.should eq(3)
 
@@ -79,7 +79,7 @@ describe "dnf/yum list: query mode" do
         "state" => "present",
       })
 
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
       result["results"].as_a.size.should eq(3)
       result["results"].as_a[0].as_h["name"].as_s.should eq("kernel")
     end
@@ -92,7 +92,7 @@ describe "dnf/yum list: query mode" do
         "state" => "present",
       })
 
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
       result["results"].as_a.size.should eq(0)
     end
   end

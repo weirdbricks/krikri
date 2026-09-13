@@ -72,8 +72,12 @@ module Krikri
     def to_json(io : IO) : Nil
       result = Hash(String, JSON::Any::Type).new
       result["changed"] = @changed
-      result["failed"] = @failed
-      result["msg"] = @msg
+      # Real Ansible's module protocol (module_utils/basic.py) only adds
+      # `failed`/`msg` to the result dict on a fail_json exit - a
+      # successful module's wire result never carries either key at all
+      # (not a display-layer strip; callbacks pass the dict through).
+      result["failed"] = @failed if @failed
+      result["msg"] = @msg unless @msg.empty?
 
       # Add diff if present
       if diff = @diff

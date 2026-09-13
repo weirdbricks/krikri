@@ -340,7 +340,7 @@ describe "template plugin param coverage" do
         "dest"    => tmp_path("enc_default.txt"),
       })
 
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
       File.open(tmp_path("enc_default.txt"), "rb", &.getb_to_end).should eq("Héllo\n".encode("UTF-8"))
     end
 
@@ -351,7 +351,7 @@ describe "template plugin param coverage" do
         "output_encoding" => "latin-1",
       })
 
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
       File.open(tmp_path("enc_latin.txt"), "rb", &.getb_to_end).should eq("Héllo\n".encode("ISO-8859-1"))
     end
 
@@ -367,7 +367,7 @@ describe "template plugin param coverage" do
         "output_encoding" => "latin-1",
       })
 
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
       result["changed"].as_bool.should be_false
     end
 
@@ -418,7 +418,7 @@ describe "template plugin param coverage" do
         "follow"  => "true",
       })
 
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
       result["changed"].as_bool.should be_true
       File.symlink?(link).should be_true
       File.read(target).should eq("NEW\n")
@@ -436,7 +436,7 @@ describe "template plugin param coverage" do
         "follow"  => "true",
       })
 
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
       result["changed"].as_bool.should be_false
       File.symlink?(link).should be_true
     end
@@ -452,7 +452,7 @@ describe "template plugin param coverage" do
         "dest"    => link,
       })
 
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
       result["changed"].as_bool.should be_true
       File.symlink?(link).should be_false
       File.read(link).should eq("SAME\n")
@@ -473,7 +473,7 @@ describe "template plugin param coverage" do
         "dest"    => dest,
       })
 
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
       result["changed"].as_bool.should be_true
       File.read(dest).should eq("NEW\n")
     end
@@ -488,7 +488,7 @@ describe "template plugin param coverage" do
         "force"   => "false",
       })
 
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
       result["changed"].as_bool.should be_false
       File.read(dest).should eq("OLD\n")
     end
@@ -546,7 +546,7 @@ describe "template plugin param coverage" do
         "unsafe_writes" => "true",
       })
 
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
       result["changed"].as_bool.should be_true
       File.read(dest).should eq("A\nB\nC\n")
       # The in-place write preserves dest's inode - the hardlink sees
@@ -577,7 +577,7 @@ describe "template plugin param coverage" do
         "selevel" => "s0",
       })
 
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
       result["changed"].as_bool.should be_true
       result.as_h.has_key?("secontext").should be_false
       File.exists?(dest).should be_true
@@ -592,7 +592,7 @@ describe "template plugin param coverage" do
         "setype"  => "httpd_sys_content_t",
       })
 
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
       result["changed"].as_bool.should be_false
       File.read(dest).should eq("x\n")
     end

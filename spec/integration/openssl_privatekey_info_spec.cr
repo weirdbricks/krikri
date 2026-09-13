@@ -20,7 +20,7 @@ describe "openssl_privatekey_info plugin" do
 
     result = PluginSpecHelper.run("openssl_privatekey_info", {"path" => path})
 
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     result["can_load_key"].as_bool.should be_true
     result["can_parse_key"].as_bool.should be_true
     # key_is_consistent stays nil unless check_consistency: true - the
@@ -85,7 +85,7 @@ describe "openssl_privatekey_info plugin" do
     result = PluginSpecHelper.run("openssl_privatekey_info",
       {"path" => path, "passphrase" => "s3cret"})
 
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     result["type"].as_s.should eq("RSA")
 
     wrong = PluginSpecHelper.run("openssl_privatekey_info",

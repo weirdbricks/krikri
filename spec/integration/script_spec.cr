@@ -18,7 +18,7 @@ describe "script plugin" do
 
     result = PluginSpecHelper.run("script", {"cmd" => path})
 
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     result["changed"].as_bool.should be_true
     result["stdout"].as_s.should eq("hello-from-script")
     result["rc"].as_i.should eq(0)

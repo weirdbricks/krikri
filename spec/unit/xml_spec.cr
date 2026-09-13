@@ -66,7 +66,7 @@ describe "community.general.xml plugin" do
       File.write(path, %(<business><name>co</name></business>))
       result = run_xml(xml_params({"path" => path, "xpath" => "/business/missing", "value" => "x", "create_if_missing" => "false"}))
       result["changed"].should be_false
-      result["failed"].should be_false
+      result["failed"]?.should be_falsey
       File.read(path).should_not contain("missing")
       File.delete(path)
     end

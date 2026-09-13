@@ -86,7 +86,7 @@ describe "get_url plugin" do
     result = PluginSpecHelper.run("get_url", {"url" => "#{get_url_base}/file.txt", "dest" => dest})
 
     result["changed"].as_bool.should be_true
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     File.read(dest).should eq(FILE_CONTENT)
   ensure
     File.delete(dest) if dest && File.exists?(dest)
@@ -104,7 +104,7 @@ describe "get_url plugin" do
     result = PluginSpecHelper.run("get_url", {"url" => "#{get_url_base}/echo-headers.txt", "dest" => dest, "headers" => "{}"})
 
     result["changed"].as_bool.should be_true
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     File.read(dest).should eq("no-custom-header")
   ensure
     File.delete(dest) if dest && File.exists?(dest)
@@ -115,7 +115,7 @@ describe "get_url plugin" do
     result = PluginSpecHelper.run("get_url", {"url" => "#{get_url_base}/echo-headers.txt", "dest" => dest, "headers" => %({"X-Custom":"hello"})})
 
     result["changed"].as_bool.should be_true
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     File.read(dest).should eq("hello")
   ensure
     File.delete(dest) if dest && File.exists?(dest)
@@ -126,7 +126,7 @@ describe "get_url plugin" do
     result = PluginSpecHelper.run("get_url", {"url" => "#{get_url_base}/echo-headers.txt", "dest" => dest, "headers" => "X-Custom:legacy-form"})
 
     result["changed"].as_bool.should be_true
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     File.read(dest).should eq("legacy-form")
   ensure
     File.delete(dest) if dest && File.exists?(dest)
@@ -159,7 +159,7 @@ describe "get_url plugin" do
     result = PluginSpecHelper.run("get_url", {"url" => "#{get_url_base}/file.txt", "dest" => dest, "checksum" => ""})
 
     result["changed"].as_bool.should be_true
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     File.read(dest).should eq(FILE_CONTENT)
   ensure
     File.delete(dest) if dest && File.exists?(dest)
@@ -181,7 +181,7 @@ describe "get_url plugin" do
     })
 
     result["changed"].as_bool.should be_true
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     File.read(dest).should eq(FILE_CONTENT)
   ensure
     File.delete(dest) if dest && File.exists?(dest)
@@ -196,7 +196,7 @@ describe "get_url plugin" do
     })
 
     result["changed"].as_bool.should be_false
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
   ensure
     File.delete(dest) if dest && File.exists?(dest)
   end
@@ -242,7 +242,7 @@ describe "get_url plugin" do
     result = PluginSpecHelper.run("get_url", {"url" => "#{get_url_base}/file.txt", "dest" => dest, "force" => "yes"})
 
     result["changed"].as_bool.should be_false
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     File.read(dest).should eq(FILE_CONTENT)
   ensure
     File.delete(dest) if dest && File.exists?(dest)
@@ -289,7 +289,7 @@ describe "get_url plugin" do
     })
 
     result["changed"].as_bool.should be_true
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     File.read(dest).should eq(FILE_CONTENT)
   ensure
     File.delete(dest) if dest && File.exists?(dest)
@@ -311,7 +311,7 @@ describe "get_url plugin" do
     })
 
     result["changed"].as_bool.should be_true
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     File.read(dest).should eq(FILE_CONTENT)
   ensure
     File.delete(dest) if dest && File.exists?(dest)
@@ -350,7 +350,7 @@ describe "get_url plugin" do
     })
 
     result["changed"].as_bool.should be_true
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     File.read(dest).should eq("secret-authed")
   ensure
     File.delete(dest) if dest && File.exists?(dest)
@@ -446,7 +446,7 @@ describe "get_url plugin" do
       })
 
       result["changed"].as_bool.should be_true
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
       File.read(dest).should eq(FILE_CONTENT)
       Dir.children(staging).should be_empty
     ensure
@@ -492,7 +492,7 @@ describe "get_url plugin" do
     })
 
     result["changed"].as_bool.should be_true
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     File.read(dest).should eq(FILE_CONTENT)
   ensure
     File.delete(dest) if dest && File.exists?(dest)
@@ -549,13 +549,13 @@ describe "get_url plugin" do
       "url" => "#{get_url_base}/file.txt", "dest" => dest, "attributes" => "-i",
     })
 
-    result["failed"].as_bool.should be_falsey
+    result["failed"]?.try(&.as_bool).should be_falsey
     result["changed"].as_bool.should be_true
 
     warm = PluginSpecHelper.run("get_url", {
       "url" => "#{get_url_base}/file.txt", "dest" => dest, "attributes" => "-i",
     })
-    warm["failed"].as_bool.should be_falsey
+    warm["failed"]?.try(&.as_bool).should be_falsey
     warm["changed"].as_bool.should be_true
   ensure
     File.delete(dest) if dest && File.exists?(dest)
@@ -569,7 +569,7 @@ describe "get_url plugin" do
     })
 
     result["changed"].as_bool.should be_true
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     File.read(dest).should eq(FILE_CONTENT)
   ensure
     File.delete(dest) if dest && File.exists?(dest)

@@ -246,7 +246,7 @@ describe "apache2_module plugin" do
       "_environment"       => env_for(file, {"FAKE_CONFIG_BROKEN" => "1"}),
     })
 
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     result["changed"].as_bool.should be_true
     warnings = result["warnings"].as_a.map(&.as_s)
     warnings.should contain("No MPM module loaded! apache2 reload AND other module actions will fail if no MPM module is loaded immediately.")

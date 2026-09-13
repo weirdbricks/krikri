@@ -29,7 +29,7 @@ describe "controlling terminal for command:/shell: subprocesses" do
     })
 
     result["rc"].as_i.should eq(0)
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     # The banner went to the terminal, which nothing on the controller
     # reads - it must not appear in either captured stream, and the two
     # streams must stay separate (a pty would have merged them).

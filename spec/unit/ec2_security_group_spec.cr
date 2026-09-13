@@ -233,7 +233,7 @@ describe Krikri::PluginHelpers::Ec2SecurityGroup do
       end)
 
       result["changed"].should eq(true)
-      result["failed"].should eq(false)
+      result["failed"]?.should be_falsey
       result["group_id"].should eq("sg-new")
       result["name"].should eq("web")
     end

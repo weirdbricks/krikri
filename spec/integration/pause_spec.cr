@@ -7,7 +7,7 @@ describe "pause plugin" do
     elapsed = Time.monotonic - started
 
     result["changed"].as_bool.should be_false
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     result["stdout"].as_s.should eq("Paused for 1.0 seconds")
     result["delta"].as_i.should eq(1)
     elapsed.total_seconds.should be >= 1.0
@@ -30,7 +30,7 @@ describe "pause plugin" do
     result = PluginSpecHelper.run("pause", {} of String => String)
     elapsed = Time.monotonic - started
 
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     elapsed.total_seconds.should be < 1.0
   end
 

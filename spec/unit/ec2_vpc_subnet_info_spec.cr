@@ -87,7 +87,7 @@ describe Krikri::PluginHelpers::Ec2Info do
     it "shapes a subnet with the real module's field names" do
       result = run_module({"region" => "us-east-1"}, ->(region : String, body : String) { DESCRIBE_ONE })
 
-      result["failed"].should eq(false)
+      result["failed"]?.should be_falsey
       subnet = result["subnets"][0]
       subnet["id"].should eq("subnet-aaaa")
       subnet["subnet_id"].should eq("subnet-aaaa")

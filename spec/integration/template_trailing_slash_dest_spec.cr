@@ -15,7 +15,7 @@ describe "template plugin - directory-style dest (trailing /)" do
     result = PluginSpecHelper.run("template",
       {"content" => "fragment\n", "_rendered_from_template" => "/etc/ansible/roles/l3d.unbound/templates/fragment.conf.j2", "dest" => "#{dest_dir}/"})
 
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     result["changed"].as_bool.should be_true
     Dir.exists?(dest_dir).should be_true
     File.read(File.join(dest_dir, "fragment.conf.j2")).should eq("fragment\n")
@@ -30,7 +30,7 @@ describe "template plugin - directory-style dest (trailing /)" do
     result = PluginSpecHelper.run("template",
       {"content" => "existing-dir\n", "_rendered_from_template" => "/srv/templates/motd.j2", "dest" => dest_dir})
 
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     File.read(File.join(dest_dir, "motd.j2")).should eq("existing-dir\n")
   ensure
     FileUtils.rm_rf(dest_dir) if dest_dir
@@ -44,7 +44,7 @@ describe "template plugin - directory-style dest (trailing /)" do
     result = PluginSpecHelper.run("template",
       {"content" => "literal\n", "_rendered_from_template" => "/srv/templates/named.conf.j2", "dest" => dest})
 
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     File.read(dest).should eq("literal\n")
     Dir.children(dest_dir).size.should eq(1)
   ensure

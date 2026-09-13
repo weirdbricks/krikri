@@ -974,7 +974,7 @@ module Krikri
 
         # Try to parse JSON output
         begin
-          JSON.parse(output)
+          normalize_module_result(JSON.parse(output))
         rescue ex
           # Parsing failed - return error with details. Real Ansible's
           # own equivalent (a become/connection failure, e.g. "Premature
@@ -1028,7 +1028,7 @@ module Krikri
       become : Bool,
       become_user : String?,
     ) : JSON::Any
-      execute_remote_plugin_transport(plugin_name, config, host, vars, become, become_user)
+      normalize_module_result(execute_remote_plugin_transport(plugin_name, config, host, vars, become, become_user))
     rescue ex
       raise ex unless SSHManager.connection_level_exception?(ex)
       detail = ex.message.to_s.lines.first?.to_s
@@ -1386,7 +1386,7 @@ module Krikri
       end
 
       begin
-        JSON.parse(stdout)
+        normalize_module_result(JSON.parse(stdout))
       rescue
         JSON.parse({
           "changed"             => false,
@@ -1397,6 +1397,33 @@ module Krikri
           "_connection_failure" => true,
         }.to_json)
       end
+    end
+
+    # Controller-side result normalization - real Ansible's own
+    # task_executor._execute_internal pass, applied to every module
+    # result before register:/when:/display ever see it: a module wire
+    # result only carries `failed` when the module called fail_json (a
+    # successful exit_json never emits the key), so the controller
+    # backfills it - `failed: true` when a nonzero rc says so, `false`
+    # otherwise - and backfills `changed: false` when the module
+    # omitted it. (Live-verified against 2.19.4: a registered command
+    # result carries "failed": false even though command.py's
+    # exit_json never passes it; the ad-hoc JSON dump still omits it
+    # because the CALLBACK pipeline strips failed/skipped from the
+    # display copy - ResultDisplay.adhoc_result_json mirrors that
+    # strip.) Applied where module wire results are parsed: the local
+    # spawn, the remote one-shot/batch interpretation, and the daemon
+    # response (via execute_remote_plugin's transport wrap).
+    def self.normalize_module_result(result : JSON::Any) : JSON::Any
+      hash = result.as_h? || return result
+
+      unless hash.has_key?("failed")
+        rc = hash["rc"]?.try(&.as_i?) || hash["rc"]?.try(&.as_s?).try(&.to_i?)
+        hash["failed"] = JSON::Any.new(!(rc.nil? || rc == 0))
+      end
+      hash["changed"] = JSON::Any.new(false) unless hash.has_key?("changed")
+
+      JSON::Any.new(hash)
     end
 
     # Reads become:/become_user: back out of the config JSON (embedded by

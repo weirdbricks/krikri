@@ -9,7 +9,7 @@ describe "wait_for plugin" do
 
   it "is skipped under check_mode, matching real Ansible's own skip text" do
     result = PluginSpecHelper.run("wait_for", {"timeout" => "1", "check_mode" => "true"})
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     result["skipped"].as_bool.should be_true
     result["msg"].as_s.should eq("remote module (wait_for) does not support check mode")
   end
@@ -28,14 +28,14 @@ describe "wait_for plugin" do
   it "succeeds immediately when an open port is already listening" do
     server = TCPServer.new("127.0.0.1", 0)
     result = PluginSpecHelper.run("wait_for", {"port" => server.local_address.port.to_s, "host" => "127.0.0.1", "timeout" => "3"})
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
   ensure
     server.try(&.close)
   end
 
   it "succeeds immediately when state: stopped and the port is already closed" do
     result = PluginSpecHelper.run("wait_for", {"port" => "1", "state" => "stopped", "timeout" => "3"})
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
   end
 
   it "succeeds immediately when a path already exists" do
@@ -43,7 +43,7 @@ describe "wait_for plugin" do
     File.write(path, "x")
 
     result = PluginSpecHelper.run("wait_for", {"path" => path, "timeout" => "3"})
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     result["path"].as_s.should eq(path)
   ensure
     File.delete(path) if path && File.exists?(path)
@@ -57,7 +57,7 @@ describe "wait_for plugin" do
 
   it "succeeds immediately when state: absent and the path is already missing" do
     result = PluginSpecHelper.run("wait_for", {"path" => "/nonexistent/wait-for-spec-path", "state" => "absent", "timeout" => "3"})
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
   end
 
   it "matches search_regex against an existing file's content" do
@@ -65,7 +65,7 @@ describe "wait_for plugin" do
     File.write(path, "some log line\nneedle here\nmore text\n")
 
     result = PluginSpecHelper.run("wait_for", {"path" => path, "search_regex" => "needle", "timeout" => "3"})
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
   ensure
     File.delete(path) if path && File.exists?(path)
   end
@@ -102,7 +102,7 @@ describe "wait_for plugin" do
         "port" => port.to_s, "host" => "127.0.0.1", "search_regex" => "OpenSSH", "timeout" => "5",
       })
 
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
     ensure
       server.try(&.close)
     end
@@ -156,7 +156,7 @@ describe "wait_for plugin" do
     server.close # closed immediately - never actually accepted a connection
 
     result = PluginSpecHelper.run("wait_for", {"port" => port.to_s, "state" => "drained", "timeout" => "3"})
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
   end
 
   it "times out with state: drained while a real ESTABLISHED connection is still open on that port" do
@@ -189,7 +189,7 @@ describe "wait_for plugin" do
       "port" => port.to_s, "state" => "drained", "active_connection_states" => "SYN_SENT", "timeout" => "3",
     })
 
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
   ensure
     client.try(&.close)
     accepted.try(&.close)

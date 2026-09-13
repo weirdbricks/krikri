@@ -30,10 +30,18 @@ describe Krikri::PluginManager do
       result["unreachable"]?.should be_nil
     end
 
-    it "stamps nothing on a successful parseable run" do
+    it "stamps nothing but the executor's failed/changed normalization on a successful parseable run" do
       result = Krikri::PluginManager.interpret_remote_result(0, %({"changed": false}), "")
-      result["failed"]?.should be_falsey
+      # The module wire result itself no longer carries failed: false
+      # (real exit_json never emits the key) - this boundary is what
+      # backfills it, mirroring task_executor._execute_internal.
+      result["failed"]?.try(&.as_bool).should be_false
       result["unreachable"]?.should be_nil
+    end
+
+    it "backfills failed: true from a nonzero rc when the module omitted it" do
+      result = Krikri::PluginManager.interpret_remote_result(0, %({"changed": false, "rc": 2}), "")
+      result["failed"].as_bool.should be_true
     end
   end
 end

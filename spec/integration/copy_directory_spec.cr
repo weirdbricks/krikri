@@ -16,7 +16,7 @@ describe "copy plugin - directory src" do
     result = PluginSpecHelper.run("copy", {"src" => "#{src}/", "dest" => "#{dest}/"})
 
     result["changed"].as_bool.should be_true
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     File.read(File.join(dest, "a.txt")).should eq("file a\n")
     File.read(File.join(dest, "sub", "b.txt")).should eq("file b\n")
   end

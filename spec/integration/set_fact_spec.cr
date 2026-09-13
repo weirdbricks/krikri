@@ -5,7 +5,7 @@ describe "set_fact plugin" do
     result = PluginSpecHelper.run("set_fact", {"greeting" => "hi"})
 
     result["changed"].as_bool.should be_false
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     result["ansible_facts"]["greeting"].as_s.should eq("hi")
   end
 

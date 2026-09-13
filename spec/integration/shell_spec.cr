@@ -76,7 +76,7 @@ describe "shell plugin" do
   it "accepts argv: as an alternative to cmd:, quoting each element for the shell" do
     result = PluginSpecHelper.run("shell", {"argv" => ["echo", "hello world with spaces"].to_json})
 
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     result["stdout"].as_s.should eq("hello world with spaces")
   end
 

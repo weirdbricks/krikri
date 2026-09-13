@@ -39,7 +39,7 @@ describe "docker_network_info plugin" do
     result = PluginSpecHelper.run("docker_network_info", {
       "name" => "krikri-spec-definitely-absent-#{Process.pid}",
     })
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     result["exists"].as_bool.should be_false
     result["network"].as_nil.should be_nil
   end

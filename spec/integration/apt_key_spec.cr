@@ -133,7 +133,7 @@ describe "apt_key plugin" do
     result = PluginSpecHelper.run("apt_key", {"state" => "absent", "id" => FAKE_KEY_ID})
 
     result["changed"].as_bool.should be_false
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
   end
 
   it "requires id when keyserver: is given, matching real Ansible's exact message" do
@@ -213,12 +213,12 @@ describe "apt_key plugin" do
       result = PluginSpecHelper.run("apt_key", {"state" => "present", "data" => VALID_KEY_ASC})
 
       result["changed"].as_bool.should be_true
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
 
       result2 = PluginSpecHelper.run("apt_key", {"state" => "present", "data" => VALID_KEY_ASC})
 
       result2["changed"].as_bool.should be_false
-      result2["failed"].as_bool.should be_false
+      result2["failed"]?.try(&.as_bool).should be_falsey
     end
     File.delete(state) rescue nil
   end

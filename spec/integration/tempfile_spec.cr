@@ -4,7 +4,7 @@ describe "tempfile plugin" do
   it "creates a temporary file by default and reports changed" do
     result = PluginSpecHelper.run("tempfile", {} of String => String)
 
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     result["changed"].as_bool.should be_true
     path = result["path"].as_s
     File.exists?(path).should be_true
@@ -15,7 +15,7 @@ describe "tempfile plugin" do
   it "creates a temporary directory when state: directory" do
     result = PluginSpecHelper.run("tempfile", {"state" => "directory"})
 
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     path = result["path"].as_s
     Dir.exists?(path).should be_true
     Dir.delete(path)

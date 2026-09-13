@@ -35,7 +35,7 @@ describe "deb822_repository param coverage" do
       "check_mode" => "true",
     })
 
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     result["repo"].as_s.should contain("Components: main contrib non-free")
   end
 

@@ -27,7 +27,7 @@ describe "synchronize plugin" do
 
       result = PluginSpecHelper.run("synchronize", {"src" => "#{src}/", "dest" => "#{dest}/"})
 
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
       result["changed"].as_bool.should be_true
       result["rc"].as_i.should eq(0)
       File.read(File.join(dest, "a.txt")).should eq("file a\n")
@@ -49,7 +49,7 @@ describe "synchronize plugin" do
 
       second = PluginSpecHelper.run("synchronize", {"src" => "#{src}/", "dest" => "#{dest}/"})
       second["changed"].as_bool.should be_false
-      second["failed"].as_bool.should be_false
+      second["failed"]?.try(&.as_bool).should be_falsey
     ensure
       cleanup_sync_dirs([src, dest])
     end

@@ -56,7 +56,7 @@ describe "package plugin" do
     result = PluginSpecHelper.run("package",
       {"name" => "bash", "state" => "present", "check_mode" => "true", "use" => "apt"})
 
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     result["changed"].as_bool.should be_false
     result["msg"].as_s.should contain("already installed")
   end
@@ -88,7 +88,7 @@ describe "package plugin" do
       {"state" => "present"})
 
     result["changed"].as_bool.should be_false
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     result["msg"].as_s.should_not contain("Missing required parameter")
   end
 

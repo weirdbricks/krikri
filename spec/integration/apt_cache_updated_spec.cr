@@ -116,7 +116,7 @@ describe "apt plugin cache_updated result key" do
     result = PluginSpecHelper.run("apt", {"name" => "[]"})
 
     result["changed"].as_bool.should be_false
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
   end
 end
 

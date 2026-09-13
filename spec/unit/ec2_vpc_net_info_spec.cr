@@ -99,7 +99,7 @@ describe Krikri::PluginHelpers::Ec2Info do
         end
       end)
 
-      result["failed"].should eq(false)
+      result["failed"]?.should be_falsey
       vpc = result["vpcs"][0]
       vpc["id"].should eq("vpc-1234")
       vpc["vpc_id"].should eq("vpc-1234")

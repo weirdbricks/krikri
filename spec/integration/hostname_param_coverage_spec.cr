@@ -108,7 +108,7 @@ private def read_calls(log : String) : Array(String)
 end
 
 private def expect_ok(result : JSON::Any) : Nil
-  return unless result["failed"].as_bool
+  return unless result["failed"]?.try(&.as_bool)
   raise "task failed: #{result["msg"]?}"
 end
 

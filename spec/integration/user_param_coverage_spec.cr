@@ -98,7 +98,7 @@ end
 # own parsing) for substring assertions.
 
 private def expect_ok(result : JSON::Any) : Nil
-  return unless result["failed"].as_bool
+  return unless result["failed"]?.try(&.as_bool)
   raise "task failed: #{result["msg"]?}"
 end
 

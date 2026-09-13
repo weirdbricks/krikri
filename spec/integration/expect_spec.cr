@@ -9,7 +9,7 @@ describe "expect plugin" do
       "timeout"   => "5",
     })
 
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     result["stdout"].as_s.should contain("got: yes")
   end
 
@@ -25,7 +25,7 @@ describe "expect plugin" do
       "timeout"   => "5",
     })
 
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     result["stdout"].as_s.should contain("name=alice confirm=y")
   end
 
@@ -64,7 +64,7 @@ describe "expect plugin" do
       "timeout"   => "5",
     })
 
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     # The typed response itself ("hunter2") must not appear a second time
     # via terminal echo - only the script's own explicit "pw-was: hunter2"
     # print should be present.
@@ -79,7 +79,7 @@ describe "expect plugin" do
       "echo"      => "true",
     })
 
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     # Once from the pty's own echo of the typed line, once from the
     # script's explicit print.
     result["stdout"].as_s.scan("hunter2").size.should eq(2)
@@ -98,7 +98,7 @@ describe "expect plugin" do
       "timeout"   => "5",
     })
 
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     result["stdout"].as_s.should contain("answered one with yes")
     result["stdout"].as_s.should contain("answered two with no")
     result["stdout"].as_s.should contain("answered three with yes")
@@ -111,7 +111,7 @@ describe "expect plugin" do
       "timeout"   => "5",
     })
 
-    result["failed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
     match = result["stdout"].as_s.match!(/sid=(\d+) pid=(\d+)/)
     # A real session leader's own session id equals its own pid - the
     # thing setsid()/TIOCSCTTY exists to arrange, unreachable via a plain

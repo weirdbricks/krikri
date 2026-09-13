@@ -61,7 +61,7 @@ module Krikri
           "host_vars" => JSON::Any.new(host.vars),
         }),
       }
-      ActionResult.final(ActionResult.plugin_result_json(true, false, "ok", extra))
+      ActionResult.final(ActionResult.plugin_result_json(true, false, "", extra))
     end
 
     # `groups`/`group` accepts a comma-separated string, a JSON array

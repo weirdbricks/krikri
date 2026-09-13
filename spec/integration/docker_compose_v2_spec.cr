@@ -114,14 +114,14 @@ describe "docker_compose_v2 plugin (live docker)" do
       "project_src"  => dir,
       "project_name" => project_name,
     })
-    first["failed"].as_bool.should be_false, first["msg"].as_s
+    first["failed"]?.try(&.as_bool).should be_falsey, first["msg"].as_s
     first["changed"].as_bool.should be_true, "first up should create the container"
 
     second = PluginSpecHelper.run("docker_compose_v2", {
       "project_src"  => dir,
       "project_name" => project_name,
     })
-    second["failed"].as_bool.should be_false, second["msg"].as_s
+    second["failed"]?.try(&.as_bool).should be_falsey, second["msg"].as_s
     second["changed"].as_bool.should be_false, "second up should be a no-op (warm-run idempotency)"
 
     stopped = PluginSpecHelper.run("docker_compose_v2", {
@@ -129,7 +129,7 @@ describe "docker_compose_v2 plugin (live docker)" do
       "project_name" => project_name,
       "state"        => "stopped",
     })
-    stopped["failed"].as_bool.should be_false, stopped["msg"].as_s
+    stopped["failed"]?.try(&.as_bool).should be_falsey, stopped["msg"].as_s
     stopped["changed"].as_bool.should be_true, "stopping a running project reports changed"
 
     stopped_again = PluginSpecHelper.run("docker_compose_v2", {
@@ -137,7 +137,7 @@ describe "docker_compose_v2 plugin (live docker)" do
       "project_name" => project_name,
       "state"        => "stopped",
     })
-    stopped_again["failed"].as_bool.should be_false, stopped_again["msg"].as_s
+    stopped_again["failed"]?.try(&.as_bool).should be_falsey, stopped_again["msg"].as_s
     stopped_again["changed"].as_bool.should be_false, "stopping an already-stopped project is a no-op (real module's _are_containers_stopped gate)"
 
     down = PluginSpecHelper.run("docker_compose_v2", {
@@ -146,7 +146,7 @@ describe "docker_compose_v2 plugin (live docker)" do
       "state"          => "absent",
       "remove_volumes" => "true",
     })
-    down["failed"].as_bool.should be_false, down["msg"].as_s
+    down["failed"]?.try(&.as_bool).should be_falsey, down["msg"].as_s
   ensure
     if dir && Dir.exists?(dir)
       cleanup_err = IO::Memory.new

@@ -91,7 +91,7 @@ describe "AddHostActionPlugin" do
 
     final = result.final_result.not_nil!
     final.as_h["changed"].as_bool.should be_true
-    final.as_h["failed"].as_bool.should be_false
+    final.as_h["failed"]?.try(&.as_bool).should be_falsey
   end
 
   it "fails cleanly without a name" do
