@@ -412,4 +412,11 @@ describe "unarchive plugin" do
     result["failed"].as_bool.should be_true
     result["msg"].as_s.should contain("src")
   end
+
+  it "fails when include: and exclude: are both given (real Ansible's mutually_exclusive)" do
+    result = PluginSpecHelper.run("unarchive", {"src" => "irrelevant.tar.gz", "dest" => TMP_DIR, "include" => "a", "exclude" => "b"})
+
+    result["failed"].as_bool.should be_true
+    result["msg"].as_s.should eq("parameters are mutually exclusive: include|exclude")
+  end
 end
