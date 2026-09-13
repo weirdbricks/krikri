@@ -593,11 +593,14 @@ module Krikri
         # changed/dest/gid/... attribute fields only), so the wire result
         # omits msg entirely - "File touched" used to leak into both the
         # ad-hoc JSON dump and the playbook-style msg display line.
+        # state=touch specifically reports under `dest`, not `path` (live-
+        # verified against ansible-core 2.19.4 - touch is the one file:
+        # state that uses dest, unlike file/directory/link/absent below).
         return PluginResult.new(
           changed: changed,
           failed: false,
           msg: "",
-          path: path
+          dest: path
         )
       end
 

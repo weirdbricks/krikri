@@ -115,7 +115,7 @@ describe "file-common result fields (real Ansible's add_path_info)" do
 
       result = PluginSpecHelper.run("file", {"path" => path, "state" => "touch"})
 
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
       result["dest"].as_s.should eq(path)
       result["state"].as_s.should eq("file")
       result["uid"].as_i64.should eq(File.info(path, follow_symlinks: false).owner_id.to_i64)
@@ -131,7 +131,7 @@ describe "file-common result fields (real Ansible's add_path_info)" do
 
       result = PluginSpecHelper.run("file", {"path" => path, "state" => "directory"})
 
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
       result["path"].as_s.should eq(path)
       result["state"].as_s.should eq("directory")
       result["uid"].as_i64.should eq(File.info(path, follow_symlinks: false).owner_id.to_i64)
@@ -149,7 +149,7 @@ describe "file-common result fields (real Ansible's add_path_info)" do
 
       result = PluginSpecHelper.run("file", {"path" => link, "src" => target, "state" => "link"})
 
-      result["failed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
       result["dest"].as_s.should eq(link)
       result["state"].as_s.should eq("link")
       result["mode"].as_s.should eq("0777")
