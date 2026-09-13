@@ -56,4 +56,30 @@ describe Krikri::ResultDisplay do
       stats["changed"].should eq(2)
     end
   end
+
+  describe ".adhoc_state_and_color" do
+    # Codes must match ansible.constants' COLOR_CODES byte-for-byte
+    # (verified against ansible-core 2.19.4): yellow=0;33, green=0;32,
+    # red=0;31, and bright red=1;31 for unreachable - a distinct bold
+    # variant, NOT plain red.
+    it "maps unreachable to bright red 1;31, not plain red" do
+      Krikri::ResultDisplay.adhoc_state_and_color(false, false, true).should eq({"UNREACHABLE!", "1;31"})
+    end
+
+    it "maps failed to red 0;31" do
+      Krikri::ResultDisplay.adhoc_state_and_color(false, true, false).should eq({"FAILED!", "0;31"})
+    end
+
+    it "prefers unreachable over failed" do
+      Krikri::ResultDisplay.adhoc_state_and_color(false, true, true).should eq({"UNREACHABLE!", "1;31"})
+    end
+
+    it "maps changed to yellow 0;33" do
+      Krikri::ResultDisplay.adhoc_state_and_color(true, false, false).should eq({"CHANGED", "0;33"})
+    end
+
+    it "maps plain success to green 0;32" do
+      Krikri::ResultDisplay.adhoc_state_and_color(false, false, false).should eq({"SUCCESS", "0;32"})
+    end
+  end
 end

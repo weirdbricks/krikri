@@ -35,6 +35,11 @@ require "./src/krikri/vault"
 require "./src/krikri/vault_cli"
 require "./src/krikri/task_executor"
 
+# Colorize is tty-gated by default (non-tty output stays plain, matching
+# real ansible's isatty check); ANSIBLE_FORCE_COLOR=1 forces it back on
+# for the same piped-output use cases real ansible supports it for.
+Colorize.enabled = true if ENV["ANSIBLE_FORCE_COLOR"]? == "1"
+
 pattern = ""
 module_name = "command"
 module_args = ""

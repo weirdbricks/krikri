@@ -144,20 +144,61 @@ module Krikri
     # DIR/<hostname>, like real Ansible's tree callback plugin.
     class_property adhoc_tree_dir : String? = nil
 
+    # Real ansible's ad-hoc ("minimal" and "oneline") callbacks pass the
+    # ENTIRE multi-line result buffer to `Display.display(msg, color=...)`,
+    # whose `stringc()` wraps EACH line of the buffer individually with
+    # one shared SGR code (`\e[<code>m<line>\e[0m`, joined by "\n") after
+    # stripping one trailing newline - so the whole block gets the same
+    # color, not just the status word. Codes come from ansible.constants'
+    # COLOR_CODES (verified byte-for-byte against ansible-core 2.19.4 via
+    # `ANSIBLE_FORCE_COLOR=1 ansible ... | xxd`): yellow=0;33 (changed),
+    # green=0;32 (ok), red=0;31 (failed), and bright red=1;31 (unreachable)
+    # - a distinct bold variant, NOT plain red.
+    private ADHOC_COLOR_CODES = {
+      changed:     "0;33",
+      ok:          "0;32",
+      failed:      "0;31",
+      unreachable: "1;31",
+    }
+
+    # Replicates ansible's `Display.display(buffer, color=...)` byte-for-
+    # byte for a fixed color: strips one trailing newline, wraps each
+    # remaining line in the SGR sequence, re-adds the newline. With color
+    # disabled (non-tty unless ANSIBLE_FORCE_COLOR=1) the buffer passes
+    # through untouched, matching ansible's own nocolor path.
+    private def self.adhoc_display(buffer : String, color_code : String) : Nil
+      unless Colorize.enabled?
+        print buffer
+        return
+      end
+      body = buffer.ends_with?('\n') ? buffer.chomp('\n') : buffer
+      wrapped = body.split('\n').map { |line| "\e[#{color_code}m#{line}\e[0m" }.join("\n")
+      print wrapped + "\n"
+    end
+
+    # Returns {state word, SGR color code} for an ad-hoc result, mirroring
+    # real ansible's minimal/oneline callbacks: unreachable wins over
+    # failed, failed over changed. Public so the state-to-color mapping
+    # (especially unreachable's distinct bright red, not plain red) can
+    # be regression-tested without a live host.
+    def self.adhoc_state_and_color(changed : Bool, failed : Bool, unreachable : Bool) : {String, String}
+      if unreachable
+        {"UNREACHABLE!", ADHOC_COLOR_CODES[:unreachable]}
+      elsif failed
+        {"FAILED!", ADHOC_COLOR_CODES[:failed]}
+      elsif changed
+        {"CHANGED", ADHOC_COLOR_CODES[:changed]}
+      else
+        {"SUCCESS", ADHOC_COLOR_CODES[:ok]}
+      end
+    end
+
     def self.display_adhoc_result(host : Host, result : JSON::Any, diff_mode : Bool = false) : Nil
       changed = result["changed"]?.try(&.as_bool) || false
       failed = result["failed"]?.try(&.as_bool) || false
       unreachable = result["unreachable"]?.try(&.as_bool) || false
 
-      status = if unreachable
-                 "UNREACHABLE!".colorize(:red).bold
-               elsif failed
-                 "FAILED!".colorize(:red).bold
-               elsif changed
-                 "CHANGED".colorize(:yellow)
-               else
-                 "SUCCESS".colorize(:green)
-               end
+      state, color_code = adhoc_state_and_color(changed, failed, unreachable)
 
       connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
 
@@ -166,22 +207,30 @@ module Krikri
       if adhoc_oneline?
         if rc && stdout
           escaped = stdout.gsub('\n', "\\n").gsub('\r', "\\r")
-          line = "#{connection_host} | #{status} | rc=#{rc} | (stdout) #{escaped}"
-          if (stderr = result["stderr"]?.try(&.as_s?)) && !stderr.empty?
-            line += " | (stderr) #{stderr.gsub('\n', "\\n").gsub('\r', "\\r")}"
+          buffer = String.build do |str|
+            str << "#{connection_host} | #{state} | rc=#{rc} | (stdout) #{escaped}"
+            if (stderr = result["stderr"]?.try(&.as_s?)) && !stderr.empty?
+              str << " | (stderr) #{stderr.gsub('\n', "\\n").gsub('\r', "\\r")}"
+            end
           end
-          puts line
+          adhoc_display(buffer, color_code)
         else
-          puts "#{connection_host} | #{status} => #{result.to_json}"
+          adhoc_display("#{connection_host} | #{state} => #{result.to_json}", color_code)
         end
       elsif rc && stdout
-        puts "#{connection_host} | #{status} | rc=#{rc} >>"
-        puts stdout
-        if (stderr = result["stderr"]?.try(&.as_s?)) && !stderr.empty?
-          puts stderr.colorize(:red)
+        # Same shape as ansible's minimal callback `_command_generic_msg`:
+        # header line, then raw stdout, then stderr - all one buffer, one
+        # color (real ansible does NOT color stderr separately here).
+        buffer = String.build do |str|
+          str << "#{connection_host} | #{state} | rc=#{rc} >>\n"
+          str << stdout
+          if (stderr = result["stderr"]?.try(&.as_s?)) && !stderr.empty?
+            str << stderr
+          end
         end
+        adhoc_display("#{buffer}\n", color_code)
       else
-        puts "#{connection_host} | #{status} => #{result.to_pretty_json}"
+        adhoc_display("#{connection_host} | #{state} => #{result.to_pretty_json}", color_code)
       end
 
       if diff_mode && result["diff"]?

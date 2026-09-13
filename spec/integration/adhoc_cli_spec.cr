@@ -20,9 +20,9 @@ Spec.before_suite do
   raise "build.sh failed while preparing integration specs" unless status.success?
 end
 
-private def run_adhoc(args : Array(String)) : {Process::Status, String}
+private def run_adhoc(args : Array(String), env : Hash(String, String)? = nil) : {Process::Status, String}
   output = IO::Memory.new
-  status = Process.run(BINARY, args, output: output, error: output, chdir: PROJECT_ROOT)
+  status = Process.run(BINARY, args, output: output, error: output, chdir: PROJECT_ROOT, env: env)
   {status, output.to_s}
 end
 
@@ -141,5 +141,43 @@ describe "krikri ad-hoc CLI" do
 
     status.success?.should be_false
     output.should contain("Error")
+  end
+
+  # Real ansible passes the ENTIRE ad-hoc result buffer to one
+  # Display.display(msg, color=...) call whose stringc() wraps each line
+  # with the same SGR code - so the whole block gets colored, not just
+  # the status word. Codes verified byte-for-byte against ansible-core
+  # 2.19.4 (`ANSIBLE_FORCE_COLOR=1 ansible ... | xxd`): yellow=0;33,
+  # green=0;32, red=0;31.
+  describe "ANSI colorization" do
+    it "colors the whole CHANGED command block yellow, every line" do
+      _, output = run_adhoc(["localhost", "-i", INVENTORY, "-c", "local", "-m", "command", "-a", "echo colormarker"],
+        env: {"ANSIBLE_FORCE_COLOR" => "1"})
+
+      output.should contain("\e[0;33mlocalhost | CHANGED | rc=0 >>\e[0m\n")
+      output.should contain("\e[0;33mcolormarker\e[0m\n")
+    end
+
+    it "colors the whole SUCCESS JSON block green, every line" do
+      _, output = run_adhoc(["localhost", "-i", INVENTORY, "-c", "local", "-m", "debug", "-a", "msg=greenmarker"],
+        env: {"ANSIBLE_FORCE_COLOR" => "1"})
+
+      output.should contain("\e[0;32mlocalhost | SUCCESS => {\e[0m\n")
+      output.should contain("\e[0;32m}\e[0m\n")
+    end
+
+    it "colors the whole FAILED command block red, every line" do
+      _, output = run_adhoc(["localhost", "-i", INVENTORY, "-c", "local", "-m", "command", "-a", "false"],
+        env: {"ANSIBLE_FORCE_COLOR" => "1"})
+
+      output.should contain("\e[0;31mlocalhost | FAILED! | rc=1 >>\e[0m\n")
+    end
+
+    it "stays plain when piped without ANSIBLE_FORCE_COLOR" do
+      _, output = run_adhoc(["localhost", "-i", INVENTORY, "-c", "local", "-m", "command", "-a", "echo plainmarker"])
+
+      output.should contain("localhost | CHANGED | rc=0 >>")
+      output.should_not contain("\e[0;33m")
+    end
   end
 end
