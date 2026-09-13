@@ -156,6 +156,40 @@ against Atlantic.net now, Kata having been retired as a backend.
 
 ---
 
+## Ad-hoc CLI JSON-object `-a` args: parsed as module params, not silently ignored (0.9.1027)
+
+Found via the same ad-hoc CLI comparison sweep against real `ansible`
+(2026-09-13): `bin/krikri`'s ad-hoc CLI never parsed a JSON-object `-a`
+string at all - `bin/krikri localhost -c local -m debug -a '{"msg":"hi"}'`
+printed the module's own default ("Hello world!") because the whole
+string fell into `_raw_params`-shaped k=v handling and was dropped.
+Real Ansible's ad-hoc arg parsing (ansible.parsing.splitter /
+ModuleArgsParser) tries `json.loads()` on the whole string first when
+it looks like a JSON object (starts with `{` after stripping
+whitespace) and, if it parses as a dict, uses it as the module params
+directly - which is the ONLY way to express dict/list-shaped module
+args on an ad-hoc command line (`expect`'s `responses`, `command`'s
+`argv`, `xml`'s `namespaces`); the k=v encoding cannot represent a
+dict value.
+
+`PlaybookParser.parse_adhoc_params` now has the same two-path logic:
+a `{`-leading string that parses as a JSON object feeds its keys into
+the params map (scalars stringified the same way the playbook-side
+k=v path produces them; dicts/lists JSON-encoded, the convention the
+plugins' own leading-bracket JSON decoding already expects), and
+anything else falls through to the existing k=v parsing. The
+malformed-JSON case was determined live against ansible-core
+2.19.11 rather than assumed: a `{`-leading string that is NOT valid
+JSON is not specially errored there either - real Ansible falls
+through to the ordinary k=v split (the string lands in `_raw_params`,
+which debug rejects and command tries to execute, rc=2), and krikri
+now reproduces exactly that. Verified side-by-side live for the JSON
+dict form (`debug` msg, `command` argv, `set_fact` nested fact with
+types preserved), the malformed-JSON fallback, and unchanged k=v
+behavior; regression coverage in `spec/integration/adhoc_cli_spec.cr`.
+
+---
+
 ## `mysql_query`/`mysql_variables`/`mysql_info` parameter and result-field bugs (0.9.1026)
 
 Found via an extended ad-hoc CLI comparison sweep against real `ansible`
