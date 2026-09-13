@@ -1,16 +1,16 @@
 class Krikri < Formula
   desc "Ansible-compatible automation tool, written in Crystal"
   homepage "https://github.com/weirdbricks/krikri"
-  version "0.9.1000"
+  version "0.9.1020"
   license "MIT"
 
   on_macos do
     if Hardware::CPU.arm?
-      url "https://github.com/weirdbricks/krikri/releases/download/v0.9.1000/krikri-v0.9.1000-darwin-arm64.tar.gz"
-      sha256 "93dc2c54e7062baea348391c8919cd0458834026842010d40167d689a3102061"
+      url "https://github.com/weirdbricks/krikri/releases/download/v0.9.1020/krikri-v0.9.1020-darwin-arm64.tar.gz"
+      sha256 "33c82e61e00c008ee1df6af9ce2dd77d87dbb27ee93d1999b4e1a144126af829"
     else
-      url "https://github.com/weirdbricks/krikri/releases/download/v0.9.1000/krikri-v0.9.1000-darwin-x86_64.tar.gz"
-      sha256 "a9886e7879b6aa5fc5788e384ac8a5e0b9657a4a8ace81fed4445b78c89263c1"
+      url "https://github.com/weirdbricks/krikri/releases/download/v0.9.1020/krikri-v0.9.1020-darwin-x86_64.tar.gz"
+      sha256 "61e6bf41943f89645b294666f5322cacff2d4f579ee922978da08657589e6d20"
     end
 
     # Unlike the Linux binaries (fully static musl builds, zero runtime
@@ -30,11 +30,11 @@ class Krikri < Formula
 
   on_linux do
     if Hardware::CPU.arm?
-      url "https://github.com/weirdbricks/krikri/releases/download/v0.9.1000/krikri-v0.9.1000-linux-arm64.tar.gz"
-      sha256 "f9f0c4ff9d6891e9d45d89a79f22908498435b0e842deeea1d1f0a44cd5927a3"
+      url "https://github.com/weirdbricks/krikri/releases/download/v0.9.1020/krikri-v0.9.1020-linux-arm64.tar.gz"
+      sha256 "5ca12eb0052040006dcd82a3dc8daa0bca08dcbf1dcf82371bc0943b1302ca6a"
     else
-      url "https://github.com/weirdbricks/krikri/releases/download/v0.9.1000/krikri-v0.9.1000-linux-x86_64.tar.gz"
-      sha256 "70fe0f629182d135a9db634ebac9db34df0aea1edee798b20cd688d3fb1b15ff"
+      url "https://github.com/weirdbricks/krikri/releases/download/v0.9.1020/krikri-v0.9.1020-linux-x86_64.tar.gz"
+      sha256 "ee82c026631c587f25433f2e6b6dbb587512b42b7bd70a6fafd9331d6e20760d"
     end
   end
 
