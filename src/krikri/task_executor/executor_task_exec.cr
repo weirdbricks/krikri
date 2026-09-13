@@ -1,4 +1,6 @@
 require "./executor"
+require "../plugin_helpers/ansible_splitlines"
+
 
 module Krikri
   class TaskExecutor
@@ -1116,24 +1118,12 @@ module Krikri
 
     # Matches real Ansible's `stdout_lines`/`stderr_lines` (built from
     # Python's `str.splitlines()`), not Crystal's plain `String#split("\n")`.
-    # The two differ on exactly the cases that matter for real command
-    # output: empty input - Python's splitlines() gives `[]`, Crystal's
-    # split gives `[""]` (one empty element) - and any trailing newline,
-    # which split() turns into a spurious final empty element that
-    # splitlines() never produces. Found via konstruktoid-hardening's
-    # "Delete unmanaged UFW rules" task: its `ufw_not_managed` command's
-    # `grep -v` legitimately matches nothing (every rule this role adds is
-    # tagged "ansible managed" and filtered out), producing empty stdout;
-    # `ufw_not_managed.stdout_lines | length > 0` should then gate the
-    # whole loop off, but the spurious `[""]` made it loop once with an
-    # empty item, running `ufw delete ` with no rule spec at all - which
-    # real `ufw` rejects with "ERROR: Invalid syntax".
+    # The rationale (empty input, trailing-newline cases - and the UFW role
+    # that found them) lives with the shared implementation in
+    # plugin_helpers/ansible_splitlines.cr, which the command/shell plugins
+    # now also use for their own module-side *_lines keys.
     private def ansible_splitlines(text : String) : Array(String)
-      return [] of String if text.empty?
-
-      lines = text.split("\n")
-      lines.pop if lines.last?.try(&.empty?)
-      lines
+      PluginHelpers::AnsibleSplitlines.split(text)
     end
 
     # Adds stdout_lines/stderr_lines (real Ansible behavior - each module

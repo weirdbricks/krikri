@@ -216,8 +216,13 @@ module Krikri
 
       # Build full command. argv: form is quoted element-wise and joined
       # (see the comment above); cmd:/free-form is passed through verbatim
-      # - the shell does the splitting.
-      full_cmd = argv_parts ? argv_parts.map { |arg| shell_single_quote(arg) }.join(" ") : cmd.to_s
+      # - the shell does the splitting. `command_string` (the pre-chdir
+      # form) is what real Ansible's shell module reports as the result's
+      # `cmd` key - the raw command string, not the argv list command uses
+      # and not the `cd X && ...` prefixed form the shell actually runs.
+      command_string = argv_parts ? argv_parts.map { |arg| shell_single_quote(arg) }.join(" ") : cmd.to_s
+
+      full_cmd = command_string
 
       # Add chdir if specified
       if chdir
@@ -297,18 +302,30 @@ module Krikri
       # .rstrip("\r\n")`); when false, the raw bytes are returned
       # untouched (live-verified: printf 'out\n\n\n' keeps all 6 bytes
       # with strip_empty_ends: false, collapses to "out" with the
-      # default). The executor derives stdout_lines/stderr_lines
-      # centrally from whatever lands here, so the *_lines keys follow
-      # automatically. Crystal's String#rstrip(set) strips trailing
+      # default). The result carries the FULL real shell-module shape:
+      # cmd is the raw command string, stdout_lines/stderr_lines are
+      # derived here (module-side, where real Ansible's command.py sets
+      # them) from the same splitlines() semantics the executor used to
+      # derive them centrally from (Python's str.splitlines()), and msg
+      # is left empty on success - real Ansible's shell module NEVER sets
+      # msg on success (PluginResult omits an empty msg from the wire
+      # JSON), and the previous "Command executed successfully" text
+      # showed up as a nonstandard key in ad-hoc (`ansible -m shell`)
+      # result output. Crystal's String#rstrip(set) strips trailing
       # chars from the set, exactly like Python's str.rstrip("\r\n").
       strip_empty_ends = true?(@params["strip_empty_ends"]?, default: true)
+      final_stdout = strip_empty_ends ? result[:stdout].rstrip("\r\n") : result[:stdout]
+      final_stderr = strip_empty_ends ? result[:stderr].rstrip("\r\n") : result[:stderr]
 
       PluginResult.new(
         changed: true,
         failed: result[:exit_code] != 0,
-        msg: result[:exit_code] == 0 ? "Command executed successfully" : "Command failed",
-        stdout: strip_empty_ends ? result[:stdout].rstrip("\r\n") : result[:stdout],
-        stderr: strip_empty_ends ? result[:stderr].rstrip("\r\n") : result[:stderr],
+        msg: result[:exit_code] == 0 ? "" : "Command failed",
+        cmd: command_string,
+        stdout: final_stdout,
+        stdout_lines: PluginHelpers::AnsibleSplitlines.split(final_stdout),
+        stderr: final_stderr,
+        stderr_lines: PluginHelpers::AnsibleSplitlines.split(final_stderr),
         exit_code: result[:exit_code],
         rc: result[:exit_code], # Add rc as alias for Ansible compatibility
         diff: diff_data

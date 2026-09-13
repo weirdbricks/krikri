@@ -11,6 +11,7 @@ require "./ssh_manager"
 require "./local_executor"
 require "./plugin_helpers/stat_fields"
 require "./plugin_helpers/controlling_tty"
+require "./plugin_helpers/ansible_splitlines"
 
 module Krikri
   # LibC::Stat's timestamp fields are named differently per libc: glibc
