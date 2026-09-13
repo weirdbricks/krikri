@@ -167,6 +167,20 @@ describe Krikri::PluginHelpers::Ec2SecurityGroup do
       plan.steps[0].params.should contain({"GroupDescription", "d"})
     end
 
+    it "revokes AWS's default egress rule when creating with a rules_egress list that replaces it" do
+      tcp443 = Krikri::PluginHelpers::Ec2SecurityGroup::Rule.new("tcp", "443", "443", ["0.0.0.0/0"], [] of String, [] of String, [] of String, [] of String)
+      plan = Krikri::PluginHelpers::Ec2SecurityGroup.plan_present("web", "d", nil, existing.ingress, [tcp443], true, true, {} of String => String, [] of Krikri::PluginHelpers::Ec2SecurityGroup::SecurityGroup)
+      plan.steps.map(&.action).should eq(["CreateSecurityGroup", "RevokeSecurityGroupEgress", "AuthorizeSecurityGroupIngress", "AuthorizeSecurityGroupEgress"])
+      plan.steps[1].params.should contain({"IpPermissions.1.IpProtocol", "-1"})
+      plan.steps[1].params.should contain({"IpPermissions.1.IpRanges.1.CidrIp", "0.0.0.0/0"})
+    end
+
+    it "keeps the default egress rule when the desired create list includes it" do
+      allow_all = Krikri::PluginHelpers::Ec2SecurityGroup::Rule.new("-1", nil, nil, ["0.0.0.0/0"], [] of String, [] of String, [] of String, [] of String)
+      plan = Krikri::PluginHelpers::Ec2SecurityGroup.plan_present("web", "d", nil, nil, [allow_all], true, true, {} of String => String, [] of Krikri::PluginHelpers::Ec2SecurityGroup::SecurityGroup)
+      plan.steps.map(&.action).should eq(["CreateSecurityGroup", "AuthorizeSecurityGroupEgress"])
+    end
+
     it "is a no-op when the group already matches" do
       plan = Krikri::PluginHelpers::Ec2SecurityGroup.plan_present("web", "web group", "vpc-1", existing.ingress, existing.egress, true, true, {"env" => "prod"}, [existing])
       plan.changed.should be_false
@@ -236,6 +250,48 @@ describe Krikri::PluginHelpers::Ec2SecurityGroup do
       result["failed"]?.should be_falsey
       result["group_id"].should eq("sg-new")
       result["name"].should eq("web")
+    end
+
+    it "targets the just-created group on the create-with-rules authorize calls" do
+      bodies = [] of String
+      handler = ->(region : String, body : String) do
+        bodies << body
+        action = URI::Params.parse(body)["Action"]
+        if action == "DescribeSecurityGroups"
+          DESCRIBE_NONE
+        else
+          <<-XML
+            <#{action}Response xmlns="http://ec2.amazonaws.com/doc/2016-11-15/">
+              <return>true</return>
+              <groupId>sg-new</groupId>
+            </#{action}Response>
+          XML
+        end
+      end
+      rules = %([{"proto": "tcp", "from_port": 22, "to_port": 22, "cidr_ip": "10.0.0.0/8"}])
+      egress = %([{"proto": "tcp", "from_port": 443, "to_port": 443, "cidr_ip": "0.0.0.0/0"}])
+      run_module({"name" => "web", "description" => "web group", "state" => "present", "region" => "us-east-1", "rules" => rules, "rules_egress" => egress}, handler)
+
+      actions = bodies.map { |b| URI::Params.parse(b)["Action"] }
+      actions.should eq(["DescribeSecurityGroups", "CreateSecurityGroup", "RevokeSecurityGroupEgress", "AuthorizeSecurityGroupIngress", "AuthorizeSecurityGroupEgress"])
+      authorize_body = bodies.find { |b| URI::Params.parse(b)["Action"] == "AuthorizeSecurityGroupIngress" }.not_nil!
+      authorize_body.should contain("GroupId=sg-new")
+      authorize_body.should contain("IpPermissions.1.IpProtocol=tcp")
+      revoke_body = bodies.find { |b| URI::Params.parse(b)["Action"] == "RevokeSecurityGroupEgress" }.not_nil!
+      revoke_body.should contain("GroupId=sg-new")
+      revoke_body.should contain("IpPermissions.1.IpRanges.1.CidrIp=0.0.0.0%2F0")
+    end
+
+    it "targets the existing group on update authorize calls" do
+      bodies = [] of String
+      handler = ->(region : String, body : String) do
+        bodies << body
+        DESCRIBE_ONE
+      end
+      rules = %([{"proto": "tcp", "from_port": 80, "to_port": 80, "cidr_ip": "0.0.0.0/0"}])
+      run_module({"name" => "web", "state" => "present", "region" => "us-east-1", "rules" => rules}, handler)
+      authorize_body = bodies.find { |b| URI::Params.parse(b)["Action"] == "AuthorizeSecurityGroupIngress" }.not_nil!
+      authorize_body.should contain("GroupId=sg-111")
     end
 
     it "sends the group-name filter on the describe call" do

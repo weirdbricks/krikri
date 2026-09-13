@@ -233,6 +233,20 @@ module Krikri
           create_params << {"VpcId", vpc_id} if vpc_id && !vpc_id.empty?
 
           steps = [Ec2Api::Step.new("CreateSecurityGroup", create_params)]
+          # Real module's create path revokes the group's pre-existing
+          # rules before authorizing the desired ones, and handles
+          # ingress before egress (remove_old_permissions then
+          # add_new_permissions).
+          if egress
+            # A freshly created VPC group already carries AWS's default
+            # allow-all egress rule; with purge_rules_egress (the default)
+            # real Ansible revokes it whenever the desired list is
+            # supplied without it - including an explicitly empty one.
+            default_egress = Rule.new("-1", nil, nil, ["0.0.0.0/0"], [] of String, [] of String, [] of String, [] of String)
+            unless egress.any?(&.canonical.==(default_egress.canonical))
+              steps << Ec2Api::Step.new("RevokeSecurityGroupEgress", permission_params([default_egress]))
+            end
+          end
           steps << Ec2Api::Step.new("AuthorizeSecurityGroupIngress", permission_params(ingress)) if ingress && !ingress.empty?
           steps << Ec2Api::Step.new("AuthorizeSecurityGroupEgress", permission_params(egress)) if egress && !egress.empty?
           return Plan.new(steps, true, "security group #{group_name} created", "")
@@ -329,7 +343,15 @@ module Krikri
 
         group_id = plan.group_id
         plan.steps.each do |step|
-          root = Ec2Api.call(region, step.action, Ec2Api.to_form_params(step.params), credentials)
+          params = step.params
+          # Authorize/Revoke target the group explicitly by GroupId - the
+          # EC2 API rejects the call without it (MissingParameter), and on
+          # the create path the id only exists after CreateSecurityGroup
+          # returns, so the plan can't carry it and #run injects it here.
+          if step.action.starts_with?("AuthorizeSecurityGroup") || step.action.starts_with?("RevokeSecurityGroup")
+            params = [{"GroupId", group_id}] + params
+          end
+          root = Ec2Api.call(region, step.action, Ec2Api.to_form_params(params), credentials)
           if step.action == "CreateSecurityGroup"
             group_id = Ec2Api.text(root, "groupId") || group_id
           end
