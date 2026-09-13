@@ -18,7 +18,7 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.1029`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.1030`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.31` (see `shard.yml`; 0.9.31 adds the six
 configurable Jinja delimiter strings).
 
@@ -153,6 +153,52 @@ commits), on top of the 7 immediately above re-verified clean the same
 way. The shortlist is at
 `testing/kata/round_new_authors/shortlist120.txt` if resuming it -
 against Atlantic.net now, Kata having been retired as a backend.
+
+---
+
+## `ec2_vpc_net_info`/`ec2_vpc_subnet_info`/`ec2_ami_info`/`iam_user_info` result-shape and field-path bugs (0.9.1031)
+
+Found via an ad-hoc CLI comparison sweep against real AWS (account
+567671850288, us-east-1, 2026-09-13) - all four modules are read-only
+`*_info` describe calls, verified live against real `ansible` and the
+real API on both engines. Three shape bugs shared by the three EC2
+modules (all in the shared `Ec2Info` shaping helper, fixed once there),
+plus one badly broken module:
+
+- All three EC2 modules omitted the `tags` key when the describe
+  response carried no `tagSet` (real Ansible always includes it, `{}`
+  when untagged), and every success result carried a krikri-only
+  `msg: "N found"` - real modules only pass msg to `fail_json`.
+- `ec2_vpc_subnet_info` type bugs: `available_ip_address_count` came
+  back as a JSON string (`"4091"`) instead of boto3's native integer,
+  and an empty `ipv6_cidr_block_association_set` came back as `""`
+  instead of boto3's `[]` (the EC2 wire serializes an empty set as a
+  self-closing element, which the generic XML converter turned into an
+  empty string; empty `*Set` elements are now empty lists, and the
+  handful of wire fields boto3 parses as integers -
+  `availableIpAddressCount`, `volumeSize` - are now native ints too).
+- `ec2_ami_info` field-name bug: the XML wire name is `isPublic` but
+  boto3's response key is `Public`, so real Ansible returns `public` -
+  krikri now maps it instead of passing `is_public` through. Verified
+  live that real Ansible's result never carries
+  `free_tier_eligible`/`public_ssm_parameter_name` for any AMI, and
+  krikri doesn't emit them either (the suspected extra keys do not
+  exist in krikri's implementation at all).
+- `iam_user_info` was the badly broken one: the XML field paths read
+  snake_case element names (`user_name`, `arn`, ...) off the IAM Query
+  API's PascalCase wire shape (`UserName`, `Arn`, ...), so
+  `normalize_user` dropped every scalar field, the name filter matched
+  nothing (empty result even for a real user), and the tag lookup
+  queried `ListUserTags` with an empty username - the whole result was
+  just `{"login_profile": {}, "tags": {}}` where real Ansible returns
+  the full user (arn, create_date, login_profile, path, tags,
+  user_id, user_name). Field paths fixed to the real wire shape and
+  normalized to snake_case, timestamps now rendered with isoformat's
+  `+00:00` like boto3's datetimes, and the GetLoginProfile parse now
+  descends through `GetLoginProfileResult`. The shaping logic also
+  moved from the plugin binary into a `PluginHelpers::IamUser` helper
+  (same split the three EC2 modules use) so it is unit-specable
+  through the `IamApi` transport seam.
 
 ---
 

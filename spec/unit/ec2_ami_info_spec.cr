@@ -124,7 +124,7 @@ describe Krikri::PluginHelpers::Ec2Info do
       image["image_id"].should eq("ami-older")
       image["state"].should eq("available")
       image["owner_id"].should eq("123456789012")
-      image["is_public"].should eq(true)
+      image["public"].should eq(true)
       image["architecture"].should eq("x86_64")
       image["image_type"].should eq("machine")
       image["name"].should eq("web-2024-01")
@@ -144,7 +144,7 @@ describe Krikri::PluginHelpers::Ec2Info do
       result = run_module({"region" => "us-east-1"}, ->(region : String, body : String) { DESCRIBE_TWO })
       mapping = result["images"][0]["block_device_mappings"][0]
       mapping["device_name"].should eq("/dev/xvda")
-      mapping["ebs"]["volume_size"].should eq("8")
+      mapping["ebs"]["volume_size"].should eq(8)
       mapping["ebs"]["delete_on_termination"].should eq(true)
       mapping["ebs"]["volume_type"].should eq("gp3")
     end
@@ -154,6 +154,12 @@ describe Krikri::PluginHelpers::Ec2Info do
       result["images"].as_a.map { |image| image["image_id"].as_s }.should eq(["ami-older", "ami-newer"])
     end
 
+    it "defaults tags to {} when the image has no tagSet, and carries no msg on success" do
+      result = run_module({"region" => "us-east-1"}, ->(_region : String, _body : String) { DESCRIBE_TWO })
+      result["msg"]?.should be_nil
+      result["images"][1]["tags"].as_h.should be_empty
+    end
+
     it "returns an empty list when no images match" do
       result = run_module({"region" => "us-east-1"}, ->(region : String, body : String) { DESCRIBE_NONE })
       result["images"].as_a.should be_empty
@@ -161,7 +167,7 @@ describe Krikri::PluginHelpers::Ec2Info do
 
     it "fetches launch permissions when describe_image_attributes is set" do
       result = run_module({
-        "region"                     => "us-east-1",
+        "region"                    => "us-east-1",
         "describe_image_attributes" => "true",
       }, ->(region : String, body : String) do
         URI::Params.parse(body)["Action"] == "DescribeImageAttribute" ? LAUNCH_PERMISSION : DESCRIBE_TWO
@@ -176,7 +182,7 @@ describe Krikri::PluginHelpers::Ec2Info do
 
     it "omits launch permissions when the attribute call fails" do
       result = run_module({
-        "region"                     => "us-east-1",
+        "region"                    => "us-east-1",
         "describe_image_attributes" => "true",
       }, ->(region : String, body : String) do
         URI::Params.parse(body)["Action"] == "DescribeImageAttribute" ? raise Krikri::PluginHelpers::Ec2Api::Error.new("AuthFailure: not permitted") : DESCRIBE_TWO
