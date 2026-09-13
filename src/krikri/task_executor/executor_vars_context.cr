@@ -830,16 +830,42 @@ module Krikri
       end
 
       roots = [] of String
-      task.role_files_dir.try { |dir| roots << dir }
-      task.role_templates_dir.try { |dir| roots << dir }
-      # with_first_found is commonly used with include_vars: to pick an
-      # OS-specific vars file - dev-sec os_hardening's "Fetch OS dependent
-      # variables" does exactly this against Ubuntu.yml/Debian.yml in the
-      # role's vars/ dir. Include vars/ in the search roots so those resolve
-      # the same way resolve_include_vars_path already looks there.
-      task.role_vars_dir.try { |dir| roots << dir }
-      task.role_path.try { |dir| roots << dir }
+      # The directory of the file the with_first_found: task itself is
+      # written in - real Ansible tries a bare candidate against the
+      # task's own file first. include_file_dir is only assigned for
+      # include_tasks: statements, though, so a task declared directly
+      # in a role's tasks/main.yml has it nil - fall back to the role's
+      # tasks/ dir itself. so5.ssh_hostbased_auth and so5.pbspro (both
+      # verified live against ansible-core 2.19.x) include_vars:
+      # with_first_found: a "setup-<OS>.yml" idiom whose only matching
+      # file lives under tasks/ (never vars/ or files/) - without this
+      # root the lookup exhausted and failed with "No file was found
+      # when using first_found." where real Ansible resolved to
+      # tasks/setup-Debian.yml and the role ran to completion.
       task.include_file_dir.try { |dir| roots << dir }
+      task.role_path.try { |role_dir| roots << File.join(role_dir, "tasks") }
+      unless task.include_tasks?
+        task.role_files_dir.try { |dir| roots << dir }
+        task.role_templates_dir.try { |dir| roots << dir }
+        # with_first_found is commonly used with include_vars: to pick an
+        # OS-specific vars file - dev-sec os_hardening's "Fetch OS dependent
+        # variables" does exactly this against Ubuntu.yml/Debian.yml in the
+        # role's vars/ dir. Include vars/ in the search roots so those resolve
+        # the same way resolve_include_vars_path already looks there.
+        task.role_vars_dir.try { |dir| roots << dir }
+      end
+      # vars//files//templates/ are NOT searched for an include_tasks:'
+      # with_first_found: at all - include_tasks: consumes task-list YAML
+      # only, and real Ansible (verified live against ansible-core 2.19.x
+      # with ccdc.ntp_configuration's "Set up NTP time synchronisation"
+      # repro) skips straight past an "Debian.yml" candidate even when
+      # vars/Debian.yml exists, resolving instead to tasks/Linux.yml.
+      # Searching vars/ here matched the candidate against a vars MAPPING
+      # and failed the task with "Included tasks file must be a YAML
+      # list" - a vars file can never be a valid include target, so
+      # including these subdirs for include_tasks: can only ever find a
+      # file real Ansible would never pick.
+      task.role_path.try { |dir| roots << dir }
       roots << Dir.current
 
       first_existing(roots, candidate)
