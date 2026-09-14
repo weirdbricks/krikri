@@ -256,6 +256,30 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
     renderer.render("{{ false | ansible.builtin.ternary('YES', 'NO') }}").should eq("NO")
   end
 
+  it "renders a comma directly after a no-parens filter inside a call's arguments" do
+    # Real bug found benchmarking rolehippie.nullmailer (round 811337):
+    # its `remotes.j2` contains an inline ternary whose true-branch is
+    # `' --port=' + nullmailer_port | string` - real Jinja2 binds `|`
+    # tighter than binary `+`, so a COMMA legitimately lands directly
+    # after the `string` filter's name, both inside a parenthesized call
+    # argument list (`cond | ternary(' --port=' + port | string, '')`,
+    # which template_action_plugin's own inline-ternary rewrite produces
+    # for Crinja) and inside a bare tuple. Crinja's no-parenthesis call
+    # grammar (real Jinja2: at most ONE bare argument, like `is
+    # divisibleby 3`) mistook that COMMA for the start of an implicit
+    # argument and the whole template render died with
+    # "Unexpected COMMA"; the argument list must end at the COMMA.
+    v = Hash(String, JSON::Any).new
+    v["nullmailer_host"] = JSON::Any.new("mail.example.com")
+    v["nullmailer_port"] = JSON::Any.new(25)
+    v["nullmailer_username"] = JSON::Any.new(nil)
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+
+    renderer.render("{{ (true) | ternary(' --port=' + nullmailer_port | string, '') }}").should eq(" --port=25")
+    renderer.render("{{ (nullmailer_username is not none) | ternary(' --user=' + nullmailer_username, '') }}").should eq("")
+    renderer.render("{{ ('a' | upper, 'z') }}").should eq("['A', 'z']")
+  end
+
   it "honors the style= positional argument for comment()" do
     # Real bug found benchmarking robertdebock.php: `{{ "..." |
     # comment('c') }}` (php.ini.j2's own header) previously ignored the
