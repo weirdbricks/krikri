@@ -65,10 +65,10 @@ module Krikri
       handlers = [] of Task
 
       roles_yaml.each do |entry|
-        name, invocation_vars, invocation_tags, role_when = parse_role_entry(entry)
+        name, entry_version, invocation_vars, invocation_tags, entry_when = parse_role_entry(entry)
         before_count = tasks.size
-        load_role(name, invocation_vars, invocation_tags, play, playbook_dir, seen, tasks, handlers, play_scope: true)
-        apply_role_when(tasks, before_count, role_when)
+        load_role(name, invocation_vars, invocation_tags, play, playbook_dir, seen, tasks, handlers, play_scope: true, role_version: entry_version, role_when: entry_when)
+        apply_role_when(tasks, before_count, entry_when)
       end
 
       {tasks, handlers}
@@ -80,9 +80,9 @@ module Krikri
     # call gets its own fresh "seen" set, so - matching include_role's
     # allow_duplicates: true default - repeated include_role calls for the
     # same role name each load it again rather than being silently
-    # deduplicated the way a role listed twice under roles: would be. An
-    # explicit allow_duplicates: false isn't honored (dedup only happens
-    # within a single call's own meta dependency chain).
+    # deduplicated the way a role listed twice under roles: would be.
+    # allow_duplicates: false on the include itself isn't honored (dedup
+    # only happens within a single call's own meta dependency chain).
     def self.load_single_role(name : String, invocation_vars : Hash(String, JSON::Any), invocation_tags : Array(String), play : Play, playbook_dir : String, tasks_from : String? = nil, parent_names : Array(String) = [] of String, parent_paths : Array(String) = [] of String, parent_defaults : Hash(String, JSON::Any) = Hash(String, JSON::Any).new) : {Array(Task), Array(Task)}
       seen = Set(String).new
       tasks = [] of Task
@@ -96,9 +96,9 @@ module Krikri
     # A roles: entry is either a bare string ("common") or a mapping with
     # role:/name: (+ optional vars:/tags:, and Ansible also treats any
     # other top-level key as a role var - `roles: [{role: app, port: 8080}]`).
-    private def self.parse_role_entry(entry : YAML::Any) : {String, Hash(String, JSON::Any), Array(String), String?}
+    private def self.parse_role_entry(entry : YAML::Any) : {String, String?, Hash(String, JSON::Any), Array(String), String?}
       if bare_name = entry.as_s?
-        return {bare_name, Hash(String, JSON::Any).new, [] of String, nil}
+        return {bare_name, nil, Hash(String, JSON::Any).new, [] of String, nil}
       end
 
       hash = entry.as_h
@@ -129,8 +129,14 @@ module Krikri
       # already are (a `version: v1.0.9` var leaking into the role's own
       # vars context, e.g. via `{{ version }}`, would be a real
       # divergence from what real Ansible - which never exposes these
-      # as vars either - provides).
+      # as vars either - provides). `version` is still captured (below)
+      # for the dependency-dedup key: real Ansible treats two dependency
+      # declarations differing ONLY in their `version:` pin as two
+      # distinct invocations and runs both (verified live,
+      # andrewrothstein.kafka-consumer's v1.0.13-via-kafka vs
+      # v1.0.12-via-openjdk unarchive-deps double run).
       reserved = {"role", "name", "src", "version", "scm", "vars", "tags", "when"}
+      version = hash["version"]?.try(&.to_s)
       hash.each do |key, value|
         key_str = key.to_s
         next if reserved.includes?(key_str)
@@ -154,7 +160,7 @@ module Krikri
       # dropped through as a role VAR named "when" instead of a gate.
       role_when = hash["when"]?.try { |cond| PlaybookParser.condition_to_string(cond) }
 
-      {name, vars, tags, role_when}
+      {name, version, vars, tags, role_when}
     end
 
     private def self.load_role(
@@ -178,16 +184,30 @@ module Krikri
       # it is `public: true` - contributing them here would expose them
       # to every later task in the play instead.
       play_scope : Bool = false,
+      # The dependency entry's `version:` pin, when declared - part of the
+      # invocation identity #role_dedup_key dedupes on (not a role var,
+      # matching real Ansible, which never exposes it as one).
+      role_version : String? = nil,
+      role_when : String? = nil,
     )
-      # An already-loaded role contributes no defaults a second time -
-      # its tasks (and their defaults) are already in the play.
-      return Hash(String, JSON::Any).new if seen.includes?(name)
-      seen.add(name)
-
       role_dir = resolve_role_dir(name, playbook_dir)
       unless role_dir
         raise RoleNotFoundError.new("Role not found: #{name} (looked under #{File.join(playbook_dir, "roles", name)} and #{File.join("roles", name)})")
       end
+
+      # An already-loaded role contributes no defaults a second time -
+      # its tasks (and their defaults) are already in the play. The key
+      # is the full invocation identity, NOT just the bare role name (see
+      # #role_dedup_key) - found via andrewrothstein.kafka-consumer's
+      # dependency graph, which reaches andrewrothstein.unarchive-deps
+      # twice (via andrewrothstein.kafka AND via andrewrothstein.openjdk)
+      # with two different `version:` pins; real Ansible (verified live
+      # against ansible-core 2.19.11, both with this exact role graph and
+      # with synthetic same-name/different-params graphs) runs it twice,
+      # while deduping by name alone silently dropped the second run.
+      dedup_key = role_dedup_key(name, role_version, invocation_vars, invocation_tags, role_when)
+      return Hash(String, JSON::Any).new if !meta_allows_duplicates?(role_dir) && seen.includes?(dedup_key)
+      seen.add(dedup_key)
       # Real Ansible's `role_path` magic var is always an ABSOLUTE path -
       # resolve_role_dir's own search dirs can be relative (a bare "roles"
       # search root, or a relative ANSIBLE_ROLES_PATH entry), and that
@@ -398,14 +418,44 @@ module Krikri
       return collected unless deps
 
       deps.each do |dep|
-        dep_name, dep_vars, dep_tags, dep_when = parse_role_entry(dep)
+        dep_name, dep_version, dep_vars, dep_tags, dep_when = parse_role_entry(dep)
         before_count = tasks.size
-        dep_defaults = load_role(dep_name, dep_vars, dep_tags, play, playbook_dir, seen, tasks, handlers, nil, parent_names, parent_paths, parent_defaults, play_scope)
+        dep_defaults = load_role(dep_name, dep_vars, dep_tags, play, playbook_dir, seen, tasks, handlers, nil, parent_names, parent_paths, parent_defaults, play_scope, role_version: dep_version, role_when: dep_when)
         apply_role_when(tasks, before_count, dep_when)
         collected.merge!(dep_defaults)
       end
 
       collected
+    end
+
+    # The dedup key for one role invocation: role name + its `version:`
+    # pin + its inline vars + tags + when. Real Ansible (ansible-core
+    # 2.19.11, verified live with synthetic role graphs) deduplicates a
+    # meta/dependency invocation only when this whole identity matches -
+    # two declarations of the same role name that differ in ANY of these
+    # both run, no matter how many times the role is reachable in one
+    # dependency graph - while a genuinely identical pair still collapses
+    # to a single run.
+    private def self.role_dedup_key(name : String, version : String?, vars : Hash(String, JSON::Any), tags : Array(String), role_when : String?) : String
+      String.build do |io|
+        io << name << "|version=" << (version || "")
+        io << "|vars=" << vars.keys.sort!.map { |k| "#{k}=#{vars[k]}" }.join(",")
+        io << "|tags=" << tags.sort.join(",")
+        io << "|when=" << (role_when || "")
+      end
+    end
+
+    # A shared dependency's own meta/main.yml `allow_duplicates: true` is
+    # real Ansible's escape hatch to opt out of dependency deduplication
+    # entirely: with it, even two IDENTICAL invocations of the role both
+    # run (probe-verified); without it (the default), only non-identical
+    # invocations run more than once.
+    private def self.meta_allows_duplicates?(role_dir : String) : Bool
+      meta_path = find_main_file(File.join(role_dir, "meta")) || File.join(role_dir, "meta", "main.yml")
+      return false unless File.exists?(meta_path)
+
+      flag = cached_yaml(meta_path)["allow_duplicates"]?
+      (flag.try(&.as_bool?) || false)
     end
 
     # Prepends *role_when* (parent-first, matching import_role:'s own

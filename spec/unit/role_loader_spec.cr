@@ -366,6 +366,125 @@ describe Krikri::RoleLoader do
     tasks.map(&.name).should eq(["shared task", "dependent task"])
   end
 
+  # Real divergence found via andrewrothstein.kafka-consumer's dependency
+  # graph: it reaches andrewrothstein.unarchive-deps TWICE (once via
+  # andrewrothstein.kafka, once via andrewrothstein.openjdk) with two
+  # different `version:` pins (v1.0.13 vs v1.0.12). Real Ansible
+  # (ansible-core 2.19.11, probe-verified) deduplicates a dependency only
+  # when the WHOLE invocation identity matches - name + version: pin +
+  # inline vars - so a shared dependency declared with different
+  # params/version runs once per distinct declaration, not once per name.
+  # Deduping by bare name silently dropped the second run.
+  it "runs a shared dependency twice when the two declarations differ only in version: pin (kafka-consumer shape)" do
+    build_role("shared_pin") { |role| role.tasks(<<-YAML) }
+      - name: shared task
+        ansible.builtin.debug:
+          msg: shared
+      YAML
+
+    build_role("mid_pin1") do |role|
+      role.tasks("- name: mid1 task\n  ansible.builtin.debug:\n    msg: mid1\n")
+      role.meta("dependencies:\n  - role: shared_pin\n    version: v1.0.13\n")
+    end
+
+    build_role("mid_pin2") do |role|
+      role.tasks("- name: mid2 task\n  ansible.builtin.debug:\n    msg: mid2\n")
+      role.meta("dependencies:\n  - role: shared_pin\n    version: v1.0.12\n")
+    end
+
+    build_role("top_pin") do |role|
+      role.tasks("- name: top task\n  ansible.builtin.debug:\n    msg: top\n")
+      role.meta("dependencies:\n  - mid_pin1\n  - mid_pin2\n")
+    end
+
+    tasks, _ = Krikri::RoleLoader.load_roles(roles_yaml("- top_pin"), fresh_play, ROLES_ROOT)
+
+    tasks.map(&.name).count("shared task").should eq(2)
+  end
+
+  it "runs a shared dependency twice when the two declarations differ only in inline vars" do
+    build_role("shared_vars") { |role| role.tasks(<<-YAML) }
+      - name: shared task
+        ansible.builtin.debug:
+          msg: shared
+      YAML
+
+    build_role("mid_vars1") do |role|
+      role.tasks("- name: mid1 task\n  ansible.builtin.debug:\n    msg: mid1\n")
+      role.meta("dependencies:\n  - role: shared_vars\n    probe_var: alpha\n")
+    end
+
+    build_role("mid_vars2") do |role|
+      role.tasks("- name: mid2 task\n  ansible.builtin.debug:\n    msg: mid2\n")
+      role.meta("dependencies:\n  - role: shared_vars\n    probe_var: beta\n")
+    end
+
+    build_role("top_vars") do |role|
+      role.tasks("- name: top task\n  ansible.builtin.debug:\n    msg: top\n")
+      role.meta("dependencies:\n  - mid_vars1\n  - mid_vars2\n")
+    end
+
+    tasks, _ = Krikri::RoleLoader.load_roles(roles_yaml("- top_vars"), fresh_play, ROLES_ROOT)
+
+    tasks.map(&.name).count("shared task").should eq(2)
+  end
+
+  it "still runs a shared dependency only once when both declarations are identical" do
+    build_role("shared_same") { |role| role.tasks(<<-YAML) }
+      - name: shared task
+        ansible.builtin.debug:
+          msg: shared
+      YAML
+
+    build_role("mid_same1") do |role|
+      role.tasks("- name: mid1 task\n  ansible.builtin.debug:\n    msg: mid1\n")
+      role.meta("dependencies:\n  - role: shared_same\n    version: v1.0.13\n")
+    end
+
+    build_role("mid_same2") do |role|
+      role.tasks("- name: mid2 task\n  ansible.builtin.debug:\n    msg: mid2\n")
+      role.meta("dependencies:\n  - role: shared_same\n    version: v1.0.13\n")
+    end
+
+    build_role("top_same") do |role|
+      role.tasks("- name: top task\n  ansible.builtin.debug:\n    msg: top\n")
+      role.meta("dependencies:\n  - mid_same1\n  - mid_same2\n")
+    end
+
+    tasks, _ = Krikri::RoleLoader.load_roles(roles_yaml("- top_same"), fresh_play, ROLES_ROOT)
+
+    tasks.map(&.name).count("shared task").should eq(1)
+  end
+
+  # Real Ansible's escape hatch (probe-verified): allow_duplicates: true
+  # in the SHARED dependency's own meta/main.yml opts it out of
+  # deduplication entirely - even two identical invocations both run.
+  it "runs identical declarations twice when the shared dependency's own meta declares allow_duplicates: true" do
+    build_role("shared_allow") do |role|
+      role.tasks("- name: shared task\n  ansible.builtin.debug:\n    msg: shared\n")
+      role.meta("allow_duplicates: true\n")
+    end
+
+    build_role("mid_allow1") do |role|
+      role.tasks("- name: mid1 task\n  ansible.builtin.debug:\n    msg: mid1\n")
+      role.meta("dependencies:\n  - shared_allow\n")
+    end
+
+    build_role("mid_allow2") do |role|
+      role.tasks("- name: mid2 task\n  ansible.builtin.debug:\n    msg: mid2\n")
+      role.meta("dependencies:\n  - shared_allow\n")
+    end
+
+    build_role("top_allow") do |role|
+      role.tasks("- name: top task\n  ansible.builtin.debug:\n    msg: top\n")
+      role.meta("dependencies:\n  - mid_allow1\n  - mid_allow2\n")
+    end
+
+    tasks, _ = Krikri::RoleLoader.load_roles(roles_yaml("- top_allow"), fresh_play, ROLES_ROOT)
+
+    tasks.map(&.name).count("shared task").should eq(2)
+  end
+
   it "raises with a clear message when the role directory can't be found" do
     expect_raises(Exception, /Role not found: nonexistent/) do
       Krikri::RoleLoader.load_roles(roles_yaml("- nonexistent"), fresh_play, ROLES_ROOT)
