@@ -101,6 +101,64 @@ describe "authorized_key plugin" do
     result["failed"].as_bool.should be_true
   end
 
+  # Round 811277 (jtprogru.profile): a role default left a username that
+  # doesn't exist on the host, and krikri silently "succeeded" by
+  # inventing /home/<user>/.ssh/authorized_keys for it. Real Ansible's
+  # keyfile() does a real pwd.getpwnam(user) and hard-fails instead.
+  # All messages below verified live against real ansible-playbook
+  # (ansible.posix 2.1.0).
+  it "fails like real Ansible when the user doesn't exist and no path is given" do
+    result = PluginSpecHelper.run("authorized_key", {
+      "user" => "definitely-not-a-user-xyz", "key" => RSA_KEY,
+    })
+
+    result["failed"].as_bool.should be_true
+    result["msg"].as_s.should eq(
+      "Failed to lookup user definitely-not-a-user-xyz: \"getpwnam(): name not found: 'definitely-not-a-user-xyz'\""
+    )
+  end
+
+  it "fails in check mode with real Ansible's own check-mode message for a nonexistent user" do
+    result = PluginSpecHelper.run("authorized_key", {
+      "user" => "definitely-not-a-user-xyz", "key" => RSA_KEY, "check_mode" => "true",
+    })
+
+    result["failed"].as_bool.should be_true
+    result["msg"].as_s.should eq("Either user must exist or you must provide full path to key file in check mode")
+  end
+
+  it "fails in normal mode even with an explicit path when the user doesn't exist (real Ansible still does the lookup for ownership)" do
+    path = File.join(tmp_path("authorized-key-explicit-no-user"), ".ssh", "authorized_keys")
+    `rm -rf #{tmp_path("authorized-key-explicit-no-user")}`
+
+    result = PluginSpecHelper.run("authorized_key", {
+      "user" => "definitely-not-a-user-xyz", "path" => path, "key" => RSA_KEY,
+    })
+
+    result["failed"].as_bool.should be_true
+    result["msg"].as_s.should eq(
+      "Failed to lookup user definitely-not-a-user-xyz: \"getpwnam(): name not found: 'definitely-not-a-user-xyz'\""
+    )
+  end
+
+  it "skips the user lookup entirely in check mode with an explicit path (real Ansible's early return)" do
+    path = File.join(tmp_path("authorized-key-explicit-cm"), ".ssh", "authorized_keys")
+    `rm -rf #{tmp_path("authorized-key-explicit-cm")}`
+
+    result = PluginSpecHelper.run("authorized_key", {
+      "user" => "definitely-not-a-user-xyz", "path" => path, "key" => RSA_KEY, "check_mode" => "true",
+    })
+
+    result["failed"]?.try(&.as_bool).should be_falsey
+  end
+
+  it "still succeeds for a user that genuinely exists, resolving the real NSS home" do
+    result = PluginSpecHelper.run("authorized_key", {"user" => "root", "key" => RSA_KEY, "check_mode" => "true"})
+
+    result["failed"]?.try(&.as_bool).should be_falsey
+    result["keyfile"].as_s.should eq("/root/.ssh/authorized_keys")
+  end
+
   # Ad-hoc CLI comparison sweep vs real ansible (2026-09-13): real
   # ansible.posix.authorized_key returns its ENTIRE module.params dict
   # (with keyfile/changed merged in), so every effective parameter -
