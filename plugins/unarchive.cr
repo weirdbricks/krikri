@@ -293,7 +293,7 @@ module Krikri
         end
       end
 
-      if attr_error = apply_dest_attributes(dest)
+      if attr_error = apply_dest_attributes(dest, handler, src)
         return attr_error
       end
       stat_fields = dest_stat_fields(dest)
@@ -473,53 +473,98 @@ module Krikri
     # to apply, nil otherwise. Proactive-audit fix (same "real command
     # failure silently discarded" shape as apt_repository.cr's own
     # update_cache bug and sysctl.cr's own apply_kernel_value bug found
-    # this round): applied RECURSIVELY over dest, not just to dest
-    # itself - real Ansible's unarchive module does a final
-    # os.walk()-based pass over every extracted path when owner:/group:/
-    # mode: is given. Verified live: robertdebock.nextcloud's `Install
-    # nextcloud` task (`owner: www-data, group: www-data`) left the
-    # ENTIRE extracted tree www-data:www-data on real ansible-playbook
-    # (dest itself, every subdirectory, every file down to AUTHORS) -
-    # krikri-playbook's own previous `chown #{owner} #{dest}` (no `-R`)
-    # left everything but dest itself still root:root, which then broke
-    # the role's own downstream `occ` commands ("Cannot write into
-    # 'apps' directory") since the role's own permissions pass only
-    # explicitly re-chowns config.php/config/data, relying on
-    # unarchive's owner: for everything else (apps/, 3rdparty/, etc).
+    # this round): applied to every extracted path, not just to dest
+    # itself - real Ansible's unarchive module does a final pass over
+    # every extracted path when owner:/group:/mode: is given. Verified
+    # live: robertdebock.nextcloud's `Install nextcloud` task (`owner:
+    # www-data, group: www-data`) left the ENTIRE extracted tree
+    # www-data:www-data on real ansible-playbook (dest itself, every
+    # subdirectory, every file down to AUTHORS) - krikri-playbook's own
+    # previous `chown #{owner} #{dest}` (no `-R`) left everything but
+    # dest itself still root:root, which then broke the role's own
+    # downstream `occ` commands ("Cannot write into 'apps' directory")
+    # since the role's own permissions pass only explicitly re-chowns
+    # config.php/config/data, relying on unarchive's owner: for
+    # everything else (apps/, 3rdparty/, etc).
+    #
     # Real Ansible's own unarchive module applies owner:/group:/mode: to
-    # every EXTRACTED path (dest/<member> for each archive member, plus
-    # the top-level archive folders, ansible#35426) on every run -
-    # including an already-extracted rerun - and NEVER to dest itself,
-    # which it requires to already exist and leaves at whatever
-    # attributes it had. Rooting the recursive apply AT dest (the old
-    # `chown -R owner dest`/`chmod -R mode dest`) corrupted pre-existing
-    # directories: kostiantyn-nemchenko.mongodb_exporter extracts into
-    # /usr/local/bin with `owner: mongodb_exporter`/`mode: 0750`, which
-    # chown'ed/chmod'ed /usr/local/bin itself, and the role's own later
-    # `file: state: directory` task then detected and repaired that on
-    # every warm rerun - a permanent changed=1 warm-idempotency
-    # divergence real Ansible doesn't have. `find -mindepth 1 -exec
-    # ... {} +` reaches every extracted member (nested dirs and files
-    # extracted flat into dest alike) without touching dest, and
-    # batches path arguments to survive archives with many members.
-    private def apply_dest_attributes(dest : String) : PluginResult?
-      member_args = "\"#{dest}\" -mindepth 1 -exec"
-      if owner = @params["owner"]?
-        result = remote_exec("find #{member_args} chown #{owner} {} +")
-        if result[:exit_code] != 0
-          return PluginResult.new(changed: true, failed: true, msg: "Failed to set owner under #{dest}: #{result[:stderr]}")
+    # every EXTRACTED path (dest/<member> for each archive member,
+    # ansible#35426) on every run - including an already-extracted
+    # rerun - and NEVER to dest itself, which it requires to already
+    # exist and leaves at whatever attributes it had. This used to be
+    # approximated with a blanket `find dest -mindepth 1 -exec ...` -
+    # which reaches every extracted member correctly, but ALSO reaches
+    # any pre-existing, unrelated file that already happened to live
+    # under dest, which real Ansible never touches. Found live via
+    # buluma.daemonize (a 400-role regression sweep): its own
+    # `get_url: {dest: /root/daemonize-X.tar.gz, mode: "0644"}` followed
+    # by `unarchive: {dest: /root, mode: "0755"}` shares /root as BOTH
+    # tasks' target directory - the blanket find chmod'd the just-
+    # downloaded tarball (an unrelated sibling, not a member of the
+    # archive being extracted) from 0644 to 0755, so get_url's own
+    # idempotency check saw a corrupted mode on the next run and
+    # reported changed: true where real Ansible (which never touches
+    # anything outside the archive's own member list) stayed unchanged.
+    #
+    # Fixed by applying attributes to each archive member's own
+    # `dest/<member>` path explicitly (the same list `members` already
+    # produces for `list_files:`, real tar/zip listings enumerate every
+    # directory entry as well as every file, so no separate intermediate-
+    # directory pass is needed) instead of walking dest itself. `find`
+    # accepts multiple starting paths, so passing every member path as
+    # its own start argument (plus `-maxdepth 0`, since each is already
+    # a leaf as far as this find invocation is concerned - `members`
+    # already recurses through the archive's own listing) keeps the
+    # same `-exec ... +` batching the old blanket version relied on to
+    # survive archives with many members, applied to an explicit
+    # allowlist instead of an implicit "everything here" scan. The
+    # member-path list itself is also chunked (MEMBER_CHUNK_SIZE) across
+    # multiple `find` invocations - unlike the old single `dest` start
+    # argument, a huge member count could otherwise itself blow past a
+    # single command line's own length limit.
+    MEMBER_CHUNK_SIZE = 200
+
+    private def apply_dest_attributes(dest : String, handler : Symbol, src : String) : PluginResult?
+      return nil unless @params["owner"]? || @params["group"]? || @params["mode"]?
+
+      # A tar built via `tar czf archive.tar.gz -C src .` (archiving the
+      # CURRENT directory) lists a leading self-referential "./" member
+      # for the archived directory itself - `Path[dest, "./"]` normalizes
+      # right back to dest. This is deliberately NOT filtered out: real
+      # Ansible (live-verified against ansible-core 2.19.11) DOES apply
+      # a requested mode:/owner: to dest itself in this shape - dest at
+      # 700, an archive whose own "./" entry records 775, and a task
+      # requesting mode: "0644" all converge to dest ending up 644 (the
+      # TASK's own requested mode - neither the pre-existing 700 nor the
+      # archive's embedded 775). Real Ansible treats "./" as an ordinary
+      # member like any other; it just happens to resolve to dest's own
+      # path. Only a member that ISN'T dest (the overwhelmingly common
+      # shape - an archive listing individual named files/dirs rather
+      # than ".") skips dest, because dest was simply never one of its
+      # members to begin with - see the mongodb_exporter case below,
+      # whose archive has no "./" entry at all.
+      member_paths = members(handler, src).map { |member| shell_single_quote(Path[dest, member].normalize.to_s) }
+      return nil if member_paths.empty?
+
+      member_paths.each_slice(MEMBER_CHUNK_SIZE) do |chunk|
+        member_args = "#{chunk.join(" ")} -maxdepth 0 -exec"
+        if owner = @params["owner"]?
+          result = remote_exec("find #{member_args} chown #{owner} {} +")
+          if result[:exit_code] != 0
+            return PluginResult.new(changed: true, failed: true, msg: "Failed to set owner under #{dest}: #{result[:stderr]}")
+          end
         end
-      end
-      if group = @params["group"]?
-        result = remote_exec("find #{member_args} chgrp #{group} {} +")
-        if result[:exit_code] != 0
-          return PluginResult.new(changed: true, failed: true, msg: "Failed to set group under #{dest}: #{result[:stderr]}")
+        if group = @params["group"]?
+          result = remote_exec("find #{member_args} chgrp #{group} {} +")
+          if result[:exit_code] != 0
+            return PluginResult.new(changed: true, failed: true, msg: "Failed to set group under #{dest}: #{result[:stderr]}")
+          end
         end
-      end
-      if mode = @params["mode"]?
-        result = remote_exec("find #{member_args} chmod #{mode} {} +")
-        if result[:exit_code] != 0
-          return PluginResult.new(changed: true, failed: true, msg: "Failed to set mode under #{dest}: #{result[:stderr]}")
+        if mode = @params["mode"]?
+          result = remote_exec("find #{member_args} chmod #{mode} {} +")
+          if result[:exit_code] != 0
+            return PluginResult.new(changed: true, failed: true, msg: "Failed to set mode under #{dest}: #{result[:stderr]}")
+          end
         end
       end
       nil

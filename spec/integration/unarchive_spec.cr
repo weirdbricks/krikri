@@ -79,31 +79,34 @@ describe "unarchive plugin" do
     File.read(File.join(dest, "sub", "b.txt")).should eq("nested")
   end
 
-  it "applies mode: recursively to every extracted file, not just dest itself" do
+  it "applies mode: recursively to every extracted file, including dest itself when the archive has its own './' entry" do
     # Real bug found benchmarking robertdebock.nextcloud: `owner:`/
     # `group:` used to only ever be applied to the DESTINATION
     # DIRECTORY itself (a `chown #{owner} #{dest}`, no `-R`), while
-    # real ansible-playbook's own unarchive module does a final
-    # os.walk()-based pass applying owner:/group:/mode: to every
-    # extracted path. Left everything but dest itself at its
-    # archive-native ownership - broke a role's downstream `occ`
-    # commands relying on the extracted tree being fully owned by the
-    # web server user ("Cannot write into 'apps' directory"). Using
-    # mode: here (not owner:/group:) since the spec runs as a normal
-    # user and can't chown to an arbitrary user/group without root.
+    # real ansible-playbook's own unarchive module does a final pass
+    # applying owner:/group:/mode: to every extracted path. Left
+    # everything but dest itself at its archive-native ownership -
+    # broke a role's downstream `occ` commands relying on the extracted
+    # tree being fully owned by the web server user ("Cannot write
+    # into 'apps' directory"). Using mode: here (not owner:/group:)
+    # since the spec runs as a normal user and can't chown to an
+    # arbitrary user/group without root.
     #
-    # The fix overcorrected for years by ALSO rooting a `chmod -R` at
-    # dest itself, which real Ansible never touches (it requires dest
-    # to exist and leaves its attributes alone) - found when
-    # kostiantyn-nemchenko.mongodb_exporter extracted into the
-    # pre-existing /usr/local/bin with `mode: 0750`/`owner:` set, and
-    # the role's later `file: state: directory` task detected and
-    # repaired the corrupted dest on every warm rerun (changed=1
-    # forever; real Ansible warm is fully idempotent). dest keeps
-    # whatever attributes it had before; only its CONTENTS get the
-    # requested attributes.
+    # This fixture's own archive.tar.gz was built via `tar czf ... .`
+    # (archiving the CURRENT directory), so it carries a self-
+    # referential "./" member for its own top-level directory - live-
+    # verified against ansible-core 2.19.11: real Ansible applies a
+    # requested mode:/owner: to dest ITSELF in exactly this shape (dest
+    # preset to one mode, the archive's own embedded "./" entry
+    # recording a different one, and the task's own explicit mode:
+    # requested - all three distinct - converges to the TASK's
+    # requested mode winning, not the pre-existing one and not the
+    # archive-embedded one). See the sibling "never touches an
+    # unrelated sibling file" spec below for the different, ALSO real,
+    # mongodb_exporter shape (an archive with no "./" entry at all,
+    # where dest is never one of the archive's own members and stays
+    # untouched).
     dest = fresh_dest("tar-recursive-mode")
-    dest_mode_before = File.info(dest).permissions.value & 0o777
     result = PluginSpecHelper.run("unarchive", {
       "src"  => File.join(TMP_DIR, "archive.tar.gz"),
       "dest" => dest,
@@ -111,22 +114,62 @@ describe "unarchive plugin" do
     })
 
     result["changed"].as_bool.should be_true
-    (File.info(dest).permissions.value & 0o777).should eq(dest_mode_before)
+    (File.info(dest).permissions.value & 0o777).should eq(0o700)
     (File.info(File.join(dest, "a.txt")).permissions.value & 0o777).should eq(0o700)
     (File.info(File.join(dest, "sub", "b.txt")).permissions.value & 0o777).should eq(0o700)
 
-    # And a warm rerun (nothing left to extract) must leave dest's own
-    # attributes untouched too - the actual warm-idempotency shape the
-    # real-host round tripped over.
+    # A warm rerun (nothing left to extract) must reapply the same
+    # attributes to dest and every member again, matching real
+    # Ansible's own "every run, not just an initial extraction" pass.
     result = PluginSpecHelper.run("unarchive", {
       "src"  => File.join(TMP_DIR, "archive.tar.gz"),
       "dest" => dest,
       "mode" => "0700",
     })
     result["changed"].as_bool.should be_false
-    (File.info(dest).permissions.value & 0o777).should eq(dest_mode_before)
+    (File.info(dest).permissions.value & 0o777).should eq(0o700)
     (File.info(File.join(dest, "a.txt")).permissions.value & 0o777).should eq(0o700)
     (File.info(File.join(dest, "sub", "b.txt")).permissions.value & 0o777).should eq(0o700)
+  end
+
+  it "never touches an unrelated sibling file, or dest itself, when the archive names its members explicitly (no './' entry)" do
+    # The mongodb_exporter fix above (dest itself untouched) still left
+    # a blanket `find dest -mindepth 1 -exec ... +` reaching every OTHER
+    # pre-existing file under dest too - real Ansible's own unarchive
+    # module only ever applies owner:/group:/mode: to the archive's own
+    # extracted members (dest/<member>, ansible#35426), never to
+    # anything else that happens to already live there. Found live via
+    # buluma.daemonize (a 400-role regression sweep): its own get_url:
+    # downloads a tarball into the SAME dir (dest: /root) its own
+    # unarchive: task later extracts into with mode: "0755" - the old
+    # blanket find chmod'd the just-downloaded tarball from 0644 to
+    # 0755 too, so get_url's own idempotency check saw a "corrupted"
+    # mode on the next run and reported changed: true where real
+    # Ansible (which never touches anything outside the archive's own
+    # member list) stayed unchanged.
+    #
+    # Uses wrapped.tar.gz (built via `tar czf ... -C wrapped
+    # myproject-1.0`, naming the directory explicitly rather than
+    # archiving "."), so dest itself is genuinely never one of the
+    # archive's own members here - unlike the "./"-entry fixture above,
+    # where live verification against real Ansible showed dest DOES
+    # get the requested mode (a different, equally real shape).
+    dest = fresh_dest("tar-unrelated-sibling")
+    dest_mode_before = File.info(dest).permissions.value & 0o777
+    sibling = File.join(dest, "unrelated-sibling.txt")
+    File.write(sibling, "not part of the archive\n")
+    File.chmod(sibling, 0o644)
+
+    result = PluginSpecHelper.run("unarchive", {
+      "src"  => File.join(TMP_DIR, "wrapped.tar.gz"),
+      "dest" => dest,
+      "mode" => "0700",
+    })
+
+    result["changed"].as_bool.should be_true
+    (File.info(dest).permissions.value & 0o777).should eq(dest_mode_before)
+    (File.info(File.join(dest, "myproject-1.0", "index.php")).permissions.value & 0o777).should eq(0o700)
+    (File.info(sibling).permissions.value & 0o777).should eq(0o644)
   end
 
   it "fails the task when owner: can't actually be applied, instead of silently succeeding" do
