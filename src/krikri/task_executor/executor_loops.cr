@@ -224,22 +224,36 @@ module Krikri
         end
       when "with_dict"
         hash = value.as_h?
-        if hash.nil? && (arr = value.as_a?) && arr.empty?
-          # Real Ansible's `with_dict:` ultimately does a Python
-          # `dict(candidate)` conversion - `dict([])` succeeds (yields
-          # `{}`, zero loop items, task reported "skipping"), even
-          # though `dict([1, 2, 3])` (a genuinely non-empty non-mapping
-          # list) would raise. A role default of `rsyslog_foo: []`
-          # meant to be overridden with a real dict (buluma.rsyslog's
-          # own `rsyslog_rsyslog_d_files: []`) is a common shape for
-          # this - previously `value.as_h?` failing on an Array
-          # returned nil for the WHOLE loop regardless of size, and
-          # (per resolve_loop_template's own comment above) a nil loop
-          # resolution runs the task ONCE with `item` undefined instead
-          # of skipping it, so `item.key`/`item.value` raised
-          # "undefined" instead of the task being skipped like real
-          # Ansible.
-          hash = {} of String => JSON::Any
+        if hash.nil?
+          if (arr = value.as_a?) && arr.empty? && !task.loop_template_array_wrapped?
+            # The bare-scalar source shape (`with_dict: "{{ var }}"`, NO
+            # YAML list wrapper - buluma.rsyslog's own `rsyslog_rsyslog_
+            # d_files: []` default, round 180): real Ansible templates the
+            # bare scalar into the lookup's TERMS LIST itself, so a
+            # resolution that IS an empty list means zero terms, zero
+            # loop items, task reported "skipping". The original fix's
+            # `dict([])`-succeeds story is correct for exactly this
+            # shape - live-verified against ansible-core 2.19.11.
+            hash = {} of String => JSON::Any
+          elsif task.loop_template_array_wrapped?
+            # The list-wrapped source shape (`with_dict:\n  - "{{ git_
+            # users }}"` - volker-raschek.git, round 812006): there the
+            # explicit YAML list is itself ONE lookup TERM, and
+            # ansible-core 2.19's lookup/dict.py requires every term to
+            # be a Mapping, so an empty-list resolution HARD-FAILS the
+            # task ("The lookup plugin 'dict' failed: the 'dict' lookup
+            # plugin expects a dictionary, got '[]' of type ...)").
+            # Live-verified against ansible-core 2.19.11 that the two
+            # shapes really diverge this way (bare scalar skips,
+            # list-wrapped fails) - previously BOTH hit the empty-list
+            # leniency above and silently skipped where real Ansible
+            # fails. The type name real Ansible prints is a 2.19-internal
+            # lazy-templating container class not reproducible here;
+            # "list" is the direct `dict()` equivalent.
+            raise UndefinedVariableError.new(
+              "The lookup plugin 'dict' failed: the 'dict' lookup plugin expects a dictionary, " \
+              "got '#{value}' of type <class '#{python_type_name(value)}'>).")
+          end
         end
         return nil unless hash
         LoopResolver.with_dict(hash.transform_keys(&.to_s))

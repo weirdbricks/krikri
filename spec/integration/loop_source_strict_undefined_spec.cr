@@ -164,6 +164,56 @@ describe "undefined loop: source is strict" do
     output.should contain("failed=1")
   end
 
+  # The two with_dict: YAML SHAPES really do diverge in real Ansible
+  # (live-verified against ansible-core 2.19.11): a bare scalar whose
+  # template resolves to an empty list becomes the lookup's TERMS LIST
+  # itself (zero terms -> zero loop items -> "skipping"), while an
+  # explicit list-wrapped value is itself ONE lookup TERM, and
+  # ansible-core 2.19's lookup/dict.py requires every term to be a
+  # Mapping, so the same empty-list resolution HARD-FAILS. Round 180
+  # (buluma.rsyslog, bare scalar) vs round 812006 (volker-raschek.git,
+  # list-wrapped).
+  it "skips a bare-scalar with_dict: source resolving to an empty list" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          empty_list: []
+        tasks:
+          - name: looped
+            ansible.builtin.debug:
+              msg: "static text"
+            with_dict: "{{ empty_list }}"
+      YAML
+
+    status.success?.should be_true
+    output.should contain("skipping:")
+    output.should_not contain("expects a dictionary")
+    output.should contain("failed=0")
+  end
+
+  it "fails a list-wrapped with_dict: source resolving to an empty list" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          empty_list: []
+        tasks:
+          - name: looped
+            ansible.builtin.debug:
+              msg: "static text"
+            with_dict:
+              - "{{ empty_list }}"
+      YAML
+
+    status.exit_code.should eq(2)
+    output.should contain("The lookup plugin 'dict' failed: the 'dict' lookup plugin expects a dictionary")
+    output.should_not contain("skipping:")
+    output.should contain("failed=1")
+  end
+
   # Scenario 2 - the lenient escape hatch. Same bare/dotted-only
   # strictness boundary the when: work uses.
   it "stays lenient for a default() filter chain" do
