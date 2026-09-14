@@ -472,6 +472,106 @@ module Krikri
     end
   end
 
+  # Round 812045 (pluggero.bibata_cursor): a bracket index applied to a
+  # FILTER-CHAIN or parenthesized base (`(x.stdout | regex_search('...',
+  # '\\1', multiline=True))[0]`) is invisible to dict_attribute_miss_name
+  # above (its shape regex only accepts plain bare-var chains), so a base
+  # that resolves to Python None (regex_search with no match at all) or an
+  # index past the end of a real-but-too-short list silently rendered the
+  # "undefined" sentinel and the play ran green where real Ansible
+  # hard-fails the task. Live-verified against ansible-core 2.19.11 - both
+  # at task-arg finalization and in `when:` evaluation, which are DISTINCT
+  # Python error shapes, deliberately not collapsed into one message:
+  #   None/JSON-null base  -> "None has no element 0"
+  #   list index past end  -> "object of type 'list' has no attribute 5"
+  # Walks the TRAILING top-level integer-index brackets off *expr*
+  # (so a `| default(...)` guard after the index, which real Ansible
+  # answers leniently, never reaches the check), structurally evaluates
+  # the remaining base via Crinja, and returns real Ansible's own message
+  # for the first failing index. nil for every shape this can't pin down
+  # (undefined base - the generic "'x' is undefined" probe already owns
+  # that; non-integer index; dict-key miss, lenient by long-standing
+  # convention here; or a base containing a side-effecting lookup(...)/
+  # query(...) call that must not run a second time).
+  def self.bracket_index_failure_message(expr : String, vars : Hash(String, JSON::Any)) : String?
+    indices = [] of Int32
+    rest = expr.strip
+    while (open = trailing_top_level_bracket_index(rest))
+      idx = rest[(open + 1)...(rest.size - 1)].strip.to_i32?
+      break unless idx
+      indices.unshift(idx)
+      rest = rest[0...open].strip
+    end
+    return nil if indices.empty? || rest.empty?
+    return nil if rest.includes?("lookup(") || rest.includes?("query(")
+
+    current = begin
+      VariableSubstitutor::ExpressionEvaluator.new(vars).evaluate_structured(rest)
+    rescue
+      return nil
+    end
+
+    indices.each do |index|
+      case list = current.try(&.raw)
+      when Nil
+        return "None has no element #{index}"
+      when Array
+        in_range = index.negative? ? index >= -list.size : index < list.size
+        return "object of type 'list' has no attribute #{index}" unless in_range
+        current = list[index]
+      else
+        return nil
+      end
+    end
+    nil
+  end
+
+  # The `[` that opens the bracket group closing at *expr*'s very last
+  # character (top-level: outside quotes and any `(`/`[`/`{` nesting) -
+  # nil when the expr doesn't end with a top-level index at all.
+  private def self.trailing_top_level_bracket_index(expr : String) : Int32?
+    return nil unless expr.ends_with?(']')
+
+    open : Int32? = nil
+    depth = 0
+    quote : Char? = nil
+    expr.each_char_with_index do |char, i|
+      if q = quote
+        quote = nil if char == q
+      elsif char == '\'' || char == '"'
+        quote = char
+      elsif char == '['
+        open = i if depth == 0
+        depth += 1
+      elsif char == ']'
+        depth -= 1
+      end
+    end
+    return nil unless open
+
+    depth = 0
+    quote = nil
+    # Scan from `open` (exclusive of the final `]` itself): the group only
+    # counts as the trailing index when its own matching close is the
+    # expression's last character - any close that brings the depth back
+    # to zero earlier means the last top-level `[` closed mid-expression
+    # (`x[0] + y`, not an index shape at all).
+    (open...(expr.size - 1)).each do |i|
+      char = expr[i]
+      if q = quote
+        quote = nil if char == q
+      elsif char == '\'' || char == '"'
+        quote = char
+      elsif char == '['
+        depth += 1
+      elsif char == ']'
+        depth -= 1
+        return nil if depth == 0
+      end
+    end
+    open
+  end
+
   # The ONE shared "recursive re-templating" helper: re-renders *value*
   # when its raw form is still a String containing Jinja markers. This
   # used to exist as four independently-maintained copies
@@ -1670,7 +1770,19 @@ module Krikri
       # ansible-core 2.19.4: `msg: "[{{ omit }}]"` prints "[]".
       return if inner == "omit"
       resolved = VariableSubstitutor::VariableLookup.new(@vars).resolve(inner)
-      raise UndefinedVariableError.new(Krikri.strict_undefined_message(inner, @vars)) unless resolved
+      unless resolved
+        # Round 812045 (pluggero.bibata_cursor): a bracket index that
+        # landed on Python None or ran past the end of a real list has
+        # real Ansible's own distinct failure wording (live-verified
+        # against ansible-core 2.19.11) - prefer it over the generic
+        # "'x' is undefined" whenever the miss is one this probe can pin
+        # down. nil (undefined base, non-integer index, dict miss) falls
+        # back to the generic message exactly as before.
+        raise UndefinedVariableError.new(
+          Krikri.bracket_index_failure_message(inner, @vars) ||
+          Krikri.strict_undefined_message(inner, @vars)
+        )
+      end
       raise_if_nested_value_undefined(resolved)
     end
 

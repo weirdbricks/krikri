@@ -1,5 +1,11 @@
 require "../spec_helper"
 require "../../src/krikri/variable_substitutor"
+# The round-812045 specs below evaluate a real `regex_search` filter chain
+# through the Crinja-first delegation path - without jinja_filters's own
+# require-time `Crinja.filter` registration, Crinja raises
+# UnknownFeatureError and the evaluator silently falls back to its
+# hand-rolled path (the same bare-env gap filter_batch2_spec.cr documents).
+require "../../src/krikri/jinja_filters"
 
 # Real bug found benchmarking robertdebock.bios_update on Rocky 9.6 (round
 # 161): real Ansible's Jinja2 templating for module args is
@@ -54,6 +60,87 @@ describe Krikri::VarSubstitutor do
     it "does not raise under plain (non-strict) substitute - matches when:/vars-file/etc. semantics unchanged" do
       sub = Krikri::VarSubstitutor.new(vars: Hash(String, JSON::Any).new, host_name: "h1")
       sub.substitute("Value: {{ totally_undefined_var }}").should eq("Value: undefined")
+    end
+  end
+
+  # Round 812045 (pluggero.bibata_cursor): a bracket index applied to a
+  # FILTER-CHAIN base (`(cmd.stdout | regex_search('...', '\\1',
+  # multiline=True))[0]`) whose base resolves to Python None (regex_search
+  # with no match at all - the role's own configured package wasn't a real
+  # apt package, so `apt show` never printed a "Version:" line) silently
+  # rendered the "undefined" sentinel and the whole play ran green, where
+  # real ansible-playbook (2.19.11) hard-fails the task with
+  # "Error while resolving value for '...': None has no element 0".
+  # Indexing past the end of a real-but-too-short list is a DIFFERENT
+  # Python error shape ("object of type 'list' has no attribute 5",
+  # live-verified) and must not be collapsed into the None message (or
+  # into one lenient no-op).
+  describe "strict bracket-index failures (round 812045)" do
+    it "raises 'None has no element 0' indexing into a no-match regex_search result" do
+      vars = {"cmd_out" => JSON.parse(%({"stdout": "no version here"}))}
+      sub = Krikri::VarSubstitutor.new(vars: vars, host_name: "h1")
+      expect_raises(Krikri::UndefinedVariableError, /None has no element 0/) do
+        sub.substitute(%({{ (cmd_out.stdout | regex_search('Version:\\ ([\\d\\.]{2,})', '\\1', multiline=True))[0] }}), strict: true)
+      end
+    end
+
+    it "raises 'None has no element 0' indexing into a JSON-null variable, parenthesized" do
+      vars = {"none_var" => JSON.parse(%(null))}
+      sub = Krikri::VarSubstitutor.new(vars: vars, host_name: "h1")
+      expect_raises(Krikri::UndefinedVariableError, /None has no element 0/) do
+        sub.substitute("{{ (none_var)[0] }}", strict: true)
+      end
+    end
+
+    it "raises 'None has no element 0' indexing into a JSON-null variable, plain bracket shape" do
+      vars = {"none_var" => JSON.parse(%(null))}
+      sub = Krikri::VarSubstitutor.new(vars: vars, host_name: "h1")
+      expect_raises(Krikri::UndefinedVariableError, /None has no element 0/) do
+        sub.substitute("{{ none_var[0] }}", strict: true)
+      end
+    end
+
+    it "raises the list-out-of-range message indexing past the end of a real list" do
+      vars = {"short_list" => JSON.parse(%(["a", "b"]))}
+      sub = Krikri::VarSubstitutor.new(vars: vars, host_name: "h1")
+      expect_raises(Krikri::UndefinedVariableError, /object of type 'list' has no attribute 5/) do
+        sub.substitute("{{ (short_list)[5] }}", strict: true)
+      end
+    end
+
+    it "raises the list-out-of-range message for the plain bracket shape too" do
+      vars = {"short_list" => JSON.parse(%(["a", "b"]))}
+      sub = Krikri::VarSubstitutor.new(vars: vars, host_name: "h1")
+      expect_raises(Krikri::UndefinedVariableError, /object of type 'list' has no attribute 5/) do
+        sub.substitute("{{ short_list[5] }}", strict: true)
+      end
+    end
+
+    it "still extracts the captured group when the regex genuinely matches" do
+      vars = {"cmd_out" => JSON.parse(%({"stdout": "Version: 2.11.9"}))}
+      sub = Krikri::VarSubstitutor.new(vars: vars, host_name: "h1")
+      sub.substitute(%({{ (cmd_out.stdout | regex_search('Version:\\ ([\\d\\.]{2,})', '\\1', multiline=True))[0] }}), strict: true).should eq("2.11.9")
+    end
+
+    it "keeps the default() guard lenient over a None-index miss" do
+      # live-verified against ansible-core 2.19.11: none_var[0] is
+      # Jinja-Undefined, not an exception, so a trailing | default('x')
+      # answers 'x' - only the UNGUARDED index is the hard failure.
+      vars = {"none_var" => JSON.parse(%(null)), "lst" => JSON.parse(%(["a", "b"]))}
+      sub = Krikri::VarSubstitutor.new(vars: vars, host_name: "h1")
+      sub.substitute("{{ (none_var)[0] | default('x') }}", strict: true).should eq("x")
+      sub.substitute("{{ lst[5] | default('x') }}", strict: true).should eq("x")
+    end
+
+    it "keeps an undefined BASE lenient (real Ansible's 'x is undefined' shape, not a None-index)" do
+      sub = Krikri::VarSubstitutor.new(vars: Hash(String, JSON::Any).new, host_name: "h1")
+      sub.substitute("{{ (no_such_var)[0] | default('y') }}", strict: true).should eq("y")
+    end
+
+    it "keeps a negative in-range index working" do
+      vars = {"lst" => JSON.parse(%(["a", "b"]))}
+      sub = Krikri::VarSubstitutor.new(vars: vars, host_name: "h1")
+      sub.substitute("{{ lst[-1] }}", strict: true).should eq("b")
     end
   end
 end
