@@ -8,6 +8,28 @@ private def vars(hash : Hash(String, JSON::Any::Type)) : Hash(String, JSON::Any)
   result
 end
 
+# Mirrors dgibbs64.netdata's vars/main.yml shape: quoted-argument
+# selectattr chains feeding an `is version(...)` compare-to, combined
+# with `or` (round 812053).
+private def distro_vars(distribution : String, version : String, arch : String) : Hash(String, JSON::Any)
+  v = Hash(String, JSON::Any).new
+  v["supported_distros"] = JSON.parse(<<-JSON
+    [
+      {"name": "Debian", "min_version": "12",
+       "supported_architectures": "['x86_64', 'i686', 'aarch64', 'armv7l']"},
+      {"name": "Ubuntu", "min_version": "20.04",
+       "supported_architectures": "['x86_64', 'i686', 'aarch64', 'armv7l']"}
+    ]
+    JSON
+  )
+  v["ansible_facts"] = JSON.parse(<<-JSON
+    {"distribution": "#{distribution}", "distribution_version": "#{version}",
+     "architecture": "#{arch}"}
+    JSON
+  )
+  v
+end
+
 private EMPTY_VARS = Hash(String, JSON::Any).new
 
 describe Krikri::ConditionalEvaluator do
@@ -1777,6 +1799,66 @@ describe Krikri::ConditionalEvaluator do
       v["site_errorlog"] = JSON::Any.new("/home/{{ system_user }}/logs/site.error.log")
       Krikri::ConditionalEvaluator.evaluate(
         "site_errorlog | length > 0", v
+      ).should be_false
+    end
+  end
+
+  # The `is version(...)` handler used to capture its two call arguments
+  # with a naive non-greedy `(.+?),(.+?)` regex, which cut at the FIRST
+  # comma anywhere - including one inside a quoted string or a nested
+  # filter call's argument list. dgibbs64.netdata (round 812053) gates a
+  # set_fact on a compare-to that is itself a whole selectattr chain with
+  # quoted arguments, and the truncated compare-to
+  # (`... | selectattr("name"`) hard-failed as "No filter named
+  # 'selectattr(\"name\"'." where real ansible-playbook evaluates the
+  # condition fine (verified live against ansible-core: supported
+  # distro/version/arch -> skip, old version -> run).
+  describe "is version() with commas inside its own arguments (round 812053)" do
+    it "parses double-quoted selectattr args inside a version test" do
+      v = distro_vars("Debian", "12", "x86_64")
+      Krikri::ConditionalEvaluator.evaluate(<<-COND, v
+          supported_distros | selectattr("name", "equalto", ansible_facts['distribution']) | list | length == 0 or
+          ansible_facts['distribution_version'] is version(supported_distros | selectattr("name", "equalto", ansible_facts['distribution']) | map(attribute="min_version") | first, "<")
+        COND
+      ).should be_false
+    end
+
+    it "parses single-quoted selectattr args inside a version test" do
+      v = distro_vars("Debian", "12", "x86_64")
+      Krikri::ConditionalEvaluator.evaluate(<<-COND, v
+          supported_distros | selectattr('name', 'equalto', ansible_facts['distribution']) | list | length == 0 or
+          ansible_facts['distribution_version'] is version(supported_distros | selectattr('name', 'equalto', ansible_facts['distribution']) | map(attribute='min_version') | first, "<")
+        COND
+      ).should be_false
+    end
+
+    it "evaluates the full real-role boolean shape true for an old version" do
+      v = distro_vars("Ubuntu", "18.04", "x86_64")
+      Krikri::ConditionalEvaluator.evaluate(<<-COND, v
+          supported_distros | selectattr("name", "equalto", ansible_facts['distribution']) | list | length == 0 or
+          ansible_facts['distribution_version'] is version(supported_distros | selectattr("name", "equalto", ansible_facts['distribution']) | map(attribute="min_version") | first, "<") or
+          ansible_facts['architecture'] not in (supported_distros | selectattr("name", "equalto", ansible_facts['distribution']) | map(attribute="supported_architectures", default=[]) | first)
+        COND
+      ).should be_true
+    end
+
+    it "evaluates the full real-role boolean shape false for a supported host" do
+      v = distro_vars("Debian", "12", "x86_64")
+      Krikri::ConditionalEvaluator.evaluate(<<-COND, v
+          supported_distros | selectattr("name", "equalto", ansible_facts['distribution']) | list | length == 0 or
+          ansible_facts['distribution_version'] is version(supported_distros | selectattr("name", "equalto", ansible_facts['distribution']) | map(attribute="min_version") | first, "<") or
+          ansible_facts['architecture'] not in (supported_distros | selectattr("name", "equalto", ansible_facts['distribution']) | map(attribute="supported_architectures", default=[]) | first)
+        COND
+      ).should be_false
+    end
+
+    it "still evaluates a plain literal-argument version test" do
+      v = distro_vars("Debian", "12", "x86_64")
+      Krikri::ConditionalEvaluator.evaluate(
+        "ansible_facts['distribution_version'] is version('11', '>')", v
+      ).should be_true
+      Krikri::ConditionalEvaluator.evaluate(
+        "ansible_facts['distribution_version'] is version('12', '<')", v
       ).should be_false
     end
   end

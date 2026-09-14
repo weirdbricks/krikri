@@ -29,7 +29,7 @@ module Krikri
     # same misparse started hard-failing the task ("'')' is undefined")
     # for the extremely common `x is version_compare(min, '>=')`
     # version-gate idiom.
-    REGEX_VERSION_TEST      = /\A(.+?)\s+is\s+version(?:_compare)?\(\s*(.+?)\s*,\s*(.+?)\s*\)\z/
+    REGEX_VERSION_TEST      = /\A(.+?)\s+is\s+version(?:_compare)?\(/
     REGEX_MATCH_SEARCH_TEST = /^(.+?)\s+is\s+(not\s+)?(match|search)\((.+)\)\s*$/
     REGEX_SUBSET_TEST       = /^(.+?)\s+is\s+(not\s+)?(issubset|issuperset|subset|superset|contains)\((.+)\)\s*$/
     REGEX_SAME_FILE_TEST    = /^(.+?)\s+is\s+(not\s+)?(?:is_)?same_file\((.+)\)\s*$/
@@ -392,7 +392,30 @@ module Krikri
       # a `loop:` over a genuinely undefined variable three tasks later
       # (surfacing as `item` = the literal string "undefined").
       if version_test = condition.match(REGEX_VERSION_TEST)
-        return evaluate_version_test(version_test[1], version_test[2], version_test[3], vars, raise_undefined)
+        # The two call arguments cannot be captured by a naive `(.+?),(.*?)`
+        # regex: the compare-to expression very often carries commas INSIDE
+        # quoted strings or nested call parens (`is version(supported_
+        # distros | selectattr("name", "equalto", ansible_facts['distribution'])
+        # | map(attribute="min_version") | first, "<")`, dgibbs64.netdata,
+        # round 812053) - the non-greedy capture cut at the FIRST comma
+        # anywhere, handing the evaluator a truncated
+        # compare-to (`... | selectattr("name"`) that hard-failed as "No
+        # filter named 'selectattr("name"'." (real Ansible evaluates the
+        # same condition fine). Re-split the full argument text quote- and
+        # paren-aware instead, mirroring how real Jinja2 parses the test's
+        # call arguments. A non-two-argument shape (single-arg, or 3+ args
+        # real Jinja accepts via operator defaults/kwargs) falls through to
+        # the generic is-test delegation below, exactly as the old regex's
+        # non-match did.
+        rest = condition[version_test[0].size..].strip
+        # The closing paren must be the condition's last character for this
+        # handler to own the whole condition (`X is version(...) and Y`
+        # falls through to the and-split instead, exactly as the old
+        # end-anchored regex's non-match did).
+        if rest.ends_with?(')')
+          args = split_by_operator(rest[0...-1], ",")
+          return evaluate_version_test(version_test[1], args[0], args[1], vars, raise_undefined) if args.size == 2
+        end
       end
 
       # Handle comparison operators
