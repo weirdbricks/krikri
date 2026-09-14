@@ -177,4 +177,54 @@ describe "loop: source must resolve to a list" do
     status.success?.should be_false
     output.should contain("must resolve to a 'list', not 'str'")
   end
+
+  it "keeps a block-tag set_fact whose rendered output looks like a list literal a plain string" do
+    # Found live benchmarking HanXHX.debian_bootstrap: its
+    # `dbs_repo_old: "{% if false %}{{ x }}{% else %}['dummy']{% endif %}"`
+    # default renders to text that happens to look like a Python list
+    # literal, but real ansible-core (2.19.11, live-verified) never
+    # natively types block-tag output - native typing requires the
+    # template's whole parsed AST to be exactly one output node wrapping
+    # one expression, so this stays the literal STRING "['dummy']"
+    # (`is string` -> True). The set_fact coercion path used to re-parse
+    # the repr-looking text into a real array, so the loop below
+    # silently iterated where real Ansible hard-fails.
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: block-tag if/else producing a bracket-looking string
+            ansible.builtin.set_fact:
+              dbs_repo_old: "{% if false %}{{ x }}{% else %}['dummy']{% endif %}"
+
+          - name: show type
+            ansible.builtin.debug:
+              msg: "type is {{ dbs_repo_old is string }} value={{ dbs_repo_old }}"
+      YAML
+
+    status.success?.should be_true
+    output.should contain("type is True value=['dummy']")
+  end
+
+  it "hard-fails a loop: over a block-tag set_fact that stayed a string, with real Ansible's exact error" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: block-tag if/else producing a bracket-looking string
+            ansible.builtin.set_fact:
+              dbs_repo_old: "{% if false %}{{ x }}{% else %}['dummy']{% endif %}"
+
+          - name: looped
+            ansible.builtin.debug:
+              msg: "item={{ item }}"
+            loop: "{{ dbs_repo_old }}"
+      YAML
+
+    status.success?.should be_false
+    output.should contain("The `loop` value must resolve to a 'list', not 'str'.")
+    output.should contain("failed=1")
+  end
 end

@@ -582,8 +582,21 @@ module Krikri
 
         with_depth_guard do
           if raw.includes?("{%") || raw.includes?("{#")
-            rendered = CrinjaRenderer.new(vars).render(raw)
-            next Krikri.parse_json_or_python_literal(rendered)
+            # A template containing ANY block tag ({% if %}/{% for %}/{#
+            # comment #}) is never natively typed, even when its rendered
+            # OUTPUT happens to look like a Python container literal:
+            # native typing requires the template's whole parsed AST to be
+            # exactly one output node wrapping one expression - a single
+            # bare `{{ }}` - and the moment a `{%`/`{#` token exists,
+            # Template.render() returns a plain str. Found live vs real
+            # ansible-playbook via HanXHX.debian_bootstrap's
+            # `dbs_repo_old: "{% if false %}{{ x }}{% else %}['dummy']{%
+            # endif %}`: the output text `['dummy']` stayed the literal
+            # STRING real Ansible produces (`is string` -> True), and a
+            # later `loop: "{{ dbs_repo_old }}"` then correctly hard-
+            # failed with "The `loop` value must resolve to a 'list',
+            # not 'str'." instead of silently iterating the bogus list.
+            next JSON::Any.new(CrinjaRenderer.new(vars).render(raw))
           end
 
           Krikri.parse_json_or_python_literal(render_raw(vars, raw))
