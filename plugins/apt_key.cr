@@ -331,8 +331,27 @@ module Krikri
       parse_output_for_keys(result[:stdout])
     end
 
+    # Real ansible.builtin.apt_key never compares an 8-char short id
+    # against the raw listing: its all_keys passes short_format into
+    # parse_output_for_keys, whose shorten_key_ids reduces EVERY listed
+    # key to its last 8 hex chars before the membership check - the
+    # short id is by definition the last 8 chars of the 16-char long id
+    # (or 40-char fingerprint) that --keyid-format=long prints. Exact
+    # equality against the unshortened listing therefore can never match
+    # a short id, and ANY short-format id: failed post-add verification
+    # even after a real, successful add (found live via
+    # mrlesmithjr.docker's id: 0EBFCD88 from download.docker.com and
+    # alannix_lw.lacework_agent_ansible_role's id: EE0CC692 from
+    # keyserver.ubuntu.com). An ends-with match is the same comparison
+    # without pre-shortening, and also covers mixed-length listings (the
+    # colon-format fallback can put a full 40-char fingerprint in the
+    # same array as 16-char long ids) plus a hypothetical 8-char element
+    # (trivial exact match). Both sides are already uppercase hex
+    # (parse_key_id uppercases; gpg prints uppercase), but upcasing here
+    # costs nothing and keeps the comparison case-insensitive.
     private def key_id_in_keys?(parsed : NamedTuple(key_id: String, fingerprint: String, short_key_id: String, short_format: Bool), keys : Array(String)) : Bool
-      keys.includes?(parsed[:short_format] ? parsed[:short_key_id] : parsed[:fingerprint])
+      wanted = parsed[:short_format] ? parsed[:short_key_id] : parsed[:fingerprint]
+      keys.any? { |key| key.upcase.ends_with?(wanted) }
     end
 
     private def remove_key : PluginResult

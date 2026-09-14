@@ -242,4 +242,45 @@ describe "apt_key plugin" do
     end
     File.delete(state) rescue nil
   end
+
+  it "recognizes a key already present when id: is an 8-char short id (changed: false, no re-add)" do
+    # The listing (--keyid-format=long) only ever yields 16-char long ids
+    # (or 40-char fingerprints via the colon-format fallback), and an
+    # 8-char short id is the last 8 chars of those - so the pre-fix
+    # exact-membership check against the raw listing could never match a
+    # short id and always re-added (or failed post-add verification).
+    # Found live via mrlesmithjr.docker's id: 0EBFCD88 (download.docker.com)
+    # and alannix_lw.lacework_agent_ansible_role's id: EE0CC692
+    # (keyserver.ubuntu.com): real ansible-playbook succeeded on both,
+    # krikri failed with the "did not return an error" message even
+    # though apt-key add really had added the key.
+    state = apt_key_spec_state_file
+    File.write(state, "pub  2048R/#{FAKE_KEY_ID} 2020-01-01\n")
+    with_apt_key_shim(state) do
+      result = PluginSpecHelper.run("apt_key", {"state" => "present", "data" => VALID_KEY_ASC, "id" => "CAFEF00D"})
+
+      result["changed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should be_falsey
+      result["msg"].as_s.should eq("Key already present")
+    end
+    File.delete(state) rescue nil
+  end
+
+  it "passes post-add verification when a key is added via an 8-char short id" do
+    # The exact mrlesmithjr.docker / lacework failure shape: a real,
+    # successful add followed by a re-list that must match the id: that
+    # was given as its 8-char short form (1278AEBD is the fixture key's
+    # own E07A3F141278AEBD shortened). Pre-fix this failed with the
+    # post-add verification message because the listing's 16-char id
+    # can never equal an 8-char one.
+    state = apt_key_spec_state_file
+    with_apt_key_shim(state) do
+      result = PluginSpecHelper.run("apt_key", {"state" => "present", "data" => VALID_KEY_ASC, "id" => "1278AEBD"})
+
+      result["changed"].as_bool.should be_true
+      result["failed"]?.try(&.as_bool).should be_falsey
+      result["msg"].as_s.should eq("Key added")
+    end
+    File.delete(state) rescue nil
+  end
 end
