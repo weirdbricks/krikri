@@ -28,4 +28,25 @@ describe "npm plugin" do
     result["failed"].as_bool.should be_true
     result["msg"].as_s.should contain("name is required")
   end
+
+  it "fails with the real Ansible executable-not-found message instead of silently reporting already installed" do
+    # Real Ansible's own npm module resolves the executable via
+    # `module.get_bin_path(npm_path, True)`, which fails the task
+    # outright when it's missing - real bug found via a 400-role
+    # regression sweep: krikri's own `npm list` shell command just
+    # failed silently (bad exit code, empty stdout) and
+    # #collect_installed's "malformed output -> nothing installed"
+    # fallback turned that into an empty `missing` set, which
+    # #handle_present then read as "Package already installed" without
+    # npm ever actually having been checked to exist at all.
+    result = PluginSpecHelper.run("npm", {
+      "name"       => "left-pad",
+      "global"     => "true",
+      "executable" => "krikri-spec-nonexistent-npm-binary",
+    })
+
+    result["failed"].as_bool.should be_true
+    result["msg"].as_s.should eq(
+      "Failed to find required executable \"krikri-spec-nonexistent-npm-binary\" in paths: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
+  end
 end

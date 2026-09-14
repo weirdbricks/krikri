@@ -34,6 +34,37 @@ module Krikri
         return invalid
       end
 
+      # Real Ansible's npm module resolves the executable via
+      # `module.get_bin_path(npm_path, True)`, which raises "Failed to
+      # find required executable ... in paths: ..." and fails the task
+      # outright when npm isn't installed - `list()` below never even
+      # gets a chance to be wrong about it. Missing here before: `npm
+      # list`'s own shell command just failed silently (bad exit code,
+      # empty/garbage stdout), and #collect_installed's "malformed
+      # output -> treat as nothing installed" fallback (a deliberate,
+      # documented no-op-read-failure convention for THAT case) turned
+      # a genuinely missing npm binary into an empty `missing` set,
+      # which #handle_present's `missing.empty?` then read as "Package
+      # already installed" - a false-positive success reporting nothing
+      # was ever actually checked or installed. `which` (not `command
+      # -v`, whose own no-op is a SHELL BUILTIN - `remote_exec`'s local-
+      # connection path shells out directly, without a shell, for any
+      # command string with no metacharacters, so "command -v npm"
+      # tried to execve a real file literally named "command", which
+      # doesn't exist, and failed regardless of whether npm itself was
+      # actually present; `which` is a real external binary, so it
+      # works identically whether local_connection? routes through a
+      # real shell or execve's it directly) resolves both a bare name
+      # and an absolute `executable:` override identically to how the
+      # shell itself will later resolve `npm_binary` in #run_npm's own
+      # command string.
+      bin = npm_binary
+      check = remote_exec("which #{bin}")
+      if check[:exit_code] != 0
+        return PluginResult.new(changed: false, failed: true,
+          msg: "Failed to find required executable \"#{bin}\" in paths: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
+      end
+
       global = true?(@params["global"]?)
       path = @params["path"]?
 
