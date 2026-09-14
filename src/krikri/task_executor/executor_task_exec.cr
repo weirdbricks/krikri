@@ -954,7 +954,27 @@ module Krikri
     # had that file transferred to it at all - "Source ... failed to
     # transfer" regardless of the file genuinely existing, just on the
     # wrong host.
-    private def stage_unarchive_remote_src(task : Task, params : Hash(String, String), host : Host, vars_context : Hash(String, JSON::Any)) : Hash(String, String)
+    # Real Ansible's unarchive action plugin checks `src:` against the
+    # CONTROLLER only, unconditionally, when remote_src is false (the
+    # default) - there is no "maybe it's already on the remote" fallback,
+    # and a controller-side miss is a hard task failure:
+    #   "Task failed: Could not find or access '<src>' on the Ansible
+    #   Controller.\nIf you are using a module and expect the file to
+    #   exist on the remote, see the remote_src option"
+    # (verified live against ansible-core 2.19). Previously a controller
+    # miss silently returned params unchanged, so the plugin ran anyway
+    # and its remote_file_exists? check found the file ON THE TARGET -
+    # exactly the shape get_url downloads into - and succeeded where real
+    # Ansible fails. Found via andrewrothstein.func_e (round 810153):
+    # get_url pulls the tarball to the remote /tmp, then unarchive: with
+    # no remote_src: (and arguably a buggy role) must fail per real
+    # Ansible, not paper over it.
+    #
+    # Returns either the (possibly rewritten) params hash on success, or
+    # a JSON::Any failed-task result the caller must turn into a task
+    # failure via apply_changed_failed_when (same shape the param-
+    # substitution rescue blocks build).
+    private def stage_unarchive_remote_src(task : Task, params : Hash(String, String), host : Host, vars_context : Hash(String, JSON::Any)) : Hash(String, String) | JSON::Any
       return params unless task.module_name == "ansible.builtin.unarchive"
       return params if ["true", "yes", "1", "on"].includes?(params["remote_src"]?.try(&.downcase))
 
@@ -962,6 +982,8 @@ module Krikri
       return params if src.nil? || src.empty?
       # URL sources are downloaded by the plugin itself - never stage.
       return params if src.starts_with?("http://") || src.starts_with?("https://")
+
+      original_src = src
 
       # A bare relative src: names a controller-side file in the role's
       # own files/ dir (real Ansible's unarchive action plugin searches
@@ -974,10 +996,14 @@ module Krikri
       # the gap actually surfaces).
       unless src.starts_with?('/') && File.exists?(src)
         resolved_local = resolve_script_path(src, task)
-        return params unless resolved_local
+        # resolve_script_path covers both the role's files/ dir and a
+        # path relative to the controller's own cwd - if neither has it,
+        # real Ansible's controller-side lookup has run out of places to
+        # look and the task fails here, before the plugin ever runs.
+        return controller_missing_unarchive_result(original_src) unless resolved_local
         src = resolved_local
       end
-      return params unless File.exists?(src)
+      return controller_missing_unarchive_result(original_src) unless File.exists?(src)
 
       # A local connection runs the plugin on the controller itself -
       # hand it the resolved ABSOLUTE path, no staging (the transfer-
@@ -1009,6 +1035,18 @@ module Krikri
       resolved["remote_src"] = "true"
       resolved["__cleanup_after_unarchive"] = "true"
       resolved
+    end
+
+    # Real Ansible's own failure text for a controller-side src: miss
+    # (unarchive action plugin, remote_src: false) - byte-identical so
+    # divergence triage compares cleanly against a real ansible-playbook
+    # run of the same role.
+    private def controller_missing_unarchive_result(src : String) : JSON::Any
+      JSON.parse({
+        "changed" => false,
+        "failed"  => true,
+        "msg"     => "Task failed: Could not find or access '#{src}' on the Ansible Controller.\nIf you are using a module and expect the file to exist on the remote, see the remote_src option",
+      }.to_json)
     end
 
     # script:'s free-form `cmd` (or bare-string `_raw_params`, resolved to
