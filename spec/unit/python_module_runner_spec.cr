@@ -324,4 +324,40 @@ describe Krikri::PythonModuleRunner do
     parsed["native"].as_s.should contain("boom")
     parsed["roundtrip"].as_s.should eq("café")
   end
+
+  it "shim provides ansible.module_utils.common.text.converters for modules importing to_native" do
+    pending("python3 not available") unless File.exists?("/usr/bin/python3")
+    # The exact shape that ModuleNotFoundError'd at import time on a
+    # fresh Atlantic host (bodsch.users' own library/multi_users.py,
+    # round 813275, which does `from
+    # ansible.module_utils.common.text.converters import to_native` at
+    # module top level - the modern ansible-core path that real _text.py
+    # is itself just a deprecated re-export of). Without a
+    # common/text/converters.py in the shim bundle the import dies with
+    # ModuleNotFoundError: No module named 'ansible.module_utils.common',
+    # before AnsibleModule is ever constructed, so the module printed no
+    # result JSON while real ansible-playbook succeeded (ok=8/failed=0
+    # there vs ok=6/failed=1 here).
+    work_dir = File.join(Dir.tempdir, "krikri-shim-spec-#{Random.rand(1_000_000)}")
+    Dir.mkdir_p(work_dir)
+    Krikri::PythonModuleRunner.write_module_utils_bundle(work_dir)
+    module_path = File.join(work_dir, "multi_users_spec.py")
+    File.write(module_path, "from ansible.module_utils.basic import AnsibleModule\n" \
+                            "from ansible.module_utils.common.text.converters import to_native, to_bytes\n" \
+                            "native = to_native(Exception('boom'))\n" \
+                            "back = to_native(to_bytes('caf\\u00e9'))\n" \
+                            "module = AnsibleModule(argument_spec={})\n" \
+                            "module.exit_json(changed=False, native=native, roundtrip=back)\n")
+    stdout_io = IO::Memory.new
+    err = IO::Memory.new
+    status = Process.run("/usr/bin/python3", [module_path],
+      input: IO::Memory.new(%({"ANSIBLE_MODULE_ARGS": {}})),
+      output: stdout_io, error: err)
+    FileUtils.rm_r(work_dir)
+    status.success?.should be_true
+    err.to_s.should_not contain("ModuleNotFoundError")
+    parsed = Krikri::PythonModuleRunner.parse_module_output(stdout_io.to_s).should_not be_nil
+    parsed["native"].as_s.should contain("boom")
+    parsed["roundtrip"].as_s.should eq("café")
+  end
 end

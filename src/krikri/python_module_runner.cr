@@ -377,6 +377,13 @@ module Krikri
       File.write(module_utils_init, "")
       File.write(basic_py, BASIC_PY_SHIM)
       File.write(File.join(work_dir, "ansible", "module_utils", "_text.py"), TEXT_PY_SHIM)
+      common_init = File.join(work_dir, "ansible", "module_utils", "common", "__init__.py")
+      text_init = File.join(work_dir, "ansible", "module_utils", "common", "text", "__init__.py")
+      Dir.mkdir_p(File.dirname(common_init))
+      Dir.mkdir_p(File.dirname(text_init))
+      File.write(common_init, "")
+      File.write(text_init, "")
+      File.write(File.join(work_dir, "ansible", "module_utils", "common", "text", "converters.py"), CONVERTERS_PY_SHIM)
     end
 
     # The `ansible/module_utils/_text` helpers a new-style module can
@@ -389,6 +396,53 @@ module Krikri
     # error-handler spellings real _text.py maps (surrogate_or_strict
     # et al) become surrogateescape on py3 like the real code.
     TEXT_PY_SHIM = <<-PYTHON
+      def to_bytes(value, errors='surrogate_or_strict', encoding='utf-8'):
+          if isinstance(value, bytes):
+              return value
+          if errors in ('surrogate_or_strict', 'surrogate_or_replace',
+                        'surrogate_or_xmltext', 'surrogate_then_replace'):
+              errors = 'surrogateescape'
+          try:
+              return str(value).encode(encoding, errors)
+          except (UnicodeEncodeError, LookupError):
+              return str(value).encode(encoding, 'replace')
+
+      def to_text(value, errors='surrogate_or_strict', encoding='utf-8'):
+          if isinstance(value, bytes):
+              if errors in ('surrogate_or_strict', 'surrogate_or_replace',
+                            'surrogate_or_xmltext', 'surrogate_then_replace'):
+                  errors = 'surrogateescape'
+              try:
+                  return value.decode(encoding, errors)
+              except (UnicodeDecodeError, LookupError):
+                  return value.decode(encoding, 'replace')
+          if isinstance(value, str):
+              return value
+          return str(value)
+
+      def to_native(value, errors='surrogate_or_strict', encoding='utf-8'):
+          return to_text(value, errors, encoding)
+
+      def to_basestring(value):
+          return to_text(value)
+      PYTHON
+
+    # In modern ansible-core the real text-conversion implementation
+    # moved from `ansible/module_utils/_text.py` to
+    # `ansible/module_utils/common/text/converters.py` - `_text` remains
+    # only as a deprecated re-export shim - and newer roles import the
+    # new path directly. bodsch.users' own library/multi_users.py does
+    # exactly that (`from ansible.module_utils.common.text.converters
+    # import to_native`, round 813275) and died with
+    # ModuleNotFoundError: No module named 'ansible.module_utils.common'
+    # on a target without ansible-core, while real Ansible - which ships
+    # both paths - succeeded on the same task. So this file ships
+    # alongside _text.py, self-contained rather than importing from it,
+    # since role code may import either path (or both) and real Ansible
+    # keeps both importable. Same to_bytes/to_text/to_native surface and
+    # the same surrogateescape mapping of the Ansible error-handler
+    # spellings as the _text shim above.
+    CONVERTERS_PY_SHIM = <<-PYTHON
       def to_bytes(value, errors='surrogate_or_strict', encoding='utf-8'):
           if isinstance(value, bytes):
               return value
