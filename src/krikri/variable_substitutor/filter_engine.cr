@@ -72,7 +72,7 @@ module Krikri
       # applies every name here to a nil value and fails if any of them
       # raises UnknownFilterError (i.e. the dispatch stopped knowing a
       # name the list still advertises). Deliberately EXCLUDES names the
-      # dispatch doesn't actually implement (rejectattr, to_nice_yaml,
+      # dispatch doesn't actually implement (to_nice_yaml,
       # the select()-style test names like equalto/match/truthy that
       # #item_matches_test? handles for select/reject arguments but that
       # are not themselves top-level filters) - advertising one of those
@@ -83,7 +83,7 @@ module Krikri
         fileglob realpath default d upper lower capitalize title trim
         strip dirname basename length count replace split sort unique
         flatten reverse join list first last min max int float string
-        bool abs map select reject selectattr to_datetime sum combine
+        bool abs map select reject selectattr rejectattr to_datetime sum combine
         dict2items items2dict regex_search regex_findall regex_replace
         hash password_hash type_debug to_json b64encode b64decode
         from_json from_yaml json_query to_yaml checksum union path_join
@@ -516,7 +516,28 @@ module Krikri
           # every test this codebase's roles/specs actually use - an
           # unrecognized test name falls back to a `defined` check rather
           # than silently passing every item through unfiltered.
-          apply_selectattr(value, filter_args)
+          apply_selectattr(value, filter_args, false)
+        when "rejectattr"
+          # rejectattr('stat.exists') - the inverse of selectattr, with
+          # the same argument shape, but its own no-test-given default
+          # differs from selectattr's: real Jinja2 3.x's own no-test
+          # default for rejectattr is truthiness of the attribute value
+          # (see the "truthy" case in selectattr_matches?), not
+          # selectattr's "defined" presence check - a `stat.exists:
+          # false` entry is perfectly well-defined but must still be
+          # picked (rejected) here. Real Ansible's idiom for "run only if
+          # ALL of a registered
+          # looped stat:'s results say the file exists":
+          # `_concat_stat.results | rejectattr('stat.exists') | list |
+          # length == 0` - rejectattr picks out the results whose
+          # stat.exists is falsy; an empty picked list means nothing is
+          # missing. Found via round 813028's
+          # volker-raschek.certificate_authority, whose shared
+          # concatenate.yml helper task file gates a task exactly this
+          # way - rejectattr was entirely unrecognized before, so the
+          # when: hard-failed and the task was always skipped, even when
+          # every stat'd file genuinely existed.
+          apply_selectattr(value, filter_args, true)
         when "to_datetime"
           # to_datetime('%b %d, %Y') - dev-sec os_hardening's own
           # password-ageing verification parses `chage -l`'s date output
@@ -1547,15 +1568,16 @@ module Krikri
         end
       end
 
-      private def apply_selectattr(value : JSON::Any, args : String) : JSON::Any
+      private def apply_selectattr(value : JSON::Any, args : String, invert : Bool) : JSON::Any
         parts = split_top_level_args(args)
         attr = parts[0]?.try { |part| resolve_default_expression(part) }.try(&.as_s?)
         return value unless attr
 
-        test = parts[1]?.try { |part| resolve_default_expression(part) }.try(&.as_s?) || "defined"
+        test = parts[1]?.try { |part| resolve_default_expression(part) }.try(&.as_s?) ||
+               (invert ? "truthy" : "defined")
         compare_value = parts[2]?.try { |part| resolve_default_expression(part) }
 
-        filtered = as_array(value).select { |item| selectattr_matches?(item, attr, test, compare_value) }
+        filtered = as_array(value).select { |item| selectattr_matches?(item, attr, test, compare_value) != invert }
         JSON::Any.new(filtered)
       end
 
@@ -1613,6 +1635,14 @@ module Krikri
           attr_value != compare_value
         when "undefined"
           attr_value.nil?
+        when "truthy"
+          # rejectattr with no test name at all defaults to real Jinja2
+          # 3.x's own truthiness check on the attribute value (not the
+          # defined-presence check selectattr's no-test fallback here
+          # uses) - `results | rejectattr('stat.exists')` must pick out
+          # the looped-stat entries whose `exists` is literally false,
+          # which are still perfectly well-defined values.
+          truthy?(attr_value || JSON::Any.new(nil))
         when "sameas"
           # Real Jinja2's `sameas` is Python `is` - object identity, which
           # for a JSON value means "same type AND same value" (unlike
