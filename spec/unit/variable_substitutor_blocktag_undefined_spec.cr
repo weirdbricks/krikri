@@ -129,6 +129,30 @@ describe Krikri::VarSubstitutor do
       sub.substitute("{% for item in items %}{% set y = item %}{{ y }}{% endfor %}", strict: true).should eq("ab")
     end
 
+    it "does not false-positive on tuple-unpacking for-loop vars referenced inside a nested {% if %} (round 813228, HanXHX.php)" do
+      # Found via HanXHX.php's tasks/main.yml "SET_FACT | Transform data"
+      # (round 813228): a set_fact value with a `{% for k, v in
+      # p.items() | list %}{% if k not in [...] %}{{ k }}: "{{ v }}"{%
+      # endif %}{% endfor %}` shape - a tuple-unpacking for-loop with a
+      # nested {% if %} referencing BOTH loop-bound names. The prior fix
+      # for round 813222 (see above) carried a for-loop's variable(s)
+      # forward onto the BlockTagFrame stack by splitting `loop_var` on
+      # "," specifically so this shape would be covered too - this pins
+      # that tuple-unpacking case with its own repro rather than relying
+      # on the single-variable case above to exercise the split path.
+      # Confirmed live: krikri v0.9.1066 failed this task with
+      # "'k' is undefined" while real ansible-playbook renders fine;
+      # current krikri renders identically to real ansible-playbook.
+      v = {
+        "d" => JSON.parse(%({"a": 1, "b": 2})),
+      } of String => JSON::Any
+      sub = Krikri::VarSubstitutor.new(vars: v)
+      sub.substitute(
+        "{% for k,v in d.items()|list %}{% if k not in ['x'] %}{{ k }}={{ v }};{% endif %}{% endfor %}",
+        strict: true
+      ).should eq("a=1;b=2;")
+    end
+
     it "still raises for a genuinely undefined var inside a nested {% set %} tag with no enclosing for-loop" do
       # Companion to the round 813222 fix above: the loop-var carry-over
       # must not swallow every future undefined-inside-{% set %} case.
