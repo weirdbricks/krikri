@@ -1045,6 +1045,43 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
     end
   end
 
+  it "evaluates lookup('merge_variables', ...) returning initial_value when no variable matches" do
+    # thulium_drake.sshd (round 813042): the role defines
+    # sshd_configs: "{{ lookup('community.general.merge_variables',
+    # '_sshd_configs__to_merge', pattern_type='suffix',
+    # initial_value=[]) }}" with NO variable ending in the suffix -
+    # real Ansible returns the initial_value untouched (so
+    # `when: sshd_configs | length > 0` skips cleanly), while the
+    # missing lookup used to fall through to the "undefined" fallback
+    # and hard-fail the loop as an UndefinedVariableError.
+    v = Hash(String, JSON::Any).new
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
+
+    evaluator.evaluate("lookup('merge_variables', 'somesuffix', pattern_type='suffix', initial_value=[])").should eq("[]")
+    evaluator.evaluate("lookup('merge_variables', 'somesuffix', pattern_type='suffix', initial_value=[]) | length").should eq("0")
+  end
+
+  it "evaluates lookup('merge_variables', ...) concatenating matching list-valued variables in name order" do
+    v = Hash(String, JSON::Any).new
+    v["role_b__configs"] = JSON.parse(%(["b"]))
+    v["role_a__configs"] = JSON.parse(%(["a"]))
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
+
+    result = JSON.parse(evaluator.evaluate("lookup('merge_variables', '__configs', pattern_type='suffix')")).as_a
+    result.map(&.as_s).should eq(["a", "b"])
+  end
+
+  it "evaluates lookup('merge_variables', ...) deep-merging matching dicts with pattern_type='prefix'" do
+    v = Hash(String, JSON::Any).new
+    v["sshd__config_a"] = JSON.parse(%({"Port": 22, "PermitRootLogin": "yes"}))
+    v["sshd__config_b"] = JSON.parse(%({"PermitRootLogin": "no"}))
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
+
+    result = JSON.parse(evaluator.evaluate("lookup('merge_variables', 'sshd__config', pattern_type='prefix')")).as_h
+    result["Port"].as_i.should eq(22)
+    result["PermitRootLogin"].as_s.should eq("no")
+  end
+
   it "evaluates lookup('subelements', ...) yielding [parent, child] pairs" do
     v = Hash(String, JSON::Any).new
     v["users"] = JSON.parse(%([{"name": "alice", "groups": ["a", "b"]}, {"name": "bob", "groups": ["c"]}]))
