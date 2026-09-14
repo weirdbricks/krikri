@@ -77,10 +77,18 @@ module Krikri
   # @params Hash every plugin already uses, so a real playbook passing
   # any of these no longer needs param-rejection tolerance from this
   # engine):
-  # - `copy` (the module-level `copy:` param, distinct from remote_src:
-  #   above - real Ansible's own `copy: false` on unarchive means
-  #   something different again, "don't copy files that already exist
-  #   unmodified inside dest", not the controller-vs-target concept)
+  # - `copy` - unarchive's OLDER, mutually-exclusive-with-remote_src:
+  #   param spelling (confirmed via `ansible-doc unarchive`): `copy:
+  #   true` (the default) means the same as `remote_src: false` (src:
+  #   is a controller path, copied to the target first); `copy: false`
+  #   means the same as `remote_src: true` (src: is already on the
+  #   target). Read straight through by executor_task_exec.cr's
+  #   `stage_unarchive_remote_src` for that controller-vs-target
+  #   staging decision (round 812047, CVi.thanos - `copy: no` treated
+  #   as remote_src: false there failed a task real Ansible succeeds);
+  #   this plugin itself never reads it, since staging already resolved
+  #   src: to wherever it actually needs to be read from by the time
+  #   this process runs.
   # - `io_buffer_size` - sizes a manual byte-copy loop real Ansible's own
   #   module uses for zip extraction; this plugin shells out to
   #   `tar`/`unzip` entirely, so there's no Crystal-side read loop for

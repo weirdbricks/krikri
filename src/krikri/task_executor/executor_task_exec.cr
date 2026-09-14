@@ -977,6 +977,19 @@ module Krikri
     private def stage_unarchive_remote_src(task : Task, params : Hash(String, String), host : Host, vars_context : Hash(String, JSON::Any)) : Hash(String, String) | JSON::Any
       return params unless task.module_name == "ansible.builtin.unarchive"
       return params if ["true", "yes", "1", "on"].includes?(params["remote_src"]?.try(&.downcase))
+      # copy: is unarchive's OLDER param spelling, mutually exclusive
+      # with remote_src: per real Ansible's own argument_spec, and
+      # INVERTED - copy: false means the same thing as remote_src: true
+      # ("the file is already on the target, don't copy it from the
+      # controller"). CVi.thanos (round 812047, confirming this staging
+      # fix's own 0.9.1048 controller-src work) uses `copy: no` on a
+      # task whose src: was downloaded straight to the remote by an
+      # earlier task - without this check that reads as remote_src:
+      # false (the default), so staging looked for src: on the
+      # CONTROLLER, found nothing, and failed the task where real
+      # Ansible (which treats copy: no identically to remote_src: true)
+      # succeeds.
+      return params if ["false", "no", "0", "off"].includes?(params["copy"]?.try(&.downcase))
 
       src = params["src"]?
       return params if src.nil? || src.empty?

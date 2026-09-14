@@ -110,4 +110,23 @@ describe "unarchive: remote_src:false controller-side src: staging" do
       .probe(unarchive_task, url_params, host, {} of String => JSON::Any)
     staged.should be_a(Hash(String, String))
   end
+
+  it "treats copy: no the same as remote_src: true, never staging (round 812047, CVi.thanos)" do
+    # copy: is unarchive's OLDER, mutually-exclusive-with-remote_src:
+    # param spelling (`ansible-doc unarchive`): copy: false means the
+    # same thing as remote_src: true - src: is already on the target,
+    # never a controller path. CVi.thanos's own `copy: no` task (src:
+    # downloaded straight to the remote by an earlier get_url-shaped
+    # task) regressed through this exact staging path once the
+    # controller-miss hard-fail landed (0.9.1048): copy: no was read as
+    # the DEFAULT remote_src: false, so staging looked for src: on the
+    # controller, found nothing, and failed where real Ansible succeeds.
+    host = Krikri::Host.new("unreachable-spec-host", "root", 1)
+    params = {"src" => "/tmp/does-not-exist-#{Random::Secure.hex(4)}.tar.gz", "dest" => "/opt/spec", "copy" => "no"}
+
+    staged = UnarchiveStageProbeExecutor.new([host] of Krikri::Host, [unarchive_task] of Krikri::Task)
+      .probe(unarchive_task, params, host, {} of String => JSON::Any)
+
+    staged.should be_a(Hash(String, String))
+  end
 end
