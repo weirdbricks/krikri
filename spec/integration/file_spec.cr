@@ -283,6 +283,20 @@ describe "file plugin" do
       result["changed"].as_bool.should be_false
     end
 
+    it "retargets an existing symlink to a new src without force" do
+      target_a = tmp_path("linktarget5.txt")
+      target_b = tmp_path("linktarget6.txt")
+      link = tmp_path("retargeted")
+      File.write(target_a, "a")
+      File.write(target_b, "b")
+      PluginSpecHelper.run("file", {"path" => link, "src" => target_a, "state" => "link"})
+
+      result = PluginSpecHelper.run("file", {"path" => link, "src" => target_b, "state" => "link"})
+      result["changed"].as_bool.should be_true
+      result["failed"]?.try(&.as_bool).should be_falsey
+      File.readlink(link).should eq(target_b)
+    end
+
     it "refuses to overwrite an existing regular file without force" do
       target = tmp_path("linktarget3.txt")
       path = tmp_path("occupied")

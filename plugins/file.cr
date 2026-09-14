@@ -441,21 +441,8 @@ module Krikri
         )
       end
 
-      # Check if something exists at path (follows symlinks, matching
-      # `test -e`'s own dangling-symlink-is-"missing" behavior)
-      if File.exists?(path)
-        force = true?(@params["force"]?)
-        unless force
-          return PluginResult.new(
-            changed: false,
-            failed: true,
-            msg: "Path exists and is not the correct link. Use force=yes to overwrite."
-          )
-        end
-
-        # Remove existing file/link
-        File.delete?(path)
-      end
+      result = clear_path_for_link(path)
+      return result if result
 
       # Create symbolic link
       created = begin
@@ -484,6 +471,36 @@ module Krikri
         dest: path,
         src: src
       )
+    end
+
+    # Returns a failure PluginResult if an existing non-symlink path blocks
+    # creating the link without force; nil means it's safe to proceed
+    # (nothing existed, or an existing symlink was removed to be replaced).
+    #
+    # Real Ansible only requires force when the existing path is NOT itself
+    # a symlink (regular file, dir, etc. -> "refusing to convert from file
+    # to symlink for <path>"); re-pointing an existing symlink to a new src
+    # happens unconditionally (round 813093,
+    # ccdc.build_machine_desktop_environment)
+    private def clear_path_for_link(path : String) : PluginResult?
+      if File.exists?(path) && !File.symlink?(path)
+        force = true?(@params["force"]?)
+        unless force
+          return PluginResult.new(
+            changed: false,
+            failed: true,
+            msg: "refusing to convert from file to symlink for #{path}"
+          )
+        end
+
+        # Remove existing file/link
+        File.delete?(path)
+      elsif File.symlink?(path)
+        # Existing symlink pointing elsewhere: unlink and relink, no force needed
+        File.delete(path)
+      end
+
+      nil
     end
 
     # Handle state=hard (hard link)
