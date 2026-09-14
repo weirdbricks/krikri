@@ -73,9 +73,43 @@ describe Krikri::HandlerRunner do
   it "fires a handler notified by its listen: topic" do
     host = make_host
     handler = make_handler("restart web")
-    handler.listen = "web services restarted"
+    handler.listen = ["web services restarted"]
     runner = Krikri::HandlerRunner.new([handler], [host])
     runner.notify(host, "web services restarted")
+
+    counter = [0]
+    runner.run(counting_callback(counter), fresh_results(host), false)
+
+    counter[0].should eq(1)
+  end
+
+  it "fires a multi-topic listen: handler notified via a MIDDLE topic in its list" do
+    # Regression (round 811339, CVi.thanos): handler listen: used to be
+    # typed as a single optional string, so a handler listening on
+    # several topics at once never matched any bare notify: naming one
+    # of them - the run aborted with HandlerNotFoundError instead.
+    host = make_host
+    handler = make_handler("Restart sidecar service")
+    handler.listen = ["restart thanos", "restart thanos-sidecar", "restart thanos bucket"]
+    runner = Krikri::HandlerRunner.new([handler], [host])
+    runner.notify(host, "restart thanos")
+
+    counter = [0]
+    runner.run(counting_callback(counter), fresh_results(host), false)
+
+    counter[0].should eq(1)
+  end
+
+  it "runs a multi-topic listen: handler only ONCE when notified via two of its topics in one flush" do
+    # Real Ansible's own dedup rule: a handler notified through more
+    # than one of its listen topics (or the same topic twice) in a
+    # single flush still runs exactly once.
+    host = make_host
+    handler = make_handler("Restart sidecar service")
+    handler.listen = ["restart thanos", "restart thanos-sidecar"]
+    runner = Krikri::HandlerRunner.new([handler], [host])
+    runner.notify(host, "restart thanos")
+    runner.notify(host, "restart thanos-sidecar")
 
     counter = [0]
     runner.run(counting_callback(counter), fresh_results(host), false)

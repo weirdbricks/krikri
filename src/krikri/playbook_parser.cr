@@ -117,7 +117,11 @@ module Krikri
     property when_condition_list : Array(String)?
     property register : String?
     property notify : Array(String)?
-    property listen : String?
+    # Real Ansible's handler `listen:` accepts a single topic string OR a
+    # list of topics (CVi.thanos's own handlers/main.yml listens on three
+    # at once, round 811339) - same single-string-or-list shape as
+    # `notify:` above, parsed identically. nil when absent.
+    property listen : Array(String)?
     property? ignore_errors : Bool
     # Raw `{{ ... }}` text when ignore_errors: is a templated expression
     # rather than a literal boolean (`dj-wasabi.telegraf`'s own
@@ -2744,8 +2748,13 @@ module Krikri
         end
       end
 
-      # Parse listen (string only)
-      task.listen = task_hash["listen"]?.try { |v| safe_yaml_to_string(v) }
+      # Parse listen (can be string or array of topics) - same shape rule
+      # as notify: directly above. `safe_yaml_to_string` used to stringify
+      # a YAML sequence here (round 811339, CVi.thanos's three-topic
+      # listen: list), so no notify: naming a single topic ever matched.
+      if listen_yaml = task_hash["listen"]?
+        task.listen = listen_yaml.as_s? ? [listen_yaml.as_s] : listen_yaml.as_a.map(&.as_s)
+      end
 
       # Parse tags
       # Parse loop / with_* (checked in this priority order; first match wins,
