@@ -2787,6 +2787,8 @@ module Krikri
           lookup_subelements(parts)
         when "random_string"
           lookup_random_string(parts, kwargs)
+        when "merge_variables"
+          lookup_merge_variables(parts, kwargs)
         end
       end
 
@@ -2909,6 +2911,76 @@ module Krikri
         raw = opts[key]?
         return default unless raw
         raw.downcase.in?("true", "1", "yes", "on")
+      end
+
+      # lookup('community.general.merge_variables', pattern, ...,
+      # pattern_type='suffix', initial_value=[]) - community.general's
+      # merge_variables lookup: collects every variable NAME in scope
+      # matching the given pattern(s), sorts them alphabetically (the
+      # real plugin's documented order), and merges their values in that
+      # order (dicts deep-merge, lists concatenate, anything else the
+      # later value replaces). The no-match path is the one real roles
+      # hit most: thulium_drake.sshd (round 813042) defines
+      # sshd_configs: "{{ lookup('community.general.merge_variables',
+      # '_sshd_configs__to_merge', pattern_type='suffix',
+      # initial_value=[]) }}" where NO variable ends with the suffix -
+      # real Ansible returns initial_value untouched (rendered, not
+      # "undefined"), so `when: sshd_configs | length > 0` skips the
+      # task cleanly; unimplemented here, the lookup fell through to the
+      # "undefined" fallback and resolve_loop_template turned the
+      # literal sentinel into a fatal UndefinedVariableError instead.
+      # Scoped to what real roles use: no groups:/override:/dict_merge:
+      # cross-host options (same scope decision as random_string).
+      private def lookup_merge_variables(parts : Array(String), kwargs : Array(String)) : String
+        patterns = parts[1..].map { |part| evaluate(part.strip) }
+        return "undefined" if patterns.empty?
+
+        opts = kwargs.compact_map do |term|
+          key, sep, value = term.partition('=')
+          sep.empty? ? nil : {key.strip, value}
+        end.to_h
+        pattern_type = opts["pattern_type"]?.try { |raw| evaluate(raw.strip) } || "regex"
+        # initial_value: may itself be a template (`initial_value=[]`),
+        # so render it through the same machinery before parsing.
+        initial = opts["initial_value"]?.try { |raw| Krikri.parse_json_or_python_literal(evaluate(raw.strip)) }
+
+        matched = @vars.keys.select { |name| merge_variables_matches?(name, pattern_type, patterns) }.sort!
+        return initial ? initial.to_json : "[]" if matched.empty?
+
+        result = initial
+        matched.each do |name|
+          result = merge_variables_combine(result, @vars[name])
+        end
+        result ? result.to_json : "[]"
+      end
+
+      private def merge_variables_matches?(name : String, pattern_type : String, patterns : Array(String)) : Bool
+        patterns.any? do |pattern|
+          case pattern_type
+          when "prefix" then name.starts_with?(pattern)
+          when "suffix" then name.ends_with?(pattern)
+          else               name.matches?(Regex.new(pattern))
+          end
+        end
+      end
+
+      # One merge step for #lookup_merge_variables: nil seed adopts the
+      # first value outright, dict+dict deep-merges (later wins on
+      # scalar collisions), list+list concatenates, anything else the
+      # later value replaces - the real plugin's default merge shape.
+      private def merge_variables_combine(current : JSON::Any?, value : JSON::Any) : JSON::Any
+        return value unless current
+        current_h, value_h = current.as_h?, value.as_h?
+        if current_h && value_h
+          merged = current_h.dup
+          value_h.each do |key, sub|
+            merged[key] = merged.has_key?(key) ? merge_variables_combine(merged[key], sub) : sub
+          end
+          return JSON::Any.new(merged)
+        end
+        current_a, value_a = current.as_a?, value.as_a?
+        return JSON::Any.new(current_a + value_a) if current_a && value_a
+        value
       end
 
       private def lookup_subelements(parts : Array(String)) : String
