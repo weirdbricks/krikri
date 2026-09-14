@@ -1,27 +1,39 @@
 require "../spec_helper"
 require "file_utils"
 
-# The UnresolvedModuleError hard-stop, end to end: a task whose module
-# name resolves to nothing krikri can run - a tombstoned-removed module
-# like `ec2_remote_facts`, OR (since 0.9.903, owner decision, safety-
-# motivated) ANY module krikri simply hasn't implemented yet - must
-# refuse to run the playbook AT ALL, rc=4, no PLAY RECAP, nothing
-# executes - matching real Ansible's own playbook-load module-resolution
-# check for the tombstone case (verified live against ansible-core
-# 2.19.4, including the when:-gated variant: the resolution check is a
-# playbook-LOAD check there, not a per-task one), and krikri's own
-# explicit safety posture for the "real Ansible would resolve this fine,
-# krikri just hasn't ported it" case (a silently-skipped task with real
-# consequences - a firewall rule, a security config - is worse than
-# refusing to run).
+# The UnresolvedModuleError hard-stop, end to end. A tombstoned-removed
+# module name like `ec2_remote_facts` - one real Ansible ITSELF refuses
+# to resolve anywhere, at its own playbook-load time - must refuse to
+# run the playbook AT ALL, rc=4, no PLAY RECAP, nothing executes,
+# matching real Ansible's own playbook-load module-resolution check
+# (verified live against ansible-core 2.19.4, including the when:-gated
+# variant: the resolution check is a playbook-LOAD check there, not a
+# per-task one).
 #
-# Before 0.9.903, only tombstoned names hard-stopped; everything else
-# unresolvable took a graceful per-task unavailable_module skip (warning
-# printed, task marked skipped, play continued) - see git log /
-# KNOWN_MISSING.md for that history. The ONLY module resolving to
-# nothing krikri ships that still degrades gracefully is a role-private
-# `library/<name>.py` (or playbook-adjacent `library/`) source, which
-# genuinely runs via PythonModuleRunner - that's not "unimplemented",
+# A plain "krikri simply hasn't implemented this" module is DIFFERENT
+# (0.9.1050, reversing 0.9.903's unconditional hard-stop, round 811000):
+# real Ansible resolves a task's module lazily, per task, only once the
+# task is actually about to run - after its own `when:` evaluated true -
+# so krikri must not abort the whole load at parse time for a task that
+# would never run. The task parses through with unavailable_module set
+# and takes the graceful runtime skip path; the safety net is that
+# reachable_unavailable_modules records the module name if its own
+# `when:` would have let it run for at least one host at RUNTIME (after
+# facts are gathered), and the run still exit(4)s at the very end - a
+# genuinely-reached unimplemented module is never silently swallowed.
+# Round 811000 found the old parse-time hard-stop aborting 25 real
+# roles outright for when:-gated modules: robertdebock.podman
+# (containers.podman.podman_container behind `when: podman_containers is
+# defined`, false on the role's own defaults - real Ansible ok=7
+# changed=2, krikri rc=4 with zero tasks run), mashimom.oh-my-zsh (apk:
+# behind `when: ansible_pkg_mgr == 'apk'` on a Debian host - real
+# Ansible's only failure was a later, unrelated one), and ~23 more of
+# the same shape (Windows-only modules, OS-family branches, feature-flag
+# definedness checks).
+#
+# The ONLY module resolving to nothing krikri ships that RUNS is a
+# role-private `library/<name>.py` (or playbook-adjacent `library/`)
+# source, executed via PythonModuleRunner - that's not "unimplemented",
 # it's a real module this engine executes.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
@@ -56,14 +68,16 @@ describe "unresolvable module names hard-stop the run (UnresolvedModuleError)" d
     output.should_not contain("Gathering Facts"), output
   end
 
-  it "hard-stops for a module from a collection with zero krikri modules (0.9.903, unconditional - was a graceful skip before)" do
+  it "runs to completion when a when:-gated unimplemented module's gate is false" do
     # kubernetes.core is a real, commonly-installed collection real
     # ansible-playbook would resolve and run fine here - krikri simply
-    # hasn't ported this specific module, and since 0.9.903 that's
-    # ALSO refused, with krikri's own wording (not real Ansible's, which
-    # would have succeeded). Also confirms the hard-stop is UNCONDITIONAL,
-    # same as the tombstone shape above: a when:-gated task that would
-    # never actually run on this host still aborts the whole load.
+    # hasn't ported this specific module. Round 811000: the module name
+    # must be resolved lazily like real Ansible does (only once the
+    # task is about to run, after its when: evaluates), so a gate that
+    # is false on this host (`ansible_os_family == "Windows"` on a
+    # Linux-family run) means the task is cleanly skipped and the rest
+    # of the play runs to a green recap - the old parse-time hard-stop
+    # aborted the whole load before a single task executed.
     status, output = run_playbook(<<-YAML)
       - hosts: localhost
         connection: local
@@ -71,18 +85,26 @@ describe "unresolvable module names hard-stop the run (UnresolvedModuleError)" d
         tasks:
           - name: normal
             ansible.builtin.debug: msg=hi
-          - name: unported collection, when-gated - still hard-stops
+          - name: unported collection, when-gated - cleanly skipped
             kubernetes.core.helm_repository:
               repo_name: foo
             when: ansible_os_family == "Windows"
       YAML
-    status.success?.should be_false, output
-    status.exit_code.should eq(4), output
-    output.should contain("krikri does not yet have module 'kubernetes.core.helm_repository' implemented"), output
-    output.should_not contain("PLAY RECAP"), output
+    status.success?.should be_true, output
+    output.should contain("PLAY RECAP"), output
+    output.should contain("TASK [normal]"), output
+    output.should contain("skipping: [localhost]"), output
+    output.should_not contain("unavailable modules"), output
   end
 
-  it "hard-stops for a not-yet-implemented module from a RECOGNIZED collection too (0.9.903, unconditional)" do
+  it "exit-4s at the END of the run for a genuinely-reached unimplemented module, after a full recap" do
+    # The inverse, safety side of the reversal: with NO when: gate the
+    # task is genuinely reached, so the run still fails - but now via
+    # the runtime reachable_unavailable_modules machinery (exit 4 after
+    # the recap, from krikri-playbook.cr's end-of-run check) rather
+    # than a parse-time abort, so the other tasks in the play actually
+    # ran and show in the PLAY RECAP - matching real Ansible's own
+    # per-task resolution timing.
     status, output = run_playbook(<<-YAML)
       - hosts: localhost
         connection: local
@@ -96,22 +118,26 @@ describe "unresolvable module names hard-stop the run (UnresolvedModuleError)" d
       YAML
     status.success?.should be_false, output
     status.exit_code.should eq(4), output
-    output.should contain("krikri does not yet have module 'ansible.builtin.sysvinit' implemented"), output
-    output.should_not contain("PLAY RECAP"), output
+    output.should contain("✗ Playbook execution completed with unavailable modules: ansible.builtin.sysvinit"), output
+    output.should contain("PLAY RECAP"), output
+    output.should contain("TASK [normal]"), output
   end
 
-  it "hard-stops for an unimplemented module used as a HANDLER too, not just as a regular task (0.9.903)" do
+  it "exit-4s for a FIRED handler backed by an unimplemented module, but never fires one behind an unchanged notify" do
     # juju4.falco's own shape: kubernetes.core.helm_repository as a
-    # notified handler, not a regular task - the parse-time hard-stop
-    # applies identically regardless of where in the playbook the name
-    # appears, same as the tombstone shape.
+    # notified handler. A handler only runs when a task that reported
+    # CHANGED notifies it (real Ansible: an ok/skipped task notifies
+    # nothing), so the fired case is genuinely reached and exit-4s at
+    # the end of the run via reachable_unavailable_modules - while an
+    # unchanged notify (the debug task below) leaves the handler
+    # unfired and the run green, exactly like real Ansible.
     status, output = run_playbook(<<-YAML)
       - hosts: localhost
         connection: local
         gather_facts: false
         tasks:
-          - name: normal task that notifies the handler
-            ansible.builtin.debug: msg=hi
+          - name: changed task that notifies the handler
+            ansible.builtin.command: "true"
             notify: unported handler
         handlers:
           - name: unported handler
@@ -120,8 +146,84 @@ describe "unresolvable module names hard-stop the run (UnresolvedModuleError)" d
       YAML
     status.success?.should be_false, output
     status.exit_code.should eq(4), output
-    output.should contain("krikri does not yet have module 'kubernetes.core.helm_repository' implemented"), output
-    output.should_not contain("PLAY RECAP"), output
+    output.should contain("HANDLER [unported handler]"), output
+    output.should contain("✗ Playbook execution completed with unavailable modules: kubernetes.core.helm_repository"), output
+    output.should contain("PLAY RECAP"), output
+
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: unchanged task that notifies the handler
+            ansible.builtin.debug: msg=hi
+            notify: unported handler
+        handlers:
+          - name: unported handler
+            kubernetes.core.helm_repository:
+              repo_name: foo
+      YAML
+    status.success?.should be_true, output
+    output.should contain("PLAY RECAP"), output
+    output.should_not contain("unported handler"), output
+  end
+
+  it "runs an unrelated LATER task after a when:-gated unimplemented one (round 811000, robertdebock.podman's shape)" do
+    # The exact real-world shape that motivated the reversal: an
+    # earlier task, then a when:-gated task using an unimplemented
+    # module whose gate is false (podman_containers left undefined -
+    # robertdebock.podman's own defaults), then a later unrelated task.
+    # Real ansible-playbook: all three run/skip cleanly, green recap.
+    # The old parse-time hard-stop killed the whole play before the
+    # first task; the fixed engine must run the earlier task, skip the
+    # gated one, and still execute the later one.
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        tasks:
+          - name: earlier unrelated task
+            ansible.builtin.debug: msg=before
+          - name: manage podman containers (unimplemented module, false gate)
+            containers.podman.podman_container:
+              name: foo
+            when: podman_containers is defined and podman_containers | length > 0
+          - name: later unrelated task
+            ansible.builtin.debug: msg=after
+      YAML
+    status.success?.should be_true, output
+    output.should contain("TASK [earlier unrelated task]"), output
+    output.should contain("TASK [manage podman containers (unimplemented module, false gate)]"), output
+    output.should contain("TASK [later unrelated task]"), output
+    output.should contain("PLAY RECAP"), output
+    output.should_not contain("unavailable modules"), output
+  end
+
+  it "still exit-4s when the gate on the unimplemented module evaluates TRUE (never silently swallow a reached module)" do
+    # Same shape with the gate TRUE: the module really would run, so
+    # the run must still fail - exit 4 from the end-of-run
+    # unavailable-modules check, with the play's tasks and recap
+    # showing first (real Ansible would fail the task itself mid-run).
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          podman_containers:
+            - name: foo
+        tasks:
+          - name: earlier unrelated task
+            ansible.builtin.debug: msg=before
+          - name: manage podman containers (unimplemented module, true gate)
+            containers.podman.podman_container:
+              name: foo
+            when: podman_containers is defined and podman_containers | length > 0
+      YAML
+    status.success?.should be_false, output
+    status.exit_code.should eq(4), output
+    output.should contain("✗ Playbook execution completed with unavailable modules: containers.podman.podman_container"), output
+    output.should contain("TASK [earlier unrelated task]"), output
+    output.should contain("PLAY RECAP"), output
   end
 
   it "still runs a role-private library/*.py module (the one exception - genuinely runs here, not unimplemented)" do

@@ -12,29 +12,30 @@ module Krikri
   class Task
     property name : String
     property module_name : String
-    # Set ONLY for a role-private `library/<name>.py` module (module_name
-    # above keeps the raw requested name, e.g. "sr_fingerprint") whose
-    # source parse found via PythonModuleRunner.find_source - such a task
-    # RUNS through the py_module runner (see executor_run_loop.cr), it is
-    # never gracefully skipped. Since 0.9.903 every OTHER module name
-    # that resolves to nothing this engine ships hard-stops the whole
-    # playbook at parse time (UnresolvedModuleError) - the old graceful
-    # per-task skip (task marked skipped, "uses unimplemented plugin"
-    # warning, play continued) is gone. Previously such a task
-    # raised "Plugin not available" at PARSE time and was dropped
-    # entirely - before its own when: was ever evaluated - so a task
-    # gated behind e.g. `when: ansible_facts['pkg_mgr'] == "zypper"`
-    # (always false on RHEL/Ubuntu) vanished from the recap/task list
-    # completely instead of printing "skipping" like real Ansible would
-    # (real ansible-playbook also evaluates when: before resolving the
-    # action). Found via round171's robertdebock.haproxy (seport, now a
-    # real plugin) and robertdebock.jenkins (zypper_repository, SUSE-only,
-    # out of this project's scope). `when_passes?` now funnels a task
-    # with this set through the same skip path unconditionally,
-    # regardless of what its own when: would evaluate to - matching real
-    # Ansible whenever the condition is genuinely false (every case found
-    # so far), and a smaller, more visible divergence than vanishing
-    # entirely in the rare case the condition would have been true.
+    # Set for ANY module name that resolves to nothing this engine ships -
+    # a role-private `library/<name>.py` module (module_name above keeps
+    # the raw requested name, e.g. "sr_fingerprint", whose source
+    # PythonModuleRunner will find at run time), OR a plain unimplemented
+    # module (0.9.1050, reversing 0.9.903's parse-time hard-stop - round
+    # 811000: the unconditional raise aborted whole plays for tasks real
+    # Ansible would simply skip, e.g. robertdebock.podman's
+    # containers.podman.podman_container behind `when: podman_containers
+    # is defined`, false on the role's own defaults). Either way the task
+    # can't dispatch to a native plugin binary: with a library/ source it
+    # RUNS through the py_module runner (see executor_run_loop.cr);
+    # without one it takes the graceful per-task skip (task marked
+    # skipped, "skipping" line, play continued) - exactly what real
+    # Ansible does when evaluating `when:` before resolving the action -
+    # and register_reachable_unavailable_module records the name for the
+    # final exit-code decision if its own when: would have let it run.
+    # Previously an unimplemented task raised "Plugin not available" at
+    # PARSE time and was dropped entirely - before its own when: was ever
+    # evaluated - so a task gated behind e.g.
+    # `when: ansible_facts['pkg_mgr'] == "zypper"` (always false on
+    # RHEL/Ubuntu) vanished from the recap/task list completely. Found
+    # via round171's robertdebock.haproxy (seport, now a real plugin) and
+    # robertdebock.jenkins (zypper_repository, SUSE-only, out of this
+    # project's scope).
     property unavailable_module : String?
     # A legacy `action:`/`local_action:` free-form directive whose module
     # name is itself a `{{ }}` template (`action: "{{ ansible_pkg_mgr }}
@@ -958,37 +959,34 @@ module Krikri
   class HandlerNotFoundError < Exception
   end
 
-  # A task whose module/action name resolves to nothing this engine can
-  # run - raised at PARSE time.
+  # A tombstoned-removed module name (REMOVED_MODULE_TOMBSTONES) - the
+  # only thing that raises this anymore.
   #
-  # Raised at PARSE time when a task's module/action name resolves to
-  # nothing this engine can run. Real ansible-playbook refuses to even
-  # START the run for one: "[ERROR]: couldn't resolve module/action
+  # Raised at PARSE time ONLY for a tombstoned-removed module name
+  # (REMOVED_MODULE_TOMBSTONES): real ansible-playbook refuses to even
+  # START the run for one - "[ERROR]: couldn't resolve module/action
   # '<name>'. This often indicates a misspelling, missing collection, or
   # incorrect module path.", rc=4, no PLAY RECAP - verified live against
   # ansible-core 2.19.4, including with the offending task behind a
   # `when:` that would have skipped it (the resolution check is a
-  # playbook-LOAD check there, not a per-task one).
+  # playbook-LOAD check there, not a per-task one). That stays static
+  # here too: a tombstoned name is one real Ansible ITSELF refuses to
+  # resolve anywhere, at its own playbook-load time.
   #
-  # Since 0.9.903 this hard-stop is UNCONDITIONAL for every unresolvable
-  # name (owner decision, safety-motivated): a module krikri hasn't
-  # implemented refuses the whole playbook too - "krikri does not yet
-  # have module 'x' implemented" - because a silently-skipped task (a
-  # firewall rule, a security config, anything with real consequences)
-  # can leave a system in a worse state than refusing to run at all.
-  # The ONLY exception is a role-private `library/<name>.py` module
-  # (plus the playbook-adjacent `library/`): that module genuinely runs
-  # here (PythonModuleRunner), so it keeps the graceful
-  # unavailable_module path and parse looks for its source before
-  # deciding to raise. Role-private `filter_plugins/*.py` custom filters
-  # are a separate mechanism entirely (PythonFilterRunner) and were
-  # never affected.
-  #
-  # Tombstoned-removed names (REMOVED_MODULE_TOMBSTONES) hard-stop with
-  # real Ansible's own exact wording instead - real Ansible also
-  # hard-stops there, for its own genuine reason. Same bug class as the
-  # `ansible.builtin.include:` tombstone (RemovedActionError, round
-  # 162, 0.9.518), generalized from that one hard-coded name.
+  # A module krikri simply hasn't implemented does NOT raise here
+  # anymore (0.9.1050, reversing 0.9.903's unconditional hard-stop, same
+  # owner-approved reversal): the task flows through with
+  # unavailable_module set and real Ansible's own lazy per-task
+  # resolution timing - a when:-false task is skipped cleanly like any
+  # other, while a genuinely-reached one is recorded by
+  # reachable_unavailable_modules and still fails the run's exit code at
+  # the end (round 811000: robertdebock.podman, mashimom.oh-my-zsh, and
+  # ~23 more roles aborting rc=4 with zero tasks run for modules behind
+  # false `when:` gates). The role-private `library/<name>.py` module
+  # (plus the playbook-adjacent `library/`) still genuinely runs here
+  # (PythonModuleRunner). Role-private `filter_plugins/*.py` custom
+  # filters are a separate mechanism entirely (PythonFilterRunner) and
+  # were never affected.
   class UnresolvedModuleError < Exception
   end
 
@@ -1399,14 +1397,13 @@ module Krikri
       "community.general.redhat_subscription",
       # The arbitrary-Python-module runner's internal dispatch name -
       # NOT a module real playbooks call. A task whose module resolves
-      # to nothing hard-stops the whole parse (UnresolvedModuleError,
-      # 0.9.903), but when a role-private `library/<name>.py` source
-      # exists for it (parse runs PythonModuleRunner.find_source with
-      # the same role_path/playbook_dir roots the executor uses), the
-      # task keeps the graceful unavailable_module path instead and
-      # TaskExecutor dispatches it to the py_module plugin with the
-      # source embedded, running it on the target with the target's
-      # own python3 - see PythonModuleRunner's own comment.
+      # to nothing keeps the graceful unavailable_module path (since
+      # 0.9.1050 - see the parse_task call site); when the executor's
+      # PythonModuleRunner.find_source finds a role-private
+      # `library/<name>.py` source for it, TaskExecutor dispatches it
+      # to the py_module plugin with the source embedded, running it
+      # on the target with the target's own python3 - see
+      # PythonModuleRunner's own comment.
       "ansible.builtin.py_module",
     }
 
@@ -1604,20 +1601,13 @@ module Krikri
       end
     end
 
-    # Raises UnresolvedModuleError for a module krikri simply hasn't
-    # implemented - since 0.9.903 an UNCONDITIONAL hard-stop (owner
-    # decision, safety-motivated: a silently-skipped task with real
-    # consequences is worse than refusing to run). krikri's own wording,
-    # NOT real Ansible's - unlike the tombstone shape above, real Ansible
-    # would resolve (and run) most of these names fine; refusing is this
-    # engine's own safety posture, so the message says so plainly.
-    # Callers must first have ruled out a role-private `library/<name>.py`
-    # source (which runs here via PythonModuleRunner and keeps the
-    # graceful unavailable_module path).
-    def self.raise_unimplemented_module_error(as_written : String) : Nil
-      raise UnresolvedModuleError.new(
-        "krikri does not yet have module '#{as_written}' implemented")
-    end
+    # Deliberately no "krikri hasn't implemented this" sibling anymore:
+    # 0.9.903 added one (an unconditional parse-time hard-stop for every
+    # name resolving to nothing krikri ships) and 0.9.1050 reversed it -
+    # it pre-empted the executor's already-correct lazy
+    # reachable_unavailable_modules machinery, aborting whole plays
+    # (rc=4, zero tasks run) for when:-gated tasks real Ansible would
+    # simply skip. See round 811000 in KNOWN_MISSING.md's round history.
 
     def self.resolve_module_name(raw : String) : String?
       return MODULE_ALIASES[raw] if MODULE_ALIASES.has_key?(raw)
@@ -2043,10 +2033,11 @@ module Krikri
           # Same bypass, same reason - real Ansible's playbook-load
           # module-resolution check refuses the whole run (rc=4) for a
           # name it can't resolve anywhere, including a task behind a
-          # `when:` (verified against ansible-core 2.19.4), and since
-          # 0.9.903 that hard-stop is unconditional for every
-          # unimplemented name too (see UnresolvedModuleError's own
-          # comment).
+          # `when:` (verified against ansible-core 2.19.4). Since
+          # 0.9.1050 only the tombstoned names still raise here - a
+          # plain unimplemented name flows through with
+          # unavailable_module set and is handled lazily at runtime
+          # (see the parse_task call site).
           raise ex
         rescue ex : ConflictingActionStatementsError
           # Same bypass, same reason - see that class's own comment.
@@ -2644,20 +2635,33 @@ module Krikri
           # A tombstoned-removed module name (ec2_remote_facts and
           # friends) hard-stops the whole run at parse time with real
           # Ansible's own exact wording - the same playbook-load check
-          # real ansible-playbook runs, verified against 2.19.4.
+          # real ansible-playbook runs, verified against 2.19.4. That
+          # stays static because a tombstoned name is one real Ansible
+          # ITSELF refuses to resolve anywhere, at its own playbook-load
+          # time. Every other unresolvable name - a module krikri simply
+          # hasn't ported - does NOT raise here (0.9.1050, reversing
+          # 0.9.903's unconditional hard-stop): it flows through with
+          # unavailable_module set, exactly like a role-private
+          # `library/<name>.py` with no matching source. Real Ansible
+          # resolves a task's module lazily, per task, only once the
+          # task is actually about to run - after its `when:` evaluated
+          # true - so a parse-time hard-stop here aborted whole plays
+          # (rc=4, zero tasks run) for when:-gated tasks that would
+          # never run on the target hosts. Round 811000, confirmed live
+          # on 25 roles: robertdebock.podman's
+          # containers.podman.podman_container behind `when:
+          # podman_containers is defined` (false on the role's own
+          # defaults - real Ansible ok=7 changed=2, krikri rc=4 with
+          # nothing run), mashimom.oh-my-zsh's apk: behind
+          # `when: ansible_pkg_mgr == 'apk'` on a Debian host, and ~23
+          # more of the same shape (Windows-only modules, OS-family
+          # branches, feature-flag definedness checks). The safety
+          # posture 0.9.903 was protecting is preserved: the executor's
+          # reachable_unavailable_modules records the name at RUNTIME if
+          # the task's own when: would have let it run for at least one
+          # host, and krikri-playbook still exit(4)s at the very end -
+          # the exact mechanism the library/-module case already used.
           raise_unresolvable_module_error(module_name)
-          # EVERY other name that resolves to nothing krikri implements
-          # now hard-stops too (0.9.903, unconditional - owner decision,
-          # safety-motivated: a silently-skipped task with real
-          # consequences is worse than refusing to run). A role-private
-          # `library/<name>.py` module is the one exception - it genuinely
-          # runs here (PythonModuleRunner), so parse runs the SAME
-          # find_source lookup the executor will and only keeps the
-          # graceful unavailable_module path when a source actually
-          # exists. Includes the playbook-adjacent `library/` root.
-          unless PythonModuleRunner.find_source(PythonModuleRunner.short_name(module_name), role_path, playbook_dir)
-            raise_unimplemented_module_error(module_name)
-          end
         end
       end
       module_name = resolved_module_name || module_name
@@ -4397,11 +4401,13 @@ module Krikri
           # run time (Task#templated_action) - the raw `{{ }}` text here is
           # expected, not an unimplemented plugin.
           next if task.templated_action
-          # An unavailable_module task is a role-private `library/<name>.py`
-          # module with a parse-found source (see Task#unavailable_module) -
-          # it RUNS through PythonModuleRunner, so "unimplemented" would be
-          # wrong. Every other unresolvable name already hard-stopped the
-          # parse (UnresolvedModuleError), so this branch is defensive.
+          # An unavailable_module task is any module name that resolved
+          # to nothing (a role-private `library/<name>.py` module with a
+          # parse-found source that RUNS through PythonModuleRunner, or
+          # since 0.9.1050 a plain unimplemented module taking the
+          # graceful runtime path instead of the old parse-time
+          # hard-stop), so "unimplemented" would be wrong for it -
+          # every unresolvable name lands in this branch now.
           next if task.unavailable_module
           unless AVAILABLE_PLUGINS.includes?(task.module_name)
             warnings << "Task '#{task.name}' uses unimplemented plugin: #{task.module_name}"
