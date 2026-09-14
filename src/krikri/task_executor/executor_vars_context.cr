@@ -1168,18 +1168,39 @@ module Krikri
         # ("Finalization of task args ... failed"). See
         # UndefinedVariableError's own comment for the narrow, bare-
         # reference-only scope of what actually raises here.
-        # output: true - a module argument is final text (see
-        # VarSubstitutor#substitute), so a container renders the way
-        # real Ansible renders one. EXCEPT for set_fact
-        # (native_containers): real Ansible keeps a set_fact: value
-        # NATIVELY typed - a container expression stays a real dict/list,
-        # not display text. Formatting it as output text here produced a
+        # output: a module argument is final text (see
+        # VarSubstitutor#substitute), so a container inside MIXED text
+        # renders the way real Ansible renders one (Python repr,
+        # live-verified: `msg: "pre {{ list }} post"` prints
+        # "pre ['a', 'b'] post"). EXCEPT for a param whose ENTIRE value
+        # is one bare `{{ }}` span: real Ansible's native typing keeps
+        # the referenced value's native type there (live-verified vs
+        # ansible-playbook 2.19.11: `apt: name: "{{ pkg_list }}"` with a
+        # real list var looks up the clean ELEMENTS - "No package
+        # matching 'probe-pkg-one'" - never the repr text), so the
+        # plugin wire carries the double-quoted JSON form this codebase
+        # uses for containers everywhere else (set_fact's own
+        # native_containers path, stringify_json_scalar). Rendering
+        # whole-span containers as repr text instead forced every
+        # list-param plugin to "repair" single-quoted repr back into a
+        # real list - a repair that also swallowed values that merely
+        # LOOK like a repr (a literal `name: "['a', 'b']"` string, or a
+        # `{% if %}...{% else %}['a']{% endif %}` block's output - both
+        # plain strings in real Ansible, live-verified - the latter via
+        # HanXHX.debian_bootstrap) into containers real Ansible never
+        # had.
+        # set_fact (native_containers) keeps output:false for ALL its
+        # params: real Ansible keeps a set_fact: value NATIVELY typed -
+        # a container expression stays a real dict/list, not display
+        # text. Formatting it as output text here produced a
         # Python-repr STRING fact (buluma.ara_api's own
         # `ara_api_configuration: "{{ {ara_api_env: reconciled_configuration} }}"`
         # became the literal `{'default': {...}}` text, which its own
         # to_nice_yaml then quoted as a scalar and the app failed to
         # parse, round 190).
-        substituted_value = substitutor.substitute(value, strict: true, output: !native_containers, native: native_containers)
+        stripped_value = value.strip
+        whole_single_span = stripped_value.starts_with?("{{") && stripped_value.ends_with?("}}") && stripped_value.scan("{{").size == 1
+        substituted_value = substitutor.substitute(value, strict: true, output: !whole_single_span && !native_containers, native: native_containers)
 
         # `mode:` piped through a variable (`mode: "{{ redis_conf_dir_mode
         # }}"`, geerlingguy.redis's own style) loses its octal-ness the

@@ -481,17 +481,16 @@ module Krikri
 
     # Parses `argv:`'s JSON-array text into its literal argument list - no
     # shell splitting/quoting at all (that's the whole point of argv: over
-    # cmd:/free-form). A templated Jinja list var renders as Python's repr
-    # (single-quoted strings) rather than JSON when it comes through a
-    # `{% if %}...{{ [list] }}...{% endif %}` idiom - same fallback as
-    # rpm_package.cr's/apt.cr's own copies of this pattern.
+    # cmd:/free-form). A whole-value `{{ list_var }}` container arg
+    # arrives as the double-quoted JSON the wire serialized it to (see
+    # substitute_task_params's whole-single-span comment); ONLY that valid
+    # JSON is parsed - never a Python-repr repair pass, since a value that
+    # merely LOOKS like a container (a literal `"['a']"` string, or a
+    # `{% if %}...{% else %}['a']{% endif %}` block's rendered output) is
+    # a plain STRING in real ansible-core (live-verified vs
+    # ansible-playbook 2.19.11, see apt.cr's parse_package_names).
     private def parse_argv_list(raw : String) : Array(String)
-      trimmed = raw.strip
-      begin
-        Array(String).from_json(trimmed)
-      rescue
-        Array(String).from_json(trimmed.gsub('\'', '"'))
-      end
+      Array(String).from_json(raw.strip)
     end
 
     # First executable file named *name* under the colon-separated

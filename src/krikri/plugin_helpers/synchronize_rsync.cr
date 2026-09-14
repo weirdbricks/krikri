@@ -231,11 +231,18 @@ module Krikri
         rescue
           nil
         end
-        parsed ||= begin
-          Array(String).from_json(trimmed.gsub('\'', '"'))
-        rescue
-          nil
-        end
+        # ONLY valid JSON - never a Python-repr repair pass. A value that
+        # merely LOOKS like a container (a literal `"['a']"` string, or a
+        # `{% if %}...{% else %}['a']{% endif %}` block's rendered
+        # output) is a plain STRING in real ansible-core - native typing
+        # requires the template's whole AST to be one output node
+        # wrapping one expression, so block-tag output is never
+        # re-parsed (live-verified vs ansible-playbook 2.19.11, see
+        # apt.cr's parse_package_names). A whole-value `{{ list_var }}`
+        # container arg arrives as the double-quoted JSON the wire
+        # serialized it to (see substitute_task_params's
+        # whole-single-span comment), which the plain JSON parse above
+        # already handles.
         return parsed.map(&.strip).reject(&.empty?) if parsed
       end
       trimmed.split(",").map(&.strip).reject(&.empty?)

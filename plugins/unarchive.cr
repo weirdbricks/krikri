@@ -245,12 +245,20 @@ module Krikri
       return [] of String unless raw
       if raw.starts_with?('[')
         (Array(String).from_json(raw) rescue nil).try { |parsed| return parsed }
-        # A Python-repr list (single-quoted strings, from a Jinja
-        # `{% if %}...{{ [list] }}...{% endif %}` template rendering as
-        # Python's `str(list)` form) isn't valid JSON - same fallback as
-        # apt.cr/package.cr/dnf.cr's own copies of this logic. Proactive
-        # fix - not yet caught live for exclude:/include: specifically.
-        (Array(String).from_json(raw.gsub('\'', '"')) rescue nil).try { |parsed| return parsed }
+        # ONLY valid JSON - never a Python-repr repair pass. A value that
+        # merely LOOKS like a container (a literal `exclude: "['x']"`
+        # string, or a `{% if %}...{% else %}['x']{% endif %}` block's
+        # rendered output) is a plain STRING in real ansible-core -
+        # native typing requires the template's whole AST to be one
+        # output node wrapping one expression, so block-tag output is
+        # never re-parsed (live-verified vs ansible-playbook 2.19.11,
+        # see apt.cr's parse_package_names). A whole-value `{{ list_var }}`
+        # container arg arrives as the double-quoted JSON the wire
+        # serialized it to (see substitute_task_params's
+        # whole-single-span comment), which the plain JSON parse above
+        # already handles; anything else falls through to the comma
+        # split, matching real Ansible's own comma-split of a plain
+        # string list param.
       end
       raw.split(",").map(&.strip).reject(&.empty?)
     end

@@ -587,14 +587,31 @@ module Krikri
     private def parse_package_names(name_param : String) : Array(String)
       # `name: "{{ packages_debian }}"` (konstruktoid-hardening's own
       # "Debian family package installation" task) templates a *list*
-      # var through a plain `{{ }}` substitution - since @params values
-      # are always String, the substitutor's own format_value renders an
-      # Array as its JSON form (`["acct","apparmor-profiles",...]`), not
-      # a bare comma-joined string. Splitting that on "," (the plain
-      # comma-separated case below) left the brackets/quotes stuck to
-      # the first and last entries ("[acct", "wamerican]"), which apt
-      # then rejected outright as invalid package names. Detected here
-      # and parsed as real JSON instead.
+      # var through a plain `{{ }}` substitution - a whole-span
+      # container arg arrives as the double-quoted JSON
+      # VariableLookup#format_value serialized it to
+      # (`["acct","apparmor-profiles",...]`, see
+      # substitute_task_params's whole-single-span comment). Splitting
+      # that on "," (the plain comma-separated case below) left the
+      # brackets/quotes stuck to the first and last entries ("[acct",
+      # "wamerican]"), which apt then rejected outright as invalid
+      # package names. Detected here and parsed as real JSON instead.
+      #
+      # ONLY valid JSON, though - never a Python-repr repair pass. A
+      # value that merely LOOKS like a container (a literal
+      # `name: "['pkg1']"` string, or a `{% if %}...{% else %}
+      # ['pkg1']{% endif %}` block's rendered output) is a plain STRING
+      # in real ansible-core - native typing requires the template's
+      # whole AST to be one output node wrapping one expression, so
+      # block-tag output is never re-parsed (live-verified vs
+      # ansible-playbook 2.19.11: `apt: name: "['probe-pkg-one',
+      # 'probe-pkg-two']"` fails with "No package(s) matching
+      # '['probe-pkg-one'' available" - real Ansible comma-splits the
+      # repr-looking string into garbage names and fails looking them
+      # up, exactly what the plain comma-split below now produces,
+      # instead of the old single-quote repair that decomposed it into
+      # a real list and installed both packages). Found live
+      # benchmarking prometheus.prometheus.blackbox_exporter.
       trimmed = name_param.strip
       if trimmed.starts_with?('[') && trimmed.ends_with?(']')
         parsed = begin
@@ -603,34 +620,20 @@ module Krikri
           nil
         end
         return parsed if parsed
-
-        # A Python-repr list (single-quoted strings, e.g.
-        # `"['python3-apt', 'libcap2-bin']"`) isn't valid JSON, so the
-        # parse above fails and previously fell through to the naive
-        # comma-split, leaving the brackets/quotes stuck to the first/
-        # last entries again ("['python3-apt", "libcap2-bin']"). This
-        # shape comes from a Jinja `{% if %}...{% endif %}` template
-        # whose only `{{ }}` is a literal list - real Ansible/Jinja2
-        # renders that as the Python `str(list)` form, then Ansible's
-        # own templating re-parses a whole-template result that looks
-        # like a Python literal back into a real list (`ast.literal_
-        # eval`-equivalent). Found live via prometheus.prometheus.
-        # blackbox_exporter's own `_blackbox_exporter_dependencies:
-        # "{% if ... %}{{ [...] }}{% endif %}"`. Naive but safe for the
-        # common case (no embedded quotes/escapes in element strings,
-        # true for every real caller so far): swap single quotes for
-        # double and retry as JSON.
-        parsed = begin
-          Array(String).from_json(trimmed.gsub('\'', '"'))
-        rescue
-          nil
-        end
-        return parsed if parsed
       end
 
-      # Split by comma and clean up whitespace
-      packages = name_param.split(",").map(&.strip).reject(&.empty?)
-      packages
+      # Split by comma and clean up whitespace. Empty segments are KEPT:
+      # real Ansible treats each comma-split piece as a real package
+      # name and fails with "No package matching '' is available" for
+      # an empty one (live-verified in check mode for `name: ""`,
+      # leading `",probe-pkg-one"`, middle `"bash,,bash"` - with bash
+      # actually installed - and trailing `"bash,"`), so the old
+      # `.reject(&.empty?)` silently turned `name: ""` (inverse_inc.
+      # gitlab_buildpkg_tools's `name: "{{ lookup('env',
+      # 'DEB_PACKAGES_NAME') }}"` with the env var unset - the lookup
+      # correctly yields "") into "no packages, cache update only" and
+      # reported ok where real Ansible fails the task.
+      name_param.split(",").map(&.strip)
     end
 
     # Real Ansible's apt module supports real apt's own `name=version`
@@ -772,6 +775,21 @@ module Krikri
 
     # Handle installing packages
     private def handle_install(packages : Array(String), messages : Array(String), changed : Bool, lock_timeout : Int32) : PluginResult
+      # An empty package name (from `name: ""` or an empty comma
+      # segment - parse_package_names keeps those now) is a hard failure
+      # in real Ansible's apt module, same as any other name missing
+      # from the cache: "No package matching '' is available"
+      # (live-verified vs ansible-playbook 2.19.11 in check mode for
+      # state present AND latest; state absent with an empty name is
+      # just "ok" there, so handle_remove deliberately has no guard).
+      if packages.any?(&.empty?)
+        return PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: "No package matching '' is available"
+        )
+      end
+
       to_install = [] of String
       already_installed = [] of String
       install_stdout = ""
@@ -1000,6 +1018,18 @@ module Krikri
 
     # Handle upgrading packages to latest
     private def handle_latest(packages : Array(String), messages : Array(String), changed : Bool, lock_timeout : Int32) : PluginResult
+      # Same empty-name hard failure real Ansible's apt module produces
+      # for state: latest as for state: present (live-verified, see
+      # handle_install's guard) - only handle_remove's absent path
+      # tolerates one.
+      if packages.any?(&.empty?)
+        return PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: "No package matching '' is available"
+        )
+      end
+
       # only_upgrade: real Ansible's install() skips packages that are
       # not installed at all when only_upgrade is set (`if not installed
       # and only_upgrade: continue` - only upgrades, never newly

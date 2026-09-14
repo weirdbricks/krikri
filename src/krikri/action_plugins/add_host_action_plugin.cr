@@ -91,9 +91,17 @@ module Krikri
     end
 
     private def try_parse_json(value : String) : JSON::Any?
+      # Valid JSON only - never a Python-repr repair pass, matching
+      # SetFactActionPlugin's own fixed try_parse_json (and the
+      # plugin-wide removal of the same pattern): a whole-value
+      # `{{ some_list }}` container arg arrives as the double-quoted
+      # JSON the wire serialized it to (see substitute_task_params's
+      # whole-single-span comment); a value that merely LOOKS like a
+      # container is a plain STRING in real ansible-core (live-verified
+      # vs ansible-playbook 2.19.11, see apt.cr's parse_package_names).
       JSON.parse(value)
     rescue JSON::ParseException
-      JSON.parse(value.gsub('\'', '"')) rescue nil
+      nil
     end
   end
 end

@@ -94,6 +94,82 @@ end
 # DPKG_OPTIONS = 'force-confdef,force-confold'.
 DEFAULT_DPKG_OPTIONS = "-o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold"
 
+describe "apt plugin - name: parsing (empty names, repr-looking strings)" do
+  # Real ansible-playbook 2.19.11, live-verified in check mode
+  # (2026-09-13): `apt: {name: ""}` fails with "No package matching ''
+  # is available" (an empty string is ONE invalid package name, exactly
+  # like any other name missing from the cache) - for state present AND
+  # latest, but NOT for state absent (remove just reports ok). The same
+  # failure hits empty comma segments anywhere in the string
+  # (",pkg", "pkg,,pkg" with pkg installed, "pkg,"). Found live
+  # benchmarking inverse_inc.gitlab_buildpkg_tools, whose
+  # `name: "{{ lookup('env', 'DEB_PACKAGES_NAME') }}"` renders to ""
+  # when the env var is unset - this engine silently no-op'd
+  # ("cache update only") where real Ansible fails the task.
+  it "hard-fails name: \"\" for state present with real Ansible's exact error" do
+    with_apt_param_shims("un") do |env, log|
+      result = PluginSpecHelper.run("apt", {"name" => "", "state" => "present", "_environment" => env})
+      result["failed"].as_bool.should be_true
+      result["msg"].as_s.should eq("No package matching '' is available")
+      install_call(log).should be_nil
+    end
+  end
+
+  it "hard-fails name: \"\" for state latest too" do
+    with_apt_param_shims("un") do |env, log|
+      result = PluginSpecHelper.run("apt", {"name" => "", "state" => "latest", "_environment" => env})
+      result["failed"].as_bool.should be_true
+      result["msg"].as_s.should eq("No package matching '' is available")
+      install_call(log).should be_nil
+    end
+  end
+
+  it "hard-fails an empty comma segment for state present (live-verified: \"bash,,bash\" with bash installed)" do
+    with_apt_param_shims("ii") do |env, log|
+      result = PluginSpecHelper.run("apt", {"name" => "krikri-fake-pkg,,krikri-fake-pkg", "state" => "present", "_environment" => env})
+      result["failed"].as_bool.should be_true
+      result["msg"].as_s.should eq("No package matching '' is available")
+      install_call(log).should be_nil
+    end
+  end
+
+  # `apt: {name: []}` stays "no packages" (live-verified: real Ansible
+  # runs the cache update only and reports changed from that) - the
+  # parser stringifies a literal empty list to "[]" precisely so the
+  # plugin can tell it apart from the empty STRING (see
+  # parse_module_params's empty-list branch), and a templated
+  # `{{ list_var | default([]) }}` arrives as the same "[]" text.
+  it "treats the empty-list wire text \"[]\" as no packages (cache update only)" do
+    with_apt_param_shims("un") do |env, log|
+      result = PluginSpecHelper.run("apt", {"name" => "[]", "state" => "present", "update_cache" => "true", "_environment" => env})
+      result["failed"]?.try(&.as_bool).should be_falsey
+      install_call(log).should be_nil
+    end
+  end
+
+  # Real ansible-playbook 2.19.11, live-verified: `apt: name:
+  # "['probe-pkg-one', 'probe-pkg-two']"` (a Python-repr STRING, not a
+  # real YAML list) is a plain string - real Ansible comma-splits it
+  # and fails with "No package(s) matching '['probe-pkg-one''
+  # available". Native typing requires the template's whole parsed AST
+  # to be one output node wrapping one expression, so block-tag output
+  # or a literal repr-looking string is never re-parsed; a whole-value
+  # `{{ list_var }}` container arg instead arrives as double-quoted
+  # JSON (see substitute_task_params's whole-single-span comment).
+  it "treats a repr-looking name string as raw comma-split names, never re-parsing it into a list" do
+    with_apt_param_shims("un") do |env, log|
+      PluginSpecHelper.run("apt", {"name" => "['krikri-fake-pkg', 'krikri-fake-pkg2']", "state" => "present", "_environment" => env})
+      call = install_call(log) || ""
+      call.should_not eq("")
+      # The RAW comma-split garbage tokens (bracket remnants verbatim
+      # after shell splitting), not the repaired/re-parsed clean name
+      # pair real Ansible never sees:
+      call.should contain("[krikri-fake-pkg")
+      call.should contain("krikri-fake-pkg2]")
+    end
+  end
+end
+
 describe "apt plugin - parameter coverage" do
   describe "dpkg_options" do
     it "keeps the real-Ansible default (force-confdef,force-confold) when unset" do

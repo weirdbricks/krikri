@@ -98,12 +98,24 @@ describe "package_facts plugin" do
     packages.size.should be > 0
   end
 
-  it "accepts a Python-repr manager list too (Jinja-rendered list form)" do
+  it "keeps a Python-repr manager list a plain string (never re-parsed into a list)" do
+    # Real ansible-core's native typing requires a template's whole
+    # parsed AST to be exactly one output node wrapping one expression,
+    # so a value that merely LOOKS like a container (a literal
+    # `manager: "['auto']"` string, or a `{% if %}...{% else %}['auto']
+    # {% endif %}` block's rendered output) is a plain STRING
+    # (live-verified vs ansible-playbook 2.19.11 for the same bug class
+    # on apt's name:). A whole-value `{{ list_var }}` container arg
+    # arrives as double-quoted JSON (see substitute_task_params's
+    # whole-single-span comment), so the single-quote "repair" this
+    # spec used to assert was only ever reachable for values that are
+    # strings in real Ansible - and the garbage manager text then fails
+    # the unsupported-manager check the same way real Ansible's
+    # comma-split garbage does.
     result = PluginSpecHelper.run("package_facts", {"manager" => "['auto']"})
 
-    result["failed"]?.try(&.as_bool).should be_falsey
-    packages = result["ansible_facts"]["packages"].as_h
-    packages.size.should be > 0
+    result["failed"].as_bool.should be_true
+    result["msg"].as_s.should contain("Unsupported package managers requested")
   end
 
   it "accepts a comma-separated manager string (real AnsibleModule's check_type_list split)" do
