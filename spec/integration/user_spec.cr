@@ -17,6 +17,21 @@ describe "user plugin" do
     result["failed"]?.try(&.as_bool).should be_falsey
   end
 
+  # Real ansible.builtin.user's argument_spec declares `name` with alias
+  # `user` (`name=dict(type='str', required=True, aliases=['user'])`) -
+  # RedHatOfficial.rhel9_pci_dss (round 812000) writes `user: '{{ item
+  # }}'` throughout its STIG role, which real Ansible resolves fine via
+  # the alias; this plugin only ever read `name`, failing "Missing
+  # required parameter: name" despite the alias spelling being given.
+  it "resolves the user: alias of name:" do
+    shell = `getent passwd root`.split(":")[6].strip
+
+    result = PluginSpecHelper.run("user", {"user" => "root", "shell" => shell, "check_mode" => "true"})
+
+    result["failed"]?.try(&.as_bool).should be_falsey
+    result["changed"].as_bool.should be_false
+  end
+
   # Real bug found benchmarking konstruktoid.docker_rootless (0.9.617):
   # real Ansible's user module ALWAYS returns the resolved user facts
   # (home/uid/group/shell/name) in its register result, whether the

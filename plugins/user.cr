@@ -113,6 +113,20 @@ module Krikri
   # `password:` straight through either way).
   class UserPlugin < BasePlugin
     def execute : PluginResult
+      # Real ansible.builtin.user's argument_spec declares `name` with
+      # alias `user` (`name=dict(type='str', required=True,
+      # aliases=['user'])`) - RedHatOfficial.rhel9_pci_dss (round 812000)
+      # writes `user: '{{ item }}'` throughout its whole STIG role, which
+      # real Ansible resolves fine via that alias; this plugin only ever
+      # read `name`, failing "Missing required parameter: name" on every
+      # such task despite the alias spelling being given. Present alias
+      # overwrites canonical, matching real Ansible's own _handle_aliases
+      # order (same convention plugins/cron.cr's `value`->`job` alias and
+      # yum_repository.cr already follow).
+      if user_alias = @params["user"]?
+        @params["name"] = user_alias
+      end
+
       name = @params["name"]?
       return missing_param("name") unless name
 
