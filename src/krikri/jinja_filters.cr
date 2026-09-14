@@ -2011,7 +2011,35 @@ module Krikri
     # random_choice - are capped at 4 combined terms, same "declared-
     # keyword-args form can't be truly variadic" tradeoff zip/product
     # filters already made above).
+    # The tuple must be a LITERAL at each registration site (the
+    # Crinja.callable macro branches on `is_a?(NamedTupleLiteral)` to
+    # extract declared defaults - a named constant arrives as a plain
+    # identifier and silently registers under the constant's NAME
+    # instead), so the same tuple is spelled out three times.
     Crinja.function({type: "", a1: Crinja::UNDEFINED, a2: Crinja::UNDEFINED, a3: Crinja::UNDEFINED, a4: Crinja::UNDEFINED}, :lookup) do
+      JinjaFilters.crinja_lookup(env, arguments)
+    end
+
+    # `query(...)` - real Ansible's list-forcing sibling spelling, and
+    # `q(...)` its documented short alias. Not registered at all before
+    # (the `.j2` template path had NO query support - a template calling
+    # query() inside a `{% for %}` failed with "no function with name
+    # \"query\""), so a blockinfile/copy block using the modern query
+    # idiom could never render. All three spellings share one dispatch;
+    # query/q wrap a non-list result as a single-element list.
+    Crinja.function({type: "", a1: Crinja::UNDEFINED, a2: Crinja::UNDEFINED, a3: Crinja::UNDEFINED, a4: Crinja::UNDEFINED}, :query) do
+      JinjaFilters.crinja_lookup(env, arguments, query_mode: true)
+    end
+
+    Crinja.function({type: "", a1: Crinja::UNDEFINED, a2: Crinja::UNDEFINED, a3: Crinja::UNDEFINED, a4: Crinja::UNDEFINED}, :q) do
+      JinjaFilters.crinja_lookup(env, arguments, query_mode: true)
+    end
+
+    # The shared dispatch behind the three lookup-function spellings
+    # above. Mirrors all of ExpressionEvaluator#evaluate_lookup's lookup
+    # types, including url/first_found (ported once a real template
+    # actually needed one, per the note this comment used to carry).
+    def self.crinja_lookup(env : Crinja, arguments : Crinja::Arguments, query_mode : Bool = false) : Crinja::Value
       # Real Ansible accepts a lookup plugin's name either bare
       # ('first_found') or fully-qualified ('ansible.builtin.
       # first_found') - see ExpressionEvaluator#evaluate_lookup's
@@ -2023,223 +2051,277 @@ module Krikri
       role_path = role_path_value.undefined? ? nil : role_path_value.to_s
       variadic_terms = [arguments["a1"], arguments["a2"], arguments["a3"], arguments["a4"]].reject(&.undefined?)
 
-      case lookup_type
-      when "env"
-        var_name = arg1.to_s
-        Crinja::Value.new(var_name.empty? ? "" : (ENV[var_name]? || ""))
-      when "config"
-        # Multi-arg config lookup - see ExpressionEvaluator's own config
-        # branch for the full rationale (buluma.multi, round 190).
-        names = variadic_terms.map(&.to_s).reject { |tval| tval.downcase.starts_with?("wantlist=") || tval.empty? }
-        values = names.map { |nval| JinjaFilters.ansible_config_value(nval) }
-        if names.size > 1 || variadic_terms.any? { |tval| tval.to_s.downcase.starts_with?("wantlist=true") }
-          Crinja::Value.new(values)
-        else
-          Crinja::Value.new(values[0]? || "")
-        end
-      when "vars"
-        name = arg1.to_s
-        name.empty? ? Crinja::Value.new(nil) : env.context[name]
-      when "file"
-        path = arg1.to_s
-        resolved = JinjaFilters.resolve_lookup_path(path, role_path)
-        begin
-          Crinja::Value.new(File.read(resolved).chomp)
-        rescue
-          Crinja::Value.new(nil)
-        end
-      when "pipe"
-        command = arg1.to_s
-        begin
-          output = IO::Memory.new
-          status = Process.run("/bin/sh", ["-c", command], output: output, error: Process::Redirect::Close)
-          status.success? ? Crinja::Value.new(output.to_s.chomp) : Crinja::Value.new(nil)
-        rescue
-          Crinja::Value.new(nil)
-        end
-      when "lines"
-        command = arg1.to_s
-        begin
-          output = IO::Memory.new
-          status = Process.run("/bin/sh", ["-c", command], output: output, error: Process::Redirect::Close)
-          status.success? ? Crinja::Value.new(output.to_s.split('\n').reject(&.empty?)) : Crinja::Value.new(nil)
-        rescue
-          Crinja::Value.new(nil)
-        end
-      when "template"
-        path = arg1.to_s
-        resolved = JinjaFilters.resolve_lookup_path(path, role_path)
-        begin
-          content = File.read(resolved)
-          # A `#jinja2: key:value, ...` directive on the template's very
-          # first line is metadata for the renderer, not template
-          # content - real Ansible strips it before rendering. Same fix
-          # as ExpressionEvaluator#lookup_template's own (see that
-          # method's comment) - this native Crinja `:lookup` path is a
-          # SEPARATE implementation (this repo's own two-evaluator
-          # split) that needed the identical fix ported in, not
-          # inherited automatically.
-          first_line_end = content.index('\n')
-          first_line = first_line_end ? content[0...first_line_end] : content
-          if first_line.strip.starts_with?("#jinja2:")
-            content = first_line_end ? content[(first_line_end + 1)..] : ""
-          end
+      result = case lookup_type
+               when "env"
+                 var_name = arg1.to_s
+                 Crinja::Value.new(var_name.empty? ? "" : (ENV[var_name]? || ""))
+               when "config"
+                 # Multi-arg config lookup - see ExpressionEvaluator's own config
+                 # branch for the full rationale (buluma.multi, round 190).
+                 names = variadic_terms.map(&.to_s).reject { |tval| tval.downcase.starts_with?("wantlist=") || tval.empty? }
+                 values = names.map { |nval| JinjaFilters.ansible_config_value(nval) }
+                 if names.size > 1 || variadic_terms.any? { |tval| tval.to_s.downcase.starts_with?("wantlist=true") }
+                   Crinja::Value.new(values)
+                 else
+                   Crinja::Value.new(values[0]? || "")
+                 end
+               when "vars"
+                 name = arg1.to_s
+                 name.empty? ? Crinja::Value.new(nil) : env.context[name]
+               when "file"
+                 path = arg1.to_s
+                 resolved = JinjaFilters.resolve_lookup_path(path, role_path)
+                 begin
+                   Crinja::Value.new(File.read(resolved).chomp)
+                 rescue
+                   Crinja::Value.new(nil)
+                 end
+               when "pipe"
+                 command = arg1.to_s
+                 begin
+                   output = IO::Memory.new
+                   status = Process.run("/bin/sh", ["-c", command], output: output, error: Process::Redirect::Close)
+                   status.success? ? Crinja::Value.new(output.to_s.chomp) : Crinja::Value.new(nil)
+                 rescue
+                   Crinja::Value.new(nil)
+                 end
+               when "lines"
+                 command = arg1.to_s
+                 begin
+                   output = IO::Memory.new
+                   status = Process.run("/bin/sh", ["-c", command], output: output, error: Process::Redirect::Close)
+                   status.success? ? Crinja::Value.new(output.to_s.split('\n').reject(&.empty?)) : Crinja::Value.new(nil)
+                 rescue
+                   Crinja::Value.new(nil)
+                 end
+               when "template"
+                 path = arg1.to_s
+                 resolved = JinjaFilters.resolve_lookup_path(path, role_path)
+                 begin
+                   content = File.read(resolved)
+                   # A `#jinja2: key:value, ...` directive on the template's very
+                   # first line is metadata for the renderer, not template
+                   # content - real Ansible strips it before rendering. Same fix
+                   # as ExpressionEvaluator#lookup_template's own (see that
+                   # method's comment) - this native Crinja `:lookup` path is a
+                   # SEPARATE implementation (this repo's own two-evaluator
+                   # split) that needed the identical fix ported in, not
+                   # inherited automatically.
+                   first_line_end = content.index('\n')
+                   first_line = first_line_end ? content[0...first_line_end] : content
+                   if first_line.strip.starts_with?("#jinja2:")
+                     content = first_line_end ? content[(first_line_end + 1)..] : ""
+                   end
 
-          # template_vars=dict(...) - real Ansible's own template lookup
-          # plugin merges this kwarg's dict into the vars available to
-          # the rendered template, ON TOP of (never replacing) the
-          # calling context's own vars. Entirely ignored before in this
-          # native Crinja path (ExpressionEvaluator#lookup_template
-          # already had the equivalent fix) - a template rendered via
-          # `{{ lookup('template', path, template_vars=dict(...)) }}`
-          # reached here with the kwarg's values simply absent, so any
-          # `{{ app_name }}` etc. inside the template rendered
-          # "undefined" regardless of which call passed which values
-          # (bimdata.ferm's own get_vars.j2, rendered 4 times with a
-          # different app_name:/var_type: pair each time via this exact
-          # kwarg - round 849).
-          extra = arguments.kwargs["template_vars"]?.try { |val| val.raw.is_a?(Crinja::Dictionary) ? val.raw.as(Crinja::Dictionary) : nil }
-          if extra && !extra.empty?
-            saved = extra.keys.to_h { |key| {key, env.context[key.to_s]} }
-            extra.each { |key, value| env.context[key.to_s] = value }
-            begin
-              Crinja::Value.new(env.from_string(content).render.chomp)
-            ensure
-              saved.each { |key, value| env.context[key.to_s] = value }
-            end
-          else
-            Crinja::Value.new(env.from_string(content).render.chomp)
-          end
-        rescue
-          Crinja::Value.new(nil)
-        end
-      when "password"
-        raw_arg = arg1.to_s
-        Crinja::Value.new(JinjaFilters.password_lookup(raw_arg, role_path))
-      when "unvault"
-        # Session-wide vault secret (Vault.password), distinct from the
-        # `unvault` FILTER above (an explicit filter-argument secret).
-        path = arg1.to_s
-        password = Krikri::Vault.password
-        begin
-          (password && File.exists?(path)) ? Crinja::Value.new(Krikri::Vault.decrypt(File.read(path), password).chomp) : Crinja::Value.new(nil)
-        rescue
-          Crinja::Value.new(nil)
-        end
-      when "dict"
-        hash = arg1.raw.is_a?(Crinja::Dictionary) ? arg1.raw.as(Crinja::Dictionary) : Crinja::Dictionary.new
-        Crinja::Value.new(hash.map { |k, v| Crinja::Value.new({"key" => Crinja::Value.new(k.to_s), "value" => v}) })
-      when "list"
-        Crinja::Value.new(variadic_terms)
-      when "items"
-        Crinja::Value.new(variadic_terms.flat_map { |tval| tval.sequence? ? tval.to_a : [tval] })
-      when "together"
-        arrays = variadic_terms.map { |tval| tval.sequence? ? tval.to_a : [] of Crinja::Value }
-        size = arrays.max_of?(&.size) || 0
-        Crinja::Value.new((0...size).map { |i| Crinja::Value.new(arrays.map { |arr| arr[i]? || Crinja::Value.new(nil) }) })
-      when "nested"
-        arrays = variadic_terms.map { |tval| tval.sequence? ? tval.to_a : [] of Crinja::Value }
-        result = arrays.reduce([[] of Crinja::Value]) { |acc, arr| acc.flat_map { |row| arr.map { |item| row + [item] } } }
-        Crinja::Value.new(result.map { |row| Crinja::Value.new(row) })
-      when "varnames"
-        patterns = variadic_terms.compact_map { |tval| VariableSubstitutor::FilterEngine.cached_regex(tval.to_s) rescue nil }
-        names = env.context.keys.select { |nm_blk| patterns.any?(&.matches?(nm_blk)) }
-        Crinja::Value.new(names.map { |nval| Crinja::Value.new(nval) })
-      when "indexed_items"
-        arr = arg1.sequence? ? arg1.to_a : [] of Crinja::Value
-        Crinja::Value.new(arr.map_with_index { |item, i| Crinja::Value.new([Crinja::Value.new(i), item]) })
-      when "random_choice"
-        items = variadic_terms.flat_map { |tval| tval.sequence? ? tval.to_a : [tval] }
-        items.empty? ? Crinja::Value.new(nil) : items.sample
-      when "subelements"
-        source = arg1.sequence? ? arg1.to_a : [] of Crinja::Value
-        subkey = arguments["a2"].to_s
-        skip_missing = arguments["a3"].raw.is_a?(Crinja::Dictionary) ? (arguments["a3"].raw.as(Crinja::Dictionary)[Crinja::Value.new("skip_missing")]?.try(&.truthy?) || false) : false
-        result = [] of Crinja::Value
-        source.each do |parent|
-          children = parent.raw.is_a?(Crinja::Dictionary) ? parent.raw.as(Crinja::Dictionary)[Crinja::Value.new(subkey)]? : nil
-          next if children.nil? && skip_missing
-          (children.try(&.to_a) || [] of Crinja::Value).each { |child| result << Crinja::Value.new([parent, child]) }
-        end
-        Crinja::Value.new(result)
-      when "url"
-        # lookup('url', url_expr[, wantlist=True]) - fetches from the
-        # CONTROLLER, following redirects (see .fetch_url_lines below).
-        # `wantlist` arrives as a plain caller-supplied kwarg - it's
-        # deliberately NOT declared in this function's defaults tuple
-        # (unlike type/a1..a4), since `Arguments#kwargs` already holds
-        # whatever named args the caller actually passed regardless of
-        # what's declared, and declaring it would force every OTHER
-        # lookup type to also tolerate a stray `wantlist=` kwarg.
-        wantlist = arguments.kwargs["wantlist"]?.try(&.truthy?) || false
-        lines = JinjaFilters.fetch_url_lines(arg1.to_s)
-        if lines.nil?
-          Crinja::Value.new(nil)
-        elsif wantlist
-          Crinja::Value.new(lines.map { |line| Crinja::Value.new(line) })
-        else
-          Crinja::Value.new(lines.join(","))
-        end
-      when "first_found"
-        # lookup('first_found', {'files': [...], 'paths': [...]}) - same
-        # search order/role-relative resolution as ExpressionEvaluator's
-        # own #evaluate_first_found, adapted to Crinja::Dictionary/Value
-        # instead of JSON::Any.
-        hash = arg1.raw.is_a?(Crinja::Dictionary) ? arg1.raw.as(Crinja::Dictionary) : nil
-        files_val = hash.try(&.[Crinja::Value.new("files")]?)
-        paths_val = hash.try(&.[Crinja::Value.new("paths")]?)
-        # A `files:`/`paths:` value can be a TEMPLATED SCALAR (`files: "{{
-        # candidates | map('regex_replace', '$', '.yml') | list }}"`, the
-        # idiv_biodiversity.systemd_timesyncd idiom) rather than a literal
-        # list - the dict reaches this lookup with its nested {{ }} intact,
-        # so the string form must be rendered and parsed back out, not
-        # silently dropped as an empty candidate list by the sequence?
-        # guard (same mechanism ExpressionEvaluator's
-        # #render_first_found_param fixes for the hand-rolled evaluator).
-        files = render_first_found_crinja_param(files_val, env) || [] of Crinja::Value
-        paths = render_first_found_crinja_param(paths_val, env) ||
-                ["files", "templates", "vars", "."].map { |root| Crinja::Value.new(root) }
+                   # template_vars=dict(...) - real Ansible's own template lookup
+                   # plugin merges this kwarg's dict into the vars available to
+                   # the rendered template, ON TOP of (never replacing) the
+                   # calling context's own vars. Entirely ignored before in this
+                   # native Crinja path (ExpressionEvaluator#lookup_template
+                   # already had the equivalent fix) - a template rendered via
+                   # `{{ lookup('template', path, template_vars=dict(...)) }}`
+                   # reached here with the kwarg's values simply absent, so any
+                   # `{{ app_name }}` etc. inside the template rendered
+                   # "undefined" regardless of which call passed which values
+                   # (bimdata.ferm's own get_vars.j2, rendered 4 times with a
+                   # different app_name:/var_type: pair each time via this exact
+                   # kwarg - round 849).
+                   extra = arguments.kwargs["template_vars"]?.try { |val| val.raw.is_a?(Crinja::Dictionary) ? val.raw.as(Crinja::Dictionary) : nil }
+                   if extra && !extra.empty?
+                     saved = extra.keys.to_h { |key| {key, env.context[key.to_s]} }
+                     extra.each { |key, value| env.context[key.to_s] = value }
+                     begin
+                       Crinja::Value.new(env.from_string(content).render.chomp)
+                     ensure
+                       saved.each { |key, value| env.context[key.to_s] = value }
+                     end
+                   else
+                     Crinja::Value.new(env.from_string(content).render.chomp)
+                   end
+                 rescue
+                   Crinja::Value.new(nil)
+                 end
+               when "password"
+                 raw_arg = arg1.to_s
+                 Crinja::Value.new(JinjaFilters.password_lookup(raw_arg, role_path))
+               when "unvault"
+                 # Session-wide vault secret (Vault.password), distinct from the
+                 # `unvault` FILTER above (an explicit filter-argument secret).
+                 path = arg1.to_s
+                 password = Krikri::Vault.password
+                 begin
+                   (password && File.exists?(path)) ? Crinja::Value.new(Krikri::Vault.decrypt(File.read(path), password).chomp) : Crinja::Value.new(nil)
+                 rescue
+                   Crinja::Value.new(nil)
+                 end
+               when "dict"
+                 hash = arg1.raw.is_a?(Crinja::Dictionary) ? arg1.raw.as(Crinja::Dictionary) : Crinja::Dictionary.new
+                 Crinja::Value.new(hash.map { |k, v| Crinja::Value.new({"key" => Crinja::Value.new(k.to_s), "value" => v}) })
+               when "list"
+                 Crinja::Value.new(variadic_terms)
+               when "items"
+                 Crinja::Value.new(variadic_terms.flat_map { |tval| tval.sequence? ? tval.to_a : [tval] })
+               when "together"
+                 arrays = variadic_terms.map { |tval| tval.sequence? ? tval.to_a : [] of Crinja::Value }
+                 size = arrays.max_of?(&.size) || 0
+                 Crinja::Value.new((0...size).map { |i| Crinja::Value.new(arrays.map { |arr| arr[i]? || Crinja::Value.new(nil) }) })
+               when "nested"
+                 arrays = variadic_terms.map { |tval| tval.sequence? ? tval.to_a : [] of Crinja::Value }
+                 rows = arrays.reduce([[] of Crinja::Value]) { |acc, arr| acc.flat_map { |row| arr.map { |item| row + [item] } } }
+                 Crinja::Value.new(rows.map { |row| Crinja::Value.new(row) })
+               when "varnames"
+                 patterns = variadic_terms.compact_map { |tval| VariableSubstitutor::FilterEngine.cached_regex(tval.to_s) rescue nil }
+                 names = env.context.keys.select { |nm_blk| patterns.any?(&.matches?(nm_blk)) }
+                 Crinja::Value.new(names.map { |nval| Crinja::Value.new(nval) })
+               when "indexed_items"
+                 arr = arg1.sequence? ? arg1.to_a : [] of Crinja::Value
+                 Crinja::Value.new(arr.map_with_index { |item, i| Crinja::Value.new([Crinja::Value.new(i), item]) })
+               when "random_choice"
+                 items = variadic_terms.flat_map { |tval| tval.sequence? ? tval.to_a : [tval] }
+                 items.empty? ? Crinja::Value.new(nil) : items.sample
+               when "subelements"
+                 source = arg1.sequence? ? arg1.to_a : [] of Crinja::Value
+                 subkey = arguments["a2"].to_s
+                 skip_missing = arguments["a3"].raw.is_a?(Crinja::Dictionary) ? (arguments["a3"].raw.as(Crinja::Dictionary)[Crinja::Value.new("skip_missing")]?.try(&.truthy?) || false) : false
+                 pairs = [] of Crinja::Value
+                 source.each do |parent|
+                   children = parent.raw.is_a?(Crinja::Dictionary) ? parent.raw.as(Crinja::Dictionary)[Crinja::Value.new(subkey)]? : nil
+                   next if children.nil? && skip_missing
+                   (children.try(&.to_a) || [] of Crinja::Value).each { |child| pairs << Crinja::Value.new([parent, child]) }
+                 end
+                 Crinja::Value.new(pairs)
+               when "url"
+                 # lookup('url', url_expr[, wantlist=True]) - fetches from the
+                 # CONTROLLER, following redirects (see .fetch_url_lines below).
+                 # `wantlist` arrives as a plain caller-supplied kwarg - it's
+                 # deliberately NOT declared in this function's defaults tuple
+                 # (unlike type/a1..a4), since `Arguments#kwargs` already holds
+                 # whatever named args the caller actually passed regardless of
+                 # what's declared, and declaring it would force every OTHER
+                 # lookup type to also tolerate a stray `wantlist=` kwarg.
+                 wantlist = arguments.kwargs["wantlist"]?.try(&.truthy?) || false
+                 lines = JinjaFilters.fetch_url_lines(arg1.to_s)
+                 if lines.nil?
+                   Crinja::Value.new(nil)
+                 elsif wantlist
+                   Crinja::Value.new(lines.map { |line| Crinja::Value.new(line) })
+                 else
+                   Crinja::Value.new(lines.join(","))
+                 end
+               when "first_found"
+                 # lookup('first_found', {'files': [...], 'paths': [...]}) - same
+                 # search order/role-relative resolution as ExpressionEvaluator's
+                 # own #evaluate_first_found, adapted to Crinja::Dictionary/Value
+                 # instead of JSON::Any.
+                 hash = arg1.raw.is_a?(Crinja::Dictionary) ? arg1.raw.as(Crinja::Dictionary) : nil
+                 files_val = hash.try(&.[Crinja::Value.new("files")]?)
+                 paths_val = hash.try(&.[Crinja::Value.new("paths")]?)
+                 # A `files:`/`paths:` value can be a TEMPLATED SCALAR (`files: "{{
+                 # candidates | map('regex_replace', '$', '.yml') | list }}"`, the
+                 # idiv_biodiversity.systemd_timesyncd idiom) rather than a literal
+                 # list - the dict reaches this lookup with its nested {{ }} intact,
+                 # so the string form must be rendered and parsed back out, not
+                 # silently dropped as an empty candidate list by the sequence?
+                 # guard (same mechanism ExpressionEvaluator's
+                 # #render_first_found_param fixes for the hand-rolled evaluator).
+                 files = render_first_found_crinja_param(files_val, env) || [] of Crinja::Value
+                 paths = render_first_found_crinja_param(paths_val, env) ||
+                         ["files", "templates", "vars", "."].map { |root| Crinja::Value.new(root) }
 
-        rendered_paths = paths.flat_map { |path_entry| JinjaFilters.resolve_first_found_roots(env.from_string(path_entry.to_s).render, role_path) }
+                 rendered_paths = paths.flat_map { |path_entry| JinjaFilters.resolve_first_found_roots(env.from_string(path_entry.to_s).render, role_path) }
 
-        found = nil
-        files.each do |file_entry|
-          rendered_file = env.from_string(file_entry.to_s).render
-          rendered_paths.each do |root_path|
-            candidate = File.join(root_path, rendered_file)
-            if File.exists?(candidate)
-              found = candidate
-              break
-            end
-          end
-          break if found
-        end
-        # Real first_found's own `skip:` param: with no match and skip unset
-        # it RAISES ("No file was found when using first_found.", verified
-        # live against 2.19.4) - it does not quietly render as nil/empty and
-        # let a chained default() paper over a missing vars file
-        # (idiv_biodiversity.systemd_timesyncd). With skip: true the miss is
-        # an empty result (real renders the lookup as `[]`), not nil.
-        if found.nil?
-          skip_param = hash.try(&.[Crinja::Value.new("skip")]?)
-          if skip_param.try(&.truthy?)
-            Crinja::Value.new([] of Crinja::Value)
-          else
-            raise Krikri::FirstFoundLookupError.new(
-              "The lookup plugin 'first_found' failed: No file was found when using first_found.")
-          end
-        else
-          Crinja::Value.new(found)
-        end
-      when "sequence"
-        Crinja::Value.new(JinjaFilters.sequence_lookup(arg1.to_s).map { |v| Crinja::Value.new(v) })
-      when "csvfile"
-        Crinja::Value.new(JinjaFilters.csvfile_lookup(arg1.to_s))
-      when "ini"
-        Crinja::Value.new(JinjaFilters.ini_lookup(arg1.to_s))
+                 found = nil
+                 files.each do |file_entry|
+                   rendered_file = env.from_string(file_entry.to_s).render
+                   rendered_paths.each do |root_path|
+                     candidate = File.join(root_path, rendered_file)
+                     if File.exists?(candidate)
+                       found = candidate
+                       break
+                     end
+                   end
+                   break if found
+                 end
+                 # Real first_found's own `skip:` param: with no match and skip unset
+                 # it RAISES ("No file was found when using first_found.", verified
+                 # live against 2.19.4) - it does not quietly render as nil/empty and
+                 # let a chained default() paper over a missing vars file
+                 # (idiv_biodiversity.systemd_timesyncd). With skip: true the miss is
+                 # an empty result (real renders the lookup as `[]`), not nil.
+                 if found.nil?
+                   skip_param = hash.try(&.[Crinja::Value.new("skip")]?)
+                   if skip_param.try(&.truthy?)
+                     Crinja::Value.new([] of Crinja::Value)
+                   else
+                     raise Krikri::FirstFoundLookupError.new(
+                       "The lookup plugin 'first_found' failed: No file was found when using first_found.")
+                   end
+                 else
+                   Crinja::Value.new(found)
+                 end
+               when "sequence"
+                 Crinja::Value.new(JinjaFilters.sequence_lookup(arg1.to_s).map { |v| Crinja::Value.new(v) })
+               when "csvfile"
+                 Crinja::Value.new(JinjaFilters.csvfile_lookup(arg1.to_s))
+               when "ini"
+                 Crinja::Value.new(JinjaFilters.ini_lookup(arg1.to_s))
+               else
+                 crinja_custom_python_lookup(lookup_type, env, arguments, variadic_terms)
+               end
+
+      # query()/q() is real Ansible's lookup(..., wantlist=True): a
+      # non-list result renders as a single-element list (a list-shaped
+      # result and an undefined one pass through unchanged).
+      if query_mode && !result.undefined? && !result.raw.nil? && !result.sequence?
+        Crinja::Value.new([result])
       else
-        Crinja::Value.new(nil)
+        result
       end
+    end
+
+    # The lookup dispatch's `else` fallback: a role-local (or
+    # playbook-adjacent) custom `lookup_plugins/<name>.py`, delegated to
+    # the controller's own python3 (see PythonLookupRunner) - the
+    # Crinja-side twin of ExpressionEvaluator's
+    # #evaluate_custom_python_lookup, which this needed ported to
+    # separately (the two evaluators share no implementation). Every
+    # unavailable/miss path returns the plain nil the else branch always
+    # returned, so templates without custom lookups render identically.
+    private def self.crinja_custom_python_lookup(lookup_type : String, env : Crinja, arguments : Crinja::Arguments, variadic_terms : Array(Crinja::Value)) : Crinja::Value
+      role_path_value = env.context["role_path"]
+      playbook_dir_value = env.context["playbook_dir"]
+      role_path = role_path_value.undefined? ? nil : role_path_value.to_s
+      playbook_dir = playbook_dir_value.undefined? ? nil : playbook_dir_value.to_s
+      return Crinja::Value.new(nil) unless source = Krikri::PythonLookupRunner.find_source(lookup_type, role_path, playbook_dir)
+
+      terms = variadic_terms.map { |tval| Krikri::VariableSubstitutor::CrinjaRenderer.crinja_value_to_json_any(tval) }
+      options = Hash(String, JSON::Any).new
+      arguments.kwargs.each do |key, value|
+        # wantlist/errors are Templar's own generic options - real
+        # Ansible pops them before the plugin ever sees the kwargs.
+        next if key.downcase.in?("wantlist", "errors")
+        options[key] = Krikri::VariableSubstitutor::CrinjaRenderer.crinja_value_to_json_any(value)
+      end
+
+      # Real Ansible's lookup variables dict always carries the omit
+      # sentinel - a real-world plugin (manala.accounts's own
+      # manala_accounts_users_authorized_keys.py) does
+      # `variables['omit']` equality checks against it.
+      variables = Hash(String, JSON::Any).new
+      env.context.keys.each do |key|
+        value = env.context[key]
+        variables[key] = Krikri::VariableSubstitutor::CrinjaRenderer.crinja_value_to_json_any(value) unless value.undefined?
+      end
+      variables["omit"] = JSON::Any.new(OMIT_SENTINEL)
+
+      begin
+        result = Krikri::PythonLookupRunner.call_lookup(lookup_type, source, terms, variables, options)
+      rescue ex : Krikri::PythonLookupRunner::LookupUnavailableError
+        return Crinja::Value.new(nil) if ex.unavailable?
+        return Crinja::Value.new(nil) if arguments.kwargs["errors"]?.try(&.to_s.downcase) == "ignore"
+        raise ex
+      end
+      json_any_to_value(result)
     end
 
     # lookup('file'|'template', path) both name a CONTROLLER-side path

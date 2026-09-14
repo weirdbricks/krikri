@@ -8,6 +8,7 @@ require "./filter_engine"
 require "./array_slicer"
 require "./variable_lookup"
 require "./crinja_renderer"
+require "../python_lookup_runner"
 require "./undefined"
 require "../variable_substitutor"
 
@@ -1968,6 +1969,7 @@ module Krikri
           evaluate_lookup_list(lookup_type, parts, kwargs) ||
           evaluate_lookup_misc(lookup_type, parts, kwargs) ||
           evaluate_lookup_file_parsers(lookup_type, parts, kwargs) ||
+          evaluate_custom_python_lookup(lookup_type, parts, kwargs, query_mode) ||
           "undefined"
       end
 
@@ -2044,7 +2046,7 @@ module Krikri
             next
           end
           case char
-          when '\'', '"'   then quote = char
+          when '\'', '"'     then quote = char
           when '(', '[', '{' then depth += 1
           when ')', ']', '}' then depth -= 1
           when ':'
@@ -2950,15 +2952,72 @@ module Krikri
             "undefined"
           end
         else
-          # Reached only by lookup types with no handler above - most
-          # commonly a role-local CUSTOM Python lookup plugin
-          # (manala.cron's own lookup_plugins/manala_cron_files_env.py,
-          # a real, understood scope limit), which real Ansible runs as
-          # ordinary Python. Previously this list also named `config`
-          # (implemented round 190) and `inventory_hostnames`
-          # (implemented 0.9.825 - both fall through here no more).
+          # Reached only by lookup types with no handler above AND no
+          # role-local/playbook-adjacent `lookup_plugins/<name>.py`
+          # (evaluate_custom_python_lookup got the custom ones first).
+          # Previously this branch also swallowed the custom Python
+          # plugins themselves, silently degrading every role shipping
+          # one (manala.cron's own manala_cron_files_env.py) to
+          # "undefined".
           nil
         end
+      end
+
+      # A lookup type with no handler above falls back to role-local
+      # (and playbook-adjacent) custom `lookup_plugins/*.py` - real
+      # Ansible loads those on the controller (a lookup plugin's name
+      # IS its file name) and runs `LookupModule.run(terms, variables,
+      # **kwargs)` there. Delegated to the controller's own python3
+      # (see PythonLookupRunner); nil keeps the previous "undefined"
+      # fallback exactly as before whenever the mechanism cannot help
+      # (no source file, no python3, no LookupModule class), so roles
+      # without custom lookup plugins behave bit-for-bit identically.
+      private def evaluate_custom_python_lookup(lookup_type : String?, parts : Array(String), kwargs : Array(String), query_mode : Bool = false) : String?
+        return nil unless lookup_type
+
+        role_path = @vars["role_path"]?.try(&.as_s?)
+        playbook_dir = @vars["playbook_dir"]?.try(&.as_s?)
+        return nil unless source = PythonLookupRunner.find_source(lookup_type, role_path, playbook_dir)
+
+        # wantlist/errors are Templar's own generic options - real
+        # Ansible pops them before the plugin ever sees the kwargs.
+        wantlist = kwargs.any? { |part| part.strip.downcase.starts_with?("wantlist=true") }
+        options = Hash(String, JSON::Any).new
+        kwargs.each do |kwarg|
+          key, _, raw_value = kwarg.strip.partition('=')
+          next if key.empty? || key.downcase.in?("wantlist", "errors")
+          options[key] = evaluate_lookup_term(raw_value)
+        end
+
+        # Real Ansible's lookup variables dict always carries the omit
+        # sentinel - a real-world plugin (manala.accounts's own
+        # manala_accounts_users_authorized_keys.py) does
+        # `variables['omit']` equality checks against it.
+        variables = @vars.dup
+        variables["omit"] = JSON::Any.new(OMIT_SENTINEL)
+
+        terms = parts[1..].map { |part| evaluate_lookup_term(part) }
+        begin
+          result = PythonLookupRunner.call_lookup(lookup_type, source, terms, variables, options)
+        rescue ex : PythonLookupRunner::LookupUnavailableError
+          return nil if ex.unavailable?
+          # A dispatched plugin failure is a real task failure in real
+          # Ansible (the plugin's own error) - same hard-failure
+          # convention as lookup_pipe's PipeLookupError; the generic
+          # lookup errors='ignore' option keeps the empty-result
+          # behavior instead (verified live against 2.19.4 there).
+          return "" if first_found_errors_ignore?(kwargs)
+          raise ex
+        end
+
+        # Same list-form convention as lookup_inventory_hostnames: a
+        # list-shaped result is comma-joined into a scalar only when
+        # the caller asked for a scalar lookup() AND got something -
+        # query()/wantlist=True/an empty result stay a real list.
+        items = result.as_a?
+        return result.to_json unless items
+        list_form = wantlist || query_mode || items.empty?
+        list_form ? items.to_json : items.map { |item| item.raw.is_a?(String) ? item.as_s : item.to_json }.join(",")
       end
 
       # `query(lookup_type, args)` - real Ansible's list-forcing sibling
@@ -3000,15 +3059,15 @@ module Krikri
 
         raw = evaluate_lookup(args, query_mode: true)
         # The same "undefined" sentinel #evaluate_lookup falls back to
-        # for any lookup type it doesn't implement (most commonly a
-        # role-local CUSTOM Python lookup plugin - manala.cron's own
-        # lookup_plugins/manala_cron_files_env.py, a real, understood
-        # scope limit) - wrapping it as a single-element ["undefined"]
-        # array below would make a `loop: "{{ query(...) }}"` run ONCE
-        # with a bogus string item instead of the empty list real
-        # Ansible's own query() falls back to when nothing resolves.
-        # Same special case the first_found branch above already has;
-        # this is its generic-fallback equivalent.
+        # for any lookup type it doesn't implement and that has no
+        # role-local custom `lookup_plugins/<name>.py` behind it (those
+        # dispatch through #evaluate_custom_python_lookup inside
+        # #evaluate_lookup now) - wrapping it as a single-element
+        # ["undefined"] array below would make a `loop: "{{ query(...)
+        # }}"` run ONCE with a bogus string item instead of the empty
+        # list real Ansible's own query() falls back to when nothing
+        # resolves. Same special case the first_found branch above
+        # already has; this is its generic-fallback equivalent.
         return "[]" if raw == "undefined"
 
         parsed = (JSON.parse(raw) rescue nil)
