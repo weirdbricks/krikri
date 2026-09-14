@@ -830,29 +830,44 @@ module Krikri
       end
 
       roots = [] of String
-      # The directory of the file the with_first_found: task itself is
-      # written in - real Ansible tries a bare candidate against the
-      # task's own file first. include_file_dir is only assigned for
-      # include_tasks: statements, though, so a task declared directly
-      # in a role's tasks/main.yml has it nil - fall back to the role's
-      # tasks/ dir itself. so5.ssh_hostbased_auth and so5.pbspro (both
-      # verified live against ansible-core 2.19.x) include_vars:
-      # with_first_found: a "setup-<OS>.yml" idiom whose only matching
-      # file lives under tasks/ (never vars/ or files/) - without this
-      # root the lookup exhausted and failed with "No file was found
-      # when using first_found." where real Ansible resolved to
-      # tasks/setup-Debian.yml and the role ran to completion.
-      task.include_file_dir.try { |dir| roots << dir }
-      task.role_path.try { |role_dir| roots << File.join(role_dir, "tasks") }
-      unless task.include_tasks?
-        task.role_files_dir.try { |dir| roots << dir }
-        task.role_templates_dir.try { |dir| roots << dir }
-        # with_first_found is commonly used with include_vars: to pick an
-        # OS-specific vars file - dev-sec os_hardening's "Fetch OS dependent
-        # variables" does exactly this against Ubuntu.yml/Debian.yml in the
-        # role's vars/ dir. Include vars/ in the search roots so those resolve
-        # the same way resolve_include_vars_path already looks there.
+      if task.include_vars?
+        # include_vars: + with_first_found: (round 812001, mircomasa.
+        # filebeat): real Ansible's include_vars action plugin searches the
+        # role's vars/ dir FIRST and its tasks/ dir only as a fallback, and
+        # never files/ or templates/ (verified live against ansible-core
+        # 2.19.11 with a probe role holding the same basename in every
+        # subdir: the vars/ copy won; with vars/ empty and only files//
+        # templates/ populated, the lookup exhausted and failed). The
+        # previous root order here put tasks/ first, so a role shipping the
+        # same OS filename in both tasks/ (a task LIST, mircomasa.filebeat's
+        # own tasks/Linux.yml) and vars/ (a vars MAPPING, its vars/Linux.yml
+        # defining a `default:` dict) resolved the include_vars: to the
+        # tasks/ copy, merged zero variables, and every later default that
+        # referenced one of them - fb_home: '{{ default["fb_home"] }}' -
+        # failed with "'default[...]' is undefined" at the first task that
+        # rendered it, even though the include_vars: task itself had
+        # reported ok. The tasks/ fallback stays because so5.ssh_hostbased_
+        # auth and so5.pbspro (both verified live against ansible-core
+        # 2.19.x) include_vars: with_first_found: a "setup-<OS>.yml" idiom
+        # whose only matching file lives under tasks/ (never vars/ or
+        # files/) - real Ansible resolved to tasks/setup-Debian.yml there.
         task.role_vars_dir.try { |dir| roots << dir }
+        task.include_file_dir.try { |dir| roots << dir }
+        task.role_path.try { |role_dir| roots << File.join(role_dir, "tasks") }
+      else
+        # The directory of the file the with_first_found: task itself is
+        # written in - real Ansible tries a bare candidate against the
+        # task's own file first. include_file_dir is only assigned for
+        # include_tasks: statements, though, so a task declared directly
+        # in a role's tasks/main.yml has it nil - fall back to the role's
+        # tasks/ dir itself.
+        task.include_file_dir.try { |dir| roots << dir }
+        task.role_path.try { |role_dir| roots << File.join(role_dir, "tasks") }
+        unless task.include_tasks?
+          task.role_files_dir.try { |dir| roots << dir }
+          task.role_templates_dir.try { |dir| roots << dir }
+          task.role_vars_dir.try { |dir| roots << dir }
+        end
       end
       # vars//files//templates/ are NOT searched for an include_tasks:'
       # with_first_found: at all - include_tasks: consumes task-list YAML
