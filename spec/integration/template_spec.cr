@@ -492,6 +492,31 @@ describe "template plugin param coverage" do
       result["changed"].as_bool.should be_false
       File.read(dest).should eq("OLD\n")
     end
+
+    it "still creates a brand-new dest with force: false (round 811059/812xxx, cchurch.uwsgi)" do
+      # force: false only guards an OVERWRITE of an EXISTING file - real
+      # Ansible's copy.py only takes the force-skip branch inside its own
+      # `if os.path.exists(dest)` check, so a dest that doesn't exist yet
+      # is always created regardless of force:. This engine's own
+      # `changed` starts true unconditionally and only flips to false
+      # when dest exists with matching content - missing a
+      # `File.exists?(dest)` guard on the force check meant `changed &&
+      # !force` fired for a nonexistent dest too, wrongly reporting
+      # "File already exists" (cchurch.uwsgi's own `uwsgi_conf_force:
+      # false` default) for a file that had never been written.
+      dest = tmp_path("force_off_new_file.txt")
+      File.delete(dest) if File.exists?(dest)
+
+      result = PluginSpecHelper.run("template", {
+        "content" => "NEW\n",
+        "dest"    => dest,
+        "force"   => "false",
+      })
+
+      result["failed"]?.try(&.as_bool).should be_falsey
+      result["changed"].as_bool.should be_true
+      File.read(dest).should eq("NEW\n")
+    end
   end
 
   describe "unsafe_writes:" do

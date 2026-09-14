@@ -163,8 +163,18 @@ module Krikri
       # already exists with DIFFERENT content and force: is explicitly
       # false, real Ansible leaves the file untouched and reports plain
       # ok/changed: false - NOT a failure (live-verified against
-      # ansible-core 2.19.4). Mirrors copy.cr's own force handling.
-      if changed && !true?(@params["force"]?, default: true)
+      # ansible-core 2.19.4). force: false only guards an OVERWRITE of an
+      # EXISTING file - it never blocks the initial CREATE of a dest that
+      # doesn't exist yet (real Ansible's copy.py only takes this branch
+      # inside its own `if os.path.exists(dest)` check). Missing the
+      # `File.exists?(dest)` guard here (copy.cr's own #handle_file_copy
+      # already has it, at the `unless force` check nested inside `if
+      # File.exists?(dest)`) meant a template: task with force: false
+      # skipped creating a BRAND NEW dest on its very first cold run,
+      # reporting "File already exists" for a file that never existed
+      # (round 811059/812xxx, cchurch.uwsgi's own `uwsgi_conf_force:
+      # false` default) - real Ansible creates it fine.
+      if changed && File.exists?(dest) && !true?(@params["force"]?, default: true)
         return PluginResult.new(
           changed: false,
           failed: false,
