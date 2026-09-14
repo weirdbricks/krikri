@@ -1016,7 +1016,7 @@ module Krikri
         # "skipping: [host] => (item=...)" line (cyan) and leaves it out
         # of the executed set entirely - only the items that actually
         # ran decide the task's ok=/changed= recap bucket. Found via
-        # jjahrik.nerd_fonts round 813005 plus a live repro against real
+        # jahrik.nerd_fonts round 813005 plus a live repro against real
         # ansible-playbook (ansible-core 2.19).
         if result["skipped"]?.try(&.as_bool) || false
           connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
@@ -1071,7 +1071,7 @@ module Krikri
         # nothing at all otherwise, and the all-items-skipped case needs
         # it IN ADDITION to its own per-item `skipping: => (item=...)`
         # lines above - verified live against real ansible-playbook 2.19
-        # (found via jjahrik.nerd_fonts round 813005): real Ansible emits
+        # (found via jahrik.nerd_fonts round 813005): real Ansible emits
         # the bare line in BOTH shapes, so both share this same
         # executed_count == 0 condition.
         connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
