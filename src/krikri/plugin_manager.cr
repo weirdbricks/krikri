@@ -475,6 +475,22 @@ module Krikri
         # tasks instead of dropping them at parse time).
         next if task.unavailable_module
 
+        # templated_action (Task's own doc; set when a dict-form
+        # `action: {module: "{{ ansible_pkg_mgr }}"}` - or an equivalent
+        # bare-string form - templates the MODULE NAME itself, not just
+        # its params) has no real name to look up a plugin binary for
+        # until TaskExecutor#resolve_templated_action renders it against
+        # a specific host's own gathered facts at run time - task.
+        # module_name here is still the literal unrendered "{{ ... }}"
+        # text. Same crash shape as unavailable_module above:
+        # get_local_plugin_path("{{ ansible_pkg_mgr }}") raised outright
+        # ("Plugin binary not found: {{ ansible_pkg_mgr }}"), crashing
+        # the whole run before a single task executed - found live via
+        # cchurch.admin-users (round 811129), whose "ensure sudo package
+        # is installed" task dispatches to whichever of apt:/dnf:/yum:
+        # ansible_pkg_mgr resolves to per host.
+        next if task.templated_action
+
         # ansible.builtin.reboot has no plugin binary at all (see
         # TaskExecutor#execute_reboot's own comment - it can't run ON
         # the target, since the target is about to reboot). Same crash
