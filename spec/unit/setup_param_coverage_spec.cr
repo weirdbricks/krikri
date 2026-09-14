@@ -97,6 +97,17 @@ describe Krikri::FactsGatherer do
       result["msg"].as_s.should start_with("Bad subset ' virtual'")
     end
 
+    it "recovers a JSON-array-shaped STRING gather_subset (native-list task param re-serialized to a string wire value, the linux-system-roles.vpn/fapolicyd divergence)" do
+      # A `setup: {gather_subset: "{{ list_var }}"}` task arrives on the
+      # wire with the native list's JSON rendering inside a String field
+      # - it must be parsed back to a list, not comma-split into tokens
+      # like `["!all"`.
+      result = JSON.parse(Krikri::FactsGatherer.run(config_with(%({"gather_subset": "[\\"!all\\", \\"!min\\", \\"distribution\\"]"}))))
+      result["failed"]?.try(&.as_bool).should be_falsey
+      facts = result["ansible_facts"]
+      facts["gather_subset"].as_a.map(&.as_s).should eq(["!all", "!min", "distribution"])
+    end
+
     it "returns only the meta facts for !all,!min" do
       result = JSON.parse(Krikri::FactsGatherer.run(config_with(%({"gather_subset": ["!all", "!min"]}))))
       result["failed"]?.try(&.as_bool).should be_falsey
