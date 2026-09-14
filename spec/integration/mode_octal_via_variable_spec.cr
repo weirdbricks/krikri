@@ -127,16 +127,11 @@ describe "mode: piped through a variable that's itself an unquoted-octal YAML li
     stat_output.to_s.strip.should eq("1777")
 
     # dir_b: a value that LOOKS like a leading-zero octal after
-    # decimal-coercion too - "0755" -> int 755. The mode-octal fix in
-    # TaskExecutor (KNOWN_MISSING.md's 0.9.339 entry) checks whether
-    # the int's plain decimal digits already match `\\A0?[0-7]{3,4}\\z`
-    # (the same regex file.cr's mode parser uses); if so, use as-is.
-    # 755 is exactly 3 valid octal digits, so the executor uses it
-    # unchanged - mode 0755, the correct value. (My initial spec
-    # comment assumed the reformatting would apply and produce "1363"
-    # via to_s(8); the live behavior is the BETTER outcome where
-    # the bug fix already handles "0755" through the same path as
-    # "1777".) This dir_b assertion just confirms the dir_a fix
+    # decimal-coercion too - "0755" -> int 755. set_fact's own coercion
+    # keeps octal-mode-shaped strings strings (see plugins/set_fact.cr),
+    # so the executor's `'%04o'` reformat never sees an int here at all -
+    # the mode goes through as the string "0755" and applies 0755, the
+    # correct value. This dir_b assertion just confirms the dir_a fix
     # didn't regress the leading-zero decimal-coercion case.
     stat_output2 = IO::Memory.new
     Process.run("stat", ["-c", "%a", "#{dir}_b"], output: stat_output2)
@@ -154,5 +149,56 @@ describe "mode: piped through a variable that's itself an unquoted-octal YAML li
       Dir.delete("#{dir}_a") if Dir.exists?("#{dir}_a")
       Dir.delete("#{dir}_b") if Dir.exists?("#{dir}_b")
     end
+  end
+
+  it "recovers the octal digits even when the int's own decimal digits coincidentally look octal-valid (0640 -> 416)" do
+    # Real bug found benchmarking geerlingguy.redis (round 810117, a
+    # 400-role regression sweep): its vars/Debian.yml defines
+    # `redis_conf_mode: 0640` - an UNQUOTED YAML literal Crystal parses
+    # to the decimal Int64 416. The old disambiguator only reformatted
+    # an int mode via to_s(8) when the int's own DECIMAL digits did NOT
+    # already look like a valid octal mode - but 0640's decimal 416,
+    # 0644's decimal 420 and 0777's decimal 511 all coincidentally have
+    # octal-only digits, so the literal digits "416" were used as-is:
+    # the config file was chmod'd to octal 416 (-r----xrw-) instead of
+    # 0640. Never converged either - redis-server's own postinst chmods
+    # the config 640 on install, so every warm run saw 640 vs the
+    # (wrongly-rendered) target 416 and re-chmod'd - changed: true on
+    # every warm run where real ansible-playbook (whose module receives
+    # the native int and does `'%04o' % mode` itself) stays ok. The fix
+    # (see substitute_task_params's key == "mode" comment) always
+    # reformats via to_s(8), which round-trips ANY YAML-octal-derived
+    # int back to its original digits exactly.
+    dir = File.tempname("mode-octal-416")
+    playbook = File.tempname("mode-octal-416", ".yml")
+    File.write(playbook, <<-YAML)
+      - name: repro
+        hosts: localhost
+        gather_facts: false
+        vars:
+          redis_conf_mode: 0640
+        tasks:
+          - name: make dir
+            ansible.builtin.file:
+              path: #{dir}
+              state: directory
+              mode: "{{ redis_conf_mode }}"
+      YAML
+
+    output1 = IO::Memory.new
+    status1 = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output1, error: output1)
+    status1.success?.should be_true
+
+    stat_output = IO::Memory.new
+    Process.run("stat", ["-c", "%a", dir], output: stat_output)
+    stat_output.to_s.strip.should eq("640")
+
+    output2 = IO::Memory.new
+    status2 = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output2, error: output2)
+    status2.success?.should be_true
+    output2.to_s.should_not contain("changed=1")
+  ensure
+    File.delete(playbook) if playbook && File.exists?(playbook)
+    Dir.delete(dir) if dir && Dir.exists?(dir)
   end
 end

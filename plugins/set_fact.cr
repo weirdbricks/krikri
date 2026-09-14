@@ -73,6 +73,25 @@ module Krikri
           # excluded from int coercion entirely and falls through to the
           # plain-string case below.
           JSON::Any.new(value)
+        elsif value.matches?(/\A[0-7]{3,4}\z/)
+          # Same class of bug, one zero shorter: an octal-MODE-shaped
+          # string with no leading zero ("1777" - os_hardening's own
+          # /dev/shm, /tmp and /var/tmp entries are exactly this shape)
+          # decimal-coerced into the int 1777. Real Ansible's native
+          # typing keeps a string-sourced fact a string, and the string
+          # is what downstream mode:/consumers need - a fed-back int
+          # instead re-triggers the executor's int-mode reformatting
+          # (`'%04o'`, see substitute_task_params's key == "mode"
+          # comment), turning "1777" into "3361" and corrupting real
+          # directory permissions again. The executor's reformat can
+          # afford to be unconditional (and must be - geerlingguy.redis's
+          # `mode: "{{ redis_conf_mode }}"` with 0640's decimal 416 was
+          # misapplied as octal 416, never converging against
+          # redis-server's own postinst chmod 640) precisely because this
+          # coercion no longer manufactures fake ints out of octal-shaped
+          # strings. Numeric comparisons are unaffected either way -
+          # compare_values parses both sides numerically.
+          JSON::Any.new(value)
         elsif int_value = value.to_i64?
           JSON::Any.new(int_value)
         elsif float_value = value.to_f64?

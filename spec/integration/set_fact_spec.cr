@@ -67,7 +67,13 @@ describe "set_fact plugin" do
     # chmod syscall applied it as octal 1363 instead of 0755 - corrupted
     # real directory permissions (/dev, /run, /var, /home, /tmp,
     # /dev/shm, /var/tmp) on a live host. "0" itself and a genuine float
-    # like "0.5" must still coerce normally.
+    # like "0.5" must still coerce normally. "1777" (os_hardening's own
+    # /dev/shm|/tmp|/var/tmp shape - no leading zero, all octal digits)
+    # must ALSO stay a string: coerced to the int 1777, a downstream
+    # `mode: "{{ ... }}"` re-triggers the executor's `'%04o'` int-mode
+    # reformatting and applies 3361 instead - the identical corruption,
+    # found live via geerlingguy.redis (whose 0640 int, the flip side,
+    # must REFORMAT to "0640" - see mode_octal_via_variable_spec.cr).
     result = PluginSpecHelper.run("set_fact", {
       "mode1" => "0755", "mode2" => "1777", "mode3" => "0700",
       "zero" => "0", "small_float" => "0.5",
@@ -75,7 +81,7 @@ describe "set_fact plugin" do
 
     facts = result["ansible_facts"]
     facts["mode1"].as_s.should eq("0755")
-    facts["mode2"].as_i64.should eq(1777)
+    facts["mode2"].as_s.should eq("1777")
     facts["mode3"].as_s.should eq("0700")
     facts["zero"].as_i64.should eq(0)
     facts["small_float"].as_f.should eq(0.5)

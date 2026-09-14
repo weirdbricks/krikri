@@ -1224,14 +1224,14 @@ module Krikri
           substituted_value = OMIT_SENTINEL
         end
 
-        # `mode:` piped through a variable (`mode: "{{ redis_conf_dir_mode
+        # `mode:` piped through a variable (`mode: "{{ redis_conf_mode
         # }}"`, geerlingguy.redis's own style) loses its octal-ness the
         # same way a *direct* unquoted `mode: 0770` literal does (see
         # playbook_parser.cr's own #parse_task_params octal-mode comment)
         # - Crystal's YAML parser already decimal-converted the variable's
-        # defining `redis_conf_dir_mode: 02770` at vars-file parse time,
-        # so #substitute above just stringifies that decimal (Int64 1528)
-        # as "1528" verbatim. Real Ansible's own file module hits the
+        # defining `redis_conf_mode: 0640` at vars-file parse time,
+        # so #substitute above just stringifies that decimal (Int64 416)
+        # as "416" verbatim. Real Ansible's own file module hits the
         # exact same decimal-rendered string internally, but recovers the
         # original octal digits because its `mode:` argspec is `type:
         # raw` - a *bare* single `{{ }}` template preserves the
@@ -1242,45 +1242,32 @@ module Krikri
         # narrowly scoped to key == "mode" (matching the parse-time fix's
         # own scope) rather than generally preserving native types for
         # every param, since only mode: has this real-Ansible-specific
-        # int -> octal-string reinterpretation.
+        # int -> octal-string reinterpretation. rjust(4, '0') mirrors
+        # `'%04o'`'s own minimum-width padding exactly ("640" from
+        # 0640's decimal 416, "2770" from 02770's decimal 1528).
+        #
+        # This used to keep the int's plain decimal digits when they
+        # already LOOKED like a valid octal mode (`\A[0-7]{3,4}\z`), to
+        # protect set_fact-decimal-coerced mode strings ("1777" -> int
+        # 1777 -> reformatted to "3361") - but that heuristic misfires on
+        # exactly the most common YAML-octal modes, whose decimal values
+        # coincidentally have octal-only digits: 0640 -> 416, 0644 ->
+        # 420, 0777 -> 511. geerlingguy.redis's own `mode: "{{
+        # redis_conf_mode }}"` (0640) applied as octal 416 instead, then
+        # never converged against redis-server's own postinst chmod 640 -
+        # changed: true on every warm run. The escape is gone because its
+        # other side is now fixed at the root: set_fact's coerce no
+        # longer decimal-coerces octal-mode-shaped strings into ints at
+        # all (see plugins/set_fact.cr - real Ansible's native typing
+        # keeps a string-sourced fact a string), so every Int64 arriving
+        # here is a genuine YAML-octal-derived int and to_s(8) always
+        # round-trips the original octal digits.
         if key == "mode"
           stripped = value.strip
           if stripped.starts_with?("{{") && stripped.ends_with?("}}") && stripped.scan("{{").size == 1
             native = VariableSubstitutor::VariableLookup.new(substitutor.vars).resolve(stripped[2..-3].strip)
             if native && (raw = native.raw).is_a?(Int64)
-              # Only reformat via to_s(8) when the int's own PLAIN
-              # decimal digits do NOT already look like a valid octal
-              # mode (`\A[0-7]{3,4}\z`, matching `parse_numeric_mode`'s
-              # own regex in plugins/file.cr). Real bug found live-
-              # verifying the Crinja convergence work against dev-sec os_hardening:
-              # this reformatting assumes every Int64-typed mode value
-              # came from Crystal's YAML parser octal-converting an
-              # UNQUOTED literal (`redis_conf_dir_mode: 02770` -> decimal
-              # 1528, whose own digit string "1528" contains an '8' and
-              # so never looks octal-valid itself - reformatting recovers
-              # "02770") - but os_hardening's own dynamic `set_fact: "{{
-              # item.key }}": "{{ item.value }}"` produces an Int64 a
-              # COMPLETELY different way: plugins/set_fact.cr's `coerce`
-              # decimal-parses an already-octal-style STRING like "1777"
-              # into the int 1777 directly (no YAML octal parsing
-              # involved at all) - and for THAT kind of int, reformatting
-              # via to_s(8) treats 1777's decimal VALUE as needing
-              # re-expression in octal, giving "3361" instead of the
-              # original "1777", silently corrupting real chmod calls
-              # (found via corrupted directory permissions on a live
-              # host: /dev/shm, /tmp, /var/tmp all ended up mode 3361
-              # instead of 1777). Since a genuine octal-YAML-derived int's
-              # own decimal digits essentially never coincidentally look
-              # like a valid octal mode already (verified against both
-              # real cases above), checking that first disambiguates
-              # correctly without needing to track how the int
-              # originated.
-              plain = raw.to_s
-              substituted_value = if plain.matches?(/\A[0-7]{3,4}\z/)
-                                    plain
-                                  else
-                                    "0" + raw.to_s(8)
-                                  end
+              substituted_value = raw.to_s(8).rjust(4, '0')
             end
           end
         end
