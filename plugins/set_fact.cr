@@ -93,18 +93,22 @@ module Krikri
     end
 
     private def try_parse_json(value : String) : JSON::Any?
+      # Valid JSON only - never a Python-repr repair pass. Native
+      # containers (a whole-value `{{ some_list }}` set_fact) arrive as
+      # the double-quoted JSON VariableLookup#format_value serialized
+      # them to; a value that merely LOOKS like a container (a
+      # `{% if %}...{% else %}['dummy']{% endif %}` block's rendered
+      # output, or a plain quoted "['a']" literal) is a plain STRING in
+      # real ansible-core - native typing requires the template's whole
+      # AST to be one output node wrapping one expression, so block-tag
+      # output is never re-parsed. Found live vs real ansible-playbook
+      # via HanXHX.debian_bootstrap: the repr-looking string became a
+      # real ARRAY here, so `loop: "{{ dbs_repo_old }}"` silently
+      # iterated where real Ansible hard-fails with "The `loop` value
+      # must resolve to a 'list', not 'str'."
       JSON.parse(value)
     rescue JSON::ParseException
-      # A Python-repr list/dict (single-quoted, from a Jinja `{% if %}
-      # ...{{ [list] }}...{% endif %}` template rendering as Python's
-      # str() form) isn't valid JSON - same fallback as apt.cr/
-      # package.cr/dnf.cr/unarchive.cr's own copies of this logic.
-      # Proactive fix - not yet caught live for set_fact: specifically,
-      # but the same bug class already found independently in four
-      # other plugins. Narrow: only attempted on a value that already
-      # starts with `{`/`[` (the caller's own gate), so this can't
-      # misfire on an ordinary string value.
-      JSON.parse(value.gsub('\'', '"')) rescue nil
+      nil
     end
 
     # "0", "0.5" - real numbers, fine to coerce. "0755", "0007" - a

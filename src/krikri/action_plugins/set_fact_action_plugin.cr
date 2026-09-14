@@ -45,10 +45,30 @@ module Krikri
       end
     end
 
+    # Native containers (a whole-value `{{ some_list }}`/`{{ some_dict }}`
+    # set_fact) arrive here as the JSON text VariableLookup#format_value
+    # serialized them to - parse that back to a real Hash/Array so later
+    # dotted access (`os_shadow_perms.owner`) works, instead of leaving it
+    # a flat string that renders "undefined".
+    #
+    # ONLY valid JSON, though - never a Python-repr repair pass. A value
+    # that merely LOOKS like a container must stay a string: real
+    # ansible-core's native typing requires the template's whole parsed
+    # AST to be exactly one output node wrapping one expression, so a
+    # `{% if %}...{% else %}['dummy']{% endif %}` block (or a plain quoted
+    # `"['a']"` literal) renders to a plain str and set_fact stores it as
+    # a string, period. Found live vs real ansible-playbook via
+    # HanXHX.debian_bootstrap: its `dbs_repo_old` block-tag default whose
+    # output text happens to be `['dummy']` became a real ARRAY here, so
+    # a later `loop: "{{ dbs_repo_old }}"` silently iterated where real
+    # Ansible hard-fails with "The `loop` value must resolve to a 'list',
+    # not 'str'.". A genuine container never reaches this branch as
+    # single-quoted repr text - the evaluator serializes containers to
+    # double-quoted JSON before the plugin ever sees them.
     private def try_parse_json(value : String) : JSON::Any?
       JSON.parse(value)
     rescue JSON::ParseException
-      JSON.parse(value.gsub('\'', '"')) rescue nil
+      nil
     end
 
     private def leading_zero_number?(value : String) : Bool

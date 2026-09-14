@@ -22,21 +22,39 @@ describe "set_fact plugin" do
     facts["name"].as_s.should eq("web01")
   end
 
-  it "parses a Python-repr list/dict string (single-quoted), not just valid JSON" do
-    # A Jinja `{% if %}...{{ [list_expr] }}...{% endif %}` template
-    # idiom renders as Python's str() form (single-quoted), not JSON -
-    # same bug class already found live in apt.cr/package.cr/dnf.cr's
-    # own name: parsing (round 27 and this proactive audit pass);
-    # try_parse_json's plain JSON.parse silently left the value as a
-    # literal string instead of a real array/dict.
+  it "parses valid-JSON container text back into a real list/dict" do
+    # A native container set_fact (`my_list: "{{ some_list }}"`) arrives
+    # here as the double-quoted JSON text the evaluator serialized it to.
+    facts = PluginSpecHelper.run("set_fact", {
+      "my_list" => "[\"a\", \"b\", \"c\"]",
+      "my_dict" => "{\"x\": \"y\"}",
+    })["ansible_facts"]
+    facts["my_list"].as_a.map(&.as_s).should eq(["a", "b", "c"])
+    facts["my_dict"]["x"].as_s.should eq("y")
+  end
+
+  it "keeps a Python-repr-looking (single-quoted) string a plain string" do
+    # Real ansible-core's native typing requires the template's whole
+    # parsed AST to be exactly one output node wrapping one expression,
+    # so block-tag output (or a plain quoted literal) that merely LOOKS
+    # like a container is stored as a string, never re-parsed. Verified
+    # live against real ansible-playbook 2.19.11 (both shapes):
+    # `set_fact: repr_list: "['a', 'b']"` and a
+    # `{% if false %}{{ x }}{% else %}['dummy']{% endif %}` block both
+    # give `is string` -> True, and a later
+    # `loop: "{{ repr_list }}"` hard-fails with "The `loop` value must
+    # resolve to a 'list', not 'str'." The old single-quote repair pass
+    # here turned both into real containers (found live via
+    # HanXHX.debian_bootstrap's `dbs_repo_old` default, whose loop then
+    # silently iterated where real Ansible fails the task).
     result = PluginSpecHelper.run("set_fact", {
       "my_list" => "['a', 'b', 'c']",
       "my_dict" => "{'x': 'y'}",
     })
 
     facts = result["ansible_facts"]
-    facts["my_list"].as_a.map(&.as_s).should eq(["a", "b", "c"])
-    facts["my_dict"]["x"].as_s.should eq("y")
+    facts["my_list"].as_s.should eq("['a', 'b', 'c']")
+    facts["my_dict"].as_s.should eq("{'x': 'y'}")
   end
 
   it "does not coerce a leading-zero numeric-looking string (octal-style file mode) to an int" do
