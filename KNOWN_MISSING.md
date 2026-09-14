@@ -18,9 +18,91 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.1046`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.1049`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.31` (see `shard.yml`; 0.9.31 adds the six
 configurable Jinja delimiter strings).
+
+## Round 810000-810399: 400-role Galaxy batch, 8 real bugs fixed (0.9.1043 -> 0.9.1049)
+
+400-role Galaxy top-download batch split ubuntu (round 810000-810199) +
+rocky (round 810200-810399), Atlantic.net only. 44 DIVERGENT results
+triaged in full; 8 turned out to be real krikri bugs (below), one
+(`mrlesmithjr.ansible-hashi-vault`'s `debian | Installing Pre-Reqs` apt
+task, `changed` on real Ansible vs `ok` on krikri, both cold-run) was
+live-repro'd against a genuinely fresh host and found NOT to reproduce -
+disposed as Atlantic.net base-image variance between the two
+independently-provisioned hosts in that round, not an engine defect.
+
+- **`mrlesmithjr.docker` + `alannix_lw.lacework_agent_ansible_role`**
+  (0.9.1043): `apt_key:`'s post-add verification exact-matched an
+  8-char short key id against `apt-key`'s own listing, which only ever
+  contains 16-char long ids or 40-char fingerprints - an 8-char id can
+  never equal either, so every short-format `id:` failed verification
+  even after a genuinely successful add. Fixed with an `ends_with?`
+  match, mirroring real `apt_key`'s own `shorten_key_ids`.
+- **`copy:` `content:`/`src:` presence semantics** (0.9.1043): an
+  earlier `hbjydev.restic` fix (0.9.976, see above) over-generalized
+  into "any empty `content:` means not provided", breaking
+  `geerlingguy.sanoid`'s own `content: "{{ sanoid_conf }}"` with
+  `sanoid_conf: ""` (a legitimate empty file). `src:` stays truthiness-
+  checked; `content:` reverted to nil-vs-not-nil presence, matching
+  real Ansible's own asymmetric behavior (verified against ansible-core
+  2.19.11).
+- **`buluma.daemonize`** (0.9.1044): `unarchive:`'s `mode:`/`owner:`/
+  `group:` application walked every pre-existing file under `dest`, not
+  just the archive's own extracted members - a sibling file the daemonize
+  role wrote itself before the unarchive task got re-chmod'd to the
+  archive's requested mode on every run. Scoped to the archive's own
+  member list (`find <path1> <path2> ... -maxdepth 0 -exec`).
+- **`npm:`'s missing-executable handling** (0.9.1045): `npm list --json
+  --long` ran unconditionally, and its "malformed output -> nothing
+  installed" fallback also silently absorbed the case where `npm`
+  isn't installed at all - `missing.empty?` then read as "already
+  installed" without `npm` ever being verified to exist. Now checks
+  `which #{bin}` first and fails with real Ansible's "executable not
+  found" message (an earlier attempt using `command -v` broke local
+  connections outright: `command` is a shell builtin, not a real file,
+  and `LocalExecutor`'s no-shell-metacharacters fast path tries to
+  execve it directly).
+- **`buluma.postfix`** (0.9.1046): the strict block-tag `is defined`
+  scanner tracked `{% if %}` guards as a flat per-tag scan with no real
+  nesting awareness, so a guard proven in one `{% if %}` didn't
+  propagate into a genuinely nested or sibling `{% elif %}`/`{% endif %}`
+  the way real Jinja2's own block-scoping does - false "undefined
+  variable" positives. Rewritten with an explicit `{% if %}/{% elif %}/
+  {% else %}/{% endif %}` frame stack.
+- **A round-810xxx role with `meta/dependencies:`** (0.9.1047,
+  `andrewrothstein.kafka-consumer`'s `unarchive-deps` dependency): role
+  dependency dedup keyed on the bare role name only, so a role invoked
+  twice with different `version:`/inline vars/`tags:`/`when:` (or a
+  dependency's own `allow_duplicates: true`) got silently collapsed into
+  one invocation instead of running twice like real Ansible does.
+- **`andrewrothstein.func_e`** (0.9.1048): `unarchive:`'s controller-
+  side `src:` staging silently no-op'd instead of failing when the file
+  wasn't found on the controller (`remote_src: false`, the default) -
+  the plugin then ran anyway and found the file on the TARGET instead
+  (exactly the shape `get_url:` downloads into), succeeding where real
+  Ansible hard-fails with "Could not find or access ... on the Ansible
+  Controller." Now fails with real Ansible's own message when staging
+  can't find `src:` anywhere on the controller.
+- **`robertdebock.phpmyadmin` + `geerlingguy.redis`** (0.9.1049, two
+  fixes found investigating the same idempotency-divergence report):
+  `unarchive:`'s member-path scoping (the `buluma.daemonize` fix above)
+  used verbatim archive-listing paths, which broke under `extra_opts:
+  --strip-components=N` (phpmyadmin's own unpack) - every `find` start
+  pointed at a directory that doesn't exist on disk post-stripping,
+  failing the task outright. Separately, `set_fact:`'s decimal coercion
+  turned an octal-mode-shaped string with no leading zero ("1777",
+  dev-sec.os-hardening's own `/dev/shm`/`/tmp`/`/var/tmp` shape) into an
+  int, and the disambiguator protecting that case from `mode:`'s int-
+  to-octal-string reformatting also accidentally skipped reformatting
+  ordinary YAML-octal literals whose decimal value coincidentally has
+  octal-only digits (`0640` -> decimal `416`, `0644` -> `420`, `0777` ->
+  `511`) - redis's own `mode: "{{ redis_conf_mode }}"` (`0640`) applied
+  as octal `416` instead, never converging against redis-server's own
+  postinst `chmod 640`. Fixed at the root: `set_fact:` now keeps an
+  octal-mode-shaped string a string, so the reformat can go back to
+  being unconditional.
 
 ## Open gaps
 
