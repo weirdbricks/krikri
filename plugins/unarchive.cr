@@ -541,6 +541,25 @@ module Krikri
       0
     end
 
+    # extra_opts entries that AREN'T a tar flag (don't start with "-") are
+    # positional MEMBER NAMES to tar itself - `tar --extract -f archive.tar
+    # hugo` extracts only the "hugo" member (and, for a directory member,
+    # everything nested under it), the exact mechanism darkwizard242.hugo's
+    # own `extra_opts: [hugo]` uses to pull just one binary out of a
+    # tarball that also ships README.md/LICENSE at the top level. tar_flags
+    # already passes these through to the real extraction command
+    # unchanged; apply_dest_attributes' own member list must respect the
+    # same filter or it walks archive members that were never actually
+    # extracted, failing every find with "No such file or directory"
+    # (round 811222/811266: --strip-components=1's own fix at 0.9.1049
+    # covered the OTHER extra_opts shape, path-prefix stripping, but not
+    # this one - a real, separate use of the same param). Empty when
+    # every extra_opts entry is a flag (the overwhelmingly common case),
+    # meaning "no member filter, everything tar actually extracted counts".
+    private def extra_opts_member_filter : Array(String)
+      parse_list_param(@params["extra_opts"]?).reject(&.starts_with?("-"))
+    end
+
     # Maps an archive-listing member path to its on-disk path under dest
     # after --strip-components=N stripping (mirroring GNU tar's own
     # semantics: N leading path components removed, a member left with
@@ -560,7 +579,11 @@ module Krikri
     # this stripping logic's own branches.
     private def stripped_member_paths(dest : String, handler : Symbol, src : String) : Array(String)
       strip = handler == :tar ? strip_components_count : 0
+      member_filter = handler == :tar ? extra_opts_member_filter : [] of String
       members(handler, src).compact_map do |member|
+        if !member_filter.empty? && member_filter.none? { |named| member == named || member.starts_with?("#{named}/") }
+          next nil
+        end
         stripped = stripped_member(member, strip)
         next nil if stripped.nil?
         path = Path[dest, stripped].normalize.to_s

@@ -36,6 +36,17 @@ Spec.before_suite do
   Dir.mkdir_p(File.join(TMP_DIR, "foreign_owner_src"))
   File.write(File.join(TMP_DIR, "foreign_owner_src", "bin.txt"), "payload")
   `tar --owner=99999 --group=99999 -czf #{File.join(TMP_DIR, "foreign_owner.tar.gz")} -C #{File.join(TMP_DIR, "foreign_owner_src")} bin.txt`
+
+  # A GitHub-release-shaped archive with SEVERAL top-level members
+  # (darkwizard242.hugo/awsnuke's own real shape: a release tarball
+  # bundling the binary alongside README.md/LICENSE) - the fixture
+  # extra_opts: [hugo] (a plain member NAME, not a tar flag) exists to
+  # extract just one member out of.
+  Dir.mkdir_p(File.join(TMP_DIR, "multi_member_src"))
+  File.write(File.join(TMP_DIR, "multi_member_src", "hugo"), "binary")
+  File.write(File.join(TMP_DIR, "multi_member_src", "README.md"), "readme")
+  File.write(File.join(TMP_DIR, "multi_member_src", "LICENSE"), "license")
+  `tar czf #{File.join(TMP_DIR, "multi_member.tar.gz")} -C #{File.join(TMP_DIR, "multi_member_src")} hugo README.md LICENSE`
 end
 
 # A tiny local HTTP server serving the tar.gz built above, plus a
@@ -214,6 +225,40 @@ describe "unarchive plugin" do
     result["changed"].as_bool.should be_true
     File.exists?(File.join(dest, "myproject-1.0")).should be_false
     File.read(File.join(dest, "index.php")).should eq("<?php")
+  end
+
+  it "applies mode: only to a member extra_opts: [name] actually extracted, never to un-extracted siblings" do
+    # Real bug found benchmarking darkwizard242.hugo and .awsnuke (round
+    # 811222/811266): extra_opts: [hugo] is a plain MEMBER NAME (not a
+    # tar flag), extracting only "hugo" out of a release tarball that
+    # also ships README.md/LICENSE at the top level - real Ansible (and
+    # this plugin's own extraction step) never touches those other
+    # members. apply_dest_attributes' own member list didn't know about
+    # this extra_opts shape (only --strip-components: from the 0.9.1049
+    # fix above) and still walked the archive's FULL listing, trying to
+    # `find` README.md/LICENSE paths that were never extracted - failing
+    # the task outright with "No such file or directory" instead of
+    # merely being over-broad.
+    dest = fresh_dest("tar-extra-opts-member-filter")
+    result = PluginSpecHelper.run("unarchive", {
+      "src"        => File.join(TMP_DIR, "multi_member.tar.gz"),
+      "dest"       => dest,
+      "mode"       => "0700",
+      "extra_opts" => "hugo",
+    })
+
+    result["changed"].as_bool.should be_true
+    (File.info(File.join(dest, "hugo")).permissions.value & 0o777).should eq(0o700)
+    File.exists?(File.join(dest, "README.md")).should be_false
+    File.exists?(File.join(dest, "LICENSE")).should be_false
+
+    result = PluginSpecHelper.run("unarchive", {
+      "src"        => File.join(TMP_DIR, "multi_member.tar.gz"),
+      "dest"       => dest,
+      "mode"       => "0700",
+      "extra_opts" => "hugo",
+    })
+    result["changed"].as_bool.should be_false
   end
 
   it "honors extra_opts: when it arrives as a JSON-array-encoded string, not just the comma-joined literal-list form" do
