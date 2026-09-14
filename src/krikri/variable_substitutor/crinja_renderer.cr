@@ -3,6 +3,7 @@ require "json"
 require "crinja"
 require "../variable_substitutor"
 require "../python_filter_runner"
+require "../python_lookup_runner"
 require "../crinja_strict_undefined"
 require "../crinja_string_index"
 require "../crinja_bool_arithmetic"
@@ -289,13 +290,17 @@ module Krikri
           raise FilterEngine::UnknownFilterError.new("No filter named '#{filter_name}'.")
         end
         raise e
-      rescue e : Krikri::FirstFoundLookupError | Krikri::PipeLookupError
+      rescue e : Krikri::FirstFoundLookupError | Krikri::PipeLookupError | Krikri::PythonLookupRunner::LookupError
         # Same reasoning as the unknown-filter case above: first_found's own
         # no-match failure is a hard task failure in real Ansible, never the
         # lenient give-back-the-text fallback (which turned it into the
         # "undefined" sentinel string at whatever consumer came next).
         # PipeLookupError likewise - a non-zero pipe-command exit is real
         # Ansible's hard task failure, never silent text passthrough.
+        # PythonLookupRunner::LookupError likewise - a custom lookup plugin
+        # that RAN and raised is real Ansible's own task failure (only an
+        # unavailable mechanism degrades, and it degrades inside the
+        # dispatch, never as this exception).
         raise e
       rescue
         # Return original text on failure

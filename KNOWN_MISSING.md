@@ -18,7 +18,7 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.1037`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.1040`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.31` (see `shard.yml`; 0.9.31 adds the six
 configurable Jinja delimiter strings).
 
@@ -6040,6 +6040,28 @@ gaps" rather than arguing with the note in place.
 
 ### Arbitrary Python
 
+- **Role-private custom `lookup_plugins/*.py` lookup plugins run on the
+  controller, like the module/filter equivalents** (`PythonLookupRunner`,
+  0.9.1038): `lookup('name', ...)`/`query('name', ...)` for a plugin the
+  role ships in its own `lookup_plugins/` (or the playbook-adjacent one)
+  dispatches to the controller's own python3 and runs the plugin's
+  `LookupModule.run(terms, variables, **kwargs)` - a lookup plugin's name
+  IS its file name, so no introspection pass is needed. Previously any
+  such call silently degraded to "undefined"/`[]`, which collapsed a
+  `loop: "{{ query(...) }}"` to zero iterations (seen live via
+  manala.environment and manala.accounts). Wired into BOTH templating
+  engines separately (the repo's two-evaluator split): the hand-rolled
+  `{{ }}` evaluator's lookup dispatch (`evaluate_custom_python_lookup`)
+  and the Crinja `.j2`-template side, which additionally had NO
+  `query()`/`q()` Jinja global at all before (a template calling
+  `query()` failed with "no function with name"). Every unhelpable case
+  (no python3, the `ansible` package not importable by the controller
+  python3, no `LookupModule` class in the file) keeps that exact previous
+  undefined/`[]` degradation; a plugin that RAN and raised fails the task
+  with its own error, like real Ansible. Still cut: third-party
+  COLLECTION lookup plugins (the bullet below) - same reason as for
+  modules/filters, they live inside installed collections, not in the
+  playbook tree the runner can see.
 - **Arbitrary-Python-module support is scoped to role-private
   `library/*.py` sources** (plus the playbook-adjacent `library/`): a
   module with a resolvable source now RUNS on the target with the
