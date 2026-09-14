@@ -242,6 +242,7 @@ module Krikri
       when Int64   then "int"
       when Float64 then "float"
       when Hash    then "dict"
+      when Array   then "list"
       else              "str"
       end
     end
