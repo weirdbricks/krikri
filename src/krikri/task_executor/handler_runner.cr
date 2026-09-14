@@ -254,8 +254,10 @@ module Krikri
       # text, or name_resolver wasn't supplied at all).
       return true if notified.includes?(rendered_name) || notified.includes?(handler.name)
 
-      # Check by listen topic
-      if listen_topic = handler.listen
+      # Check by listen topic - a handler's listen: may itself be a list
+      # of topics (real Ansible; CVi.thanos round 811339), and any of
+      # them matching the notified set runs it.
+      (handler.listen || [] of String).each do |listen_topic|
         return true if notified.includes?(listen_topic)
       end
 

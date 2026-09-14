@@ -149,7 +149,32 @@ describe Krikri::PlaybookParser do
 
       handler = playbook.plays[0].handlers[0]
       handler.module_name.should eq("ansible.builtin.debug")
-      handler.listen.should eq("restart thing")
+      handler.listen.should eq(["restart thing"])
+    end
+
+    it "parses a handler's listen: as a LIST of topics when written as one" do
+      # Regression (round 811339, CVi.thanos): real Ansible's handler
+      # listen: accepts a single string OR a YAML list of topics - a
+      # handler can subscribe to several notification topics at once.
+      # The list form was handed to safe_yaml_to_string and stringified,
+      # so no bare notify: naming one of the topics ever matched and
+      # notify_handlers raised HandlerNotFoundError, aborting the run.
+      playbook = Krikri::PlaybookParser.parse_string(<<-YAML)
+        - hosts: all
+          handlers:
+            - name: Restart sidecar service
+              listen:
+                - restart thanos
+                - restart thanos-sidecar
+                - restart thanos bucket
+              ansible.builtin.systemd:
+                name: thanos-sidecar
+                state: restarted
+        YAML
+
+      handler = playbook.plays[0].handlers[0]
+      handler.module_name.should eq("ansible.builtin.systemd")
+      handler.listen.should eq(["restart thanos", "restart thanos-sidecar", "restart thanos bucket"])
     end
 
     it "recognizes become_method: as a task keyword, not a module name" do

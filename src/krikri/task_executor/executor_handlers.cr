@@ -69,7 +69,10 @@ module Krikri
       handlers.each do |handler|
         return false if handler.name.includes?("{{")
         answerable << handler.name
-        if listen_topic = handler.listen
+        # A handler's listen: is itself single-string-or-list (real
+        # Ansible; CVi.thanos round 811339) - every topic it lists is
+        # answerable.
+        (handler.listen || [] of String).each do |listen_topic|
           return false if listen_topic.includes?("{{")
           answerable << listen_topic
         end
@@ -113,9 +116,7 @@ module Krikri
       templated = false
       @handler_runner.handlers.each do |handler|
         candidates = [handler.name]
-        if listen_topic = handler.listen
-          candidates << listen_topic
-        end
+        candidates.concat(handler.listen || [] of String)
 
         candidates.each do |candidate|
           if candidate.includes?("{{")
@@ -133,9 +134,7 @@ module Krikri
       substitutor = VarSubstitutor.new(vars: build_vars_context(task, host), host_name: host.name)
       @handler_runner.handlers.each do |handler|
         candidates = [handler.name]
-        if listen_topic = handler.listen
-          candidates << listen_topic
-        end
+        candidates.concat(handler.listen || [] of String)
 
         candidates.each do |candidate|
           next unless candidate.includes?("{{")
