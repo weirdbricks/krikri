@@ -41,12 +41,34 @@ module Krikri
       end
       dest = expand_tilde(dest)
 
-      # Check if using content or src. An empty-string src or content
-      # counts as not provided: real ansible's copy action plugin
-      # truthiness-checks src, and ansible-core 2.19 (verified live on
-      # hbjydev.restic) fails `content:` templating to "" with
-      # "src (or content) is required" instead of writing an empty file.
-      content = @params["content"]?.presence
+      # `src` and `content` have DIFFERENT presence rules in real
+      # Ansible - genuinely asymmetric, not a simplification either way
+      # (all four live-verified against ansible-core 2.19.11):
+      #
+      # - `src`: truthiness-checked, matching a real file PATH - an
+      #   empty string is never a valid path, so `src: ""` alone fails
+      #   "src (or content) is required" exactly like `src:` being
+      #   absent, AND `src: "", content: "hello"` succeeds using
+      #   content (the empty src is simply ignored, not "provided",
+      #   so there's no mutual-exclusivity conflict either).
+      # - `content`: presence-checked (nil vs not-nil), since an empty
+      #   FILE is a perfectly legitimate thing to write - a bare `{{
+      #   empty_var }}`, mixed text (`"prefix{{ e }}"`), a literal
+      #   `content: ""`, and even a bare `{{ '' }}` expression all
+      #   succeed and write a real empty file (geerlingguy.sanoid's own
+      #   `content: "{{ sanoid_conf }}"` with `sanoid_conf: ""` needs
+      #   this to keep working) - and `src: "actual/path", content: ""`
+      #   DOES hit "src and content are mutually exclusive" (the empty
+      #   content still counts as "given"). The ONE exception - a `{%
+      #   for %}...{% endfor %}` block tag rendering to nothing
+      #   (hbjydev.restic's own `content:`) DOES fail "src (or content)
+      #   is required" - is handled upstream, in
+      #   TaskExecutor#substitute_task_params, which drops such a param
+      #   key entirely (OMIT_SENTINEL) rather than sending it here as
+      #   "" - so a plain presence check on content is already correct
+      #   for every remaining shape without this plugin needing to know
+      #   anything about how its value was templated.
+      content = @params["content"]?
       src = @params["src"]?.presence
 
       # Must have either src or content

@@ -126,4 +126,43 @@ describe "omit" do
     output.should contain(%(["kept","",0,false]))
     output.should contain(%({"a":0,"b":false,"c":""}))
   end
+
+  it "treats a block-tag template rendering to nothing as omitted, not empty" do
+    # hbjydev.restic's own content: "{% for f in restic_files %}{{ f
+    # }}\n{% endfor %}" with restic_files: [] - live-verified vs
+    # ansible-core 2.19.11: real Ansible fails copy's own "src (or
+    # content) is required" check here, unlike a bare `{{ empty_var
+    # }}"`/literal `""` content (both succeed and write a real empty
+    # file - see copy_empty_content_spec.cr). The block tag's own empty
+    # render is functionally indistinguishable from an unset param, so
+    # this dedicated OMIT path in substitute_task_params drops the
+    # param key entirely rather than sending copy.cr a literal "".
+    dir = File.tempname("omit-block-tag")
+    Dir.mkdir_p(dir)
+    File.write(File.join(dir, "inv.ini"), "localhost ansible_connection=local\n")
+    dest = File.join(dir, "out.conf")
+    File.write(File.join(dir, "pb.yml"), <<-YAML)
+    - hosts: all
+      gather_facts: false
+      vars:
+        restic_files: []
+      tasks:
+        - name: t
+          ansible.builtin.copy:
+            dest: #{dest}
+            content: "{% for f in restic_files %}{{ f }}\\n{% endfor %}"
+          ignore_errors: true
+          register: r
+        - ansible.builtin.debug:
+            msg: "MSG={{ r.msg | default('OK') }}"
+    YAML
+
+    io = IO::Memory.new
+    Process.run(BINARY, ["-i", "inv.ini", "pb.yml"], output: io, error: io, chdir: dir)
+    output = io.to_s
+    output.should contain("MSG=src (or content) is required")
+    File.exists?(dest).should be_false
+  ensure
+    FileUtils.rm_rf(dir) if dir && Dir.exists?(dir)
+  end
 end

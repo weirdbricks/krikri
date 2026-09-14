@@ -1202,6 +1202,28 @@ module Krikri
         whole_single_span = stripped_value.starts_with?("{{") && stripped_value.ends_with?("}}") && stripped_value.scan("{{").size == 1
         substituted_value = substitutor.substitute(value, strict: true, output: !whole_single_span && !native_containers, native: native_containers)
 
+        # A block-tag template (`{%`/`{#`) that renders to a literally
+        # EMPTY string is treated as OMITTED, not as an empty-string
+        # value - live-verified against ansible-core 2.19.11:
+        # `content: "{% for f in restic_files %}{{ f }}\n{% endfor %}"`
+        # with `restic_files: []` fails copy's own `src (or content) is
+        # required` check (hbjydev.restic, round found this originally),
+        # while a BARE `{{ some_empty_string_var }}`, mixed text
+        # (`"prefix{{ e }}"`), a literal `content: ""`, and even a bare
+        # `{{ '' }}` expression all succeed and write a real empty file
+        # (verified live, all four shapes, same ansible-core version) -
+        # so this is specific to block-tag rendering, not "any empty
+        # content:" generally (geerlingguy.sanoid's own `content: "{{
+        # sanoid_conf }}"` with `sanoid_conf: ""` must keep succeeding).
+        # Only the WHOLE-VALUE case is treated this way, matching
+        # OMIT_SENTINEL's own existing whole-value-vs-partial split
+        # immediately below - a block tag that's only PART of a larger
+        # value and happens to contribute nothing keeps the surrounding
+        # literal text, it doesn't omit the whole param.
+        if (value.includes?("{%") || value.includes?("{#")) && substituted_value.empty?
+          substituted_value = OMIT_SENTINEL
+        end
+
         # `mode:` piped through a variable (`mode: "{{ redis_conf_dir_mode
         # }}"`, geerlingguy.redis's own style) loses its octal-ness the
         # same way a *direct* unquoted `mode: 0770` literal does (see
