@@ -1115,12 +1115,27 @@ module Krikri
       end
     end
 
-    private def scan_block_tag_refs(cond_no_strings : String, loop_var : String?) : Nil
+    private def scan_block_tag_refs(cond_no_strings : String, loop_var : String?, active_guarantee : Set(String) = Set(String).new) : Nil
       cond_no_strings.scan(SCAN_STRICT_BLOCK_TAG_REF) do |mat|
         ident = mat[0]
         root = block_tag_ref_root(ident)
         next if @vars.has_key?(root)
         next if loop_var == ident || loop_var == root
+        # Lexically nested inside a still-open `{% if X is defined %}`
+        # (or `elif`) whose OWN condition already proved `root` defined
+        # - see block_tag_defined_guards and scan_strict_block_tags_
+        # for_undefined's own BlockTagFrame nesting stack. Found live
+        # via buluma.postfix's `_postfix_relay_domains: "{% if
+        # postfix_relay_domains is defined %} {% if
+        # postfix_relay_domains is string %} ...` - the SECOND `{% if
+        # %}`'s own condition references postfix_relay_domains again,
+        # in a wholly separate `{% %}` tag from the first, and a flat
+        # per-tag scan (the previous shape of this method) had no way
+        # to know that tag's condition is only ever reached once the
+        # outer is-defined guard already passed - it raised "is
+        # undefined" where real Ansible short-circuits the entire
+        # true-branch away and never evaluates it at all.
+        next if active_guarantee.includes?(root)
         # The shared tolerance chain from the `{{ }}`-span scanner
         # (keywords, builtin filters, filter/function calls, kwarg
         # names, `| default(...)`, and - the ruzickap.proxy_settings
@@ -1374,7 +1389,29 @@ module Krikri
       end
     end
 
+    # One open `{% if %}`/`{% for %}` block on the nesting stack below.
+    # `:if` frames carry the set of variable ROOTS the currently-ACTIVE
+    # clause (the most recent `if`/`elif` seen at this depth) proved
+    # defined via its own `is defined`/`is not undefined` test(s) - real
+    # Jinja only evaluates the text between that clause and the next
+    # same-depth `elif`/`else`/`endif` when the clause's condition was
+    # true, so a bare reference anywhere in that span (including nested
+    # deeper `{% if %}`/`{% for %}` tags) is provably safe regardless of
+    # whether the variable is ACTUALLY in @vars. `:for` frames carry no
+    # guarantee of their own - they exist purely so `{% endfor %}`/
+    # `{% endif %}` pop the right kind of frame when the two are
+    # interleaved (Jinja always nests them correctly, so this scan
+    # trusts that rather than re-verifying it).
+    private class BlockTagFrame
+      property kind : Symbol
+      property guaranteed_defined : Set(String)
+
+      def initialize(@kind : Symbol, @guaranteed_defined : Set(String) = Set(String).new)
+      end
+    end
+
     private def scan_strict_block_tags_for_undefined(text : String) : Nil
+      stack = [] of BlockTagFrame
       i = 0
       while i < text.size
         # Scan forward from i to the next `{%` block-tag opener (NOT
@@ -1392,6 +1429,34 @@ module Krikri
         inner = text[i...close]
         stripped = inner.strip
 
+        # `{% else %}`/`{% endif %}`/`{% endfor %}` carry no condition
+        # for parse_block_tag_condition to extract - handled here,
+        # purely for their effect on the nesting stack, before falling
+        # through to the condition-bearing tags below.
+        case stripped
+        when "else"
+          # The `if`/`elif` clause that was active just proved FALSE
+          # (that's why we're in its `else` now) - none of its own
+          # is-defined guarantees carry over into this branch. An
+          # outer frame's guarantee (already a separate stack entry)
+          # is untouched.
+          if (top = stack.last?) && top.kind == :if
+            top.guaranteed_defined = Set(String).new
+          end
+          i = close + 2
+          next
+        when "endif"
+          stack.pop if stack.last?.try(&.kind) == :if
+          i = close + 2
+          next
+        when "endfor"
+          stack.pop if stack.last?.try(&.kind) == :for
+          i = close + 2
+          next
+        else
+          # nothing - fall through to the general condition parse below
+        end
+
         parsed = parse_block_tag_condition(stripped)
         if parsed
           loop_var, cond = parsed
@@ -1401,9 +1466,86 @@ module Krikri
         end
 
         cond_no_strings = strip_string_literals(cond)
-        scan_block_tag_refs(cond_no_strings, loop_var)
+        active_guarantee = stack.reduce(Set(String).new) { |acc, frame| acc | frame.guaranteed_defined }
+        scan_block_tag_refs(cond_no_strings, loop_var, active_guarantee)
+
+        if stripped.starts_with?("if ")
+          stack.push(BlockTagFrame.new(:if, block_tag_defined_guards(cond_no_strings)))
+        elsif stripped.starts_with?("elif ")
+          if (top = stack.last?) && top.kind == :if
+            top.guaranteed_defined = block_tag_defined_guards(cond_no_strings)
+          end
+        elsif stripped.starts_with?("for ")
+          stack.push(BlockTagFrame.new(:for))
+        end
         i = close + 2
       end
+    end
+
+    # The set of variable ROOTS *cond* (already string-literal-stripped)
+    # PROVES defined via a bare `<ident> is defined`/`<ident> is not
+    # undefined` test - the guarantee `scan_strict_block_tags_for_
+    # undefined`'s nesting stack carries forward into that clause's own
+    # body. Deliberately conservative: only a condition with NO top-
+    # level ` or ` (any `or` branch could be the one that's true,
+    # without the other side's variable being defined at all) is
+    # considered, split on top-level ` and ` (each conjunct
+    # independently guarantees whatever it tests - `A is defined and B
+    # is defined` gives both). A conjunct that ISN'T exactly `<ident> is
+    # defined`/`<ident> is not undefined` (parens stripped) contributes
+    # no guarantee of its own - it doesn't need to, since it's free to
+    # reference a variable an ENCLOSING frame already guarantees
+    # (`elif X is iterable and (X is not string and X is not mapping)`
+    # inside an outer `if X is defined` relies on exactly this: this
+    # elif's own condition proves nothing new about X, but X is already
+    # guaranteed by the still-open outer frame by the time this method's
+    # caller unions the whole stack).
+    private def block_tag_defined_guards(cond : String) : Set(String)
+      guards = Set(String).new
+      return guards if split_top_level(cond, " or ").size > 1
+
+      split_top_level(cond, " and ").each do |clause|
+        trimmed = clause.strip
+        while trimmed.starts_with?('(') && trimmed.ends_with?(')')
+          trimmed = trimmed[1..-2].strip
+        end
+        m = trimmed.match(/\A([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*|\[(?:-?\d+|'[^']*'|"[^"]*")\])*)\s+is\s+(?:not\s+undefined|defined)\z/)
+        next unless m
+        guards << block_tag_ref_root(m[1])
+      end
+      guards
+    end
+
+    # Splits *text* on every top-level occurrence of *separator*
+    # (depth-0 with respect to parens - a separator inside `(...)` is
+    # part of that sub-expression, not a real split point). Good enough
+    # for the and/or splitting above without a real Jinja parser: this
+    # scan only ever needs to tell "is the whole condition ONE thing, or
+    # several ` and `/` or `-joined things" apart, never to evaluate the
+    # sub-expressions themselves.
+    private def split_top_level(text : String, separator : String) : Array(String)
+      parts = [] of String
+      depth = 0
+      start = 0
+      i = 0
+      while i < text.size
+        case text[i]
+        when '('
+          depth += 1
+        when ')'
+          depth -= 1
+        else
+          if depth == 0 && text[i..].starts_with?(separator)
+            parts << text[start...i]
+            i += separator.size
+            start = i
+            next
+          end
+        end
+        i += 1
+      end
+      parts << text[start..]
+      parts
     end
 
     # Removes every single- and double-quoted string literal from

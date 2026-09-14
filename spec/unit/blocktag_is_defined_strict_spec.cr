@@ -63,4 +63,85 @@ describe "strict block-tag scan: `is defined` on a plain undefined variable neve
       )
     end
   end
+
+  # Real bug found via a 400-role regression sweep, benchmarking
+  # buluma.postfix: the "is defined" tolerance above only ever applied
+  # to a reference living INSIDE the SAME `{% %}` tag as its own `is
+  # defined` test. The block-tag scan processed every `{% %}` tag in a
+  # template independently, so a SEPARATE, later `{% if X is string
+  # %}` tag - lexically nested inside an earlier `{% if X is defined
+  # %}`'s true-branch, but a wholly different tag - had no way to know
+  # it could only ever be reached once X was already proven defined,
+  # and raised "'X' is undefined" where real ansible-playbook (verified
+  # live, ansible-core 2.19.11) short-circuits the entire guarded
+  # branch away and never evaluates it at all.
+  describe "nesting across SEPARATE {% %} tags (not just within one)" do
+    it "buluma.postfix's own real shape: is-defined guard, then the same var reused in a nested {% if %}/{% elif %}/{% for %}" do
+      sub = Krikri::VarSubstitutor.new(vars: Hash(String, JSON::Any).new, host_name: "h")
+
+      # Verbatim from buluma.postfix's tasks/main.yml (Setting values
+      # for main.cf (2/2)) - real ansible-playbook renders " <None> "
+      # when postfix_relay_domains is unset.
+      result = sub.substitute(
+        "{% if postfix_relay_domains is defined %} {% if postfix_relay_domains is string %} " \
+        "{{ postfix_relay_domains }} {% elif postfix_relay_domains is iterable and " \
+        "(postfix_relay_domains is not string and postfix_relay_domains is not mapping) %} " \
+        "{% for domain in postfix_relay_domains %}{{ domain }}{% if not loop.last %}, {% endif %}" \
+        "{% endfor %} {% endif %} {% else %} <None> {% endif %}",
+        strict: true
+      )
+
+      result.should eq(" <None> ")
+    end
+
+    it "carries the guarantee through a genuinely nested {% if %} (not just one level)" do
+      sub = Krikri::VarSubstitutor.new(vars: Hash(String, JSON::Any).new, host_name: "h")
+
+      sub.substitute(
+        "{% if x is defined %}{% if x is string %}{% if x is not mapping %}A{% endif %}{% endif %}{% else %}B{% endif %}",
+        strict: true
+      ).should eq("B")
+    end
+
+    it "does NOT carry the guarantee into the {% else %} branch of the SAME if" do
+      sub = Krikri::VarSubstitutor.new(vars: Hash(String, JSON::Any).new, host_name: "h")
+
+      # Real Jinja gives no guarantee that `q` is defined inside the
+      # `else` of `{% if q is defined %}` - reaching else means the
+      # guard was FALSE, so a reference to q there is exactly as
+      # undefined as it ever was.
+      expect_raises(Krikri::UndefinedVariableError, /'q' is undefined/) do
+        sub.substitute(
+          "{% if q is defined %}yes{% else %}{% if q is string %}str{% endif %}{% endif %}",
+          strict: true
+        )
+      end
+    end
+
+    it "does NOT carry the guarantee into an unrelated {% elif %} clause" do
+      sub = Krikri::VarSubstitutor.new(vars: Hash(String, JSON::Any).new, host_name: "h")
+
+      expect_raises(Krikri::UndefinedVariableError, /'q' is undefined/) do
+        sub.substitute(
+          "{% if other_var is defined %}A{% elif q is string %}B{% endif %}",
+          strict: true
+        )
+      end
+    end
+
+    it "still raises for an unguarded reference nested inside an unrelated guarded {% if %}" do
+      sub = Krikri::VarSubstitutor.new(vars: {"x" => JSON::Any.new(true)}, host_name: "h")
+
+      # x is genuinely defined, but that guarantees nothing about y -
+      # the nesting fix must not become "anything inside any {% if %}
+      # is exempt", only "a variable an ENCLOSING is-defined test
+      # actually named".
+      expect_raises(Krikri::UndefinedVariableError, /'y' is undefined/) do
+        sub.substitute(
+          "{% if x %}{% if y %}yes{% endif %}{% endif %}",
+          strict: true
+        )
+      end
+    end
+  end
 end
