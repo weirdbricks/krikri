@@ -2197,7 +2197,16 @@ module Krikri
       # arithmetic support - found via geerlingguy.swap's own
       # check-size.yml doing its own `{{ stat.size / 1024 / 1024 }}`
       # comparison as a bare `when:`/`assert:`-style value, not just
-      # inside `{{ }}` template interpolation. A bare `(` anywhere (not
+      # inside `{{ }}` template interpolation. `+` was missing too -
+      # found via wunzeco.consul-template (round 811188), whose
+      # `when: "'v' + consul_template_version in version.stderr.split('
+      # ')"` fell through to the bare variable lookup below, which
+      # tried (and failed) to find a variable literally named
+      # "'v' + consul_template_version" and hard-failed the task
+      # ("Error while evaluating conditional: ''v' +
+      # consul_template_version' is undefined") where real Ansible
+      # concatenates and evaluates the membership test cleanly.
+      # A bare `(` anywhere (not
       # just a leading one) also needs routing here - real bug found
       # benchmarking robertdebock.squid (round 48): its own assert.yml
       # has `squid_cache_dir.split(" ")[0] in [...]`, a Python-style
@@ -2210,7 +2219,7 @@ module Krikri
       # all - it just tried (and failed) to treat `split(" ")` as a
       # literal, nonexistent hash key, always undefined.
       if expr.includes?("|") || expr.includes?("(") || expr.includes?(" - ") || expr.includes?("~") ||
-         expr.includes?("*") || expr.includes?("/")
+         expr.includes?("*") || expr.includes?("/") || expr.includes?("+")
         # A filter chain fed by a genuinely undefined variable is fatal
         # for a `when:`/`assert:` in real Ansible exactly as a bare
         # undefined reference is ("Error while evaluating conditional:
@@ -2234,6 +2243,20 @@ module Krikri
         # sentinel into the string and this conditional silently
         # answered falsy (inmotionhosting.php_fpm, round 82024).
         Krikri.raise_if_chain_source_value_undefined(expr, vars) if raise_undefined
+
+        # A `+` expression that reached this delegation ONLY because of
+        # the `+` guard (no filter chain, no parens, no other operator)
+        # has no filter-chain probe above that can catch an undefined
+        # bare operand: ExpressionEvaluator's render is lenient, baking
+        # the undefined in as "", so `when: "'v' + no_such_var in ..."`
+        # would silently skip where real Ansible fatally fails
+        # ("'no_such_var' is undefined" - live-verified against
+        # ansible-playbook). Probe the top-level `+` operands - only for
+        # this narrow newly-routed shape, leaving every
+        # previously-routed shape's lenient behavior untouched.
+        raise_if_plus_operand_undefined(expr, vars) if raise_undefined &&
+          !expr.includes?("|") && !expr.includes?("(") && !expr.includes?("~") &&
+          !expr.includes?("*") && !expr.includes?("/") && !expr.includes?(" - ")
 
         evaluator = VariableSubstitutor::ExpressionEvaluator.new(vars)
         rendered = evaluator.evaluate(expr)
@@ -2363,6 +2386,70 @@ module Krikri
         # true); every other caller keeps the long-standing lenient nil.
         raise UndefinedVariableError.new("'#{expr}' is undefined") if raise_undefined
         nil
+      end
+    end
+
+    # Strict-undefined probe for a bare `+` expression routed to the
+    # lenient ExpressionEvaluator by #evaluate_value's operator guard
+    # (round 811188, wunzeco.consul-template). Real Ansible fails the
+    # task when any bare operand of such an expression is genuinely
+    # undefined - `when: "'v' + no_such_var in list"` dies with
+    # "'no_such_var' is undefined" - so the top-level (outside
+    # quotes/brackets) `+` segments are checked for plain bare/dotted/
+    # indexed references missing from *vars* and raised on BEFORE the
+    # lenient render can bake the undefined in as "". Deliberately
+    # narrow, same allowlist spirit as
+    # Krikri.undefined_filter_chain_source: only segments matching
+    # REGEX_BARE_VAR_REF are probed, so none of the expression-syntax
+    # gaps in this heuristic evaluator can turn into a spurious task
+    # failure here.
+    private def self.raise_if_plus_operand_undefined(expr : String, vars : Hash(String, JSON::Any)) : Nil
+      segments = [] of String
+      current = String::Builder.new
+      depth = 0
+      quote : Char? = nil
+      expr.each_char do |char|
+        if (q = quote)
+          current << char
+          quote = nil if char == q
+          next
+        end
+        case char
+        when '\'', '"'
+          quote = char
+          current << char
+        when '[', '(', '{'
+          depth += 1
+          current << char
+        when ']', ')', '}'
+          depth -= 1
+          current << char
+        when '+'
+          if depth == 0
+            segments << current.to_s.strip
+            current = String::Builder.new
+          else
+            current << char
+          end
+        else
+          current << char
+        end
+      end
+      segments << current.to_s.strip
+
+      segments.each do |segment|
+        next if segment.empty?
+        # Quoted string literal, number, boolean/None/omit bareword -
+        # none of these can be an undefined variable reference.
+        next if (segment.starts_with?('"') && segment.ends_with?('"') && segment.size >= 2) ||
+                (segment.starts_with?('\'') && segment.ends_with?('\'') && segment.size >= 2)
+        next if segment.to_i64? || segment.to_f64?
+        next if segment.in?("true", "True", "false", "False", "None", "none", "omit")
+        next unless segment.matches?(REGEX_BARE_VAR_REF)
+        root = segment.split(/[.\[]/, 2)[0]
+        next if Krikri::NON_VAR_ROOT_NAMES.includes?(root)
+        next if vars.has_key?(root)
+        raise UndefinedVariableError.new("'#{root}' is undefined")
       end
     end
 
