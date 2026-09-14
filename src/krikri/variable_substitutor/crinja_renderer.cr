@@ -262,7 +262,7 @@ module Krikri
         # mislabel (found via sunfoxcz.dkim's `dkim_domains is not list`,
         # where real Ansible fails immediately with "No test named
         # 'list'.").
-        if feature = crinja_unknown_feature(e)
+        if feature = self.class.unknown_feature(e)
           if feature[0] == "test"
             raise UnknownTestError.new("No test named '#{feature[1]}'.")
           end
@@ -302,7 +302,13 @@ module Krikri
         text
       end
 
-      private def crinja_unknown_feature(e : Crinja::FeatureLibrary::UnknownFeatureError) : {String, String}?
+      # Parses Crinja's own unknown-feature error wording ("no filter/
+      # test with name ... registered") into {kind, name} - shared by
+      # #render's rescue and #evaluate_value!'s rescue (the two Crinja
+      # entry points that can surface an unregistered filter/test at
+      # evaluation time), so both react to the same feature kinds the
+      # same way.
+      def self.unknown_feature(e : Crinja::FeatureLibrary::UnknownFeatureError) : {String, String}?
         match = e.message.try(&.match(/no (filter|test) with name "([^"]+)" registered/))
         match ? {match[1], match[2]} : nil
       end
@@ -342,6 +348,43 @@ module Krikri
       # sequence for the same reason (getting at the raw value, not
       # Crinja's own stringified rendering of it).
       def evaluate_value!(expr : String) : JSON::Any?
+        evaluate_value_once!(expr)
+      rescue e : Crinja::FeatureLibrary::UnknownFeatureError
+        # Same gate #render's rescue implements (see it for the full
+        # real-Ansible semantics): an unknown FILTER gets one chance to
+        # be a role-local (or playbook-adjacent) `filter_plugins/*.py`
+        # filter - register it into the shared environment and retry the
+        # evaluation once; anything else (an unknown TEST, an error shape
+        # this gate can't parse, no plugin defining the name) is
+        # re-raised untouched so the caller's existing behavior (raise,
+        # or its own hand-rolled fallback, which may still implement the
+        # name in FilterEngine) engages exactly as before.
+        #
+        # Why this lives HERE and not only in #render: unlike #render!,
+        # this entry point evaluates the parsed AST directly, so the
+        # unknown-feature error surfaces at `shared_env.evaluate` time
+        # (Crinja's `Evaluator` resolves every `| name` through the
+        # filter library mid-evaluation) - the leading-paren delegation
+        # branch in ExpressionEvaluator#evaluate_expr_access and every
+        # other #render_via_crinja_value call site funnels through this
+        # method, and without this gate their blanket rescue routed the
+        # error into the hand-rolled fallback. That fallback re-derives
+        # the value itself and its suffix-walk step used to collapse the
+        # whole expression to "undefined" - diodonfrost.vagrant's
+        # `{{ (vagrant_index.content | from_json).versions | list |
+        # sort_versions | last }}` (role-local filter_plugins/
+        # sort_versions.py) rendered the literal string "undefined" into
+        # a download URL while real ansible-playbook resolved 2.4.3.
+        # Registering here also means every LATER evaluation - in either
+        # evaluator - finds the filter natively, same as #render's
+        # rescue already provided for the string-rendering path.
+        feature = self.class.unknown_feature(e)
+        raise e if feature.nil? || feature[0] != "filter"
+        raise e unless self.class.ensure_python_filter?(feature[1], @vars)
+        evaluate_value_once!(expr)
+      end
+
+      def evaluate_value_once!(expr : String) : JSON::Any?
         # A bare expression (no surrounding template, no tags) can never
         # contain a `{% set %}`, so - unlike #render! above - there is no
         # leak risk in evaluating directly against the shared lazy parent
