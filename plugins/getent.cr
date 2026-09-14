@@ -69,7 +69,8 @@ module Krikri
         return PluginResult.new(
           changed: false,
           failed: true,
-          msg: "Unsupported getent database: #{database}"
+          msg: "Unsupported getent database: #{database}",
+          invocation: invocation_block(database)
         )
       end
 
@@ -77,7 +78,8 @@ module Krikri
         return PluginResult.new(
           changed: false,
           failed: true,
-          msg: "Could not find a matching entry: #{database} (#{file})"
+          msg: "Could not find a matching entry: #{database} (#{file})",
+          invocation: invocation_block(database)
         )
       end
 
@@ -128,7 +130,8 @@ module Krikri
           return PluginResult.new(
             changed: false,
             failed: true,
-            msg: "One or more supplied key could not be found in the database."
+            msg: "One or more supplied key could not be found in the database.",
+            invocation: invocation_block(database)
           )
         end
         # Single-key lookup still wraps the result in a dict keyed by
@@ -166,8 +169,38 @@ module Krikri
         changed: false,
         failed: false,
         msg: "Successfully retrieved #{database} database",
-        ansible_facts: JSON::Any.new(facts)
+        ansible_facts: JSON::Any.new(facts),
+        invocation: invocation_block(database)
       )
+    end
+
+    # Real Ansible's module protocol (module_utils/basic.py's
+    # _return_formatted, called from both exit_json and fail_json) ALWAYS
+    # attaches `invocation: {module_args: <the module's params>}` to a
+    # module's raw JSON result - so it is present on a failing lookup
+    # exactly as on a successful one. Round 813375 (galaxyproject.pulsar)
+    # reads `item.invocation.module_args.key` off a looped+registered
+    # getent task to recover the ORIGINAL key that produced each
+    # results[] entry, then uses it to index
+    # `ansible_facts.getent_passwd[...]`; without this block the key
+    # resolved to None and `[2]` on it crashed with "None has no element
+    # 2". module_args mirrors the RAW param values exactly as real
+    # Ansible reports them: `split:` stays null when the user didn't pass
+    # it (the ':' colon-database default below is internal, not reported)
+    # and `fail_key` is the boolean the user's value (or its default)
+    # produces. Note the controller separately strips a top-level
+    # `invocation` from a NON-looped register (ansible-core's strategy
+    # plugin does the same); only the per-item entries inside a looped
+    # register's results[] are meant to expose it - which is exactly the
+    # access path the pulsar role's pattern takes.
+    private def invocation_block(database : String) : JSON::Any
+      args = Hash(String, JSON::Any).new
+      args["database"] = JSON::Any.new(database)
+      args["fail_key"] = JSON::Any.new(@params["fail_key"]? ? true?(@params["fail_key"]) : true)
+      args["key"] = (v = @params["key"]?) ? JSON::Any.new(v) : JSON::Any.new(nil)
+      args["service"] = (v = @params["service"]?) ? JSON::Any.new(v) : JSON::Any.new(nil)
+      args["split"] = (v = @params["split"]?) ? JSON::Any.new(v) : JSON::Any.new(nil)
+      JSON::Any.new({"module_args" => JSON::Any.new(args)})
     end
 
     # Map a database name to the local file it reads. passwd/shadow/group
