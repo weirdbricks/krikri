@@ -336,6 +336,41 @@ module Krikri
       # produces a real bool regardless of x's own type, so a None-typed
       # operand under `not` is exactly as safe in real Ansible as under
       # crystal's existing truthy conversion - no divergence to guard.
+      # The same leading-`not` check must also match the zero-space
+      # spelling `not(...)` - Python/Jinja's `not` is a keyword, not a
+      # callable, so `not(X)` is exactly `not (X)` and real Ansible
+      # evaluates it identically. Leaving it unmatched here is far worse
+      # than merely mis-grouping: the `(...)` wrapper then survives
+      # uneaten into every later handler, each of which slices the
+      # string on operators INSIDE that wrapper. Found benchmarking
+      # redhat_sap.sap_hana_deployment's own
+      # `when: >- not(( sap_hana_deployment_zip_file_name is none ) or
+      # (sap_hana_deployment_zip_file_name | trim == ''))` (vars: null):
+      # real Ansible skips the task (`is none` is True, `or` short-
+      # circuits, `not True` is False), here the ` or ` inside the
+      # wrapper sits at paren depth 1 so the or-split found nothing, the
+      # `not ` match failed for lack of a space, and the `==` comparison
+      # handler split the whole raw string into left operand
+      # "not(( ... is none ) or (... | trim" and right operand "''))" -
+      # failing the whole task with "''))' is undefined". The spaced
+      # variant `not ((...) or (...))` already worked (the `not ` match
+      # recursed into the parens, which unwrap_outer_parens then
+      # unwrapped), as did every paren/quote combination WITHOUT a
+      # leading no-space `not(` - `not(x is none)`, `(x | trim == '')`,
+      # `((x | trim == ''))` all verified identical to real
+      # ansible-playbook before the fix. Deliberately NOT strict here,
+      # same rationale as the `not ` branch below: Python/Jinja's `not`
+      # always produces a real bool regardless of the operand's type.
+      # Strip only the `not` itself, NOT the `(` with it: recursing on
+      # `(rest)` hands the balanced parens to the unwrap_outer_parens
+      # loop, exactly as the spaced `not (rest)` spelling already does.
+      # (Consuming the paren too leaves `rest)` - a closing paren with
+      # no opener - which then poisons every later split, e.g.
+      # `not(x | trim == '')` recursed on "x | trim == '')" and failed
+      # with "''')' is undefined" before this was caught in testing.)
+      if condition.starts_with?("not(")
+        return !evaluate(condition[3..-1].strip, vars, false, raise_undefined)
+      end
       if condition.starts_with?("not ")
         return !evaluate(condition[4..-1].strip, vars, false, raise_undefined)
       end

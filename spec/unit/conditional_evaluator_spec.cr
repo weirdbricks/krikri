@@ -167,6 +167,55 @@ describe Krikri::ConditionalEvaluator do
       v = vars({"a" => false} of String => JSON::Any::Type)
       Krikri::ConditionalEvaluator.evaluate(%(not a or "x" in undefined_var.stdout), v).should be_true
     end
+
+    it "parses the zero-space 'not(...)' spelling as negation of the parens" do
+      # Real bug found benchmarking redhat_sap.sap_hana_deployment, whose
+      # own `when:` uses the compressed zero-space spelling:
+      # `not(( sap_hana_deployment_zip_file_name is none ) or
+      # (sap_hana_deployment_zip_file_name | trim == ''))` with the var
+      # null. Real ansible-playbook (2.19.x, verified live) skips the
+      # task: `is none` is True, the `or` short-circuits True, `not` ->
+      # False. Here only the SPACED `not (` spelling was recognized -
+      # the `(` of `not(` is glued to the keyword, so no leading-`not`
+      # match ever fired, the ` or ` inside the wrapper sat at paren
+      # depth 1 (no opener seen before it) so the or-split found
+      # nothing, and the whole raw string fell through to the `==`
+      # comparison handler, which split it into left operand
+      # "not(( ... is none ) or (... | trim" and right operand "''))" -
+      # failing the whole task with "''))' is undefined" instead of
+      # skipping it. `not(` must negate exactly like `not (`: in real
+      # Python/Jinja `not` is a keyword, never a callable, so `not(X)`
+      # can only ever be `not (X)`.
+      v = vars({"sap_hana_deployment_zip_file_name" => nil} of String => JSON::Any::Type)
+      Krikri::ConditionalEvaluator.evaluate(
+        %(not(( sap_hana_deployment_zip_file_name is none ) or (sap_hana_deployment_zip_file_name | trim == ''))),
+        v
+      ).should be_false
+    end
+
+    it "keeps the not(...) parens balanced for the recursion (no not( glued-strip)" do
+      # The first cut of the not( fix consumed the `(` together with the
+      # keyword, recursing on "x | trim == '')" - a closing paren with
+      # no opener - which re-created the exact same class of garbage
+      # right-operand ("''')' is undefined") on the simpler real-role
+      # shape `not(x | trim == '')`. Only the `not` itself may be
+      # stripped; the parens belong to the recursion, which unwraps
+      # them via the same outer-paren unwrap the spaced spelling uses.
+      v = vars({"x" => "  "} of String => JSON::Any::Type)
+      Krikri::ConditionalEvaluator.evaluate(%(not(x | trim == '')), v).should be_false
+      Krikri::ConditionalEvaluator.evaluate(%(not(x | trim == '')), vars({"x" => "a"} of String => JSON::Any::Type)).should be_true
+    end
+
+    it "evaluates simple no-space not(x is none) like real Python's not (x is none)" do
+      # Same zero-space spelling, single paren pair, no boolean inside -
+      # real ansible-playbook (verified live) skips on a null var. This
+      # shape used to slip through to the `is none` type-test shortcut
+      # with a garbage var_name ("not(x") and only accidentally
+      # evaluated false; it must evaluate false through the real
+      # negation path instead.
+      v = vars({"x" => nil} of String => JSON::Any::Type)
+      Krikri::ConditionalEvaluator.evaluate(%(not(x is none)), v).should be_false
+    end
   end
 
   describe "bare-variable truthiness" do
