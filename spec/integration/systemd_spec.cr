@@ -65,6 +65,40 @@ describe "systemd plugin" do
     result["msg"].to_s.should contain("start")
   end
 
+  # Real bug found via round 813233 (role libre_ops.multi_redis): the
+  # role passes `systemd: {name: ..., status: ...}` - `status` is not a
+  # parameter of real Ansible's systemd module at all
+  # (ansible/modules/systemd_service.py's argument_spec), so real
+  # ansible-playbook rejects the task outright at argument-spec
+  # validation time, before the module runs. This plugin previously
+  # silently accepted and ignored the unknown key and ran anyway.
+  it "rejects an unsupported parameter with real Ansible's argument-spec message" do
+    result = PluginSpecHelper.run("systemd", {
+      "name"   => "foo.service",
+      "state"  => "started",
+      "status" => "yes",
+    })
+    result["failed"].as_bool.should be_true
+    result["msg"].to_s.should eq(
+      "Unsupported parameters for (systemd) module: status. " \
+      "Supported parameters include: daemon_reexec, daemon_reload, enabled, force, masked, name, no_block, scope, state " \
+      "(daemon-reexec, daemon-reload, service, unit).")
+  end
+
+  it "sorts multiple unsupported parameters alphabetically in real Ansible's argument-spec message" do
+    result = PluginSpecHelper.run("systemd", {
+      "name"    => "foo.service",
+      "state"   => "started",
+      "status"  => "yes",
+      "pattern" => "foo*",
+    })
+    result["failed"].as_bool.should be_true
+    result["msg"].to_s.should eq(
+      "Unsupported parameters for (systemd) module: pattern, status. " \
+      "Supported parameters include: daemon_reexec, daemon_reload, enabled, force, masked, name, no_block, scope, state " \
+      "(daemon-reexec, daemon-reload, service, unit).")
+  end
+
   it "rejects an invalid state" do
     result = PluginSpecHelper.run("systemd", {"name" => "foo.service", "state" => "frobnitz"})
     result["failed"].as_bool.should be_true
