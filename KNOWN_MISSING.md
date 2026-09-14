@@ -18,7 +18,7 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.1036`.** Vendored `crinja` fork now at tag
+**Currently at `0.9.1037`.** Vendored `crinja` fork now at tag
 `crystal-play-0.9.31` (see `shard.yml`; 0.9.31 adds the six
 configurable Jinja delimiter strings).
 
@@ -51,12 +51,10 @@ configurable Jinja delimiter strings).
   `reimarstier.jetbrains_installer`, `darkwizard242.packer`,
   `openmicroscopy.upgrade-distpackages`, `buluma.gitlab_ee`,
   `linux-system-roles.ssh`, `redhat_sap.sap_hana_hsr` - one-off recap
-  mismatches, no shared pattern found yet. Three cluster on the same
-  `first_found` lookup symptom ("No file was found when using
-  first_found" or resolving to the wrong candidate entirely -
-  `ccdc.ntp_configuration` picks `vars/Debian.yml` instead of
-  `tasks/Linux.yml`): `ccdc.ntp_configuration`, `so5.ssh_hostbased_auth`,
-  `so5.pbspro`. Two show an `undefined`-looking value leaking into
+  mismatches, no shared pattern found yet. (`ccdc.ntp_configuration`,
+  `so5.ssh_hostbased_auth`, `so5.pbspro` - the `with_first_found:`
+  wrong-subdir-search cluster also once listed here - are now fixed,
+  see git log.) Two show an `undefined`-looking value leaking into
   rendered output (`diodonfrost.vagrant`'s URL literally contains
   `vagrant_undefined_linux_amd64`; `buluma.fish`'s repo metadata is
   similarly broken) - possibly the recursive-re-templating bug class
