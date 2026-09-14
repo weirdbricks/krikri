@@ -98,8 +98,11 @@ module Krikri
     #
     # Unlike the script transport there is no exit code to arbitrate
     # against - the dispatch block's return value IS the plugin's own
-    # JSON, same as the solo daemon path, so no `interpret_remote_result`
-    # equivalent is needed or wanted here.
+    # JSON, same as the solo daemon path. That is true of the EXIT-CODE
+    # arbitration, but it does NOT exempt the response from the
+    # failed/changed backfill every other transport's interpretation
+    # applies (see the normalize step inside the loop below - skipping
+    # it is what broke round 813096).
     private def self.run_batch(batch : JSON::Any, & : String, JSON::Any -> String) : String
       results = {} of String => JSON::Any
 
@@ -116,6 +119,34 @@ module Krikri
             "stdout"              => raw,
             "_connection_failure" => true,
           }.to_json)
+        end
+
+        # Backfill `failed`/`changed` exactly like the controller-side
+        # PluginManager.normalize_module_result does for every OTHER
+        # transport (local exec, one-shot ssh, the batch script's
+        # interpret_remote_result, the solo daemon response): a
+        # successful module's wire JSON carries neither key (BasePlugin
+        # #to_json omits `failed` on success, mimicking real Ansible's
+        # module protocol, where the controller - not the module -
+        # backfills), so this batch response is the one result shape in
+        # the codebase a registered variable could be missing `failed`
+        # from. Round 813096 hit exactly that (also 813254/813290/813354,
+        # same root cause): a daemon-batched successful slurp: registered
+        # a dict with no "failed" key, and elan.monitoring_blackbox_
+        # exporter's sibling block condition `when: registered["failed"]
+        # or ...` then raised "object of type 'dict' has no attribute
+        # 'failed'" once per loop item on the warm run, where real
+        # ansible-playbook skips the whole block. run_batch's own
+        # transport-parity promise ("which transport ran a group is not
+        # observable in the result") covers the result SHAPE too. Keep in
+        # lockstep with normalize_module_result: an absent rc means
+        # failed: false, not unknown - most read-only modules emit no rc.
+        if hash = parsed.as_h?
+          unless hash.has_key?("failed")
+            rc = hash["rc"]?.try(&.as_i?) || hash["rc"]?.try(&.as_s?).try(&.to_i?)
+            hash["failed"] = JSON::Any.new(!(rc.nil? || rc == 0))
+          end
+          hash["changed"] = JSON::Any.new(false) unless hash.has_key?("changed")
         end
 
         results[index.to_s] = parsed

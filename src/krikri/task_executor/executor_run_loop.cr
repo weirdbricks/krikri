@@ -1219,7 +1219,7 @@ module Krikri
       end
 
       begin
-        SSHManager.daemon_send_batch(
+        results = SSHManager.daemon_send_batch(
           connection_host,
           ssh_user,
           host.port,
@@ -1228,6 +1228,27 @@ module Krikri
           identity_file: host.vars["ansible_ssh_private_key_file"]?.try(&.as_s?),
           become_user: become_user
         )
+        # Same normalization the script transport applies one frame up in
+        # interpret_batch_script: the daemon's parsed response is a raw
+        # module wire result, and a SUCCESSFUL module's wire JSON carries
+        # no "failed" key at all (BasePlugin#to_json omits it, exactly
+        # like real Ansible's module protocol - the CONTROLLER backfills
+        # failed: false). Found via round 813096 (also 813254/813290/
+        # 813354, one root cause: ~/scratch/krt-results/
+        # 813096_atlantic_elan_monitoring_blackbox_exporter/): a
+        # daemon-batched successful slurp: registered a dict with no
+        # "failed" key, and the elan.monitoring_* roles' sibling block
+        # condition `when: registered["failed"] or ...` then died with
+        # "object of type 'dict' has no attribute 'failed'" once per loop
+        # item on the warm run, where real ansible-playbook skips the
+        # block. The daemon-side run_batch backfills too, so this is
+        # belt-and-suspenders against a stale pre-fix daemon binary still
+        # resident on a remote host - but it is what makes this path
+        # shape-identical to interpret_batch_script by construction.
+        results.each do |idx, result|
+          results[idx] = PluginManager.normalize_module_result(result)
+        end
+        results
       rescue
         nil
       end

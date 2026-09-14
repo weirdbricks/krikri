@@ -93,6 +93,46 @@ describe "fat plugin binary --daemon mode" do
     end
   end
 
+  it "backfills failed/changed on a successful batch step, matching the script transport's interpreted shape" do
+    # Round 813096 (also 813254/813290/813354 - one root cause): a
+    # daemon-batched successful slurp: registered a dict with NO "failed"
+    # key (a module's wire JSON omits it on success; the script
+    # transport's controller-side interpret_remote_result ->
+    # normalize_module_result backfills it, the daemon batch response
+    # didn't). elan.monitoring_blackbox_exporter's sibling block then
+    # evaluated `when: blackbox_exporter_remote_version["failed"] or ...`
+    # against that shape and died with "object of type 'dict' has no
+    # attribute 'failed'" once per loop item on the warm run, where real
+    # ansible-playbook skips the whole block (its warm recap there:
+    # ok=9 skipped=10; krikri's: ok=7 failed=1). This drives the REAL
+    # compiled daemon over the same length-prefixed pipe
+    # SSHManager.daemon_send_batch speaks over - only the transport
+    # (local pipe, not SSH) differs.
+    pending! "fat plugin binary not built (run ./build.sh first)" unless File.exists?(daemon_binary)
+
+    process = Process.new(daemon_binary, ["--daemon"],
+      input: Process::Redirect::Pipe, output: Process::Redirect::Pipe, error: Process::Redirect::Close)
+
+    begin
+      slurp_config = {
+        "host"   => {"name" => "localhost", "user" => ENV["USER"]? || "root", "port" => 22},
+        "vars"   => {"ansible_connection" => "local"},
+        "params" => {"src" => "/etc/hostname"},
+      }
+      results = daemon_batch(process, [
+        {"module" => JSON::Any.new("slurp"), "config" => JSON.parse(slurp_config.to_json), "ignore_errors" => JSON::Any.new(false)},
+      ])
+
+      results["0"]["failed"]?.try(&.as_bool).should be_false
+      results["0"]["changed"]?.try(&.as_bool).should be_false
+      # The backfill must not have disturbed the payload itself.
+      results["0"]["content"]?.should_not be_nil
+    ensure
+      process.input.close rescue nil
+      process.wait rescue nil
+    end
+  end
+
   it "stops a batch at the first failing step, exactly as the script transport does" do
     pending! "fat plugin binary not built (run ./build.sh first)" unless File.exists?(daemon_binary)
 
