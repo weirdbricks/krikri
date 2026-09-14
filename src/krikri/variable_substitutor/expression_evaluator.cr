@@ -3741,8 +3741,18 @@ module Krikri
 
         parsed = JSON.parse(rendered) rescue JSON::Any.new(rendered)
         walk_part, filter_part = split_suffix_walk_and_filters(suffix)
+        # The split cuts at the `|` itself, so the walk-able prefix keeps
+        # the blank before it (".versions | ..." -> ".versions ") -
+        # `@lookup.walk` does no trimming of its own, so that trailing
+        # blank made it look up the dict key "versions " and return nil,
+        # collapsing the whole expression to "undefined". Same
+        # diodonfrost.vagrant shape as the Crinja-side unknown-filter
+        # gate in `CrinjaRenderer#evaluate_value!` - this is that
+        # branch's hand-rolled fallback path, which a non-Crinja filter
+        # name (one only FilterEngine implements) still reaches.
+        walk_part = walk_part.strip
 
-        value = if walk_part.strip.empty?
+        value = if walk_part.empty?
                   parsed
                 else
                   walked = @lookup.walk(parsed, walk_part)

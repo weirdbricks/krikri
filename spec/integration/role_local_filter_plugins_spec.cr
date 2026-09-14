@@ -150,6 +150,99 @@ describe "role-local filter_plugins/*.py custom filters" do
     FileUtils.rm_rf(root) if root
   end
 
+  it "resolves a custom filter behind a leading parenthesized sub-expression with attribute access (round: diodonfrost.vagrant)" do
+    # Real role shape: `{{ (vagrant_index.content | from_json).versions |
+    # list | sort_versions | last }}` with the role's own
+    # filter_plugins/sort_versions.py. The leading-paren construct is
+    # evaluated by ExpressionEvaluator's Crinja-first delegation
+    # (render_via_crinja_value -> CrinjaRenderer#evaluate_value!), which
+    # raises Crinja's unknown-feature error for the custom filter mid-
+    # evaluation - so the case needs the register-and-retry gate on the
+    # raw-value entry point, not just #render's rescue. All three
+    # spellings are asserted together: the builtin-only chain, the
+    # custom filter without the paren (both already worked), and the
+    # custom filter behind the paren (the divergence - krikri rendered
+    # the literal string "undefined" into a download URL while real
+    # ansible-playbook resolved the latest version).
+    root = File.tempname("filter-plugins-paren-attr")
+    Dir.mkdir_p(File.join(root, "roles", "myrole", "filter_plugins"))
+    Dir.mkdir_p(File.join(root, "roles", "myrole", "tasks"))
+    File.write(File.join(root, "roles", "myrole", "filter_plugins", "sort_versions.py"), <<-'PYTHON')
+      import re
+      def _version_key(version_string):
+          return [int(x) for x in re.findall(r'\d+', version_string)]
+      def filter_sort_versions(value):
+          return sorted(value, key=_version_key)
+      class FilterModule(object):
+          def filters(self):
+              return {'sort_versions': filter_sort_versions}
+      PYTHON
+    File.write(File.join(root, "roles", "myrole", "tasks", "main.yml"), <<-YAML)
+      - name: builtin sort behind leading paren (must keep working)
+        ansible.builtin.set_fact:
+          a1: "{{ (vagrant_index.content | from_json).versions | list | sort | last }}"
+        vars:
+          vagrant_index:
+            content: '{"versions": {"2.4.1": {}, "2.4.3": {}, "2.3.0": {}}}'
+      - name: custom filter without leading paren (must keep working)
+        ansible.builtin.set_fact:
+          a2: "{{ ['2.4.1', '2.4.3', '2.3.0'] | sort_versions | last }}"
+      - name: custom filter behind leading paren (the bug)
+        ansible.builtin.set_fact:
+          a3: "{{ (vagrant_index.content | from_json).versions | list | sort_versions | last }}"
+        vars:
+          vagrant_index:
+            content: '{"versions": {"2.4.1": {}, "2.4.3": {}, "2.3.0": {}}}'
+      - name: surface all three results
+        ansible.builtin.debug:
+          msg: "{{ a1 }} / {{ a2 }} / {{ a3 }}"
+      YAML
+
+    status, output = run_playbook(root, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        roles:
+          - myrole
+      YAML
+
+    status.success?.should be_true, output
+    output.should contain("2.4.3 / 2.4.3 / 2.4.3"), output
+    output.should_not contain("undefined"), output
+  ensure
+    FileUtils.rm_rf(root) if root
+  end
+
+  it "still hard-fails a genuinely unknown filter behind a leading paren instead of degrading to 'undefined'" do
+    # The other half of the paren-path gate: with no filter_plugins
+    # source defining the name, the expression must fail the task with
+    # real Ansible's wording - not silently collapse to the
+    # "undefined" sentinel the fallback path used to produce.
+    root = File.tempname("filter-plugins-paren-unknown")
+    Dir.mkdir_p(File.join(root, "roles", "myrole", "tasks"))
+    File.write(File.join(root, "roles", "myrole", "tasks", "main.yml"), <<-YAML)
+      - name: unknown filter behind leading paren
+        ansible.builtin.set_fact:
+          a: "{{ (vagrant_index.content | from_json).versions | list | totally_bogus_filter_xyz | last }}"
+        vars:
+          vagrant_index:
+            content: '{"versions": {"2.4.1": {}, "2.4.3": {}, "2.3.0": {}}}'
+      YAML
+
+    status, output = run_playbook(root, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        roles:
+          - myrole
+      YAML
+
+    status.success?.should be_false, output
+    output.should contain("No filter named 'totally_bogus_filter_xyz'"), output
+  ensure
+    FileUtils.rm_rf(root) if root
+  end
+
   it "still raises the plain unknown-filter error when no filter_plugins source defines the name" do
     root = File.tempname("filter-plugins-none")
     Dir.mkdir_p(File.join(root, "roles", "myrole", "tasks"))
