@@ -103,23 +103,21 @@ module Krikri
     private def typed_value(value : String) : JSON::Any
       stripped = value.strip
       if stripped.starts_with?('{') || stripped.starts_with?('[')
-        # A magic var like `ansible_play_hosts_all` (a real list) renders
-        # through the substitutor as a Python-repr string
-        # (`['10.99.1.2']`, single-quoted) rather than valid JSON when a
-        # task param references it directly - same Jinja
-        # `{% if %}...{{ [list] }}...{% endif %}`-shaped rendering
-        # already handled elsewhere in this codebase (package.cr's own
-        # `parse_package_names`). Found via linux-system-roles.storage's
-        # own `sr_fingerprint: {ansible_play_hosts_all: "{{
-        # ansible_play_hosts_all }}", ...}`.
+        # A whole-value `{{ list_var }}`/`{{ dict_var }}` container arg
+        # arrives as the double-quoted JSON the wire serialized it to
+        # (see substitute_task_params's whole-single-span comment) - a
+        # real Ansible module arg keeps the referenced value's native
+        # type for a whole-span template (live-verified vs
+        # ansible-playbook 2.19.11: `apt: name: "{{ pkg_list }}"` with a
+        # real list var looks up the clean elements), so parse it back
+        # into a real container here the same way. ONLY valid JSON,
+        # though - never a Python-repr repair pass: a value that merely
+        # LOOKS like a container is a plain STRING in real ansible-core
+        # (live-verified, see apt.cr's parse_package_names).
         parsed = begin
           JSON.parse(stripped)
         rescue
-          begin
-            JSON.parse(stripped.gsub('\'', '"'))
-          rescue
-            nil
-          end
+          nil
         end
         return parsed if parsed
       end

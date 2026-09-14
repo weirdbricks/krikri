@@ -234,16 +234,16 @@ module Krikri
             ns[k] = v.as_s? || v.to_s
           end
         elsif s = nsv.as_s?
-          # Templated dict params can arrive as their string form; try JSON
-          # (double-quoted) then python-repr (single-quoted) like apt's own
-          # list-param handling.
+          # Templated dict params arrive as their string form - valid JSON
+          # only. A whole-value `{{ dict_var }}` container arg arrives as
+          # the double-quoted JSON the wire serialized it to (see
+          # substitute_task_params's whole-single-span comment); NEVER a
+          # Python-repr repair pass - a value that merely LOOKS like a
+          # container is a plain STRING in real ansible-core
+          # (live-verified vs ansible-playbook 2.19.11, see apt.cr's
+          # parse_package_names).
           parsed = begin
             JSON.parse(s).as_h?
-          rescue
-            nil
-          end
-          parsed ||= begin
-            JSON.parse(s.gsub('\'', '"')).as_h?
           rescue
             nil
           end

@@ -136,19 +136,22 @@ module Krikri
         rescue
           nil
         end
-        # A Python-repr list (single-quoted strings) isn't valid JSON -
-        # same fallback as apt.cr's own parse_package_names (see there
-        # for the full rationale: a Jinja `{% if %}...{{ [list] }}...
-        # {% endif %}` template idiom renders as Python's `str(list)`
-        # form). Found live via prometheus.prometheus.blackbox_exporter's
-        # own `ansible.builtin.package: name: "{{ _common_dependencies
-        # }}"` task - _common_dependencies ultimately resolves through
-        # exactly this template shape.
-        parsed ||= begin
-          Array(String).from_json(trimmed.gsub('\'', '"'))
-        rescue
-          nil
-        end
+        # ONLY valid JSON - never a Python-repr repair pass. A value that
+        # merely LOOKS like a container (a literal `name: "['pkg1']"`
+        # string, or a `{% if %}...{% else %}['pkg1']{% endif %}` block's
+        # rendered output) is a plain STRING in real ansible-core -
+        # native typing requires the template's whole AST to be one
+        # output node wrapping one expression, so block-tag output is
+        # never re-parsed. A whole-value `{{ list_var }}` container arg
+        # arrives as the double-quoted JSON the wire serialized it to
+        # (see substitute_task_params's whole-single-span comment), which
+        # the plain JSON parse above already handles. Live-verified vs
+        # ansible-playbook 2.19.11: `package: name: "['probe-pkg-one',
+        # 'probe-pkg-two']"` fails with "No package(s) matching
+        # '['probe-pkg-one'' available" (real Ansible comma-splits the
+        # repr-looking string into garbage names and fails looking them
+        # up) - the old single-quote repair here decomposed it into a
+        # real list and installed both packages instead.
         if parsed
           single_name = parsed.size == 1
           names = parsed
@@ -161,8 +164,11 @@ module Krikri
         # plugin's list params already expect" per playbook_parser.cr's
         # own stringify_value, but apt-get/dpkg -l/rpm -q all need space-
         # separated names, not comma-separated (a real single package
-        # name never contains a comma, so this can't misfire).
-        parts = trimmed.split(',').map(&.strip).reject(&.empty?)
+        # name never contains a comma, so this can't misfire). Empty
+        # comma segments are KEPT: real Ansible fails the install with
+        # "No package matching '' is available" for one (live-verified
+        # for the apt backend, see apt.cr's parse_package_names).
+        parts = trimmed.split(',').map(&.strip)
         single_name = parts.size == 1
         names = parts
         name = parts.join(" ")
@@ -181,17 +187,18 @@ module Krikri
         names = single_name ? [trimmed] : trimmed.split(' ').reject(&.empty?)
       end
 
-      # A name that templates down to nothing - an empty string or an
-      # empty list (`name: '{{ ntp_packages_removed }}'` with the var
-      # defaulting to `[]`, round 83246) - is a no-op, not a package
-      # operation on the empty-string name. Real Ansible's apt backend
-      # exits changed=false for an empty package list (`install([])`
-      # returns immediately) for both state: present and state: absent;
-      # this engine instead used to run `apt-get remove` on the empty
-      # token and report "Package  removed" (double space) as changed on
-      # every run, breaking idempotency.
+      # An empty LIST (`name: '{{ ntp_packages_removed }}'` with the var
+      # defaulting to `[]`, round 83246 - arriving as the literal text
+      # "[]" and JSON-decoded above, or a literal `name: []` stringified
+      # to "[]" by parse_module_params) is a no-op, not a package
+      # operation: real Ansible's apt backend exits changed=false for an
+      # empty package list (`install([])` returns immediately) for both
+      # state: present and state: absent; this engine instead used to
+      # run `apt-get remove` on the empty token and report "Package
+      # removed" (double space) as changed on every run, breaking
+      # idempotency.
       return PluginResult.new(changed: false, failed: false, msg: "Nothing to do") if
-        names.empty? || names.all?(&.strip.empty?)
+        names.empty?
 
       # Per-element shell quoting for the actual package-manager command
       # line - each element quoted as its own atomic token, since a
@@ -207,6 +214,23 @@ module Krikri
       # "Invalid state" instead of installing.
       state = "present" if state == "installed"
       state = "absent" if state == "removed"
+
+      # An empty name that SURVIVED parsing (`name: ""`, or an empty
+      # comma segment) is a hard failure for present/latest - real
+      # Ansible treats it as one (invalid) package name and fails with
+      # "No package matching '' is available" (live-verified vs
+      # ansible-playbook 2.19.11 for both the apt and package modules in
+      # check mode). state: absent tolerates one - real Ansible's remove
+      # path just reports ok there. The old `names.all?(&.strip.empty?)`
+      # "Nothing to do" collapsed this into a silent success where real
+      # Ansible fails the task.
+      if state != "absent" && names.any?(&.empty?)
+        return PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: "No package matching '' is available"
+        )
+      end
 
       # Resolve the backend: an explicit `use:` overrides auto-detection
       # UNCONDITIONALLY - it dispatches straight to the named module and

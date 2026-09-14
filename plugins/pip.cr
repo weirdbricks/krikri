@@ -325,8 +325,14 @@ module Krikri
       stripped = raw.strip
       return raw unless stripped.starts_with?('[') && stripped.ends_with?(']')
 
-      list = (Array(String).from_json(stripped) rescue nil) ||
-             (Array(String).from_json(stripped.gsub('\'', '"')) rescue nil)
+      # ONLY valid JSON - never a Python-repr repair pass: a value that
+      # merely LOOKS like a container is a plain STRING in real
+      # ansible-core (live-verified vs ansible-playbook 2.19.11, see
+      # apt.cr's parse_package_names). A whole-value `{{ list_var }}`
+      # container arg arrives as the double-quoted JSON the wire
+      # serialized it to (see substitute_task_params's whole-single-span
+      # comment).
+      list = (Array(String).from_json(stripped) rescue nil)
       return raw unless list
 
       # Real bug found benchmarking claranet.postgresql's own `name:

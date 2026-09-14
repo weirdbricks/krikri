@@ -237,24 +237,19 @@ module Krikri
       private def parse_name_param_as_json(trimmed : String) : Array(String)?
         return unless trimmed.starts_with?('[') && trimmed.ends_with?(']')
 
-        begin
-          Array(String).from_json(trimmed)
-        rescue
-          # A Python-repr list (single-quoted strings) isn't
-          # valid JSON - same fallback as apt.cr's/package.cr's
-          # own copies of this logic (see there for the full
-          # rationale: a Jinja `{% if %}...{{ [list] }}...
-          # {% endif %}` template idiom renders as Python's
-          # `str(list)` form, not JSON). Proactive fix - not
-          # yet caught live for dnf specifically, but the
-          # exact same bug class already found independently
-          # in two other plugins this way.
-          begin
-            Array(String).from_json(trimmed.gsub('\'', '"'))
-          rescue
-            nil
-          end
-        end
+        # ONLY valid JSON - never a Python-repr repair pass. A value that
+        # merely LOOKS like a container (a literal `name: "['pkg1']"`
+        # string, or a `{% if %}...{% else %}['pkg1']{% endif %}` block's
+        # rendered output) is a plain STRING in real ansible-core -
+        # native typing requires the template's whole AST to be one
+        # output node wrapping one expression, so block-tag output is
+        # never re-parsed (live-verified vs ansible-playbook 2.19.11,
+        # see apt.cr's parse_package_names). A whole-value `{{ list_var }}`
+        # container arg arrives as the double-quoted JSON the wire
+        # serialized it to (see substitute_task_params's
+        # whole-single-span comment), which the plain JSON parse above
+        # already handles.
+        Array(String).from_json(trimmed) rescue nil
       end
 
       private def handle_install(names : Array(String), options : String) : PluginResult
@@ -841,19 +836,20 @@ module Krikri
       # list params with JSON's own .to_s) or as the comma-separated string
       # real Ansible's yumdnf.listify_comma_sep_strings_in_list still
       # accepts for these same options ("It's possible someone passed a
-      # comma separated string since it used to be a string type"). The
-      # single-quote fallback covers a Python-repr list rendering the same
-      # way parse_name_param_as_json handles it for `name:`.
+      # comma separated string since it used to be a string type"). ONLY
+      # valid JSON, though - never a Python-repr repair pass: a value that
+      # merely LOOKS like a container is a plain STRING in real
+      # ansible-core (live-verified vs ansible-playbook 2.19.11, see
+      # apt.cr's parse_package_names), and a whole-value `{{ list_var }}`
+      # container arg arrives as the double-quoted JSON the wire
+      # serialized it to (see substitute_task_params's whole-single-span
+      # comment).
       private def string_list_param(key : String) : Array(String)
         raw = @params[key]?
         return [] of String if raw.nil? || raw.strip.empty?
 
-        [raw, raw.gsub('\'', '"')].each do |candidate|
-          begin
-            return JSON.parse(candidate).as_a.map(&.as_s)
-          rescue
-          end
-        end
+        parsed = JSON.parse(raw).as_a.map(&.as_s) rescue nil
+        return parsed if parsed
 
         raw.split(",").map(&.strip).reject(&.empty?)
       end

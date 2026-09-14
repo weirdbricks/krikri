@@ -348,17 +348,28 @@ describe "unarchive plugin" do
     File.exists?(File.join(dest, "sub", "b.txt")).should be_false
   end
 
-  it "excludes a member when exclude: is a Python-repr list string, not just JSON" do
-    # A Jinja `{% if %}...{{ [list_expr] }}...{% endif %}` template
-    # idiom renders as Python's str() form (single-quoted), not JSON -
-    # same bug class already found live in apt.cr/package.cr's own
-    # name: parsing (round 27), proactively fixed here too.
+  it "keeps a Python-repr exclude: string a plain string (never re-parsed into a list)" do
+    # Real ansible-core's native typing requires a template's whole
+    # parsed AST to be exactly one output node wrapping one expression,
+    # so a value that merely LOOKS like a container - a literal
+    # `exclude: "['sub/b.txt']"` string, or a `{% if %}...{% else %}
+    # ['sub/b.txt']{% endif %}` block's rendered output - is a plain
+    # STRING (live-verified vs ansible-playbook 2.19.11 for the same
+    # bug class on apt's name:). A whole-value `{{ list_var }}`
+    # container arg arrives as double-quoted JSON (see
+    # substitute_task_params's whole-single-span comment), so the
+    # single-quote "repair" this spec used to assert was only ever
+    # reachable for values that are strings in real Ansible. The raw
+    # garbage text now reaches tar's --exclude verbatim (exactly what
+    # real Ansible's comma-split would pass), where its own bracket-
+    # pattern wildcard semantics swallow every member - nothing is
+    # compared as differing and nothing is extracted, vs the repaired
+    # parse that excluded a REAL member real Ansible never excluded.
     dest = fresh_dest("exclude-pyrepr")
     result = PluginSpecHelper.run("unarchive", {"src" => File.join(TMP_DIR, "archive.tar.gz"), "dest" => dest, "exclude" => "['sub/b.txt']"})
 
-    result["changed"].as_bool.should be_true
-    File.exists?(File.join(dest, "a.txt")).should be_true
-    File.exists?(File.join(dest, "sub", "b.txt")).should be_false
+    result["changed"].as_bool.should be_false
+    Dir.empty?(dest).should be_true
   end
 
   it "fails with a clear message when dest doesn't already exist" do

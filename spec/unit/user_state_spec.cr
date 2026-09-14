@@ -75,17 +75,34 @@ describe UserState do
       args.should eq(["-m", "'runner'"])
     end
 
-    it "comma-joins a multi-item bracketed groups: value instead of passing the bracket text raw to -G" do
+    it "comma-joins a multi-item JSON-array groups: value instead of passing the bracket text raw to -G" do
       # Real bug found benchmarking kostiantyn-nemchenko.mongodb_exporter's
       # own `groups: "{{ mongodb_exporter_system_groups }}"` (a full-value
-      # substitution of a real 2-item list) - this renders as bracketed
-      # text (`['mongodb_exporter', 'ssl-cert']`) instead of a real
-      # array, and passing that whole string straight to `-G` made
+      # substitution of a real 2-item list) - the templated-list wire
+      # format is the double-quoted JSON text
+      # substitute_task_params's whole-single-span comment documents,
+      # and passing the raw bracketed string straight to `-G` made
       # useradd itself split on the comma INSIDE the quotes, producing
       # two bogus group names ("['mongodb_exporter'" and " 'ssl-cert']")
       # and failing "group ... does not exist" for both.
-      args = UserState.useradd_args("mongodb_exporter", nil, nil, "['mongodb_exporter', 'ssl-cert']", nil, nil, nil, false, true)
+      args = UserState.useradd_args("mongodb_exporter", nil, nil, %(["mongodb_exporter", "ssl-cert"]), nil, nil, nil, false, true)
       args.should eq(["-G 'mongodb_exporter,ssl-cert'", "-m", "'mongodb_exporter'"])
+    end
+
+    it "passes a Python-repr-looking groups: string through raw (never re-parsed into a list)" do
+      # Real ansible-core's native typing requires a template's whole
+      # parsed AST to be exactly one output node wrapping one
+      # expression, so a value that merely LOOKS like a container - a
+      # literal `groups: "['a', 'b']"` string, or a `{% if %}...{% else
+      # %}['a']{% endif %}` block's rendered output - is a plain STRING
+      # (live-verified vs ansible-playbook 2.19.11 for the same bug
+      # class on apt's name:). The single-quote "repair" this spec used
+      # to assert turned that string into a real group list real
+      # Ansible never had; passing the raw text to `-G` now fails with
+      # useradd's own "group ... does not exist" exactly like real
+      # Ansible's comma-split garbage does.
+      args = UserState.useradd_args("mongodb_exporter", nil, nil, "['mongodb_exporter', 'ssl-cert']", nil, nil, nil, false, true)
+      args.should eq(["-G '['\\''mongodb_exporter'\\'', '\\''ssl-cert'\\'']'", "-m", "'mongodb_exporter'"])
     end
 
     it "emits -o alongside the uid when non_unique is set (live-verified: `useradd -u 60000 -o ...`)" do

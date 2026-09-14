@@ -90,9 +90,12 @@ describe "omit" do
           ansible.builtin.debug:
             msg: "{{ [1, v_omit, 3] }}"
       YAML
-    # Containers render in Python's `repr` form, as real Ansible renders
-    # them (0.9.612) - single quotes, a space after each comma.
-    output.should contain("[1, 3]")
+    # A whole-span `{{ expr }}` module arg is natively typed like real
+    # Ansible's own module args (live-verified vs ansible-playbook
+    # 2.19.11: `debug: msg: "{{ [1, omit, 3] }}"` prints msg as a real
+    # LIST, pretty-printed by the callback) - the wire carries this
+    # codebase's double-quoted JSON container form.
+    output.should contain("[1,3]")
   end
 
   it "drops its whole key in a dict literal" do
@@ -101,9 +104,9 @@ describe "omit" do
           ansible.builtin.debug:
             msg: "{{ {'a': 1, 'b': v_omit} }}"
       YAML
-    # Containers render in Python's `repr` form, as real Ansible renders
-    # them (0.9.612) - single quotes, a space after each comma.
-    output.should contain(%({'a': 1}))
+    # Same whole-span native typing as above (live-verified: real
+    # Ansible prints msg as a real dict with only the omit key dropped).
+    output.should contain(%({"a":1}))
   end
 
   it "does not swallow genuinely falsy values alongside it" do
@@ -118,9 +121,9 @@ describe "omit" do
           ansible.builtin.debug:
             msg: "{{ {'a': 0, 'b': false, 'c': '', 'd': v_omit} }}"
       YAML
-    # Containers render in Python's `repr` form, as real Ansible renders
-    # them (0.9.612) - single quotes, a space after each comma.
-    output.should contain(%(['kept', '', 0, False]))
-    output.should contain(%({'a': 0, 'b': False, 'c': ''}))
+    # Same whole-span native typing as above (live-verified: real
+    # Ansible keeps "", 0 and False in the natively-typed containers).
+    output.should contain(%(["kept","",0,false]))
+    output.should contain(%({"a":0,"b":false,"c":""}))
   end
 end

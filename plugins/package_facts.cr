@@ -143,13 +143,16 @@ module Krikri
     # accepted (single element, or comma-separated - real AnsibleModule's
     # check_type_list splits those). A templated expression that resolved
     # to a real list reaches the plugin as a JSON-array string (same
-    # convention unarchive.cr's parse_list_param documents), and a
-    # `{% if %}`-rendered Python list reaches it as a Python-repr string.
+    # convention unarchive.cr's parse_list_param documents). ONLY valid
+    # JSON - never a Python-repr repair pass: a value that merely LOOKS
+    # like a container is a plain STRING in real ansible-core
+    # (live-verified vs ansible-playbook 2.19.11, see apt.cr's
+    # parse_package_names); a `{% if %}`-rendered "list" is such a
+    # string.
     private def parse_manager_list(raw : String) : Array(String)
       return ["auto"] if raw.empty?
       if raw.starts_with?('[')
         (Array(String).from_json(raw) rescue nil).try { |parsed| return parsed }
-        (Array(String).from_json(raw.gsub('\'', '"')) rescue nil).try { |parsed| return parsed }
       end
       raw.split(",").map(&.strip).reject(&.empty?)
     end

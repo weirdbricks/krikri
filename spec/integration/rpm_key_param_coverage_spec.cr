@@ -98,15 +98,29 @@ describe "rpm_key plugin fingerprint param" do
     end
   end
 
-  it "accepts a Python-repr list (single-quoted, from a Jinja template render)" do
+  it "keeps a Python-repr fingerprint list a plain string (never re-parsed into a list)" do
+    # Real ansible-core's native typing requires a template's whole
+    # parsed AST to be exactly one output node wrapping one expression,
+    # so a value that merely LOOKS like a container - a literal
+    # `"['<fp>']"` string, or a `{% if %}...{% else %}['<fp>']{% endif
+    # %}` block's rendered output - is a plain STRING (live-verified vs
+    # ansible-playbook 2.19.11 for the same bug class on apt's name:
+    # real Ansible comma-splits the repr-looking string and fails
+    # looking the garbage names up). A whole-value `{{ list_var }}`
+    # container arg arrives as double-quoted JSON (see
+    # substitute_task_params's whole-single-span comment), so the
+    # single-quote "repair" this spec used to assert was only ever
+    # reachable for values that are strings in real Ansible - here the
+    # garbage fingerprint text then fails the match exactly like real
+    # Ansible's own comma-split would.
     with_rpm_key_shims do
       with_key_file do |key_path|
         result = PluginSpecHelper.run("rpm_key", {
           "key"         => key_path,
           "fingerprint" => "['#{FPR}']",
         })
-        result["failed"]?.try(&.as_bool).should be_falsey
-        result["changed"].as_bool.should be_true
+        result["failed"].as_bool.should be_true
+        result["msg"].as_s.should contain("does not match any key fingerprints")
       end
     end
   end

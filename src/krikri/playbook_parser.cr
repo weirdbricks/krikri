@@ -3781,6 +3781,32 @@ module Krikri
             # #parse_argv_list decodes it back into an Array(String).
             argv_items = value.as_a.map { |item| stringify_value(item) }
             params[key.to_s] = argv_items.to_json
+          elsif value.as_a?.try(&.empty?)
+            # A literal empty-list param value (any module, any key -
+            # real Ansible keeps a literal YAML `[]` a natively-typed
+            # empty container wherever it appears, live-verified vs
+            # ansible-playbook 2.19.11: `debug: msg: []` prints a real
+            # empty list, `apt: {name: []}` is "no packages") must stay
+            # distinguishable from an empty STRING on the String-valued
+            # plugin wire. The generic Array branch's comma-join erases
+            # the difference - both stringify to "" - and real Ansible
+            # does NOT treat them the same (same live verification in
+            # check mode): `apt: {name: []}` is "no packages" (cache
+            # update only, changed from the refresh), while `apt:
+            # {name: ""}` treats the empty string as ONE (invalid)
+            # package name and hard-fails with "No package matching ''
+            # is available" - found live benchmarking
+            # inverse_inc.gitlab_buildpkg_tools, whose `name: "{{
+            # lookup('env', 'DEB_PACKAGES_NAME') }}"` renders to "" when
+            # the env var is unset, and silently no-op'd here where real
+            # Ansible fails the task. "[]" is the same wire text the
+            # templated whole-span path already renders an empty
+            # container to (VariableLookup#format_value_output /
+            # substitute_task_params's whole-single-span form), so
+            # literal and templated empty containers arrive
+            # indistinguishable - and each plugin's own leading-bracket
+            # JSON branch decodes both to no elements.
+            params[key.to_s] = "[]"
           elsif key.to_s.in?({"mode", "directory_mode"}) && (raw = value.raw).is_a?(Int64 | Int32)
             # `mode: 0770` (unquoted, no string quotes - the way most
             # real playbooks write it) is genuinely ambiguous YAML: 1.1's

@@ -270,11 +270,13 @@ module Krikri
       rescue
       end
 
-      begin
-        list = Array(String).from_json(raw.gsub('\'', '"'))
-        return list unless list.empty?
-      rescue
-      end
+      # ONLY valid JSON - never a Python-repr repair pass: a value that
+      # merely LOOKS like a container is a plain STRING in real
+      # ansible-core (live-verified vs ansible-playbook 2.19.11, see
+      # apt.cr's parse_package_names). A whole-value `{{ list_var }}`
+      # container arg arrives as the double-quoted JSON the wire
+      # serialized it to (see substitute_task_params's whole-single-span
+      # comment), which the JSON.parse above already handles.
 
       return [] of String if raw.empty?
       raw.includes?(",") ? raw.split(",").map(&.strip) : [raw]

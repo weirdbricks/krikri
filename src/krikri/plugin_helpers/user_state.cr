@@ -20,23 +20,31 @@ module Krikri
       # `groups: "{{ list_var }}"` (a full-value bare-variable
       # substitution of a real multi-item list, as opposed to a literal
       # YAML `groups:` list - already comma-joined by the parser before
-      # this ever runs) renders as bracketed text (`['mongodb_exporter',
-      # 'ssl-cert']`) instead of a real array. Passed straight through
-      # into `useradd -G`, that whole bracketed string became ONE
-      # malformed group-list argument - useradd itself then split it on
-      # the comma INSIDE the quotes, producing two bogus group names
-      # ("['mongodb_exporter'" and " 'ssl-cert']") and failing "group
-      # ... does not exist" for both. Found via kostiantyn-nemchenko.
-      # mongodb_exporter's own `groups: "{{ mongodb_exporter_system_
-      # groups }}"` on `user:`'s create (useradd) path - the same
-      # bracketed-list-not-comma-joined shape pip.cr's own normalize_name
-      # already fixed for `name:`.
+      # this ever runs) arrives as the double-quoted JSON the wire
+      # serialized it to (see substitute_task_params's whole-single-span
+      # comment) - parse it back into real elements to comma-join for
+      # `useradd -G`. Previously the whole bracketed string went into
+      # `useradd -G` as ONE malformed group-list argument and useradd
+      # failed "group ... does not exist" for the bracket-stuck pieces.
+      # Found via kostiantyn-nemchenko.mongodb_exporter's own
+      # `groups: "{{ mongodb_exporter_system_groups }}"` on `user:`'s
+      # create (useradd) path.
+      #
+      # ONLY valid JSON, though - never a Python-repr repair pass: a
+      # value that merely LOOKS like a container (a literal
+      # `groups: "['a']"` string, or a `{% if %}...{% else %}['a']{%
+      # endif %}` block's rendered output) is a plain STRING in real
+      # ansible-core - native typing requires the template's whole AST
+      # to be one output node wrapping one expression, so block-tag
+      # output is never re-parsed (live-verified vs ansible-playbook
+      # 2.19.11, see apt.cr's parse_package_names). The repr-looking
+      # string passes through unchanged and `useradd -G` fails on it
+      # exactly like real Ansible's comma-split garbage does.
       def self.normalize_groups_value(raw : String) : String
         stripped = raw.strip
         return raw unless stripped.starts_with?('[') && stripped.ends_with?(']')
 
-        list = (Array(String).from_json(stripped) rescue nil) ||
-               (Array(String).from_json(stripped.gsub('\'', '"')) rescue nil)
+        list = (Array(String).from_json(stripped) rescue nil)
         list ? list.join(",") : raw
       end
 

@@ -194,9 +194,18 @@ describe Krikri::SynchronizeRsync do
   end
 
   describe "parse_list" do
-    it "handles JSON arrays, python-repr lists, comma separation, and nil" do
+    it "parses JSON arrays and comma separation, keeps a repr-looking string raw, and maps nil to empty" do
+      # A whole-value `{{ list_var }}` container arg arrives as
+      # double-quoted JSON (see substitute_task_params's
+      # whole-single-span comment). A value that merely LOOKS like a
+      # container (single-quoted repr text - a literal string, or a
+      # `{% if %}...{% else %}['a']{% endif %}` block's rendered output)
+      # is a plain STRING in real ansible-core (live-verified vs
+      # ansible-playbook 2.19.11, see apt.cr's parse_package_names) -
+      # the old single-quote "repair" turned it into a list real
+      # Ansible never had.
       Krikri::SynchronizeRsync.parse_list(%(["--a", "--b"])).should eq(["--a", "--b"])
-      Krikri::SynchronizeRsync.parse_list("['--a', '--b']").should eq(["--a", "--b"])
+      Krikri::SynchronizeRsync.parse_list("['--a', '--b']").should eq(["['--a'", "'--b']"])
       Krikri::SynchronizeRsync.parse_list("--a, --b").should eq(["--a", "--b"])
       Krikri::SynchronizeRsync.parse_list(nil).should eq([] of String)
     end
