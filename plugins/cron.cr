@@ -13,8 +13,12 @@ module Krikri
   #     "#Ansible: <name>" comment marker so the entry can be found again.
   #     With env: true this is instead the NAME of a crontab environment
   #     variable (see env below).
-  #   job (required unless state: absent): The command to run. With
-  #     env: true, the variable's VALUE instead.
+  #   job (required unless state: absent; `value:` is its documented
+  #     alias - cron.py's `job=dict(type='str', aliases=['value'])`):
+  #     The command to run. With env: true, the variable's VALUE instead.
+  #     env-mode roles in the wild (infOpen.lynis, round 811204) spell it
+  #     `value:`, so the alias must resolve or the task fails validation
+  #     even though real ansible-playbook accepts it.
   #   minute/hour/day/month/weekday (optional, default "*")
   #   special_time (optional): reboot/yearly/annually/monthly/weekly/daily/hourly
   #     - overrides minute/hour/day/month/weekday
@@ -73,6 +77,17 @@ module Krikri
       insertbefore = @params["insertbefore"]?
       if insertafter && insertbefore
         return PluginResult.new(changed: false, failed: true, msg: "parameters are mutually exclusive: insertafter|insertbefore")
+      end
+
+      # Real cron.py's argument_spec gives `job` the alias `value`, and
+      # env-mode tasks (infOpen.lynis, round 811204) use the alias
+      # spelling - without this resolution `value:` fell through as nil
+      # and state=present failed with "job parameter required". Real
+      # Ansible's _handle_aliases makes a present alias OVERWRITE the
+      # canonical name, so `value:` wins when both spellings are given
+      # (same convention yum_repository.cr already follows).
+      if value_param = @params["value"]?
+        @params["job"] = value_param
       end
 
       state = @params["state"]? || "present"

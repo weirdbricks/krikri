@@ -199,6 +199,65 @@ describe "cron plugin" do
       File.read(path).should_not contain("PATH=")
     end
 
+    # Real bug, round 811204 (infOpen.lynis): the role manages crontab
+    # vars with `value:` - cron.py's documented alias of `job` - and
+    # real ansible-playbook accepts it, but an unresolved alias left
+    # `job` nil and the task failed with "job parameter required when
+    # state=present". These mirror the role's exact task shape.
+    describe "`value:` alias (cron.py's aliases: ['value'])" do
+      it "creates an env-var line from value:" do
+        path = tmp_path("cron-env-alias-create.txt")
+        File.delete(path) if File.exists?(path)
+
+        result = PluginSpecHelper.run("cron", {
+          "name"      => "CURRENT_DATE",
+          "env"       => "true",
+          "value"     => "date +%Y%m%d",
+          "user"      => "root",
+          "cron_file" => path,
+        })
+
+        result["failed"]?.try(&.as_bool).should be_falsey
+        result["changed"].as_bool.should be_true
+        File.read(path).should contain("CURRENT_DATE=\"date +%Y%m%d\"")
+      end
+
+      it "is idempotent on a second identical value: run" do
+        path = tmp_path("cron-env-alias-idempotent.txt")
+        params = {"name" => "CURRENT_DATE", "env" => "true", "value" => "date +%Y%m%d", "user" => "root", "cron_file" => path}
+
+        PluginSpecHelper.run("cron", params)
+        second = PluginSpecHelper.run("cron", params)
+
+        second["changed"].as_bool.should be_false
+        File.read(path).should eq("CURRENT_DATE=\"date +%Y%m%d\"\n")
+      end
+
+      it "removes the alias-defined variable when state=absent" do
+        path = tmp_path("cron-env-alias-absent.txt")
+        PluginSpecHelper.run("cron", {"name" => "CURRENT_DATE", "env" => "true", "value" => "date +%Y%m%d", "cron_file" => path})
+
+        result = PluginSpecHelper.run("cron", {"name" => "CURRENT_DATE", "env" => "true", "value" => "date +%Y%m%d", "state" => "absent", "cron_file" => path})
+
+        result["changed"].as_bool.should be_true
+        File.read(path).should_not contain("CURRENT_DATE=")
+      end
+
+      it "honors value: on the plain-job path too (it aliases job)" do
+        path = tmp_path("cron-job-alias.txt")
+        File.delete(path) if File.exists?(path)
+
+        result = PluginSpecHelper.run("cron", {
+          "name"      => "aliased job",
+          "value"     => "/bin/true",
+          "cron_file" => path,
+        })
+
+        result["changed"].as_bool.should be_true
+        File.read(path).should contain("* * * * * /bin/true")
+      end
+    end
+
     it "inserts after the named variable with insertafter" do
       path = tmp_path("cron-env-insertafter.txt")
       File.write(path, "MAILTO=root\nSHELL=/bin/sh\n")
