@@ -524,6 +524,56 @@ module Krikri
     # single command line's own length limit.
     MEMBER_CHUNK_SIZE = 200
 
+    # The `--strip-components=N` extra_opt, if any (either the
+    # `--strip-components=N` joined form or `--strip-components`/`N` as
+    # separate elements - tar accepts both). Zips never see extra_opts
+    # (they aren't forwarded to `unzip`), so the count only ever applies
+    # to the tar handler's own on-disk layout.
+    private def strip_components_count : Int32
+      opts = parse_list_param(@params["extra_opts"]?)
+      opts.each_with_index do |opt, index|
+        if match = opt.match(/\A--strip-components=(\d+)\z/)
+          return match[1].to_i
+        elsif opt == "--strip-components" && (next_opt = opts[index + 1]?)
+          return next_opt.to_i? || 0
+        end
+      end
+      0
+    end
+
+    # Maps an archive-listing member path to its on-disk path under dest
+    # after --strip-components=N stripping (mirroring GNU tar's own
+    # semantics: N leading path components removed, a member left with
+    # nothing is not extracted at all). Nil when the member vanishes.
+    private def stripped_member(member : String, strip : Int32) : String?
+      return member if strip.zero?
+      components = member.split("/")
+      stripped = components[strip..]?
+      return nil if stripped.nil? || stripped.all?(&.empty?)
+      stripped.reject(&.empty?).join("/")
+    end
+
+    # Shell-quoted on-disk paths for every archive member, after
+    # --strip-components stripping - split out of #apply_dest_attributes
+    # purely to keep that method's own branching (owner:/group:/mode:
+    # each independently optional) readable rather than tangled with
+    # this stripping logic's own branches.
+    private def stripped_member_paths(dest : String, handler : Symbol, src : String) : Array(String)
+      strip = handler == :tar ? strip_components_count : 0
+      members(handler, src).compact_map do |member|
+        stripped = stripped_member(member, strip)
+        next nil if stripped.nil?
+        path = Path[dest, stripped].normalize.to_s
+        # With stripping active, a member that collapses onto dest itself
+        # (the "./" self-reference shape) is exactly what tar skips - it
+        # extracts nothing there. Without stripping, the "./" member
+        # deliberately KEEPS dest as its own path (see the "./" comment
+        # above - real Ansible applies the requested mode to dest there).
+        next nil if strip.positive? && path == dest
+        shell_single_quote(path)
+      end
+    end
+
     private def apply_dest_attributes(dest : String, handler : Symbol, src : String) : PluginResult?
       return nil unless @params["owner"]? || @params["group"]? || @params["mode"]?
 
@@ -543,7 +593,17 @@ module Krikri
       # than ".") skips dest, because dest was simply never one of its
       # members to begin with - see the mongodb_exporter case below,
       # whose archive has no "./" entry at all.
-      member_paths = members(handler, src).map { |member| shell_single_quote(Path[dest, member].normalize.to_s) }
+      # The listing paths are ARCHIVE paths; with extra_opts:
+      # --strip-components=N (robertdebock.phpmyadmin's own unpack) the
+      # on-disk layout is dest/<stripped path>, so the member list must
+      # go through the same stripping before becoming find start
+      # arguments - verbatim archive paths point at directories that
+      # don't exist on disk, failing every find with "No such file or
+      # directory" (found live: the 0.9.1044 member-scoping fix kept
+      # using raw archive paths and made phpmyadmin's unarchive task
+      # fail outright where the pre-fix blanket walk had merely been
+      # over-broad).
+      member_paths = stripped_member_paths(dest, handler, src)
       return nil if member_paths.empty?
 
       member_paths.each_slice(MEMBER_CHUNK_SIZE) do |chunk|

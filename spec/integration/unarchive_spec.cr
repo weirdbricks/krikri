@@ -269,6 +269,56 @@ describe "unarchive plugin" do
     result["changed"].as_bool.should be_true
   end
 
+  it "applies mode: to the STRIPPED member paths under --strip-components=1, and never to non-members" do
+    # Real bug found benchmarking robertdebock.phpmyadmin (round 810048,
+    # a 400-role regression sweep), in TWO acts. The archive's member
+    # list is ARCHIVE paths (`tar tf` output); with extra_opts:
+    # --strip-components=1 the on-disk layout is dest/<stripped path>.
+    # Act 1 (pre-0.9.1044): the mode:/owner:/group: application walked
+    # EVERYTHING under dest, so each warm run re-chmod'd files that
+    # aren't archive members at all - phpmyadmin's later `file:`/
+    # `template:` tasks (a 0750 tmp dir, a 0640 config.inc.php) saw
+    # their own carefully-applied modes stomped back to the unarchive
+    # task's 0755 on every run and re-fixed them right back, reporting
+    # changed: true forever where real ansible-playbook's warm rerun
+    # (which never touches non-members) stays ok. 0.9.1044 scoped the
+    # application to the archive's own member list - but
+    # Act 2 (what this spec pins): the member paths were still raw
+    # archive paths, so under --strip-components=1 every find start
+    # pointed at a directory that doesn't exist on disk
+    # (dest/phpMyAdmin-5.2.1-all-languages/...) and the task FAILED
+    # outright with "No such file or directory".
+    dest = fresh_dest("tar-strip-components-mode-members")
+    pre_existing = File.join(dest, "pre-existing.txt")
+    File.write(pre_existing, "already here before the archive\n")
+    File.chmod(pre_existing, 0o644)
+    dest_mode_before = File.info(dest).permissions.value & 0o777
+
+    result = PluginSpecHelper.run("unarchive", {
+      "src"        => File.join(TMP_DIR, "wrapped.tar.gz"),
+      "dest"       => dest,
+      "mode"       => "0700",
+      "extra_opts" => "--strip-components=1",
+    })
+
+    result["changed"].as_bool.should be_true
+    # Every stripped member got the requested mode...
+    (File.info(File.join(dest, "index.php")).permissions.value & 0o777).should eq(0o700)
+    # ...while dest and the non-member sibling were never touched.
+    (File.info(dest).permissions.value & 0o777).should eq(dest_mode_before)
+    (File.info(pre_existing).permissions.value & 0o777).should eq(0o644)
+
+    # And the member re-apply stays idempotent on a warm rerun.
+    result = PluginSpecHelper.run("unarchive", {
+      "src"        => File.join(TMP_DIR, "wrapped.tar.gz"),
+      "dest"       => dest,
+      "mode"       => "0700",
+      "extra_opts" => "--strip-components=1",
+    })
+    result["changed"].as_bool.should be_false
+    (File.info(File.join(dest, "index.php")).permissions.value & 0o777).should eq(0o700)
+  end
+
   it "reports changed: true when an extracted file is modified since the last extraction" do
     dest = fresh_dest("tar-changed")
     PluginSpecHelper.run("unarchive", {"src" => File.join(TMP_DIR, "archive.tar.gz"), "dest" => dest})
