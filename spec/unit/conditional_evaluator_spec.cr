@@ -683,6 +683,75 @@ describe Krikri::ConditionalEvaluator do
       Krikri::ConditionalEvaluator.evaluate(%(('linux-' + go_arch + '.tar.gz') in item), v).should be_true
     end
 
+    it "concatenates a quoted literal + bare variable (no parens) inside an `in` check" do
+      # Real bug found benchmarking wunzeco.consul-template (round
+      # 811188): `when: "'v' + consul_template_version in
+      # version.stderr.split(' ')"` - no parens around the concat, so
+      # #evaluate_value's operator guard never routed it to
+      # ExpressionEvaluator (unlike the parenthesized prometheus shape
+      # above) and it fell through to the bare variable lookup, which
+      # hard-failed the task ("Error while evaluating conditional:
+      # ''v' + consul_template_version' is undefined") where real
+      # Ansible concatenates and evaluates the membership test cleanly.
+      # The `{{ }}`-wrapped shape (`{{ 'v' + x }}`) always worked -
+      # ExpressionEvaluator's own `+` handling - which is how the bug
+      # stayed invisible until a bare `when:` hit the exact shape.
+      v = Hash(String, JSON::Any).new
+      v["consul_template_version"] = JSON::Any.new("0.19.4")
+      v["version"] = JSON.parse(%({"stderr": "consul-template v0.19.4 installed"}))
+
+      Krikri::ConditionalEvaluator.evaluate(
+        %('v' + consul_template_version in version.stderr.split(' ')), v,
+        strict: true, raise_undefined: true
+      ).should be_true
+
+      v["version"] = JSON.parse(%({"stderr": "consul-template 1.2.3 installed"}))
+      Krikri::ConditionalEvaluator.evaluate(
+        %('v' + consul_template_version in version.stderr.split(' ')), v,
+        strict: true, raise_undefined: true
+      ).should be_false
+    end
+
+    it "concatenates a bare variable + quoted literal (variable-first, no parens)" do
+      v = Hash(String, JSON::Any).new
+      v["consul_template_version"] = JSON::Any.new("0.19.4")
+      v["version"] = JSON.parse(%({"stderr": "0.19.4v installed"}))
+
+      Krikri::ConditionalEvaluator.evaluate(
+        %(consul_template_version + 'v' in version.stderr.split(' ')), v,
+        strict: true, raise_undefined: true
+      ).should be_true
+    end
+
+    it "raises on an undefined bare operand of a paren-less `+` concat" do
+      # Real Ansible fatally fails `when: "'v' + no_such_var in ..."`
+      # with "'no_such_var' is undefined" (live-verified) - the lenient
+      # ExpressionEvaluator delegation must not silently bake the
+      # undefined in as "" and skip.
+      v = Hash(String, JSON::Any).new
+      v["x"] = JSON.parse(%("0.19.4"))
+      v["version"] = JSON.parse(%({"stderr": "a b"}))
+      expect_raises(
+        Krikri::ConditionalEvaluator::UndefinedVariableError,
+        /'no_such_var' is undefined/
+      ) do
+        Krikri::ConditionalEvaluator.evaluate(
+          %('v' + no_such_var in version.stderr.split(' ')), v,
+          strict: true, raise_undefined: true
+        )
+      end
+    end
+
+    it "concatenates a quoted literal + bare variable in a plain `{{ }}` span" do
+      # The {{ }}-wrapped shape never shared the bare-when: bug - this
+      # pins it so a future guard change can't silently regress either
+      # path without the other noticing.
+      v = Hash(String, JSON::Any).new
+      v["x"] = JSON::Any.new("0.19.4")
+      rendered = Krikri::VarSubstitutor.new(vars: v).substitute("{{ 'v' + x }}")
+      rendered.should eq("v0.19.4")
+    end
+
     it "evaluates 'is mapping' / 'is sequence' (plus negations), real Jinja2 type tests" do
       # Real bug found benchmarking cloudalchemy.grafana's own defaults-
       # sanity assert: `grafana_security is mapping`. Entirely
