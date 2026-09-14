@@ -824,8 +824,25 @@ module Krikri
       # picked the FALSE branch, installing the removed python2-
       # era `python-netaddr`/`python-dnspython` package names
       # instead of `python3-*` on every real Debian/Ubuntu target.
+      # Exactly "True"/"False"/"None" however IS safe to re-type natively:
+      # those are Python's own repr of a boolean/None, and real Ansible's
+      # templar preserves a whole-single-template value's native TYPE
+      # (`__postfix_debian: "{{ ansible_os_family == 'Debian' }}"` in
+      # galaxyproject.postfix's defaults/main.yml is a genuine False on a
+      # RedHat host, round 812025), so a variable referenced FROM another
+      # expression must come out as a real bool there. This converter
+      # (feeding Crinja's own vars context) was the one rerender site that
+      # never did: the string "False" is non-empty and therefore always
+      # TRUTHY to Jinja, so a nested ternary conditioned on it
+      # (`__postfix_packages: "{{ debian_pkgs if __postfix_debian else
+      # (...) }}"`) picked the first (Debian) branch on every host -
+      # krikri tried to `dnf install` `bsd-mailx`/`amavisd-new` on Rocky
+      # where real ansible-playbook cleanly installed the RedHat list.
+      # Exact-match only, so the quoted-string repro case above (and any
+      # string that merely begins with those letters) is untouched.
       private def self.render_pure_mustache_value(rendered : String, stripped : String, substitutor : VarSubstitutor) : JSON::Any
-        if rendered.strip.starts_with?('[') || rendered.strip.starts_with?('{')
+        stripped_rendered = rendered.strip
+        if stripped_rendered.starts_with?('[') || stripped_rendered.starts_with?('{')
           # A container literal built from a Python-style dict/set
           # expression (`{ 'Virtual': v } if cond else { 'X': y }`,
           # jtyr.motd's own motd_info__default) finalizes to
@@ -845,6 +862,8 @@ module Krikri
           (JSON.parse(rendered) rescue nil) ||
             (CrinjaRenderer.new(substitutor.vars).evaluate_value!(inner) rescue nil) ||
             JSON::Any.new(rendered)
+        elsif stripped_rendered.in?("True", "False", "None")
+          Krikri.parse_json_or_python_literal(stripped_rendered)
         else
           JSON::Any.new(rendered)
         end

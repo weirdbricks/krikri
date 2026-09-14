@@ -1239,4 +1239,41 @@ describe "CrinjaRenderer.rerender_nested_templates (round 170 - scalar-vs-contai
 
     rendered.should eq("ExecStart=/usr/bin/docuum \nStandardOutput=syslog\n\nRestart=on-failure")
   end
+
+  it "round-trips a whole-value '{{ boolean-expression }}' var as a real bool when another expression references it" do
+    # Real bug found benchmarking galaxyproject.postfix (round 812025): its
+    # own defaults/main.yml defines `__postfix_debian: "{{ ansible_os_family
+    # == 'Debian' }}"` (and RedHat/SmartOS siblings), then a folded
+    # `__postfix_packages: >-` nested ternary selects between the OS package
+    # lists conditioned on those flags. A whole-single-span {{ }} value
+    # renders to the TEXT "True"/"False", and render_pure_mustache_value
+    # only re-typed container-shaped renders back natively - so every flag
+    # reached Crinja's vars context as a non-empty (always-truthy) STRING
+    # and the nested ternary picked the first (Debian) branch on every
+    # host: krikri tried to `dnf install` bsd-mailx/amavisd-new on Rocky
+    # where real ansible-playbook's templar preserves the native boolean
+    # and cleanly installs the RedHat list. Quoted-string repro guard:
+    # buluma.bind's round-170 case above must keep its literal "3"/"True"
+    # strings - only an exact unquoted True/False/None render is re-typed.
+    v = Hash(String, JSON::Any).new
+    v["ansible_os_family"] = JSON::Any.new("RedHat")
+    v["__postfix_debian"] = JSON::Any.new("{{ ansible_os_family == 'Debian' }}")
+    v["__postfix_redhat"] = JSON::Any.new("{{ ansible_os_family == 'RedHat' }}")
+    v["__postfix_debian_packages"] = JSON.parse(%(["bsd-mailx", "amavisd-new"]))
+    v["__postfix_redhat_packages"] = JSON.parse(%(["mailx", "postfix"]))
+    v["__postfix_packages"] = JSON::Any.new(
+      %({{ __postfix_debian_packages if __postfix_debian else (__postfix_redhat_packages if __postfix_redhat else None) }})
+    )
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+
+    renderer.render("{{ __postfix_packages }}").should eq("['mailx', 'postfix']")
+
+    v["ansible_os_family"] = JSON::Any.new("Debian")
+    renderer2 = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer2.render("{{ __postfix_packages }}").should eq("['bsd-mailx', 'amavisd-new']")
+
+    v["ansible_os_family"] = JSON::Any.new("Suse")
+    renderer3 = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer3.render("{{ __postfix_packages }}").should eq("")
+  end
 end
