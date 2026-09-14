@@ -110,7 +110,7 @@ describe "Krikri.parse_shard_yml_dependency_pins" do
       dependencies:
         crinja:
           github: weirdbricks/crinja
-          tag: crystal-play-0.9.31
+          tag: crystal-play-0.9.32
         docr:
           github: weirdbricks/docr
           branch: master
@@ -128,7 +128,7 @@ describe "Krikri.parse_shard_yml_dependency_pins" do
 
     pins = Krikri.parse_shard_yml_dependency_pins(yml, "dependencies")
     pins.should eq({
-      "crinja" => {github: "weirdbricks/crinja", tag: "crystal-play-0.9.31", branch: nil},
+      "crinja" => {github: "weirdbricks/crinja", tag: "crystal-play-0.9.32", branch: nil},
       "docr"   => {github: "weirdbricks/docr", tag: nil, branch: "master"},
       "bz2"    => {github: "weirdbricks/bz2.cr", tag: nil, branch: nil},
       "pg"     => {github: "will/crystal-pg", tag: nil, branch: nil},
@@ -147,7 +147,7 @@ describe "Krikri::RUNTIME_DEPENDENCY_FORK_NOTES" do
   it "annotates only weirdbricks-owned dependencies, with their pin" do
     notes = Krikri::RUNTIME_DEPENDENCY_FORK_NOTES
 
-    notes["crinja"].should eq(" (weirdbricks/crinja fork, tag crystal-play-0.9.31)")
+    notes["crinja"].should eq(" (weirdbricks/crinja fork, tag crystal-play-0.9.32)")
     notes["mysql"].should eq(" (weirdbricks/crystal-mysql fork, tag crystal-ansible-0.9.340)")
     notes["docr"].should eq(" (weirdbricks/docr fork, branch master)")
     notes["awscr-signer"].should eq(" (weirdbricks/awscr-signer fork, branch master)")
