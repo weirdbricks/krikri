@@ -109,5 +109,36 @@ describe Krikri::VarSubstitutor do
         sub.substitute("{% if some_var == \"x\" %}yes{% endif %}", strict: true)
       end
     end
+    it "does not false-positive on a for-loop variable referenced inside a nested {% set %} tag (round 813222, pluggero.burpsuite)" do
+      # Found via pluggero.burpsuite's
+      # tasks/noauto_extensions_sort_by_priority.yml (round 813222): a
+      # set_fact value shaped
+      # `{% set result = [] %}{% for ext in unsorted %}{% if 'priority'
+      # in ext %}{% set _ = result.append(ext) %}{% else %}...{% endif
+      # %}{% endfor %}{{ result }}`. The for tag's OWN condition
+      # correctly exempted its loop var `ext`, but that exemption never
+      # reached the enclosing frame's stack entry - so a NESTED `{% set
+      # y = ext.name %}` inside the loop body was scanned with only its
+      # own set-target carved out, and the scanner raised "'ext' is
+      # undefined" where real Ansible/Jinja2 scopes `ext` over the
+      # loop's whole body and renders fine.
+      v = {
+        "items" => JSON.parse(%(["a", "b"])),
+      } of String => JSON::Any
+      sub = Krikri::VarSubstitutor.new(vars: v)
+      sub.substitute("{% for item in items %}{% set y = item %}{{ y }}{% endfor %}", strict: true).should eq("ab")
+    end
+
+    it "still raises for a genuinely undefined var inside a nested {% set %} tag with no enclosing for-loop" do
+      # Companion to the round 813222 fix above: the loop-var carry-over
+      # must not swallow every future undefined-inside-{% set %} case.
+      # With no enclosing {% for %} frame binding it, a bare reference
+      # to a var that is neither in @vars nor a loop var still raises.
+      v = {} of String => JSON::Any
+      sub = Krikri::VarSubstitutor.new(vars: v)
+      expect_raises(Krikri::UndefinedVariableError, /'genuinely_undefined_var' is undefined/) do
+        sub.substitute("{% set y = genuinely_undefined_var %}{{ y }}", strict: true)
+      end
+    end
   end
 end

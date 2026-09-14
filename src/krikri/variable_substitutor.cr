@@ -1215,7 +1215,7 @@ module Krikri
       end
     end
 
-    private def scan_block_tag_refs(cond_no_strings : String, loop_var : String?, active_guarantee : Set(String) = Set(String).new) : Nil
+    private def scan_block_tag_refs(cond_no_strings : String, loop_var : String?, active_guarantee : Set(String) = Set(String).new, active_loop_vars : Set(String) = Set(String).new) : Nil
       cond_no_strings.scan(SCAN_STRICT_BLOCK_TAG_REF) do |mat|
         ident = mat[0]
         root = block_tag_ref_root(ident)
@@ -1236,6 +1236,13 @@ module Krikri
         # undefined" where real Ansible short-circuits the entire
         # true-branch away and never evaluates it at all.
         next if active_guarantee.includes?(root)
+        # Bound by an ENCLOSING `{% for %}` still on the stack: Jinja
+        # scopes the loop variable to that loop's whole body, so a
+        # nested `{% set y = ext.name %}` / `{% if 'priority' in ext %}`
+        # legitimately sees it even though it only ever exists as a
+        # Crinja for-loop binding, never as a real substitutor variable
+        # (round 813222, pluggero.burpsuite).
+        next if active_loop_vars.includes?(root)
         # The shared tolerance chain from the `{{ }}`-span scanner
         # (keywords, builtin filters, filter/function calls, kwarg
         # names, `| default(...)`, and - the ruzickap.proxy_settings
@@ -1505,8 +1512,20 @@ module Krikri
     private class BlockTagFrame
       property kind : Symbol
       property guaranteed_defined : Set(String)
+      # The loop variable name(s) this `:for` frame binds - e.g. `ext`
+      # from `{% for ext in some_list %}` (split on "," so a
+      # tuple-unpacking `{% for key, value in dict.items() %}` records
+      # both). Jinja scopes a for-loop variable to that loop's BODY:
+      # every tag nested inside the loop can reference `ext` without it
+      # ever existing as a real substitutor variable, so the enclosing
+      # frame has to carry it forward the same way `guaranteed_defined`
+      # does for is-defined guards - otherwise the scanner raises
+      # "'ext' is undefined" on a nested `{% set y = ext.name %}` where
+      # real Ansible/Jinja2 renders it fine (round 813222,
+      # pluggero.burpsuite).
+      property loop_vars : Set(String)
 
-      def initialize(@kind : Symbol, @guaranteed_defined : Set(String) = Set(String).new)
+      def initialize(@kind : Symbol, @guaranteed_defined : Set(String) = Set(String).new, @loop_vars : Set(String) = Set(String).new)
       end
     end
 
@@ -1567,7 +1586,16 @@ module Krikri
 
         cond_no_strings = strip_string_literals(cond)
         active_guarantee = stack.reduce(Set(String).new) { |acc, frame| acc | frame.guaranteed_defined }
-        scan_block_tag_refs(cond_no_strings, loop_var, active_guarantee)
+        # Same stack-union as active_guarantee, but for for-loop
+        # variables: any still-open `{% for %}` frame binds its loop
+        # var(s) over its whole body, so a nested tag referencing them
+        # is in scope no matter what @vars holds - without this the
+        # scanner flagged `ext` in `{% for ext in X %}{% set y =
+        # ext.name %}` because each nested tag only exempted its OWN
+        # set-target/loop-var, never the enclosing loop's (round 813222,
+        # pluggero.burpsuite, "'ext' is undefined").
+        active_loop_vars = stack.reduce(Set(String).new) { |acc, frame| acc | frame.loop_vars }
+        scan_block_tag_refs(cond_no_strings, loop_var, active_guarantee, active_loop_vars)
 
         if stripped.starts_with?("if ")
           stack.push(BlockTagFrame.new(:if, block_tag_defined_guards(cond_no_strings)))
@@ -1576,7 +1604,12 @@ module Krikri
             top.guaranteed_defined = block_tag_defined_guards(cond_no_strings)
           end
         elsif stripped.starts_with?("for ")
-          stack.push(BlockTagFrame.new(:for))
+          # Record this loop's variable(s) onto the frame so nested tags
+          # inside the body can reference them - the loop_var carve-out
+          # passed to scan_block_tag_refs only covers the for tag's OWN
+          # condition (`for ext in unsorted` itself), not the body.
+          frame_loop_vars = loop_var ? Set(String).new(loop_var.split(',').map(&.strip)) : Set(String).new
+          stack.push(BlockTagFrame.new(:for, loop_vars: frame_loop_vars))
         end
         i = close + 2
       end
