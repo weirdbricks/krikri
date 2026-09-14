@@ -2576,16 +2576,39 @@ module Krikri
           end
         elsif (mp2 = module_params) && (h = mp2.as_h?)
           mod = ""
-          args = nil.as(YAML::Any?)
+          # Real Ansible's dict-form action:/local_action: directive
+          # (`action: {module: X, name: Y, state: Z}`, no args: wrapper
+          # needed - the exact syntax real docs describe, equivalent to
+          # the free-form `action: "X name=Y state=Z"` string form
+          # above) treats every sibling key OTHER than `module` as a
+          # param directly. This previously only recognized an explicit
+          # nested `args:` dict and silently DROPPED every other sibling
+          # key - cchurch.admin-users' own `action: {module: "{{
+          # ansible_pkg_mgr }}", name: ..., state: present}` (round
+          # 811129/812021) lost `name:`/`state:` entirely, failing with
+          # "Missing required parameter: name" even though real Ansible
+          # forwards them fine. args: (if also present) is merged in on
+          # top of the direct siblings - not real Ansible's own
+          # documented dict-form syntax, but this engine already
+          # supported it as a nesting convenience before this fix, and
+          # existing callers rely on it.
+          collected = Hash(YAML::Any, YAML::Any).new
           h.each do |k, v|
             ks = k.to_s
-            mod = v.to_s if ks == "module"
-            args = v if ks == "args"
+            if ks == "module"
+              mod = v.to_s
+            elsif ks == "args"
+              if (nested = v.as_h?)
+                nested.each { |nested_key, nested_value| collected[nested_key] = nested_value }
+              end
+            else
+              collected[k] = v
+            end
           end
           raise "action: is missing 'module' in task '#{name || "at index #{index + 1}"}'" if mod.empty?
           templated_action_string = mod if mod.includes?("{{")
           module_name = mod
-          module_params = args || YAML::Any.new(Hash(YAML::Any, YAML::Any).new)
+          module_params = YAML::Any.new(collected)
         end
       end
 

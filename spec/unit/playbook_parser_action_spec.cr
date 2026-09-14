@@ -57,5 +57,31 @@ describe Krikri::PlaybookParser do
       task.params["content"].should eq "hi"
       task.params["dest"].should eq "/tmp/x"
     end
+
+    it "parses the dict form action: {module:, ...} with DIRECT sibling params, no args: wrapper (round 812021, cchurch.admin-users)" do
+      # Real Ansible's own documented dict-form action:/local_action:
+      # syntax: every key other than `module` IS a param directly, no
+      # args: nesting required. cchurch.admin-users' own `action:
+      # {module: "{{ ansible_pkg_mgr }}", name: ..., state: present}`
+      # (templated module name, direct name:/state: siblings) previously
+      # dropped name:/state: entirely - only an explicit args: dict was
+      # ever read - failing "Missing required parameter: name" even
+      # though real Ansible forwards them fine.
+      pb = Krikri::PlaybookParser.parse_string(<<-YAML)
+        - name: dict form direct siblings
+          hosts: all
+          gather_facts: false
+          tasks:
+            - name: install sudo
+              action:
+                module: "{{ ansible_pkg_mgr }}"
+                name: sudo
+                state: present
+        YAML
+      task = pb.plays[0].tasks[0]
+      task.templated_action.should eq "{{ ansible_pkg_mgr }}"
+      task.params["name"].should eq "sudo"
+      task.params["state"].should eq "present"
+    end
   end
 end
