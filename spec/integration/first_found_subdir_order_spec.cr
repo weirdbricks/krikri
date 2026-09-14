@@ -124,4 +124,67 @@ describe "with_first_found: default search roots vs the task's action" do
   ensure
     FileUtils.rm_rf(src_dir) if src_dir
   end
+
+  it "prefers vars/ over tasks/ for an include_vars: with_first_found: when both hold the same basename" do
+    # Real divergence benchmarking mircomasa.filebeat (round 812001): its
+    # "Load a variable file based on the OS type" include_vars: +
+    # with_first_found: candidate '{{ ansible_system }}.yml' exists in the
+    # role BOTH as tasks/Linux.yml (a task LIST) and vars/Linux.yml (a vars
+    # MAPPING defining a `default:` dict). Real ansible-playbook (core
+    # 2.19.x, verified live) resolves the include_vars: to the vars/ copy;
+    # krikri searched tasks/ before vars/ and loaded the tasks/ copy,
+    # merging zero variables, so the role's own
+    # defaults/main.yml fb_home: '{{ default["fb_home"] }}' failed with
+    # "'default[\"fb_home\"]' is undefined" at the first task that rendered
+    # it - even though the include_vars: task itself had reported ok.
+    src_dir = File.tempname("first-found-include-vars-vars-before-tasks")
+    role = File.join(src_dir, "roles", "myrole")
+    Dir.mkdir_p(File.join(role, "tasks"))
+    Dir.mkdir_p(File.join(role, "vars"))
+    Dir.mkdir_p(File.join(role, "defaults"))
+    File.write(File.join(role, "vars", "Linux.yml"), <<-YAML)
+      default:
+        fb_home: /usr/share/filebeat
+      YAML
+    File.write(File.join(role, "tasks", "Linux.yml"), <<-YAML)
+      - name: linux specific tasks
+        ansible.builtin.debug:
+          msg: TASKS_LINUX_YML
+      YAML
+    File.write(File.join(role, "defaults", "main.yml"), <<-YAML)
+      fb_home: '{{ default["fb_home"] }}'
+      YAML
+    File.write(File.join(role, "tasks", "main.yml"), <<-YAML)
+      - name: Load a variable file based on the OS type
+        include_vars: '{{ platform_vars }}'
+        with_first_found:
+          - '{{ ansible_system }}.yml'
+          - default.yml
+        loop_control:
+          loop_var: platform_vars
+      - name: render the role default
+        ansible.builtin.debug:
+          msg: "fb_home={{ fb_home }}"
+      YAML
+
+    playbook = File.join(src_dir, "pb.yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          ansible_system: Linux
+        roles:
+          - myrole
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output, chdir: src_dir)
+
+    status.success?.should be_true
+    output.to_s.should contain("fb_home=/usr/share/filebeat")
+    output.to_s.should_not contain("is undefined")
+  ensure
+    FileUtils.rm_rf(src_dir) if src_dir
+  end
 end
