@@ -1712,15 +1712,29 @@ module Krikri
       # gather_subset: comma-separated in string form (type=list in real
       # Ansible's argument spec, whose check_type_list splits on ','
       # WITHOUT stripping - live-verified: "network, virtual" with a
-      # space FAILS the real module with "Bad subset ' virtual'"), or an
-      # actual list when the playbook passed YAML list form.
+      # space FAILS the real module with "Bad subset ' virtual'"), an
+      # actual list when the playbook passed YAML list form, or the
+      # JSON-rendered form of a native list: a `setup:
+      # {gather_subset: "{{ list_var }}"}` task is a whole-single-span
+      # param whose native list typing this engine's task-param wire
+      # format loses (it re-serializes the list as JSON text in a
+      # String field), so that JSON form has to be recovered here
+      # before falling back to the ordinary comma-split real Ansible's
+      # own argspec does for a genuinely scalar string. Only valid JSON
+      # counts (same precedent as apt.cr/package.cr's name parsing): a
+      # Python-repr-looking string keeps the comma-split, matching real
+      # Ansible.
       requested_subset = ["all"]
       params.try(&.["gather_subset"]?).try do |raw|
         if list = raw.as_a?
           requested_subset = list.compact_map(&.as_s?)
         else
           raw.as_s?.try do |subset_string|
-            requested_subset = subset_string.split(',').reject(&.empty?)
+            trimmed = subset_string.strip
+            parsed_list = if trimmed.starts_with?('[') && trimmed.ends_with?(']')
+                            Array(String).from_json(trimmed) rescue nil
+                          end
+            requested_subset = parsed_list || subset_string.split(',').reject(&.empty?)
           end
         end
       end
