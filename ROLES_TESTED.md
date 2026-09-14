@@ -6157,3 +6157,426 @@ not what was seen live during the round).
 | `buluma.daemonize` | rocky | ✅ FIXED (round 810291, 0.9.1044): re-diverged since the earlier clean row above - `unarchive:`'s `mode:`/`owner:`/`group:` application walked every pre-existing file under `dest`, re-chmod'ing a sibling file the role wrote itself on every warm run (`ok=5 changed=1` cr vs `ok=5 changed=0` py). Scoped to the archive's own member list. Times: cold py 57.20s vs cr 46.46s; warm py 10.67s vs cr 0.67s. |
 | `buluma.postfix` | rocky | ✅ FIXED (round 810346, 0.9.1046): root-caused since the earlier "not yet root-caused" row above - the strict block-tag `is defined` scanner had no `{% if %}`/`{% elif %}` nesting awareness, so a guarded, lexically-nested reference to the same variable was flagged as unconditionally undefined. Times: cold py 29.32s vs cr 16.44s; warm py 13.55s vs cr 0.85s. |
 | `geerlingguy.redis` | ubuntu | ✅ FIXED (round 810117, 0.9.1049): confirmed as the real bug the earlier "inconclusive" row above suspected wasn't one - `set_fact:`'s decimal coercion plus `mode:`'s int-to-octal-string disambiguator misfired on `redis_conf_mode: 0640` (decimal 416, coincidentally all octal-valid digits), applying octal 416 instead of 640 and never converging (`warm ok=9 changed=2` cr vs `warm ok=8 changed=0` py, pre-fix). Times: cold py 19.37s vs cr 11.20s; warm py 9.90s vs cr 0.84s. |
+
+## Round 811000-812999 (2026-09-14): 400-role Galaxy top-download batch (ubuntu+rocky) + 55-role confirm rerun
+
+A fifth 400-role differential round via `krikri-role-tester`, split 200
+ubuntu/200 rocky, sourced from a fresh Galaxy top-download query (round
+811000-811399, one genuine duplicate queue entry - `ebbba-org.bigbluebutton` -
+collapsed to a single row below). `CLEAN=278 DIVERGENT=55 GALAXY_MISSING=60
+TF_APPLY_FAILED=6`. Of the 55 divergences, 18 were real krikri bugs, fixed in
+`0.9.1050`-`0.9.1066` (see `KNOWN_MISSING.md`'s round narrative); 6 are
+genuinely missing modules (`k8s`, `community.general.deploy_helper`,
+`community.general.cronvar`, `community.general.snap` x2, `parted`+`lvg`); 3
+were disposed as not-a-krikri-bug after live repro (a systemd crash-loop
+timing race, a MySQL grant-propagation race, and one `azavea.terraform`
+re-verify that no longer reproduces on `main`); the remainder are either
+environmental (network/mirror unreachability, upstream-role bugs), a known
+pre-existing ansible-core 2.19 conditional-strictness gap, or minor
+recap-count drift not yet root-caused. A 55-role confirm rerun (round
+812000-812999) was launched against the build in place when each fix
+landed; its own recap numbers are not re-quoted per-row below since several
+fixes landed after their confirm host was already provisioned - the fix
+version numbers and the full validation (unit spec + isolated live repro)
+each went through under the `fix-divergence` skill are the authoritative
+record, not this batch's own timing snapshot.
+
+| `030.ansible_git_crypt` | rocky | ✅ clean. Times: cold py 0.67s vs cr 0.04s; warm py 0.60s vs cr 0.01s. |
+| `0x0I.systemd` | rocky | ✅ clean. Times: cold py 4.67s vs cr 10.16s; warm py 4.04s vs cr 0.58s. |
+| `CVi.thanos` | ubuntu | ✅ FIXED (0.9.1053 + 0.9.1056): handlers declared only via `listen:` LISTS (not a single string) never matched `notify:` (0.9.1053); once fixed, a task using `unarchive: {copy: no, ...}` (the older, mutually-exclusive-with-`remote_src:` spelling) still failed the controller-src staging check because `copy:` wasn't recognized as an alias for `remote_src: true` (0.9.1056). Times: cold py 35.71s vs cr 11.94s; warm py 25.39s vs cr 1.03s. |
+| `ChristopherDavenport.universal-tomcat` | rocky | ✅ clean. Times: cold py 38.19s vs cr 48.46s; warm py 12.69s vs cr 1.41s. |
+| `ConsenSys.checkpointz` | ubuntu | not yet individually root-caused. Times: cold py 108.36s vs cr 65.11s; warm py 66.90s vs cr 61.36s. |
+| `ConsenSys.erigon` | ubuntu | ✅ clean. Times: cold py 7.33s vs cr 7.21s; warm py 5.23s vs cr 0.36s. |
+| `ConsenSys.geth` | ubuntu | ✅ clean. Times: cold py 4.41s vs cr 4.55s; warm py 3.35s vs cr 0.42s. |
+| `ConsenSys.nethermind` | ubuntu | ✅ clean. Times: cold py 4.08s vs cr 3.98s; warm py 2.87s vs cr 0.41s. |
+| `CyVerse-Ansible.docker` | rocky | ✅ clean. Times: cold py 74.50s vs cr 81.20s; warm py 32.43s vs cr 13.49s. |
+| `FGtatsuro.ansible` | ubuntu | ❌ untestable - Galaxy install failed (role not found / install error, see `~/scratch/krt-results` galaxy_install.log for round811). |
+| `FGtatsuro.vagrant` | ubuntu | ❌ untestable - Galaxy install failed (role not found / install error, see `~/scratch/krt-results` galaxy_install.log for round811). |
+| `FGtatsuro.virtualbox` | ubuntu | ❌ untestable - Galaxy install failed (role not found / install error, see `~/scratch/krt-results` galaxy_install.log for round811). |
+| `Gwerlas.podman` | ubuntu | ✅ clean. Times: cold py 8.80s vs cr 5.67s; warm py 7.41s vs cr 1.36s. |
+| `HanXHX.debian_sury` | ubuntu | ✅ clean. Times: cold py 50.96s vs cr 44.84s; warm py 11.03s vs cr 1.24s. |
+| `ICTO.jenkins` | ubuntu | ✅ clean. Times: cold py 0.46s vs cr 0.01s; warm py 0.49s vs cr 0.01s. |
+| `IFB-ElixirFr.ansible_tools` | rocky | ❌ untestable - Galaxy install failed (role not found / install error, see `~/scratch/krt-results` galaxy_install.log for round811). |
+| `IronicBadger.figurine` | rocky | ✅ clean. Times: cold py 10.67s vs cr 20.34s; warm py 10.90s vs cr 0.83s. |
+| `LukasGibb.s3cmd` | ubuntu | ✅ clean. Times: cold py 14.44s vs cr 8.48s; warm py 6.71s vs cr 0.46s. |
+| `MakarenaLabs.wordpress` | ubuntu | ✅ clean. Times: cold py 0.47s vs cr 0.01s; warm py 0.45s vs cr 0.01s. |
+| `Oefenweb.autossh_tunnel_client` | ubuntu | ✅ clean. Times: cold py 39.31s vs cr 50.43s; warm py 9.93s vs cr 2.23s. |
+| `Oefenweb.gnu_parallel` | ubuntu | ⚠️ disposed as environmental - a GNU mirror redirect (`ftpmirror.gnu.org` -> a specific regional mirror) was unreachable from the krikri host at test time ("Network is unreachable"), not a krikri defect. Times: cold py 84.63s vs cr 76.46s; warm py 42.08s vs cr 14.77s. |
+| `Oefenweb.shiny_server` | ubuntu | ✅ clean. Times: cold py 68.76s vs cr 98.80s; warm py 16.39s vs cr 2.04s. |
+| `OpenSIPS.opensips_cp` | rocky | ❌ untestable - Galaxy install failed (role not found / install error, see `~/scratch/krt-results` galaxy_install.log for round811). |
+| `OsgiliathEnterprise.ansible_routing` | rocky | ✅ clean. Times: cold py 16.75s vs cr 11.10s; warm py 15.04s vs cr 0.81s. |
+| `OsgiliathEnterprise.ansible_hostname` | rocky | ❌ untestable - Galaxy install failed (role not found / install error, see `~/scratch/krt-results` galaxy_install.log for round811). |
+| `OsgiliathEnterprise.ansible_securehost` | rocky | ❌ untestable - Galaxy install failed (role not found / install error, see `~/scratch/krt-results` galaxy_install.log for round811). |
+| `OsgiliathEnterprise.ansible_volumes` | rocky | ❌ untestable - Galaxy install failed (role not found / install error, see `~/scratch/krt-results` galaxy_install.log for round811). |
+| `PyratLabs.helm` | rocky | ❌ untestable - Galaxy install failed (role not found / install error, see `~/scratch/krt-results` galaxy_install.log for round811). |
+| `RedHatOfficial.rhel9_pci_dss` | rocky | ✅ FIXED (0.9.1064): `ansible.builtin.user: {user: '{{ item }}', ...}` (the documented `user:` alias of `name:`) failed "Missing required parameter: name" throughout this whole STIG hardening role - krikri never resolved the alias. Times: cold py 900.02s vs cr 65.37s; warm py 900.03s vs cr 14.97s. |
+| `Rheinwerk.haproxy22` | ubuntu | ✅ clean. Times: cold py 66.27s vs cr 61.01s; warm py 50.47s vs cr 33.51s. |
+| `Rheinwerk.ulimits_setup` | ubuntu | ✅ clean. Times: cold py 10.24s vs cr 4.18s; warm py 6.42s vs cr 0.34s. |
+| `Rheinwerk.update_rs_collector_ng_config` | ubuntu | ✅ clean. Times: cold py 5.89s vs cr 5.23s; warm py 4.57s vs cr 0.35s. |
+| `Rheinwerk.docker` | ubuntu | ❌ untestable - Galaxy install failed (role not found / install error, see `~/scratch/krt-results` galaxy_install.log for round811). |
+| `STEAMULO.sftpgo` | rocky | ✅ clean. Times: cold py 13.33s vs cr 18.98s; warm py 11.46s vs cr 0.68s. |
+| `Stouts.backup` | ubuntu | ✅ clean. Times: cold py 0.48s vs cr 0.01s; warm py 0.47s vs cr 0.01s. |
+| `Stouts.deploy` | rocky | ✅ clean. Times: cold py 0.45s vs cr 0.01s; warm py 0.45s vs cr 0.01s. |
+| `Stouts.redis` | rocky | ✅ clean. Times: cold py 0.52s vs cr 0.01s; warm py 0.48s vs cr 0.01s. |
+| `Thulium-Drake.acme_ssl` | ubuntu | ❌ untestable - Galaxy install failed (role not found / install error, see `~/scratch/krt-results` galaxy_install.log for round811). |
+| `Thulium-Drake.docker_services` | rocky | ❌ untestable - Galaxy install failed (role not found / install error, see `~/scratch/krt-results` galaxy_install.log for round811). |
+| `Thulium-Drake.motd` | ubuntu | ❌ untestable - Galaxy install failed (role not found / install error, see `~/scratch/krt-results` galaxy_install.log for round811). |
+| `Thulium-Drake.nullmailer` | ubuntu | ❌ untestable - Galaxy install failed (role not found / install error, see `~/scratch/krt-results` galaxy_install.log for round811). |
+| `Thulium-Drake.sshd` | rocky | ❌ untestable - Galaxy install failed (role not found / install error, see `~/scratch/krt-results` galaxy_install.log for round811). |
+| `Thulium-Drake.subscription_manager` | rocky | ❌ untestable - Galaxy install failed (role not found / install error, see `~/scratch/krt-results` galaxy_install.log for round811). |
+| `TypistTech.trellis-cloudflare-origin-ca` | ubuntu | ✅ clean. Times: cold py 1.48s vs cr 0.01s; warm py 0.46s vs cr 0.01s. |
+| `Venafi.ansible_role_venafi` | rocky | ✅ clean. Times: cold py 4.78s vs cr 10.05s; warm py 2.52s vs cr 0.52s. |
+| `William-Yeh.uwsgi` | ubuntu | ✅ clean. Times: cold py 0.44s vs cr 0.01s; warm py 0.44s vs cr 0.01s. |
+| `abims-sbr.sequenceserver` | rocky | ❌ untestable - Galaxy install failed (role not found / install error, see `~/scratch/krt-results` galaxy_install.log for round811). |
+| `andrewrothstein.julia` | ubuntu | ✅ clean. Times: cold py 48.87s vs cr 45.64s; warm py 7.87s vs cr 0.40s. |
+| `ansible-lockdown.ubuntu18_cis` | ubuntu | ❌ untestable - terraform apply failed provisioning the host pair, not a krikri result. |
+| `ansibleguy.infra_docker_minimal` | ubuntu | ✅ clean. Times: cold py 77.02s vs cr 72.84s; warm py 21.59s vs cr 4.15s. |
+| `aroberts.zfs_exporter` | rocky | ✅ clean. Times: cold py 9.22s vs cr 10.54s; warm py 7.16s vs cr 0.70s. |
+| `ashwin-sid.gaia_fw1` | rocky | ❌ untestable - Galaxy install failed (role not found / install error, see `~/scratch/krt-results` galaxy_install.log for round811). |
+| `azavea.aws-cli` | ubuntu | ✅ clean. Times: cold py 8.58s vs cr 6.25s; warm py 6.39s vs cr 0.35s. |
+| `azavea.memcached` | ubuntu | ✅ clean. Times: cold py 5.52s vs cr 4.31s; warm py 4.26s vs cr 1.00s. |
+| `azavea.python-security` | ubuntu | ✅ clean. Times: cold py 7.21s vs cr 3.84s; warm py 4.95s vs cr 0.44s. |
+| `azavea.terraform` | ubuntu | re-verified directly against current `main` - the original divergence (a `| changed` legacy filter in a `when:`) no longer reproduces; already resolved by an earlier fix this session. Times: cold py 24.01s vs cr 8.07s; warm py 11.84s vs cr 1.80s. |
+| `azmelanar.timezone` | rocky | ✅ clean. Times: cold py 10.44s vs cr 26.91s; warm py 9.28s vs cr 0.43s. |
+| `babidi34.openclaw` | ubuntu | ✅ clean. Times: cold py 170.56s vs cr 107.94s; warm py 62.79s vs cr 26.88s. |
+| `baztian.pip_venv` | ubuntu | ✅ clean. Times: cold py 4.39s vs cr 4.39s; warm py 2.86s vs cr 0.28s. |
+| `bbatsche.MySQL` | ubuntu | ✅ clean. Times: cold py 4.41s vs cr 3.97s; warm py 3.17s vs cr 0.29s. |
+| `benjamin-smith.aws-inspector-agent` | rocky | ✅ clean. Times: cold py 0.48s vs cr 0.01s; warm py 0.55s vs cr 0.01s. |
+| `bennojoy.nginx` | rocky | ✅ clean. Times: cold py 7.04s vs cr 17.46s; warm py 4.69s vs cr 1.85s. |
+| `bngsudheer.centos_base` | rocky | ✅ clean. Times: cold py 4.54s vs cr 20.82s; warm py 4.54s vs cr 0.26s. |
+| `bodsch.logrotate` | ubuntu | ✅ clean. Times: cold py 31.09s vs cr 31.71s; warm py 8.18s vs cr 2.98s. |
+| `bodsch.monitoring_plugins` | ubuntu | ✅ clean. Times: cold py 85.82s vs cr 60.01s; warm py 46.26s vs cr 4.90s. |
+| `brianhartsock.avahi` | ubuntu | ✅ clean. Times: cold py 19.04s vs cr 10.96s; warm py 9.51s vs cr 0.53s. |
+| `buluma.gitlab_ce` | rocky | ⚠️ inconclusive - real ansible-playbook hits the 900s harness timeout on this large role (cold AND warm), so no real recap to compare against; not confirmed as a krikri behavioral defect. Times: cold py 900.01s vs cr 28.90s; warm py 335.16s vs cr 4.99s. |
+| `buluma.handbrake` | rocky | ✅ clean. Times: cold py 61.22s vs cr 70.09s; warm py 36.89s vs cr 17.97s. |
+| `buluma.jenkins` | rocky | ⚠️ disposed as not-a-bug - `jenkins.service` (`Type=notify`, `Restart=on-failure`, `StartLimitBurst=5`) genuinely crash-loops before settling into `ActiveState=failed`; a warm rerun's own `service:` result depends on exactly when it probes `ActiveState` relative to the crash-loop's own timing on this specific host, not a krikri defect - confirmed via a live podman repro reproducing the identical shape on both engines. Times: cold py 36.53s vs cr 0.01s; warm py 19.49s vs cr 0.01s. |
+| `buluma.node_red` | rocky | ✅ clean. Times: cold py 0.46s vs cr 0.01s; warm py 0.46s vs cr 0.01s. |
+| `buluma.supervisor` | rocky | ✅ clean. Times: cold py 20.20s vs cr 11.86s; warm py 20.13s vs cr 1.95s. |
+| `camilin87.elastalert` | ubuntu | ✅ clean. Times: cold py 0.44s vs cr 0.01s; warm py 0.44s vs cr 0.01s. |
+| `ccdc-opensource.cpp_troubleshooting_tools` | rocky | ❌ untestable - Galaxy install failed (role not found / install error, see `~/scratch/krt-results` galaxy_install.log for round811). |
+| `ccdc-opensource.expand_artifactory_archives` | rocky | ❌ untestable - Galaxy install failed (role not found / install error, see `~/scratch/krt-results` galaxy_install.log for round811). |
+| `ccdc-opensource.ntp_configuration` | rocky | ❌ untestable - Galaxy install failed (role not found / install error, see `~/scratch/krt-results` galaxy_install.log for round811). |
+| `ccdc-opensource.system_python` | rocky | ❌ untestable - Galaxy install failed (role not found / install error, see `~/scratch/krt-results` galaxy_install.log for round811). |
+| `cchurch.admin-users` | rocky | ✅ FIXED (0.9.1050 + 0.9.1057): a templated module name (`action: {module: "{{ ansible_pkg_mgr }}"}`) crashed the pre-run plugin-upload pass outright (0.9.1050); once fixed, the dict-form `action:` directive's own direct sibling params (`name:`, `state:`) were still being dropped, only an explicit `args:` wrapper was ever read (0.9.1057). Times: cold py 11.83s vs cr 0.38s; warm py 8.88s vs cr 0.17s. |
+| `cchurch.django` | rocky | ✅ FIXED - re-confirmed CLEAN in the round 812 confirm rerun; shared one of this round's other fixed root causes rather than being individually root-caused as its own distinct case. Times: cold py 4.89s vs cr 0.01s; warm py 4.22s vs cr 0.01s. |
+| `cchurch.uwsgi` | rocky | likely resolved by the 0.9.1061 `template:` `force:` fix (the role's own `uwsgi_conf_force: false` blocked creating a brand-new `/etc/uwsgi.ini`) - not yet re-confirmed live. Times: cold py 15.78s vs cr 15.30s; warm py 13.87s vs cr 0.59s. |
+| `chaosmail.sublime-text` | rocky | ✅ clean. Times: cold py 29.01s vs cr 42.24s; warm py 10.41s vs cr 4.58s. |
+| `chrisevett.inspec` | rocky | ✅ clean. Times: cold py 9.11s vs cr 10.45s; warm py 8.18s vs cr 1.32s. |
+| `chrisvanmeer.atop` | rocky | ✅ clean. Times: cold py 6.54s vs cr 13.08s; warm py 5.49s vs cr 1.92s. |
+| `chrisvanmeer.certmonitor` | rocky | ✅ FIXED - re-confirmed CLEAN in the round 812 confirm rerun; shared one of this round's other fixed root causes rather than being individually root-caused as its own distinct case. Times: cold py 4.52s vs cr 0.01s; warm py 4.00s vs cr 0.01s. |
+| `chrisvanmeer.certmonitor_vault` | rocky | ✅ FIXED - re-confirmed CLEAN in the round 812 confirm rerun; shared one of this round's other fixed root causes rather than being individually root-caused as its own distinct case. Times: cold py 6.89s vs cr 0.01s; warm py 3.30s vs cr 0.01s. |
+| `chrisvanmeer.hvault_secrets_fetcher` | rocky | ✅ FIXED - re-confirmed CLEAN in the round 812 confirm rerun; shared one of this round's other fixed root causes rather than being individually root-caused as its own distinct case. Times: cold py 4.50s vs cr 0.01s; warm py 3.28s vs cr 0.01s. |
+| `chrisvanmeer.snmpd` | rocky | ✅ clean. Times: cold py 17.06s vs cr 17.54s; warm py 6.07s vs cr 0.48s. |
+| `chrisvanmeer.tty_sessions` | rocky | ✅ FIXED - re-confirmed CLEAN in the round 812 confirm rerun; shared one of this round's other fixed root causes rather than being individually root-caused as its own distinct case. Times: cold py 4.00s vs cr 0.01s; warm py 3.61s vs cr 0.01s. |
+| `chusiang.php7` | ubuntu | ✅ clean. Times: cold py 38.60s vs cr 27.23s; warm py 38.69s vs cr 22.67s. |
+| `cmacrae.consul` | ubuntu | ✅ clean. Times: cold py 1.40s vs cr 0.04s; warm py 0.47s vs cr 0.01s. |
+| `constrict0r.unify` | ubuntu | ✅ clean. Times: cold py 6.51s vs cr 6.80s; warm py 6.21s vs cr 1.36s. |
+| `coopdevs.ansible_restic` | rocky | ✅ clean. Times: cold py 0.44s vs cr 0.01s; warm py 0.44s vs cr 0.01s. |
+| `cytopia.cloudformation` | rocky | ✅ clean. Times: cold py 6.18s vs cr 10.65s; warm py 4.09s vs cr 0.47s. |
+| `darkwizard242.asciinema` | ubuntu | ✅ clean. Times: cold py 52.62s vs cr 45.21s; warm py 9.91s vs cr 3.55s. |
+| `darkwizard242.awless` | ubuntu | ✅ clean. Times: cold py 7.38s vs cr 4.68s; warm py 5.87s vs cr 1.25s. |
+| `darkwizard242.awsnuke` | ubuntu | ✅ FIXED - re-confirmed CLEAN in the round 812 confirm rerun; shared one of this round's other fixed root causes rather than being individually root-caused as its own distinct case. Times: cold py 15.53s vs cr 8.38s; warm py 12.67s vs cr 3.69s. |
+| `darkwizard242.awsvault` | ubuntu | ✅ clean. Times: cold py 7.65s vs cr 4.18s; warm py 4.15s vs cr 0.31s. |
+| `darkwizard242.checkov` | ubuntu | ✅ clean. Times: cold py 7.87s vs cr 7.09s; warm py 6.91s vs cr 1.56s. |
+| `darkwizard242.cloc` | ubuntu | ✅ clean. Times: cold py 38.34s vs cr 35.96s; warm py 6.92s vs cr 2.78s. |
+| `darkwizard242.dockercompose` | ubuntu | ✅ clean. Times: cold py 7.17s vs cr 4.77s; warm py 4.55s vs cr 0.29s. |
+| `darkwizard242.duf` | ubuntu | ✅ clean. Times: cold py 10.34s vs cr 7.70s; warm py 7.13s vs cr 0.91s. |
+| `darkwizard242.eksctl` | ubuntu | ✅ clean. Times: cold py 11.94s vs cr 9.66s; warm py 8.72s vs cr 4.85s. |
+| `darkwizard242.gcloudsdk` | ubuntu | ✅ clean. Times: cold py 158.92s vs cr 149.52s; warm py 16.77s vs cr 7.58s. |
+| `darkwizard242.hugo` | ubuntu | ✅ FIXED (0.9.1051, same fix as .awsnuke below) - the specific confirm-round run also hit an unrelated, known plugin-upload SSH race (krikri-role-tester's own documented flakiness, exhausted its 3 retries), not a second bug. Times: cold py 8.19s vs cr 7.52s; warm py 6.25s vs cr 2.55s. |
+| `darkwizard242.locust` | ubuntu | ✅ clean. Times: cold py 7.14s vs cr 7.38s; warm py 5.64s vs cr 1.36s. |
+| `darkwizard242.logrotate` | ubuntu | ✅ clean. Times: cold py 21.13s vs cr 26.81s; warm py 6.30s vs cr 2.98s. |
+| `darkwizard242.mc` | ubuntu | ✅ clean. Times: cold py 5.51s vs cr 4.33s; warm py 4.01s vs cr 0.61s. |
+| `darkwizard242.nodejs` | ubuntu | ✅ clean. Times: cold py 81.42s vs cr 71.64s; warm py 62.50s vs cr 36.16s. |
+| `darkwizard242.onepassword` | ubuntu | ✅ clean. Times: cold py 131.14s vs cr 111.81s; warm py 31.57s vs cr 10.85s. |
+| `darkwizard242.openvpn` | ubuntu | ✅ clean. Times: cold py 38.50s vs cr 45.91s; warm py 5.58s vs cr 3.65s. |
+| `darkwizard242.ruby` | ubuntu | ✅ clean. Times: cold py 46.73s vs cr 45.08s; warm py 7.38s vs cr 3.20s. |
+| `darkwizard242.saws` | ubuntu | ✅ clean. Times: cold py 7.17s vs cr 6.25s; warm py 6.18s vs cr 1.31s. |
+| `darkwizard242.scout` | ubuntu | ✅ clean. Times: cold py 7.76s vs cr 4.79s; warm py 4.94s vs cr 0.31s. |
+| `darkwizard242.simplescreenrecorder` | ubuntu | ✅ clean. Times: cold py 57.22s vs cr 58.10s; warm py 6.01s vs cr 2.13s. |
+| `darkwizard242.stacer` | ubuntu | ✅ clean. Times: cold py 42.66s vs cr 65.43s; warm py 7.16s vs cr 3.65s. |
+| `darkwizard242.subfinder` | ubuntu | ✅ clean. Times: cold py 43.09s vs cr 35.83s; warm py 11.95s vs cr 3.42s. |
+| `darkwizard242.subversion` | ubuntu | ✅ clean. Times: cold py 25.70s vs cr 39.73s; warm py 4.18s vs cr 3.09s. |
+| `darkwizard242.syft` | ubuntu | ✅ clean. Times: cold py 9.92s vs cr 9.53s; warm py 6.93s vs cr 1.26s. |
+| `darkwizard242.tfsec` | ubuntu | ✅ clean. Times: cold py 8.61s vs cr 5.03s; warm py 5.74s vs cr 0.45s. |
+| `darkwizard242.virtualbox` | ubuntu | ✅ clean. Times: cold py 112.65s vs cr 78.83s; warm py 9.33s vs cr 2.67s. |
+| `darkwizard242.vscode` | ubuntu | ✅ clean. Times: cold py 96.16s vs cr 116.12s; warm py 12.75s vs cr 5.39s. |
+| `darkwizard242.serverspec` | ubuntu | ❌ untestable - terraform apply failed provisioning the host pair, not a krikri result. |
+| `darkwizard242.sslscan` | ubuntu | ❌ untestable - terraform apply failed provisioning the host pair, not a krikri result. |
+| `darkwizard242.terraforming` | ubuntu | ❌ untestable - terraform apply failed provisioning the host pair, not a krikri result. |
+| `dbrennand.caddy_docker` | ubuntu | ✅ clean. Times: cold py 13.84s vs cr 4.31s; warm py 13.82s vs cr 0.38s. |
+| `devon-mar.step_cert` | rocky | ❌ untestable - Galaxy install failed (role not found / install error, see `~/scratch/krt-results` galaxy_install.log for round811). |
+| `dgibbs64.netdata` | ubuntu | ✅ FIXED (0.9.1059): the `is version(...)` test's own two-argument split cut at the FIRST comma anywhere in its parens, truncating a compare-to expression that was itself a whole `selectattr("name", "equalto", ...)` chain with its own internal commas - "No filter named 'selectattr(\"name\"'". Times: cold py 67.52s vs cr 0.01s; warm py 24.08s vs cr 0.01s. |
+| `djungle-io.godaddy_ansible_role` | rocky | ❌ untestable - Galaxy install failed (role not found / install error, see `~/scratch/krt-results` galaxy_install.log for round811). |
+| `dockpack.base_java8` | rocky | ✅ clean. Times: cold py 5.26s vs cr 10.12s; warm py 4.26s vs cr 0.53s. |
+| `dymurray.memcached_operator_role` | rocky | genuinely missing module: `k8s` (kubernetes.core/community.kubernetes) - real Ansible would resolve and run it fine; krikri correctly reports it unimplemented and refuses (0.9.1052's own reachability-aware hard-stop) rather than silently skipping. Times: cold py 3.48s vs cr 0.01s; warm py 2.67s vs cr 0.01s. |
+| `ebbba-org.bigbluebutton` | ubuntu | ❌ untestable - Galaxy install failed (role not found / install error, see `~/scratch/krt-results` galaxy_install.log for round811). |
+| `ecgalaxy.aws_workspace_tweaks` | rocky | ✅ clean. Times: cold py 14.64s vs cr 10.54s; warm py 12.43s vs cr 0.68s. |
+| `ecgalaxy.docker_compose` | rocky | ✅ clean. Times: cold py 8.96s vs cr 12.70s; warm py 6.27s vs cr 0.63s. |
+| `ecgalaxy.oracle_instantclient` | rocky | ✅ clean. Times: cold py 4.21s vs cr 9.58s; warm py 3.70s vs cr 0.33s. |
+| `elan-ev.docker_install` | rocky | ❌ untestable - Galaxy install failed (role not found / install error, see `~/scratch/krt-results` galaxy_install.log for round811). |
+| `elan-ev.elan_certbot` | rocky | ❌ untestable - Galaxy install failed (role not found / install error, see `~/scratch/krt-results` galaxy_install.log for round811). |
+| `elan-ev.monitoring_alertmanager` | rocky | ❌ untestable - Galaxy install failed (role not found / install error, see `~/scratch/krt-results` galaxy_install.log for round811). |
+| `elan-ev.monitoring_blackbox_exporter` | rocky | ❌ untestable - Galaxy install failed (role not found / install error, see `~/scratch/krt-results` galaxy_install.log for round811). |
+| `elan-ev.monitoring_loki` | rocky | ❌ untestable - Galaxy install failed (role not found / install error, see `~/scratch/krt-results` galaxy_install.log for round811). |
+| `elan-ev.monitoring_node_exporter` | rocky | ❌ untestable - Galaxy install failed (role not found / install error, see `~/scratch/krt-results` galaxy_install.log for round811). |
+| `elan-ev.monitoring_prometheus` | rocky | ❌ untestable - Galaxy install failed (role not found / install error, see `~/scratch/krt-results` galaxy_install.log for round811). |
+| `elan-ev.monitoring_promtail` | rocky | ❌ untestable - Galaxy install failed (role not found / install error, see `~/scratch/krt-results` galaxy_install.log for round811). |
+| `elan-ev.opencast_repository` | rocky | ❌ untestable - Galaxy install failed (role not found / install error, see `~/scratch/krt-results` galaxy_install.log for round811). |
+| `elan-ev.opencast_user` | rocky | ❌ untestable - Galaxy install failed (role not found / install error, see `~/scratch/krt-results` galaxy_install.log for round811). |
+| `elan-ev.secure_sshd` | rocky | ❌ untestable - Galaxy install failed (role not found / install error, see `~/scratch/krt-results` galaxy_install.log for round811). |
+| `entanet-devops.consul` | ubuntu | ❌ untestable - Galaxy install failed (role not found / install error, see `~/scratch/krt-results` galaxy_install.log for round811). |
+| `entanet-devops.new_relic_apm` | ubuntu | ❌ untestable - Galaxy install failed (role not found / install error, see `~/scratch/krt-results` galaxy_install.log for round811). |
+| `ericsysmin.certbot` | ubuntu | ✅ clean. Times: cold py 70.01s vs cr 61.91s; warm py 48.63s vs cr 35.40s. |
+| `ericsysmin.cfnbootstrap` | rocky | ⚠️ disposed as environmental - both engines fail identically on the cold run (missing `tar`/`unzip` on the target); a warm-run pip-install idempotency nuance downstream of the same already-broken task, low value. Times: cold py 23.44s vs cr 21.29s; warm py 16.42s vs cr 5.39s. |
+| `ericsysmin.epel` | rocky | ✅ clean. Times: cold py 7.67s vs cr 12.86s; warm py 19.57s vs cr 0.75s. |
+| `ericsysmin.gcsfuse` | ubuntu | ✅ clean. Times: cold py 47.45s vs cr 40.56s; warm py 11.12s vs cr 3.34s. |
+| `ericsysmin.kompose` | rocky | ✅ clean. Times: cold py 8.07s vs cr 11.94s; warm py 5.83s vs cr 1.69s. |
+| `ericsysmin.yarn` | rocky | ✅ clean. Times: cold py 17.02s vs cr 18.38s; warm py 8.09s vs cr 0.52s. |
+| `esolitos.zsh` | rocky | ❌ untestable - Galaxy install failed (role not found / install error, see `~/scratch/krt-results` galaxy_install.log for round811). |
+| `ezamriy.epel` | rocky | ✅ clean. Times: cold py 9.90s vs cr 20.59s; warm py 7.75s vs cr 1.74s. |
+| `f500.project_deploy` | rocky | genuinely missing module: `community.general.deploy_helper`. Times: cold py 3.53s vs cr 0.01s; warm py 2.86s vs cr 0.01s. |
+| `fgci-org.cuda` | rocky | ❌ untestable - Galaxy install failed (role not found / install error, see `~/scratch/krt-results` galaxy_install.log for round811). |
+| `fiunchinho.aws-elasticsearch-module` | rocky | ✅ clean. Times: cold py 4.95s vs cr 10.24s; warm py 2.63s vs cr 0.50s. |
+| `fubarhouse.rust` | rocky | ✅ clean. Times: cold py 194.16s vs cr 175.93s; warm py 16.80s vs cr 1.20s. |
+| `galaxyproject.mailman3` | rocky | ✅ FIXED - re-confirmed CLEAN in the round 812 confirm rerun; shared one of this round's other fixed root causes rather than being individually root-caused as its own distinct case. Times: cold py 6.33s vs cr 0.01s; warm py 5.49s vs cr 0.01s. |
+| `galaxyproject.opendkim` | rocky | ✅ clean. Times: cold py 6.54s vs cr 12.68s; warm py 4.90s vs cr 2.57s. |
+| `galaxyproject.postfix` | rocky | ✅ FIXED (0.9.1058): a templated boolean var (`__postfix_debian: "{{ ansible_os_family == 'Debian' }}"`) referenced from a DIFFERENT `{{ }}` expression (a nested ternary chain) came back as the truthy STRING "False" instead of a native boolean, always selecting the first (Debian) branch regardless of the real host's OS family - installed Debian package names on Rocky. Times: cold py 20.34s vs cr 11.58s; warm py 11.59s vs cr 1.25s. |
+| `gantsign.apt` | ubuntu | ✅ clean. Times: cold py 6.91s vs cr 4.10s; warm py 4.31s vs cr 0.40s. |
+| `gantsign.atom` | ubuntu | ✅ clean. Times: cold py 10.40s vs cr 7.66s; warm py 6.30s vs cr 1.09s. |
+| `gantsign.audio` | ubuntu | ✅ clean. Times: cold py 29.67s vs cr 14.82s; warm py 5.70s vs cr 0.45s. |
+| `gantsign.git_user` | rocky | ✅ clean. Times: cold py 11.53s vs cr 18.19s; warm py 4.66s vs cr 1.01s. |
+| `gantsign.gnome-proxy` | ubuntu | ✅ clean. Times: cold py 12.15s vs cr 4.20s; warm py 7.58s vs cr 0.53s. |
+| `gantsign.kubernetes` | ubuntu | ✅ clean. Times: cold py 71.22s vs cr 52.10s; warm py 54.66s vs cr 30.12s. |
+| `gantsign.maven-notifier` | rocky | ✅ clean. Times: cold py 7.67s vs cr 10.15s; warm py 6.28s vs cr 0.65s. |
+| `gantsign.sdkman_init` | rocky | ✅ clean. Times: cold py 3.72s vs cr 9.58s; warm py 2.97s vs cr 0.34s. |
+| `gantsign.terminator` | ubuntu | ✅ clean. Times: cold py 9.55s vs cr 7.29s; warm py 5.76s vs cr 1.32s. |
+| `gantsign.timezone` | ubuntu | ✅ clean. Times: cold py 12.07s vs cr 4.53s; warm py 8.03s vs cr 0.33s. |
+| `geerlingguy.gogs` | rocky | ✅ clean. Times: cold py 15.78s vs cr 20.01s; warm py 6.86s vs cr 0.69s. |
+| `geerlingguy.hdparm` | ubuntu | ✅ clean. Times: cold py 8.69s vs cr 7.78s; warm py 6.70s vs cr 0.54s. |
+| `geerlingguy.logstash-forwarder` | rocky | ✅ clean. Times: cold py 0.45s vs cr 0.01s; warm py 0.46s vs cr 0.01s. |
+| `geerlingguy.php-pear` | rocky | ✅ clean. Times: cold py 56.35s vs cr 39.57s; warm py 25.95s vs cr 0.88s. |
+| `geerlingguy.sanoid` | ubuntu | ✅ clean. Times: cold py 19.19s vs cr 10.92s; warm py 9.22s vs cr 0.35s. |
+| `geerlingguy.sonar` | rocky | ✅ FIXED - re-confirmed CLEAN in the round 812 confirm rerun; shared one of this round's other fixed root causes rather than being individually root-caused as its own distinct case. Times: cold py 35.63s vs cr 42.54s; warm py 15.60s vs cr 2.02s. |
+| `geerlingguy.svn` | ubuntu | ✅ clean. Times: cold py 65.09s vs cr 62.26s; warm py 19.36s vs cr 1.52s. |
+| `ggiinnoo.remi_repo` | rocky | ✅ clean. Times: cold py 7.54s vs cr 12.96s; warm py 4.47s vs cr 0.63s. |
+| `githubixx.cfssl` | ubuntu | ✅ clean. Times: cold py 20.19s vs cr 8.40s; warm py 15.55s vs cr 1.94s. |
+| `githubixx.harden_linux` | ubuntu | minor one-count recap drift (both engines succeed fully), not yet root-caused. Times: cold py 389.11s vs cr 254.13s; warm py 83.34s vs cr 3.82s. |
+| `githubixx.lvm` | ubuntu | ✅ FIXED - re-confirmed CLEAN in the round 812 confirm rerun; shared one of this round's other fixed root causes rather than being individually root-caused as its own distinct case. Times: cold py 37.63s vs cr 28.16s; warm py 12.79s vs cr 1.15s. |
+| `gocd-contrib.gocd` | rocky | ✅ clean. Times: cold py 4.55s vs cr 16.79s; warm py 2.92s vs cr 0.24s. |
+| `grycap.slurm` | rocky | ✅ clean. Times: cold py 48.06s vs cr 50.03s; warm py 13.35s vs cr 0.78s. |
+| `guidugli.banner` | rocky | ✅ clean. Times: cold py 16.15s vs cr 15.25s; warm py 11.69s vs cr 0.55s. |
+| `guillaumewatteeux.centreon` | rocky | ✅ clean. Times: cold py 0.48s vs cr 0.01s; warm py 0.45s vs cr 0.01s. |
+| `hashbangcode.tomcat` | rocky | ✅ clean. Times: cold py 0.47s vs cr 0.01s; warm py 0.45s vs cr 0.01s. |
+| `howtodojo.acct` | ubuntu | ✅ clean. Times: cold py 37.17s vs cr 25.77s; warm py 5.78s vs cr 9.38s. |
+| `hudecof.resolv` | rocky | ✅ clean. Times: cold py 0.52s vs cr 0.02s; warm py 0.58s vs cr 0.01s. |
+| `humio.zookeeper` | rocky | ✅ clean. Times: cold py 0.97s vs cr 0.01s; warm py 1.06s vs cr 0.04s. |
+| `hybridadmin.exabgp` | ubuntu | ✅ clean. Times: cold py 0.46s vs cr 0.01s; warm py 0.45s vs cr 0.01s. |
+| `idealista.airflow-role` | ubuntu | ✅ clean. Times: cold py 38.21s vs cr 33.48s; warm py 17.69s vs cr 4.71s. |
+| `idealista.monit-role` | ubuntu | ✅ clean. Times: cold py 0.46s vs cr 0.01s; warm py 0.44s vs cr 0.01s. |
+| `idealista.oracle_instant_client_role` | ubuntu | ✅ clean. Times: cold py 0.45s vs cr 0.01s; warm py 0.45s vs cr 0.01s. |
+| `idealista.rsyslog_role` | ubuntu | ✅ clean. Times: cold py 50.74s vs cr 26.92s; warm py 19.97s vs cr 1.28s. |
+| `idealista.solr_role` | ubuntu | ✅ clean. Times: cold py 163.14s vs cr 329.72s; warm py 34.21s vs cr 5.56s. |
+| `idiv-biodiversity.hosts` | rocky | ✅ clean. Times: cold py 9.67s vs cr 10.06s; warm py 8.42s vs cr 0.42s. |
+| `idiv-biodiversity.locale` | rocky | ✅ clean. Times: cold py 13.99s vs cr 10.09s; warm py 10.26s vs cr 0.68s. |
+| `idiv-biodiversity.ntp` | rocky | ✅ clean. Times: cold py 4.68s vs cr 9.98s; warm py 3.45s vs cr 0.54s. |
+| `idiv-biodiversity.nvidia-driver` | rocky | minor warm-run idempotency drift on a task that already fails identically on both engines cold; not yet root-caused, low value. Times: cold py 24.24s vs cr 23.42s; warm py 14.37s vs cr 1.65s. |
+| `idiv-biodiversity.repo-xcat` | rocky | ✅ clean. Times: cold py 6.45s vs cr 10.54s; warm py 4.99s vs cr 0.49s. |
+| `idiv-biodiversity.sysstat` | rocky | ✅ clean. Times: cold py 11.47s vs cr 16.00s; warm py 9.93s vs cr 1.18s. |
+| `idiv-biodiversity.postfix` | rocky | ❌ untestable - Galaxy install failed (role not found / install error, see `~/scratch/krt-results` galaxy_install.log for round811). |
+| `ikke-t.container_image_cleanup` | rocky | ❌ untestable - Galaxy install failed (role not found / install error, see `~/scratch/krt-results` galaxy_install.log for round811). |
+| `indigo-dc.openvpn` | rocky | ✅ clean. Times: cold py 0.48s vs cr 0.01s; warm py 0.50s vs cr 0.01s. |
+| `infOpen.curl` | ubuntu | ✅ clean. Times: cold py 29.11s vs cr 28.48s; warm py 6.62s vs cr 0.62s. |
+| `infOpen.lynis` | ubuntu | ✅ FIXED (0.9.1054): `cron:`'s `env: true` mode reads the env-var's value from `value:` - real cron.py declares `job` with alias `value`, but krikri never resolved that alias, so `job` was nil and validation failed "job parameter required" even in env: mode. Times: cold py 40.24s vs cr 33.97s; warm py 18.37s vs cr 1.23s. |
+| `infOpen.transparent-huge-pages` | ubuntu | ✅ clean. Times: cold py 11.84s vs cr 5.43s; warm py 6.59s vs cr 0.42s. |
+| `infothrill.datadog_check_lynis` | ubuntu | ✅ clean. Times: cold py 10.51s vs cr 3.81s; warm py 9.08s vs cr 0.86s. |
+| `infothrill.hd_idle` | ubuntu | ✅ clean. Times: cold py 8.68s vs cr 4.12s; warm py 7.01s vs cr 0.62s. |
+| `infothrill.runit` | ubuntu | ✅ clean. Times: cold py 46.56s vs cr 45.89s; warm py 8.44s vs cr 3.57s. |
+| `iroquoisorg.env` | ubuntu | ✅ clean. Times: cold py 3.93s vs cr 3.67s; warm py 2.70s vs cr 0.31s. |
+| `iroquoisorg.users` | ubuntu | minor one-count recap drift late in a long task sequence (both engines succeed fully), not yet root-caused. Times: cold py 13.05s vs cr 4.42s; warm py 7.99s vs cr 0.33s. |
+| `itnok.update_ubuntu` | ubuntu | ✅ clean. Times: cold py 10.31s vs cr 8.09s; warm py 8.20s vs cr 0.59s. |
+| `jacoelho.stunnel` | ubuntu | ✅ clean. Times: cold py 0.44s vs cr 0.01s; warm py 0.44s vs cr 0.01s. |
+| `jaredhocutt.gnome_extensions` | rocky | ✅ clean. Times: cold py 5.17s vs cr 9.73s; warm py 3.87s vs cr 0.49s. |
+| `jgeusebroek.docker` | rocky | ✅ clean. Times: cold py 15.35s vs cr 13.45s; warm py 11.53s vs cr 2.59s. |
+| `jimbydamonk.libselinux-python` | rocky | ✅ clean. Times: cold py 6.61s vs cr 11.43s; warm py 4.36s vs cr 1.34s. |
+| `jindrichskupa.ansible_developer` | ubuntu | ✅ clean. Times: cold py 5.86s vs cr 4.74s; warm py 4.77s vs cr 0.42s. |
+| `jtprogru.profile` | ubuntu | ✅ FIXED (0.9.1065): `authorized_key:` with a `user:` resolving to a username absent from the passwd DB silently invented `/home/<user>/.ssh/authorized_keys` instead of failing like real Ansible's own `pwd.getpwnam()` check. Times: cold py 9.75s vs cr 4.04s; warm py 8.90s vs cr 0.52s. |
+| `jtyr.grub_cmdline` | rocky | ✅ clean. Times: cold py 6.66s vs cr 15.05s; warm py 3.32s vs cr 0.47s. |
+| `juwai.common` | rocky | ✅ clean. Times: cold py 0.45s vs cr 0.01s; warm py 0.45s vs cr 0.01s. |
+| `kazauwa.headscale` | rocky | ✅ clean. Times: cold py 24.70s vs cr 12.45s; warm py 21.43s vs cr 1.18s. |
+| `kosctelecom.ansible_traefikee` | ubuntu | ❌ untestable - Galaxy install failed (role not found / install error, see `~/scratch/krt-results` galaxy_install.log for round811). |
+| `labpositiva.ntp` | ubuntu | ✅ clean. Times: cold py 0.95s vs cr 0.01s; warm py 0.49s vs cr 0.01s. |
+| `lean-delivery.mysql` | rocky | ❌ untestable - Galaxy install failed (role not found / install error, see `~/scratch/krt-results` galaxy_install.log for round811). |
+| `levonet.docker-zookeeper` | ubuntu | ❌ untestable - Galaxy install failed (role not found / install error, see `~/scratch/krt-results` galaxy_install.log for round811). |
+| `lifeofguenter.php7-cli` | ubuntu | ✅ clean. Times: cold py 3.96s vs cr 3.78s; warm py 2.53s vs cr 0.28s. |
+| `lifeofguenter.resolvconf` | ubuntu | ✅ clean. Times: cold py 10.63s vs cr 5.57s; warm py 6.82s vs cr 0.42s. |
+| `liksi.mount_data_disk` | ubuntu | genuinely missing modules: `parted`, `lvg`. Times: cold py 3.98s vs cr 0.04s; warm py 2.72s vs cr 0.01s. |
+| `linux-system-roles.ha_cluster` | rocky | ✅ clean. Times: cold py 9.37s vs cr 10.44s; warm py 10.01s vs cr 0.81s. |
+| `linux-system-roles.image_builder` | rocky | ✅ clean. Times: cold py 4.17s vs cr 10.15s; warm py 3.36s vs cr 0.37s. |
+| `lrk.ansible_role_sjk` | rocky | ✅ clean. Times: cold py 0.50s vs cr 0.01s; warm py 0.47s vs cr 0.01s. |
+| `lucasmaurice.linux_motd` | rocky | ✅ clean. Times: cold py 40.22s vs cr 35.27s; warm py 31.44s vs cr 2.12s. |
+| `macunha1.confluent_kafka` | ubuntu | real bug, not yet fixed: `defaults/main.yaml` defines `ansible_memtotal_gb_sqrt: "{{ ... | root | round | int }}"` (`root` isn't a real filter - a role bug), and real Ansible only fails if that specific default is ever actually REFERENCED (it isn't, for this task) - krikri appears to eagerly evaluate it regardless, failing "No filter named 'root'" on unrelated template renders. Times: cold py 112.73s vs cr 30.50s; warm py 66.37s vs cr 1.47s. |
+| `major.mailgun` | rocky | ✅ clean. Times: cold py 23.34s vs cr 22.53s; warm py 14.17s vs cr 0.63s. |
+| `manala.ansible_galaxy` | ubuntu | ✅ clean. Times: cold py 5.86s vs cr 4.36s; warm py 4.16s vs cr 0.32s. |
+| `manala.fail2ban` | ubuntu | ✅ clean. Times: cold py 39.97s vs cr 44.43s; warm py 4.60s vs cr 0.45s. |
+| `manala.grafana` | ubuntu | ✅ clean. Times: cold py 34.16s vs cr 29.57s; warm py 5.29s vs cr 1.19s. |
+| `manala.maxscale` | ubuntu | ✅ clean. Times: cold py 26.33s vs cr 32.95s; warm py 4.53s vs cr 1.35s. |
+| `manala.mount` | ubuntu | ✅ clean. Times: cold py 6.04s vs cr 5.34s; warm py 2.80s vs cr 0.32s. |
+| `manala.phpredisadmin` | ubuntu | ✅ clean. Times: cold py 33.59s vs cr 33.98s; warm py 6.73s vs cr 1.50s. |
+| `manala.postgresql` | ubuntu | ✅ clean. Times: cold py 5.06s vs cr 4.48s; warm py 2.62s vs cr 0.41s. |
+| `manala.sqlite` | ubuntu | ✅ clean. Times: cold py 42.88s vs cr 33.40s; warm py 5.68s vs cr 0.48s. |
+| `manala.telegraf` | ubuntu | ✅ clean. Times: cold py 39.94s vs cr 57.67s; warm py 5.68s vs cr 0.73s. |
+| `manala.thumbor` | ubuntu | ✅ clean. Times: cold py 32.36s vs cr 39.29s; warm py 4.77s vs cr 2.10s. |
+| `manala.skeleton` | ubuntu | ❌ untestable - Galaxy install failed (role not found / install error, see `~/scratch/krt-results` galaxy_install.log for round811). |
+| `marvel-nccr.current_user` | ubuntu | ✅ clean. Times: cold py 7.77s vs cr 6.30s; warm py 4.81s vs cr 0.43s. |
+| `mashimom.oh-my-zsh` | rocky | ✅ FIXED - re-confirmed CLEAN in the round 812 confirm rerun; shared one of this round's other fixed root causes rather than being individually root-caused as its own distinct case. Times: cold py 4.78s vs cr 0.01s; warm py 3.95s vs cr 0.01s. |
+| `maxlareo.chkrootkit` | ubuntu | ✅ clean. Times: cold py 41.09s vs cr 50.14s; warm py 7.51s vs cr 0.67s. |
+| `mergermarket.cloudwatch_agent` | rocky | ✅ clean. Times: cold py 6.68s vs cr 12.22s; warm py 4.76s vs cr 1.42s. |
+| `mergermarket.docker` | rocky | ✅ clean. Times: cold py 39.98s vs cr 56.49s; warm py 7.67s vs cr 1.00s. |
+| `mergermarket.ebs_volumes` | rocky | ✅ clean. Times: cold py 37.12s vs cr 38.63s; warm py 11.93s vs cr 3.35s. |
+| `mergermarket.npm_client` | rocky | genuinely missing module: `community.general.cronvar` (already tracked from an earlier round's own missing-module list too). Times: cold py 14.48s vs cr 0.02s; warm py 12.35s vs cr 0.01s. |
+| `mergermarket.utils` | rocky | ✅ clean. Times: cold py 12.06s vs cr 18.67s; warm py 4.51s vs cr 0.93s. |
+| `mila-iqia.slurm` | rocky | ❌ untestable - Galaxy install failed (role not found / install error, see `~/scratch/krt-results` galaxy_install.log for round811). |
+| `mircomasa.filebeat` | rocky | ✅ FIXED (0.9.1063): `with_first_found:` + `include_vars:` searched `tasks/` before `vars/`, loading a same-named tasks/Linux.yml (a task list) instead of vars/Linux.yml (a `default:` dict) - every later default referencing `default["key"]` failed "is undefined" even though the include_vars: task itself reported ok. Times: cold py 47.31s vs cr 0.01s; warm py 23.31s vs cr 0.01s. |
+| `mircomasa.jenkins` | rocky | ✅ clean. Times: cold py 9.44s vs cr 12.97s; warm py 4.92s vs cr 0.41s. |
+| `mircomasa.jenkins_slave` | ubuntu | ✅ FIXED - re-confirmed CLEAN in the round 812 confirm rerun; shared one of this round's other fixed root causes rather than being individually root-caused as its own distinct case. Times: cold py 14.96s vs cr 0.01s; warm py 9.68s vs cr 0.01s. |
+| `mircomasa.microk8s` | ubuntu | genuinely missing module: `community.general.snap`. Times: cold py 68.31s vs cr 0.01s; warm py 12.85s vs cr 0.01s. |
+| `mk-ansible-roles.disk-init` | rocky | ✅ clean. Times: cold py 0.50s vs cr 0.01s; warm py 0.50s vs cr 0.01s. |
+| `mlangry.google-chrome` | ubuntu | ✅ clean. Times: cold py 0.45s vs cr 0.01s; warm py 0.51s vs cr 0.01s. |
+| `mpataki.ha_aws` | ubuntu | ✅ clean. Times: cold py 8.72s vs cr 6.64s; warm py 5.81s vs cr 1.28s. |
+| `mrlesmithjr.kea-dhcp` | rocky | ✅ clean. Times: cold py 34.52s vs cr 33.57s; warm py 13.31s vs cr 0.93s. |
+| `mrlesmithjr.snmpd` | rocky | ✅ clean. Times: cold py 0.50s vs cr 0.01s; warm py 0.46s vs cr 0.01s. |
+| `mtlynch.tinypilot` | ubuntu | ✅ clean. Times: cold py 13.58s vs cr 7.25s; warm py 9.99s vs cr 2.48s. |
+| `mullholland.pip` | rocky | ✅ clean. Times: cold py 13.85s vs cr 9.53s; warm py 5.63s vs cr 0.49s. |
+| `nephelaiio.k8s` | rocky | ✅ FIXED - re-confirmed CLEAN in the round 812 confirm rerun; shared one of this round's other fixed root causes rather than being individually root-caused as its own distinct case. Times: cold py 5.55s vs cr 0.04s; warm py 2.97s vs cr 0.02s. |
+| `nephelaiio.rabbitmq` | rocky | ✅ clean. Times: cold py 3.42s vs cr 9.60s; warm py 3.26s vs cr 0.68s. |
+| `nephosolutions.sshguard` | rocky | ✅ clean. Times: cold py 12.30s vs cr 18.61s; warm py 6.14s vs cr 0.49s. |
+| `nginxinc.nginx_app_protect` | rocky | ✅ FIXED - re-confirmed CLEAN in the round 812 confirm rerun; shared one of this round's other fixed root causes rather than being individually root-caused as its own distinct case. Times: cold py 22.13s vs cr 9.61s; warm py 41.66s vs cr 0.44s. |
+| `niainaLens.gcp_secret_manager` | ubuntu | broken-upstream-role territory: `gcp_secrets` is defined as a list where the role's own later tasks expect a dict (real Ansible fails early with "object of type 'list' has no attribute 'keys'"; krikri gets further before failing differently) - both engines ultimately fail, just at different points; not chased further. Times: cold py 5.12s vs cr 3.53s; warm py 2.62s vs cr 0.27s. |
+| `nl2go.clickhouse_backup` | ubuntu | ✅ clean. Times: cold py 28.94s vs cr 8.16s; warm py 25.32s vs cr 1.24s. |
+| `nl2go.hetzner_failover` | ubuntu | ✅ clean. Times: cold py 46.32s vs cr 43.82s; warm py 7.34s vs cr 0.76s. |
+| `nl2go.ip_route` | ubuntu | ✅ clean. Times: cold py 0.45s vs cr 0.01s; warm py 0.46s vs cr 0.01s. |
+| `nl2go.kafka` | ubuntu | ✅ clean. Times: cold py 8.87s vs cr 6.03s; warm py 7.70s vs cr 1.01s. |
+| `nl2go.network_encryption` | ubuntu | ✅ clean. Times: cold py 0.45s vs cr 0.01s; warm py 0.44s vs cr 0.01s. |
+| `nl2go.vpn_gateway` | ubuntu | ✅ clean. Times: cold py 4.83s vs cr 3.76s; warm py 3.07s vs cr 0.31s. |
+| `nl2go.clickhouse` | ubuntu | ❌ untestable - terraform apply failed provisioning the host pair, not a krikri result. |
+| `nsg.graphite` | rocky | ✅ clean. Times: cold py 0.46s vs cr 0.02s; warm py 0.46s vs cr 0.01s. |
+| `oasis-roles.firewalld` | rocky | ❌ untestable - Galaxy install failed (role not found / install error, see `~/scratch/krt-results` galaxy_install.log for round811). |
+| `ogerbron.satellite6_content_views` | rocky | ✅ clean. Times: cold py 0.47s vs cr 0.01s; warm py 0.46s vs cr 0.01s. |
+| `ontic.exim` | ubuntu | ✅ clean. Times: cold py 8.56s vs cr 5.64s; warm py 5.31s vs cr 1.17s. |
+| `openmicroscopy.deploy_archive` | rocky | ✅ clean. Times: cold py 3.36s vs cr 10.21s; warm py 2.57s vs cr 0.53s. |
+| `openmicroscopy.logrotate` | rocky | ✅ clean. Times: cold py 10.40s vs cr 16.35s; warm py 8.80s vs cr 0.54s. |
+| `openmicroscopy.postgresql_backup` | rocky | ✅ clean. Times: cold py 4.15s vs cr 9.64s; warm py 2.77s vs cr 0.30s. |
+| `openmicroscopy.redis` | rocky | ✅ clean. Times: cold py 33.74s vs cr 45.79s; warm py 11.78s vs cr 0.62s. |
+| `oukooveu.libreswan` | rocky | ✅ clean. Times: cold py 35.88s vs cr 20.28s; warm py 24.72s vs cr 0.88s. |
+| `papanito.cloudflared` | rocky | real bug, not yet fixed: `cf_tunnels_available | difference(cf_tunnels)` where `cf_tunnels` is genuinely undefined - real Ansible fails immediately ("'cf_tunnels' is undefined"), krikri lets the play continue much further before eventually hanging on an unrelated, genuine `cloudflared tunnel login` OAuth wait (542s) - the same class of "undefined variable fed into a filter argument should raise" gap this round's `regex_search()[0]`/`+`-operand fixes covered for other syntactic positions, not yet covering bare filter-call arguments generally. Times: cold py 8.96s vs cr 542.71s; warm py 7.59s vs cr 528.74s. |
+| `pinkeen.selinux-disable` | rocky | ✅ clean. Times: cold py 7.37s vs cr 10.95s; warm py 7.65s vs cr 1.40s. |
+| `pluggero.alacritty` | ubuntu | ✅ clean. Times: cold py 173.55s vs cr 115.71s; warm py 32.06s vs cr 2.16s. |
+| `pluggero.bibata_cursor` | ubuntu | ✅ FIXED (0.9.1062): `(cmd.stdout | regex_search(...))[0]` on a no-match result (Python `None`) silently rendered "undefined" and let the whole play continue instead of hard-failing "None has no element 0" like real Ansible. Times: cold py 62.99s vs cr 61.95s; warm py 11.36s vs cr 3.13s. |
+| `pluggero.docker` | ubuntu | ✅ clean. Times: cold py 109.20s vs cr 63.24s; warm py 44.82s vs cr 2.21s. |
+| `pluggero.firefox` | ubuntu | ✅ clean. Times: cold py 140.50s vs cr 118.14s; warm py 36.45s vs cr 2.14s. |
+| `pluggero.fish` | ubuntu | ✅ clean. Times: cold py 47.85s vs cr 55.44s; warm py 14.87s vs cr 1.75s. |
+| `pluggero.golang` | ubuntu | ✅ clean. Times: cold py 70.02s vs cr 58.44s; warm py 19.32s vs cr 2.48s. |
+| `pluggero.lazygit` | ubuntu | ✅ clean. Times: cold py 57.85s vs cr 35.92s; warm py 12.34s vs cr 0.66s. |
+| `pluggero.neovim` | ubuntu | ✅ clean. Times: cold py 331.57s vs cr 224.67s; warm py 44.84s vs cr 2.19s. |
+| `pluggero.python` | ubuntu | ✅ FIXED - re-confirmed CLEAN in the round 812 confirm rerun; shared one of this round's other fixed root causes rather than being individually root-caused as its own distinct case. Times: cold py 900.01s vs cr 179.20s; warm py 900.01s vs cr 4.78s. |
+| `pluggero.tmux` | ubuntu | ✅ clean. Times: cold py 97.91s vs cr 87.93s; warm py 21.09s vs cr 0.81s. |
+| `pluggero.yazi` | ubuntu | ✅ clean. Times: cold py 158.24s vs cr 93.39s; warm py 30.62s vs cr 1.21s. |
+| `pro-vision.jenkins_pv` | rocky | ❌ untestable - Galaxy install failed (role not found / install error, see `~/scratch/krt-results` galaxy_install.log for round811). |
+| `pro-vision.jenkins_pv_pipeline_library` | rocky | ❌ untestable - Galaxy install failed (role not found / install error, see `~/scratch/krt-results` galaxy_install.log for round811). |
+| `pulp.pulp_rpm_prerequisites` | rocky | ✅ clean. Times: cold py 2.97s vs cr 10.89s; warm py 2.22s vs cr 0.33s. |
+| `racqspace.microk8s` | ubuntu | genuinely missing module: `community.general.snap`. Times: cold py 64.36s vs cr 0.01s; warm py 15.93s vs cr 0.01s. |
+| `radek-sprta.docker` | ubuntu | ❌ untestable - Galaxy install failed (role not found / install error, see `~/scratch/krt-results` galaxy_install.log for round811). |
+| `redhat-cip.swiftbackmeup` | rocky | ✅ clean. Times: cold py 22.23s vs cr 45.95s; warm py 6.29s vs cr 2.00s. |
+| `redhat-cop.jboss-common` | rocky | ✅ clean. Times: cold py 1.00s vs cr 0.02s; warm py 0.45s vs cr 0.01s. |
+| `redhat-sap.sap_hana_ha_pacemaker` | rocky | ❌ untestable - Galaxy install failed (role not found / install error, see `~/scratch/krt-results` galaxy_install.log for round811). |
+| `redhat-sap.sap_hana_hsr` | rocky | ❌ untestable - Galaxy install failed (role not found / install error, see `~/scratch/krt-results` galaxy_install.log for round811). |
+| `robertdebock.artifactory` | rocky | ✅ clean. Times: cold py 521.21s vs cr 455.46s; warm py 50.88s vs cr 3.08s. |
+| `robertdebock.collectd` | rocky | ✅ clean. Times: cold py 6.38s vs cr 11.58s; warm py 7.00s vs cr 2.26s. |
+| `robertdebock.dhcpd` | rocky | ✅ clean. Times: cold py 22.18s vs cr 15.30s; warm py 14.92s vs cr 0.98s. |
+| `robertdebock.dovecot` | rocky | minor one-count recap drift (an `ansible.builtin.file:` loop over `find:`'s zero-item result), not yet root-caused - both engines report full success, no failures. Times: cold py 16.25s vs cr 15.89s; warm py 11.21s vs cr 0.54s. |
+| `robertdebock.lynis` | rocky | ✅ clean. Times: cold py 8.60s vs cr 15.29s; warm py 6.99s vs cr 0.43s. |
+| `robertdebock.nfsserver` | rocky | ✅ clean. Times: cold py 37.11s vs cr 26.09s; warm py 9.13s vs cr 0.58s. |
+| `robertdebock.podman` | rocky | ✅ FIXED - re-confirmed CLEAN in the round 812 confirm rerun; shared one of this round's other fixed root causes rather than being individually root-caused as its own distinct case. Times: cold py 50.96s vs cr 0.01s; warm py 6.74s vs cr 0.01s. |
+| `robertdebock.vault_agent` | rocky | ✅ clean. Times: cold py 5.15s vs cr 10.81s; warm py 2.50s vs cr 0.30s. |
+| `robgmills.pure-ftpd` | ubuntu | ✅ clean. Times: cold py 0.44s vs cr 0.01s; warm py 0.45s vs cr 0.01s. |
+| `rolehippie.github_runner` | ubuntu | known pre-existing gap, not new: ansible-core 2.19's strict conditional-must-be-boolean enforcement (`github_runner_repo | default(false)` - a genuinely `None`-valued var, not caught by the single-arg `default()` form) - the same documented class of divergence as `AerisCloud.disk`/`bobbyrenwick.pip` from earlier rounds. Times: cold py 5.14s vs cr 5.77s; warm py 3.47s vs cr 0.35s. |
+| `rolehippie.nullmailer` | ubuntu | ✅ FIXED (0.9.1066): the vendored Crinja fork's no-parenthesis filter-call grammar mistook a COMMA appearing directly after a bare (no-parens) filter name for the start of an implicit argument (`' --port=' + port | string, ''` - real Jinja2 binds `|` tighter than `+`, so the comma legitimately follows the `string` filter) - "Unexpected COMMA", template render failure. Times: cold py 36.31s vs cr 12.46s; warm py 20.48s vs cr 0.88s. |
+| `rolehippie.syncthing` | ubuntu | ✅ clean. Times: cold py 51.86s vs cr 38.60s; warm py 8.42s vs cr 0.58s. |
+| `rolehippie.yq` | ubuntu | ✅ clean. Times: cold py 7.38s vs cr 4.38s; warm py 4.38s vs cr 0.36s. |
+| `roles-ansible.no_sleep` | ubuntu | ✅ clean. Times: cold py 24.49s vs cr 6.36s; warm py 19.75s vs cr 0.55s. |
+| `roles-ansible.install_firefox` | ubuntu | ❌ untestable - Galaxy install failed (role not found / install error, see `~/scratch/krt-results` galaxy_install.log for round811). |
+| `sansible.amazon_inspector_agent` | ubuntu | ✅ clean. Times: cold py 0.45s vs cr 0.01s; warm py 0.45s vs cr 0.01s. |
+| `sansible.ansible` | ubuntu | ✅ clean. Times: cold py 0.47s vs cr 0.01s; warm py 0.44s vs cr 0.01s. |
+| `sansible.aws_ec2_perf` | ubuntu | ✅ clean. Times: cold py 0.47s vs cr 0.01s; warm py 0.46s vs cr 0.01s. |
+| `sansible.composer` | ubuntu | ✅ clean. Times: cold py 0.45s vs cr 0.01s; warm py 0.44s vs cr 0.01s. |
+| `sansible.docker` | ubuntu | ✅ clean. Times: cold py 0.45s vs cr 0.01s; warm py 0.46s vs cr 0.01s. |
+| `sansible.haproxy` | ubuntu | ✅ clean. Times: cold py 0.45s vs cr 0.01s; warm py 0.45s vs cr 0.01s. |
+| `sansible.openvpn` | ubuntu | ✅ clean. Times: cold py 0.48s vs cr 0.01s; warm py 0.47s vs cr 0.01s. |
+| `sansible.supervisor` | ubuntu | ✅ clean. Times: cold py 0.45s vs cr 0.01s; warm py 0.46s vs cr 0.01s. |
+| `sansible.vernemq` | ubuntu | ✅ clean. Times: cold py 0.44s vs cr 0.01s; warm py 0.45s vs cr 0.01s. |
+| `searchmetrics.ansible-role-docker-clickhouse` | ubuntu | ✅ clean. Times: cold py 23.43s vs cr 6.16s; warm py 17.15s vs cr 0.92s. |
+| `server-labs.wowza` | rocky | ❌ untestable - Galaxy install failed (role not found / install error, see `~/scratch/krt-results` galaxy_install.log for round811). |
+| `severalnines.clustercontrol` | rocky | ⚠️ disposed as environmental - a MySQL grant-propagation race in the role's own installer script (`Host '127.0.0.1' is not allowed to connect`), timing-sensitive on both engines; krikri's own speed makes it more likely to hit the race, not a correctness bug. Times: cold py 270.65s vs cr 141.10s; warm py 116.14s vs cr 9.59s. |
+| `shelleg.activemq` | rocky | ✅ clean. Times: cold py 0.45s vs cr 0.01s; warm py 0.45s vs cr 0.01s. |
+| `silpion.util` | rocky | ✅ clean. Times: cold py 0.45s vs cr 0.01s; warm py 0.44s vs cr 0.01s. |
+| `silverlogic.certbot` | rocky | ✅ clean. Times: cold py 5.89s vs cr 13.24s; warm py 4.22s vs cr 2.12s. |
+| `simoncaron.pve_permissions` | ubuntu | ✅ clean. Times: cold py 5.56s vs cr 4.22s; warm py 4.34s vs cr 0.36s. |
+| `snyssen.oh-my-zsh-p10k` | rocky | ✅ clean. Times: cold py 11.61s vs cr 28.88s; warm py 6.23s vs cr 0.83s. |
+| `softasap.sa_loki` | ubuntu | minor changed-count drift (both engines succeed fully), not yet root-caused. Times: cold py 61.64s vs cr 13.93s; warm py 44.30s vs cr 3.55s. |
+| `solarwinds.swisnap` | ubuntu | ✅ clean. Times: cold py 0.45s vs cr 0.01s; warm py 0.44s vs cr 0.01s. |
+| `sorrowless.docker` | rocky | ✅ FIXED - re-confirmed CLEAN in the round 812 confirm rerun; shared one of this round's other fixed root causes rather than being individually root-caused as its own distinct case. Times: cold py 12.92s vs cr 0.01s; warm py 12.15s vs cr 0.01s. |
+| `sorrowless.postgresql` | ubuntu | ✅ FIXED - re-confirmed CLEAN in the round 812 confirm rerun; shared one of this round's other fixed root causes rather than being individually root-caused as its own distinct case. Times: cold py 4.22s vs cr 0.01s; warm py 2.86s vs cr 0.01s. |
+| `sorrowless.prometheus_postgres_exporter` | ubuntu | ✅ clean. Times: cold py 21.71s vs cr 7.80s; warm py 13.29s vs cr 1.53s. |
+| `sourcejedi.etckeeper` | rocky | ✅ clean. Times: cold py 0.48s vs cr 0.02s; warm py 0.45s vs cr 0.01s. |
+| `spk.syncthing-debian` | ubuntu | ❌ untestable - Galaxy install failed (role not found / install error, see `~/scratch/krt-results` galaxy_install.log for round811). |
+| `staticdev.firefox` | ubuntu | ✅ clean. Times: cold py 70.75s vs cr 64.09s; warm py 12.87s vs cr 0.41s. |
+| `supertarto.apache` | ubuntu | ✅ FIXED - re-confirmed CLEAN in the round 812 confirm rerun; shared one of this round's other fixed root causes rather than being individually root-caused as its own distinct case. Times: cold py 58.07s vs cr 21.16s; warm py 11.28s vs cr 0.80s. |
+| `tehtbl.reboot` | ubuntu | ✅ clean. Times: cold py 5.79s vs cr 3.77s; warm py 3.94s vs cr 0.37s. |
+| `thiagoalmeidasa.certbot_route53` | rocky | ✅ clean. Times: cold py 7.83s vs cr 15.88s; warm py 6.57s vs cr 0.54s. |
+| `thomashesry.ansible_logrotate` | ubuntu | ✅ clean. Times: cold py 15.02s vs cr 4.64s; warm py 15.16s vs cr 0.79s. |
+| `thomasjpfan.docker-swarm` | ubuntu | ✅ clean. Times: cold py 6.57s vs cr 4.24s; warm py 3.85s vs cr 0.39s. |
+| `tomhesse.jellyfin` | ubuntu | ✅ clean. Times: cold py 81.12s vs cr 65.59s; warm py 22.48s vs cr 1.05s. |
+| `torian.nomad` | rocky | ✅ clean. Times: cold py 0.51s vs cr 0.01s; warm py 0.49s vs cr 0.01s. |
+| `torian.supervisor` | rocky | ✅ clean. Times: cold py 0.44s vs cr 0.01s; warm py 0.44s vs cr 0.01s. |
+| `tschifftner.common` | ubuntu | ✅ clean. Times: cold py 0.47s vs cr 0.01s; warm py 0.45s vs cr 0.01s. |
+| `tschoonj.ansible_role_guacamole_exporter` | rocky | ✅ FIXED - re-confirmed CLEAN in the round 812 confirm rerun; shared one of this round's other fixed root causes rather than being individually root-caused as its own distinct case. Times: cold py 24.83s vs cr 19.36s; warm py 8.30s vs cr 0.65s. |
+| `uZer.keepalived` | rocky | ✅ clean. Times: cold py 0.45s vs cr 0.01s; warm py 0.46s vs cr 0.01s. |
+| `uchida.nvidia-container-runtime` | ubuntu | ✅ clean. Times: cold py 31.40s vs cr 33.83s; warm py 7.32s vs cr 3.89s. |
+| `uchida.nvidia-driver` | ubuntu | ✅ clean. Times: cold py 22.15s vs cr 26.77s; warm py 6.78s vs cr 4.00s. |
+| `usegalaxy-eu.fs_maintenance` | rocky | ❌ untestable - Galaxy install failed (role not found / install error, see `~/scratch/krt-results` galaxy_install.log for round811). |
+| `vantaworks.goss` | rocky | ✅ clean. Times: cold py 0.45s vs cr 0.01s; warm py 0.46s vs cr 0.01s. |
+| `vcc-caeit.ntp` | ubuntu | ❌ untestable - Galaxy install failed (role not found / install error, see `~/scratch/krt-results` galaxy_install.log for round811). |
+| `volker-raschek.bind9` | rocky | ✅ clean. Times: cold py 47.29s vs cr 24.06s; warm py 38.25s vs cr 2.00s. |
+| `volker-raschek.git` | rocky | ✅ FIXED (0.9.1060): `with_dict:\n  - "{{ empty_list }}"` (list-wrapped source) now correctly fails like real Ansible (the wrapping list is itself one lookup term, and `lookup/dict.py` requires every term to be a Mapping) - previously conflated with the bare-scalar shape's own, genuinely-different leniency (`with_dict: "{{ empty_list }}"`, zero terms, clean skip). Times: cold py 13.97s vs cr 16.00s; warm py 4.99s vs cr 0.61s. |
+| `volker-raschek.root` | rocky | ✅ clean. Times: cold py 9.17s vs cr 10.33s; warm py 7.49s vs cr 0.38s. |
+| `volker-raschek.sudo` | ubuntu | ❌ untestable - terraform apply failed provisioning the host pair, not a krikri result. |
+| `volker-raschek.unix_users` | rocky | ❌ untestable - Galaxy install failed (role not found / install error, see `~/scratch/krt-results` galaxy_install.log for round811). |
+| `wangsha.docker-cadvisor` | rocky | ✅ clean. Times: cold py 0.46s vs cr 0.01s; warm py 0.46s vs cr 0.01s. |
+| `webnifico.haproxy_exporter` | ubuntu | ❌ untestable - Galaxy install failed (role not found / install error, see `~/scratch/krt-results` galaxy_install.log for round811). |
+| `wilmardo.plex` | rocky | ✅ clean. Times: cold py 20.89s vs cr 14.87s; warm py 9.01s vs cr 2.36s. |
+| `winterheart.maxmind_geoipupdate` | rocky | ✅ clean. Times: cold py 0.45s vs cr 0.01s; warm py 0.45s vs cr 0.01s. |
+| `wittdennis.node_exporter` | rocky | ✅ clean. Times: cold py 9.05s vs cr 11.33s; warm py 9.80s vs cr 1.09s. |
+| `wittdennis.wireguard_client` | ubuntu | ✅ clean. Times: cold py 4.64s vs cr 3.94s; warm py 3.14s vs cr 0.45s. |
+| `woohgit.teleport` | rocky | ✅ clean. Times: cold py 9.69s vs cr 14.36s; warm py 6.61s vs cr 1.01s. |
+| `wtanaka.apache-flink` | rocky | ✅ clean. Times: cold py 0.46s vs cr 0.01s; warm py 0.44s vs cr 0.01s. |
+| `wtanaka.chrome` | ubuntu | ✅ clean. Times: cold py 0.95s vs cr 0.01s; warm py 0.48s vs cr 0.01s. |
+| `wtanaka.monit` | rocky | ✅ clean. Times: cold py 0.49s vs cr 0.01s; warm py 0.47s vs cr 0.01s. |
+| `wtanaka.oracle-java` | rocky | ✅ clean. Times: cold py 0.57s vs cr 0.01s; warm py 0.56s vs cr 0.01s. |
+| `wtanaka.vim` | rocky | ✅ clean. Times: cold py 0.49s vs cr 0.01s; warm py 0.48s vs cr 0.01s. |
+| `wtanaka.zookeeper` | rocky | ✅ clean. Times: cold py 0.46s vs cr 0.01s; warm py 0.46s vs cr 0.01s. |
+| `wunzeco.cassandra` | rocky | ✅ clean. Times: cold py 0.47s vs cr 0.01s; warm py 0.49s vs cr 0.01s. |
+| `wunzeco.consul` | rocky | ✅ clean. Times: cold py 0.46s vs cr 0.01s; warm py 0.48s vs cr 0.01s. |
+| `wunzeco.consul-template` | rocky | ✅ FIXED (0.9.1055): `when: "'v' + consul_template_version in ..."` (no parens around the `+` concatenation) fell through to a bare-variable lookup instead of being routed to the expression evaluator, hard-failing "''v' + consul_template_version' is undefined". Times: cold py 37.96s vs cr 13.40s; warm py 15.72s vs cr 0.59s. |
+| `wunzeco.docker` | rocky | ✅ clean. Times: cold py 6.49s vs cr 13.18s; warm py 5.39s vs cr 0.77s. |
+| `wunzeco.filebeat` | rocky | ✅ clean. Times: cold py 0.45s vs cr 0.01s; warm py 0.47s vs cr 0.01s. |
+| `wunzeco.java` | rocky | ✅ clean. Times: cold py 6.35s vs cr 10.49s; warm py 5.10s vs cr 1.00s. |
+| `wunzeco.kong` | rocky | ✅ clean. Times: cold py 6.14s vs cr 28.50s; warm py 4.61s vs cr 0.48s. |
+| `wunzeco.mongodb` | rocky | ✅ clean. Times: cold py 0.49s vs cr 0.01s; warm py 0.49s vs cr 0.01s. |
+| `wunzeco.nginx-docker` | rocky | ✅ clean. Times: cold py 18.02s vs cr 10.12s; warm py 15.92s vs cr 0.62s. |
+| `wunzeco.ntp` | rocky | ✅ clean. Times: cold py 8.22s vs cr 9.81s; warm py 6.29s vs cr 1.12s. |
+| `wunzeco.registrator` | rocky | ✅ clean. Times: cold py 4.22s vs cr 14.65s; warm py 2.43s vs cr 0.33s. |
+| `wunzeco.telegraf` | rocky | ✅ clean. Times: cold py 0.49s vs cr 0.01s; warm py 0.48s vs cr 0.01s. |
+| `wunzeco.users` | rocky | ✅ clean. Times: cold py 5.06s vs cr 10.08s; warm py 4.21s vs cr 0.42s. |
+| `ypsman.aws_cli` | ubuntu | ✅ clean. Times: cold py 7.55s vs cr 7.02s; warm py 5.47s vs cr 1.45s. |
+| `zorun.garage` | ubuntu | ✅ clean. Times: cold py 4.05s vs cr 4.34s; warm py 2.53s vs cr 0.28s. |

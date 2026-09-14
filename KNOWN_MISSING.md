@@ -18,9 +18,79 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.1049`.** Vendored `crinja` fork now at tag
-`crystal-play-0.9.31` (see `shard.yml`; 0.9.31 adds the six
-configurable Jinja delimiter strings).
+**Currently at `0.9.1066`.** Vendored `crinja` fork now at tag
+`crystal-play-0.9.32` (see `shard.yml`; 0.9.32 fixes a no-parenthesis
+filter-call grammar bug where a COMMA legitimately following a `|
+somefilter` was mistaken for the start of an implicit argument).
+
+## Round 811000-812999: 400-role Galaxy batch + 55-role confirm rerun, 18 real bugs fixed (0.9.1050 -> 0.9.1066)
+
+400-role Galaxy top-download batch split 200 ubuntu/200 rocky (round
+811000-811399), Atlantic.net only, plus a 55-role confirm rerun (round
+812000-812999) against the fixed build. `CLEAN=278 DIVERGENT=55
+GALAXY_MISSING=60 TF_APPLY_FAILED=6` (one genuine duplicate queue entry
+collapsed). 18 of the 55 divergences were real krikri bugs:
+
+- `0.9.1050`: `collect_required_plugins` crashed outright on a templated
+  module name (`action: {module: "{{ ansible_pkg_mgr }}"}`).
+- `0.9.1051`: `unarchive:`'s `dest:` attribute application (`mode:`/
+  `owner:`/`group:`) walked every pre-existing file under `dest` instead
+  of scoping to the archive's own extracted members.
+- `0.9.1052`: unimplemented modules no longer hard-stop unconditionally
+  at parse time - resolution is now lazy and `when:`-aware, matching
+  real Ansible's own per-task, post-condition module resolution; an
+  end-of-run safety net (`reachable_unavailable_modules`) still catches
+  and reports any genuinely-reached missing module.
+- `0.9.1053`: handlers declared only via a `listen:` **list** (not a
+  single string) never matched `notify:`.
+- `0.9.1054`: `cron:`'s `env: true` mode never resolved the `value:`
+  alias of `job:`.
+- `0.9.1055`: `when: "'v' + some_var in ..."` (no parens around a `+`
+  concatenation) fell through to a bare-variable lookup instead of the
+  expression evaluator.
+- `0.9.1056`: `unarchive: {copy: no, ...}` (the older spelling,
+  mutually exclusive with `remote_src:`) wasn't recognized as a
+  `remote_src: true` alias by the controller-src staging check; dict-form
+  `action:`/`local_action:` also dropped direct sibling params not
+  wrapped in an explicit `args:`.
+- `0.9.1057`: (see above, same commit as 0.9.1056's dict-form `action:`
+  fix).
+- `0.9.1058`: a templated boolean var referenced from a different `{{ }}`
+  expression (a nested ternary) came back as the truthy string `"False"`
+  instead of a native boolean in the Crinja renderer.
+- `0.9.1059`: the `is version(...)` test's argument split cut at the
+  first comma anywhere in its parens, truncating a compare-to expression
+  that itself contained commas (e.g. a `selectattr(...)` chain).
+- `0.9.1060`: `with_dict: ["{{ some_var }}"]` (list-wrapped source) and
+  `with_dict: "{{ some_var }}"` (bare-scalar source) have genuinely
+  different empty/type-checking semantics in real Ansible and weren't
+  distinguished; also, `python_type_name` had no `Array` case.
+- `0.9.1061`: `template:`'s `force: false` blocked creating a
+  brand-new destination file, not just overwriting an existing one.
+- `0.9.1062`: `(expr | regex_search(...))[0]` on a no-match (`None`)
+  result silently rendered "undefined" instead of hard-failing like
+  real Jinja2's distinct `None`-indexing error.
+- `0.9.1063`: `with_first_found:` + `include_vars:` searched `tasks/`
+  before `vars/`, so a same-named `tasks/X.yml` could shadow the
+  intended `vars/X.yml`.
+- `0.9.1064`: `user:` (the documented alias of `name:`) wasn't resolved
+  on the `user` plugin.
+- `0.9.1065`: `authorized_key:` silently invented a home directory for a
+  nonexistent user instead of failing like real Ansible's own
+  `pwd.getpwnam()` check.
+- `0.9.1066`: vendored Crinja fork fix - a COMMA legitimately following a
+  no-parenthesis filter call (`... | string, ''`) was misparsed as the
+  start of an implicit filter argument.
+
+3 divergences were disposed as not krikri bugs after live repro
+(`buluma.jenkins`'s systemd crash-loop timing, `severalnines.clustercontrol`'s
+MySQL grant-propagation race, and `azavea.terraform`'s `| changed` filter
+usage no longer reproducing on `main`). 6 are genuinely missing modules
+(see Open gaps below). The remainder are environmental (unreachable
+mirrors, upstream-role bugs), one instance of the known pre-existing
+ansible-core 2.19 conditional-strictness gap (`rolehippie.github_runner`),
+or minor recap-count drift not yet root-caused - see `ROLES_TESTED.md`'s
+round entry for the full per-role breakdown.
 
 ## Round 810000-810399: 400-role Galaxy batch, 8 real bugs fixed (0.9.1043 -> 0.9.1049)
 
@@ -106,6 +176,16 @@ independently-provisioned hosts in that round, not an engine defect.
 
 ## Open gaps
 
+- **Round 811000-812999: 6 single-role missing modules** (400-role
+  Galaxy top-download batch, ubuntu+rocky): `k8s`
+  (`dymurray.memcached_operator_role`),
+  `community.general.deploy_helper` (`f500.project_deploy`),
+  `community.general.cronvar` (`mergermarket.npm_client`, already
+  tracked below too), `community.general.snap`
+  (`mircomasa.microk8s`, `racqspace.microk8s`), `parted`+`lvg`
+  (`liksi.mount_data_disk`) - genuinely missing, unimplemented modules
+  correctly caught by the 0.9.1052 end-of-run safety net rather than
+  silently skipped.
 - **Round 700000-701129 + 702000-702046 requeue: 26 single-role missing
   modules** (400-role Galaxy top-download batch, ubuntu+rocky, plus the
   47-role kata-recovery requeue): `os_nova_flavor`, `os_keypair`,
