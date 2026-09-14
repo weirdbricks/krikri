@@ -1272,8 +1272,20 @@ module Krikri
       # `_ansible_verbose_always` is absent from the registered var), and
       # the assert plugins' `_ansible_quiet` display marker is likewise
       # controller-internal, not part of the registered shape.
+      #
+      # `invocation` is stripped here too, generically: real ansible-core's
+      # strategy plugin (strategy/__init__.py, "register final results"
+      # block) deletes a top-level `invocation` key from the clean copy it
+      # registers. Round 813375 (galaxyproject.pulsar) pinned the exact
+      # split this mirrors: a NON-looped register never exposes
+      # `invocation` (stripped here), while each per-item entry inside a
+      # LOOPED+registered task's `results[]` keeps its own `invocation`
+      # intact (the strategy strip only touches the top-level dict) - so
+      # this must stay out of the loop aggregation path in
+      # executor_loops.cr.
       result_hash = result.as_h.dup
       result_hash.reject! { |key, _| key.starts_with?("_ansible_") }
+      result_hash.delete("invocation")
       @registered_vars[host.name][register_name] = with_command_lines_augmented(JSON::Any.new(result_hash))
       @hv_generation += 1
     end

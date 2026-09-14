@@ -60,6 +60,41 @@ describe "getent plugin" do
     result["msg"].as_s.should contain("could not be found")
   end
 
+  it "reports invocation.module_args matching real Ansible on a keyed lookup" do
+    # Round 813375 (galaxyproject.pulsar): the role reads
+    # `item.invocation.module_args.key` off a looped+registered getent
+    # task to recover the ORIGINAL key that produced each results[]
+    # entry, then indexes `ansible_facts.getent_passwd[...][2]` with it.
+    # Real Ansible's module protocol (module_utils/basic.py's
+    # _return_formatted) always attaches this block; without it the
+    # expression resolved to None and crashed with "None has no element
+    # 2". module_args carries the raw param values: `split` stays null
+    # when the user didn't pass it (the ':' colon-database default is
+    # internal), service is null, fail_key defaults to true.
+    result = PluginSpecHelper.run("getent", {"database" => "passwd", "key" => "root"})
+    result["failed"]?.try(&.as_bool).should be_falsey
+
+    module_args = result["invocation"]["module_args"]
+    module_args["database"].as_s.should eq("passwd")
+    module_args["key"].as_s.should eq("root")
+    module_args["fail_key"].as_bool.should be_true
+    module_args["service"].raw.should be_nil
+    module_args["split"].raw.should be_nil
+  end
+
+  it "reports the same invocation.module_args (key null) on a no-key full-dump call" do
+    # fail_json attaches invocation exactly like exit_json, and key is
+    # simply absent (not defaulted) when the user didn't pass it - so a
+    # full-dump call reports key: null, matching live-verified real
+    # ansible-playbook 2.19 output.
+    result = PluginSpecHelper.run("getent", {"database" => "passwd"})
+    result["failed"]?.try(&.as_bool).should be_falsey
+
+    module_args = result["invocation"]["module_args"]
+    module_args["database"].as_s.should eq("passwd")
+    module_args["key"].raw.should be_nil
+  end
+
   it "does not fail a missing key when fail_key is false, and maps it to a real null (not an empty array)" do
     # Real bug found benchmarking filviu.activemq/.tomcat's own "env |
     # determine if <user> exists" -> "setup | create system user" pair
