@@ -93,6 +93,17 @@ module Krikri
         end
       end
 
+      # Structured (raw JSON::Any) evaluation of a full expression, for
+      # callers outside this class - Krikri.bracket_index_failure_message's
+      # strict-probe use (round 812045, pluggero.bibata_cursor), which must
+      # see a JSON-null result as a real None value, not as the
+      # "undefined"-sentinel string the String-returning #evaluate collapses
+      # it to. Deliberately does NOT rescue: the caller decides what a
+      # Crinja failure means on its own path.
+      def evaluate_structured(expr : String) : JSON::Any?
+        render_via_crinja_value(expr)
+      end
+
       # #render_via_crinja_value, formatted through this codebase's own
       # `VariableLookup#format_value` (not Crinja's `Finalizer`) - the
       # convenience form for a call site that ultimately wants a String
@@ -975,12 +986,7 @@ module Krikri
           # `#evaluate_leading_paren` (which itself already recurses
           # through `#evaluate`, so still benefits from every other
           # converged construct even on the fallback path).
-          return begin
-            value = render_via_crinja_value(expr)
-            value ? @lookup.format_value(value) : "undefined"
-          rescue
-            evaluate_leading_paren(paren)
-          end
+          return evaluate_leading_paren_crinja_first(expr, paren)
         end
 
         # Check for filters (|) - depth-aware: a `|` nested inside a
@@ -1141,10 +1147,24 @@ module Krikri
         # pattern as the dotted-access/simple-lookup cases above.
         begin
           value = render_via_crinja_value(expr)
-          value ? @lookup.format_value(value) : "undefined"
         rescue
-          @lookup.indexed(expr)
+          return @lookup.indexed(expr)
         end
+
+        # Round 812045 (pluggero.bibata_cursor): same strict bracket-index
+        # check as the leading-paren path above - a plain `none_var[0]`
+        # (JSON-null base) or `short_list[5]` (past the end) must fail the
+        # task the way real Ansible does, not render "undefined". A
+        # `| default(...)` guard after the index never reaches this (the
+        # whole chain goes through the top-level-pipe path instead, and
+        # the trailing-index walk in bracket_index_failure_message stops
+        # at any non-`]` tail), so leniency for guarded lookups is
+        # preserved.
+        if (value.nil? || value.not_nil!.raw.nil?) &&
+           (failure = bracket_index_failure(expr))
+          raise UndefinedVariableError.new(failure)
+        end
+        value ? @lookup.format_value(value) : "undefined"
       end
 
       # Returns nil (not a String) when *expr* is neither a dict literal
@@ -3785,6 +3805,43 @@ module Krikri
       private def spaced_minus_at?(expr : String, i : Int32) : Bool
         return false unless expr[i] == '-'
         i > 0 && expr[i - 1] == ' ' && i + 1 < expr.size && expr[i + 1] == ' '
+      end
+
+      # The Crinja-first attempt for a leading-paren expression, split out
+      # of #evaluate_expr_access so the strict bracket-index check below
+      # sits OUTSIDE the blanket rescue (a raise from it must propagate as
+      # a real task failure, not be swallowed into the hand-rolled
+      # fallback and silently collapse to "undefined" again).
+      private def evaluate_leading_paren_crinja_first(expr : String, paren : {String, String}) : String
+        begin
+          value = render_via_crinja_value(expr)
+        rescue
+          return evaluate_leading_paren(paren)
+        end
+
+        # Crinja resolves a bracket index into Python None (or an
+        # out-of-range index into a real list) to its own Undefined -
+        # a Crystal nil here, indistinguishable from a genuinely-undefined
+        # base - so the strict check runs on BOTH a nil result and a
+        # defined-but-null (real None) one before anything renders.
+        if (value.nil? || value.not_nil!.raw.nil?) &&
+           (failure = bracket_index_failure(expr))
+          raise UndefinedVariableError.new(failure)
+        end
+        return "undefined" unless value
+        @lookup.format_value(value)
+      end
+
+      # Krikri.bracket_index_failure_message for this expression, with any
+      # internal evaluation failure (unknown Crinja feature, depth guard)
+      # demoted to "no detectable failure" so the strict check can never
+      # turn an evaluator gap into a spurious task failure.
+      private def bracket_index_failure(expr : String) : String?
+        begin
+          Krikri.bracket_index_failure_message(expr, @vars)
+        rescue
+          nil
+        end
       end
 
       # Resolves each side (same operand resolution `+` uses - a literal,
