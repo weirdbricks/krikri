@@ -1312,7 +1312,11 @@ module Krikri
 
       substituted_params = resolve_role_relative_src(task, substituted_params)
       substituted_params = inline_copy_source_content(task, substituted_params, host, vars_context)
-      substituted_params = stage_unarchive_remote_src(task, substituted_params, host, vars_context)
+      staged = stage_unarchive_remote_src(task, substituted_params, host, vars_context)
+      if staged.is_a?(JSON::Any)
+        return apply_changed_failed_when(task, staged, vars_context, host)
+      end
+      substituted_params = staged
       substituted_params = stage_script_src(task, substituted_params, host, vars_context)
       substituted_params = stage_assemble_dir(task, substituted_params, host, vars_context)
       substituted_become_user = task.become_user.try { |raw_user| substitutor.substitute(raw_user) }
@@ -1512,7 +1516,11 @@ module Krikri
 
       substituted_params = resolve_role_relative_src(task, substituted_params)
       substituted_params = inline_copy_source_content(task, substituted_params, exec_host, vars_context)
-      substituted_params = stage_unarchive_remote_src(task, substituted_params, exec_host, vars_context)
+      staged = stage_unarchive_remote_src(task, substituted_params, exec_host, vars_context)
+      if staged.is_a?(JSON::Any)
+        return apply_changed_failed_when(task, staged, vars_context, host)
+      end
+      substituted_params = staged
       substituted_params = stage_script_src(task, substituted_params, exec_host, vars_context)
       substituted_params = stage_assemble_dir(task, substituted_params, exec_host, vars_context)
       # become_user: goes through the same {{ }} substitution as any
