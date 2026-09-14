@@ -448,6 +448,32 @@ describe Krikri::VariableSubstitutor::FilterEngine do
     result.as_a[0]["path"].as_s.should eq("/b")
   end
 
+  it "rejectattr() is selectattr()'s inverse, same dotted-attribute path support" do
+    # Real bug found via round 813028 (volker-raschek.certificate_authority,
+    # its shared concatenate.yml helper): `_concat_stat.results |
+    # rejectattr('stat.exists') | list | length == 0` gating a task to run
+    # only when EVERY result of a preceding looped stat: says the file
+    # exists. rejectattr was entirely unrecognized (UnknownFilterError),
+    # so the when: never ran the task at all - real ansible-playbook
+    # evaluates the length == 0 condition true when no stat result is
+    # missing, and runs the task.
+    engine = Krikri::VariableSubstitutor::FilterEngine.new(Hash(String, JSON::Any).new)
+    value = JSON.parse(%([
+      {"path": "/a", "stat": {"exists": false}},
+      {"path": "/b", "stat": {"exists": true}}
+    ]))
+
+    result = engine.apply(value, %(rejectattr('stat.exists')))
+    result.as_a.size.should eq(1)
+    result.as_a[0]["path"].as_s.should eq("/a")
+
+    all_exist = JSON.parse(%([
+      {"path": "/a", "stat": {"exists": true}},
+      {"path": "/b", "stat": {"exists": true}}
+    ]))
+    engine.apply_chain(all_exist, %(rejectattr('stat.exists') | list)).as_a.should be_empty
+  end
+
   it "unescapes a real Python/Jinja2 string literal's own backslash escapes when used as a filter argument" do
     # Real bug found benchmarking prometheus.prometheus._common's own
     # preflight.yml: `reject('match', '.+:\d+$')`, written inside a
