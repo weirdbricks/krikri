@@ -976,15 +976,6 @@ module Krikri
         result = item_results[idx]
         next unless result
 
-        executed_count += 1
-        merge_ansible_facts(fact_hosts.try(&.[idx]) || host, result, task.module_name.ends_with?("set_fact"))
-
-        changed = result["changed"]?.try(&.as_bool) || false
-        failed = result["failed"]?.try(&.as_bool) || false
-        any_changed ||= changed
-        any_failed ||= failed
-        any_unreachable ||= unreachable_task_result?(result)
-
         # loop_control.label renders against this item, so it needs a
         # context carrying it - this method is handed only the results.
         # No label configured -> no context needed at all.
@@ -1015,7 +1006,33 @@ module Krikri
                        item_display(item)
                      end
 
-        ResultDisplay.display_result(host, result, @diff_mode, item_label: item_label, ignore_errors: resolve_task_ignore_errors(task, base_vars_context), no_log: resolve_task_no_log(task, base_vars_context))
+        # A plugin can voluntarily skip a single loop item by returning
+        # "skipped": true itself (unarchive's creates:-already-exists
+        # check being the canonical case) - the single-task path has
+        # always honored that, but this looped path treated such a
+        # result as a normal execution: it printed "ok:", counted in
+        # ok=/changed=, and even fed merge_ansible_facts. Real Ansible
+        # instead prints each individually-skipped item as its own
+        # "skipping: [host] => (item=...)" line (cyan) and leaves it out
+        # of the executed set entirely - only the items that actually
+        # ran decide the task's ok=/changed= recap bucket. Found via
+        # jjahrik.nerd_fonts round 813005 plus a live repro against real
+        # ansible-playbook (ansible-core 2.19).
+        if result["skipped"]?.try(&.as_bool) || false
+          connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
+          puts "skipping: [#{connection_host}] => (item=#{item_label})".colorize(:cyan)
+        else
+          executed_count += 1
+          merge_ansible_facts(fact_hosts.try(&.[idx]) || host, result, task.module_name.ends_with?("set_fact"))
+
+          changed = result["changed"]?.try(&.as_bool) || false
+          failed = result["failed"]?.try(&.as_bool) || false
+          any_changed ||= changed
+          any_failed ||= failed
+          any_unreachable ||= unreachable_task_result?(result)
+
+          ResultDisplay.display_result(host, result, @diff_mode, item_label: item_label, ignore_errors: resolve_task_ignore_errors(task, base_vars_context), no_log: resolve_task_no_log(task, base_vars_context))
+        end
 
         result_hash = result.as_h.dup
         # Same private-key strip register_result does - a looped task's
@@ -1047,18 +1064,18 @@ module Krikri
       # The per-item `skipping:`/`changed:`/`ok:` lines above are display
       # only; Ansible prints those but sums the task once in the recap.
       if executed_count == 0
-        # A genuinely empty loop source (0 items total, not "every item's
-        # own when: was false" - those already printed their own
-        # per-item `skipping: [host] => (item=x)` lines above) never
-        # printed anything at all otherwise - real Ansible still emits
-        # one bare `skipping: [host]` line for it (dev-sec os_hardening's
-        # with_subelements:/with_community.general.flattened: tasks hit
-        # this whenever nothing matched, e.g. no world-writable files
-        # found to fix).
-        if loop_items.empty?
-          connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
-          puts "skipping: [#{connection_host}]".colorize(:cyan)
-        end
+        # Nothing executed - either the loop source was genuinely empty
+        # (0 items total) or every item was itself individually skipped
+        # (e.g. unarchive's creates:-already-exists check). Both get one
+        # bare trailing `skipping: [host]` line: the empty case printed
+        # nothing at all otherwise, and the all-items-skipped case needs
+        # it IN ADDITION to its own per-item `skipping: => (item=...)`
+        # lines above - verified live against real ansible-playbook 2.19
+        # (found via jjahrik.nerd_fonts round 813005): real Ansible emits
+        # the bare line in BOTH shapes, so both share this same
+        # executed_count == 0 condition.
+        connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
+        puts "skipping: [#{connection_host}]".colorize(:cyan)
         @results[host.name]["skipped"] += 1
       else
         # Any item that failed at the SSH transport level makes the whole
