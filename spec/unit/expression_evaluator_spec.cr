@@ -1503,6 +1503,35 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
     ).should eq("1")
   end
 
+  it "walks a chained numeric dot-index (.0.0) into a parenthesized filter result" do
+    # Real bug found benchmarking xolyu.mariadb (round 813338): its own
+    # tasks/main.yml computes `mariadb_version.major`/`.minor`/`.build`
+    # via `( item | regex_findall(_regex_ver_components) ).0.0` (and
+    # `.0.1`/`.0.2`) - real Ansible resolves "10"/"6"/"12" from a
+    # version string like "10.6.12-MariaDB". Crinja handles a SINGLE
+    # dotted level on a paren-wrapped result natively, but raises on
+    # `regex_findall` (a filter it doesn't implement), forcing the
+    # whole leading-paren expression into ExpressionEvaluator's own
+    # `walk` fallback - whose `'.'` case only understood Hash key
+    # lookup, with no Array branch at all (unlike the already-correct
+    # `apply_dotted_parts` used elsewhere). A SECOND chained dotted
+    # level landing there silently returned "undefined" instead of
+    # indexing into the nested list `regex_findall` returns.
+    v = Hash(String, JSON::Any).new
+    v["item"] = JSON::Any.new("10.6.12-MariaDB")
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
+
+    evaluator.evaluate(
+      %(( item | regex_findall('(\\d+)\\.(\\d+)\\.(\\d+)-MariaDB') ).0.0)
+    ).should eq("10")
+    evaluator.evaluate(
+      %(( item | regex_findall('(\\d+)\\.(\\d+)\\.(\\d+)-MariaDB') ).0.1)
+    ).should eq("6")
+    evaluator.evaluate(
+      %(( item | regex_findall('(\\d+)\\.(\\d+)\\.(\\d+)-MariaDB') ).0.2)
+    ).should eq("12")
+  end
+
   it "compares a dotted operand against a `~`-concatenated one, full ansible-vault expression" do
     # End-to-end regression for the exact expression benchmarked from
     # ansible-community.ansible-vault's own "Compute if installation is

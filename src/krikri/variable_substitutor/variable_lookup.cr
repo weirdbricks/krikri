@@ -161,7 +161,25 @@ module Krikri
               pos += 1
             end
             part = suffix[dot_start...pos]
-            current = hash_method_call(current, part) || (current.raw.is_a?(Hash) ? current[part]? : nil)
+            # Real Ansible/Jinja2 lets a dotted numeric index chain
+            # (`.0.0`) walk arbitrarily deep into nested lists/dicts.
+            # This fallback path's own hand-rolled branch below only
+            # handled Hash key lookup - unlike the already-correct
+            # `apply_dotted_parts` used elsewhere, it had no Array
+            # branch at all. Crinja itself handles a single dotted
+            # level on a paren-wrapped result, but raises on filters
+            # it doesn't implement (like this repo's `regex_findall`),
+            # forcing the multi-level chain into `walk` - where a
+            # second dotted level silently returned "undefined"
+            # instead of indexing into the array. Found in round
+            # 813338, role xolyu.mariadb: `( item | regex_findall(...)
+            # ).0.0`-style version-string parsing lost `major`/`minor`/
+            # `build` to "undefined" (real Ansible: "10"/"6"/"12").
+            # Delegate to `apply_dotted_parts` so walk gets Hash key
+            # lookup, string methods, AND Array numeric-dot-indexing
+            # with no duplicated logic; its nil return propagates via
+            # the `return nil unless current` check above.
+            current = apply_dotted_parts(current, [part])
           when '['
             close = matching_bracket_close(suffix, pos)
             return nil unless close
