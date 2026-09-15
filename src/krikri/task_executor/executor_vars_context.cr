@@ -920,16 +920,41 @@ module Krikri
         if substituted.starts_with?('[')
           parsed = (JSON.parse(substituted).as_a? rescue nil)
           if parsed
-            parsed.each { |item| matches.concat(Dir.glob(item.to_s)) }
+            parsed.each { |item| matches.concat(Dir.glob(fileglob_pattern(task, item.to_s))) }
             next
           end
         end
 
-        matches.concat(Dir.glob(substituted))
+        matches.concat(Dir.glob(fileglob_pattern(task, substituted)))
       end
 
       matches.sort!
       matches.map { |path| JSON::Any.new(path) }
+    end
+
+    # Real Ansible's own fileglob lookup plugin dwims each pattern's
+    # directory part relative to the role's files/ dir (path_dwim_relative
+    # with 'files'), so a BARE pattern (`*.yml`, no "/" in it) inside a role
+    # matches the role's own files/ contents - NOT whatever the process
+    # happens to have as its current working directory. Without this, the
+    # bare pattern globbed cwd directly: a playbook `site.yml` sitting next
+    # to the invocation matched itself instead of the role's
+    # middleware.yml/redirect.yml (mismatch-traefik round repro, confirmed
+    # live against real ansible-playbook, which found only the role's own
+    # files). The returned paths stay the FULL resolved paths Dir.glob
+    # yields - the same shape copy:'s src: already receives from
+    # resolve_script_path, which leaves an absolute item path untouched
+    # (File.join with an absolute candidate just can't exist, then
+    # File.expand_path passes it through), so the item never gets
+    # double-resolved. An absolute pattern, or one that already carries a
+    # directory component, is left as-is; a task outside any role
+    # (role_files_dir nil, only set when the role actually ships a files/
+    # dir) keeps the old cwd-relative behavior.
+    private def fileglob_pattern(task : Task, pattern : String) : String
+      return pattern if pattern.starts_with?('/')
+      return pattern unless File.dirname(pattern) == "."
+      role_files_dir = task.role_files_dir
+      role_files_dir ? File.join(role_files_dir, pattern) : pattern
     end
 
     # Resolve with_file: entries (if any) - real Ansible's `file` lookup
