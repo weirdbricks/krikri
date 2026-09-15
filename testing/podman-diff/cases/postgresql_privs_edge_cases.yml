@@ -1,0 +1,184 @@
+# postgresql_privs edge cases. NO PostgreSQL server in the harness
+# containers (real-server lifecycle belongs to the Atlantic.net role
+# rounds), so these are validation-only cases: they check WHICH failure
+# each engine reports first (argument rejection vs connection failure)
+# and the failed=/changed= shape. Real community.postgresql needs the
+# collection installed (run.sh's ^postgresql gated block). Msg wording
+# differs between engines and is not a bug. One documented deliberate
+# difference (see plugins/postgresql_privs.cr's class docs): real
+# requires `database:`/`login_db:` and fails before any connection;
+# krikri defaults it to "postgres" and fails at connection instead -
+# failed=/changed= still match, which is what these cases assert.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "P1 missing roles"
+      community.postgresql.postgresql_privs:
+        login_db: postgres
+        type: table
+        objs: krikri_t
+        privs: SELECT
+      register: p1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P1 failed={{ p1.failed | default('none') }} changed={{ p1.changed | default('none') }}"
+
+    - name: "P2 missing privs for type table"
+      community.postgresql.postgresql_privs:
+        login_db: postgres
+        roles: krikri_role
+        type: table
+        objs: krikri_t
+      register: p2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P2 failed={{ p2.failed | default('none') }} changed={{ p2.changed | default('none') }}"
+
+    - name: "P3 invalid type value"
+      community.postgresql.postgresql_privs:
+        login_db: postgres
+        roles: krikri_role
+        type: krikri_type
+        objs: krikri_t
+        privs: SELECT
+      register: p3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P3 failed={{ p3.failed | default('none') }} changed={{ p3.changed | default('none') }}"
+
+    - name: "P4 invalid state value"
+      community.postgresql.postgresql_privs:
+        login_db: postgres
+        roles: krikri_role
+        type: table
+        objs: krikri_t
+        privs: SELECT
+        state: revoked
+      register: p4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P4 failed={{ p4.failed | default('none') }} changed={{ p4.changed | default('none') }}"
+
+    - name: "P5 privs is not allowed for type group"
+      community.postgresql.postgresql_privs:
+        login_db: postgres
+        roles: krikri_role
+        type: group
+        objs: krikri_group
+        privs: SELECT
+      register: p5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P5 failed={{ p5.failed | default('none') }} changed={{ p5.changed | default('none') }}"
+
+    - name: "P6 missing objs for type table"
+      community.postgresql.postgresql_privs:
+        login_db: postgres
+        roles: krikri_role
+        type: table
+        privs: SELECT
+      register: p6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P6 failed={{ p6.failed | default('none') }} changed={{ p6.changed | default('none') }}"
+
+    - name: "P7 default_privs without privs"
+      community.postgresql.postgresql_privs:
+        login_db: postgres
+        roles: krikri_role
+        type: default_privs
+        objs: TABLES
+      register: p7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P7 failed={{ p7.failed | default('none') }} changed={{ p7.changed | default('none') }}"
+
+    - name: "P8 default_privs with an invalid objs class"
+      community.postgresql.postgresql_privs:
+        login_db: postgres
+        roles: krikri_role
+        type: default_privs
+        objs: BOGUSCLASS
+        privs: ALL
+      register: p8
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P8 failed={{ p8.failed | default('none') }} changed={{ p8.changed | default('none') }}"
+
+    - name: "P9 target_roles outside default_privs"
+      community.postgresql.postgresql_privs:
+        login_db: postgres
+        roles: krikri_role
+        type: table
+        objs: krikri_t
+        privs: SELECT
+        target_roles: krikri_role
+      register: p9
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P9 failed={{ p9.failed | default('none') }} changed={{ p9.changed | default('none') }}"
+
+    - name: "P10 missing database param (real fails on arg spec, krikri defaults it)"
+      community.postgresql.postgresql_privs:
+        roles: krikri_role
+        type: table
+        objs: krikri_t
+        privs: SELECT
+      register: p10
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P10 failed={{ p10.failed | default('none') }} changed={{ p10.changed | default('none') }}"
+
+    - name: "P11 ALL_IN_SCHEMA with an unsupported type"
+      community.postgresql.postgresql_privs:
+        login_db: postgres
+        roles: krikri_role
+        type: database
+        objs: ALL_IN_SCHEMA
+        privs: CONNECT
+      register: p11
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P11 failed={{ p11.failed | default('none') }} changed={{ p11.changed | default('none') }}"
+
+    - name: "P12 function obj without a signature"
+      community.postgresql.postgresql_privs:
+        login_db: postgres
+        roles: krikri_role
+        type: function
+        objs: krikri_fn
+        privs: EXECUTE
+      register: p12
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P12 failed={{ p12.failed | default('none') }} changed={{ p12.changed | default('none') }}"
+
+    - name: "P13 valid-looking grant on an unreachable server"
+      community.postgresql.postgresql_privs:
+        login_db: postgres
+        roles: krikri_role
+        type: table
+        objs: krikri_t
+        privs: SELECT
+        login_host: 127.0.0.1
+        login_port: 13399
+      register: p13
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P13 failed={{ p13.failed | default('none') }} changed={{ p13.changed | default('none') }}"
+
+    - name: "P14 state absent on an unreachable server"
+      community.postgresql.postgresql_privs:
+        login_db: postgres
+        roles: krikri_role
+        type: table
+        objs: krikri_t
+        privs: SELECT
+        state: absent
+        login_host: 127.0.0.1
+        login_port: 13399
+      register: p14
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P14 failed={{ p14.failed | default('none') }} changed={{ p14.changed | default('none') }}"

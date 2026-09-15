@@ -1,0 +1,112 @@
+# postgresql_db edge cases. NO PostgreSQL server in the harness
+# containers (real-server lifecycle belongs to the Atlantic.net role
+# rounds), so these are validation-only cases: they check WHICH failure
+# each engine reports first (argument rejection vs connection failure)
+# and the failed=/changed= shape. Real community.postgresql needs the
+# collection installed (run.sh's ^postgresql gated block). Msg wording
+# differs between engines and is not a bug.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "Q1 missing name"
+      community.postgresql.postgresql_db:
+        state: present
+      register: q1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "Q1 failed={{ q1.failed | default('none') }} changed={{ q1.changed | default('none') }}"
+
+    - name: "Q2 name via the db alias still fails at connection, not on args"
+      community.postgresql.postgresql_db:
+        db: krikri_db
+        state: present
+        login_host: 127.0.0.1
+        login_port: 13399
+      register: q2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "Q2 failed={{ q2.failed | default('none') }} changed={{ q2.changed | default('none') }}"
+
+    - name: "Q3 invalid state value"
+      community.postgresql.postgresql_db:
+        name: krikri_db
+        state: krikri_state
+      register: q3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "Q3 failed={{ q3.failed | default('none') }} changed={{ q3.changed | default('none') }}"
+
+    - name: "Q4 state dump without target"
+      community.postgresql.postgresql_db:
+        name: krikri_db
+        state: dump
+      register: q4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "Q4 failed={{ q4.failed | default('none') }} changed={{ q4.changed | default('none') }}"
+
+    - name: "Q5 state restore without target"
+      community.postgresql.postgresql_db:
+        name: krikri_db
+        state: restore
+      register: q5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "Q5 failed={{ q5.failed | default('none') }} changed={{ q5.changed | default('none') }}"
+
+    - name: "Q6 dump with target on an unreachable server"
+      community.postgresql.postgresql_db:
+        name: krikri_db
+        state: dump
+        target: /tmp/krikri_dump.sql
+        login_host: 127.0.0.1
+        login_port: 13399
+      register: q6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "Q6 failed={{ q6.failed | default('none') }} changed={{ q6.changed | default('none') }}"
+
+    - name: "Q7 check mode present on an unreachable server"
+      community.postgresql.postgresql_db:
+        name: krikri_db
+        state: present
+        check_mode: true
+        login_host: 127.0.0.1
+        login_port: 13399
+      register: q7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "Q7 failed={{ q7.failed | default('none') }} changed={{ q7.changed | default('none') }}"
+
+    - name: "Q8 state absent on an unreachable server"
+      community.postgresql.postgresql_db:
+        name: krikri_db
+        state: absent
+        login_host: 127.0.0.1
+        login_port: 13399
+      register: q8
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "Q8 failed={{ q8.failed | default('none') }} changed={{ q8.changed | default('none') }}"
+
+    - name: "Q9 dump check mode without target still fails on the missing target"
+      community.postgresql.postgresql_db:
+        name: krikri_db
+        state: dump
+        check_mode: true
+      register: q9
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "Q9 failed={{ q9.failed | default('none') }} changed={{ q9.changed | default('none') }}"
+
+    - name: "Q10 invalid state with an unreachable server fails on args first"
+      community.postgresql.postgresql_db:
+        name: krikri_db
+        state: krikri_state
+        login_host: 127.0.0.1
+        login_port: 13399
+      register: q10
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "Q10 failed={{ q10.failed | default('none') }} changed={{ q10.changed | default('none') }}"

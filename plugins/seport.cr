@@ -19,7 +19,8 @@ module Krikri
   # Supported parameters:
   # - ports: required. A single port/range or a comma-separated list
   #   (e.g. "80", "80-81", "80,443").
-  # - proto: required. tcp/udp.
+  # - proto: required. tcp/udp/dccp/sctp (real's choices; case-sensitive,
+  #   like real's argument_spec check).
   # - setype: required. The SELinux port type to assign.
   # - state: default "present". present adds/reassigns the mapping;
   #   absent removes it (only if it currently belongs to setype).
@@ -36,7 +37,39 @@ module Krikri
       setype = @params["setype"]?
       return PluginResult.new(changed: false, failed: true, msg: "missing required arguments: setype") unless setype
 
-      state = @params["state"]?.try(&.downcase) || "present"
+      setype = @params["setype"]?
+      return PluginResult.new(changed: false, failed: true, msg: "missing required arguments: setype") unless setype
+
+      # Real's argument_spec rejects these at module init - before the
+      # python-lib import check, the SELinux-enabled gate, anything
+      # (podman-diff harness R4/R5/R11: real reports the proto/state
+      # choices failure and the bool-conversion failure against a host
+      # with no SELinux at all, while this plugin reached the
+      # "SELinux is disabled" gate first, so an invalid value against a
+      # real SELinux host would have slipped past validation).
+      proto = proto.not_nil!
+      unless ["tcp", "udp", "dccp", "sctp"].includes?(proto)
+        return PluginResult.new(changed: false, failed: true,
+          msg: "value of proto must be one of: tcp, udp, dccp, sctp, got: #{proto}")
+      end
+
+      # Case-sensitive like real's choices check (state: Present is a
+      # real-args failure, not a silently-accepted alias).
+      state = @params["state"]? || "present"
+      unless ["absent", "present"].includes?(state)
+        return PluginResult.new(changed: false, failed: true,
+          msg: "value of state must be one of: absent, present, got: #{state}")
+      end
+
+      if bad_bool = @params["ignore_selinux_state"]?
+        valid_booleans = {"true", "yes", "1", "on", "y", "t", "false", "no", "0", "off", "n", "f"}
+        unless valid_booleans.includes?(bad_bool.downcase)
+          return PluginResult.new(changed: false, failed: true,
+            msg: "argument 'ignore_selinux_state' is of type <class 'str'> and we were unable to convert to bool: " \
+                 "The value '#{bad_bool}' is not a valid boolean.  " \
+                 "Valid booleans include: 'f', 'y', 1, 0, 'yes', 'false', 'on', '1', 'n', 'off', 't', 'true', '0', 'no'")
+        end
+      end
       ignore_selinux_state = true?(@params["ignore_selinux_state"]?)
 
       unless ignore_selinux_state

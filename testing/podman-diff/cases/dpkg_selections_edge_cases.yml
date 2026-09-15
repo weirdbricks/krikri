@@ -1,0 +1,116 @@
+# dpkg_selections edge cases. Fully testable here: the harness
+# containers are real Debian (dpkg + dpkg-query present), and real
+# Ansible's own module shells out to the same binaries this plugin
+# drives - no gate needed. The two engines run in SEPARATE containers,
+# so the linear state-mutation sequence (hold -> verify -> back to
+# install) is independent per engine. Msg wording differs between
+# engines and is not a bug (only failed=/changed= and the boolean
+# probes are compared).
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "D1 missing name"
+      ansible.builtin.dpkg_selections:
+        selection: hold
+      register: d1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D1 failed={{ d1.failed | default('none') }} changed={{ d1.changed | default('none') }}"
+
+    - name: "D2 missing selection"
+      ansible.builtin.dpkg_selections:
+        name: bash
+      register: d2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D2 failed={{ d2.failed | default('none') }} changed={{ d2.changed | default('none') }}"
+
+    - name: "D3 invalid selection value"
+      ansible.builtin.dpkg_selections:
+        name: bash
+        selection: krikri_state
+      register: d3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D3 failed={{ d3.failed | default('none') }} changed={{ d3.changed | default('none') }}"
+
+    - name: "D4 unknown package is a hard error, not a silent no-op"
+      ansible.builtin.dpkg_selections:
+        name: krikri-nonexistent-pkg
+        selection: install
+      register: d4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D4 failed={{ d4.failed | default('none') }} changed={{ d4.changed | default('none') }}"
+
+    - name: "D5 hold an installed package"
+      ansible.builtin.dpkg_selections:
+        name: bash
+        selection: hold
+      register: d5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D5 failed={{ d5.failed | default('none') }} changed={{ d5.changed | default('none') }}"
+
+    - name: "D6 re-run hold is idempotent"
+      ansible.builtin.dpkg_selections:
+        name: bash
+        selection: hold
+      register: d6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D6 failed={{ d6.failed | default('none') }} changed={{ d6.changed | default('none') }}"
+
+    - name: "D7 check mode claims change"
+      ansible.builtin.dpkg_selections:
+        name: bash
+        selection: deinstall
+      check_mode: true
+      register: d7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D7 failed={{ d7.failed | default('none') }} changed={{ d7.changed | default('none') }}"
+
+    - name: "D7b check mode wrote nothing - selection is still hold"
+      ansible.builtin.command:
+        cmd: dpkg --get-selections bash
+      register: d7b
+    - ansible.builtin.debug:
+        msg: "D7b rc={{ d7b.rc }} still-hold={{ 'hold' in d7b.stdout }}"
+
+    - name: "D8 hold back to install"
+      ansible.builtin.dpkg_selections:
+        name: bash
+        selection: install
+      register: d8
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D8 failed={{ d8.failed | default('none') }} changed={{ d8.changed | default('none') }}"
+
+    - name: "D9 re-run install is idempotent"
+      ansible.builtin.dpkg_selections:
+        name: bash
+        selection: install
+      register: d9
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D9 failed={{ d9.failed | default('none') }} changed={{ d9.changed | default('none') }}"
+
+    - name: "D10 deinstall an installed package"
+      ansible.builtin.dpkg_selections:
+        name: bash
+        selection: deinstall
+      register: d10
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D10 failed={{ d10.failed | default('none') }} changed={{ d10.changed | default('none') }}"
+
+    - name: "D11 re-run deinstall is idempotent"
+      ansible.builtin.dpkg_selections:
+        name: bash
+        selection: deinstall
+      register: d11
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D11 failed={{ d11.failed | default('none') }} changed={{ d11.changed | default('none') }}"

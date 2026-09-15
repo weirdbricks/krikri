@@ -95,6 +95,17 @@ module Krikri
       end
 
       state = @params["state"]? || "present"
+      # Real's argument_spec rejects an invalid state at module init -
+      # before the psycopg2 import, the connection attempt, anything
+      # (verified in the podman-diff harness: real reports "value of
+      # state must be one of: ..." against a server that isn't even
+      # reachable). This plugin used to connect first and only fail on
+      # the unreachable server, so an invalid state against a REACHABLE
+      # server would have sailed past validation.
+      unless ["present", "absent", "dump", "restore"].includes?(state)
+        return PluginResult.new(changed: false, failed: true,
+          msg: "value of state must be one of: absent, dump, present, restore, got: #{state}")
+      end
       return run_dump_or_restore(state, name) if state == "dump" || state == "restore"
 
       uri = build_maintenance_uri
