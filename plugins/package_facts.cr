@@ -20,13 +20,18 @@ module Krikri
   #
   # Param coverage matches real Ansible's argument_spec
   # (ansible/modules/package_facts.py):
-  #   manager:  type list (default ['auto']), lowercased, with aliases
-  #             (dnf/dnf5/yum/zypper -> rpm; krikri additionally accepts
-  #             dpkg -> apt since dpkg-query IS this engine's apt backend).
-  #             'auto' expands to krikri's gatherable manager set, keeping
-  #             user order (real appends the full sorted name list and drops
-  #             'auto' - same shape, restricted to managers this engine can
-  #             actually query).
+  #   manager:  type list (default ['auto']), lowercased, with real's
+  #             ALIASES (dnf/dnf5/yum/zypper -> rpm; added in ansible-core
+  #             2.18). There is deliberately NO "dpkg" manager: real
+  #             Ansible - every version - fails "Unsupported package
+  #             managers requested: dpkg" (dpkg-query is this engine's
+  #             implementation detail of the apt manager, not a real
+  #             manager name).
+  #             'auto' expands to real's full PKG_MANAGER_NAMES (only apt
+  #             and rpm are gatherable here), keeping user order (real
+  #             appends the full sorted name list and drops 'auto' - same
+  #             shape, restricted to managers this engine can actually
+  #             query).
   #   strategy: 'first' (default) stops at the first manager that yielded a
   #             NON-EMPTY package list; 'all' queries every manager in the
   #             list. When several managers report the SAME package name,
@@ -43,7 +48,10 @@ module Krikri
   # ansible-core 2.19.4):
   #   - an unknown manager name fails immediately with "Unsupported package
   #     managers requested: <names>" (real code's unsupported-set check,
-  #     before any gathering);
+  #     before any gathering) - or, when the request also contained 'auto',
+  #     with real's different "Could not auto detect a usable package
+  #     manager, check warnings for details." wording for the same
+  #     unsupported-name condition;
   #   - known-but-unusable managers just gather nothing (real code's warn
   #     + keep-going path), and only if NO manager yielded packages does
   #     the task fail with "Could not detect a supported package manager
@@ -56,13 +64,12 @@ module Krikri
     AUTO_DETECT_MANAGERS = ["apt", "rpm"]
 
     # Canonical names this engine can gather + real Ansible's ALIASES
-    # (package_facts.py) restricted to those. "dpkg" is a krikri-specific
-    # alias of apt - real Ansible has no dpkg manager (it would fail
-    # "Unsupported package managers requested: dpkg"), but this engine
-    # historically accepted it and dpkg-query is the same backend.
+    # (package_facts.py, added in ansible-core 2.18). No "dpkg": real
+    # Ansible has no dpkg manager and fails it as unsupported (verified
+    # live vs ansible-core 2.14 AND 2.19), and dpkg-query is only this
+    # engine's implementation detail of the apt manager.
     CANONICAL_MANAGERS = {
       "apt"    => "apt",
-      "dpkg"   => "apt",
       "rpm"    => "rpm",
       "dnf"    => "rpm",
       "dnf5"   => "rpm",
@@ -87,12 +94,18 @@ module Krikri
       bad = requested.reject { |mgr_name| CANONICAL_MANAGERS.has_key?(mgr_name) || mgr_name == "auto" }
       unless bad.empty?
         # Real module fails BEFORE gathering anything, and the message
-        # differs from the not-detectable case (verified live):
-        # "Unsupported package managers requested: bogusmgr".
+        # differs depending on whether 'auto' was among the requested
+        # names (real code's `if 'auto' in module.params['manager']`
+        # branch, verified live): with 'auto' present it's
+        # "Could not auto detect a usable package manager, check warnings
+        # for details.", without it "Unsupported package managers
+        # requested: bogusmgr".
         return PluginResult.new(
           changed: false,
           failed: true,
-          msg: "Unsupported package managers requested: #{bad.join(", ")}"
+          msg: requested.includes?("auto") \
+            ? "Could not auto detect a usable package manager, check warnings for details." \
+            : "Unsupported package managers requested: #{bad.join(", ")}"
         )
       end
 
@@ -175,32 +188,58 @@ module Krikri
       )
     end
 
-    # dpkg-query -W -f='${Package}\t${Version}\n' prints one "pkg<TAB>ver"
-    # per line. Repeated prefixes/architectures could yield the same name
-    # again; the dict maps name -> [entry...], matching real Ansible where a
-    # package present in multiple architectures/versions appears as a list.
-    # Real Ansible's apt manager (python-apt) also stamps every entry with
-    # source: apt (RETURN doc: name/version/source are the always-present
-    # fields) - same for rpm below.
+    # dpkg-query -W -f='${Package}\t${Version}\t${Architecture}\t${Section}\n'
+    # prints one line per package. Repeated prefixes/architectures could
+    # yield the same name again; the dict maps name -> [entry...], matching
+    # real Ansible where a package present in multiple
+    # architectures/versions appears as a list. Real Ansible's apt manager
+    # (python-apt) stamps every entry with source: apt plus arch/category
+    # (RETURN doc + live-verified entry keys: arch, category, name, origin,
+    # source, version) - origin is python-apt's repo-Release-file Origin
+    # (e.g. "Debian"), which dpkg-query has no equivalent field for, so
+    # apt_release_origin reads it from /var/lib/apt/lists instead (""
+    # matches python-apt's when no apt lists exist, e.g. the
+    # origins[0].origin == '' "now" archive case).
     private def apt_packages : Hash(String, JSON::Any)
       result = Hash(String, JSON::Any).new
-      stdout = capture("dpkg-query", ["-W", "-f=${Package}\\t${Version}\\n"])
+      origin = apt_release_origin
+      stdout = capture("dpkg-query", ["-W", "-f=${Package}\\t${Version}\\t${Architecture}\\t${Section}\\n"])
       stdout.each_line do |line|
         line = line.strip
         parts = line.split("\t")
-        next unless parts.size == 2
-        name, version = parts
+        next unless parts.size == 4
+        name, version, arch, category = parts
         next if name.empty?
         entry = JSON::Any.new({
-          "name"    => JSON::Any.new(name),
-          "version" => JSON::Any.new(version),
-          "source"  => JSON::Any.new("apt"),
+          "name"     => JSON::Any.new(name),
+          "version"  => JSON::Any.new(version),
+          "arch"     => JSON::Any.new(arch),
+          "category" => JSON::Any.new(category),
+          "origin"   => JSON::Any.new(origin),
+          "source"   => JSON::Any.new("apt"),
         })
         list = result[name]?.try(&.as_a?) || [] of JSON::Any
         list << entry
         result[name] = JSON::Any.new(list)
       end
       result
+    end
+
+    # The repo-Release Origin (e.g. "Debian") python-apt reports as each
+    # entry's origin: read from the first apt list's Release/InRelease
+    # header. InRelease files have a PGP wrapper before the headers, so
+    # scan lines rather than assuming a header block at the top.
+    private def apt_release_origin : String
+      files = Dir.glob("/var/lib/apt/lists/*_InRelease") + Dir.glob("/var/lib/apt/lists/*_Release")
+      files.each do |path|
+        next unless File.file?(path)
+        File.each_line(path) do |line|
+          return line["Origin: ".size..].strip if line.starts_with?("Origin: ")
+        end
+      end
+      ""
+    rescue
+      ""
     end
 
     # rpm -qa --qf '%{NAME}\t%{VERSION}-%{RELEASE}\n' gives one pkg per line.

@@ -1,0 +1,118 @@
+# openssl_csr edge cases. A valid private key is generated first with
+# openssl_privatekey (both engines); the openssl CLI is installed in BOTH
+# containers by run.sh's openssl-gated install so the CSR-content checks
+# (openssl req -text) run identically. failed=/changed= and CSR on-disk
+# content are what matter; error-message WORDING may differ.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "O0 generate a valid private key for the CSR cases"
+      community.crypto.openssl_privatekey:
+        path: /tmp/okri-key.pem
+      register: o0
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "O0 failed={{ o0.failed }} changed={{ o0.changed | default('none') }}"
+
+    - name: "O1 state present with no privatekey_path fails"
+      community.crypto.openssl_csr:
+        path: /tmp/okri-o1.csr
+        common_name: okri.example
+      register: o1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "O1 failed={{ o1.failed }} changed={{ o1.changed | default('none') }}"
+
+    - name: "O2 no common_name and no subject still succeeds with an empty subject"
+      community.crypto.openssl_csr:
+        path: /tmp/okri-o2.csr
+        privatekey_path: /tmp/okri-key.pem
+      register: o2
+      ignore_errors: true
+    - ansible.builtin.stat:
+        path: /tmp/okri-o2.csr
+      register: o2_after
+    - ansible.builtin.debug:
+        msg: "O2 failed={{ o2.failed }} changed={{ o2.changed | default('none') }} exists={{ o2_after.stat.exists }}"
+
+    - name: "O3 privatekey_path pointing to a nonexistent key fails"
+      community.crypto.openssl_csr:
+        path: /tmp/okri-o3.csr
+        privatekey_path: /tmp/okri-no-such-key.pem
+        common_name: okri.example
+      register: o3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "O3 failed={{ o3.failed }} changed={{ o3.changed | default('none') }}"
+
+    - name: "O4 SAN list containing an empty entry"
+      community.crypto.openssl_csr:
+        path: /tmp/okri-o4.csr
+        privatekey_path: /tmp/okri-key.pem
+        common_name: okri.example
+        subject_alt_name:
+          - "DNS:ok.example"
+          - ""
+          - "DNS:two.example"
+      register: o4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "O4 failed={{ o4.failed }} changed={{ o4.changed | default('none') }}"
+
+    - name: "O5 SAN entry with an unknown type prefix"
+      community.crypto.openssl_csr:
+        path: /tmp/okri-o5.csr
+        privatekey_path: /tmp/okri-key.pem
+        common_name: okri.example
+        subject_alt_name: "krikri-not-a-type:foo"
+      register: o5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "O5 failed={{ o5.failed }} changed={{ o5.changed | default('none') }}"
+
+    - name: "O6 CN-only CSR gets a DNS: CN-derived SAN (use_common_name_for_san default)"
+      community.crypto.openssl_csr:
+        path: /tmp/okri-o6.csr
+        privatekey_path: /tmp/okri-key.pem
+        common_name: ocn.example
+      register: o6
+      ignore_errors: true
+    - ansible.builtin.shell: "openssl req -in /tmp/okri-o6.csr -noout -text | grep -c 'DNS:ocn.example'"
+      register: o6_txt
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "O6 failed={{ o6.failed }} changed={{ o6.changed | default('none') }} cn_san_count={{ o6_txt.stdout | default('none') }}"
+
+    - name: "O7 IP-shaped CN still derives a DNS: SAN, not IP: (no IP detection in real)"
+      community.crypto.openssl_csr:
+        path: /tmp/okri-o7.csr
+        privatekey_path: /tmp/okri-key.pem
+        common_name: 10.1.2.3
+      register: o7
+      ignore_errors: true
+    - ansible.builtin.shell: "openssl req -in /tmp/okri-o7.csr -noout -text | grep -c 'DNS:10.1.2.3'"
+      register: o7_txt
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "O7 failed={{ o7.failed }} changed={{ o7.changed | default('none') }} cn_san_count={{ o7_txt.stdout | default('none') }}"
+
+    - name: "O8 state absent on a never-present path"
+      community.crypto.openssl_csr:
+        path: /tmp/okri-o8-never.csr
+        state: absent
+      register: o8
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "O8 failed={{ o8.failed }} changed={{ o8.changed | default('none') }}"
+
+    - name: "O9 subject as a non-dict value"
+      community.crypto.openssl_csr:
+        path: /tmp/okri-o9.csr
+        privatekey_path: /tmp/okri-key.pem
+        common_name: okri.example
+        subject: krikri-bogus-subject
+      register: o9
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "O9 failed={{ o9.failed }} changed={{ o9.changed | default('none') }}"

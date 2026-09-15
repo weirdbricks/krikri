@@ -18,6 +18,35 @@ module Krikri
   #     user's home-directory default (the user's NSS home + /.ssh/authorized_keys)
   #   manage_dir (optional, default yes): create ~/.ssh (mode 0700) if missing
   class AuthorizedKeyPlugin < BasePlugin
+    # The real module's own VALID_SSH2_KEY_TYPES allowlist (ansible.posix
+    # authorized_key's parsekey): a new-key line is valid iff one of its
+    # whitespace-separated tokens is exactly one of these.
+    VALID_SSH2_KEY_TYPES = [
+      "sk-ecdsa-sha2-nistp256@openssh.com",
+      "sk-ecdsa-sha2-nistp256-cert-v01@openssh.com",
+      "webauthn-sk-ecdsa-sha2-nistp256@openssh.com",
+      "ecdsa-sha2-nistp256",
+      "ecdsa-sha2-nistp256-cert-v01@openssh.com",
+      "ecdsa-sha2-nistp384",
+      "ecdsa-sha2-nistp384-cert-v01@openssh.com",
+      "ecdsa-sha2-nistp521",
+      "ecdsa-sha2-nistp521-cert-v01@openssh.com",
+      "sk-ssh-ed25519@openssh.com",
+      "sk-ssh-ed25519-cert-v01@openssh.com",
+      "ssh-ed25519",
+      "ssh-ed25519-cert-v01@openssh.com",
+      "ssh-dss",
+      "ssh-rsa",
+      "ssh-xmss@openssh.com",
+      "ssh-xmss-cert-v01@openssh.com",
+      "rsa-sha2-256",
+      "rsa-sha2-512",
+      "ssh-rsa-cert-v01@openssh.com",
+      "rsa-sha2-256-cert-v01@openssh.com",
+      "rsa-sha2-512-cert-v01@openssh.com",
+      "ssh-dss-cert-v01@openssh.com",
+    ]
+
     def execute : PluginResult
       key = @params["key"]?
       return missing_param("key") unless key
@@ -29,6 +58,7 @@ module Krikri
       state = @params["state"]? || "present"
       check_mode = true?(@params["check_mode"]?)
       manage_dir = @params["manage_dir"]?.nil? || true?(@params["manage_dir"]?)
+      exclusive = true?(@params["exclusive"]?)
 
       # Real Ansible's keyfile() does a real pwd.getpwnam(user) and
       # hard-fails the task when the user isn't in the passwd DB - it
@@ -43,10 +73,28 @@ module Krikri
       path = resolve_path
       return PluginResult.new(changed: false, failed: true, msg: "Could not determine authorized_keys path: provide 'path' or a valid 'user'") unless path
 
-      original_content = File.exists?(path) ? File.read(path) : ""
-      new_content, changed = PluginHelpers::AuthorizedKeysFile.ensure(original_content, key, state == "present")
+      # Real Ansible splits the key into lines, drops blank and
+      # '#'-prefixed ones, and hard-fails the task on the FIRST line
+      # without a known SSH2 key-type token ("invalid key specified:") -
+      # garbage is never silently appended.
+      key_lines = new_key_lines(key)
+      if failure = invalid_key_result(key_lines)
+        return failure
+      end
 
-      apply_write(new_content, path, changed, check_mode, manage_dir)
+      # key_options: replaces whatever options the key line itself
+      # carries (the real module's parsed_options overwrite), so the line
+      # is rewritten as "<key_options> <type> <blob> <comment>".
+      if key_options = @params["key_options"]?
+        key_lines = key_lines.map { |line| apply_key_options(line, key_options) }
+      end
+
+      original_content = File.exists?(path) ? File.read(path) : ""
+      new_content, changed = PluginHelpers::AuthorizedKeysFile.ensure_keys(original_content, key_lines, state == "present", exclusive)
+
+      if error = apply_write(new_content, path, changed, check_mode, manage_dir)
+        return PluginResult.new(changed: false, failed: true, msg: error)
+      end
 
       result = PluginResult.new(changed: changed, failed: false, msg: "")
 
@@ -65,7 +113,7 @@ module Krikri
       result.extra["manage_dir"] = JSON::Any.new(manage_dir)
       result.extra["state"] = JSON::Any.new(state)
       result.extra["key_options"] = json_string(@params["key_options"]?)
-      result.extra["exclusive"] = JSON::Any.new(true?(@params["exclusive"]?))
+      result.extra["exclusive"] = JSON::Any.new(exclusive)
       result.extra["comment"] = json_string(@params["comment"]?)
       result.extra["validate_certs"] = JSON::Any.new(@params["validate_certs"]?.nil? || true?(@params["validate_certs"]?))
       result.extra["follow"] = JSON::Any.new(true?(@params["follow"]?))
@@ -95,6 +143,33 @@ module Krikri
     # key's signature is nil, and blank lines are filtered out of
     # the "existing lines" list before the signature comparison even
     # runs) - non-idempotent forever, `changed: true` on every run.
+    # The real module's new_keys split: blank ("") and '#'-prefixed
+    # lines are dropped entirely - not validated, not written.
+    private def new_key_lines(key : String) : Array(String)
+      key.split("\n").reject { |line| line.empty? || line.starts_with?("#") }
+    end
+
+    private def invalid_key_result(key_lines : Array(String)) : PluginResult?
+      key_lines.each do |line|
+        tokens = line.split
+        next if tokens.any? { |token| VALID_SSH2_KEY_TYPES.includes?(token) }
+
+        return PluginResult.new(changed: false, failed: true, msg: "invalid key specified: #{line}")
+      end
+      nil
+    end
+
+    # Strips any inline options (everything before the key-type token)
+    # and prefixes the given options, like the real module's serialize
+    # step (options are canonicalized to "type blob comment" + options).
+    private def apply_key_options(line : String, key_options : String) : String
+      tokens = line.split
+      type_index = tokens.index { |token| VALID_SSH2_KEY_TYPES.includes?(token) }
+      return "#{key_options} #{line}" unless type_index
+
+      "#{key_options} #{tokens[type_index..].join(" ")}"
+    end
+
     private def empty_key_result(key : String) : PluginResult?
       return unless key.strip.empty?
 
@@ -148,19 +223,40 @@ module Krikri
       "/home/#{user}"
     end
 
-    private def ensure_dir(dir : String) : Nil
-      unless Dir.exists?(dir)
-        Dir.mkdir_p(dir)
+    # Real Ansible's keyfile() creates ONLY the .ssh directory itself
+    # (os.mkdir, a single level - a missing grandparent is the exact
+    # "Failed to create directory" OSError real Ansible fails with, not
+    # something to mkdir -p through), then chowns/chmods it 0700
+    # unconditionally, even when it already existed.
+    private def apply_write(new_content : String, path : String, changed : Bool, check_mode : Bool, manage_dir : Bool) : String?
+      return nil unless changed && !check_mode
+
+      if manage_dir
+        dir = File.dirname(path)
+        unless Dir.exists?(dir)
+          begin
+            Dir.mkdir(dir)
+          rescue e : File::Error
+            return "Failed to create directory #{dir} : #{os_error_text(e, dir)}"
+          end
+        end
         File.chmod(dir, 0o700)
       end
-    end
-
-    private def apply_write(new_content : String, path : String, changed : Bool, check_mode : Bool, manage_dir : Bool) : Nil
-      return unless changed && !check_mode
-
-      ensure_dir(File.dirname(path)) if manage_dir
       File.write(path, new_content)
       File.chmod(path, 0o600)
+      nil
+    end
+
+    # Formats the Errno the way Python's str(OSError) does - that text
+    # is exactly what the real module's fail_json message embeds.
+    private def os_error_text(e : File::Error, dir : String) : String
+      errno = e.os_error.try(&.value)
+      case errno
+      when 2   then "[Errno 2] No such file or directory: '#{dir}'"
+      when 13  then "[Errno 13] Permission denied: '#{dir}'"
+      when 20  then "[Errno 20] Not a directory: '#{dir}'"
+      else          "[Errno #{errno}] #{e.message}"
+      end
     end
 
     private def missing_param(name : String) : PluginResult

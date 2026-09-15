@@ -1,0 +1,174 @@
+# authorized_key edge cases. Runs as root in both containers, so the
+# user-lookup paths hit a real passwd entry and the missing-user case
+# hits a real getpwnam failure. failed=/changed= and on-disk content
+# (via stat/wc/grep counted into the msg) are what matter; error-message
+# WORDING may differ.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "A0 add a key to root's authorized_keys"
+      ansible.posix.authorized_key:
+        user: root
+        key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOkri0kri krikri@example"
+      register: a0
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A0 failed={{ a0.failed }} changed={{ a0.changed | default('none') }}"
+
+    - name: "A1 re-adding the same key is idempotent"
+      ansible.posix.authorized_key:
+        user: root
+        key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOkri0kri krikri@example"
+      register: a1
+      ignore_errors: true
+    - ansible.builtin.shell: "wc -l < /root/.ssh/authorized_keys"
+      register: a1_wc
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A1 failed={{ a1.failed }} changed={{ a1.changed | default('none') }} lines={{ a1_wc.stdout | default('none') }}"
+
+    - name: "A2 state absent removes the key, second absent is a no-op"
+      ansible.posix.authorized_key:
+        user: root
+        key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOkri0kri krikri@example"
+        state: absent
+      register: a2
+      ignore_errors: true
+    - ansible.posix.authorized_key:
+        user: root
+        key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOkri0kri krikri@example"
+        state: absent
+      register: a2b
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A2 failed={{ a2.failed }} changed={{ a2.changed | default('none') }} again={{ a2b.changed | default('none') }}"
+
+    - name: "A3 missing key param fails"
+      ansible.posix.authorized_key:
+        user: root
+      register: a3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A3 failed={{ a3.failed }} changed={{ a3.changed | default('none') }}"
+
+    - name: "A4 empty key is a no-op, not a blank line"
+      ansible.posix.authorized_key:
+        user: root
+        key: ""
+      register: a4
+      ignore_errors: true
+    - ansible.builtin.shell: "wc -l < /root/.ssh/authorized_keys"
+      register: a4_wc
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A4 failed={{ a4.failed }} changed={{ a4.changed | default('none') }} lines={{ a4_wc.stdout | default('none') }}"
+
+    - name: "A5 nonexistent user fails"
+      ansible.posix.authorized_key:
+        user: krikri-nosuchuser
+        key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAbcdefg nosuch@example"
+      register: a5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A5 failed={{ a5.failed }} changed={{ a5.changed | default('none') }}"
+
+    - name: "A6 explicit path with manage_dir creates .ssh dir 0700 and file 0600"
+      ansible.posix.authorized_key:
+        user: root
+        key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOkri0path path@example"
+        path: /tmp/akri-home/.ssh/authorized_keys
+      register: a6
+      ignore_errors: true
+    - ansible.builtin.stat:
+        path: /tmp/akri-home/.ssh/authorized_keys
+      register: a6_file
+    - ansible.builtin.stat:
+        path: /tmp/akri-home/.ssh
+      register: a6_dir
+    - ansible.builtin.debug:
+        msg: "A6 failed={{ a6.failed }} changed={{ a6.changed | default('none') }} file_mode={{ a6_file.stat.mode | default('none') }} dir_mode={{ a6_dir.stat.mode | default('none') }}"
+
+    - name: "A7 check mode reports changed but writes nothing"
+      ansible.posix.authorized_key:
+        user: root
+        key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOkri0chk chk@example"
+      register: a7
+      check_mode: true
+      ignore_errors: true
+    - ansible.builtin.shell: "grep -c Okri0chk /root/.ssh/authorized_keys || true"
+      register: a7_grep
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A7 failed={{ a7.failed }} changed={{ a7.changed | default('none') }} present={{ a7_grep.stdout | default('none') }}"
+
+    - name: "A8 exclusive replaces all existing keys"
+      ansible.posix.authorized_key:
+        user: root
+        key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOkri0x1 x1@example"
+      ignore_errors: true
+      # two keys in the file first
+    - ansible.posix.authorized_key:
+        user: root
+        key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOkri0x2 x2@example"
+      ignore_errors: true
+    - ansible.posix.authorized_key:
+        user: root
+        key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOkri0ex exclusive@example"
+        exclusive: true
+      register: a8
+      ignore_errors: true
+    - ansible.builtin.shell: "wc -l < /root/.ssh/authorized_keys"
+      register: a8_wc
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A8 failed={{ a8.failed }} changed={{ a8.changed | default('none') }} lines={{ a8_wc.stdout | default('none') }}"
+
+    - name: "A9 multiple keys in one key param all land"
+      ansible.posix.authorized_key:
+        user: root
+        key: |
+          ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOkri0m1 m1@example
+          ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOkri0m2 m2@example
+      register: a9
+      ignore_errors: true
+    - ansible.builtin.shell: "grep -cE 'Okri0m[12]' /root/.ssh/authorized_keys"
+      register: a9_grep
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A9 failed={{ a9.failed }} changed={{ a9.changed | default('none') }} both={{ a9_grep.stdout | default('none') }}"
+
+    - name: "A10 key_options prefixes the line"
+      ansible.posix.authorized_key:
+        user: root
+        key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOkri0opt opt@example"
+        key_options: 'command="echo hi",no-pty'
+      register: a10
+      ignore_errors: true
+    - ansible.builtin.shell: "grep -c 'command=\"echo hi\",no-pty ssh-ed25519' /root/.ssh/authorized_keys"
+      register: a10_grep
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A10 failed={{ a10.failed }} changed={{ a10.changed | default('none') }} prefixed={{ a10_grep.stdout | default('none') }}"
+
+    - name: "A11 garbage key material is still managed as a line (no validation)"
+      ansible.posix.authorized_key:
+        user: root
+        key: "krikri-not-a-key at all"
+      register: a11
+      ignore_errors: true
+    - ansible.builtin.shell: "grep -c 'krikri-not-a-key' /root/.ssh/authorized_keys"
+      register: a11_grep
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A11 failed={{ a11.failed }} changed={{ a11.changed | default('none') }} present={{ a11_grep.stdout | default('none') }}"
+
+    - name: "A12 state absent on a never-present key"
+      ansible.posix.authorized_key:
+        user: root
+        key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOkri0abs absent@example"
+        state: absent
+      register: a12
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A12 failed={{ a12.failed }} changed={{ a12.changed | default('none') }}"

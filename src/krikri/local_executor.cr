@@ -68,7 +68,7 @@ module Krikri
     end
 
     # Execute command locally
-    def self.exec(command : String) : NamedTuple(exit_code: Int32, stdout: String, stderr: String)
+    def self.exec(command : String, force_shell : Bool = false) : NamedTuple(exit_code: Int32, stdout: String, stderr: String)
       # Passing argv directly (no shell: true) skips the extra sh -> bash
       # hop a shell-escaped string would need, and needs no quote-escaping
       # since the command travels as a single argv element, not a string
@@ -76,8 +76,17 @@ module Krikri
       # no shell metacharacters at all - anything else (a real pipeline,
       # `export K=V; ...` env prefixing, glob, etc.) still needs `bash -c`
       # for correct semantics.
+      #
+      # force_shell skips the argv fast path entirely: the shell module's
+      # contract is that the string is ALWAYS interpreted by /bin/sh, even
+      # when it is metachar-free - a builtin invocation like
+      # `command -v modprobe` has no metacharacters but still only exists
+      # as a shell builtin (real Ansible's shell module always runs
+      # `sh -c <string>`; live-verified 2026-09-15). The command module
+      # keeps the fast path - real Ansible's command module genuinely
+      # execs argv without a shell.
       process =
-        if needs_shell?(command)
+        if force_shell || needs_shell?(command)
           Process.new(
             "/bin/bash",
             ["-c", command],

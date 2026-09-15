@@ -242,11 +242,11 @@ module Krikri
     # wait_for_connection: (see plugins/wait_for_connection.cr), whose
     # whole job is retrying a short, bounded connection probe rather
     # than waiting the normal hour-long ceiling on each attempt.
-    protected def remote_exec(command : String, timeout : Int32? = nil) : NamedTuple(exit_code: Int32, stdout: String, stderr: String)
+    protected def remote_exec(command : String, timeout : Int32? = nil, force_shell : Bool = false) : NamedTuple(exit_code: Int32, stdout: String, stderr: String)
       command = with_environment(command)
       if local_connection?
         # Execute locally
-        LocalExecutor.exec(command)
+        LocalExecutor.exec(command, force_shell: force_shell)
       else
         # Execute via SSH - use ansible_host if set
         SSHManager.exec(

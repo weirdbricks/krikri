@@ -354,7 +354,13 @@ module Krikri
         remote_command = "printf %s #{shell_single_quote(stdin_payload)} | { #{remote_command}; }"
       end
 
-      result = remote_exec(remote_command)
+      # force_shell: the shell module's string is ALWAYS interpreted by
+      # the shell on the target, even when it has no metacharacters -
+      # without this, a builtin-only command like `command -v foo`
+      # would be argv-split and direct-exec'd (and fail: there is no
+      # `command` binary), where real Ansible's shell module always
+      # runs it through /bin/sh.
+      result = remote_exec(remote_command, force_shell: true)
 
       # Build diff data if diff mode enabled
       diff_data = nil

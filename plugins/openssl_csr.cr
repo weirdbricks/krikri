@@ -59,6 +59,10 @@ module Krikri
 
       return remove(path, check_mode) if state == "absent"
 
+      if error = validate_subject
+        return failure(error)
+      end
+
       privatekey_path = @params["privatekey_path"]?
       return failure("state is present but all of the following are missing: privatekey_path") unless privatekey_path
       privatekey_path = expand_tilde(privatekey_path)
@@ -66,6 +70,10 @@ module Krikri
 
       base_dir = File.dirname(path)
       return failure("The directory #{base_dir} does not exist or the file is not a directory") unless Dir.exists?(base_dir)
+
+      if error = validate_subject_alt_names(subject_alt_names)
+        return failure(error)
+      end
 
       candidate = secure_tempfile(path, "csr-candidate")
       begin
@@ -132,9 +140,68 @@ module Krikri
           parsed.each do |key, value|
             pairs << {key, value.as_s? || value.to_s}
           end
+        elsif kv = key_value_dict(raw)
+          kv.each do |key, value|
+            pairs << {key, value}
+          end
         end
       end
       pairs
+    end
+
+    # The real module parses every SAN entry through
+    # cryptography_get_name (module_utils/_crypto/cryptography_support.py)
+    # before generating. Two failure classes the openssl CLI does NOT
+    # reproduce on its own: an entry with no colon at all is the
+    # "forgot DNS: prefix?" case (the CLI silently accepts an empty
+    # entry inside "DNS:a,,DNS:b"), and a colon with an unknown type is
+    # "potentially unsupported by cryptography backend" (which the CLI
+    # does also reject, but with different wording). Prefixes are
+    # case-sensitive, exactly like the real startswith checks.
+    SAN_TYPE_PREFIXES = ["DNS:", "IP:", "email:", "URI:", "RID:", "otherName:", "dirName:"]
+
+    private def validate_subject_alt_names(names : Array(String)) : String?
+      names.each do |entry|
+        next if SAN_TYPE_PREFIXES.any? { |prefix| entry.starts_with?(prefix) }
+        if entry.includes?(':')
+          return "Cannot parse Subject Alternative Name \"#{entry}\" (potentially unsupported by cryptography backend)"
+        end
+        return "Cannot parse Subject Alternative Name \"#{entry}\" (forgot \"DNS:\" prefix?)"
+      end
+      nil
+    end
+
+    # `subject:` is type dict in the real module's argument spec, so a
+    # non-dict value goes through real Ansible's check_type_dict: a JSON
+    # object string, or a "key=value key2=value2" kv string, succeeds;
+    # anything else is a hard failure naming the argument's type - NOT
+    # the silent drop a plain string used to get here.
+    private def validate_subject : String?
+      raw = @params["subject"]?
+      return nil unless raw
+
+      parsed = JSON.parse(raw) rescue nil
+      return nil if parsed && parsed.as_h?
+      return nil if parsed.nil? && key_value_dict(raw)
+
+      type = if parsed
+               parsed.as_s? ? "str" : parsed.as_a? ? "list" : parsed.as_i? ? "int" : parsed.as_f? ? "float" : parsed.as_bool? ? "bool" : "str"
+             else
+               "str"
+             end
+      "argument 'subject' is of type <class '#{type}'> and we were unable to convert to dict: dictionary requested, could not parse JSON or key=value"
+    end
+
+    private def key_value_dict(s : String) : Hash(String, String)?
+      tokens = s.split(' ', remove_empty: true)
+      return nil if tokens.empty?
+      dict = {} of String => String
+      tokens.each do |token|
+        key, sep, value = token.partition('=')
+        return nil if sep.empty? || key.empty?
+        dict[key] = value
+      end
+      dict
     end
 
     private def list_param(name : String) : Array(String)
@@ -144,7 +211,11 @@ module Krikri
       if parsed = (JSON.parse(raw).as_a? rescue nil)
         parsed.map { |v| v.as_s? || v.to_s }
       else
-        raw.split(',').map(&.strip).reject(&.empty?)
+        # Real Ansible's string→list conversion is a plain comma split
+        # that KEEPS empty entries ("DNS:a,,DNS:b" → a real "" element
+        # the real module then rejects) - dropping them here silently
+        # sanitized away a failure real Ansible produces.
+        raw.split(',').map(&.strip)
       end
     end
 
@@ -206,10 +277,16 @@ module Krikri
 
     # OpenSSL's `-subj` uses `/` as the field separator, so any `/` in a
     # value (a common thing in an organization name) has to be escaped
-    # or it silently splits the subject into extra fields.
+    # or it silently splits the subject into extra fields. An entirely
+    # empty subject (no common_name, no subject:) is real: `-subj ""`
+    # makes the CLI error or prompt, but a bare "/" (a single empty
+    # RDN) is the CLI's own way to write the empty Distinguished Name
+    # the real module's cryptography backend produces.
     private def subject_argument : String
+      pairs = subject_pairs
+      return "/" if pairs.empty?
       String.build do |str|
-        subject_pairs.each do |(key, value)|
+        pairs.each do |(key, value)|
           str << '/' << key << '=' << value.gsub("\\", "\\\\").gsub("/", "\\/")
         end
       end

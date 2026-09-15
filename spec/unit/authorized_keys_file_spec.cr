@@ -4,6 +4,8 @@ require "../../src/krikri/plugin_helpers/authorized_keys_file"
 private alias AuthorizedKeysFile = Krikri::PluginHelpers::AuthorizedKeysFile
 
 private RSA_KEY = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC test@example.com"
+private ED25519_KEY = "ssh-ed25519 AAAAC3 m2@example"
+private KEEP_KEY = "ssh-ed25519 AAAAC3 keep@host"
 
 describe AuthorizedKeysFile do
   describe ".key_signature" do
@@ -56,6 +58,75 @@ describe AuthorizedKeysFile do
       _, changed = AuthorizedKeysFile.ensure(existing, RSA_KEY, true)
 
       changed.should be_false
+    end
+  end
+
+  describe ".ensure_keys (multi-key present)" do
+
+
+    it "appends every new key after existing ones in the order given" do
+      text, changed = AuthorizedKeysFile.ensure_keys(
+        "ssh-ed25519 AAAAC3-old old@host\n",
+        [RSA_KEY, ED25519_KEY], true
+      )
+
+      text.should eq("ssh-ed25519 AAAAC3-old old@host\n#{RSA_KEY}\n#{ED25519_KEY}\n")
+      changed.should be_true
+    end
+
+    it "is idempotent per-key when some keys are already present" do
+      existing = "#{RSA_KEY}\n"
+      text, changed = AuthorizedKeysFile.ensure_keys(existing, [RSA_KEY, ED25519_KEY], true)
+
+      text.should eq("#{RSA_KEY}\n#{ED25519_KEY}\n")
+      changed.should be_true
+
+      text2, changed2 = AuthorizedKeysFile.ensure_keys(text, [RSA_KEY, ED25519_KEY], true)
+      text2.should eq(text)
+      changed2.should be_false
+    end
+  end
+
+  describe ".ensure_keys (exclusive)" do
+
+
+    it "removes every existing key whose signature isn't among the new keys" do
+      existing = "#{RSA_KEY}\nssh-ed25519 AAAAC3-drop drop@host\n"
+
+      text, changed = AuthorizedKeysFile.ensure_keys(existing, [ED25519_KEY], true, true)
+
+      text.should eq("#{ED25519_KEY}\n")
+      changed.should be_true
+    end
+
+    it "is a no-op when the file already holds exactly the new keys" do
+      existing = "#{ED25519_KEY}\n"
+
+      text, changed = AuthorizedKeysFile.ensure_keys(existing, [ED25519_KEY], true, true)
+
+      text.should eq(existing)
+      changed.should be_false
+    end
+
+    it "keeps lines without a recognizable signature (comments survive exclusive)" do
+      existing = "# a comment\n#{RSA_KEY}\n"
+
+      text, _ = AuthorizedKeysFile.ensure_keys(existing, [ED25519_KEY], true, true)
+
+      text.should eq("# a comment\n#{ED25519_KEY}\n")
+    end
+  end
+
+  describe ".ensure_keys (absent, multi-key)" do
+    it "removes every matching key and reports changed once" do
+      existing = "#{RSA_KEY}\nssh-ed25519 AAAAC3 m2@example\nssh-ed25519 AAAAC3-keep keep@host\n"
+
+      text, changed = AuthorizedKeysFile.ensure_keys(
+        existing, [RSA_KEY, "ssh-ed25519 AAAAC3 m2@example"], false
+      )
+
+      text.should eq("ssh-ed25519 AAAAC3-keep keep@host\n")
+      changed.should be_true
     end
   end
 

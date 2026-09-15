@@ -44,8 +44,8 @@ log "installing ansible-core in $NAME_A"
 podman exec "$NAME_A" bash -c "apt-get update -qq && apt-get install -y -qq --no-install-recommends ansible-core python3 procps cron gnupg git >/dev/null" \
   || { log "FATAL: ansible-core install failed"; exit 1; }
 
-log "installing collections in $NAME_A (ansible.posix, community.general)"
-podman exec "$NAME_A" bash -c "ansible-galaxy collection install ansible.posix community.general community.mysql >/dev/null 2>&1" \
+log "installing collections in $NAME_A (ansible.posix, community.general, community.crypto)"
+podman exec "$NAME_A" bash -c "ansible-galaxy collection install ansible.posix community.general community.mysql community.crypto >/dev/null 2>&1" \
   || { log "FATAL: collection install failed"; exit 1; }
 
 log "staging krikri-playbook in $NAME_B"
@@ -101,6 +101,41 @@ if printf '%s\n' "${cases[@]}" | grep -q '^deb822'; then
   podman exec "$NAME_A" bash -c "apt-get install -y -qq --no-install-recommends python3-venv python3-debian >/dev/null && python3 -m venv /opt/ansible215 && /opt/ansible215/bin/pip install -q ansible-core" \
     || { log "FATAL: venv ansible-core install failed"; exit 1; }
   DEB822_ANSIBLE="/opt/ansible215/bin/ansible-playbook"
+fi
+
+# package_facts cases need python3-apt in the REAL container (its apt
+# manager is python-apt-based and yields nothing without it, so every
+# case would fail there while krikri's dpkg-query backend succeeds) -
+# gated on the requested case list like the mysql cases above.
+if printf '%s\n' "${cases[@]}" | grep -q '^package_facts'; then
+  log "installing python3-apt for package_facts cases"
+  podman exec "$NAME_A" bash -c "apt-get install -y -qq --no-install-recommends python3-apt >/dev/null" \
+    || { log "FATAL: python3-apt install failed"; exit 1; }
+fi
+
+# openssl_csr cases need the openssl CLI in BOTH containers (the case
+# playbook inspects generated CSRs with `openssl req -noout -text` in the
+# krikri container too, whose base image doesn't ship the binary) -
+# gated on the requested case list like the mysql cases above.
+if printf '%s\n' "${cases[@]}" | grep -q '^openssl'; then
+  log "installing openssl CLI for openssl cases"
+  for c in "$NAME_A" "$NAME_B"; do
+    podman exec "$c" bash -c "apt-get install -y -qq --no-install-recommends openssl >/dev/null" \
+      || { log "FATAL: openssl install failed in $c"; exit 1; }
+  done
+fi
+
+# modprobe cases need the kmod package (real /sbin/modprobe) in BOTH
+# containers - debian:bookworm-slim ships without it, which would make
+# every case fail with "Failed to find required executable" instead of
+# exercising the module-state logic. Gated on the requested case list
+# like the mysql/openssl cases above.
+if printf '%s\n' "${cases[@]}" | grep -q '^modprobe'; then
+  log "installing kmod for modprobe cases"
+  for c in "$NAME_A" "$NAME_B"; do
+    podman exec "$c" bash -c "apt-get install -y -qq --no-install-recommends kmod >/dev/null" \
+      || { log "FATAL: kmod install failed in $c"; exit 1; }
+  done
 fi
 
 overall_rc=0
