@@ -289,7 +289,17 @@ module Krikri
 
       handler = detect_handler(src)
       unless handler
-        return PluginResult.new(changed: false, failed: true, msg: "Unsupported archive format for #{src}")
+        # Real unarchive's pick_handler composes its failure as
+        # 'Failed to find handler for "<src>". Make sure the required
+        # command to extract the file is installed.\n<reasons>' - the
+        # head is deterministic; the reason list after it is NOT (2.14
+        # collects the per-handler probe reasons into a Python set, so
+        # even real-vs-real ordering shuffles run to run), so only the
+        # head is replicated here. Found via the podman-diff
+        # unarchive_edge_cases E6 harness case, where this engine said
+        # "Unsupported archive format for <src>" instead.
+        return PluginResult.new(changed: false, failed: true,
+          msg: "Failed to find handler for \"#{src}\". Make sure the required command to extract the file is installed.")
       end
 
       changed = handler == :tar ? tar_changed?(src, dest, exclude, include_files, keep_newer, extra_opts) : zip_changed?(src, dest, exclude, include_files)

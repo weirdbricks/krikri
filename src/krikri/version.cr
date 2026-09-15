@@ -1,7 +1,7 @@
 require "yaml"
 
 module Krikri
-  VERSION = "0.9.1097"
+  VERSION = "0.9.1098"
 
   # Baked into the binary at compile time (never read from disk at
   # runtime - a deployed binary has no shard.lock beside it), the same
