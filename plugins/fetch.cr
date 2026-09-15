@@ -43,7 +43,23 @@ module Krikri
       end
 
       dest_dir = File.dirname(dest_path)
-      Dir.mkdir_p(dest_dir) unless Dir.exists?(dest_dir)
+      unless Dir.exists?(dest_dir)
+        begin
+          Dir.mkdir_p(dest_dir)
+        rescue e : File::Error
+          # Real fetch's dest-dir creation runs on the CONTROLLER
+          # (makedirs_safe inside the action plugin's run()) - a
+          # non-directory ancestor (flat: false into /etc/passwd/target/
+          # ... with /etc/passwd a file) escapes run() as an AnsibleError,
+          # so the failure result carries no `changed` key at all
+          # (registered `changed` is undefined, not false).
+          return PluginResult.new(
+            changed: false, failed: true, omit_changed: true,
+            msg: "Unable to create local directories(#{dest_dir}): #{e.message}",
+            file: src,
+          )
+        end
+      end
       remote_download(src, dest_path)
 
       PluginResult.new(

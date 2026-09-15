@@ -1437,7 +1437,16 @@ module Krikri
         rc = hash["rc"]?.try(&.as_i?) || hash["rc"]?.try(&.as_s?).try(&.to_i?)
         hash["failed"] = JSON::Any.new(!(rc.nil? || rc == 0))
       end
-      hash["changed"] = JSON::Any.new(false) unless hash.has_key?("changed")
+      # A FAILED result with no `changed` key is the real controller-side
+      # exception shape ({failed, msg} only - see PluginResult#to_json's
+      # omit_changed); backfilling it with changed: false here would
+      # turn a registered variable's undefined `changed` into a defined
+      # one, diverging from real Ansible's failure surface. Module wire
+      # results (success AND fail_json) always carry changed themselves,
+      # so this only ever holds back the deliberate no-changed failures.
+      if !hash.has_key?("changed") && !hash["failed"].as_bool?
+        hash["changed"] = JSON::Any.new(false)
+      end
 
       JSON::Any.new(hash)
     end
