@@ -1,0 +1,149 @@
+# command/shell module failure-path edge cases. The defining behavior
+# under test: the plain `command` module must NOT invoke a shell
+# (metacharacters stay literal argv), while `shell` must. Each case
+# registers its result and prints a "C<n> key=value" debug line so
+# run.sh's diff extraction compares real ansible-playbook vs
+# krikri-playbook field by field. failed=/changed=/rc values (and the
+# did-it-actually-run behavior checks) are what matter; error-message
+# WORDING may legitimately differ between engines and is not a bug.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "C1 setup the creates: target so it already exists"
+      ansible.builtin.file:
+        path: /tmp/podman-diff-c1-exists.txt
+        state: touch
+        mode: "0644"
+
+    - name: "C1 command with creates: pointing at an existing file (should skip, not run)"
+      ansible.builtin.command:
+        cmd: "touch /tmp/podman-diff-c1-ran.txt"
+        creates: /tmp/podman-diff-c1-exists.txt
+      register: c1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "C1 failed={{ c1.failed }} changed={{ c1.changed }} rc={{ c1.rc | default('none') }}"
+
+    - name: "C1b verify the creates:-skipped command did not actually run"
+      ansible.builtin.stat:
+        path: /tmp/podman-diff-c1-ran.txt
+      register: c1b
+    - ansible.builtin.debug:
+        msg: "C1b exists={{ c1b.stat.exists }}"
+
+    - name: "C2 command with removes: pointing at a missing file (should skip, not run)"
+      ansible.builtin.command:
+        cmd: "touch /tmp/podman-diff-c2-ran.txt"
+        removes: /tmp/podman-diff-c2-missing.txt
+      register: c2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "C2 failed={{ c2.failed }} changed={{ c2.changed }} rc={{ c2.rc | default('none') }}"
+
+    - name: "C2b verify the removes:-skipped command did not actually run"
+      ansible.builtin.stat:
+        path: /tmp/podman-diff-c2-ran.txt
+      register: c2b
+    - ansible.builtin.debug:
+        msg: "C2b exists={{ c2b.stat.exists }}"
+
+    - name: "C2c setup a second target so the next removes: check finds it"
+      ansible.builtin.file:
+        path: /tmp/podman-diff-c2-now-exists.txt
+        state: touch
+
+    - name: "C2d command with removes: pointing at an existing file (should run)"
+      ansible.builtin.command:
+        cmd: "rm -f /tmp/podman-diff-c2-now-exists.txt"
+        removes: /tmp/podman-diff-c2-now-exists.txt
+      register: c2d
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "C2d failed={{ c2d.failed }} changed={{ c2d.changed }} rc={{ c2d.rc | default('none') }}"
+
+    - name: "C3 command exits nonzero with ignore_errors: true (task fails, play continues)"
+      ansible.builtin.command:
+        cmd: "sh -c 'exit 3'"
+      register: c3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "C3 failed={{ c3.failed }} changed={{ c3.changed }} rc={{ c3.rc }}"
+
+    - name: "C3b command exits zero (baseline for C3)"
+      ansible.builtin.command:
+        cmd: "true"
+      register: c3b
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "C3b failed={{ c3b.failed }} changed={{ c3b.changed }} rc={{ c3b.rc }}"
+
+    - name: "C5 shell with a nonexistent executable"
+      ansible.builtin.shell:
+        cmd: "echo hi"
+        executable: /nonexistent/shell-zzz
+      register: c5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "C5 failed={{ c5.failed }} changed={{ c5.changed }} rc={{ c5.rc | default('none') }}"
+
+    - name: "C6 command module must NOT shell-interpret metacharacters (no redirection)"
+      ansible.builtin.command:
+        cmd: "echo hello > /tmp/podman-diff-c6.txt"
+      register: c6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "C6 failed={{ c6.failed }} changed={{ c6.changed }} rc={{ c6.rc }} stdout={{ c6.stdout }}"
+
+    - name: "C6b verify no redirection happened (file must not exist)"
+      ansible.builtin.stat:
+        path: /tmp/podman-diff-c6.txt
+      register: c6b
+    - ansible.builtin.debug:
+        msg: "C6b exists={{ c6b.stat.exists }}"
+
+    - name: "C7 command with chdir: to a nonexistent directory"
+      ansible.builtin.command:
+        cmd: "pwd"
+        chdir: /nonexistent-dir-zzz
+      register: c7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "C7 failed={{ c7.failed }} changed={{ c7.changed }} rc={{ c7.rc }}"
+
+    - name: "C8 shell module DOES shell-interpret redirection"
+      ansible.builtin.shell:
+        cmd: "echo hello > /tmp/podman-diff-c8.txt"
+      register: c8
+      ignore_errors: true
+    - name: "C8b verify the redirection actually happened"
+      ansible.builtin.stat:
+        path: /tmp/podman-diff-c8.txt
+      register: c8b
+    - ansible.builtin.debug:
+        msg: "C8 failed={{ c8.failed }} changed={{ c8.changed }} rc={{ c8.rc }} C8b exists={{ c8b.stat.exists }}"
+
+    - name: "C9 shell with chdir: to a nonexistent directory"
+      ansible.builtin.shell:
+        cmd: "pwd"
+        chdir: /nonexistent-dir-zzz
+      register: c9
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "C9 failed={{ c9.failed }} changed={{ c9.changed }} rc={{ c9.rc }}"
+
+# C4 is deliberately its own FINAL play: a nonzero exit with no
+# ignore_errors aborts the host's play, so leaving it among C1-C8
+# would make everything after it unreachable on BOTH engines. Here the
+# abort is the expected outcome - neither engine should print C4b, and
+# a wrong "continued=yes" from either one shows up in the diff.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "C4 command exits nonzero with NO ignore_errors (must abort the play)"
+      ansible.builtin.command:
+        cmd: "false"
+    - name: "C4b marker that must never be reached (prints only if the failure wrongly continued)"
+      ansible.builtin.debug:
+        msg: "C4 continued=yes"

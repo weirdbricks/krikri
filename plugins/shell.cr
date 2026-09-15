@@ -229,6 +229,78 @@ module Krikri
         full_cmd = "cd #{chdir} && #{full_cmd}"
       end
 
+      # Real Ansible's run_command tries os.chdir(chdir) BEFORE spawning
+      # anything, so a nonexistent/non-directory chdir fails the MODULE
+      # (changed: false, rc: null, full command-module shape) instead of
+      # surfacing as a shell exit code with changed: true - the `cd X
+      # &&` prefix above would have run and failed inside the shell.
+      # Same up-front check as command.cr's, with the rc:null shape
+      # run_command actually produces (live-verified against 2.19.4;
+      # found via the podman-diff command_edge_cases C9 harness case).
+      if chdir && !File.directory?(expand_tilde(chdir))
+        reason = File.exists?(expand_tilde(chdir)) ? "Not a directory" : "No such file or directory"
+        return PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: "Failed to change directory to #{chdir}: #{reason}",
+          cmd: command_string,
+          rc: nil,
+          stdout: "",
+          stdout_lines: [] of String,
+          stderr: "",
+          stderr_lines: [] of String,
+          start: nil,
+          end: nil,
+          delta: nil
+        )
+      end
+
+      # Real Ansible hands `executable:` to run_command as the SHELL
+      # BINARY itself (subprocess executable=), so a nonexistent one
+      # raises OSError before any process starts: fail_json(rc=e.errno,
+      # msg="[Errno 2] No such file or directory: b'...'") - changed
+      # stays FALSE and rc is the raw errno (2 for ENOENT, 13 for
+      # EACCES), not a shell "command not found" exit code with changed:
+      # true. This engine's remote_exec would have reported exactly
+      # that (changed=true, rc=1) - live-verified divergence via the
+      # podman-diff command_edge_cases C5 harness case.
+      if executable != "/bin/sh"
+        unless File.file?(executable)
+          return PluginResult.new(
+            changed: false,
+            failed: true,
+            msg: "No such file or directory: '#{executable}'",
+            cmd: command_string,
+            rc: 2,
+            exit_code: 2,
+            stdout: "",
+            stdout_lines: [] of String,
+            stderr: "",
+            stderr_lines: [] of String,
+            start: nil,
+            end: nil,
+            delta: nil
+          )
+        end
+        unless File.executable?(executable)
+          return PluginResult.new(
+            changed: false,
+            failed: true,
+            msg: "Permission denied: '#{executable}'",
+            cmd: command_string,
+            rc: 13,
+            exit_code: 13,
+            stdout: "",
+            stdout_lines: [] of String,
+            stderr: "",
+            stderr_lines: [] of String,
+            start: nil,
+            end: nil,
+            delta: nil
+          )
+        end
+      end
+
       # Give this process (and therefore the shell it is about to
       # spawn, and everything under it) a controlling terminal, the way
       # real ansible-core's `ssh -tt` does for the whole remote process
