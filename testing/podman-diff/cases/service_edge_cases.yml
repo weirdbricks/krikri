@@ -1,0 +1,57 @@
+# service module edge cases. NOTE on the environment: run.sh's
+# containers run plain `sleep infinity` with NO init (systemd is not
+# PID 1 and no real unit manager is running), so anything that needs a
+# live systemd to act is untestable here - these cases deliberately
+# target the unknown/nonexistent-unit paths, where both engines must
+# fail (or no-op) identically before touching a real daemon. Each case
+# registers its result and prints an "S<n> key=value" debug line for
+# run.sh's diff extraction; failed=/changed= booleans matter, error
+# message WORDING may legitimately differ.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "S1 start a service that does not exist (must fail, not silently succeed)"
+      ansible.builtin.service:
+        name: krikri-diff-nonexistent-zzz
+        state: started
+      register: s1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S1 failed={{ s1.failed }} changed={{ s1.changed }}"
+
+    - name: "S2 stop a service that does not exist (real ansible fails like S1)"
+      ansible.builtin.service:
+        name: krikri-diff-nonexistent-zzz
+        state: stopped
+      register: s2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S2 failed={{ s2.failed }} changed={{ s2.changed }}"
+
+    - name: "S3 enabled: true on a nonexistent unit (must fail)"
+      ansible.builtin.service:
+        name: krikri-diff-nonexistent-zzz
+        enabled: true
+      register: s3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S3 failed={{ s3.failed }} changed={{ s3.changed }}"
+
+    - name: "S4 reload a service that does not exist (must fail)"
+      ansible.builtin.service:
+        name: krikri-diff-nonexistent-zzz
+        state: reloaded
+      register: s4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S4 failed={{ s4.failed }} changed={{ s4.changed }}"
+
+    - name: "S5 restart a service that does not exist (must fail)"
+      ansible.builtin.service:
+        name: krikri-diff-nonexistent-zzz
+        state: restarted
+      register: s5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S5 failed={{ s5.failed }} changed={{ s5.changed }}"

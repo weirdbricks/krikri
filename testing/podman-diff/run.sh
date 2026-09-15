@@ -16,8 +16,12 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 DIFF_DIR="$(pwd)"
 REPO_DIR="$(cd "$DIFF_DIR/../.." && pwd)"
 IMAGE="docker.io/library/debian:bookworm-slim"
-NAME_A="krikri-diff-real"
-NAME_B="krikri-diff-krikri"
+# Per-invocation suffix: container names are global to podman, so two
+# concurrent run.sh sessions (e.g. two worktrees) would otherwise keep
+# rm -f'ing each other's mid-run containers.
+SUFFIX="-$(date +%s)-$$"
+NAME_A="krikri-diff-real$SUFFIX"
+NAME_B="krikri-diff-krikri$SUFFIX"
 RESULTS="$DIFF_DIR/results"
 mkdir -p "$RESULTS"
 
