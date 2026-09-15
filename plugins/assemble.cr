@@ -161,7 +161,7 @@ module Krikri
     private def write_assembled(dest : String, content : String, existing : String?) : String
       backup_file = ""
       if existing && true?(@params["backup"]?)
-        backup_file = "#{dest}.#{Time.utc.to_unix}.bak"
+        backup_file = "#{dest}.#{Process.pid}.#{Time.utc.to_s("%Y-%m-%d@%H:%M:%S")}~"
         File.write(backup_file, existing)
       end
 

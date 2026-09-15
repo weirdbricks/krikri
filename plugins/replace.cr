@@ -277,8 +277,8 @@ module Krikri
     # file-editing module in this codebase reports backup_file the same
     # way.
     private def write_backup(path : String) : String
-      timestamp = Time.local.to_s("%Y%m%d-%H%M%S")
-      backup_file = "#{path}.#{timestamp}.bak"
+      timestamp = Time.utc.to_s("%Y-%m-%d@%H:%M:%S")
+      backup_file = "#{path}.#{Process.pid}.#{timestamp}~"
       File.copy(path, backup_file)
       backup_file
     end
