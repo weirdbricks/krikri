@@ -75,6 +75,18 @@ describe Krikri::FactsGatherer do
     facts["ansible_fips"].as_bool.should be_a(Bool)
   end
 
+  it "always sets ansible_processor_threads_per_core on hosts whose cpuinfo has siblings and cpu cores" do
+    # Real Ansible's Linux hardware collector always derives this fact
+    # (siblings / cpu cores from /proc/cpuinfo) - marvel-nccr.slurm's
+    # templates/slurm.conf references it directly, and with the fact
+    # never set the template died with "is undefined" while real
+    # ansible-playbook completes. Value varies by host, so only pin
+    # presence and positivity.
+    facts = JSON.parse(Krikri::FactsGatherer.run(nil))["ansible_facts"].as_h
+    facts["ansible_processor_threads_per_core"]?.should_not be_nil
+    facts["ansible_processor_threads_per_core"].as_i64.should be > 0
+  end
+
   it "honours gather_subset from the config it is handed" do
     # The daemon hands over an already-parsed JSON::Any rather than a
     # STDIN string, so this is the shape that matters now.

@@ -1210,6 +1210,19 @@ module Krikri
           facts["ansible_processor_cores"] = match[1].to_i64
         end
 
+        # ansible_processor_threads_per_core - real ansible-core's Linux
+        # hardware collector ALWAYS sets this (siblings / cpu cores, its
+        # get_cpu_facts logic), so roles like marvel-nccr.slurm render it
+        # straight into their configs (templates/slurm.conf); with the
+        # fact never set, that template died with "is undefined" and
+        # real Ansible completes. Only set when both values parse and
+        # cpu cores is non-zero - same independently-conditional style
+        # as ansible_processor_cores above.
+        siblings_match = cpuinfo.match(/siblings\s+:\s+(\d+)/)
+        if (cores_match = cpuinfo.match(/cpu cores\s+:\s+(\d+)/)) && siblings_match && cores_match[1].to_i64 > 0
+          facts["ansible_processor_threads_per_core"] = siblings_match[1].to_i64 // cores_match[1].to_i64
+        end
+
         if match = cpuinfo.match(/model name\s+:\s+(.+)/)
           facts["ansible_processor"] = [match[1].strip]
         end
