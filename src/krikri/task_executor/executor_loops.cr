@@ -687,12 +687,16 @@ module Krikri
       loop_items : Array(JSON::Any),
       exec_host : Host = host,
     )
-      # See register_reachable_unavailable_module's own comment: an empty
-      # loop means no item ever reaches when_passes?, so the module-
-      # resolution check that call normally carries has to happen here
-      # instead, once, against the task's own when: (there's no item to
-      # bind yet either way).
-      register_reachable_unavailable_module(task, base_vars_context, host) if loop_items.empty?
+      # An empty loop means the task skips cleanly - real Ansible resolves
+      # a looped task's module per-item inside _execute_internal, so with
+      # zero items the module name is NEVER resolved and an unimplemented
+      # module here is never reported (live-verified against ansible-core
+      # 2.19.11: a looped missing-module task over an empty list is a
+      # plain `skipping:`, rc=0; telekom_mms.grafana's zero-iteration
+      # grafana_datasource/grafana_folder/etc. loops previously drove a
+      # bogus rc=4 "unavailable modules" exit on an otherwise-green run).
+      # A NON-empty loop's registration still happens per-item inside
+      # when_passes?.
 
       # Render each item *before* it's ever bound to "item" or checked
       # against when: - a literal loop: entry can itself be a template

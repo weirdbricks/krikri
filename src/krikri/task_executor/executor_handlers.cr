@@ -343,10 +343,11 @@ module Krikri
       # line, and #record_handler_result's already_displayed branch
       # counted the no-op result as "ok" instead of "skipped".
       if loop_items.empty?
-        # Same module-resolution-before-loop-emptiness gap execute_looped_task's
-        # own call handles for regular tasks - a handler's module is just as
-        # reachable via a fired notify: regardless of what its loop resolves to.
-        register_reachable_unavailable_module(handler, base_vars_context, host)
+        # Same lazy module resolution real Ansible does (see
+        # execute_looped_task's own comment): with zero items the
+        # handler's module is never resolved, so an unimplemented module
+        # behind an empty loop is a plain skip, not an
+        # unavailable-modules exit-code report.
         puts "skipping: [#{host.connection_host}]".colorize(:cyan)
         return JSON.parse({
           "changed" => false,
@@ -380,6 +381,19 @@ module Krikri
     # goes through - unchanged from before loop: support was added, just
     # extracted so execute_handler_loop can call it once per item.
     private def execute_handler_plugin_once(handler : Task, host : Host, vars_context : Hash(String, JSON::Any)) : JSON::Any
+      # Same connection-plugin resolution a regular task gets (see
+      # execute_task_once's own check): a fired handler whose connection
+      # type resolves to nothing fails the handler, not a silent SSH
+      # fallback.
+      if (conn_type = vars_context["ansible_connection"]?.try(&.as_s?)) &&
+         PluginManager.connection_plugin_not_found?(conn_type)
+        return JSON.parse({
+          "changed" => false,
+          "failed"  => true,
+          "msg"     => "Task failed: the connection plugin '#{conn_type}' was not found",
+        }.to_json)
+      end
+
       # An unavailable-module handler (see Task#unavailable_module - a
       # module this engine hasn't implemented, e.g. a role's
       # kubernetes.core.helm_repository handler) skips exactly like a

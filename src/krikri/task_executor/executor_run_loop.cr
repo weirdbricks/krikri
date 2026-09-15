@@ -979,6 +979,11 @@ module Krikri
       return {false, nil} unless @batching_enabled
       return {false, nil} unless exec_host == host
       return {false, nil} if PluginManager.local_connection?(exec_host, vars_context)
+      # An unresolvable connection type must take the solo path, where
+      # execute_task_once's own check fails the task like real Ansible -
+      # the batch script would silently SSH instead.
+      return {false, nil} if (conn_type = vars_context["ansible_connection"]?.try(&.as_s?)) &&
+                             PluginManager.connection_plugin_not_found?(conn_type)
       # A templated action:/local_action: resolves its real module only
       # inside execute_task_once; the batch script path has no such
       # resolution (and breaks_run? below only keeps the task out of
@@ -1513,6 +1518,28 @@ module Krikri
         # failed"), not `skipped=1` the way silently returning nil here
         # used to.
         return when_error_result(ex)
+      end
+
+      # Real Ansible resolves the task's effective connection type through
+      # its plugin loader right after the when: evaluates and BEFORE the
+      # module ever runs, failing the task with "Task failed: the
+      # connection plugin 'X' was not found" when nothing resolves -
+      # including a case-mismatched spelling ("Local"/"Podman", the
+      # loader's name match is case-sensitive) and any FQCN that names no
+      # real connection plugin (community.grafana.grafana is a module
+      # namespace only). vars_context already carries the merged value
+      # (inventory/host vars, or this ONE task's own `connection:`
+      # override - see build_vars_context). Previously ANY non-"local"
+      # value silently fell back to SSH: an unresolvable connection
+      # turned into a bogus UNREACHABLE ("Failed to connect to the host
+      # via ssh") instead of real Ansible's one clean failed task.
+      if (conn_type = vars_context["ansible_connection"]?.try(&.as_s?)) &&
+         PluginManager.connection_plugin_not_found?(conn_type)
+        return apply_changed_failed_when(task, JSON.parse({
+          "changed" => false,
+          "failed"  => true,
+          "msg"     => "Task failed: the connection plugin '#{conn_type}' was not found",
+        }.to_json), vars_context, host)
       end
 
       begin

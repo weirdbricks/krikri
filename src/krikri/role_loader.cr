@@ -554,7 +554,10 @@ module Krikri
       nil
     end
 
-    private def self.collections_paths(playbook_dir : String) : Array(String)
+    # Public: PluginManager's connection-plugin resolution (fix "the
+    # connection plugin 'X' was not found") searches the same controller
+    # collection locations for `plugins/connection/<name>.py`.
+    def self.collections_paths(playbook_dir : String = ".") : Array(String)
       paths = [] of String
 
       if env_path = ENV["ANSIBLE_COLLECTIONS_PATH"]? || ENV["ANSIBLE_COLLECTIONS_PATHS"]?

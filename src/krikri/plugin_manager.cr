@@ -325,6 +325,19 @@ module Krikri
           # their hosts:.
           next if local_connection?(host, host.vars)
 
+          # A host whose ansible_connection resolves to no connection
+          # plugin (real Ansible would fail every task with "the
+          # connection plugin 'X' was not found") must NOT enter this
+          # pre-upload pass: attempting the eager SSH upload reported a
+          # bogus pre-run UNREACHABLE ("Failed to upload ... ssh:
+          # connect refused") that marked the host unreachable before a
+          # single task ran, swallowing the per-task connection failure
+          # entirely. Skipped here, so execution reaches the per-task
+          # check (execute_task_once) and fails tasks the way real
+          # Ansible does.
+          next if (conn_type = host.vars["ansible_connection"]?.try(&.as_s?)) &&
+                  connection_plugin_not_found?(conn_type)
+
           # Deduplicate by connection details
           connection_host = get_connection_host(host, host.vars)
           host_key = "#{host.user}@#{connection_host}:#{host.port}"
@@ -1595,6 +1608,58 @@ module Krikri
       end
       @@staged_local_plugins << plugin_name
       staged_path
+    end
+
+    # Connection types this engine can actually dispatch, matched
+    # CASE-SENSITIVELY exactly like real Ansible's own plugin loader,
+    # which looks the name up verbatim against plugin filenames (no
+    # lowercasing anywhere in the resolution path - verified live against
+    # ansible-core 2.19.11: `connection: Local` fails the task with "the
+    # connection plugin 'Local' was not found", and so does any FQCN that
+    # names no real connection plugin, e.g. `community.grafana.grafana`).
+    # "smart" is real Ansible's default alias resolving to ssh for a
+    # remote host; paramiko_ssh is still ssh for this engine's purposes.
+    SUPPORTED_CONNECTION_TYPES = Set{
+      "local", "ssh", "smart", "paramiko_ssh",
+      "ansible.builtin.local", "ansible.builtin.ssh", "ansible.builtin.smart",
+      "ansible.builtin.paramiko_ssh",
+      "ansible.legacy.local", "ansible.legacy.ssh", "ansible.legacy.smart",
+      "ansible.legacy.paramiko_ssh",
+    }
+
+    # Connection plugins real Ansible RESOLVES (shipped in ansible-core
+    # itself, so the loader never returns not-found for them) but this
+    # engine has no transport for: psrp/winrm (Windows), etc. They keep
+    # the same "unknown connection falls back to SSH" behavior every
+    # unimplemented-but-real connection plugin always had here - failing
+    # them as "not found" would misreport a resolvable connection (real
+    # Ansible reaches an actual connection ATTEMPT for those, failing
+    # with a connect error, not a resolution error).
+    RESOLVABLE_UNIMPLEMENTED_CONNECTION_TYPES = Set{"psrp", "winrm"}
+
+    # Whether *raw* (the effective connection type: an inventory/role/
+    # task-level ansible_connection value, or a task's own `connection:`
+    # keyword after substitution) names no connection plugin real Ansible
+    # could resolve either - so a task using it must fail the way real
+    # Ansible's TaskExecutor._get_connection does, instead of silently
+    # falling back to SSH. A collection-qualified name is checked against
+    # the controller's own collection paths exactly like real Ansible's
+    # loader: a plugin that EXISTS there (containers.podman.podman,
+    # community.docker.docker) keeps the engine's long-standing SSH
+    # fallback - this engine can't exec inside a container target, but
+    # that's a transport approximation, not a resolution failure; a
+    # plugin that exists NOWHERE is the not-found verdict.
+    def self.connection_plugin_not_found?(raw : String) : Bool
+      return false if SUPPORTED_CONNECTION_TYPES.includes?(raw)
+      return false if RESOLVABLE_UNIMPLEMENTED_CONNECTION_TYPES.includes?(raw)
+
+      parts = raw.split('.')
+      return true unless parts.size == 3
+
+      namespace, collection, name = parts[0], parts[1], parts[2]
+      relative = File.join("ansible_collections", namespace, collection,
+        "plugins", "connection", "#{name}.py")
+      RoleLoader.collections_paths.none? { |base| File.exists?(File.join(base, relative)) }
     end
 
     # Check if connection is local. Public - TaskExecutor's batch path

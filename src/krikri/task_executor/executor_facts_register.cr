@@ -144,9 +144,43 @@ module Krikri
       end
     end
 
+    # The failure message for a host whose ansible_connection names no
+    # connection plugin (see PluginManager.connection_plugin_not_found?),
+    # or nil when the connection resolves (including "unset", which the
+    # executor's own local/ssh default covers).
+    private def unresolvable_connection_message(host : Host) : String?
+      conn_type = host.vars["ansible_connection"]?.try(&.as_s?)
+      return nil unless conn_type && PluginManager.connection_plugin_not_found?(conn_type)
+
+      "Task failed: the connection plugin '#{conn_type}' was not found"
+    end
+
+    # "Plugin execution failed on remote" alone hides WHY the plugin
+    # died - the kata round of 2026-09-10 (36/36 roles) failed facts
+    # with a bare exit 127 because the guest image lacked
+    # libxml2.so.2, and only manual SSH reproduced the loader error.
+    # Surface the plugin's own stderr so the cause is visible at the
+    # point of failure.
+    private def facts_failure_message(result : JSON::Any) : String
+      msg = result["msg"]?.try(&.as_s) || "Unknown error"
+      if (stderr = result["stderr"]?.try(&.as_s?)) && !stderr.empty?
+        msg += "\n  stderr: #{stderr.strip.lines[0, 10].join("\n  stderr: ")}"
+      end
+      msg
+    end
+
     private def gather_facts_for_host_measured(host : Host) : {Bool, String?, Bool}
       vars_context = Hash(String, JSON::Any).new
       host.vars.each { |key, value| vars_context[key] = value }
+
+      # Real Ansible resolves the connection plugin for the implicit setup
+      # task too - an unresolvable ansible_connection fails Gathering
+      # Facts with "the connection plugin 'X' was not found" instead of
+      # attempting SSH (the silent fallback below reported a bogus
+      # UNREACHABLE for what real Ansible reports as a plain failure).
+      if (conn_msg = unresolvable_connection_message(host))
+        return {false, conn_msg, false}
+      end
 
       # If this gathers over SSH the wire payload needs
       # ansible_connection=local, so decide that up front and serialize
