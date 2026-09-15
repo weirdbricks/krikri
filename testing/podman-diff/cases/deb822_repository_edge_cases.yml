@@ -1,0 +1,123 @@
+# deb822_repository edge cases. NOTE: labels reuse the V prefix (V is
+# also uri_edge_cases') - run.sh diffs one case file at a time, so the
+# two files never mix; V was the last free uppercase letter.
+# deb822_repository landed in ansible-core 2.15; run.sh installs a venv
+# ansible-core + python3-debian into the real-side container for these
+# cases (bookworm's apt ansible-core 2.14 predates the module).
+# Each case registers its result and prints a "V<n> key=value" debug
+# line; failed=/changed= and the actual .sources file bytes/state are
+# what matter; error-message WORDING may legitimately differ.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "V1 missing required name"
+      ansible.builtin.deb822_repository:
+        uris: http://deb.debian.org/debian
+        suites: bookworm
+      register: v1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "V1 failed={{ v1.failed | default('none') }} changed={{ v1.changed | default('none') }}"
+
+    - name: "V2 name but no body at all (no uris/suites)"
+      ansible.builtin.deb822_repository:
+        name: v2-empty
+      register: v2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "V2 failed={{ v2.failed | default('none') }} changed={{ v2.changed | default('none') }}"
+
+    - name: "V2b read back the name-only .sources file"
+      ansible.builtin.slurp:
+        src: /etc/apt/sources.list.d/v2-empty.sources
+      register: v2b
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "V2b failed={{ v2b.failed | default('none') }} content={{ v2b.content | default('none') }}"
+
+    - name: "V3 invalid types choice"
+      ansible.builtin.deb822_repository:
+        name: v3-badtype
+        types: banana
+        uris: http://deb.debian.org/debian
+        suites: bookworm
+        components: main
+      register: v3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "V3 failed={{ v3.failed | default('none') }} changed={{ v3.changed | default('none') }}"
+
+    - name: "V4 uris with no scheme"
+      ansible.builtin.deb822_repository:
+        name: v4-noscheme
+        uris: deb.debian.org/debian
+        suites: bookworm
+        components: main
+      register: v4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "V4 failed={{ v4.failed | default('none') }} changed={{ v4.changed | default('none') }}"
+
+    - name: "V4b read back the schemeless-uris .sources file"
+      ansible.builtin.slurp:
+        src: /etc/apt/sources.list.d/v4-noscheme.sources
+      register: v4b
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "V4b failed={{ v4b.failed | default('none') }} content={{ v4b.content | default('none') }}"
+
+    - name: "V5 malformed body_string"
+      ansible.builtin.deb822_repository:
+        name: v5-malformed
+        body_string: "Types: [banana\nURIs::::"
+      register: v5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "V5 failed={{ v5.failed | default('none') }} changed={{ v5.changed | default('none') }}"
+
+    - name: "V6 valid minimal repo (real on-disk write)"
+      ansible.builtin.deb822_repository:
+        name: v6-valid
+        uris: http://deb.debian.org/debian
+        suites: bookworm
+        components: main
+      register: v6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "V6 failed={{ v6.failed | default('none') }} changed={{ v6.changed | default('none') }}"
+
+    - name: "V6b idempotent re-run of the same repo"
+      ansible.builtin.deb822_repository:
+        name: v6-valid
+        uris: http://deb.debian.org/debian
+        suites: bookworm
+        components: main
+      register: v6b
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "V6b failed={{ v6b.failed | default('none') }} changed={{ v6b.changed | default('none') }}"
+
+    - name: "V6c read back the .sources file bytes"
+      ansible.builtin.slurp:
+        src: /etc/apt/sources.list.d/v6-valid.sources
+      register: v6c
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "V6c failed={{ v6c.failed | default('none') }} content={{ v6c.content | default('none') }}"
+
+    - name: "V7 state absent removes the repo file"
+      ansible.builtin.deb822_repository:
+        name: v6-valid
+        state: absent
+      register: v7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "V7 failed={{ v7.failed | default('none') }} changed={{ v7.changed | default('none') }}"
+
+    - name: "V7b stat the removed file"
+      ansible.builtin.stat:
+        path: /etc/apt/sources.list.d/v6-valid.sources
+      register: v7b
+    - ansible.builtin.debug:
+        msg: "V7b exists={{ v7b.stat.exists }}"

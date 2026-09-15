@@ -90,6 +90,19 @@ if printf '%s\n' "${cases[@]}" | grep -q '^docker'; then
     || { log "FATAL: community.docker/Docker SDK install failed"; exit 1; }
 fi
 
+# deb822_repository landed in ansible-core 2.15; bookworm's apt ships
+# 2.14, where the module doesn't exist yet (a harness artifact, not a
+# divergence). For deb822 cases the real side gets a venv with a current
+# ansible-core + python3-debian (the module's own runtime dep) and those
+# cases run with that venv's ansible-playbook.
+DEB822_ANSIBLE=""
+if printf '%s\n' "${cases[@]}" | grep -q '^deb822'; then
+  log "installing venv ansible-core (>=2.15) + python3-debian for deb822 cases"
+  podman exec "$NAME_A" bash -c "apt-get install -y -qq --no-install-recommends python3-venv python3-debian >/dev/null && python3 -m venv /opt/ansible215 && /opt/ansible215/bin/pip install -q ansible-core" \
+    || { log "FATAL: venv ansible-core install failed"; exit 1; }
+  DEB822_ANSIBLE="/opt/ansible215/bin/ansible-playbook"
+fi
+
 overall_rc=0
 for case_file in "${cases[@]}"; do
   case_name="${case_file%.yml}"
@@ -98,7 +111,7 @@ for case_file in "${cases[@]}"; do
   podman cp "$DIFF_DIR/cases/$case_file" "$NAME_B:/work/case.yml"
 
   podman exec "$NAME_A" bash -c \
-    "cd /work && ANSIBLE_NOCOLOR=1 ansible-playbook -i inventory.ini case.yml" \
+    "cd /work && ANSIBLE_NOCOLOR=1 ${DEB822_ANSIBLE:-ansible-playbook} -i inventory.ini case.yml" \
     > "$RESULTS/${case_name}_real.log" 2>&1
   rc_a=$?
 
@@ -128,7 +141,13 @@ for case_file in "${cases[@]}"; do
   # Volatile backup paths (backup_file: pid + timestamp) are masked so
   # an otherwise-identical run still MATCHes.
   extract() {
-    grep -oE '\b[A-Z][0-9]+[a-c]? [a-zA-Z_]+=.*' "$1" \
+    # Drop real ansible's error-context source echo first: a failed task
+    # makes real ansible-playbook print the surrounding playbook lines
+    # prefixed with a line number ("37         msg: \"V2b failed=...\""),
+    # which would otherwise double-extract the PREVIOUS debug label with
+    # its raw unrendered template and show as a phantom divergence.
+    sed -E '/^[0-9]+[[:space:]]/d' "$1" \
+      | grep -oE '\b[A-Z][0-9]+[a-c]? [a-zA-Z_]+=.*' \
       | sed -E 's/\\\\/\x01/g; s/\\n/ | /g; s/\x01/\\/g; s/"\}?(,)?$//; s/=[^ ]*[0-9]{2,6}\.[0-9]{4}-[0-9]{2}-[0-9]{2}@[0-9:]{8}~/=<backup-path>/g'
   }
   extract "$RESULTS/${case_name}_real.log" > "$msgs_a"

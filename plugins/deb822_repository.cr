@@ -44,9 +44,12 @@ module Krikri
   # own check_type_list backward compat):
   # - name (required): base filename under /etc/apt/sources.list.d/,
   #   written as <name>.sources
-  # - types: deb (default) | deb-src | "deb deb-src"
-  # - uris (required): the repo URL(s), space-separated if more than one
-  # - suites (required): distro suite/codename(s)
+  # - types: deb (default) | deb-src | "deb deb-src" - elements validated
+  #   against [deb, deb-src] like real Ansible's own choices check
+  # - uris: the repo URL(s), space-separated if more than one (optional
+  #   - real Ansible accepts a name-only task and writes just the
+  #   X-Repolib-Name header + the Types default)
+  # - suites: distro suite/codename(s) (optional)
   # - components: repo component(s), e.g. "main"
   # - signed_by: a path to an *already-local* keyring/armored-key file,
   #   OR a URL - fetched (binary-safe, redirect-aware, matching
@@ -76,6 +79,26 @@ module Krikri
     @slug : String = ""
 
     def execute : PluginResult
+      # Real Ansible rejects ANY parameter outside its own argument_spec
+      # at module-arg validation, before any action runs (ansible-core
+      # 2.15 has no body_string/body - a body-only task fails with
+      # "Unsupported parameters", it does not write the file). Found via
+      # the podman-diff deb822_repository_edge_cases V5 harness case.
+      # check_mode/diff_mode/_verbosity/_environment are engine-internal
+      # keys injected by the executor (see build_plugin_config), not
+      # part of the real argument_spec, so none are rejected.
+      deb822_supported = {"allow_downgrade_to_insecure", "allow_insecure", "allow_weak", "architectures", "by_hash", "check_date", "check_valid_until", "components", "date_max_future", "enabled", "exclude", "include", "inrelease_path", "languages", "mode", "name", "pdiffs", "signed_by", "state", "suites", "targets", "trusted", "types", "uris"}
+      deb822_internal = {"check_mode", "diff_mode", "_verbosity", "_environment"}
+      unsupported = @params.keys.reject { |k| deb822_supported.includes?(k) || deb822_internal.includes?(k) }
+      unless unsupported.empty?
+        return PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: "Unsupported parameters for (ansible.builtin.deb822_repository) module: #{unsupported.sort.join(", ")}. " \
+               "Supported parameters include: #{deb822_supported.to_a.sort.join(", ")}."
+        )
+      end
+
       name = @params["name"]?
       return PluginResult.new(changed: false, failed: true, msg: "missing required argument: name") unless name
 
@@ -88,10 +111,15 @@ module Krikri
         return remove(target, check_mode)
       end
 
-      uris = @params["uris"]?
-      suites = @params["suites"]?
-      return PluginResult.new(changed: false, failed: true, msg: "missing required argument: uris") unless uris
-      return PluginResult.new(changed: false, failed: true, msg: "missing required argument: suites") unless suites
+      # Real Ansible's own argument_spec validates `types` elements
+      # against choices=[deb, deb-src] and FAILS the task (changed=False)
+      # on anything else - it does not silently write the invalid value.
+      # uris/suites are NOT required by real Ansible: a name-only task
+      # succeeds and writes just X-Repolib-Name + the Types: deb default.
+      if types = @params["types"]?
+        bad = parse_list_param(types).reject { |t| %w[deb deb-src].includes?(t) }
+        return PluginResult.new(changed: false, failed: true, msg: "value of types must be one or more of: deb, deb-src. Got no match for: #{bad.join(", ")}") unless bad.empty?
+      end
 
       add(target, check_mode)
     end
