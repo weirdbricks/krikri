@@ -88,7 +88,9 @@ for case_file in "${cases[@]}"; do
   # suffix, so new case files only need to pick an unused prefix.
   msgs_a="$RESULTS/${case_name}_real.msgs"
   msgs_b="$RESULTS/${case_name}_krikri.msgs"
-  extract() { grep -oE '\b[A-Z][0-9]+[a-c]? [a-zA-Z_]+=.*' "$1" | sed -E 's/\\n/ | /g; s/"\}?(,)?$//'; }
+  # Volatile backup paths (copy's backup_file: pid + timestamp) are
+  # masked so an otherwise-identical run still MATCHes.
+  extract() { grep -oE '\b[A-Z][0-9]+[a-c]? [a-zA-Z_]+=.*' "$1" | sed -E 's/\\n/ | /g; s/"\}?(,)?$//; s/=[^ ]*[0-9]{2,6}\.[0-9]{4}-[0-9]{2}-[0-9]{2}@[0-9:]{8}~/=<backup-path>/g'; }
   extract "$RESULTS/${case_name}_real.log" > "$msgs_a"
   extract "$RESULTS/${case_name}_krikri.log" > "$msgs_b"
 

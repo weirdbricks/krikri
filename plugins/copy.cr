@@ -283,8 +283,9 @@ module Krikri
       end
 
       # Handle backup if requested
+      backup_file = nil
       if true?(@params["backup"]?) && File.exists?(dest)
-        create_backup(dest)
+        backup_file = create_backup(dest)
       end
 
       # Real Ansible's copy module does NOT create a missing single-file
@@ -319,6 +320,7 @@ module Krikri
         checksum: content_sha1,
         md5sum: content_md5
       )
+      result.extra["backup_file"] = JSON::Any.new(backup_file) if backup_file
       add_path_info(result, dest)
       result
     end
@@ -522,8 +524,9 @@ module Krikri
       end
 
       # Create backup if requested
+      backup_file = nil
       if true?(@params["backup"]?) && File.exists?(dest)
-        create_backup(dest)
+        backup_file = create_backup(dest)
       end
 
       # Real Ansible's copy module does NOT create a missing single-file
@@ -580,6 +583,7 @@ module Krikri
         checksum: src_sha1,
         md5sum: src_md5
       )
+      result.extra["backup_file"] = JSON::Any.new(backup_file) if backup_file
       add_path_info(result, dest)
       result
     end
@@ -786,7 +790,10 @@ module Krikri
     # Create backup of file
     private def create_backup(path : String) : String
       timestamp = Time.utc.to_s("%Y-%m-%d@%H:%M:%S")
-      backup_path = "#{path}.#{Random.rand(10000..99999)}.#{timestamp}~"
+      # Real Ansible's backup_local (module_utils/files.py) inserts the
+      # process PID between path and timestamp, not a random number:
+      # `<path>.<pid>.<yyyy-mm-dd@hh:mm:ss>~`.
+      backup_path = "#{path}.#{Process.pid}.#{timestamp}~"
 
       begin
         File.copy(path, backup_path)
