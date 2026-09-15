@@ -1,0 +1,96 @@
+# user module edge cases. Containers run as root, so real user
+# creation/mutation is exercised; the cleanup task at the end keeps
+# re-runs idempotent. Each case registers its result and prints a
+# "U<n> key=value" debug line for run.sh's diff extraction;
+# failed=/changed= booleans matter, error-message WORDING may
+# legitimately differ between engines.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "U0 cleanup from a previous run"
+      ansible.builtin.user:
+        name: krikri-diff-u
+        state: absent
+      ignore_errors: true
+
+    - name: "U1 create a user with explicit uid/shell/home"
+      ansible.builtin.user:
+        name: krikri-diff-u
+        uid: 4242
+        shell: /bin/sh
+        home: /home/krikri-diff-u
+        create_home: true
+      register: u1
+    - ansible.builtin.debug:
+        msg: "U1 failed={{ u1.failed }} changed={{ u1.changed }}"
+
+    - name: "U2 re-run the same create (idempotency: must be changed=false)"
+      ansible.builtin.user:
+        name: krikri-diff-u
+        uid: 4242
+        shell: /bin/sh
+        home: /home/krikri-diff-u
+        create_home: true
+      register: u2
+    - ansible.builtin.debug:
+        msg: "U2 failed={{ u2.failed }} changed={{ u2.changed }}"
+
+    - name: "U3 mutate shell (must be changed=true and echo the new shell)"
+      ansible.builtin.user:
+        name: krikri-diff-u
+        shell: /bin/bash
+      register: u3
+    - ansible.builtin.debug:
+        msg: "U3 failed={{ u3.failed }} changed={{ u3.changed }}"
+
+    - name: "U4 create a SECOND user with the SAME uid (must fail, not corrupt)"
+      ansible.builtin.user:
+        name: krikri-diff-u2
+        uid: 4242
+      register: u4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "U4 failed={{ u4.failed }} changed={{ u4.changed }}"
+
+    - name: "U5 append to a group that does not exist (must fail)"
+      ansible.builtin.user:
+        name: krikri-diff-u
+        groups: krikri-diff-nogroup-zzz
+        append: true
+      register: u5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "U5 failed={{ u5.failed }} changed={{ u5.changed }}"
+
+    - name: "U6 remove the user (changed=true, home removed with it)"
+      ansible.builtin.user:
+        name: krikri-diff-u
+        state: absent
+        remove: true
+      register: u6
+    - ansible.builtin.debug:
+        msg: "U6 failed={{ u6.failed }} changed={{ u6.changed }}"
+
+    - name: "U7 remove an already-absent user (idempotency: changed=false)"
+      ansible.builtin.user:
+        name: krikri-diff-u
+        state: absent
+      register: u7
+    - ansible.builtin.debug:
+        msg: "U7 failed={{ u7.failed }} changed={{ u7.changed }}"
+
+    - name: "U8 password_lock on a nonexistent user (must fail)"
+      ansible.builtin.user:
+        name: krikri-diff-nobody-zzz
+        password_lock: true
+      register: u8
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "U8 failed={{ u8.failed }} changed={{ u8.changed }}"
+
+    - name: "U9 cleanup U4 if it got created"
+      ansible.builtin.user:
+        name: krikri-diff-u2
+        state: absent
+      ignore_errors: true

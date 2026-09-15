@@ -1,0 +1,110 @@
+# blockinfile module edge cases. Each case registers its result and
+# prints a "B<n> key=value" debug line for run.sh's diff extraction;
+# failed=/changed= booleans matter, error-message WORDING may
+# legitimately differ between engines.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "B0 fresh slate for the marker file"
+      ansible.builtin.file:
+        path: /tmp/krikri-diff-blockfile
+        state: absent
+      ignore_errors: true
+
+    - name: "B1 insert a block into a fresh file (creates it)"
+      ansible.builtin.blockinfile:
+        path: /tmp/krikri-diff-blockfile
+        create: true
+        block: |
+          first line
+          second line
+        marker: "# {mark} krikri-diff"
+      register: b1
+    - ansible.builtin.debug:
+        msg: "B1 failed={{ b1.failed }} changed={{ b1.changed }}"
+
+    - name: "B2 re-run the same block (idempotency: changed=false)"
+      ansible.builtin.blockinfile:
+        path: /tmp/krikri-diff-blockfile
+        create: true
+        block: |
+          first line
+          second line
+        marker: "# {mark} krikri-diff"
+      register: b2
+    - ansible.builtin.debug:
+        msg: "B2 failed={{ b2.failed }} changed={{ b2.changed }}"
+
+    - name: "B3 change the block content (changed=true)"
+      ansible.builtin.blockinfile:
+        path: /tmp/krikri-diff-blockfile
+        block: |
+          first line
+          replaced line
+        marker: "# {mark} krikri-diff"
+      register: b3
+    - ansible.builtin.debug:
+        msg: "B3 failed={{ b3.failed }} changed={{ b3.changed }}"
+
+    - name: "B4 blockinfile on a file WITHOUT create on a missing path (must fail)"
+      ansible.builtin.blockinfile:
+        path: /tmp/krikri-diff-blockfile-missing-zzz
+        block: |
+          nope
+      register: b4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "B4 failed={{ b4.failed }} changed={{ b4.changed }}"
+
+    - name: "B5 insert with marker at end of file (insertafter: EOF)"
+      ansible.builtin.blockinfile:
+        path: /tmp/krikri-diff-blockfile
+        block: |
+          tail block
+        marker: "# {mark} krikri-diff-tail"
+        insertafter: EOF
+      register: b5
+    - ansible.builtin.debug:
+        msg: "B5 failed={{ b5.failed }} changed={{ b5.changed }}"
+
+    - name: "B6 remove one block (state: absent, changed=true)"
+      ansible.builtin.blockinfile:
+        path: /tmp/krikri-diff-blockfile
+        block: ""
+        marker: "# {mark} krikri-diff-tail"
+        state: absent
+      register: b6
+    - ansible.builtin.debug:
+        msg: "B6 failed={{ b6.failed }} changed={{ b6.changed }}"
+
+    - name: "B7 remove an already-absent block (idempotency: changed=false)"
+      ansible.builtin.blockinfile:
+        path: /tmp/krikri-diff-blockfile
+        block: ""
+        marker: "# {mark} krikri-diff-tail"
+        state: absent
+      register: b7
+    - ansible.builtin.debug:
+        msg: "B7 failed={{ b7.failed }} changed={{ b7.changed }}"
+
+    - name: "B8 no marker braces: {mark} missing (real ansible warns and appends raw)"
+      ansible.builtin.blockinfile:
+        path: /tmp/krikri-diff-blockfile
+        block: |
+          nomarker
+        marker: "# krikri-diff-nomark"
+      register: b8
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "B8 failed={{ b8.failed }} changed={{ b8.changed }}"
+
+    - ansible.builtin.command: cat /tmp/krikri-diff-blockfile
+      register: b9
+    - ansible.builtin.debug:
+        msg: "B9 failed={{ b9.failed }} out={{ b9.stdout | replace('\n', '|') }}"
+
+    - name: "B10 cleanup"
+      ansible.builtin.file:
+        path: /tmp/krikri-diff-blockfile
+        state: absent

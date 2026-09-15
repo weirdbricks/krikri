@@ -1,0 +1,88 @@
+# cron module edge cases. Containers run as root with a real crontab
+# (cron installed in the image; if not, both engines must fail
+# identically on the missing binary). Each case registers its result
+# and prints a "C<n> key=value" debug line for run.sh's diff
+# extraction; failed=/changed= booleans matter, error-message WORDING
+# may legitimately differ between engines.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "C0 cleanup from a previous run"
+      ansible.builtin.cron:
+        name: krikri-diff-c
+        state: absent
+      ignore_errors: true
+
+    - name: "C1 create a named cron job"
+      ansible.builtin.cron:
+        name: krikri-diff-c
+        minute: "15"
+        hour: "3"
+        job: "/usr/bin/true krikri-diff"
+      register: c1
+    - ansible.builtin.debug:
+        msg: "C1 failed={{ c1.failed }} changed={{ c1.changed }}"
+
+    - name: "C2 re-run the same job (idempotency: changed=false)"
+      ansible.builtin.cron:
+        name: krikri-diff-c
+        minute: "15"
+        hour: "3"
+        job: "/usr/bin/true krikri-diff"
+      register: c2
+    - ansible.builtin.debug:
+        msg: "C2 failed={{ c2.failed }} changed={{ c2.changed }}"
+
+    - name: "C3 mutate the schedule (changed=true)"
+      ansible.builtin.cron:
+        name: krikri-diff-c
+        minute: "30"
+        hour: "4"
+        job: "/usr/bin/true krikri-diff"
+      register: c3
+    - ansible.builtin.debug:
+        msg: "C3 failed={{ c3.failed }} changed={{ c3.changed }}"
+
+    - name: "C4 special time string (reboot)"
+      ansible.builtin.cron:
+        name: krikri-diff-c
+        special_time: reboot
+        job: "/usr/bin/true krikri-diff"
+      register: c4
+    - ansible.builtin.debug:
+        msg: "C4 failed={{ c4.failed }} changed={{ c4.changed }}"
+
+    - name: "C5 list the current crontab entries for the job marker"
+      ansible.builtin.command: grep -c krikri-diff /etc/crontab /var/spool/cron/crontabs/root /var/spool/cron/root
+      register: c5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "C5 failed={{ c5.failed }} rc={{ c5.rc }}"
+
+    - name: "C6 remove the job (changed=true)"
+      ansible.builtin.cron:
+        name: krikri-diff-c
+        state: absent
+      register: c6
+    - ansible.builtin.debug:
+        msg: "C6 failed={{ c6.failed }} changed={{ c6.changed }}"
+
+    - name: "C7 remove an already-absent job (idempotency: changed=false)"
+      ansible.builtin.cron:
+        name: krikri-diff-c
+        state: absent
+      register: c7
+    - ansible.builtin.debug:
+        msg: "C7 failed={{ c7.failed }} changed={{ c7.changed }}"
+
+    - name: "C8 both minute and special_time given (real ansible rejects)"
+      ansible.builtin.cron:
+        name: krikri-diff-c
+        minute: "5"
+        special_time: daily
+        job: "/usr/bin/true"
+      register: c8
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "C8 failed={{ c8.failed }} changed={{ c8.changed }}"
