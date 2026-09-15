@@ -130,6 +130,28 @@ describe "pip plugin" do
     result["changed"].as_bool.should be_false
   end
 
+  it "keeps a version-specifier comma as part of one requirement, not a second bogus package" do
+    # Real bug found benchmarking jonaspammer.openssl (round 813196):
+    # `name: "cryptography>3,<3.5"` - a single string whose comma is
+    # part of one PEP 440 version spec, not a separator between two
+    # packages. Naive comma-splitting produced a bogus second "package"
+    # starting with `<`, which real pip rejects outright ("Invalid
+    # requirement: '<3.5': Expected package name at the start of
+    # dependency specifier") - real Ansible's pip.py re-merges such
+    # pieces onto the preceding requirement before invoking pip.
+    # state: absent on a not-installed package only ever calls `pip
+    # show` (no real install/network call) - safe to run for real,
+    # matching this file's own no-real-execution convention.
+    result = PluginSpecHelper.run("pip", {
+      "name"  => "definitely-not-a-real-package-xyz<3.5,>3",
+      "state" => "absent",
+    })
+
+    result["failed"]?.try(&.as_bool).should_not be_true
+    result["changed"].as_bool.should be_false
+    result["msg"].as_s.should_not contain("Invalid requirement")
+  end
+
   # The plugin's default virtualenv_command is real Ansible's own
   # argument_spec default ("virtualenv", the classic tool - often NOT
   # installed on minimal hosts, which is real Ansible's behavior too:

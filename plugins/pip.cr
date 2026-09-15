@@ -542,7 +542,7 @@ module Krikri
       # `--upgrade`/`extra_args` are never comma-joined so they pass
       # through the `elsif spec` branch above and are handled directly
       # below, one per name.
-      quoted_target = requirements ? target : target.split(',').map { |tval| Process.quote(tval.strip) }.join(" ")
+      quoted_target = requirements ? target : split_requirements(target).map { |tval| Process.quote(tval) }.join(" ")
       cmd = with_umask(with_chdir("#{break_system_packages_env}#{pip_bin} install #{upgrade ? "--upgrade " : ""}#{extra} #{quoted_target}".strip))
       result = remote_exec(cmd)
 
@@ -572,12 +572,40 @@ module Krikri
       end
     end
 
+    # Real Ansible's pip.py list-type `name:` param auto-splits a raw
+    # string on commas (AnsibleModule list-param coercion), then
+    # RE-MERGES any resulting piece that starts with a version
+    # comparison operator (<, >, =, !, ~) back onto the preceding
+    # piece - such a piece can only be a continuation of that
+    # package's own PEP 440 version specifier (no valid PyPI package
+    # name starts with one of those characters), never a second
+    # distinct package. Confirmed live: `name: "cryptography>3,<3.5"`
+    # (jonaspammer.openssl round 813196) reaches real pip as ONE argv
+    # word `cryptography<3.5,>3` - splitting naively on every comma
+    # instead produced two words, the second (`<3.5`) rejected by pip
+    # as "Invalid requirement: '<3.5': Expected package name at the
+    # start of dependency specifier", which flipped that round's PLAY
+    # RECAP counts (a downstream `when: ...failed` task then ran
+    # differently than in real Ansible).
+    private def split_requirements(spec : String) : Array(String)
+      pieces = spec.split(',').map(&.strip)
+      merged = [] of String
+      pieces.each do |piece|
+        if !merged.empty? && piece =~ /\A[<>=!~]/
+          merged[-1] = "#{merged[-1]},#{piece}"
+        else
+          merged << piece
+        end
+      end
+      merged
+    end
+
     # Per-package idempotency check for a non-upgrade, non-requirements
     # install: every package already installed (or - for a `==` pin -
     # already at the requested version)?
     private def all_packages_satisfied?(pip_bin : String, spec : String?) : Bool
       sp = spec || raise "pip: spec is required"
-      packages = sp.split(',').map(&.strip)
+      packages = split_requirements(sp)
       packages.all? do |package|
         if package.includes?("==")
           bare, _, wanted_version = package.partition("==")
