@@ -16,15 +16,24 @@ module Krikri
   # reaches it anymore.
   class DebugActionPlugin < ActionPlugin
     def execute : ActionResult
+      msg = @params["msg"]?
+      var_name = @params["var"]?
+
+      # msg and var are mutually exclusive in real ansible.builtin.debug -
+      # the action plugin fails the task with exactly this message before
+      # the verbosity gate or any output happens (verified live via
+      # testing/podman-diff/cases/debug_edge_cases.yml: real ansible-core
+      # prints fatal "'msg' and 'var' are incompatible options").
+      if msg && var_name
+        return ActionResult.final(result_json(changed: false, failed: true, msg: "'msg' and 'var' are incompatible options"))
+      end
+
       required_verbosity = @params["verbosity"]?.try(&.to_i) || 0
       current_verbosity = @params["_verbosity"]?.try(&.to_i) || 0
 
       if current_verbosity < required_verbosity
         return ActionResult.final(result_json(changed: false, failed: false, msg: "skipped", extra: {"skipped" => JSON::Any.new(true)}))
       end
-
-      msg = @params["msg"]?
-      var_name = @params["var"]?
 
       # Real ansible.builtin.debug documents msg as defaulting to
       # "Hello world!" and prints it for a bare `debug:` task (verified
