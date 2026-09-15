@@ -264,10 +264,30 @@ module Krikri
       # task, `chdir: /var/www/html/nextcloud`, `become_user: www-data`).
       if chdir && !File.directory?(chdir)
         reason = File.exists?(chdir) ? "Not a directory" : "No such file or directory"
+        # The result carries the FULL real command-module shape with
+        # rc: NULL (not absent, not 0) - real Ansible's chdir failure
+        # happens inside run_command, whose fail_json populates
+        # cmd/stdout/stdout_lines/stderr/stderr_lines/start/end/delta
+        # alongside rc: null (live-verified against 2.19.4: `{"changed":
+        # false, "cmd": ["pwd"], ..., "rc": null, "msg": "Unable to
+        # change directory before execution: ..."}`). With `rc` absent
+        # a registered result's `.rc` reference was genuinely undefined
+        # where real Ansible hands back null - same divergence class as
+        # the creates:/removes: skip above (found via the podman-diff
+        # command_edge_cases C7 harness case).
         return with_executable_warning(PluginResult.new(
           changed: false,
           failed: true,
-          msg: "Failed to change directory to #{chdir}: #{reason}"
+          msg: "Failed to change directory to #{chdir}: #{reason}",
+          cmd: cmd,
+          rc: nil,
+          stdout: "",
+          stdout_lines: [] of String,
+          stderr: "",
+          stderr_lines: [] of String,
+          start: nil,
+          end: nil,
+          delta: nil
         ))
       end
 

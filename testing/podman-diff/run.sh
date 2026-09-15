@@ -77,10 +77,14 @@ for case_file in "${cases[@]}"; do
   # them as `"msg": "F1 failed=..."`, krikri-playbook as a plain
   # `  F1 failed=...` - the label+key=value pattern (not just "F1")
   # is what lets this match both formats while skipping TASK-name
-  # lines like "TASK [F1 touch a file ...]" that also contain "F1 ".
+  # lines like "F1 touch a file ..." that also contain "F1 " but no
+  # trailing key=value. The label shape is general: one uppercase
+  # letter (the case-file's prefix - F=file, T=template, S=set_fact,
+  # C=command, ...), digits, and an optional lowercase a-c sub-case
+  # suffix, so new case files only need to pick an unused prefix.
   msgs_a="$RESULTS/${case_name}_real.msgs"
   msgs_b="$RESULTS/${case_name}_krikri.msgs"
-  extract() { grep -oE '\b(F[0-9][a-c]?|T[0-9]|S[0-9][ab]?) [a-zA-Z_]+=.*' "$1" | sed -E 's/\\n/ | /g; s/"[,]?$//'; }
+  extract() { grep -oE '\b[A-Z][0-9]+[a-c]? [a-zA-Z_]+=.*' "$1" | sed -E 's/\\n/ | /g; s/"\}?(,)?$//'; }
   extract "$RESULTS/${case_name}_real.log" > "$msgs_a"
   extract "$RESULTS/${case_name}_krikri.log" > "$msgs_b"
 

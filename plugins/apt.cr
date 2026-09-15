@@ -93,6 +93,37 @@ module Krikri
     end
 
     def execute_inner : PluginResult
+      # Real ansible's apt module rejects ANY parameter outside its own
+      # argument_spec at module-arg validation, before any action runs -
+      # notably `use:`, which is a PACKAGE action-plugin parameter (the
+      # action plugin consumes it to pick a backend and never forwards it
+      # to the apt module), so `apt: {name: ..., use: no-such-backend}`
+      # fails with "Unsupported parameters ... use" while this engine
+      # silently ignored the unknown key and ran anyway. Found via the
+      # podman-diff package_edge_cases P2 harness case; message live-
+      # verified against ansible-core 2.19's own output for this exact
+      # task. check_mode/diff_mode/_verbosity/_environment are engine-
+      # internal keys injected by the executor (see build_plugin_config),
+      # and _policy_rc_d_path is the spec seam above - none are part of
+      # the real argument_spec, so none are rejected.
+      apt_supported = {"allow_change_held_packages", "allow_downgrade", "allow_unauthenticated", "autoclean", "autoremove", "cache_valid_time", "clean", "deb", "default_release", "dpkg_options", "fail_on_autoremove", "force", "force_apt_get", "install_recommends", "lock_timeout", "only_upgrade", "package", "policy_rc_d", "purge", "state", "update_cache", "update_cache_retries", "update_cache_retry_max_delay", "upgrade", "allow-downgrade", "allow-downgrades", "allow-unauthenticated", "allow_downgrades", "default-release", "install-recommends", "name", "pkg", "update-cache"}
+      apt_internal = {"check_mode", "diff_mode", "_verbosity", "_environment", "_policy_rc_d_path"}
+      unsupported = @params.keys.reject { |k| apt_supported.includes?(k) || apt_internal.includes?(k) }
+      unless unsupported.empty?
+        return PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: "Unsupported parameters for (ansible.builtin.apt) module: #{unsupported.sort.join(", ")}. " \
+               "Supported parameters include: " \
+               "allow_change_held_packages, allow_downgrade, allow_unauthenticated, autoclean, autoremove, " \
+               "cache_valid_time, clean, deb, default_release, dpkg_options, fail_on_autoremove, force, " \
+               "force_apt_get, install_recommends, lock_timeout, only_upgrade, package, policy_rc_d, purge, " \
+               "state, update_cache, update_cache_retries, update_cache_retry_max_delay, upgrade " \
+               "(allow-downgrade, allow-downgrades, allow-unauthenticated, allow_downgrades, default-release, " \
+               "install-recommends, name, pkg, update-cache)."
+        )
+      end
+
       # Real ansible's apt module on a non-Debian-family host: it first
       # auto-installs its python3-apt dependency ("Updating cache and
       # auto-installing missing dependency: python3-apt" warning) via

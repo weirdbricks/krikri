@@ -98,9 +98,16 @@ module Krikri
           end
         end
 
-        # Show exit code if available
-        if rc = result["rc"]?.try(&.as_i)
-          puts "  Exit code: #{rc}".colorize(:red)
+        # Show exit code if available. rc can legitimately be NULL (not
+        # just absent) - real Ansible's chdir-before-execution failure
+        # fails the module with rc: null (its run_command never spawned
+        # anything, live-verified against 2.19.4), and `.as_i` on a
+        # JSON null hard-crashed the whole engine here where real
+        # ansible-playbook simply omits the Exit code line.
+        if rc_value = result["rc"]?
+          unless rc_value.raw == nil
+            puts "  Exit code: #{rc_value.as_i}".colorize(:red)
+          end
         end
 
         # Real ansible-playbook always prints a bare "...ignoring" line

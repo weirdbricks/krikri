@@ -1,0 +1,64 @@
+# package/apt module failure-path edge cases. All cases fail WITHOUT
+# installing anything (bad args, nonexistent packages/versions), so no
+# network install happens inside the throwaway containers. Each case
+# registers its result and prints a "P<n> key=value" debug line for
+# run.sh's diff extraction. failed=/changed=/rc values are what matter;
+# error-message WORDING may legitimately differ between engines.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "P1 package with an invalid state value (arg validation)"
+      ansible.builtin.package:
+        name: bash
+        state: installed-nowhere
+      register: p1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P1 failed={{ p1.failed }} changed={{ p1.changed | default('none') }}"
+
+    - name: "P2 apt with a nonexistent backend (use:)"
+      ansible.builtin.apt:
+        name: bash
+        state: present
+        use: no-such-backend-zzz
+      register: p2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P2 failed={{ p2.failed }} changed={{ p2.changed | default('none') }}"
+
+    - name: "P3 apt with an uppercase (invalid) package name"
+      ansible.builtin.apt:
+        name: BASH
+        state: present
+      register: p3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P3 failed={{ p3.failed }} changed={{ p3.changed | default('none') }} rc={{ p3.rc | default('none') }}"
+
+    - name: "P4 apt with a nonexistent package"
+      ansible.builtin.apt:
+        name: krikri-no-such-package-zzz
+        state: present
+      register: p4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P4 failed={{ p4.failed }} changed={{ p4.changed | default('none') }} rc={{ p4.rc | default('none') }}"
+
+    - name: "P5 apt with a nonexistent package version"
+      ansible.builtin.apt:
+        name: bash=999999-zzz
+        state: present
+      register: p5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P5 failed={{ p5.failed }} changed={{ p5.changed | default('none') }} rc={{ p5.rc | default('none') }}"
+
+    - name: "P6 apt with an empty package name list entry"
+      ansible.builtin.apt:
+        name: ""
+        state: present
+      register: p6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P6 failed={{ p6.failed | default('none') }} changed={{ p6.changed | default('none') }}"

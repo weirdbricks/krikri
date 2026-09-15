@@ -418,23 +418,25 @@ describe "apt plugin - parameter coverage" do
       end
     end
 
-    # Real Ansible's auto_install_module_deps governs installing the
-    # python3-apt bindings the MODULE itself needs. This plugin is a
-    # native Crystal binary with no Python dependency of its own - there
-    # is nothing for the option to govern (the plugin's separate
-    # python3-apt emulation for host-state parity is not conditional on
-    # it, matching how real playbooks use the option).
-    it "auto_install_module_deps is a no-op by architecture (native binary, no python3-apt dependency)" do
-      with_apt_param_shims("un") do |env, log|
-        result = PluginSpecHelper.run("apt", {
-          "name"                      => "krikri-fake-pkg",
-          "state"                     => "present",
-          "auto_install_module_deps"  => "false",
-          "_environment"              => env,
-        })
-        result["failed"]?.try(&.as_bool).should be_falsey
-        install_call(log).should eq("install -y #{DEFAULT_DPKG_OPTIONS} krikri-fake-pkg")
-      end
+    # Real Ansible 2.19 REMOVED auto_install_module_deps from apt's
+    # argument_spec and now rejects it at module-arg validation -
+    # live-verified via a debian:bookworm ansible-core container:
+    # `auto_install_module_deps: true` on a real ansible-playbook fails
+    # with "Unsupported parameters for (ansible.builtin.apt) module:
+    # auto_install_module_deps" (the option governed installing the
+    # python3-apt bindings, which the 2.19 module no longer manages this
+    # way). The engine used to treat it as a silent no-op back when an
+    # older ansible-core still listed it; matching 2.19 now means
+    # rejecting it like any other out-of-spec parameter (apt.cr's
+    # unsupported-parameter validation, added 0.9.1086).
+    it "auto_install_module_deps is REJECTED like real Ansible 2.19 (removed from its argument_spec)" do
+      result = PluginSpecHelper.run("apt", {
+        "name"                     => "krikri-fake-pkg",
+        "state"                    => "present",
+        "auto_install_module_deps" => "false",
+      })
+      result["failed"].as_bool.should be_true
+      result["msg"].as_s.should contain("Unsupported parameters for (ansible.builtin.apt) module: auto_install_module_deps.")
     end
   end
 
