@@ -139,6 +139,17 @@ if printf '%s\n' "${cases[@]}" | grep -q '^firewalld'; then
   done
 fi
 
+# postgresql_* cases need the community.postgresql collection in the
+# REAL container (krikri talks the wire protocol itself; the real
+# modules are collection modules not shipped with ansible-core).
+# Validation-only cases - no PostgreSQL server is installed. Gated on
+# the requested case list like the mysql cases above.
+if printf '%s\n' "${cases[@]}" | grep -q '^postgresql'; then
+  log "installing community.postgresql collection for postgresql cases"
+  podman exec "$NAME_A" bash -c "ansible-galaxy collection install community.postgresql >/dev/null 2>&1" \
+    || { log "FATAL: community.postgresql install failed"; exit 1; }
+fi
+
 # modprobe cases need the kmod package (real /sbin/modprobe) in BOTH
 # containers - debian:bookworm-slim ships without it, which would make
 # every case fail with "Failed to find required executable" instead of
