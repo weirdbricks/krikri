@@ -104,7 +104,9 @@ module Krikri
     end
 
     private def apply_flush(bin : String, chain : String?, check_mode : Bool, msgs : Array(String)) : Nil
-      remote_exec("#{push(bin, "-F", chain)} 2>/dev/null") unless check_mode
+      unless check_mode
+        fail_on_command_failure(remote_exec(push(bin, "-F", chain)))
+      end
       msgs << "flushed #{chain}"
     end
 
@@ -117,7 +119,7 @@ module Krikri
       end
       changed = current != policy
       if changed && !check_mode
-        remote_exec("#{push(bin, "-P", chain)} #{policy}")
+        fail_on_command_failure(remote_exec("#{push(bin, "-P", chain)} #{policy}"))
       end
       msgs << "policy #{policy}"
       changed
@@ -128,7 +130,7 @@ module Krikri
       changed = state == "absent" ? present : !present
       if changed
         action = state == "absent" ? "-X" : "-N"
-        remote_exec(push(bin, action, chain)) if chain_management && !check_mode
+        fail_on_command_failure(remote_exec(push(bin, action, chain))) if chain_management && !check_mode
       end
       changed
     end
@@ -140,8 +142,23 @@ module Krikri
 
       return true if check_mode
       action = should_be_present ? (@params["action"]? == "insert" ? "-I" : "-A") : "-D"
-      remote_exec(push(bin, action, chain, rule: rule_flags))
+      fail_on_command_failure(remote_exec(push(bin, action, chain, rule: rule_flags)))
       true
+    end
+
+    # Real Ansible runs every mutating operation (the -F/-P/-N/-X/-A/-I/-D
+    # call sites) through module.run_command(check_rc=True) - a non-zero
+    # exit from the real iptables/ip6tables binary fails the task with
+    # the binary's stderr as the message. It is never swallowed into a
+    # silent "changed: true" (an -A on a nonexistent chain used to be
+    # reported exactly that way). First failure wins: a later operation
+    # never overwrites an already-recorded failure.
+    private def fail_on_command_failure(result : NamedTuple(exit_code: Int32, stdout: String, stderr: String)) : Nil
+      return if result[:exit_code] == 0 || @failure
+      @failure = [result[:stderr].strip, result[:stdout].strip]
+        .reject(&.empty?)
+        .first?
+      @failure ||= "Failure executing command, exit code: #{result[:exit_code]}"
     end
 
     # Real Ansible's push_arguments(): one shared command framing for

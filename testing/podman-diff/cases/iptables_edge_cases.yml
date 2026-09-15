@@ -1,0 +1,174 @@
+# iptables edge cases. Both containers get the real iptables(8) binary
+# (run.sh's iptables-gated install); krikri shells to the same binary as
+# real Ansible. Rootless-podman netfilter may or may not permit real
+# rule mutation - if the main path turns out to be blocked in this
+# environment, the argument-spec validations that fail BEFORE any real
+# iptables(8) call still fully apply, and failed=/changed= for the
+# netfilter-touching cases must still agree even when both engines fail
+# on the same kernel restriction.
+#
+# ansible-core in bookworm is 2.14, where iptables still lives in
+# community.general (moved to ansible.builtin in 2.15); krikri strips
+# both FQCN prefixes to the same plugin.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "I1 flush and policy together is mutually exclusive"
+      ansible.builtin.iptables:
+        flush: true
+        chain: INPUT
+        policy: DROP
+      register: i1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "I1 failed={{ i1.failed }} changed={{ i1.changed | default('none') }}"
+
+    - name: "I2 no chain and no flush is rejected by the arg spec"
+      ansible.builtin.iptables:
+        jump: ACCEPT
+      register: i2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "I2 failed={{ i2.failed }} changed={{ i2.changed | default('none') }}"
+
+    - name: "I3 jump TEE without gateway is rejected by required_if"
+      ansible.builtin.iptables:
+        chain: INPUT
+        jump: TEE
+      register: i3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "I3 failed={{ i3.failed }} changed={{ i3.changed | default('none') }}"
+
+    - name: "I4 logging options with a non-LOG jump target fail"
+      ansible.builtin.iptables:
+        chain: INPUT
+        jump: ACCEPT
+        log_prefix: KRIKRI
+      register: i4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "I4 failed={{ i4.failed }} changed={{ i4.changed | default('none') }}"
+
+    - name: "I5 set_dscp_mark without jump is rejected by required_by"
+      ansible.builtin.iptables:
+        chain: INPUT
+        set_dscp_mark: "8"
+      register: i5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "I5 failed={{ i5.failed }} changed={{ i5.changed | default('none') }}"
+
+    - name: "I6 add a real rule to INPUT"
+      ansible.builtin.iptables:
+        chain: INPUT
+        protocol: tcp
+        destination_port: "8099"
+        jump: ACCEPT
+        comment: krikri-diff-test
+      register: i6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "I6 failed={{ i6.failed }} changed={{ i6.changed }}"
+
+    - name: "I6b same rule again is idempotent"
+      ansible.builtin.iptables:
+        chain: INPUT
+        protocol: tcp
+        destination_port: "8099"
+        jump: ACCEPT
+        comment: krikri-diff-test
+      register: i6b
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "I6b failed={{ i6b.failed }} changed={{ i6b.changed }}"
+
+    - name: "I7 observe the rule with real iptables"
+      ansible.builtin.shell: "iptables -S | grep 8099 || true"
+      register: i7
+      ignore_errors: true
+      changed_when: false
+    - ansible.builtin.debug:
+        msg: "I7 present={{ i7.stdout | length > 0 }}"
+
+    - name: "I8 remove the rule again"
+      ansible.builtin.iptables:
+        chain: INPUT
+        protocol: tcp
+        destination_port: "8099"
+        jump: ACCEPT
+        comment: krikri-diff-test
+        state: absent
+      register: i8
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "I8 failed={{ i8.failed }} changed={{ i8.changed }}"
+
+    - name: "I9 state absent on a rule never present is a no-op"
+      ansible.builtin.iptables:
+        chain: INPUT
+        protocol: udp
+        destination_port: "8098"
+        jump: ACCEPT
+        state: absent
+      register: i9
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "I9 failed={{ i9.failed }} changed={{ i9.changed }}"
+
+    - name: "I10 invalid policy value fails (arg spec or iptables binary)"
+      ansible.builtin.iptables:
+        chain: INPUT
+        policy: DENY
+      register: i10
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "I10 failed={{ i10.failed }} changed={{ i10.changed | default('none') }}"
+
+    - name: "I11 invalid state value is rejected by the arg spec"
+      ansible.builtin.iptables:
+        chain: INPUT
+        state: enabled
+      register: i11
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "I11 failed={{ i11.failed }} changed={{ i11.changed | default('none') }}"
+
+    - name: "I12 new chain creation and removal"
+      ansible.builtin.iptables:
+        chain: KRIKRI-DIFF
+        state: present
+      register: i12
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "I12 failed={{ i12.failed }} changed={{ i12.changed }}"
+
+    - name: "I12b chain really exists"
+      ansible.builtin.shell: "iptables -S KRIKRI-DIFF || true"
+      register: i12b
+      ignore_errors: true
+      changed_when: false
+    - ansible.builtin.debug:
+        msg: "I12b present={{ i12b.stdout | length > 0 }}"
+
+    - name: "I12c chain removal is a second change"
+      ansible.builtin.iptables:
+        chain: KRIKRI-DIFF
+        state: absent
+      register: i12c
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "I12c failed={{ i12c.failed }} changed={{ i12c.changed }}"
+
+    - name: "I13 ipv6 rule on a nonexistent custom chain fails via the real binary"
+      ansible.builtin.iptables:
+        chain: KRIKRI-NOCHAIN
+        protocol: tcp
+        destination_port: "8097"
+        jump: ACCEPT
+        ip_version: ipv6
+      register: i13
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "I13 failed={{ i13.failed }} changed={{ i13.changed | default('none') }}"

@@ -202,6 +202,30 @@ if printf '%s\n' "${cases[@]}" | grep -q '^modprobe'; then
   done
 fi
 
+# iptables cases need the real iptables(8) binary in BOTH containers -
+# krikri's plugin shells to it exactly like real Ansible - and
+# --privileged is already on for both containers; a rootless-podman
+# netfilter restriction, if present, fails BOTH engines identically.
+# The venv from the deb822 block below is reused when needed: bookworm's
+# 2.14 doesn't have ansible.builtin.iptables yet (landed in 2.15) and
+# 2.14 can't follow community.general's redirect to it, so iptables
+# cases run against the venv's current ansible-core. Gated on the
+# requested case list like the mysql cases above.
+IPTABLES_ANSIBLE=""
+if printf '%s\n' "${cases[@]}" | grep -q '^iptables'; then
+  log "installing iptables for iptables cases"
+  for c in "$NAME_A" "$NAME_B"; do
+    podman exec "$c" bash -c "apt-get install -y -qq --no-install-recommends iptables >/dev/null" \
+      || { log "FATAL: iptables install failed in $c"; exit 1; }
+  done
+  if ! podman exec "$NAME_A" test -x /opt/ansible215/bin/ansible-playbook; then
+    log "installing venv ansible-core (>=2.15) for iptables cases (2.14 lacks ansible.builtin.iptables)"
+    podman exec "$NAME_A" bash -c "apt-get install -y -qq --no-install-recommends python3-venv >/dev/null && python3 -m venv /opt/ansible215 && /opt/ansible215/bin/pip install -q ansible-core" \
+      || { log "FATAL: venv ansible-core install failed"; exit 1; }
+  fi
+  IPTABLES_ANSIBLE="/opt/ansible215/bin/ansible-playbook"
+fi
+
 # seboolean cases need the real module's own python libs in the REAL
 # container only - without python3-selinux/python3-semanage every
 # case would fail on the libselinux import check and mask all the
@@ -223,7 +247,7 @@ for case_file in "${cases[@]}"; do
   podman cp "$DIFF_DIR/cases/$case_file" "$NAME_B:/work/case.yml"
 
   podman exec "$NAME_A" bash -c \
-    "cd /work && ANSIBLE_NOCOLOR=1 ${DEB822_ANSIBLE:-ansible-playbook} -i inventory.ini case.yml" \
+    "cd /work && ANSIBLE_NOCOLOR=1 ${IPTABLES_ANSIBLE:-${DEB822_ANSIBLE:-ansible-playbook}} -i inventory.ini case.yml" \
     > "$RESULTS/${case_name}_real.log" 2>&1
   rc_a=$?
 

@@ -353,6 +353,53 @@ describe Krikri::PluginHelpers::IptablesCommand do
       err.should eq("parameters are mutually exclusive: flush|policy")
     end
 
+    it "rejects an invalid policy value with the real choices wording" do
+      err = Krikri::PluginHelpers::IptablesCommand.validate({
+        "chain"  => "INPUT",
+        "policy" => "DENY",
+      })
+      err.should eq("value of policy must be one of: ACCEPT, DROP, QUEUE, RETURN, got: DENY")
+    end
+
+    it "rejects an invalid state value with the real choices wording" do
+      err = Krikri::PluginHelpers::IptablesCommand.validate({
+        "chain" => "INPUT",
+        "state" => "enabled",
+      })
+      err.should eq("value of state must be one of: absent, present, got: enabled")
+    end
+
+    it "rejects an invalid log_level value with the real choices wording" do
+      err = Krikri::PluginHelpers::IptablesCommand.validate({
+        "chain"      => "INPUT",
+        "log_prefix" => "KRIKRI",
+        "log_level"  => "bogus",
+      })
+      err.should eq("value of log_level must be one of: 0, 1, 2, 3, 4, 5, 6, 7, emerg, alert, crit, error, warning, notice, info, debug, got: bogus")
+    end
+
+    # Real-Ansible position pinned against ansible-core: the
+    # mutually-exclusive check fires BEFORE choices (flush + policy=DENY
+    # reports the mutual exclusion), while choices fire BEFORE
+    # required_if (state=enabled with no chain reports the choice, not
+    # the missing chain).
+    it "reports a mutually-exclusive pair before a choices violation" do
+      err = Krikri::PluginHelpers::IptablesCommand.validate({
+        "chain"  => "INPUT",
+        "flush"  => "true",
+        "policy" => "DENY",
+      })
+      err.should eq("parameters are mutually exclusive: flush|policy")
+    end
+
+    it "reports a choices violation before a required_if violation" do
+      err = Krikri::PluginHelpers::IptablesCommand.validate({
+        "jump"  => "ACCEPT",
+        "state" => "enabled",
+      })
+      err.should eq("value of state must be one of: absent, present, got: enabled")
+    end
+
     it "requires gateway when jump is TEE" do
       err = Krikri::PluginHelpers::IptablesCommand.validate({
         "chain" => "PREROUTING",
