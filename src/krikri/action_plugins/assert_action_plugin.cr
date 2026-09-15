@@ -57,14 +57,22 @@ module Krikri
       # bool) - real Ansible fails the whole play at this first task;
       # this plugin silently treated the nonzero int as truthy and let
       # the play continue for 5 more tasks before diverging elsewhere.
+      # NO `changed` key on either conditional-error result: the
+      # conditional failed before any module ran, and real Ansible's
+      # registered var for this shape carries ONLY failed+msg
+      # (live-verified against ansible-core 2.19: `assert: that: undef
+      # == 1` with register: gives keys=['failed', 'msg'], while an
+      # ordinary failing assertion still registers changed: false
+      # alongside). plugin_result_json can't express the missing key,
+      # so both rescues use conditional_error_result_json instead.
       begin
         failing = conditions.find do |condition|
           substituted = substitutor.substitute(condition)
           !ConditionalEvaluator.evaluate(substituted, @vars, strict: true, raise_undefined: true)
         end
       rescue ex : ConditionalEvaluator::UndefinedVariableError
-        return ActionResult.final(ActionResult.plugin_result_json(
-          false, true, "Error while evaluating conditional: #{ex.message}"))
+        return ActionResult.final(ActionResult.conditional_error_result_json(
+          "Error while evaluating conditional: #{ex.message}"))
       rescue ex : ConditionalEvaluator::ConditionalBooleanError
         # Real Ansible's assert: prefixes this specific failure
         # "Task failed: " rather than when:'s own "Error while
@@ -72,8 +80,8 @@ module Krikri
         # message ansible-core 2.19.4 raises for a non-bool `that:`
         # result (mrlesmithjr.postgresql's own `that: postgresql_
         # version | default(false)` with a real int default).
-        return ActionResult.final(ActionResult.plugin_result_json(
-          false, true, "Task failed: #{ex.message}"))
+        return ActionResult.final(ActionResult.conditional_error_result_json(
+          "Task failed: #{ex.message}"))
       end
 
       if failing

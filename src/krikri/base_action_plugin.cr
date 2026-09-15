@@ -99,5 +99,25 @@ module Krikri
       extra.each { |k, v| h[k] = v }
       JSON::Any.new(h)
     end
+
+    # The result shape for a CONDITIONAL-EVALUATION failure (assert:'s
+    # that: hitting an undefined reference or a non-bool result) - the
+    # conditional failed before any module ran, and real Ansible's
+    # registered var for this shape carries ONLY failed+msg, with no
+    # `changed` key at all (live-verified against ansible-core 2.19:
+    # `assert: that: undef_var == 1` with register: gives
+    # keys=['failed', 'msg']; a later task reading `<reg>.changed` sees
+    # it as undefined and fails its own templating, while an ordinary
+    # failing assertion still registers changed: false alongside).
+    # plugin_result_json can't express the missing key, so this builds
+    # the hash directly. The when:/ path's identical shape lives in
+    # Executor's when_error_result/swallow_when_error.
+    def self.conditional_error_result_json(msg : String) : JSON::Any
+      h = Hash(String, JSON::Any).new
+      h["failed"] = JSON::Any.new(true)
+      h["msg"] = JSON::Any.new(msg)
+      JSON::Any.new(h)
+    end
+
   end
 end

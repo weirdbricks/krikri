@@ -893,8 +893,15 @@ module Krikri
     # correctly for a real failed result, so building one here instead of
     # hand-rolling that bookkeeping a second time keeps it consistent
     # with every other failure path.
+    #
+    # NO `changed` key - the conditional failed before any module ran,
+    # and real Ansible's registered var for this shape carries ONLY
+    # failed+msg (live-verified against ansible-core 2.19: `when: undef
+    # == 1` with register: gives keys=['failed', 'msg']; a later task
+    # reading `<reg>.changed` sees it as undefined and fails its own
+    # templating, it does not see `changed: false`).
     private def when_error_result(ex : WhenEvaluationError) : JSON::Any
-      JSON.parse({"changed" => false, "failed" => true, "msg" => ex.message || "Error while evaluating conditional"}.to_json)
+      JSON.parse({"failed" => true, "msg" => ex.message || "Error while evaluating conditional"}.to_json)
     end
 
     # For a `when_passes?` call site with no real per-item result
@@ -928,10 +935,12 @@ module Krikri
       end
       register_name = task.register
       unless register_name.nil? || register_name.empty?
+        # Same changed-less shape as when_error_result: real Ansible's
+        # registered var for a conditional-evaluation failure carries
+        # ONLY failed+msg (live-verified, ansible-core 2.19).
         register_result(host, register_name, JSON.parse({
-          "changed" => false,
-          "failed"  => true,
-          "msg"     => msg,
+          "failed" => true,
+          "msg"    => msg,
         }.to_json))
       end
       false
