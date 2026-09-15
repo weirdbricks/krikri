@@ -158,6 +158,41 @@ describe Krikri::FactsGatherer do
     end
   end
 
+  describe "#fqdn_from_getent_hosts" do
+    # ansible_fqdn must come from socket.getfqdn()'s REVERSE-lookup
+    # algorithm, not `hostname -f`'s forward lookup of the name itself.
+    # oasis_roles.hostname sets a short hostname and colocates it on the
+    # 127.0.0.1 line of /etc/hosts; reverse-resolving 127.0.0.1 there
+    # yields "localhost localhost.localdomain", and Python skips the
+    # dotless "localhost" in favor of "localhost.localdomain" - so real
+    # ansible-playbook reports ansible_fqdn as "localhost.localdomain"
+    # (and keeps re-reporting changed on the role's hostname:/blockinfile:
+    # tasks every run) while a `hostname -f`-based value stays at the
+    # short name, making this engine falsely idempotent. These pin the
+    # parse of that reverse-lookup output; the shelling-out half of the
+    # algorithm stays a live-host concern, same convention as
+    # #detect_virtualization above.
+    it "prefers the first dot-qualified name over the dotless canonical one" do
+      Krikri::FactsGatherer.fqdn_from_getent_hosts("127.0.0.1 localhost localhost.localdomain localhost4 localhost4.localdomain4").should eq("localhost.localdomain")
+    end
+
+    it "returns the canonical name when it already carries a dot" do
+      Krikri::FactsGatherer.fqdn_from_getent_hosts("10.0.0.5 myhost.example.com").should eq("myhost.example.com")
+    end
+
+    it "scans aliases in order after the canonical name" do
+      Krikri::FactsGatherer.fqdn_from_getent_hosts("10.0.0.5 short alias.example.com other").should eq("alias.example.com")
+    end
+
+    it "returns empty when every name is dotless, triggering the plain-hostname fallback" do
+      Krikri::FactsGatherer.fqdn_from_getent_hosts("127.0.0.1 myhost").should eq("")
+    end
+
+    it "returns empty for a bare address with no names at all" do
+      Krikri::FactsGatherer.fqdn_from_getent_hosts("127.0.0.1").should eq("")
+    end
+  end
+
   describe "ansible_memory_mb (ansible_facts.memory_mb)" do
     it "gathers the namespaced memory dict, not just the legacy flat facts" do
       # Found via geerlingguy.swap's "Disable swap (if configured).":

@@ -337,20 +337,40 @@ module Krikri
       facts["ansible_hostname"] = hostname
       facts["ansible_nodename"] = hostname
 
-      # `hostname -f` fails outright ("Name or service not known", empty
-      # stdout) on a host with no real FQDN/domain configured - common
-      # on a minimal Kata/container image with no DNS setup at all.
-      # Real Ansible gathers this via Python's `socket.getfqdn()`,
-      # which NEVER fails/returns empty - with no resolvable FQDN it
-      # falls back to plain `gethostname()`'s own result instead,
-      # matching the same fallback `hostname -f`'s own shell manpage
-      # documents but this engine wasn't replicating. Without it,
-      # `ansible_fqdn` was silently never set at all on such hosts -
-      # found via imntreal.smallstep_ca's own `Initialize CA` task,
-      # which references `{{ ansible_fqdn }}` directly and failed
-      # "'ansible_fqdn' is undefined" outright instead of getting the
-      # same plain-hostname fallback real Ansible gives it.
-      fqdn = capture("hostname", ["-f"])
+      # Real Ansible computes `ansible_fqdn` via Python's
+      # `socket.getfqdn()`, which is NOT `hostname -f`: it forward-resolves
+      # the hostname to an address, then REVERSE-resolves that address, and
+      # returns the first of the reverse lookup's canonical name + aliases
+      # that contains a dot. The two genuinely diverge when a role sets a
+      # short hostname AND colocates it on the /etc/hosts loopback line
+      # (oasis_roles.hostname's own pattern, found live): reverse-resolving
+      # 127.0.0.1 there yields "localhost localhost.localdomain", and the
+      # dotless "localhost" is skipped in favor of "localhost.localdomain",
+      # so real ansible-playbook reports ansible_fqdn as
+      # "localhost.localdomain" - and keeps re-reporting changed on the
+      # role's hostname:/blockinfile: tasks every run - while `hostname -f`
+      # (a FORWARD lookup of the queried name) echoed the short name back,
+      # making this engine falsely idempotent there. `getent hosts` reads
+      # the same NSS sources Python's socket module does, without assuming
+      # python3 exists on the managed node. The old `hostname -f` fallback
+      # chain is kept only for hosts with no resolvable name at all (a
+      # minimal container image with no DNS setup), where getent gives us
+      # nothing to reverse-resolve and `hostname -f` fails outright to
+      # empty stdout - there it still lands on the plain hostname, the
+      # same fallback real Ansible's getfqdn itself documents.
+      fqdn = ""
+      ip = capture("getent", ["ahosts", hostname]).split("\n").first?.try(&.split.first?)
+      unless ip.nil? || ip.empty?
+        reverse = capture("getent", ["hosts", ip]).split("\n").first?
+        unless reverse.nil?
+          fqdn = fqdn_from_getent_hosts(reverse)
+          # socket.getfqdn()'s own fallback: a successful reverse lookup
+          # whose every name is dotless returns the plain hostname, NOT
+          # `hostname -f`'s answer.
+          fqdn = hostname if fqdn.empty?
+        end
+      end
+      fqdn = capture("hostname", ["-f"]) if fqdn.empty?
       fqdn = hostname if fqdn.empty?
       facts["ansible_fqdn"] = fqdn unless fqdn.empty?
 
@@ -366,6 +386,21 @@ module Krikri
       # real Ansible's own empty-string default.
       domain = fqdn.includes?(".") ? fqdn.sub(/^#{Regex.escape(hostname)}\./, "") : ""
       facts["ansible_domain"] = domain
+    end
+
+    # socket.getfqdn()'s final step over one `getent hosts <ip>` line
+    # ("<ip> <canonical> [alias ...]"): the canonical name is checked
+    # first (Python's `aliases.insert(0, hostname)`), then the aliases in
+    # order, and the first entry containing a dot wins - "" when none
+    # does, which the caller maps to the plain-hostname fallback.
+    def fqdn_from_getent_hosts(output : String) : String
+      fields = output.split
+      return "" if fields.size < 2
+
+      fields[1..].each do |name|
+        return name if name.includes?(".")
+      end
+      ""
     end
 
     # Gather OS facts
