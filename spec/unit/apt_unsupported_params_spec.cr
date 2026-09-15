@@ -43,18 +43,18 @@ describe "apt: unsupported parameter rejection" do
     # inert: a package that doesn't exist fails the INSTALL, not the
     # arg validation - the msg must NOT be "Unsupported parameters".
     result = PluginSpecHelper.run("apt", {
-      "name"                          => "krikri-no-such-package-zzz",
-      "state"                         => "present",
-      "update-cache"                  => "false",
-      "default-release"               => "stable",
-      "install-recommends"            => "true",
-      "allow-downgrade"               => "false",
-      "allow_unauthenticated"         => "false",
-      "dpkg_options"                  => "force-confdef,force-confold",
-      "force_apt_get"                 => "true",
-      "lock_timeout"                  => "60",
-      "update_cache_retries"          => "5",
-      "update_cache_retry_max_delay"  => "12",
+      "name"                         => "krikri-no-such-package-zzz",
+      "state"                        => "present",
+      "update-cache"                 => "false",
+      "default-release"              => "stable",
+      "install-recommends"           => "true",
+      "allow-downgrade"              => "false",
+      "allow_unauthenticated"        => "false",
+      "dpkg_options"                 => "force-confdef,force-confold",
+      "force_apt_get"                => "true",
+      "lock_timeout"                 => "60",
+      "update_cache_retries"         => "5",
+      "update_cache_retry_max_delay" => "12",
     })
 
     result["failed"].as_bool.should be_true
