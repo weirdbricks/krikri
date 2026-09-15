@@ -1,6 +1,7 @@
 #!/usr/bin/env crystal
 
 require "json"
+require "xml"
 require "../src/krikri/base_plugin"
 require "../src/krikri/plugin_helpers/firewalld_command"
 
@@ -9,8 +10,9 @@ module Krikri
   # with Ansible's ansible.posix.firewalld module.
   #
   # Supported parameters:
-  # - zone: firewalld zone - defaults to `firewall-offline-cmd --get-
-  #   default-zone` when omitted, matching real Ansible's own documented
+  # - zone: firewalld zone - defaults to the configured default zone
+  #   (firewalld.conf's DefaultZone, resolved over D-Bus when a daemon
+  #   is running) when omitted, matching real Ansible's own documented
   #   behavior ("the default zone can be configured per system but
   #   public is default from upstream") rather than requiring it.
   # - state: enabled | disabled for every "thing" below except target: -
@@ -20,7 +22,10 @@ module Krikri
   #   operations" message (verified live against a real ansible-playbook
   #   run - this plugin previously accepted present/absent everywhere as
   #   silent synonyms, more lenient than real Ansible rather than
-  #   matching it)
+  #   matching it). Those four are also the ONLY valid values - real
+  #   Ansible's argument spec rejects anything else up front (found by
+  #   the podman-diff firewalld round: this plugin previously accepted
+  #   any unrecognized state as a silent "disabled").
   # - permanent/immediate/offline: ported real Ansible's own validation
   #   logic exactly (see #validate_permanent_immediate) rather than
   #   requiring `offline: true, permanent: true` explicitly - real
@@ -49,28 +54,33 @@ module Krikri
   #   "Reset zone %s target to default" - NOT simply "remove", since a
   #   zone's target isn't optional the way a service/port/etc entry is).
   #
-  # This only implements permanent/offline-style changes - i.e.
-  # `firewall-offline-cmd`, which edits firewalld's on-disk zone XML
-  # directly without needing a running firewalld daemon at all. A real
-  # `immediate:` runtime change against a *live* firewalld (going
-  # through `firewall-cmd`/D-Bus) needs an actual running firewalld
-  # service - the same category of gap already documented for
-  # `service:` in this codebase (no init system in the compat harness
-  # container) - so it's not implemented here; that specific combination
-  # (firewalld genuinely running AND an immediate action actually
-  # requested/defaulted) fails with a clear message rather than silently
-  # doing the wrong thing. Every other combination - which is every
-  # combination this plugin is ever likely to see in the containerized/
-  # no-init-system hosts this project's benchmark rounds target - is
-  # serviced via `firewall-offline-cmd` regardless of the `offline:`
-  # param's own value, matching real Ansible's own auto-detected
-  # fallback.
+  # The permanent/offline backend is NOT `firewall-offline-cmd` - real
+  # ansible.posix.firewalld's offline mode never shells out to it; it
+  # uses firewalld's own Python Firewall(offline=True), which loads the
+  # /usr/lib/firewalld + /etc/firewalld zone XML and writes changes back
+  # to /etc/firewalld/zones/<zone>.xml. firewall-offline-cmd dies
+  # entirely in environments where its protocol validation can't resolve
+  # entries like 'esp' (getprotobyname('esp') fails in a slim container
+  # - this plugin previously failed every permanent operation there
+  # while real Ansible succeeded), so the offline backend here is the
+  # same direct XML manipulation the real module's Python does (see
+  # FirewalldCommand's ZoneXml helpers). The one exception is
+  # rich_rule, whose string form needs firewalld's own Rich_Rule
+  # parser for XML serialization AND query canonicalization - it stays
+  # on the firewall-offline-cmd path, which works on hosts where that
+  # binary works and fails (rather than silently mis-editing) where it
+  # doesn't. A real `immediate:` runtime change against a *live*
+  # firewalld goes through `firewall-cmd`/D-Bus and needs the daemon
+  # actually running - validate_permanent_immediate fails that
+  # combination (immediate requested, daemon absent) with real
+  # Ansible's own message.
   #
   # `firewall-offline-cmd`'s command shape and quirks (verified
   # empirically against a real firewalld 2.1.1 install, since much of
   # this isn't documented by `ansible-doc` at all - it belongs to the
   # underlying CLI tool, not the Ansible module) live in
-  # `src/krikri/plugin_helpers/firewalld_command.cr`.
+  # `src/krikri/plugin_helpers/firewalld_command.cr`, alongside the
+  # ZoneXml backend.
   #
   # - port_forward: a list of at most one dict
   #   ({port, proto, toport, toaddr?}), structurally different from
@@ -78,17 +88,18 @@ module Krikri
   #   own module (`ForwardPortTransaction`) fails with "Only one port
   #   forward supported at a time" for more than one entry, and builds
   #   a compound `port=X:proto=Y:toport=Z[:toaddr=W]` value (`toaddr`
-  #   omitted when absent). Verified live against a real
-  #   `firewall-offline-cmd` (firewalld 1.3.3, Debian bookworm
-  #   container): `--add-forward-port=`/`--remove-forward-port=`/
-  #   `--query-forward-port=` all take this same compound value and
-  #   exist as their own distinct flags (NOT reachable via the generic
-  #   add/remove/query-<thing> pattern the other things use).
+  #   omitted when absent) for the runtime path; the offline path
+  #   stores the same fields as a <forward-port> element.
   #
   # Not implemented: `timeout`, `immediate` (meaningless without a
   # running daemon - offline always forces it false, matching real
   # Ansible's own behavior).
   class FirewalldPlugin < BasePlugin
+    ETC_ZONE_DIR = "/etc/firewalld/zones"
+    USR_ZONE_DIR = "/usr/lib/firewalld/zones"
+    ETC_CONF_DIR = "/etc/firewalld"
+    USR_CONF_DIR = "/usr/lib/firewalld"
+
     # Which change contexts the current request touches, set by
     # #validate_permanent_immediate (see its own comment).
     @do_runtime = false
@@ -100,6 +111,16 @@ module Krikri
         return PluginResult.new(changed: false, failed: true, msg: "missing required argument: state")
       end
 
+      # Real Ansible's argument spec: state choices are enabled,
+      # disabled, present, absent - anything else fails at argument
+      # validation time, before any firewalld interaction (verified
+      # live: "value of state must be one of: absent, disabled, enabled,
+      # present, got: enabled-forever"). This plugin previously
+      # accepted any other value as a silent "disabled".
+      unless %w[enabled disabled present absent].includes?(state)
+        return PluginResult.new(changed: false, failed: true, msg: "value of state must be one of: absent, disabled, enabled, present, got: #{state}")
+      end
+
       zone = resolve_zone
       unless zone
         return PluginResult.new(changed: false, failed: true, msg: "missing required argument: zone (and no default zone could be determined)")
@@ -107,6 +128,16 @@ module Krikri
 
       if validation_error = validate_permanent_immediate(zone)
         return validation_error
+      end
+
+      # Real Ansible's own mutually_exclusive constraint spans target
+      # and port_forward too - target+port together is a validation
+      # failure there, not a silently-honored target. (Live-verified
+      # error message shape: "parameters are mutually exclusive:
+      # icmp_block|...|source|target".)
+      all_things = PluginHelpers::FirewalldCommand::SUPPORTED_THINGS + ["port_forward", "target"]
+      if all_things.count { |key| @params[key]? } > 1
+        return PluginResult.new(changed: false, failed: true, msg: "parameters are mutually exclusive: icmp_block|icmp_block_inversion|service|protocol|port|port_forward|rich_rule|interface|forward|masquerade|source|target")
       end
 
       if target = @params["target"]?
@@ -132,13 +163,17 @@ module Krikri
         return run_port_forward(zone, state, port_forward)
       end
 
-      thing = PluginHelpers::FirewalldCommand.thing(@params)
-      unless thing
-        return PluginResult.new(changed: false, failed: true, msg: "exactly one of service, port, rich_rule, source, masquerade, interface, icmp_block, protocol, icmp_block_inversion, forward, port_forward, target is required")
+      if thing = PluginHelpers::FirewalldCommand.thing(@params)
+        key, value = thing
+        return run(zone, state, key, value)
       end
 
-      key, value = thing
-      run(zone, state, key, value)
+      # Zero "things" is NOT an error: verified live, real Ansible with
+      # only zone+state (enabled, permanent) succeeds as a no-op
+      # (changed=false) - its transaction list is simply empty. This
+      # plugin previously failed such a task with an "exactly one of
+      # ... is required" error.
+      PluginResult.new(changed: false, failed: false, msg: "", zone: zone)
     end
 
     private def run_target(zone : String, state : String, target : String) : PluginResult
@@ -160,15 +195,26 @@ module Krikri
       want_present = state == "enabled" || state == "present"
       desired = want_present ? target : "default"
 
-      current = remote_exec("firewall-offline-cmd --zone=#{zone} --get-target")[:stdout].strip
-      return PluginResult.new(changed: false, failed: false, msg: "", zone: zone) if current == desired
+      content = read_zone_xml(zone)
+      return PluginResult.new(changed: false, failed: true, msg: "INVALID_ZONE: #{zone}", zone: zone) unless content
+
+      return PluginResult.new(changed: false, failed: false, msg: "", zone: zone) if zone_target(content) == desired
 
       if true?(@params["check_mode"]?)
         return PluginResult.new(changed: true, failed: false, msg: "", zone: zone)
       end
 
-      result = remote_exec("firewall-offline-cmd --zone=#{zone} --set-target=#{desired}")
-      PluginResult.new(changed: result[:exit_code] == 0, failed: result[:exit_code] != 0, msg: result[:stdout], zone: zone)
+      write_zone_xml(zone, PluginHelpers::FirewalldCommand.zone_set_target(content, desired))
+      PluginResult.new(changed: true, failed: false, msg: "", zone: zone)
+    end
+
+    # The zone root's target attribute - a zone's target isn't optional
+    # the way an entry is, its ABSENCE is the "default" target (see the
+    # class comment on state: disabled/absent resetting to "default").
+    private def zone_target(content : String) : String
+      root = XML.parse(content).root
+      return "default" unless root && root.name == "zone"
+      root["target"]? || "default"
     end
 
     # Matches real Ansible's own `ForwardPortTransaction` construction
@@ -188,19 +234,49 @@ module Krikri
       check_mode = true?(@params["check_mode"]?)
       changed = false
 
-      contexts.each do |binary|
-        present = remote_exec(PluginHelpers::FirewalldCommand.forward_port_query_command(zone, value, binary))[:exit_code] == 0
-        next if present == want_present
+      if @do_runtime
+        result = forward_port_runtime(zone, value, want_present, check_mode)
+        return result if result.failed?
+        changed ||= result.changed?
+      end
 
-        return PluginResult.new(changed: true, failed: false, msg: "", zone: zone) if check_mode
-
-        cmd = want_present ? PluginHelpers::FirewalldCommand.forward_port_add_command(zone, value, binary) : PluginHelpers::FirewalldCommand.forward_port_remove_command(zone, value, binary)
-        result = remote_exec(cmd)
-        return PluginResult.new(changed: false, failed: true, msg: result[:stdout], zone: zone) if result[:exit_code] != 0
-        changed = true
+      if @do_permanent
+        result = forward_port_offline(zone, entries[0], want_present, check_mode)
+        return result if result.failed?
+        changed ||= result.changed?
       end
 
       PluginResult.new(changed: changed, failed: false, msg: "", zone: zone)
+    end
+
+    private def forward_port_runtime(zone : String, value : String, want_present : Bool, check_mode : Bool) : PluginResult
+      present = remote_exec(PluginHelpers::FirewalldCommand.forward_port_query_command(zone, value, "firewall-cmd"))[:exit_code] == 0
+      return PluginResult.new(changed: false, failed: false, msg: "", zone: zone) if present == want_present
+      return PluginResult.new(changed: true, failed: false, msg: "", zone: zone) if check_mode
+
+      cmd = want_present ? PluginHelpers::FirewalldCommand.forward_port_add_command(zone, value, "firewall-cmd") : PluginHelpers::FirewalldCommand.forward_port_remove_command(zone, value, "firewall-cmd")
+      result = remote_exec(cmd)
+      return PluginResult.new(changed: false, failed: true, msg: result[:stdout], zone: zone) if result[:exit_code] != 0
+
+      PluginResult.new(changed: true, failed: false, msg: "", zone: zone)
+    end
+
+    private def forward_port_offline(zone : String, entry : JSON::Any, want_present : Bool, check_mode : Bool) : PluginResult
+      content = read_zone_xml(zone)
+      return PluginResult.new(changed: false, failed: true, msg: "INVALID_ZONE: #{zone}", zone: zone) unless content
+
+      element, attrs = PluginHelpers::FirewalldCommand.forward_port_element(entry)
+      present = PluginHelpers::FirewalldCommand.zone_query(content, element, attrs)
+      return PluginResult.new(changed: false, failed: false, msg: "", zone: zone) if present == want_present
+      return PluginResult.new(changed: true, failed: false, msg: "", zone: zone) if check_mode
+
+      new_content = want_present ? PluginHelpers::FirewalldCommand.zone_add(content, element, attrs) : PluginHelpers::FirewalldCommand.zone_remove(content, element, attrs)
+      if new_content
+        write_zone_xml(zone, new_content)
+        return PluginResult.new(changed: true, failed: false, msg: "", zone: zone)
+      end
+
+      PluginResult.new(changed: false, failed: false, msg: "", zone: zone)
     end
 
     private def run(zone : String, state : String, key : String, value : String) : PluginResult
@@ -208,52 +284,124 @@ module Krikri
       check_mode = true?(@params["check_mode"]?)
       changed = false
 
-      contexts.each do |binary|
-        present = remote_exec(PluginHelpers::FirewalldCommand.query_command(zone, key, value, binary))[:exit_code] == 0
-        next if present == want_present
+      if @do_runtime
+        present = remote_exec(PluginHelpers::FirewalldCommand.query_command(zone, key, value, "firewall-cmd"))[:exit_code] == 0
+        if present != want_present
+          return PluginResult.new(changed: true, failed: false, msg: "", zone: zone) if check_mode
+          cmd = want_present ? PluginHelpers::FirewalldCommand.add_command(zone, key, value, "firewall-cmd") : PluginHelpers::FirewalldCommand.remove_command(zone, key, value, "firewall-cmd")
+          result = remote_exec(cmd)
+          return PluginResult.new(changed: false, failed: true, msg: result[:stdout], zone: zone) if result[:exit_code] != 0
+          changed = true
+        end
+      end
 
-        return PluginResult.new(changed: true, failed: false, msg: "", zone: zone) if check_mode
-
-        cmd = want_present ? PluginHelpers::FirewalldCommand.add_command(zone, key, value, binary) : PluginHelpers::FirewalldCommand.remove_command(zone, key, value, binary)
-        result = remote_exec(cmd)
-        return PluginResult.new(changed: false, failed: true, msg: result[:stdout], zone: zone) if result[:exit_code] != 0
-        changed = true
+      if @do_permanent
+        if key == "rich_rule"
+          result = run_rich_rule_offline(zone, want_present, value, check_mode)
+          return result if result.failed?
+          changed ||= result.changed?
+        else
+          result = run_thing_offline(zone, key, value, want_present, check_mode)
+          return result if result.failed?
+          changed ||= result.changed?
+        end
       end
 
       PluginResult.new(changed: changed, failed: false, msg: "", zone: zone)
     end
 
-    # The CLI binaries to service this request through - `firewall-cmd`
-    # (the live-daemon D-Bus client) for an immediate action against a
-    # running firewalld, `firewall-offline-cmd` (on-disk zone XML) for a
-    # permanent one. Both when both were requested - real Ansible's own
-    # module applies each requested context separately and ORs the
-    # changed flags.
-    private def contexts : Array(String)
-      binaries = [] of String
-      binaries << "firewall-cmd" if @do_runtime
-      binaries << "firewall-offline-cmd" if @do_permanent
-      binaries
+    # The XML-file backend for every "thing" except rich_rule (see the
+    # class comment) - real Ansible's own offline mode edits the zone
+    # config files via firewalld's Python Firewall(offline=True); the
+    # direct file manipulation below mirrors that. The zone file is
+    # read from /etc (user config) first, then /usr/lib (stock), exactly
+    # the real module's load order; a zone present in neither is real
+    # Ansible's INVALID_ZONE failure.
+    private def run_thing_offline(zone : String, key : String, value : String, want_present : Bool, check_mode : Bool) : PluginResult
+      content = read_zone_xml(zone)
+      return PluginResult.new(changed: false, failed: true, msg: "INVALID_ZONE: #{zone}", zone: zone) unless content
+
+      element, attrs = PluginHelpers::FirewalldCommand.zone_element(key, value)
+      present = PluginHelpers::FirewalldCommand.zone_query(content, element, attrs)
+      return PluginResult.new(changed: false, failed: false, msg: "", zone: zone) if present == want_present
+      return PluginResult.new(changed: true, failed: false, msg: "", zone: zone) if check_mode
+
+      new_content = want_present ? PluginHelpers::FirewalldCommand.zone_add(content, element, attrs) : PluginHelpers::FirewalldCommand.zone_remove(content, element, attrs)
+      if new_content
+        write_zone_xml(zone, new_content)
+        return PluginResult.new(changed: true, failed: false, msg: "", zone: zone)
+      end
+
+      PluginResult.new(changed: false, failed: false, msg: "", zone: zone)
+    end
+
+    # rich_rule stays on the firewall-offline-cmd path (see the class
+    # comment - its string form needs firewalld's own Rich_Rule parser,
+    # both for XML serialization and for query canonicalization), so
+    # this only works on hosts where that binary works.
+    private def run_rich_rule_offline(zone : String, want_present : Bool, value : String, check_mode : Bool) : PluginResult
+      present = remote_exec(PluginHelpers::FirewalldCommand.query_command(zone, "rich_rule", value))[:exit_code] == 0
+      return PluginResult.new(changed: false, failed: false, msg: "", zone: zone) if present == want_present
+      return PluginResult.new(changed: true, failed: false, msg: "", zone: zone) if check_mode
+
+      cmd = want_present ? PluginHelpers::FirewalldCommand.add_command(zone, "rich_rule", value) : PluginHelpers::FirewalldCommand.remove_command(zone, "rich_rule", value)
+      result = remote_exec(cmd)
+      return PluginResult.new(changed: false, failed: true, msg: result[:stdout], zone: zone) if result[:exit_code] != 0
+
+      PluginResult.new(changed: true, failed: false, msg: "", zone: zone)
+    end
+
+    # Writes back to /etc/firewalld/zones/<zone>.xml - real Ansible's
+    # offline mode persists every change there (firewalld's own
+    # set_zone_config), including changes to a stock /usr/lib zone,
+    # which effectively copies it into user config.
+    private def write_zone_xml(zone : String, content : String) : Nil
+      Dir.mkdir_p(ETC_ZONE_DIR)
+      File.write(File.join(ETC_ZONE_DIR, "#{zone}.xml"), content)
+    end
+
+    private def read_zone_xml(zone : String) : String?
+      return nil if zone.includes?("/") || zone.includes?("..")
+      [File.join(ETC_ZONE_DIR, "#{zone}.xml"), File.join(USR_ZONE_DIR, "#{zone}.xml")].each do |path|
+        return File.read(path) if File.exists?(path)
+      end
+      nil
     end
 
     # `zone:` (real Ansible's own doc: "the default zone can be
     # configured per system but public is default from upstream") -
-    # falls back to `firewall-offline-cmd --get-default-zone`, which
-    # (like every other operation this plugin shells out to) works
-    # without a live firewalld daemon. Returns nil only if firewalld
-    # itself isn't installed at all (empty/failed output).
+    # resolves the LIVE daemon's default zone when one is running (real
+    # Ansible resolves the default over its D-Bus connection), the
+    # on-disk configured one (firewalld.conf's DefaultZone, the same
+    # thing firewall's offline Python reads) otherwise.
     private def resolve_zone : String?
       given = @params["zone"]?
       return given if given
 
-      # the LIVE daemon's own default zone when one is running (real
-      # Ansible resolves the default over its D-Bus connection), the
-      # on-disk one otherwise
-      cmd = firewalld_running? ? "firewall-cmd --get-default-zone" : "firewall-offline-cmd --get-default-zone"
-      zone = remote_exec(cmd)[:stdout].strip
-      zone.empty? ? nil : zone
+      if firewalld_running?
+        zone = remote_exec("firewall-cmd --get-default-zone")[:stdout].strip
+        return zone unless zone.empty?
+        return nil
+      end
+
+      offline_default_zone
     rescue
       nil
+    end
+
+    private def offline_default_zone : String?
+      found_conf = false
+      [File.join(ETC_CONF_DIR, "firewalld.conf"), File.join(USR_CONF_DIR, "firewalld.conf")].each do |path|
+        next unless File.exists?(path)
+        found_conf = true
+        File.read(path).each_line do |line|
+          line = line.strip
+          next if line.empty? || line.starts_with?("#")
+          key, value = line.split("=", 2)
+          return value.strip if key.strip.downcase == "defaultzone"
+        end
+      end
+      found_conf ? "public" : nil
     end
 
     # Real firewalld's own Python module_utils auto-detects "offline"

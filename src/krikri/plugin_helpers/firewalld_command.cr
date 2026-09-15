@@ -1,3 +1,6 @@
+require "json"
+require "xml"
+
 module Krikri
   module PluginHelpers
     # FirewalldCommand - pure logic for building `firewall-offline-cmd`
@@ -18,6 +21,19 @@ module Krikri
     # is `--remove-service-from-zone=`. `port`/`rich-rule`/`source`/
     # `masquerade` don't have this quirk; their plain `--remove-<thing>=`
     # forms work fine with `--zone=`.
+    #
+    # The ZoneXml section below is the direct zone-config-file backend
+    # for offline mode: real ansible.posix.firewalld's offline mode does
+    # NOT shell out to firewall-offline-cmd at all - it uses firewalld's
+    # own Python Firewall(offline=True), which loads the /usr/lib/
+    # firewalld + /etc/firewalld zone XML into memory and writes changes
+    # back to /etc/firewalld/zones/<zone>.xml. firewall-offline-cmd, by
+    # contrast, dies entirely in environments where its protocol
+    # validation can't resolve entries like 'esp' (getprotobyname('esp')
+    # fails in a slim container), so a CLI-based offline backend
+    # diverges from real Ansible in exactly the containerized hosts this
+    # project targets. These helpers operate on the XML file CONTENT
+    # only - the plugin owns the reads/writes/paths.
     module FirewalldCommand
       SUPPORTED_THINGS = %w[service port rich_rule source masquerade interface icmp_block protocol icmp_block_inversion forward]
 
@@ -106,6 +122,127 @@ module Krikri
 
       def self.forward_port_remove_command(zone : String, value : String, binary : String = "firewall-offline-cmd") : String
         "#{binary} --zone=#{zone} --remove-forward-port='#{value}'"
+      end
+
+      # --- ZoneXml: direct zone-config-file (offline) backend ---
+
+      # The XML element name + identifying attributes each "thing"
+      # serializes to inside a zone config file. The compound value
+      # shapes are firewalld's own file format: port is "N/proto" split
+      # across the port/protocol attributes, everything else maps
+      # attribute-for-attribute. rich_rule is absent here on purpose:
+      # its string form parses through firewalld's own Rich_Rule into
+      # arbitrarily nested <rule> XML, and a hand-rolled subset would
+      # break query canonicalization (attribute order/equivalence), so
+      # it stays on the firewall-offline-cmd path.
+      def self.zone_element(thing : String, value : String) : {String, Hash(String, String)}
+        case thing
+        when "port"
+          parts = value.split("/", 2)
+          {"port", {"port" => parts[0], "protocol" => parts[1]? || ""}}
+        when "service"
+          {"service", {"name" => value}}
+        when "source"
+          {"source", {"address" => value}}
+        when "interface"
+          {"interface", {"name" => value}}
+        when "icmp_block"
+          {"icmp-block", {"name" => value}}
+        when "protocol"
+          {"protocol", {"value" => value}}
+        else
+          # masquerade, icmp_block_inversion, forward - the NO_VALUE_THINGS
+          {thing.gsub('_', '-'), {} of String => String}
+        end
+      end
+
+      # A <forward-port> element's identifying attributes for a
+      # port_forward entry dict (port/proto required, toport required,
+      # toaddr optional and simply absent from the element when not
+      # given - matching the compound-value shape ForwardPortTransaction
+      # builds).
+      def self.forward_port_element(entry : JSON::Any) : {String, Hash(String, String)}
+        attrs = {
+          "port"     => entry["port"].to_s,
+          "protocol" => entry["proto"].to_s,
+          "to-port"  => entry["toport"].to_s,
+        }
+        if toaddr = entry["toaddr"]?
+          attrs = attrs.merge({"to-addr" => toaddr.to_s})
+        end
+        {"forward-port", attrs}
+      end
+
+      # Does the zone XML already contain the element? (the query step -
+      # exactly one element matching name + every identifying attribute)
+      def self.zone_query(content : String, element : String, attrs : Hash(String, String)) : Bool
+        root = zone_root(content)
+        return false unless root
+        root.children.any? do |child|
+          child.element? && child.name == element &&
+            attrs.all? { |key, value| child[key]? == value }
+        end
+      end
+
+      # Serialized zone XML with the element added, or nil if it's
+      # already present (query-then-add stays the caller's idempotency
+      # primitive, mirroring the CLI path's query exit code).
+      def self.zone_add(content : String, element : String, attrs : Hash(String, String)) : String?
+        root = zone_root(content)
+        return nil unless root
+        return nil if zone_query(content, element, attrs)
+        rebuild(root, root.children.select(&.element?).map(&.to_s) + [build_element(element, attrs)])
+      end
+
+      # Serialized zone XML with the element removed, or nil if it
+      # wasn't present.
+      def self.zone_remove(content : String, element : String, attrs : Hash(String, String)) : String?
+        root = zone_root(content)
+        return nil unless root
+        matching = root.children.select do |child|
+          child.element? && child.name == element &&
+            attrs.all? { |key, value| child[key]? == value }
+        end
+        return nil if matching.empty?
+        kept = root.children.reject { |child| matching.includes?(child) }
+        rebuild(root, kept.select(&.element?).map(&.to_s))
+      end
+
+      # Serialized zone XML with the zone root's target attribute set
+      # (or removed for "default" - a zone's target isn't optional the
+      # way an entry is, absence IS "default").
+      def self.zone_set_target(content : String, target : String) : String
+        root = zone_root(content)
+        return content unless root
+        root.attributes.delete("target") if root.attributes["target"]?
+        attr_line = root.attributes.map { |a| %(#{a.name}="#{a.content}") }.join(" ")
+        attr_line = " #{attr_line}" unless attr_line.empty?
+        if target != "default"
+          attr_line += %( target="#{target}")
+        end
+        "<zone#{attr_line}>\n#{root.children.select(&.element?).map(&.to_s).join("\n")}\n</zone>\n"
+      end
+
+      private def self.zone_root(content : String) : XML::Node?
+        root = XML.parse(content).root
+        return nil unless root && root.name == "zone"
+        root
+      end
+
+      private def self.build_element(element : String, attrs : Hash(String, String)) : String
+        attr_s = attrs.map { |key, value| %( #{key}="#{value}") }.join
+        "<#{element}#{attr_s}/>"
+      end
+
+      # Re-serializes the zone root with *children* as the full element
+      # child list (text/whitespace nodes dropped - the output is
+      # normalized one-element-per-line, which firewalld's own writer
+      # also is). Callers pass the existing element children they want
+      # kept plus any new ones.
+      private def self.rebuild(root : XML::Node, children : Array(String)) : String
+        attr_line = root.attributes.map { |a| %(#{a.name}="#{a.content}") }.join(" ")
+        attr_line = " #{attr_line}" unless attr_line.empty?
+        "<zone#{attr_line}>\n#{children.join("\n")}\n</zone>\n"
       end
     end
   end

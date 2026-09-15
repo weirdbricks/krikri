@@ -125,6 +125,20 @@ if printf '%s\n' "${cases[@]}" | grep -q '^openssl'; then
   done
 fi
 
+# firewalld cases need the firewalld PACKAGE (firewall-offline-cmd +
+# the python bindings the real module imports) in BOTH containers -
+# without it real ansible.posix.firewalld dies on the import before any
+# validation, manufacturing a divergence. No daemon runs (no systemd);
+# the real module auto-detects offline mode, same backend krikri
+# drives. Gated on the requested case list like the mysql cases above.
+if printf '%s\n' "${cases[@]}" | grep -q '^firewalld'; then
+  log "installing firewalld package (offline-cmd + bindings) for firewalld cases"
+  for c in "$NAME_A" "$NAME_B"; do
+    podman exec "$c" bash -c "apt-get install -y -qq --no-install-recommends firewalld >/dev/null" \
+      || { log "FATAL: firewalld install failed in $c"; exit 1; }
+  done
+fi
+
 # modprobe cases need the kmod package (real /sbin/modprobe) in BOTH
 # containers - debian:bookworm-slim ships without it, which would make
 # every case fail with "Failed to find required executable" instead of
