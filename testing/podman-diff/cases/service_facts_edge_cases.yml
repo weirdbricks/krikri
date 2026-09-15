@@ -1,0 +1,47 @@
+# service_facts edge cases. The podman containers are debian:bookworm-slim
+# with NO systemd (PID 1 is sleep, no systemctl binary) - which is exactly
+# the non-systemd-manager path: real Ansible runs its SysV scan (guard:
+# a `service` binary and neither chkconfig nor rc-status present), and the
+# systemd scan finds nothing. Both containers install cron explicitly, so
+# /etc/init.d/cron and its listing entry are comparable; the FULL service
+# list is NOT (the real container carries extra init scripts from its
+# ansible-core install). failed=/changed=/skipped=, fact STRUCTURE
+# (services is a dict keyed by unit/init-script name with
+# {name, source, state} for sysv entries - no status key), and the
+# source: field value are what matter.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "V1 service_facts on a non-systemd host"
+      ansible.builtin.service_facts:
+      register: v1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "V1 failed={{ v1.failed }} changed={{ v1.changed }} skipped={{ v1.skipped | default('none') }} cron_present={{ 'cron' in v1.ansible_facts.services }}"
+
+    - name: "V2 sysv entry shape for cron"
+      ansible.builtin.set_fact:
+        v2cron: "{{ v1.ansible_facts.services['cron'] }}"
+    - ansible.builtin.debug:
+        msg: "V2 keys={{ v2cron.keys() | list | sort | join(',') }} source={{ v2cron.source }} name={{ v2cron.name }} state={{ v2cron.state }} has_status={{ 'status' in v2cron }}"
+
+    - name: "V3 services is a mapping, not a list"
+      ansible.builtin.set_fact:
+        v3services: "{{ v1.ansible_facts.services }}"
+    - ansible.builtin.debug:
+        msg: "V3 is_map={{ v3services is mapping }} is_seq={{ v3services is sequence }}"
+
+    - name: "V4 check-mode run gathers the same shape"
+      ansible.builtin.service_facts:
+      check_mode: true
+      register: v4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "V4 failed={{ v4.failed }} changed={{ v4.changed }} cron_present={{ 'cron' in v4.ansible_facts.services | default(false) }}"
+
+    - name: "V5 state missing entirely (services fact absent downstream)"
+      ansible.builtin.set_fact:
+        v5lookup: "{{ v1.ansible_facts.services['krikri-no-such-svc'] | default('absent') }}"
+    - ansible.builtin.debug:
+        msg: "V5 missing_service={{ v5lookup }}"
