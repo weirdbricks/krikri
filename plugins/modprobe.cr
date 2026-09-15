@@ -46,10 +46,25 @@ module Krikri
   # caller (loading nf_conntrack for ufw) doesn't use it.
   class ModprobePlugin < BasePlugin
     def execute : PluginResult
+      # Real AnsibleModule validates the argument spec BEFORE anything
+      # else runs (before get_bin_path, before any state check) - so a
+      # bad state or missing name must win even when the modprobe binary
+      # is missing. Verified live: with the binary hidden, real Ansible
+      # still reports "value of state must be one of: ..." first.
       name = @params["name"]?
-      return PluginResult.new(changed: false, failed: true, msg: "missing required argument: name") unless name
+      return PluginResult.new(changed: false, failed: true, msg: "missing required arguments: name") unless name
 
       state = @params["state"]? || "present"
+      unless state == "present" || state == "absent"
+        return PluginResult.new(changed: false, failed: true, msg: "value of state must be one of: absent, present, got: #{state}")
+      end
+
+      if persistent = @params["persistent"]?
+        unless persistent == "disabled" || persistent == "present" || persistent == "absent"
+          return PluginResult.new(changed: false, failed: true, msg: "value of persistent must be one of: disabled, present, absent, got: #{persistent}")
+        end
+      end
+
       check_mode = true?(@params["check_mode"]?)
 
       # Real modprobe.py resolves (and requires) the binary before
@@ -65,24 +80,65 @@ module Krikri
         )
       end
 
-      loaded = module_loaded?(name)
+      loaded = module_loaded(name)
+      if loaded.is_a?(String)
+        return PluginResult.new(changed: false, failed: true, msg: loaded)
+      end
 
-      case state
-      when "present"
+      if state == "present"
         ensure_loaded(modprobe_path, name, loaded, check_mode)
-      when "absent"
-        ensure_unloaded(modprobe_path, name, loaded, check_mode)
       else
-        PluginResult.new(changed: false, failed: true, msg: "state must be 'present' or 'absent', got '#{state}'")
+        ensure_unloaded(modprobe_path, name, loaded, check_mode)
       end
     end
 
-    private def module_loaded?(name : String) : Bool
-      # Kernel module directory names always use underscores, even when
-      # the module is more commonly referred to with a dash (nf-
-      # conntrack vs nf_conntrack) - normalize the same way modprobe(8)
-      # itself does before checking.
-      File.directory?("/sys/module/#{name.gsub('-', '_')}")
+    # Real modprobe.py's module_loaded(): scans /proc/modules for
+    # "<name_> " (dash-normalized), then falls back to scanning
+    # /lib/modules/$(uname -r)/modules.builtin for lines ending in
+    # "/<name>.ko" (builtin modules count as loaded). Any OSError in
+    # that sequence - typically a container without modules.builtin -
+    # is an UNCAUGHT Python exception real Ansible surfaces as the
+    # task failure "[Errno 2] No such file or directory: '...'", NOT
+    # a clean yes/no. Returns the boolean, or the formatted OSError
+    # text to fail the task with.
+    private def module_loaded(name : String) : Bool | String
+      path = "/proc/modules"
+      begin
+        module_name = "#{name.gsub('-', '_')} "
+        is_loaded = false
+        File.each_line(path) do |line|
+          if line.starts_with?(module_name)
+            is_loaded = true
+            break
+          end
+        end
+        return true if is_loaded
+
+        module_file = "/#{name}.ko"
+        path = "/lib/modules/#{kernel_release}/modules.builtin"
+        File.each_line(path) do |line|
+          return true if line.rstrip.ends_with?(module_file)
+        end
+        false
+      rescue e : File::Error
+        os_error_text(e, path)
+      end
+    end
+
+    private def kernel_release : String
+      File.read("/proc/sys/kernel/osrelease").chomp
+    end
+
+    # Formats the Errno the way Python's str(OSError) does - that text
+    # is exactly what real Ansible surfaces when module_loaded()'s file
+    # access fails.
+    private def os_error_text(e : File::Error, path : String) : String
+      errno = e.os_error.try(&.value)
+      case errno
+      when 2   then "[Errno 2] No such file or directory: '#{path}'"
+      when 13  then "[Errno 13] Permission denied: '#{path}'"
+      else          "[Errno #{errno}] #{e.message}"
+      end
     end
 
     # Directories searched beyond $PATH for the modprobe binary. Real
@@ -125,7 +181,9 @@ module Krikri
 
       result = remote_exec(PluginHelpers::ModprobeCommand.load_command(modprobe_path, name, @params["params"]?))
       unless result[:exit_code] == 0
-        return PluginResult.new(changed: false, failed: true, msg: "Failed to load module #{name}", stderr: result[:stderr])
+        # Real modprobe.py's load_module: fail_json(msg=err, ...) - the
+        # msg IS the raw modprobe stderr, not a wrapper sentence.
+        return PluginResult.new(changed: false, failed: true, msg: result[:stderr].to_s, stderr: result[:stderr])
       end
 
       PluginResult.new(changed: true, failed: false, msg: "Loaded #{name}")
@@ -137,7 +195,7 @@ module Krikri
 
       result = remote_exec("#{modprobe_path} -r #{name}")
       unless result[:exit_code] == 0
-        return PluginResult.new(changed: false, failed: true, msg: "Failed to unload module #{name}", stderr: result[:stderr])
+        return PluginResult.new(changed: false, failed: true, msg: result[:stderr].to_s, stderr: result[:stderr])
       end
 
       PluginResult.new(changed: true, failed: false, msg: "Unloaded #{name}")

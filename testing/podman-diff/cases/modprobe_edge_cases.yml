@@ -1,0 +1,109 @@
+# modprobe edge cases. Argument validation that real AnsibleModule does
+# BEFORE any real modprobe(8)/kernel call is what's testable here - a
+# container can't load or unload a real kernel module, so actual module
+# mutation is not exercised (state present on a never-loaded module
+# still exercises the real modprobe binary's not-found failure, which
+# both engines shell out to). failed=/changed= and error CLASS matter;
+# error-message WORDING may differ.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "M1 state absent on a module never loaded is a no-op"
+      community.general.modprobe:
+        name: krikri-notamodule
+        state: absent
+      register: m1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "M1 failed={{ m1.failed }} changed={{ m1.changed | default('none') }}"
+
+    - name: "M2 invalid state value is rejected by the arg spec"
+      community.general.modprobe:
+        name: krikri-notamodule
+        state: loaded
+      register: m2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "M2 failed={{ m2.failed }} changed={{ m2.changed | default('none') }}"
+
+    - name: "M3 missing name param is rejected by the arg spec"
+      community.general.modprobe:
+        state: absent
+      register: m3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "M3 failed={{ m3.failed }} changed={{ m3.changed | default('none') }}"
+
+    - name: "M4 state present on a nonexistent module fails via the real modprobe binary"
+      community.general.modprobe:
+        name: krikri-notamodule
+      register: m4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "M4 failed={{ m4.failed }} changed={{ m4.changed | default('none') }}"
+
+    - name: "M5 check mode present on a never-loaded module reports would-load"
+      community.general.modprobe:
+        name: krikri-notamodule
+      register: m5
+      check_mode: true
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "M5 failed={{ m5.failed }} changed={{ m5.changed | default('none') }}"
+
+    - name: "M6 check mode absent on a never-loaded module is a no-op (loaded check first)"
+      community.general.modprobe:
+        name: krikri-notamodule
+        state: absent
+      register: m6
+      check_mode: true
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "M6 failed={{ m6.failed }} changed={{ m6.changed | default('none') }}"
+
+    - name: "M7 dash-name is normalized when checking loaded state"
+      community.general.modprobe:
+        name: krikri-no-such-mod
+        state: absent
+      register: m7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "M7 failed={{ m7.failed }} changed={{ m7.changed | default('none') }}"
+
+    # Real AnsibleModule validates the arg spec BEFORE
+    # get_bin_path('modprobe', required=True) runs, so hiding the binary
+    # must not change the M2/M3 outcomes (invalid state / missing name
+    # still win). M8 hides the binary only; M9 stacks invalid state on
+    # top of it to expose any ordering divergence.
+    - name: "M8 hide the modprobe binary"
+      ansible.builtin.shell: "p=$(command -v modprobe) && mv \"$p\" \"$p.bak\" || true"
+    - name: "M8 state absent, never loaded, with the binary missing"
+      community.general.modprobe:
+        name: krikri-notamodule
+        state: absent
+      register: m8
+      ignore_errors: true
+    - name: "M9 invalid state with the binary missing (arg spec still wins)"
+      community.general.modprobe:
+        name: krikri-notamodule
+        state: bogus
+      register: m9
+      ignore_errors: true
+    - name: "M8 restore the modprobe binary"
+      ansible.builtin.shell: "p=$(ls /usr/sbin/modprobe.bak /sbin/modprobe.bak /usr/bin/modprobe.bak /bin/modprobe.bak 2>/dev/null | head -1); [ -n \"$p\" ] && mv \"$p\" \"${p%.bak}\"; true"
+    - name: "M8 confirm the binary is back"
+      ansible.builtin.shell: "command -v modprobe"
+      register: m8_check
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "M8 failed={{ m8.failed }} changed={{ m8.changed | default('none') }} restored={{ (m8_check.rc | default(1)) == 0 }} M9 failed={{ m9.failed }} changed={{ m9.changed | default('none') }}"
+
+    - name: "M10 empty name string passes required, hits the loaded check"
+      community.general.modprobe:
+        name: ""
+        state: absent
+      register: m10
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "M10 failed={{ m10.failed }} changed={{ m10.changed | default('none') }}"

@@ -102,6 +102,19 @@ if printf '%s\n' "${cases[@]}" | grep -q '^openssl'; then
   done
 fi
 
+# modprobe cases need the kmod package (real /sbin/modprobe) in BOTH
+# containers - debian:bookworm-slim ships without it, which would make
+# every case fail with "Failed to find required executable" instead of
+# exercising the module-state logic. Gated on the requested case list
+# like the mysql/openssl cases above.
+if printf '%s\n' "${cases[@]}" | grep -q '^modprobe'; then
+  log "installing kmod for modprobe cases"
+  for c in "$NAME_A" "$NAME_B"; do
+    podman exec "$c" bash -c "apt-get install -y -qq --no-install-recommends kmod >/dev/null" \
+      || { log "FATAL: kmod install failed in $c"; exit 1; }
+  done
+fi
+
 overall_rc=0
 for case_file in "${cases[@]}"; do
   case_name="${case_file%.yml}"
