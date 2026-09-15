@@ -1,0 +1,110 @@
+# yum_repository module edge cases. The module itself is (like real
+# Ansible's) mostly pure file manipulation under /etc/yum.repos.d, so
+# these exercise REAL operations, not just validation: a valid baseurl
+# writes a .repo file and is idempotent on rerun, state=absent for a
+# nonexistent repo is a clean ok, and arg-spec rejections (invalid
+# state, out-of-spec param, no url source at all) fail like real.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "D1 yum_repository with an invalid state value"
+      ansible.builtin.yum_repository:
+        name: krikri
+        description: Krikri test repo
+        baseurl: https://example.invalid/krikri
+        state: installed-nowhere
+      register: d1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D1 failed={{ d1.failed | default('none') }} changed={{ d1.changed | default('none') }}"
+
+    - name: "D2 yum_repository with an out-of-spec parameter"
+      ansible.builtin.yum_repository:
+        name: krikri
+        description: Krikri test repo
+        baseurl: https://example.invalid/krikri
+        krikri_not_a_repo_param: true
+      register: d2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D2 failed={{ d2.failed | default('none') }} changed={{ d2.changed | default('none') }}"
+
+    - name: "D3 yum_repository with no url source at all"
+      ansible.builtin.yum_repository:
+        name: krikri
+        description: Krikri test repo
+      register: d3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D3 failed={{ d3.failed | default('none') }} changed={{ d3.changed | default('none') }}"
+
+    - name: "D4 create the reposdir so the write lifecycle is exercisable (real refuses to mkdir it itself)"
+      ansible.builtin.file:
+        path: /etc/yum.repos.d
+        state: directory
+
+    - name: "D5 yum_repository with a valid baseurl creates the repo"
+      ansible.builtin.yum_repository:
+        name: krikri
+        description: Krikri test repo
+        baseurl: https://example.invalid/krikri
+        enabled: true
+        gpgcheck: false
+      register: d5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D5 failed={{ d5.failed | default('none') }} changed={{ d5.changed | default('none') }}"
+
+    - name: "D6 yum_repository same definition again is idempotent"
+      ansible.builtin.yum_repository:
+        name: krikri
+        description: Krikri test repo
+        baseurl: https://example.invalid/krikri
+        enabled: true
+        gpgcheck: false
+      register: d6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D6 failed={{ d6.failed | default('none') }} changed={{ d6.changed | default('none') }}"
+
+    - name: "D7 yum_repository state=absent for a nonexistent repo"
+      ansible.builtin.yum_repository:
+        name: krikri-no-such-repo
+        state: absent
+      register: d7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D7 failed={{ d7.failed | default('none') }} changed={{ d7.changed | default('none') }}"
+
+    - name: "D8 yum_repository state=absent removes the created repo"
+      ansible.builtin.yum_repository:
+        name: krikri
+        state: absent
+      register: d8
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D8 failed={{ d8.failed | default('none') }} changed={{ d8.changed | default('none') }}"
+
+    - name: "D9 yum_repository state=absent again is idempotent"
+      ansible.builtin.yum_repository:
+        name: krikri
+        state: absent
+      register: d9
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D9 failed={{ d9.failed | default('none') }} changed={{ d9.changed | default('none') }}"
+
+    - name: "D10 remove the now-empty reposdir"
+      ansible.builtin.file:
+        path: /etc/yum.repos.d
+        state: absent
+
+    - name: "D11 yum_repository state=absent with the reposdir gone fails like real"
+      ansible.builtin.yum_repository:
+        name: krikri
+        state: absent
+      register: d11
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D11 failed={{ d11.failed | default('none') }} changed={{ d11.changed | default('none') }}"

@@ -1,0 +1,62 @@
+# rpm_key module edge cases. rpm itself is NOT functional on the Debian
+# harness containers (no RPM database, no rpm binary), so these are
+# validation-only cases: they check WHICH error each engine reports
+# first (argument-spec rejection vs backend failure) and the
+# failed=/changed= shape, not key operations. The rpm_key plugin still
+# ships in this engine for the RPM-family hosts it targets.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "K1 rpm_key with an invalid state value"
+      ansible.builtin.rpm_key:
+        key: https://example.invalid/krikri.asc
+        state: installed-nowhere
+      register: k1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "K1 failed={{ k1.failed | default('none') }} changed={{ k1.changed | default('none') }}"
+
+    - name: "K2 rpm_key with an out-of-spec parameter"
+      ansible.builtin.rpm_key:
+        key: https://example.invalid/krikri.asc
+        state: present
+        krikri_not_an_rpm_key_param: true
+      register: k2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "K2 failed={{ k2.failed | default('none') }} changed={{ k2.changed | default('none') }}"
+
+    - name: "K3 rpm_key with neither key nor the state making it usable (missing key param)"
+      ansible.builtin.rpm_key:
+        state: present
+      register: k3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "K3 failed={{ k3.failed | default('none') }} changed={{ k3.changed | default('none') }}"
+
+    - name: "K4 rpm_key state=absent with no key param"
+      ansible.builtin.rpm_key:
+        state: absent
+      register: k4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "K4 failed={{ k4.failed | default('none') }} changed={{ k4.changed | default('none') }}"
+
+    - name: "K5 rpm_key state=present with a nonexistent local key file"
+      ansible.builtin.rpm_key:
+        key: /tmp/krikri-no-such-key.asc
+        state: present
+      register: k5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "K5 failed={{ k5.failed | default('none') }} changed={{ k5.changed | default('none') }}"
+
+    - name: "K6 rpm_key state=present with an unreachable https URL"
+      ansible.builtin.rpm_key:
+        key: https://krikri.invalid/krikri.asc
+        state: present
+      register: k6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "K6 failed={{ k6.failed | default('none') }} changed={{ k6.changed | default('none') }}"

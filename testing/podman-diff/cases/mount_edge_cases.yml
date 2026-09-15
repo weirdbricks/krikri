@@ -1,0 +1,106 @@
+# ansible.posix.mount edge cases. state=present/unmounted/absent only
+# edit /etc/fstab (no actual mount syscall), which works fine inside the
+# privileged harness containers, so the fstab lifecycle is exercised for
+# real: create, idempotent rerun, remove, idempotent rerun. state=
+# mounted would actually mount - kept to a tmpfs src, which a
+# privileged container can mount for real, matching real Ansible's own
+# changed/ok cadence.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "M1 mount with missing required params (no fstype)"
+      ansible.posix.mount:
+        path: /mnt/krikri
+        src: tmpfs
+        state: mounted
+      register: m1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "M1 failed={{ m1.failed | default('none') }} changed={{ m1.changed | default('none') }}"
+
+    - name: "M2 mount with an invalid state value"
+      ansible.posix.mount:
+        path: /mnt/krikri
+        src: tmpfs
+        fstype: tmpfs
+        state: installed-nowhere
+      register: m2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "M2 failed={{ m2.failed | default('none') }} changed={{ m2.changed | default('none') }}"
+
+    - name: "M3 mount with an out-of-spec parameter"
+      ansible.posix.mount:
+        path: /mnt/krikri
+        src: tmpfs
+        fstype: tmpfs
+        state: present
+        krikri_not_a_mount_param: true
+      register: m3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "M3 failed={{ m3.failed | default('none') }} changed={{ m3.changed | default('none') }}"
+
+    - name: "M4 mount state=present writes the fstab entry"
+      ansible.posix.mount:
+        path: /mnt/krikri
+        src: krikri-fake-host:/export
+        fstype: nfs
+        opts: ro
+        state: present
+      register: m4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "M4 failed={{ m4.failed | default('none') }} changed={{ m4.changed | default('none') }}"
+
+    - name: "M5 mount state=present again is idempotent"
+      ansible.posix.mount:
+        path: /mnt/krikri
+        src: krikri-fake-host:/export
+        fstype: nfs
+        opts: ro
+        state: present
+      register: m5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "M5 failed={{ m5.failed | default('none') }} changed={{ m5.changed | default('none') }}"
+
+    - name: "M6 mount state=absent removes the fstab entry"
+      ansible.posix.mount:
+        path: /mnt/krikri
+        state: absent
+      register: m6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "M6 failed={{ m6.failed | default('none') }} changed={{ m6.changed | default('none') }}"
+
+    - name: "M7 mount state=absent again is idempotent"
+      ansible.posix.mount:
+        path: /mnt/krikri
+        state: absent
+      register: m7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "M7 failed={{ m7.failed | default('none') }} changed={{ m7.changed | default('none') }}"
+
+    - name: "M8 mount state=mounted with a tmpfs actually mounts"
+      ansible.posix.mount:
+        path: /mnt/krikri-tmpfs
+        src: tmpfs
+        fstype: tmpfs
+        opts: size=16m
+        state: mounted
+      register: m8
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "M8 failed={{ m8.failed | default('none') }} changed={{ m8.changed | default('none') }}"
+
+    - name: "M9 mount state=absent cleans the tmpfs entry back up"
+      ansible.posix.mount:
+        path: /mnt/krikri-tmpfs
+        state: absent
+      register: m9
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "M9 failed={{ m9.failed | default('none') }} changed={{ m9.changed | default('none') }}"

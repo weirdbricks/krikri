@@ -150,6 +150,15 @@ module Krikri
       path = File.join(reposdir, "#{file}.repo")
 
       if state == "absent"
+        # Real Ansible's reposdir check fires for state=absent too, not
+        # just the write path - a `state: absent` on a host with no
+        # /etc/yum.repos.d fails with the same "Repo directory ... does
+        # not exist." message (podman-diff yum_repository_edge_cases
+        # D6-D8: real fails all three, this engine happily returned
+        # changed=false for the absent branch).
+        unless Dir.exists?(reposdir)
+          return PluginResult.new(changed: false, failed: true, msg: "Repo directory '#{reposdir}' does not exist.")
+        end
         return remove_repo(name, path)
       end
 
