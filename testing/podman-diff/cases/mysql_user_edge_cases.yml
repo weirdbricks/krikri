@@ -1,0 +1,118 @@
+# mysql_user module edge cases, against a real MariaDB running in BOTH
+# harness containers (the run.sh mysql gate installs mariadb-server in
+# each, plus PyMySQL + community.mysql on the real side). Functional
+# create/idempotency/drop/priv cases, not just validation. Debian's
+# MariaDB root account authenticates via unix_socket, so every task
+# connects through login_unix_socket with no password. Prefix: W.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "W1 mysql_user create a brand-new user"
+      community.mysql.mysql_user:
+        name: krikri_w1
+        password: "Wpw1!"
+        state: present
+        login_user: root
+        login_unix_socket: /run/mysqld/mysqld.sock
+      register: w1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "W1 failed={{ w1.failed | default('none') }} changed={{ w1.changed | default('none') }} msg={{ w1.msg | default('none') }}"
+
+    - name: "W2 mysql_user re-run the same create (idempotency)"
+      community.mysql.mysql_user:
+        name: krikri_w1
+        password: "Wpw1!"
+        state: present
+        login_user: root
+        login_unix_socket: /run/mysqld/mysqld.sock
+      register: w2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "W2 failed={{ w2.failed | default('none') }} changed={{ w2.changed | default('none') }}"
+
+    - name: "W3 mysql_user create a user with privileges"
+      community.mysql.mysql_user:
+        name: krikri_w3
+        password: "Wpw3!"
+        priv: "krikri3.*:SELECT,INSERT"
+        state: present
+        login_user: root
+        login_unix_socket: /run/mysqld/mysqld.sock
+      register: w3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "W3 failed={{ w3.failed | default('none') }} changed={{ w3.changed | default('none') }} msg={{ w3.msg | default('none') }}"
+
+    - name: "W4 mysql_user re-run the privileged create (priv diff)"
+      community.mysql.mysql_user:
+        name: krikri_w3
+        password: "Wpw3!"
+        priv: "krikri3.*:SELECT,INSERT"
+        state: present
+        login_user: root
+        login_unix_socket: /run/mysqld/mysqld.sock
+      register: w4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "W4 failed={{ w4.failed | default('none') }} changed={{ w4.changed | default('none') }}"
+
+    - name: "W5 mysql_user drop the first user"
+      community.mysql.mysql_user:
+        name: krikri_w1
+        state: absent
+        login_user: root
+        login_unix_socket: /run/mysqld/mysqld.sock
+      register: w5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "W5 failed={{ w5.failed | default('none') }} changed={{ w5.changed | default('none') }}"
+
+    - name: "W6 mysql_user drop an already-absent user (idempotency)"
+      community.mysql.mysql_user:
+        name: krikri_w1
+        state: absent
+        login_user: root
+        login_unix_socket: /run/mysqld/mysqld.sock
+      register: w6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "W6 failed={{ w6.failed | default('none') }} changed={{ w6.changed | default('none') }}"
+
+    - name: "W7 mysql_user with an invalid state value"
+      community.mysql.mysql_user:
+        name: krikri_w7
+        state: present-nowhere
+        login_user: root
+        login_unix_socket: /run/mysqld/mysqld.sock
+      register: w7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "W7 failed={{ w7.failed | default('none') }} changed={{ w7.changed | default('none') }} msg={{ w7.msg | default('none') }}"
+
+    - name: "W8 mysql_user without a name"
+      community.mysql.mysql_user:
+        state: present
+        login_user: root
+        login_unix_socket: /run/mysqld/mysqld.sock
+      register: w8
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "W8 failed={{ w8.failed | default('none') }} changed={{ w8.changed | default('none') }} msg={{ w8.msg | default('none') }}"
+
+    - name: "W9 mysql_user with a nonexistent socket"
+      # The Exception-message tail of real's connect failure is
+      # PyMySQL-specific ((errno, "...") reprs), so W9 compares the
+      # failed=/changed= shape only; the deterministic wrapper part of
+      # the message is asserted by the unit-level regression spec
+      # (mysql_user_validation_spec.cr) instead.
+      community.mysql.mysql_user:
+        name: krikri_w9
+        state: present
+        login_user: root
+        login_unix_socket: /run/mysqld/no-such.sock
+      register: w9
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "W9 failed={{ w9.failed | default('none') }} changed={{ w9.changed | default('none') }}"
