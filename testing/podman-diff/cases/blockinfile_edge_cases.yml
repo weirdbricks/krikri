@@ -1,0 +1,157 @@
+# blockinfile edge cases. Each case builds a known fixture file (copy:
+# with content:), runs the blockinfile operation under test, then reads
+# the file back through a command task and prints a "B<n> out=..."
+# debug line, so the diff sees the actual on-disk result. failed=/
+# changed=/backup_file presence are what matter; error-message WORDING
+# may legitimately differ between engines.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "B1 fixture"
+      ansible.builtin.copy:
+        content: "alpha\nomega\n"
+        dest: /tmp/B1.conf
+
+    - name: "B1 default marker block insert"
+      ansible.builtin.blockinfile:
+        path: /tmp/B1.conf
+        block: "middle=1"
+      register: b1
+    - ansible.builtin.command: bash -c "tr '\n' '|' < /tmp/B1.conf"
+      register: b1out
+      changed_when: false
+    - ansible.builtin.debug:
+        msg: "B1 failed={{ b1.failed | default('none') }} changed={{ b1.changed }} out={{ b1out.stdout }}"
+
+    - name: "B1b same block again must be idempotent"
+      ansible.builtin.blockinfile:
+        path: /tmp/B1.conf
+        block: "middle=1"
+      register: b1b
+    - ansible.builtin.debug:
+        msg: "B1b failed={{ b1b.failed | default('none') }} changed={{ b1b.changed }}"
+
+    - name: "B2 insertafter a regex that matches"
+      ansible.builtin.blockinfile:
+        path: /tmp/B1.conf
+        block: "after-block"
+        insertafter: '^alpha$'
+      register: b2
+    - ansible.builtin.command: bash -c "tr '\n' '|' < /tmp/B1.conf"
+      register: b2out
+      changed_when: false
+    - ansible.builtin.debug:
+        msg: "B2 failed={{ b2.failed | default('none') }} changed={{ b2.changed }} out={{ b2out.stdout }}"
+
+    - name: "B3 insertbefore a regex that matches"
+      ansible.builtin.blockinfile:
+        path: /tmp/B1.conf
+        block: "before-block"
+        insertbefore: '^omega$'
+      register: b3
+    - ansible.builtin.command: bash -c "tr '\n' '|' < /tmp/B1.conf"
+      register: b3out
+      changed_when: false
+    - ansible.builtin.debug:
+        msg: "B3 failed={{ b3.failed | default('none') }} changed={{ b3.changed }} out={{ b3out.stdout }}"
+
+    - name: "B4 state absent removes the managed block"
+      ansible.builtin.blockinfile:
+        path: /tmp/B1.conf
+        block: "after-block"
+        state: absent
+      register: b4
+    - ansible.builtin.command: bash -c "tr '\n' '|' < /tmp/B1.conf"
+      register: b4out
+      changed_when: false
+    - ansible.builtin.debug:
+        msg: "B4 failed={{ b4.failed | default('none') }} changed={{ b4.changed }} out={{ b4out.stdout }}"
+
+    - name: "B4b state absent when no block exists is idempotent"
+      ansible.builtin.blockinfile:
+        path: /tmp/B1.conf
+        block: "never-inserted"
+        state: absent
+      register: b4b
+    - ansible.builtin.debug:
+        msg: "B4b failed={{ b4b.failed | default('none') }} changed={{ b4b.changed }}"
+
+    - name: "B5 create true on a missing file"
+      ansible.builtin.blockinfile:
+        path: /tmp/B5-does-not-exist.conf
+        block: "fresh=1"
+        create: true
+      register: b5
+    - ansible.builtin.command: bash -c "tr '\n' '|' < /tmp/B5-does-not-exist.conf"
+      register: b5out
+      changed_when: false
+    - ansible.builtin.debug:
+        msg: "B5 failed={{ b5.failed | default('none') }} changed={{ b5.changed }} out={{ b5out.stdout }}"
+
+    - name: "B6 custom marker template keeps both {mark} substitutions"
+      ansible.builtin.blockinfile:
+        path: /tmp/B1.conf
+        block: "marked=1"
+        marker: "# {mark} managed region"
+      register: b6
+    - ansible.builtin.command: bash -c "tr '\n' '|' < /tmp/B1.conf"
+      register: b6out
+      changed_when: false
+    - ansible.builtin.debug:
+        msg: "B6 failed={{ b6.failed | default('none') }} changed={{ b6.changed }} out={{ b6out.stdout }}"
+
+    - name: "B7 custom marker_begin/marker_end words"
+      ansible.builtin.blockinfile:
+        path: /tmp/B1.conf
+        block: "bracketed=1"
+        marker_begin: "START"
+        marker_end: "STOP"
+      register: b7
+    - ansible.builtin.command: bash -c "tr '\n' '|' < /tmp/B1.conf"
+      register: b7out
+      changed_when: false
+    - ansible.builtin.debug:
+        msg: "B7 failed={{ b7.failed | default('none') }} changed={{ b7.changed }} out={{ b7out.stdout }}"
+
+    - name: "B8 multi-line block replaces single-line block"
+      ansible.builtin.blockinfile:
+        path: /tmp/B1.conf
+        block: |
+          line-one=1
+          line-two=2
+      register: b8
+    - ansible.builtin.command: bash -c "tr '\n' '|' < /tmp/B1.conf"
+      register: b8out
+      changed_when: false
+    - ansible.builtin.debug:
+        msg: "B8 failed={{ b8.failed | default('none') }} changed={{ b8.changed }} out={{ b8out.stdout }}"
+
+    - name: "B9 backup true leaves a backup file"
+      ansible.builtin.blockinfile:
+        path: /tmp/B1.conf
+        block: "backup-check=1"
+        backup: true
+      register: b9
+    - ansible.builtin.debug:
+        msg: "B9 failed={{ b9.failed | default('none') }} changed={{ b9.changed }} backup={{ b9.backup_file | default('none') }}"
+
+    - name: "B10 path pointing at a directory must fail"
+      ansible.builtin.blockinfile:
+        path: /tmp
+        block: "nope=1"
+      register: b10
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "B10 failed={{ b10.failed | default('none') }} changed={{ b10.changed | default('none') }}"
+
+    - name: "B11 block after state=absent of everything still leaves markers absent"
+      ansible.builtin.blockinfile:
+        path: /tmp/B1.conf
+        state: absent
+      register: b11
+    - ansible.builtin.command: bash -c "tr '\n' '|' < /tmp/B1.conf"
+      register: b11out
+      changed_when: false
+    - ansible.builtin.debug:
+        msg: "B11 failed={{ b11.failed | default('none') }} changed={{ b11.changed }} out={{ b11out.stdout }}"

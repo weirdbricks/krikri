@@ -16,8 +16,12 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 DIFF_DIR="$(pwd)"
 REPO_DIR="$(cd "$DIFF_DIR/../.." && pwd)"
 IMAGE="docker.io/library/debian:bookworm-slim"
-NAME_A="krikri-diff-real"
-NAME_B="krikri-diff-krikri"
+# Per-invocation suffix: container names are global to podman, so two
+# concurrent run.sh sessions (e.g. two worktrees) would otherwise keep
+# rm -f'ing each other's mid-run containers.
+SUFFIX="-$(date +%s)-$$"
+NAME_A="krikri-diff-real$SUFFIX"
+NAME_B="krikri-diff-krikri$SUFFIX"
 RESULTS="$DIFF_DIR/results"
 mkdir -p "$RESULTS"
 
@@ -37,7 +41,7 @@ podman exec "$NAME_A" bash -c "apt-get update -qq && apt-get install -y -qq --no
   || { log "FATAL: ansible-core install failed"; exit 1; }
 
 log "staging krikri-playbook in $NAME_B"
-podman exec "$NAME_B" bash -c "apt-get update -qq && apt-get install -y -qq --no-install-recommends libxml2 libssl3 libyaml-0-2 libpcre2-8-0 >/dev/null" \
+podman exec "$NAME_B" bash -c "apt-get update -qq && apt-get install -y -qq --no-install-recommends libxml2 libssl3 libyaml-0-2 libpcre2-8-0 python3 >/dev/null" \
   || { log "FATAL: runtime lib install failed"; exit 1; }
 podman exec "$NAME_B" bash -c "mkdir -p /opt/krikri/bin"
 podman cp "$REPO_DIR/bin/krikri-playbook" "$NAME_B:/opt/krikri/bin/krikri-playbook"
@@ -84,7 +88,19 @@ for case_file in "${cases[@]}"; do
   # suffix, so new case files only need to pick an unused prefix.
   msgs_a="$RESULTS/${case_name}_real.msgs"
   msgs_b="$RESULTS/${case_name}_krikri.msgs"
-  extract() { grep -oE '\b[A-Z][0-9]+[a-c]? [a-zA-Z_]+=.*' "$1" | sed -E 's/\\n/ | /g; s/"\}?(,)?$//'; }
+  # Real ansible-playbook prints msg as a JSON string, so backslashes
+  # in actual on-disk content arrive doubled ("\\1" for "\1") and must
+  # be unescaped to compare with krikri-playbook's raw plain-text
+  # output. The placeholder pass below unescapes \\ without turning a
+  # JSON \n (newline, already handled) or the trailing quote-cleanup
+  # into the wrong thing. ("\\n" in JSON means literal backslash+n and
+  # survives as such.)
+  # Volatile backup paths (backup_file: pid + timestamp) are masked so
+  # an otherwise-identical run still MATCHes.
+  extract() {
+    grep -oE '\b[A-Z][0-9]+[a-c]? [a-zA-Z_]+=.*' "$1" \
+      | sed -E 's/\\\\/\x01/g; s/\\n/ | /g; s/\x01/\\/g; s/"\}?(,)?$//; s/=[^ ]*[0-9]{2,6}\.[0-9]{4}-[0-9]{2}-[0-9]{2}@[0-9:]{8}~/=<backup-path>/g'
+  }
   extract "$RESULTS/${case_name}_real.log" > "$msgs_a"
   extract "$RESULTS/${case_name}_krikri.log" > "$msgs_b"
 

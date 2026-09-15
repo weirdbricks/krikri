@@ -1,0 +1,82 @@
+# get_url edge cases. A tiny python3 http.server is started as a
+# fixture inside each container (port 8081, serving /tmp/gsrv):
+#   /hello.txt  -> exists, content "hello-v1\n"
+#   anything else -> 404
+# so the cases are deterministic and need no external network. Each
+# case registers its result and prints a "G<n> key=value" debug line;
+# failed=/changed= values and whether the dest file actually exists
+# (and its content) are what matter; error-message WORDING may
+# legitimately differ between engines.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "G0 fixtures: serve dir, served file, and pre-existing dest"
+      ansible.builtin.shell: |
+        mkdir -p /tmp/gsrv
+        echo "hello-v1" > /tmp/gsrv/hello.txt
+        echo "pre-existing" > /tmp/G4_dest.txt
+        nohup python3 -m http.server --directory /tmp/gsrv 8081 >/dev/null 2>&1 &
+        sleep 1
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: "G1 URL that returns 404"
+      ansible.builtin.get_url:
+        url: http://localhost:8081/no-such-file.txt
+        dest: /tmp/G1_out.txt
+      register: g1
+      ignore_errors: true
+    - ansible.builtin.command: bash -c "test -e /tmp/G1_out.txt && echo present || echo absent"
+      register: g1out
+      changed_when: false
+    - ansible.builtin.debug:
+        msg: "G1 failed={{ g1.failed | default('none') }} changed={{ g1.changed | default('none') }} file={{ g1out.stdout }}"
+
+    - name: "G2 dest directory does not exist"
+      ansible.builtin.get_url:
+        url: http://localhost:8081/hello.txt
+        dest: /tmp/G_nosuch_dir_zzz/out.txt
+      register: g2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "G2 failed={{ g2.failed | default('none') }} changed={{ g2.changed | default('none') }}"
+
+    - name: "G3 checksum mismatch (sha256 of different content)"
+      ansible.builtin.get_url:
+        url: http://localhost:8081/hello.txt
+        dest: /tmp/G3_out.txt
+        checksum: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+      register: g3
+      ignore_errors: true
+    - ansible.builtin.command: bash -c "test -e /tmp/G3_out.txt && echo present || echo absent"
+      register: g3out
+      changed_when: false
+    - ansible.builtin.debug:
+        msg: "G3 failed={{ g3.failed | default('none') }} changed={{ g3.changed | default('none') }} file={{ g3out.stdout }}"
+
+    - name: "G4 force false with an already-existing dest (skip download)"
+      ansible.builtin.get_url:
+        url: http://localhost:8081/hello.txt
+        dest: /tmp/G4_dest.txt
+        force: false
+      register: g4
+    - ansible.builtin.command: bash -c "cat /tmp/G4_dest.txt"
+      register: g4out
+      changed_when: false
+    - ansible.builtin.debug:
+        msg: "G4 failed={{ g4.failed | default('none') }} changed={{ g4.changed | default('none') }} content={{ g4out.stdout }}"
+
+    - name: "G5 successful download (positive control, force true)"
+      ansible.builtin.get_url:
+        url: http://localhost:8081/hello.txt
+        dest: /tmp/G5_out.txt
+        force: true
+      register: g5
+      ignore_errors: true
+    - ansible.builtin.command: bash -c "cat /tmp/G5_out.txt"
+      register: g5out
+      changed_when: false
+    - ansible.builtin.debug:
+        msg: "G5 failed={{ g5.failed | default('none') }} changed={{ g5.changed | default('none') }} content={{ g5out.stdout }}"

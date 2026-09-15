@@ -62,3 +62,24 @@
       ignore_errors: true
     - ansible.builtin.debug:
         msg: "P6 failed={{ p6.failed | default('none') }} changed={{ p6.changed | default('none') }}"
+
+    - name: "P7 package with a name list containing one bad entry"
+      ansible.builtin.package:
+        name:
+          - bash
+          - krikri-no-such-package-zzz
+        state: present
+      register: p7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P7 failed={{ p7.failed | default('none') }} changed={{ p7.changed | default('none') }}"
+
+    - name: "P8 package with a nonexistent backend (use:)"
+      ansible.builtin.package:
+        name: bash
+        state: present
+        use: no-such-backend-zzz
+      register: p8
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P8 failed={{ p8.failed | default('none') }} changed={{ p8.changed | default('none') }}"

@@ -199,4 +199,17 @@ describe "replace plugin" do
 
     result["failed"].as_bool.should be_true
   end
+
+  it "rejects parameters outside replace's own argument_spec (ignorecase is lineinfile's, msg live-verified)" do
+    path = fresh_file("ignorecase.txt", "hue\n")
+    result = PluginSpecHelper.run("replace", {"path" => path, "regexp" => "hue", "replace" => "x", "ignorecase" => "true"})
+
+    result["failed"].as_bool.should be_true
+    result["changed"].as_bool.should be_false
+    result["msg"].as_s.should eq("Unsupported parameters for (ansible.builtin.replace) module: ignorecase. " \
+                                 "Supported parameters include: after, attributes, backup, before, encoding, group, mode, owner, " \
+                                 "path, regexp, replace, selevel, serole, setype, seuser, unsafe_writes, validate " \
+                                 "(attr, dest, destfile, name).")
+    File.read(path).should eq("hue\n")
+  end
 end

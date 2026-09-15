@@ -1,0 +1,107 @@
+# lineinfile edge cases. Each case builds a known fixture file (copy:
+# with content:), runs the lineinfile operation under test, then reads
+# the file back through a command task and prints an "L<n> out=..."
+# debug line, so the diff sees the actual on-disk result. failed=/
+# changed= values are what matter; error-message WORDING may
+# legitimately differ between engines.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "L1 fixture: backreference file"
+      ansible.builtin.copy:
+        content: "PORT=9999\nOTHER=1\n"
+        dest: /tmp/L1.conf
+
+    - name: "L1 regexp with a backreference in the replacement line"
+      ansible.builtin.lineinfile:
+        path: /tmp/L1.conf
+        regexp: '^(PORT=)[0-9]+$'
+        line: '\1 2222'
+      register: l1
+    - ansible.builtin.command: bash -c "tr '\n' '|' < /tmp/L1.conf"
+      register: l1out
+      changed_when: false
+    - ansible.builtin.debug:
+        msg: "L1 failed={{ l1.failed | default('none') }} changed={{ l1.changed }} out={{ l1out.stdout }}"
+
+    - name: "L2 fixture: insertafter-no-match file"
+      ansible.builtin.copy:
+        content: "one\nthree\n"
+        dest: /tmp/L2.conf
+
+    - name: "L2 insertafter with a regex matching nothing"
+      ansible.builtin.lineinfile:
+        path: /tmp/L2.conf
+        line: "two"
+        insertafter: '^NOSUCHPATTERN$'
+      register: l2
+    - ansible.builtin.command: bash -c "tr '\n' '|' < /tmp/L2.conf"
+      register: l2out
+      changed_when: false
+    - ansible.builtin.debug:
+        msg: "L2 failed={{ l2.failed | default('none') }} changed={{ l2.changed }} out={{ l2out.stdout }}"
+
+    - name: "L3 fixture: insertbefore-no-match file"
+      ansible.builtin.copy:
+        content: "one\nthree\n"
+        dest: /tmp/L3.conf
+
+    - name: "L3 insertbefore with a regex matching nothing"
+      ansible.builtin.lineinfile:
+        path: /tmp/L3.conf
+        line: "zero"
+        insertbefore: '^NOSUCHPATTERN$'
+      register: l3
+    - ansible.builtin.command: bash -c "tr '\n' '|' < /tmp/L3.conf"
+      register: l3out
+      changed_when: false
+    - ansible.builtin.debug:
+        msg: "L3 failed={{ l3.failed | default('none') }} changed={{ l3.changed }} out={{ l3out.stdout }}"
+
+    - name: "L4 create false on a nonexistent file (must fail, not create)"
+      ansible.builtin.lineinfile:
+        path: /tmp/L4-no-such-dir-zzz/L4.conf
+        line: "x"
+      register: l4
+      ignore_errors: true
+    - ansible.builtin.command: bash -c "test -e /tmp/L4-no-such-dir-zzz/L4.conf && echo present || echo absent"
+      register: l4out
+      changed_when: false
+    - ansible.builtin.debug:
+        msg: "L4 failed={{ l4.failed | default('none') }} changed={{ l4.changed | default('none') }} file={{ l4out.stdout }}"
+
+    - name: "L5 fixture: duplicate matching lines"
+      ansible.builtin.copy:
+        content: "top\nMARK\nmiddle\nMARK\nbottom\n"
+        dest: /tmp/L5.conf
+
+    - name: "L5 firstmatch true with duplicate matching lines"
+      ansible.builtin.lineinfile:
+        path: /tmp/L5.conf
+        line: "NEW"
+        insertafter: '^MARK$'
+        firstmatch: true
+      register: l5
+    - ansible.builtin.command: bash -c "tr '\n' '|' < /tmp/L5.conf"
+      register: l5out
+      changed_when: false
+    - ansible.builtin.debug:
+        msg: "L5 failed={{ l5.failed | default('none') }} changed={{ l5.changed }} out={{ l5out.stdout }}"
+
+    - name: "L5b fixture: duplicate matching lines (fresh file)"
+      ansible.builtin.copy:
+        content: "top\nMARK\nmiddle\nMARK\nbottom\n"
+        dest: /tmp/L5b.conf
+
+    - name: "L5b firstmatch false (default) with duplicate matching lines"
+      ansible.builtin.lineinfile:
+        path: /tmp/L5b.conf
+        line: "NEW"
+        insertafter: '^MARK$'
+      register: l5b
+    - ansible.builtin.command: bash -c "tr '\n' '|' < /tmp/L5b.conf"
+      register: l5bout
+      changed_when: false
+    - ansible.builtin.debug:
+        msg: "L5b failed={{ l5b.failed | default('none') }} changed={{ l5b.changed }} out={{ l5bout.stdout }}"

@@ -42,6 +42,33 @@ module Krikri
     end
 
     def execute : PluginResult
+      # Real ansible's replace module rejects ANY parameter outside its
+      # own argument_spec at module-arg validation, before any action
+      # runs - notably `ignorecase:`, which belongs to lineinfile, not
+      # replace, so a role that copies lineinfile's params onto a
+      # replace task fails loudly under real Ansible while this engine
+      # silently ignored the unknown key and ran anyway. Found via the
+      # podman-diff replace_edge_cases R9 harness case; message live-
+      # verified against the real module's own output for this exact
+      # task. check_mode/diff_mode/_verbosity/_environment are engine-
+      # internal keys injected by the executor (see build_plugin_config),
+      # not part of the real argument_spec, so none are rejected. The
+      # parenthesized alias list mirrors real Ansible's msg (attr, dest,
+      # destfile, name).
+      replace_supported = {"after", "attributes", "backup", "before", "encoding", "group", "mode", "owner", "path", "regexp", "replace", "selevel", "serole", "setype", "seuser", "unsafe_writes", "validate", "attr", "dest", "destfile", "name"}
+      replace_internal = {"check_mode", "diff_mode", "_verbosity", "_environment"}
+      unsupported = @params.keys.reject { |k| replace_supported.includes?(k) || replace_internal.includes?(k) }
+      unless unsupported.empty?
+        return PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: "Unsupported parameters for (ansible.builtin.replace) module: #{unsupported.sort.join(", ")}. " \
+               "Supported parameters include: after, attributes, backup, before, encoding, group, mode, owner, " \
+               "path, regexp, replace, selevel, serole, setype, seuser, unsafe_writes, validate " \
+               "(attr, dest, destfile, name)."
+        )
+      end
+
       # path (aliases: dest, name) - matches real Ansible's own
       # argument_spec, where `dest:` is the long-standing legacy alias
       # most existing playbooks/roles still write (lineinfile.cr already
@@ -277,8 +304,8 @@ module Krikri
     # file-editing module in this codebase reports backup_file the same
     # way.
     private def write_backup(path : String) : String
-      timestamp = Time.local.to_s("%Y%m%d-%H%M%S")
-      backup_file = "#{path}.#{timestamp}.bak"
+      timestamp = Time.utc.to_s("%Y-%m-%d@%H:%M:%S")
+      backup_file = "#{path}.#{Process.pid}.#{timestamp}~"
       File.copy(path, backup_file)
       backup_file
     end

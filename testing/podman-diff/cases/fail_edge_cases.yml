@@ -1,0 +1,67 @@
+# fail (ansible.builtin.fail) edge cases. No fixtures needed - fail is
+# pure task-level behavior. What matters per case: failed=/changed=
+# values and that the play reaches later tasks/hosts consistently;
+# error-message WORDING may legitimately differ between engines (the
+# default no-msg: text is compared below because it is a documented
+# constant, not incidental wording). Each case prints an "F<n>
+# key=value" debug line. Note F2's fail msg interpolation happens at
+# task-param templating time, so with an undefined variable both
+# engines should fail the task BEFORE the fail module even runs -
+# failed=true either way is what counts.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "F1 plain fail with msg"
+      ansible.builtin.fail:
+        msg: "F1 deliberate failure"
+      register: f1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "F1 failed={{ f1.failed | default('none') }} changed={{ f1.changed | default('none') }}"
+
+    - name: "F2 fail msg interpolating an undefined variable"
+      ansible.builtin.fail:
+        msg: "F2 boom {{ f2_undefined_var_zzz }}"
+      register: f2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "F2 failed={{ f2.failed | default('none') }} changed={{ f2.changed | default('none') }}"
+
+    - name: "F3 fail with no msg at all (default message)"
+      ansible.builtin.fail:
+      register: f3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "F3 failed={{ f3.failed | default('none') }} changed={{ f3.changed | default('none') }} msg={{ f3.msg | default('none') }}"
+
+    - name: "F4 fail via fail_msg alias"
+      ansible.builtin.fail:
+        fail_msg: "F4 via alias"
+      register: f4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "F4 failed={{ f4.failed | default('none') }} changed={{ f4.changed | default('none') }}"
+
+    - name: "F5 task after a failed-but-ignored fail still runs"
+      ansible.builtin.command: echo "F5 reached"
+      register: f5
+      changed_when: false
+    - ansible.builtin.debug:
+        msg: "F5 stdout={{ f5.stdout | default('none') }}"
+
+    - name: "F6 when: referencing an undefined variable (fails before module runs)"
+      ansible.builtin.command: echo "F6 should not run"
+      register: f6
+      when: f6_undefined_var_zzz | bool
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "F6 failed={{ f6.failed | default('none') }} changed={{ f6.changed | default('none') }}"
+
+    - name: "F7 loop source with an undefined variable"
+      ansible.builtin.command: echo "{{ item }}"
+      register: f7
+      loop: "{{ f7_undefined_list_zzz }}"
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "F7 failed={{ f7.failed | default('none') }} changed={{ f7.changed | default('none') }}"

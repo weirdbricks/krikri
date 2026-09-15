@@ -1,0 +1,146 @@
+# replace edge cases. Each case builds a known fixture file (copy:
+# with content:), runs the replace operation under test, then reads
+# the file back through a command task and prints a "R<n> out=..."
+# debug line, so the diff sees the actual on-disk result. failed=/
+# changed=/backup_file presence are what matter; error-message WORDING
+# may legitimately differ between engines. Task names carry no "=" so
+# real ansible's "TASK [...]" header lines can never match the
+# harness's msg extractor.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "R1 fixture"
+      ansible.builtin.copy:
+        content: "color red\ncolor blue\n"
+        dest: /tmp/R1.txt
+
+    - name: "R1 basic regexp replace"
+      ansible.builtin.replace:
+        path: /tmp/R1.txt
+        regexp: 'color'
+        replace: 'shade'
+      register: r1
+    - ansible.builtin.command: cat /tmp/R1.txt
+      register: r1out
+      changed_when: false
+    - ansible.builtin.debug:
+        msg: "R1 failed={{ r1.failed | default('none') }} changed={{ r1.changed }} out={{ r1out.stdout | replace('\n', '|') }}"
+
+    - name: "R1b same replace again must be idempotent"
+      ansible.builtin.replace:
+        path: /tmp/R1.txt
+        regexp: 'color'
+        replace: 'shade'
+      register: r1b
+    - ansible.builtin.debug:
+        msg: "R1b failed={{ r1b.failed | default('none') }} changed={{ r1b.changed }}"
+
+    - name: "R2 backreference replacement keeps the captured group"
+      ansible.builtin.replace:
+        path: /tmp/R1.txt
+        regexp: 'shade (red)'
+        replace: 'tone \1'
+      register: r2
+    - ansible.builtin.command: cat /tmp/R1.txt
+      register: r2out
+      changed_when: false
+    - ansible.builtin.debug:
+        msg: "R2 failed={{ r2.failed | default('none') }} changed={{ r2.changed }} out={{ r2out.stdout | replace('\n', '|') }}"
+
+    - name: "R3 after restricts the replacement region"
+      ansible.builtin.replace:
+        path: /tmp/R1.txt
+        after: 'tone red'
+        regexp: 'blue'
+        replace: 'green'
+      register: r3
+    - ansible.builtin.command: cat /tmp/R1.txt
+      register: r3out
+      changed_when: false
+    - ansible.builtin.debug:
+        msg: "R3 failed={{ r3.failed | default('none') }} changed={{ r3.changed }} out={{ r3out.stdout | replace('\n', '|') }}"
+
+    - name: "R4 backup true leaves a backup file"
+      ansible.builtin.replace:
+        path: /tmp/R1.txt
+        regexp: 'green'
+        replace: 'teal'
+        backup: true
+      register: r4
+    - ansible.builtin.debug:
+        msg: "R4 failed={{ r4.failed | default('none') }} changed={{ r4.changed }} backup={{ r4.backup_file | default('none') }}"
+
+    - name: "R5 regexp that matches nothing changes nothing"
+      ansible.builtin.replace:
+        path: /tmp/R1.txt
+        regexp: 'purple'
+        replace: 'violet'
+      register: r5
+    - ansible.builtin.debug:
+        msg: "R5 failed={{ r5.failed | default('none') }} changed={{ r5.changed }}"
+
+    - name: "R5b missing path must fail"
+      ansible.builtin.replace:
+        path: /tmp/R5-does-not-exist.txt
+        regexp: 'x'
+        replace: 'y'
+      register: r5b
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "R5b failed={{ r5b.failed | default('none') }} changed={{ r5b.changed | default('none') }}"
+
+    - name: "R6 multi-line replacement inserts real newlines"
+      ansible.builtin.replace:
+        path: /tmp/R1.txt
+        regexp: 'tone red'
+        replace: "tone red\nextra=1"
+      register: r6
+    - ansible.builtin.command: cat /tmp/R1.txt
+      register: r6out
+      changed_when: false
+    - ansible.builtin.debug:
+        msg: "R6 failed={{ r6.failed | default('none') }} changed={{ r6.changed }} out={{ r6out.stdout | replace('\n', '|') }}"
+
+    - name: "R7 caret matches line starts without any flag"
+      ansible.builtin.replace:
+        path: /tmp/R1.txt
+        regexp: '^hue'
+        replace: 'HUE'
+      register: r7
+    - ansible.builtin.command: cat /tmp/R1.txt
+      register: r7out
+      changed_when: false
+    - ansible.builtin.debug:
+        msg: "R7 failed={{ r7.failed | default('none') }} changed={{ r7.changed }} out={{ r7out.stdout | replace('\n', '|') }}"
+
+    - name: "R8 path pointing at a directory must fail"
+      ansible.builtin.replace:
+        path: /tmp
+        regexp: 'x'
+        replace: 'y'
+      register: r8
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "R8 failed={{ r8.failed | default('none') }} changed={{ r8.changed | default('none') }}"
+
+    - name: "R9 unsupported parameter must fail like real Ansible"
+      ansible.builtin.replace:
+        path: /tmp/R1.txt
+        regexp: 'hue'
+        replace: 'x'
+        ignorecase: true
+      register: r9
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "R9 failed={{ r9.failed | default('none') }} changed={{ r9.changed | default('none') }}"
+
+    - name: "R10 invalid regexp must fail"
+      ansible.builtin.replace:
+        path: /tmp/R1.txt
+        regexp: 'hue('
+        replace: 'x'
+      register: r10
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "R10 failed={{ r10.failed | default('none') }} changed={{ r10.changed | default('none') }}"

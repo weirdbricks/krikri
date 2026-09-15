@@ -180,14 +180,17 @@ module Krikri
     # Verifies the freshly staged download against a provided
     # checksum: tuple; returns a failed PluginResult (staging file
     # cleaned up) on mismatch, nil when it matches or no checksum was
-    # given.
+    # given. changed: true mirrors real Ansible: the download itself
+    # already happened by the time the checksum is evaluated, so the
+    # task is reported as having changed even though the failure means
+    # nothing landed on dest:.
     private def checksum_mismatch_result(tmp_path : String, checksum : {String, String}) : PluginResult?
       algorithm, expected = checksum
       actual = native_checksum(tmp_path, algorithm)
       return nil if actual == expected
 
       File.delete(tmp_path) if File.exists?(tmp_path)
-      PluginResult.new(changed: false, failed: true, msg: "checksum mismatch: expected #{expected}, got #{actual}")
+      PluginResult.new(changed: true, failed: true, msg: "checksum mismatch: expected #{expected}, got #{actual}")
     end
 
     # backup: true copies the existing dest aside (timestamp-suffixed,

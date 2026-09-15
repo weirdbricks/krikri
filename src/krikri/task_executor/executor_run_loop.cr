@@ -894,7 +894,10 @@ module Krikri
     # hand-rolling that bookkeeping a second time keeps it consistent
     # with every other failure path.
     private def when_error_result(ex : WhenEvaluationError) : JSON::Any
-      JSON.parse({"changed" => false, "failed" => true, "msg" => ex.message || "Error while evaluating conditional"}.to_json)
+      # No "changed" key, matching real Ansible: a conditional that raises
+      # registers a msg-only result (verified live, ansible-core 2.19 -
+      # fail_edge_cases.yml F6/F7 in the podman-diff harness).
+      JSON.parse({"failed" => true, "msg" => ex.message || "Error while evaluating conditional"}.to_json)
     end
 
     # For a `when_passes?` call site with no real per-item result
@@ -929,9 +932,8 @@ module Krikri
       register_name = task.register
       unless register_name.nil? || register_name.empty?
         register_result(host, register_name, JSON.parse({
-          "changed" => false,
-          "failed"  => true,
-          "msg"     => msg,
+          "failed" => true,
+          "msg"    => msg,
         }.to_json))
       end
       false
@@ -1514,10 +1516,14 @@ module Krikri
         # "{{ lookup('url', ...) }}"` against a 404'd release checksums
         # file (a broken-upstream default, but real Ansible still
         # degrades to one clean failed task, not a crash).
+        # No "changed" key, matching real Ansible: a param-templating
+        # failure happens BEFORE the module runs, so there is no module
+        # result to carry a changed flag - the registered result is
+        # msg-only (verified live, ansible-core 2.19 - fail_edge_cases.
+        # yml F2 in the podman-diff harness).
         result = JSON.parse({
-          "changed" => false,
-          "failed"  => true,
-          "msg"     => ex.message || "Failed to resolve task arguments",
+          "failed" => true,
+          "msg"    => ex.message || "Failed to resolve task arguments",
         }.to_json)
         return apply_changed_failed_when(task, result, vars_context, host)
       end
