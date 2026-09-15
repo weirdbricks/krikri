@@ -1,0 +1,129 @@
+# known_hosts edge cases (ansible.builtin.known_hosts on the real side;
+# run.sh's known_hosts-gated block installs openssh-client in BOTH
+# containers - real module and krikri's plugin both drive ssh-keygen).
+#
+# Each side generates its OWN throwaway keypair (different bytes by
+# construction), so the debug lines compare changed-state, entry counts
+# and host-name visibility, never key material.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "K0 generate the throwaway keypair"
+      ansible.builtin.command:
+        cmd: ssh-keygen -q -t ed25519 -f /root/khtest -N ""
+        creates: /root/khtest
+
+    - name: "K0b read the public key"
+      ansible.builtin.slurp:
+        src: /root/khtest.pub
+      register: pub
+
+    - name: "K0c build the known_hosts key line"
+      ansible.builtin.set_fact:
+        kh_key: "{{ (pub.content | b64decode).split(' ')[0:2] | join(' ') }}"
+
+    - name: "K1 add a host entry to a custom file"
+      ansible.builtin.known_hosts:
+        name: diffhost.test
+        key: "diffhost.test {{ kh_key }}"
+        path: /root/.kh_test
+      register: k1
+    - ansible.builtin.debug:
+        msg: "K1 failed={{ k1.failed }} changed={{ k1.changed }} msg={{ k1.msg }}"
+
+    - name: "K1b the entry names the host"
+      ansible.builtin.command: grep -c diffhost.test /root/.kh_test
+      register: k1b
+      changed_when: false
+    - ansible.builtin.debug:
+        msg: "K1b lines={{ k1b.stdout }}"
+
+    - name: "K2 same entry again is a no-op"
+      ansible.builtin.known_hosts:
+        name: diffhost.test
+        key: "diffhost.test {{ kh_key }}"
+        path: /root/.kh_test
+      register: k2
+    - ansible.builtin.debug:
+        msg: "K2 failed={{ k2.failed }} changed={{ k2.changed }} msg={{ k2.msg }}"
+
+    - name: "K3 a different key for the same host replaces"
+      ansible.builtin.known_hosts:
+        name: diffhost.test
+        key: "diffhost.test {{ kh_key }} comment-does-not-matter"
+        path: /root/.kh_test
+      register: k3
+    - ansible.builtin.debug:
+        msg: "K3 failed={{ k3.failed }} changed={{ k3.changed }} msg={{ k3.msg }}"
+
+    - name: "K3b still exactly one entry line"
+      ansible.builtin.command: grep -c diffhost.test /root/.kh_test
+      register: k3b
+      changed_when: false
+    - ansible.builtin.debug:
+        msg: "K3b lines={{ k3b.stdout }}"
+
+    - name: "K4 state=absent removes the host"
+      ansible.builtin.known_hosts:
+        name: diffhost.test
+        path: /root/.kh_test
+        state: absent
+      register: k4
+    - ansible.builtin.debug:
+        msg: "K4 failed={{ k4.failed }} changed={{ k4.changed }} msg={{ k4.msg }}"
+
+    - name: "K5 absent again is a no-op"
+      ansible.builtin.known_hosts:
+        name: diffhost.test
+        path: /root/.kh_test
+        state: absent
+      register: k5
+    - ansible.builtin.debug:
+        msg: "K5 failed={{ k5.failed }} changed={{ k5.changed }} msg={{ k5.msg }}"
+
+    - name: "K6 hash_host hashes the hostname"
+      ansible.builtin.known_hosts:
+        name: hashhost.test
+        key: "hashhost.test {{ kh_key }}"
+        path: /root/.kh_hash
+        hash_host: true
+      register: k6
+    - ansible.builtin.debug:
+        msg: "K6 failed={{ k6.failed }} changed={{ k6.changed }} plain={{ not 'hashhost.test' in (lookup('file', '/root/.kh_hash') or '') }}"
+
+    - name: "K7 state=present without a key fails"
+      ansible.builtin.known_hosts:
+        name: nokey.test
+        path: /root/.kh_test
+      register: k7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "K7 failed={{ k7.failed | default('none') }} changed={{ k7.changed | default('none') }} msg={{ k7.msg | default('none') }}"
+
+    - name: "K8 missing name fails"
+      ansible.builtin.known_hosts:
+        key: "otherhost.test {{ kh_key }}"
+        path: /root/.kh_test
+      register: k8
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "K8 failed={{ k8.failed | default('none') }} changed={{ k8.changed | default('none') }}"
+
+    - name: "K9 default path is ~/.ssh/known_hosts"
+      ansible.builtin.known_hosts:
+        name: defaulthost.test
+        key: "defaulthost.test {{ kh_key }}"
+      register: k9
+    - ansible.builtin.debug:
+        msg: "K9 failed={{ k9.failed }} changed={{ k9.changed }} exists={{ '/root/.ssh/known_hosts' is file }}"
+
+    - name: "K10 check mode adds nothing"
+      ansible.builtin.known_hosts:
+        name: chkhost.test
+        key: "chkhost.test {{ kh_key }}"
+        path: /root/.kh_test
+      check_mode: true
+      register: k10
+    - ansible.builtin.debug:
+        msg: "K10 failed={{ k10.failed }} changed={{ k10.changed }} absent={{ not 'chkhost.test' in (lookup('file', '/root/.kh_test') or '') }}"

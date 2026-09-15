@@ -1,0 +1,55 @@
+# tempfile edge cases. No external deps - ansible.builtin.tempfile on
+# the real side, and krikri's tempfile shells to the same mktemp(1) the
+# real module's tempfile.mkstemp/mkdtemp calls are backed by.
+#
+# Every successful run creates a fresh, uniquely-named path (changed is
+# always true, there is no idempotency to assert), so the cases check
+# creation shape and failure surface instead.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "T1 create a temp file"
+      ansible.builtin.tempfile:
+      register: t1
+    - ansible.builtin.debug:
+        msg: "T1 failed={{ t1.failed }} changed={{ t1.changed }} exists={{ t1.path is file }}"
+
+    - name: "T2 create a temp directory"
+      ansible.builtin.tempfile:
+        state: directory
+      register: t2
+    - ansible.builtin.debug:
+        msg: "T2 failed={{ t2.failed }} changed={{ t2.changed }} isdir={{ t2.path is directory }}"
+
+    - name: "T3 prefix and suffix shape the filename"
+      ansible.builtin.tempfile:
+        prefix: myfix
+        suffix: .txt
+      register: t3
+    - ansible.builtin.debug:
+        msg: "T3 failed={{ t3.failed }} prefix_ok={{ t3.path is search('/myfix') }} suffix_ok={{ t3.path.endswith('txt') }}"
+
+    - name: "T4 parent path that does not exist fails"
+      ansible.builtin.tempfile:
+        path: /nonexistent-krikri-diff-dir
+      register: t4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "T4 failed={{ t4.failed | default('none') }} changed={{ t4.changed | default('none') }}"
+
+    - name: "T5 invalid state value is rejected by the arg spec"
+      ansible.builtin.tempfile:
+        state: link
+      register: t5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "T5 failed={{ t5.failed | default('none') }} changed={{ t5.changed | default('none') }}"
+
+    - name: "T6 task-level check mode on a non-check-mode-aware module"
+      ansible.builtin.tempfile:
+      check_mode: true
+      register: t6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "T6 failed={{ t6.failed | default('none') }} changed={{ t6.changed | default('none') }} skipped={{ t6.skipped | default('none') }} msg={{ t6.msg | default('none') }}"

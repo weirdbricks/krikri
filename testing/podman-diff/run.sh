@@ -239,6 +239,48 @@ if printf '%s\n' "${cases[@]}" | grep -q '^seboolean'; then
     || { log "FATAL: SELinux python libs install failed"; exit 1; }
 fi
 
+# htpasswd cases: the real community.general.htpasswd imports passlib in
+# the REAL container - without python3-passlib every case fails on the
+# import instead of exercising the hash/idempotency logic. krikri's
+# htpasswd shells to `openssl passwd`, so BOTH containers need the
+# openssl CLI on PATH (bookworm-slim ships without it). Gated on the
+# requested case list like the mysql cases above.
+if printf '%s\n' "${cases[@]}" | grep -q '^htpasswd'; then
+  log "installing passlib (real) + openssl (both) for htpasswd cases"
+  podman exec "$NAME_A" bash -c "apt-get install -y -qq --no-install-recommends python3-passlib >/dev/null" \
+    || { log "FATAL: passlib install failed"; exit 1; }
+  for c in "$NAME_A" "$NAME_B"; do
+    podman exec "$c" bash -c "apt-get install -y -qq --no-install-recommends openssl >/dev/null" \
+      || { log "FATAL: openssl install failed in $c"; exit 1; }
+  done
+fi
+
+# npm cases need a real node + npm in BOTH containers (krikri's npm
+# shells to the same npm binary real Ansible resolves via
+# get_bin_path) - debian:bookworm-slim ships without either, which
+# would make every case fail with "Failed to find required executable"
+# on both sides and exercise nothing. Real installs hit the live npm
+# registry; both engines see the same network. Gated like the gem cases.
+if printf '%s\n' "${cases[@]}" | grep -q '^npm'; then
+  log "installing npm for npm cases"
+  for c in "$NAME_A" "$NAME_B"; do
+    podman exec "$c" bash -c "apt-get install -y -qq --no-install-recommends npm >/dev/null" \
+      || { log "FATAL: npm install failed in $c"; exit 1; }
+  done
+fi
+
+# known_hosts cases need ssh-keygen in BOTH containers (real
+# ansible.builtin.known_hosts and krikri's plugin both drive it for
+# lookup, removal and host hashing). Gated on the requested case list
+# like the modprobe cases above.
+if printf '%s\n' "${cases[@]}" | grep -q '^known_hosts'; then
+  log "installing openssh-client for known_hosts cases"
+  for c in "$NAME_A" "$NAME_B"; do
+    podman exec "$c" bash -c "apt-get install -y -qq --no-install-recommends openssh-client >/dev/null" \
+      || { log "FATAL: openssh-client install failed in $c"; exit 1; }
+  done
+fi
+
 overall_rc=0
 for case_file in "${cases[@]}"; do
   case_name="${case_file%.yml}"
