@@ -1,0 +1,60 @@
+# docker_container edge cases. There is NO docker daemon inside either
+# harness container (and no docker-in-podman), so cases that would
+# actually create/pull/run a container are NOT testable here - that
+# needs a real daemon and is deferred to the Atlantic.net role rounds.
+# What IS testable is argument validation that real Ansible performs in
+# argument_spec BEFORE any daemon contact (missing required params,
+# invalid choices, unsupported parameters), plus "no daemon -> both
+# engines fail". The real side runs community.docker.docker_container
+# with the Docker SDK installed (run.sh gates the install); message
+# WORDING may differ, only failed=/changed= matter.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "Z1 missing required name"
+      community.docker.docker_container:
+        state: present
+      register: z1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "Z1 failed={{ z1.failed | default('none') }} changed={{ z1.changed | default('none') }}"
+
+    - name: "Z2 invalid state choice"
+      community.docker.docker_container:
+        name: zzz
+        state: banana
+      register: z2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "Z2 failed={{ z2.failed | default('none') }} changed={{ z2.changed | default('none') }}"
+
+    - name: "Z3 unsupported parameter"
+      community.docker.docker_container:
+        name: zzz
+        image: alpine
+        state: present
+        krikri_not_a_docker_param: true
+      register: z3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "Z3 failed={{ z3.failed | default('none') }} changed={{ z3.changed | default('none') }}"
+
+    - name: "Z4 valid args but no daemon (both engines must fail)"
+      community.docker.docker_container:
+        name: zzz
+        image: alpine
+        state: present
+      register: z4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "Z4 failed={{ z4.failed | default('none') }} changed={{ z4.changed | default('none') }}"
+
+    - name: "Z5 state absent with no daemon (still needs the API)"
+      community.docker.docker_container:
+        name: zzz
+        state: absent
+      register: z5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "Z5 failed={{ z5.failed | default('none') }} changed={{ z5.changed | default('none') }}"

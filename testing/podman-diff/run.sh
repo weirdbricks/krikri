@@ -80,6 +80,16 @@ if printf '%s\n' "${cases[@]}" | grep -q '^mysql'; then
     || { log "FATAL: mariadb install failed"; exit 1; }
 fi
 
+# docker_* cases run argument-validation only (there is no docker daemon
+# inside either container, and no docker-in-podman) - the real side
+# still needs the community.docker collection + Docker SDK importable,
+# or every case fails on the SDK import instead of on the args.
+if printf '%s\n' "${cases[@]}" | grep -q '^docker'; then
+  log "installing community.docker + Docker SDK for docker cases"
+  podman exec "$NAME_A" bash -c "apt-get install -y -qq --no-install-recommends python3-docker >/dev/null && ansible-galaxy collection install community.docker >/dev/null 2>&1" \
+    || { log "FATAL: community.docker/Docker SDK install failed"; exit 1; }
+fi
+
 overall_rc=0
 for case_file in "${cases[@]}"; do
   case_name="${case_file%.yml}"
