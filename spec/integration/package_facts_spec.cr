@@ -185,4 +185,44 @@ describe "package_facts plugin" do
 
     result["failed"]?.try(&.as_bool).should be_falsey
   end
+
+  it "fails manager: dpkg as unsupported, like real Ansible (no version has a dpkg manager)" do
+    # Verified live vs ansible-core 2.14 AND 2.19: "Unsupported package
+    # managers requested: dpkg" - dpkg-query is only the implementation
+    # detail of this engine's apt manager, never a real manager name.
+    # This plugin used to accept dpkg as a krikri-specific apt alias.
+    result = PluginSpecHelper.run("package_facts", {"manager" => "dpkg"})
+
+    result["failed"].as_bool.should be_true
+    result["msg"].as_s.should eq("Unsupported package managers requested: dpkg")
+  end
+
+  it "uses real's different auto-detect wording when 'auto' accompanies an unsupported name" do
+    # Real package_facts.py main(): the unsupported-names failure message
+    # depends on whether 'auto' was in the ORIGINAL manager param -
+    # `if 'auto' in module.params['manager']` switches the same
+    # unsupported-set failure to "Could not auto detect a usable package
+    # manager, check warnings for details." This plugin used to always
+    # say "Unsupported package managers requested: ...".
+    result = PluginSpecHelper.run("package_facts", {"manager" => "[\"auto\", \"bogusmgr\"]"})
+
+    result["failed"].as_bool.should be_true
+    result["msg"].as_s.should eq("Could not auto detect a usable package manager, check warnings for details.")
+  end
+
+  it "stamps apt entries with arch/category/origin, matching real python-apt's entry shape" do
+    # Live-verified real apt-manager entry keys (ansible-core 2.19, Debian
+    # container with python3-apt): arch, category, name, origin, source,
+    # version - this plugin used to emit only name/version/source. origin
+    # is the repo Release-file Origin ("Debian" when apt lists exist, ""
+    # when they don't - matching python-apt's "now" archive origin).
+    result = PluginSpecHelper.run("package_facts", {"manager" => "apt"})
+
+    packages = result["ansible_facts"]["packages"].as_h
+    entry = packages[packages.keys.first].as_a.first.as_h
+    entry.keys.sort.should eq(["arch", "category", "name", "origin", "source", "version"])
+    entry["arch"].as_s.should_not be_empty
+    entry["category"].as_s.should_not be_empty
+    entry["origin"].as_s.should_not be_nil
+  end
 end

@@ -80,6 +80,16 @@ if printf '%s\n' "${cases[@]}" | grep -q '^mysql'; then
     || { log "FATAL: mariadb install failed"; exit 1; }
 fi
 
+# package_facts cases need python3-apt in the REAL container (its apt
+# manager is python-apt-based and yields nothing without it, so every
+# case would fail there while krikri's dpkg-query backend succeeds) -
+# gated on the requested case list like the mysql cases above.
+if printf '%s\n' "${cases[@]}" | grep -q '^package_facts'; then
+  log "installing python3-apt for package_facts cases"
+  podman exec "$NAME_A" bash -c "apt-get install -y -qq --no-install-recommends python3-apt >/dev/null" \
+    || { log "FATAL: python3-apt install failed"; exit 1; }
+fi
+
 overall_rc=0
 for case_file in "${cases[@]}"; do
   case_name="${case_file%.yml}"

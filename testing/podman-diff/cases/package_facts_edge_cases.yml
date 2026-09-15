@@ -1,0 +1,91 @@
+# package_facts edge cases. Package LISTS legitimately differ between the
+# two containers (real's container installs ansible-core, krikri's installs
+# its runtime libs), so no count/name-list comparisons - only failed=/changed=,
+# the returned fact STRUCTURE (packages is a dict keyed by package name whose
+# values are lists of {name, version, source} dicts), and failure paths.
+# bash is essential in debian:bookworm-slim, so it exists in both containers.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "Q1 manager auto gathers via dpkg"
+      ansible.builtin.package_facts:
+      register: q1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "Q1 failed={{ q1.failed }} changed={{ q1.changed }} bash_keys={{ q1.ansible_facts.packages['bash'][0].keys() | list | sort | join(',') }} bash_name={{ q1.ansible_facts.packages['bash'][0]['name'] }} bash_is_seq={{ q1.ansible_facts.packages['bash'] is sequence }} bash_src={{ q1.ansible_facts.packages['bash'][0]['source'] }}"
+
+    - name: "Q2 explicit manager rpm on a Debian host yields nothing and fails"
+      ansible.builtin.package_facts:
+        manager: rpm
+      register: q2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "Q2 failed={{ q2.failed }} changed={{ q2.changed | default('none') }}"
+
+    - name: "Q3 unknown manager name fails before gathering"
+      ansible.builtin.package_facts:
+        manager: krikri-no-such-mgr-zzz
+      register: q3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "Q3 failed={{ q3.failed }} changed={{ q3.changed | default('none') }}"
+
+    - name: "Q4 strategy all still succeeds on Debian"
+      ansible.builtin.package_facts:
+        manager: auto
+        strategy: all
+      register: q4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "Q4 failed={{ q4.failed }} changed={{ q4.changed }} bash_keys={{ q4.ansible_facts.packages['bash'][0].keys() | list | sort | join(',') }}"
+
+    - name: "Q5 invalid strategy value"
+      ansible.builtin.package_facts:
+        strategy: krikri-bogus-strategy
+      register: q5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "Q5 failed={{ q5.failed }} changed={{ q5.changed | default('none') }}"
+
+    - name: "Q6 manager list whose first name gathers nothing, strategy first"
+      ansible.builtin.package_facts:
+        manager: ["rpm", "apt"]
+        strategy: first
+      register: q6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "Q6 failed={{ q6.failed }} changed={{ q6.changed }} bash_keys={{ q6.ansible_facts.packages['bash'][0].keys() | list | sort | join(',') }} bash_src={{ q6.ansible_facts.packages['bash'][0]['source'] }}"
+
+    - name: "Q7 manager list of only unusable managers, strategy all, fails"
+      ansible.builtin.package_facts:
+        manager: ["rpm", "zypper"]
+        strategy: all
+      register: q7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "Q7 failed={{ q7.failed }} changed={{ q7.changed | default('none') }}"
+
+    - name: "Q8 mixed valid-plus-invalid manager list"
+      ansible.builtin.package_facts:
+        manager: ["apt", "krikri-nope"]
+      register: q8
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "Q8 failed={{ q8.failed }} changed={{ q8.changed | default('none') }}"
+
+    - name: "Q9 dpkg is not a real manager name (real Ansible fails it as unsupported)"
+      ansible.builtin.package_facts:
+        manager: dpkg
+      register: q9
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "Q9 failed={{ q9.failed }} changed={{ q9.changed | default('none') }}"
+
+    - name: "Q10 auto plus an unsupported name takes real's different auto-detect failure path"
+      ansible.builtin.package_facts:
+        manager: ["auto", "krikri-nope"]
+      register: q10
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "Q10 failed={{ q10.failed }} changed={{ q10.changed | default('none') }}"
