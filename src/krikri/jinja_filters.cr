@@ -393,6 +393,17 @@ module Krikri
     # gap Crinja::Value#truthy? has - an empty string, empty sequence,
     # or empty mapping. Everything else is truthy.
     def self.real_truthy?(value : Crinja::Value) : Bool
+      # Real Jinja2/Ansible: `bool()` on a StrictUndefined is itself an
+      # UndefinedError - Ansible's Jinja2 environment (AnsibleUndefined,
+      # a StrictUndefined subclass) fails even a bare `{% if undef_var %}`
+      # (verified against real ansible-playbook: "'some_undefined_var' is
+      # undefined", found via vcc_caeit.ntp's templates/ntp.conf.j2
+      # `{% if ntp_use_external %}` with no default anywhere). This
+      # helper drives the pytruthy rewrite, ternary, and friends, so it
+      # must agree with the fork's own Crinja::Value#truthy? fix - only
+      # the strict marker raises; the plain lenient Undefined stays falsy.
+      raw = value.raw
+      raise Crinja::UndefinedError.new(raw.name) if raw.is_a?(Crinja::StrictUndefined)
       return false if value.undefined? || value.raw.nil?
       case raw = value.raw
       when Bool
