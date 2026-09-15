@@ -723,7 +723,25 @@ module Krikri
         unless raw.includes?("{{") || raw.includes?("{%") || raw.includes?("{#")
           return value
         end
-        rendered = substitutor.substitute(raw)
+        # strict: true - a nested leaf that is a BARE/dotted reference to a
+        # name set nowhere must FAIL the whole render ("'x' is undefined"),
+        # not collapse to this engine's literal "undefined" sentinel text
+        # and get serialized as ordinary content. Found via a role
+        # `my_config: {foo: {bar: "{{ some_undefined_var }}"}}` fed through
+        # `{{ my_config | to_json }}`/`| to_nice_yaml`: real ansible-playbook
+        # fails immediately (it templates every nested string value at every
+        # level, strictly), while krikri quietly wrote
+        # {"foo":{"bar":"undefined"}}. This one call site is shared by BOTH
+        # evaluators - Crinja's own context conversion (convert_var) AND the
+        # hand-rolled FilterEngine path (ExpressionEvaluator's
+        # retemplated_lookup_value -> rerender_nested_templates) - so a
+        # filter like to_json on a dict with an undefined nested leaf fails
+        # identically either way. substitute's own strictness already
+        # forgives exactly what real Ansible does: `default()`/`d()`-guarded
+        # leaves, `omit`, literals, operators (raise_if_strict_undefined's
+        # own bare-ref rule), so deliberately-lenient nested values keep
+        # rendering.
+        rendered = substitutor.substitute(raw, strict: true)
         stripped = raw.strip
         if stripped.starts_with?("{{") && stripped.ends_with?("}}")
           render_pure_mustache_value(rendered, stripped, substitutor)
