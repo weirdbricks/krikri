@@ -32,16 +32,22 @@ module Krikri
   #   default) rather than system-wide
   # - bindir: custom `--bindir` for installed executables
   #
-  # Idempotency: `present` (no version:) checks `gem list -i "^name$"`
+  # Idempotency: `present` (no version:) checks parsed `gem list` output
   # for existence at ANY version - already installed is a no-op,
   # matching real Ansible's own default behavior. `present` with a
-  # version: checks that specific version via `-v`. `latest` always
-  # invokes `gem install`, matching real Ansible's own GemModule
-  # (a fresh `gem install` on an already-latest gem is a real no-op at
-  # the `gem` CLI level, but this module doesn't attempt to distinguish
-  # that from a real upgrade in its own changed: reporting - narrower
-  # than pip.cr's own state: latest handling, revisit if a real
-  # playbook needs it).
+  # version: does real Ansible's exact-string membership test against
+  # the parsed version list (NOT `gem list -i -v`) - so a version
+  # SPECIFIER (">= 1.0") is deliberately non-idempotent here exactly as
+  # it is in real Ansible, where the specifier never matches a parsed
+  # version string. `latest` resolves the latest remote version first
+  # (real Ansible's own remote listing) and then runs the same
+  # exact-version check - so an already-latest gem is a no-op with
+  # changed=false, and `version` together with `latest` fails with real
+  # Ansible's own validation message. `gem install` on an already-latest
+  # gem is a real no-op at the `gem` CLI level, but this module doesn't
+  # attempt to distinguish that from a real upgrade in its own changed:
+  # reporting - narrower than pip.cr's own state: latest handling,
+  # revisit if a real playbook needs it).
   #
   # - repository: `--source <repository>`
   # - include_dependencies: default true (matching real Ansible's own
@@ -73,16 +79,42 @@ module Krikri
       when "absent"
         remove(executable, name, version)
       when "latest"
-        install(executable, name, version, force: true)
+        if version
+          return PluginResult.new(changed: false, failed: true, msg: "Cannot specify version when state=latest")
+        end
+        # Real Ansible resolves the latest REMOTE version first and then
+        # runs the same exact-version installed check as state=present,
+        # so state=latest is idempotent for an already-latest gem (the
+        # remote listing costs a network round-trip, and an unreachable
+        # registry degrades to the "any version installed" check - both
+        # real behaviors, kept). Verified against real gem.py's exists():
+        # the version param is an exact-string membership test against
+        # parsed `gem list` output - NOT `gem list -i -v` - which is why
+        # version specifiers (">= 1.0") are deliberately non-idempotent
+        # in real Ansible: the specifier never matches a parsed version
+        # string, so the module reinstalls on every run. Matching that
+        # exactly, including the non-idempotence.
+        resolved = list_versions(executable, name, remote: true)[0]?
+        install(executable, name, resolved, force: false)
       else
         install(executable, name, version, force: false)
       end
     end
 
+    # Real Ansible's get_installed_versions: `gem list --norc "^name$"`
+    # (optionally --remote), each line parsed with
+    # /\S+\s+\((?:default: )?(.+)\)/, versions split on ", ", platform
+    # suffixes (everything after the first token) stripped - and then an
+    # exact-string membership test for the version param.
+    private def list_versions(executable : String, name : String, remote : Bool) : Array(String)
+      cmd = %Q(#{executable} list --norc #{remote ? "--remote " : ""}"^#{name}$")
+      result = remote_exec(cmd)
+      PluginHelpers::GemCommand.parse_list_versions(result[:stdout])
+    end
+
     private def installed?(executable : String, name : String, version : String?) : Bool
-      cmd = "#{executable} list -i \"^#{name}$\""
-      cmd += " -v \"#{version}\"" if version
-      remote_exec(cmd)[:exit_code] == 0
+      versions = list_versions(executable, name, remote: false)
+      version ? versions.includes?(version) : !versions.empty?
     end
 
     private def install(executable : String, name : String, version : String?, force : Bool) : PluginResult

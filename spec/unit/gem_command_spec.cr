@@ -49,4 +49,34 @@ describe Krikri::PluginHelpers::GemCommand do
       )
     end
   end
+
+  describe ".parse_list_versions" do
+    it "parses plain local list output" do
+      Krikri::PluginHelpers::GemCommand.parse_list_versions(
+        "hashie (5.1.0)\nminitar (1.1.0)\n"
+      ).should eq(["5.1.0", "1.1.0"])
+    end
+
+    it "handles the 'default:' prefix and multiple versions on one line" do
+      Krikri::PluginHelpers::GemCommand.parse_list_versions(
+        "rake (default: 13.0.6, 12.3.3)\n"
+      ).should eq(["13.0.6", "12.3.3"])
+    end
+
+    it "strips platform suffixes (only the first token of a version is kept)" do
+      Krikri::PluginHelpers::GemCommand.parse_list_versions(
+        "nokogiri (1.16.0 x86_64-linux, 1.16.0 aarch64-linux)\n"
+      ).should eq(["1.16.0", "1.16.0"])
+    end
+
+    it "ignores non-matching lines" do
+      Krikri::PluginHelpers::GemCommand.parse_list_versions(
+        "*** LOCAL GEMS ***\n\nhashie (5.1.0)\n"
+      ).should eq(["5.1.0"])
+    end
+
+    it "returns an empty list for a gem with no output" do
+      Krikri::PluginHelpers::GemCommand.parse_list_versions("").should eq([] of String)
+    end
+  end
 end

@@ -125,6 +125,19 @@ if printf '%s\n' "${cases[@]}" | grep -q '^openssl'; then
   done
 fi
 
+# gem cases need a real ruby + rubygems (the `gem` CLI) in BOTH
+# containers - debian:bookworm-slim ships without it, which would make
+# every case fail with "Failed to find required executable" instead of
+# exercising the install/idempotency logic. Gated on the requested case
+# list like the modprobe cases above.
+if printf '%s\n' "${cases[@]}" | grep -q '^gem'; then
+  log "installing ruby for gem cases"
+  for c in "$NAME_A" "$NAME_B"; do
+    podman exec "$c" bash -c "apt-get install -y -qq --no-install-recommends ruby >/dev/null" \
+      || { log "FATAL: ruby install failed in $c"; exit 1; }
+  done
+fi
+
 # modprobe cases need the kmod package (real /sbin/modprobe) in BOTH
 # containers - debian:bookworm-slim ships without it, which would make
 # every case fail with "Failed to find required executable" instead of

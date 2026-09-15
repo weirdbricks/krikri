@@ -1,0 +1,154 @@
+# gem edge cases. Both containers install real ruby (run.sh's gem-gated
+# install) so the `gem` CLI exists on both sides. Gem NAME/VERSION lists
+# on rubygems.org are volatile across containers only in timing (both
+# fetch the same gems); failed=/changed= and gem CLI-observed state are
+# what matter. Real community.general.gem's idempotency check is an
+# exact-string membership test of the version param against parsed
+# `gem list` output - NOT `gem list -i -v` - so version SPECIFIERS are
+# deliberately included (real is documented-non-idempotent there).
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "G1 install a real gem, default user_install"
+      community.general.gem:
+        name: hashie
+      register: g1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "G1 failed={{ g1.failed }} changed={{ g1.changed }}"
+
+    - name: "G1b re-install is idempotent"
+      community.general.gem:
+        name: hashie
+      register: g1b
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "G1b failed={{ g1b.failed }} changed={{ g1b.changed }}"
+
+    - name: "G1c capture installed version"
+      ansible.builtin.shell: "gem list '^hashie$'"
+      register: g1c
+      ignore_errors: true
+      changed_when: false
+    - ansible.builtin.set_fact:
+        g1ver: "{{ g1c.stdout.split('(')[1].split(',')[0].split()[0] }}"
+    - ansible.builtin.debug:
+        msg: "G1c ver_prefix={{ g1ver }}"
+
+    - name: "G2 install with the exact installed version is a no-op"
+      community.general.gem:
+        name: hashie
+        version: "{{ g1ver }}"
+      register: g2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "G2 failed={{ g2.failed }} changed={{ g2.changed }}"
+
+    - name: "G3 version specifier >= 1.0 over an installed gem"
+      community.general.gem:
+        name: hashie
+        version: ">= 1.0"
+      register: g3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "G3 failed={{ g3.failed }} changed={{ g3.changed }}"
+
+    - name: "G4 nonexistent exact version of an installed gem fails"
+      community.general.gem:
+        name: hashie
+        version: "99.99.99"
+      register: g4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "G4 failed={{ g4.failed }} changed={{ g4.changed | default('none') }}"
+
+    - name: "G5 nonexistent gem name fails"
+      community.general.gem:
+        name: krikri-no-such-gem-zzz
+      register: g5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "G5 failed={{ g5.failed }} changed={{ g5.changed | default('none') }}"
+
+    - name: "G6 state absent for a never-installed gem is a no-op"
+      community.general.gem:
+        name: krikri-no-such-gem-zzz
+        state: absent
+      register: g6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "G6 failed={{ g6.failed }} changed={{ g6.changed }}"
+
+    - name: "G7 version together with state latest is rejected"
+      community.general.gem:
+        name: hashie
+        state: latest
+        version: "1.0"
+      register: g7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "G7 failed={{ g7.failed }} changed={{ g7.changed | default('none') }}"
+
+    - name: "G8 state latest on an already-installed gem"
+      community.general.gem:
+        name: hashie
+        state: latest
+      register: g8
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "G8 failed={{ g8.failed }} changed={{ g8.changed }}"
+
+    - name: "G9 state absent removes the gem"
+      community.general.gem:
+        name: hashie
+        state: absent
+      register: g9
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "G9 failed={{ g9.failed }} changed={{ g9.changed }}"
+
+    - name: "G9b state absent again is idempotent"
+      community.general.gem:
+        name: hashie
+        state: absent
+      register: g9b
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "G9b failed={{ g9b.failed }} changed={{ g9b.changed }}"
+
+    - name: "G9c state absent with a version specifier on an absent gem"
+      community.general.gem:
+        name: hashie
+        state: absent
+        version: ">= 1.0"
+      register: g9c
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "G9c failed={{ g9c.failed }} changed={{ g9c.changed }}"
+
+    - name: "G10 user_install false installs a second real gem"
+      community.general.gem:
+        name: minitar
+        user_install: false
+      register: g10
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "G10 failed={{ g10.failed }} changed={{ g10.changed }}"
+
+    - name: "G10b user_install false re-run is idempotent"
+      community.general.gem:
+        name: minitar
+        user_install: false
+      register: g10b
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "G10b failed={{ g10b.failed }} changed={{ g10b.changed }}"
+
+    - name: "G10c minitar is really on disk (gem CLI sees it)"
+      ansible.builtin.shell: "gem list '^minitar$'"
+      register: g10c
+      ignore_errors: true
+      changed_when: false
+    - ansible.builtin.debug:
+        msg: "G10c present={{ g10c.stdout | length > 0 }} line={{ g10c.stdout }}"
