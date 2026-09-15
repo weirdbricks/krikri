@@ -1,0 +1,66 @@
+# dnf module edge cases. Same shape as yum_edge_cases: dnf itself is
+# NOT functional on the Debian harness containers (no RPM database, no
+# dnf python bindings), so these are validation-only cases: they check
+# WHICH error each engine reports first (argument-spec rejection vs
+# backend failure) and the failed=/changed= shape, not package
+# operations. Prefix: N.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "N1 dnf with an invalid state value"
+      ansible.builtin.dnf:
+        name: bash
+        state: installed-nowhere
+      register: n1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "N1 failed={{ n1.failed | default('none') }} changed={{ n1.changed | default('none') }}"
+
+    - name: "N2 dnf with an out-of-spec parameter"
+      ansible.builtin.dnf:
+        name: bash
+        state: present
+        krikri_not_a_dnf_param: true
+      register: n2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "N2 failed={{ n2.failed | default('none') }} changed={{ n2.changed | default('none') }}"
+
+    - name: "N3 dnf with a nonexistent package"
+      ansible.builtin.dnf:
+        name: krikri-no-such-package-zzz
+        state: present
+      register: n3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "N3 failed={{ n3.failed | default('none') }} changed={{ n3.changed | default('none') }}"
+
+    - name: "N4 dnf with an empty name"
+      ansible.builtin.dnf:
+        name: ""
+        state: present
+      register: n4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "N4 failed={{ n4.failed | default('none') }} changed={{ n4.changed | default('none') }}"
+
+    - name: "N5 dnf with an invalid disablerepo value type"
+      ansible.builtin.dnf:
+        name: bash
+        state: present
+        disablerepo: 12
+      register: n5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "N5 failed={{ n5.failed | default('none') }} changed={{ n5.changed | default('none') }}"
+
+    - name: "N6 dnf with both disable_gpg_check and an invalid boolean"
+      ansible.builtin.dnf:
+        name: bash
+        state: present
+        disable_gpg_check: sometimes
+      register: n6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "N6 failed={{ n6.failed | default('none') }} changed={{ n6.changed | default('none') }}"

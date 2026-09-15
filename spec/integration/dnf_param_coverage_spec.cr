@@ -92,33 +92,11 @@ describe "dnf plugin - parameter coverage (CLI-invocation shape)" do
   end
 
   # dnf.py _configure_base: `conf.best = not self.nobest` when nobest is
-  # given, `conf.best = self.best` otherwise; the two are mutually
-  # exclusive in the shared yumdnf argument spec, and the documented
-  # default is "set by the operating system distribution" (nothing
-  # emitted). dnf's CLI accepts both --best and --nobest.
-  it "maps best: false to --nobest" do
-    with_recording_pkg_managers do |log|
-      result = PluginSpecHelper.run("dnf", {
-        "name"  => "fake-pkg",
-        "state" => "present",
-        "best"  => "false",
-      })
-      result["failed"]?.try(&.as_bool).should be_falsey
-      recorded_install_command(log).should eq("install -y --setopt=localpkg_gpgcheck=1 --nobest fake-pkg")
-    end
-  end
-
-  it "maps best: true to --best" do
-    with_recording_pkg_managers do |log|
-      result = PluginSpecHelper.run("dnf", {
-        "name"  => "fake-pkg",
-        "state" => "present",
-        "best"  => "true",
-      })
-      result["failed"]?.try(&.as_bool).should be_falsey
-      recorded_install_command(log).should eq("install #{BASELINE_OPTIONS} fake-pkg")
-    end
-  end
+  # given, `conf.best = self.best` otherwise. There is no `best:` module
+  # parameter in real Ansible's yumdnf argument spec (only `nobest`) -
+  # a `best:` mapping existed here briefly and was removed (real Ansible
+  # rejects it as an unsupported parameter); the nobest cases below cover
+  # the mapping, and the argument-spec rejection spec covers the rest.
 
   it "maps nobest: true to --nobest (the inverted form of best:)" do
     with_recording_pkg_managers do |log|

@@ -719,17 +719,15 @@ module Krikri
         end
 
         # Best (default in dnf, but explicit is good). Real ansible-core's
-        # dnf module maps both `best:` and `nobest:` onto dnf's single
-        # `best` config switch, inverted for nobest (`conf.best = not
-        # self.nobest`, verified in ansible-core's own dnf.py
-        # _configure_base; the two are documented as mutually exclusive in
-        # the shared yumdnf argument spec), and its documented default is
-        # "set by the operating system distribution", so nothing is
-        # emitted when neither is given - the historical unconditional
-        # `--best` (dnf's own built-in default) is kept for that case.
-        if best = @params["best"]?
-          options << (true?(best) ? "--best" : "--nobest")
-        elsif nobest = @params["nobest"]?
+        # dnf module has only `nobest` in its shared yumdnf argument spec
+        # (`conf.best = not self.nobest`, verified in ansible-core's own
+        # dnf.py _configure_base) - there is no `best:` parameter (one was
+        # invented here briefly and had to go, real Ansible rejects it as
+        # an unsupported parameter), and the documented default is "set by
+        # the operating system distribution", so nothing is emitted when
+        # it is not given - the historical unconditional `--best` (dnf's
+        # own built-in default) is kept for that case.
+        if nobest = @params["nobest"]?
           options << (true?(nobest) ? "--nobest" : "--best")
         elsif !true?(@params["skip_broken"]?)
           options << "--best"
