@@ -76,6 +76,8 @@ module Krikri
   # native. This matches the *existing* (pre-conversion) limitation
   # documented in `normalize_mode` below, not a new one introduced here.
   class FilePlugin < BasePlugin
+    class InvalidModeError < Exception; end
+
     property? check_mode : Bool
     property? diff_mode : Bool
 
@@ -128,7 +130,15 @@ module Krikri
         )
       end
 
-      result = dispatch_state(state, path)
+      result = begin
+        dispatch_state(state, path)
+      rescue InvalidModeError
+        PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: "mode must be in octal or symbolic form"
+        )
+      end
 
       # Real Ansible's file module always echoes the resolved state:
       # back in its result (dev-sec os_hardening's own molecule test
@@ -393,15 +403,8 @@ module Krikri
 
     # Handle state=link (symbolic link)
     private def handle_link(path : String) : PluginResult
-      src = @params["src"]?
-      unless src
-        return PluginResult.new(
-          changed: false,
-          failed: true,
-          msg: "src parameter required for state=link"
-        )
-      end
-      src = expand_tilde(src)
+      src = link_src(path)
+      return src if src.is_a?(PluginResult)
 
       # Check if link already exists and points to correct target
       current_target = try_readlink(path)
@@ -469,6 +472,35 @@ module Krikri
         failed: false,
         msg: "Symbolic link created",
         dest: path,
+        src: src
+      )
+    end
+
+    # Resolves state=link's src:, returning either the tilde-expanded
+    # source path or a failure PluginResult. Real Ansible
+    # (ensure_symlink in its file module) checks that src exists
+    # unconditionally - before any existing-dest handling, so even a
+    # re-run against an already-correct link to a since-deleted src
+    # fails the same way - unless force: is set.
+    private def link_src(path : String) : String | PluginResult
+      raw = @params["src"]?
+      unless raw
+        return PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: "src parameter required for state=link"
+        )
+      end
+      src = expand_tilde(raw)
+      return src if true?(@params["force"]?) || File.exists?(src)
+
+      relpath = !File.symlink?(path) && Dir.exists?(path) ? path : File.dirname(path)
+      absrc = src.starts_with?('/') ? src : File.join(relpath, src)
+      PluginResult.new(
+        changed: false,
+        failed: true,
+        msg: "src file does not exist, use \"force=yes\" if you really want to create the link: #{absrc}",
+        path: path,
         src: src
       )
     end
@@ -882,7 +914,31 @@ module Krikri
     # comma-separated clauses applied left to right - not every POSIX
     # corner case, but every shape real playbooks (and this project's own
     # fixtures) actually write.
+    # Real Ansible (AnsibleModule._symbolic_mode_to_octal in
+    # module_utils/basic.py) validates each comma clause against
+    # USERS_RE ^[ugo]+$ and PERMS_RE ^[rwxXstugo]*$ - note the perms
+    # class includes u/g/o (copy syntax like `g+u`) - and fails the
+    # task with "mode must be in octal or symbolic form" on any
+    # violation. This mirrors that check exactly, so modes chmod(1)
+    # and real Ansible both accept (copy syntax) keep working while
+    # anything else is rejected rather than silently no-op'd by the
+    # narrower compute regex in apply_symbolic_clause.
+    private def validate_symbolic_mode(mode : String) : Nil
+      mode.split(',').each do |raw_clause|
+        clause = raw_clause.strip
+        next if clause.empty?
+        parts = clause.split(/[+=-]/, remove_empty: true)
+        users = parts.shift
+        users = "ugo" if users.empty? || users == "a"
+        next if parts.empty?
+        unless users.matches?(/\A[ugo]+\z/) && parts.all? { |perms| perms.matches?(/\A[rwxXstugo]*\z/) }
+          raise InvalidModeError.new("mode must be in octal or symbolic form")
+        end
+      end
+    end
+
     private def resolve_symbolic_mode(current : Int32, symbolic : String) : Int32
+      validate_symbolic_mode(symbolic)
       symbolic.split(',').reduce(current) do |mode, raw_clause|
         clause = raw_clause.strip
         clause.empty? ? mode : apply_symbolic_clause(mode, clause)
@@ -1251,6 +1307,7 @@ module Krikri
         File.chmod(path, numeric)
       else
         # Symbolic mode (e.g. "u+x", "go-w") - see the class doc comment.
+        validate_symbolic_mode(mode)
         remote_exec("chmod #{shell_single_quote(mode)} #{shell_single_quote(path)}")
       end
     end
