@@ -143,6 +143,16 @@ module Krikri
         encoding: @params["encoding"]?,
       )
 
+      # Real Ansible's find fails the whole module when `age:` or `size:`
+      # doesn't parse ("banana" etc.); it does NOT silently drop the
+      # filter and return unfiltered matches.
+      if (age = options.age_filter) && parse_age(age).nil?
+        return PluginResult.new(changed: false, failed: true, msg: "failed to process age")
+      end
+      if (size = options.size_filter) && parse_size(size).nil?
+        return PluginResult.new(changed: false, failed: true, msg: "failed to process size")
+      end
+
       files, examined, skipped_paths = collect_matches(paths, options)
 
       PluginResult.new(

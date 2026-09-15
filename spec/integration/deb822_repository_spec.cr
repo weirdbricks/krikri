@@ -16,14 +16,67 @@ describe "deb822_repository plugin" do
     result["msg"].as_s.should contain("name")
   end
 
-  it "fails with a clear message when uris is missing" do
+  it "rejects unknown parameters like real Ansible's module-arg validation (ansible-core 2.15 has no body_string)" do
     result = PluginSpecHelper.run("deb822_repository", {
-      "name"   => "testrepo",
-      "suites" => "stable",
+      "name"        => "testrepo-body",
+      "body_string" => "Types: deb\nURIs: http://example.com\n",
     })
 
     result["failed"].as_bool.should be_true
-    result["msg"].as_s.should contain("uris")
+    result["changed"].as_bool.should be_false
+    result["msg"].as_s.should contain("Unsupported parameters")
+    result["msg"].as_s.should contain("body_string")
+  end
+
+  it "succeeds without uris/suites (real Ansible treats both as optional - a name-only task writes just X-Repolib-Name + Types: deb)" do
+    result = PluginSpecHelper.run("deb822_repository", {
+      "name"       => "testrepo-name-only",
+      "check_mode" => "true",
+    })
+
+    result["failed"]?.try(&.as_bool).should be_falsey
+    result["changed"].as_bool.should be_true
+  end
+
+  it "fails with changed=False when types contains an invalid choice (real Ansible's own choices check)" do
+    result = PluginSpecHelper.run("deb822_repository", {
+      "name"       => "testrepo-badtype",
+      "types"      => "banana",
+      "uris"       => "https://example.com/repo",
+      "suites"     => "stable",
+      "components" => "main",
+    })
+
+    result["failed"].as_bool.should be_true
+    result["changed"].as_bool.should be_false
+    result["msg"].as_s.should contain("deb, deb-src")
+    result["msg"].as_s.should contain("banana")
+  end
+
+  it "accepts a real YAML list of valid types choices (check mode)" do
+    result = PluginSpecHelper.run("deb822_repository", {
+      "name"       => "testrepo-multitypes",
+      "types"      => "[\"deb\", \"deb-src\"]",
+      "uris"       => "https://example.com/repo",
+      "suites"     => "stable",
+      "check_mode" => "true",
+    })
+
+    result["failed"]?.try(&.as_bool).should be_falsey
+    result["changed"].as_bool.should be_true
+  end
+
+  it "fails on a space-separated types scalar like real Ansible's comma-only check_type_list split" do
+    result = PluginSpecHelper.run("deb822_repository", {
+      "name"       => "testrepo-spacetype",
+      "types"      => "deb deb-src",
+      "uris"       => "https://example.com/repo",
+      "suites"     => "stable",
+      "check_mode" => "true",
+    })
+
+    result["failed"].as_bool.should be_true
+    result["changed"].as_bool.should be_false
   end
 
   it "reports it would add a repository that isn't present yet (check mode, no real change)" do
