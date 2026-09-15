@@ -42,6 +42,35 @@ module Krikri
     end
 
     def execute : PluginResult
+      # Real AnsibleModule argument-spec validation: any key outside real
+      # Ansible's argument_spec (ansible/modules/systemd_service.py: name/
+      # service/unit, state, enabled, force, masked, daemon_reload/
+      # daemon-reload, daemon_reexec/daemon-reexec, scope, no_block) aborts
+      # the task BEFORE the module runs. Round 813233 (role
+      # libre_ops.multi_redis) passes `systemd: {name: ..., status: ...}` -
+      # `status` is not a parameter of this module at all - and real
+      # ansible-playbook rejects the task with the message below, while
+      # this plugin silently ignored the unknown key and ran anyway.
+      # check_mode/diff_mode/_environment are engine-internal keys
+      # injected by BasePlugin/the test harness, not part of the real
+      # argument_spec, so they must not be rejected.
+      supported_params = {"name", "service", "unit", "state", "enabled",
+                          "masked", "daemon_reload", "daemon-reload",
+                          "daemon_reexec", "daemon-reexec", "force",
+                          "no_block", "scope"}
+      internal_keys = {"check_mode", "diff_mode", "_environment"}
+      unsupported = @params.keys.reject { |k| supported_params.includes?(k) || internal_keys.includes?(k) }
+      unless unsupported.empty?
+        return PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: "Unsupported parameters for (systemd) module: #{unsupported.sort.join(", ")}. " \
+               "Supported parameters include: " \
+               "daemon_reexec, daemon_reload, enabled, force, masked, name, no_block, scope, state " \
+               "(daemon-reexec, daemon-reload, service, unit)."
+        )
+      end
+
       # name/daemon_reload/daemon_reexec all have real Ansible-documented
       # hyphenated aliases (`ansible-doc ansible.builtin.systemd`: name's
       # are service/unit; daemon_reload's is daemon-reload; daemon_
