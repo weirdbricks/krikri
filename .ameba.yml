@@ -70,6 +70,7 @@ Lint/NotNil:
   - plugins/postgresql_query.cr
   - plugins/replace.cr
   - plugins/sefcontext.cr
+  - plugins/selinux.cr
   - plugins/xml.cr
   - spec/integration/apt_key_spec.cr
   - spec/integration/apt_param_coverage_spec.cr

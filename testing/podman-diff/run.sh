@@ -95,9 +95,17 @@ fi
 # divergence). For deb822 cases the real side gets a venv with a current
 # ansible-core + python3-debian (the module's own runtime dep) and those
 # cases run with that venv's ansible-playbook.
+#
+# dpkg_selections has the same 2.14 problem in the other direction: the
+# "Failed to find package 'x' to perform selection 'y'." guard for a
+# package dpkg has never heard of only landed in ansible-core 2.16
+# (verified against the 2.14/2.16/2.18/devel sources) - 2.14 silently
+# records a selection for the unknown package and reports changed=True.
+# krikri matches 2.16+, so dpkg_selections cases run under the same
+# venv's current ansible-playbook.
 DEB822_ANSIBLE=""
-if printf '%s\n' "${cases[@]}" | grep -q '^deb822'; then
-  log "installing venv ansible-core (>=2.15) + python3-debian for deb822 cases"
+if printf '%s\n' "${cases[@]}" | grep -qE '^(deb822|dpkg_selections)'; then
+  log "installing venv ansible-core (>=2.15) for deb822/dpkg_selections cases (+ python3-debian for deb822)"
   podman exec "$NAME_A" bash -c "apt-get install -y -qq --no-install-recommends python3-venv python3-debian >/dev/null && python3 -m venv /opt/ansible215 && /opt/ansible215/bin/pip install -q ansible-core" \
     || { log "FATAL: venv ansible-core install failed"; exit 1; }
   DEB822_ANSIBLE="/opt/ansible215/bin/ansible-playbook"
@@ -202,15 +210,17 @@ if printf '%s\n' "${cases[@]}" | grep -q '^modprobe'; then
   done
 fi
 
-# seboolean cases need the real module's own python libs in the REAL
-# container only - without python3-selinux/python3-semanage every
-# case would fail on the libselinux import check and mask all the
-# argument-validation behavior the cases are actually testing. krikri's
-# seboolean shells out to getenforce/getsebool, so it needs nothing.
-# (The container genuinely has no SELinux - that's the point; see the
-# case file's own header.)
-if printf '%s\n' "${cases[@]}" | grep -q '^seboolean'; then
-  log "installing python3-selinux + python3-semanage for seboolean cases"
+# seboolean/seport/selinux cases need the real modules' own python
+# libs in the REAL container only - without
+# python3-selinux/python3-semanage every case would fail on the
+# libselinux/seobject import checks and mask all the argument-
+# validation behavior the cases are actually testing. krikri's
+# seboolean shells out to getenforce/getsebool, seport to semanage,
+# and selinux reads/writes /etc/selinux/config itself, so krikri needs
+# nothing. (The container genuinely has no SELinux - that's the point;
+# see the case files' own headers.)
+if printf '%s\n' "${cases[@]}" | grep -qE '^(seboolean|seport|selinux)'; then
+  log "installing python3-selinux + python3-semanage for seboolean/seport/selinux cases"
   podman exec "$NAME_A" bash -c "apt-get install -y -qq --no-install-recommends python3-selinux python3-semanage >/dev/null" \
     || { log "FATAL: SELinux python libs install failed"; exit 1; }
 fi

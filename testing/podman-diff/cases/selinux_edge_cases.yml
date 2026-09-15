@@ -1,0 +1,128 @@
+# selinux edge cases. The harness containers have NO SELinux (no
+# /sys/fs/selinux) and no /etc/selinux/config initially - the missing-
+# config path is exactly what the real module fails on unconditionally
+# (see plugins/selinux.cr's class docs; found live via buluma.selinux
+# on a Rocky 9.6 host missing the SELinux-policy package). Later cases
+# create a minimal /etc/selinux/config by hand so the config-rewrite
+# paths (policy-required, idempotency, nonexistent policy type) run
+# against a real file. Real ansible.posix.selinux needs
+# python3-selinux + python3-semanage in the real container (run.sh's
+# ^selinux/^seboolean gated block) or the libselinux import check
+# fails first and masks all of it. Msg wording differs between engines
+# and is not a bug.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "S1 missing state is a required argument"
+      ansible.posix.selinux:
+      register: s1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S1 failed={{ s1.failed | default('none') }} changed={{ s1.changed | default('none') }}"
+
+    - name: "S2 invalid state value"
+      ansible.posix.selinux:
+        state: krikri_state
+      register: s2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S2 failed={{ s2.failed | default('none') }} changed={{ s2.changed | default('none') }}"
+
+    - name: "S3 valid state on a host with no /etc/selinux/config"
+      ansible.posix.selinux:
+        state: enforcing
+      register: s3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S3 failed={{ s3.failed | default('none') }} changed={{ s3.changed | default('none') }}"
+
+    - name: "S4 state disabled still requires the config file to exist"
+      ansible.posix.selinux:
+        state: disabled
+      register: s4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S4 failed={{ s4.failed | default('none') }} changed={{ s4.changed | default('none') }}"
+
+    - name: "S5 check mode does not bypass the missing-config failure"
+      ansible.posix.selinux:
+        state: enforcing
+      check_mode: true
+      register: s5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S5 failed={{ s5.failed | default('none') }} changed={{ s5.changed | default('none') }}"
+
+    - name: "S0a create /etc/selinux"
+      ansible.builtin.file:
+        path: /etc/selinux
+        state: directory
+
+    - name: "S0b create a minimal /etc/selinux/config"
+      ansible.builtin.copy:
+        content: |
+          # This file controls the state of SELinux on the system.
+          SELINUX=disabled
+          SELINUXTYPE=targeted
+        dest: /etc/selinux/config
+
+    - name: "S6 state != disabled without policy is rejected"
+      ansible.posix.selinux:
+        state: enforcing
+      register: s6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S6 failed={{ s6.failed | default('none') }} changed={{ s6.changed | default('none') }}"
+
+    - name: "S7 state disabled without policy defaults the policy from config"
+      ansible.posix.selinux:
+        state: disabled
+      register: s7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S7 failed={{ s7.failed | default('none') }} changed={{ s7.changed | default('none') }}"
+
+    - name: "S8 enforcing with policy targeted rewrites the config"
+      ansible.posix.selinux:
+        state: enforcing
+        policy: targeted
+      register: s8
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S8 failed={{ s8.failed | default('none') }} changed={{ s8.changed | default('none') }}"
+
+    - name: "S9 re-run enforcing/targeted is idempotent"
+      ansible.posix.selinux:
+        state: enforcing
+        policy: targeted
+      register: s9
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S9 failed={{ s9.failed | default('none') }} changed={{ s9.changed | default('none') }}"
+
+    - name: "S10 a nonexistent policy type is rejected"
+      ansible.posix.selinux:
+        state: enforcing
+        policy: krikri_policy
+      register: s10
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S10 failed={{ s10.failed | default('none') }} changed={{ s10.changed | default('none') }}"
+
+    - name: "S11 check mode predicts the policy change without the existence check"
+      ansible.posix.selinux:
+        state: enforcing
+        policy: krikri_policy
+      check_mode: true
+      register: s11
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S11 failed={{ s11.failed | default('none') }} changed={{ s11.changed | default('none') }}"
+
+    - name: "S12 check mode wrote nothing - config still has enforcing"
+      ansible.builtin.command:
+        cmd: grep -c '^SELINUX=enforcing' /etc/selinux/config
+      register: s12
+    - ansible.builtin.debug:
+        msg: "S12 rc={{ s12.rc }} count={{ s12.stdout | trim }}"
