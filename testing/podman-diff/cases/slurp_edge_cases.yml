@@ -1,0 +1,53 @@
+# slurp module edge cases. X0 creates the fixtures (including a
+# deterministic binary blob); all other cases are read-only. Each case
+# registers its result and prints an "X<n> key=value" debug line for
+# run.sh's diff extraction. failed=/changed=/base64 content are what
+# matter; error-message WORDING may legitimately differ between engines.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "X0 fixture: regular, binary, and empty files"
+      ansible.builtin.command: |
+        bash -c "mkdir -p /tmp/vroot && printf 'line one\nline two\n' > /tmp/x_regular.txt && printf 'a\x00b\xff\x7f\x01\xfe' > /tmp/x_binary.bin && : > /tmp/x_empty.bin"
+      changed_when: false
+
+    - name: "X1 slurp a file that does not exist"
+      ansible.builtin.slurp:
+        src: /tmp/X_no_such_file_zzz
+      register: x1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "X1 failed={{ x1.failed | default('none') }} changed={{ x1.changed | default('none') }} content_present={{ x1.content is defined }}"
+
+    - name: "X2 slurp a directory (must fail)"
+      ansible.builtin.slurp:
+        src: /tmp/vroot
+      register: x2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "X2 failed={{ x2.failed | default('none') }} changed={{ x2.changed | default('none') }} content_present={{ x2.content is defined }}"
+
+    - name: "X3 slurp a regular text file"
+      ansible.builtin.slurp:
+        src: /tmp/x_regular.txt
+      register: x3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "X3 failed={{ x3.failed | default('none') }} changed={{ x3.changed | default('none') }} content={{ x3.content | default('none') }} encoding={{ x3.encoding | default('none') }}"
+
+    - name: "X4 slurp a binary file (base64 correctness)"
+      ansible.builtin.slurp:
+        src: /tmp/x_binary.bin
+      register: x4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "X4 failed={{ x4.failed | default('none') }} content={{ x4.content | default('none') }}"
+
+    - name: "X5 slurp an empty file"
+      ansible.builtin.slurp:
+        src: /tmp/x_empty.bin
+      register: x5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "X5 failed={{ x5.failed | default('none') }} content={{ x5.content | default('none') }}"
