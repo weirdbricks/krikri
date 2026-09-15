@@ -151,6 +151,19 @@ if printf '%s\n' "${cases[@]}" | grep -q '^modprobe'; then
   done
 fi
 
+# seboolean cases need the real module's own python libs in the REAL
+# container only - without python3-selinux/python3-semanage every
+# case would fail on the libselinux import check and mask all the
+# argument-validation behavior the cases are actually testing. krikri's
+# seboolean shells out to getenforce/getsebool, so it needs nothing.
+# (The container genuinely has no SELinux - that's the point; see the
+# case file's own header.)
+if printf '%s\n' "${cases[@]}" | grep -q '^seboolean'; then
+  log "installing python3-selinux + python3-semanage for seboolean cases"
+  podman exec "$NAME_A" bash -c "apt-get install -y -qq --no-install-recommends python3-selinux python3-semanage >/dev/null" \
+    || { log "FATAL: SELinux python libs install failed"; exit 1; }
+fi
+
 overall_rc=0
 for case_file in "${cases[@]}"; do
   case_name="${case_file%.yml}"

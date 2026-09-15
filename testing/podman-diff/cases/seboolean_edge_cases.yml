@@ -1,0 +1,125 @@
+# seboolean edge cases, focused on argument validation that fails
+# BEFORE any real SELinux call - this Debian container has no SELinux
+# (no /sys/fs/selinux, no getenforce binary), so the module's actual
+# get/set path is NOT testable here (it was verified against a real
+# Rocky 9.6 enforcing host; see plugins/seboolean.cr's class docs).
+# What IS testable is everything real ansible.posix.seboolean does
+# before touching libselinux/libsemanage: required-arg collection
+# (sorted, comma-joined), bool-type conversion of state/persistent/
+# ignore_selinux_state, and the "SELinux is disabled" runtime-status
+# gate. The real side needs python3-selinux + python3-libsemanage
+# installed (run.sh gate) or the libselinux import check fails first
+# and masks all of it.
+#
+# B8/B9/B11 are the interesting disabled-host paths: with
+# ignore_selinux_state: true real skips the runtime-status gate, and
+# the NON-persistent branch is guarded by is_selinux_enabled() (0
+# here), so it exits a no-op SUCCESS with changed=False. The
+# persistent branch bypasses that guard (it talks to the semanage
+# policy store directly) and fails on a store-less host.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "B1 bare call fails both required args"
+      ansible.posix.seboolean:
+      register: b1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "B1 failed={{ b1.failed }} changed={{ b1.changed | default('none') }} msg={{ b1.msg | default('none') }}"
+
+    - name: "B2 missing state"
+      ansible.posix.seboolean:
+        name: "krikri_bool"
+      register: b2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "B2 failed={{ b2.failed }} changed={{ b2.changed | default('none') }} msg={{ b2.msg | default('none') }}"
+
+    - name: "B3 missing name"
+      ansible.posix.seboolean:
+        state: true
+      register: b3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "B3 failed={{ b3.failed }} changed={{ b3.changed | default('none') }} msg={{ b3.msg | default('none') }}"
+
+    - name: "B4 invalid state value fails bool conversion"
+      ansible.posix.seboolean:
+        name: "krikri_bool"
+        state: "krikri-not-a-bool"
+      register: b4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "B4 failed={{ b4.failed }} changed={{ b4.changed | default('none') }}"
+
+    - name: "B5 invalid persistent value fails bool conversion"
+      ansible.posix.seboolean:
+        name: "krikri_bool"
+        state: true
+        persistent: "krikri-not-a-bool"
+      register: b5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "B5 failed={{ b5.failed }} changed={{ b5.changed | default('none') }}"
+
+    - name: "B6 invalid ignore_selinux_state value fails bool conversion"
+      ansible.posix.seboolean:
+        name: "krikri_bool"
+        state: true
+        ignore_selinux_state: "krikri-not-a-bool"
+      register: b6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "B6 failed={{ b6.failed }} changed={{ b6.changed | default('none') }}"
+
+    - name: "B7 valid args, SELinux disabled without ignore flag"
+      ansible.posix.seboolean:
+        name: "krikri_bool"
+        state: true
+      register: b7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "B7 failed={{ b7.failed }} changed={{ b7.changed | default('none') }} msg={{ b7.msg | default('none') }}"
+
+    - name: "B8 ignore_selinux_state true, non-persistent: disabled host is a no-op success"
+      ansible.posix.seboolean:
+        name: "krikri_bool"
+        state: true
+        ignore_selinux_state: true
+      register: b8
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "B8 failed={{ b8.failed }} changed={{ b8.changed | default('none') }}"
+
+    - name: "B9 ignore true with persistent still fails on a store-less host"
+      ansible.posix.seboolean:
+        name: "krikri_bool"
+        state: true
+        persistent: true
+        ignore_selinux_state: true
+      register: b9
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "B9 failed={{ b9.failed }} changed={{ b9.changed | default('none') }}"
+
+    - name: "B10 check mode does not bypass the disabled-host gate"
+      ansible.posix.seboolean:
+        name: "krikri_bool"
+        state: true
+      check_mode: true
+      register: b10
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "B10 failed={{ b10.failed }} changed={{ b10.changed | default('none') }} msg={{ b10.msg | default('none') }}"
+
+    - name: "B11 check mode with ignore flag is still a no-op success"
+      ansible.posix.seboolean:
+        name: "krikri_bool"
+        state: true
+        ignore_selinux_state: true
+      check_mode: true
+      register: b11
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "B11 failed={{ b11.failed }} changed={{ b11.changed | default('none') }}"
