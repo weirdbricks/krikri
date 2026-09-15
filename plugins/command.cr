@@ -238,32 +238,37 @@ module Krikri
       # Get optional parameters
       stdin_data = @params["stdin"]?
 
-      # Change directory if requested. No need to track/restore the
-      # original directory afterwards - this plugin process runs once
-      # and exits, it never returns to running further code in the
-      # process's own original cwd. A prior version DID try to restore
-      # it (`Dir.cd(original_dir)` in both the exec-failure rescue and
-      # after a successful run below), which was worse than a no-op: on
-      # a remote SSH+`become_user:` invocation, the process starts with
-      # cwd inherited from the SSH login user's home (root's, `/root`,
-      # mode 700) - restoring to that path as an unprivileged
-      # become_user with no permission on `/root` at all raised an
-      # uncaught `Dir.cd` exception AFTER the real command had already
-      # run successfully, crashing an otherwise-successful task.
-      # ssh_hardening/nextcloud-shaped `command: ... chdir: X become_user:
-      # www-data` tasks hit this every time. Found via
-      # robertdebock.nextcloud's own `Configure nextcloud` task
-      # (`chdir: /var/www/html/nextcloud`, `become_user: www-data`).
-      if chdir
-        begin
-          Dir.cd(chdir)
-        rescue ex
-          return with_executable_warning(PluginResult.new(
-            changed: false,
-            failed: true,
-            msg: "Failed to change directory to #{chdir}: #{ex.message}"
-          ))
-        end
+      # Fail the task up front when chdir doesn't exist or isn't a
+      # directory (real Ansible's command module does the same), but do
+      # NOT mutate this process's own cwd at all - the child below gets
+      # its cwd via Process.new's chdir: instead. The old approach
+      # (process-global Dir.cd) relied on this plugin process being
+      # one-shot-per-task, which is true for the normal exec path but
+      # FALSE under --persistent-daemon mode: there ONE long-lived
+      # process dispatches every task on the connection in a loop, so a
+      # Dir.cd here leaked into every later task on that connection
+      # (round 813358, markosamuli.nvm - a later task deleted the chdir
+      # directory and a still-later plain command: inherited the stale
+      # deleted cwd and failed with a getcwd/shell-init error, something
+      # real Ansible can never hit since it execs a fresh process per
+      # task). An earlier variant that tried to RESTORE the original cwd
+      # after the run was worse still: on a remote SSH+`become_user:`
+      # invocation the process starts with cwd inherited from the SSH
+      # login user's home (root's, `/root`, mode 700), and restoring to
+      # that path as an unprivileged become_user with no permission on
+      # `/root` at all raised an uncaught `Dir.cd` exception AFTER the
+      # real command had already run successfully, crashing an
+      # otherwise-successful task. ssh_hardening/nextcloud-shaped
+      # `command: ... chdir: X become_user: www-data` tasks hit that
+      # every time (robertdebock.nextcloud's own `Configure nextcloud`
+      # task, `chdir: /var/www/html/nextcloud`, `become_user: www-data`).
+      if chdir && !File.directory?(chdir)
+        reason = File.exists?(chdir) ? "Not a directory" : "No such file or directory"
+        return with_executable_warning(PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: "Failed to change directory to #{chdir}: #{reason}"
+        ))
       end
 
       # Execute command using Crystal's Process
@@ -340,6 +345,7 @@ module Krikri
           command_name,
           args,
           env: task_environment,
+          chdir: chdir,
           output: stdout,
           error: stderr,
           input: stdin_data ? Process::Redirect::Pipe : Process::Redirect::Close
