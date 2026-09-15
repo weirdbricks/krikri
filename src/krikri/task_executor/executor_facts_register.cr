@@ -182,6 +182,7 @@ module Krikri
         params["fact_path"] = fact_path
       end
       params["_remote_connection"] = remote.to_s
+      params["_first_gather"] = first_gather_for_host?(host).to_s
 
       config = {
         "host" => {
@@ -226,6 +227,23 @@ module Krikri
       {true, nil, false}
     rescue ex
       {false, ex.message, false}
+    end
+
+    # Real Ansible's setup result carries `discovered_interpreter_python`
+    # (the interpreter its own discovery resolved) exactly ONCE per host
+    # per run - the first module invocation where discovery runs, and it
+    # is exempt from the module's own filter (podman-diff setup case W1:
+    # real returns ansible_facts = {discovered_interpreter_python} for a
+    # filter matching nothing); later invocations find the discovery
+    # already cached and never re-emit it (real W2+). This engine's
+    # gatherer has no per-host state, so the executor computes the
+    # first-gather gate here and threads it to the plugin under
+    # _first_gather (see build_plugin_config): a W1-style filtered merge
+    # stores the stamp alone, which must count as "already discovered"
+    # for the next invocation's gate.
+    private def first_gather_for_host?(host : Host) : Bool
+      store = @facts[host.name]?
+      store.nil? || (store["ansible_python"]?.nil? && store["discovered_interpreter_python"]?.nil?)
     end
 
     # Show execution recap

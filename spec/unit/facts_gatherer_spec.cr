@@ -300,4 +300,98 @@ describe Krikri::FactsGatherer do
       renderer.render(template).strip.should eq("DRIVE1 /dev/sda")
     end
   end
+
+  describe "min-bundle parity with real Ansible (podman-diff setup case)" do
+    # Found adding the setup edge cases to the podman-diff harness: real
+    # ansible-core's min bundle (`gather_subset: "!all"`) reports several
+    # facts this engine never gathered at all, and two families
+    # (virtualization, DMI) this engine reported UNDER MIN that real
+    # Ansible only reports under the virtual/hardware subsets.
+    config = JSON.parse(%({"host":{"name":"localhost","user":"root","port":22},"params":{"gather_subset":"!all"},"vars":{}}))
+
+    it "always sets ansible_dns (empty dict when resolv.conf has nothing usable)" do
+      facts = JSON.parse(Krikri::FactsGatherer.run(config))["ansible_facts"].as_h
+      facts["ansible_dns"]?.should_not be_nil
+      facts["ansible_dns"].as_h?.should_not be_nil
+    end
+
+    it "sets ansible_cmdline/ansible_proc_cmdline with flag=True and k=v semantics" do
+      parsed = Krikri::FactsGatherer.parse_cmdline("quiet splash root=UUID=abc-1 console=tty0 console=ttyS0", false)
+      parsed["quiet"].as_bool.should be_true
+      parsed["root"].as_s.should eq("UUID=abc-1")
+      parsed["console"].as_s.should eq("ttyS0")
+
+      multi = Krikri::FactsGatherer.parse_cmdline("console=tty0 console=ttyS0", true)
+      multi["console"].as_a.map(&.as_s).should eq(["tty0", "ttyS0"])
+
+      empty_value = Krikri::FactsGatherer.parse_cmdline("opt=", false)
+      empty_value["opt"].as_s.should eq("")
+    end
+
+    it "sets the real/effective user and group id facts" do
+      facts = JSON.parse(Krikri::FactsGatherer.run(config))["ansible_facts"].as_h
+      facts["ansible_real_user_id"]?.should_not be_nil
+      facts["ansible_real_group_id"]?.should_not be_nil
+      facts["ansible_effective_user_id"]?.should_not be_nil
+      facts["ansible_effective_group_id"]?.should_not be_nil
+      facts["ansible_effective_user_id"].as_i64.should eq(facts["ansible_user_uid"].as_i64)
+    end
+
+    it "sets ansible_system_capabilities/_enforced (real N/A defaults without capsh)" do
+      facts = JSON.parse(Krikri::FactsGatherer.run(config))["ansible_facts"].as_h
+      facts["ansible_system_capabilities_enforced"]?.should_not be_nil
+      facts["ansible_system_capabilities"]?.should_not be_nil
+    end
+
+    it "reports ansible_distribution_minor_version even for dotless VERSION_ID" do
+      facts = JSON.parse(Krikri::FactsGatherer.run(config))["ansible_facts"].as_h
+      facts["ansible_distribution_minor_version"]?.should_not be_nil
+    end
+
+    it "does NOT report virtualization facts under min" do
+      facts = JSON.parse(Krikri::FactsGatherer.run(config))["ansible_facts"].as_h
+      facts["ansible_virtualization_type"]?.should be_nil
+      facts["ansible_virtualization_role"]?.should be_nil
+    end
+
+    it "reports virtualization facts (incl. the tech lists) under the default all gather" do
+      facts = JSON.parse(Krikri::FactsGatherer.run(nil))["ansible_facts"].as_h
+      facts["ansible_virtualization_type"]?.should_not be_nil
+      facts["ansible_virtualization_role"]?.should_not be_nil
+      facts["ansible_virtualization_tech_guest"]?.should_not be_nil
+      facts["ansible_virtualization_tech_host"]?.should_not be_nil
+      facts["ansible_virtualization_tech_host"].as_a.should be_empty
+    end
+
+    it "reports processor_nproc and uptime under the default gather" do
+      facts = JSON.parse(Krikri::FactsGatherer.run(nil))["ansible_facts"].as_h
+      facts["ansible_processor_nproc"]?.should_not be_nil
+      facts["ansible_processor_nproc"].as_i64.should be > 0
+      facts["ansible_uptime_seconds"]?.should_not be_nil
+      facts["ansible_uptime_seconds"].as_i64.should be > 0
+    end
+
+    it "reports the DMI set under the default gather" do
+      facts = JSON.parse(Krikri::FactsGatherer.run(nil))["ansible_facts"].as_h
+      %w[ansible_system_vendor ansible_product_version ansible_product_name
+         ansible_product_serial ansible_product_uuid ansible_bios_vendor
+         ansible_bios_version ansible_bios_date ansible_board_vendor
+         ansible_board_name ansible_chassis_vendor ansible_form_factor
+         ansible_lvm ansible_device_links].each do |key|
+        facts[key]?.should_not be_nil
+      end
+      # The lvs/vgs dicts are always present (empty on hosts without LVM).
+      facts["ansible_lvm"].as_h["lvs"].as_h?.should_not be_nil
+      facts["ansible_lvm"].as_h["vgs"].as_h?.should_not be_nil
+    end
+
+    it "resolves the new family subsets like real Ansible's alias map" do
+      Krikri::FactsGatherer.resolve_enabled_families(["virtualization_type"]).should contain("virtual")
+      Krikri::FactsGatherer.resolve_enabled_families(["is_chroot"]).should contain("is_chroot")
+      Krikri::FactsGatherer.resolve_enabled_families(["all"]).should contain("virtual")
+      Krikri::FactsGatherer.resolve_enabled_families(["!all"]).should_not contain("virtual")
+      # !virtualization_type excludes the whole alias family, not just one fact.
+      Krikri::FactsGatherer.resolve_enabled_families(["!virtualization_type"]).should_not contain("virtual")
+    end
+  end
 end

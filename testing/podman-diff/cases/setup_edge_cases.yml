@@ -1,0 +1,70 @@
+# setup (gather_facts) module edge cases. Fact VALUES themselves can
+# legitimately differ between engines (different discovery depth), so
+# these compare failed=/changed= plus the SIZE of the returned
+# ansible_facts dict - a no-match filter must give the interpreter
+# stamp only (not a failure), exclusions must remove subsets, and an
+# invalid subset must fail like real Ansible does.
+#
+# setup_shape_exclusions: keys this engine surfaces inside the setup
+# result's ansible_facts that real Ansible only ever exposes as
+# injected VARS, never inside the module result dict - the flat
+# ansible_python_interpreter (krikri defines it for local-connection
+# runs; real resolves it from config, see facts_gatherer.cr's
+# gather_python_facts) and the per-interface facts
+# (ansible_interfaces/ansible_<iface>, which real's
+# inject_facts_as_vars flattens into host vars; `ansible_facts['lo']`
+# templating works in both). Excluding them here keeps the comparison
+# on subset/filter behavior; the templating surface is identical.
+- hosts: all
+  gather_facts: false
+  vars:
+    setup_shape_exclusions: ['ansible_python_interpreter', 'ansible_interfaces', 'ansible_lo', 'ansible_wlo1']
+
+  tasks:
+    - name: "W1 filter matching nothing returns the interpreter stamp, not a failure"
+      ansible.builtin.setup:
+        filter: "krikri_no_such_fact*"
+      register: w1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "W1 failed={{ w1.failed | default('none') }} changed={{ w1.changed | default('none') }} facts_len={{ w1.ansible_facts.keys() | list | difference(setup_shape_exclusions) | length }} keys={{ w1.ansible_facts.keys() | list | sort | difference(setup_shape_exclusions) | join(',') }}"
+
+    - name: "W2 gather_subset excluding everything"
+      ansible.builtin.setup:
+        gather_subset: "!all"
+      register: w2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "W2 failed={{ w2.failed | default('none') }} changed={{ w2.changed | default('none') }} facts_len={{ w2.ansible_facts.keys() | list | difference(setup_shape_exclusions) | length }} keys={{ w2.ansible_facts.keys() | list | sort | difference(setup_shape_exclusions) | join(',') }}"
+
+    - name: "W3 gather_subset excluding one subset from hardware"
+      ansible.builtin.setup:
+        gather_subset: "hardware,!mount"
+      register: w3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "W3 failed={{ w3.failed | default('none') }} changed={{ w3.changed | default('none') }} facts_len={{ w3.ansible_facts.keys() | list | difference(setup_shape_exclusions) | length }} keys={{ w3.ansible_facts.keys() | list | sort | difference(setup_shape_exclusions) | join(',') }}"
+
+    - name: "W4 invalid gather_subset value"
+      ansible.builtin.setup:
+        gather_subset: "krikri-not-a-subset"
+      register: w4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "W4 failed={{ w4.failed | default('none') }} changed={{ w4.changed | default('none') }}"
+
+    - name: "W5 gather_timeout short but nonzero"
+      ansible.builtin.setup:
+        gather_timeout: 5
+      register: w5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "W5 failed={{ w5.failed | default('none') }} changed={{ w5.changed | default('none') }} facts_len={{ w5.ansible_facts.keys() | list | difference(setup_shape_exclusions) | length }} keys={{ w5.ansible_facts.keys() | list | sort | difference(setup_shape_exclusions) | join(',') }}"
+
+    - name: "W6 filter matching a narrow family"
+      ansible.builtin.setup:
+        filter: "ansible_processor*"
+      register: w6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "W6 failed={{ w6.failed | default('none') }} changed={{ w6.changed | default('none') }} facts_len={{ w6.ansible_facts.keys() | list | difference(setup_shape_exclusions) | length }} keys={{ w6.ansible_facts.keys() | list | sort | difference(setup_shape_exclusions) | join(',') }}"
