@@ -329,6 +329,20 @@ module Krikri
     property block_tasks : Array(Task)?
     property rescue_tasks : Array(Task)?
     property always_tasks : Array(Task)?
+    # Raw (unrendered) `name:` of every enclosing block:/rescue:/always:
+    # wrapper, outermost first - nil for a task with no enclosing block.
+    # Real ansible-core 2.19 templates a BLOCK's name keyword strictly
+    # when one of its children actually goes to run, failing that child
+    # with "Task failed: Error processing keyword 'name': 'X' is
+    # undefined" (ikke_t.podman_container_systemd round 813203: the block
+    # named `do tasks when "{{ service_name }}" state is "running"`
+    # hard-failed real Ansible when the role ran without grafana_podman's
+    # `container_name` above it - this engine rendered the name leniently
+    # and kept executing). A TASK's own name stays lenient there (real
+    # Ansible banners it as "<< error 1 - 'nope' is undefined >>" and
+    # still runs/skips it normally), so only the enclosing-chain names
+    # are tracked.
+    property block_name_chain : Array(String)?
     # Set on every task loaded from a role (tasks/main.yml and
     # handlers/main.yml alike) by RoleLoader. role_defaults is the lowest
     # precedence tier (role's defaults/main.yml); role_vars sits above
@@ -3263,6 +3277,20 @@ module Krikri
     end
 
     # naturally through parse_tasks -> parse_task -> parse_block_task).
+
+    # parse_block_task's helper - prepends the enclosing block's name to
+    # each descendant's block_name_chain, recursing through nested
+    # block:/rescue:/always: wrappers so a doubly-nested task's chain
+    # reads outermost-first (see Task.block_name_chain).
+    private def self.prepend_block_name_to_descendants(tasks : Array(Task), name : String) : Nil
+      tasks.each do |child|
+        child.block_name_chain = [name] + (child.block_name_chain || [] of String)
+        prepend_block_name_to_descendants(child.block_tasks || [] of Task, name)
+        prepend_block_name_to_descendants(child.rescue_tasks || [] of Task, name)
+        prepend_block_name_to_descendants(child.always_tasks || [] of Task, name)
+      end
+    end
+
     private def self.parse_block_task(name : String, task_hash : Hash(YAML::Any, YAML::Any), block_yaml : Array(YAML::Any), play : Play, file_dir : String, role_path : String? = nil, playbook_dir : String? = nil) : Task
       task = Task.new(name, "_block")
 
@@ -3309,6 +3337,15 @@ module Krikri
         play.become = saved_become
         play.become_user = saved_become_user
       end
+
+      # Stamp this block's own name onto every descendant's
+      # block_name_chain - AFTER the children parse, so a nested block's
+      # own stamping (its children carry its name innermost) is already
+      # in place and this outer pass prepends on top of it, outermost
+      # first. See Task.block_name_chain for why the chain exists.
+      prepend_block_name_to_descendants(task.block_tasks || [] of Task, name)
+      prepend_block_name_to_descendants(task.rescue_tasks || [] of Task, name)
+      prepend_block_name_to_descendants(task.always_tasks || [] of Task, name)
 
       # Block-level settings gate/apply to the block as a whole; each
       # nested task still evaluates its own when:/tags:/etc in addition.

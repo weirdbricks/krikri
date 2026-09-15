@@ -1314,6 +1314,7 @@ module Krikri
       substitutor = shared || VarSubstitutor.new(vars: vars_context, host_name: host.name)
 
       begin
+        substitute_block_name_chain(task, substitutor)
         substituted_params = substitute_task_params(task.params, substitutor, native_containers: task.module_name.ends_with?("set_fact"), module_name: task.module_name)
         substituted_env = substitute_task_environment(task, substitutor)
       rescue ex
@@ -1494,6 +1495,7 @@ module Krikri
       end
 
       begin
+        substitute_block_name_chain(task, substitutor)
         task = resolve_templated_action(task, substitutor)
         substituted_params = substitute_task_params(task.params, substitutor, native_containers: task.module_name.ends_with?("set_fact"), module_name: task.module_name)
         substituted_env = substitute_task_environment(task, substitutor)
