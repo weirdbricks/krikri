@@ -17,7 +17,7 @@ describe Krikri::FactsGatherer do
   describe "#resolve_enabled_families" do
     it "gathers every family with no tokens (real get_collector_names' `gather_subset or ['all']`)" do
       families = Krikri::FactsGatherer.resolve_enabled_families([] of String)
-      families.should eq(Set.new(%w[min local network hardware mounts]))
+      families.should eq(Set.new(%w[min local network hardware mounts virtual is_chroot loadavg fibre_channel_wwn iscsi hostnqn]))
     end
 
     it "keeps the min floor for !all, exactly like real Ansible" do
@@ -35,7 +35,7 @@ describe Krikri::FactsGatherer do
 
     it "restricts to the named families plus min" do
       Krikri::FactsGatherer.resolve_enabled_families(["network", "virtual"])
-        .should eq(Set.new(%w[min local network]))
+        .should eq(Set.new(%w[min local network virtual]))
     end
 
     it "lets an explicit positive token override a negation of the same family (real exclude-minus-explicit rule)" do
@@ -69,11 +69,12 @@ describe Krikri::FactsGatherer do
     end
 
     it "accepts valid-but-unimplemented subset names without failing" do
-      # virtual/dns/selinux/... are real collectors this engine has no
+      # dns/selinux/... are real collectors this engine has no
       # implementation for - real Ansible accepts the token, so this
-      # must too (gathering nothing extra).
+      # must too (gathering nothing extra). virtual IS implemented now
+      # (its own family), so only dns stays a gather-nothing token.
       Krikri::FactsGatherer.resolve_enabled_families(["virtual", "dns"])
-        .should eq(Set.new(%w[min local]))
+        .should eq(Set.new(%w[min local virtual]))
     end
 
     it "fails on an unknown positive token with real Ansible's message" do
@@ -159,6 +160,18 @@ describe Krikri::FactsGatherer do
       it "treats an empty string as no filter (live-verified)" do
         result = JSON.parse(Krikri::FactsGatherer.run(config_with(%({"filter": ""}))))
         result["ansible_facts"].as_h.size.should be > 10
+      end
+
+      it "stamps discovered_interpreter_python post-filter only on the executor's first gather" do
+        # Real playbook run: the FIRST setup invocation keeps the
+        # interpreter-discovery stamp even under a filter matching
+        # nothing (podman-diff setup case W1), later invocations and a
+        # bare ad-hoc -m setup (no _first_gather param) never emit it.
+        first = JSON.parse(Krikri::FactsGatherer.run(config_with(%({"filter": "krikri_no_such_fact*", "_first_gather": "true"}))))
+        first["ansible_facts"].as_h.keys.should eq(["discovered_interpreter_python"])
+
+        later = JSON.parse(Krikri::FactsGatherer.run(config_with(%({"filter": "krikri_no_such_fact*"}))))
+        later["ansible_facts"].as_h.should be_empty
       end
 
       it "keeps a matched nested dict whole (filter only prunes level one)" do

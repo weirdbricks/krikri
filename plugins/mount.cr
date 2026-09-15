@@ -97,6 +97,29 @@ module Krikri
     DEFAULT_FSTAB = "/etc/fstab"
 
     def execute : PluginResult
+      # Real ansible.posix.mount rejects ANY parameter outside its own
+      # argument_spec at module-arg validation, before any action runs -
+      # this engine silently ignored the unknown key and wrote the fstab
+      # entry anyway (changed=true on a task real Ansible fails). Found
+      # via the podman-diff mount_edge_cases M3 harness case; message
+      # live-verified against the real module's own output for this exact
+      # task. check_mode/diff_mode/_verbosity/_environment are engine-
+      # internal keys injected by the executor (see build_plugin_config),
+      # not part of the real argument_spec, so none are rejected. The
+      # parenthesized alias list mirrors real Ansible's msg (name).
+      mount_supported = {"backup", "boot", "dump", "fstab", "fstype", "opts", "opts_no_log", "passno", "path", "src", "state", "name"}
+      mount_internal = {"check_mode", "diff_mode", "_verbosity", "_environment"}
+      unsupported = @params.keys.reject { |k| mount_supported.includes?(k) || mount_internal.includes?(k) }
+      unless unsupported.empty?
+        return PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: "Unsupported parameters for (ansible.posix.mount) module: #{unsupported.sort.join(", ")}. " \
+               "Supported parameters include: backup, boot, dump, fstab, fstype, opts, opts_no_log, " \
+               "passno, path, src, state (name)."
+        )
+      end
+
       # `name:` is real Ansible's own documented alias for `path:` (the
       # module's original param name, predating `path:` - still commonly
       # used in real-world roles, e.g. geerlingguy.swap's own "Manage

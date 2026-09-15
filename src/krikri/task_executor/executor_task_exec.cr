@@ -1175,6 +1175,15 @@ module Krikri
       # flags (see debug.cr's own comment on `_verbosity`).
       final_params["_verbosity"] = @verbosity.to_s
 
+      # setup:'s discovered_interpreter_python stamp - real Ansible emits
+      # it on the host's FIRST module invocation that runs interpreter
+      # discovery, never after (see first_gather_for_host?); the gate is
+      # executor state, so it is threaded to the gatherer here and in the
+      # implicit Gathering Facts path.
+      if task.module_name.split(".").last == "setup"
+        final_params["_first_gather"] = first_gather_for_host?(host).to_s
+      end
+
       # environment: - substituted STRICTLY (UndefinedVariableError on an
       # undefined reference) ahead of this call, inside the same protected
       # "finalization of task args" block as substitute_task_params - see

@@ -1,0 +1,83 @@
+# git module edge cases. git IS installed in both harness containers
+# (see run.sh), so the file://-URL lifecycle is exercised for real: a
+# local source repo is seeded with plain git commands (no network), then
+# cloned, re-cloned (idempotent), cloned at a specific tag, and probed
+# with failures (bad version, bad dest, missing repo param).
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "Seed the local source repo"
+      ansible.builtin.command: |
+        git init -q -b main /tmp/krikri-git-src \
+        && printf 'hello\n' > /tmp/krikri-git-src/README.md \
+        && git -C /tmp/krikri-git-src add README.md \
+        && git -C /tmp/krikri-git-src -c user.email=k@kri.kri -c user.name=krikri commit -qm "seed" \
+        && git -C /tmp/krikri-git-src tag v1.0
+      args:
+        creates: /tmp/krikri-git-src/README.md
+
+    - name: "J1 git with a missing repo param"
+      ansible.builtin.git:
+        dest: /tmp/krikri-git-clone
+      register: j1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "J1 failed={{ j1.failed | default('none') }} changed={{ j1.changed | default('none') }}"
+
+    - name: "J2 git clone from a local file:// repo"
+      ansible.builtin.git:
+        repo: file:///tmp/krikri-git-src
+        dest: /tmp/krikri-git-clone
+      register: j2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "J2 failed={{ j2.failed | default('none') }} changed={{ j2.changed | default('none') }}"
+
+    - name: "J3 git clone again is idempotent"
+      ansible.builtin.git:
+        repo: file:///tmp/krikri-git-src
+        dest: /tmp/krikri-git-clone
+      register: j3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "J3 failed={{ j3.failed | default('none') }} changed={{ j3.changed | default('none') }}"
+
+    - name: "J4 git with a nonexistent version fails"
+      ansible.builtin.git:
+        repo: file:///tmp/krikri-git-src
+        dest: /tmp/krikri-git-clone
+        version: krikri-no-such-tag
+      register: j4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "J4 failed={{ j4.failed | default('none') }} changed={{ j4.changed | default('none') }}"
+
+    - name: "J5 git at an existing tag checks out that tag"
+      ansible.builtin.git:
+        repo: file:///tmp/krikri-git-src
+        dest: /tmp/krikri-git-clone
+        version: v1.0
+      register: j5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "J5 failed={{ j5.failed | default('none') }} changed={{ j5.changed | default('none') }}"
+
+    - name: "J6 git with an out-of-spec parameter"
+      ansible.builtin.git:
+        repo: file:///tmp/krikri-git-src
+        dest: /tmp/krikri-git-clone
+        krikri_not_a_git_param: true
+      register: j6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "J6 failed={{ j6.failed | default('none') }} changed={{ j6.changed | default('none') }}"
+
+    - name: "J7 git clone into a fresh nested dest"
+      ansible.builtin.git:
+        repo: file:///tmp/krikri-git-src
+        dest: /tmp/krikri-git-nested/a/b/clone
+      register: j7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "J7 failed={{ j7.failed | default('none') }} changed={{ j7.changed | default('none') }}"

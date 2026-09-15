@@ -39,6 +39,8 @@ lib LibC
 
   fun uname(buf : Utsname*) : Int32
   fun getgid : GidT
+  fun geteuid : UidT
+  fun getegid : GidT
 end
 
 module Krikri
@@ -107,6 +109,22 @@ module Krikri
     # PATH, and that is where systemctl/initctl live on some distros.
     FACT_BINARY_EXTRA_DIRS = ["/sbin", "/usr/sbin", "/bin", "/usr/bin"]
 
+    # Real Ansible's own SMBIOS chassis-type table
+    # (module_utils/facts/hardware/linux.py) behind ansible_form_factor.
+    CHASSIS_TYPES = {
+      1 => "Other", 2 => "Unknown", 3 => "Desktop", 4 => "Low Profile Desktop",
+      5 => "Pizza Box", 6 => "Mini Tower", 7 => "Tower", 8 => "Portable",
+      9 => "Laptop", 10 => "Notebook", 11 => "Hand Held", 12 => "Docking Station",
+      13 => "All In One", 14 => "Sub Notebook", 15 => "Space-saving",
+      16 => "Lunch Box", 17 => "Main Server Chassis", 18 => "Expansion Chassis",
+      19 => "Sub Chassis", 20 => "Bus Expansion Chassis", 21 => "Peripheral Chassis",
+      22 => "RAID Chassis", 23 => "Rack Mount Chassis", 24 => "Sealed-case PC",
+      25 => "Multi-system", 26 => "CompactPCI", 27 => "AdvancedTCA", 28 => "Blade",
+      29 => "Blade Enclosure", 30 => "Tablet", 31 => "Convertible",
+      32 => "Detachable", 33 => "IoT Gateway", 34 => "Embedded PC",
+      35 => "Mini PC", 36 => "Stick PC",
+    }
+
     # Real Ansible's get_bin_path for the service_mgr collector's
     # systemctl/initctl lookups. Returns the first executable match, nil
     # when nothing is found.
@@ -150,7 +168,7 @@ module Krikri
       distribution_version dns effective_group_ids effective_user_id env
       facter fibre_channel_wwn fips hardware interfaces is_chroot iscsi
       kernel kernel_version loadavg local lsb machine machine_id mounts
-      network nvme ohai os_family pkg_mgr platform processor
+      hostnqn network nvme ohai os_family pkg_mgr platform processor
       processor_cores processor_count python python_version real_user_id
       selinux service_mgr ssh_host_key_dsa_public ssh_host_key_ecdsa_public
       ssh_host_key_ed25519_public ssh_host_key_rsa_public ssh_host_pub_keys
@@ -168,9 +186,22 @@ module Krikri
     # are absent: they resolve to the min bundle itself, which real
     # Ansible always gathers first anyway.
     FAMILY_SUBSETS = {
-      "network"  => %w[network all_ipv4_addresses all_ipv6_addresses default_ipv4 default_ipv6 interfaces],
-      "hardware" => %w[hardware devices dmi processor processor_cores processor_count iscsi nvme fibre_channel_wwn loadavg],
-      "mounts"   => %w[mounts],
+      "network"           => %w[network all_ipv4_addresses all_ipv6_addresses default_ipv4 default_ipv6 interfaces],
+      "hardware"          => %w[hardware devices dmi processor processor_cores processor_count nvme],
+      "mounts"            => %w[mounts],
+      # real Ansible gathers virtualization/dmi-adjacent singleton
+      # collectors OUTSIDE the min bundle - `!all` (min only) on a real
+      # host never reports ansible_virtualization_type/ansible_is_chroot/
+      # ansible_loadavg/ansible_fibre_channel_wwn (live-verified against
+      # the podman-diff setup case: real W2/W3 lack them, W5 all has
+      # them), so each needs its own family here rather than living in
+      # the min gatherers.
+      "virtual"           => %w[virtual virtualization_role virtualization_type virtualization_tech_guest virtualization_tech_host],
+      "is_chroot"         => %w[is_chroot],
+      "loadavg"           => %w[loadavg],
+      "fibre_channel_wwn" => %w[fibre_channel_wwn],
+      "iscsi"             => %w[iscsi],
+      "hostnqn"           => %w[hostnqn],
     }
 
     # The families "min" covers in this engine. Real Ansible's
@@ -273,6 +304,9 @@ module Krikri
         gather_user_facts(facts)
         gather_date_time_facts(facts)
         gather_environment_facts(facts)
+        gather_cmdline_facts(facts)
+        gather_dns_facts(facts)
+        gather_system_capabilities_facts(facts)
       end
 
       # ansible_local - custom *.fact files under fact_path. Part of real
@@ -288,7 +322,20 @@ module Krikri
       # timeout decorator), so neither does this.
       gather_network_facts(facts) if families.includes?("network")
       gather_family_timed(facts, "hardware", gather_timeout) { |scratch| gather_hardware_facts(scratch) } if families.includes?("hardware")
-      gather_family_timed(facts, "mounts", gather_timeout) { |scratch| gather_mount_facts(scratch) } if families.includes?("mounts")
+      # mounts rides along with hardware: real Ansible's LinuxHardware
+      # collector gathers mount facts itself, so `gather_subset:
+      # hardware,!mount` on a real host STILL reports ansible_mounts
+      # (podman-diff setup case W3) - only dropping hardware (or min-only
+      # gathers) drops the mounts.
+      if families.includes?("mounts") || families.includes?("hardware")
+        gather_family_timed(facts, "mounts", gather_timeout) { |scratch| gather_mount_facts(scratch) }
+      end
+      gather_virtualization_facts(facts) if families.includes?("virtual")
+      gather_is_chroot_fact(facts) if families.includes?("is_chroot")
+      gather_loadavg_facts(facts) if families.includes?("loadavg")
+      gather_fibre_channel_wwn_facts(facts) if families.includes?("fibre_channel_wwn")
+      gather_iscsi_fact(facts) if families.includes?("iscsi")
+      gather_hostnqn_fact(facts) if families.includes?("hostnqn")
 
       facts
     end
@@ -445,8 +492,13 @@ module Krikri
 
         if version = os_info["VERSION_ID"]?
           facts["ansible_distribution_version"] = version
-          major = version.split(".").first
-          facts["ansible_distribution_major_version"] = major
+          version_parts = version.split(".")
+          facts["ansible_distribution_major_version"] = version_parts.first
+          # Real Ansible's distribution collector always reports the minor
+          # segment too, as "" when VERSION_ID carries no dot at all (Debian's
+          # "12") - never omits the key (real W2 min output carries it on
+          # every host, podman-diff setup case). Previously missing entirely.
+          facts["ansible_distribution_minor_version"] = version_parts[1]? || ""
         end
 
         # Real Ansible's DistributionFactCollector always sets this fact,
@@ -638,55 +690,6 @@ module Krikri
           end
         end
       end
-
-      # virtualization_type - whether we're inside a container/VM, which roles
-      # use to skip kernel-module and sysctl work that can't apply there
-      # (os_hardening's modprobe/sysctl tasks do exactly this).
-      facts["ansible_virtualization_type"] = detect_virtualization
-
-      # virtualization_role ("guest"/"host"/"NA") - entirely missing
-      # before this, found benchmarking Ansible-Security-Compliance's
-      # rhel7-role-hipaa (round823): its own audit-rule tasks gate on
-      # `ansible_virtualization_role != "guest" or ansible_virtualization_
-      # type != "docker"` (skip certain host-only audit rules on a
-      # container/VM guest) - real Ansible resolves this fine on a real
-      # cloud VM (role: "guest"), this engine raised "Error while
-      # evaluating conditional: 'ansible_virtualization_role' is
-      # undefined" and crashed the whole run outright instead of just
-      # this one task's when:. This engine's own #detect_virtualization
-      # never distinguishes hypervisor-host detection from guest
-      # detection (real Ansible's own host-side checks - a populated
-      # /etc/xen/, a running libvirtd, etc - are rare in practice and not
-      # implemented here), so "host" is never reported; every detected
-      # type maps to "guest", matching the overwhelming common case (a
-      # real role's target is virtualized, not the hypervisor itself).
-      facts["ansible_virtualization_role"] = facts["ansible_virtualization_type"] == "None" ? "NA" : "guest"
-
-      # system_vendor - real Ansible's DMI fact collector reads this straight
-      # from /sys/class/dmi/id/sys_vendor (falling back to "NA" when the file
-      # is missing/unreadable, e.g. inside some container runtimes). Entirely
-      # missing before - sbaerlocher.qemu-guest-agent/.ovirt-guest-agent's own
-      # `when: ansible_system_vendor == 'QEMU'` guard raised "Error while
-      # evaluating conditional: 'ansible_system_vendor' is undefined" instead
-      # of just evaluating (usually to false, correctly skipping the task) -
-      # found on a Kata/cloud-hypervisor guest, where the real value doesn't
-      # even match 'QEMU'.
-      sys_vendor = capture("cat", ["/sys/class/dmi/id/sys_vendor"]).strip
-      facts["ansible_system_vendor"] = sys_vendor.empty? ? "NA" : sys_vendor
-
-      # product_version - same DMI class as system_vendor above, read from
-      # /sys/class/dmi/id/product_version, "NA" fallback matching real
-      # Ansible's own DMI fact collector exactly. Entirely missing before -
-      # found benchmarking robertdebock.bios_update: the role's own
-      # rescue: block references `ansible_product_version` in a debug:
-      # msg, which real Ansible resolves (even to a virtualized "NA"-ish
-      # placeholder like "pc-q35-...", but resolves) while this engine
-      # raised "'ansible_product_version' is undefined" instead - ironic,
-      # since that's the exact strict-undefined behavior round 161 added
-      # on purpose for module-arg rendering, just tripped by a fact this
-      # engine never gathered rather than the role's own genuine bug.
-      product_version = capture("cat", ["/sys/class/dmi/id/product_version"]).strip
-      facts["ansible_product_version"] = product_version.empty? ? "NA" : product_version
 
       # apparmor.status - real Ansible's own ApparmorFactCollector just
       # checks for /sys/kernel/security/apparmor's existence (not whether any
@@ -1228,6 +1231,139 @@ module Krikri
         end
       end
 
+      # ansible_processor_nproc - real Ansible's processor collector
+      # reports the total logical CPU count (its os.cpu_count()) alongside
+      # the per-socket facts: a `filter: ansible_processor*` on a real
+      # host returns it (podman-diff setup case W6 - real 6 keys, this
+      # engine 5). Missing entirely before.
+      facts["ansible_processor_nproc"] = System.cpu_count.to_i64
+
+      # ansible_uptime_seconds - real Ansible's uptime collector floors
+      # /proc/uptime's first field to an int; hardware family (real W3
+      # carries it, min does not - podman-diff setup case). Missing
+      # entirely before.
+      uptime = begin
+        File.read("/proc/uptime").split.first?.try(&.to_f?)
+      rescue
+        nil
+      end
+      facts["ansible_uptime_seconds"] = uptime.to_i64 if uptime
+
+      # DMI facts - real Ansible's DmiFactCollector (hardware family:
+      # real W3 carries the full set, W2 min none - podman-diff setup
+      # case). The two this engine already had (ansible_system_vendor /
+      # ansible_product_version) previously sat in the MIN gatherer,
+      # making `!all` diverge from real by two keys. Every id file falls
+      # back to "NA" when missing/unreadable, exactly like real's
+      # collector (sbaerlocher.qemu-guest-agent's `when:
+      # ansible_system_vendor == 'QEMU'` and robertdebock.bios_update's
+      # rescue-block reference are the original consumers - see
+      # gather_os_facts history).
+      {
+        "sys_vendor"         => "system_vendor",
+        "product_name"       => "product_name",
+        "product_version"    => "product_version",
+        "product_serial"     => "product_serial",
+        "product_uuid"       => "product_uuid",
+        "board_vendor"       => "board_vendor",
+        "board_name"         => "board_name",
+        "board_version"      => "board_version",
+        "board_serial"       => "board_serial",
+        "board_asset_tag"    => "board_asset_tag",
+        "chassis_vendor"     => "chassis_vendor",
+        "chassis_version"    => "chassis_version",
+        "chassis_serial"     => "chassis_serial",
+        "chassis_asset_tag"  => "chassis_asset_tag",
+        "bios_vendor"        => "bios_vendor",
+        "bios_version"       => "bios_version",
+        "bios_date"          => "bios_date",
+      }.each do |file, fact|
+        value = begin
+          File.read("/sys/class/dmi/id/#{file}").strip
+        rescue
+          ""
+        end
+        facts["ansible_#{fact}"] = value.empty? ? "NA" : value
+      end
+
+      # ansible_form_factor - real Ansible maps /sys/class/dmi/id/
+      # chassis_type's number through its SMBIOS chassis table; "NA" when
+      # unreadable/unmapped, matching real's fallback. Missing entirely
+      # before - podman-diff setup case (real W3).
+      chassis_type = begin
+        File.read("/sys/class/dmi/id/chassis_type").strip
+      rescue
+        ""
+      end
+      form_factor = chassis_type.to_i?.try { |ct| CHASSIS_TYPES[ct]? } || "NA"
+      facts["ansible_form_factor"] = form_factor
+
+      # ansible_lvm - real Ansible's LvmFactCollector always reports the
+      # lvs/vgs dicts (empty when the binaries are absent or find nothing
+      # - real W3 carries the key even inside a container with no LVM
+      # installed). Missing entirely before - podman-diff setup case.
+      lvs = {} of String => JSON::Any
+      if lvs_bin = find_fact_binary("lvs")
+        capture(lvs_bin, ["--noheadings", "--nosuffix", "--units", "b", "--separator", "|", "-o", "lv_name,vg_name,lv_size"]).each_line do |line|
+          fields = line.strip.split("|").map(&.strip)
+          next if fields.size < 3
+          lvs[fields[0]] = JSON::Any.new({"size" => JSON::Any.new(fields[2]), "vg" => JSON::Any.new(fields[1])} of String => JSON::Any)
+        end
+      end
+      vgs = {} of String => JSON::Any
+      if vgs_bin = find_fact_binary("vgs")
+        capture(vgs_bin, ["--noheadings", "--nosuffix", "--units", "b", "--separator", "|", "-o", "vg_name,vg_free,vg_size"]).each_line do |line|
+          fields = line.strip.split("|").map(&.strip)
+          next if fields.size < 3
+          vgs[fields[0]] = JSON::Any.new({"free" => JSON::Any.new(fields[1]), "size" => JSON::Any.new(fields[2])} of String => JSON::Any)
+        end
+      end
+      facts["ansible_lvm"] = {
+        "lvs" => JSON::Any.new(lvs),
+        "vgs" => JSON::Any.new(vgs),
+      } of String => JSON::Any
+
+      # ansible_device_links - real Ansible's device-links collector scans
+      # /dev/disk/by-{id,label,uuid}: each subdict maps a link name to the
+      # device it points at, and "disks" inverts that to device -> [link
+      # names]. Missing entirely before - podman-diff setup case (real
+      # W3/W5). Hosts with no /dev/disk at all still get the (empty)
+      # structure, like real.
+      ids = {} of String => JSON::Any
+      labels = {} of String => JSON::Any
+      uuids = {} of String => JSON::Any
+      disks = {} of String => JSON::Any
+      {
+        "ids"    => "by-id",
+        "labels" => "by-label",
+        "uuids"  => "by-uuid",
+      }.each do |kind, dir|
+        path = "/dev/disk/#{dir}"
+        next unless Dir.exists?(path)
+        Dir.each_child(path) do |link|
+          target = begin
+             File.realpath(File.join(path, link))
+          rescue
+            next
+          end
+          device = File.basename(target)
+          case kind
+          when "ids"    then ids[link] = JSON::Any.new(device)
+          when "labels" then labels[link] = JSON::Any.new(device)
+          when "uuids"  then uuids[link] = JSON::Any.new(device)
+          end
+          disk_list = disks[device]?.try(&.as_a?) || [] of JSON::Any
+          disk_list << JSON::Any.new(link)
+          disks[device] = JSON::Any.new(disk_list)
+        end
+      end
+      facts["ansible_device_links"] = {
+        "ids"    => JSON::Any.new(ids),
+        "labels" => JSON::Any.new(labels),
+        "uuids"  => JSON::Any.new(uuids),
+        "disks"  => JSON::Any.new(disks),
+      } of String => JSON::Any
+
       gather_device_facts(facts)
     end
 
@@ -1548,6 +1684,19 @@ module Krikri
       facts["ansible_user_uid"] = LibC.getuid.to_i64
       facts["ansible_user_gid"] = LibC.getgid.to_i64
 
+      # Real Ansible's UserFactCollector reports the real AND effective ids
+      # alongside these (ansible_real_user_id/ansible_real_group_id from
+      # getuid(2)/getgid(2), ansible_effective_user_id/ansible_effective_
+      # group_id from geteuid(2)/getegid(2)) - all four live in real min
+      # output (podman-diff setup case, real W2), and the effective ids are
+      # the standard root check (`when: ansible_effective_user_id == 0`);
+      # with them never set that gate died with "'ansible_effective_user_id'
+      # is undefined" while real Ansible just skipped the task.
+      facts["ansible_real_user_id"] = LibC.getuid.to_i64
+      facts["ansible_effective_user_id"] = LibC.geteuid.to_i64
+      facts["ansible_real_group_id"] = LibC.getgid.to_i64
+      facts["ansible_effective_group_id"] = LibC.getegid.to_i64
+
       if home = ENV["HOME"]?
         facts["ansible_user_dir"] ||= home
       end
@@ -1568,6 +1717,228 @@ module Krikri
       end
 
       facts["ansible_env"] = env unless env.empty?
+    end
+
+    # /proc/cmdline facts - real Ansible's CmdLineFactCollector
+    # (module_utils/facts/system/cmdline.py), part of real min output
+    # (podman-diff setup case, real W2): ansible_cmdline collapses
+    # duplicate keys (later token wins), ansible_proc_cmdline turns them
+    # into lists, and a flag without "=" is True. Empty/missing
+    # /proc/cmdline sets NEITHER key (real's collector returns {} and
+    # skips both facts).
+    def gather_cmdline_facts(facts)
+      data = begin
+        File.read("/proc/cmdline").strip
+      rescue
+        ""
+      end
+      return if data.empty?
+
+      facts["ansible_cmdline"] = parse_cmdline(data, false)
+      facts["ansible_proc_cmdline"] = parse_cmdline(data, true)
+    end
+
+    def parse_cmdline(data : String, multi : Bool) : Hash(String, JSON::Any)
+      parsed = {} of String => JSON::Any
+      data.split.each do |piece|
+        key, _, value = piece.partition("=")
+        if value.empty? && !piece.ends_with?("=")
+          parsed[key] = JSON::Any.new(true)
+        elsif multi && (existing = parsed[key]?)
+          list = existing.as_a? || [existing]
+          list << JSON::Any.new(value)
+          parsed[key] = JSON::Any.new(list)
+        else
+          parsed[key] = JSON::Any.new(value)
+        end
+      end
+      parsed
+    end
+
+    # ansible_dns - real Ansible's DnsFactCollector
+    # (module_utils/facts/system/dns.py) over /etc/resolv.conf: nameserver
+    # lines append to "nameservers", domain/search/sortlist as
+    # scalar/list, options as key:value or bare-True flags. The KEY is
+    # always set - an empty/comment-only resolv.conf yields {}, never an
+    # absent ansible_dns (real min output carries it on every host,
+    # podman-diff setup case).
+    def gather_dns_facts(facts)
+      content = begin
+        File.read("/etc/resolv.conf")
+      rescue
+        ""
+      end
+      facts["ansible_dns"] = parse_dns_content(content)
+    end
+
+    def parse_dns_content(content : String) : Hash(String, JSON::Any)
+      dns = {} of String => JSON::Any
+      content.each_line do |line|
+        stripped = line.strip
+        next if stripped.empty? || stripped.starts_with?('#') || stripped.starts_with?(';')
+        tokens = stripped.split
+        next if tokens.empty?
+        case tokens[0]
+        when "nameserver"
+          nameservers = dns["nameservers"]?.try(&.as_a?) || [] of JSON::Any
+          tokens[1..].each { |ns| nameservers << JSON::Any.new(ns) }
+          dns["nameservers"] = JSON::Any.new(nameservers)
+        when "domain"
+          dns["domain"] = JSON::Any.new(tokens[1]) if tokens.size > 1
+        when "search"
+          dns["search"] = JSON::Any.new(tokens[1..].map { |s| JSON::Any.new(s) })
+        when "sortlist"
+          dns["sortlist"] = JSON::Any.new(tokens[1..].map { |s| JSON::Any.new(s) })
+        when "options"
+          options = {} of String => JSON::Any
+          tokens[1..].each do |option|
+            key, sep, value = option.partition(":")
+            options[key] = sep.empty? ? JSON::Any.new(true) : JSON::Any.new(value)
+          end
+          dns["options"] = JSON::Any.new(options)
+        end
+      end
+      dns
+    end
+
+    # ansible_system_capabilities / _enforced - real Ansible's
+    # SystemCapabilitiesFactCollector (module_utils/facts/system/caps.py)
+    # via `capsh --print`: its "Current:" line decides both - the bare
+    # "=ep" bounding set means unenforced, anything else means enforced
+    # with that capability list; no capsh binary (or a failing run)
+    # leaves both keys at real's literal "N/A" defaults. Missing
+    # entirely before - podman-diff setup case (real W2 min carries
+    # both keys).
+    def gather_system_capabilities_facts(facts)
+      enforced = "N/A"
+      capabilities : String | Array(String) = "N/A"
+      if capsh = find_fact_binary("capsh")
+        output = capture(capsh, ["--print"])
+        output.each_line do |line|
+          next unless line.starts_with?("Current:")
+          current = line.split(":", 2)[1]?.try(&.strip) || ""
+          if current == "=ep"
+            enforced = "False"
+            capabilities = [] of String
+          else
+            enforced = "True"
+            raw = current.index('=') ? current[(current.index('=').not_nil! + 1)..] : current
+            capabilities = raw.split(',').map(&.strip).reject(&.empty?)
+          end
+        end
+      end
+      facts["ansible_system_capabilities_enforced"] = enforced
+      facts["ansible_system_capabilities"] = capabilities
+    end
+
+    # virtualization facts - moved out of the min gatherers into their
+    # own family: real Ansible's VirtualFactCollector runs under the
+    # 'virtual' subset, which `!all` (min only) never selects (real W2
+    # min output has NO virtualization facts, W5 all does - podman-diff
+    # setup case), so reporting them under min made this engine's `!all`
+    # result diverge by two keys. The tech_guest/tech_host lists real
+    # Ansible also reports (as sets, serialized as lists) were missing
+    # entirely.
+    #
+    # virtualization_role ("guest"/"host"/"NA") - entirely missing
+    # before this, found benchmarking Ansible-Security-Compliance's
+    # rhel7-role-hipaa (round823): its own audit-rule tasks gate on
+    # `ansible_virtualization_role != "guest" or ansible_virtualization_
+    # type != "docker"` (skip certain host-only audit rules on a
+    # container/VM guest) - real Ansible resolves this fine on a real
+    # cloud VM (role: "guest"), this engine raised "Error while
+    # evaluating conditional: 'ansible_virtualization_role' is
+    # undefined" and crashed the whole run outright instead of just
+    # this one task's when:. This engine's own #detect_virtualization
+    # never distinguishes hypervisor-host detection from guest
+    # detection (real Ansible's own host-side checks - a populated
+    # /etc/xen/, a running libvirtd, etc - are rare in practice and not
+    # implemented here), so "host" is never reported; every detected
+    # type maps to "guest", matching the overwhelming common case (a
+    # real role's target is virtualized, not the hypervisor itself).
+    def gather_virtualization_facts(facts)
+      vtype = detect_virtualization
+      facts["ansible_virtualization_type"] = vtype
+      facts["ansible_virtualization_role"] = vtype == "None" ? "NA" : "guest"
+      facts["ansible_virtualization_tech_guest"] = vtype == "None" ? [] of String : [vtype]
+      facts["ansible_virtualization_tech_host"] = [] of String
+    end
+
+    # ansible_is_chroot - real Ansible's IsChrootFactCollector compares
+    # /proc/1/root's resolved inode/device against /: same (the usual
+    # case, PID 1 lives in this root) is False, different is True.
+    # Missing entirely before - podman-diff setup case (real W5, all).
+    def gather_is_chroot_fact(facts)
+      is_chroot = false
+      if File.exists?("/") && File.exists?("/proc/1/root")
+        is_chroot = File.realpath("/proc/1/root") != File.realpath("/")
+      end
+      facts["ansible_is_chroot"] = is_chroot
+    end
+
+    # ansible_loadavg - real Ansible's LoadAvgFactCollector over
+    # /proc/loadavg's first three fields. Missing entirely before -
+    # podman-diff setup case (real W5, all).
+    def gather_loadavg_facts(facts)
+      return unless File.exists?("/proc/loadavg")
+      fields = File.read("/proc/loadavg").split
+      return if fields.size < 3
+      facts["ansible_loadavg"] = {
+        "1min"  => JSON::Any.new(fields[0]),
+        "5min"  => JSON::Any.new(fields[1]),
+        "15min" => JSON::Any.new(fields[2]),
+      } of String => JSON::Any
+    end
+
+    # ansible_fibre_channel_wwn - real Ansible scans
+    # /sys/class/fc_host/*/node_name + port_name ("0x..." strings); no FC
+    # adapters (containers, most VMs) yields []. The KEY is still set
+    # under the subset that selects it (real W5 carries it with [] on
+    # hosts without FC hardware) - podman-diff setup case.
+    def gather_fibre_channel_wwn_facts(facts)
+      wwns = [] of String
+      if Dir.exists?("/sys/class/fc_host")
+        Dir.each_child("/sys/class/fc_host") do |host|
+          %w[node_name port_name].each do |kind|
+            value = begin
+              File.read(File.join("/sys/class/fc_host", host, kind)).strip
+            rescue
+              ""
+            end
+            wwns << value unless value.empty?
+          end
+        end
+      end
+      facts["ansible_fibre_channel_wwn"] = wwns
+    end
+
+    # ansible_iscsi_iqn - real Ansible reads the InitiatorName= line out
+    # of /etc/iscsi/initiatorname.iscsi, defaulting to "" when the file
+    # (or the entry) is absent. Missing entirely before - podman-diff
+    # setup case (real W5).
+    def gather_iscsi_fact(facts)
+      iqn = ""
+      if File.exists?("/etc/iscsi/initiatorname.iscsi")
+        File.each_line("/etc/iscsi/initiatorname.iscsi") do |line|
+          stripped = line.strip
+          next if stripped.empty? || stripped.starts_with?('#')
+          key, _, value = stripped.partition("=")
+          iqn = value.strip if key.strip == "InitiatorName"
+        end
+      end
+      facts["ansible_iscsi_iqn"] = iqn
+    end
+
+    # ansible_hostnqn - real Ansible reads /etc/nvme/hostnqn ("" when
+    # missing). Missing entirely before - podman-diff setup case (real
+    # W5).
+    def gather_hostnqn_fact(facts)
+      hostnqn = begin
+        File.read("/etc/nvme/hostnqn").strip
+      rescue
+        ""
+      end
+      facts["ansible_hostnqn"] = hostnqn
     end
 
     def gather_date_time_facts(facts)
@@ -1801,7 +2172,30 @@ module Krikri
       facts["gather_subset"] = requested_subset
       facts["module_setup"] = true
 
+      # Real Ansible stamps the interpreter its discovery resolved into
+      # the result AFTER the filter applies - the FIRST setup invocation
+      # per host per run carries it regardless of filter (podman-diff
+      # setup case W1: `filter: krikri_no_such_fact*` on a real host
+      # still returns ansible_facts = {discovered_interpreter_python},
+      # and a matching filter on that same first invocation keeps both
+      # keys), later invocations never do (the discovery result is
+      # already cached), and a bare ad-hoc `-m setup` doesn't either.
+      # The once-per-host gate is executor state, so the executor passes
+      # it in under _first_gather; without that param (ad-hoc module
+      # run) nothing is stamped.
+      discovered_interpreter = nil
+      python_value = facts["ansible_python"]?
+      if python_value.is_a?(Hash(String, JSON::Any))
+        discovered_interpreter = python_value["executable"]?.try(&.as_s?)
+      end
+
       facts = apply_fact_filter(facts, filter_spec)
+
+      if params.try(&.["_first_gather"]?).try(&.as_s?) == "true"
+        if discovered = discovered_interpreter
+          facts["discovered_interpreter_python"] = discovered unless discovered.empty?
+        end
+      end
 
       {
         "changed"       => false,
