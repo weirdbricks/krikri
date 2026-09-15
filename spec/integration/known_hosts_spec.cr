@@ -22,6 +22,7 @@ describe "known_hosts plugin" do
 
     result["failed"]?.try(&.as_bool).should be_falsey
     result["changed"].as_bool.should be_true
+    result["msg"]?.should be_nil, "real known_hosts returns no msg on success"
     File.read(path).should contain("example.com")
   end
 
@@ -34,6 +35,7 @@ describe "known_hosts plugin" do
 
     result["failed"]?.try(&.as_bool).should be_falsey
     result["changed"].as_bool.should be_false
+    result["msg"]?.should be_nil, "real known_hosts returns no msg on success"
   end
 
   it "replaces a differing key for the same host" do
@@ -45,6 +47,7 @@ describe "known_hosts plugin" do
 
     result["failed"]?.try(&.as_bool).should be_falsey
     result["changed"].as_bool.should be_true
+    result["msg"]?.should be_nil, "real known_hosts returns no msg on success"
     content = File.read(path)
     content.should contain("DifferentKeyData")
     content.should_not contain("ExampleKeyData")
@@ -59,6 +62,7 @@ describe "known_hosts plugin" do
 
     result["failed"]?.try(&.as_bool).should be_falsey
     result["changed"].as_bool.should be_true
+    result["msg"]?.should be_nil, "real known_hosts returns no msg on success"
     File.read(path).should_not contain("example.com")
   end
 
@@ -70,6 +74,7 @@ describe "known_hosts plugin" do
 
     result["failed"]?.try(&.as_bool).should be_falsey
     result["changed"].as_bool.should be_false
+    result["msg"]?.should be_nil, "real known_hosts returns no msg on success"
   end
 
   it "fails when state: present is given without a key" do
@@ -79,5 +84,17 @@ describe "known_hosts plugin" do
     result = PluginSpecHelper.run("known_hosts", {"name" => "example.com", "path" => path})
 
     result["failed"].as_bool.should be_true
+    result["msg"].as_s.should eq("No key specified when adding a host")
+  end
+
+  it "fails when the parent directory of path does not exist" do
+    path = File.join(TMP_DIR, "no-such-dir", "known_hosts_parent_missing")
+    File.delete(path) if File.exists?(path)
+
+    result = PluginSpecHelper.run("known_hosts", {"name" => "example.com", "key" => KEY1, "path" => path})
+
+    result["failed"].as_bool.should be_true
+    result["changed"].as_bool.should be_false
+    File.exists?(File.dirname(path)).should be_false
   end
 end

@@ -1,0 +1,96 @@
+# npm edge cases (community.general.npm on the real side; run.sh's
+# npm-gated block installs the real node + npm in BOTH containers -
+# krikri's plugin shells to the same npm binary). Real install cases
+# hit the live npm registry; both engines see the same network, so a
+# registry outage fails both sides identically.
+#
+# Packages picked tiny (left-pad) to keep install time trivial.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "N1 global install of a tiny package"
+      community.general.npm:
+        name: left-pad
+        global: true
+      register: n1
+    - ansible.builtin.debug:
+        msg: "N1 failed={{ n1.failed }} changed={{ n1.changed }}"
+
+    - name: "N2 same global install again is idempotent"
+      community.general.npm:
+        name: left-pad
+        global: true
+      register: n2
+    - ansible.builtin.debug:
+        msg: "N2 failed={{ n2.failed }} changed={{ n2.changed }}"
+
+    - name: "N3 state=absent uninstalls it"
+      community.general.npm:
+        name: left-pad
+        state: absent
+        global: true
+      register: n3
+    - ansible.builtin.debug:
+        msg: "N3 failed={{ n3.failed }} changed={{ n3.changed }}"
+
+    - name: "N4 absent again is a no-op"
+      community.general.npm:
+        name: left-pad
+        state: absent
+        global: true
+      register: n4
+    - ansible.builtin.debug:
+        msg: "N4 failed={{ n4.failed }} changed={{ n4.changed }}"
+
+    - name: "N5 state=absent without a name fails"
+      community.general.npm:
+        state: absent
+        global: true
+      register: n5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "N5 failed={{ n5.failed | default('none') }} changed={{ n5.changed | default('none') }} msg={{ n5.msg | default('none') }}"
+
+    - name: "N6 non-global without a path fails"
+      community.general.npm:
+        name: left-pad
+      register: n6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "N6 failed={{ n6.failed | default('none') }} changed={{ n6.changed | default('none') }} msg={{ n6.msg | default('none') }}"
+
+    - name: "N7 nonexistent executable override fails"
+      community.general.npm:
+        name: left-pad
+        global: true
+        executable: /nonexistent-krikri-npm
+      register: n7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "N7 failed={{ n7.failed | default('none') }} changed={{ n7.changed | default('none') }} msg={{ n7.msg | default('none') }}"
+
+    - name: "N8 version-pinned local install"
+      community.general.npm:
+        name: left-pad
+        version: 1.3.0
+        path: /work/npmproj
+      register: n8
+    - ansible.builtin.debug:
+        msg: "N8 failed={{ n8.failed }} changed={{ n8.changed }}"
+
+    - name: "N9 same version-pinned install is idempotent"
+      community.general.npm:
+        name: left-pad
+        version: 1.3.0
+        path: /work/npmproj
+      register: n9
+    - ansible.builtin.debug:
+        msg: "N9 failed={{ n9.failed }} changed={{ n9.changed }}"
+
+    - name: "N10 installed version is exactly 1.3.0"
+      ansible.builtin.command: npm list --json --long --prefix /work/npmproj
+      register: n10
+      changed_when: false
+    - ansible.builtin.debug:
+        msg: "N10 ver={{ (n10.stdout | from_json).dependencies['left-pad'].version }}"

@@ -19,6 +19,18 @@ require "../src/krikri/base_plugin"
 module Krikri
   class TempfilePlugin < BasePlugin
     def execute : PluginResult
+      # Real tempfile passes no supports_check_mode=True to its
+      # AnsibleModule, so real Ansible's action plugin never runs the
+      # module under check mode at all - the task skips with "check mode
+      # not supported for this module" (podman-diff tempfile_edge_cases
+      # T6). This plugin used to run the real mktemp remotely AND report
+      # changed:true: a genuine side effect under check mode plus a
+      # wrong skip/ok accounting.
+      if true?(@params["check_mode"]?)
+        invoked = @params["_module_name"]? || "ansible.builtin.tempfile"
+        return PluginResult.new(changed: false, failed: false, msg: "remote module (#{invoked}) does not support check mode", skipped: true)
+      end
+
       state = normalized_state
       unless {"file", "directory"}.includes?(state)
         return PluginResult.new(changed: false, failed: true, msg: "value of state must be one of: file, directory, got: #{state}")

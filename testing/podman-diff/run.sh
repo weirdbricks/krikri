@@ -202,6 +202,30 @@ if printf '%s\n' "${cases[@]}" | grep -q '^modprobe'; then
   done
 fi
 
+# iptables cases need the real iptables(8) binary in BOTH containers -
+# krikri's plugin shells to it exactly like real Ansible - and
+# --privileged is already on for both containers; a rootless-podman
+# netfilter restriction, if present, fails BOTH engines identically.
+# The venv from the deb822 block below is reused when needed: bookworm's
+# 2.14 doesn't have ansible.builtin.iptables yet (landed in 2.15) and
+# 2.14 can't follow community.general's redirect to it, so iptables
+# cases run against the venv's current ansible-core. Gated on the
+# requested case list like the mysql cases above.
+IPTABLES_ANSIBLE=""
+if printf '%s\n' "${cases[@]}" | grep -q '^iptables'; then
+  log "installing iptables for iptables cases"
+  for c in "$NAME_A" "$NAME_B"; do
+    podman exec "$c" bash -c "apt-get install -y -qq --no-install-recommends iptables >/dev/null" \
+      || { log "FATAL: iptables install failed in $c"; exit 1; }
+  done
+  if ! podman exec "$NAME_A" test -x /opt/ansible215/bin/ansible-playbook; then
+    log "installing venv ansible-core (>=2.15) for iptables cases (2.14 lacks ansible.builtin.iptables)"
+    podman exec "$NAME_A" bash -c "apt-get install -y -qq --no-install-recommends python3-venv >/dev/null && python3 -m venv /opt/ansible215 && /opt/ansible215/bin/pip install -q ansible-core" \
+      || { log "FATAL: venv ansible-core install failed"; exit 1; }
+  fi
+  IPTABLES_ANSIBLE="/opt/ansible215/bin/ansible-playbook"
+fi
+
 # seboolean cases need the real module's own python libs in the REAL
 # container only - without python3-selinux/python3-semanage every
 # case would fail on the libselinux import check and mask all the
@@ -215,6 +239,48 @@ if printf '%s\n' "${cases[@]}" | grep -q '^seboolean'; then
     || { log "FATAL: SELinux python libs install failed"; exit 1; }
 fi
 
+# htpasswd cases: the real community.general.htpasswd imports passlib in
+# the REAL container - without python3-passlib every case fails on the
+# import instead of exercising the hash/idempotency logic. krikri's
+# htpasswd shells to `openssl passwd`, so BOTH containers need the
+# openssl CLI on PATH (bookworm-slim ships without it). Gated on the
+# requested case list like the mysql cases above.
+if printf '%s\n' "${cases[@]}" | grep -q '^htpasswd'; then
+  log "installing passlib (real) + openssl (both) for htpasswd cases"
+  podman exec "$NAME_A" bash -c "apt-get install -y -qq --no-install-recommends python3-passlib >/dev/null" \
+    || { log "FATAL: passlib install failed"; exit 1; }
+  for c in "$NAME_A" "$NAME_B"; do
+    podman exec "$c" bash -c "apt-get install -y -qq --no-install-recommends openssl >/dev/null" \
+      || { log "FATAL: openssl install failed in $c"; exit 1; }
+  done
+fi
+
+# npm cases need a real node + npm in BOTH containers (krikri's npm
+# shells to the same npm binary real Ansible resolves via
+# get_bin_path) - debian:bookworm-slim ships without either, which
+# would make every case fail with "Failed to find required executable"
+# on both sides and exercise nothing. Real installs hit the live npm
+# registry; both engines see the same network. Gated like the gem cases.
+if printf '%s\n' "${cases[@]}" | grep -q '^npm'; then
+  log "installing npm for npm cases"
+  for c in "$NAME_A" "$NAME_B"; do
+    podman exec "$c" bash -c "apt-get install -y -qq --no-install-recommends npm >/dev/null" \
+      || { log "FATAL: npm install failed in $c"; exit 1; }
+  done
+fi
+
+# known_hosts cases need ssh-keygen in BOTH containers (real
+# ansible.builtin.known_hosts and krikri's plugin both drive it for
+# lookup, removal and host hashing). Gated on the requested case list
+# like the modprobe cases above.
+if printf '%s\n' "${cases[@]}" | grep -q '^known_hosts'; then
+  log "installing openssh-client for known_hosts cases"
+  for c in "$NAME_A" "$NAME_B"; do
+    podman exec "$c" bash -c "apt-get install -y -qq --no-install-recommends openssh-client >/dev/null" \
+      || { log "FATAL: openssh-client install failed in $c"; exit 1; }
+  done
+fi
+
 overall_rc=0
 for case_file in "${cases[@]}"; do
   case_name="${case_file%.yml}"
@@ -223,7 +289,7 @@ for case_file in "${cases[@]}"; do
   podman cp "$DIFF_DIR/cases/$case_file" "$NAME_B:/work/case.yml"
 
   podman exec "$NAME_A" bash -c \
-    "cd /work && ANSIBLE_NOCOLOR=1 ${DEB822_ANSIBLE:-ansible-playbook} -i inventory.ini case.yml" \
+    "cd /work && ANSIBLE_NOCOLOR=1 ${IPTABLES_ANSIBLE:-${DEB822_ANSIBLE:-ansible-playbook}} -i inventory.ini case.yml" \
     > "$RESULTS/${case_name}_real.log" 2>&1
   rc_a=$?
 
@@ -260,7 +326,7 @@ for case_file in "${cases[@]}"; do
     # its raw unrendered template and show as a phantom divergence.
     sed -E '/^[0-9]+[[:space:]]/d' "$1" \
       | grep -oE '\b[A-Z][0-9]+[a-c]? [a-zA-Z_]+=.*' \
-      | sed -E 's/\\\\/\x01/g; s/\\n/ | /g; s/\x01/\\/g; s/"\}?(,)?$//; s/=[^ ]*[0-9]{2,6}\.[0-9]{4}-[0-9]{2}-[0-9]{2}@[0-9:]{8}~/=<backup-path>/g'
+      | sed -E 's/\\\\/\x01/g; s/\\n/ | /g; s/\x01/\\/g; s/"\}?(,)?$//; s/[[:space:]]*\*+[[:space:]]*$//; s/=[^ ]*[0-9]{2,6}\.[0-9]{4}-[0-9]{2}-[0-9]{2}@[0-9:]{8}~/=<backup-path>/g'
   }
   extract "$RESULTS/${case_name}_real.log" > "$msgs_a"
   extract "$RESULTS/${case_name}_krikri.log" > "$msgs_b"

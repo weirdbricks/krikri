@@ -1169,6 +1169,12 @@ module Krikri
       final_params = params.dup
       final_params["check_mode"] = resolve_task_check_mode(task, vars_context).to_s
       final_params["diff_mode"] = @diff_mode.to_s
+      # The module name exactly as the playbook invoked it - real
+      # Ansible's check-mode skip message echoes it ("remote module
+      # (ansible.builtin.tempfile) does not support check mode", see
+      # tempfile.cr), and the plugin has no other way to recover the
+      # invoked spelling after FQCN-stripping dispatch.
+      final_params["_module_name"] = task.module_name
       # debug.cr's own verbosity: gate reads this back out - previously
       # never set at all, so a role's `debug: ... verbosity: 2` always
       # compared against a hardcoded 0 regardless of real -v/-vv/-vvv

@@ -25,7 +25,7 @@ module Krikri
   class KnownHostsPlugin < BasePlugin
     def execute : PluginResult
       name = @params["name"]? || @params["host"]?
-      return PluginResult.new(changed: false, failed: true, msg: "missing required argument: name") unless name
+      return PluginResult.new(changed: false, failed: true, msg: "missing required arguments: name") unless name
 
       state = @params["state"]?
       state = "present" if state.nil? || state.empty?
@@ -38,34 +38,32 @@ module Krikri
       path = expand_tilde(raw_path)
       check_mode = true?(@params["check_mode"]?)
 
-      ensure_parent_dir(path) unless check_mode
-
       existing = lookup_existing(name, path)
 
       return remove_host(name, path, existing, check_mode) if state == "absent"
 
       key = @params["key"]?
-      return PluginResult.new(changed: false, failed: true, msg: "missing required argument: key (required when state=present)") unless key
+      return PluginResult.new(changed: false, failed: true, msg: "No key specified when adding a host") unless key
 
       add_host(name, path, existing, key.strip, check_mode)
     end
 
     private def remove_host(name : String, path : String, existing : String?, check_mode : Bool) : PluginResult
-      return PluginResult.new(changed: false, failed: false, msg: "#{name} not in #{path}") if existing.nil?
-      return PluginResult.new(changed: true, failed: false, msg: "#{name} would be removed from #{path}") if check_mode
+      return PluginResult.new(changed: false, failed: false) if existing.nil?
+      return PluginResult.new(changed: true, failed: false) if check_mode
 
       result = remote_exec("ssh-keygen -R #{shell_quote(name)} -f #{shell_quote(path)}")
       remote_exec("rm -f #{shell_quote(path)}.old")
       return PluginResult.new(changed: false, failed: true, msg: "failed to remove #{name}: #{result[:stderr].strip}") unless result[:exit_code] == 0
-      PluginResult.new(changed: true, failed: false, msg: "#{name} removed from #{path}")
+      PluginResult.new(changed: true, failed: false)
     end
 
     private def add_host(name : String, path : String, existing : String?, key_data : String, check_mode : Bool) : PluginResult
       if existing && keys_equivalent?(existing, key_data)
-        return PluginResult.new(changed: false, failed: false, msg: "#{name} already in #{path}")
+        return PluginResult.new(changed: false, failed: false)
       end
 
-      return PluginResult.new(changed: true, failed: false, msg: "#{name} would be added to #{path}") if check_mode
+      return PluginResult.new(changed: true, failed: false) if check_mode
 
       if existing
         removal = remote_exec("ssh-keygen -R #{shell_quote(name)} -f #{shell_quote(path)}")
@@ -81,7 +79,7 @@ module Krikri
         remote_exec("rm -f #{shell_quote(path)}.old")
       end
 
-      PluginResult.new(changed: true, failed: false, msg: "#{name} added to #{path}")
+      PluginResult.new(changed: true, failed: false)
     end
 
     # Returns the raw ssh-keygen -F output block for *name* in *path*, or
@@ -117,11 +115,6 @@ module Krikri
       parts = parts[1..] if parts[0].starts_with?('@')
       return nil if parts.size < 3
       {parts[1], parts[2]}
-    end
-
-    private def ensure_parent_dir(path : String) : Nil
-      dir = File.dirname(path)
-      remote_exec("mkdir -p #{shell_quote(dir)} && chmod 700 #{shell_quote(dir)}")
     end
 
     private def append_key(path : String, key_data : String) : NamedTuple(exit_code: Int32, stdout: String, stderr: String)

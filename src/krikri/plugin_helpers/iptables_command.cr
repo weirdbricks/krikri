@@ -150,14 +150,40 @@ module Krikri
       # message-for-message (module_utils/common/validation.py wording),
       # in its own evaluation order: mutually_exclusive (which real
       # Ansible checks BEFORE applying defaults, so only an explicitly
-      # passed flush: counts), then required_if, then required_by.
-      # Returns the failure message, or nil when everything passes.
+      # passed flush: counts), then the per-parameter choices, then
+      # required_if, then required_by. Returns the failure message, or
+      # nil when everything passes.
+      #
+      # CHOICES_BY_PARAM: the argument_spec's own choices lists, in the
+      # module's declaration order (the failure message echoes that
+      # order). Real-Ansible position pinned empirically: a
+      # mutually-exclusive pair fires before choices (flush +
+      # policy=DENY reports the mutual exclusion), but choices fire
+      # before required_if (state=enabled with no chain reports the
+      # choice, not the missing chain).
+      CHOICES_BY_PARAM = {
+        "table"           => ["filter", "nat", "mangle", "raw", "security"],
+        "state"           => ["absent", "present"],
+        "action"          => ["append", "insert"],
+        "ip_version"      => ["ipv4", "ipv6", "both"],
+        "syn"             => ["ignore", "match", "negate"],
+        "policy"          => ["ACCEPT", "DROP", "QUEUE", "RETURN"],
+        "match_set_flags" => ["src", "dst", "src,dst", "dst,src", "src,src", "dst,dst"],
+        "log_level"       => ["0", "1", "2", "3", "4", "5", "6", "7", "emerg", "alert", "crit", "error", "warning", "notice", "info", "debug"],
+      }
+
       def self.validate(params : Hash(String, String)) : String?
         if params.has_key?("flush") && params["policy"]?
           return "parameters are mutually exclusive: flush|policy"
         end
         if params["set_dscp_mark"]? && params["set_dscp_mark_class"]?
           return "parameters are mutually exclusive: set_dscp_mark|set_dscp_mark_class"
+        end
+
+        CHOICES_BY_PARAM.each do |name, allowed|
+          value = params[name]?
+          next if value.nil? || value.empty? || allowed.includes?(value)
+          return "value of #{name} must be one of: #{allowed.join(", ")}, got: #{value}"
         end
 
         if jump = params["jump"]?
