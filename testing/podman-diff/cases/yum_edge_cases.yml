@@ -1,0 +1,46 @@
+# yum module edge cases. yum itself is NOT functional on the Debian
+# harness containers (no RPM database, no yum python bindings), so
+# these are validation-only cases: they check WHICH error each engine
+# reports first (argument-spec rejection vs backend failure) and the
+# failed=/changed= shape, not package operations. The yum plugin still
+# ships in this engine for the RPM-family hosts it targets.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "Y1 yum with an invalid state value"
+      ansible.builtin.yum:
+        name: bash
+        state: installed-nowhere
+      register: y1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "Y1 failed={{ y1.failed | default('none') }} changed={{ y1.changed | default('none') }}"
+
+    - name: "Y2 yum with an out-of-spec parameter"
+      ansible.builtin.yum:
+        name: bash
+        state: present
+        krikri_not_a_yum_param: true
+      register: y2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "Y2 failed={{ y2.failed | default('none') }} changed={{ y2.changed | default('none') }}"
+
+    - name: "Y3 yum with a nonexistent package"
+      ansible.builtin.yum:
+        name: krikri-no-such-package-zzz
+        state: present
+      register: y3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "Y3 failed={{ y3.failed | default('none') }} changed={{ y3.changed | default('none') }}"
+
+    - name: "Y4 yum with an empty name"
+      ansible.builtin.yum:
+        name: ""
+        state: present
+      register: y4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "Y4 failed={{ y4.failed | default('none') }} changed={{ y4.changed | default('none') }}"
