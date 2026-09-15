@@ -182,6 +182,19 @@ if printf '%s\n' "${cases[@]}" | grep -q '^ec2_metadata'; then
     || { log "FATAL: amazon.aws install failed"; exit 1; }
 fi
 
+# rabbitmq_user cases are argument-validation only (no RabbitMQ server
+# or even rabbitmqctl binary in either container - both engines must
+# fail identically on the missing binary / missing args). The real side
+# still needs the community.rabbitmq collection (a collection module,
+# not shipped with ansible-core), or every case fails on module lookup
+# instead of on the args. Gated on the requested case list like the
+# postgresql cases.
+if printf '%s\n' "${cases[@]}" | grep -q '^rabbitmq'; then
+  log "installing community.rabbitmq collection for rabbitmq cases"
+  podman exec "$NAME_A" bash -c "ansible-galaxy collection install community.rabbitmq >/dev/null 2>&1" \
+    || { log "FATAL: community.rabbitmq install failed"; exit 1; }
+fi
+
 # locale_gen cases need the locales package (real /etc/locale.gen,
 # /usr/share/i18n/SUPPORTED and the locale-gen binary) in BOTH
 # containers - debian:bookworm-slim ships without it, which would make
