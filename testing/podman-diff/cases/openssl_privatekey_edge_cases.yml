@@ -1,0 +1,205 @@
+# openssl_privatekey edge cases. The openssl CLI is installed in BOTH
+# containers by run.sh's openssl-gated install (needed by the
+# openssl_csr cases too), so key-generation succeeds on both sides and
+# the openssl CLI can verify on-disk results identically.
+# failed=/changed= and actual on-disk state (file exists, openssl can
+# parse it, key type/size observed by openssl) are what matter; error
+# MESSAGE WORDING may differ.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "K1 generate a default RSA key"
+      community.crypto.openssl_privatekey:
+        path: /tmp/krikri-k1.pem
+      register: k1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "K1 failed={{ k1.failed }} changed={{ k1.changed | default('none') }}"
+
+    - name: "K1b re-run same key is idempotent"
+      community.crypto.openssl_privatekey:
+        path: /tmp/krikri-k1.pem
+      register: k1b
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "K1b failed={{ k1b.failed }} changed={{ k1b.changed }}"
+
+    - name: "K1c openssl can still parse the key, RSA 4096"
+      ansible.builtin.shell: "openssl pkey -in /tmp/krikri-k1.pem -noout -text 2>/dev/null | grep -c 'Private-Key: (4096 bit'"
+      register: k1c
+      ignore_errors: true
+      changed_when: false
+    - ansible.builtin.debug:
+        msg: "K1c rsa4096_count={{ k1c.stdout | default('none') }}"
+
+    - name: "K2 different size regenerates"
+      community.crypto.openssl_privatekey:
+        path: /tmp/krikri-k1.pem
+        size: 2048
+      register: k2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "K2 failed={{ k2.failed }} changed={{ k2.changed }}"
+
+    - name: "K2b back to default size regenerates again"
+      community.crypto.openssl_privatekey:
+        path: /tmp/krikri-k1.pem
+        size: 4096
+      register: k2b
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "K2b failed={{ k2b.failed }} changed={{ k2b.changed }}"
+
+    - name: "K3 unsupported type value fails"
+      community.crypto.openssl_privatekey:
+        path: /tmp/krikri-k3.pem
+        type: krikri-bogus-type
+      register: k3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "K3 failed={{ k3.failed }} changed={{ k3.changed | default('none') }}"
+
+    - name: "K4 RSA size too small for the type fails"
+      community.crypto.openssl_privatekey:
+        path: /tmp/krikri-k4.pem
+        type: RSA
+        size: 128
+      register: k4
+      ignore_errors: true
+    - ansible.builtin.stat:
+        path: /tmp/krikri-k4.pem
+      register: k4_after
+    - ansible.builtin.debug:
+        msg: "K4 failed={{ k4.failed }} changed={{ k4.changed | default('none') }} exists={{ k4_after.stat.exists }}"
+
+    - name: "K5 force true on an existing key regenerates"
+      community.crypto.openssl_privatekey:
+        path: /tmp/krikri-k1.pem
+        force: true
+      register: k5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "K5 failed={{ k5.failed }} changed={{ k5.changed }}"
+
+    - name: "K6 ECC without curve fails"
+      community.crypto.openssl_privatekey:
+        path: /tmp/krikri-k6.pem
+        type: ECC
+      register: k6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "K6 failed={{ k6.failed }} changed={{ k6.changed | default('none') }}"
+
+    - name: "K7 ECC with curve secp256r1 succeeds"
+      community.crypto.openssl_privatekey:
+        path: /tmp/krikri-k7.pem
+        type: ECC
+        curve: secp256r1
+      register: k7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "K7 failed={{ k7.failed }} changed={{ k7.changed | default('none') }}"
+
+    - name: "K7b ECC re-run with same curve is idempotent"
+      community.crypto.openssl_privatekey:
+        path: /tmp/krikri-k7.pem
+        type: ECC
+        curve: secp256r1
+      register: k7b
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "K7b failed={{ k7b.failed }} changed={{ k7b.changed }}"
+
+    - name: "K8 Ed25519 key succeeds and is parseable"
+      community.crypto.openssl_privatekey:
+        path: /tmp/krikri-k8.pem
+        type: Ed25519
+      register: k8
+      ignore_errors: true
+    - ansible.builtin.shell: "openssl pkey -in /tmp/krikri-k8.pem -noout -text >/dev/null 2>&1 && echo ok || echo bad"
+      register: k8c
+      ignore_errors: true
+      changed_when: false
+    - ansible.builtin.debug:
+        msg: "K8 failed={{ k8.failed }} changed={{ k8.changed | default('none') }} parse={{ k8c.stdout | default('none') }}"
+
+    - name: "K9 regenerate never with a size mismatch is a no-op"
+      community.crypto.openssl_privatekey:
+        path: /tmp/krikri-k1.pem
+        size: 1024
+        regenerate: never
+      register: k9
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "K9 failed={{ k9.failed }} changed={{ k9.changed }}"
+
+    - name: "K10 regenerate partial_idempotence with mismatch fails"
+      community.crypto.openssl_privatekey:
+        path: /tmp/krikri-k1.pem
+        size: 1024
+        regenerate: partial_idempotence
+      register: k10
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "K10 failed={{ k10.failed }} changed={{ k10.changed | default('none') }}"
+
+    - name: "K11 check-mode generate over a missing file claims change, writes nothing"
+      community.crypto.openssl_privatekey:
+        path: /tmp/krikri-k11.pem
+      check_mode: true
+      register: k11
+      ignore_errors: true
+    - ansible.builtin.stat:
+        path: /tmp/krikri-k11.pem
+      register: k11_after
+    - ansible.builtin.debug:
+        msg: "K11 failed={{ k11.failed }} changed={{ k11.changed | default('none') }} exists={{ k11_after.stat.exists }}"
+
+    - name: "K12 state absent removes the key"
+      community.crypto.openssl_privatekey:
+        path: /tmp/krikri-k7.pem
+        state: absent
+      register: k12
+      ignore_errors: true
+    - ansible.builtin.stat:
+        path: /tmp/krikri-k7.pem
+      register: k12_after
+    - ansible.builtin.debug:
+        msg: "K12 failed={{ k12.failed }} changed={{ k12.changed | default('none') }} exists={{ k12_after.stat.exists }}"
+
+    - name: "K12b state absent again is a no-op"
+      community.crypto.openssl_privatekey:
+        path: /tmp/krikri-k7.pem
+        state: absent
+      register: k12b
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "K12b failed={{ k12b.failed }} changed={{ k12b.changed }}"
+
+    - name: "K13 passphrase-protected key"
+      community.crypto.openssl_privatekey:
+        path: /tmp/krikri-k13.pem
+        passphrase: krikri-secret
+      register: k13
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "K13 failed={{ k13.failed }} changed={{ k13.changed | default('none') }}"
+
+    - name: "K13b re-run with same passphrase is idempotent"
+      community.crypto.openssl_privatekey:
+        path: /tmp/krikri-k13.pem
+        passphrase: krikri-secret
+      register: k13b
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "K13b failed={{ k13b.failed }} changed={{ k13b.changed }}"
+
+    - name: "K13c re-run with a different passphrase regenerates (full_idempotence default)"
+      community.crypto.openssl_privatekey:
+        path: /tmp/krikri-k13.pem
+        passphrase: krikri-other
+      register: k13c
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "K13c failed={{ k13c.failed }} changed={{ k13c.changed }}"

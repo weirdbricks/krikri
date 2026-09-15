@@ -125,6 +125,19 @@ if printf '%s\n' "${cases[@]}" | grep -q '^openssl'; then
   done
 fi
 
+# gem cases need a real ruby + rubygems (the `gem` CLI) in BOTH
+# containers - debian:bookworm-slim ships without it, which would make
+# every case fail with "Failed to find required executable" instead of
+# exercising the install/idempotency logic. Gated on the requested case
+# list like the modprobe cases above.
+if printf '%s\n' "${cases[@]}" | grep -q '^gem'; then
+  log "installing ruby for gem cases"
+  for c in "$NAME_A" "$NAME_B"; do
+    podman exec "$c" bash -c "apt-get install -y -qq --no-install-recommends ruby >/dev/null" \
+      || { log "FATAL: ruby install failed in $c"; exit 1; }
+  done
+fi
+
 # modprobe cases need the kmod package (real /sbin/modprobe) in BOTH
 # containers - debian:bookworm-slim ships without it, which would make
 # every case fail with "Failed to find required executable" instead of
@@ -136,6 +149,19 @@ if printf '%s\n' "${cases[@]}" | grep -q '^modprobe'; then
     podman exec "$c" bash -c "apt-get install -y -qq --no-install-recommends kmod >/dev/null" \
       || { log "FATAL: kmod install failed in $c"; exit 1; }
   done
+fi
+
+# seboolean cases need the real module's own python libs in the REAL
+# container only - without python3-selinux/python3-semanage every
+# case would fail on the libselinux import check and mask all the
+# argument-validation behavior the cases are actually testing. krikri's
+# seboolean shells out to getenforce/getsebool, so it needs nothing.
+# (The container genuinely has no SELinux - that's the point; see the
+# case file's own header.)
+if printf '%s\n' "${cases[@]}" | grep -q '^seboolean'; then
+  log "installing python3-selinux + python3-semanage for seboolean cases"
+  podman exec "$NAME_A" bash -c "apt-get install -y -qq --no-install-recommends python3-selinux python3-semanage >/dev/null" \
+    || { log "FATAL: SELinux python libs install failed"; exit 1; }
 fi
 
 overall_rc=0
