@@ -1,0 +1,327 @@
+# xml (community.general.xml) edge cases. Uses xmlstring: for most
+# cases (no file staging needed) plus a path-based section. failed=/
+# changed=/count= booleans and resulting file content matter; parse-
+# error and validation WORDING may differ. Prefix X.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "X1 neither path nor xmlstring"
+      community.general.xml:
+        xpath: /root
+        count: true
+      register: x1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "X1 failed={{ x1.failed | default('none') }} changed={{ x1.changed | default('none') }}"
+
+    - name: "X2 no action param (only a source)"
+      community.general.xml:
+        xmlstring: "<root><a>1</a></root>"
+      register: x2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "X2 failed={{ x2.failed | default('none') }} changed={{ x2.changed | default('none') }}"
+
+    - name: "X3 count existing xpath"
+      community.general.xml:
+        xmlstring: "<root><a>1</a><a>2</a></root>"
+        xpath: /root/a
+        count: true
+      register: x3
+    - ansible.builtin.debug:
+        msg: "X3 failed={{ x3.failed }} changed={{ x3.changed }} count={{ x3.count | default('none') }}"
+
+    - name: "X4 count xpath matching nothing"
+      community.general.xml:
+        xmlstring: "<root><a>1</a></root>"
+        xpath: /root/nope
+        count: true
+      register: x4
+    - ansible.builtin.debug:
+        msg: "X4 failed={{ x4.failed }} changed={{ x4.changed }} count={{ x4.count | default('none') }}"
+
+    - name: "X5 content=attribute read"
+      community.general.xml:
+        xmlstring: "<root><a id='x1'>1</a><a id='x2'>2</a></root>"
+        xpath: /root/a
+        content: attribute
+      register: x5
+    - ansible.builtin.debug:
+        msg: "X5 failed={{ x5.failed }} changed={{ x5.changed }} n={{ x5.matches | default([]) | length }}"
+
+    - name: "X6 content=text read"
+      community.general.xml:
+        xmlstring: "<root><a>hello</a></root>"
+        xpath: /root/a
+        content: text
+      register: x6
+    - ansible.builtin.debug:
+        msg: "X6 failed={{ x6.failed }} changed={{ x6.changed }} n={{ x6.matches | default([]) | length }}"
+
+    - name: "X7 invalid content value"
+      community.general.xml:
+        xmlstring: "<root><a>1</a></root>"
+        xpath: /root/a
+        content: krikri_content
+      register: x7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "X7 failed={{ x7.failed | default('none') }} changed={{ x7.changed | default('none') }}"
+
+    - name: "X8 value + content together (mutually exclusive)"
+      community.general.xml:
+        xmlstring: "<root><a>1</a></root>"
+        xpath: /root/a
+        content: text
+        value: 9
+      register: x8
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "X8 failed={{ x8.failed | default('none') }} changed={{ x8.changed | default('none') }}"
+
+    - name: "X9 set text value on existing element"
+      community.general.xml:
+        xmlstring: "<root><a>1</a></root>"
+        xpath: /root/a
+        value: krikri-text
+      register: x9
+    - ansible.builtin.debug:
+        msg: "X9 failed={{ x9.failed }} changed={{ x9.changed }}"
+
+    - name: "X10 re-run same value (idempotency)"
+      community.general.xml:
+        xmlstring: "<root><a>krikri-text</a></root>"
+        xpath: /root/a
+        value: krikri-text
+      register: x10
+    - ansible.builtin.debug:
+        msg: "X10 failed={{ x10.failed }} changed={{ x10.changed }}"
+
+    - name: "X11 set attribute value"
+      community.general.xml:
+        xmlstring: "<root><a id='old'>1</a></root>"
+        xpath: /root/a
+        attribute: id
+        value: new-id
+      register: x11
+    - ansible.builtin.debug:
+        msg: "X11 failed={{ x11.failed }} changed={{ x11.changed }}"
+
+    - name: "X12 remove attribute via null value"
+      community.general.xml:
+        xmlstring: "<root><a id='gone'>1</a></root>"
+        xpath: /root/a
+        attribute: id
+        value: null
+      register: x12
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "X12 failed={{ x12.failed | default('none') }} changed={{ x12.changed | default('none') }}"
+
+    - name: "X13 value with xpath matching nothing creates the element"
+      community.general.xml:
+        xmlstring: "<root><a>1</a></root>"
+        xpath: /root/b
+        value: created
+      register: x13
+    - ansible.builtin.debug:
+        msg: "X13 failed={{ x13.failed }} changed={{ x13.changed }}"
+
+    - name: "X14 verify the created element via count"
+      community.general.xml:
+        xmlstring: "<root><a>1</a><b>created</b></root>"
+        xpath: /root/b
+        count: true
+      register: x14
+    - ansible.builtin.debug:
+        msg: "X14 failed={{ x14.failed }} changed={{ x14.changed }} count={{ x14.count | default('none') }}"
+
+    - name: "X15 add_children"
+      community.general.xml:
+        xmlstring: "<root><a>1</a></root>"
+        xpath: /root
+        add_children:
+          - c: cc
+      register: x15
+    - ansible.builtin.debug:
+        msg: "X15 failed={{ x15.failed }} changed={{ x15.changed }}"
+
+    - name: "X16 add_children idempotent re-run"
+      community.general.xml:
+        xmlstring: "<root><a>1</a><c>cc</c></root>"
+        xpath: /root
+        add_children:
+          - c: cc
+      register: x16
+    - ansible.builtin.debug:
+        msg: "X16 failed={{ x16.failed }} changed={{ x16.changed }}"
+
+    - name: "X17 set_children replaces existing children"
+      community.general.xml:
+        xmlstring: "<root><a>1</a><a>2</a></root>"
+        xpath: /root
+        set_children:
+          - z: zz
+      register: x17
+    - ansible.builtin.debug:
+        msg: "X17 failed={{ x17.failed }} changed={{ x17.changed }}"
+
+    - name: "X18 set_children idempotent re-run"
+      community.general.xml:
+        xmlstring: "<root><z>zz</z></root>"
+        xpath: /root
+        set_children:
+          - z: zz
+      register: x18
+    - ansible.builtin.debug:
+        msg: "X18 failed={{ x18.failed }} changed={{ x18.changed }}"
+
+    - name: "X19 add_children to a nonmatching xpath"
+      community.general.xml:
+        xmlstring: "<root><a>1</a></root>"
+        xpath: /root/nope
+        add_children:
+          - c: cc
+      register: x19
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "X19 failed={{ x19.failed | default('none') }} changed={{ x19.changed | default('none') }}"
+
+    - name: "X20 state absent removes matching element"
+      community.general.xml:
+        xmlstring: "<root><a>1</a><a>2</a></root>"
+        xpath: /root/a
+        state: absent
+      register: x20
+    - ansible.builtin.debug:
+        msg: "X20 failed={{ x20.failed }} changed={{ x20.changed }}"
+
+    - name: "X21 state absent on an already-empty tree"
+      community.general.xml:
+        xmlstring: "<root></root>"
+        xpath: /root/a
+        state: absent
+      register: x21
+    - ansible.builtin.debug:
+        msg: "X21 failed={{ x21.failed }} changed={{ x21.changed }}"
+
+    - name: "X22 malformed XML source"
+      community.general.xml:
+        xmlstring: "<root><unclosed></root>"
+        xpath: /root/a
+        value: 1
+      register: x22
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "X22 failed={{ x22.failed | default('none') }} changed={{ x22.changed | default('none') }}"
+
+    - name: "X23 nonexistent path"
+      community.general.xml:
+        path: /tmp/krikri-xml-missing.xml
+        xpath: /root/a
+        value: 1
+      register: x23
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "X23 failed={{ x23.failed | default('none') }} changed={{ x23.changed | default('none') }}"
+
+    - name: "X24 create_if_missing=false with a nonmatching xpath"
+      community.general.xml:
+        xmlstring: "<root><a>1</a></root>"
+        xpath: /root/b
+        value: 2
+        create_if_missing: false
+      register: x24
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "X24 failed={{ x24.failed | default('none') }} changed={{ x24.changed | default('none') }}"
+
+    - name: "X25 stage an XML file for path-based cases"
+      ansible.builtin.copy:
+        content: "<root><a id='1'>first</a><a>second</a></root>"
+        dest: /tmp/krikri-xml-case.xml
+      register: x25
+    - ansible.builtin.debug:
+        msg: "X25 failed={{ x25.failed }} changed={{ x25.changed }}"
+
+    - name: "X26 path-based count"
+      community.general.xml:
+        path: /tmp/krikri-xml-case.xml
+        xpath: /root/a
+        count: true
+      register: x26
+    - ansible.builtin.debug:
+        msg: "X26 failed={{ x26.failed }} changed={{ x26.changed }} count={{ x26.count | default('none') }}"
+
+    - name: "X27 path-based value edit"
+      community.general.xml:
+        path: /tmp/krikri-xml-case.xml
+        xpath: /root/a[1]
+        value: edited
+      register: x27
+    - ansible.builtin.debug:
+        msg: "X27 failed={{ x27.failed }} changed={{ x27.changed }}"
+
+    - name: "X28 read the edited file back (single line so the debug msg is diffable)"
+      ansible.builtin.command: tr -d '\n' < /tmp/krikri-xml-case.xml
+      register: x28
+    - ansible.builtin.debug:
+        msg: "X28 rc={{ x28.rc | default('none') }} out={{ x28.stdout | default('none') }}"
+
+    - name: "X29 path-based idempotent re-run"
+      community.general.xml:
+        path: /tmp/krikri-xml-case.xml
+        xpath: /root/a[1]
+        value: edited
+      register: x29
+    - ansible.builtin.debug:
+        msg: "X29 failed={{ x29.failed }} changed={{ x29.changed }}"
+
+    - name: "X30 clean up the staged file"
+      ansible.builtin.file:
+        path: /tmp/krikri-xml-case.xml
+        state: absent
+
+    - name: "X31 remove an attribute via state absent + attribute + value"
+      community.general.xml:
+        xmlstring: "<root><a id='x'>1</a></root>"
+        xpath: /root/a
+        attribute: id
+        value: anything
+        state: absent
+      register: x31
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "X31 failed={{ x31.failed | default('none') }} changed={{ x31.changed | default('none') }}"
+
+    - name: "X32 state absent + attribute without value"
+      community.general.xml:
+        xmlstring: "<root><a id='x'>1</a></root>"
+        xpath: /root/a
+        attribute: id
+        state: absent
+      register: x32
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "X32 failed={{ x32.failed | default('none') }} changed={{ x32.changed | default('none') }}"
+
+    - name: "X33 value with a quoted boolean string"
+      community.general.xml:
+        xmlstring: "<root><a>1</a></root>"
+        xpath: /root/a
+        value: "true"
+      register: x33
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "X33 failed={{ x33.failed | default('none') }} changed={{ x33.changed | default('none') }}"
+
+    - name: "X34 count with a non-boolean string"
+      community.general.xml:
+        xmlstring: "<root><a>1</a></root>"
+        xpath: /root/a
+        count: krikri_bool
+      register: x34
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "X34 failed={{ x34.failed | default('none') }} changed={{ x34.changed | default('none') }} count={{ x34.count | default('none') }}"

@@ -195,6 +195,17 @@ if printf '%s\n' "${cases[@]}" | grep -q '^rabbitmq'; then
     || { log "FATAL: community.rabbitmq install failed"; exit 1; }
 fi
 
+# xml cases: the real community.general.xml imports lxml in the REAL
+# container - without python3-lxml every case fails on the import
+# instead of exercising the xpath/mutation logic. krikri's xml plugin
+# uses native libxml2 (already installed in the krikri container).
+# Gated on the requested case list like the htpasswd cases.
+if printf '%s\n' "${cases[@]}" | grep -q '^xml'; then
+  log "installing python3-lxml for xml cases"
+  podman exec "$NAME_A" bash -c "apt-get install -y -qq --no-install-recommends python3-lxml >/dev/null" \
+    || { log "FATAL: python3-lxml install failed"; exit 1; }
+fi
+
 # locale_gen cases need the locales package (real /etc/locale.gen,
 # /usr/share/i18n/SUPPORTED and the locale-gen binary) in BOTH
 # containers - debian:bookworm-slim ships without it, which would make
