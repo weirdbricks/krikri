@@ -230,6 +230,7 @@ Metrics/CyclomaticComplexity:
   - plugins/service.cr
   - plugins/shell.cr
   - plugins/subversion.cr
+  - plugins/sysctl.cr
   - plugins/systemd.cr
   - plugins/template.cr
   - plugins/uri.cr

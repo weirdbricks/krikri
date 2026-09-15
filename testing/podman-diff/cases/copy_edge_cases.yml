@@ -1,0 +1,113 @@
+# copy module edge cases. Each case registers its result and prints a
+# "P<n> key=value" debug line for run.sh's diff extraction; failed=/
+# changed= booleans and on-disk effects (verified via follow-up stat
+# tasks) are what matter, error-message WORDING may differ.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "P1 copy with a src that does not exist (must fail, create nothing)"
+      ansible.builtin.copy:
+        src: /tmp/podman-diff-p1-missing-src.txt
+        dest: /tmp/podman-diff-p1-dest.txt
+      register: p1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P1 failed={{ p1.failed }} changed={{ p1.changed }}"
+
+    - name: "P1b verify no dest was created"
+      ansible.builtin.stat:
+        path: /tmp/podman-diff-p1-dest.txt
+      register: p1b
+    - ansible.builtin.debug:
+        msg: "P1b exists={{ p1b.stat.exists }}"
+
+    - name: "P2 copy with a missing parent directory on dest (must fail)"
+      ansible.builtin.copy:
+        content: "hello"
+        dest: /tmp/podman-diff-p2-no-such-dir/dest.txt
+      register: p2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P2 failed={{ p2.failed }} changed={{ p2.changed }}"
+
+    - name: "P3 setup a source file for the backup overwrite case"
+      ansible.builtin.copy:
+        content: "v1"
+        dest: /tmp/podman-diff-p3.txt
+        mode: "0644"
+
+    - name: "P3b overwrite with backup: true (must change and leave one .N backup)"
+      ansible.builtin.copy:
+        content: "v2"
+        dest: /tmp/podman-diff-p3.txt
+        backup: true
+      register: p3b
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P3b failed={{ p3b.failed }} changed={{ p3b.changed }} backup={{ p3b.backup_file | default('none') }}"
+
+    - name: "P3c verify the backup file actually exists on disk"
+      ansible.builtin.find:
+        paths: /tmp
+        patterns: "podman-diff-p3.txt.*"
+      register: p3c
+    - ansible.builtin.debug:
+        msg: "P3c backups={{ p3c.files | length }}"
+
+    - name: "P4 remote_src: true with a src that does not exist on the target (must fail)"
+      ansible.builtin.copy:
+        src: /tmp/podman-diff-p4-missing-remote-src.txt
+        dest: /tmp/podman-diff-p4-dest.txt
+        remote_src: true
+      register: p4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P4 failed={{ p4.failed }} changed={{ p4.changed }}"
+
+    - name: "P4b verify no dest was created"
+      ansible.builtin.stat:
+        path: /tmp/podman-diff-p4-dest.txt
+      register: p4b
+    - ansible.builtin.debug:
+        msg: "P4b exists={{ p4b.stat.exists }}"
+
+    - name: "P5 setup a directory with two files for the no-recurse dir-copy case"
+      ansible.builtin.file:
+        path: "/tmp/podman-diff-p5-src"
+        state: directory
+    - name: "P5b create first file inside the directory"
+      ansible.builtin.copy:
+        content: "a"
+        dest: /tmp/podman-diff-p5-src/a.txt
+    - name: "P5c create second file inside the directory"
+      ansible.builtin.copy:
+        content: "b"
+        dest: /tmp/podman-diff-p5-src/b.txt
+
+    - name: "P6 copy a directory as src without recurse semantics (real ansible copies the dir tree - both engines must agree on what happened)"
+      ansible.builtin.copy:
+        src: /tmp/podman-diff-p5-src
+        dest: /tmp/podman-diff-p6-dest
+      register: p6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P6 failed={{ p6.failed }} changed={{ p6.changed }}"
+
+    - name: "P6b check what landed under the destination"
+      ansible.builtin.find:
+        paths: /tmp/podman-diff-p6-dest
+        recurse: true
+        file_type: file
+      register: p6b
+    - ansible.builtin.debug:
+        msg: "P6b files={{ p6b.files | length }}"
+
+    - name: "P7 copy an explicitly-recursive directory (must succeed)"
+      ansible.builtin.copy:
+        src: /tmp/podman-diff-p5-src/
+        dest: /tmp/podman-diff-p7-dest/
+      register: p7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P7 failed={{ p7.failed }} changed={{ p7.changed }}"

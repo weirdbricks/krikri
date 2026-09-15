@@ -241,7 +241,14 @@ module Krikri
     end
 
     private def append_section(new_lines : Array(String), section : String) : Int32
-      new_lines << "" unless new_lines.empty? || new_lines.last.strip.empty?
+      # Real do_ini appends a new section header DIRECTLY - no blank-line
+      # separator (`ini_lines.append(f"[{section}]\n")`). The only blank
+      # line real ever produces is the empty-file seed in initial_lines,
+      # which is already in `new_lines` by the time a second section is
+      # appended; adding another one here put a spurious blank line
+      # between the previous section's last option and every newly
+      # appended `[section]` header (caught by the podman-diff harness's
+      # byte-for-byte `cat` of the final file).
       new_lines << "[#{section}]"
       new_lines.size - 1
     end

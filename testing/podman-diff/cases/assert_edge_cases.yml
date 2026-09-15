@@ -1,0 +1,57 @@
+# assert module edge cases. Each case registers its result and prints
+# an "A<n> key=value" debug line for run.sh's diff extraction;
+# failed=/changed= booleans matter, error-message WORDING may
+# legitimately differ between engines.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "A1 assert with an undefined variable in the condition"
+      ansible.builtin.assert:
+        that: "krikri_diff_undefined_var == 1"
+      register: a1
+      ignore_errors: true
+    # default() guards: real Ansible's registered var for a
+    # conditional-evaluation failure carries NO changed key (only
+    # failed+msg), so a bare a1.changed would fail the debug task
+    # itself in real Ansible and abort the play there.
+    - ansible.builtin.debug:
+        msg: "A1 failed={{ a1.failed | default('undef') }} changed={{ a1.changed | default('undef') }}"
+
+    - name: "A2 assert as a list where one condition is false (must report which)"
+      ansible.builtin.assert:
+        that:
+          - "1 == 1"
+          - "1 == 2"
+          - "2 == 2"
+      register: a2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A2 failed={{ a2.failed }} changed={{ a2.changed }}"
+
+    - name: "A3 assert all-true list with a custom success_msg"
+      ansible.builtin.assert:
+        that: "1 == 1"
+        success_msg: "all good here"
+      register: a3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A3 failed={{ a3.failed }} changed={{ a3.changed }}"
+
+    - name: "A4 failing assert with a custom fail_msg"
+      ansible.builtin.assert:
+        that: "1 == 2"
+        fail_msg: "custom failure text"
+      register: a4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A4 failed={{ a4.failed }} changed={{ a4.changed }}"
+
+    - name: "A5 quiet: true on a failing assert"
+      ansible.builtin.assert:
+        that: "1 == 2"
+        quiet: true
+      register: a5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A5 failed={{ a5.failed }} changed={{ a5.changed }}"

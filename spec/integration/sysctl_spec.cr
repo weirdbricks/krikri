@@ -151,6 +151,35 @@ describe "sysctl plugin" do
     result["failed"]?.try(&.as_bool).should be_falsey
   end
 
+  it "normalizes boolean values to 1/0 like real _parse_value, and stays idempotent across equivalent booleans" do
+    # Real _parse_value turns y/yes/on/1/true (any case) into "1" and
+    # n/no/off/0/false into "0" before comparing or writing, so value:
+    # yes then value: true is a no-op rerun, not a second change.
+    conf = fresh_conf("bool-normalize.conf")
+
+    result = PluginSpecHelper.run("sysctl", {"name" => "net.ipv4.krikri_spec_bool", "value" => "yes", "sysctl_file" => conf, "reload" => "false"})
+
+    result["changed"].as_bool.should be_true
+    File.read(conf).should eq("net.ipv4.krikri_spec_bool=1\n")
+
+    rerun = PluginSpecHelper.run("sysctl", {"name" => "net.ipv4.krikri_spec_bool", "value" => "true", "sysctl_file" => conf, "reload" => "false"})
+
+    rerun["changed"].as_bool.should be_false
+    File.read(conf).should eq("net.ipv4.krikri_spec_bool=1\n")
+  end
+
+  it "rewrites a loosely-spaced existing key line in real fix_lines form (key=value, stripped)" do
+    # Real fix_lines re-emits every parsed key as "key=value" with both
+    # sides stripped, so pre-existing "key = value" spacing is
+    # normalized on the next write of the file.
+    conf = fresh_conf("spacing.conf", "net.ipv4.ip_forward = 0\n")
+
+    result = PluginSpecHelper.run("sysctl", {"name" => "net.ipv4.ip_forward", "value" => "1", "sysctl_file" => conf, "reload" => "false"})
+
+    result["changed"].as_bool.should be_true
+    File.read(conf).should eq("net.ipv4.ip_forward=1\n")
+  end
+
   it "fails with a clear message when value is missing for state: present" do
     conf = fresh_conf("missing-value.conf")
 

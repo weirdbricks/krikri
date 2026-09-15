@@ -1,0 +1,73 @@
+# group module edge cases. Containers run as root; cleanup keeps
+# re-runs idempotent. Each case registers its result and prints a
+# "G<n> key=value" debug line for run.sh's diff extraction;
+# failed=/changed= booleans matter, error-message WORDING may
+# legitimately differ between engines.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "G0 cleanup from a previous run"
+      ansible.builtin.group:
+        name: krikri-diff-g
+        state: absent
+      ignore_errors: true
+
+    - name: "G1 create a group with an explicit gid"
+      ansible.builtin.group:
+        name: krikri-diff-g
+        gid: 4242
+      register: g1
+    - ansible.builtin.debug:
+        msg: "G1 failed={{ g1.failed }} changed={{ g1.changed }}"
+
+    - name: "G2 re-run the same create (idempotency: changed=false)"
+      ansible.builtin.group:
+        name: krikri-diff-g
+        gid: 4242
+      register: g2
+    - ansible.builtin.debug:
+        msg: "G2 failed={{ g2.failed }} changed={{ g2.changed }}"
+
+    - name: "G3 create a second group with the SAME gid (must fail)"
+      ansible.builtin.group:
+        name: krikri-diff-g2
+        gid: 4242
+      register: g3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "G3 failed={{ g3.failed }} changed={{ g3.changed }}"
+
+    - name: "G4 remove the group (changed=true)"
+      ansible.builtin.group:
+        name: krikri-diff-g
+        state: absent
+      register: g4
+    - ansible.builtin.debug:
+        msg: "G4 failed={{ g4.failed }} changed={{ g4.changed }}"
+
+    - name: "G5 remove an already-absent group (idempotency: changed=false)"
+      ansible.builtin.group:
+        name: krikri-diff-g
+        state: absent
+      register: g5
+    - ansible.builtin.debug:
+        msg: "G5 failed={{ g5.failed }} changed={{ g5.changed }}"
+
+    - name: "G6 system group create/remove round trip"
+      ansible.builtin.group:
+        name: krikri-diff-gsys
+        system: true
+      register: g6
+    - ansible.builtin.group:
+        name: krikri-diff-gsys
+        state: absent
+      register: g6b
+    - ansible.builtin.debug:
+        msg: "G6 failed={{ g6.failed }} changed={{ g6.changed }} removed_failed={{ g6b.failed }} removed_changed={{ g6b.changed }}"
+
+    - name: "G7 cleanup G3 if it got created"
+      ansible.builtin.group:
+        name: krikri-diff-g2
+        state: absent
+      ignore_errors: true

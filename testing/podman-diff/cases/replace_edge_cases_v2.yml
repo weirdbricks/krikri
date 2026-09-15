@@ -1,0 +1,94 @@
+# replace module edge cases. Each case registers its result and
+# prints an "R<n> key=value" debug line for run.sh's diff extraction;
+# failed=/changed= booleans matter, error-message WORDING may
+# legitimately differ between engines.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "R0 fresh slate"
+      ansible.builtin.copy:
+        content: "alpha=1\nbeta=2\ngamma=3\n"
+        dest: /tmp/krikri-diff-replace
+      register: r0
+
+    - name: "R1 regex replace a line (changed=true)"
+      ansible.builtin.replace:
+        path: /tmp/krikri-diff-replace
+        regexp: '^beta=\d+$'
+        replace: 'beta=99'
+      register: r1
+    - ansible.builtin.debug:
+        msg: "R1 failed={{ r1.failed }} changed={{ r1.changed }}"
+
+    - name: "R2 re-run the same replace (idempotency: changed=false)"
+      ansible.builtin.replace:
+        path: /tmp/krikri-diff-replace
+        regexp: '^beta=\d+$'
+        replace: 'beta=99'
+      register: r2
+    - ansible.builtin.debug:
+        msg: "R2 failed={{ r2.failed }} changed={{ r2.changed }}"
+
+    - name: "R3 regexp that matches nothing (changed=false, no error)"
+      ansible.builtin.replace:
+        path: /tmp/krikri-diff-replace
+        regexp: '^krikri-diff-nonexistent=\d+$'
+        replace: 'x'
+      register: r3
+    - ansible.builtin.debug:
+        msg: "R3 failed={{ r3.failed }} changed={{ r3.changed }}"
+
+    - name: "R4 invalid regexp (must fail)"
+      ansible.builtin.replace:
+        path: /tmp/krikri-diff-replace
+        regexp: 'alpha=['
+        replace: 'x'
+      register: r4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "R4 failed={{ r4.failed }} changed={{ r4.changed }}"
+
+    - name: "R5 missing file without create (must fail)"
+      ansible.builtin.replace:
+        path: /tmp/krikri-diff-replace-missing-zzz
+        regexp: 'a'
+        replace: 'b'
+      register: r5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "R5 failed={{ r5.failed }} changed={{ r5.changed }}"
+
+    - name: "R6 backup: true on a real change (result must name the backup)"
+      ansible.builtin.replace:
+        path: /tmp/krikri-diff-replace
+        regexp: '^gamma=3$'
+        replace: 'gamma=33'
+        backup: true
+      register: r6
+    - ansible.builtin.debug:
+        msg: "R6 failed={{ r6.failed }} changed={{ r6.changed }}"
+
+    - name: "R7 after/before scoping (replace only between markers)"
+      ansible.builtin.copy:
+        content: "start\nnum=1\nmid\nnum=2\nend\n"
+        dest: /tmp/krikri-diff-replace2
+      register: r7a
+    - ansible.builtin.replace:
+        path: /tmp/krikri-diff-replace2
+        regexp: '^num=\d+$'
+        replace: 'num=0'
+        after: '^mid$'
+      register: r7
+    - ansible.builtin.command: cat /tmp/krikri-diff-replace2
+      register: r7b
+    - ansible.builtin.debug:
+        msg: "R7 failed={{ r7.failed }} changed={{ r7.changed }} out={{ r7b.stdout | replace('\n', '|') }}"
+
+    - name: "R8 cleanup"
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /tmp/krikri-diff-replace
+        - /tmp/krikri-diff-replace2

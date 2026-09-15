@@ -1,0 +1,78 @@
+# sysctl module edge cases. Containers run as root; /etc/sysctl.conf
+# is writable. Cleanup keeps re-runs idempotent. Each case registers
+# its result and prints an "S<n> key=value" debug line for run.sh's
+# diff extraction; failed=/changed= booleans matter, error-message
+# WORDING may legitimately differ between engines.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "S1 set a new sysctl value (changed=true, writes conf)"
+      ansible.posix.sysctl:
+        name: net.ipv4.krikri_diff_test
+        value: "42"
+        sysctl_set: true
+      register: s1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S1 failed={{ s1.failed }} changed={{ s1.changed }}"
+
+    - name: "S2 re-run the same sysctl (idempotency: changed=false)"
+      ansible.posix.sysctl:
+        name: net.ipv4.krikri_diff_test
+        value: "42"
+        sysctl_set: true
+      register: s2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S2 failed={{ s2.failed }} changed={{ s2.changed }}"
+
+    - name: "S3 change the value (changed=true)"
+      ansible.posix.sysctl:
+        name: net.ipv4.krikri_diff_test
+        value: "43"
+        sysctl_set: true
+      register: s3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S3 failed={{ s3.failed }} changed={{ s3.changed }}"
+
+    - name: "S4 set a value in a custom conf file"
+      ansible.posix.sysctl:
+        name: net.ipv4.krikri_diff_test2
+        value: "7"
+        sysctl_file: /etc/sysctl.d/99-krikri-diff.conf
+        sysctl_set: true
+      register: s4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S4 failed={{ s4.failed }} changed={{ s4.changed }}"
+
+    - name: "S5 remove a sysctl (state: absent, changed=true)"
+      ansible.posix.sysctl:
+        name: net.ipv4.krikri_diff_test
+        value: "43"
+        state: absent
+        sysctl_set: true
+      register: s5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S5 failed={{ s5.failed }} changed={{ s5.changed }}"
+
+    - name: "S6 reload on an unloadable key (must fail like real)"
+      ansible.posix.sysctl:
+        name: kernel.krikri_diff_nonexistent
+        value: "1"
+        sysctl_set: true
+      register: s6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S6 failed={{ s6.failed }} changed={{ s6.changed }}"
+
+    - name: "S7 cleanup conf files"
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/sysctl.d/99-krikri-diff.conf
+      ignore_errors: true
