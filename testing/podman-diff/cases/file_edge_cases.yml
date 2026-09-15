@@ -1,0 +1,79 @@
+# file module failure-path edge cases - each task is independent
+# (ignore_errors so one failure doesn't hide the rest) and its
+# result is printed so cold-diff between real ansible-playbook and
+# krikri-playbook shows exact rc/msg divergence, not just recap counts.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "F1 touch a file whose parent dir does not exist"
+      ansible.builtin.file:
+        path: /tmp/podman-diff-nope/deep/file.txt
+        state: touch
+      register: f1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "F1 failed={{ f1.failed }} msg={{ f1.msg | default('') }}"
+
+    - name: "F2 owner set to a nonexistent user"
+      ansible.builtin.file:
+        path: /tmp/podman-diff-f2.txt
+        state: touch
+        owner: this_user_does_not_exist_zzz
+      register: f2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "F2 failed={{ f2.failed }} msg={{ f2.msg | default('') }}"
+
+    - name: "F3 hard link with a source that does not exist"
+      ansible.builtin.file:
+        src: /tmp/podman-diff-no-such-source
+        dest: /tmp/podman-diff-f3-link
+        state: hard
+      register: f3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "F3 failed={{ f3.failed }} msg={{ f3.msg | default('') }}"
+
+    - name: "F4 invalid symbolic mode string"
+      ansible.builtin.file:
+        path: /tmp/podman-diff-f4.txt
+        state: touch
+        mode: "u=rwx,g=elephant"
+      register: f4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "F4 failed={{ f4.failed }} msg={{ f4.msg | default('') }}"
+
+    - name: "F5 recurse chmod on a path that does not exist"
+      ansible.builtin.file:
+        path: /tmp/podman-diff-f5-nope
+        state: directory
+        recurse: true
+        mode: "0755"
+      register: f5_setup
+      ignore_errors: true
+    - name: "F5b remove it then recurse chmod again"
+      ansible.builtin.file:
+        path: /tmp/podman-diff-f5-nope
+        state: absent
+    - name: "F5c recurse chmod on now-missing path"
+      ansible.builtin.file:
+        path: /tmp/podman-diff-f5-nope
+        state: file
+        recurse: true
+        mode: "0755"
+      register: f5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "F5 failed={{ f5.failed }} msg={{ f5.msg | default('') }}"
+
+    - name: "F6 broken symlink creation (no force needed)"
+      ansible.builtin.file:
+        src: /tmp/podman-diff-f6-target-missing
+        dest: /tmp/podman-diff-f6-link
+        state: link
+      register: f6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "F6 failed={{ f6.failed }} changed={{ f6.changed }} msg={{ f6.msg | default('') }}"

@@ -1,0 +1,59 @@
+# set_fact failure-path edge cases, including a second angle on the
+# recursive re-templating bug class (see template_edge_cases.yml T2):
+# here the unrendered-Jinja-looking value flows through set_fact
+# rather than a .j2 file, which exercises the hand-rolled
+# ExpressionEvaluator path instead of Crinja.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "S1 set_fact referencing an undefined variable"
+      ansible.builtin.set_fact:
+        derived_fact: "{{ undefined_source_var }}-suffix"
+      register: s1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S1 failed={{ s1.failed }} msg={{ s1.msg | default('') }}"
+
+    - name: "S2 set_fact value contains literal-looking Jinja text"
+      ansible.builtin.set_fact:
+        literal_holder: "{{ '{{ should_not_be_rendered }}' }}"
+    - name: "S2b use literal_holder in a second set_fact"
+      ansible.builtin.set_fact:
+        literal_used: "prefix-{{ literal_holder }}-suffix"
+      register: s2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S2 failed={{ s2.failed | default(false) }} literal_used={{ literal_used | default('N/A') }}"
+
+    - name: "S3 set_fact with cacheable true"
+      ansible.builtin.set_fact:
+        cacheable_fact: "cached-value"
+        cacheable: true
+      register: s3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S3 failed={{ s3.failed | default(false) }} cacheable_fact={{ cacheable_fact | default('N/A') }}"
+
+    - name: "S4 set_fact inside a loop referencing item"
+      ansible.builtin.set_fact:
+        "loop_fact_{{ item }}": "value-{{ item }}"
+      loop:
+        - a
+        - b
+        - c
+      register: s4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S4 loop_fact_a={{ loop_fact_a | default('N/A') }} loop_fact_b={{ loop_fact_b | default('N/A') }} loop_fact_c={{ loop_fact_c | default('N/A') }}"
+
+    - name: "S5 set_fact self-referencing an existing fact of same name"
+      ansible.builtin.set_fact:
+        chained: "base"
+    - name: "S5b redefine chained referencing itself"
+      ansible.builtin.set_fact:
+        chained: "{{ chained }}-extended"
+      register: s5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S5 failed={{ s5.failed | default(false) }} chained={{ chained | default('N/A') }}"

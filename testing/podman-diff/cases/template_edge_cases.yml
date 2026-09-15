@@ -1,0 +1,61 @@
+# template module failure-path edge cases, esp. the "recursive
+# re-templating" bug class called out in CLAUDE.md: a variable whose
+# own value is itself unrendered Jinja must NOT get re-rendered when
+# substituted - both the hand-rolled evaluator and Crinja have
+# independently regressed on this before.
+- hosts: all
+  gather_facts: false
+
+  vars:
+    literal_jinja_value: "{{ this_should_stay_literal }}"
+
+  tasks:
+    - name: "T1 undefined variable in template"
+      ansible.builtin.template:
+        src: /tmp/podman-diff-t1.j2
+        dest: /tmp/podman-diff-t1-out.txt
+      register: t1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "T1 failed={{ t1.failed }} msg={{ t1.msg | default('') }}"
+
+    - name: "T2 recursive re-templating - value must NOT be re-rendered"
+      ansible.builtin.template:
+        src: /tmp/podman-diff-t2.j2
+        dest: /tmp/podman-diff-t2-out.txt
+      register: t2
+      ignore_errors: true
+    - name: "T2b read back what actually got written"
+      ansible.builtin.slurp:
+        src: /tmp/podman-diff-t2-out.txt
+      register: t2_content
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "T2 failed={{ t2.failed }} content={{ (t2_content.content | default('') | b64decode) if t2_content is defined and t2_content.content is defined else 'N/A' }}"
+
+    - name: "T3 jinja syntax error (unclosed if block)"
+      ansible.builtin.template:
+        src: /tmp/podman-diff-t3.j2
+        dest: /tmp/podman-diff-t3-out.txt
+      register: t3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "T3 failed={{ t3.failed }} msg={{ t3.msg | default('') }}"
+
+    - name: "T4 missing source template"
+      ansible.builtin.template:
+        src: /tmp/podman-diff-t4-does-not-exist.j2
+        dest: /tmp/podman-diff-t4-out.txt
+      register: t4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "T4 failed={{ t4.failed }} msg={{ t4.msg | default('') }}"
+
+    - name: "T5 dest parent dir missing"
+      ansible.builtin.template:
+        src: /tmp/podman-diff-t5.j2
+        dest: /tmp/podman-diff-t5-nope/deep/out.txt
+      register: t5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "T5 failed={{ t5.failed }} msg={{ t5.msg | default('') }}"
