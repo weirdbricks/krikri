@@ -1,0 +1,155 @@
+# firewalld module edge cases. The harness containers have NO running
+# firewalld daemon (podman container, no systemd), but the firewalld
+# PACKAGE is installed by run.sh's gated block (for ^firewalld cases)
+# in BOTH containers, which provides firewall-offline-cmd + the python
+# firewalld bindings - real ansible.posix.firewalld auto-detects "not
+# connected" and falls back to offline mode (firewall-offline-cmd),
+# exactly the backend this plugin drives. So permanent/offline-path
+# behavior IS testable here; a live-daemon `immediate:` change is not.
+# Msg wording differs between engines for the argument-spec failures
+# and is not a bug; failed=/changed= and on-disk zone state are.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "K1 missing required state param"
+      ansible.posix.firewalld:
+        port: 8888/tcp
+        zone: public
+        permanent: true
+      register: k1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "K1 failed={{ k1.failed | default('none') }} changed={{ k1.changed | default('none') }}"
+
+    - name: "K2 invalid state value (not in choices)"
+      ansible.posix.firewalld:
+        port: 8888/tcp
+        zone: public
+        state: enabled-forever
+        permanent: true
+      register: k2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "K2 failed={{ k2.failed | default('none') }} changed={{ k2.changed | default('none') }}"
+
+    - name: "K3 two things at once (port + service, mutually exclusive)"
+      ansible.posix.firewalld:
+        port: 8888/tcp
+        service: http
+        zone: public
+        state: enabled
+        permanent: true
+      register: k3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "K3 failed={{ k3.failed | default('none') }} changed={{ k3.changed | default('none') }}"
+
+    - name: "K4 no thing at all"
+      ansible.posix.firewalld:
+        zone: public
+        state: enabled
+        permanent: true
+      register: k4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "K4 failed={{ k4.failed | default('none') }} changed={{ k4.changed | default('none') }}"
+
+    - name: "K5 state present with a non-target thing (only valid at zone level)"
+      ansible.posix.firewalld:
+        port: 8888/tcp
+        zone: public
+        state: present
+        permanent: true
+      register: k5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "K5 failed={{ k5.failed | default('none') }} changed={{ k5.changed | default('none') }}"
+
+    - name: "K6 enabled port permanent (offline path, changed=true)"
+      ansible.posix.firewalld:
+        port: 8891/tcp
+        zone: public
+        state: enabled
+        permanent: true
+      register: k6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "K6 failed={{ k6.failed | default('none') }} changed={{ k6.changed | default('none') }}"
+
+    - name: "K7 re-run the same port (idempotent, changed=false)"
+      ansible.posix.firewalld:
+        port: 8891/tcp
+        zone: public
+        state: enabled
+        permanent: true
+      register: k7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "K7 failed={{ k7.failed | default('none') }} changed={{ k7.changed | default('none') }}"
+
+    - name: "K8 immediate: true with no running daemon fails"
+      ansible.posix.firewalld:
+        port: 8892/tcp
+        zone: public
+        state: enabled
+        immediate: true
+      register: k8
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "K8 failed={{ k8.failed | default('none') }} changed={{ k8.changed | default('none') }}"
+
+    - name: "K9 offline: true without permanent: true fails"
+      ansible.posix.firewalld:
+        port: 8893/tcp
+        zone: public
+        state: enabled
+        offline: true
+      register: k9
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "K9 failed={{ k9.failed | default('none') }} changed={{ k9.changed | default('none') }}"
+
+    - name: "K10 port_forward enabled permanent (compound value)"
+      ansible.posix.firewalld:
+        port_forward:
+          - port: 8080
+            proto: tcp
+            toport: 8090
+        zone: public
+        state: enabled
+        permanent: true
+      register: k10
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "K10 failed={{ k10.failed | default('none') }} changed={{ k10.changed | default('none') }}"
+
+    - name: "K11 zone target state enabled permanent"
+      ansible.posix.firewalld:
+        target: DROP
+        zone: public
+        state: enabled
+        permanent: true
+      register: k11
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "K11 failed={{ k11.failed | default('none') }} changed={{ k11.changed | default('none') }}"
+
+    - name: "K12 zone target idempotent re-run"
+      ansible.posix.firewalld:
+        target: DROP
+        zone: public
+        state: enabled
+        permanent: true
+      register: k12
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "K12 failed={{ k12.failed | default('none') }} changed={{ k12.changed | default('none') }}"
+
+    - name: "K13 on-disk zone state after the permanent changes"
+      ansible.builtin.command:
+        cmd: grep -o 'port=[0-9]*:proto=tcp:toport=[0-9]*\|<port port="[0-9]*"[^/]*/>\|DROP' /etc/firewalld/zones/public.xml
+      register: k13
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "K13 failed={{ k13.failed | default('none') }} changed={{ k13.changed | default('none') }} rc={{ k13.rc | default('none') }}"

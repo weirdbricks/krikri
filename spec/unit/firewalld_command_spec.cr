@@ -180,4 +180,79 @@ describe Krikri::PluginHelpers::FirewalldCommand do
         .should eq("firewall-offline-cmd --zone=public --remove-forward-port='port=80:proto=tcp:toport=8080'")
     end
   end
+
+  # The ZoneXml (direct zone-config-file) offline backend - real
+  # ansible.posix.firewalld's offline mode never runs
+  # firewall-offline-cmd; it drives firewalld's Python Firewall(
+  # offline=True) over the same zone XML files. Found by the
+  # podman-diff firewalld round: firewall-offline-cmd dies entirely
+  # where getprotobyname('esp') fails (slim containers), so every
+  # permanent operation failed under the CLI backend while real Ansible
+  # succeeded.
+  zone_xml = <<-XML
+    <?xml version="1.0" encoding="utf-8"?>
+    <zone>
+      <short>Public</short>
+      <service name="ssh"/>
+      <port port="8891" protocol="tcp"/>
+    </zone>
+    XML
+
+  describe "ZoneXml backend" do
+    it "queries an existing element" do
+      Krikri::PluginHelpers::FirewalldCommand.zone_query(zone_xml, "port", {"port" => "8891", "protocol" => "tcp"}).should be_true
+      Krikri::PluginHelpers::FirewalldCommand.zone_query(zone_xml, "service", {"name" => "ssh"}).should be_true
+      Krikri::PluginHelpers::FirewalldCommand.zone_query(zone_xml, "port", {"port" => "9999", "protocol" => "tcp"}).should be_false
+    end
+
+    it "adds an element and serializes back to parseable zone XML" do
+      content = Krikri::PluginHelpers::FirewalldCommand.zone_add(zone_xml, "service", {"name" => "http"}).not_nil!
+      Krikri::PluginHelpers::FirewalldCommand.zone_query(content, "service", {"name" => "http"}).should be_true
+      Krikri::PluginHelpers::FirewalldCommand.zone_query(content, "service", {"name" => "ssh"}).should be_true
+      content.should contain(%(<service name="http"/>))
+    end
+
+    it "add is idempotent (nil when the element already exists)" do
+      Krikri::PluginHelpers::FirewalldCommand.zone_add(zone_xml, "port", {"port" => "8891", "protocol" => "tcp"}).should be_nil
+    end
+
+    it "removes an element" do
+      content = Krikri::PluginHelpers::FirewalldCommand.zone_remove(zone_xml, "port", {"port" => "8891", "protocol" => "tcp"}).not_nil!
+      Krikri::PluginHelpers::FirewalldCommand.zone_query(content, "port", {"port" => "8891", "protocol" => "tcp"}).should be_false
+      Krikri::PluginHelpers::FirewalldCommand.zone_query(content, "service", {"name" => "ssh"}).should be_true
+    end
+
+    it "remove is a no-op (nil) when the element is absent" do
+      Krikri::PluginHelpers::FirewalldCommand.zone_remove(zone_xml, "masquerade", {} of String => String).should be_nil
+    end
+
+    it "splits a port value across the port/protocol attributes" do
+      element, attrs = Krikri::PluginHelpers::FirewalldCommand.zone_element("port", "8080/udp")
+      element.should eq("port")
+      attrs.should eq({"port" => "8080", "protocol" => "udp"})
+    end
+
+    it "builds a no-attribute element for the boolean things" do
+      element, attrs = Krikri::PluginHelpers::FirewalldCommand.zone_element("icmp_block_inversion", "true")
+      element.should eq("icmp-block-inversion")
+      attrs.should be_empty
+    end
+
+    it "builds a forward-port element with to-addr omitted when absent" do
+      entry = JSON.parse(%({"port": 8080, "proto": "tcp", "toport": 8090}))
+      element, attrs = Krikri::PluginHelpers::FirewalldCommand.forward_port_element(entry)
+      element.should eq("forward-port")
+      attrs.should eq({"port" => "8080", "protocol" => "tcp", "to-port" => "8090"})
+
+      entry = JSON.parse(%({"port": 8080, "proto": "tcp", "toport": 8090, "toaddr": "10.0.0.1"}))
+      element, attrs = Krikri::PluginHelpers::FirewalldCommand.forward_port_element(entry)
+      attrs.should eq({"port" => "8080", "protocol" => "tcp", "to-port" => "8090", "to-addr" => "10.0.0.1"})
+    end
+
+    it "sets the target attribute, and removes it for default" do
+      content = Krikri::PluginHelpers::FirewalldCommand.zone_set_target(zone_xml, "DROP")
+      content.should contain(%(<zone target="DROP">))
+      Krikri::PluginHelpers::FirewalldCommand.zone_set_target(content, "default").should_not contain("target=")
+    end
+  end
 end

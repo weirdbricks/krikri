@@ -52,6 +52,18 @@ module Krikri
         supported_lines.any? { |line| supported_entry_locale(line) == locale }
       end
 
+      # changed determination: the real module tracks state_tracking -
+      # whether ALL requested locales are present - against the
+      # requested state, so `present` changes when any locale is
+      # missing, but `absent` only changes (and only applies) when
+      # every requested locale is present. Check mode never applies,
+      # and StateModuleHelper recomputes state_tracking from the
+      # untouched system, so check mode always reports changed=False.
+      def self.changed?(state : String, all_present : Bool, check_mode : Bool) : Bool
+        return false if check_mode
+        state == "present" ? !all_present : all_present
+      end
+
       # set_locale_glibc: comment out (`enabled: false`) or uncomment
       # (`enabled: true`) one entry per requested locale in
       # /etc/locale.gen, preserving each line's charset column. Real

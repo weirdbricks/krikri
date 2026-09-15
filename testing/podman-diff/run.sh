@@ -138,6 +138,57 @@ if printf '%s\n' "${cases[@]}" | grep -q '^gem'; then
   done
 fi
 
+# firewalld cases need the firewalld PACKAGE (firewall-offline-cmd +
+# the python bindings the real module imports) in BOTH containers -
+# without it real ansible.posix.firewalld dies on the import before any
+# validation, manufacturing a divergence. No daemon runs (no systemd);
+# the real module auto-detects offline mode, same backend krikri
+# drives. Gated on the requested case list like the mysql cases above.
+if printf '%s\n' "${cases[@]}" | grep -q '^firewalld'; then
+  log "installing firewalld package (offline-cmd + bindings) for firewalld cases"
+  for c in "$NAME_A" "$NAME_B"; do
+    podman exec "$c" bash -c "apt-get install -y -qq --no-install-recommends firewalld >/dev/null" \
+      || { log "FATAL: firewalld install failed in $c"; exit 1; }
+  done
+fi
+
+# postgresql_* cases need the community.postgresql collection in the
+# REAL container (krikri talks the wire protocol itself; the real
+# modules are collection modules not shipped with ansible-core).
+# Validation-only cases - no PostgreSQL server is installed. Gated on
+# the requested case list like the mysql cases above.
+if printf '%s\n' "${cases[@]}" | grep -q '^postgresql'; then
+  log "installing community.postgresql collection for postgresql cases"
+  podman exec "$NAME_A" bash -c "ansible-galaxy collection install community.postgresql >/dev/null 2>&1" \
+    || { log "FATAL: community.postgresql install failed"; exit 1; }
+fi
+
+# ec2_metadata_facts cases need the amazon.aws collection in the REAL
+# container (collection module, not shipped with ansible-core).
+# Validation-only + unreachable-endpoint cases - the real IMDS endpoint
+# doesn't exist inside a container, and both engines must fail cleanly
+# there. Gated on the requested case list like the postgresql cases.
+if printf '%s\n' "${cases[@]}" | grep -q '^ec2_metadata'; then
+  log "installing amazon.aws collection for ec2_metadata_facts cases"
+  podman exec "$NAME_A" bash -c "ansible-galaxy collection install amazon.aws >/dev/null 2>&1" \
+    || { log "FATAL: amazon.aws install failed"; exit 1; }
+fi
+
+# locale_gen cases need the locales package (real /etc/locale.gen,
+# /usr/share/i18n/SUPPORTED and the locale-gen binary) in BOTH
+# containers - debian:bookworm-slim ships without it, which would make
+# every case fail with the "Is the package 'locales' installed?"
+# mechanism error instead of exercising the glibc path. locale-gen
+# works fine inside a container, so real generation IS testable here.
+# Gated on the requested case list like the modprobe cases above.
+if printf '%s\n' "${cases[@]}" | grep -q '^locale_gen'; then
+  log "installing locales for locale_gen cases"
+  for c in "$NAME_A" "$NAME_B"; do
+    podman exec "$c" bash -c "apt-get install -y -qq --no-install-recommends locales >/dev/null" \
+      || { log "FATAL: locales install failed in $c"; exit 1; }
+  done
+fi
+
 # modprobe cases need the kmod package (real /sbin/modprobe) in BOTH
 # containers - debian:bookworm-slim ships without it, which would make
 # every case fail with "Failed to find required executable" instead of

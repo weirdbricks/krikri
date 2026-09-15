@@ -41,8 +41,11 @@ module Krikri
     class FetchError < Exception; end
 
     def execute : PluginResult
-      ttl = (@params["metadata_token_ttl_seconds"]? || "60").to_i
-      unless (1..21600).covers?(ttl)
+      # Real module: an out-of-range (or non-numeric - its AnsibleModule
+      # int-type conversion rejects that too) metadata_token_ttl_seconds
+      # fails with this exact message BEFORE any network I/O.
+      ttl = (@params["metadata_token_ttl_seconds"]? || "60").to_i?
+      unless ttl && (1..21600).covers?(ttl)
         return PluginResult.new(changed: false, failed: true, msg: "The option 'metadata_token_ttl_seconds' must be set to a value between 1 and 21600.")
       end
 
@@ -198,8 +201,10 @@ module Krikri
     private def request(url : String, method : String, headers : HTTP::Headers) : HTTP::Client::Response
       uri = URI.parse(url)
       client = HTTP::Client.new(uri)
-      client.connect_timeout = 5.seconds
-      client.read_timeout = 5.seconds
+      # 10s, matching real Ansible's own fetch_url default timeout (the
+      # module passes no explicit timeout) - both connect and read.
+      client.connect_timeout = 10.seconds
+      client.read_timeout = 10.seconds
       client.exec(method, uri.request_target, headers: headers)
     ensure
       client.try(&.close)
