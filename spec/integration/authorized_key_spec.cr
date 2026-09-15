@@ -13,14 +13,19 @@ end
 private RSA_KEY = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC test@example.com"
 
 describe "authorized_key plugin" do
-  it "creates the file (and .ssh-style parent dir) and adds the key" do
-    path = File.join(tmp_path("authorized-key-create"), ".ssh", "authorized_keys")
-    `rm -rf #{tmp_path("authorized-key-create")}`
+  it "creates the file (and the .ssh dir itself, real Ansible's single os.mkdir) and adds the key" do
+    # Real Ansible's keyfile() does os.mkdir on the .ssh dir only - a
+    # missing grandparent is a real "Failed to create directory" OSError
+    # (verified live), so the spec's base dir must exist up front.
+    base = tmp_path("authorized-key-create")
+    `rm -rf #{base} && mkdir -p #{base}`
+    path = File.join(base, ".ssh", "authorized_keys")
 
     result = PluginSpecHelper.run("authorized_key", {"path" => path, "key" => RSA_KEY})
 
     result["changed"].as_bool.should be_true
     File.read(path).should contain(RSA_KEY)
+    File.info(File.join(base, ".ssh")).permissions.should eq(File::Permissions.new(0o700))
   end
 
   it "no-ops on an empty key, without even creating the file (matches real Ansible)" do
@@ -195,5 +200,67 @@ describe "authorized_key plugin" do
     result["mode"].as_s.should match(/\A0[0-7]{3,4}\z/)
     result["state"].as_s.should eq("file")
     result["size"].as_i64.should eq(RSA_KEY.bytesize + 1)
+  end
+
+  # podman-diff authorized_key_edge_cases (2026-09-15): real
+  # ansible.posix.authorized_key splits the key into lines, drops blank
+  # and '#'-prefixed ones, and hard-fails on the FIRST line without a
+  # known SSH2 key-type token ("invalid key specified:") - garbage is
+  # never silently appended.
+  it "fails with real Ansible's invalid-key message on garbage key material" do
+    path = tmp_path("authorized-key-invalid")
+    `rm -rf #{tmp_path("authorized-key-invalid")}`
+
+    result = PluginSpecHelper.run("authorized_key", {
+      "path" => path, "key" => "krikri-not-a-key at all",
+    })
+
+    result["failed"].as_bool.should be_true
+    result["msg"].as_s.should eq("invalid key specified: krikri-not-a-key at all")
+    File.exists?(path).should be_false
+  end
+
+  it "accepts a multi-line key param, landing every key" do
+    path = tmp_path("authorized-key-multi")
+    `rm -rf #{tmp_path("authorized-key-multi")}`
+    k1 = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOkrim1 m1@example"
+    k2 = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOkrim2 m2@example"
+
+    result = PluginSpecHelper.run("authorized_key", {
+      "path" => path, "key" => "#{k1}\n#{k2}",
+    })
+
+    result["changed"].as_bool.should be_true
+    content = File.read(path)
+    content.should contain(k1)
+    content.should contain(k2)
+  end
+
+  it "honors exclusive=true by removing keys not in the new key set" do
+    path = tmp_path("authorized-key-exclusive")
+    `rm -rf #{tmp_path("authorized-key-exclusive")}`
+    keep = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOkriex exclusive@example"
+
+    PluginSpecHelper.run("authorized_key", {"path" => path, "key" => RSA_KEY})
+    result = PluginSpecHelper.run("authorized_key", {
+      "path" => path, "key" => keep, "exclusive" => "true",
+    })
+
+    result["changed"].as_bool.should be_true
+    content = File.read(path)
+    content.should eq("#{keep}\n")
+  end
+
+  it "rewrites the line as '<key_options> <type> <blob> <comment>' when key_options is given" do
+    path = tmp_path("authorized-key-options")
+    `rm -rf #{tmp_path("authorized-key-options")}`
+
+    result = PluginSpecHelper.run("authorized_key", {
+      "path" => path, "key" => RSA_KEY,
+      "key_options" => "command=\"echo hi\",no-pty",
+    })
+
+    result["changed"].as_bool.should be_true
+    File.read(path).should contain("command=\"echo hi\",no-pty ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC test@example.com")
   end
 end

@@ -25,25 +25,43 @@ module Krikri
       # Ensures `key_line`'s signature is present (or absent) in `text`.
       # Returns {new_text, changed}.
       def self.ensure(text : String, key_line : String, present : Bool) : {String, Bool}
-        signature = key_signature(key_line)
+        ensure_keys(text, [key_line], present)
+      end
+
+      # Multi-key form matching the real module's enforce_state: each key
+      # line is matched by its own signature; new keys are appended after
+      # existing ones in the order given. With `exclusive` (state present
+      # only), every existing key whose signature isn't among the new keys
+      # is deleted - real Ansible's "remove all other keys to honor
+      # exclusive".
+      def self.ensure_keys(text : String, key_lines : Array(String), present : Bool, exclusive : Bool = false) : {String, Bool}
+        signatures = key_lines.map { |line| key_signature(line) }
         lines = text.split("\n").reject(&.empty?)
 
         if present
-          add(lines, key_line, signature)
+          result_lines = lines.dup
+          changed = false
+          key_lines.each_with_index do |line, i|
+            signature = signatures[i]
+            next if signature.nil?
+            next if result_lines.any? { |existing| key_signature(existing) == signature }
+
+            result_lines << line.strip
+            changed = true
+          end
+          if exclusive
+            kept = result_lines.reject do |existing|
+              existing_sig = key_signature(existing)
+              existing_sig && !signatures.includes?(existing_sig)
+            end
+            changed ||= kept.size != result_lines.size
+            result_lines = kept
+          end
+          {render(result_lines), changed}
         else
-          remove(lines, signature)
+          kept = lines.reject { |existing| (sig = key_signature(existing)) && signatures.includes?(sig) }
+          {render(kept), kept.size != lines.size}
         end
-      end
-
-      private def self.add(lines : Array(String), key_line : String, signature : String?) : {String, Bool}
-        return {render(lines), false} if lines.any? { |existing| key_signature(existing) == signature }
-
-        {render(lines + [key_line.strip]), true}
-      end
-
-      private def self.remove(lines : Array(String), signature : String?) : {String, Bool}
-        kept = lines.reject { |existing| key_signature(existing) == signature }
-        {render(kept), kept.size != lines.size}
       end
 
       private def self.render(lines : Array(String)) : String
