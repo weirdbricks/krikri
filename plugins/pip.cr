@@ -640,15 +640,22 @@ module Krikri
 
     private def remove(pip_bin : String, name : String) : PluginResult
       bare_name = name.split(/[=<>!~]/, 2)[0]
-      unless already_installed?(pip_bin, bare_name)
-        return PluginResult.new(changed: false, failed: false, msg: "Package already absent")
-      end
 
       cmd = with_umask(with_chdir("#{break_system_packages_env}#{pip_bin} uninstall -y #{bare_name}"))
       result = remote_exec(cmd)
 
       unless result[:exit_code] == 0
         return PluginResult.new(changed: false, failed: true, msg: "Failed to uninstall: #{result[:stderr]}")
+      end
+
+      # Real Ansible runs `pip uninstall` unconditionally and lets pip's
+      # own "not installed" line decide changed=false - it does NOT
+      # pre-check installed-ness locally. Skipping that invocation made
+      # a PEP 668 externally-managed environment report state=absent as
+      # ok where real Ansible fails (pip refuses to even run), so the
+      # command must actually be issued and its output parsed.
+      if (result[:stdout] + result[:stderr]).downcase.includes?("not installed")
+        return PluginResult.new(changed: false, failed: false, msg: "Package already absent")
       end
 
       PluginResult.new(changed: true, failed: false, msg: "Package removed")

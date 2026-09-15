@@ -1,0 +1,99 @@
+# pip module edge cases. The harness containers are Debian bookworm
+# with no pip preinstalled, so case Q0 installs python3-pip and
+# python3-venv via apt first (fresh container each run, so both engines
+# see the same cold state). Bookworm's system python is PEP 668
+# externally-managed and bookworm's ansible-core (2.14) predates the
+# break_system_packages parameter, so cases that exercise real install
+# / uninstall behavior run inside a virtualenv instead of the system
+# environment - no engine sees a parameter the other rejects there.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "Q0 install python3-pip and python3-venv so later cases reach pip itself"
+      ansible.builtin.apt:
+        name:
+          - python3-pip
+          - python3-venv
+        state: present
+      register: q0
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "Q0 failed={{ q0.failed | default('none') }} changed={{ q0.changed | default('none') }}"
+
+    - name: "Q1 neither name nor requirements"
+      ansible.builtin.pip:
+        state: present
+      register: q1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "Q1 failed={{ q1.failed | default('none') }} changed={{ q1.changed | default('none') }}"
+
+    - name: "Q2 nonexistent package name, system env (PEP 668 blocks pip itself)"
+      ansible.builtin.pip:
+        name: krikri-no-such-package-zzz
+        state: present
+      register: q2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "Q2 failed={{ q2.failed | default('none') }} changed={{ q2.changed | default('none') }}"
+
+    - name: "Q3 venv + comma-separated version specifier, cold run"
+      ansible.builtin.pip:
+        name: six>=1.16,<2.0
+        state: present
+        virtualenv: /tmp/krikri-venv-q3
+        virtualenv_command: "python3 -m venv"
+      register: q3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "Q3 failed={{ q3.failed | default('none') }} changed={{ q3.changed | default('none') }}"
+
+    - name: "Q4 same specifier again, warm run (idempotency)"
+      ansible.builtin.pip:
+        name: six>=1.16,<2.0
+        state: present
+        virtualenv: /tmp/krikri-venv-q3
+        virtualenv_command: "python3 -m venv"
+      register: q4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "Q4 failed={{ q4.failed | default('none') }} changed={{ q4.changed | default('none') }}"
+
+    - name: "Q5 state absent on a package never installed, system env (PEP 668)"
+      ansible.builtin.pip:
+        name: krikri-no-such-package-zzz
+        state: absent
+      register: q5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "Q5 failed={{ q5.failed | default('none') }} changed={{ q5.changed | default('none') }}"
+
+    - name: "Q6 requirements file that does not exist, inside the venv"
+      ansible.builtin.pip:
+        requirements: /nonexistent/requirements.txt
+        state: present
+        virtualenv: /tmp/krikri-venv-q3
+        virtualenv_command: "python3 -m venv"
+      register: q6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "Q6 failed={{ q6.failed | default('none') }} changed={{ q6.changed | default('none') }}"
+
+    - name: "Q7 virtualenv under a parent directory that does not exist"
+      ansible.builtin.pip:
+        name: six
+        state: present
+        virtualenv: /no-such-parent/venv
+        virtualenv_command: "python3 -m venv"
+      register: q7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "Q7 failed={{ q7.failed | default('none') }} changed={{ q7.changed | default('none') }}"
+
+    - name: "Q8 venv from Q3 should now exist on disk (both engines)"
+      ansible.builtin.stat:
+        path: /tmp/krikri-venv-q3/bin/activate
+      register: q8
+    - ansible.builtin.debug:
+        msg: "Q8 failed={{ q8.failed | default('none') }} exists={{ q8.stat.exists | default('none') }}"

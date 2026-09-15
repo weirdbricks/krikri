@@ -54,16 +54,19 @@ describe "pip plugin" do
   end
 
   it "unwraps a single-element name: list to the bare package name" do
-    # state: absent on a not-installed package only ever calls `pip
-    # show` (no real install/network call) - safe to run for real,
-    # matching this file's own no-real-execution convention.
-    result = PluginSpecHelper.run("pip", {
-      "name"  => "['definitely-not-a-real-package-xyz']",
-      "state" => "absent",
-    })
+    # state: absent on a not-installed package runs a real `pip
+    # uninstall` unconditionally (matching real Ansible), so the fake
+    # pip shim keeps this hermetic - no real pip, no network.
+    with_absent_pip_shim do |fake_pip|
+      result = PluginSpecHelper.run("pip", {
+        "name"       => "['definitely-not-a-real-package-xyz']",
+        "state"      => "absent",
+        "executable" => fake_pip,
+      })
 
-    result["failed"]?.try(&.as_bool).should_not be_true
-    result["msg"].as_s.should_not contain("[")
+      result["failed"]?.try(&.as_bool).should_not be_true
+      result["msg"].as_s.should_not contain("[")
+    end
   end
 
   it "joins a multi-element name: list into comma-separated packages, not the bracketed text" do
@@ -76,33 +79,38 @@ describe "pip plugin" do
     # naively, truncating everything after the first item's own
     # internal comma into a bogus "package" ("['psycopg2'"), and pip
     # errored "Invalid requirement" instead of ever seeing two real
-    # package names. state: absent on two not-installed packages only
-    # ever calls `pip show` per package (no real install/network call)
-    # - safe to run for real, matching this file's own convention.
-    result = PluginSpecHelper.run("pip", {
-      "name"  => "['definitely-not-a-real-package-xyz', 'also-not-a-real-package-abc']",
-      "state" => "absent",
-    })
+    # package names. state: absent on two not-installed packages now
+    # runs the uninstall unconditionally (real Ansible semantics), so
+    # the fake pip shim keeps this hermetic.
+    with_absent_pip_shim do |fake_pip|
+      result = PluginSpecHelper.run("pip", {
+        "name"       => "['definitely-not-a-real-package-xyz', 'also-not-a-real-package-abc']",
+        "state"      => "absent",
+        "executable" => fake_pip,
+      })
 
-    result["failed"]?.try(&.as_bool).should_not be_true
-    result["msg"].as_s.should_not contain("[")
-    result["msg"].as_s.should_not contain("Invalid requirement")
+      result["failed"]?.try(&.as_bool).should_not be_true
+      result["msg"].as_s.should_not contain("[")
+      result["msg"].as_s.should_not contain("Invalid requirement")
+    end
   end
 
-  it "strips a PEP 508 extras suffix before checking pip show (regression: robertdebock.ara round 144 - pip show 'ara[server]' fails outright, extras aren't a separate installed distribution)" do
-    # state: absent on a not-installed package only ever calls `pip
-    # show` (no real install/network call) - safe to run for real.
+  it "strips a PEP 508 extras suffix before checking pip (regression: robertdebock.ara round 144 - pip show 'ara[server]' fails outright, extras aren't a separate installed distribution)" do
     # Before the fix, `pip show 'definitely-not-a-real-package-xyz[extra]'`
     # would have been shelled out with the extras suffix intact (pip
     # itself rejects that form outright), and any `name: "pkg[extra]"`
-    # install task would never converge to changed: false.
-    result = PluginSpecHelper.run("pip", {
-      "name"  => "definitely-not-a-real-package-xyz[extra]",
-      "state" => "absent",
-    })
+    # install task would never converge to changed: false. The fake pip
+    # shim keeps the unconditional uninstall hermetic.
+    with_absent_pip_shim do |fake_pip|
+      result = PluginSpecHelper.run("pip", {
+        "name"       => "definitely-not-a-real-package-xyz[extra]",
+        "state"      => "absent",
+        "executable" => fake_pip,
+      })
 
-    result["failed"]?.try(&.as_bool).should_not be_true
-    result["changed"].as_bool.should be_false
+      result["failed"]?.try(&.as_bool).should_not be_true
+      result["changed"].as_bool.should be_false
+    end
   end
 
   # Real bug found benchmarking konstruktoid.docker_rootless (0.9.616):
@@ -139,17 +147,20 @@ describe "pip plugin" do
     # requirement: '<3.5': Expected package name at the start of
     # dependency specifier") - real Ansible's pip.py re-merges such
     # pieces onto the preceding requirement before invoking pip.
-    # state: absent on a not-installed package only ever calls `pip
-    # show` (no real install/network call) - safe to run for real,
-    # matching this file's own no-real-execution convention.
-    result = PluginSpecHelper.run("pip", {
-      "name"  => "definitely-not-a-real-package-xyz<3.5,>3",
-      "state" => "absent",
-    })
+    # pieces onto the preceding requirement before invoking pip.
+    # state: absent now runs the uninstall unconditionally (real
+    # Ansible semantics), so the fake pip shim keeps this hermetic.
+    with_absent_pip_shim do |fake_pip|
+      result = PluginSpecHelper.run("pip", {
+        "name"       => "definitely-not-a-real-package-xyz<3.5,>3",
+        "state"      => "absent",
+        "executable" => fake_pip,
+      })
 
-    result["failed"]?.try(&.as_bool).should_not be_true
-    result["changed"].as_bool.should be_false
-    result["msg"].as_s.should_not contain("Invalid requirement")
+      result["failed"]?.try(&.as_bool).should_not be_true
+      result["changed"].as_bool.should be_false
+      result["msg"].as_s.should_not contain("Invalid requirement")
+    end
   end
 
   # The plugin's default virtualenv_command is real Ansible's own
@@ -277,18 +288,28 @@ describe "pip plugin" do
     # use." message on a host where real Ansible succeeded.
     #
     # Simulated with a shim dir REPLACING the whole PATH (apt_key_spec.cr's
-    # established shim pattern): python3.9 (symlink to the real
-    # interpreter) present, python3 and pip3 absent. state: absent on a
-    # not-installed package only ever calls `pip show` (no real
-    # install/network call) - safe to run for real, matching this file's
-    # own no-real-execution convention.
+    # established shim pattern): python3.9 present (a wrapper that execs
+    # the real interpreter for discovery but answers the uninstall
+    # invocation itself), python3 and pip3 absent. state: absent now
+    # runs `pip uninstall` unconditionally (real Ansible semantics), so
+    # the wrapper keeps that hermetic instead of invoking the spec
+    # machine's real pip.
     it "falls back to a versioned interpreter (python3.9) when the host has no python3 or pip3 binary" do
       python = Process.find_executable("python3") || Process.find_executable("python")
       raise "this spec needs a working python3 -m pip on the spec machine" unless python && python_with_pip?(python)
 
       shim_dir = File.tempname("/tmp", ".krikri-spec-pip-bin")
       Dir.mkdir(shim_dir)
-      File.symlink(File.realpath(python), File.join(shim_dir, "python3.9"))
+      File.write(File.join(shim_dir, "python3.9"), <<-SH
+        #!/bin/sh
+        if [ "$1" = "-m" ] && [ "$2" = "pip" ] && [ "$3" = "uninstall" ]; then
+          echo "WARNING: Skipping $5 as it is not installed."
+          exit 0
+        fi
+        exec #{File.realpath(python)} "$@"
+        SH
+      )
+      File.chmod(File.join(shim_dir, "python3.9"), 0o755)
       File.symlink("/bin/sh", File.join(shim_dir, "sh"))
       old_path = ENV["PATH"]?
       ENV["PATH"] = shim_dir
@@ -483,6 +504,34 @@ private def write_venv_shim(shim_dir : String, name : String, help_lists_no_site
   )
   File.chmod(shim, 0o755)
   shim
+end
+
+# A fake pip whose `uninstall` branch succeeds with pip's own "not
+# installed" line (state=absent now runs that invocation
+# unconditionally, matching real Ansible) and whose other subcommands
+# fail - so an absent-on-never-installed spec needs no real pip, no
+# network, and mutates nothing. Yields the absolute path (trusted
+# as-is by the plugin's executable: resolution).
+private def with_absent_pip_shim(&)
+  shim_dir = File.tempname("/tmp", ".krikri-spec-pip-absent")
+  Dir.mkdir(shim_dir)
+  shim = File.join(shim_dir, "absent-pip")
+  File.write(shim, <<-SH
+    #!/bin/sh
+    export PATH=/usr/local/bin:/usr/bin:/bin
+    if [ "$1" = "uninstall" ]; then
+      echo "WARNING: Skipping $3 as it is not installed."
+      exit 0
+    fi
+    exit 1
+    SH
+  )
+  File.chmod(shim, 0o755)
+  begin
+    yield shim
+  ensure
+    FileUtils.rm_rf(shim_dir)
+  end
 end
 
 private def write_pip_shim(shim_dir : String) : String
