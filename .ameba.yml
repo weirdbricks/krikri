@@ -71,6 +71,7 @@ Lint/NotNil:
   - plugins/replace.cr
   - plugins/sefcontext.cr
   - plugins/selinux.cr
+  - plugins/seport.cr
   - plugins/xml.cr
   - spec/integration/apt_key_spec.cr
   - spec/integration/apt_param_coverage_spec.cr

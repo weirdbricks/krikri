@@ -1,0 +1,128 @@
+# seport edge cases. NO SELinux in the harness containers (no
+# /sys/fs/selinux, no semanage policy store) - same situation as the
+# seboolean cases, and for the same reason: everything up to and
+# including the "SELinux is disabled" runtime gate IS testable, the
+# actual semanage mutation path is not (verified against a real Rocky
+# 9.6 host; see plugins/seport.cr's class docs). Real
+# community.general.seport needs python3-selinux + python3-semanage in
+# the real container (run.sh's ^seport/^seboolean gated block) or the
+# libselinux/seobject import checks fail first and mask all of it.
+# Msg wording differs between engines and is not a bug.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "R1 missing ports"
+      community.general.seport:
+        proto: tcp
+        setype: krikri_port_t
+      register: r1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "R1 failed={{ r1.failed | default('none') }} changed={{ r1.changed | default('none') }}"
+
+    - name: "R2 missing proto"
+      community.general.seport:
+        ports: 8080
+        setype: krikri_port_t
+      register: r2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "R2 failed={{ r2.failed | default('none') }} changed={{ r2.changed | default('none') }}"
+
+    - name: "R3 missing setype"
+      community.general.seport:
+        ports: 8080
+        proto: tcp
+      register: r3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "R3 failed={{ r3.failed | default('none') }} changed={{ r3.changed | default('none') }}"
+
+    - name: "R4 invalid proto value"
+      community.general.seport:
+        ports: 8080
+        proto: krikri_proto
+        setype: krikri_port_t
+      register: r4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "R4 failed={{ r4.failed | default('none') }} changed={{ r4.changed | default('none') }}"
+
+    - name: "R5 invalid state value"
+      community.general.seport:
+        ports: 8080
+        proto: tcp
+        setype: krikri_port_t
+        state: krikri_state
+      register: r5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "R5 failed={{ r5.failed | default('none') }} changed={{ r5.changed | default('none') }}"
+
+    - name: "R6 valid args, SELinux disabled without the ignore flag"
+      community.general.seport:
+        ports: 8080
+        proto: tcp
+        setype: krikri_port_t
+      register: r6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "R6 failed={{ r6.failed | default('none') }} changed={{ r6.changed | default('none') }}"
+
+    - name: "R7 ignore_selinux_state true, state present fails on the store-less host"
+      community.general.seport:
+        ports: 8080
+        proto: tcp
+        setype: krikri_port_t
+        ignore_selinux_state: true
+      register: r7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "R7 failed={{ r7.failed | default('none') }} changed={{ r7.changed | default('none') }}"
+
+    - name: "R8 ignore true, state absent also fails on the store-less host"
+      community.general.seport:
+        ports: 8080
+        proto: tcp
+        setype: krikri_port_t
+        state: absent
+        ignore_selinux_state: true
+      register: r8
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "R8 failed={{ r8.failed | default('none') }} changed={{ r8.changed | default('none') }}"
+
+    - name: "R9 check mode does not bypass the disabled-host gate"
+      community.general.seport:
+        ports: 8080
+        proto: tcp
+        setype: krikri_port_t
+        check_mode: true
+      register: r9
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "R9 failed={{ r9.failed | default('none') }} changed={{ r9.changed | default('none') }}"
+
+    - name: "R10 ports as a YAML list is accepted up to the gate"
+      community.general.seport:
+        ports:
+          - 10000-10100
+          - 10112
+        proto: tcp
+        setype: krikri_port_t
+      register: r10
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "R10 failed={{ r10.failed | default('none') }} changed={{ r10.changed | default('none') }}"
+
+    - name: "R11 invalid ignore_selinux_state value fails bool conversion"
+      community.general.seport:
+        ports: 8080
+        proto: tcp
+        setype: krikri_port_t
+        ignore_selinux_state: krikri-not-a-bool
+      register: r11
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "R11 failed={{ r11.failed | default('none') }} changed={{ r11.changed | default('none') }}"
