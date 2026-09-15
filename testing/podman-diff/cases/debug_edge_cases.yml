@@ -1,0 +1,51 @@
+# debug module edge cases. Real Ansible semantics of interest:
+# - var: referencing an undefined variable (templating failure shape)
+# - msg: and var: both given (real Ansible: mutually exclusive)
+# - verbosity: higher than current -v level (should skip silently)
+# Label prefix: D.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "D1 debug var referencing an undefined variable"
+      ansible.builtin.debug:
+        var: krikri_undefined_variable_zzz
+      register: d1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D1 failed={{ d1.failed | default('none') }} changed={{ d1.changed | default('none') }} msg={{ d1.msg | default('none') }}"
+
+    - name: "D2 debug with both msg and var"
+      ansible.builtin.debug:
+        msg: "hello"
+        var: d1
+      register: d2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D2 failed={{ d2.failed | default('none') }} changed={{ d2.changed | default('none') }} msg={{ d2.msg | default('none') }}"
+
+    - name: "D3 debug with verbosity above current level"
+      ansible.builtin.debug:
+        msg: "should not appear"
+        verbosity: 3
+      register: d3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D3 failed={{ d3.failed | default('none') }} changed={{ d3.changed | default('none') }} msg={{ d3.msg | default('none') }} skipped={{ d3.skipped | default('none') }}"
+
+    - name: "D4 debug var with a defined variable (sanity)"
+      ansible.builtin.debug:
+        var: inventory_hostname
+      register: d4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D4 failed={{ d4.failed | default('none') }} changed={{ d4.changed | default('none') }} msg={{ d4.msg | default('none') }}"
+
+    - name: "D5 debug with verbosity exactly 0 (should print)"
+      ansible.builtin.debug:
+        msg: "D5 visible at default verbosity"
+        verbosity: 0
+      register: d5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D5 failed={{ d5.failed | default('none') }} changed={{ d5.changed | default('none') }}"

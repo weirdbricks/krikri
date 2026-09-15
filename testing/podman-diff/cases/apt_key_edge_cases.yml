@@ -1,0 +1,52 @@
+# apt_key edge cases. apt_key is deprecated (still present in Debian
+# bookworm's ansible-core 2.14) and the malformed-data / never-present
+# / missing-param cases all fail before any network keyserver traffic.
+# Prefix: K.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "K1 apt_key with malformed key data"
+      ansible.builtin.apt_key:
+        data: "krikri-not-a-gpg-key"
+        state: present
+      register: k1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "K1 failed={{ k1.failed | default('none') }} changed={{ k1.changed | default('none') }}"
+
+    - name: "K2 apt_key state absent on a key never present"
+      ansible.builtin.apt_key:
+        id: "DEADBEEF1234567890"
+        state: absent
+      register: k2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "K2 failed={{ k2.failed | default('none') }} changed={{ k2.changed | default('none') }}"
+
+    - name: "K3 apt_key with no data, url, or keyserver"
+      ansible.builtin.apt_key:
+        state: present
+      register: k3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "K3 failed={{ k3.failed | default('none') }} changed={{ k3.changed | default('none') }}"
+
+    - name: "K4 apt_key with more than one of data/url/keyserver"
+      ansible.builtin.apt_key:
+        data: "krikri-not-a-gpg-key"
+        url: "http://krikri.invalid/key.asc"
+        state: present
+      register: k4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "K4 failed={{ k4.failed | default('none') }} changed={{ k4.changed | default('none') }}"
+
+    - name: "K5 apt_key with an invalid state value"
+      ansible.builtin.apt_key:
+        id: "DEADBEEF1234567890"
+        state: present-nowhere
+      register: k5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "K5 failed={{ k5.failed | default('none') }} changed={{ k5.changed | default('none') }}"

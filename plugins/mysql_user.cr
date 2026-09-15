@@ -74,11 +74,26 @@ module Krikri
       # no matter what `user:` was set to.
       name = @params["name"]? || @params["user"]?
       unless name
-        return PluginResult.new(changed: false, failed: true, msg: "missing required argument: name")
+        # Real AnsibleModule's own required-arguments failure is plural
+        # "arguments" even for a single missing param (same wording the
+        # dpkg_selections fix aligned to) - live-verified against
+        # community.mysql.mysql_user via the podman-diff
+        # mysql_user_edge_cases W8 harness case.
+        return PluginResult.new(changed: false, failed: true, msg: "missing required arguments: name")
       end
 
       host = @params["host"]? || "localhost"
       state = @params["state"]? || "present"
+      # Real community.mysql's argument-spec choices check fails the
+      # task BEFORE any connection attempt; this engine accepted any
+      # unknown state as if it were present and CREATED the account
+      # (W7: state: present-nowhere reported changed=true "User added")
+      # where real Ansible fails with the standard choices message
+      # (live-verified, same harness case).
+      unless ["present", "absent"].includes?(state)
+        return PluginResult.new(changed: false, failed: true,
+          msg: "value of state must be one of: absent, present, got: #{state}")
+      end
       password = @params["password"]?
       priv = @params["priv"]?
       update_password = @params["update_password"]? || "always"
@@ -105,7 +120,16 @@ module Krikri
       run_with_db(uri, name, host, state, password, update_password, priv, plugin,
         plugin_hash_string, plugin_auth_string, check_mode, host_all)
     rescue ex : DB::ConnectionRefused
-      PluginHelpers::DbErrors.connection_failed(ex, "MySQL")
+      # community.mysql's own connection-failure wrapper (live-verified
+      # against bookworm's community.mysql 3.x via the W9 harness case,
+      # where this engine printed the generic DbErrors shape with an
+      # EMPTY detail tail). The Exception-message tail after the
+      # wrapper is PyMySQL-specific (an (errno, "...") repr) and is not
+      # replicated; the deterministic wrapper is the parity that
+      # matters. mysql_db/mysql_info/mysql_variables keep DbErrors's
+      # generic shape until their own harness cases say otherwise.
+      PluginResult.new(changed: false, failed: true,
+        msg: "unable to connect to database, check login_user and login_password are correct or /root/.my.cnf has the credentials. Exception message: #{ex.message}")
     rescue ex : MySql::Connection::PacketError
       PluginHelpers::DbErrors.query_failed(ex, "MySQL")
     end

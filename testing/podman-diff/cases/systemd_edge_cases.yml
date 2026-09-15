@@ -1,0 +1,55 @@
+# systemd module edge cases. The podman container runs `sleep infinity`
+# as PID 1 (no systemd init, and bookworm-slim does not even ship
+# systemctl), so cases that would actually manipulate real units are not
+# testable here. These focus on argument validation and unit-name
+# resolution that fail before (or without) a live systemd: invalid state
+# value, missing service param, bad masked value, and an unknown unit
+# name (both engines surface whatever their systemctl backend says).
+# Prefix: M.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "M1 systemd with an invalid state value"
+      ansible.builtin.systemd:
+        name: ssh
+        state: present-nowhere
+      register: m1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "M1 failed={{ m1.failed | default('none') }} changed={{ m1.changed | default('none') }}"
+
+    - name: "M2 systemd with no service name"
+      ansible.builtin.systemd:
+        state: started
+      register: m2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "M2 failed={{ m2.failed | default('none') }} changed={{ m2.changed | default('none') }}"
+
+    - name: "M3 systemd with an invalid masked value"
+      ansible.builtin.systemd:
+        name: ssh
+        masked: sometimes
+      register: m3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "M3 failed={{ m3.failed | default('none') }} changed={{ m3.changed | default('none') }}"
+
+    - name: "M4 systemd starting a nonexistent unit name"
+      ansible.builtin.systemd:
+        name: krikri-no-such-unit-zzz.service
+        state: started
+      register: m4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "M4 failed={{ m4.failed | default('none') }} changed={{ m4.changed | default('none') }}"
+
+    - name: "M5 systemd enabling a nonexistent unit name (no state)"
+      ansible.builtin.systemd:
+        name: krikri-no-such-unit-zzz.service
+        enabled: true
+      register: m5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "M5 failed={{ m5.failed | default('none') }} changed={{ m5.changed | default('none') }}"

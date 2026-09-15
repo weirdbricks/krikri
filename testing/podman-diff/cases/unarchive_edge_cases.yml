@@ -1,0 +1,106 @@
+# unarchive module edge cases. unarchive IS functional on the Debian
+# harness containers (GNU tar ships in bookworm-slim); the test archive
+# is built in-place by a command: task at the top, so both engines see a
+# byte-identical archive. Prefix: E.
+#
+# E2 and E6 deliberately compare failed=/changed= only, not msg=:
+# - E2: krikri prefixes the controller-miss failure with "Task failed: "
+#   (live-verified against ansible-core 2.19, see executor_task_exec.cr);
+#   bookworm's 2.14 doesn't. A version difference, not a bug.
+# - E6: real 2.14's no-handler-found message embeds a per-run tmp path
+#   AND collects its per-handler probe reasons into a Python set, so the
+#   full msg shuffles run to run even against real Ansible itself. Only
+#   the deterministic head is replicated (see unarchive.cr).
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "E0 build the test fixtures"
+      ansible.builtin.command:
+        argv:
+          - bash
+          - -c
+          - rm -rf /tmp/e-src /tmp/e-dest /tmp/e-dest2 && mkdir -p /tmp/e-src/sub /tmp/e-dest /tmp/e-dest2 && echo hello > /tmp/e-src/a.txt && echo world > /tmp/e-src/sub/b.txt && tar czf /tmp/e3.tgz -C /tmp/e-src . && echo this is not an archive > /tmp/e-notarchive.txt
+      changed_when: false
+
+    - name: "E1 unarchive with a missing dest"
+      ansible.builtin.unarchive:
+        src: /tmp/e3.tgz
+        dest: /tmp/e-no-such-dest
+      register: e1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "E1 failed={{ e1.failed | default('none') }} changed={{ e1.changed | default('none') }} msg={{ e1.msg | default('none') }}"
+
+    - name: "E2 unarchive with a missing src"
+      ansible.builtin.unarchive:
+        src: /tmp/e-no-such-src.tgz
+        dest: /tmp/e-dest
+      register: e2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "E2 failed={{ e2.failed | default('none') }} changed={{ e2.changed | default('none') }}"
+
+    - name: "E3 unarchive a tar.gz into a fresh dest"
+      ansible.builtin.unarchive:
+        src: /tmp/e3.tgz
+        dest: /tmp/e-dest
+      register: e3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "E3 failed={{ e3.failed | default('none') }} changed={{ e3.changed | default('none') }} msg={{ e3.msg | default('none') }}"
+
+    - name: "E4 re-run the same unarchive (idempotency)"
+      ansible.builtin.unarchive:
+        src: /tmp/e3.tgz
+        dest: /tmp/e-dest
+      register: e4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "E4 failed={{ e4.failed | default('none') }} changed={{ e4.changed | default('none') }}"
+
+    - name: "E5 unarchive with creates: pointing at an extracted file"
+      ansible.builtin.unarchive:
+        src: /tmp/e3.tgz
+        dest: /tmp/e-dest
+        creates: /tmp/e-dest/a.txt
+      register: e5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "E5 failed={{ e5.failed | default('none') }} changed={{ e5.changed | default('none') }}"
+
+    - name: "E6 unarchive a non-archive file"
+      ansible.builtin.unarchive:
+        src: /tmp/e-notarchive.txt
+        dest: /tmp/e-dest
+      register: e6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "E6 failed={{ e6.failed | default('none') }} changed={{ e6.changed | default('none') }}"
+
+    - name: "E7 unarchive with exclude: into a second dest"
+      ansible.builtin.unarchive:
+        src: /tmp/e3.tgz
+        dest: /tmp/e-dest2
+        exclude: sub/b.txt
+      register: e7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "E7 failed={{ e7.failed | default('none') }} changed={{ e7.changed | default('none') }}"
+
+    - name: "E8 verify the excluded member is absent"
+      ansible.builtin.stat:
+        path: /tmp/e-dest2/sub/b.txt
+      register: e8
+    - ansible.builtin.debug:
+        msg: "E8 exists={{ e8.stat.exists | default('none') }}"
+
+    - name: "E9 verify an included member landed with its content"
+      ansible.builtin.command:
+        argv:
+          - cat
+          - /tmp/e-dest2/a.txt
+      register: e9
+      changed_when: false
+    - ansible.builtin.debug:
+        msg: "E9 rc={{ e9.rc | default('none') }} stdout={{ e9.stdout | default('none') }}"

@@ -41,7 +41,7 @@ podman run -d --privileged --name "$NAME_A" "$IMAGE" sleep infinity >/dev/null
 podman run -d --privileged --name "$NAME_B" "$IMAGE" sleep infinity >/dev/null
 
 log "installing ansible-core in $NAME_A"
-podman exec "$NAME_A" bash -c "apt-get update -qq && apt-get install -y -qq --no-install-recommends ansible-core python3 procps cron >/dev/null" \
+podman exec "$NAME_A" bash -c "apt-get update -qq && apt-get install -y -qq --no-install-recommends ansible-core python3 procps cron gnupg >/dev/null" \
   || { log "FATAL: ansible-core install failed"; exit 1; }
 
 log "installing collections in $NAME_A (ansible.posix, community.general)"
@@ -49,7 +49,7 @@ podman exec "$NAME_A" bash -c "ansible-galaxy collection install ansible.posix c
   || { log "FATAL: collection install failed"; exit 1; }
 
 log "staging krikri-playbook in $NAME_B"
-podman exec "$NAME_B" bash -c "apt-get update -qq && apt-get install -y -qq --no-install-recommends libxml2 libssl3 libyaml-0-2 libpcre2-8-0 python3 procps cron >/dev/null" \
+podman exec "$NAME_B" bash -c "apt-get update -qq && apt-get install -y -qq --no-install-recommends libxml2 libssl3 libyaml-0-2 libpcre2-8-0 python3 procps cron gnupg >/dev/null" \
   || { log "FATAL: runtime lib install failed"; exit 1; }
 podman exec "$NAME_B" bash -c "mkdir -p /opt/krikri/bin"
 podman cp "$REPO_DIR/bin/krikri-playbook" "$NAME_B:/opt/krikri/bin/krikri-playbook"
@@ -66,6 +66,18 @@ cases=("$@")
 if [ ${#cases[@]} -eq 0 ]; then
   cases=()
   while IFS= read -r f; do cases+=("$(basename "$f")"); done < <(find "$DIFF_DIR/cases" -name '*.yml' | sort)
+fi
+
+# mysql_* cases need a real MariaDB in BOTH containers (krikri's
+# mysql_user talks the wire protocol itself, real community.mysql needs
+# PyMySQL) plus community.mysql in the real one - gated on the requested
+# case list so ordinary runs don't pay the mariadb-server install.
+if printf '%s\n' "${cases[@]}" | grep -q '^mysql'; then
+  log "installing mariadb-server (+ PyMySQL + community.mysql) for mysql cases"
+  podman exec "$NAME_A" bash -c "apt-get install -y -qq --no-install-recommends mariadb-server python3-pymysql >/dev/null && service mariadb start >/dev/null && sleep 3 && ansible-galaxy collection install community.mysql >/dev/null 2>&1" \
+    || { log "FATAL: mariadb/community.mysql install failed"; exit 1; }
+  podman exec "$NAME_B" bash -c "apt-get install -y -qq --no-install-recommends mariadb-server >/dev/null && service mariadb start >/dev/null && sleep 3" \
+    || { log "FATAL: mariadb install failed"; exit 1; }
 fi
 
 overall_rc=0

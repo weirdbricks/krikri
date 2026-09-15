@@ -58,7 +58,78 @@ module Krikri
       "yum"
     end
 
+    # Real ansible.builtin.yum's argument-spec validation rejects ANY
+    # parameter outside its argument_spec at module-arg validation,
+    # before any module code runs - same bug class as dnf.cr's
+    # identical check (found via the podman-diff dnf_edge_cases N2
+    # harness case, and yum shares dnf's yumdnf_argument_spec minus
+    # dnf-only allowerasing, plus use_backend which yum.py uses for
+    # its own backend detection). On a non-RPM host real yum fails
+    # even earlier - "Could not detect which major revision of yum
+    # is in use ..." (live-verified on Debian) - so this message
+    # shape is unverifiable on the Debian podman-diff harness and
+    # mirrors dnf's live-verified one. check_mode/diff_mode/
+    # _verbosity/_environment are engine-internal keys injected by
+    # the executor, not part of the real argument_spec, so they are
+    # not rejected.
+    private def arg_spec_rejection : PluginResult?
+      yum_supported = {"allow_downgrade", "autoremove", "bugfix", "cacheonly",
+                       "conf_file", "disable_excludes", "disable_gpg_check",
+                       "disable_plugin", "disablerepo", "download_dir", "download_only",
+                       "enable_plugin", "enablerepo", "exclude", "install_repoquery",
+                       "install_weak_deps", "installroot", "list", "lock_timeout",
+                       "name", "nobest", "releasever", "security", "skip_broken",
+                       "sslverify", "state", "update_cache", "update_only",
+                       "validate_certs", "use_backend", "expire-cache", "pkg"}
+      yum_internal = {"check_mode", "diff_mode", "_verbosity", "_environment"}
+      unsupported = @params.keys.reject { |k| yum_supported.includes?(k) || yum_internal.includes?(k) }
+      unless unsupported.empty?
+        unsupported_sorted = unsupported.sort
+        return PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: "Unsupported parameters for (ansible.builtin.yum) module: #{unsupported_sorted.join(", ")}. " \
+               "Supported parameters include: " \
+               "allow_downgrade, autoremove, bugfix, cacheonly, conf_file, disable_excludes, disable_gpg_check, " \
+               "disable_plugin, disablerepo, download_dir, download_only, enable_plugin, enablerepo, exclude, " \
+               "install_repoquery, install_weak_deps, installroot, list, lock_timeout, name, nobest, releasever, " \
+               "security, skip_broken, sslverify, state, update_cache, update_only, validate_certs, " \
+               "use_backend (expire-cache, pkg)."
+        )
+      end
+
+      # Real AnsibleModule type-converts every bool-typed argument_spec
+      # param and fails the task on a non-boolean string - same bug
+      # class as dnf.cr's identical check (disable_gpg_check: sometimes
+      # live-verified against bookworm's ansible-core 2.14 dnf). Params
+      # arrive as strings here; lowercase compare matches
+      # AnsibleModule's own case-insensitive boolean() check.
+      yum_bool_params = {"allow_downgrade", "autoremove", "bugfix", "cacheonly",
+                         "disable_gpg_check", "download_only", "install_repoquery",
+                         "install_weak_deps", "nobest", "security", "skip_broken",
+                         "sslverify", "update_cache", "update_only", "validate_certs",
+                         "expire-cache"}
+      valid_booleans = {"0", "1", "true", "off", "yes", "t", "false", "on", "f", "n", "y", "no"}
+      bad_bool_keys = @params.select { |k, v| yum_bool_params.includes?(k) && !valid_booleans.includes?(v.downcase) }.keys
+      bad_bool = bad_bool_keys.sort
+      unless bad_bool.empty?
+        return PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: "argument '#{bad_bool.first}' is of type <class 'str'> and we were unable to convert to bool: " \
+               "The value '#{@params[bad_bool.first]}' is not a valid boolean.  " \
+               "Valid booleans include: 0, 1, 'true', 'off', 'yes', '1', 't', '0', 'false', 'on', 'f', 'n', 'y', 'no'"
+        )
+      end
+
+      nil
+    end
+
     def execute : PluginResult
+      if failure = arg_spec_rejection
+        return failure
+      end
+
       if list_result = list_query_result
         return list_result
       end
@@ -82,12 +153,13 @@ module Krikri
       # Get state (default: present) and normalize state aliases
       state = normalized_state
 
-      # Validate state
+      # Validate state (message matches real Ansible's choices-validation
+      # wording - same class as dnf.cr's aligned message)
       unless ["present", "absent", "latest"].includes?(state)
         return PluginResult.new(
           changed: false,
           failed: true,
-          msg: "Invalid state: #{state}. Must be present, absent, or latest"
+          msg: "value of state must be one of: absent, installed, latest, present, removed, got: #{@params["state"]? || state}"
         )
       end
 

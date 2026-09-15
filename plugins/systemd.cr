@@ -51,14 +51,17 @@ module Krikri
       # `status` is not a parameter of this module at all - and real
       # ansible-playbook rejects the task with the message below, while
       # this plugin silently ignored the unknown key and ran anyway.
-      # check_mode/diff_mode/_environment are engine-internal keys
-      # injected by BasePlugin/the test harness, not part of the real
-      # argument_spec, so they must not be rejected.
+      # check_mode/diff_mode/_verbosity/_environment are engine-internal
+      # keys injected by BasePlugin/the executor, not part of the real
+      # argument_spec, so they must not be rejected. (_verbosity omission
+      # found via podman-diff: every systemd task failed with
+      # "Unsupported parameters ... _verbosity" before the module ever
+      # ran - real Ansible never passes _verbosity into module args.)
       supported_params = {"name", "service", "unit", "state", "enabled",
                           "masked", "daemon_reload", "daemon-reload",
                           "daemon_reexec", "daemon-reexec", "force",
                           "no_block", "scope"}
-      internal_keys = {"check_mode", "diff_mode", "_environment"}
+      internal_keys = {"check_mode", "diff_mode", "_verbosity", "_environment"}
       unsupported = @params.keys.reject { |k| supported_params.includes?(k) || internal_keys.includes?(k) }
       unless unsupported.empty?
         return PluginResult.new(

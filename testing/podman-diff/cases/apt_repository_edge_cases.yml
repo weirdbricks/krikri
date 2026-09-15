@@ -1,0 +1,60 @@
+# apt_repository edge cases. All cases avoid network cache updates
+# (update_cache: false on additions; krikri.invalid repos never
+# resolved anyway). Prefix: R.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "R1 apt_repository with a malformed repo line"
+      ansible.builtin.apt_repository:
+        repo: "krikri-not-a-valid-repo-line"
+        state: present
+        update_cache: false
+      register: r1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "R1 failed={{ r1.failed | default('none') }} changed={{ r1.changed | default('none') }}"
+
+    - name: "R2 apt_repository state absent on a repo never added"
+      ansible.builtin.apt_repository:
+        repo: "deb http://krikri.invalid/debian stable main"
+        state: absent
+      register: r2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "R2 failed={{ r2.failed | default('none') }} changed={{ r2.changed | default('none') }}"
+
+    - name: "R3 add repo with custom filename, no cache update"
+      ansible.builtin.apt_repository:
+        repo: "deb http://krikri.invalid/debian stable main"
+        state: present
+        filename: krikri-diff-test
+        update_cache: false
+      register: r3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "R3 failed={{ r3.failed | default('none') }} changed={{ r3.changed | default('none') }}"
+
+    - name: "R4 stat the generated repo file"
+      ansible.builtin.stat:
+        path: /etc/apt/sources.list.d/krikri-diff-test.list
+      register: r4
+    - ansible.builtin.debug:
+        msg: "R4 failed={{ r4.failed | default('none') }} exists={{ r4.stat.exists | default('none') }}"
+
+    - name: "R5 remove the repo again via custom filename"
+      ansible.builtin.apt_repository:
+        repo: "deb http://krikri.invalid/debian stable main"
+        state: absent
+        filename: krikri-diff-test
+      register: r5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "R5 failed={{ r5.failed | default('none') }} changed={{ r5.changed | default('none') }}"
+
+    - name: "R6 stat the generated repo file after removal"
+      ansible.builtin.stat:
+        path: /etc/apt/sources.list.d/krikri-diff-test.list
+      register: r6
+    - ansible.builtin.debug:
+        msg: "R6 failed={{ r6.failed | default('none') }} exists={{ r6.stat.exists | default('none') }}"

@@ -568,4 +568,19 @@ describe "unarchive plugin" do
     result["failed"].as_bool.should be_true
     result["msg"].as_s.should eq("parameters are mutually exclusive: include|exclude")
   end
+
+  it "fails on a non-archive src with real Ansible's no-handler-found message head" do
+    # podman-diff unarchive_edge_cases E6: real 2.14's pick_handler
+    # composes 'Failed to find handler for "<src>". Make sure the
+    # required command to extract the file is installed.\n<reasons>' -
+    # the reasons tail is nondeterministic (collected into a Python
+    # set), so this engine replicates only the head.
+    not_archive = File.join(TMP_DIR, "not-an-archive.txt")
+    File.write(not_archive, "this is not an archive")
+
+    result = PluginSpecHelper.run("unarchive", {"src" => not_archive, "dest" => fresh_dest("no-handler")})
+
+    result["failed"].as_bool.should be_true
+    result["msg"].as_s.should contain(%(Failed to find handler for "#{not_archive}". Make sure the required command to extract the file is installed.))
+  end
 end

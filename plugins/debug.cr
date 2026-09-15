@@ -28,6 +28,21 @@ module Krikri
   #     verbosity: 2
   class DebugPlugin < BasePlugin
     def execute : PluginResult
+      # Get msg or var parameter
+      msg = @params["msg"]?
+      var_name = @params["var"]?
+
+      # msg and var are mutually exclusive in real ansible.builtin.debug -
+      # the action plugin fails the task with exactly this message before
+      # the verbosity gate or any output happens.
+      if msg && var_name
+        return PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: "'msg' and 'var' are incompatible options"
+        )
+      end
+
       # Get verbosity level (default: 0)
       required_verbosity = @params["verbosity"]?.try(&.to_i) || 0
       current_verbosity = @params["_verbosity"]?.try(&.to_i) || 0
@@ -41,10 +56,6 @@ module Krikri
           skipped: true
         )
       end
-
-      # Get msg or var parameter
-      msg = @params["msg"]?
-      var_name = @params["var"]?
 
       # Neither msg nor var is not an error: real ansible.builtin.debug
       # documents `msg` as defaulting to "Hello world!" and prints that

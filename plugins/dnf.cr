@@ -22,8 +22,9 @@ module Krikri
   # - skip_broken: Skip packages with broken dependencies
   # - allow_downgrade: Allow downgrading packages
   # - allowerasing: Allow erasing installed packages to resolve deps
-  # - best / nobest: Highest-version-or-fail handling (mutually
-  #   exclusive; nobest is the inverted form kept for compatibility)
+  # - nobest: Highest-version-or-fail handling (real Ansible has only
+  #   `nobest` in its shared yumdnf argument spec - `best:` is NOT a
+  #   real parameter and is rejected by the argument-spec check below)
   # - cacheonly: Run entirely from the local cache
   # - conf_file: Alternate dnf.conf path
   # - disable_excludes: all / main / <repoid> excludes suppression
@@ -68,7 +69,79 @@ module Krikri
       "dnf"
     end
 
+    # Real ansible.builtin.dnf's argument-spec validation rejects ANY
+    # parameter outside its argument_spec at module-arg validation,
+    # before any module code runs - found via the podman-diff
+    # dnf_edge_cases N2 harness case (real ansible-core rejected
+    # krikri_not_a_dnf_param with the message below while this engine
+    # silently ignored the unknown key and proceeded to the backend
+    # failure). Message live-verified against bookworm's
+    # ansible-core 2.14. check_mode/diff_mode/_verbosity/_environment
+    # are engine-internal keys injected by the executor, not part of
+    # the real argument_spec, so they are not rejected. (use_backend
+    # is in upstream's dnf argument_spec per dnf.py, so it stays
+    # accepted here; bookworm's 2.14 rejects it live - a known
+    # version difference, left matching upstream's spec.)
+    private def arg_spec_rejection : PluginResult?
+      dnf_supported = {"allow_downgrade", "allowerasing", "autoremove", "bugfix",
+                       "cacheonly", "conf_file", "disable_excludes", "disable_gpg_check",
+                       "disable_plugin", "disablerepo", "download_dir", "download_only",
+                       "enable_plugin", "enablerepo", "exclude", "install_repoquery",
+                       "install_weak_deps", "installroot", "list", "lock_timeout",
+                       "name", "nobest", "releasever", "security", "skip_broken",
+                       "sslverify", "state", "update_cache", "update_only",
+                       "validate_certs", "use_backend", "expire-cache", "pkg"}
+      dnf_internal = {"check_mode", "diff_mode", "_verbosity", "_environment"}
+      unsupported = @params.keys.reject { |k| dnf_supported.includes?(k) || dnf_internal.includes?(k) }
+      unless unsupported.empty?
+        unsupported_sorted = unsupported.sort
+        return PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: "Unsupported parameters for (ansible.builtin.dnf) module: #{unsupported_sorted.join(", ")}. " \
+               "Supported parameters include: " \
+               "allow_downgrade, allowerasing, autoremove, bugfix, cacheonly, conf_file, disable_excludes, " \
+               "disable_gpg_check, disable_plugin, disablerepo, download_dir, download_only, enable_plugin, " \
+               "enablerepo, exclude, install_repoquery, install_weak_deps, installroot, list, lock_timeout, " \
+               "name, nobest, releasever, security, skip_broken, sslverify, state, update_cache, update_only, " \
+               "validate_certs (expire-cache, pkg)."
+        )
+      end
+
+      # Real AnsibleModule type-converts every bool-typed argument_spec
+      # param and fails the task on a non-boolean string with exactly
+      # this message (live-verified: disable_gpg_check: sometimes on
+      # bookworm's ansible-core 2.14). Without it this engine accepted
+      # e.g. `disable_gpg_check: sometimes` as a truthy value and ran
+      # the transaction anyway. Params arrive as strings here (YAML
+      # booleans were stringified by the parser); lowercase compare
+      # matches AnsibleModule's own case-insensitive boolean() check.
+      dnf_bool_params = {"allow_downgrade", "allowerasing", "autoremove", "bugfix",
+                         "cacheonly", "disable_gpg_check", "download_only",
+                         "install_repoquery", "install_weak_deps", "nobest",
+                         "security", "skip_broken", "sslverify", "update_cache",
+                         "update_only", "validate_certs", "expire-cache"}
+      valid_booleans = {"0", "1", "true", "off", "yes", "t", "false", "on", "f", "n", "y", "no"}
+      bad_bool_keys = @params.select { |k, v| dnf_bool_params.includes?(k) && !valid_booleans.includes?(v.downcase) }.keys
+      bad_bool = bad_bool_keys.sort
+      unless bad_bool.empty?
+        return PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: "argument '#{bad_bool.first}' is of type <class 'str'> and we were unable to convert to bool: " \
+               "The value '#{@params[bad_bool.first]}' is not a valid boolean.  " \
+               "Valid booleans include: 0, 1, 'true', 'off', 'yes', '1', 't', '0', 'false', 'on', 'f', 'n', 'y', 'no'"
+        )
+      end
+
+      nil
+    end
+
     def execute : PluginResult
+      if failure = arg_spec_rejection
+        return failure
+      end
+
       # use_backend: real Ansible's argument spec (dnf.py:
       # choices=['auto', 'dnf', 'yum', 'yum4', 'dnf4', 'dnf5']) rejects
       # anything else with the standard choices-validation message
@@ -105,7 +178,7 @@ module Krikri
         return PluginResult.new(
           changed: false,
           failed: true,
-          msg: "Invalid state: #{state}. Must be present, absent, or latest"
+          msg: "value of state must be one of: absent, installed, latest, present, removed, got: #{@params["state"]? || state}"
         )
       end
 
