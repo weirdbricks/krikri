@@ -1429,6 +1429,37 @@ module Krikri
       end
     end
 
+    # An enclosing block:'s `name:` keyword - strict-undefined templating
+    # of the whole enclosing chain (outermost first) at child-execution
+    # time, raising the same failure shape the `environment:` handler
+    # above produces: real ansible-core 2.19 fails the child task with
+    # "Task failed: Error processing keyword 'name': 'container_name' is
+    # undefined" when the block name's chain bottoms out at a variable
+    # set nowhere (round 813203, ikke_t.podman_container_systemd run
+    # without grafana_podman's `container_name` above it - this engine
+    # rendered the block name leniently for display and kept executing
+    # deep into the role, diverging on every counter after). The strict
+    # substitute reports the INNERMOST missing name (see
+    # #raise_if_nested_value_undefined), matching real Ansible. Only
+    # fires when the child actually goes to run: real Ansible finalizes
+    # the block name after the child's own `when:` passes, so a
+    # when-skipped child sails through and the failure lands on the next
+    # child that runs (live-verified against 2.19.11). A task's OWN name
+    # stays lenient - real Ansible banners it as "<< error 1 - 'nope' is
+    # undefined >>" and still runs/skips it normally.
+    private def substitute_block_name_chain(task : Task, substitutor : VarSubstitutor) : Nil
+      return unless chain = task.block_name_chain
+
+      chain.each do |raw_name|
+        next unless raw_name.includes?("{{")
+        begin
+          substitutor.substitute(raw_name, strict: true)
+        rescue e : UndefinedVariableError
+          raise UndefinedVariableError.new("Task failed: Error processing keyword 'name': #{e.message}")
+        end
+      end
+    end
+
     # For copy:/template:/assemble: tasks that came from a role, a
     # relative src: resolves against the role's files/ or templates/
     # directory - the plugin subprocess itself has no concept of roles, so
