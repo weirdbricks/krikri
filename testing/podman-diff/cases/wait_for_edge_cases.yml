@@ -1,0 +1,101 @@
+# wait_for edge cases. All waits use short timeouts (2s) so the case
+# never hangs; failed=/changed= and elapsed-presence are what matter.
+# elapsed VALUES legitimately differ (poll timing), so they are not
+# printed - only the success/failure outcome and the on-disk state after
+# a state: absent wait.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "V1 port that never opens times out"
+      ansible.builtin.wait_for:
+        port: 19999
+        timeout: 2
+      register: v1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "V1 failed={{ v1.failed }} changed={{ v1.changed | default('none') }}"
+
+    - name: "V2 path that never appears times out"
+      ansible.builtin.wait_for:
+        path: /tmp/krikri-never-appears-v2
+        timeout: 2
+      register: v2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "V2 failed={{ v2.failed }} changed={{ v2.changed | default('none') }}"
+
+    - name: "V3 state absent on something already absent succeeds immediately"
+      ansible.builtin.wait_for:
+        path: /tmp/krikri-never-appears-v3
+        state: absent
+        timeout: 2
+      register: v3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "V3 failed={{ v3.failed }} changed={{ v3.changed | default('none') }}"
+
+    - name: "V4 state absent on an EXISTING file times out (it never disappears)"
+      ansible.builtin.file:
+        path: /tmp/krikri-waitfor-v4
+        state: touch
+      ignore_errors: true
+    - ansible.builtin.wait_for:
+        path: /tmp/krikri-waitfor-v4
+        state: absent
+        timeout: 2
+      register: v4
+      ignore_errors: true
+    - ansible.builtin.stat:
+        path: /tmp/krikri-waitfor-v4
+      register: v4_after
+    - ansible.builtin.debug:
+        msg: "V4 failed={{ v4.failed }} changed={{ v4.changed | default('none') }} still_there={{ v4_after.stat.exists }}"
+
+    - name: "V5 connect_timeout short on a refused port still just times out"
+      ansible.builtin.wait_for:
+        port: 19998
+        connect_timeout: 1
+        timeout: 2
+      register: v5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "V5 failed={{ v5.failed }} changed={{ v5.changed | default('none') }}"
+
+    - name: "V6 no port or path is a plain sleep for the full timeout"
+      ansible.builtin.wait_for:
+        timeout: 2
+      register: v6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "V6 failed={{ v6.failed }} changed={{ v6.changed | default('none') }}"
+
+    - name: "V7 port and path are mutually exclusive"
+      ansible.builtin.wait_for:
+        port: 19997
+        path: /tmp/krikri-waitfor-v7
+        timeout: 2
+      register: v7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "V7 failed={{ v7.failed }} changed={{ v7.changed | default('none') }}"
+
+    - name: "V8 state drained without a port fails"
+      ansible.builtin.wait_for:
+        state: drained
+        timeout: 2
+      register: v8
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "V8 failed={{ v8.failed }} changed={{ v8.changed | default('none') }}"
+
+    - name: "V9 exclude_hosts without state drained fails"
+      ansible.builtin.wait_for:
+        port: 19996
+        timeout: 2
+        exclude_hosts:
+          - 127.0.0.1
+      register: v9
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "V9 failed={{ v9.failed }} changed={{ v9.changed | default('none') }}"
