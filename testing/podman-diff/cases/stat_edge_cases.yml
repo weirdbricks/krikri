@@ -1,0 +1,70 @@
+# stat module edge cases. All cases are read-only, so the containers
+# stay pristine. Each case registers its result and prints an "A<n>
+# key=value" debug line for run.sh's diff extraction. failed=/changed=
+# and actual stat fields (exists, checksum, islnk) are what matter;
+# error-message WORDING may legitimately differ between engines.
+# NOTE: the harness containers run as root, so a mode-000 file or a
+# no-execute directory cannot produce a genuine EACCES (root's
+# CAP_DAC_OVERRIDE bypasses it) - the permission-denied sub-case below
+# therefore also documents the as-root behavior both engines see.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "A0 fixture: broken symlink and zero file"
+      ansible.builtin.command: |
+        bash -c "ln -sfn /nonexistent-target-zzz /tmp/A_broken_link && dd if=/dev/zero of=/tmp/A_big.bin bs=1M count=10 status=none && : > /tmp/A_mode000 && chmod 000 /tmp/A_mode000"
+      changed_when: false
+
+    - name: "A1 stat on a nonexistent path (must not fail)"
+      ansible.builtin.stat:
+        path: /tmp/A_no_such_path_zzz
+      register: a1
+    - ansible.builtin.debug:
+        msg: "A1 failed={{ a1.failed | default('none') }} exists={{ a1.stat.exists }}"
+
+    - name: "A2 stat on a broken symlink (follow default true)"
+      ansible.builtin.stat:
+        path: /tmp/A_broken_link
+      register: a2
+    - ansible.builtin.debug:
+        msg: "A2 failed={{ a2.failed | default('none') }} exists={{ a2.stat.exists }} islnk={{ a2.stat.islnk | default('none') }}"
+
+    - name: "A2b stat on a broken symlink (follow false)"
+      ansible.builtin.stat:
+        path: /tmp/A_broken_link
+        follow: false
+      register: a2b
+    - ansible.builtin.debug:
+        msg: "A2b failed={{ a2b.failed | default('none') }} exists={{ a2b.stat.exists }} islnk={{ a2b.stat.islnk | default('none') }}"
+
+    - name: "A3 get_checksum on a 10MB file"
+      ansible.builtin.stat:
+        path: /tmp/A_big.bin
+        get_checksum: true
+      register: a3
+    - ansible.builtin.debug:
+        msg: "A3 failed={{ a3.failed | default('none') }} exists={{ a3.stat.exists }} checksum={{ a3.stat.checksum | default('none') }}"
+
+    - name: "A4 get_checksum on a directory"
+      ansible.builtin.stat:
+        path: /tmp
+        get_checksum: true
+      register: a4
+    - ansible.builtin.debug:
+        msg: "A4 failed={{ a4.failed | default('none') }} exists={{ a4.stat.exists }} checksum={{ a4.stat.checksum | default('none') }}"
+
+    - name: "A5 get_checksum on a special file (/dev/null)"
+      ansible.builtin.stat:
+        path: /dev/null
+        get_checksum: true
+      register: a5
+    - ansible.builtin.debug:
+        msg: "A5 failed={{ a5.failed | default('none') }} exists={{ a5.stat.exists }} checksum={{ a5.stat.checksum | default('none') }}"
+
+    - name: "A6 stat on a mode-000 file (running as root)"
+      ansible.builtin.stat:
+        path: /tmp/A_mode000
+      register: a6
+    - ansible.builtin.debug:
+        msg: "A6 failed={{ a6.failed | default('none') }} exists={{ a6.stat.exists }} mode={{ a6.stat.mode | default('none') }}"
