@@ -30,7 +30,7 @@
         path: /root/.kh_test
       register: k1
     - ansible.builtin.debug:
-        msg: "K1 failed={{ k1.failed }} changed={{ k1.changed }} msg={{ k1.msg }}"
+        msg: "K1 failed={{ k1.failed }} changed={{ k1.changed }} msg={{ k1.msg | default('none') }}"
 
     - name: "K1b the entry names the host"
       ansible.builtin.command: grep -c diffhost.test /root/.kh_test
@@ -46,7 +46,7 @@
         path: /root/.kh_test
       register: k2
     - ansible.builtin.debug:
-        msg: "K2 failed={{ k2.failed }} changed={{ k2.changed }} msg={{ k2.msg }}"
+        msg: "K2 failed={{ k2.failed }} changed={{ k2.changed }} msg={{ k2.msg | default('none') }}"
 
     - name: "K3 a different key for the same host replaces"
       ansible.builtin.known_hosts:
@@ -55,7 +55,7 @@
         path: /root/.kh_test
       register: k3
     - ansible.builtin.debug:
-        msg: "K3 failed={{ k3.failed }} changed={{ k3.changed }} msg={{ k3.msg }}"
+        msg: "K3 failed={{ k3.failed }} changed={{ k3.changed }} msg={{ k3.msg | default('none') }}"
 
     - name: "K3b still exactly one entry line"
       ansible.builtin.command: grep -c diffhost.test /root/.kh_test
@@ -71,7 +71,7 @@
         state: absent
       register: k4
     - ansible.builtin.debug:
-        msg: "K4 failed={{ k4.failed }} changed={{ k4.changed }} msg={{ k4.msg }}"
+        msg: "K4 failed={{ k4.failed }} changed={{ k4.changed }} msg={{ k4.msg | default('none') }}"
 
     - name: "K5 absent again is a no-op"
       ansible.builtin.known_hosts:
@@ -80,7 +80,7 @@
         state: absent
       register: k5
     - ansible.builtin.debug:
-        msg: "K5 failed={{ k5.failed }} changed={{ k5.changed }} msg={{ k5.msg }}"
+        msg: "K5 failed={{ k5.failed }} changed={{ k5.changed }} msg={{ k5.msg | default('none') }}"
 
     - name: "K6 hash_host hashes the hostname"
       ansible.builtin.known_hosts:
