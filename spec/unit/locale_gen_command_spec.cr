@@ -62,6 +62,26 @@ describe Krikri::PluginHelpers::LocaleGenCommand do
     end
   end
 
+  describe ".changed?" do
+    it "changes for present when any requested locale is missing" do
+      Krikri::PluginHelpers::LocaleGenCommand.changed?("present", false, false).should be_true
+    end
+
+    it "is unchanged for present when every requested locale is already present" do
+      Krikri::PluginHelpers::LocaleGenCommand.changed?("present", true, false).should be_false
+    end
+
+    it "changes for absent only when every requested locale is present" do
+      Krikri::PluginHelpers::LocaleGenCommand.changed?("absent", true, false).should be_true
+      Krikri::PluginHelpers::LocaleGenCommand.changed?("absent", false, false).should be_false
+    end
+
+    it "never reports changed in check mode" do
+      Krikri::PluginHelpers::LocaleGenCommand.changed?("present", false, true).should be_false
+      Krikri::PluginHelpers::LocaleGenCommand.changed?("absent", true, true).should be_false
+    end
+  end
+
   describe ".rewrite_locale_gen" do
     lines = [
       "#  Generated configuration file",

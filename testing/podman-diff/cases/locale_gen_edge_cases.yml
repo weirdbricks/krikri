@@ -1,0 +1,115 @@
+# locale_gen module edge cases. The `locales` package is installed by
+# run.sh's gated block (for ^locale_gen cases) in BOTH containers,
+# which provides /etc/locale.gen, /usr/share/i18n/SUPPORTED and the
+# locale-gen binary - so the glibc mechanism path is fully testable,
+# including real locale generation (locale-gen works in a container).
+# Msg wording differs between engines for arg-spec failures and is not
+# a bug; failed=/changed=, the not-available error class, and the
+# resulting `locale -a` / /etc/locale.gen state are.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "L1 missing required name param"
+      community.general.locale_gen:
+        state: present
+      register: l1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "L1 failed={{ l1.failed | default('none') }} changed={{ l1.changed | default('none') }}"
+
+    - name: "L2 invalid state value (not in choices)"
+      community.general.locale_gen:
+        name: en_US.UTF-8
+        state: generated
+      register: l2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "L2 failed={{ l2.failed | default('none') }} changed={{ l2.changed | default('none') }}"
+
+    - name: "L3 locale not in SUPPORTED (nor compiled)"
+      community.general.locale_gen:
+        name: xx_YY.UTF-8
+        state: present
+      register: l3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "L3 failed={{ l3.failed | default('none') }} changed={{ l3.changed | default('none') }}"
+
+    - name: "L4 present on an available locale (real locale-gen run, changed=true)"
+      community.general.locale_gen:
+        name: en_US.UTF-8
+        state: present
+      register: l4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "L4 failed={{ l4.failed | default('none') }} changed={{ l4.changed | default('none') }}"
+
+    - name: "L5 verify the locale is actually compiled after L4"
+      ansible.builtin.command: locale -a
+      register: l5
+      changed_when: false
+    - ansible.builtin.debug:
+        msg: "L5 en_US listed={{ l5.stdout is search('en_US') }}"
+
+    - name: "L6 re-run the same locale (idempotent, changed=false)"
+      community.general.locale_gen:
+        name: en_US.UTF-8
+        state: present
+      register: l6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "L6 failed={{ l6.failed | default('none') }} changed={{ l6.changed | default('none') }}"
+
+    - name: "L7 check mode on a not-yet-compiled locale reports would-change"
+      community.general.locale_gen:
+        name: de_DE.UTF-8
+        state: present
+      register: l7
+      check_mode: true
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "L7 failed={{ l7.failed | default('none') }} changed={{ l7.changed | default('none') }}"
+
+    - name: "L8 list-form name (post-9.3.0 API) generates all listed locales"
+      community.general.locale_gen:
+        name:
+          - fr_FR.UTF-8
+          - de_DE.UTF-8
+        state: present
+      register: l8
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "L8 failed={{ l8.failed | default('none') }} changed={{ l8.changed | default('none') }}"
+
+    - name: "L9 absent on a compiled locale (uncomments locale.gen, purge regenerates)"
+      community.general.locale_gen:
+        name: fr_FR.UTF-8
+        state: absent
+      register: l9
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "L9 failed={{ l9.failed | default('none') }} changed={{ l9.changed | default('none') }}"
+
+    - name: "L10 re-run absent (idempotent, changed=false)"
+      community.general.locale_gen:
+        name: fr_FR.UTF-8
+        state: absent
+      register: l10
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "L10 failed={{ l10.failed | default('none') }} changed={{ l10.changed | default('none') }}"
+
+    - name: "L11 final locale -a state after all the above"
+      ansible.builtin.command: locale -a
+      register: l11
+      changed_when: false
+    - ansible.builtin.debug:
+        msg: "L11 en_US={{ l11.stdout is search('en_US') }} de_DE={{ l11.stdout is search('de_DE') }} fr_FR={{ l11.stdout is search('fr_FR') }}"
+
+    - name: "L12 /etc/locale.gen line state for fr_FR after L9/L10"
+      ansible.builtin.command: grep -c "fr_FR.UTF-8" /etc/locale.gen
+      register: l12
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "L12 failed={{ l12.failed | default('none') }} stdout={{ l12.stdout | default('none') }}"

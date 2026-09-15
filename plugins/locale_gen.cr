@@ -71,7 +71,8 @@ module Krikri
           msg: "The following locales you have entered are not available on your system: #{unavailable.join(", ")}")
       end
 
-      changed = not_present.any?
+      all_present = not_present.empty?
+      changed = PluginHelpers::LocaleGenCommand.changed?(state, all_present, check_mode)
       if changed && !check_mode
         apply_result = state == "present" ? apply_change_present(mechanism.as(String), names) : apply_change_absent(mechanism.as(String), names)
         return apply_result if apply_result
