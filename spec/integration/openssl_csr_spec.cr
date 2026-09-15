@@ -210,6 +210,63 @@ describe "openssl_csr plugin" do
     PluginSpecHelper.run("openssl_csr", {"path" => path, "state" => "absent"})["changed"].as_bool.should be_false
   end
 
+  # Found via podman-diff O2: the real module generates a CSR with an
+  # entirely empty subject here (changed=True, file on disk); the CLI
+  # needs `-subj /` to express the empty Distinguished Name.
+  it "succeeds with an empty subject when there is no common_name or subject" do
+    path = csr_path("empty-subject.csr")
+    result = PluginSpecHelper.run("openssl_csr",
+      {"path" => path, "privatekey_path" => KEY})
+
+    result["failed"]?.should be_nil
+    result["changed"].as_bool.should be_true
+    File.exists?(path).should be_true
+    subject_line(path).should eq("subject=")
+  end
+
+  # Found via podman-diff O4: the CLI silently accepts "DNS:a,,DNS:b",
+  # the real module's cryptography_get_name rejects the empty entry.
+  it "rejects an empty SAN entry like the real module" do
+    result = PluginSpecHelper.run("openssl_csr",
+      {"path" => csr_path("empty-san.csr"), "privatekey_path" => KEY,
+       "common_name" => "okri.example",
+       "subject_alt_name" => %(["DNS:ok.example","","DNS:two.example"])})
+
+    result["failed"].as_bool.should be_true
+    result["msg"].as_s.should eq("Cannot parse Subject Alternative Name \"\" (forgot \"DNS:\" prefix?)")
+  end
+
+  it "rejects an unknown SAN type prefix with the real module's wording" do
+    result = PluginSpecHelper.run("openssl_csr",
+      {"path" => csr_path("bad-san.csr"), "privatekey_path" => KEY,
+       "common_name" => "okri.example",
+       "subject_alt_name" => "krikri-not-a-type:foo"})
+
+    result["failed"].as_bool.should be_true
+    result["msg"].as_s.should eq("Cannot parse Subject Alternative Name \"krikri-not-a-type:foo\" (potentially unsupported by cryptography backend)")
+  end
+
+  # Found via podman-diff O9: a non-dict subject: is a check_type_dict
+  # failure in real Ansible, not a silently-ignored parameter.
+  it "rejects a plain-string subject like real Ansible's check_type_dict" do
+    result = PluginSpecHelper.run("openssl_csr",
+      {"path" => csr_path("bogus-subject.csr"), "privatekey_path" => KEY,
+       "common_name" => "okri.example", "subject" => "krikri-bogus-subject"})
+
+    result["failed"].as_bool.should be_true
+    result["msg"].as_s.should eq("argument 'subject' is of type <class 'str'> and we were unable to convert to dict: dictionary requested, could not parse JSON or key=value")
+  end
+
+  it "accepts a key=value subject string like real Ansible's check_type_dict" do
+    path = csr_path("kv-subject.csr")
+    result = PluginSpecHelper.run("openssl_csr",
+      {"path" => path, "privatekey_path" => KEY,
+       "subject" => "OU=kvexample"})
+
+    result["failed"]?.should be_nil
+    subject_line(path).should contain("OU=kvexample")
+  end
+
   it "fails when the private key does not exist" do
     result = PluginSpecHelper.run("openssl_csr",
       {"path" => csr_path("missing.csr"), "privatekey_path" => File.join(TMP_DIR, "nope.key"),
