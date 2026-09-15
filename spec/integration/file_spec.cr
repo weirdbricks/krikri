@@ -154,6 +154,16 @@ describe "file plugin" do
       (File.info(path, follow_symlinks: false).permissions.value & 0o100).should eq(0o100)
     end
 
+    it "fails on an invalid symbolic mode with real Ansible's message" do
+      path = tmp_path("invalid-mode.txt")
+      File.write(path, "hi")
+
+      result = PluginSpecHelper.run("file", {"path" => path, "state" => "touch", "mode" => "u=rwx,g=elephant"})
+
+      result["failed"].as_bool.should be_true
+      result["msg"].as_s.should eq("mode must be in octal or symbolic form")
+    end
+
     it "preserves setuid/setgid/sticky bits in change detection" do
       path = tmp_path("setuid.txt")
       File.write(path, "x")
@@ -317,6 +327,28 @@ describe "file plugin" do
       result = PluginSpecHelper.run("file", {"path" => path, "src" => target, "state" => "link", "force" => "yes"})
       result["changed"].as_bool.should be_true
       File.symlink?(path).should be_true
+    end
+
+    it "refuses to create a link to a nonexistent src without force" do
+      target = tmp_path("no-such-target")
+      link = tmp_path("broken-link")
+
+      result = PluginSpecHelper.run("file", {"path" => link, "src" => target, "state" => "link"})
+
+      result["failed"].as_bool.should be_true
+      result["msg"].as_s.should eq("src file does not exist, use \"force=yes\" if you really want to create the link: #{target}")
+      File.symlink?(link).should be_false
+    end
+
+    it "creates a broken link when force=yes" do
+      target = tmp_path("no-such-target2")
+      link = tmp_path("forced-broken-link")
+
+      result = PluginSpecHelper.run("file", {"path" => link, "src" => target, "state" => "link", "force" => "yes"})
+
+      result["failed"]?.try(&.as_bool).should be_falsey
+      File.symlink?(link).should be_true
+      File.readlink(link).should eq(target)
     end
   end
 
