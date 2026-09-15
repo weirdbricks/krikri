@@ -27,6 +27,21 @@ describe "ini_file plugin" do
     File.read(path).should eq("\n[mysqld]\nport = 3306\n")
   end
 
+  it "appends a new section header directly after existing content, with no blank-line separator" do
+    # Real do_ini appends "[section]" straight onto the lines list; the
+    # only blank line real ever produces is the empty-file seed. Adding
+    # another separator here put a spurious blank line between the
+    # previous section's last option and every appended header (caught
+    # by the podman-diff harness's byte-for-byte `cat` of the file).
+    path = tmp_path("ini_file-append-section")
+    File.write(path, "[alpha]\nkey1 = one\n")
+
+    result = PluginSpecHelper.run("ini_file", {"path" => path, "section" => "beta", "option" => "opt", "value" => "x"})
+
+    result["changed"].as_bool.should be_true
+    File.read(path).should eq("[alpha]\nkey1 = one\n[beta]\nopt = x\n")
+  end
+
   it "uncomments and replaces an existing commented-out option line in place, matching real Ansible's modify_inactive_option default" do
     path = tmp_path("ini_file-uncomment-option")
     File.write(path, "[Journal]\n#Storage=auto\n#LineMax=48K\n#ReadKMsg=yes\n")

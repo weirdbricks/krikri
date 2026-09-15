@@ -1,0 +1,104 @@
+# ini_file module edge cases (community.general). Each case registers
+# its result and prints an "I<n> key=value" debug line for run.sh's
+# diff extraction; failed=/changed= booleans matter, error-message
+# WORDING may legitimately differ between engines.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "I0 fresh slate"
+      ansible.builtin.file:
+        path: /tmp/krikri-diff-ini
+        state: absent
+      ignore_errors: true
+
+    - name: "I1 set an option in a missing section of a missing file"
+      community.general.ini_file:
+        path: /tmp/krikri-diff-ini
+        section: alpha
+        option: key1
+        value: one
+      register: i1
+    - ansible.builtin.debug:
+        msg: "I1 failed={{ i1.failed }} changed={{ i1.changed }}"
+
+    - name: "I2 re-run the same set (idempotency: changed=false)"
+      community.general.ini_file:
+        path: /tmp/krikri-diff-ini
+        section: alpha
+        option: key1
+        value: one
+      register: i2
+    - ansible.builtin.debug:
+        msg: "I2 failed={{ i2.failed }} changed={{ i2.changed }}"
+
+    - name: "I3 change the value (changed=true)"
+      community.general.ini_file:
+        path: /tmp/krikri-diff-ini
+        section: alpha
+        option: key1
+        value: uno
+      register: i3
+    - ansible.builtin.debug:
+        msg: "I3 failed={{ i3.failed }} changed={{ i3.changed }}"
+
+    - name: "I4 add a second option in the same section"
+      community.general.ini_file:
+        path: /tmp/krikri-diff-ini
+        section: alpha
+        option: key2
+        value: two
+      register: i4
+    - ansible.builtin.debug:
+        msg: "I4 failed={{ i4.failed }} changed={{ i4.changed }}"
+
+    - name: "I5 create a new section"
+      community.general.ini_file:
+        path: /tmp/krikri-diff-ini
+        section: beta
+        option: opt
+        value: "x y z"
+      register: i5
+    - ansible.builtin.debug:
+        msg: "I5 failed={{ i5.failed }} changed={{ i5.changed }}"
+
+    - name: "I6 no value -> comment out the option (changed=true)"
+      community.general.ini_file:
+        path: /tmp/krikri-diff-ini
+        section: alpha
+        option: key2
+        value: ""
+      register: i6
+    - ansible.builtin.debug:
+        msg: "I6 failed={{ i6.failed }} changed={{ i6.changed }}"
+
+    - name: "I7 remove an option (state: absent, changed=true)"
+      community.general.ini_file:
+        path: /tmp/krikri-diff-ini
+        section: alpha
+        option: key1
+        state: absent
+      register: i7
+    - ansible.builtin.debug:
+        msg: "I7 failed={{ i7.failed }} changed={{ i7.changed }}"
+
+    - name: "I8 remove an already-absent option (idempotency: changed=false)"
+      community.general.ini_file:
+        path: /tmp/krikri-diff-ini
+        section: alpha
+        option: key1
+        state: absent
+      register: i8
+    - ansible.builtin.debug:
+        msg: "I8 failed={{ i8.failed }} changed={{ i8.changed }}"
+
+    - name: "I9 verify the final file"
+      ansible.builtin.command: cat /tmp/krikri-diff-ini
+      register: i9
+    - ansible.builtin.debug:
+        msg: "I9 failed={{ i9.failed }} out={{ i9.stdout | replace('\n', '|') }}"
+
+    - name: "I10 cleanup"
+      ansible.builtin.file:
+        path: /tmp/krikri-diff-ini
+        state: absent

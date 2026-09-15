@@ -32,16 +32,24 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# --privileged: sysctl/hostname modules need a writable /proc/sys and
+# sethostname inside the container - an unprivileged podman container
+# denies both, which would fail only the REAL side and manufacture
+# divergences.
 log "starting containers"
-podman run -d --name "$NAME_A" "$IMAGE" sleep infinity >/dev/null
-podman run -d --name "$NAME_B" "$IMAGE" sleep infinity >/dev/null
+podman run -d --privileged --name "$NAME_A" "$IMAGE" sleep infinity >/dev/null
+podman run -d --privileged --name "$NAME_B" "$IMAGE" sleep infinity >/dev/null
 
 log "installing ansible-core in $NAME_A"
-podman exec "$NAME_A" bash -c "apt-get update -qq && apt-get install -y -qq --no-install-recommends ansible-core python3 >/dev/null" \
+podman exec "$NAME_A" bash -c "apt-get update -qq && apt-get install -y -qq --no-install-recommends ansible-core python3 procps cron >/dev/null" \
   || { log "FATAL: ansible-core install failed"; exit 1; }
 
+log "installing collections in $NAME_A (ansible.posix, community.general)"
+podman exec "$NAME_A" bash -c "ansible-galaxy collection install ansible.posix community.general >/dev/null 2>&1" \
+  || { log "FATAL: collection install failed"; exit 1; }
+
 log "staging krikri-playbook in $NAME_B"
-podman exec "$NAME_B" bash -c "apt-get update -qq && apt-get install -y -qq --no-install-recommends libxml2 libssl3 libyaml-0-2 libpcre2-8-0 >/dev/null" \
+podman exec "$NAME_B" bash -c "apt-get update -qq && apt-get install -y -qq --no-install-recommends libxml2 libssl3 libyaml-0-2 libpcre2-8-0 procps cron >/dev/null" \
   || { log "FATAL: runtime lib install failed"; exit 1; }
 podman exec "$NAME_B" bash -c "mkdir -p /opt/krikri/bin"
 podman cp "$REPO_DIR/bin/krikri-playbook" "$NAME_B:/opt/krikri/bin/krikri-playbook"

@@ -2,10 +2,15 @@
 
 # hostname module (ansible.builtin.hostname) - manages the system hostname.
 #
-# Sets the hostname persistently. Without `use:`, auto-detects: hostnamectl
-# (systemd - the expected mechanism on modern Linux: Ubuntu 16.04+, Debian
-# 9+, etc.) with a fallback to /etc/hostname + the hostname(1) command for
-# non-systemd systems.
+# Sets the hostname persistently. Without `use:`, auto-detects exactly
+# like real Ansible's Hostname dispatch: on Linux, a systemd-managed host
+# (systemctl installed AND one of systemd's sd_booted canary directories
+# present) uses SystemdStrategy (hostnamectl); otherwise the distribution
+# picks the strategy. Debian-family distros use FileStrategy, which reads
+# and writes ONLY /etc/hostname and never touches the live kernel hostname
+# (its set_current_hostname is a no-op, so the changed decision rests
+# entirely on the file's stripped content, with a missing file reading as
+# "").
 #
 # `use:` overrides auto-detection (real Ansible's STRATS dict), mapping to
 # the same strategy classes real Ansible uses:
@@ -38,15 +43,15 @@
 #   so there is no working behavior to replicate.
 #
 # Out of scope (deliberately, this is a Linux-only engine): use: values
-# freebsd/macos/macosx/darwin/openbsd/solaris/sles select non-Linux
-# platform strategies (the first six genuinely non-Linux; sles targets a
-# distro outside krikri's supported set). They are rejected with an
+# freebsd/macos/macosx/darwin/openbsd/solaris select non-Linux platform
+# strategies (genuinely non-Linux). They are rejected with an
 # explicit error rather than silently mis-executed. Note real Ansible
 # would actually run them on Linux; that divergence is krikri's
 # Linux-only stance, not an oversight.
 #
-# Idempotent: compares against the current hostname per the selected
-# strategy (auto path: System.hostname). Returns ansible_facts
+# Idempotent: compares against the hostname per the selected strategy
+# (auto path on Debian-family: /etc/hostname's content, not the live
+# kernel hostname). Returns ansible_facts
 # (ansible_hostname, ansible_nodename, ansible_fqdn, ansible_domain)
 # matching real Ansible's convention.
 #
@@ -96,13 +101,15 @@ module Krikri
         alpine_strategy(desired)
       when "openrc"
         openrc_strategy(desired)
+      when "sles"
+        file_strategy(desired, "/etc/HOSTNAME")
       when "generic"
         PluginResult.new(
           changed: false,
           failed: true,
           msg: "use: generic is broken in real Ansible's hostname module (its Base strategy raises NotImplementedError on every operation); failing for parity",
         )
-      when "freebsd", "macos", "macosx", "darwin", "openbsd", "solaris", "sles"
+      when "freebsd", "macos", "macosx", "darwin", "openbsd", "solaris"
         PluginResult.new(
           changed: false,
           failed: true,
@@ -149,16 +156,100 @@ module Krikri
       }
     end
 
-    # Auto-detect path (no use: given) - the original behavior.
-    # Tries hostnamectl first (systemd), falls back to /etc/hostname +
-    # hostname(1) for non-systemd systems.
+    # Auto-detect path (no use: given) - real Ansible's Hostname.__init__
+    # dispatch: on Linux, a systemd-managed host uses SystemdStrategy;
+    # otherwise the distribution subclass decides. Distributions without
+    # a dedicated class fail exactly like real Ansible's
+    # UnimplementedStrategy. Debian-family distros map to FileStrategy,
+    # whose reads and writes are /etc/hostname only - so in a container
+    # (no systemd, /etc/hostname the only state) the module is idempotent
+    # on re-runs and never changes the live kernel hostname.
     private def auto_detect_strategy(name : String) : PluginResult
-      current = System.hostname
+      return systemd_strategy(name) if systemd_managed?
 
-      # Build facts (same shape as the facts plugin's gather_hostname)
+      distro = detect_distribution
+      case distro
+      when "debian", "ubuntu", "kali", "parrot", "linuxmint", "devuan",
+           "raspbian", "neon", "void", "pop", "kylin", "cumulus-linux",
+           "linaro", "uos", "deepin"
+        file_strategy(name, "/etc/hostname")
+      when "alpine"
+        alpine_strategy(name)
+      when "gentoo"
+        openrc_strategy(name)
+      when "redhat", "centos", "anolis", "cloudlinuxserver", "cloudlinux",
+           "alinux", "scientific", "oracle", "virtuozzo", "amazon",
+           "altlinux", "eurolinux"
+        redhat_strategy(name)
+      when "sles"
+        if sles_version_major.try { |v| v >= 10 && v <= 12 }
+          file_strategy(name, "/etc/HOSTNAME")
+        else
+          unimplemented_failure(distro)
+        end
+      else
+        unimplemented_failure(distro)
+      end
+    end
+
+    # Real Ansible's ServiceMgrFactCollector.is_systemd_managed: systemctl
+    # must be installed AND one of systemd's own boot-canary directories
+    # (sd_booted) must exist.
+    private def systemd_managed? : Bool
+      probe = remote_exec("command -v systemctl >/dev/null 2>&1")
+      return false unless probe[:exit_code] == 0
+      %w[/run/systemd/system/ /dev/.run/systemd/ /dev/.systemd/].each do |canary|
+        return true if File.exists?(canary)
+      end
+      false
+    end
+
+    # The lowercased os-release ID (real Ansible's get_distribution
+    # substrate), or nil when the file is absent or has no ID - which real
+    # Ansible treats as an unknown distribution.
+    private def detect_distribution : String?
+      return nil unless File.file?("/etc/os-release")
+      File.each_line("/etc/os-release") do |line|
+        if line.starts_with?("ID=")
+          id = line[3..].strip.strip('"').strip('\'').downcase
+          return id.empty? ? nil : id
+        end
+      end
+      nil
+    end
+
+    private def sles_version_major : Int32?
+      return nil unless File.file?("/etc/os-release")
+      File.each_line("/etc/os-release") do |line|
+        if line.starts_with?("VERSION_ID=")
+          value = line["VERSION_ID=".size..].strip.strip('"')
+          return value.to_i?(prefix: true)
+        end
+      end
+      nil
+    end
+
+    # Real Ansible's UnimplementedStrategy fail_json text; the distro is
+    # rendered capitalized the way get_distribution presents it.
+    private def unimplemented_failure(distro : String?) : PluginResult
+      msg_platform = distro ? "Linux (#{distro[0].upcase}#{distro[1..]})" : "Linux"
+      PluginResult.new(
+        changed: false,
+        failed: true,
+        msg: "hostname module cannot be used on platform #{msg_platform}",
+      )
+    end
+
+    # Real Ansible's FileStrategy (the Debian-family auto-detect target,
+    # also SLES with /etc/HOSTNAME): current == permanent == the file's
+    # stripped content ("" when missing), set_current_hostname is a no-op,
+    # so changed rests entirely on the file and the live kernel hostname
+    # is never read or written.
+    private def file_strategy(name : String, file : String) : PluginResult
+      permanent = File.file?(file) ? File.read(file).strip : ""
       hostname_facts = build_facts(name)
 
-      if current == name
+      if permanent == name
         return PluginResult.new(
           changed: false,
           failed: false,
@@ -167,8 +258,7 @@ module Krikri
         )
       end
 
-      # Store old facts for diff
-      old_facts = build_facts(current)
+      old_facts = build_facts(permanent)
 
       if @check_mode
         return PluginResult.new(
@@ -176,24 +266,23 @@ module Krikri
           failed: false,
           ansible_facts: hostname_facts,
           diff: generate_attribute_diff(old_facts, hostname_facts),
-          msg: "would change hostname from #{current} to #{name}",
+          msg: "would change hostname from #{permanent} to #{name}",
         )
       end
 
-      # Actually set the hostname
-      set_hostname(name)
-
-      # Re-read to verify (and get the actual resulting hostname, since
-      # hostnamectl may normalize it - trimming trailing dots, etc.)
-      actual = System.hostname
-      actual_facts = build_facts(actual)
+      begin
+        File.write(file, name + "\n")
+      rescue ex : File::Error
+        return PluginResult.new(changed: false, failed: true,
+          msg: "failed to update hostname: #{python_os_error_message(ex)}")
+      end
 
       PluginResult.new(
         changed: true,
         failed: false,
-        ansible_facts: actual_facts,
-        diff: generate_attribute_diff(old_facts, actual_facts),
-        msg: "hostname changed from #{current} to #{actual}",
+        ansible_facts: hostname_facts,
+        diff: generate_attribute_diff(old_facts, hostname_facts),
+        msg: "hostname changed from #{permanent} to #{name}",
       )
     end
 
@@ -548,31 +637,6 @@ module Krikri
         failed: true,
         msg: "Command failed rc=#{result[:exit_code]}, out=#{result[:stdout]}, err=#{result[:stderr]}",
       )
-    end
-
-    # Set the system hostname persistently (auto-detect path only).
-    private def set_hostname(name : String) : Nil
-      # Try systemd's hostnamectl first - detect failure via exit status.
-      # capture swallows errors and returns "", so a failed hostnamectl call
-      # is indistinguishable from an empty-stdout success on its own; the
-      # status check below is what actually drives the fallback.
-      if run_succeeds?("hostnamectl", ["set-hostname", name])
-        return
-      end
-
-      # Legacy fallback: write /etc/hostname and run hostname(1)
-      File.write("/etc/hostname", name + "\n")
-      capture("hostname", [name])
-    end
-
-    # Run *command* with *args* directly (no shell). Returns true iff the
-    # process exited 0 (binary found and succeeded). stderr is discarded; a
-    # missing binary or nonzero exit => false.
-    private def run_succeeds?(command : String, args : Array(String) = [] of String) : Bool
-      status = Process.run(command, args, error: Process::Redirect::Close)
-      status.success?
-    rescue
-      false
     end
 
     # Run *command* with *args* directly (no shell), capturing stdout only

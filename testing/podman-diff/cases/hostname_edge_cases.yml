@@ -1,0 +1,55 @@
+# hostname module edge cases. Containers run as root; changing the
+# container hostname is allowed inside podman (uts namespace). Each
+# case registers its result and prints an "H<n> key=value" debug line
+# for run.sh's diff extraction; failed=/changed= booleans matter,
+# error-message WORDING may legitimately differ between engines.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "H0 record the original hostname"
+      ansible.builtin.command: hostname
+      register: h0
+
+    - name: "H1 set a new hostname (changed=true)"
+      ansible.builtin.hostname:
+        name: krikri-diff-host
+      register: h1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "H1 failed={{ h1.failed }} changed={{ h1.changed }}"
+
+    - name: "H2 re-run the same hostname (idempotency: changed=false)"
+      ansible.builtin.hostname:
+        name: krikri-diff-host
+      register: h2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "H2 failed={{ h2.failed }} changed={{ h2.changed }}"
+
+    - name: "H3 verify the live hostname is UNCHANGED (FileStrategy never touches it)"
+      ansible.builtin.command: hostname
+      register: h3
+    - ansible.builtin.debug:
+        msg: "H3 failed={{ h3.failed }} unchanged={{ h3.stdout == h0.stdout }}"
+
+    - name: "H4 restore the original hostname"
+      ansible.builtin.hostname:
+        name: "{{ h0.stdout }}"
+      register: h4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "H4 failed={{ h4.failed }} changed={{ h4.changed }}"
+
+    - name: "H5 invalid hostname with dots handled per distro rules"
+      ansible.builtin.hostname:
+        name: "krikri-diff.invalid.name"
+      register: h5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "H5 failed={{ h5.failed }} changed={{ h5.changed }}"
+
+    - name: "H6 restore again"
+      ansible.builtin.hostname:
+        name: "{{ h0.stdout }}"
+      ignore_errors: true

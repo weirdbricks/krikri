@@ -49,22 +49,71 @@ module Krikri
       unless name
         return PluginResult.new(changed: false, failed: true, msg: "missing required argument: name")
       end
+      name = name.strip
+      return PluginResult.new(changed: false, failed: true, msg: "name cannot be blank") if name.empty?
 
       state = @params["state"]? || "present"
       value = @params["value"]?
       if state == "present" && !value
         return PluginResult.new(changed: false, failed: true, msg: "state is present but all of the following are missing: value")
       end
+      parsed_value = parse_value(value)
+      if state == "present" && parsed_value.empty?
+        return PluginResult.new(changed: false, failed: true, msg: "value cannot be blank")
+      end
 
       sysctl_file = @params["sysctl_file"]? || DEFAULT_SYSCTL_FILE
       check_mode = true?(@params["check_mode"]?)
+      reload = true?(@params["reload"]?, default: true)
 
-      lines = read_lines(sysctl_file)
-      new_lines = rewrite_lines(lines, name, value, state)
-      changed = new_lines != lines
+      # Real SysctlModule.process() order: read the live value, read the
+      # file, decide changed/write_file/set_proc, then (not check mode)
+      # set the live value FIRST and the conf file second - so a failed
+      # `sysctl -w` fails the task with changed=false and leaves the conf
+      # file untouched.
+      proc_value = get_token_curr_value(name)
+
+      file_lines = read_lines(sysctl_file).map(&.strip)
+      file_values = file_values_from(file_lines)
+      fixed_lines = fix_lines(file_lines, name, parsed_value, state)
+
+      changed = false
+      write_file = false
+      set_proc = false
+
+      fv = file_values[name]?
+      if fv.nil? && state == "present"
+        changed = true
+        write_file = true
+      elsif fv.nil? && state == "absent"
+        # changed stays false
+      elsif !fv.nil? && !fv.empty? && state == "absent"
+        changed = true
+        write_file = true
+      elsif fv != parsed_value
+        changed = true
+        write_file = true
+      elsif reload
+        changed = true unless (live = proc_value) && values_is_equal(live, parsed_value)
+      end
+
+      if state == "present" && true?(@params["sysctl_set"]?)
+        if (live = proc_value)
+          unless values_is_equal(live, parsed_value)
+            changed = true
+            set_proc = true
+          end
+        else
+          changed = true
+        end
+      end
 
       unless check_mode
-        if failure = apply_changes(name, value, state, sysctl_file, new_lines, changed)
+        if set_proc && (failure = set_token_value(name, parsed_value, sysctl_file))
+          return failure
+        end
+        write_lines(sysctl_file, fixed_lines) if write_file
+        if changed && reload && (failure = reload_sysctl(sysctl_file))
           return failure
         end
       end
@@ -72,67 +121,69 @@ module Krikri
       PluginResult.new(changed: changed, failed: false, msg: "", name: name, sysctl_file: sysctl_file)
     end
 
-    # Real ansible.posix.sysctl fails the task when `sysctl -w` itself
-    # fails (an invalid/read-only kernel parameter name, for instance) -
-    # unless ignoreerrors: is set, which is forwarded to sysctl's own `-e`
-    # flag for exactly this. This used to discard apply_kernel_value's
-    # result entirely and unconditionally return failed: false regardless
-    # - the same "real command failure silently swallowed" shape as
-    # apt_repository.cr's own update_cache bug found this round, just in a
-    # different plugin.
-    private def apply_changes(
-      name : String, value : String?, state : String,
-      sysctl_file : String, new_lines : Array(String), changed : Bool,
-    ) : PluginResult?
-      write_lines(sysctl_file, new_lines) if changed
-
-      if state == "present" && true?(@params["sysctl_set"]?)
-        kernel_result = apply_kernel_value(name, value)
-        if kernel_result[:exit_code] != 0 && !true?(@params["ignoreerrors"]?)
-          return PluginResult.new(
-            changed: changed,
-            failed: true,
-            msg: "Failed to set sysctl #{name}: #{kernel_result[:stderr]}",
-            name: name,
-            sysctl_file: sysctl_file
-          )
-        end
-      end
-
-      reload_sysctl(sysctl_file) if changed && true?(@params["reload"]?, default: true)
-      nil
+    # Real _parse_value: booleans become "1"/"0", strings are stripped,
+    # nil becomes "".
+    private def parse_value(value : String?) : String
+      return "" unless value
+      lower = value.downcase
+      return "1" if {"y", "yes", "on", "1", "t", "true"}.includes?(lower)
+      return "0" if {"n", "no", "off", "0", "f", "false"}.includes?(lower)
+      value.strip
     end
 
-    # Rewrites `lines` with `name`'s entry set/removed, matching real
-    # Ansible's own fix_lines(): comments/blanks pass through untouched,
-    # only the first occurrence of a duplicated key is kept, state:
-    # absent drops the key's line entirely rather than commenting it.
-    private def rewrite_lines(lines : Array(String), name : String, value : String?, state : String) : Array(String)
-      seen = Set(String).new
-      found = false
-      result = [] of String
+    # Real _values_is_equal: whitespace-split token comparison, order
+    # included.
+    private def values_is_equal(a : String, b : String) : Bool
+      a_tokens = a.split
+      b_tokens = b.split
+      return false if a_tokens.size != b_tokens.size
+      a_tokens.zip(b_tokens).all? { |x, y| x == y }
+    end
 
-      lines.each do |line|
-        stripped = line.strip
+    # Real read_sysctl_file's parse half: only keys with an "=" count,
+    # last occurrence wins (dict overwrite), values stripped.
+    private def file_values_from(lines : Array(String)) : Hash(String, String)
+      values = Hash(String, String).new
+      lines.each do |stripped|
+        next if stripped.empty? || stripped.starts_with?('#') || stripped.starts_with?(';') || !stripped.includes?('=')
+        key, val = stripped.split('=', 2)
+        values[key.strip] = val.strip
+      end
+      values
+    end
+
+    # Real fix_lines, byte for byte: passthrough lines (comments, blanks,
+    # no "=") keep their (stripped) content; the first occurrence of each
+    # key wins; the managed key is rewritten as "key=value" when present
+    # or appended once at the end; state: absent drops it entirely.
+    private def fix_lines(lines : Array(String), name : String, parsed_value : String?, state : String) : Array(String)
+      checked = [] of String
+      fixed = [] of String
+      lines.each do |stripped|
         if stripped.empty? || stripped.starts_with?('#') || stripped.starts_with?(';') || !stripped.includes?('=')
-          result << line
+          fixed << stripped
           next
         end
-
-        key = stripped.split('=', 2)[0].strip
-        next if seen.includes?(key)
-        seen.add(key)
-
+        key, val = stripped.split('=', 2)
+        key = key.strip
+        next if checked.includes?(key)
+        checked << key
         if key == name
-          found = true
-          result << "#{name}=#{value}" if state == "present"
+          fixed << "#{key}=#{parsed_value}" if state == "present"
         else
-          result << stripped
+          fixed << "#{key}=#{val.strip}"
         end
       end
+      fixed << "#{name}=#{parsed_value}" if !checked.includes?(name) && state == "present"
+      fixed
+    end
 
-      result << "#{name}=#{value}" if !found && state == "present"
-      result
+    # Real get_token_curr_value: `sysctl -e -n <token>` under LANG=C (the
+    # stderr must be parseable); a nonzero rc reads as nil (unknown key).
+    private def get_token_curr_value(token : String) : String?
+      result = remote_exec("LANG=C LC_ALL=C LC_MESSAGES=C sysctl -e -n #{Process.quote(token)}")
+      return nil if result[:exit_code] != 0
+      result[:stdout]
     end
 
     # `String#split("\n")` always produces one trailing "" artifact when
@@ -170,19 +221,52 @@ module Krikri
       end
     end
 
-    private def apply_kernel_value(name : String, value : String?) : NamedTuple(exit_code: Int32, stdout: String, stderr: String)?
+    # Real set_token_value: `sysctl [-e] -w token="value"` under LANG=C;
+    # fails the task (changed stays false) when the rc is nonzero OR the
+    # stderr matches real Ansible's _stderr_failed regex - sysctl can exit
+    # 0 yet still fail to set a value
+    # (https://bugzilla.redhat.com/show_bug.cgi?id=1264080).
+    private def set_token_value(token : String, value : String, sysctl_file : String) : PluginResult?
       ignore_flag = true?(@params["ignoreerrors"]?) ? "-e " : ""
       # Unquoted, a space-separated value (net.ipv4.ip_local_port_range:
       # "32768 65535") splits into two shell words - sysctl sets only the
       # first and then chokes on the second as a bogus bare key, failing
       # the whole command where real ansible.posix.sysctl's own quoted
       # write succeeds. Found via juju4.harden_sysctl, round 60128.
-      remote_exec("sysctl #{ignore_flag}-w #{name}=#{Process.quote(value.to_s)}")
+      result = remote_exec("LANG=C LC_ALL=C LC_MESSAGES=C sysctl #{ignore_flag}-w #{token}=#{Process.quote(value)}")
+      if result[:exit_code] != 0 || stderr_failed?(result[:stderr])
+        return PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: "setting #{token} failed: #{result[:stdout]}#{result[:stderr]}",
+          name: token,
+          sysctl_file: sysctl_file
+        )
+      end
+      nil
     end
 
-    private def reload_sysctl(sysctl_file : String) : Nil
-      ignore_flag = true?(@params["ignoreerrors"]?) ? "-e " : ""
-      remote_exec("sysctl #{ignore_flag}-p #{sysctl_file}")
+    # Real _stderr_failed: only these two specific stderr shapes count as
+    # a failure behind an rc 0.
+    private def stderr_failed?(err : String) : Bool
+      !!(err =~ /^sysctl: setting key "[^"]+": (Invalid argument|Read-only file system)$/)
+    end
+
+    # Real reload_sysctl: `sysctl [-e] -p <file>` under LANG=C; failure
+    # text is "Failed to reload sysctl: <out><err>".
+    private def reload_sysctl(sysctl_file : String) : PluginResult?
+      ignore_flag = true?(@params["ignoreerrors"]?) ? "-e" : ""
+      result = remote_exec("LANG=C LC_ALL=C LC_MESSAGES=C sysctl #{ignore_flag} -p #{sysctl_file}")
+      if result[:exit_code] != 0 || stderr_failed?(result[:stderr])
+        return PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: "Failed to reload sysctl: #{result[:stdout]}#{result[:stderr]}",
+          name: @params["name"]?,
+          sysctl_file: sysctl_file
+        )
+      end
+      nil
     end
   end
 end
