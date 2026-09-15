@@ -150,6 +150,17 @@ if printf '%s\n' "${cases[@]}" | grep -q '^postgresql'; then
     || { log "FATAL: community.postgresql install failed"; exit 1; }
 fi
 
+# ec2_metadata_facts cases need the amazon.aws collection in the REAL
+# container (collection module, not shipped with ansible-core).
+# Validation-only + unreachable-endpoint cases - the real IMDS endpoint
+# doesn't exist inside a container, and both engines must fail cleanly
+# there. Gated on the requested case list like the postgresql cases.
+if printf '%s\n' "${cases[@]}" | grep -q '^ec2_metadata'; then
+  log "installing amazon.aws collection for ec2_metadata_facts cases"
+  podman exec "$NAME_A" bash -c "ansible-galaxy collection install amazon.aws >/dev/null 2>&1" \
+    || { log "FATAL: amazon.aws install failed"; exit 1; }
+fi
+
 # locale_gen cases need the locales package (real /etc/locale.gen,
 # /usr/share/i18n/SUPPORTED and the locale-gen binary) in BOTH
 # containers - debian:bookworm-slim ships without it, which would make

@@ -1,0 +1,46 @@
+# wait_for_connection edge cases. The module is an action plugin in
+# real Ansible (a controller-side retry loop around the ping module;
+# the plugins/wait_for_connection.cr port retries the connection itself
+# the same way). The harness containers use ansible_connection=local,
+# so the success path is trivially immediate - the interesting case is
+# W3, which points the play at a port with nothing listening
+# (127.0.0.1:9) via play vars, making the retry loop run to its
+# timeout: in BOTH engines. That is this module's real job (a host
+# still booting) with the unreachable endpoint being a dead SSH port
+# instead.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "W1 check mode skips the probe entirely"
+      ansible.builtin.wait_for_connection:
+      check_mode: true
+      register: w1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "W1 skipped={{ w1.skipped | default('none') }} failed={{ w1.failed | default('none') }} changed={{ w1.changed | default('none') }}"
+
+    - name: "W2 priming ping (interpreter discovery outside the elapsed window)"
+      ansible.builtin.ping:
+      register: w2prime
+
+    - name: "W2 reachable host (local connection, immediate success)"
+      ansible.builtin.wait_for_connection:
+      register: w2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "W2 failed={{ w2.failed | default('none') }} changed={{ w2.changed | default('none') }} elapsed_defined={{ w2.elapsed is defined | default('none') }}"
+
+    - name: "W3 unreachable target, short timeout"
+      ansible.builtin.wait_for_connection:
+        timeout: 2
+        sleep: 1
+        connect_timeout: 1
+      vars:
+        ansible_connection: ssh
+        ansible_host: 127.0.0.1
+        ansible_port: 9
+      register: w3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "W3 failed={{ w3.failed | default('none') }} changed={{ w3.changed | default('none') }} elapsed_defined={{ w3.elapsed is defined | default('none') }}"

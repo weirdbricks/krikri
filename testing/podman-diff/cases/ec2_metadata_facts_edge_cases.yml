@@ -1,0 +1,55 @@
+# ec2_metadata_facts module edge cases. The real 169.254.169.254 IMDS
+# endpoint does not exist inside either container (and only ever answers
+# on a real EC2 instance - real Ansible's own module has the identical
+# restriction), so everything here is validation-first: the
+# metadata_token_ttl_seconds range check must fail BEFORE any network
+# I/O with the module's exact failure shape, a non-numeric ttl must fail
+# the task (real AnsibleModule int conversion rejects it, this engine
+# must not silently default), and a VALID ttl must fail cleanly at the
+# network attempt in BOTH engines (failed=true, changed=false) rather
+# than crashing or hanging. The fact-gathering walk itself (token ->
+# recursive meta-data/dynamic tree -> mangled ansible_ec2_* fact names)
+# is genuinely untestable in this harness - it needs a real EC2
+# instance.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "E1 ttl below range (0)"
+      amazon.aws.ec2_metadata_facts:
+        metadata_token_ttl_seconds: 0
+      register: e1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "E1 failed={{ e1.failed | default('none') }} changed={{ e1.changed | default('none') }}"
+
+    - name: "E2 ttl above range (30000)"
+      amazon.aws.ec2_metadata_facts:
+        metadata_token_ttl_seconds: 30000
+      register: e2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "E2 failed={{ e2.failed | default('none') }} changed={{ e2.changed | default('none') }}"
+
+    - name: "E3 ttl non-numeric"
+      amazon.aws.ec2_metadata_facts:
+        metadata_token_ttl_seconds: not-a-number
+      register: e3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "E3 failed={{ e3.failed | default('none') }} changed={{ e3.changed | default('none') }}"
+
+    - name: "E4 valid ttl, no IMDS endpoint reachable in a container"
+      amazon.aws.ec2_metadata_facts:
+        metadata_token_ttl_seconds: 21600
+      register: e4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "E4 failed={{ e4.failed | default('none') }} changed={{ e4.changed | default('none') }}"
+
+    - name: "E5 default args, no IMDS endpoint reachable in a container"
+      amazon.aws.ec2_metadata_facts:
+      register: e5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "E5 failed={{ e5.failed | default('none') }} changed={{ e5.changed | default('none') }}"

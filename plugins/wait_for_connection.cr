@@ -18,44 +18,90 @@ module Krikri
   # delay: seconds to wait before the FIRST attempt (real Ansible: give
   # a just-triggered reboot/service-restart a head start before even
   # trying). sleep: seconds between retries. timeout: overall deadline
-  # from when this task started (not from the first attempt, matching
-  # real Ansible - a delay: that itself exceeds timeout: fails
-  # immediately with zero attempts made, same as there).
+  # for the retry loop ONLY - real Ansible's action plugin sleeps the
+  # full delay first and starts the deadline clock afterwards, so a
+  # delay: larger than timeout: is applied in full and only then times
+  # out (the deadline never absorbs the delay).
   # connect_timeout: bounds each individual attempt's own connection
   # wait, reusing SSHManager#exec's own process-timeout parameter -
   # the real module has this as a distinct, smaller-than-timeout knob
   # specifically so one hung attempt can't eat the whole budget.
+  # Check mode short-circuits to skipped before any probe (real
+  # Ansible's own action plugin does the same), and every result
+  # carries elapsed: whole seconds since task start, success or
+  # timeout alike - real Ansible always sets it too.
   class WaitForConnectionPlugin < BasePlugin
     def execute : PluginResult
-      delay = @params["delay"]?.try(&.to_i?) || 0
-      sleep_interval = @params["sleep"]?.try(&.to_i?) || 1
-      timeout = @params["timeout"]?.try(&.to_i?) || 600
-      connect_timeout = @params["connect_timeout"]?.try(&.to_i?) || 5
+      # Real module converts each arg with int() before anything else,
+      # so a non-numeric value fails the task (even in check mode)
+      # rather than silently falling back to the default.
+      delay = int_arg("delay", 0)
+      return invalid_int_result("delay") unless delay
+
+      sleep_interval = int_arg("sleep", 1)
+      return invalid_int_result("sleep") unless sleep_interval
+
+      timeout = int_arg("timeout", 600)
+      return invalid_int_result("timeout") unless timeout
+
+      connect_timeout = int_arg("connect_timeout", 5)
+      return invalid_int_result("connect_timeout") unless connect_timeout
+
+      start_monotonic = Time.monotonic
+
+      if true?(@params["check_mode"]?)
+        return PluginResult.new(changed: false, failed: false,
+          msg: "`wait_for_connection` did not execute due to check mode",
+          skipped: true)
+      end
+
+      # One unconditional sleep before the loop, matching real Ansible.
+      sleep delay.seconds if delay > 0
 
       deadline = Time.monotonic + timeout.seconds
 
-      if delay > 0
-        return timeout_result(delay) if Time.monotonic + delay.seconds > deadline
-        sleep delay.seconds
-      end
-
       loop do
-        result = probe_connection(connect_timeout)
-        return PluginResult.new(changed: false, failed: false, msg: "") if result
+        if probe_connection(connect_timeout)
+          return PluginResult.new(changed: false, failed: false, msg: "",
+            elapsed: elapsed_since(start_monotonic))
+        end
 
-        return timeout_result(timeout) if Time.monotonic >= deadline
+        return timeout_result(start_monotonic) if Time.monotonic >= deadline
 
         remaining = (deadline - Time.monotonic).total_seconds
         sleep [sleep_interval, remaining.to_i].min.clamp(0..).seconds
       end
     end
 
-    private def timeout_result(timeout : Int32) : PluginResult
+    private def int_arg(name : String, default : Int32) : Int32?
+      raw = @params[name]?
+      return default unless raw
+      raw.to_i?
+    end
+
+    private def invalid_int_result(name : String) : PluginResult
+      PluginResult.new(changed: false, failed: true,
+        msg: "invalid integer value for #{name}")
+    end
+
+    # Real Ansible's action plugin raises
+    # TimedOutException("timed out waiting for ping module test: ping
+    # test failed") and turns that into the failed result's msg (plus
+    # elapsed, whole seconds since task start).
+    private def timeout_result(start_monotonic : Time::Span) : PluginResult
       PluginResult.new(
         changed: false,
         failed: true,
-        msg: "timed out waiting for last boot time check (timeout=#{timeout})"
+        msg: "timed out waiting for ping module test: ping test failed",
+        elapsed: elapsed_since(start_monotonic)
       )
+    end
+
+    # Whole seconds, matching real Ansible's own `elapsed.seconds`
+    # timedelta read (not total_seconds - values wrap past hours there
+    # too).
+    private def elapsed_since(start_monotonic : Time::Span) : Int32
+      (Time.monotonic - start_monotonic).seconds
     end
 
     # A trivial no-op command, same purpose as real Ansible's own
