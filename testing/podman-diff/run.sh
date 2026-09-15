@@ -84,7 +84,17 @@ for case_file in "${cases[@]}"; do
   # suffix, so new case files only need to pick an unused prefix.
   msgs_a="$RESULTS/${case_name}_real.msgs"
   msgs_b="$RESULTS/${case_name}_krikri.msgs"
-  extract() { grep -oE '\b[A-Z][0-9]+[a-c]? [a-zA-Z_]+=.*' "$1" | sed -E 's/\\n/ | /g; s/"\}?(,)?$//'; }
+  # Real ansible-playbook prints msg as a JSON string, so backslashes
+  # in actual on-disk content arrive doubled ("\\1" for "\1") and must
+  # be unescaped to compare with krikri-playbook's raw plain-text
+  # output. The placeholder pass below unescapes \\ without turning a
+  # JSON \n (newline, already handled) or the trailing quote-cleanup
+  # into the wrong thing. ("\\n" in JSON means literal backslash+n and
+  # survives as such.)
+  extract() {
+    grep -oE '\b[A-Z][0-9]+[a-c]? [a-zA-Z_]+=.*' "$1" \
+      | sed -E 's/\\\\/\x01/g; s/\\n/ | /g; s/\x01/\\/g; s/"\}?(,)?$//'
+  }
   extract "$RESULTS/${case_name}_real.log" > "$msgs_a"
   extract "$RESULTS/${case_name}_krikri.log" > "$msgs_b"
 
