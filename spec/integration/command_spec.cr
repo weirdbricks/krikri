@@ -77,7 +77,7 @@ describe "command plugin" do
     result["stdout"].as_s.should eq("[/tmp]")
   end
 
-  it "does not try to restore the original working directory afterwards (and so can't crash if that directory becomes inaccessible)" do
+  it "runs successfully via chdir: even when the process's OWN starting directory has been deleted out from under it" do
     # Real bug found benchmarking robertdebock.nextcloud's own
     # `Configure nextcloud` task (`chdir: /var/www/html/nextcloud,
     # become_user: www-data`): the plugin used to save `Dir.current` up
@@ -91,10 +91,14 @@ describe "command plugin" do
     # `Dir.cd` exception AFTER the real command had already run
     # successfully, crashing an otherwise-successful task. Reproduced
     # here without needing a real become_user: delete the process's own
-    # starting directory before it even calls `Dir.cd(chdir)` - any
-    # attempt to `Dir.cd` back to that now-nonexistent path afterward
-    # would raise (ENOENT, not EACCES, but the same "restore blows up"
-    # failure class), which the fix avoids entirely by not restoring.
+    # starting directory before running the chdir:'d command at all -
+    # any attempt to `Dir.cd` back to that now-nonexistent path
+    # afterward would raise (ENOENT, not EACCES, but the same "restore
+    # blows up" failure class). The fix now avoids the whole class of
+    # failure at its root: chdir: is passed straight to `Process.new`
+    # (the CHILD's cwd) instead of ever calling `Dir.cd` on this plugin
+    # process itself, so the process's own (deleted) starting directory
+    # is never touched, read, or restored at all.
     original = File.join(Dir.tempdir, "krikri-playbook-spec-original-#{Random.rand(1_000_000)}")
     target = File.join(Dir.tempdir, "krikri-playbook-spec-chdir-target-#{Random.rand(1_000_000)}")
     Dir.mkdir(target) unless Dir.exists?(target)
@@ -112,6 +116,51 @@ describe "command plugin" do
       Dir.cd(saved_cwd)
       FileUtils.rm_rf(target)
     end
+  end
+
+  it "never changes this process's OWN cwd via chdir: - only the spawned command's" do
+    # Round 813358 (markosamuli.nvm, under --persistent-daemon): this
+    # plugin's `run` used to call a process-global `Dir.cd(chdir)`. That
+    # was harmless for the normal one-shot-exec-per-task path (the
+    # process exits right after), but under `--persistent-daemon` mode
+    # ONE long-lived process (`Krikri::FatPluginDispatch.call`, see
+    # build.sh) instantiates this plugin fresh for EVERY task on a
+    # connection, in a loop, in the SAME OS process - so a `Dir.cd(chdir)`
+    # from one task PERMANENTLY changed that process's cwd for every
+    # later task on the same connection. When a later task deleted that
+    # directory, a still-later plain command/shell with no chdir: of its
+    # own inherited the now-deleted stale cwd and failed at shell/process
+    # startup ("getcwd: cannot access parent directories") - a class of
+    # bug real ansible-playbook can't hit since it execs fresh per task.
+    # This spec doesn't need a real daemon to catch a regression: it just
+    # asserts the plugin's own process cwd is bit-for-bit unchanged
+    # before/after running a chdir:'d command, proving the daemon-shared
+    # process can never pick up a leaked cwd from this plugin again.
+    target = File.join(Dir.tempdir, "krikri-playbook-spec-chdir-noleak-#{Random.rand(1_000_000)}")
+    Dir.mkdir(target) unless Dir.exists?(target)
+    saved_cwd = Dir.current
+
+    begin
+      result = PluginSpecHelper.run("command", {"cmd" => "echo ok", "chdir" => target})
+      result["changed"].as_bool.should be_true
+      Dir.current.should eq(saved_cwd)
+    ensure
+      FileUtils.rm_rf(target)
+    end
+  end
+
+  it "fails the task with a clear message when chdir: doesn't exist, without ever calling Dir.cd" do
+    # Companion to the no-leak spec above: the chdir-validation path
+    # (File.directory? check, added when Dir.cd(chdir) was removed) must
+    # still fail the task the same way real Ansible does for a bad
+    # chdir:, just without mutating this process's own cwd to get there.
+    missing = File.join(Dir.tempdir, "krikri-playbook-spec-chdir-missing-#{Random.rand(1_000_000)}")
+    FileUtils.rm_rf(missing)
+
+    result = PluginSpecHelper.run("command", {"cmd" => "echo should-not-run", "chdir" => missing})
+
+    result["failed"].as_bool.should be_true
+    result["msg"].as_s.should contain("Failed to change directory to #{missing}")
   end
 
   it "expands a leading ~ in creates: before checking existence, matching real Ansible's expanduser" do
