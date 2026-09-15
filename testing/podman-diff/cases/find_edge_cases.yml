@@ -1,0 +1,127 @@
+# find module edge cases. Read-only against a fixture tree created by
+# the O0 task, so the containers stay pristine. Each case registers
+# its result and prints an "O<n> key=value" debug line for run.sh's
+# diff extraction. failed=/changed=/matched-file lists (sorted) are
+# what matter; error-message WORDING may differ between engines.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "O0 fixture: build a small tree"
+      ansible.builtin.command: |
+        bash -c "mkdir -p /tmp/otree/d1/d2/d3 && echo a > /tmp/otree/aaa.txt && echo b > /tmp/otree/bbb.log && echo c > /tmp/otree/d1/ccc.txt && echo d > /tmp/otree/d1/d2/ddd.log && echo e > /tmp/otree/d1/d2/d3/eee.txt && touch -d '2020-01-01' /tmp/otree/bbb.log"
+      changed_when: false
+
+    - name: "O1 find on a path that does not exist"
+      ansible.builtin.find:
+        paths: /tmp/O_no_such_dir_zzz
+      register: o1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "O1 failed={{ o1.failed | default('none') }} changed={{ o1.changed | default('none') }} files_len={{ (o1.files | default([])) | length }} skipped_paths={{ (o1.skipped_paths | default({})) | length }}"
+
+    - name: "O2 pattern that matches nothing"
+      ansible.builtin.find:
+        paths: /tmp/otree
+        patterns: "*.zzz"
+      register: o2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "O2 failed={{ o2.failed | default('none') }} changed={{ o2.changed | default('none') }} files_len={{ (o2.files | default([])) | length }}"
+
+    - name: "O3 recurse depth 1 (non-recursive baseline)"
+      ansible.builtin.find:
+        paths: /tmp/otree
+        recurse: true
+        depth: 1
+      register: o3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "O3 failed={{ o3.failed | default('none') }} files={{ (o3.files | default([])) | map(attribute='path') | list | sort }}"
+
+    - name: "O3b recurse depth 2"
+      ansible.builtin.find:
+        paths: /tmp/otree
+        recurse: true
+        depth: 2
+      register: o3b
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "O3b failed={{ o3b.failed | default('none') }} files={{ (o3b.files | default([])) | map(attribute='path') | list | sort }}"
+
+    - name: "O3c recurse depth 99 (full traversal)"
+      ansible.builtin.find:
+        paths: /tmp/otree
+        recurse: true
+        depth: 99
+      register: o3c
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "O3c failed={{ o3c.failed | default('none') }} files_len={{ (o3c.files | default([])) | length }}"
+
+    - name: "O4 file_type: directory"
+      ansible.builtin.find:
+        paths: /tmp/otree
+        recurse: true
+        file_type: directory
+      register: o4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "O4 failed={{ o4.failed | default('none') }} files={{ (o4.files | default([])) | map(attribute='path') | list | sort }}"
+
+    - name: "O4b file_type: any (default) counts dirs+files at depth 1"
+      ansible.builtin.find:
+        paths: /tmp/otree
+        file_type: any
+      register: o4b
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "O4b failed={{ o4b.failed | default('none') }} files_len={{ (o4b.files | default([])) | length }}"
+
+    - name: "O5 age filter (older than 1 hour matches only the 2020 file)"
+      ansible.builtin.find:
+        paths: /tmp/otree
+        recurse: true
+        age: 1h
+      register: o5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "O5 failed={{ o5.failed | default('none') }} files={{ (o5.files | default([])) | map(attribute='path') | list | sort }}"
+
+    - name: "O5b age with negative value"
+      ansible.builtin.find:
+        paths: /tmp/otree
+        age: -1h
+      register: o5b
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "O5b failed={{ o5b.failed | default('none') }} files_len={{ (o5b.files | default([])) | length }}"
+
+    - name: "O5c age with a garbage value (parse failure)"
+      ansible.builtin.find:
+        paths: /tmp/otree
+        age: banana
+      register: o5c
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "O5c failed={{ o5c.failed | default('none') }} files_len={{ (o5c.files | default([])) | length }}"
+
+    - name: "O5d age_stamp: ctime"
+      ansible.builtin.find:
+        paths: /tmp/otree
+        recurse: true
+        age: 1h
+        age_stamp: ctime
+      register: o5d
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "O5d failed={{ o5d.failed | default('none') }} files={{ (o5d.files | default([])) | map(attribute='path') | list | sort }}"
+
+    - name: "O5e size with a garbage value (parse failure)"
+      ansible.builtin.find:
+        paths: /tmp/otree
+        size: banana
+      register: o5e
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "O5e failed={{ o5e.failed | default('none') }} files_len={{ (o5e.files | default([])) | length }}"
