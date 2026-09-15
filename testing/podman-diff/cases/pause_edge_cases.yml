@@ -1,0 +1,105 @@
+# pause edge cases. Both engines run non-interactively here (podman
+# exec without a TTY, stdin closed) - which is the documented,
+# verified-real behavior path: real pause warns "Not waiting for
+# response to prompt as stdin is not interactive" and continues
+# immediately when a prompt can't be asked. Durations kept small
+# (1-2s). failed=/changed= and the returned stdout text are what
+# matter; start/stop/delta are wall-clock values that legitimately
+# differ between containers, so only checked loosely.
+# KNOWN harness artifact, not a krikri bug: W1b's `is number` is False
+# on the real side because this harness's ansible-core 2.14 stringifies
+# set_fact values (jinja2_native off); krikri deliberately matches 2.19's
+# native-type set_fact preservation, so W1b delta_int=True is expected
+# to stay divergent in the diff.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "W1 seconds 1 waits and reports"
+      ansible.builtin.pause:
+        seconds: 1
+      register: w1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "W1 failed={{ w1.failed }} changed={{ w1.changed }} stdout={{ w1.stdout | default('none') }}"
+
+    - name: "W1b delta is a small non-negative integer"
+      ansible.builtin.set_fact:
+        w1delta: "{{ w1.delta | default(-1) }}"
+    - ansible.builtin.debug:
+        msg: "W1b delta_int={{ w1delta is number }} delta_small={{ w1delta | int >= 0 and w1delta | int < 10 }}"
+
+    - name: "W2 minutes 0"
+      ansible.builtin.pause:
+        minutes: 0
+      register: w2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "W2 failed={{ w2.failed }} changed={{ w2.changed }} stdout={{ w2.stdout | default('none') }}"
+
+    - name: "W3 seconds and minutes together are mutually exclusive"
+      ansible.builtin.pause:
+        seconds: 1
+        minutes: 1
+      register: w3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "W3 failed={{ w3.failed }} changed={{ w3.changed | default('none') }}"
+
+    - name: "W4 prompt only, non-interactive stdin continues immediately"
+      ansible.builtin.pause:
+        prompt: "krikri-prompt-text"
+      register: w4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "W4 failed={{ w4.failed }} changed={{ w4.changed }} stdout={{ w4.stdout | default('none') }}"
+
+    - name: "W5 bare pause with nothing given"
+      ansible.builtin.pause:
+      register: w5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "W5 failed={{ w5.failed }} changed={{ w5.changed }} stdout={{ w5.stdout | default('none') }}"
+
+    - name: "W6 echo false with a short duration"
+      ansible.builtin.pause:
+        seconds: 1
+        echo: false
+      register: w6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "W6 failed={{ w6.failed }} changed={{ w6.changed }} echo={{ w6.echo | default('none') }}"
+
+    - name: "W7 prompt plus duration shows the timed result"
+      ansible.builtin.pause:
+        seconds: 1
+        prompt: "w7-prompt"
+      register: w7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "W7 failed={{ w7.failed }} changed={{ w7.changed }} stdout={{ w7.stdout | default('none') }}"
+
+    - name: "W8 seconds 2 with check mode still runs"
+      ansible.builtin.pause:
+        seconds: 2
+      check_mode: true
+      register: w8
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "W8 failed={{ w8.failed }} changed={{ w8.changed }} stdout={{ w8.stdout | default('none') }}"
+
+    - name: "W9 fractional seconds"
+      ansible.builtin.pause:
+        seconds: 1.5
+      register: w9
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "W9 failed={{ w9.failed }} changed={{ w9.changed }} stdout={{ w9.stdout | default('none') }}"
+
+    - name: "W10 invalid non-numeric seconds"
+      ansible.builtin.pause:
+        seconds: krikri-not-a-number
+      register: w10
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "W10 failed={{ w10.failed }} changed={{ w10.changed | default('none') }}"
