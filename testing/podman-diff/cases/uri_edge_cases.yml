@@ -1,0 +1,91 @@
+# uri module edge cases. Runs against a local python3 http.server
+# started by the fixture task (both harness containers ship python3),
+# so no external network dependency. Each case registers its result
+# and prints a "V<n> key=value" debug line for run.sh's diff
+# extraction. failed=/changed=/status=/body content are what matter;
+# error-message WORDING may legitimately differ between engines.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "V0 fixture: local http server on 8123"
+      ansible.builtin.command: |
+        bash -c "mkdir -p /tmp/vroot && printf 'hello' > /tmp/vroot/ok.txt && (nohup python3 -m http.server 8123 --directory /tmp/vroot >/dev/null 2>&1 &) && sleep 1"
+      changed_when: false
+
+    - name: "V1 GET a URL that 404s (default status_code=200 must fail)"
+      ansible.builtin.uri:
+        url: http://localhost:8123/missing
+      register: v1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "V1 failed={{ v1.failed | default('none') }} status={{ v1.status | default('none') }} changed={{ v1.changed | default('none') }} msg_present={{ v1.msg is defined }}"
+
+    - name: "V2 same 404 but status_code list accepts 404"
+      ansible.builtin.uri:
+        url: http://localhost:8123/missing
+        status_code: [200, 404]
+      register: v2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "V2 failed={{ v2.failed | default('none') }} status={{ v2.status | default('none') }} changed={{ v2.changed | default('none') }}"
+
+    - name: "V3 GET a 200 URL"
+      ansible.builtin.uri:
+        url: http://localhost:8123/ok.txt
+      register: v3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "V3 failed={{ v3.failed | default('none') }} status={{ v3.status | default('none') }} changed={{ v3.changed | default('none') }}"
+
+    - name: "V4 GET with return_content: true"
+      ansible.builtin.uri:
+        url: http://localhost:8123/ok.txt
+        return_content: true
+      register: v4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "V4 failed={{ v4.failed | default('none') }} status={{ v4.status | default('none') }} content={{ v4.content | default('none') }}"
+
+    - name: "V4b GET a 404 with return_content: true (body still returned)"
+      ansible.builtin.uri:
+        url: http://localhost:8123/missing
+        return_content: true
+        status_code: [200, 404]
+      register: v4b
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "V4b failed={{ v4b.failed | default('none') }} status={{ v4b.status | default('none') }} content_len={{ (v4b.content | default('')) | length }}"
+
+    - name: "V5 unsupported HTTP method (server answers 501)"
+      ansible.builtin.uri:
+        url: http://localhost:8123/ok.txt
+        method: BREW
+      register: v5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "V5 failed={{ v5.failed | default('none') }} status={{ v5.status | default('none') }}"
+
+    - name: "V6 URL with no scheme"
+      ansible.builtin.uri:
+        url: localhost:8123/ok.txt
+      register: v6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "V6 failed={{ v6.failed | default('none') }} status={{ v6.status | default('none') }} changed={{ v6.changed | default('none') }}"
+
+    - name: "V7 malformed URL (empty host)"
+      ansible.builtin.uri:
+        url: "http:///"
+      register: v7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "V7 failed={{ v7.failed | default('none') }} status={{ v7.status | default('none') }} changed={{ v7.changed | default('none') }}"
+
+    - name: "V8 unknown URL scheme"
+      ansible.builtin.uri:
+        url: "ftp://localhost:8123/ok.txt"
+      register: v8
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "V8 failed={{ v8.failed | default('none') }} status={{ v8.status | default('none') }} changed={{ v8.changed | default('none') }}"
