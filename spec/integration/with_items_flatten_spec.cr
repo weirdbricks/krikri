@@ -69,4 +69,88 @@ describe "with_items: flattens nested list sources one level, unlike loop:" do
     output.should contain("['one', 'two']")
     output.should contain("['three']")
   end
+
+  # Round 813350 (RedHatOfficial.rhel9_hipaa): the "Correct file
+  # permissions with RPM" task loops
+  # `with_items: "{{ list_of_packages.results | map(attribute='stdout_
+  # lines') | list | unique }}"` - the map produces [[pkg], [pkg], ...]
+  # and real ansible-playbook 2.19.11 flattens that one level before
+  # iterating, so `item` reaches `rpm --restore '{{ item }}'` as a bare
+  # scalar package name. krikri used to keep each item a one-element
+  # nested list here (the whole-source filter-chain path in
+  # resolve_loop_template).
+  it "with_items: over a filter chain producing nested lists flattens one level" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          list_of_packages:
+            results:
+              - stdout_lines: ["pkgA"]
+              - stdout_lines: ["pkgB"]
+        tasks:
+          - name: filter chain flatten
+            ansible.builtin.debug:
+              msg: "item={{ item }}"
+            with_items: "{{ list_of_packages.results | map(attribute='stdout_lines') | list | unique }}"
+      YAML
+
+    status.success?.should be_true
+    output.should contain("item=pkgA")
+    output.should contain("item=pkgB")
+    output.should_not contain("['pkgA']")
+    output.should_not contain("['pkgB']")
+  end
+
+  # Same flatten for the direct whole-variable template form
+  # (`with_items: "{{ nested }}"`, not a filter chain) - real Ansible
+  # applies its one-level flatten regardless of how the source
+  # resolved to a list of lists.
+  it "with_items: over a direct template resolving to nested lists flattens one level" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          nested:
+            - ["pkgA"]
+            - ["pkgB"]
+        tasks:
+          - name: direct template flatten
+            ansible.builtin.debug:
+              msg: "item={{ item }}"
+            with_items: "{{ nested }}"
+      YAML
+
+    status.success?.should be_true
+    output.should contain("item=pkgA")
+    output.should contain("item=pkgB")
+    output.should_not contain("['pkgA']")
+    output.should_not contain("['pkgB']")
+  end
+
+  # loop: has no such legacy flatten - the nested lists must survive
+  # as items (same rule the array-literal example above already pins
+  # for the multi-source form, here for a single whole-source template).
+  it "loop: over the same nested-list template does NOT flatten" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          nested:
+            - ["pkgA"]
+            - ["pkgB"]
+        tasks:
+          - name: no flatten for loop
+            ansible.builtin.debug:
+              msg: "item={{ item }}"
+            loop: "{{ nested }}"
+      YAML
+
+    status.success?.should be_true
+    output.should contain("['pkgA']")
+    output.should contain("['pkgB']")
+  end
 end

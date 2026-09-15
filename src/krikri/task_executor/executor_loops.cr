@@ -150,6 +150,17 @@ module Krikri
         end
 
         parsed = parse_list_result(result, vars_context)
+        if parsed && kind == "with_items"
+          # Real Ansible's with_items: flattens its resolved list by one
+          # level - a filter chain like `results | map(attribute='stdout_
+          # lines') | list | unique` produces a list of one-element lists,
+          # and real ansible-playbook iterates the bare inner scalars, not
+          # the nested lists. Found via round 813350 (RedHatOfficial.
+          # rhel9_hipaa), whose `rpm --restore '{{ item }}'` task broke
+          # because item stayed a nested list where real Ansible had
+          # already flattened it to a scalar package name.
+          parsed = flatten_with_items_one_level(parsed)
+        end
         return parsed unless parsed.nil?
         # A filtered single-element array source (`with_items: ["{{ x |
         # dirname }}"]`, Oefenweb.ssh_keys, round 196) evaluates to a
@@ -183,7 +194,19 @@ module Krikri
         # "with_items"` case that (incorrectly, per this fresh live
         # check) assumed both directives shared the same strict-fail
         # rule for a non-array-wrapped scalar source.
-        value.as_a? || [value]
+        #
+        # Same one-level flatten as the filter-chain path above: real
+        # Ansible's with_items: splices any nested-list ELEMENT of the
+        # resolved list into the outer iteration (round 813350,
+        # RedHatOfficial.rhel9_hipaa's `rpm --restore '{{ item }}'`).
+        # Only applies when the resolution is an actual array - the
+        # scalar-wrapping fallback stays untouched (a scalar
+        # `with_items: "{{ myscalar }}"` still iterates once as-is).
+        if list = value.as_a?
+          flatten_with_items_one_level(list)
+        else
+          [value]
+        end
       when "loop"
         # A single-element array holding one bare `{{ var }}` span
         # (`loop: ["{{ scalar_var }}"]`) is what routed this whole task
