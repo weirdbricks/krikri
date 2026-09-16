@@ -1,0 +1,183 @@
+# assemble module edge cases. No extra packages needed. Each case
+# registers its result and prints a "C<n> key=value" debug line for
+# run.sh's diff extraction. failed=/changed=/on-disk behavior are what
+# matter; error-message WORDING may legitimately differ and is not a bug.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "C1 setup: fragments directory"
+      ansible.builtin.file:
+        path: /tmp/podman-diff-c-frag
+        state: directory
+
+    - name: "C1 setup the fragments files"
+      ansible.builtin.copy:
+        content: "{{ item.content }}"
+        dest: "/tmp/podman-diff-c-frag/{{ item.name }}"
+      loop:
+        - { name: "01-first.conf", content: "first\n" }
+        - { name: "02-second.conf", content: "second\n" }
+        - { name: "03-third.txt", content: "third\n" }
+        - { name: "README", content: "readme\n" }
+
+    - name: "C1 assemble all fragments (no regexp, should change)"
+      ansible.builtin.assemble:
+        src: /tmp/podman-diff-c-frag
+        dest: /tmp/podman-diff-c1-out.conf
+      register: c1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "C1 failed={{ c1.failed }} changed={{ c1.changed }}"
+    - name: "C1b check the assembled content"
+      ansible.builtin.command:
+        cmd: "cat /tmp/podman-diff-c1-out.conf"
+      register: c1b
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "C1b failed={{ c1b.failed }} rc={{ c1b.rc | default('none') }} has_first={{ 'first' in (c1b.stdout | default('')) }} has_readme={{ 'readme' in (c1b.stdout | default('')) }}"
+
+    - name: "C2 assemble again identically (idempotency, should not change)"
+      ansible.builtin.assemble:
+        src: /tmp/podman-diff-c-frag
+        dest: /tmp/podman-diff-c1-out.conf
+      register: c2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "C2 failed={{ c2.failed }} changed={{ c2.changed }}"
+
+    - name: "C3 assemble with regexp picking only .conf fragments"
+      ansible.builtin.assemble:
+        src: /tmp/podman-diff-c-frag
+        dest: /tmp/podman-diff-c3-out.conf
+        regexp: ".*\\.conf$"
+      register: c3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "C3 failed={{ c3.failed }} changed={{ c3.changed }}"
+    - name: "C3b check the regexp-filtered content (third.txt and README must be absent)"
+      ansible.builtin.command:
+        cmd: "cat /tmp/podman-diff-c3-out.conf"
+      register: c3b
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "C3b failed={{ c3b.failed }} rc={{ c3b.rc | default('none') }} has_first={{ 'first' in (c3b.stdout | default('')) }} has_third={{ 'third' in (c3b.stdout | default('')) }} has_readme={{ 'readme' in (c3b.stdout | default('')) }}"
+
+    - name: "C4 assemble with delimiter between fragments"
+      ansible.builtin.assemble:
+        src: /tmp/podman-diff-c-frag
+        dest: /tmp/podman-diff-c4-out.conf
+        delimiter: "---DELIM---"
+        regexp: ".*\\.conf$"
+      register: c4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "C4 failed={{ c4.failed }} changed={{ c4.changed }}"
+    - name: "C4b check the delimiter actually separates fragments"
+      ansible.builtin.command:
+        cmd: "cat /tmp/podman-diff-c4-out.conf"
+      register: c4b
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "C4b failed={{ c4b.failed }} rc={{ c4b.rc | default('none') }} delim_count={{ (c4b.stdout | default('') | regex_findall('---DELIM---')) | length }}"
+
+    - name: "C5 assemble from a src directory that does not exist (must fail)"
+      ansible.builtin.assemble:
+        src: /tmp/podman-diff-c5-nonexistent
+        dest: /tmp/podman-diff-c5-out.conf
+      register: c5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "C5 failed={{ c5.failed }} changed={{ c5.changed }}"
+
+    - name: "C6 assemble with regexp matching NOTHING (real Ansible fails: no fragments found)"
+      ansible.builtin.assemble:
+        src: /tmp/podman-diff-c-frag
+        dest: /tmp/podman-diff-c6-out.conf
+        regexp: "\\.nomatch-xyz$"
+      register: c6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "C6 failed={{ c6.failed }} changed={{ c6.changed }}"
+
+    - name: "C7 assemble with remote_src: false (explicit, local connection)"
+      ansible.builtin.assemble:
+        src: /tmp/podman-diff-c-frag
+        dest: /tmp/podman-diff-c7-out.conf
+        regexp: ".*\\.conf$"
+        remote_src: false
+      register: c7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "C7 failed={{ c7.failed }} changed={{ c7.changed }}"
+
+    - name: "C8 assemble with remote_src: true (explicit)"
+      ansible.builtin.assemble:
+        src: /tmp/podman-diff-c-frag
+        dest: /tmp/podman-diff-c8-out.conf
+        regexp: ".*\\.conf$"
+        remote_src: true
+      register: c8
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "C8 failed={{ c8.failed }} changed={{ c8.changed }}"
+    - name: "C8b verify the remote_src: true output content"
+      ansible.builtin.command:
+        cmd: "cat /tmp/podman-diff-c8-out.conf"
+      register: c8b
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "C8b failed={{ c8b.failed }} rc={{ c8b.rc | default('none') }} has_first={{ 'first' in (c8b.stdout | default('')) }} has_third={{ 'third' in (c8b.stdout | default('')) }}"
+
+    - name: "C9 assemble with mode: on a fresh dest (dest attrs applied)"
+      ansible.builtin.assemble:
+        src: /tmp/podman-diff-c-frag
+        dest: /tmp/podman-diff-c9-out.conf
+        regexp: ".*\\.conf$"
+        mode: "0600"
+      register: c9
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "C9 failed={{ c9.failed }} changed={{ c9.changed }} mode={{ c9.mode | default('none') }}"
+
+    - name: "C10 assemble with src pointing at a FILE, not a directory (must fail)"
+      ansible.builtin.assemble:
+        src: /tmp/podman-diff-c-frag/01-first.conf
+        dest: /tmp/podman-diff-c10-out.conf
+      register: c10
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "C10 failed={{ c10.failed }} changed={{ c10.changed }}"
+
+    - name: "C11 assemble with validate: pointing at a nonexistent validator (must fail)"
+      ansible.builtin.assemble:
+        src: /tmp/podman-diff-c-frag
+        dest: /tmp/podman-diff-c11-out.conf
+        regexp: ".*\\.conf$"
+        validate: "/nonexistent-validator-zzz %s"
+      register: c11
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "C11 failed={{ c11.failed }} changed={{ c11.changed }}"
+
+    - name: "C12 assemble with validate: using /bin/true (should succeed)"
+      ansible.builtin.assemble:
+        src: /tmp/podman-diff-c-frag
+        dest: /tmp/podman-diff-c12-out.conf
+        regexp: ".*\\.conf$"
+        validate: "/bin/true %s"
+      register: c12
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "C12 failed={{ c12.failed }} changed={{ c12.changed }}"
+
+    - name: "C13 assemble with validate: using /bin/false (validation must fail the task)"
+      ansible.builtin.assemble:
+        src: /tmp/podman-diff-c-frag
+        dest: /tmp/podman-diff-c13-out.conf
+        regexp: ".*\\.conf$"
+        validate: "/bin/false %s"
+      register: c13
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "C13 failed={{ c13.failed }} changed={{ c13.changed }}"
