@@ -35,6 +35,14 @@ module Krikri
   #   - the SSO response error walk (OpenID-style
   #     error/error_description, then OAuth-style error_code/error)
   #     reproduces the SDK's _get_sso_error
+  #   - the real module's AnsibleModule validation surface: state
+  #     choices, parameters.py type conversion for timeout (int),
+  #     insecure/compress/kerberos (bool) and headers/ovirt_auth (dict),
+  #     required_if's state-absent-needs-ovirt_auth, and the
+  #     "You must specify either 'url' or 'hostname'." check - which for
+  #     state=absent reads url/hostname from the PREVIOUS ovirt_auth
+  #     fact dict (with the same env fallbacks), the way the real module
+  #     re-points `params` at that dict
   #
   # Deliberately left out: Kerberos authentication (the
   # token-http-auth/GSSNEGOTIATE grant - kerberos: true fails with an
@@ -47,14 +55,23 @@ module Krikri
       return PluginResult.new(changed: false, failed: true,
         msg: "value of state must be one of: present, absent, got #{state}") unless ["present", "absent"].includes?(state)
 
+      if failure = validate_arg_types
+        return failure
+      end
+
       if state == "absent"
-        return revoke
+        # required_if: ('state', 'absent', ['ovirt_auth'])
+        raw = @params["ovirt_auth"]?
+        return PluginResult.new(changed: false, failed: true,
+          msg: "state is absent but all of the following are missing: ovirt_auth") unless raw
+        return revoke(raw)
       end
 
       url = param_or_env("url", "OVIRT_URL")
       hostname = param_or_env("hostname", "OVIRT_HOSTNAME")
       return PluginResult.new(changed: false, failed: true,
-        msg: "You must specify either 'url' or 'hostname'.") if !url || url.empty?
+        msg: "You must specify either 'url' or 'hostname'.") if url.nil? && hostname.nil?
+      url = "https://#{hostname}/ovirt-engine/api" if url.nil?
 
       username = param_or_env("username", "OVIRT_USERNAME") || ""
       password = param_or_env("password", "OVIRT_PASSWORD") || ""
@@ -91,27 +108,74 @@ module Krikri
         ansible_facts: JSON::Any.new({"ovirt_auth" => JSON::Any.new(facts)}))
     end
 
+    # AnsibleModule's parameter.py type conversion, which runs before the
+    # module body: timeout is int, insecure/compress/kerberos are bool,
+    # headers/ovirt_auth are dict (JSON object or k=v pairs).
+    private def validate_arg_types : PluginResult?
+      unless (@params["timeout"]? || "0").to_i32?
+        return PluginResult.new(changed: false, failed: true,
+          msg: "argument 'timeout' is of type <class 'str'> and we were unable to convert to int: " \
+               "<class 'str'> cannot be converted to an int")
+      end
+
+      valid_booleans = {"0", "1", "true", "off", "yes", "t", "false", "on", "f", "n", "y", "no"}
+      {"insecure", "compress", "kerberos"}.each do |param|
+        if (value = @params[param]?) && !valid_booleans.includes?(value.downcase)
+          return PluginResult.new(changed: false, failed: true,
+            msg: "argument '#{param}' is of type <class 'str'> and we were unable to convert to bool: " \
+                 "The value '#{value}' is not a valid boolean.  " \
+                 "Valid booleans include: 0, 1, 'f', 'on', 'n', 't', '1', 'false', 'y', 'true', 'off', 'yes', '0', 'no'")
+        end
+      end
+
+      {"headers", "ovirt_auth"}.each do |param|
+        if (value = @params[param]?) && !dict_param?(value)
+          return PluginResult.new(changed: false, failed: true,
+            msg: "argument '#{param}' is of type <class 'str'> and we were unable to convert to dict: " \
+                 "dictionary requested, could not parse JSON or key=value")
+        end
+      end
+
+      nil
+    end
+
+    private def dict_param?(value : String) : Bool
+      JSON.parse(value).as_h? != nil
+    rescue
+      value.includes?("=")
+    end
+
     # state=absent: real module takes the previous run's ovirt_auth
     # fact, calls connection.close(logout=True) - revoking the token -
-    # and exits with an empty ovirt_auth fact.
-    private def revoke : PluginResult
-      raw = @params["ovirt_auth"]?
-      return PluginResult.new(changed: false, failed: true,
-        msg: "state is absent but all of the following are missing: ovirt_auth") unless raw
+    # and exits with an empty ovirt_auth fact. The url/hostname (and
+    # credential) resolution re-points at that dict, env vars as
+    # fallback, exactly like the real module's params swap.
+    private def revoke(raw : String) : PluginResult
+      auth = JSON.parse(raw).as_h
 
-      begin
-        auth = JSON.parse(raw).as_h
-      rescue
-        return PluginResult.new(changed: false, failed: true,
-          msg: "ovirt_auth must be a dict with 'token' and 'url' entries")
+      url = auth["url"]?.try(&.as_s?).presence || ENV["OVIRT_URL"]?
+      hostname = auth["hostname"]?.try(&.as_s?).presence || ENV["OVIRT_HOSTNAME"]?
+      return PluginResult.new(changed: false, failed: true,
+        msg: "You must specify either 'url' or 'hostname'.") if url.nil? && hostname.nil?
+      url = "https://#{hostname}/ovirt-engine/api" if url.nil?
+
+      token = auth["token"]?.try(&.as_s?).presence || ENV["OVIRT_TOKEN"]?
+      ca_file = auth["ca_file"]?.try(&.as_s?).presence || ENV["OVIRT_CAFILE"]?
+      insecure_fact = auth["insecure"]?.try(&.raw)
+      insecure = insecure_fact.is_a?(Bool) ? insecure_fact : !ca_file
+
+      unless token
+        # no token in the fact: the real module's authenticate() falls
+        # back to a fresh password-grant login with the dict/env creds
+        username = auth["username"]?.try(&.as_s?).presence || ENV["OVIRT_USERNAME"]? || ""
+        password = auth["password"]?.try(&.as_s?).presence || ENV["OVIRT_PASSWORD"]? || ""
+        tok = request_token(url.not_nil!, username, password, ca_file, insecure)
+        return tok if tok.is_a?(PluginResult)
+        token = tok.as(String)
       end
-      token = auth["token"]?.try(&.as_s?)
-      url = auth["url"]?.try(&.as_s?)
-      return PluginResult.new(changed: false, failed: true,
-        msg: "ovirt_auth must be a dict with 'token' and 'url' entries") unless token && url
 
-      response = post_form(PluginHelpers::OvirtAuthCommand.sso_url(url, revoke: true),
-        PluginHelpers::OvirtAuthCommand.revoke_body(token), nil, false)
+      response = post_form(PluginHelpers::OvirtAuthCommand.sso_url(url.not_nil!, revoke: true),
+        PluginHelpers::OvirtAuthCommand.revoke_body(token.not_nil!), ca_file, insecure)
       if response.is_a?(PluginResult)
         return response
       end
