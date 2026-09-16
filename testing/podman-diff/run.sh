@@ -220,6 +220,18 @@ if printf '%s\n' "${cases[@]}" | grep -q '^make'; then
   done
 fi
 
+# nsupdate cases need dnspython in the REAL container - real
+# community.general.nsupdate fails with "Failed to import the required
+# Python library (dnspython)." before any behavior otherwise. krikri
+# speaks the DNS wire format natively. No DNS server runs in either
+# container; the network cases exercise the refused-connection wording.
+# Gated on the requested case list like the expect cases.
+if printf '%s\n' "${cases[@]}" | grep -q '^nsupdate'; then
+  log "installing python3-dnspython for nsupdate cases"
+  podman exec "$NAME_A" bash -c "apt-get install -y -qq --no-install-recommends python3-dnspython >/dev/null" \
+    || { log "FATAL: python3-dnspython install failed"; exit 1; }
+fi
+
 # ec2_metadata_facts cases need the amazon.aws collection in the REAL
 # container (collection module, not shipped with ansible-core).
 # Validation-only + unreachable-endpoint cases - the real IMDS endpoint

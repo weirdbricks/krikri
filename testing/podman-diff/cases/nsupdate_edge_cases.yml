@@ -1,0 +1,220 @@
+# community.general.nsupdate edge cases. The real module needs dnspython
+# (run.sh gated block) - without it EVERY case fails on the import and
+# nothing else is reachable. No DNS server runs in either container, so
+# the network cases exercise the real module's failure wording for a
+# refused connection (server 127.0.0.1, nothing listening on 53).
+#
+# Real nsupdate.py specifics under test:
+# - parameters.py "missing required arguments" for server/record
+# - record-empty check ("record cannot be empty.") and the choices
+#   wordings for state/protocol/key_algorithm (note the "got:" colon)
+# - key_name without key_secret -> "Missing key_secret"; a non-base64
+#   secret -> binascii's message inside "TSIG key error: ..."
+# - relative record + no zone -> "record must be absolute when omitting
+#   zone parameter"
+# - port type=int conversion failure wording
+# - gss-tsig + key_name -> "key_name cannot be used with GSS-TSIG";
+#   gss-tsig alone fails on the missing gssapi library
+# - unknown record type fails with dnspython's text inside "Record
+#   error: ..." BEFORE any network traffic (message-build time)
+# - value validation happens at moment-of-use: with no server, a
+#   malformed/missing value still fails with the CONNECTION error first
+#   (real only builds rdata inside create_record, after the
+#   record-exists probe), and a refused connection fails with
+#   Python's own OSError class name and errno text
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "N1 missing server"
+      community.general.nsupdate:
+        record: "ansible.example.org."
+        value: "192.168.1.1"
+      register: n1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "N1 failed={{ n1.failed | default('absent') }} msg={{ n1.msg | default('absent') }}"
+
+    - name: "N2 missing record"
+      community.general.nsupdate:
+        server: "127.0.0.1"
+        value: "192.168.1.1"
+      register: n2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "N2 failed={{ n2.failed | default('absent') }} msg={{ n2.msg | default('absent') }}"
+
+    - name: "N3 empty record"
+      community.general.nsupdate:
+        server: "127.0.0.1"
+        record: ""
+      register: n3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "N3 failed={{ n3.failed | default('absent') }} msg={{ n3.msg | default('absent') }}"
+
+    - name: "N4 invalid state"
+      community.general.nsupdate:
+        server: "127.0.0.1"
+        record: "ansible.example.org."
+        state: "bogus"
+      register: n4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "N4 failed={{ n4.failed | default('absent') }} msg={{ n4.msg | default('absent') }}"
+
+    - name: "N5 invalid protocol"
+      community.general.nsupdate:
+        server: "127.0.0.1"
+        record: "ansible.example.org."
+        protocol: "sctp"
+      register: n5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "N5 failed={{ n5.failed | default('absent') }} msg={{ n5.msg | default('absent') }}"
+
+    - name: "N6 invalid key_algorithm"
+      community.general.nsupdate:
+        server: "127.0.0.1"
+        record: "ansible.example.org."
+        key_algorithm: "hmac-bad"
+      register: n6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "N6 failed={{ n6.failed | default('absent') }} msg={{ n6.msg | default('absent') }}"
+
+    - name: "N7 key_name without key_secret"
+      community.general.nsupdate:
+        server: "127.0.0.1"
+        record: "ansible.example.org."
+        zone: "example.org."
+        key_name: "nsupdate"
+      register: n7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "N7 failed={{ n7.failed | default('absent') }} msg={{ n7.msg | default('absent') }}"
+
+    - name: "N8 key_name with a non-base64 key_secret"
+      community.general.nsupdate:
+        server: "127.0.0.1"
+        record: "ansible.example.org."
+        zone: "example.org."
+        key_name: "nsupdate"
+        key_secret: "!!!not-base64!!!"
+      register: n8
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "N8 failed={{ n8.failed | default('absent') }} msg={{ n8.msg | replace('\n', ' | ') }}"
+
+    - name: "N9 relative record, zone omitted"
+      community.general.nsupdate:
+        server: "127.0.0.1"
+        record: "ansible.example.org"
+        value: "192.168.1.1"
+      register: n9
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "N9 failed={{ n9.failed | default('absent') }} msg={{ n9.msg | default('absent') }}"
+
+    - name: "N10 port not an int"
+      community.general.nsupdate:
+        server: "127.0.0.1"
+        record: "ansible.example.org."
+        zone: "example.org."
+        port: "not-a-port"
+      register: n10
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "N10 failed={{ n10.failed | default('absent') }} msg={{ n10.msg | default('absent') }}"
+
+    - name: "N11 gss-tsig with key_name"
+      community.general.nsupdate:
+        server: "127.0.0.1"
+        record: "ansible.example.org."
+        zone: "example.org."
+        key_algorithm: "gss-tsig"
+        key_name: "nsupdate"
+      register: n11
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "N11 failed={{ n11.failed | default('absent') }} msg={{ n11.msg | default('absent') }}"
+
+    - name: "N12 gss-tsig alone (gssapi lib)"
+      community.general.nsupdate:
+        server: "127.0.0.1"
+        record: "ansible.example.org."
+        zone: "example.org."
+        key_algorithm: "gss-tsig"
+      register: n12
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "N12 failed={{ n12.failed | default('absent') }} msg={{ n12.msg | default('absent') }}"
+
+    - name: "N13 refused connection (tcp)"
+      community.general.nsupdate:
+        server: "127.0.0.1"
+        record: "ansible.example.org."
+        zone: "example.org."
+        value: "192.168.1.1"
+      register: n13
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "N13 failed={{ n13.failed | default('absent') }} msg={{ n13.msg | default('absent') }}"
+
+    - name: "N14 unknown record type fails at message-build time, pre-network"
+      community.general.nsupdate:
+        server: "127.0.0.1"
+        record: "ansible.example.org."
+        zone: "example.org."
+        type: "NOTATYPE"
+        value: "192.168.1.1"
+      register: n14
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "N14 failed={{ n14.failed | default('absent') }} msg={{ n14.msg | default('absent') }}"
+
+    - name: "N15 malformed value: connection error comes first (moment-of-use validation)"
+      community.general.nsupdate:
+        server: "127.0.0.1"
+        record: "ansible.example.org."
+        zone: "example.org."
+        type: "A"
+        value: "not-an-ip"
+      register: n15
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "N15 failed={{ n15.failed | default('absent') }} msg={{ n15.msg | default('absent') }}"
+
+    - name: "N16 missing value: connection error comes first"
+      community.general.nsupdate:
+        server: "127.0.0.1"
+        record: "ansible.example.org."
+        zone: "example.org."
+      register: n16
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "N16 failed={{ n16.failed | default('absent') }} msg={{ n16.msg | default('absent') }}"
+
+    - name: "N17 refused connection (udp)"
+      community.general.nsupdate:
+        server: "127.0.0.1"
+        record: "ansible.example.org."
+        zone: "example.org."
+        value: "192.168.1.1"
+        protocol: "udp"
+      register: n17
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "N17 failed={{ n17.failed | default('absent') }} msg={{ n17.msg | default('absent') }}"
+
+    - name: "N18 check mode still needs the server (probe first)"
+      community.general.nsupdate:
+        server: "127.0.0.1"
+        record: "ansible.example.org."
+        zone: "example.org."
+        value: "192.168.1.1"
+      check_mode: true
+      register: n18
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "N18 failed={{ n18.failed | default('absent') }} msg={{ n18.msg | default('absent') }}"

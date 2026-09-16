@@ -46,38 +46,47 @@ module Krikri
   class NsupdatePlugin < BasePlugin
     @tsig : PluginHelpers::NsupdateMessage::Tsig?
     @dns_rc = 0
+    @query_timeout = 10.0
 
     def execute : PluginResult
       server = @params["server"]?
       return PluginResult.new(changed: false, failed: true,
-        msg: "missing required argument: server") unless server
+        msg: "missing required arguments: server") unless server
       record = @params["record"]?
       return PluginResult.new(changed: false, failed: true,
-        msg: "missing required argument: record") unless record
+        msg: "missing required arguments: record") unless record
+
+      # real validation order: AnsibleModule's parameter.py type coercion
+      # runs before the choices checks and before the module body's own
+      # record-empty check
+      port = (@params["port"]? || "53").to_i32?
       return PluginResult.new(changed: false, failed: true,
-        msg: "record cannot be empty.") if record.empty?
+        msg: "argument 'port' is of type <class 'str'> and we were unable to convert to int: <class 'str'> cannot be converted to an int") unless port
+      ttl = (@params["ttl"]? || "3600").to_i32?
+      return PluginResult.new(changed: false, failed: true,
+        msg: "argument 'ttl' is of type <class 'str'> and we were unable to convert to int: <class 'str'> cannot be converted to an int") unless ttl
+      timeout = (@params["timeout"]? || "10").to_f?
+      return PluginResult.new(changed: false, failed: true,
+        msg: "argument 'timeout' is of type <class 'str'> and we were unable to convert to float: <class 'str'> cannot be converted to a float") unless timeout
+      @query_timeout = timeout.not_nil!
 
       state = @params["state"]? || "present"
       return PluginResult.new(changed: false, failed: true,
-        msg: "value of state must be one of: present, absent, got #{state}") unless ["present", "absent"].includes?(state)
+        msg: "value of state must be one of: present, absent, got: #{state}") unless ["present", "absent"].includes?(state)
 
-      port = (@params["port"]? || "53").to_i? || 53
       record_type = @params["type"]? || "A"
-      ttl = (@params["ttl"]? || "3600").to_i? || 3600
       protocol = @params["protocol"]? || "tcp"
       return PluginResult.new(changed: false, failed: true,
-        msg: "value of protocol must be one of: tcp, udp, got #{protocol}") unless ["tcp", "udp"].includes?(protocol)
-      unless PluginHelpers::NsupdateMessage::TYPES.has_key?(record_type.upcase)
-        return PluginResult.new(changed: false, failed: true,
-          msg: "Record error: unknown record type #{record_type}")
-      end
-      type_code = PluginHelpers::NsupdateMessage::TYPES[record_type.upcase].to_i32
+        msg: "value of protocol must be one of: tcp, udp, got: #{protocol}") unless ["tcp", "udp"].includes?(protocol)
 
       key_algorithm = @params["key_algorithm"]? || "hmac-md5"
       known_algorithms = ["HMAC-MD5.SIG-ALG.REG.INT", "hmac-md5", "hmac-sha1", "hmac-sha224",
                           "hmac-sha256", "hmac-sha384", "hmac-sha512", "gss-tsig"]
       return PluginResult.new(changed: false, failed: true,
-        msg: "value of key_algorithm must be one of: #{known_algorithms.join(", ")}, got #{key_algorithm}") unless known_algorithms.includes?(key_algorithm)
+        msg: "value of key_algorithm must be one of: #{known_algorithms.join(", ")}, got: #{key_algorithm}") unless known_algorithms.includes?(key_algorithm)
+
+      return PluginResult.new(changed: false, failed: true,
+        msg: "record cannot be empty.") if record.empty?
 
       @tsig = nil
       tsig = build_tsig(key_algorithm)
@@ -85,27 +94,8 @@ module Krikri
       @tsig = tsig
 
       values = parse_values
-      if state == "present" && values.nil?
-        # matches the real module's failure at the moment of use
-        return PluginResult.new(changed: false, failed: true,
-          msg: "value needed when state=present")
-      end
       if record_type.upcase == "TXT" && (vals = values)
         values = vals.map { |v| PluginHelpers::NsupdateMessage.txt_helper(v) }
-      end
-
-      # the real module builds dnspython rdata objects from the values
-      # (failing with 'Invalid/malformed value') before touching the
-      # network - validate up front so bad values never reach a server
-      if (vals = values)
-        vals.each do |entry|
-          begin
-            PluginHelpers::NsupdateMessage.encode_rdata(record_type.upcase, entry)
-          rescue PluginHelpers::NsupdateMessage::MalformedValueError
-            return PluginResult.new(changed: false, failed: true,
-              msg: "Invalid/malformed value")
-          end
-        end
       end
 
       zone = @params["zone"]?
@@ -121,8 +111,17 @@ module Krikri
 
       fqdn = record.ends_with?(".") ? record : "#{record}.#{zone}"
 
+      # the real module only parses the record type inside record_exists
+      # (dnspython raises UnknownRdatatype at message-build time, after the
+      # TSIG/zone setup, before any network traffic)
+      unless PluginHelpers::NsupdateMessage::TYPES.has_key?(record_type.upcase)
+        return PluginResult.new(changed: false, failed: true,
+          msg: "Record error: DNS resource record type is unknown.")
+      end
+      type_code = PluginHelpers::NsupdateMessage::TYPES[record_type.upcase].to_i32
+
       result = state == "absent" ? remove_record(server.not_nil!, port, protocol, zone.as(String), record, type_code) :
-                create_or_update_record(server.not_nil!, port, protocol, zone.as(String), record, fqdn, type_code, ttl, values.not_nil!)
+                create_or_update_record(server.not_nil!, port, protocol, zone.as(String), record, fqdn, type_code, ttl, values)
       return result if result.is_a?(PluginResult)
 
       changed, failed = result.as(Tuple(Bool, Bool))
@@ -146,6 +145,10 @@ module Krikri
 
     private def build_tsig(key_algorithm : String) : (PluginHelpers::NsupdateMessage::Tsig | PluginResult | Nil)
       if key_algorithm == "gss-tsig"
+        # the real module checks the key_name incompatibility before
+        # importing gssapi, so this fires even without the library
+        return PluginResult.new(changed: false, failed: true,
+          msg: "key_name cannot be used with GSS-TSIG") if @params["key_name"]?
         return PluginResult.new(changed: false, failed: true,
           msg: "gss-tsig authentication is not supported by this implementation")
       end
@@ -190,9 +193,9 @@ module Krikri
     private def query_wire(server : String, port : Int32, protocol : String, message : Bytes) : (Bytes | PluginResult)
       begin
         if protocol == "tcp"
-          socket = TCPSocket.new(server, port, connect_timeout: 10)
-          socket.read_timeout = 10
-          socket.write_timeout = 10
+          socket = TCPSocket.new(server, port, connect_timeout: @query_timeout.seconds)
+          socket.read_timeout = @query_timeout.seconds
+          socket.write_timeout = @query_timeout.seconds
           begin
             header = IO::Memory.new
             header.write_bytes(message.size.to_u16, IO::ByteFormat::NetworkEndian)
@@ -211,8 +214,8 @@ module Krikri
         else
           socket = UDPSocket.new
           socket.connect(server, port)
-          socket.read_timeout = 10
-          socket.write_timeout = 10
+          socket.read_timeout = @query_timeout.seconds
+          socket.write_timeout = @query_timeout.seconds
           begin
             socket.write(message)
             socket.flush
@@ -312,12 +315,24 @@ module Krikri
       return 0 if @dns_rc != 0
 
       return 1 if @params["state"]? == "absent"
-      return 0 unless values
+
+      # the real module's value checks live at this same spot - after the
+      # first probe round trip - so with an unreachable server a missing or
+      # malformed value fails with the connection error first
+      unless values
+        return PluginResult.new(changed: false, failed: true,
+          msg: "value needed when state=present")
+      end
 
       # "RRSET exists with this rdata" per value
       prerequisites = values.map do |entry|
-        PluginHelpers::NsupdateMessage.prerequisite_present_with(record, type_code,
-          PluginHelpers::NsupdateMessage.encode_rdata(type_name, entry))
+        rdata = begin
+          PluginHelpers::NsupdateMessage.encode_rdata(type_name, entry)
+        rescue PluginHelpers::NsupdateMessage::MalformedValueError
+          return PluginResult.new(changed: false, failed: true,
+            msg: "Invalid/malformed value")
+        end
+        PluginHelpers::NsupdateMessage.prerequisite_present_with(record, type_code, rdata)
       end
 
       failure = send_update(server, port, protocol, zone, prerequisites, [] of PluginHelpers::NsupdateMessage::RR)
@@ -359,7 +374,7 @@ module Krikri
 
     private def create_or_update_record(server : String, port : Int32, protocol : String,
                                         zone : String, record : String, fqdn : String,
-                                        type_code : Int32, ttl : Int32, values : Array(String)) : (Tuple(Bool, Bool) | PluginResult)
+                                        type_code : Int32, ttl : Int32, values : Array(String)?) : (Tuple(Bool, Bool) | PluginResult)
       @ttl_value = ttl
       @type_name = (@params["type"]? || "A").upcase
 
@@ -375,12 +390,20 @@ module Krikri
 
       rcode = 0
       if exists == 0
-        rcode = create_record(server, port, protocol, zone, record, type_code, ttl, values)
+        unless values
+          return PluginResult.new(changed: false, failed: true,
+            msg: "value needed when state=present")
+        end
+        rcode = create_record(server, port, protocol, zone, record, type_code, ttl, values.not_nil!)
         return PluginResult.new(changed: false, failed: true,
           msg: "Failed to create DNS record (rc: #{@dns_rc})",
           dns_rc: @dns_rc, dns_rc_str: PluginHelpers::NsupdateMessage.rcode_to_text(@dns_rc)) if rcode != 0
       elsif exists == 2
-        rcode = modify_record(server, port, protocol, zone, record, type_code, ttl, values)
+        unless values
+          return PluginResult.new(changed: false, failed: true,
+            msg: "value needed when state=present")
+        end
+        rcode = modify_record(server, port, protocol, zone, record, type_code, ttl, values.not_nil!)
         return PluginResult.new(changed: false, failed: true,
           msg: "Failed to update DNS record (rc: #{@dns_rc})",
           dns_rc: @dns_rc, dns_rc_str: PluginHelpers::NsupdateMessage.rcode_to_text(@dns_rc)) if rcode != 0

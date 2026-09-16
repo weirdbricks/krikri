@@ -44,13 +44,18 @@ describe "nsupdate plugin" do
     result["msg"].as_s.should contain("value of protocol must be one of")
   end
 
-  it "fails on an unknown record type" do
+  it "fails on an unknown record type (pre-network, dnspython wording)" do
+    # DHCID is a valid dnspython type (real Ansible accepts it and proceeds
+    # to the network); the unknown-type wording is confirmed for truly
+    # unknown types via podman-diff case N14 - and it fires before any
+    # traffic, so the unreachable server never matters here.
     result = PluginSpecHelper.run("nsupdate", {
-      "server" => "127.0.0.1", "record" => "host.example.com.", "type" => "DHCID",
+      "server" => "127.0.0.1", "record" => "host.example.com.",
+      "zone"   => "example.com.", "type" => "NOTATYPE",
     })
 
     result["failed"].as_bool.should be_true
-    result["msg"].as_s.should contain("unknown record type")
+    result["msg"].as_s.should eq("Record error: DNS resource record type is unknown.")
   end
 
   it "fails on an invalid key_algorithm" do
@@ -71,13 +76,17 @@ describe "nsupdate plugin" do
     result["msg"].as_s.should contain("gss-tsig")
   end
 
-  it "fails when state=present without a value" do
+  it "reports the connection error before a missing value (moment-of-use)" do
+    # real nsupdate only checks the value inside create_record, after the
+    # record-exists probe round trip - with no server, the connection
+    # error wins (podman-diff case N16)
     result = PluginSpecHelper.run("nsupdate", {
-      "server" => "127.0.0.1", "record" => "host.example.com.", "state" => "present",
+      "server" => "127.0.0.1", "port" => "1",
+      "record" => "host.example.com.", "zone" => "example.com.", "state" => "present",
     })
 
     result["failed"].as_bool.should be_true
-    result["msg"].as_s.should contain("value needed when state=present")
+    result["msg"].as_s.should contain("DNS server error")
   end
 
   it "fails cleanly when the DNS server refuses the connection" do
@@ -90,7 +99,9 @@ describe "nsupdate plugin" do
     result["msg"].as_s.should contain("DNS server error")
   end
 
-  it "fails with Invalid/malformed value for a bad record value" do
+  it "reports the connection error before a malformed value (moment-of-use)" do
+    # same moment-of-use validation: the connection error wins first
+    # (podman-diff case N15)
     result = PluginSpecHelper.run("nsupdate", {
       "server" => "127.0.0.1", "port" => "1",
       "record" => "host.example.com.", "zone" => "example.com.",
@@ -98,6 +109,6 @@ describe "nsupdate plugin" do
     })
 
     result["failed"].as_bool.should be_true
-    result["msg"].as_s.should contain("Invalid/malformed value")
+    result["msg"].as_s.should contain("DNS server error")
   end
 end
