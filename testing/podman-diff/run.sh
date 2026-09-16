@@ -342,6 +342,25 @@ if printf '%s\n' "${cases[@]}" | grep -q '^known_hosts'; then
   done
 fi
 
+# py_module cases need the playbook-dir library/ fixture modules seeded
+# into BOTH containers BEFORE ansible-playbook loads the playbook:
+# real Ansible resolves a task's module name at playbook-LOAD time
+# against the on-disk library/ (a module written by an earlier playbook
+# task is invisible to it -> "ERROR! couldn't resolve module/action",
+# rc=4, zero tasks run), while krikri resolves lazily per task. The
+# fixtures live in library/ next to run.sh. Gated on the requested
+# case list like the mysql cases above.
+if printf '%s\n' "${cases[@]}" | grep -q '^py_module'; then
+  log "seeding library/ fixture modules for py_module cases"
+  for c in "$NAME_A" "$NAME_B"; do
+    podman exec "$c" mkdir -p /work/library
+    for f in "$DIFF_DIR"/library/*.py; do
+      podman cp "$f" "$c:/work/library/$(basename "$f")" >/dev/null \
+        || { log "FATAL: library fixture copy failed in $c"; exit 1; }
+    done
+  done
+fi
+
 overall_rc=0
 for case_file in "${cases[@]}"; do
   case_name="${case_file%.yml}"

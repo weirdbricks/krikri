@@ -1,0 +1,64 @@
+# py_module (role-private library/<name>.py) edge cases. The fixture
+# modules are seeded into /work/library/ (the playbook-dir library/
+# search root BOTH engines share) by run.sh's py_module gated block -
+# BEFORE playbook load, because real Ansible resolves module names at
+# load time and cannot see modules written by earlier playbook tasks.
+# Scenarios: a trivially-succeeding module, a module that raises, a
+# module that prints no JSON (no result JSON -> MODULE FAILURE on
+# both engines), and a new-style AnsibleModule script exercising real
+# argument passing (krikri feeds args via the stdin JSON wrapper,
+# real Ansible via AnsiballZ - same failed=/changed= either way).
+# Msg wording differs and is not compared; only failed=/changed=
+# matter. Prefix P.
+# (A missing library/ source is a separate case file,
+# py_module_missing.yml - real Ansible aborts at playbook LOAD on an
+# unresolvable name, so it cannot share a playbook with the
+# succeeding scenarios.)
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "P1 module that succeeds"
+      krikri_ok:
+      register: p1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P1 failed={{ p1.failed | default('none') }} changed={{ p1.changed | default('none') }}"
+
+    - name: "P2 module that raises"
+      krikri_crash:
+      register: p2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P2 failed={{ p2.failed | default('none') }} changed={{ p2.changed | default('none') }}"
+
+    - name: "P3 module printing no JSON"
+      krikri_badjson:
+      register: p3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P3 failed={{ p3.failed | default('none') }} changed={{ p3.changed | default('none') }}"
+
+    - name: "P4 new-style module with required arg"
+      krikri_args:
+        name: krikri
+      register: p4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P4 failed={{ p4.failed | default('none') }} changed={{ p4.changed | default('none') }}"
+
+    # Deliberately NO shebang on this fixture (krikri_noshebang.py):
+    # real Ansible fails it controller-side with "module (name) is
+    # missing interpreter line" (a non-new-style module payload needs
+    # a #! first line). The debug prints failed= only - real's
+    # controller-side error result carries no changed key at all, so
+    # printing changed= would diff changed=none (real) against
+    # changed=False (krikri), a result-shape artifact of the same
+    # boolean.
+    - name: "P5 old-style module with no shebang"
+      krikri_noshebang:
+      register: p5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P5 failed={{ p5.failed | default('none') }}"
+

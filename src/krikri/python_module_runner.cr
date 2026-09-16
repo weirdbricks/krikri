@@ -74,6 +74,22 @@ module Krikri
         source.includes?("ansible.module_utils.basic")
     end
 
+    # Real Ansible refuses to ship a module payload whose first line is
+    # not a `#!` interpreter line: ActionBase._execute_module's
+    # `if not module_shebang and module_style != 'binary'` guard raises
+    # "module (name) is missing interpreter line" as a controller-side
+    # AnsibleError (failed task, nothing executed on the target).
+    # New-style modules are exempt in practice - the AnsiballZ wrapper
+    # embeds its own shebang. This engine runs the raw script with the
+    # target's python3 instead of honoring the file's own line, so
+    # without this guard a shebangless old-style module - which real
+    # ansible-playbook FAILS - silently succeeded (found by the
+    # py_module podman-diff edge cases: only the new-style fixture
+    # survived the real side without a shebang).
+    def missing_interpreter_line?(source : String, new_style : Bool) : Bool
+      !new_style && !source.lines.first?.try(&.starts_with?("#!"))
+    end
+
     # The module's argument dict: the substituted task params (already
     # stringified by the parser) re-typed as JSON where they parse -
     # the parser JSON-encodes list/dict-valued params verbatim, so
