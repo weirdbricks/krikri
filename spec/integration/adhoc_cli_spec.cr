@@ -106,18 +106,22 @@ describe "krikri ad-hoc CLI" do
   end
 
   # Ad-hoc result shape for command/shell, matched against real ansible's
-  # own ad-hoc output (2026-09-13 sweep, ansible-core 2.19.4):
+  # own ad-hoc output (re-verified 2026-09-16, ansible-core 2.19.11,
+  # matching command.py's r['msg'] = '' initialization + exit_json):
   # `ansible localhost -c local -m command -a "echo hi" -t <dir>` writes
-  # {"changed": true, "cmd": ["echo", "hi"], "rc": 0, "stderr": "",
-  # "stderr_lines": [], "stdout": "hi", "stdout_lines": ["hi"], ...} -
-  # cmd is the argv LIST for command and the raw STRING for shell, the
-  # *_lines keys are present, and msg is ABSENT on success (real Ansible's
-  # command/shell never set msg on a successful run). The ad-hoc path
-  # dumps the plugin's raw result verbatim, so these plugin-side keys are
-  # what the tree file - and the SUCCESS => JSON dump for non-command-
-  # shaped results - must carry.
+  # {"changed": true, "cmd": ["echo", "hi"], "rc": 0, "msg": "",
+  # "stderr": "", "stderr_lines": [], "stdout": "hi",
+  # "stdout_lines": ["hi"], ...} - cmd is the argv LIST for command and
+  # the raw STRING for shell, the *_lines keys are present, and msg is
+  # an explicit EMPTY STRING on success (real command.py initializes
+  # r['msg'] = '' and exits it verbatim; the earlier "msg is ABSENT"
+  # reading of the 2026-09-13 sweep was wrong - both plugins now emit it
+  # via include_empty_msg). The ad-hoc path dumps the plugin's raw
+  # result verbatim, so these plugin-side keys are what the tree file -
+  # and the SUCCESS => JSON dump for non-command-shaped results - must
+  # carry.
   describe "command/shell ad-hoc result shape" do
-    it "command carries cmd as an argv list, stdout_lines/stderr_lines, and no msg on success" do
+    it "command carries cmd as an argv list, stdout_lines/stderr_lines, and an empty msg on success" do
       tree = File.join(PROJECT_ROOT, "spec", "tmp", "adhoc-command-shape")
       FileUtils.rm_rf(tree)
       status, _ = run_adhoc(["localhost", "-i", INVENTORY, "-c", "local", "-t", tree, "-m", "command", "-a", "echo hi"])
@@ -130,13 +134,13 @@ describe "krikri ad-hoc CLI" do
         result["stderr_lines"].as_a.map(&.as_s).should eq([] of String)
         result["rc"].as_i.should eq(0)
         result["changed"].as_bool.should be_true
-        result["msg"]?.should be_nil
+        result["msg"].as_s.should eq("")
       ensure
         FileUtils.rm_rf(tree)
       end
     end
 
-    it "shell carries cmd as the raw string, stdout_lines/stderr_lines, and no msg on success" do
+    it "shell carries cmd as the raw string, stdout_lines/stderr_lines, and an empty msg on success" do
       tree = File.join(PROJECT_ROOT, "spec", "tmp", "adhoc-shell-shape")
       FileUtils.rm_rf(tree)
       status, _ = run_adhoc(["localhost", "-i", INVENTORY, "-c", "local", "-t", tree, "-m", "shell", "-a", "echo hi && echo bye"])
@@ -150,7 +154,7 @@ describe "krikri ad-hoc CLI" do
         result["stderr_lines"].as_a.map(&.as_s).should eq([] of String)
         result["rc"].as_i.should eq(0)
         result["changed"].as_bool.should be_true
-        result["msg"]?.should be_nil
+        result["msg"].as_s.should eq("")
       ensure
         FileUtils.rm_rf(tree)
       end

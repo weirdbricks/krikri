@@ -23,7 +23,7 @@ describe "lvol plugin" do
     result = PluginSpecHelper.run("lvol", {"vg" => "vg0", "lv" => "test", "state" => "bogus"})
 
     result["failed"].as_bool.should be_true
-    result["msg"].as_s.should contain("state must be 'present' or 'absent'")
+    result["msg"].as_s.should eq("value of state must be one of: absent, present, got: bogus")
   end
 
   it "fails on a bad size specification before touching LVM" do

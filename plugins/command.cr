@@ -425,10 +425,13 @@ module Krikri
       # argv LIST itself, stdout_lines/stderr_lines are derived here
       # (module-side, exactly where real Ansible's command.py sets them)
       # from the same splitlines() semantics the executor used to derive
-      # them centrally from (Python's str.splitlines()), and msg is left
-      # empty on success - real Ansible's command module NEVER sets msg on
-      # success (PluginResult omits an empty msg from the wire JSON), and
-      # the previous "Command executed successfully" text showed up as a
+      # them centrally from (Python's str.splitlines()), and msg is an
+      # explicit "" on success - real command.py initializes r['msg'] =
+      # '' and exit_json's it verbatim (live-verified: both
+      # `ansible -m command` and `-m shell` ad-hoc successes carry
+      # "msg": ""), so include_empty_msg keeps the key on the wire
+      # instead of PluginResult's omit-empty-msg default dropping it.
+      # The previous "Command executed successfully" text showed up as a
       # nonstandard key in ad-hoc (`ansible -m command`) result output.
       # Crystal's String#rstrip(set) strips trailing chars from the set,
       # exactly like Python's str.rstrip("\r\n").
@@ -442,6 +445,7 @@ module Krikri
         changed: true,
         failed: exit_code != 0,
         msg: exit_code == 0 ? "" : "Command failed with exit code #{exit_code}",
+        include_empty_msg: true,
         cmd: cmd_parts,
         stdout: final_stdout,
         stdout_lines: PluginHelpers::AnsibleSplitlines.split(final_stdout),

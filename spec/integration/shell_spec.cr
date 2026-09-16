@@ -136,19 +136,24 @@ describe "shell plugin" do
     result["stdout"].as_s.should eq("a\nb\n\n\n")
   end
 
-  # Proactive param-coverage pass: real Ansible REJECTS
-  # `expand_argument_vars:` on shell outright - the shell module's own
-  # argspec doesn't include it (only command's does), so the task fails
-  # before the command runs with exactly "Unsupported parameters for
-  # (shell) module: expand_argument_vars" (live-verified against
-  # ansible-core 2.19.4; note the message carries no "Supported
-  # parameters include" tail, unlike the warn: rejection). Matching that
-  # rejection IS the real-Ansible behavior, so that is what's implemented.
+  # Real Ansible REJECTS `expand_argument_vars:` on shell outright - the
+  # shell module's own argspec (which IS command.py's, bookworm 2.14
+  # reference) doesn't include it, so the task fails before the command
+  # runs, naming the module ansible.legacy.command with the full
+  # supported-parameters tail (live-verified in a bookworm-slim
+  # ansible-core 2.14 container: "Unsupported parameters for
+  # (ansible.legacy.command) module: expand_argument_vars. Supported
+  # parameters include: _raw_params, _uses_shell, argv, chdir, creates,
+  # executable, removes, stdin, stdin_add_newline, strip_empty_ends.").
+  # Matching that rejection IS the real-Ansible behavior, so that is
+  # what's implemented. (2.19-era real re-ADDED expand_argument_vars to
+  # the argspec - the 2.14 podman-diff harness reference is what this
+  # engine matches here.)
   it "rejects expand_argument_vars: exactly like real Ansible's shell module" do
     result = PluginSpecHelper.run("shell", {"cmd" => "echo hi", "expand_argument_vars" => "false"})
 
     result["failed"].as_bool.should be_true
-    result["msg"].as_s.should eq("Unsupported parameters for (shell) module: expand_argument_vars")
+    result["msg"].as_s.should eq("Unsupported parameters for (ansible.legacy.command) module: expand_argument_vars. Supported parameters include: _raw_params, _uses_shell, argv, chdir, creates, executable, removes, stdin, stdin_add_newline, strip_empty_ends.")
     result["changed"].as_bool.should be_false
   end
 end

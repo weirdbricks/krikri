@@ -56,9 +56,22 @@ private def with_apt_param_shims(dpkg_status : String, fail_apt : Bool = false, 
   File.write(File.join(dir, "apt-get"), apt_shim)
   File.write(File.join(dir, "dpkg-query"), "#!/bin/sh\necho \"$KRIKRI_DPKG_STATUS 1.0-1 $3\"\n")
   File.write(File.join(dir, "stat"), "#!/bin/sh\necho 100\n")
+  # The candidate pre-flight probe (package_resolvable?) runs
+  # `apt-cache policy <name>` - real-Ansible-style in-process cache
+  # lookup, so the shim answers with a Candidate stanza for any
+  # non-empty name (resolvable) and nothing for "" (the empty-name
+  # failure cases below rely on). Not logged: $KRIKRI_APT_CALLS stays
+  # an apt-get-only log so the install_call/remove_call/upgrade_call
+  # finders keep their "first line starting with <verb>" semantics.
+  File.write(File.join(dir, "apt-cache"), <<-'CACHE_SHIM')
+    #!/bin/sh
+    [ -n "$2" ] || exit 0
+    printf '%s:\n  Installed: (none)\n  Candidate: 1.0-1\n  Version table:\n' "$2"
+  CACHE_SHIM
   File.chmod(File.join(dir, "apt-get"), 0o755)
   File.chmod(File.join(dir, "dpkg-query"), 0o755)
   File.chmod(File.join(dir, "stat"), 0o755)
+  File.chmod(File.join(dir, "apt-cache"), 0o755)
   env = {
     "PATH"               => "#{dir}:/usr/bin:/bin",
     "KRIKRI_APT_CALLS"   => log,
@@ -161,11 +174,12 @@ describe "apt plugin - name: parsing (empty names, repr-looking strings)" do
       PluginSpecHelper.run("apt", {"name" => "['krikri-fake-pkg', 'krikri-fake-pkg2']", "state" => "present", "_environment" => env})
       call = install_call(log) || ""
       call.should_not eq("")
-      # The RAW comma-split garbage tokens (bracket remnants verbatim
-      # after shell splitting), not the repaired/re-parsed clean name
-      # pair real Ansible never sees:
-      call.should contain("[krikri-fake-pkg")
-      call.should contain("krikri-fake-pkg2]")
+      # The RAW comma-split garbage tokens (bracket remnants verbatim,
+      # re-quoted for apt-get by the install command's per-package
+      # shell_single_quote), not the repaired/re-parsed clean name pair
+      # real Ansible never sees:
+      call.should contain("['krikri-fake-pkg'")
+      call.should contain("'krikri-fake-pkg2']")
     end
   end
 end

@@ -148,8 +148,11 @@ module Krikri
       # task. check_mode/diff_mode/_verbosity/_environment are engine-
       # internal keys injected by the executor (see build_plugin_config),
       # and _policy_rc_d_path is the spec seam above - none are part of
-      # the real argument_spec, so none are rejected.
-      unsupported = unsupported_param_keys(@params, APT_SPEC)
+      # the real argument_spec, so none are rejected. (_policy_rc_d_path
+      # needs an explicit exemption: it is not in the shared INTERNAL
+      # list because it is this plugin's spec seam alone, and the
+      # policy_rc_d lifecycle specs pass it on every call.)
+      unsupported = unsupported_param_keys(@params, APT_SPEC).reject { |key| key == "_policy_rc_d_path" }
       unless unsupported.empty?
         return unsupported_params_error(
           @params["_module_name"]? || "ansible.builtin.apt",
@@ -775,14 +778,19 @@ module Krikri
       idx ? {pkg[0...idx], pkg[(idx + 1)..]} : {pkg, nil}
     end
 
-    # Real install()'s per-spec candidate probe: can apt resolve this
-    # package name at all? A plain `apt-get install --dry-run` is the
-    # same resolution real's python-apt cache does, including virtual
-    # packages (resolved to their providers -> rc 0) vs unknown names
-    # (rc 100, "Unable to locate package").
+    # Real install()'s per-spec candidate probe: does this package name
+    # exist in the apt cache at all? Real does the lookup in-process
+    # (python-apt's cache[pkgname] + get_providing_packages for virtual
+    # names) with NO apt-get invocation at all, so `apt-cache policy` is
+    # the CLI stand-in. The stanza's Candidate: line is the tell: an
+    # unknown name prints no stanza at all, while a known name carries
+    # one - "Candidate: <version>" for a real package, "Candidate:
+    # (none)" for a purely virtual one, the same let-apt-get-sort-it-out
+    # treatment real gives virtual names (package_status returns
+    # version_installable=True for them).
     private def package_resolvable?(name : String) : Bool
-      probe = remote_exec("DEBIAN_FRONTEND=noninteractive apt-get install --dry-run -y #{shell_single_quote(name)} 2>/dev/null")
-      probe[:exit_code] == 0
+      probe = remote_exec("apt-cache policy #{shell_single_quote(name)} 2>/dev/null")
+      probe[:stdout].includes?("Candidate:")
     end
 
     # Real install()'s pinned-version probe: version_installable in
