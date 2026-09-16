@@ -60,18 +60,39 @@ module Krikri
     def execute : PluginResult
       name = @params["name"]?
       unless name
-        return PluginResult.new(changed: false, failed: true, msg: "missing required argument: name")
+        return PluginResult.new(changed: false, failed: true,
+          msg: "missing required arguments: name")
       end
 
       state = @params["state"]? || "present"
+      # Real argument_spec gives state/source their choices lists, so
+      # AnsibleModule's choice checks (parameters.py's exact wording)
+      # fire before the required_if source check and before anything
+      # daemon-contacting - previously a bogus state silently fell into
+      # the absent branch and a bogus source got the scope-cut paraphrase.
+      unless ["absent", "present"].includes?(state)
+        return PluginResult.new(changed: false, failed: true,
+          msg: "value of state must be one of: absent, present, got: #{state}")
+      end
+
+      source = @params["source"]?
+      if source && !["build", "load", "pull", "local"].includes?(source)
+        return PluginResult.new(changed: false, failed: true,
+          msg: "value of source must be one of: build, load, pull, local, got: #{source}")
+      end
 
       if state == "present"
-        source = @params["source"]?
         unless source
-          return PluginResult.new(changed: false, failed: true, msg: "state is present but all of the following are missing: source")
+          return PluginResult.new(changed: false, failed: true,
+            msg: "state is present but all of the following are missing: source")
         end
         unless source == "pull"
-          return PluginResult.new(changed: false, failed: true, msg: "docker_image: only source: pull is implemented, got '#{source}'")
+          # A VALID non-pull source is the documented scope cut (real
+          # module needs the daemon for build/load/local anyway, so on a
+          # daemon-less host both engines fail here - wording differs,
+          # failed=/changed= match).
+          return PluginResult.new(changed: false, failed: true,
+            msg: "docker_image: only source: pull is implemented, got '#{source}'")
         end
       end
       check_mode = true?(@params["check_mode"]?)
@@ -87,13 +108,10 @@ module Krikri
       exists = !pre_pull_id.nil?
       force_source = true?(@params["force_source"]?)
 
-      case state
-      when "present"
+      if state == "present"
         present_result(client, api, ref_name, ref_tag, full_ref, pre_pull_id, exists, force_source, check_mode)
-      when "absent"
-        absent_result(api, full_ref, exists, check_mode)
       else
-        PluginResult.new(changed: false, failed: true, msg: "state must be 'present' or 'absent', got '#{state}'")
+        absent_result(api, full_ref, exists, check_mode)
       end
     rescue ex : Docr::Errors::DockerAPIError
       PluginResult.new(changed: false, failed: true, msg: "Docker API error: #{ex.message}")

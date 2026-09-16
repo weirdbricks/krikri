@@ -1,0 +1,108 @@
+# docker_image edge cases. Like the docker_container cases: NO docker
+# daemon inside either harness container (and no docker-in-podman), so
+# only the argument-validation surface real Ansible performs BEFORE any
+# daemon contact is exercisable (missing required params, choice
+# checks, required_if), plus "valid args but no daemon -> both engines
+# fail". The real side runs community.docker.docker_image with the
+# Docker SDK installed (run.sh gates the install). The D1-D4 msg
+# wordings are AnsibleModule-level (parameters.py) and deterministic,
+# so they are rendered; daemon-touching cases compare failed=/changed=
+# only - msg wording there is either Docker-SDK error text or the
+# documented build/load/local scope cut, and the engines' real-vs-docr
+# error surfaces legitimately differ.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "D1 missing required name"
+      community.docker.docker_image:
+        state: present
+        source: pull
+      register: d1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D1 failed={{ d1.failed | default('none') }} changed={{ d1.changed | default('none') }} msg={{ d1.msg | default('none') }}"
+
+    - name: "D2 invalid state choice"
+      community.docker.docker_image:
+        name: alpine
+        state: banana
+      register: d2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D2 failed={{ d2.failed | default('none') }} changed={{ d2.changed | default('none') }} msg={{ d2.msg | default('none') }}"
+
+    - name: "D3 state=present without source (required_if)"
+      community.docker.docker_image:
+        name: alpine
+      register: d3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D3 failed={{ d3.failed | default('none') }} changed={{ d3.changed | default('none') }} msg={{ d3.msg | default('none') }}"
+
+    - name: "D4 invalid source choice"
+      community.docker.docker_image:
+        name: alpine
+        source: banana
+      register: d4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D4 failed={{ d4.failed | default('none') }} changed={{ d4.changed | default('none') }} msg={{ d4.msg | default('none') }}"
+
+    - name: "D5 source=build with no daemon (both engines fail)"
+      community.docker.docker_image:
+        name: alpine
+        source: build
+        build:
+          path: /tmp/krikri-build
+      register: d5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D5 failed={{ d5.failed | default('none') }} changed={{ d5.changed | default('none') }}"
+
+    - name: "D6 source=local with no daemon (both engines fail)"
+      community.docker.docker_image:
+        name: alpine
+        source: local
+      register: d6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D6 failed={{ d6.failed | default('none') }} changed={{ d6.changed | default('none') }}"
+
+    - name: "D7 valid pull args but no daemon (both engines fail)"
+      community.docker.docker_image:
+        name: alpine
+        source: pull
+      register: d7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D7 failed={{ d7.failed | default('none') }} changed={{ d7.changed | default('none') }}"
+
+    - name: "D8 state=absent still needs the API (both engines fail)"
+      community.docker.docker_image:
+        name: alpine
+        state: absent
+      register: d8
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D8 failed={{ d8.failed | default('none') }} changed={{ d8.changed | default('none') }}"
+
+    - name: "D9 unsupported parameter"
+      community.docker.docker_image:
+        name: alpine
+        source: pull
+        krikri_not_a_docker_param: true
+      register: d9
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D9 failed={{ d9.failed | default('none') }} changed={{ d9.changed | default('none') }}"
+
+    - name: "D10 invalid docker tag"
+      community.docker.docker_image:
+        name: alpine
+        tag: "-bad-tag-"
+        source: pull
+      register: d10
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D10 failed={{ d10.failed | default('none') }} changed={{ d10.changed | default('none') }}"
