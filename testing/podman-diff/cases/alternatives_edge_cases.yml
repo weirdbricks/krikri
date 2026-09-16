@@ -1,0 +1,235 @@
+# community.general.alternatives edge cases. The harness containers
+# are real Debian (update-alternatives ships with dpkg) and real
+# Ansible's module shells out to the same binary this plugin drives -
+# no gate needed. Real-module specifics under test:
+# - required_one_of ("one of the following is required: path, family")
+# - state choices validation BEFORE binary resolution
+# - install()'s os.path.exists(path) check ("Specified path ... does
+#   not exist") - the plugin used to register alternatives pointing at
+#   nonexistent binaries
+# - check mode skips the update-alternatives calls but still reports
+#   changed + msg
+# - install -> idempotent re-run -> second alternative -> selected/auto
+#   switching -> absent removal, with readlink state probes
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "A0 prep link dirs"
+      ansible.builtin.shell: "mkdir -p /tmp/krikri-alt /tmp/krikri-alt2"
+      args:
+        executable: /bin/bash
+
+    - name: "A1 missing name"
+      community.general.alternatives:
+        path: /bin/sh
+      register: a1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A1 failed={{ a1.failed | default('absent') }} changed={{ a1.changed | default('absent') }}"
+
+    - name: "A2 name only - required_one_of path/family"
+      community.general.alternatives:
+        name: krikri-alt
+      register: a2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A2 failed={{ a2.failed | default('absent') }} changed={{ a2.changed | default('absent') }} path-required={{ 'one of the following is required' in (a2.msg | default('')) }}"
+
+    - name: "A3 nonexistent path, unknown alternative, no link"
+      community.general.alternatives:
+        name: krikri-alt
+        path: /krikri/nope
+      register: a3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A3 failed={{ a3.failed | default('absent') }} changed={{ a3.changed | default('absent') }} path-check={{ 'Specified path /krikri/nope does not exist' in (a3.msg | default('')) }}"
+
+    - name: "A4 nonexistent path, link given"
+      community.general.alternatives:
+        name: krikri-alt
+        path: /krikri/nope
+        link: /tmp/krikri-alt/krikri-sh
+      register: a4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A4 failed={{ a4.failed | default('absent') }} changed={{ a4.changed | default('absent') }} path-check={{ 'Specified path /krikri/nope does not exist' in (a4.msg | default('')) }}"
+
+    - name: "A5 install /bin/sh priority 100"
+      community.general.alternatives:
+        name: krikri-alt
+        path: /bin/sh
+        link: /tmp/krikri-alt/krikri-sh
+        priority: 100
+      register: a5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A5 failed={{ a5.failed | default('absent') }} changed={{ a5.changed | default('absent') }}"
+
+    - name: "A6 re-run is idempotent"
+      community.general.alternatives:
+        name: krikri-alt
+        path: /bin/sh
+        link: /tmp/krikri-alt/krikri-sh
+        priority: 100
+      register: a6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A6 failed={{ a6.failed | default('absent') }} changed={{ a6.changed | default('absent') }}"
+
+    - name: "A7 register a second alternative"
+      community.general.alternatives:
+        name: krikri-alt
+        path: /bin/true
+        link: /tmp/krikri-alt/krikri-sh
+        priority: 10
+      register: a7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A7 failed={{ a7.failed | default('absent') }} changed={{ a7.changed | default('absent') }}"
+
+    - name: "A8 state=auto on an auto group is a no-op"
+      community.general.alternatives:
+        name: krikri-alt
+        path: /bin/sh
+        state: auto
+      register: a8
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A8 failed={{ a8.failed | default('absent') }} changed={{ a8.changed | default('absent') }}"
+
+    - name: "A9 select the low-priority alternative"
+      community.general.alternatives:
+        name: krikri-alt
+        path: /bin/true
+      register: a9
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A9 failed={{ a9.failed | default('absent') }} changed={{ a9.changed | default('absent') }}"
+
+    - name: "A10 link now points at /bin/true"
+      ansible.builtin.command: "readlink /tmp/krikri-alt/krikri-sh"
+      register: a10
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A10 rc={{ a10.rc }} points-true={{ a10.stdout.strip() == '/bin/true' }}"
+
+    - name: "A11 re-select the same path is idempotent"
+      community.general.alternatives:
+        name: krikri-alt
+        path: /bin/true
+      register: a11
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A11 failed={{ a11.failed | default('absent') }} changed={{ a11.changed | default('absent') }}"
+
+    - name: "A12 back to auto mode"
+      community.general.alternatives:
+        name: krikri-alt
+        path: /bin/true
+        state: auto
+      register: a12
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A12 failed={{ a12.failed | default('absent') }} changed={{ a12.changed | default('absent') }}"
+
+    - name: "A13 auto mode picked the highest priority (/bin/sh)"
+      ansible.builtin.command: "readlink /tmp/krikri-alt/krikri-sh"
+      register: a13
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A13 rc={{ a13.rc }} points-sh={{ a13.stdout.strip() == '/bin/sh' }}"
+
+    - name: "A14 state=auto again is a no-op"
+      community.general.alternatives:
+        name: krikri-alt
+        path: /bin/true
+        state: auto
+      register: a14
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A14 failed={{ a14.failed | default('absent') }} changed={{ a14.changed | default('absent') }}"
+
+    - name: "A15 invalid state value"
+      community.general.alternatives:
+        name: krikri-alt
+        path: /bin/sh
+        state: krikri_state
+      register: a15
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A15 failed={{ a15.failed | default('absent') }} changed={{ a15.changed | default('absent') }} state-check={{ 'value of state must be one of' in (a15.msg | default('')) }}"
+
+    - name: "A16 select a path that was never registered"
+      community.general.alternatives:
+        name: krikri-alt
+        path: /krikri/nope2
+      register: a16
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A16 failed={{ a16.failed | default('absent') }} changed={{ a16.changed | default('absent') }} path-check={{ 'Specified path /krikri/nope2 does not exist' in (a16.msg | default('')) }}"
+
+    - name: "A17 state=absent removes a registered alternative"
+      community.general.alternatives:
+        name: krikri-alt
+        path: /bin/true
+        state: absent
+      register: a17
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A17 failed={{ a17.failed | default('absent') }} changed={{ a17.changed | default('absent') }}"
+
+    - name: "A18 state=absent again is a no-op"
+      community.general.alternatives:
+        name: krikri-alt
+        path: /bin/true
+        state: absent
+      register: a18
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A18 failed={{ a18.failed | default('absent') }} changed={{ a18.changed | default('absent') }}"
+
+    - name: "A19 state=absent on a never-registered path is a no-op"
+      community.general.alternatives:
+        name: krikri-alt
+        path: /krikri/never-registered
+        state: absent
+      register: a19
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A19 failed={{ a19.failed | default('absent') }} changed={{ a19.changed | default('absent') }}"
+
+    - name: "A20 check mode claims the install but writes nothing"
+      community.general.alternatives:
+        name: krikri-alt2
+        path: /bin/sh
+        link: /tmp/krikri-alt2/krikri-sh
+      check_mode: true
+      register: a20
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A20 failed={{ a20.failed | default('absent') }} changed={{ a20.changed | default('absent') }}"
+
+    - name: "A21 nothing was actually installed"
+      ansible.builtin.command: "test ! -e /tmp/krikri-alt2/krikri-sh"
+      register: a21
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A21 rc={{ a21.rc }}"
+
+    - name: "A22 default priority is 50"
+      community.general.alternatives:
+        name: krikri-alt2
+        path: /bin/sh
+        link: /tmp/krikri-alt2/krikri-sh
+      register: a22
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A22 failed={{ a22.failed | default('absent') }} changed={{ a22.changed | default('absent') }}"
+
+    - name: "A23 verify the recorded priority"
+      ansible.builtin.command: "update-alternatives --query krikri-alt2"
+      register: a23
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A23 rc={{ a23.rc }} priority-50={{ 'Priority: 50' in a23.stdout }}"

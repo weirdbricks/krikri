@@ -20,6 +20,6 @@ describe "alternatives plugin" do
   it "fails when name is missing" do
     result = PluginSpecHelper.run("alternatives", {"path" => "/bin/true"})
     result["failed"].as_bool.should be_true
-    result["msg"].as_s.should contain("name is required")
+    result["msg"].as_s.should contain("missing required arguments: name")
   end
 end

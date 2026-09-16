@@ -1,0 +1,211 @@
+# community.general.maven_artifact edge cases. run.sh installs
+# python3-lxml + python3-semantic-version in the REAL container (the
+# real module fails on the lxml import before anything else if they
+# are missing; the plugin is native and needs nothing). The local
+# file:// repository fixtures are seeded by the case itself into each
+# container, so no network is needed except where noted. Real-module
+# specifics under test:
+# - missing required group_id/artifact_id/dest
+# - version|version_by_spec mutual exclusion
+# - verify_checksum/checksum_alg choices
+# - s3:// repository without boto3
+# - version_by_spec unsupported-spec failure
+# - version=latest resolved through the LOCAL metadata file, which is
+#   maven-metadata-local.xml for file:// repositories (the plugin used
+#   to read maven-metadata.xml and never find it)
+# - dest as a directory gets the generated filename; re-run is
+#   idempotent; state=absent is a documented no-op (the real module
+#   ignores it and still downloads)
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "R0 seed the local file:// maven repository"
+      ansible.builtin.shell: |
+        mkdir -p /tmp/ma-repo/krikri/test/1.0 /tmp/ma-repo/krikri/missing /tmp/ma-dest
+        printf 'krikri-test-jar-content' > /tmp/ma-repo/krikri/test/1.0/test-1.0.jar
+        printf '<?xml version="1.0" encoding="UTF-8"?>\n<metadata><groupId>krikri</groupId><artifactId>test</artifactId><versioning><versions><version>0.9</version><version>1.0</version></versions></versioning></metadata>\n' > /tmp/ma-repo/krikri/test/maven-metadata-local.xml
+        rm -f /tmp/ma-dest/*
+      args:
+        executable: /bin/bash
+
+    - name: "R1 missing group_id"
+      community.general.maven_artifact:
+        artifact_id: test
+        dest: /tmp/ma-dest/x.jar
+      register: r1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "R1 failed={{ r1.failed | default('absent') }} changed={{ r1.changed | default('absent') }} group-check={{ 'group_id' in (r1.msg | default('')) }}"
+
+    - name: "R2 missing artifact_id"
+      community.general.maven_artifact:
+        group_id: krikri
+        dest: /tmp/ma-dest/x.jar
+      register: r2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "R2 failed={{ r2.failed | default('absent') }} changed={{ r2.changed | default('absent') }} artifact-check={{ 'artifact_id' in (r2.msg | default('')) }}"
+
+    - name: "R3 missing dest"
+      community.general.maven_artifact:
+        group_id: krikri
+        artifact_id: test
+      register: r3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "R3 failed={{ r3.failed | default('absent') }} changed={{ r3.changed | default('absent') }} dest-check={{ 'dest' in (r3.msg | default('')) }}"
+
+    - name: "R4 all required params missing"
+      community.general.maven_artifact: {}
+      register: r4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "R4 failed={{ r4.failed | default('absent') }} changed={{ r4.changed | default('absent') }}"
+
+    - name: "R5 version and version_by_spec are mutually exclusive"
+      community.general.maven_artifact:
+        group_id: krikri
+        artifact_id: test
+        dest: /tmp/ma-dest/x.jar
+        version: "1.0"
+        version_by_spec: "[0.5,1.0)"
+      register: r5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "R5 failed={{ r5.failed | default('absent') }} changed={{ r5.changed | default('absent') }} excl-check={{ 'mutually exclusive' in (r5.msg | default('')) }}"
+
+    - name: "R6 invalid verify_checksum value"
+      community.general.maven_artifact:
+        group_id: krikri
+        artifact_id: test
+        dest: /tmp/ma-dest/x.jar
+        verify_checksum: krikri_mode
+      register: r6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "R6 failed={{ r6.failed | default('absent') }} changed={{ r6.changed | default('absent') }} checksum-check={{ 'value of verify_checksum must be one of' in (r6.msg | default('')) }}"
+
+    - name: "R7 invalid checksum_alg value"
+      community.general.maven_artifact:
+        group_id: krikri
+        artifact_id: test
+        dest: /tmp/ma-dest/x.jar
+        checksum_alg: sha256
+      register: r7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "R7 failed={{ r7.failed | default('absent') }} changed={{ r7.changed | default('absent') }} alg-check={{ 'value of checksum_alg must be one of' in (r7.msg | default('')) }}"
+
+    - name: "R8 s3:// repository without boto3"
+      community.general.maven_artifact:
+        group_id: krikri
+        artifact_id: test
+        dest: /tmp/ma-dest/x.jar
+        repository_url: s3://krikri-bucket/maven
+      register: r8
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "R8 failed={{ r8.failed | default('absent') }} changed={{ r8.changed | default('absent') }} s3-check={{ 's3' in (r8.msg | default('')) }}"
+
+    - name: "R9 unsupported version_by_spec syntax"
+      community.general.maven_artifact:
+        group_id: krikri
+        artifact_id: test
+        dest: /tmp/ma-dest/x.jar
+        version_by_spec: not-a-spec
+        repository_url: file:///tmp/ma-repo
+      register: r9
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "R9 failed={{ r9.failed | default('absent') }} changed={{ r9.changed | default('absent') }} spec-check={{ 'is not supported!' in (r9.msg | default('')) }}"
+
+    - name: "R10 version=latest resolved through the local metadata file"
+      community.general.maven_artifact:
+        group_id: krikri
+        artifact_id: test
+        dest: /tmp/ma-dest/
+        repository_url: file:///tmp/ma-repo
+      register: r10
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "R10 failed={{ r10.failed | default('absent') }} changed={{ r10.changed | default('absent') }}"
+
+    - name: "R11 downloaded under the generated filename (no version: keep_name=false)"
+      ansible.builtin.shell: "test -f /tmp/ma-dest/test.jar && grep -q krikri-test-jar-content /tmp/ma-dest/test.jar"
+      register: r11
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "R11 rc={{ r11.rc }}"
+
+    - name: "R12 re-run is idempotent"
+      community.general.maven_artifact:
+        group_id: krikri
+        artifact_id: test
+        dest: /tmp/ma-dest/
+        repository_url: file:///tmp/ma-repo
+      register: r12
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "R12 failed={{ r12.failed | default('absent') }} changed={{ r12.changed | default('absent') }}"
+
+    - name: "R13 missing local metadata file"
+      community.general.maven_artifact:
+        group_id: krikri
+        artifact_id: missing
+        dest: /tmp/ma-dest/missing.jar
+        repository_url: file:///tmp/ma-repo
+      register: r13
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "R13 failed={{ r13.failed | default('absent') }} changed={{ r13.changed | default('absent') }} metadata-check={{ 'can not find file' in (r13.msg | default('')) }} local-name={{ 'maven-metadata-local.xml' in (r13.msg | default('')) }}"
+
+    - name: "R14 state=absent is a no-op that still downloads"
+      community.general.maven_artifact:
+        group_id: krikri
+        artifact_id: test
+        dest: /tmp/ma-dest/absent-test.jar
+        version: "1.0"
+        state: absent
+        repository_url: file:///tmp/ma-repo
+      register: r14
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "R14 failed={{ r14.failed | default('absent') }} changed={{ r14.changed | default('absent') }}"
+
+    - name: "R15 the artifact really landed"
+      ansible.builtin.shell: "test -f /tmp/ma-dest/absent-test.jar"
+      register: r15
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "R15 rc={{ r15.rc }}"
+
+    - name: "R16 explicit version, dest as a file path"
+      community.general.maven_artifact:
+        group_id: krikri
+        artifact_id: test
+        dest: /tmp/ma-dest/explicit.jar
+        version: "1.0"
+        repository_url: file:///tmp/ma-repo
+      register: r16
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "R16 failed={{ r16.failed | default('absent') }} changed={{ r16.changed | default('absent') }}"
+
+    - name: "R17 dest-file artifact content"
+      ansible.builtin.shell: "grep -q krikri-test-jar-content /tmp/ma-dest/explicit.jar"
+      register: r17
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "R17 rc={{ r17.rc }}"
+
+    - name: "R18 empty repository_url falls back to Maven Central"
+      community.general.maven_artifact:
+        group_id: krikri
+        artifact_id: test
+        dest: /tmp/ma-dest/central.jar
+        repository_url: ""
+      register: r18
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "R18 failed={{ r18.failed | default('absent') }} changed={{ r18.changed | default('absent') }}"

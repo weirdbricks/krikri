@@ -27,12 +27,23 @@ module Krikri
     NEVRA_RE = /^(?<name>.+)-(?<epoch>\d+):(?<version>.+)-(?<release>.+)\.(?<arch>.+)$/
 
     def execute : PluginResult
+      # AnsibleModule's constructor validates state's choices BEFORE
+      # main() resolves the dnf binary or runs any semantic option
+      # check - so an invalid state fails with the choices message even
+      # on a host without dnf (real order: arg-spec validation ->
+      # get_bin_path("dnf", required) -> versionlock conf -> option
+      # checks).
+      state = @params["state"]? || "present"
+      unless ["present", "absent", "excluded", "clean"].includes?(state)
+        return PluginResult.new(changed: false, failed: true,
+          msg: "value of state must be one of: present, absent, excluded, clean, got: #{state}")
+      end
+
       precondition_error = check_preconditions
       return precondition_error if precondition_error
 
       patterns = parse_names
       raw = true?(@params["raw"]?)
-      state = @params["state"]? || "present"
       check_mode = true?(@params["check_mode"]?)
 
       param_error = validate_state_params(state, patterns)

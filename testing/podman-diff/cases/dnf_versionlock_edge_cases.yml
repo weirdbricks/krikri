@@ -1,0 +1,65 @@
+# community.general.dnf_versionlock edge cases. Genuinely limited on
+# Debian: neither container has dnf, and the REAL module resolves the
+# dnf binary (get_bin_path, required) BEFORE its semantic option
+# checks (clean-vs-name / name-required), so every case except the
+# argument-spec state-choices error fails on the missing binary on the
+# real side. krikri must reproduce that ORDER (its own binary
+# precondition used to run after nothing but before the choices check
+# - fixed to validate state choices first, like AnsibleModule's
+# constructor). Locking/unlocking behavior itself is untestable here -
+# no dnf, no versionlock plugin, no RPM repo.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "V1 missing name with state present"
+      community.general.dnf_versionlock:
+        state: present
+      register: v1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "V1 failed={{ v1.failed | default('absent') }} changed={{ v1.changed | default('absent') }} dnf-missing={{ 'dnf' in (v1.msg | default('')) }}"
+
+    - name: "V2 state=clean without a name list"
+      community.general.dnf_versionlock:
+        state: clean
+      register: v2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "V2 failed={{ v2.failed | default('absent') }} changed={{ v2.changed | default('absent') }} dnf-missing={{ 'dnf' in (v2.msg | default('')) }}"
+
+    - name: "V3 invalid state value - choices check wins over the binary check"
+      community.general.dnf_versionlock:
+        name: bash
+        state: krikri_state
+      register: v3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "V3 failed={{ v3.failed | default('absent') }} changed={{ v3.changed | default('absent') }} state-check={{ 'value of state must be one of' in (v3.msg | default('')) }}"
+
+    - name: "V4 state=absent on a never-locked package"
+      community.general.dnf_versionlock:
+        name: krikri-never-locked
+        state: absent
+      register: v4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "V4 failed={{ v4.failed | default('absent') }} changed={{ v4.changed | default('absent') }} dnf-missing={{ 'dnf' in (v4.msg | default('')) }}"
+
+    - name: "V5 raw pattern lock"
+      community.general.dnf_versionlock:
+        name: bash-0:4.*
+        raw: true
+      register: v5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "V5 failed={{ v5.failed | default('absent') }} changed={{ v5.changed | default('absent') }} dnf-missing={{ 'dnf' in (v5.msg | default('')) }}"
+
+    - name: "V6 state=excluded"
+      community.general.dnf_versionlock:
+        name: bash
+        state: excluded
+      register: v6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "V6 failed={{ v6.failed | default('absent') }} changed={{ v6.changed | default('absent') }} dnf-missing={{ 'dnf' in (v6.msg | default('')) }}"
