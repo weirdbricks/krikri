@@ -1,0 +1,254 @@
+# pam_limits module edge cases (community.general.pam_limits). Prefix M;
+# failed=/changed= booleans and on-disk rule lines (via grep) matter; error-
+# message WORDING may legitimately differ between engines. The working file
+# is /etc/security/limits.d/krikri-m1.conf (a throwaway limits.d entry -
+# nothing parses it at boot in these containers).
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "M0 seed the limits file"
+      ansible.builtin.copy:
+        content: |
+          # krikri test file
+          * soft nofile 1024
+          * hard core 1 #old comment
+        dest: /etc/security/limits.d/krikri-m1.conf
+      register: m0
+    - ansible.builtin.debug:
+        msg: "M0 failed={{ m0.failed }}"
+
+    - name: "M1 missing required arguments (only domain)"
+      community.general.pam_limits:
+        domain: "*"
+      register: m1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "M1 failed={{ m1.failed }} changed={{ m1.changed }}"
+
+    - name: "M2 invalid limit_type choice"
+      community.general.pam_limits:
+        domain: "*"
+        limit_type: bogus
+        limit_item: nofile
+        value: 4096
+        dest: /etc/security/limits.d/krikri-m1.conf
+      register: m2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "M2 failed={{ m2.failed }} changed={{ m2.changed }}"
+
+    - name: "M3 invalid limit_item choice"
+      community.general.pam_limits:
+        domain: "*"
+        limit_type: soft
+        limit_item: bogus
+        value: 4096
+        dest: /etc/security/limits.d/krikri-m1.conf
+      register: m3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "M3 failed={{ m3.failed }} changed={{ m3.changed }}"
+
+    - name: "M4 unconvertible use_max bool"
+      community.general.pam_limits:
+        domain: "*"
+        limit_type: soft
+        limit_item: nofile
+        value: 4096
+        use_max: bogus
+        dest: /etc/security/limits.d/krikri-m1.conf
+      register: m4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "M4 failed={{ m4.failed }} changed={{ m4.changed }}"
+
+    - name: "M5 unsupported parameter"
+      community.general.pam_limits:
+        domain: "*"
+        limit_type: soft
+        limit_item: nofile
+        value: 4096
+        bogus_param: 1
+        dest: /etc/security/limits.d/krikri-m1.conf
+      register: m5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "M5 failed={{ m5.failed }} changed={{ m5.changed }}"
+
+    - name: "M6 use_min and use_max together"
+      community.general.pam_limits:
+        domain: "*"
+        limit_type: soft
+        limit_item: nofile
+        value: 4096
+        use_min: true
+        use_max: true
+        dest: /etc/security/limits.d/krikri-m1.conf
+      register: m6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "M6 failed={{ m6.failed }} changed={{ m6.changed }}"
+
+    - name: "M7 invalid value for a plain item"
+      community.general.pam_limits:
+        domain: "*"
+        limit_type: soft
+        limit_item: nofile
+        value: bogus
+        dest: /etc/security/limits.d/krikri-m1.conf
+      register: m7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "M7 failed={{ m7.failed }} changed={{ m7.changed }}"
+
+    - name: "M8 nice out of range"
+      community.general.pam_limits:
+        domain: "*"
+        limit_type: soft
+        limit_item: nice
+        value: 40
+        dest: /etc/security/limits.d/krikri-m1.conf
+      register: m8
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "M8 failed={{ m8.failed }} changed={{ m8.changed }}"
+
+    - name: "M9 dest whose parent directory does not exist"
+      community.general.pam_limits:
+        domain: "*"
+        limit_type: soft
+        limit_item: nofile
+        value: 4096
+        dest: /etc/security/krikri-nodir/limits.conf
+      register: m9
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "M9 failed={{ m9.failed }} changed={{ m9.changed }}"
+
+    - name: "M10 update an entry that has its own comment"
+      community.general.pam_limits:
+        domain: "*"
+        limit_type: hard
+        limit_item: core
+        value: 4096
+        dest: /etc/security/limits.d/krikri-m1.conf
+      register: m10
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "M10 failed={{ m10.failed }} changed={{ m10.changed }}"
+
+    - name: "M10b read the entry back"
+      ansible.builtin.command: cat /etc/security/limits.d/krikri-m1.conf
+      register: m10b
+      changed_when: false
+    - ansible.builtin.debug:
+        msg: "M10b rc={{ m10b.rc }}"
+
+    - name: "M11 rerun the same update (idempotent)"
+      community.general.pam_limits:
+        domain: "*"
+        limit_type: hard
+        limit_item: core
+        value: 4096
+        dest: /etc/security/limits.d/krikri-m1.conf
+      register: m11
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "M11 failed={{ m11.failed }} changed={{ m11.changed }}"
+
+    - name: "M12 append a brand new entry with a comment"
+      community.general.pam_limits:
+        domain: james
+        limit_type: "-"
+        limit_item: memlock
+        value: unlimited
+        comment: unlimited memory lock for james
+        dest: /etc/security/limits.d/krikri-m1.conf
+      register: m12
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "M12 failed={{ m12.failed }} changed={{ m12.changed }}"
+
+    - name: "M12b read the entry back"
+      ansible.builtin.command: grep james /etc/security/limits.d/krikri-m1.conf
+      register: m12b
+      changed_when: false
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "M12b rc={{ m12b.rc }} line={{ m12b.stdout }}"
+
+    - name: "M13 use_max keeps the larger existing value"
+      community.general.pam_limits:
+        domain: "*"
+        limit_type: soft
+        limit_item: nofile
+        value: 512
+        use_max: true
+        dest: /etc/security/limits.d/krikri-m1.conf
+      register: m13
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "M13 failed={{ m13.failed }} changed={{ m13.changed }}"
+
+    - name: "M13b read the nofile line back"
+      ansible.builtin.command: grep nofile /etc/security/limits.d/krikri-m1.conf
+      register: m13b
+      changed_when: false
+    - ansible.builtin.debug:
+        msg: "M13b rc={{ m13b.rc }} line={{ m13b.stdout }}"
+
+    - name: "M14 backup creates a backup file"
+      community.general.pam_limits:
+        domain: "*"
+        limit_type: soft
+        limit_item: nofile
+        value: 2048
+        backup: true
+        dest: /etc/security/limits.d/krikri-m1.conf
+      register: m14
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "M14 failed={{ m14.failed }} changed={{ m14.changed }} backup={{ m14.backup_file is defined }}"
+
+    - name: "M15 check mode writes nothing"
+      community.general.pam_limits:
+        domain: "*"
+        limit_type: soft
+        limit_item: stack
+        value: 8192
+        dest: /etc/security/limits.d/krikri-m1.conf
+      check_mode: true
+      register: m15
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "M15 failed={{ m15.failed }} changed={{ m15.changed }}"
+
+    - name: "M15b is the stack entry really absent?"
+      ansible.builtin.command: grep -c stack /etc/security/limits.d/krikri-m1.conf
+      register: m15b
+      changed_when: false
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "M15b rc={{ m15b.rc }} absent={{ m15b.rc != 0 }}"
+
+    - name: "M16 invalid value in the EXISTING file fails the module"
+      community.general.pam_limits:
+        domain: "*"
+        limit_type: soft
+        limit_item: nofile
+        value: 4096
+        dest: /etc/security/limits.d/krikri-m2bad.conf
+    - ansible.builtin.copy:
+        content: "* soft nofile garbage\n"
+        dest: /etc/security/limits.d/krikri-m2bad.conf
+    - community.general.pam_limits:
+        domain: "*"
+        limit_type: soft
+        limit_item: nofile
+        value: 4096
+        dest: /etc/security/limits.d/krikri-m2bad.conf
+      register: m16
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "M16 failed={{ m16.failed }} changed={{ m16.changed }}"
