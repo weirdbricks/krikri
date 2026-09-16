@@ -2,6 +2,7 @@
 
 require "json"
 require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/ansible_arg_validation"
 
 module Krikri
   # pamd plugin - edits a /etc/pam.d/<name> service config. Ported to
@@ -35,7 +36,7 @@ module Krikri
     property control : String # already normalized
     property path : String
     property args : Array(String)
-    property kind : Symbol # :rule, :comment, :empty, :include
+    property kind : Symbol # :rule, :comment, :empty, :include, :unparsed
     property raw : String  # verbatim text for non-rule kinds
 
     def initialize(@rule_type, control : String, @path, @args = [] of String, @kind = :rule, @raw = "")
@@ -63,6 +64,33 @@ module Krikri
   ARG_RE  = /(\[[^\]]*\]|\S*)/
 
   class PamdPlugin < BasePlugin
+    include PluginHelpers::AnsibleArgValidation
+
+    # Real pamd.py's own constants - type/new_type choices, the simple
+    # control words, and the bracketed-control value/action vocabularies
+    # (PamdRule.valid_*), plus the state choices in the real
+    # argument_spec's (sorted) order.
+    VALID_TYPES           = ["account", "-account", "auth", "-auth", "password", "-password", "session", "-session"]
+    STATE_CHOICES         = ["absent", "after", "args_absent", "args_present", "before", "updated"]
+    VALID_SIMPLE_CONTROLS = ["required", "requisite", "sufficient", "optional", "include", "substack", "definitive"]
+    VALID_CONTROL_VALUES  = ["success", "open_err", "symbol_err", "service_err", "system_err", "buf_err", "perm_denied", "auth_err", "cred_insufficient", "authinfo_unavail", "user_unknown", "maxtries", "new_authtok_reqd", "acct_expired", "session_err", "cred_unavail", "cred_expired", "cred_err", "no_module_data", "conv_err", "authtok_err", "authtok_recover_err", "authtok_lock_busy", "authtok_disable_aging", "try_again", "ignore", "abort", "authtok_expired", "module_unknown", "bad_item", "conv_again", "incomplete", "default"]
+    VALID_CONTROL_ACTIONS = ["ignore", "bad", "die", "ok", "done", "reset"]
+
+    # Real argument_spec - no aliases.
+    SPEC = {
+      "name"             => %w[],
+      "type"             => %w[],
+      "control"          => %w[],
+      "module_path"      => %w[],
+      "new_type"         => %w[],
+      "new_control"      => %w[],
+      "new_module_path"  => %w[],
+      "module_arguments" => %w[],
+      "state"            => %w[],
+      "path"             => %w[],
+      "backup"           => %w[],
+    }
+
     # Mirrors PamdRule.rule_control=: bracketed controls have their
     # brackets stripped, " = " collapsed to "=", and are re-joined on a
     # single space wrapped back in brackets; plain controls pass
@@ -74,17 +102,15 @@ module Krikri
     end
 
     def execute : PluginResult
-      name = @params["name"]?
-      return PluginResult.new(changed: false, failed: true, msg: "missing required argument: name") unless name
+      if err = validate_arguments
+        return err
+      end
 
-      type = @params["type"]?
-      return PluginResult.new(changed: false, failed: true, msg: "missing required argument: type") unless type
+      name = @params["name"]
 
-      control = @params["control"]?
-      return PluginResult.new(changed: false, failed: true, msg: "missing required argument: control") unless control
-
-      module_path = @params["module_path"]?
-      return PluginResult.new(changed: false, failed: true, msg: "missing required argument: module_path") unless module_path
+      type = @params["type"]
+      control = @params["control"]
+      module_path = @params["module_path"]
 
       state = @params["state"]? || "updated"
       dir = expand_tilde(@params["path"]? || "/etc/pam.d")
@@ -92,13 +118,21 @@ module Krikri
       check_mode = true?(@params["check_mode"]?)
 
       unless File.exists?(path)
-        return PluginResult.new(changed: false, failed: true, msg: "#{path} does not exist")
+        return PluginResult.new(changed: false, failed: true, msg: "Unable to open/read PAM module file #{path} with error [Errno 2] No such file or directory: '#{path}'.")
       end
 
       lines = parse_lines(File.read(path))
 
       changes = apply_state(lines, state, type, control, module_path)
       return changes if changes.is_a?(PluginResult)
+
+      # Real runs service.validate() over EVERY line after taking the
+      # action and before writing - an invalid rule (bad control, or an
+      # unparseable line the parser kept verbatim) fails the module even
+      # when nothing changed, and nothing is written.
+      if err = validate_service(lines)
+        return err
+      end
 
       # Real community.general.pamd's success result is exactly
       # {changed, change_count, backupdest} - verified live against real
@@ -122,6 +156,124 @@ module Krikri
       PluginResult.new(changed: changes > 0, failed: false, msg: "", change_count: changes, backupdest: backupdest)
     end
 
+    # Real AnsibleModule setup surface, in the validator's errors[0]
+    # order (mutually exclusive -> required -> types -> choices ->
+    # required_if -> unsupported) - all BEFORE the file is opened, so
+    # e.g. state=before without the new_* triple fails the same way
+    # against a missing service file (podman-diff P2/P4).
+    private def validate_arguments : PluginResult?
+      missing = ["name", "type", "control", "module_path"].select { |param| !@params[param]? }
+      return missing_required_error(missing) unless missing.empty?
+
+      type = @params["type"]
+      return choices_error("type", VALID_TYPES, type) unless VALID_TYPES.includes?(type)
+
+      if new_type = @params["new_type"]?
+        return choices_error("new_type", VALID_TYPES, new_type) unless VALID_TYPES.includes?(new_type)
+      end
+
+      state = @params["state"]? || "updated"
+      return choices_error("state", STATE_CHOICES, state) unless STATE_CHOICES.includes?(state)
+
+      if bad_bool = @params["backup"]?
+        return bool_type_error("backup", bad_bool) unless bool_convertible?(bad_bool)
+      end
+
+      if err = validate_state_requirements(state)
+        return err
+      end
+
+      if unsupported = unsupported_param_keys(@params, SPEC)
+        unless unsupported.empty?
+          return unsupported_params_error("community.general.pamd", unsupported, SPEC)
+        end
+      end
+
+      nil
+    end
+
+    # Real required_if entries: args_present/args_absent need
+    # module_arguments, before/after need the whole new_* triple.
+    private def validate_state_requirements(state : String) : PluginResult?
+      if state == "args_present" || state == "args_absent"
+        unless @params["module_arguments"]?
+          return PluginResult.new(changed: false, failed: true,
+            msg: "state is #{state} but all of the following are missing: module_arguments")
+        end
+      end
+
+      if state == "before" || state == "after"
+        missing_new = ["new_control", "new_type", "new_module_path"].select { |param| !@params[param]? }
+        unless missing_new.empty?
+          return PluginResult.new(changed: false, failed: true,
+            msg: "state is #{state} but all of the following are missing: #{missing_new.join(", ")}")
+        end
+      end
+
+      nil
+    end
+
+    # Real PamdService.validate(): every line must be a valid comment
+    # (raw starts with '#'), @include (raw starts with '@include'), an
+    # empty line, or a rule with a valid type and control. A bracketed
+    # control's entries are "value=action" with value in
+    # VALID_CONTROL_VALUES and action in VALID_CONTROL_ACTIONS or an
+    # unsigned int.
+    private def validate_service(lines : Array(PamdRuleLine)) : PluginResult?
+      lines.each do |line|
+        ok, msg = validate_line(line)
+        return PluginResult.new(changed: false, failed: true, msg: msg) unless ok
+      end
+      nil
+    end
+
+    private def validate_line(line : PamdRuleLine) : {Bool, String}
+      case line.kind
+      when :comment
+        return line.raw.starts_with?('#') ? {true, ""} : {false, "Rule is not valid #{line.raw}"}
+      when :include
+        return line.raw.starts_with?("@include") ? {true, ""} : {false, "Rule is not valid #{line.raw}"}
+      when :empty
+        return line.raw.strip.empty? ? {true, ""} : {false, "Rule is not valid #{line.raw}"}
+      when :unparsed
+        return {false, "Rule is not valid #{line.raw}"}
+      end
+
+      unless VALID_TYPES.includes?(line.rule_type)
+        return {false, "Rule type, #{line.rule_type}, is not valid in rule #{line}"}
+      end
+
+      if line.control.starts_with?('[')
+        return validate_bracketed_control(line)
+      else
+        unless VALID_SIMPLE_CONTROLS.includes?(line.control)
+          return {false, "Rule control, #{line.control}, is not valid in rule #{line}"}
+        end
+      end
+
+      {true, ""}
+    end
+
+    # A bracketed control's entries are "value=action" with value in
+    # VALID_CONTROL_VALUES and action in VALID_CONTROL_ACTIONS or an
+    # unsigned int.
+    private def validate_bracketed_control(line : PamdRuleLine) : {Bool, String}
+      line.control.lstrip('[').rstrip(']').split(' ').reject(&.empty?).each do |entry|
+        parts = entry.split('=')
+        if parts.size != 2
+          return {false, "Rule control value, #{entry}, is not valid in rule #{line}"}
+        end
+        value, action = parts
+        unless VALID_CONTROL_VALUES.includes?(value)
+          return {false, "Rule control value, #{value}, is not valid in rule #{line}"}
+        end
+        unless VALID_CONTROL_ACTIONS.includes?(action) || action.matches?(/\A\d+\z/)
+          return {false, "Rule control action, #{action}, is not valid in rule #{line}"}
+        end
+      end
+      {true, ""}
+    end
+
     private def apply_state(lines : Array(PamdRuleLine), state : String, type : String, control : String, module_path : String) : Int32 | PluginResult
       new_type = @params["new_type"]?
       new_control = @params["new_control"]?
@@ -135,6 +287,10 @@ module Krikri
         apply_insert(lines, state, type, control, module_path, new_type, new_control, new_module_path, module_arguments_raw)
       when "args_present"
         return PluginResult.new(changed: false, failed: true, msg: "state=args_present requires module_arguments") unless module_arguments_raw
+        tokens = parse_module_arguments(module_arguments_raw) || [] of String
+        if tokens.any?(&.starts_with?('['))
+          return PluginResult.new(changed: false, failed: true, msg: "Unable to process bracketed '[' complex arguments with 'args_present'. Please use 'updated'.")
+        end
         add_module_arguments(lines, type, control, module_path, module_arguments_raw)
       when "args_absent"
         return PluginResult.new(changed: false, failed: true, msg: "state=args_absent requires module_arguments") unless module_arguments_raw
@@ -204,11 +360,11 @@ module Krikri
           PamdRuleLine.other(raw, :include)
         elsif raw.strip.empty?
           PamdRuleLine.other(raw, :empty)
-        elsif m = RULE_RE.match(raw)
+        elsif m = RULE_RE.match(raw.strip)
           args = split_arg_tokens(m[4])
           PamdRuleLine.new(m[1], m[2], m[3], args)
         else
-          PamdRuleLine.other(raw, :comment) # unparseable line - preserve verbatim
+          PamdRuleLine.other(raw, :unparsed) # unparseable line - preserved verbatim, invalid per real's validate()
         end
       end
     end
