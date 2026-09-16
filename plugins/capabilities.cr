@@ -33,6 +33,14 @@ module Krikri
       return PluginResult.new(changed: false, failed: true, msg: "missing required argument: path") unless path
       return PluginResult.new(changed: false, failed: true, msg: "missing required argument: capability") unless capability
 
+      # Real module's argument spec: state has choices [absent, present]
+      # (default present) - anything else fails in AnsibleModule's
+      # validation before any setcap runs (confirmed via the
+      # podman-diff capabilities cases, E10).
+      unless ["absent", "present"].includes?(state)
+        return PluginResult.new(changed: false, failed: true, msg: "value of state must be one of: absent, present, got: #{state}")
+      end
+
       path = path.strip
       capability = capability.strip.downcase
 

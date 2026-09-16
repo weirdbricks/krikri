@@ -342,6 +342,18 @@ if printf '%s\n' "${cases[@]}" | grep -q '^acl'; then
   done
 fi
 
+# capabilities cases need libcap2-bin (getcap/setcap) in BOTH
+# containers - real community.general.capabilities and krikri's plugin
+# both shell to them, and debian:bookworm-slim ships without them.
+# Gated on the requested case list like the modprobe cases above.
+if printf '%s\n' "${cases[@]}" | grep -q '^capabilities'; then
+  log "installing libcap2-bin for capabilities cases"
+  for c in "$NAME_A" "$NAME_B"; do
+    podman exec "$c" bash -c "apt-get install -y -qq --no-install-recommends libcap2-bin >/dev/null" \
+      || { log "FATAL: libcap2-bin install failed in $c"; exit 1; }
+  done
+fi
+
 # known_hosts cases need ssh-keygen in BOTH containers (real
 # ansible.builtin.known_hosts and krikri's plugin both drive it for
 # lookup, removal and host hashing). Gated on the requested case list

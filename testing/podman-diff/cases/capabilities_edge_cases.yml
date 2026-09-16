@@ -1,0 +1,130 @@
+# community.general.capabilities edge cases. Needs libcap2-bin
+# (getcap/setcap) in BOTH containers - installed by run.sh's gated
+# block. Each case registers its result and prints an "E<n> key=value"
+# debug line for run.sh's diff extraction. failed=/changed=/on-disk
+# behavior are what matter; error-message WORDING may legitimately
+# differ and is not a bug.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "E1 setup a private copy of a binary to hang caps on"
+      ansible.builtin.copy:
+        src: /bin/sleep
+        dest: /tmp/podman-diff-e1-bin
+        mode: "0755"
+
+    - name: "E2 capabilities on a path that does not exist (must fail)"
+      community.general.capabilities:
+        path: /tmp/podman-diff-e2-nonexistent
+        capability: cap_net_raw+ep
+        state: present
+      register: e2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "E2 failed={{ e2.failed }} changed={{ e2.changed }}"
+
+    - name: "E3 capabilities with an invalid capability name (setcap must fail)"
+      community.general.capabilities:
+        path: /tmp/podman-diff-e1-bin
+        capability: cap_nosuchcap_zz+ep
+        state: present
+      register: e3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "E3 failed={{ e3.failed }} changed={{ e3.changed }}"
+
+    - name: "E4 capabilities with an invalid operator/format (setcap must fail)"
+      community.general.capabilities:
+        path: /tmp/podman-diff-e1-bin
+        capability: cap_net_raw=banana
+        state: present
+      register: e4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "E4 failed={{ e4.failed }} changed={{ e4.changed }}"
+
+    - name: "E5 state=absent on a capability that was never set (no change)"
+      community.general.capabilities:
+        path: /tmp/podman-diff-e1-bin
+        capability: cap_net_raw+ep
+        state: absent
+      register: e5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "E5 failed={{ e5.failed }} changed={{ e5.changed }}"
+
+    - name: "E6 set a valid capability (should change)"
+      community.general.capabilities:
+        path: /tmp/podman-diff-e1-bin
+        capability: cap_net_raw+ep
+        state: present
+      register: e6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "E6 failed={{ e6.failed }} changed={{ e6.changed }}"
+
+    - name: "E6b verify the capability actually landed"
+      ansible.builtin.command:
+        cmd: "getcap /tmp/podman-diff-e1-bin"
+      register: e6b
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "E6b failed={{ e6b.failed }} rc={{ e6b.rc | default('none') }} has_cap_net_raw={{ 'cap_net_raw' in (e6b.stdout | default('')) }}"
+
+    - name: "E7 set the SAME capability again (idempotency, should not change)"
+      community.general.capabilities:
+        path: /tmp/podman-diff-e1-bin
+        capability: cap_net_raw+ep
+        state: present
+      register: e7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "E7 failed={{ e7.failed }} changed={{ e7.changed }}"
+
+    - name: "E8 remove the capability (state=absent, should change)"
+      community.general.capabilities:
+        path: /tmp/podman-diff-e1-bin
+        capability: cap_net_raw+ep
+        state: absent
+      register: e8
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "E8 failed={{ e8.failed }} changed={{ e8.changed }}"
+
+    - name: "E8b verify the capability is really gone"
+      ansible.builtin.command:
+        cmd: "getcap /tmp/podman-diff-e1-bin"
+      register: e8b
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "E8b failed={{ e8b.failed }} rc={{ e8b.rc | default('none') }} stdout_empty={{ (e8b.stdout | default('')) | length == 0 }}"
+
+    - name: "E9 state=absent again after removal (no change)"
+      community.general.capabilities:
+        path: /tmp/podman-diff-e1-bin
+        capability: cap_net_raw+ep
+        state: absent
+      register: e9
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "E9 failed={{ e9.failed }} changed={{ e9.changed }}"
+
+    - name: "E10 invalid state value (argument validation must fail)"
+      community.general.capabilities:
+        path: /tmp/podman-diff-e1-bin
+        capability: cap_net_raw+ep
+        state: banana
+      register: e10
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "E10 failed={{ e10.failed }} changed={{ e10.changed }}"
+
+    - name: "E11 missing capability param entirely (argument validation must fail)"
+      community.general.capabilities:
+        path: /tmp/podman-diff-e1-bin
+        state: present
+      register: e11
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "E11 failed={{ e11.failed }} changed={{ e11.changed }}"
