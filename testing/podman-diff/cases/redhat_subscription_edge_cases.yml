@@ -1,0 +1,58 @@
+# redhat_subscription (community.general) edge cases. Argument-validation
+# only: the Debian container has no subscription-manager (and is not a
+# Red Hat system), so every case that survives the argspec must fail on
+# the missing binary (or the real module's root check) - identically,
+# failed=True/changed=False, on both engines. The required_one_of
+# validation (state present needs username OR activationkey OR token)
+# and the state choice check fire BEFORE any binary check on the real
+# side; krikri must also report failed=True/changed=False there. Msg
+# wording differs and is not compared.
+# Prefix D.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "D1 state present with no credentials (required_one_of)"
+      community.general.redhat_subscription:
+        state: present
+      register: d1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D1 failed={{ d1.failed | default('none') }} changed={{ d1.changed | default('none') }}"
+
+    - name: "D2 state absent (no credentials needed; fails on missing binary)"
+      community.general.redhat_subscription:
+        state: absent
+      register: d2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D2 failed={{ d2.failed | default('none') }} changed={{ d2.changed | default('none') }}"
+
+    - name: "D3 state present with username/password (fails on missing binary)"
+      community.general.redhat_subscription:
+        state: present
+        username: krikri
+        password: secret
+      register: d3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D3 failed={{ d3.failed | default('none') }} changed={{ d3.changed | default('none') }}"
+
+    - name: "D4 state present with activationkey + org_id (fails on missing binary)"
+      community.general.redhat_subscription:
+        state: present
+        activationkey: krikri-key
+        org_id: krikri-org
+      register: d4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D4 failed={{ d4.failed | default('none') }} changed={{ d4.changed | default('none') }}"
+
+    - name: "D5 invalid state choice"
+      community.general.redhat_subscription:
+        state: krikri_state
+        username: krikri
+      register: d5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D5 failed={{ d5.failed | default('none') }} changed={{ d5.changed | default('none') }}"

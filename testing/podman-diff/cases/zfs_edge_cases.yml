@@ -1,0 +1,74 @@
+# community.general.zfs edge cases - argument-validation surface only:
+# neither container installs the zfs/zpool binaries (there is no
+# /dev/zfs in a container, so real pool operations are impossible
+# anyway), which makes real's get_bin_path failure the first reachable
+# non-argument failure and krikri's equivalent probe the same. The
+# point of the case is what runs BEFORE that: required-args validation
+# (with real's plural "missing required arguments: name, state"
+# wording), the state choices ordering ("absent, present"), and the
+# origin-on-snapshot check, which real runs before the binary lookup.
+# Msg wording IS compared; the PATH inside both containers is
+# identical, so the get_bin_path failure text matches byte-for-byte.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "W1 neither name nor state"
+      community.general.zfs:
+      register: w1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "W1 failed={{ w1.failed | default('none') }} changed={{ w1.changed | default('none') }} msg={{ w1.msg | default('none') }}"
+
+    - name: "W2 name without state"
+      community.general.zfs:
+        name: rpool/krikri
+      register: w2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "W2 failed={{ w2.failed | default('none') }} changed={{ w2.changed | default('none') }} msg={{ w2.msg | default('none') }}"
+
+    - name: "W3 state without name"
+      community.general.zfs:
+        state: present
+      register: w3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "W3 failed={{ w3.failed | default('none') }} changed={{ w3.changed | default('none') }} msg={{ w3.msg | default('none') }}"
+
+    - name: "W4 invalid state choice"
+      community.general.zfs:
+        name: rpool/krikri
+        state: krikri_bogus
+      register: w4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "W4 failed={{ w4.failed | default('none') }} changed={{ w4.changed | default('none') }} msg={{ w4.msg | default('none') }}"
+
+    - name: "W5 origin on a snapshot name fires before the binary lookup"
+      community.general.zfs:
+        name: rpool/krikri@snap
+        state: present
+        origin: rpool/other@snap
+      register: w5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "W5 failed={{ w5.failed | default('none') }} changed={{ w5.changed | default('none') }} msg={{ w5.msg | default('none') }}"
+
+    - name: "W6 valid present args fall through to the binary lookup"
+      community.general.zfs:
+        name: rpool/krikri
+        state: present
+      register: w6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "W6 failed={{ w6.failed | default('none') }} changed={{ w6.changed | default('none') }} msg={{ w6.msg | default('none') }}"
+
+    - name: "W7 valid absent args fall through to the binary lookup"
+      community.general.zfs:
+        name: rpool/krikri
+        state: absent
+      register: w7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "W7 failed={{ w7.failed | default('none') }} changed={{ w7.changed | default('none') }} msg={{ w7.msg | default('none') }}"

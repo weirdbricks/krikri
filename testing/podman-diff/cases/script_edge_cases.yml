@@ -1,0 +1,85 @@
+# script (ansible.builtin.script) edge cases - fully testable here (no
+# backend needed; ansible_connection=local runs the script in the same
+# container on both engines). The fixture scripts are written at
+# runtime into /work by the playbook itself (real Ansible resolves the
+# script source at task RUN time, not playbook-load time, so earlier
+# tasks' files are visible). Scenarios: a script source that does not
+# exist at all, a script exiting non-zero (real reports failed=True
+# but STILL changed=True - script has no idempotency concept), a
+# successful run, creates: with an already-existing marker (skip, ok),
+# and removes: with the marker missing (skip). Msg wording differs and
+# is not compared; failed=/changed=/rc and on-disk effects matter.
+# Prefix X.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "X0 write a succeeding fixture script"
+      ansible.builtin.copy:
+        dest: /work/krikri_ok.sh
+        mode: "0755"
+        content: |
+          #!/bin/bash
+          echo krikri-ok
+          exit 0
+
+    - name: "X0 write a failing fixture script"
+      ansible.builtin.copy:
+        dest: /work/krikri_fail.sh
+        mode: "0755"
+        content: |
+          #!/bin/bash
+          echo krikri-fail >&2
+          exit 7
+
+    - name: "X0 create the creates-guard marker"
+      ansible.builtin.file:
+        path: /work/krikri_marker
+        state: touch
+        mode: "0644"
+
+    - name: "X1 script file does not exist"
+      ansible.builtin.script: /work/krikri_missing.sh
+      register: x1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "X1 failed={{ x1.failed | default('none') }} changed={{ x1.changed | default('none') }}"
+
+    - name: "X2 script exits non-zero"
+      ansible.builtin.script: /work/krikri_fail.sh
+      register: x2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "X2 failed={{ x2.failed | default('none') }} changed={{ x2.changed | default('none') }} rc={{ x2.rc | default('none') }}"
+
+    - name: "X3 script succeeds"
+      ansible.builtin.script: /work/krikri_ok.sh
+      register: x3
+    - ansible.builtin.debug:
+        msg: "X3 failed={{ x3.failed | default('none') }} changed={{ x3.changed | default('none') }}"
+
+    - name: "X4 creates with an already-existing marker (skip)"
+      ansible.builtin.script: /work/krikri_ok.sh
+      args:
+        creates: /work/krikri_marker
+      register: x4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "X4 failed={{ x4.failed | default('none') }} changed={{ x4.changed | default('none') }}"
+
+    - name: "X5 removes with a missing marker (skip)"
+      ansible.builtin.script: /work/krikri_ok.sh
+      args:
+        removes: /work/krikri_marker_absent
+      register: x5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "X5 failed={{ x5.failed | default('none') }} changed={{ x5.changed | default('none') }}"
+
+    - name: "X6 chdir + script args"
+      ansible.builtin.script: /work/krikri_ok.sh arg1 arg2
+      args:
+        chdir: /tmp
+      register: x6
+    - ansible.builtin.debug:
+        msg: "X6 failed={{ x6.failed | default('none') }} changed={{ x6.changed | default('none') }}"

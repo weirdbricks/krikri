@@ -1,0 +1,53 @@
+# rhsm_repository (community.general) edge cases. Argument-validation
+# only: the Debian container has no subscription-manager (and is not a
+# Red Hat system), so every case that survives the argspec must fail on
+# the missing binary (or the real module's root check) - identically,
+# failed=True/changed=False, on both engines. The argspec checks
+# (required name, state choice) fire BEFORE any binary check on the
+# real side; krikri must also report failed=True/changed=False there.
+# Note the installed community.general (10.x) removed present/absent
+# from state's choices - G4 fails at the REAL argspec while krikri
+# still maps them onto enabled/disabled and fails one step later on
+# the missing binary; both report failed=True/changed=False. Msg
+# wording differs and is not compared.
+# Prefix G.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "G1 missing required name"
+      community.general.rhsm_repository:
+        state: enabled
+      register: g1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "G1 failed={{ g1.failed | default('none') }} changed={{ g1.changed | default('none') }}"
+
+    - name: "G2 invalid state choice"
+      community.general.rhsm_repository:
+        name: krikri-repo
+        state: krikri_state
+      register: g2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "G2 failed={{ g2.failed | default('none') }} changed={{ g2.changed | default('none') }}"
+
+    - name: "G3 state present (removed choice in community.general 10.x; fails on real argspec, krikri maps it)"
+      community.general.rhsm_repository:
+        name: krikri-repo
+        state: present
+      register: g3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "G3 failed={{ g3.failed | default('none') }} changed={{ g3.changed | default('none') }}"
+
+    - name: "G4 valid name list (fails on missing binary)"
+      community.general.rhsm_repository:
+        name:
+          - krikri-repo
+          - krikri-repo-2
+        state: disabled
+      register: g4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "G4 failed={{ g4.failed | default('none') }} changed={{ g4.changed | default('none') }}"

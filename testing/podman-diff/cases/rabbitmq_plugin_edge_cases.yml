@@ -1,0 +1,67 @@
+# rabbitmq_plugin (community.rabbitmq) edge cases. Argument-validation
+# only: neither container has a RabbitMQ server OR a rabbitmq-plugins
+# binary, so every case that survives argument validation must fail on
+# the missing binary - identically, failed=True/changed=False, on both
+# engines. Cases that fail at the argspec (missing required names,
+# invalid state/broker_state choice, non-boolean new_only) must fail
+# before any binary invocation on the real side; krikri must also
+# report failed=True and changed=False there. name: is a documented
+# alias of names: in the real module, so Q4 also covers the alias
+# path. Msg wording differs and is not compared.
+# Prefix Q.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "Q1 missing required names"
+      community.rabbitmq.rabbitmq_plugin:
+        state: enabled
+      register: q1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "Q1 failed={{ q1.failed | default('none') }} changed={{ q1.changed | default('none') }}"
+
+    - name: "Q2 invalid state choice"
+      community.rabbitmq.rabbitmq_plugin:
+        names: krikri_plugin
+        state: krikri_state
+      register: q2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "Q2 failed={{ q2.failed | default('none') }} changed={{ q2.changed | default('none') }}"
+
+    - name: "Q3 names via the name: alias (fails on missing rabbitmq-plugins)"
+      community.rabbitmq.rabbitmq_plugin:
+        name: krikri_plugin
+        state: enabled
+      register: q3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "Q3 failed={{ q3.failed | default('none') }} changed={{ q3.changed | default('none') }}"
+
+    - name: "Q4 state disabled (fails on missing rabbitmq-plugins)"
+      community.rabbitmq.rabbitmq_plugin:
+        names: krikri_plugin
+        state: disabled
+      register: q4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "Q4 failed={{ q4.failed | default('none') }} changed={{ q4.changed | default('none') }}"
+
+    - name: "Q5 invalid broker_state choice"
+      community.rabbitmq.rabbitmq_plugin:
+        names: krikri_plugin
+        broker_state: krikri_state
+      register: q5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "Q5 failed={{ q5.failed | default('none') }} changed={{ q5.changed | default('none') }}"
+
+    - name: "Q6 new_only as a non-boolean string"
+      community.rabbitmq.rabbitmq_plugin:
+        names: krikri_plugin
+        new_only: krikri_bool
+      register: q6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "Q6 failed={{ q6.failed | default('none') }} changed={{ q6.changed | default('none') }}"

@@ -32,16 +32,27 @@ module Krikri
   class ZfsPlugin < BasePlugin
     def execute : PluginResult
       name = @params["name"]?
-      return missing("name") unless name
-
       state = @params["state"]?
-      return missing("state") unless state
+
+      # Real AnsibleModule construction - required args (name and
+      # state, sorted) and the state choices fire here, before the
+      # origin check and the zfs/zpool binary lookup below.
+      missing = ["name", "state"].select { |arg| arg == "name" ? !name : !state }
+      return PluginResult.new(changed: false, failed: true, msg: "missing required arguments: #{missing.join(", ")}") unless missing.empty?
+      name = name.not_nil!
       unless state == "present" || state == "absent"
-        return PluginResult.new(changed: false, failed: true, msg: "value of state must be one of: present, absent, got #{state}")
+        return PluginResult.new(changed: false, failed: true, msg: "value of state must be one of: absent, present, got: #{state}")
       end
 
       origin = @params["origin"]?.try { |o| o.empty? ? nil : o }
       properties = parse_properties
+
+      # Real's main() runs this check before Zfs.__init__ does the
+      # binary lookup, so origin-on-snapshot wins even on a host
+      # without the zfs binaries.
+      if origin && name.includes?('@')
+        return PluginResult.new(changed: false, failed: true, msg: "cannot specify origin when operating on a snapshot")
+      end
 
       # The real module resolves both binaries with
       # get_bin_path(required=True) up front and fails with this exact
@@ -50,12 +61,8 @@ module Krikri
       # FileNotFoundError from spawning a missing binary.
       ["zfs", "zpool"].each do |binary|
         unless executable_in_path?(binary)
-          return PluginResult.new(changed: false, failed: true, msg: "Failed to find required executable #{binary} in paths: #{ENV.fetch("PATH", "")}")
+          return PluginResult.new(changed: false, failed: true, msg: "Failed to find required executable \"#{binary}\" in paths: #{ENV.fetch("PATH", "")}")
         end
-      end
-
-      if origin && name.includes?('@')
-        return PluginResult.new(changed: false, failed: true, msg: "cannot specify origin when operating on a snapshot")
       end
 
       changed = false
@@ -85,10 +92,6 @@ module Krikri
         res.extra[prop] = JSON::Any.new(value)
       end
       res
-    end
-
-    private def missing(arg : String) : PluginResult
-      PluginResult.new(changed: false, failed: true, msg: "missing required argument: #{arg}")
     end
 
     private def executable_in_path?(binary : String) : Bool

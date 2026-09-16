@@ -15,6 +15,11 @@ module Krikri
   # qemu:///system), xml, autostart.
   #
   # Real-module quirks ported deliberately:
+  # - argument-spec validation (state/command choices, required_if
+  #   name for the entry commands) fires at AnsibleModule construction
+  #   time - BEFORE the libvirt import probe - so an invalid choice
+  #   fails with parameters.py wording on a host with no libvirt at
+  #   all, never with the import message.
   # - `state:` RETURNS before the `command:` and `autostart:` sections
   #   run - `state: active, autostart: yes` (mattgeddes.libvirt_kvm's
   #   own "libvirt networks running state" task, round 410102) never
@@ -33,6 +38,7 @@ module Krikri
   class VirtNetPlugin < BasePlugin
     private ENTRY_COMMANDS = %w[create status start stop undefine destroy get_xml define modify]
     private HOST_COMMANDS  = %w[list_nets facts info]
+    private STATE_CHOICES  = %w[active inactive present absent]
 
     def execute : PluginResult
       name = @params["name"]? || @params["network"]?
@@ -43,9 +49,25 @@ module Krikri
       autostart = @params["autostart"]? ? true?(@params["autostart"]?) : nil
       check_mode = true?(@params["check_mode"]?)
 
+      # Real AnsibleModule construction - choices for state/command and
+      # the required_if name for the entry commands all fire here,
+      # before the HAS_VIRT probe below (real fails "value of state
+      # must be one of: ..." on a libvirt-less host for an invalid
+      # choice, with the import message reserved for valid arguments).
+      if state && !STATE_CHOICES.includes?(state)
+        return fail("value of state must be one of: #{STATE_CHOICES.join(", ")}, got: #{state}")
+      end
+      all_commands = ENTRY_COMMANDS + HOST_COMMANDS
+      if command && !all_commands.includes?(command)
+        return fail("value of command must be one of: #{all_commands.join(", ")}, got: #{command}")
+      end
+      if command && ENTRY_COMMANDS.includes?(command) && !name
+        return fail("command is #{command} but all of the following are missing: name")
+      end
+
       # Real Ansible's HAS_VIRT probe - on a host with no libvirt the
       # real module fails up front with this exact message (its python
-      # binding isn't importable), before any parameter validation.
+      # binding isn't importable), after argument validation.
       # The CLI equivalent is the virsh binary itself being absent.
       return fail("The `libvirt` module is not importable. Check the requirements.") unless executable_in_path?("virsh")
 

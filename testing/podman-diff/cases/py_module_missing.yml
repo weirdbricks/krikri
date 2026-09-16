@@ -1,0 +1,19 @@
+# py_module missing-script case, in its OWN playbook on purpose: real
+# Ansible resolves a task's module name at playbook-LOAD time, so an
+# unresolvable name ("ERROR! couldn't resolve module/action", rc=4)
+# aborts before ANY task runs - it cannot coexist with the succeeding
+# py_module_edge_cases.yml scenarios. krikri resolves lazily per task
+# (0.9.1050's deliberate match of when:-gated lazy resolution): it
+# skips the unresolvable task, runs the rest, and exit(4)s at the very
+# end ("completed with unavailable modules"). No register/debug here
+# - krikri surfaces the skip (failed=none changed=False) while real
+# aborts pre-recap, a 0.9.1050-documented shape, not a new bug; the
+# comparable observable is the terminal rc (4 on both engines).
+# Prefix P.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "P1 missing script (no library/ source for this name)"
+      krikri_missing:
+

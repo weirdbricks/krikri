@@ -413,6 +413,57 @@ if printf '%s\n' "${cases[@]}" | grep -q '^known_hosts'; then
   done
 fi
 
+# py_module cases need the playbook-dir library/ fixture modules seeded
+# into BOTH containers BEFORE ansible-playbook loads the playbook:
+# real Ansible resolves a task's module name at playbook-LOAD time
+# against the on-disk library/ (a module written by an earlier playbook
+# task is invisible to it -> "ERROR! couldn't resolve module/action",
+# rc=4, zero tasks run), while krikri resolves lazily per task. The
+# fixtures live in library/ next to run.sh. Gated on the requested
+# case list like the mysql cases above.
+if printf '%s\n' "${cases[@]}" | grep -q '^py_module'; then
+  log "seeding library/ fixture modules for py_module cases"
+  for c in "$NAME_A" "$NAME_B"; do
+    podman exec "$c" mkdir -p /work/library
+    for f in "$DIFF_DIR"/library/*.py; do
+      podman cp "$f" "$c:/work/library/$(basename "$f")" >/dev/null \
+        || { log "FATAL: library fixture copy failed in $c"; exit 1; }
+    done
+  done
+fi
+
+# subversion cases need the real svn + svnadmin binaries in BOTH
+# containers (real ansible.builtin.subversion and krikri's plugin both
+# shell out to svn), plus a seeded local file:// repo so real
+# checkout/update/export/idempotency paths actually run. Gated on the
+# requested case list like the modprobe cases above.
+if printf '%s\n' "${cases[@]}" | grep -q '^subversion'; then
+  log "installing subversion + seeding a local file:// repo for subversion cases"
+  for c in "$NAME_A" "$NAME_B"; do
+    podman exec "$c" bash -c "apt-get install -y -qq --no-install-recommends subversion >/dev/null" \
+      || { log "FATAL: subversion install failed in $c"; exit 1; }
+    podman exec "$c" bash -c "rm -rf /work/krikri_repo /work/krikri_src && mkdir -p /work/krikri_src && echo krikri > /work/krikri_src/krikri.txt && svnadmin create /work/krikri_repo && svn import --non-interactive -m krikri /work/krikri_src file:///work/krikri_repo >/dev/null" \
+      || { log "FATAL: svn repo seeding failed in $c"; exit 1; }
+  done
+fi
+
+# virt_net cases are argument-validation + HAS_VIRT-probe only (no
+# libvirt daemon in either container). The real side needs the
+# community.libvirt collection but deliberately gets NO python3-libvirt,
+# so valid-argument paths fail on the module's own import probe - the
+# same surface krikri's plugin mirrors with the absent `virsh` binary.
+# Gated on the requested case list like the postgresql cases.
+if printf '%s\n' "${cases[@]}" | grep -q '^virt_net'; then
+  log "installing community.libvirt collection for virt_net cases"
+  podman exec "$NAME_A" bash -c "ansible-galaxy collection install community.libvirt >/dev/null 2>&1" \
+    || { log "FATAL: community.libvirt install failed"; exit 1; }
+fi
+
+# zfs cases are argument-validation only: neither container installs
+# zfs/zpool (no /dev/zfs in a container anyway), so real's
+# get_bin_path failure is the first reachable non-argument failure on
+# both sides - no installs needed, listed here for the record.
+
 overall_rc=0
 for case_file in "${cases[@]}"; do
   case_name="${case_file%.yml}"
@@ -458,7 +509,7 @@ for case_file in "${cases[@]}"; do
     # its raw unrendered template and show as a phantom divergence.
     sed -E '/^[0-9]+[[:space:]]/d' "$1" \
       | grep -oE '\b[A-Z][0-9]+[a-c]? [a-zA-Z_]+=.*' \
-      | sed -E 's/\\\\/\x01/g; s/\\n/ | /g; s/\x01/\\/g; s/"\}?(,)?$//; s/[[:space:]]*\*+[[:space:]]*$//; s/=[^ ]*[0-9]{2,6}\.[0-9]{4}-[0-9]{2}-[0-9]{2}@[0-9:]{8}~/=<backup-path>/g'
+      | sed -E 's/\\\\/\x01/g; s/\\n/ | /g; s/\x01/\\/g; s/\\"/"/g; s/"\}?(,)?$//; s/[[:space:]]*\*+[[:space:]]*$//; s/=[^ ]*[0-9]{2,6}\.[0-9]{4}-[0-9]{2}-[0-9]{2}@[0-9:]{8}~/=<backup-path>/g'
   }
   extract "$RESULTS/${case_name}_real.log" > "$msgs_a"
   extract "$RESULTS/${case_name}_krikri.log" > "$msgs_b"

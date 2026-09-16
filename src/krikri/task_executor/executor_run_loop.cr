@@ -1679,12 +1679,26 @@ module Krikri
     # JSON-encoded come back as real arrays/dicts for the module).
     private def execute_python_module(task : Task, source_path : String, substituted_params : Hash(String, String), exec_host : Host, vars_context : Hash(String, JSON::Any), wire_vars : Hash(String, JSON::Any), become : Bool, become_user : String?, substituted_become_user : String?, substituted_env : Hash(String, String)? = nil) : JSON::Any
       module_name = PythonModuleRunner.short_name(task.unavailable_module || task.module_name)
-      new_style = PythonModuleRunner.new_style?(File.read(source_path))
+      source_text = File.read(source_path)
+      new_style = PythonModuleRunner.new_style?(source_text)
+
+      # See PythonModuleRunner.missing_interpreter_line? - real
+      # Ansible's own "module (name) is missing interpreter line"
+      # guard, which a shebangless old-style module fixture failed on
+      # the real side while this engine ran it and succeeded.
+      if PythonModuleRunner.missing_interpreter_line?(source_text, new_style)
+        return JSON.parse({
+          "changed" => false,
+          "failed"  => true,
+          "msg"     => "module (#{module_name}) is missing interpreter line",
+        }.to_json)
+      end
+
       check_mode = resolve_task_check_mode(task, wire_vars)
 
       py_params = substituted_params.dup
       py_params["module_name"] = module_name
-      py_params["module_source"] = Base64.strict_encode(File.read(source_path))
+      py_params["module_source"] = Base64.strict_encode(source_text)
       py_params["new_style"] = new_style.to_s
       py_params["check_mode"] = check_mode.to_s
       if new_style
