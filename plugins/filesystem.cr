@@ -15,8 +15,14 @@ module Krikri
   # `resizefs:`/`uuid:` are not implemented (real module's own resize/
   # UUID-reset paths per fstype) - same class of documented, narrow
   # scope cut as this repo's other RHEL/FreeBSD-only module gaps.
-  # `ufs` (FreeBSD-only) is not in FSTYPE_COMMANDS for the same reason.
+  # `ufs` (FreeBSD-only) is likewise not in the accepted choices and
+  # not in FSTYPE_COMMANDS for the same reason.
   class FilesystemPlugin < BasePlugin
+    PARAM_ALIASES = {
+      "device" => "dev",
+      "type"   => "fstype",
+    }
+
     # fstype -> {mkfs command argv (before force flags/opts/dev),
     # force flags, blkid's own TYPE value for an existing fs of this
     # kind - usually identical to fstype, except lvm (blkid reports
@@ -38,11 +44,51 @@ module Krikri
       "lvm"      => {["pvcreate"], ["-f"], "LVM2_member"},
     }
 
+    def initialize(config : JSON::Any)
+      super(config)
+      PARAM_ALIASES.each do |alias_name, canonical|
+        if (value = @params[alias_name]?) && !@params.has_key?(canonical)
+          @params[canonical] = value
+        end
+      end
+    end
+
     def execute : PluginResult
       dev = @params["dev"]?
-      return PluginResult.new(changed: false, failed: true, msg: "dev is required") unless dev
+      unless dev
+        return PluginResult.new(changed: false, failed: true,
+          msg: "missing required arguments: dev")
+      end
 
       state = @params["state"]?.try { |str| str.empty? ? nil : str } || "present"
+      # Real argument_spec gives state/fstype choices lists, so
+      # AnsibleModule's choice check (parameters.py's exact wording)
+      # fires before anything else param-wise - previously a bogus
+      # state silently behaved as present and a bogus fstype fell
+      # through to the device/blkid checks first. Real's choice list
+      # is set-ordered (nondeterministic wording across runs); the
+      # set of choices matches (minus FreeBSD-only ufs) and the
+      # podman-diff case only compares failed=/changed= here.
+      unless ["present", "absent"].includes?(state)
+        return PluginResult.new(changed: false, failed: true,
+          msg: "value of state must be one of: present, absent, got: #{state}")
+      end
+
+      fstype = @params["fstype"]?
+      if fstype && !FSTYPE_COMMANDS.has_key?(fstype)
+        return PluginResult.new(changed: false, failed: true,
+          msg: "value of fstype must be one of: #{FSTYPE_COMMANDS.keys.sort.join(", ")}, got: #{fstype}")
+      end
+
+      # required_if=[('state', 'present', ['fstype'])] - and real
+      # AnsibleModule's required_if check runs before the module body,
+      # so even a nonexistent dev with no fstype reports the missing
+      # parameter, not "Device ... not found.".
+      if state == "present" && !fstype
+        return PluginResult.new(changed: false, failed: true,
+          msg: "state is present but all of the following are missing: fstype")
+      end
+
       force = true?(@params["force"]?)
       opts = @params["opts"]?.try(&.split) || [] of String
       check_mode = true?(@params["check_mode"]?)
@@ -57,7 +103,9 @@ module Krikri
 
       return absent_result(dev, current_fs, check_mode) if state == "absent"
 
-      present_result(dev, current_fs, state, force, opts, check_mode)
+      # state's choices leave only "present" here, and required_if
+      # already guaranteed fstype for present.
+      present_result(dev, current_fs, state, fstype.not_nil!, force, opts, check_mode)
     end
 
     private def missing_device_result(dev : String, state : String) : PluginResult
@@ -79,30 +127,38 @@ module Krikri
       PluginResult.new(changed: true, failed: false, msg: "")
     end
 
+    # Real filesystem.py's idempotency compares FILESYSTEMS values (the
+    # per-fstype classes), not fstype strings: ext4 and ext4dev share
+    # the Ext class, and blkid's "LVM2_member" is the lvm class - so an
+    # existing ext4 fs with fstype=ext4dev is changed=False, not a
+    # force-required conflict.
+    private def fs_class_of(name : String) : String
+      case name
+      when "ext4dev"     then "ext4"
+      when "LVM2_member" then "lvm"
+      else                    name
+      end
+    end
+
     private def present_result(
-      dev : String, current_fs : String, state : String,
+      dev : String, current_fs : String, state : String, fstype : String,
       force : Bool, opts : Array(String), check_mode : Bool,
     ) : PluginResult
-      fstype = @params["fstype"]? || @params["type"]?
-      unless fstype
-        return PluginResult.new(changed: false, failed: true, msg: "fstype is required when state=present")
-      end
-
-      command_info = FSTYPE_COMMANDS[fstype]?
-      unless command_info
-        return PluginResult.new(changed: false, failed: true, msg: "module does not support this filesystem (#{fstype}) yet.")
-      end
-
+      command_info = FSTYPE_COMMANDS[fstype]
       mkfs_argv, force_flags, blkid_name = command_info
-      create_filesystem(dev, current_fs, blkid_name, mkfs_argv, force_flags, opts, force, check_mode)
+
+      create_filesystem(
+        dev, current_fs, fs_class_of(current_fs), fs_class_of(fstype),
+        mkfs_argv, force_flags, opts, force, check_mode,
+      )
     end
 
     private def create_filesystem(
-      dev : String, current_fs : String, blkid_name : String,
+      dev : String, current_fs : String, current_fs_class : String, fstype_class : String,
       mkfs_argv : Array(String), force_flags : Array(String),
       opts : Array(String), force : Bool, check_mode : Bool,
     ) : PluginResult
-      same_fs = !current_fs.empty? && current_fs == blkid_name
+      same_fs = !current_fs.empty? && current_fs_class == fstype_class
       if same_fs && !force
         return PluginResult.new(changed: false, failed: false, msg: "")
       elsif !current_fs.empty? && !same_fs && !force

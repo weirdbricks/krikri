@@ -1,0 +1,166 @@
+# filesystem (community.general) edge cases. Uses regular files as the
+# "device" so no loop devices are needed: mkswap/mkfs.ext4 on a file
+# work identically in a container. The two engines run in SEPARATE
+# containers, so the state-mutation sequence is independent per engine.
+# Only failed=/changed= are rendered (not msg) because real's choice-
+# list wording for a bogus fstype is Python-set-ordered and would
+# phantom-diverge run-to-run.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "M0 create a blank image for later cases"
+      ansible.builtin.command: dd if=/dev/zero of=/tmp/krikri-fs.img bs=1M count=16
+      changed_when: false
+
+    - name: "M1 missing dev"
+      community.general.filesystem:
+      register: m1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "M1 failed={{ m1.failed | default('none') }} changed={{ m1.changed | default('none') }}"
+
+    - name: "M2 invalid state choice"
+      community.general.filesystem:
+        dev: /tmp/krikri-fs.img
+        fstype: ext4
+        state: krikri
+      register: m2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "M2 failed={{ m2.failed | default('none') }} changed={{ m2.changed | default('none') }}"
+
+    - name: "M3 invalid fstype choice on an existing dev"
+      community.general.filesystem:
+        dev: /tmp/krikri-fs.img
+        fstype: krikri
+      register: m3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "M3 failed={{ m3.failed | default('none') }} changed={{ m3.changed | default('none') }}"
+
+    - name: "M3b invalid fstype choice on a MISSING dev (choices fire before the dev check)"
+      community.general.filesystem:
+        dev: /tmp/krikri-nope.img
+        fstype: krikri
+      register: m3b
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "M3b failed={{ m3b.failed | default('none') }} changed={{ m3b.changed | default('none') }}"
+
+    - name: "M4 state=present without fstype on an existing dev"
+      community.general.filesystem:
+        dev: /tmp/krikri-fs.img
+      register: m4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "M4 failed={{ m4.failed | default('none') }} changed={{ m4.changed | default('none') }}"
+
+    - name: "M4b state=present without fstype on a MISSING dev (required_if fires before the dev check)"
+      community.general.filesystem:
+        dev: /tmp/krikri-nope.img
+      register: m4b
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "M4b failed={{ m4b.failed | default('none') }} changed={{ m4b.changed | default('none') }}"
+
+    - name: "M5 create swap on the image"
+      community.general.filesystem:
+        dev: /tmp/krikri-fs.img
+        fstype: swap
+      register: m5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "M5 failed={{ m5.failed | default('none') }} changed={{ m5.changed | default('none') }}"
+
+    - name: "M6 re-run swap is idempotent"
+      community.general.filesystem:
+        dev: /tmp/krikri-fs.img
+        fstype: swap
+      register: m6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "M6 failed={{ m6.failed | default('none') }} changed={{ m6.changed | default('none') }}"
+
+    - name: "M7 different fstype without force fails"
+      community.general.filesystem:
+        dev: /tmp/krikri-fs.img
+        fstype: ext4
+      register: m7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "M7 failed={{ m7.failed | default('none') }} changed={{ m7.changed | default('none') }}"
+
+    - name: "M7b force=true overwrites the existing swap"
+      community.general.filesystem:
+        dev: /tmp/krikri-fs.img
+        fstype: ext4
+        force: true
+      register: m7b
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "M7b failed={{ m7b.failed | default('none') }} changed={{ m7b.changed | default('none') }}"
+
+    - name: "M8 re-run ext4 is idempotent"
+      community.general.filesystem:
+        dev: /tmp/krikri-fs.img
+        fstype: ext4
+      register: m8
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "M8 failed={{ m8.failed | default('none') }} changed={{ m8.changed | default('none') }}"
+
+    - name: "M9 ext4dev on an existing ext4 fs is the same class (idempotent, no force needed)"
+      community.general.filesystem:
+        dev: /tmp/krikri-fs.img
+        fstype: ext4dev
+      register: m9
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "M9 failed={{ m9.failed | default('none') }} changed={{ m9.changed | default('none') }}"
+
+    - name: "M10 device alias of dev"
+      community.general.filesystem:
+        device: /tmp/krikri-fs.img
+        type: ext4
+      register: m10
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "M10 failed={{ m10.failed | default('none') }} changed={{ m10.changed | default('none') }}"
+
+    - name: "M11 state=absent on a missing dev succeeds"
+      community.general.filesystem:
+        dev: /tmp/krikri-nope.img
+        state: absent
+      register: m11
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "M11 failed={{ m11.failed | default('none') }} changed={{ m11.changed | default('none') }}"
+
+    - name: "M12 state=absent wipes the fs"
+      community.general.filesystem:
+        dev: /tmp/krikri-fs.img
+        state: absent
+      register: m12
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "M12 failed={{ m12.failed | default('none') }} changed={{ m12.changed | default('none') }}"
+
+    - name: "M13 re-run absent is idempotent"
+      community.general.filesystem:
+        dev: /tmp/krikri-fs.img
+        state: absent
+      register: m13
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "M13 failed={{ m13.failed | default('none') }} changed={{ m13.changed | default('none') }}"
+
+    - name: "M14 state=absent ignores fstype (even a bogus one is choice-validated first)"
+      community.general.filesystem:
+        dev: /tmp/krikri-fs.img
+        fstype: krikri
+        state: absent
+      register: m14
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "M14 failed={{ m14.failed | default('none') }} changed={{ m14.changed | default('none') }}"
