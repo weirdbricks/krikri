@@ -128,8 +128,15 @@ describe "getent plugin" do
       ip.should_not contain(" ")
       ip.should_not contain("\t")
     end
+    # The plugin now forks the real getent binary (NSS source of truth),
+    # and its hosts enumeration legitimately emits the same key twice
+    # (glibc collapses the ::1 aliases onto 127.0.0.1 in addition to the
+    # IPv4 "127.0.0.1 localhost" line), so values can be nested
+    # field-lists here too - flatten before scanning for the name.
     localhost_seen = hosts.values.any? do |fields|
-      names = fields.as_a.map(&.as_s)
+      names = fields.as_a.flat_map do |entry|
+        entry.raw.is_a?(Array) ? entry.as_a.map(&.as_s) : [entry.as_s]
+      end
       names.includes?("localhost")
     end
     localhost_seen.should be_true
