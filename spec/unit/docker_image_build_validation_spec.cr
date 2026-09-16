@@ -184,9 +184,12 @@ describe "docker_image_build plugin argument validation" do
 
     result["failed"].as_bool.should be_true
     result["msg"].as_s.should eq("Unsupported parameters for (community.docker.docker_image_build) module: banana. " \
-                                 "Supported parameters include: args, cache_from, dockerfile, etc_hosts, labels, " \
-                                 "name, network, nocache, outputs, path, platform, pull, rebuild, secrets, " \
-                                 "shm_size, tag, target.")
+                                 "Supported parameters include: api_version, args, ca_path, cache_from, cli_context, " \
+                                 "client_cert, client_key, docker_cli, docker_host, dockerfile, etc_hosts, labels, name, " \
+                                 "network, nocache, outputs, path, platform, pull, rebuild, secrets, shm_size, tag, " \
+                                 "target, tls, tls_hostname, validate_certs (ca_cert, cacert_path, cert_path, " \
+                                 "docker_api_version, docker_url, key_path, tls_ca_cert, tls_client_cert, " \
+                                 "tls_client_key, tls_verify).")
   end
 
   it "fails a nonexistent path directory only after validation passed" do

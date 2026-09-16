@@ -3,6 +3,7 @@
 require "json"
 require "docr"
 require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/ansible_arg_validation"
 require "../src/krikri/plugin_helpers/docker_client"
 
 module Krikri
@@ -58,14 +59,54 @@ module Krikri
   #   any container still attached), matching the driver-mismatch path's
   #   own delete exactly - live-verified against a real Docker daemon.
   #
-  # Not implemented: ipam_config:, enable_ipv6:, custom driver options:,
-  # `api_version:` (see PluginHelpers::DockerClient).
+  # ipam_config: is accepted and validated (sub-spec element shape,
+  # matching real _list_no_log_values' string-to-dict conversion) but not
+  # applied - Docker has no "change a network's IPAM in place" API, so a
+  # differing ipam_config needs the force:-style recreate path, which
+  # real gates behind has_different_config's much more thorough
+  # comparison; `api_version:` is likewise unimplemented (see
+  # PluginHelpers::DockerClient).
   class DockerNetworkPlugin < BasePlugin
+    include PluginHelpers::AnsibleArgValidation
+
+    # Real merged argument_spec (community.docker docker_network.py +
+    # _util.py's DOCKER_COMMON_ARGS), name => aliases.
+    SPEC = PluginHelpers::DockerClient::COMMON_SPEC.merge({
+      "name"                => %w[network_name],
+      "config_from"         => %w[],
+      "config_only"         => %w[],
+      "connected"           => %w[containers],
+      "state"               => %w[],
+      "driver"              => %w[],
+      "driver_options"      => %w[],
+      "force"               => %w[],
+      "appends"             => %w[incremental],
+      "ipam_driver"         => %w[],
+      "ipam_driver_options" => %w[],
+      "ipam_config"         => %w[],
+      "enable_ipv4"         => %w[],
+      "enable_ipv6"         => %w[],
+      "internal"            => %w[],
+      "labels"              => %w[],
+      "scope"               => %w[],
+      "attachable"          => %w[],
+      "ingress"             => %w[],
+    })
+    # Real merged-spec order for type conversion (common args first).
+    INT_PARAMS    = %w[timeout]
+    BOOL_PARAMS   = %w[tls use_ssh_client validate_certs debug config_only force appends enable_ipv4 enable_ipv6 internal attachable ingress]
+    DICT_PARAMS   = %w[driver_options ipam_driver_options labels]
+    CHOICE_PARAMS = {
+      "state" => %w[present absent],
+      "scope" => %w[local global swarm],
+    }
+
     def execute : PluginResult
-      name = @params["name"]?
-      unless name
-        return PluginResult.new(changed: false, failed: true, msg: "missing required argument: name")
+      if err = validate_arguments
+        return err
       end
+
+      name = @params["name"]?.to_s
 
       driver = @params["driver"]? || "bridge"
       internal = true?(@params["internal"]?)
@@ -81,13 +122,11 @@ module Krikri
 
       existing = find_network(api, name)
 
-      case state
-      when "present"
+      # state is choices-validated to exactly present/absent above.
+      if state == "present"
         ensure_present(api, name, driver, internal, attachable, labels, connected, appends, existing, check_mode)
-      when "absent"
-        ensure_absent(api, existing, check_mode)
       else
-        PluginResult.new(changed: false, failed: true, msg: "state must be 'present' or 'absent', got '#{state}'")
+        ensure_absent(api, existing, check_mode)
       end
     rescue ex : Docr::Errors::DockerAPIError
       PluginResult.new(changed: false, failed: true, msg: "Docker API error: #{ex.message}")
@@ -192,6 +231,151 @@ module Krikri
       end
 
       changes
+    end
+
+    # Real AnsibleModule validation over the merged spec, in
+    # arg_spec.ArgumentSpecValidator.validate order: required -> types
+    # (merged-spec order) -> choices -> required_together -> sub-spec
+    # string-element conversion -> unsupported (deferred to last). The
+    # daemon connection only happens after all of it.
+    private def validate_arguments : PluginResult?
+      if err = validate_required
+        return err
+      end
+
+      if err = validate_types
+        return err
+      end
+
+      if err = validate_choices
+        return err
+      end
+
+      if err = validate_required_together
+        return err
+      end
+
+      if err = validate_ipam_config_elements
+        return err
+      end
+
+      validate_unsupported
+    end
+
+    private def validate_required : PluginResult?
+      return nil if @params["name"]?
+      missing_required_error(["name"])
+    end
+
+    private def validate_types : PluginResult?
+      INT_PARAMS.each do |param|
+        next unless raw = @params[param]?
+        next if raw.to_i32?
+        return int_type_error(param, raw)
+      end
+      BOOL_PARAMS.each do |param|
+        next unless raw = @params[param]?
+        next if bool_convertible?(raw)
+        return bool_type_error(param, raw)
+      end
+      DICT_PARAMS.each do |param|
+        next unless raw = @params[param]?
+        if err = check_dict_type(param, raw)
+          return err
+        end
+      end
+      nil
+    end
+
+    # check_type_dict semantics for a top-level dict param (errors get
+    # the parameters.py "argument ... is of type" wrapper).
+    private def check_dict_type(param : String, raw : String) : PluginResult?
+      case value = (JSON.parse(raw) rescue nil).try(&.raw)
+      when Hash
+        nil
+      when Array
+        PluginResult.new(changed: false, failed: true,
+          msg: "argument '#{param}' is of type <class 'list'> and we were unable to convert to dict: " \
+               "<class 'list'> cannot be converted to a dict")
+      when String
+        if err = check_dict_type_string(value)
+          return PluginResult.new(changed: false, failed: true,
+            msg: "argument '#{param}' is of type <class 'str'> and we were unable to convert to dict: #{err.msg}")
+        end
+        nil
+      when Nil
+        if err = check_dict_type_string(raw)
+          return PluginResult.new(changed: false, failed: true,
+            msg: "argument '#{param}' is of type <class 'str'> and we were unable to convert to dict: #{err.msg}")
+        end
+        nil
+      end
+    end
+
+    # Bare check_type_dict: strings try JSON (when they look like
+    # objects) then k1=v1,k2=v2 pairs; everything else fails.
+    private def check_dict_type_string(value : String) : PluginResult?
+      stripped = value.strip
+      if stripped.starts_with?("{")
+        begin
+          return nil if JSON.parse(stripped).as_h?
+        rescue
+        end
+        return PluginResult.new(changed: false, failed: true,
+          msg: "unable to evaluate string as dictionary")
+      end
+      return nil if value.includes?("=")
+      PluginResult.new(changed: false, failed: true,
+        msg: "dictionary requested, could not parse JSON or key=value")
+    end
+
+    private def validate_choices : PluginResult?
+      CHOICE_PARAMS.each do |param, allowed|
+        value = @params[param]? || (param == "state" ? "present" : nil)
+        next unless value
+        next if allowed.includes?(value)
+        return choices_error(param, allowed, value)
+      end
+      nil
+    end
+
+    # _util.py's DOCKER_REQUIRED_TOGETHER, shared by every API module;
+    # aliases count through their canonical name (real _handle_aliases
+    # copies the value onto the canonical key first).
+    private def validate_required_together : PluginResult?
+      has_cert = @params["client_cert"]? || @params["cert_path"]? || @params["tls_client_cert"]?
+      has_key = @params["client_key"]? || @params["key_path"]? || @params["tls_client_key"]?
+      if (has_cert || has_key) && !(has_cert && has_key)
+        return required_together_error(PluginHelpers::DockerClient::COMMON_REQUIRED_TOGETHER)
+      end
+      nil
+    end
+
+    # ipam_config elements must be dicts (real's _list_no_log_values
+    # string-to-dict pass fails a non-dict element before anything else
+    # looks at the param, with the bare check_type_dict wording).
+    private def validate_ipam_config_elements : PluginResult?
+      raw = @params["ipam_config"]?
+      return nil unless raw
+      parse_sub_list(raw).each do |element|
+        next unless element.as_h?.nil?
+        case value = element.raw
+        when String
+          if err = check_dict_type_string(value)
+            return err
+          end
+        when Int64, Float64, Bool
+          return PluginResult.new(changed: false, failed: true,
+            msg: "Value '#{value}' in the sub parameter field 'ipam_config' must by a dict, not '#{value.class.name.to_s.downcase.sub("int64", "int")}'")
+        end
+      end
+      nil
+    end
+
+    private def validate_unsupported : PluginResult?
+      unsupported = unsupported_param_keys(@params, SPEC, {"ipam_config" => %w[subnet iprange gateway aux_addresses]})
+      return nil if unsupported.empty?
+      unsupported_params_error("community.docker.docker_network", unsupported, SPEC)
     end
 
     private def docker_raw_call(client : Docr::Client, method : String, path : String, body)

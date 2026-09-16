@@ -15,7 +15,7 @@ describe "docker_network_info plugin" do
   it "fails when name is missing" do
     result = PluginSpecHelper.run("docker_network_info", {} of String => String)
     result["failed"].as_bool.should be_true
-    result["msg"].as_s.should contain("missing required argument: name")
+    result["msg"].as_s.should contain("missing required arguments: name")
   end
 
   it "fails with a connection error (never skips) when the Docker daemon is unreachable" do

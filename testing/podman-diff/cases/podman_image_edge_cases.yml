@@ -1,0 +1,105 @@
+# podman_image edge cases. NO podman binary inside either harness
+# container: real PodmanImageManager's executable probe is the first
+# post-validation failure on both engines (krikri mirrors the same
+# "Failed to find required executable podman in paths: ..." wording),
+# so valid-args cases compare failed=/changed= only and are not
+# included. The byte-comparable surface is the AnsibleModule argument
+# validation real runs in module setup BEFORE the manager runs
+# (required name, state/pull_policy choices in declaration order,
+# bool/int type conversion, username/password required-together,
+# auth_file/username etc. mutual exclusions, unsupported params).
+# The real side needs the containers.podman collection installed
+# (run.sh gates it); no podman SDK exists - the module shells out.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "P1 missing required name"
+      containers.podman.podman_image:
+      register: p1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P1 failed={{ p1.failed | default('none') }} changed={{ p1.changed | default('none') }} msg={{ p1.msg | default('none') }}"
+
+    - name: "P2 invalid state choice (declaration order: absent, present, build, quadlet)"
+      containers.podman.podman_image:
+        name: krikri/img
+        state: banana
+      register: p2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P2 failed={{ p2.failed | default('none') }} changed={{ p2.changed | default('none') }} msg={{ p2.msg | default('none') }}"
+
+    - name: "P3 pull_policy is not in the galaxy-release argument_spec (main-only option)"
+      containers.podman.podman_image:
+        name: krikri/img
+        pull_policy: banana
+      register: p3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P3 failed={{ p3.failed | default('none') }} changed={{ p3.changed | default('none') }} msg={{ p3.msg | default('none') }}"
+
+    - name: "P4 non-boolean force (bool list order is a Python set iteration - failed/changed only)"
+      containers.podman.podman_image:
+        name: krikri/img
+        force: banana
+      register: p4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P4 failed={{ p4.failed | default('none') }} changed={{ p4.changed | default('none') }}"
+
+    - name: "P5 username without password (required_together)"
+      containers.podman.podman_image:
+        name: krikri/img
+        username: krikri
+      register: p5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P5 failed={{ p5.failed | default('none') }} changed={{ p5.changed | default('none') }} msg={{ p5.msg | default('none') }}"
+
+    - name: "P6 auth_file + username (mutually exclusive)"
+      containers.podman.podman_image:
+        name: krikri/img
+        auth_file: /tmp/auth.json
+        username: krikri
+      register: p6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P6 failed={{ p6.failed | default('none') }} changed={{ p6.changed | default('none') }} msg={{ p6.msg | default('none') }}"
+
+    - name: "P7 arch + platform (mutually exclusive)"
+      containers.podman.podman_image:
+        name: krikri/img
+        arch: amd64
+        platform: linux/amd64
+      register: p7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P7 failed={{ p7.failed | default('none') }} changed={{ p7.changed | default('none') }} msg={{ p7.msg | default('none') }}"
+
+    - name: "P8 non-dict build (dict type conversion)"
+      containers.podman.podman_image:
+        name: krikri/img
+        build: banana
+      register: p8
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P8 failed={{ p8.failed | default('none') }} changed={{ p8.changed | default('none') }} msg={{ p8.msg | default('none') }}"
+
+    - name: "P9 retry is not in the galaxy-release argument_spec (main-only option)"
+      containers.podman.podman_image:
+        name: krikri/img
+        retry: banana
+      register: p9
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P9 failed={{ p9.failed | default('none') }} changed={{ p9.changed | default('none') }} msg={{ p9.msg | default('none') }}"
+
+    - name: "P10 unsupported parameter (deferred past every other check)"
+      containers.podman.podman_image:
+        name: krikri/img
+        banana: yes
+      register: p10
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P10 failed={{ p10.failed | default('none') }} changed={{ p10.changed | default('none') }} msg={{ p10.msg | default('none') }}"

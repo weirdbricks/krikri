@@ -3,6 +3,7 @@
 require "json"
 require "docr"
 require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/ansible_arg_validation"
 require "../src/krikri/plugin_helpers/docker_ref"
 require "../src/krikri/plugin_helpers/docker_client"
 
@@ -32,6 +33,7 @@ module Krikri
   # of it in AnsibleModule setup BEFORE the module body's buildx probe
   # and path checks.
   class DockerImageBuildPlugin < BasePlugin
+    include PluginHelpers::AnsibleArgValidation
     # Real module's argument_spec (community.docker docker_image_build.py
     # main()), in declaration order - validation iterates the MERGED spec
     # (common CLI-client args first, then the module's own) in this order,
@@ -453,12 +455,8 @@ module Krikri
         end
       end
       return nil if unsupported.empty?
-      legal = COMMON_CLI_SPEC.merge(SPEC_PARAMS.to_h { |k| {k, [] of String} })
-      supported = legal.map { |key, aliases| aliases.empty? ? key : "#{key} (#{aliases.sort.join(", ")})" }
-      PluginResult.new(changed: false, failed: true,
-        msg: "Unsupported parameters for (community.docker.docker_image_build) module: " \
-             "#{unsupported.sort.join(", ")}. Supported parameters include: " \
-             "#{supported.join(", ")}.")
+      unsupported_params_error("community.docker.docker_image_build", unsupported,
+        COMMON_CLI_SPEC.merge(SPEC_PARAMS.to_h { |k| {k, [] of String} }))
     end
 
     # Real _remove_values_conditions: a string EQUAL to the secret

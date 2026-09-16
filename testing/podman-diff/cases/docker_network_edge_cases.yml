@@ -1,0 +1,102 @@
+# docker_network edge cases. NO docker daemon inside either harness
+# container: real AnsibleDockerClient eagerly pings the daemon at module
+# init, so every case past argument validation fails there (failed=True
+# changed=False) while krikri's plugin reaches the same failed=/changed=
+# via its own daemon connection attempt - those cases compare failed=/
+# changed= only. The byte-comparable surface is the AnsibleModule
+# argument validation real runs BEFORE the client init (required name,
+# merged-spec type conversion over DOCKER_COMMON_ARGS + the module's
+# own params, state/scope choices, client_cert/client_key
+# required-together, ipam_config element shape, unsupported params).
+# The real side needs community.docker + Docker SDK installed (run.sh
+# gates it).
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "N1 missing required name"
+      community.docker.docker_network:
+      register: n1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "N1 failed={{ n1.failed | default('none') }} changed={{ n1.changed | default('none') }} msg={{ n1.msg | default('none') }}"
+
+    - name: "N2 invalid state choice"
+      community.docker.docker_network:
+        name: krikri-net
+        state: banana
+      register: n2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "N2 failed={{ n2.failed | default('none') }} changed={{ n2.changed | default('none') }} msg={{ n2.msg | default('none') }}"
+
+    - name: "N3 invalid scope choice"
+      community.docker.docker_network:
+        name: krikri-net
+        scope: banana
+      register: n3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "N3 failed={{ n3.failed | default('none') }} changed={{ n3.changed | default('none') }} msg={{ n3.msg | default('none') }}"
+
+    - name: "N4 non-boolean internal (bool list order is a Python set iteration - failed/changed only)"
+      community.docker.docker_network:
+        name: krikri-net
+        internal: banana
+      register: n4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "N4 failed={{ n4.failed | default('none') }} changed={{ n4.changed | default('none') }}"
+
+    - name: "N5 non-dict labels"
+      community.docker.docker_network:
+        name: krikri-net
+        labels: banana
+      register: n5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "N5 failed={{ n5.failed | default('none') }} changed={{ n5.changed | default('none') }} msg={{ n5.msg | default('none') }}"
+
+    - name: "N6 non-integer timeout (common arg type conversion)"
+      community.docker.docker_network:
+        name: krikri-net
+        timeout: banana
+      register: n6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "N6 failed={{ n6.failed | default('none') }} changed={{ n6.changed | default('none') }} msg={{ n6.msg | default('none') }}"
+
+    - name: "N7 client_cert without client_key (required_together)"
+      community.docker.docker_network:
+        name: krikri-net
+        client_cert: /tmp/cert.pem
+      register: n7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "N7 failed={{ n7.failed | default('none') }} changed={{ n7.changed | default('none') }} msg={{ n7.msg | default('none') }}"
+
+    - name: "N8 ipam_config element as plain string (sub-spec element shape)"
+      community.docker.docker_network:
+        name: krikri-net
+        ipam_config: banana
+      register: n8
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "N8 failed={{ n8.failed | default('none') }} changed={{ n8.changed | default('none') }} msg={{ n8.msg | default('none') }}"
+
+    - name: "N9 unsupported parameter (deferred past every other check)"
+      community.docker.docker_network:
+        name: krikri-net
+        banana: yes
+      register: n9
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "N9 failed={{ n9.failed | default('none') }} changed={{ n9.changed | default('none') }} msg={{ n9.msg | default('none') }}"
+
+    - name: "N10 valid args, daemon unreachable on both engines (failed/changed only)"
+      community.docker.docker_network:
+        name: krikri-net
+      register: n10
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "N10 failed={{ n10.failed | default('none') }} changed={{ n10.changed | default('none') }}"

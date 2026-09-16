@@ -74,13 +74,14 @@ describe "docker_compose_v2 plugin" do
 
   it "fails when definition: is given without project_name (required_by)" do
     # definition: is a DICT param, so it travels through the config as a
-    # JSON object (only the raw config carries the shape - the flattened
-    # @params view stringifies it). Run the binary directly with that shape.
+    # stringified JSON object (the engine serializes every task param to
+    # a string before the plugin sees it - a raw Hash in "params" is a
+    # shape the engine never produces).
     binary = File.join(PluginSpecHelper::PLUGINS_DIR, "docker_compose_v2")
     config = {
       "host"   => {"name" => "localhost", "user" => ENV["USER"]? || "root", "port" => 22},
       "params" => {
-        "definition" => {"services" => {"sleeper" => {"image" => "busybox:latest"}}},
+        "definition" => %({"services": {"sleeper": {"image": "busybox:latest"}}}),
       },
       "vars" => {} of String => String,
     }
@@ -88,7 +89,7 @@ describe "docker_compose_v2 plugin" do
     Process.run(binary, input: IO::Memory.new(config.to_json), output: output, error: Process::Redirect::Inherit)
     result = JSON.parse(output.to_s)
     result["failed"].as_bool.should be_true
-    result["msg"].as_s.should contain("project_name is required when definition is used")
+    result["msg"].as_s.should contain("missing parameter(s) required by 'definition': project_name")
   end
 
   it "rejects an invalid state choice" do

@@ -90,6 +90,17 @@ if printf '%s\n' "${cases[@]}" | grep -q '^docker'; then
     || { log "FATAL: community.docker/Docker SDK install failed"; exit 1; }
 fi
 
+# podman_image cases need the containers.podman collection in the REAL
+# container (a collection module, not shipped with ansible-core).
+# Validation-only + executable-probe cases - no podman binary or SDK
+# exists in either container, and the module shells out to the CLI.
+# Gated on the requested case list like the docker cases above.
+if printf '%s\n' "${cases[@]}" | grep -q '^podman'; then
+  log "installing containers.podman collection for podman cases"
+  podman exec "$NAME_A" bash -c "ansible-galaxy collection install containers.podman >/dev/null 2>&1" \
+    || { log "FATAL: containers.podman install failed"; exit 1; }
+fi
+
 # deb822_repository landed in ansible-core 2.15; bookworm's apt ships
 # 2.14, where the module doesn't exist yet (a harness artifact, not a
 # divergence). For deb822 cases the real side gets a venv with a current
