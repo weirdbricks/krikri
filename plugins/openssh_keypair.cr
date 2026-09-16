@@ -2,6 +2,7 @@
 
 require "json"
 require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/ansible_arg_validation"
 
 module Krikri
   # openssh_keypair plugin (community.crypto.openssh_keypair) - (re)
@@ -22,13 +23,40 @@ module Krikri
   # partial_idempotence [default]/full_idempotence/always), comment,
   # passphrase, owner/group/mode, check_mode.
   class OpensshKeypairPlugin < BasePlugin
-    VALID_TYPES = ["rsa", "dsa", "rsa1", "ecdsa", "ed25519"]
+    include PluginHelpers::AnsibleArgValidation
+
+    # The real module's argument_spec plus the file-common args its
+    # add_file_common_args=True injects (ansible-core 2.14's
+    # FILE_COMMON_ARGUMENTS: the only alias is attributes->attr).
+    SPEC = {
+      "state"              => [] of String,
+      "size"               => [] of String,
+      "type"               => [] of String,
+      "force"              => [] of String,
+      "path"               => [] of String,
+      "comment"            => [] of String,
+      "regenerate"         => [] of String,
+      "passphrase"         => [] of String,
+      "private_key_format" => [] of String,
+      "backend"            => [] of String,
+      "mode"               => [] of String,
+      "owner"              => [] of String,
+      "group"              => [] of String,
+      "seuser"             => [] of String,
+      "serole"             => [] of String,
+      "selevel"            => [] of String,
+      "setype"             => [] of String,
+      "attributes"         => ["attr"],
+      "unsafe_writes"      => [] of String,
+    }
 
     def execute : PluginResult
-      path = @params["path"]?
-      return PluginResult.new(changed: false, failed: true, msg: "missing required argument: path") unless path
+      if err = validate_arguments
+        return err
+      end
 
-      path = expand_tilde(path)
+      path = @params["path"]?
+      path = expand_tilde(path.not_nil!)
       pub_path = "#{path}.pub"
       state = @params["state"]? || "present"
       check_mode = true?(@params["check_mode"]?)
@@ -36,9 +64,6 @@ module Krikri
       return remove(path, pub_path, check_mode) if state == "absent"
 
       type = @params["type"]? || "rsa"
-      unless VALID_TYPES.includes?(type)
-        return PluginResult.new(changed: false, failed: true, msg: "#{type} is not a valid value for key type")
-      end
 
       size_result = resolve_size(type, @params["size"]?.try(&.to_i))
       return size_result if size_result.is_a?(PluginResult)
@@ -49,6 +74,41 @@ module Krikri
       end
 
       ensure_present(path, pub_path, type, size, check_mode)
+    end
+
+    # Real AnsibleModule validation order (ArgumentSpecValidator.validate):
+    # required -> types (spec declaration order) -> choices ->
+    # mutually_exclusive -> unsupported (deferred last). No
+    # required_together/required_if on this module.
+    private def validate_arguments : PluginResult?
+      return missing_required_error(["path"]) unless @params["path"]?
+
+      if raw = @params["size"]?
+        return int_type_error("size", raw) unless raw.to_i32?
+      end
+      %w[force unsafe_writes].each do |param|
+        if raw = @params[param]?
+          return bool_type_error(param, raw) unless bool_convertible?(raw)
+        end
+      end
+
+      {"state"              => %w[present absent],
+       "type"               => %w[rsa dsa rsa1 ecdsa ed25519],
+       "regenerate"         => %w[never fail partial_idempotence full_idempotence always],
+       "private_key_format" => %w[auto pkcs1 pkcs8 ssh],
+       "backend"            => %w[auto cryptography opensshbin]}.each do |param, allowed|
+        if value = @params[param]?
+          unless allowed.includes?(value)
+            return choices_error(param, allowed, value)
+          end
+        end
+      end
+
+      unsupported = unsupported_param_keys(@params, SPEC)
+      unless unsupported.empty?
+        return unsupported_params_error("community.crypto.openssh_keypair", unsupported, SPEC)
+      end
+      nil
     end
 
     private def ensure_present(path : String, pub_path : String, type : String, size : Int32, check_mode : Bool) : PluginResult
@@ -178,12 +238,18 @@ module Krikri
       status.success?
     end
 
+    # Both files carry the file-common attributes - a change to either
+    # one counts as changed (the real module's
+    # set_fs_attributes_if_different is applied to the pair).
     private def apply_attrs(path : String, pub_path : String) : Bool
-      before = File.exists?(path) ? File.info(path).permissions.value : nil
-      apply_owner_group_mode(path, @params["owner"]?, @params["group"]?, @params["mode"]?)
-      apply_owner_group_mode(pub_path, @params["owner"]?, @params["group"]?, @params["mode"]?)
-      after = File.exists?(path) ? File.info(path).permissions.value : nil
-      before != after
+      changed = false
+      {path, pub_path}.each do |file|
+        next unless File.exists?(file)
+        before = File.info(file).permissions.value
+        apply_owner_group_mode(file, @params["owner"]?, @params["group"]?, @params["mode"]?)
+        changed ||= File.info(file).permissions.value != before
+      end
+      changed
     rescue
       false
     end
