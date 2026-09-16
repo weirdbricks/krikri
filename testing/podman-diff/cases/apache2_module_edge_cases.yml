@@ -1,0 +1,146 @@
+# community.general.apache2_module edge cases. Needs a real apache2
+# (a2enmod/a2dismod/apache2ctl) in BOTH containers, installed by run.sh's
+# gated block for ^apache2_module cases. Debian's default MPM is event
+# (threaded), so the cgi-under-threaded-MPM refusal is exercised as-is.
+# The broken-config cases (A14-A16) append an invalid directive to
+# /etc/apache2/apache2.conf; the engines run in SEPARATE containers, so
+# the mutation is independent per engine. Msg wording is rendered only
+# for the pure argument-validation and refuse paths (A1/A2/A8); the
+# a2enmod-driven failure msgs embed apache's own stderr and are only
+# compared on failed=/changed=. Success results render the module's
+# `result` field (real sets result= and never msg).
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "A1 missing required name"
+      community.general.apache2_module:
+      register: a1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A1 failed={{ a1.failed | default('none') }} changed={{ a1.changed | default('none') }} msg={{ a1.msg | default('none') }}"
+
+    - name: "A2 invalid state choice"
+      community.general.apache2_module:
+        name: headers
+        state: krikri
+      register: a2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A2 failed={{ a2.failed | default('none') }} changed={{ a2.changed | default('none') }} msg={{ a2.msg | default('none') }}"
+
+    - name: "A3 enable headers"
+      community.general.apache2_module:
+        name: headers
+      register: a3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A3 failed={{ a3.failed | default('none') }} changed={{ a3.changed | default('none') }} result={{ a3.result | default('none') }}"
+
+    - name: "A4 re-run headers is idempotent"
+      community.general.apache2_module:
+        name: headers
+      register: a4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A4 failed={{ a4.failed | default('none') }} changed={{ a4.changed | default('none') }} result={{ a4.result | default('none') }}"
+
+    - name: "A5 disable headers"
+      community.general.apache2_module:
+        name: headers
+        state: absent
+      register: a5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A5 failed={{ a5.failed | default('none') }} changed={{ a5.changed | default('none') }}"
+
+    - name: "A6 re-run disable is idempotent"
+      community.general.apache2_module:
+        name: headers
+        state: absent
+      register: a6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A6 failed={{ a6.failed | default('none') }} changed={{ a6.changed | default('none') }}"
+
+    - name: "A7 enable a module that does not exist"
+      community.general.apache2_module:
+        name: krikri_nomod
+      register: a7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A7 failed={{ a7.failed | default('none') }} changed={{ a7.changed | default('none') }}"
+
+    - name: "A8 enabling cgi under the threaded event MPM is refused"
+      community.general.apache2_module:
+        name: cgi
+      register: a8
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A8 failed={{ a8.failed | default('none') }} changed={{ a8.changed | default('none') }} msg={{ a8.msg | default('none') }}"
+
+    - name: "A9 enable dump_io (identifier is dumpio_module, not dump_io_module)"
+      community.general.apache2_module:
+        name: dump_io
+      register: a9
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A9 failed={{ a9.failed | default('none') }} changed={{ a9.changed | default('none') }}"
+
+    - name: "A10 re-run dump_io is idempotent"
+      community.general.apache2_module:
+        name: dump_io
+      register: a10
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A10 failed={{ a10.failed | default('none') }} changed={{ a10.changed | default('none') }}"
+
+    - name: "A11 check-mode enable reports a would-be change"
+      community.general.apache2_module:
+        name: proxy
+      check_mode: true
+      register: a11
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A11 failed={{ a11.failed | default('none') }} changed={{ a11.changed | default('none') }}"
+
+    - name: "A12 ...but check mode changed nothing (proxy enables for real here)"
+      community.general.apache2_module:
+        name: proxy
+      register: a12
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A12 failed={{ a12.failed | default('none') }} changed={{ a12.changed | default('none') }}"
+
+    - name: "A13 break the apache config so apache2ctl -M fails"
+      ansible.builtin.lineinfile:
+        path: /etc/apache2/apache2.conf
+        line: "KrikriInvalidDirective"
+        state: present
+      changed_when: false
+
+    - name: "A14 a failing apache2ctl -M fails the module without ignore_configcheck"
+      community.general.apache2_module:
+        name: rewrite
+      register: a14
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A14 failed={{ a14.failed | default('none') }} changed={{ a14.changed | default('none') }}"
+
+    - name: "A15 ignore_configcheck falls back to a2enmod's own wording (first run is a change)"
+      community.general.apache2_module:
+        name: rewrite
+        ignore_configcheck: true
+      register: a15
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A15 failed={{ a15.failed | default('none') }} changed={{ a15.changed | default('none') }}"
+
+    - name: "A16 re-run with ignore_configcheck: a2enmod says 'already enabled' so not a change"
+      community.general.apache2_module:
+        name: rewrite
+        ignore_configcheck: true
+      register: a16
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A16 failed={{ a16.failed | default('none') }} changed={{ a16.changed | default('none') }}"

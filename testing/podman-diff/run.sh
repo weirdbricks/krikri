@@ -160,6 +160,20 @@ if printf '%s\n' "${cases[@]}" | grep -q '^firewalld'; then
   done
 fi
 
+# apache2_module cases need a real apache2 (a2enmod/a2dismod/apache2ctl)
+# in BOTH containers - the module drives those binaries directly and the
+# base image ships none of them. No daemon is started (none of the
+# apache2_module paths need a running server; apache2ctl -M only parses
+# the config). Gated on the requested case list like the firewalld cases
+# above.
+if printf '%s\n' "${cases[@]}" | grep -q '^apache2_module'; then
+  log "installing apache2 for apache2_module cases"
+  for c in "$NAME_A" "$NAME_B"; do
+    podman exec "$c" bash -c "apt-get install -y -qq --no-install-recommends apache2 >/dev/null" \
+      || { log "FATAL: apache2 install failed in $c"; exit 1; }
+  done
+fi
+
 # postgresql_* cases need the community.postgresql collection in the
 # REAL container (krikri talks the wire protocol itself; the real
 # modules are collection modules not shipped with ansible-core).
