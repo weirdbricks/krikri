@@ -2,6 +2,7 @@
 
 require "json"
 require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/ansible_arg_validation"
 
 module Krikri
   # openssl_dhparam plugin (community.crypto.openssl_dhparam) - generates
@@ -16,13 +17,39 @@ module Krikri
   # check_mode. select_crypto_backend/return_content are accepted but
   # only the openssl-CLI-equivalent behavior applies.
   class OpensslDhparamPlugin < BasePlugin
-    def execute : PluginResult
-      path = @params["path"]?
-      return PluginResult.new(changed: false, failed: true, msg: "missing required argument: path") unless path
+    include PluginHelpers::AnsibleArgValidation
 
-      path = expand_tilde(path)
+    # The real module's argument_spec plus the file-common args its
+    # add_file_common_args=True injects (the only alias is
+    # attributes->attr).
+    SPEC = {
+      "state"                 => [] of String,
+      "size"                  => [] of String,
+      "force"                 => [] of String,
+      "path"                  => [] of String,
+      "backup"                => [] of String,
+      "select_crypto_backend" => [] of String,
+      "return_content"        => [] of String,
+      "mode"                  => [] of String,
+      "owner"                 => [] of String,
+      "group"                 => [] of String,
+      "seuser"                => [] of String,
+      "serole"                => [] of String,
+      "selevel"               => [] of String,
+      "setype"                => [] of String,
+      "attributes"            => ["attr"],
+      "unsafe_writes"         => [] of String,
+    }
+
+    def execute : PluginResult
+      if err = validate_arguments
+        return err
+      end
+
+      path = @params["path"]?
+      path = expand_tilde(path.not_nil!)
       state = @params["state"]? || "present"
-      size = (@params["size"]? || "4096").to_i
+      size = @params["size"]?.try(&.to_i) || 4096
       force = true?(@params["force"]?)
       check_mode = true?(@params["_ansible_check_mode"]?)
 
@@ -45,6 +72,40 @@ module Krikri
       return PluginResult.new(changed: true, failed: false, msg: "Would generate DH parameters at #{path} (check mode)", size: size, filename: path) if check_mode
 
       generate(path, size)
+    end
+
+    # Real AnsibleModule validation order (ArgumentSpecValidator.validate):
+    # required -> types (spec declaration order) -> choices ->
+    # unsupported (deferred last). No required_together/required_if/
+    # mutually_exclusive on this module.
+    private def validate_arguments : PluginResult?
+      return missing_required_error(["path"]) unless @params["path"]?
+
+      if raw = @params["size"]?
+        return int_type_error("size", raw) unless raw.to_i32?
+      end
+      %w[force backup return_content unsafe_writes].each do |param|
+        if raw = @params[param]?
+          return bool_type_error(param, raw) unless bool_convertible?(raw)
+        end
+      end
+
+      if value = @params["state"]?
+        unless %w[absent present].includes?(value)
+          return choices_error("state", %w[absent present], value)
+        end
+      end
+      if value = @params["select_crypto_backend"]?
+        unless %w[auto cryptography openssl].includes?(value)
+          return choices_error("select_crypto_backend", %w[auto cryptography openssl], value)
+        end
+      end
+
+      unsupported = unsupported_param_keys(@params, SPEC)
+      unless unsupported.empty?
+        return unsupported_params_error("community.crypto.openssl_dhparam", unsupported, SPEC)
+      end
+      nil
     end
 
     private def remove(path : String, check_mode : Bool) : PluginResult

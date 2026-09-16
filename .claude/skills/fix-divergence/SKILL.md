@@ -35,40 +35,74 @@ re-run `git worktree add` fresh off `main` right before you actually start
 work on each one (or `git rebase main` inside it first) rather than trusting
 a worktree created hours earlier.
 
-## 2. Delegate to Crush — max 2 concurrent, always
+## 2. Delegate to Crush — YOU call it directly, max 2 concurrent
+
+**Call `mcp__crush-api__crush_run` yourself, from the orchestrator's own
+context — do not wrap it in a Claude subagent.** A Claude general-purpose
+subagent whose main job is "investigate, call Crush, validate" costs Claude
+tokens twice over: once for the subagent's own investigation/validation,
+and again when the orchestrator re-does that same validation before merging
+(step 3 says to do this unconditionally, subagent report or not - so the
+subagent's version of that work is pure waste). Crush is the cheap part;
+don't spend expensive Claude turns re-deriving what Crush already did once
+you're going to redo the checking yourself anyway. Do the investigation
+(fetch the real role, build the minimal repro, compare against real
+`ansible-playbook`) yourself, hand Crush a tight prompt for just the code
+change once you know the root cause, then run the full validation in
+step 3 yourself - one continuous flow, not a spawn-and-re-check round trip.
 
 **Never run more than 2 concurrent `mcp__crush-api__crush_run` calls against
 this repo**, even across separate worktrees — 15 parallel crashed the user's
-desktop once (memory: `crush-concurrency-limit`). If you're fixing several
-roles, either process 2 at a time yourself, or spawn exactly 2
-general-purpose subagents at a time (each owning one role end-to-end
-including its own `crush_run` call), wait for both, then launch the next 2.
+desktop once (memory: `crush-concurrency-limit`). Since you're calling Crush
+directly now instead of through subagents, this means: work on 2 roles'
+worktrees interleaved in your own turns (dispatch a `crush_run` for role A,
+while it runs dispatch one for role B, then come back to review both diffs)
+rather than firing off 2 parallel Claude subagents.
 
-Each subagent's prompt needs, self-contained (subagents start with zero
-context):
-- The worktree path and branch name.
-- The role name, its `~/scratch/krt-results/<round>_<backend>_<role>/`
-  evidence directory, and what files there to read (`run.log`,
-  `summary.txt`, `cold_py.out`/`cold_crystal.out`/`warm_py.out`/
-  `warm_crystal.out`, `galaxy_install.log`).
-- Instructions to fetch the real role source
-  (`ansible-galaxy role install <role> -p /tmp/galaxy-roles`) and build a
-  MINIMAL local repro (`ansible_connection=local`/`localhost`, no live VM
-  needed) comparing real `ansible-playbook` against a freshly-built
-  `bin/krikri-playbook`.
+Only reach for a real subagent (not a Crush-wrapping one) when the
+investigation itself is the expensive part and genuinely benefits from
+running unsupervised in parallel with other orchestrator work - e.g. a
+round with many roles queued and you want triage/investigation on several
+happening at once before you get to the fix step. Even then, have it stop
+at "root cause confirmed, here's the prompt for Crush" and do the actual
+`crush_run` + validation yourself.
+
+Your prompt to Crush needs, self-contained:
+- The exact root cause you've confirmed (not a hypothesis - confirm it
+  yourself against real `ansible-playbook` first, per the repro workflow
+  below, before ever calling Crush).
+- The worktree path and file(s) to change.
 - **Explicit warning that Crush has previously dropped a `return` keyword**
   mid-fix, breaking control flow in a way that still happened to compile —
-  tell the subagent to read Crush's diff line by line, not just trust that
-  it builds.
+  you MUST read Crush's diff line by line yourself afterward, not just
+  trust that it builds.
 - This repo's comment convention: explain WHY (real Ansible's behavior, the
   round that found it), never WHAT the code does.
-- Explicit instruction: **do not merge to main** — push the branch and stop.
+- Explicit instruction: **do not touch `src/krikri/version.cr`**. Version
+  bumps happen once, centrally, at merge time (step 5) - if you're working
+  2 roles interleaved, both worktrees start from the same `main`, so
+  bumping early in either one just produces a collision to untangle later
+  for no benefit (nothing in the spec suite checks the number itself, only
+  that `RUNTIME_DEPENDENCY_FORK_NOTES` matches `shard.yml`'s tags - the
+  bump is pure traceability).
 
-## 3. Validate independently before trusting anything — every time, no exceptions
+To fetch the real role source and build the minimal repro yourself before
+calling Crush: `ansible-galaxy role install <role> -p /tmp/galaxy-roles`,
+then a small `ansible_connection=local`/`localhost` playbook (no live VM
+needed) comparing real `ansible-playbook` against a freshly-built
+`bin/krikri-playbook`. The evidence directory for the original divergence
+is `~/scratch/krt-results/<round>_<backend>_<role>/` (`run.log`,
+`summary.txt`, `cold_py.out`/`cold_crystal.out`/`warm_py.out`/
+`warm_crystal.out`, `galaxy_install.log`).
 
-Do this yourself even after a subagent reports "landed" and claims it
-validated — subagents drop steps, and this repo has a strong bias toward
-double-checking rather than trusting a transcript. If a "SECURITY WARNING"
+## 3. Validate before trusting anything — every time, no exceptions
+
+This is the same continuous flow as step 2 when you called Crush yourself -
+just keep going. If a triage subagent handed off "root cause confirmed" and
+you called Crush from a fresh context picking that up, or a subagent DID
+end up owning a `crush_run` call (the exception case in step 2), redo this
+validation from scratch regardless of what it reported — don't trust a
+transcript. If a "SECURITY WARNING"
 flag comes back on a task notification, check it BEFORE reading the rest of
 the report — usually `git log` on `main` (confirm nothing merged without
 you) plus a scan of `/tmp`/home for out-of-place files is enough to clear it
@@ -77,9 +111,10 @@ this sandbox's non-blocking-IO issue with `ansible-playbook`), but never
 skip the check.
 
 1. **Rebase onto current `main` first**, since a sibling fix may have merged
-   while this worktree sat: `git rebase main`. If `src/krikri/version.cr`
-   conflicts, take `main`'s value and bump one more (see step 5) — don't
-   just pick one side blindly.
+   while this worktree sat: `git rebase main`. The subagent never touched
+   `src/krikri/version.cr` (see step 2), so this shouldn't conflict; if it
+   somehow does, take `main`'s value — the actual bump still happens only
+   at step 5, on `main`, right before merging.
 2. `git diff main --stat` then **read the actual diff**, not just the stat —
    check for a dropped `return`, a wrong variable name, or logic that
    doesn't match the stated root cause.
@@ -106,24 +141,33 @@ After any amend, verify with `git show HEAD:src/krikri/version.cr` (or
 whatever file you just edited) that the committed content actually matches
 what's on disk, not just what you intended.
 
-Version bump: read `src/krikri/version.cr` fresh (after the rebase in step
-3.1) rather than assuming a number — a sibling fix may have already taken
-the "next" version.
+No version bump at this stage — the subagent's commit doesn't touch
+`src/krikri/version.cr` at all (see step 2). That happens once, centrally,
+in step 5, right before merging.
 
 Push: `git push -u origin crush/mismatch-<role-slug>` (or
 `--force-with-lease` if amending after an earlier push, e.g. post-rebase).
 
 ## 5. Merge to main (this is on you, not the subagent)
 
+Bump the version FIRST, directly on `main`, immediately before merging —
+this is the only place `src/krikri/version.cr` gets touched, so there is
+never a collision to untangle:
+
 ```bash
 cd /home/labros/git_work/krikri
 git fetch origin --quiet
+# read src/krikri/version.cr fresh, bump one past it, commit that alone
+git commit -am "Bump version to <next>" # or fold into the merge commit below
 git merge --no-ff origin/crush/mismatch-<role-slug> -m "Merge crush/mismatch-<role-slug>: <summary>, <version>
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: <this session's URL>"
 git push
 ```
+
+If two fixes finish close together, whichever you merge first gets the
+next number; re-read `version.cr` before bumping for the second.
 
 Then clean up: `git worktree remove <path> --force`,
 `git branch -d crush/mismatch-<role-slug>`,

@@ -2,6 +2,7 @@
 
 require "json"
 require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/ansible_arg_validation"
 require "../src/krikri/plugin_helpers/java_cert_command"
 
 module Krikri
@@ -32,42 +33,68 @@ module Krikri
   # which the real module applies to the keystore file - keystore
   # attributes stay untouched here.
   class JavaCertPlugin < BasePlugin
+    include PluginHelpers::AnsibleArgValidation
+
+    # The real module's argument_spec plus the file-common args its
+    # add_file_common_args=True injects - the only alias is
+    # attributes->attr (ansible-core's FILE_COMMON_ARGUMENTS).
+    SPEC = {
+      "cert_url"        => [] of String,
+      "cert_path"       => [] of String,
+      "cert_content"    => [] of String,
+      "pkcs12_path"     => [] of String,
+      "pkcs12_password" => [] of String,
+      "pkcs12_alias"    => [] of String,
+      "cert_alias"      => [] of String,
+      "cert_port"       => [] of String,
+      "keystore_path"   => [] of String,
+      "keystore_pass"   => [] of String,
+      "trust_cacert"    => [] of String,
+      "keystore_create" => [] of String,
+      "keystore_type"   => [] of String,
+      "executable"      => [] of String,
+      "state"           => [] of String,
+      "attributes"      => ["attr"],
+      "group"           => [] of String,
+      "mode"            => [] of String,
+      "owner"           => [] of String,
+      "selevel"         => [] of String,
+      "serole"          => [] of String,
+      "setype"          => [] of String,
+      "seuser"          => [] of String,
+      "unsafe_writes"   => [] of String,
+    }
+
     def execute : PluginResult
+      if err = validate_arguments
+        return err
+      end
       url = @params["cert_url"]?
       path = @params["cert_path"]?
       content = @params["cert_content"]?
-      port = (@params["cert_port"]? || "443").to_i? || 443
+      port = @params["cert_port"]?.try(&.to_i) || 443
 
       pkcs12_path = @params["pkcs12_path"]?
       pkcs12_pass = @params["pkcs12_password"]? || ""
-      pkcs12_alias = @params["pkcs12_alias"]? || "1"
+      # The real module's `module.params.get("pkcs12_alias", "1")` is
+      # dead code - module.params always contains the key (None unless
+      # set), so pkcs12_alias is None unless explicitly passed. The
+      # distinction is load-bearing: newer keytool rejects -destalias
+      # without -srcalias, so the real module's pkcs12 import FAILS
+      # whenever cert_alias is set and pkcs12_alias is not.
+      pkcs12_alias = @params["pkcs12_alias"]?
 
       cert_alias = @params["cert_alias"]? || url
       trust_cacert = true?(@params["trust_cacert"]?)
       keystore_path = @params["keystore_path"]?
-      keystore_pass = @params["keystore_pass"]?
+      keystore_pass = @params["keystore_pass"]?.not_nil!
       keystore_create = true?(@params["keystore_create"]?)
       keystore_type = @params["keystore_type"]?
       executable = @params["executable"]? || "keytool"
       state = @params["state"]? || "present"
 
-      return failed_result("Unsupported parameters for (java_cert) module: state must be 'present' or 'absent'") unless ["present", "absent"].includes?(state)
-      return failed_result("missing required arguments: keystore_pass") unless keystore_pass
-      keystore_path ||= ""
-
-      sources = [url, path, content, pkcs12_path].compact
-      if state == "present" && sources.empty?
-        return failed_result("state is present but any of the following is missing: cert_path, cert_url, cert_content, pkcs12_path")
-      end
-      if state == "absent" && !url && !cert_alias
-        return failed_result("state is absent but any of the following is missing: cert_url, cert_alias")
-      end
-      if sources.size > 1
-        return failed_result("parameters are mutually exclusive: cert_url|cert_path|cert_content|pkcs12_path")
-      end
-
       if path && !cert_alias
-        return failed_result("Using local path import from #{keystore_path} requires alias argument.")
+        return failed_result("Using local path import from #{keystore_path || "None"} requires alias argument.")
       end
       if state == "present" && !cert_alias
         return failed_result("Using pkcs12/content import requires cert_alias argument.")
@@ -79,20 +106,20 @@ module Krikri
       keytool_check = remote_exec(executable)
       return failed_result("Failed to find required executable #{executable} in the paths.") unless keytool_check[:exit_code] == 0
 
-      if !keystore_create && !keystore_path.empty? && !remote_file_exists?(keystore_path)
+      if !keystore_create && !keystore_path.nil? && !remote_file_exists?(keystore_path.not_nil!)
         return PluginResult.new(changed: false, failed: true,
           msg: "Module require existing keystore at keystore_path '#{keystore_path}'")
       end
 
       check_mode = true?(@params["_ansible_check_mode"]?)
-      keystore_pass_str = keystore_pass.not_nil!
+      keystore_pass_str = keystore_pass
 
-      alias_exists, alias_exists_output = check_cert_present(executable, keystore_path, keystore_pass_str, cert_alias || "", keystore_type)
+      alias_exists, alias_exists_output = check_cert_present(executable, keystore_path || "", keystore_pass_str, cert_alias || "", keystore_type)
 
       if state == "absent"
         if alias_exists
           return PluginResult.new(changed: true, failed: false, msg: "Certificate delete complete.") if check_mode
-          return delete_cert(executable, keystore_path, keystore_pass_str, cert_alias.not_nil!, keystore_type)
+          return delete_cert(executable, keystore_path.not_nil!, keystore_pass_str, cert_alias.not_nil!, keystore_type)
         end
         return PluginResult.new(changed: false, failed: false, msg: "Certificate not present.")
       end
@@ -143,23 +170,67 @@ module Krikri
           return PluginResult.new(changed: true, failed: false, msg: "Certificate import complete.") if check_mode
 
           if alias_exists
-            delete_result = delete_cert(executable, keystore_path, keystore_pass_str, cert_alias_str, keystore_type)
+            delete_result = delete_cert(executable, keystore_path.not_nil!, keystore_pass_str, cert_alias_str, keystore_type)
             return delete_result if delete_result.failed?
           end
 
           if pkcs12_path
             return import_pkcs12(executable, pkcs12_path.not_nil!, pkcs12_pass, pkcs12_alias,
-              keystore_path, keystore_pass_str, cert_alias_str, keystore_type)
+              keystore_path.not_nil!, keystore_pass_str, cert_alias_str, keystore_type)
           else
-            return import_cert(executable, new_tmp, keystore_path, keystore_pass_str, cert_alias_str, keystore_type, trust_cacert)
+            return import_cert(executable, new_tmp, keystore_path.not_nil!, keystore_pass_str, cert_alias_str, keystore_type, trust_cacert)
           end
         end
 
         PluginResult.new(changed: false, failed: false, msg: "Certificate already present.",
-          cmd: PluginHelpers::JavaCertCommand.check_cmd(executable, keystore_path, cert_alias_str, keystore_type))
+          cmd: PluginHelpers::JavaCertCommand.check_cmd(executable, keystore_path.not_nil!, cert_alias_str, keystore_type))
       ensure
         File.delete(new_tmp) rescue nil if cleanup
       end
+    end
+
+    # Real AnsibleModule validation order (ArgumentSpecValidator.validate):
+    # required -> types (spec declaration order) -> choices ->
+    # required_together -> required_if -> mutually_exclusive -> unsupported
+    # (deferred last).
+    private def validate_arguments : PluginResult?
+      return missing_required_error(["keystore_pass"]) unless @params["keystore_pass"]?
+
+      {"cert_port" => :int, "trust_cacert" => :bool, "keystore_create" => :bool}.each do |param, type|
+        next unless raw = @params[param]?
+        if type == :int
+          next if raw.to_i32?
+          return int_type_error(param, raw)
+        else
+          next if bool_convertible?(raw)
+          return bool_type_error(param, raw)
+        end
+      end
+
+      state = @params["state"]? || "present"
+      unless %w[absent present].includes?(state)
+        return choices_error("state", %w[absent present], state)
+      end
+
+      sources = [@params["cert_url"]?, @params["cert_path"]?, @params["cert_content"]?, @params["pkcs12_path"]?].compact
+      if state == "present" && sources.empty?
+        return PluginResult.new(changed: false, failed: true,
+          msg: "state is present but any of the following are missing: cert_path, cert_url, cert_content, pkcs12_path")
+      end
+      if state == "absent" && !@params["cert_url"]? && !@params["cert_alias"]?
+        return PluginResult.new(changed: false, failed: true,
+          msg: "state is absent but any of the following are missing: cert_url, cert_alias")
+      end
+      if sources.size > 1
+        return PluginResult.new(changed: false, failed: true,
+          msg: "parameters are mutually exclusive: cert_url|cert_path|cert_content|pkcs12_path")
+      end
+
+      unsupported = unsupported_param_keys(@params, SPEC)
+      unless unsupported.empty?
+        return unsupported_params_error("community.general.java_cert", unsupported, SPEC)
+      end
+      nil
     end
 
     private def check_cert_present(executable : String, keystore_path : String, keystore_pass : String,
@@ -195,12 +266,12 @@ module Krikri
       PluginResult.new(changed: true, failed: false, msg: result[:stdout].strip, diff: diff)
     end
 
-    private def import_pkcs12(executable : String, pkcs12_path : String, pkcs12_pass : String, pkcs12_alias : String,
+    private def import_pkcs12(executable : String, pkcs12_path : String, pkcs12_pass : String, pkcs12_alias : String?,
                               keystore_path : String, keystore_pass : String, cert_alias : String,
                               keystore_type : String?) : PluginResult
       command = PluginHelpers::JavaCertCommand.with_stdin(
         PluginHelpers::JavaCertCommand.import_pkcs12_cmd(executable, pkcs12_path, pkcs12_alias, keystore_path, cert_alias, keystore_type),
-        keystore_path.empty? || !remote_file_exists?(keystore_path) ? [keystore_pass, keystore_pass, keystore_pass] : [keystore_pass, pkcs12_pass]
+        !keystore_path.empty? && remote_file_exists?(keystore_path) ? [keystore_pass, pkcs12_pass] : [keystore_pass, keystore_pass, pkcs12_pass]
       )
       result = remote_exec(command)
       diff = JSON.parse({before: "\n", after: "#{cert_alias}\n"}.to_json)

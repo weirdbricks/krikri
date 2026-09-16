@@ -1,0 +1,230 @@
+# x509_certificate edge cases. The openssl CLI is installed in BOTH
+# containers by run.sh's x509_certificate gate. failed=/changed= and
+# on-disk state (openssl x509 can parse the issued cert, observed
+# subject/issuer) are what matter; error MESSAGE WORDING may differ.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "X1 generate fixture key + CSR + CA"
+      ansible.builtin.shell: "openssl req -newkey rsa:2048 -keyout /tmp/x-key.pem -out /tmp/x-req.pem -nodes -subj /CN=krikri-leaf 2>/dev/null && openssl req -x509 -newkey rsa:2048 -keyout /tmp/x-ca-key.pem -out /tmp/x-ca.pem -days 2 -nodes -subj /CN=krikri-ca 2>/dev/null"
+      register: x1
+      ignore_errors: true
+      changed_when: false
+
+    - name: "X2 missing required path"
+      community.crypto.x509_certificate:
+        provider: selfsigned
+        csr_path: /tmp/x-req.pem
+        privatekey_path: /tmp/x-key.pem
+      register: x2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "X2 failed={{ x2.failed }} changed={{ x2.changed | default('none') }}"
+
+    - name: "X3 state=present without provider"
+      community.crypto.x509_certificate:
+        path: /tmp/x-a.pem
+        csr_path: /tmp/x-req.pem
+      register: x3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "X3 failed={{ x3.failed }} changed={{ x3.changed | default('none') }}"
+
+    - name: "X4 invalid provider choice"
+      community.crypto.x509_certificate:
+        path: /tmp/x-a.pem
+        provider: banana
+        csr_path: /tmp/x-req.pem
+      register: x4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "X4 failed={{ x4.failed }} changed={{ x4.changed | default('none') }}"
+
+    - name: "X5 invalid state choice"
+      community.crypto.x509_certificate:
+        path: /tmp/x-a.pem
+        state: banana
+      register: x5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "X5 failed={{ x5.failed }} changed={{ x5.changed | default('none') }}"
+
+    - name: "X6 force that is not a bool"
+      community.crypto.x509_certificate:
+        path: /tmp/x-a.pem
+        provider: selfsigned
+        csr_path: /tmp/x-req.pem
+        privatekey_path: /tmp/x-key.pem
+        force: banana
+      register: x6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "X6 failed={{ x6.failed }} changed={{ x6.changed | default('none') }}"
+
+    - name: "X7 ownca_version that is not an int"
+      community.crypto.x509_certificate:
+        path: /tmp/x-a.pem
+        provider: ownca
+        csr_path: /tmp/x-req.pem
+        ownca_path: /tmp/x-ca.pem
+        ownca_privatekey_path: /tmp/x-ca-key.pem
+        ownca_version: not-an-int
+      register: x7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "X7 failed={{ x7.failed }} changed={{ x7.changed | default('none') }}"
+
+    - name: "X8 ownca_version other than 3"
+      community.crypto.x509_certificate:
+        path: /tmp/x-a.pem
+        provider: ownca
+        csr_path: /tmp/x-req.pem
+        ownca_path: /tmp/x-ca.pem
+        ownca_privatekey_path: /tmp/x-ca-key.pem
+        ownca_version: 4
+      register: x8
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "X8 failed={{ x8.failed }} changed={{ x8.changed | default('none') }}"
+
+    - name: "X9 unsupported parameter"
+      community.crypto.x509_certificate:
+        path: /tmp/x-a.pem
+        provider: selfsigned
+        csr_path: /tmp/x-req.pem
+        privatekey_path: /tmp/x-key.pem
+        banana: true
+      register: x9
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "X9 failed={{ x9.failed }} changed={{ x9.changed | default('none') }}"
+
+    - name: "X10 csr_path and csr_content are mutually exclusive"
+      community.crypto.x509_certificate:
+        path: /tmp/x-a.pem
+        provider: selfsigned
+        csr_path: /tmp/x-req.pem
+        csr_content: banana
+        privatekey_path: /tmp/x-key.pem
+      register: x10
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "X10 failed={{ x10.failed }} changed={{ x10.changed | default('none') }}"
+
+    - name: "X11 selfsigned without a private key fails"
+      community.crypto.x509_certificate:
+        path: /tmp/x-a.pem
+        provider: selfsigned
+        csr_path: /tmp/x-req.pem
+      register: x11
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "X11 failed={{ x11.failed }} changed={{ x11.changed | default('none') }}"
+
+    - name: "X12 missing parent directory fails"
+      community.crypto.x509_certificate:
+        path: /tmp/x-nope/cert.pem
+        provider: selfsigned
+        csr_path: /tmp/x-req.pem
+        privatekey_path: /tmp/x-key.pem
+      register: x12
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "X12 failed={{ x12.failed }} changed={{ x12.changed | default('none') }}"
+
+    - name: "X13 selfsigned issuance"
+      community.crypto.x509_certificate:
+        path: /tmp/x-a.pem
+        provider: selfsigned
+        csr_path: /tmp/x-req.pem
+        privatekey_path: /tmp/x-key.pem
+      register: x13
+      ignore_errors: true
+    - name: "X13b cert parses, subject matches the CSR"
+      ansible.builtin.shell: "openssl x509 -in /tmp/x-a.pem -noout -subject 2>/dev/null | grep -c 'krikri-leaf' || true"
+      register: x13b
+      changed_when: false
+    - ansible.builtin.debug:
+        msg: "X13 failed={{ x13.failed }} changed={{ x13.changed | default('none') }} subject={{ x13b.stdout | default('none') }}"
+
+    - name: "X14 re-run is idempotent"
+      community.crypto.x509_certificate:
+        path: /tmp/x-a.pem
+        provider: selfsigned
+        csr_path: /tmp/x-req.pem
+        privatekey_path: /tmp/x-key.pem
+      register: x14
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "X14 failed={{ x14.failed }} changed={{ x14.changed }}"
+
+    - name: "X15 check-mode removal claims change without removing"
+      community.crypto.x509_certificate:
+        path: /tmp/x-a.pem
+        state: absent
+      check_mode: true
+      register: x15
+      ignore_errors: true
+    - name: "X15b cert still there"
+      ansible.builtin.stat:
+        path: /tmp/x-a.pem
+      register: x15b
+    - ansible.builtin.debug:
+        msg: "X15 failed={{ x15.failed }} changed={{ x15.changed | default('none') }} exists={{ x15b.stat.exists | default('none') }}"
+
+    - name: "X16 ownca issuance"
+      community.crypto.x509_certificate:
+        path: /tmp/x-b.pem
+        provider: ownca
+        csr_path: /tmp/x-req.pem
+        ownca_path: /tmp/x-ca.pem
+        ownca_privatekey_path: /tmp/x-ca-key.pem
+      register: x16
+      ignore_errors: true
+    - name: "X16b issuer is the CA"
+      ansible.builtin.shell: "openssl x509 -in /tmp/x-b.pem -noout -issuer 2>/dev/null | grep -c 'krikri-ca' || true"
+      register: x16b
+      changed_when: false
+    - ansible.builtin.debug:
+        msg: "X16 failed={{ x16.failed }} changed={{ x16.changed | default('none') }} issuer={{ x16b.stdout | default('none') }}"
+
+    - name: "X17 ownca re-run is idempotent"
+      community.crypto.x509_certificate:
+        path: /tmp/x-b.pem
+        provider: ownca
+        csr_path: /tmp/x-req.pem
+        ownca_path: /tmp/x-ca.pem
+        ownca_privatekey_path: /tmp/x-ca-key.pem
+      register: x17
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "X17 failed={{ x17.failed }} changed={{ x17.changed }}"
+
+    - name: "X18 csr_content variant works"
+      community.crypto.x509_certificate:
+        path: /tmp/x-c.pem
+        provider: selfsigned
+        csr_content: "{{ lookup('ansible.builtin.file', '/tmp/x-req.pem') }}"
+        privatekey_path: /tmp/x-key.pem
+      register: x18
+      ignore_errors: true
+    - name: "X18b cert parses"
+      ansible.builtin.shell: "openssl x509 -in /tmp/x-c.pem -noout -subject 2>/dev/null | grep -c 'krikri-leaf' || true"
+      register: x18b
+      changed_when: false
+    - ansible.builtin.debug:
+        msg: "X18 failed={{ x18.failed }} changed={{ x18.changed | default('none') }} subject={{ x18b.stdout | default('none') }}"
+
+    - name: "X19 state=absent removes the cert"
+      community.crypto.x509_certificate:
+        path: /tmp/x-c.pem
+        state: absent
+      register: x19
+      ignore_errors: true
+    - name: "X19b file gone"
+      ansible.builtin.stat:
+        path: /tmp/x-c.pem
+      register: x19b
+    - ansible.builtin.debug:
+        msg: "X19 failed={{ x19.failed }} changed={{ x19.changed | default('none') }} exists={{ x19b.stat.exists | default('none') }}"

@@ -48,9 +48,11 @@ module Krikri
         cmd.join(' ')
       end
 
-      # _export_public_cert_from_pkcs12
+      # _export_public_cert_from_pkcs12 - no -noprompt (the real
+      # module's export command doesn't pass it; the password goes over
+      # stdin either way).
       def self.export_pkcs12_cmd(executable : String, pkcs12_path : String, pkcs12_alias : String?) : String
-        cmd = [executable, "-list", "-noprompt", "-keystore", pkcs12_path, "-storetype", "pkcs12", "-rfc"]
+        cmd = [executable, "-list", "-keystore", pkcs12_path, "-storetype", "pkcs12", "-rfc"]
         cmd += ["-alias", pkcs12_alias] if pkcs12_alias
         cmd.join(' ')
       end

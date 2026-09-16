@@ -1,0 +1,225 @@
+# openssh_keypair edge cases. Needs ssh-keygen (openssh-client) in BOTH
+# containers (run.sh's openssh_keypair gate installs it; the real module's
+# opensshbin backend and krikri's plugin both drive it).
+# failed=/changed= and actual on-disk state (files exist, ssh-keygen -y
+# recovers the public key, observed key type/size) are what matter; error
+# MESSAGE WORDING may differ.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "S1 missing required path"
+      community.crypto.openssh_keypair:
+        size: 2048
+      register: s1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S1 failed={{ s1.failed }} changed={{ s1.changed | default('none') }}"
+
+    - name: "S2 invalid type choice"
+      community.crypto.openssh_keypair:
+        path: /tmp/s2-key
+        type: banana
+      register: s2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S2 failed={{ s2.failed }} changed={{ s2.changed | default('none') }}"
+
+    - name: "S3 invalid state choice"
+      community.crypto.openssh_keypair:
+        path: /tmp/s3-key
+        state: banana
+      register: s3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S3 failed={{ s3.failed }} changed={{ s3.changed | default('none') }}"
+
+    - name: "S4 invalid regenerate choice"
+      community.crypto.openssh_keypair:
+        path: /tmp/s4-key
+        regenerate: banana
+      register: s4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S4 failed={{ s4.failed }} changed={{ s4.changed | default('none') }}"
+
+    - name: "S5 invalid private_key_format choice"
+      community.crypto.openssh_keypair:
+        path: /tmp/s5-key
+        private_key_format: banana
+      register: s5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S5 failed={{ s5.failed }} changed={{ s5.changed | default('none') }}"
+
+    - name: "S6 invalid backend choice"
+      community.crypto.openssh_keypair:
+        path: /tmp/s6-key
+        backend: banana
+      register: s6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S6 failed={{ s6.failed }} changed={{ s6.changed | default('none') }}"
+
+    - name: "S7 size that is not an int"
+      community.crypto.openssh_keypair:
+        path: /tmp/s7-key
+        size: not-a-size
+      register: s7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S7 failed={{ s7.failed }} changed={{ s7.changed | default('none') }}"
+
+    - name: "S8 force that is not a bool"
+      community.crypto.openssh_keypair:
+        path: /tmp/s8-key
+        force: banana
+      register: s8
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S8 failed={{ s8.failed }} changed={{ s8.changed | default('none') }}"
+
+    - name: "S9 unsupported parameter"
+      community.crypto.openssh_keypair:
+        path: /tmp/s9-key
+        banana: true
+      register: s9
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S9 failed={{ s9.failed }} changed={{ s9.changed | default('none') }}"
+
+    - name: "S10 RSA below the 1024-bit minimum"
+      community.crypto.openssh_keypair:
+        path: /tmp/s10-key
+        size: 512
+      register: s10
+      ignore_errors: true
+    - name: "S10b no key on disk"
+      ansible.builtin.stat:
+        path: /tmp/s10-key
+      register: s10b
+    - ansible.builtin.debug:
+        msg: "S10 failed={{ s10.failed }} changed={{ s10.changed | default('none') }} exists={{ s10b.stat.exists | default('none') }}"
+
+    - name: "S11 generate a default RSA key"
+      community.crypto.openssh_keypair:
+        path: /tmp/s11-key
+        size: 2048
+      register: s11
+    - name: "S11b ssh-keygen recovers the public key, RSA 2048"
+      ansible.builtin.shell: "ssh-keygen -l -f /tmp/s11-key 2>/dev/null | grep -c '2048' || true"
+      register: s11b
+      changed_when: false
+    - ansible.builtin.debug:
+        msg: "S11 failed={{ s11.failed }} changed={{ s11.changed | default('none') }} bits2048={{ s11b.stdout | default('none') }}"
+
+    - name: "S12 re-run same key is idempotent"
+      community.crypto.openssh_keypair:
+        path: /tmp/s11-key
+        size: 2048
+      register: s12
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S12 failed={{ s12.failed }} changed={{ s12.changed }}"
+
+    - name: "S13 check-mode generate claims change without creating the file"
+      community.crypto.openssh_keypair:
+        path: /tmp/s13-key
+      check_mode: true
+      register: s13
+      ignore_errors: true
+    - name: "S13b file not created"
+      ansible.builtin.stat:
+        path: /tmp/s13-key
+      register: s13b
+    - ansible.builtin.debug:
+        msg: "S13 failed={{ s13.failed }} changed={{ s13.changed | default('none') }} exists={{ s13b.stat.exists | default('none') }}"
+
+    - name: "S14 ed25519 generation ignores size"
+      community.crypto.openssh_keypair:
+        path: /tmp/s14-key
+        type: ed25519
+        size: 4096
+      register: s14
+      ignore_errors: true
+    - name: "S14b key is ED25519"
+      ansible.builtin.shell: "ssh-keygen -l -f /tmp/s14-key 2>/dev/null | grep -c 'ED25519' || true"
+      register: s14b
+      changed_when: false
+    - ansible.builtin.debug:
+        msg: "S14 failed={{ s14.failed }} changed={{ s14.changed | default('none') }} ed25519={{ s14b.stdout | default('none') }}"
+
+    - name: "S15 comment update changes the key"
+      community.crypto.openssh_keypair:
+        path: /tmp/s14-key
+        type: ed25519
+        comment: krikri-comment
+      register: s15
+      ignore_errors: true
+    - name: "S15b comment visible in the public key"
+      ansible.builtin.shell: "ssh-keygen -y -f /tmp/s14-key 2>/dev/null | cut -d' ' -f3 || true"
+      register: s15b
+      changed_when: false
+    - ansible.builtin.debug:
+        msg: "S15 failed={{ s15.failed }} changed={{ s15.changed | default('none') }} comment={{ s15b.stdout | default('none') }}"
+
+    - name: "S16 missing parent directory fails"
+      community.crypto.openssh_keypair:
+        path: /tmp/s16-nope/key
+      register: s16
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S16 failed={{ s16.failed }} changed={{ s16.changed | default('none') }}"
+
+    - name: "S17 mode attr applied to both files"
+      community.crypto.openssh_keypair:
+        path: /tmp/s14-key
+        type: ed25519
+        mode: "0600"
+      register: s17
+      ignore_errors: true
+    - name: "S17b both files 0600"
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop:
+        - /tmp/s14-key
+        - /tmp/s14-key.pub
+      register: s17b
+    - ansible.builtin.debug:
+        msg: "S17 failed={{ s17.failed }} changed={{ s17.changed | default('none') }} modes={{ s17b.results | map(attribute='stat.mode') | join(',') }}"
+
+    - name: "S18 state=absent removes both files"
+      community.crypto.openssh_keypair:
+        path: /tmp/s14-key
+        state: absent
+      register: s18
+      ignore_errors: true
+    - name: "S18b files gone"
+      ansible.builtin.stat:
+        path: /tmp/s14-key
+      register: s18b
+    - ansible.builtin.debug:
+        msg: "S18 failed={{ s18.failed }} changed={{ s18.changed | default('none') }} exists={{ s18b.stat.exists | default('none') }}"
+
+    - name: "S19 state=absent again is a no-op"
+      community.crypto.openssh_keypair:
+        path: /tmp/s14-key
+        state: absent
+      register: s19
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S19 failed={{ s19.failed }} changed={{ s19.changed }}"
+
+    - name: "S20 backend=cryptography generates too"
+      community.crypto.openssh_keypair:
+        path: /tmp/s20-key
+        size: 2048
+        backend: cryptography
+      register: s20
+      ignore_errors: true
+    - name: "S20b key on disk, RSA 2048"
+      ansible.builtin.shell: "test -f /tmp/s20-key && ssh-keygen -l -f /tmp/s20-key 2>/dev/null | grep -c '2048' || true"
+      register: s20b
+      changed_when: false
+    - ansible.builtin.debug:
+        msg: "S20 failed={{ s20.failed }} changed={{ s20.changed | default('none') }} bits2048={{ s20b.stdout | default('none') }}"

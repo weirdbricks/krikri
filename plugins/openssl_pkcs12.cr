@@ -2,6 +2,7 @@
 
 require "json"
 require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/ansible_arg_validation"
 
 module Krikri
   # openssl_pkcs12 plugin (community.crypto.openssl_pkcs12) - bundles a
@@ -28,37 +29,148 @@ module Krikri
   # of identical inputs never produce identical bytes and a file
   # comparison would rewrite it on every run.
   class OpensslPkcs12Plugin < BasePlugin
+    include PluginHelpers::AnsibleArgValidation
+
+    # The real module's argument_spec (declaration order) plus the
+    # file-common args its add_file_common_args=True injects (the only
+    # alias is attributes->attr; friendly_name's alias is on the module
+    # key below).
+    SPEC = {
+      "action"                       => [] of String,
+      "other_certificates"           => [] of String,
+      "other_certificates_parse_all" => [] of String,
+      "other_certificates_content"   => [] of String,
+      "certificate_path"             => [] of String,
+      "certificate_content"          => [] of String,
+      "force"                        => [] of String,
+      "friendly_name"                => ["name"],
+      "encryption_level"             => [] of String,
+      "iter_size"                    => [] of String,
+      "maciter_size"                 => [] of String,
+      "passphrase"                   => [] of String,
+      "path"                         => [] of String,
+      "privatekey_passphrase"        => [] of String,
+      "privatekey_path"              => [] of String,
+      "privatekey_content"           => [] of String,
+      "state"                        => [] of String,
+      "src"                          => [] of String,
+      "backup"                       => [] of String,
+      "return_content"               => [] of String,
+      "select_crypto_backend"        => [] of String,
+      "mode"                         => [] of String,
+      "owner"                        => [] of String,
+      "group"                        => [] of String,
+      "seuser"                       => [] of String,
+      "serole"                       => [] of String,
+      "selevel"                      => [] of String,
+      "setype"                       => [] of String,
+      "attributes"                   => ["attr"],
+      "unsafe_writes"                => [] of String,
+    }
+
     def execute : PluginResult
-      path = @params["path"]?
-      return failure("missing required arguments: path") unless path
-
-      path = expand_tilde(path)
-      state = @params["state"]? || "present"
-      check_mode = true?(@params["_ansible_check_mode"]?)
-      action = @params["action"]? || "export"
-
-      return remove(path, check_mode) if state == "absent"
-
-      if action == "parse"
-        src = @params["src"]?.try { |value| expand_tilde(value) }
-        return failure("state is present but all of the following are missing: src") unless src
-        return failure("The PKCS#12 file #{src} does not exist") unless File.exists?(src)
-        return parse_action(path, src, check_mode)
+      if err = validate_arguments
+        return err
       end
 
-      unless action == "export"
-        return failure("The action '#{action}' is not supported by this implementation; only 'export' and 'parse' are.")
-      end
+      temp_files = [] of String
+      begin
+        path = @params["path"]?
+        path = expand_tilde(path.not_nil!)
+        state = @params["state"]? || "present"
+        check_mode = true?(@params["_ansible_check_mode"]?)
+        action = @params["action"]? || "export"
 
-      privatekey_path = @params["privatekey_path"]?.try { |value| expand_tilde(value) }
-      certificate_path = @params["certificate_path"]?.try { |value| expand_tilde(value) }
-      return failure("state is present but all of the following are missing: privatekey_path") unless privatekey_path
-      return failure("The private key #{privatekey_path} does not exist") unless File.exists?(privatekey_path)
-      if error = validate_rest(path, certificate_path)
-        return error
-      end
+        return remove(path, check_mode) if state == "absent"
 
-      export_or_attrs(path, privatekey_path, certificate_path, check_mode)
+        if action == "parse"
+          src = @params["src"]?.try { |value| expand_tilde(value) }
+          return failure("action is parse but all of the following are missing: src") unless src
+          return failure("The PKCS#12 file #{src} does not exist") unless File.exists?(src)
+          return parse_action(path, src, check_mode)
+        end
+
+        privatekey_path = @params["privatekey_path"]?.try { |value| expand_tilde(value) }
+        certificate_path = @params["certificate_path"]?.try { |value| expand_tilde(value) }
+        if privatekey_path.nil? && (content = @params["privatekey_content"]?)
+          privatekey_path = write_temp_content(temp_files, content)
+        end
+        if certificate_path.nil? && (content = @params["certificate_content"]?)
+          certificate_path = write_temp_content(temp_files, content)
+        end
+        return failure("state is present but all of the following are missing: privatekey_path") unless privatekey_path
+        return failure("The private key #{privatekey_path} does not exist") unless File.exists?(privatekey_path)
+        if error = validate_rest(path, certificate_path)
+          return error
+        end
+
+        # The real module serializes the archive through the
+        # cryptography library: in check mode via the unconditional
+        # dump() (a key/cert mismatch fails there before anything
+        # else), on a write via generate_bytes() after its
+        # friendly-name guard. An up-to-date archive without force
+        # reaches neither.
+        changed = true?(@params["force"]?) || !File.exists?(path) ||
+                  !matches?(path, privatekey_path.not_nil!, certificate_path, temp_files)
+
+        if certificate_path && (check_mode || changed) &&
+           !key_matches_cert?(privatekey_path.not_nil!, certificate_path)
+          return failure("Failed to create PKCS12 (does the key match the certificate?)")
+        end
+
+        if changed && check_mode
+          return result(true, path, privatekey_path, nil)
+        end
+
+        if changed
+          # Module-level policy (community.crypto 3.x): an export write
+          # always carries a friendly name.
+          friendly_name = @params["friendly_name"]?
+          return failure("Friendly_name is required") if friendly_name.nil? || friendly_name.empty?
+
+          return write_export(path, privatekey_path.not_nil!, certificate_path, temp_files)
+        end
+
+        attrs_changed = apply_attrs(path)
+        result(attrs_changed, path, privatekey_path, nil)
+      ensure
+        temp_files.each { |file| File.delete(file) rescue nil }
+      end
+    end
+
+    # other_certificates_content entries are PEM texts - materialized to
+    # temp files so `openssl pkcs12 -certfile` can consume them like the
+    # path-based variant.
+    private def write_temp_content(temp_files : Array(String), content : String) : String
+      file = File.tempname("pkcs12-content")
+      File.write(file, content)
+      temp_files << file
+      file
+    end
+
+    private def other_certificates(temp_files : Array(String)) : Array(String)
+      if (content_list = @params["other_certificates_content"]?) && !content_list.empty?
+        entries = parse_list(content_list)
+        return entries.map { |pem| write_temp_content(temp_files, pem) }
+      end
+      raw = @params["other_certificates"]?
+      return [] of String if raw.nil? || raw.empty?
+      parse_list(raw).map { |path| expand_tilde(path) }
+    end
+
+    # check_type_list semantics (a plain string is comma-split, no JSON
+    # probing).
+    private def parse_list(raw : String) : Array(String)
+      case value = (JSON.parse(raw) rescue nil).try(&.raw)
+      when Array
+        value.map { |v| v.as_s? ? v.as_s : v.to_s }
+      when String
+        value.split(",").map(&.strip).reject(&.empty?)
+      when Nil
+        raw.split(",").map(&.strip).reject(&.empty?)
+      else
+        [value.to_s]
+      end
     end
 
     private def validate_rest(path : String, certificate_path : String?) : PluginResult?
@@ -69,6 +181,20 @@ module Krikri
       base_dir = File.dirname(path)
       return failure("The directory #{base_dir} does not exist or the file is not a directory") unless Dir.exists?(base_dir)
       nil
+    end
+
+    private def key_matches_cert?(privatekey_path : String, certificate_path : String) : Bool
+      key_pub = openssl_out(["pkey", "-in", privatekey_path, "-pubout"])
+      cert_pub = openssl_out(["x509", "-in", certificate_path, "-pubkey", "-noout"])
+      return false unless key_pub && cert_pub
+      normalize_pem(key_pub) == normalize_pem(cert_pub)
+    end
+
+    private def openssl_out(args : Array(String)) : String?
+      stdout_io = IO::Memory.new
+      err = IO::Memory.new
+      status = Process.run("openssl", args, output: stdout_io, error: err)
+      status.success? ? stdout_io.to_s : nil
     end
 
     # action: parse - read the archive from `src`, write its private key
@@ -119,7 +245,10 @@ module Krikri
         scanner = scanner[(line_end || scanner.size)..]
       end
       return nil if blocks.empty?
-      blocks.sort_by { |is_key, _| is_key ? 0 : 1 }.map(&.[1]).join
+      # Each block is newline-terminated in the real module's output;
+      # extract_block cuts before the '\n', so re-join with separators
+      # and a trailing newline.
+      blocks.sort_by { |is_key, _| is_key ? 0 : 1 }.map { |_, block| block + "\n" }.join
     end
 
     private def result_parse(changed : Bool, path : String, src : String, backup_file : String? = nil) : PluginResult
@@ -141,21 +270,9 @@ module Krikri
       false
     end
 
-    private def export_or_attrs(path : String, privatekey_path : String, certificate_path : String?, check_mode : Bool) : PluginResult
-      changed = true?(@params["force"]?) || !File.exists?(path) ||
-                !matches?(path, privatekey_path, certificate_path)
-
-      return write_export(path, privatekey_path, certificate_path) if changed && !check_mode
-
-      return result(true, path, privatekey_path, nil) if changed
-
-      attrs_changed = apply_attrs(path)
-      result(attrs_changed, path, privatekey_path, nil)
-    end
-
-    private def write_export(path : String, privatekey_path : String, certificate_path : String?) : PluginResult
+    private def write_export(path : String, privatekey_path : String, certificate_path : String?, temp_files : Array(String)) : PluginResult
       backup_file = backup(path)
-      if error = export(path, privatekey_path, certificate_path)
+      if error = export(path, privatekey_path, certificate_path, temp_files)
         return failure(error)
       end
       apply_owner_group_mode(path, @params["owner"]?, @params["group"]?, @params["mode"]? || "0400")
@@ -164,6 +281,52 @@ module Krikri
 
     private def failure(msg : String) : PluginResult
       PluginResult.new(changed: false, failed: true, msg: msg)
+    end
+
+    # Real AnsibleModule validation order (ArgumentSpecValidator.validate):
+    # required -> types (spec declaration order) -> choices -> required_if
+    # -> mutually_exclusive -> unsupported (deferred last).
+    private def validate_arguments : PluginResult?
+      return missing_required_error(["path"]) unless @params["path"]?
+
+      %w[iter_size maciter_size].each do |param|
+        if raw = @params[param]?
+          return int_type_error(param, raw) unless raw.to_i32?
+        end
+      end
+      %w[other_certificates_parse_all force backup return_content unsafe_writes].each do |param|
+        if raw = @params[param]?
+          return bool_type_error(param, raw) unless bool_convertible?(raw)
+        end
+      end
+
+      {"action"                => %w[export parse],
+       "encryption_level"      => %w[auto compatibility2022],
+       "state"                 => %w[absent present],
+       "select_crypto_backend" => %w[auto cryptography]}.each do |param, allowed|
+        if value = @params[param]?
+          unless allowed.includes?(value)
+            return choices_error(param, allowed, value)
+          end
+        end
+      end
+
+      if (@params["action"]? || "export") == "parse" && !@params["src"]?
+        return failure("action is parse but all of the following are missing: src")
+      end
+
+      [%w[privatekey_path privatekey_content], %w[certificate_path certificate_content],
+       %w[other_certificates other_certificates_content]].each do |pair|
+        if pair.all? { |param| @params[param]? }
+          return failure("parameters are mutually exclusive: #{pair.join("|")}")
+        end
+      end
+
+      unsupported = unsupported_param_keys(@params, SPEC)
+      unless unsupported.empty?
+        return unsupported_params_error("community.crypto.openssl_pkcs12", unsupported, SPEC)
+      end
+      nil
     end
 
     private def remove(path : String, check_mode : Bool) : PluginResult
@@ -183,7 +346,7 @@ module Krikri
       @params["passphrase"]? || ""
     end
 
-    private def export(path : String, privatekey_path : String, certificate_path : String?) : String?
+    private def export(path : String, privatekey_path : String, certificate_path : String?, temp_files : Array(String) = [] of String) : String?
       tmp = File.tempname("pkcs12", dir: File.dirname(path))
       begin
         File.write(tmp, "")
@@ -195,7 +358,7 @@ module Krikri
         if (name = @params["friendly_name"]?) && !name.empty?
           args.concat(["-name", name])
         end
-        if (other = other_certificates) && !other.empty?
+        if (other = other_certificates(temp_files)) && !other.empty?
           other.each { |certificate| args.concat(["-certfile", certificate]) }
         end
         if (key_passphrase = @params["privatekey_passphrase"]?) && !key_passphrase.empty?
@@ -212,19 +375,9 @@ module Krikri
       end
     end
 
-    private def other_certificates : Array(String)
-      raw = @params["other_certificates"]?
-      return [] of String if raw.nil? || raw.empty?
-      if parsed = (JSON.parse(raw).as_a? rescue nil)
-        parsed.map { |v| expand_tilde(v.as_s? || v.to_s) }
-      else
-        raw.split(',').map { |v| expand_tilde(v.strip) }.reject(&.empty?)
-      end
-    end
-
     # --- idempotency -----------------------------------------------------
 
-    private def matches?(path : String, privatekey_path : String, certificate_path : String?) : Bool
+    private def matches?(path : String, privatekey_path : String, certificate_path : String?, temp_files : Array(String) = [] of String) : Bool
       dump = dump_pkcs12(path)
       return false unless dump
 
@@ -241,6 +394,11 @@ module Krikri
         certificate_in_archive = extract_block(dump, "CERTIFICATE")
         return false unless certificate_in_archive
         return false unless normalize_pem(certificate_in_archive) == normalize_pem(File.read(certificate_path))
+      end
+
+      if (other = other_certificates(temp_files)) && !other.empty?
+        archive_certs = dump.scan(/-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----/m).map(&.[0])
+        return false unless archive_certs.size >= other.size
       end
 
       true

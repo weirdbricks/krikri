@@ -2,6 +2,7 @@
 
 require "json"
 require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/ansible_arg_validation"
 require "../src/krikri/plugin_helpers/x509_cert_info"
 
 module Krikri
@@ -28,12 +29,29 @@ module Krikri
   # Big integers (RSA moduli, ECC coordinates) go out as decimal strings
   # when they do not fit Int64 - see X509CertInfo.json_int.
   class OpensslPrivatekeyInfoPlugin < BasePlugin
+    include PluginHelpers::AnsibleArgValidation
+
+    # The real module's argument_spec - no file-common args (no
+    # add_file_common_args), no aliases.
+    SPEC = {
+      "path"                    => [] of String,
+      "content"                 => [] of String,
+      "passphrase"              => [] of String,
+      "return_private_key_data" => [] of String,
+      "check_consistency"       => [] of String,
+      "select_crypto_backend"   => [] of String,
+    }
+
     def execute : PluginResult
+      if err = validate_arguments
+        return err
+      end
+
       path = @params["path"]?.try { |value| expand_tilde(value) }
       content = @params["content"]?
 
       if path.nil? == content.nil?
-        return failure("One of path or content must be specified, but not both")
+        return failure("parameters are mutually exclusive: path|content")
       end
 
       if path
@@ -85,6 +103,38 @@ module Krikri
       ensure
         File.delete(key_file) if File.exists?(key_file)
       end
+    end
+
+    # Real AnsibleModule validation order (ArgumentSpecValidator.validate):
+    # required_one_of -> types -> choices -> mutually_exclusive ->
+    # unsupported (deferred last). Types: return_private_key_data and
+    # check_consistency are bool; the rest are str/path.
+    private def validate_arguments : PluginResult?
+      if @params["path"]?.nil? && @params["content"]?.nil?
+        return failure("one of the following is required: path, content")
+      end
+
+      %w[return_private_key_data check_consistency].each do |param|
+        if raw = @params[param]?
+          return bool_type_error(param, raw) unless bool_convertible?(raw)
+        end
+      end
+
+      if value = @params["select_crypto_backend"]?
+        unless %w[auto cryptography].includes?(value)
+          return choices_error("select_crypto_backend", %w[auto cryptography], value)
+        end
+      end
+
+      if @params["path"]? && @params["content"]?
+        return failure("parameters are mutually exclusive: path|content")
+      end
+
+      unsupported = unsupported_param_keys(@params, SPEC)
+      unless unsupported.empty?
+        return unsupported_params_error("community.crypto.openssl_privatekey_info", unsupported, SPEC)
+      end
+      nil
     end
 
     private def failure(msg : String) : PluginResult

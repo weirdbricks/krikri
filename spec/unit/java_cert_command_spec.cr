@@ -48,7 +48,7 @@ describe Krikri::PluginHelpers::JavaCertCommand do
   describe ".export_pkcs12_cmd / .fetch_url_cmd" do
     it "builds the PKCS12 PEM export command" do
       Krikri::PluginHelpers::JavaCertCommand.export_pkcs12_cmd("keytool", "/tmp/site.p12", nil)
-        .should eq("keytool -list -noprompt -keystore /tmp/site.p12 -storetype pkcs12 -rfc")
+        .should eq("keytool -list -keystore /tmp/site.p12 -storetype pkcs12 -rfc")
     end
 
     it "builds the -printcert TLS fetch command with proxy options" do

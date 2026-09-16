@@ -144,6 +144,40 @@ if printf '%s\n' "${cases[@]}" | grep -q '^openssl'; then
   done
 fi
 
+# get_certificate/x509_certificate* cases need the openssl CLI in BOTH
+# containers too (fixture cert generation + verifying the on-disk PEM
+# output) - the `^openssl` gate above misses these case-name prefixes.
+if printf '%s\n' "${cases[@]}" | grep -qE '^(get_certificate|x509_certificate)'; then
+  log "installing openssl CLI for get_certificate/x509_certificate cases"
+  for c in "$NAME_A" "$NAME_B"; do
+    podman exec "$c" bash -c "apt-get install -y -qq --no-install-recommends openssl >/dev/null" \
+      || { log "FATAL: openssl install failed in $c"; exit 1; }
+  done
+fi
+
+# openssh_keypair/openssl_publickey cases need ssh-keygen in BOTH
+# containers (real community.crypto.openssh_keypair and krikri's plugin
+# both drive it - directly or via the cryptography/ssh-keygen split;
+# openssl_publickey needs it for format=OpenSSH).
+if printf '%s\n' "${cases[@]}" | grep -qE '^(openssh_keypair|openssl_publickey)'; then
+  log "installing openssh-client for openssh_keypair/openssl_publickey cases"
+  for c in "$NAME_A" "$NAME_B"; do
+    podman exec "$c" bash -c "apt-get install -y -qq --no-install-recommends openssh-client >/dev/null" \
+      || { log "FATAL: openssh-client install failed in $c"; exit 1; }
+  done
+fi
+
+# java_cert cases need a real keytool (JRE) in BOTH containers, plus
+# openssl (the real module shells to it for x509 parsing, krikri's
+# plugin needs it for the same fixture-generation the real side does).
+if printf '%s\n' "${cases[@]}" | grep -q '^java_cert'; then
+  log "installing default-jre-headless + openssl for java_cert cases"
+  for c in "$NAME_A" "$NAME_B"; do
+    podman exec "$c" bash -c "apt-get install -y -qq --no-install-recommends default-jre-headless openssl >/dev/null" \
+      || { log "FATAL: JRE/openssl install failed in $c"; exit 1; }
+  done
+fi
+
 # gem cases need a real ruby + rubygems (the `gem` CLI) in BOTH
 # containers - debian:bookworm-slim ships without it, which would make
 # every case fail with "Failed to find required executable" instead of

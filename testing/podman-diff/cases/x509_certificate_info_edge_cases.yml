@@ -1,0 +1,106 @@
+# x509_certificate_info edge cases. The openssl CLI is installed in
+# BOTH containers by run.sh's x509_certificate gate. failed=/changed=
+# and the parse outcome are what matter; error MESSAGE WORDING may
+# differ.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "Y1 generate a fixture cert"
+      ansible.builtin.shell: "openssl req -x509 -newkey rsa:2048 -keyout /tmp/y-key.pem -out /tmp/y-cert.pem -days 2 -nodes -subj /CN=krikri 2>/dev/null"
+      register: y1
+      ignore_errors: true
+      changed_when: false
+
+    - name: "Y2 neither path nor content"
+      community.crypto.x509_certificate_info:
+      register: y2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "Y2 failed={{ y2.failed }} changed={{ y2.changed | default('none') }}"
+
+    - name: "Y3 both path and content"
+      community.crypto.x509_certificate_info:
+        path: /tmp/y-cert.pem
+        content: "banana"
+      register: y3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "Y3 failed={{ y3.failed }} changed={{ y3.changed | default('none') }}"
+
+    - name: "Y4 invalid name_encoding choice"
+      community.crypto.x509_certificate_info:
+        path: /tmp/y-cert.pem
+        name_encoding: banana
+      register: y4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "Y4 failed={{ y4.failed }} changed={{ y4.changed | default('none') }}"
+
+    - name: "Y5 invalid select_crypto_backend choice"
+      community.crypto.x509_certificate_info:
+        path: /tmp/y-cert.pem
+        select_crypto_backend: banana
+      register: y5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "Y5 failed={{ y5.failed }} changed={{ y5.changed | default('none') }}"
+
+    - name: "Y6 unsupported parameter"
+      community.crypto.x509_certificate_info:
+        path: /tmp/y-cert.pem
+        banana: true
+      register: y6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "Y6 failed={{ y6.failed }} changed={{ y6.changed | default('none') }}"
+
+    - name: "Y7 valid_at with a non-string value"
+      community.crypto.x509_certificate_info:
+        path: /tmp/y-cert.pem
+        valid_at: "{{ {'banana': 123} }}"
+      register: y7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "Y7 failed={{ y7.failed }} changed={{ y7.changed | default('none') }}"
+
+    - name: "Y8 missing file"
+      community.crypto.x509_certificate_info:
+        path: /tmp/y-nope.pem
+      register: y8
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "Y8 failed={{ y8.failed }} changed={{ y8.changed | default('none') }}"
+
+    - name: "Y9 garbage file"
+      community.crypto.x509_certificate_info:
+        path: /etc/hostname
+      register: y9
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "Y9 failed={{ y9.failed }} changed={{ y9.changed | default('none') }}"
+
+    - name: "Y10 valid parse reports subject and key type"
+      community.crypto.x509_certificate_info:
+        path: /tmp/y-cert.pem
+      register: y10
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "Y10 failed={{ y10.failed }} changed={{ y10.changed | default('none') }} cn={{ (y10.subject | default({})).commonName | default('none') }} type={{ y10.public_key_type | default('none') }}"
+
+    - name: "Y11 content parse works"
+      community.crypto.x509_certificate_info:
+        content: "{{ lookup('ansible.builtin.file', '/tmp/y-cert.pem') }}"
+      register: y11
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "Y11 failed={{ y11.failed }} changed={{ y11.changed | default('none') }} cn={{ (y11.subject | default({})).commonName | default('none') }}"
+
+    - name: "Y12 valid_at with a string value succeeds"
+      community.crypto.x509_certificate_info:
+        path: /tmp/y-cert.pem
+        valid_at: "{{ {'banana': 'now'} }}"
+      register: y12
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "Y12 failed={{ y12.failed }} changed={{ y12.changed | default('none') }} valid_at={{ y12.valid_at | default('none') }}"

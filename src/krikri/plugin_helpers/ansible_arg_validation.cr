@@ -112,6 +112,42 @@ module Krikri
       end
 
       private INTERNAL = {"_ansible_check_mode", "_ansible_diff", "_module_name", "_verbosity", "_environment"}
+
+      # community.crypto's _time.py get_relative_time_option: a timespec
+      # is either sshd_config(5)-relative (a leading +/-, then
+      # weeks/days/hours/minutes/seconds components in that exact order)
+      # or one of four absolute ASN.1/generalized-time shapes. Anything
+      # else fails the module with 'The time spec "..." for ... is
+      # invalid'.
+      RELATIVE_TIME_RE = /^[+-](\d+[wW])?(\d+[dD])?(\d+[hH])?(\d+[mM])?(\d+[sS]?)?$/
+
+      def crypto_time_spec_valid?(value : String) : Bool
+        if value.starts_with?('+') || value.starts_with?('-')
+          return value.size > 1 && value.matches?(RELATIVE_TIME_RE)
+        end
+
+        case value.size
+        when 15
+          parse_utc(value, "%Y%m%d%H%M%SZ")
+        when 13
+          parse_utc(value, "%Y%m%d%H%MZ")
+        when 19
+          parse_utc(value, "%Y%m%d%H%M%S%z")
+        when 17
+          parse_utc(value, "%Y%m%d%H%M%z")
+        else
+          false
+        end
+      rescue
+        false
+      end
+
+      private def parse_utc(value : String, format : String) : Bool
+        Time.parse_utc(value, format)
+        true
+      rescue Time::Format::Error
+        false
+      end
     end
   end
 end
