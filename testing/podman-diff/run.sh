@@ -208,6 +208,18 @@ if printf '%s\n' "${cases[@]}" | grep -q '^expect'; then
     || { log "FATAL: python3-pexpect install failed"; exit 1; }
 fi
 
+# make cases need the real make(1) in BOTH containers - real
+# community.general.make and krikri's plugin both shell to it, and
+# debian:bookworm-slim ships without it. Gated on the requested case
+# list like the modprobe cases above.
+if printf '%s\n' "${cases[@]}" | grep -q '^make'; then
+  log "installing make for make cases"
+  for c in "$NAME_A" "$NAME_B"; do
+    podman exec "$c" bash -c "apt-get install -y -qq --no-install-recommends make >/dev/null" \
+      || { log "FATAL: make install failed in $c"; exit 1; }
+  done
+fi
+
 # ec2_metadata_facts cases need the amazon.aws collection in the REAL
 # container (collection module, not shipped with ansible-core).
 # Validation-only + unreachable-endpoint cases - the real IMDS endpoint

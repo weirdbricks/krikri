@@ -1,0 +1,143 @@
+# community.general.make edge cases. The real module shells to make
+# (or gmake - neither image ships either, so run.sh installs the make
+# package in BOTH containers). Real make.py specifics under test:
+# - parameters.py "missing required arguments: chdir"
+# - target and targets are mutually exclusive
+# - the result carries NO msg (krikri used to add "Target rebuilt" etc)
+# - the result carries `command`: the built base command, shlex-quoted
+#   only where needed (not blanket single-quoting)
+# - idempotency via `make -q` (file targets become up-to-date; phony
+#   targets never do, so the idempotency case uses a file target)
+# - check mode reports changed = (-q exit != 0) with the -q run's
+#   stdout/stderr
+# - a failing rebuild fails with check_rc's fail_json shape (msg = the
+#   sanitized stderr, rc = make's exit code)
+# - params values are str()-formatted (=4 for numbers, bare key for
+#   None values)
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "M0 create makefile fixtures"
+      ansible.builtin.shell: |
+        mkdir -p /tmp/krikri-make-proj
+        printf 'all:\n\t@echo built-all\nout.txt:\n\t@echo rebuilt > out.txt\nfail:\n\t@echo about-to-fail >&2\n\t@exit 2\n' > /tmp/krikri-make-proj/Makefile
+        printf 'custom:\n\t@echo built-custom-file\n' > /tmp/krikri-make-other.mk
+      args:
+        executable: /bin/bash
+
+    - name: "M1 missing chdir"
+      community.general.make:
+        target: all
+      register: m1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "M1 failed={{ m1.failed | default('absent') }} msg={{ m1.msg | default('absent') }}"
+
+    - name: "M2 target and targets mutually exclusive"
+      community.general.make:
+        chdir: /tmp/krikri-make-proj
+        target: all
+        targets: ["all"]
+      register: m2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "M2 failed={{ m2.failed | default('absent') }} msg={{ m2.msg | default('absent') }}"
+
+    - name: "M3 build a phony target"
+      community.general.make:
+        chdir: /tmp/krikri-make-proj
+        target: all
+      register: m3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "M3 failed={{ m3.failed | default('absent') }} changed={{ m3.changed | default('absent') }} msg={{ m3.msg | default('absent') }} command={{ m3.command | default('absent') }} stdout={{ m3.stdout | default('absent') }}"
+
+    - name: "M4 first build of a file target"
+      community.general.make:
+        chdir: /tmp/krikri-make-proj
+        target: out.txt
+      register: m4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "M4 failed={{ m4.failed | default('absent') }} changed={{ m4.changed | default('absent') }} content={{ lookup('file', '/tmp/krikri-make-proj/out.txt') }}"
+
+    - name: "M5 re-run of the file target is idempotent (make -q)"
+      community.general.make:
+        chdir: /tmp/krikri-make-proj
+        target: out.txt
+      register: m5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "M5 failed={{ m5.failed | default('absent') }} changed={{ m5.changed | default('absent') }} command={{ m5.command | default('absent') }}"
+
+    - name: "M6 params with a number and a None value"
+      community.general.make:
+        chdir: /tmp/krikri-make-proj
+        target: all
+        params:
+          NUM_THREADS: 4
+          FLAGS: null
+      register: m6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "M6 failed={{ m6.failed | default('absent') }} changed={{ m6.changed | default('absent') }} command={{ m6.command | default('absent') }}"
+
+    - name: "M7 custom makefile"
+      community.general.make:
+        chdir: /tmp/krikri-make-proj
+        target: custom
+        file: /tmp/krikri-make-other.mk
+      register: m7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "M7 failed={{ m7.failed | default('absent') }} changed={{ m7.changed | default('absent') }} command={{ m7.command | default('absent') }} stdout={{ m7.stdout | default('absent') }}"
+
+    - name: "M8 jobs parameter lands before the target"
+      community.general.make:
+        chdir: /tmp/krikri-make-proj
+        target: all
+        jobs: 2
+      register: m8
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "M8 failed={{ m8.failed | default('absent') }} changed={{ m8.changed | default('absent') }} command={{ m8.command | default('absent') }}"
+
+    - name: "M9a check mode on an up-to-date file target"
+      community.general.make:
+        chdir: /tmp/krikri-make-proj
+        target: out.txt
+      check_mode: true
+      register: m9a
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "M9a failed={{ m9a.failed | default('absent') }} changed={{ m9a.changed | default('absent') }} msg={{ m9a.msg | default('absent') }}"
+
+    - name: "M9b check mode on a stale phony target"
+      community.general.make:
+        chdir: /tmp/krikri-make-proj
+        target: all
+      check_mode: true
+      register: m9b
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "M9b failed={{ m9b.failed | default('absent') }} changed={{ m9b.changed | default('absent') }} msg={{ m9b.msg | default('absent') }}"
+
+    - name: "M10 failing target fails with check_rc's shape"
+      community.general.make:
+        chdir: /tmp/krikri-make-proj
+        target: fail
+      register: m10
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "M10 failed={{ m10.failed | default('absent') }} changed={{ m10.changed | default('absent') }} rc={{ m10.rc | default('absent') }} msg={{ m10.msg | replace('\n', ' | ') }}"
+
+    - name: "M11 explicit make binary path"
+      community.general.make:
+        chdir: /tmp/krikri-make-proj
+        target: all
+        make: /usr/bin/make
+      register: m11
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "M11 failed={{ m11.failed | default('absent') }} changed={{ m11.changed | default('absent') }} command={{ m11.command | default('absent') }}"
