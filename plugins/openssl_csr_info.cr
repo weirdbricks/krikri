@@ -2,6 +2,7 @@
 
 require "json"
 require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/ansible_arg_validation"
 require "../src/krikri/plugin_helpers/x509_cert_info"
 
 module Krikri
@@ -21,12 +22,27 @@ module Krikri
   # decoder this tree does not carry) - same cut as
   # x509_certificate_info's extensions_by_oid.
   class OpensslCsrInfoPlugin < BasePlugin
+    include PluginHelpers::AnsibleArgValidation
+
+    # The real module's argument_spec - no file-common args (no
+    # add_file_common_args), no aliases.
+    SPEC = {
+      "path"                  => [] of String,
+      "content"               => [] of String,
+      "name_encoding"         => [] of String,
+      "select_crypto_backend" => [] of String,
+    }
+
     def execute : PluginResult
+      if err = validate_arguments
+        return err
+      end
+
       path = @params["path"]?.try { |value| expand_tilde(value) }
       content = @params["content"]?
 
       if path.nil? == content.nil?
-        return failure("One of path or content must be specified, but not both")
+        return failure("parameters are mutually exclusive: path|content")
       end
 
       if path
@@ -50,6 +66,35 @@ module Krikri
         res.extra[key] = value
       end
       res
+    end
+
+    # Real AnsibleModule validation order (ArgumentSpecValidator.validate):
+    # required_one_of -> types -> choices -> mutually_exclusive ->
+    # unsupported (deferred last). Types are all str/path here, nothing
+    # to convert.
+    private def validate_arguments : PluginResult?
+      if @params["path"]?.nil? && @params["content"]?.nil?
+        return failure("one of the following is required: path, content")
+      end
+
+      {"name_encoding"         => %w[ignore idna unicode],
+       "select_crypto_backend" => %w[auto cryptography]}.each do |param, allowed|
+        if value = @params[param]?
+          unless allowed.includes?(value)
+            return choices_error(param, allowed, value)
+          end
+        end
+      end
+
+      if @params["path"]? && @params["content"]?
+        return failure("parameters are mutually exclusive: path|content")
+      end
+
+      unsupported = unsupported_param_keys(@params, SPEC)
+      unless unsupported.empty?
+        return unsupported_params_error("community.crypto.openssl_csr_info", unsupported, SPEC)
+      end
+      nil
     end
 
     private def failure(msg : String) : PluginResult

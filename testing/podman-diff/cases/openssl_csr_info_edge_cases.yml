@@ -1,0 +1,89 @@
+# openssl_csr_info edge cases. The openssl CLI is installed in BOTH
+# containers by run.sh's ^openssl gate (fixture CSR generation in the
+# case playbook). failed=/changed= and the parse outcome are what
+# matter; error MESSAGE WORDING may differ.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "C1 generate a fixture CSR"
+      ansible.builtin.shell: "openssl req -newkey rsa:2048 -keyout /tmp/ci-key.pem -out /tmp/ci-req.pem -days 2 -nodes -subj /CN=krikri 2>/dev/null"
+      register: c1
+      ignore_errors: true
+      changed_when: false
+
+    - name: "C2 neither path nor content"
+      community.crypto.openssl_csr_info:
+      register: c2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "C2 failed={{ c2.failed }} changed={{ c2.changed | default('none') }}"
+
+    - name: "C3 both path and content"
+      community.crypto.openssl_csr_info:
+        path: /tmp/ci-req.pem
+        content: "banana"
+      register: c3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "C3 failed={{ c3.failed }} changed={{ c3.changed | default('none') }}"
+
+    - name: "C4 invalid select_crypto_backend choice"
+      community.crypto.openssl_csr_info:
+        path: /tmp/ci-req.pem
+        select_crypto_backend: banana
+      register: c4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "C4 failed={{ c4.failed }} changed={{ c4.changed | default('none') }}"
+
+    - name: "C5 invalid name_encoding choice"
+      community.crypto.openssl_csr_info:
+        path: /tmp/ci-req.pem
+        name_encoding: banana
+      register: c5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "C5 failed={{ c5.failed }} changed={{ c5.changed | default('none') }}"
+
+    - name: "C6 unsupported parameter"
+      community.crypto.openssl_csr_info:
+        path: /tmp/ci-req.pem
+        banana: true
+      register: c6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "C6 failed={{ c6.failed }} changed={{ c6.changed | default('none') }}"
+
+    - name: "C7 missing file"
+      community.crypto.openssl_csr_info:
+        path: /tmp/ci-nope.pem
+      register: c7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "C7 failed={{ c7.failed }} changed={{ c7.changed | default('none') }}"
+
+    - name: "C8 garbage file"
+      community.crypto.openssl_csr_info:
+        path: /etc/hostname
+      register: c8
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "C8 failed={{ c8.failed }} changed={{ c8.changed | default('none') }}"
+
+    - name: "C9 valid parse reports subject"
+      community.crypto.openssl_csr_info:
+        path: /tmp/ci-req.pem
+      register: c9
+      ignore_errors: true
+    - name: "C9b subject common name"
+      ansible.builtin.debug:
+        msg: "C9 failed={{ c9.failed }} changed={{ c9.changed | default('none') }} cn={{ (c9.subject | default({})).commonName | default('none') }}"
+
+    - name: "C10 content parse works"
+      community.crypto.openssl_csr_info:
+        content: "{{ lookup('ansible.builtin.file', '/tmp/ci-req.pem') }}"
+      register: c10
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "C10 failed={{ c10.failed }} changed={{ c10.changed | default('none') }} cn={{ (c10.subject | default({})).commonName | default('none') }}"
