@@ -165,7 +165,7 @@
       ansible.builtin.command: git config --global --get-all krikri.opt
       register: gc15
     - ansible.builtin.debug:
-        msg: "GC15 rc={{ gc15.rc | default('none') }} out={{ gc15.stdout | default('none') }}"
+        msg: "GC15 rc={{ gc15.rc | default('none') }} out={{ gc15.stdout | replace('\n', ' | ') }}"
 
     - name: "GC16 unset the added option"
       community.general.git_config:

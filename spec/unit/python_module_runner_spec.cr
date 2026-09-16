@@ -97,8 +97,12 @@ describe Krikri::PythonModuleRunner do
   end
 
   it "builds the old-style key=value argv" do
+    # Real Ansible's old-style (non-AnsibleModule) protocol passes
+    # _ansible_* special vars as ordinary key=value pairs in the argv
+    # string - they are NOT stripped, unlike the plugin-config
+    # bookkeeping keys (check_mode/diff_mode) checked above.
     argv = Krikri::PythonModuleRunner.build_kv_argv({"path" => "/tmp/x", "mode" => "0640", "_ansible_check_mode" => "false"})
-    argv.should eq(["path=/tmp/x", "mode=0640"])
+    argv.should eq(["path=/tmp/x", "mode=0640", "_ansible_check_mode=false"])
   end
 
   # ---- result-JSON extraction ----

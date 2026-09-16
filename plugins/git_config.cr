@@ -84,7 +84,10 @@ module Krikri
       return nil if unset
 
       if old_values.includes?(value) && (old_values.size == 1 || add_mode == "add")
-        return PluginResult.new(changed: false, failed: false, msg: "")
+        # Real's no-op path passes msg='' to exit_json explicitly, so the
+        # result keeps an EMPTY msg key (msg | default('none') shows ''
+        # there, not 'none' - live-verified GC9b).
+        return PluginResult.new(changed: false, failed: false, msg: "", include_empty_msg: true)
       end
       nil
     end
