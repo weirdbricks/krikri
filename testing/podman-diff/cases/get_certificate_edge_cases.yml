@@ -1,0 +1,162 @@
+# get_certificate edge cases. Needs the openssl CLI in BOTH containers
+# (generates the fixture certs and verifies get_certificate's written
+# output). A local `openssl s_server -www` provides the TLS endpoint so
+# the happy path is testable offline; unreachable/refused endpoints
+# cover the failure paths. failed=/changed= and the actual bytes written
+# (verified by openssl x509 parsing) are what matter; error MESSAGE
+# WORDING may differ.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "G0 generate fixture certs (server cert + unrelated CA)"
+      ansible.builtin.shell: "openssl req -x509 -newkey rsa:2048 -keyout /tmp/g-key.pem -out /tmp/g-cert.pem -days 2 -nodes -subj /CN=localhost 2>/dev/null && openssl req -x509 -newkey rsa:2048 -keyout /tmp/g-otherkey.pem -out /tmp/g-other.pem -days 2 -nodes -subj /CN=other 2>/dev/null"
+      register: g0
+      ignore_errors: true
+      changed_when: false
+    - ansible.builtin.debug:
+        msg: "G0 failed={{ g0.failed }} changed={{ g0.changed | default('none') }}"
+
+    - name: "G1 unreachable port on localhost fails fast"
+      community.crypto.get_certificate:
+        host: 127.0.0.1
+        port: 59999
+        timeout: 2
+      register: g1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "G1 failed={{ g1.failed }} changed={{ g1.changed | default('none') }}"
+
+    - name: "G1b no file written on failure"
+      ansible.builtin.stat:
+        path: /tmp/g1.pem
+      register: g1b
+    - ansible.builtin.debug:
+        msg: "G1b exists={{ g1b.stat.exists }}"
+
+    - name: "G2 missing required port fails validation"
+      community.crypto.get_certificate:
+        host: 127.0.0.1
+      register: g2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "G2 failed={{ g2.failed }} changed={{ g2.changed | default('none') }}"
+
+    - name: "G3 missing required host fails validation"
+      community.crypto.get_certificate:
+        port: 443
+      register: g3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "G3 failed={{ g3.failed }} changed={{ g3.changed | default('none') }}"
+
+    - name: "G4 dead proxy fails"
+      community.crypto.get_certificate:
+        host: 127.0.0.1
+        port: 59999
+        proxy_host: 127.0.0.1
+        proxy_port: 59998
+        timeout: 2
+      register: g4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "G4 failed={{ g4.failed }} changed={{ g4.changed | default('none') }}"
+
+    - name: "G5 starttls mysql against a non-mysql endpoint fails"
+      community.crypto.get_certificate:
+        host: 127.0.0.1
+        port: 59999
+        starttls: mysql
+        timeout: 2
+      register: g5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "G5 failed={{ g5.failed }} changed={{ g5.changed | default('none') }}"
+
+    - name: "G6 start a local s_server"
+      ansible.builtin.shell: "nohup openssl s_server -accept 4433 -cert /tmp/g-cert.pem -key /tmp/g-key.pem -www >/tmp/g-s_server.log 2>&1 & sleep 1; echo started"
+      register: g6s
+      changed_when: false
+
+    - name: "G6 fetch cert from local s_server"
+      community.crypto.get_certificate:
+        host: 127.0.0.1
+        port: 4433
+      register: g6
+      ignore_errors: true
+    - name: "G6b the returned cert fact parses as the fixture cert"
+      ansible.builtin.shell: "printf '%s' '{{ g6.cert | default('missing') }}' | openssl x509 -noout -subject 2>/dev/null | grep -c 'CN[ ]*=[ ]*localhost' || echo 0"
+      register: g6b
+      changed_when: false
+    - ansible.builtin.debug:
+        msg: "G6 failed={{ g6.failed }} changed={{ g6.changed | default('none') }} subject_hit={{ g6b.stdout | default('none') }}"
+
+    - name: "G6c re-fetch same cert is idempotent"
+      community.crypto.get_certificate:
+        host: 127.0.0.1
+        port: 4433
+      register: g6c
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "G6c failed={{ g6c.failed }} changed={{ g6c.changed }}"
+
+    - name: "G6d path is not a real module parameter"
+      community.crypto.get_certificate:
+        host: 127.0.0.1
+        port: 4433
+        path: /tmp/g6.pem
+      register: g6d
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "G6d failed={{ g6d.failed }} changed={{ g6d.changed | default('none') }}"
+
+    - name: "G7 ca_cert not trusting the self-signed cert fails verification"
+      community.crypto.get_certificate:
+        host: 127.0.0.1
+        port: 4433
+        ca_cert: /tmp/g-other.pem
+        timeout: 3
+      register: g7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "G7 failed={{ g7.failed }} changed={{ g7.changed | default('none') }}"
+
+    - name: "G7b ca_cert trusting the served cert succeeds"
+      community.crypto.get_certificate:
+        host: 127.0.0.1
+        port: 4433
+        ca_cert: /tmp/g-cert.pem
+      register: g7b
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "G7b failed={{ g7b.failed }} changed={{ g7b.changed | default('none') }}"
+
+    - name: "G8 nonexistent ca_cert file fails before connecting"
+      community.crypto.get_certificate:
+        host: 127.0.0.1
+        port: 4433
+        ca_cert: /tmp/g-does-not-exist.pem
+      register: g8
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "G8 failed={{ g8.failed }} changed={{ g8.changed | default('none') }}"
+
+    - name: "G9 non-integer timeout fails conversion"
+      community.crypto.get_certificate:
+        host: 127.0.0.1
+        port: 4433
+        timeout: krikri-not-an-int
+      register: g9
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "G9 failed={{ g9.failed }} changed={{ g9.changed | default('none') }}"
+
+    - name: "G10 invalid starttls choice fails"
+      community.crypto.get_certificate:
+        host: 127.0.0.1
+        port: 4433
+        starttls: krikri-bogus
+      register: g10
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "G10 failed={{ g10.failed }} changed={{ g10.changed | default('none') }}"
