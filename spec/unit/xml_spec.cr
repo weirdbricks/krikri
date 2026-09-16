@@ -256,6 +256,83 @@ describe "community.general.xml plugin" do
     end
   end
 
+  describe "argument validation (AnsibleModule init order, before any parsing)" do
+    it "rejects mutually exclusive action params" do
+      result = run_xml(xml_params({"xmlstring" => "<a/>", "xpath" => "/a", "value" => "1", "count" => "true"}))
+      result["failed"].should be_true
+      result["msg"].as_s.should contain("parameters are mutually exclusive")
+    end
+
+    it "rejects an invalid content choice" do
+      result = run_xml(xml_params({"xmlstring" => "<a/>", "xpath" => "/a", "content" => "bogus"}))
+      result["failed"].should be_true
+      result["msg"].as_s.should contain("value of content must be one of: attribute, text")
+    end
+
+    it "rejects an invalid state choice" do
+      result = run_xml(xml_params({"xmlstring" => "<a/>", "xpath" => "/a", "state" => "bogus"}))
+      result["failed"].should be_true
+      result["msg"].as_s.should contain("value of state must be one of: absent, present")
+    end
+
+    it "rejects a non-boolean value for a bool-typed param" do
+      result = run_xml(xml_params({"xmlstring" => "<a><b/></a>", "xpath" => "/a/b", "count" => "krikri_bool"}))
+      result["failed"].should be_true
+      result["msg"].as_s.should contain("is not a valid boolean")
+    end
+
+    it "fails when attribute is given without value (required_by)" do
+      result = run_xml(xml_params({"xmlstring" => "<a><b/></a>", "xpath" => "/a/b", "attribute" => "x"}))
+      result["failed"].should be_true
+      result["msg"].as_s.should contain("missing parameter(s) required by 'attribute': value")
+    end
+
+    it "fails when value is given without xpath (required_by)" do
+      result = run_xml(xml_params({"xmlstring" => "<a/>", "value" => "1"}))
+      result["failed"].should be_true
+      result["msg"].as_s.should contain("missing parameter(s) required by 'value': xpath")
+    end
+
+    it "fails on unclosed elements (strict parse, no RECOVER)" do
+      result = run_xml(xml_params({"xmlstring" => "<root><a>1</root>", "xpath" => "/root/a", "count" => "true"}))
+      result["failed"].should be_true
+      result["msg"].as_s.should contain("Error while parsing document")
+    end
+  end
+
+  describe "xpath semantics (matching real module)" do
+    it "treats add_children on a nonmatching xpath as a silent no-op" do
+      result = run_xml(JSON.parse(%({"xmlstring": "<a><b/></a>", "xpath": "/a/nope", "add_children": [{"c": "1"}]})))
+      result["failed"]?.should be_falsey
+      result["changed"].should be_false
+    end
+
+    it "creates a missing bare-xpath target even with create_if_missing false" do
+      result = run_xml(xml_params({"xmlstring" => "<a/>", "xpath" => "/a/b", "create_if_missing" => "false"}))
+      result["failed"]?.should be_falsey
+      result["changed"].should be_true
+      result["xmlstring"].as_s.should contain("<b/>")
+    end
+
+    it "reports changed=false for idempotent xmlstring ops (no byte-diff false positive)" do
+      result = run_xml(xml_params({"xmlstring" => "<a><b>1</b></a>", "xpath" => "/a/b", "value" => "1"}))
+      result["failed"]?.should be_falsey
+      result["changed"].should be_false
+    end
+
+    it "print_match is read-only: changed stays false" do
+      result = run_xml(xml_params({"xmlstring" => "<a><b>1</b></a>", "xpath" => "/a/b", "print_match" => "true"}))
+      result["failed"]?.should be_falsey
+      result["changed"].should be_false
+    end
+
+    it "rejects a non-list set_children" do
+      result = run_xml(xml_params({"xmlstring" => "<a><b/></a>", "xpath" => "/a/b", "set_children" => "notalist"}))
+      result["failed"].should be_true
+      result["msg"].as_s.should contain("Invalid set_children type: must be a list")
+    end
+  end
+
   describe "failure modes" do
     it "fails on a missing path" do
       result = run_xml(xml_params({"path" => "/nonexistent/xmlspec_missing.xml", "xpath" => "/a", "value" => "b"}))

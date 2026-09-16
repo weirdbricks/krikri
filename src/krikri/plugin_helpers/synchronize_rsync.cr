@@ -108,6 +108,10 @@ module Krikri
       argv << "--rsync-path=#{params["rsync_path"]}" if params["rsync_path"]? && !params["rsync_path"].empty?
       argv.concat(parse_list(params["rsync_opts"]?))
       argv << "--partial" if bool(params["partial"]?)
+      # Real module: `if module.check_mode: cmd.append('--dry-run')` -
+      # the predicted changes still itemize (so changed: true still
+      # registers), nothing is written.
+      argv << "--dry-run" if bool(params["check_mode"]?)
 
       unless link_dest.empty?
         argv << "-H"

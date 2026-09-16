@@ -91,6 +91,8 @@ module Krikri
       vars : Hash(String, JSON::Any),
       host : Host,
       inventory : Inventory? = nil,
+      task_host : Host? = nil,
+      check_mode : Bool = false,
     ) : ActionResult
       # Get action plugin class
       plugin_class = ACTION_PLUGINS[module_name]?
@@ -111,9 +113,15 @@ module Krikri
       # parameter to this method and every one of its 3 call sites.
       params = params.dup
       params["_verbosity"] = (vars["ansible_verbosity"]?.try(&.as_i64?) || 0_i64).to_s
+      # Same pattern for the task's resolved check mode - the
+      # controller-only plugins never go through build_plugin_config's
+      # own check_mode injection, so synchronize (whose check-mode
+      # behavior IS the rsync --dry-run flag, real module's own shape)
+      # reads it back from here.
+      params["check_mode"] = check_mode.to_s
 
       # Create and execute action plugin
-      action_plugin = plugin_class.new(params, vars, host, inventory)
+      action_plugin = plugin_class.new(params, vars, host, inventory, task_host)
 
       # Check if should run
       unless action_plugin.should_run?

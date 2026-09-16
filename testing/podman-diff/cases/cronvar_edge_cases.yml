@@ -1,0 +1,205 @@
+# cronvar module edge cases. Containers run as root with cron
+# installed in the base image; cronvar edits a live user crontab via
+# the `crontab` binary (both engines) or a cron.d-style file. Each case
+# registers its result and prints a "V<n> key=value" debug line for
+# run.sh's diff extraction; failed=/changed= booleans and actual
+# crontab/file state matter, error-message WORDING may differ.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "V0 cleanup from a previous run"
+      ansible.builtin.cronvar:
+        name: KRIKVAR
+        state: absent
+      ignore_errors: true
+
+    - name: "V1 missing name"
+      ansible.builtin.cronvar:
+        value: x
+      register: v1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "V1 failed={{ v1.failed | default('none') }} changed={{ v1.changed | default('none') }}"
+
+    - name: "V2 missing value with state present"
+      ansible.builtin.cronvar:
+        name: KRIKVAR
+      register: v2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "V2 failed={{ v2.failed | default('none') }} changed={{ v2.changed | default('none') }}"
+
+    - name: "V3 set a new variable"
+      ansible.builtin.cronvar:
+        name: KRIKVAR
+        value: alpha
+      register: v3
+    - ansible.builtin.debug:
+        msg: "V3 failed={{ v3.failed }} changed={{ v3.changed }}"
+
+    - name: "V4 re-run same value (idempotency)"
+      ansible.builtin.cronvar:
+        name: KRIKVAR
+        value: alpha
+      register: v4
+    - ansible.builtin.debug:
+        msg: "V4 failed={{ v4.failed }} changed={{ v4.changed }}"
+
+    - name: "V5 change the value"
+      ansible.builtin.cronvar:
+        name: KRIKVAR
+        value: beta
+      register: v5
+    - ansible.builtin.debug:
+        msg: "V5 failed={{ v5.failed }} changed={{ v5.changed }}"
+
+    - name: "V6 value contains spaces"
+      ansible.builtin.cronvar:
+        name: KRIKVAR
+        value: "beta one two"
+      register: v6
+    - ansible.builtin.debug:
+        msg: "V6 failed={{ v6.failed }} changed={{ v6.changed }}"
+
+    - name: "V7 read back the variable value"
+      ansible.builtin.command: sh -c "crontab -l | grep '^KRIKVAR=' | cut -d= -f2-"
+      register: v7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "V7 rc={{ v7.rc | default('none') }} out={{ v7.stdout | default('none') }}"
+
+    - name: "V8 insertafter an existing variable"
+      ansible.builtin.cronvar:
+        name: KRIKB
+        value: bb
+        insertafter: KRIKVAR
+      register: v8
+    - ansible.builtin.debug:
+        msg: "V8 failed={{ v8.failed }} changed={{ v8.changed }}"
+
+    - name: "V9 insertbefore an existing variable"
+      ansible.builtin.cronvar:
+        name: KRIKC
+        value: cc
+        insertbefore: KRIKVAR
+      register: v9
+    - ansible.builtin.debug:
+        msg: "V9 failed={{ v9.failed }} changed={{ v9.changed }}"
+
+    - name: "V10 verify resulting order (C then KRIKVAR then B)"
+      ansible.builtin.command: sh -c "crontab -l | grep -E '^(KRIKC|KRIKVAR|KRIKB)=' | cut -d= -f1 | tr '\n' ','"
+      register: v10
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "V10 rc={{ v10.rc | default('none') }} order={{ v10.stdout | default('none') }}"
+
+    - name: "V11 insertafter a nonexistent variable (anchor silently dropped)"
+      ansible.builtin.cronvar:
+        name: KRIKD
+        value: dd
+        insertafter: KRIKNOPE
+      register: v11
+    - ansible.builtin.debug:
+        msg: "V11 failed={{ v11.failed }} changed={{ v11.changed }}"
+
+    - name: "V12 insertafter + insertbefore together (mutually exclusive)"
+      ansible.builtin.cronvar:
+        name: KRIKE
+        value: ee
+        insertafter: KRIKB
+        insertbefore: KRIKC
+      register: v12
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "V12 failed={{ v12.failed | default('none') }} changed={{ v12.changed | default('none') }}"
+
+    - name: "V13 state absent on a variable never set"
+      ansible.builtin.cronvar:
+        name: KRIKABSENT
+        state: absent
+      register: v13
+    - ansible.builtin.debug:
+        msg: "V13 failed={{ v13.failed }} changed={{ v13.changed }}"
+
+    - name: "V14 state absent on an existing variable"
+      ansible.builtin.cronvar:
+        name: KRIKB
+        state: absent
+      register: v14
+    - ansible.builtin.debug:
+        msg: "V14 failed={{ v14.failed }} changed={{ v14.changed }}"
+
+    - name: "V15 re-run state absent (idempotency)"
+      ansible.builtin.cronvar:
+        name: KRIKB
+        state: absent
+      register: v15
+    - ansible.builtin.debug:
+        msg: "V15 failed={{ v15.failed }} changed={{ v15.changed }}"
+
+    - name: "V16 cron_file relative path resolves against /etc/cron.d"
+      ansible.builtin.cronvar:
+        name: KRIKFILE
+        value: fv
+        cron_file: krikri-diff-var
+      register: v16
+    - ansible.builtin.debug:
+        msg: "V16 failed={{ v16.failed }} changed={{ v16.changed }}"
+
+    - name: "V17 re-run cron_file case (idempotency)"
+      ansible.builtin.cronvar:
+        name: KRIKFILE
+        value: fv
+        cron_file: krikri-diff-var
+      register: v17
+    - ansible.builtin.debug:
+        msg: "V17 failed={{ v17.failed }} changed={{ v17.changed }}"
+
+    - name: "V18 read back the cron.d file"
+      ansible.builtin.command: cat /etc/cron.d/krikri-diff-var
+      register: v18
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "V18 rc={{ v18.rc | default('none') }} out={{ v18.stdout | default('none') }}"
+
+    - name: "V19 cron_file absolute path"
+      ansible.builtin.cronvar:
+        name: KRIKFILE2
+        value: fv2
+        cron_file: /etc/cron.d/krikri-diff-var2
+      register: v19
+    - ansible.builtin.debug:
+        msg: "V19 failed={{ v19.failed }} changed={{ v19.changed }}"
+
+    - name: "V20 cron_file state absent removes the variable line"
+      ansible.builtin.cronvar:
+        name: KRIKFILE
+        state: absent
+        cron_file: krikri-diff-var
+      register: v20
+    - ansible.builtin.debug:
+        msg: "V20 failed={{ v20.failed }} changed={{ v20.changed }}"
+
+    - name: "V21 read back the cron.d file after removal"
+      ansible.builtin.command: cat /etc/cron.d/krikri-diff-var
+      register: v21
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "V21 rc={{ v21.rc | default('none') }} out={{ v21.stdout | default('none') }}"
+
+    - name: "V22 cleanup user crontab"
+      ansible.builtin.cronvar:
+        name: KRIKVAR
+        state: absent
+      register: v22
+    - ansible.builtin.debug:
+        msg: "V22 failed={{ v22.failed }} changed={{ v22.changed }}"
+
+    - name: "V23 cleanup cron.d files"
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/cron.d/krikri-diff-var
+        - /etc/cron.d/krikri-diff-var2

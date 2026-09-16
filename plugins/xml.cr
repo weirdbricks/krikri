@@ -60,6 +60,87 @@ module Krikri
           msg: "one of the following is required: add_children, content, count, pretty_print, print_match, set_children, value")
       end
 
+      # Real module argument validation (AnsibleModule init), which runs
+      # before any XML parsing: mutually exclusive action params, choice
+      # enums, and required_by/required_if relationships.
+      action_count = ["add_children", "content", "count", "print_match", "set_children", "value"].count { |p| raw[p]? }
+      if action_count > 1
+        return PluginResult.new(changed: false, failed: true,
+          msg: "parameters are mutually exclusive: add_children|content|count|print_match|set_children|value")
+      end
+      if content && content != "attribute" && content != "text"
+        return PluginResult.new(changed: false, failed: true,
+          msg: "value of content must be one of: attribute, text, got: #{content}")
+      end
+      if state != "present" && state != "absent"
+        return PluginResult.new(changed: false, failed: true,
+          msg: "value of state must be one of: absent, present, got: #{state}")
+      end
+      if input_type != "xml" && input_type != "yaml"
+        return PluginResult.new(changed: false, failed: true,
+          msg: "value of input_type must be one of: xml, yaml, got: #{input_type}")
+      end
+      # Real module's required_by treats an explicitly-null value as
+      # missing (observed: attribute + `value: null` fails "missing
+      # parameter(s) required by 'attribute': value"), so check the raw
+      # JSON payload, not just key presence. The engine's param pipeline
+      # is Hash(String, String) and collapses a YAML null to an empty
+      # string, so treat "" as missing too - the one shape this can't
+      # represent is a quoted `value: ""` with attribute:, which real
+      # Ansible accepts and sets the attribute to empty.
+      value_provided = !raw["value"]?.nil? && !raw["value"].not_nil!.raw.nil? && raw["value"].not_nil!.raw != ""
+      if @params["attribute"]? && !value_provided
+        return PluginResult.new(changed: false, failed: true,
+          msg: "missing parameter(s) required by 'attribute': value")
+      end
+      if value_provided && !xpath
+        return PluginResult.new(changed: false, failed: true,
+          msg: "missing parameter(s) required by 'value': xpath")
+      end
+      if (content = @params["content"]?) && !xpath
+        return PluginResult.new(changed: false, failed: true,
+          msg: "missing parameter(s) required by 'content': xpath")
+      end
+      if @params["add_children"]? && !xpath
+        return PluginResult.new(changed: false, failed: true,
+          msg: "missing parameter(s) required by 'add_children': xpath")
+      end
+      if @params["set_children"]? && !xpath
+        return PluginResult.new(changed: false, failed: true,
+          msg: "missing parameter(s) required by 'set_children': xpath")
+      end
+      if count && !xpath
+        return PluginResult.new(changed: false, failed: true,
+          msg: "missing parameter(s) required if count is True: xpath")
+      end
+      if print_match && !xpath
+        return PluginResult.new(changed: false, failed: true,
+          msg: "missing parameter(s) required if print_match is True: xpath")
+      end
+      if insertbefore && !xpath
+        return PluginResult.new(changed: false, failed: true,
+          msg: "missing parameter(s) required if insertbefore is True: xpath")
+      end
+      if insertafter && !xpath
+        return PluginResult.new(changed: false, failed: true,
+          msg: "missing parameter(s) required if insertafter is True: xpath")
+      end
+
+      # Real module bool-typed args (type='bool') reject non-boolean
+      # strings at AnsibleModule init - live-verified: `count:
+      # krikri_bool` fails "The value 'krikri_bool' is not a valid
+      # boolean". The engine's param pipeline carries these as strings,
+      # so validate before the lenient true?() coercion.
+      valid_bools = {"0" => false, "1" => true, "f" => false, "n" => false, "t" => true, "y" => true,
+                      "false" => false, "no" => false, "off" => false, "on" => true,
+                      "true" => true, "yes" => true}
+      {"count", "print_match", "pretty_print", "backup", "insertbefore", "insertafter", "create_if_missing"}.each do |bool_param|
+        if (val = @params[bool_param]?) && !valid_bools.has_key?(val.downcase)
+          return PluginResult.new(changed: false, failed: true,
+            msg: "argument '#{bool_param}' is of type <class 'str'> and we were unable to convert to bool: The value '#{val}' is not a valid boolean.  Valid booleans include: 0, 1, 'f', 'on', 'n', 't', '1', 'false', 'y', 'true', 'off', 'yes', '0', 'no'")
+        end
+      end
+
       @namespaces = namespaces_from(raw)
       @doc = nil
       if xmlstring
@@ -102,6 +183,7 @@ module Krikri
       op_ran = false
 
       if print_match
+        read_only = true
         list = [] of String
         if xpath
           each_match(doc, xpath) do |node|
@@ -146,34 +228,39 @@ module Krikri
       elsif state == "absent"
         op_ran = true
         delete_xpath_target(doc, xpath)
-      elsif set_children = raw["set_children"]?
+      elsif set_children_json = raw["set_children"]?
         op_ran = true
-        set_target_children(doc, xpath, set_children, input_type)
+        children = normalize_children_json(set_children_json)
+        if children.nil?
+          return PluginResult.new(changed: false, failed: true,
+            msg: "Invalid set_children type: must be a list")
+        end
+        set_target_children(doc, xpath, children, input_type)
       elsif add_children_json = raw["add_children"]?
-        arr = add_children_json.as_a?
+        arr = normalize_children_json(add_children_json)
         if arr.nil?
           return PluginResult.new(changed: false, failed: true,
             msg: "Invalid add_children type: must be a list")
         end
-        if !node_matches?(doc, xpath)
-          return PluginResult.new(changed: false, failed: true,
-            msg: "Xpath #{xpath} does not reference a node!")
-        end
+        # Real add_target loops over tree.xpath matches - a nonmatching
+        # xpath is a silent no-op (changed=false), NOT an error.
         op_ran = true
         add_target_children(doc, xpath, arr, input_type, insertbefore, insertafter)
-      elsif value = @params["value"]?
+      elsif value_provided
         op_ran = true
-        set_target_inner(doc, xpath, attribute, value, create_if_missing)
+        set_target_inner(doc, xpath, attribute, @params["value"].not_nil!, create_if_missing)
         if @failed_result
           return @failed_result.not_nil!
         end
       elsif xpath
-        if !node_matches?(doc, xpath)
-          op_ran = true
+        # Real main()'s ensure_xpath_exists: with no other op, a bare
+        # xpath CREATES the missing target - unconditionally, without
+        # consulting create_if_missing (that param only gates
+        # set_target's value path) - and no-ops when the node exists.
+        op_ran = true
+        unless node_matches?(doc, xpath)
           check_or_make_target(doc, xpath)
-          if @failed_result
-            return @failed_result.not_nil!
-          end
+          return @failed_result.not_nil! if @failed_result
         end
       end
 
@@ -181,8 +268,23 @@ module Krikri
       tree_changed = new_serial != orig_serial
 
       if xmlstring
-        byte_changed = new_serial != xmlstring
-        final_changed = tree_changed || byte_changed
+        # Real module computes changed from the mutated-vs-original tree
+        # comparison alone (has_changed), never from byte-differences
+        # against the xmlstring INPUT - re-serialization always prepends
+        # an XML declaration and trailing newline, so a byte comparison
+        # would report changed on every read-only or idempotent op.
+        # The one byte-comparing path is pretty_print with no xpath
+        # (make_pretty: "Modifying a string is not considered a change"
+        # does not apply - it explicitly compares and reports changed).
+        final_changed = if read_only
+          false
+        elsif op_ran || xpath
+          tree_changed
+        elsif pretty_print
+          new_serial != xmlstring
+        else
+          tree_changed
+        end
         result = build_result(final_changed, xpath, state, count_result, matches_result, msg)
         result.extra["xmlstring"] = JSON::Any.new(new_serial)
         return result
@@ -190,7 +292,22 @@ module Krikri
 
       p = path.not_nil!
       original_bytes = File.exists?(p) ? File.read(p) : ""
-      final_changed = read_only ? false : op_ran ? tree_changed : new_serial != original_bytes
+      # Read-only ops never change; mutation ops and the bare-xpath
+      # ensure-created path decide from the tree alone (has_changed);
+      # only the pretty_print-only path (make_pretty, no xpath - real
+      # main() never reaches it when xpath is set) compares file bytes;
+      # with no op and no pretty_print there is nothing to do, so
+      # changed=false regardless of formatting differences (real module
+      # never writes).
+      final_changed = if read_only
+        false
+      elsif op_ran || xpath
+        tree_changed
+      elsif pretty_print
+        new_serial != original_bytes
+      else
+        false
+      end
       backup_file = ""
       if final_changed && !check_mode?
         if backup && File.exists?(p)
@@ -212,7 +329,11 @@ module Krikri
 
     private def parse_doc(content : String, source : String) : Nil
       begin
-        @doc = XML.parse(content)
+        # Strict parse: Crystal's ParserOptions.default includes RECOVER,
+        # which silently auto-closes unclosed elements / drops junk -
+        # real lxml (this module's parser) raises XMLSyntaxError on all
+        # of it. Drop RECOVER, keep NOWARNING/NONET.
+        @doc = XML.parse(content, XML::ParserOptions.flags(NOWARNING, NONET))
       rescue ex : XML::Error
         @failed_result = PluginResult.new(changed: false, failed: true,
           msg: "Error while parsing document: #{source} (#{ex.message})")
@@ -327,9 +448,9 @@ module Krikri
       true
     end
 
-    private def set_target_children(doc : XML::Document, xp : String?, children : JSON::Any, input_type : String) : Bool
+    private def set_target_children(doc : XML::Document, xp : String?, children : Array(JSON::Any), input_type : String) : Bool
       return false unless xp
-      arr = children.as_a? || [] of JSON::Any
+      arr = children
       new_kids = children_to_nodes(doc, arr, input_type)
       changed = false
       match_nodes(doc, xp).each do |match|
@@ -350,6 +471,24 @@ module Krikri
         changed = true
       end
       changed
+    end
+
+    # The engine's param pipeline stringifies YAML list params (a
+    # list-of-dicts arrives as JSON text - see playbook_parser's
+    # stringify_value), so a children param may be a real JSON array OR
+    # a JSON-encoded string of one.
+    private def normalize_children_json(node : JSON::Any) : Array(JSON::Any)?
+      if arr = node.as_a?
+        return arr
+      end
+      if str = node.as_s?
+        begin
+          return JSON.parse(str).as_a?
+        rescue JSON::ParseException
+          return nil
+        end
+      end
+      nil
     end
 
     private def wrap_node(doc : XML::Document, ptr : LibXML::Node*) : XML::Node

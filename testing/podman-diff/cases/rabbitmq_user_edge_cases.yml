@@ -1,0 +1,91 @@
+# rabbitmq_user (community.rabbitmq) edge cases. Argument-validation
+# only: neither container has a RabbitMQ server OR a rabbitmqctl
+# binary, so every case that survives argument validation must fail on
+# the missing binary - identically, failed=True/changed=False, on both
+# engines. Cases that fail at the argspec (missing name, invalid state
+# choice, non-dict permissions elements) must fail before any daemon
+# connection on the real side; krikri must also report failed=True and
+# changed=False there. Msg wording differs and is not compared.
+# Prefix R.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "R1 missing required name"
+      community.rabbitmq.rabbitmq_user:
+        state: present
+      register: r1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "R1 failed={{ r1.failed | default('none') }} changed={{ r1.changed | default('none') }}"
+
+    - name: "R2 invalid state choice"
+      community.rabbitmq.rabbitmq_user:
+        name: krikri-u
+        state: krikri_state
+      register: r2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "R2 failed={{ r2.failed | default('none') }} changed={{ r2.changed | default('none') }}"
+
+    - name: "R3 state present with password (fails on missing rabbitmqctl)"
+      community.rabbitmq.rabbitmq_user:
+        name: krikri-u
+        password: secret
+        state: present
+      register: r3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "R3 failed={{ r3.failed | default('none') }} changed={{ r3.changed | default('none') }}"
+
+    - name: "R4 state present with tags (fails on missing rabbitmqctl)"
+      community.rabbitmq.rabbitmq_user:
+        name: krikri-u
+        tags: administrator
+        state: present
+      register: r4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "R4 failed={{ r4.failed | default('none') }} changed={{ r4.changed | default('none') }}"
+
+    - name: "R5 permissions with a non-dict element (real argspec rejects)"
+      community.rabbitmq.rabbitmq_user:
+        name: krikri-u
+        permissions:
+          - not-a-dict
+        state: present
+      register: r5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "R5 failed={{ r5.failed | default('none') }} changed={{ r5.changed | default('none') }}"
+
+    - name: "R6 state absent (fails on missing rabbitmqctl before delete)"
+      community.rabbitmq.rabbitmq_user:
+        name: krikri-u
+        state: absent
+      register: r6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "R6 failed={{ r6.failed | default('none') }} changed={{ r6.changed | default('none') }}"
+
+    - name: "R7 invalid vhost type (list where string expected)"
+      community.rabbitmq.rabbitmq_user:
+        name: krikri-u
+        vhost: ["/"]
+        password: secret
+        state: present
+      register: r7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "R7 failed={{ r7.failed | default('none') }} changed={{ r7.changed | default('none') }}"
+
+    - name: "R8 force as a non-boolean string"
+      community.rabbitmq.rabbitmq_user:
+        name: krikri-u
+        password: secret
+        force: krikri_bool
+        state: present
+      register: r8
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "R8 failed={{ r8.failed | default('none') }} changed={{ r8.changed | default('none') }}"

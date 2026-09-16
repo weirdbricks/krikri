@@ -1,0 +1,35 @@
+# ping module edge cases. Trivial connectivity check; real module
+# returns {"ping": data} (default "pong"), never changed, and raises
+# when data == "crash". Prefix P.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "P1 default ping"
+      ansible.builtin.ping:
+      register: p1
+    - ansible.builtin.debug:
+        msg: "P1 failed={{ p1.failed }} changed={{ p1.changed }} ping={{ p1.ping | default('none') }}"
+
+    - name: "P2 custom data response"
+      ansible.builtin.ping:
+        data: hello-krikri
+      register: p2
+    - ansible.builtin.debug:
+        msg: "P2 failed={{ p2.failed }} changed={{ p2.changed }} ping={{ p2.ping | default('none') }}"
+
+    - name: "P3 data crash (special-case failure)"
+      ansible.builtin.ping:
+        data: crash
+      register: p3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P3 failed={{ p3.failed | default('none') }} changed={{ p3.changed | default('none') }}"
+
+    - name: "P4 empty data string"
+      ansible.builtin.ping:
+        data: ""
+      register: p4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P4 failed={{ p4.failed | default('none') }} changed={{ p4.changed | default('none') }} ping={{ p4.ping | default('none') }}"
