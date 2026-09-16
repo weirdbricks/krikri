@@ -1,0 +1,164 @@
+# synchronize (ansible.posix.synchronize) edge cases. Runs under
+# ansible_connection=local in both containers, so every sync is a
+# plain local rsync (both endpoints are the same machine - the only
+# remotely testable shape here; remote-end src/dest munging is
+# controller-side path formatting that needs a second real host).
+# failed=/changed= and the resulting on-disk state matter; rsync's
+# own itemized stdout (the msg) is deliberately NOT surfaced since
+# it is word-for-word rsync output on both engines. Prefix Y.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "Y1 missing src"
+      ansible.posix.synchronize:
+        dest: /tmp/sync_y1/
+      register: y1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "Y1 failed={{ y1.failed | default('none') }} changed={{ y1.changed | default('none') }}"
+
+    - name: "Y2 missing dest"
+      ansible.posix.synchronize:
+        src: /tmp/sync_src/
+      register: y2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "Y2 failed={{ y2.failed | default('none') }} changed={{ y2.changed | default('none') }}"
+
+    - name: prep source tree
+      ansible.builtin.file:
+        path: /tmp/sync_src/sub
+        state: directory
+    - name: prep source files
+      ansible.builtin.copy:
+        dest: "{{ item.p }}"
+        content: "{{ item.c }}"
+      loop:
+        - {p: /tmp/sync_src/file1.txt, c: "one"}
+        - {p: /tmp/sync_src/sub/file2.txt, c: "two"}
+
+    - name: "Y3 basic push, trailing-slash src copies contents"
+      ansible.posix.synchronize:
+        src: /tmp/sync_src/
+        dest: /tmp/sync_dst/
+      register: y3
+    - ansible.builtin.debug:
+        msg: "Y3 failed={{ y3.failed | default('none') }} changed={{ y3.changed | default('none') }}"
+    - name: Y3 stat copied file
+      ansible.builtin.stat:
+        path: /tmp/sync_dst/file1.txt
+      register: y3s
+    - ansible.builtin.debug:
+        msg: "Y3a exists={{ y3s.stat.exists | default('none') }}"
+    - name: Y3 stat copied subdir file
+      ansible.builtin.stat:
+        path: /tmp/sync_dst/sub/file2.txt
+      register: y3s2
+    - ansible.builtin.debug:
+        msg: "Y3b exists={{ y3s2.stat.exists | default('none') }}"
+
+    - name: "Y4 idempotent rerun"
+      ansible.posix.synchronize:
+        src: /tmp/sync_src/
+        dest: /tmp/sync_dst/
+      register: y4
+    - ansible.builtin.debug:
+        msg: "Y4 failed={{ y4.failed | default('none') }} changed={{ y4.changed | default('none') }}"
+
+    - name: "Y5 no trailing slash copies the directory itself"
+      ansible.posix.synchronize:
+        src: /tmp/sync_src
+        dest: /tmp/sync_y5/
+      register: y5
+    - name: Y5 stat dir-copy result
+      ansible.builtin.stat:
+        path: /tmp/sync_y5/sync_src/file1.txt
+      register: y5s
+    - ansible.builtin.debug:
+        msg: "Y5 failed={{ y5.failed | default('none') }} changed={{ y5.changed | default('none') }} exists={{ y5s.stat.exists | default('none') }}"
+
+    - name: "Y6 missing src fails"
+      ansible.posix.synchronize:
+        src: /tmp/sync_missing_src/
+        dest: /tmp/sync_y6/
+      register: y6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "Y6 failed={{ y6.failed | default('none') }} changed={{ y6.changed | default('none') }}"
+
+    - name: "Y7 pull mode on a local connection is still a local rsync"
+      ansible.posix.synchronize:
+        src: /tmp/sync_src/
+        dest: /tmp/sync_y7/
+        mode: pull
+      register: y7
+    - name: Y7 stat pulled file
+      ansible.builtin.stat:
+        path: /tmp/sync_y7/file1.txt
+      register: y7s
+    - ansible.builtin.debug:
+        msg: "Y7 failed={{ y7.failed | default('none') }} changed={{ y7.changed | default('none') }} exists={{ y7s.stat.exists | default('none') }}"
+
+    - name: "Y8 bogus mode"
+      ansible.posix.synchronize:
+        src: /tmp/sync_src/
+        dest: /tmp/sync_y8/
+        mode: sideways
+      register: y8
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "Y8 failed={{ y8.failed | default('none') }} changed={{ y8.changed | default('none') }}"
+
+    - name: "Y9 delegate_to localhost"
+      ansible.posix.synchronize:
+        src: /tmp/sync_src/
+        dest: /tmp/sync_y9/
+      register: y9
+      delegate_to: localhost
+      ignore_errors: true
+    - name: Y9 stat delegated result
+      ansible.builtin.stat:
+        path: /tmp/sync_y9/file1.txt
+      register: y9s
+      delegate_to: localhost
+    - ansible.builtin.debug:
+        msg: "Y9 failed={{ y9.failed | default('none') }} changed={{ y9.changed | default('none') }} exists={{ y9s.stat.exists | default('none') }}"
+
+    - name: prep Y10/Y11 dest dirs (copy does not create parents, real Ansible included)
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+      loop:
+        - /tmp/sync_y10
+        - /tmp/sync_y11
+
+    - name: seed stale file for delete test
+      ansible.builtin.copy:
+        dest: /tmp/sync_y10/stale.txt
+        content: "stale"
+    - name: "Y10 delete removes stale dest files"
+      ansible.posix.synchronize:
+        src: /tmp/sync_src/
+        dest: /tmp/sync_y10/
+        delete: true
+      register: y10
+    - name: Y10 stat stale file
+      ansible.builtin.stat:
+        path: /tmp/sync_y10/stale.txt
+      register: y10s
+    - ansible.builtin.debug:
+        msg: "Y10 failed={{ y10.failed | default('none') }} changed={{ y10.changed | default('none') }} stale_exists={{ y10s.stat.exists | default('none') }}"
+
+    - name: "Y11 check mode predicts without writing"
+      ansible.posix.synchronize:
+        src: /tmp/sync_src/
+        dest: /tmp/sync_y11/
+      check_mode: true
+      register: y11
+    - name: Y11 stat untouched dest
+      ansible.builtin.stat:
+        path: /tmp/sync_y11/file1.txt
+      register: y11s
+    - ansible.builtin.debug:
+        msg: "Y11 failed={{ y11.failed | default('none') }} changed={{ y11.changed | default('none') }} exists={{ y11s.stat.exists | default('none') }}"

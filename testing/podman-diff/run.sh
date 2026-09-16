@@ -303,6 +303,19 @@ if printf '%s\n' "${cases[@]}" | grep -q '^npm'; then
   done
 fi
 
+# synchronize cases need the rsync binary in BOTH containers - real
+# ansible.posix.synchronize and krikri's action plugin both shell to
+# it, and with ansible_connection=local both rsync endpoints are the
+# same machine. Gated on the requested case list like the modprobe
+# cases above.
+if printf '%s\n' "${cases[@]}" | grep -q '^synchronize'; then
+  log "installing rsync for synchronize cases"
+  for c in "$NAME_A" "$NAME_B"; do
+    podman exec "$c" bash -c "apt-get install -y -qq --no-install-recommends rsync >/dev/null" \
+      || { log "FATAL: rsync install failed in $c"; exit 1; }
+  done
+fi
+
 # known_hosts cases need ssh-keygen in BOTH containers (real
 # ansible.builtin.known_hosts and krikri's plugin both drive it for
 # lookup, removal and host hashing). Gated on the requested case list

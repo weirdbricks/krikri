@@ -581,7 +581,9 @@ module Krikri
           substituted_params,
           vars_context,
           host,
-          @inventory
+          @inventory,
+          host,
+          resolve_task_check_mode(handler, vars_context)
         )
 
         unless action_result.success?

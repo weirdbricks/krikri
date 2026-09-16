@@ -25,7 +25,13 @@ module Krikri
   # and pull (remote src -> controller dest) over the play's own SSH
   # connection details (host/user/port, ansible_ssh_private_key_file,
   # dest_port: override); both-ends-local sync (ansible_connection=local
-  # or delegate_to: localhost); the full flag set (archive and its
+  # or delegate_to: localhost on a localhost task); delegate_to: localhost
+  # (any local-transport delegate) on a NON-localhost task host - real
+  # Ansible then runs rsync on the controller with the TASK host as
+  # rsync's own ssh remote (`target:/path`, no connection plugin in
+  # between, verified live: a local-connection task host still gets
+  # qualified by its inventory name and rsync dials it over its own
+  # rsh); the full flag set (archive and its
   # toggles, checksum, compress, delete, dirs, existing_only, recursive,
   # links, copy_links, perms, times, owner, group, rsync_opts, rsync_path,
   # rsync_timeout, partial, verify_host, private_key, link_dest,
@@ -34,11 +40,12 @@ module Krikri
   # Idempotency comes from rsync itself - see SynchronizeRsync's
   # changed-detection comment.
   #
-  # Known divergence: delegate_to: to a host that is NOT the sync
-  # endpoint (real Ansible runs rsync ON the delegate, connecting out to
-  # the inventory host) is not modeled - here the delegate-resolved host
-  # IS the endpoint, which covers the two shapes real roles actually
-  # write (no delegate_to:, and delegate_to: localhost).
+  # Known divergence: delegate_to: to a host that is neither localhost
+  # nor the sync endpoint (real Ansible runs rsync ON the delegate,
+  # connecting out to the inventory host) is not modeled - here the
+  # delegate-resolved host IS the endpoint, which covers the shapes real
+  # roles actually write apart from that one: no delegate_to:, delegate_to:
+  # localhost, and delegate_to: the task's own host.
   class SynchronizeActionPlugin < ActionPlugin
     def execute : ActionResult
       src_param = @params["src"]?
@@ -60,6 +67,35 @@ module Krikri
       src = src_param.to_s
       dest = dest_param.to_s
 
+      private_key = @params["private_key"]? || @vars["ansible_ssh_private_key_file"]?.try(&.as_s?)
+
+      # delegate_to: a local-transport host (localhost) while the task's
+      # own host is a different, non-localhost host: real Ansible runs
+      # rsync ON THE CONTROLLER (the delegate's connection is local) and
+      # qualifies the mode-dependent OTHER end from the TASK host's own
+      # connection details - rsync then dials that host over its own ssh
+      # (rsh), not over any connection plugin. Verified live against
+      # ansible-core 2.19 + ansible.posix: a task host with
+      # ansible_connection=local still gets qualified ("target:/path",
+      # no user prefix unless ansible_user is set on the task host's
+      # vars) and rsync fails with its own hostname-resolution error
+      # when the name doesn't resolve - the munging decision reads only
+      # the task host's inventory address, never its connection.
+      if task_host = @task_host
+        if task_host.name != @host.name && local_connection? && !localhost_addr?(task_host.connection_host)
+          user = SynchronizeRsync.bool(@params["set_remote_user"]?, default: true) ?
+            @vars["ansible_user"]?.try(&.as_s?) : nil
+          if mode == "pull"
+            src = SynchronizeRsync.format_rsh_target(task_host.connection_host, src, user)
+          else
+            dest = SynchronizeRsync.format_rsh_target(task_host.connection_host, dest, user)
+          end
+          dest_port = resolve_dest_port(task_host)
+          argv = SynchronizeRsync.build_argv(src, dest, @params, private_key, dest_port)
+          return finish(argv)
+        end
+      end
+
       # The delegate-resolved host (@host) is the sync endpoint. When its
       # connection is local, both ends are plain local paths (rsync runs
       # entirely on this machine); otherwise the REMOTE end gets the
@@ -72,10 +108,16 @@ module Krikri
         dest = SynchronizeRsync.format_rsh_target(connection_host, dest, remote_user)
       end
 
-      private_key = @params["private_key"]? || @vars["ansible_ssh_private_key_file"]?.try(&.as_s?)
       dest_port = resolve_dest_port
 
       argv = SynchronizeRsync.build_argv(src, dest, @params, private_key, dest_port)
+      finish(argv)
+    end
+
+    # Shared tail: run the rsync argv and translate its outcome into the
+    # task's final result (both the delegated-to-controller path and the
+    # endpoint-on-@host path end here).
+    private def finish(argv : Array(String)) : ActionResult
       result = SynchronizeRsync.run(argv)
       cmd_str = result.command.join(" ")
 
@@ -97,6 +139,12 @@ module Krikri
       }))
     end
 
+    # Real Ansible's C.LOCALHOST set - the addresses that mean "this same
+    # machine" to rsync's own transport.
+    private def localhost_addr?(addr : String) : Bool
+      ["localhost", "127.0.0.1", "::1"].includes?(addr)
+    end
+
     private def local_connection? : Bool
       return true if @host.name == "localhost" || @host.name == "127.0.0.1"
       conn = @vars["ansible_connection"]?
@@ -115,13 +163,16 @@ module Krikri
     end
 
     # dest_port: param, then the inventory's ansible_port var, then the
-    # host's own parsed port.
-    private def resolve_dest_port : Int32?
+    # host's own parsed port. *fallback_host* is whose parsed port wins
+    # when neither param nor vars carry one - the delegate-resolved @host
+    # normally, but the TASK host on the delegated-to-controller path
+    # (real Ansible reads inv_port from the original host's task_vars).
+    private def resolve_dest_port(fallback_host : Host = @host) : Int32?
       if dest_port = @params["dest_port"]?
         return dest_port.strip.to_i if dest_port.strip =~ /\A\d+\z/
       end
       return @vars["ansible_port"].as_i if @vars["ansible_port"]?.try(&.as_i?)
-      @host.port
+      fallback_host.port
     end
   end
 end
