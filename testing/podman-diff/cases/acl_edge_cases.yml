@@ -1,0 +1,137 @@
+# acl module edge cases. Needs the `acl` package (getfacl/setfacl) in
+# BOTH containers (real ansible.builtin.acl and krikri's plugin both
+# shell to it) - installed by run.sh's gated block. Each case registers
+# its result and prints an "A<n> key=value" debug line for run.sh's
+# diff extraction. failed=/changed=/on-disk behavior are what matter;
+# error-message WORDING may legitimately differ and is not a bug.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "A1 setup the file the ACL cases operate on"
+      ansible.builtin.file:
+        path: /tmp/podman-diff-a1.txt
+        state: touch
+        mode: "0644"
+
+    - name: "A1 acl for a user that does not exist (setfacl must fail)"
+      ansible.builtin.acl:
+        path: /tmp/podman-diff-a1.txt
+        entity: nosuchuser-zzz
+        etype: user
+        permissions: rx
+        state: present
+      register: a1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A1 failed={{ a1.failed }} changed={{ a1.changed }}"
+
+    - name: "A2 acl with an invalid permissions format"
+      ansible.builtin.acl:
+        path: /tmp/podman-diff-a1.txt
+        entity: root
+        etype: user
+        permissions: zzz
+        state: present
+      register: a2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A2 failed={{ a2.failed }} changed={{ a2.changed }}"
+
+    - name: "A3 acl state=absent on an entry that was never set"
+      ansible.builtin.acl:
+        path: /tmp/podman-diff-a1.txt
+        entity: daemon
+        etype: user
+        state: absent
+      register: a3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A3 failed={{ a3.failed }} changed={{ a3.changed }}"
+
+    - name: "A4 default ACL on a directory (should succeed and change)"
+      ansible.builtin.file:
+        path: /tmp/podman-diff-a4-dir
+        state: directory
+    - name: "A4b set a default ACL on the directory"
+      ansible.builtin.acl:
+        path: /tmp/podman-diff-a4-dir
+        entity: daemon
+        etype: user
+        permissions: rx
+        state: present
+        default: true
+      register: a4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A4 failed={{ a4.failed }} changed={{ a4.changed }}"
+
+    - name: "A4c set the SAME default ACL again (idempotency)"
+      ansible.builtin.acl:
+        path: /tmp/podman-diff-a4-dir
+        entity: daemon
+        etype: user
+        permissions: rx
+        state: present
+        default: true
+      register: a4c
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A4c failed={{ a4c.failed }} changed={{ a4c.changed }}"
+
+    - name: "A5 verify the default ACL actually landed on the directory"
+      ansible.builtin.command:
+        cmd: "getfacl -d /tmp/podman-diff-a4-dir"
+      register: a5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A5 failed={{ a5.failed }} rc={{ a5.rc | default('none') }} has_daemon={{ 'daemon' in (a5.stdout | default('')) }}"
+
+    - name: "A6 default ACL on a regular FILE (setfacl -d must fail)"
+      ansible.builtin.acl:
+        path: /tmp/podman-diff-a1.txt
+        entity: daemon
+        etype: user
+        permissions: rx
+        state: present
+        default: true
+      register: a6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A6 failed={{ a6.failed }} changed={{ a6.changed }}"
+
+    - name: "A7 acl path that does not exist"
+      ansible.builtin.acl:
+        path: /tmp/podman-diff-a7-nonexistent.txt
+        entity: root
+        etype: user
+        permissions: rx
+        state: present
+      register: a7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A7 failed={{ a7.failed }} changed={{ a7.changed }}"
+
+    - name: "A8 plain present ACL on the file (positive control, should change)"
+      ansible.builtin.acl:
+        path: /tmp/podman-diff-a1.txt
+        entity: daemon
+        etype: user
+        permissions: rx
+        state: present
+      register: a8
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A8 failed={{ a8.failed }} changed={{ a8.changed }}"
+
+    - name: "A9 same ACL again (idempotent, should not change)"
+      ansible.builtin.acl:
+        path: /tmp/podman-diff-a1.txt
+        entity: daemon
+        etype: user
+        permissions: rx
+        state: present
+      register: a9
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A9 failed={{ a9.failed }} changed={{ a9.changed }}"

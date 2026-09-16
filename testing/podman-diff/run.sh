@@ -330,6 +330,18 @@ if printf '%s\n' "${cases[@]}" | grep -q '^synchronize'; then
   done
 fi
 
+# acl cases need the acl package (getfacl/setfacl) in BOTH containers -
+# real ansible.builtin.acl and krikri's plugin both shell to it, and
+# debian:bookworm-slim ships without it. Gated on the requested case
+# list like the modprobe cases above.
+if printf '%s\n' "${cases[@]}" | grep -q '^acl'; then
+  log "installing acl for acl cases"
+  for c in "$NAME_A" "$NAME_B"; do
+    podman exec "$c" bash -c "apt-get install -y -qq --no-install-recommends acl >/dev/null" \
+      || { log "FATAL: acl install failed in $c"; exit 1; }
+  done
+fi
+
 # known_hosts cases need ssh-keygen in BOTH containers (real
 # ansible.builtin.known_hosts and krikri's plugin both drive it for
 # lookup, removal and host hashing). Gated on the requested case list
