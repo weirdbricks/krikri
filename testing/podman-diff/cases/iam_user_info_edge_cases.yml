@@ -1,0 +1,44 @@
+# iam_user_info module edge cases. Validation-surface only (no AWS API
+# in the containers): real amazon.aws.iam_user_info's AnsibleModule
+# spec checks (mutually_exclusive group|path_prefix, unsupported
+# params over the merged AWS base spec with the user_name/group_name/
+# path/prefix aliases) fire before the boto3 import check; a VALID
+# invocation fails on the missing boto3/botocore import in both
+# engines. The hostname/interpreter in the boto3 message is normalized
+# out.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "IU1 group and path_prefix are mutually exclusive"
+      amazon.aws.iam_user_info:
+        group: admins
+        path_prefix: /staff/
+      register: r1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "IU1 failed={{ r1.failed | default('none') }} msg={{ r1.msg | default('none') }}"
+
+    - name: "IU2 unsupported parameter"
+      amazon.aws.iam_user_info:
+        bogus: 1
+      register: r2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "IU2 failed={{ r2.failed | default('none') }} msg={{ r2.msg | default('none') }}"
+
+    - name: "IU3 name alias user_name accepted, then boto3 gate"
+      amazon.aws.iam_user_info:
+        user_name: bob
+      register: r3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "IU3 failed={{ r3.failed | default('none') }} msg={{ r3.msg | default('none') | regex_replace(\"on [0-9a-f]+'s Python\", \"on HOST's Python\") }}"
+
+    - name: "IU4 group valid, then boto3 gate"
+      amazon.aws.iam_user_info:
+        group: admins
+      register: r4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "IU4 failed={{ r4.failed | default('none') }} msg={{ r4.msg | default('none') | regex_replace(\"on [0-9a-f]+'s Python\", \"on HOST's Python\") }}"

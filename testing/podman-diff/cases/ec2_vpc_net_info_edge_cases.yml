@@ -1,0 +1,42 @@
+# ec2_vpc_net_info module edge cases. Validation-surface only (no AWS
+# API in the containers): real amazon.aws.ec2_vpc_net_info's
+# AnsibleModule spec checks (dict/list conversion, unsupported params
+# over the merged AWS base spec) fire before the boto3 import check; a
+# VALID invocation fails on the missing boto3/botocore import in both
+# engines. The hostname/interpreter in the boto3 message is normalized
+# out.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "VN1 unsupported parameter"
+      amazon.aws.ec2_vpc_net_info:
+        bogus: 1
+      register: r1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "VN1 failed={{ r1.failed | default('none') }} msg={{ r1.msg | default('none') }}"
+
+    - name: "VN2 filters not a dict"
+      amazon.aws.ec2_vpc_net_info:
+        filters: foo
+      register: r2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "VN2 failed={{ r2.failed | default('none') }} msg={{ r2.msg | default('none') }}"
+
+    - name: "VN3 vpc_ids as dict"
+      amazon.aws.ec2_vpc_net_info:
+        vpc_ids: {a: b}
+      register: r3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "VN3 failed={{ r3.failed | default('none') }} msg={{ r3.msg | default('none') }}"
+
+    - name: "VN4 valid args - fails on the missing boto3 import"
+      amazon.aws.ec2_vpc_net_info:
+        vpc_ids: vpc-0123456
+      register: r4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "VN4 failed={{ r4.failed | default('none') }} msg={{ r4.msg | default('none') | regex_replace(\"on [0-9a-f]+'s Python\", \"on HOST's Python\") }}"

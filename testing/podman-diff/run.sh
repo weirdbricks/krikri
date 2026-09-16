@@ -277,13 +277,17 @@ if printf '%s\n' "${cases[@]}" | grep -q '^nsupdate'; then
     || { log "FATAL: python3-dnspython install failed"; exit 1; }
 fi
 
-# ec2_metadata_facts cases need the amazon.aws collection in the REAL
-# container (collection module, not shipped with ansible-core).
-# Validation-only + unreachable-endpoint cases - the real IMDS endpoint
-# doesn't exist inside a container, and both engines must fail cleanly
-# there. Gated on the requested case list like the postgresql cases.
-if printf '%s\n' "${cases[@]}" | grep -q '^ec2_metadata'; then
-  log "installing amazon.aws collection for ec2_metadata_facts cases"
+# amazon.aws cases need the amazon.aws collection in the REAL
+# container (collection modules, not shipped with ansible-core):
+# ec2_metadata_facts plus the other natively-reimplemented AWS modules
+# (ec2_ami_info/ec2_instance/ec2_key/ec2_security_group/ec2_vpc_net_info/
+# ec2_vpc_subnet_info/iam_user_info). All validation-only or
+# missing-library cases - the real IMDS endpoint doesn't exist inside a
+# container, no boto3 is installed, and both engines must fail cleanly
+# and identically there. Gated on the requested case list like the
+# postgresql cases.
+if printf '%s\n' "${cases[@]}" | grep -qE '^(ec2_|iam_)'; then
+  log "installing amazon.aws collection for the ec2_/iam_ cases"
   podman exec "$NAME_A" bash -c "ansible-galaxy collection install amazon.aws >/dev/null 2>&1" \
     || { log "FATAL: amazon.aws install failed"; exit 1; }
 fi
