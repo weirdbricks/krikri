@@ -1,0 +1,187 @@
+# community.general.dpkg_divert edge cases. Fully testable here: the
+# harness containers are real Debian (dpkg-divert ships with dpkg) and
+# the plugin shells to the same binary the real module drives - no
+# gate needed. The two engines run in SEPARATE containers, so the
+# stateful sequence (create -> idempotent -> remove -> rename conflict
+# -> force) is independent per engine. Real-module specifics under
+# test:
+# - state choices validation
+# - state=absent on a path never diverted is a silent no-op
+# - default divert location (<path>.distrib), rename on add/remove
+# - custom --divert location
+# - check mode runs --test and changes nothing
+# - rename into an existing target fails with the force hint; force
+#   unlinks the blocker and re-adds
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "D0 prep fixture files"
+      ansible.builtin.shell: |
+        mkdir -p /tmp/krikri-dd
+        printf one > /tmp/krikri-dd/a.txt
+        printf two > /tmp/krikri-dd/b.txt
+        printf three > /tmp/krikri-dd/c.txt
+        printf blocker > /tmp/krikri-dd/c-custom.txt
+      args:
+        executable: /bin/bash
+
+    - name: "D1 missing path"
+      community.general.dpkg_divert:
+        state: present
+      register: d1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D1 failed={{ d1.failed | default('absent') }} changed={{ d1.changed | default('absent') }} path-check={{ 'path' in (d1.msg | default('')) }}"
+
+    - name: "D2 invalid state value"
+      community.general.dpkg_divert:
+        path: /tmp/krikri-dd/a.txt
+        state: krikri_state
+      register: d2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D2 failed={{ d2.failed | default('absent') }} changed={{ d2.changed | default('absent') }} state-check={{ 'state' in (d2.msg | default('')) }}"
+
+    - name: "D3 state=absent on a never-diverted path"
+      community.general.dpkg_divert:
+        path: /tmp/krikri-dd/b.txt
+        state: absent
+      register: d3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D3 failed={{ d3.failed | default('absent') }} changed={{ d3.changed | default('absent') }}"
+
+    - name: "D4 create the default diversion"
+      community.general.dpkg_divert:
+        path: /tmp/krikri-dd/a.txt
+      register: d4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D4 failed={{ d4.failed | default('absent') }} changed={{ d4.changed | default('absent') }}"
+
+    - name: "D5 file was renamed to the .distrib location"
+      ansible.builtin.shell: "test -f /tmp/krikri-dd/a.txt.distrib && test ! -f /tmp/krikri-dd/a.txt"
+      register: d5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D5 rc={{ d5.rc }}"
+
+    - name: "D6 re-run is idempotent"
+      community.general.dpkg_divert:
+        path: /tmp/krikri-dd/a.txt
+      register: d6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D6 failed={{ d6.failed | default('absent') }} changed={{ d6.changed | default('absent') }}"
+
+    - name: "D7 remove the diversion"
+      community.general.dpkg_divert:
+        path: /tmp/krikri-dd/a.txt
+        state: absent
+      register: d7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D7 failed={{ d7.failed | default('absent') }} changed={{ d7.changed | default('absent') }}"
+
+    - name: "D8 file is back"
+      ansible.builtin.shell: "test -f /tmp/krikri-dd/a.txt && test ! -f /tmp/krikri-dd/a.txt.distrib"
+      register: d8
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D8 rc={{ d8.rc }}"
+
+    - name: "D9 custom divert location"
+      community.general.dpkg_divert:
+        path: /tmp/krikri-dd/a.txt
+        divert: /tmp/krikri-dd/a-elsewhere.txt
+      register: d9
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D9 failed={{ d9.failed | default('absent') }} changed={{ d9.changed | default('absent') }}"
+
+    - name: "D10 custom location holds the file"
+      ansible.builtin.shell: "test -f /tmp/krikri-dd/a-elsewhere.txt && test ! -f /tmp/krikri-dd/a.txt"
+      register: d10
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D10 rc={{ d10.rc }}"
+
+    - name: "D11 clean up the custom diversion"
+      community.general.dpkg_divert:
+        path: /tmp/krikri-dd/a.txt
+        divert: /tmp/krikri-dd/a-elsewhere.txt
+        state: absent
+      register: d11
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D11 failed={{ d11.failed | default('absent') }} changed={{ d11.changed | default('absent') }}"
+
+    - name: "D12 check mode claims the diversion but writes nothing"
+      community.general.dpkg_divert:
+        path: /tmp/krikri-dd/b.txt
+      check_mode: true
+      register: d12
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D12 failed={{ d12.failed | default('absent') }} changed={{ d12.changed | default('absent') }}"
+
+    - name: "D13 b.txt is still plain"
+      ansible.builtin.shell: "test -f /tmp/krikri-dd/b.txt && test ! -f /tmp/krikri-dd/b.txt.distrib"
+      register: d13
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D13 rc={{ d13.rc }}"
+
+    - name: "D14 rename into an existing target fails with the force hint"
+      community.general.dpkg_divert:
+        path: /tmp/krikri-dd/c.txt
+        divert: /tmp/krikri-dd/c-custom.txt
+        rename: true
+      register: d14
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D14 failed={{ d14.failed | default('absent') }} changed={{ d14.changed | default('absent') }} force-hint={{ 'force' in (d14.msg | default('')) }}"
+
+    - name: "D15 both files still in place"
+      ansible.builtin.shell: "test -f /tmp/krikri-dd/c.txt && test -f /tmp/krikri-dd/c-custom.txt && ! dpkg-divert --listpackage /tmp/krikri-dd/c.txt | grep -q ."
+      register: d15
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D15 rc={{ d15.rc }}"
+
+    - name: "D16 force pushes through the blocker"
+      community.general.dpkg_divert:
+        path: /tmp/krikri-dd/c.txt
+        divert: /tmp/krikri-dd/c-custom.txt
+        rename: true
+        force: true
+      register: d16
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D16 failed={{ d16.failed | default('absent') }} changed={{ d16.changed | default('absent') }}"
+
+    - name: "D17 diversion recorded, file moved"
+      ansible.builtin.shell: "dpkg-divert --listpackage /tmp/krikri-dd/c.txt | grep -q /tmp/krikri-dd/c.txt && test -f /tmp/krikri-dd/c-custom.txt"
+      register: d17
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D17 rc={{ d17.rc }}"
+
+    - name: "D18 remove the forced diversion"
+      community.general.dpkg_divert:
+        path: /tmp/krikri-dd/c.txt
+        divert: /tmp/krikri-dd/c-custom.txt
+        state: absent
+        rename: true
+      register: d18
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D18 failed={{ d18.failed | default('absent') }} changed={{ d18.changed | default('absent') }}"
+
+    - name: "D19 c.txt restored"
+      ansible.builtin.shell: "test -f /tmp/krikri-dd/c.txt && ! dpkg-divert --listpackage /tmp/krikri-dd/c.txt | grep -q ."
+      register: d19
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D19 rc={{ d19.rc }}"

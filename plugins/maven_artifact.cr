@@ -74,10 +74,10 @@ module Krikri
       keep_name = true?(@params["keep_name"]?)
       verify_checksum = @params["verify_checksum"]? || "download"
       return PluginResult.new(changed: false, failed: true,
-        msg: "value of verify_checksum must be one of: never, download, change, always, got #{verify_checksum}") unless ["never", "download", "change", "always"].includes?(verify_checksum)
+        msg: "value of verify_checksum must be one of: never, download, change, always, got: #{verify_checksum}") unless ["never", "download", "change", "always"].includes?(verify_checksum)
       checksum_alg = @params["checksum_alg"]? || "md5"
       return PluginResult.new(changed: false, failed: true,
-        msg: "value of checksum_alg must be one of: md5, sha1, got #{checksum_alg}") unless ["md5", "sha1"].includes?(checksum_alg)
+        msg: "value of checksum_alg must be one of: md5, sha1, got: #{checksum_alg}") unless ["md5", "sha1"].includes?(checksum_alg)
 
       if repository_url.starts_with?("s3://")
         return PluginResult.new(changed: false, failed: true,
@@ -91,9 +91,13 @@ module Krikri
 
       base = repository_url.chomp("/")
 
+      # MavenDownloader uses a different metadata filename for local
+      # (file://) repositories: maven-metadata-local.xml.
+      metadata_file_name = local ? "maven-metadata-local.xml" : "maven-metadata.xml"
+
       # version resolution (find_uri_for_artifact)
       if version == "latest"
-        metadata = fetch_metadata(base, "#{base}/#{PluginHelpers::MavenArtifactCommand.artifact_path(group_id.not_nil!, artifact_id.not_nil!, nil)}/maven-metadata.xml", local)
+        metadata = fetch_metadata(base, "#{base}/#{PluginHelpers::MavenArtifactCommand.artifact_path(group_id.not_nil!, artifact_id.not_nil!, nil)}/#{metadata_file_name}", local)
         return metadata if metadata.is_a?(PluginResult)
         version = PluginHelpers::MavenArtifactCommand.latest_version(metadata.as(String))
         return PluginResult.new(changed: false, failed: true,
@@ -106,7 +110,7 @@ module Krikri
       # resolve the concrete file URL
       version_part = version_str
       if is_snapshot && !local
-        metadata_path = "#{base}/#{PluginHelpers::MavenArtifactCommand.artifact_path(group_id.not_nil!, artifact_id.not_nil!, version_str)}/maven-metadata.xml"
+        metadata_path = "#{base}/#{PluginHelpers::MavenArtifactCommand.artifact_path(group_id.not_nil!, artifact_id.not_nil!, version_str)}/#{metadata_file_name}"
         metadata = fetch_metadata(base, metadata_path, local)
         return metadata if metadata.is_a?(PluginResult)
         metadata_xml = metadata.as(String)
@@ -124,8 +128,10 @@ module Krikri
       artifact_url = "#{base}/#{repo_relative}/#{artifact_file}"
 
       # dest is a directory -> generated filename under it; dest is a
-      # file -> used as-is
+      # file -> used as-is. A dest ending in the path separator is
+      # created up front (real main()'s os.makedirs branch).
       dest_str = dest.not_nil!
+      Dir.mkdir_p(dest_str) if dest_str.ends_with?("/") && !Dir.exists?(dest_str)
       final_dest = dest_str.ends_with?("/") ?
         PluginHelpers::MavenArtifactCommand.dest_filename(dest_str, artifact_id.not_nil!, version_part, classifier, extension, keep_name) :
         dest_str
@@ -161,7 +167,7 @@ module Krikri
       if local
         path = URI.parse(url).path
         return File.exists?(path) ? File.read(path) : PluginResult.new(changed: false, failed: true,
-          msg: "Failed to retrieve the maven metadata file: #{url} because can not find file: #{path}")
+          msg: "Failed to retrieve the maven metadata file: #{path} because can not find file: #{url}")
       end
       get(url, nil, nil, true)
     end

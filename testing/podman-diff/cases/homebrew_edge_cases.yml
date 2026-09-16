@@ -1,0 +1,74 @@
+# community.general.homebrew edge cases. Argument-validation only:
+# neither container has homebrew at all, and the REAL module resolves
+# the brew binary (get_bin_path, required) immediately after argument
+# validation - before update_homebrew/upgrade_all and before any
+# package-name validity check - so every case except the
+# argument-spec state-choices error fails on the missing binary on
+# the real side. krikri must reproduce that order and report the
+# missing-brew failure for the same inputs (it does; the "Invalid
+# package" name check and the brew info/install logic are untestable
+# here - no brew, no taps).
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "H1 invalid state value - choices check wins over the binary check"
+      community.general.homebrew:
+        name: wget
+        state: krikri_state
+      register: h1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "H1 failed={{ h1.failed | default('absent') }} changed={{ h1.changed | default('absent') }} state-check={{ 'value of state must be one of' in (h1.msg | default('')) }}"
+
+    - name: "H2 missing name entirely"
+      community.general.homebrew:
+        state: present
+      register: h2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "H2 failed={{ h2.failed | default('absent') }} changed={{ h2.changed | default('absent') }} brew-missing={{ 'brew' in (h2.msg | default('')) }}"
+
+    - name: "H3 valid name still fails on the missing binary"
+      community.general.homebrew:
+        name: wget
+        state: present
+      register: h3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "H3 failed={{ h3.failed | default('absent') }} changed={{ h3.changed | default('absent') }} brew-missing={{ 'brew' in (h3.msg | default('')) }}"
+
+    - name: "H4 invalid package name - binary check still comes first"
+      community.general.homebrew:
+        name: krikri~pkg
+        state: present
+      register: h4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "H4 failed={{ h4.failed | default('absent') }} changed={{ h4.changed | default('absent') }} brew-missing={{ 'brew' in (h4.msg | default('')) }}"
+
+    - name: "H5 name list with state=linked"
+      community.general.homebrew:
+        name: wget
+        state: linked
+      register: h5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "H5 failed={{ h5.failed | default('absent') }} changed={{ h5.changed | default('absent') }} brew-missing={{ 'brew' in (h5.msg | default('')) }}"
+
+    - name: "H6 upgrade_all without a name"
+      community.general.homebrew:
+        upgrade_all: true
+      register: h6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "H6 failed={{ h6.failed | default('absent') }} changed={{ h6.changed | default('absent') }} brew-missing={{ 'brew' in (h6.msg | default('')) }}"
+
+    - name: "H7 name as a comma string"
+      community.general.homebrew:
+        name: wget,curl
+        state: absent
+      register: h7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "H7 failed={{ h7.failed | default('absent') }} changed={{ h7.changed | default('absent') }} brew-missing={{ 'brew' in (h7.msg | default('')) }}"

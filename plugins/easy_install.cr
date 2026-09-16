@@ -72,7 +72,9 @@ module Krikri
         changed = true
       end
 
-      PluginResult.new(changed: changed, failed: false, msg: changed ? "Package installed" : "Package already installed",
+      # Real success exit_json carries NO msg - only changed/binary/name/
+      # virtualenv.
+      PluginResult.new(changed: changed, failed: false,
         binary: easy_install, name: name, virtualenv: virtualenv.to_s)
     end
   end

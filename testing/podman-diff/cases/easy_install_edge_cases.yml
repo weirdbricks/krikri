@@ -1,0 +1,93 @@
+# community.general.easy_install edge cases. run.sh installs
+# python3-setuptools in BOTH containers (the module and the plugin
+# both shell to the same easy_install binary). Real-module specifics
+# under test:
+# - missing required name / invalid state (AnsibleModule-level)
+# - the dry-run probe's stderr becomes fail_json's msg on a package
+#   PyPI does not know (both engines run the identical binary against
+#   the identical live index)
+# - missing virtualenv_command / missing easy_install executable
+#   resolution failures
+# - a successful install carries NO msg (the plugin used to add
+#   "Package installed")
+# - check mode claims the change without installing
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "E1 missing name"
+      community.general.easy_install:
+        state: present
+      register: e1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "E1 failed={{ e1.failed | default('absent') }} changed={{ e1.changed | default('absent') }} name-check={{ 'name' in (e1.msg | default('')) }}"
+
+    - name: "E2 invalid state value"
+      community.general.easy_install:
+        name: krikri-nonexistent-pkg
+        state: krikri_state
+      register: e2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "E2 failed={{ e2.failed | default('absent') }} changed={{ e2.changed | default('absent') }} state-check={{ 'value of state must be one of' in (e2.msg | default('')) }}"
+
+    - name: "E3 nonexistent package fails on the dry-run probe"
+      community.general.easy_install:
+        name: krikri-nonexistent-pkg
+      register: e3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "E3 failed={{ e3.failed | default('absent') }} changed={{ e3.changed | default('absent') }} probe-check={{ 'Could not find suitable distribution' in (e3.msg | default('')) }}"
+
+    - name: "E4 state=latest on the same nonexistent package"
+      community.general.easy_install:
+        name: krikri-nonexistent-pkg
+        state: latest
+      register: e4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "E4 failed={{ e4.failed | default('absent') }} changed={{ e4.changed | default('absent') }} probe-check={{ 'Could not find suitable distribution' in (e4.msg | default('')) }}"
+
+    - name: "E5 virtualenv_command binary missing"
+      community.general.easy_install:
+        name: krikri-nonexistent-pkg
+        virtualenv: /tmp/krikri-venv
+      register: e5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "E5 failed={{ e5.failed | default('absent') }} changed={{ e5.changed | default('absent') }} venv-check={{ 'virtualenv' in (e5.msg | default('')) }}"
+
+    - name: "E6 missing easy_install executable override"
+      community.general.easy_install:
+        name: krikri-nonexistent-pkg
+        executable: easy_install-krikri
+      register: e6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "E6 failed={{ e6.failed | default('absent') }} changed={{ e6.changed | default('absent') }} exe-check={{ 'easy_install-krikri' in (e6.msg | default('')) }}"
+
+    - name: "E7 check mode claims the change without installing"
+      community.general.easy_install:
+        name: krikri-nonexistent-pkg
+      check_mode: true
+      register: e7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "E7 failed={{ e7.failed | default('absent') }} changed={{ e7.changed | default('absent') }}"
+
+    - name: "E8 install a tiny real package (six)"
+      community.general.easy_install:
+        name: six
+      register: e8
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "E8 failed={{ e8.failed | default('absent') }} changed={{ e8.changed | default('absent') }} msg-absent={{ e8.msg is undefined or e8.msg == '' }}"
+
+    - name: "E9 re-run is idempotent via the dry-run probe"
+      community.general.easy_install:
+        name: six
+      register: e9
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "E9 failed={{ e9.failed | default('absent') }} changed={{ e9.changed | default('absent') }} msg-absent={{ e9.msg is undefined or e9.msg == '' }}"
