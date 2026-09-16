@@ -376,6 +376,23 @@ if printf '%s\n' "${cases[@]}" | grep -q '^subversion'; then
   done
 fi
 
+# virt_net cases are argument-validation + HAS_VIRT-probe only (no
+# libvirt daemon in either container). The real side needs the
+# community.libvirt collection but deliberately gets NO python3-libvirt,
+# so valid-argument paths fail on the module's own import probe - the
+# same surface krikri's plugin mirrors with the absent `virsh` binary.
+# Gated on the requested case list like the postgresql cases.
+if printf '%s\n' "${cases[@]}" | grep -q '^virt_net'; then
+  log "installing community.libvirt collection for virt_net cases"
+  podman exec "$NAME_A" bash -c "ansible-galaxy collection install community.libvirt >/dev/null 2>&1" \
+    || { log "FATAL: community.libvirt install failed"; exit 1; }
+fi
+
+# zfs cases are argument-validation only: neither container installs
+# zfs/zpool (no /dev/zfs in a container anyway), so real's
+# get_bin_path failure is the first reachable non-argument failure on
+# both sides - no installs needed, listed here for the record.
+
 overall_rc=0
 for case_file in "${cases[@]}"; do
   case_name="${case_file%.yml}"
@@ -421,7 +438,7 @@ for case_file in "${cases[@]}"; do
     # its raw unrendered template and show as a phantom divergence.
     sed -E '/^[0-9]+[[:space:]]/d' "$1" \
       | grep -oE '\b[A-Z][0-9]+[a-c]? [a-zA-Z_]+=.*' \
-      | sed -E 's/\\\\/\x01/g; s/\\n/ | /g; s/\x01/\\/g; s/"\}?(,)?$//; s/[[:space:]]*\*+[[:space:]]*$//; s/=[^ ]*[0-9]{2,6}\.[0-9]{4}-[0-9]{2}-[0-9]{2}@[0-9:]{8}~/=<backup-path>/g'
+      | sed -E 's/\\\\/\x01/g; s/\\n/ | /g; s/\x01/\\/g; s/\\"/"/g; s/"\}?(,)?$//; s/[[:space:]]*\*+[[:space:]]*$//; s/=[^ ]*[0-9]{2,6}\.[0-9]{4}-[0-9]{2}-[0-9]{2}@[0-9:]{8}~/=<backup-path>/g'
   }
   extract "$RESULTS/${case_name}_real.log" > "$msgs_a"
   extract "$RESULTS/${case_name}_krikri.log" > "$msgs_b"

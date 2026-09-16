@@ -1,0 +1,82 @@
+# community.libvirt.virt_net edge cases - argument-validation surface
+# only: neither container has a libvirt daemon, and the real module
+# deliberately gets NO python3-libvirt either, so every valid-argument
+# path fails on the real module's HAS_VIRT probe ("The `libvirt`
+# module is not importable. Check the requirements.") - exactly what
+# krikri's plugin mirrors with the absent `virsh` binary. The point
+# of the case is what runs BEFORE that probe: real AnsibleModule
+# construction (choice checks on state/command, required_if name for
+# the entry commands) fires before any import probing, and krikri's
+# plugin must match that order and wording. Msg wording IS compared;
+# the msg values are identical on both engines for every case here.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "V1 no state or command at all"
+      community.libvirt.virt_net:
+      register: v1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "V1 failed={{ v1.failed | default('none') }} changed={{ v1.changed | default('none') }} msg={{ v1.msg | default('none') }}"
+
+    - name: "V2 invalid state choice"
+      community.libvirt.virt_net:
+        name: krikri-net
+        state: krikri_bogus
+      register: v2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "V2 failed={{ v2.failed | default('none') }} changed={{ v2.changed | default('none') }} msg={{ v2.msg | default('none') }}"
+
+    - name: "V3 invalid command choice"
+      community.libvirt.virt_net:
+        name: krikri-net
+        command: krikri_bogus
+      register: v3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "V3 failed={{ v3.failed | default('none') }} changed={{ v3.changed | default('none') }} msg={{ v3.msg | default('none') }}"
+
+    - name: "V4 entry command without name (required_if)"
+      community.libvirt.virt_net:
+        command: create
+      register: v4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "V4 failed={{ v4.failed | default('none') }} changed={{ v4.changed | default('none') }} msg={{ v4.msg | default('none') }}"
+
+    - name: "V5 valid state+name reaches the HAS_VIRT probe"
+      community.libvirt.virt_net:
+        name: krikri-net
+        state: present
+      register: v5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "V5 failed={{ v5.failed | default('none') }} changed={{ v5.changed | default('none') }} msg={{ v5.msg | default('none') }}"
+
+    - name: "V6 host command list_nets reaches the HAS_VIRT probe"
+      community.libvirt.virt_net:
+        command: list_nets
+      register: v6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "V6 failed={{ v6.failed | default('none') }} changed={{ v6.changed | default('none') }} msg={{ v6.msg | default('none') }}"
+
+    - name: "V7 state undefined is not a real choice (despite core() handling it)"
+      community.libvirt.virt_net:
+        name: krikri-net
+        state: undefined
+      register: v7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "V7 failed={{ v7.failed | default('none') }} changed={{ v7.changed | default('none') }} msg={{ v7.msg | default('none') }}"
+
+    - name: "V8 define with name but no xml reaches the HAS_VIRT probe"
+      community.libvirt.virt_net:
+        name: krikri-net
+        command: define
+      register: v8
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "V8 failed={{ v8.failed | default('none') }} changed={{ v8.changed | default('none') }} msg={{ v8.msg | default('none') }}"

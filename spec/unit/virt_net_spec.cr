@@ -93,3 +93,38 @@ describe "virt_net registration" do
     Krikri::PluginManager.simple_plugin_name("virt_net").should eq("virt_net")
   end
 end
+
+describe "virt_net plugin - argument validation before the HAS_VIRT probe" do
+  # Real AnsibleModule construction (choices + required_if) fires BEFORE
+  # the libvirt import probe, so a libvirt-less host still fails invalid
+  # arguments with parameters.py's wording - found via the
+  # virt_net_edge_cases podman-diff case, where the probe message leaked
+  # over the choice/required_if errors. These run the real plugin binary
+  # and never reach the probe, so they're deterministic with or without
+  # `virsh` installed.
+  it "rejects an invalid state choice with parameters.py wording" do
+    result = PluginSpecHelper.run("virt_net", {
+      "name"   => "krikri-net",
+      "state"  => "krikri_bogus",
+    })
+    result["failed"].as_bool.should be_true
+    result["msg"].as_s.should eq("value of state must be one of: active, inactive, present, absent, got: krikri_bogus")
+  end
+
+  it "rejects an invalid command choice with parameters.py wording" do
+    result = PluginSpecHelper.run("virt_net", {
+      "name"    => "krikri-net",
+      "command" => "krikri_bogus",
+    })
+    result["failed"].as_bool.should be_true
+    result["msg"].as_s.should eq("value of command must be one of: create, status, start, stop, undefine, destroy, get_xml, define, modify, list_nets, facts, info, got: krikri_bogus")
+  end
+
+  it "enforces required_if name for entry commands" do
+    result = PluginSpecHelper.run("virt_net", {
+      "command" => "create",
+    })
+    result["failed"].as_bool.should be_true
+    result["msg"].as_s.should eq("command is create but all of the following are missing: name")
+  end
+end
