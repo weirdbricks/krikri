@@ -1,0 +1,152 @@
+# ufw edge cases (community.general.ufw). Prefix U; failed=/changed=
+# booleans matter; error-message WORDING may legitimately differ between
+# engines. NO working ufw/netfilter in the harness containers - the
+# AnsibleModule argument-validation surface IS testable without it
+# (validation runs before main()'s get_bin_path in real ufw.py, and
+# before krikri's resolve_required_binaries); anything that gets past
+# validation fails on the missing/permission-denied ufw binary, which is
+# the same failure in both engines by construction.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "U0 no command key (required_one_of)"
+      community.general.ufw:
+        comment: krikri
+      register: u0
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "U0 failed={{ u0.failed | default('none') }} changed={{ u0.changed | default('none') }}"
+
+    - name: "U1 invalid state choice"
+      community.general.ufw:
+        state: krikri_state
+      register: u1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "U1 failed={{ u1.failed | default('none') }} changed={{ u1.changed | default('none') }}"
+
+    - name: "U2 invalid default choice"
+      community.general.ufw:
+        default: krikri_policy
+      register: u2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "U2 failed={{ u2.failed | default('none') }} changed={{ u2.changed | default('none') }}"
+
+    - name: "U3 invalid logging choice"
+      community.general.ufw:
+        logging: krikri_level
+      register: u3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "U3 failed={{ u3.failed | default('none') }} changed={{ u3.changed | default('none') }}"
+
+    - name: "U4 invalid direction choice"
+      community.general.ufw:
+        direction: krikri_dir
+        logging: low
+      register: u4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "U4 failed={{ u4.failed | default('none') }} changed={{ u4.changed | default('none') }}"
+
+    - name: "U5 invalid rule choice"
+      community.general.ufw:
+        rule: krikri_rule
+      register: u5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "U5 failed={{ u5.failed | default('none') }} changed={{ u5.changed | default('none') }}"
+
+    - name: "U6 invalid proto choice"
+      community.general.ufw:
+        rule: allow
+        proto: krikri_proto
+      register: u6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "U6 failed={{ u6.failed | default('none') }} changed={{ u6.changed | default('none') }}"
+
+    - name: "U7 mutually exclusive name+proto"
+      community.general.ufw:
+        rule: allow
+        name: krikri_app
+        proto: tcp
+      register: u7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "U7 failed={{ u7.failed | default('none') }} changed={{ u7.changed | default('none') }}"
+
+    - name: "U8 mutually exclusive direction+interface_in"
+      community.general.ufw:
+        rule: allow
+        direction: in
+        interface_in: eth0
+      register: u8
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "U8 failed={{ u8.failed | default('none') }} changed={{ u8.changed | default('none') }}"
+
+    - name: "U9 interface without direction (required_by)"
+      community.general.ufw:
+        rule: allow
+        interface: eth0
+      register: u9
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "U9 failed={{ u9.failed | default('none') }} changed={{ u9.changed | default('none') }}"
+
+    - name: "U10 invalid delete bool"
+      community.general.ufw:
+        rule: allow
+        delete: krikri-not-a-bool
+      register: u10
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "U10 failed={{ u10.failed | default('none') }} changed={{ u10.changed | default('none') }}"
+
+    - name: "U11 invalid insert int"
+      community.general.ufw:
+        rule: allow
+        insert: not-an-int
+      register: u11
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "U11 failed={{ u11.failed | default('none') }} changed={{ u11.changed | default('none') }}"
+
+    - name: "U12 unsupported parameter"
+      community.general.ufw:
+        rule: allow
+        krikri_param: yes
+      register: u12
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "U12 failed={{ u12.failed | default('none') }} changed={{ u12.changed | default('none') }}"
+
+    - name: "U13 mutually exclusive wins over required_one_of"
+      community.general.ufw:
+        name: krikri_app
+        proto: tcp
+      register: u13
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "U13 failed={{ u13.failed | default('none') }} changed={{ u13.changed | default('none') }}"
+
+    - name: "U14 valid args fail later on the missing/netfilter-less ufw binary"
+      community.general.ufw:
+        state: enabled
+      register: u14
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "U14 failed={{ u14.failed | default('none') }} changed={{ u14.changed | default('none') }}"
+
+    - name: "U15 insert_relative_to choice violation"
+      community.general.ufw:
+        rule: allow
+        insert: 1
+        insert_relative_to: krikri_rel
+      register: u15
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "U15 failed={{ u15.failed | default('none') }} changed={{ u15.changed | default('none') }}"

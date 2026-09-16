@@ -59,6 +59,7 @@ module Krikri
   # true where real Ansible failed. Found via an ad-hoc CLI comparison
   # sweep against real ansible, 2026-09-13.
   class UfwPlugin < BasePlugin
+    include PluginHelpers::AnsibleArgValidation
     # real community.general.ufw's own argument_spec aliases. Only
     # `policy` (for `default`) was handled before, and the omission of
     # the rest was not cosmetic: `port:` is the alias of `to_port`, and a
@@ -122,7 +123,7 @@ module Krikri
 
     def execute : PluginResult
       if error = validate_params
-        return PluginResult.new(changed: false, failed: true, msg: error)
+        return error
       end
 
       begin
@@ -170,26 +171,103 @@ module Krikri
       PluginResult.new(changed: false, failed: true, msg: "one of state, logging, default, or rule is required")
     end
 
-    # real community.general's own argument_spec constraints, which it
-    # enforces before running anything. Without these the task still
-    # fails, but with whatever ufw says about the malformed command it
-    # was handed ("ERROR: Invalid token 'on'" for a bare `interface:`),
-    # instead of naming the parameter that is actually missing. Verified
-    # live: real Ansible answers "missing parameter(s) required by
-    # 'interface': direction" for exactly that task.
-    private def validate_params : String?
+    # Real community.general.ufw's full AnsibleModule setup surface,
+    # live-verified via the podman-diff ufw case: argument-spec checks
+    # (choices in spec declaration order, bool/int conversion with
+    # convert wording) run in main()-independent module init BEFORE
+    # anything else, then the mutually-exclusive tuples (one message per
+    # tuple, listing the WHOLE tuple pipe-joined regardless of which
+    # members are present), then required_one_of, then required_by,
+    # then unsupported params. get_bin_path("ufw"/"grep") only runs
+    # after all of that in real ufw.py - this plugin used to resolve the
+    # binaries first, so every validation task in a ufw-less container
+    # failed with the get_bin_path message instead of naming the actual
+    # argument error.
+    SPEC = {
+      "state"              => %w[],
+      "default"            => %w[policy],
+      "logging"            => %w[],
+      "direction"          => %w[],
+      "delete"             => %w[],
+      "route"              => %w[],
+      "insert"             => %w[],
+      "insert_relative_to" => %w[],
+      "rule"               => %w[],
+      "interface"          => %w[if],
+      "interface_in"       => %w[if_in],
+      "interface_out"      => %w[if_out],
+      "log"                => %w[],
+      "from_ip"            => %w[from src],
+      "from_port"          => %w[],
+      "to_ip"              => %w[dest to],
+      "to_port"            => %w[port],
+      "proto"              => %w[protocol],
+      "name"               => %w[app],
+      "comment"            => %w[],
+    }
+
+    # Real argument_spec choices, declaration order (NOT sorted).
+    CHOICES = {
+      "state"              => %w[enabled disabled reloaded reset],
+      "default"            => %w[allow deny reject],
+      "logging"            => %w[full high low medium off on],
+      "direction"          => %w[in incoming out outgoing routed],
+      "insert_relative_to" => %w[zero first-ipv4 last-ipv4 first-ipv6 last-ipv6],
+      "rule"               => %w[allow deny limit reject],
+      "proto"              => %w[ah any esp ipv6 tcp udp gre igmp vrrp],
+    }
+
+    private def validate_params : PluginResult?
+      # Spec-order parameter validation: choices, then bool/int
+      # conversion, only for params actually passed (the defaults are
+      # valid by construction).
+      SPEC.each do |param, _aliases|
+        raw = @params[param]?
+        next unless raw
+        if allowed = CHOICES[param]?
+          unless allowed.includes?(raw)
+            return choices_error(param, allowed, raw)
+          end
+        end
+        case param
+        when "delete", "route", "log"
+          return bool_type_error(param, raw) unless bool_convertible?(raw)
+        when "insert"
+          unless raw.strip.matches?(/\A[+-]?\d(_?\d)*\z/)
+            return int_type_error(param, raw)
+          end
+        end
+      end
+
+      if @params.has_key?("name") || @params.has_key?("proto") || @params.has_key?("logging")
+        present = {"name", "proto", "logging"}.count { |key| @params.has_key?(key) }
+        if present > 1
+          return PluginResult.new(changed: false, failed: true,
+            msg: "parameters are mutually exclusive: name|proto|logging")
+        end
+      end
+      if @params.has_key?("direction") && @params.has_key?("interface_in")
+        return PluginResult.new(changed: false, failed: true,
+          msg: "parameters are mutually exclusive: direction|interface_in")
+      end
+      if @params.has_key?("direction") && @params.has_key?("interface_out")
+        return PluginResult.new(changed: false, failed: true,
+          msg: "parameters are mutually exclusive: direction|interface_out")
+      end
+
+      unless {"state", "default", "rule", "logging"}.any? { |key| @params.has_key?(key) }
+        return PluginResult.new(changed: false, failed: true,
+          msg: "one of the following is required: state, default, rule, logging")
+      end
+
       if @params.has_key?("interface") && !@params.has_key?("direction")
-        return "missing parameter(s) required by 'interface': direction"
+        return PluginResult.new(changed: false, failed: true,
+          msg: "missing parameter(s) required by 'interface': direction")
       end
 
-      exclusive = {"name", "proto", "logging"}.select { |key| @params.has_key?(key) }
-      if exclusive.size > 1
-        return "parameters are mutually exclusive: #{exclusive.join(", ")}"
-      end
-
-      {"interface_in", "interface_out"}.each do |key|
-        if @params.has_key?("direction") && @params.has_key?(key)
-          return "parameters are mutually exclusive: direction|#{key}"
+      if unsupported = unsupported_param_keys(@params, SPEC)
+        unless unsupported.empty?
+          return unsupported_params_error("community.general.ufw", unsupported, SPEC)
         end
       end
 
