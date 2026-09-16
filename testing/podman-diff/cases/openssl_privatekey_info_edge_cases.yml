@@ -1,0 +1,87 @@
+# openssl_privatekey_info edge cases. The openssl CLI is installed in
+# BOTH containers by run.sh's ^openssl gate. failed=/changed= and the
+# parse outcome are what matter; error MESSAGE WORDING may differ.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "P1 generate a fixture key"
+      ansible.builtin.shell: "openssl genrsa -out /tmp/pi-key.pem 2048 2>/dev/null"
+      register: p1
+      ignore_errors: true
+      changed_when: false
+
+    - name: "P2 neither path nor content"
+      community.crypto.openssl_privatekey_info:
+      register: p2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P2 failed={{ p2.failed }} changed={{ p2.changed | default('none') }}"
+
+    - name: "P3 both path and content"
+      community.crypto.openssl_privatekey_info:
+        path: /tmp/pi-key.pem
+        content: "banana"
+      register: p3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P3 failed={{ p3.failed }} changed={{ p3.changed | default('none') }}"
+
+    - name: "P4 invalid select_crypto_backend choice"
+      community.crypto.openssl_privatekey_info:
+        path: /tmp/pi-key.pem
+        select_crypto_backend: banana
+      register: p4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P4 failed={{ p4.failed }} changed={{ p4.changed | default('none') }}"
+
+    - name: "P5 return_private_key_data that is not a bool"
+      community.crypto.openssl_privatekey_info:
+        path: /tmp/pi-key.pem
+        return_private_key_data: banana
+      register: p5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P5 failed={{ p5.failed }} changed={{ p5.changed | default('none') }}"
+
+    - name: "P6 unsupported parameter"
+      community.crypto.openssl_privatekey_info:
+        path: /tmp/pi-key.pem
+        banana: true
+      register: p6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P6 failed={{ p6.failed }} changed={{ p6.changed | default('none') }}"
+
+    - name: "P7 missing file"
+      community.crypto.openssl_privatekey_info:
+        path: /tmp/pi-nope.pem
+      register: p7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P7 failed={{ p7.failed }} changed={{ p7.changed | default('none') }} can_load={{ p7.can_load_key | default('none') }}"
+
+    - name: "P8 garbage file"
+      community.crypto.openssl_privatekey_info:
+        path: /etc/hostname
+      register: p8
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P8 failed={{ p8.failed }} changed={{ p8.changed | default('none') }} can_parse={{ p8.can_parse_key | default('none') }}"
+
+    - name: "P9 valid parse reports the key"
+      community.crypto.openssl_privatekey_info:
+        path: /tmp/pi-key.pem
+      register: p9
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P9 failed={{ p9.failed }} changed={{ p9.changed | default('none') }} type={{ p9.type | default('none') }}"
+
+    - name: "P10 content parse works"
+      community.crypto.openssl_privatekey_info:
+        content: "{{ lookup('ansible.builtin.file', '/tmp/pi-key.pem') }}"
+      register: p10
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P10 failed={{ p10.failed }} changed={{ p10.changed | default('none') }} type={{ p10.type | default('none') }}"
