@@ -2,6 +2,7 @@
 
 require "json"
 require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/ansible_arg_validation"
 require "../src/krikri/plugin_helpers/x509_cert_info"
 
 module Krikri
@@ -19,12 +20,28 @@ module Krikri
   # (needs an ASN.1 decoder this tree does not carry) - see the helper's
   # own header.
   class X509CertificateInfoPlugin < BasePlugin
+    include PluginHelpers::AnsibleArgValidation
+
+    # The real module's argument_spec - no file-common args (no
+    # add_file_common_args), no aliases.
+    SPEC = {
+      "path"                  => [] of String,
+      "content"               => [] of String,
+      "valid_at"              => [] of String,
+      "name_encoding"         => [] of String,
+      "select_crypto_backend" => [] of String,
+    }
+
     def execute : PluginResult
+      if err = validate_arguments
+        return err
+      end
+
       path = @params["path"]?.try { |value| expand_tilde(value) }
       content = @params["content"]?
 
       if path.nil? == content.nil?
-        return failure("One of path or content must be specified, but not both")
+        return failure("parameters are mutually exclusive: path|content")
       end
 
       if path
@@ -48,6 +65,55 @@ module Krikri
         res.extra[key] = value
       end
       res
+    end
+
+    # Real AnsibleModule validation order (ArgumentSpecValidator.validate):
+    # required_one_of -> types -> choices -> mutually_exclusive ->
+    # unsupported (deferred last). Types are str/path/dict here; the
+    # dict-typed valid_at's elements each must be a string (a check the
+    # real module runs right before parsing, failing with the same
+    # wording).
+    private def validate_arguments : PluginResult?
+      if @params["path"]?.nil? && @params["content"]?.nil?
+        return failure("one of the following is required: path, content")
+      end
+
+      if value = @params["name_encoding"]?
+        unless %w[ignore idna unicode].includes?(value)
+          return choices_error("name_encoding", %w[ignore idna unicode], value)
+        end
+      end
+      if value = @params["select_crypto_backend"]?
+        unless %w[auto cryptography].includes?(value)
+          return choices_error("select_crypto_backend", %w[auto cryptography], value)
+        end
+      end
+
+      if @params["path"]? && @params["content"]?
+        return failure("parameters are mutually exclusive: path|content")
+      end
+
+      if raw = @params["valid_at"]?
+        if parsed = (JSON.parse(raw).as_h? rescue nil)
+          parsed.each do |key, value|
+            unless value.as_s?
+              return failure("The value for valid_at.#{key} must be of type string (got #{value.class.to_s.split("::").last})")
+            end
+          end
+          parsed.each do |key, value|
+            spec = value.as_s?
+            if spec && !crypto_time_spec_valid?(spec)
+              return failure("The time spec \"#{spec}\" for valid_at.#{key} is invalid")
+            end
+          end
+        end
+      end
+
+      unsupported = unsupported_param_keys(@params, SPEC)
+      unless unsupported.empty?
+        return unsupported_params_error("community.crypto.x509_certificate_info", unsupported, SPEC)
+      end
+      nil
     end
 
     private def failure(msg : String) : PluginResult
