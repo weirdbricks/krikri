@@ -3,6 +3,7 @@
 require "json"
 require "pg"
 require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/ansible_arg_validation"
 require "../src/krikri/plugin_helpers/db_errors"
 require "../src/krikri/plugin_helpers/postgresql_connection"
 require "../src/krikri/plugin_helpers/postgresql_query_heuristics"
@@ -12,22 +13,40 @@ module Krikri
   # runs SQL against PostgreSQL over the wire protocol through the same
   # shared PostgresqlConnection helper as the other community.postgresql
   # plugins (crystal-pg standing in for psycopg2). Params:
-  # - db (alias login_db): required. Database to connect to.
+  # - login_db: database to connect to. NOT required in the live module
+  #   (community.postgresql 4.x dropped required=True; with neither
+  #   login_db given, psycopg2 connects to the default database), and
+  #   the old `db:` spelling is no longer a parameter at all - real
+  #   rejects it as unsupported (live-verified via the podman-diff
+  #   postgresql_query case file).
   # - query: SQL string, or a JSON-encoded list of statements run in
-  #   order (the real module's list form).
+  #   order (the real module's list form). Also not required: real's
+  #   argument_spec has no required=True on query, and a nil query
+  #   crashes the module body's statement loop after connecting (an
+  #   uncaught TypeError) - emulated here as a failed result, which
+  #   matches the failed=True shape either way.
   # - positional_args: JSON list of $1-style binds; named_args: JSON
   #   dict of %(name)s binds (each statement's placeholders expanded to
   #   $N positions - crystal-pg has no named binding). Mutually
-  #   exclusive.
   # - login_host/login_port/login_user/login_password/login_unix_socket
-  #   (+ deprecated host/port/login/unix_socket aliases, same as the
-  #   other plugins).
+  #   (the deprecated host/port/login/unix_socket aliases the other
+  #   plugins still resolve are NOT in the real module's argument_spec
+  #   - they're rejected as unsupported params).
   # - autocommit: for statements that can't run in a transaction block
   #   (VACUUM). Mutually exclusive with check_mode.
   # - search_path: SET search_path before the query.
   # - check_mode: the query runs, but inside a transaction that is
   #   rolled back at the end (matching the real module's
   #   execute-then-rollback).
+  #
+  # Argument-validation surface matches the real module's AnsibleModule
+  # setup (verified against the live collection via the podman-diff
+  # postgresql_query case file): mutually-exclusive positional|named,
+  # login_port int conversion, autocommit/trust_input bool conversion,
+  # ssl_mode choices, and unsupported params LAST with the trailing
+  # all-aliases parenthetical (ca_cert's ssl_rootcert is the spec's only
+  # alias). The deprecated host/port/login/unix_socket names are not in
+  # the spec and get rejected like any other unsupported param.
   #
   # Returns: query_result (the LAST statement's full result set as an
   # array of column->value dicts, matching real Ansible - one entry per
@@ -42,6 +61,8 @@ module Krikri
   # reads that tag's keyword and trailing count, and that rule is ported
   # exactly (see PostgresqlQueryHeuristics), so changed: itself matches.
   class PostgresqlQueryPlugin < BasePlugin
+    include PluginHelpers::AnsibleArgValidation
+
     private record RunOutcome,
       last_sql : String,
       last_result : Array(Hash(String, JSON::Any)),
@@ -50,16 +71,51 @@ module Krikri
       statusmessage : String,
       changed : Bool
 
+    # The real module's merged argument_spec (postgres_common_
+    # argument_spec + postgresql_query's own update) in declaration
+    # order - values are the spec's aliases.
+    SPEC = {
+      "login_user"     => [] of String,
+      "login_password" => [] of String,
+      "login_host"     => [] of String,
+      "login_unix_socket" => [] of String,
+      "login_port"     => [] of String,
+      "ssl_mode"       => [] of String,
+      "ca_cert"        => ["ssl_rootcert"],
+      "ssl_cert"       => [] of String,
+      "ssl_key"        => [] of String,
+      "connect_params" => [] of String,
+      "query"          => [] of String,
+      "login_db"       => [] of String,
+      "positional_args" => [] of String,
+      "named_args"     => [] of String,
+      "session_role"   => [] of String,
+      "autocommit"     => [] of String,
+      "encoding"       => [] of String,
+      "trust_input"    => [] of String,
+      "search_path"    => [] of String,
+    }
+
+    INT_PARAMS  = {"login_port"}
+    BOOL_PARAMS = {"autocommit", "trust_input"}
+    SSL_MODES   = %w[allow disable prefer require verify-ca verify-full]
+
     def execute : PluginResult
+      if err = validate_arguments
+        return err
+      end
+
       query = @params["query"]?
-      return missing("query") unless query
-      db = @params["db"]? || @params["login_db"]?
-      return missing("login_db") unless db
+      unless query
+        # Real crashes its statement loop on a nil query (query_list =
+        # None) - a failed module either way.
+        return PluginResult.new(changed: false, failed: true, msg: "MODULE FAILURE")
+      end
+      db = @params["login_db"]?
 
       queries = parse_query_list(query)
       positional = parse_list_param("positional_args")
       named = parse_dict_param("named_args")
-      return PluginResult.new(changed: false, failed: true, msg: "parameters are mutually exclusive: positional_args|named_args") if positional && named
 
       autocommit = true?(@params["autocommit"]?)
       check_mode = true?(@params["_ansible_check_mode"]?)
@@ -106,8 +162,42 @@ module Krikri
       res
     end
 
-    private def missing(arg : String) : PluginResult
-      PluginResult.new(changed: false, failed: true, msg: "missing required argument: #{arg}")
+    # Real AnsibleModule setup order (ArgumentSpecValidator.validate,
+    # errors[0] priority): mutually_exclusive -> required (none - query
+    # and login_db are both optional in the live spec) -> types in spec
+    # declaration order -> choices -> unsupported params LAST.
+    private def validate_arguments : PluginResult?
+      positional = parse_list_param("positional_args")
+      named = parse_dict_param("named_args")
+      if positional && named
+        return PluginResult.new(changed: false, failed: true,
+          msg: "parameters are mutually exclusive: positional_args|named_args")
+      end
+
+      SPEC.each_key do |param|
+        value = @params[param]?
+        next unless value
+        if INT_PARAMS.includes?(param) && !value.strip.matches?(/^[+-]?\d+$/)
+          return int_type_error(param, value)
+        end
+        if BOOL_PARAMS.includes?(param) && !bool_convertible?(value)
+          return bool_type_error(param, value)
+        end
+      end
+
+      if ssl_mode = @params["ssl_mode"]?
+        unless SSL_MODES.includes?(ssl_mode)
+          return PluginResult.new(changed: false, failed: true,
+            msg: "value of ssl_mode must be one of: #{SSL_MODES.join(", ")}, got: #{ssl_mode}")
+        end
+      end
+
+      unsupported = unsupported_param_keys(@params, SPEC)
+      unless unsupported.empty?
+        return unsupported_params_error("community.postgresql.postgresql_query", unsupported, SPEC)
+      end
+
+      nil
     end
 
     private def run_queries(

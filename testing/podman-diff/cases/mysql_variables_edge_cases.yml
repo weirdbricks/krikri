@@ -1,0 +1,113 @@
+# mysql_variables module edge cases, against a real MariaDB running in
+# BOTH harness containers (run.sh's mysql gate installs mariadb-server
+# in each). Argument-validation surface (required variable, invalid
+# variable name, mode choices, unsupported params) plus functional
+# read/set behavior. Prefix: MV.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "MV1 missing variable"
+      community.mysql.mysql_variables:
+        login_user: root
+        login_unix_socket: /run/mysqld/mysqld.sock
+      register: mv1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "MV1 failed={{ mv1.failed | default('none') }} msg={{ mv1.msg | default('none') }}"
+
+    - name: "MV2 invalid variable name"
+      community.mysql.mysql_variables:
+        variable: "krikri-bad!"
+        login_user: root
+        login_unix_socket: /run/mysqld/mysqld.sock
+      register: mv2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "MV2 failed={{ mv2.failed | default('none') }} msg=[{{ mv2.msg | default('none') }}]"
+
+    - name: "MV3 invalid mode choice"
+      community.mysql.mysql_variables:
+        variable: version
+        mode: bogus
+        login_user: root
+        login_unix_socket: /run/mysqld/mysqld.sock
+      register: mv3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "MV3 failed={{ mv3.failed | default('none') }} msg={{ mv3.msg | default('none') }}"
+
+    - name: "MV4 unsupported parameter"
+      community.mysql.mysql_variables:
+        variable: version
+        krikri_bogus: x
+        login_user: root
+        login_unix_socket: /run/mysqld/mysqld.sock
+      register: mv4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "MV4 failed={{ mv4.failed | default('none') }} msg={{ mv4.msg | default('none') }}"
+
+    - name: "MV5 read a variable (no value)"
+      community.mysql.mysql_variables:
+        variable: version
+        login_user: root
+        login_unix_socket: /run/mysqld/mysqld.sock
+      register: mv5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "MV5 failed={{ mv5.failed | default('none') }} changed={{ mv5.changed | default('none') }} msg={{ mv5.msg | default('none') }}"
+
+    - name: "MV6 read an unknown variable"
+      community.mysql.mysql_variables:
+        variable: no_such_var_krikri
+        login_user: root
+        login_unix_socket: /run/mysqld/mysqld.sock
+      register: mv6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "MV6 failed={{ mv6.failed | default('none') }} msg=[{{ mv6.msg | default('none') }}]"
+
+    - name: "MV7 set a variable (functional)"
+      community.mysql.mysql_variables:
+        variable: max_connections
+        value: 555
+        login_user: root
+        login_unix_socket: /run/mysqld/mysqld.sock
+      register: mv7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "MV7 failed={{ mv7.failed | default('none') }} changed={{ mv7.changed | default('none') }} msg={{ mv7.msg | default('none') }} queries={{ mv7.queries | default('none') }}"
+
+    - name: "MV8 set the same value again (should be a no-op)"
+      community.mysql.mysql_variables:
+        variable: max_connections
+        value: 555
+        login_user: root
+        login_unix_socket: /run/mysqld/mysqld.sock
+      register: mv8
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "MV8 failed={{ mv8.failed | default('none') }} changed={{ mv8.changed | default('none') }} msg={{ mv8.msg | default('none') }}"
+
+    - name: "MV9 bool-ish variable set to its current value"
+      community.mysql.mysql_variables:
+        variable: innodb_file_per_table
+        value: "ON"
+        login_user: root
+        login_unix_socket: /run/mysqld/mysqld.sock
+      register: mv9
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "MV9 failed={{ mv9.failed | default('none') }} changed={{ mv9.changed | default('none') }} msg={{ mv9.msg | default('none') }}"
+
+    - name: "MV10 numeric value normalization on set"
+      community.mysql.mysql_variables:
+        variable: max_connections
+        value: 556
+        login_user: root
+        login_unix_socket: /run/mysqld/mysqld.sock
+      register: mv10
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "MV10 failed={{ mv10.failed | default('none') }} changed={{ mv10.changed | default('none') }} msg={{ mv10.msg | default('none') }}"
