@@ -197,6 +197,17 @@ if printf '%s\n' "${cases[@]}" | grep -q '^current_container_facts'; then
     || { log "FATAL: community.docker install failed"; exit 1; }
 fi
 
+# expect cases need pexpect in the REAL container - real
+# ansible.builtin.expect.py fails with "Failed to import the required
+# Python library (pexpect)." before any behavior otherwise. krikri's
+# plugin talks to the kernel pty directly (openpty + fork), so it needs
+# nothing. Gated on the requested case list like the htpasswd cases.
+if printf '%s\n' "${cases[@]}" | grep -q '^expect'; then
+  log "installing python3-pexpect for expect cases"
+  podman exec "$NAME_A" bash -c "apt-get install -y -qq --no-install-recommends python3-pexpect >/dev/null" \
+    || { log "FATAL: python3-pexpect install failed"; exit 1; }
+fi
+
 # ec2_metadata_facts cases need the amazon.aws collection in the REAL
 # container (collection module, not shipped with ansible-core).
 # Validation-only + unreachable-endpoint cases - the real IMDS endpoint
