@@ -339,8 +339,8 @@ fi
 # and selinux reads/writes /etc/selinux/config itself, so krikri needs
 # nothing. (The container genuinely has no SELinux - that's the point;
 # see the case files' own headers.)
-if printf '%s\n' "${cases[@]}" | grep -qE '^(seboolean|seport|selinux)'; then
-  log "installing python3-selinux + python3-semanage for seboolean/seport/selinux cases"
+if printf '%s\n' "${cases[@]}" | grep -qE '^(seboolean|seport|selinux|sefcontext)'; then
+  log "installing python3-selinux + python3-semanage for seboolean/seport/selinux/sefcontext cases"
   podman exec "$NAME_A" bash -c "apt-get install -y -qq --no-install-recommends python3-selinux python3-semanage >/dev/null" \
     || { log "FATAL: SELinux python libs install failed"; exit 1; }
 fi
