@@ -25,12 +25,12 @@ module Krikri
   # still running, since there's nothing changed to report yet.
   class AsyncStatusPlugin < BasePlugin
     def execute : PluginResult
+      # Real async_status.py: jid is required=True for EVERY mode (cleanup
+      # included), and the job-file existence check runs BEFORE the mode
+      # check - so cleanup on a jid that never ran fails with the same
+      # "could not find job" shape as a status lookup, not a silent
+      # success (confirmed via the podman-diff async_status cases, D2b).
       jid = @params["jid"]?
-
-      if @params["mode"]? == "cleanup"
-        return cleanup_result(jid)
-      end
-
       unless jid
         return PluginResult.new(changed: false, failed: true, msg: "missing required arguments: jid")
       end
@@ -45,6 +45,12 @@ module Krikri
           ansible_job_id: jid, started: true, finished: true)
       end
 
+      if @params["mode"]? == "cleanup"
+        AsyncJobs.cleanup(jid)
+        return PluginResult.new(changed: false, failed: false, msg: "Cleaned up job file for #{jid}",
+          ansible_job_id: jid, erased: AsyncJobs.status_path(jid))
+      end
+
       finished = AsyncJobs.finished?(status)
       job_changed = status["changed"]?.try(&.as_bool) || false
       job_failed = status["failed"]?.try(&.as_bool) || false
@@ -56,16 +62,6 @@ module Krikri
         result.extra[key] = value
       end
       result
-    end
-
-    private def cleanup_result(jid : String?) : PluginResult
-      if jid.nil? || jid == "ALL"
-        removed = AsyncJobs.cleanup_all
-        return PluginResult.new(changed: false, failed: false, msg: "Cleaned up #{removed} job file(s)")
-      end
-
-      AsyncJobs.cleanup(jid)
-      PluginResult.new(changed: false, failed: false, msg: "Cleaned up job file for #{jid}")
     end
   end
 end

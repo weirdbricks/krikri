@@ -1,0 +1,234 @@
+# ansible.builtin.expect edge cases. The REAL container needs
+# python3-pexpect (run.sh gated block) - real expect.py fails with
+# "Failed to import the required Python library (pexpect)." without it,
+# which would mask every behavior below. krikri's plugin talks to the
+# kernel pty directly (openpty + fork), no pexpect anywhere.
+#
+# Real expect.py specifics under test here:
+# - parameters.py "missing required arguments" for command/responses
+# - empty command string -> rc=256, "no command given"
+# - command is NOT run through a shell (pexpect shlex-splits it), so
+#   $HOME and redirects stay literal arguments
+# - a missing executable -> pexpect's "The command was not found or was
+#   not executable: <first token>."
+# - creates/removes use plain os.path.exists (NO glob support) and the
+#   skip result carries NO msg (unlike the command module's variant)
+# - timeout -> failed "command exceeded timeout" with rc=None
+# - a responses LIST is consumed in order and EXHAUSTS (fail_json "No
+#   remaining responses for '<key>'..."), it does not cycle; a STRING
+#   response repeats forever
+# - echo: true echoes the typed response into stdout
+# - chdir is pexpect's cwd for the spawned command
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "E1 missing command"
+      ansible.builtin.expect:
+        responses:
+          "prompt": "answer"
+      register: e1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "E1 failed={{ e1.failed | default('absent') }} msg={{ e1.msg | default('absent') }}"
+
+    - name: "E2 missing responses"
+      ansible.builtin.expect:
+        command: "/bin/true"
+      register: e2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "E2 failed={{ e2.failed | default('absent') }} msg={{ e2.msg | default('absent') }}"
+
+    - name: "E3 empty command string"
+      ansible.builtin.expect:
+        command: ""
+        responses:
+          "prompt": "answer"
+      register: e3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "E3 failed={{ e3.failed | default('absent') }} msg={{ e3.msg | default('absent') }} rc={{ e3.rc | default('absent') }}"
+
+    - name: "E4 stage helper scripts and fixtures"
+      ansible.builtin.copy:
+        dest: "{{ item.path }}"
+        mode: "0755"
+        content: "{{ item.body }}"
+      loop:
+        - path: /tmp/krikri-expect-ask.sh
+          body: |
+            #!/bin/bash
+            read -r -p "Name: " n
+            echo "Hello $n"
+        - path: /tmp/krikri-expect-ask3.sh
+          body: |
+            #!/bin/bash
+            read -r -p "Ask: " a
+            echo "A:$a"
+            read -r -p "Ask: " b
+            echo "B:$b"
+            read -r -p "Ask: " c
+            echo "C:$c"
+        - path: /tmp/krikri-expect-ask2.sh
+          body: |
+            #!/bin/bash
+            read -r -p "Ask: " a
+            echo "A:$a"
+            read -r -p "Ask: " b
+            echo "B:$b"
+        - path: /tmp/krikri-expect-fail.sh
+          body: |
+            #!/bin/bash
+            read -r -p "Name: " n
+            echo "done"
+            exit 3
+        - path: /tmp/krikri-expect-hang.sh
+          body: |
+            #!/bin/bash
+            echo "this is never a prompt"
+            sleep 30
+      loop_control:
+        label: "{{ item.path }}"
+    - ansible.builtin.file:
+        path: /tmp/krikri-expect-e7
+        state: touch
+        mode: "0644"
+    - ansible.builtin.file:
+        path: /tmp/krikri-expect-dir
+        state: directory
+        mode: "0755"
+    - ansible.builtin.copy:
+        dest: /tmp/krikri-expect-dir/data.txt
+        content: "chdir-data-here\n"
+
+    - name: "E4 simple interaction, single string response"
+      ansible.builtin.expect:
+        command: "/bin/bash /tmp/krikri-expect-ask.sh"
+        responses:
+          "Name: ": "World"
+      register: e4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "E4 failed={{ e4.failed | default('absent') }} changed={{ e4.changed | default('absent') }} rc={{ e4.rc | default('absent') }} msg={{ e4.msg | default('absent') }} hello={{ e4.stdout is search('Hello World') }}"
+
+    - name: "E5 non-zero exit -> non-zero return code, changed stays true"
+      ansible.builtin.expect:
+        command: "/bin/bash /tmp/krikri-expect-fail.sh"
+        responses:
+          "Name: ": "x"
+        timeout: 10
+      register: e5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "E5 failed={{ e5.failed | default('absent') }} changed={{ e5.changed | default('absent') }} rc={{ e5.rc | default('absent') }} msg={{ e5.msg | default('absent') }} done={{ e5.stdout is search('done') }}"
+
+    - name: "E6 timeout -> command exceeded timeout, rc None"
+      ansible.builtin.expect:
+        command: "/bin/bash /tmp/krikri-expect-hang.sh"
+        responses:
+          "prompt": "ignored"
+        timeout: 2
+      register: e6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "E6 failed={{ e6.failed | default('absent') }} msg={{ e6.msg | default('absent') }} rc_none={{ e6.rc is defined and e6.rc == none }}"
+
+    - name: "E7 creates exists -> skip, NO msg, rc 0"
+      ansible.builtin.expect:
+        command: "/bin/bash /tmp/krikri-expect-ask.sh"
+        responses:
+          "Name: ": "World"
+        creates: /tmp/krikri-expect-e7
+      register: e7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "E7 failed={{ e7.failed | default('absent') }} changed={{ e7.changed | default('absent') }} rc={{ e7.rc | default('absent') }} msg={{ e7.msg | default('absent') }} stdout={{ e7.stdout | default('absent') }}"
+
+    - name: "E8 creates missing -> runs"
+      ansible.builtin.expect:
+        command: "/bin/bash /tmp/krikri-expect-ask.sh"
+        responses:
+          "Name: ": "World"
+        creates: /tmp/krikri-expect-e8-nonexistent
+      register: e8
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "E8 failed={{ e8.failed | default('absent') }} changed={{ e8.changed | default('absent') }} rc={{ e8.rc | default('absent') }}"
+
+    - name: "E9 removes nonexistent -> skip"
+      ansible.builtin.expect:
+        command: "/bin/bash /tmp/krikri-expect-ask.sh"
+        responses:
+          "Name: ": "World"
+        removes: /tmp/krikri-expect-e9-nonexistent
+      register: e9
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "E9 failed={{ e9.failed | default('absent') }} changed={{ e9.changed | default('absent') }} rc={{ e9.rc | default('absent') }} msg={{ e9.msg | default('absent') }}"
+
+    - name: "E10 list responses answered in order"
+      ansible.builtin.expect:
+        command: "/bin/bash /tmp/krikri-expect-ask3.sh"
+        responses:
+          "Ask: ":
+            - "first"
+            - "second"
+            - "third"
+      register: e10
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "E10 failed={{ e10.failed | default('absent') }} changed={{ e10.changed | default('absent') }} rc={{ e10.rc | default('absent') }} a={{ e10.stdout is search('A:first') }} b={{ e10.stdout is search('B:second') }} c={{ e10.stdout is search('C:third') }}"
+
+    - name: "E11 list responses EXHAUST (no cycling)"
+      ansible.builtin.expect:
+        command: "/bin/bash /tmp/krikri-expect-ask2.sh"
+        responses:
+          "Ask: ":
+            - "only"
+      register: e11
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "E11 failed={{ e11.failed | default('absent') }} changed={{ e11.changed | default('absent') }} msg={{ e11.msg | default('absent') | truncate(26, true, '') }}"
+
+    - name: "E12 echo true echoes the response into stdout"
+      ansible.builtin.expect:
+        command: "/bin/bash /tmp/krikri-expect-ask.sh"
+        responses:
+          "Name: ": "World"
+        echo: true
+      register: e12
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "E12 failed={{ e12.failed | default('absent') }} rc={{ e12.rc | default('absent') }} echoed={{ e12.stdout is search('World') }}"
+
+    - name: "E13 no shell: $HOME and redirects stay literal args"
+      ansible.builtin.expect:
+        command: "echo $HOME > /tmp/krikri-expect-e13"
+        responses:
+          "prompt": "answer"
+      register: e13
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "E13 failed={{ e13.failed | default('absent') }} rc={{ e13.rc | default('absent') }} stdout={{ e13.stdout | default('absent') }} redirect_file={{ '/tmp/krikri-expect-e13' is file }}"
+
+    - name: "E14 missing executable -> pexpect's not-found wording"
+      ansible.builtin.expect:
+        command: "krikri-expect-no-such-bin --flag"
+        responses:
+          "prompt": "answer"
+      register: e14
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "E14 failed={{ e14.failed | default('absent') }} msg={{ e14.msg | default('absent') }}"
+
+    - name: "E15 chdir is the spawned command's cwd"
+      ansible.builtin.expect:
+        command: "/bin/cat data.txt"
+        responses:
+          "prompt": "answer"
+        chdir: /tmp/krikri-expect-dir
+      register: e15
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "E15 failed={{ e15.failed | default('absent') }} rc={{ e15.rc | default('absent') }} stdout={{ e15.stdout | default('absent') }}"

@@ -1,0 +1,43 @@
+# community.docker.current_container_facts edge cases. The REAL
+# container needs the community.docker collection (run.sh gated block);
+# the module itself needs no Docker SDK (pure /proc detection). Both
+# engines run inside their own throwaway podman container, so:
+# - running_in_container must be true on BOTH sides
+# - container ids are 64-hex podman ids but NECESSARILY DIFFERENT
+#   between the two containers, so the case prints shape checks
+#   (64-hex-ness), never the raw id.
+# Each case registers its result and prints an "F<n> key=value" debug
+# line for run.sh's diff extraction.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "F1 run current_container_facts inside a podman container"
+      community.docker.current_container_facts:
+      register: f1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "F1 failed={{ f1.failed | default('absent') }} changed={{ f1.changed }}"
+
+    - name: "F2 the container facts the module set (via ansible_facts)"
+      ansible.builtin.debug:
+        msg: "F2 in_container={{ ansible_facts['ansible_module_running_in_container'] | default('MISSING') }} type={{ ansible_facts['ansible_module_container_type'] | default('MISSING') }} id_is_64hex={{ ansible_facts['ansible_module_container_id'] | default('') | regex_search('^[0-9a-f]{64}$') is truthy }}"
+
+    - name: "F3 registered-result view of the same facts"
+      ansible.builtin.debug:
+        msg: "F3 in_container={{ f1.ansible_facts['ansible_module_running_in_container'] | default('MISSING') }} type={{ f1.ansible_facts['ansible_module_container_type'] | default('MISSING') }} id_is_64hex={{ f1.ansible_facts['ansible_module_container_id'] | default('') | regex_search('^[0-9a-f]{64}$') is truthy }}"
+
+    - name: "F4 sanity: /proc/self/mountinfo mentions a container id (detectability precheck)"
+      ansible.builtin.command:
+        cmd: "grep -cE '[0-9a-f]{64}/userdata/etc/hostname|[0-9a-f]{64}/etc/hostname' /proc/self/mountinfo"
+      register: f4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "F4 failed={{ f4.failed }} rc={{ f4.rc | default('none') }} mountinfo_hits={{ f4.stdout | default('0') }}"
+
+    - name: "F5 re-run is idempotent (pure fact module, never changes)"
+      community.docker.current_container_facts:
+      register: f5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "F5 failed={{ f5.failed | default('absent') }} changed={{ f5.changed }}"

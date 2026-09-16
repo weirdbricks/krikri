@@ -1112,6 +1112,14 @@ module Krikri
       "ansible.builtin.cron",
       "ansible.builtin.cronvar",
       "ansible.posix.acl",
+      # ansible.builtin.acl (0.9.1119): same legacy-redirect shape as
+      # ansible.builtin.mount below - acl lives in ansible.posix, and
+      # real ansible-core's own ansible_builtin_runtime.yml transparently
+      # redirects the ansible.builtin. spelling, so a task written with
+      # the builtin FQCN must reach the same plugin instead of being
+      # dropped as "Plugin not available". Both spellings registered;
+      # get_local_plugin_path strips both prefixes to the same binary.
+      "ansible.builtin.acl",
       "ansible.posix.authorized_key",
       # ansible.builtin.authorized_key (0.9.941): real ansible-core ships a
       # legacy redirect so the historically-core `authorized_key` module

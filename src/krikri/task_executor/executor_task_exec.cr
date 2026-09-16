@@ -474,7 +474,7 @@ module Krikri
       end
 
       changed = result["changed"]?.try(&.as_bool) || false
-      failed = result["failed"]?.try(&.as_bool) || false
+      failed = Krikri.result_failed_flag(result)
       if changed && (notify_list = task.notify)
         notify_handlers(task, host, notify_list)
       end

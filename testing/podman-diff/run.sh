@@ -185,6 +185,53 @@ if printf '%s\n' "${cases[@]}" | grep -q '^postgresql'; then
     || { log "FATAL: community.postgresql install failed"; exit 1; }
 fi
 
+# current_container_facts is a community.docker module (no Docker SDK
+# import, pure /proc detection) - the REAL container still needs the
+# collection or every case fails on module lookup. The two engines run
+# in DIFFERENT throwaway podman containers so the detected container id
+# necessarily differs; the case file prints shape checks, not the id.
+# Gated on the requested case list like the postgresql cases.
+if printf '%s\n' "${cases[@]}" | grep -q '^current_container_facts'; then
+  log "installing community.docker collection for current_container_facts cases"
+  podman exec "$NAME_A" bash -c "ansible-galaxy collection install community.docker >/dev/null 2>&1" \
+    || { log "FATAL: community.docker install failed"; exit 1; }
+fi
+
+# expect cases need pexpect in the REAL container - real
+# ansible.builtin.expect.py fails with "Failed to import the required
+# Python library (pexpect)." before any behavior otherwise. krikri's
+# plugin talks to the kernel pty directly (openpty + fork), so it needs
+# nothing. Gated on the requested case list like the htpasswd cases.
+if printf '%s\n' "${cases[@]}" | grep -q '^expect'; then
+  log "installing python3-pexpect for expect cases"
+  podman exec "$NAME_A" bash -c "apt-get install -y -qq --no-install-recommends python3-pexpect >/dev/null" \
+    || { log "FATAL: python3-pexpect install failed"; exit 1; }
+fi
+
+# make cases need the real make(1) in BOTH containers - real
+# community.general.make and krikri's plugin both shell to it, and
+# debian:bookworm-slim ships without it. Gated on the requested case
+# list like the modprobe cases above.
+if printf '%s\n' "${cases[@]}" | grep -q '^make'; then
+  log "installing make for make cases"
+  for c in "$NAME_A" "$NAME_B"; do
+    podman exec "$c" bash -c "apt-get install -y -qq --no-install-recommends make >/dev/null" \
+      || { log "FATAL: make install failed in $c"; exit 1; }
+  done
+fi
+
+# nsupdate cases need dnspython in the REAL container - real
+# community.general.nsupdate fails with "Failed to import the required
+# Python library (dnspython)." before any behavior otherwise. krikri
+# speaks the DNS wire format natively. No DNS server runs in either
+# container; the network cases exercise the refused-connection wording.
+# Gated on the requested case list like the expect cases.
+if printf '%s\n' "${cases[@]}" | grep -q '^nsupdate'; then
+  log "installing python3-dnspython for nsupdate cases"
+  podman exec "$NAME_A" bash -c "apt-get install -y -qq --no-install-recommends python3-dnspython >/dev/null" \
+    || { log "FATAL: python3-dnspython install failed"; exit 1; }
+fi
+
 # ec2_metadata_facts cases need the amazon.aws collection in the REAL
 # container (collection module, not shipped with ansible-core).
 # Validation-only + unreachable-endpoint cases - the real IMDS endpoint
@@ -327,6 +374,30 @@ if printf '%s\n' "${cases[@]}" | grep -q '^synchronize'; then
   for c in "$NAME_A" "$NAME_B"; do
     podman exec "$c" bash -c "apt-get install -y -qq --no-install-recommends rsync >/dev/null" \
       || { log "FATAL: rsync install failed in $c"; exit 1; }
+  done
+fi
+
+# acl cases need the acl package (getfacl/setfacl) in BOTH containers -
+# real ansible.builtin.acl and krikri's plugin both shell to it, and
+# debian:bookworm-slim ships without it. Gated on the requested case
+# list like the modprobe cases above.
+if printf '%s\n' "${cases[@]}" | grep -q '^acl'; then
+  log "installing acl for acl cases"
+  for c in "$NAME_A" "$NAME_B"; do
+    podman exec "$c" bash -c "apt-get install -y -qq --no-install-recommends acl >/dev/null" \
+      || { log "FATAL: acl install failed in $c"; exit 1; }
+  done
+fi
+
+# capabilities cases need libcap2-bin (getcap/setcap) in BOTH
+# containers - real community.general.capabilities and krikri's plugin
+# both shell to them, and debian:bookworm-slim ships without them.
+# Gated on the requested case list like the modprobe cases above.
+if printf '%s\n' "${cases[@]}" | grep -q '^capabilities'; then
+  log "installing libcap2-bin for capabilities cases"
+  for c in "$NAME_A" "$NAME_B"; do
+    podman exec "$c" bash -c "apt-get install -y -qq --no-install-recommends libcap2-bin >/dev/null" \
+      || { log "FATAL: libcap2-bin install failed in $c"; exit 1; }
   done
 fi
 

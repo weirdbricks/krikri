@@ -88,8 +88,15 @@ module Krikri
 
       poll = task.poll_seconds || 10
       if poll <= 0
+        # failed: 0 and finished: 0 are INTEGER zeros here, mirroring
+        # real ansible-core's TaskExecutor async launch result (it puts
+        # failed: 0/finished: 0 ints in the fire-and-forget result) -
+        # registered-var access to .failed/.finished must not be a
+        # missing-key error. Confirmed via the podman-diff
+        # async_status cases (D3).
         return JSON.parse({
           "changed"        => true,
+          "failed"         => 0,
           "started"        => 1,
           "finished"       => 0,
           "ansible_job_id" => jid,
@@ -182,6 +189,7 @@ module Krikri
       if poll <= 0
         return JSON.parse({
           "changed"        => true,
+          "failed"         => 0,
           "started"        => 1,
           "finished"       => 0,
           "ansible_job_id" => jid,

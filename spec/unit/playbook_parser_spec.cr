@@ -2214,6 +2214,12 @@ describe Krikri::PlaybookParser do
         Krikri::PluginManager.simple_plugin_name("ansible.builtin.alternatives").should eq("alternatives")
         Krikri::PluginManager.simple_plugin_name("community.general.alternatives").should eq("alternatives")
       end
+
+      it "resolves ansible.builtin.acl to the ansible.posix.acl plugin" do
+        Krikri::PlaybookParser.resolve_module_name("ansible.builtin.acl").should eq("ansible.builtin.acl")
+        Krikri::PluginManager.simple_plugin_name("ansible.builtin.acl").should eq("acl")
+        Krikri::PluginManager.simple_plugin_name("ansible.posix.acl").should eq("acl")
+      end
     end
 
     # The other collections already in MODULE_SEARCH_COLLECTIONS

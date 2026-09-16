@@ -201,7 +201,7 @@ module Krikri
       # resolve_become used to read back out of it as {false, nil}.
       result = PluginManager.execute_plugin("facts", config.to_json, host, vars_context, false, nil)
 
-      if result["failed"]?.try(&.as_bool)
+      if Krikri.result_failed_flag(result)
         msg = result["msg"]?.try(&.as_s) || "Unknown error"
         # "Plugin execution failed on remote" alone hides WHY the plugin
         # died - the kata round of 2026-09-10 (36/36 roles) failed facts
