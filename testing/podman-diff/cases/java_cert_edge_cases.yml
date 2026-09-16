@@ -1,0 +1,190 @@
+# java_cert edge cases. Needs a real keytool (JRE) in BOTH containers
+# (run.sh's java_cert gate installs default-jre-headless; the real module
+# and krikri's plugin both shell out to it), plus the openssl CLI for
+# fixture cert generation and the real module's own x509 parsing.
+# failed=/changed= and actual keystore state (keytool -list of aliases)
+# are what matter; error MESSAGE WORDING may differ.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "J1 missing required keystore_pass"
+      community.general.java_cert:
+        keystore_path: /tmp/j-keystore.jks
+      register: j1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "J1 failed={{ j1.failed }} changed={{ j1.changed | default('none') }}"
+
+    - name: "J2 invalid state choice"
+      community.general.java_cert:
+        keystore_path: /tmp/j-keystore.jks
+        keystore_pass: krikri-pass
+        state: banana
+      register: j2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "J2 failed={{ j2.failed }} changed={{ j2.changed | default('none') }}"
+
+    - name: "J3 state=present with no cert source"
+      community.general.java_cert:
+        keystore_path: /tmp/j-keystore.jks
+        keystore_pass: krikri-pass
+      register: j3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "J3 failed={{ j3.failed }} changed={{ j3.changed | default('none') }}"
+
+    - name: "J4 cert_path and cert_url together are mutually exclusive"
+      community.general.java_cert:
+        keystore_path: /tmp/j-keystore.jks
+        keystore_pass: krikri-pass
+        cert_path: /tmp/j-cert.pem
+        cert_url: krikri.example
+      register: j4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "J4 failed={{ j4.failed }} changed={{ j4.changed | default('none') }}"
+
+    - name: "J5 state=absent without cert_url or cert_alias"
+      community.general.java_cert:
+        keystore_path: /tmp/j-keystore.jks
+        keystore_pass: krikri-pass
+        state: absent
+      register: j5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "J5 failed={{ j5.failed }} changed={{ j5.changed | default('none') }}"
+
+    - name: "J6 cert_path import without cert_alias"
+      community.general.java_cert:
+        keystore_path: /tmp/j-keystore.jks
+        keystore_pass: krikri-pass
+        cert_path: /tmp/j-cert.pem
+      register: j6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "J6 failed={{ j6.failed }} changed={{ j6.changed | default('none') }}"
+
+    - name: "J7 cert_port that is not an int"
+      community.general.java_cert:
+        keystore_path: /tmp/j-keystore.jks
+        keystore_pass: krikri-pass
+        cert_url: krikri.example
+        cert_port: not-a-port
+      register: j7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "J7 failed={{ j7.failed }} changed={{ j7.changed | default('none') }}"
+
+    - name: "J8 unsupported parameter"
+      community.general.java_cert:
+        keystore_path: /tmp/j-keystore.jks
+        keystore_pass: krikri-pass
+        cert_alias: krikri
+        banana: true
+      register: j8
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "J8 failed={{ j8.failed }} changed={{ j8.changed | default('none') }}"
+
+    - name: "J9 generate fixture certs"
+      ansible.builtin.shell: "openssl req -x509 -newkey rsa:2048 -keyout /tmp/j-key.pem -out /tmp/j-cert.pem -days 2 -nodes -subj /CN=krikri 2>/dev/null && openssl req -x509 -newkey rsa:2048 -keyout /tmp/j-key2.pem -out /tmp/j-cert2.pem -days 2 -nodes -subj /CN=krikri2 2>/dev/null && openssl pkcs12 -export -in /tmp/j-cert2.pem -inkey /tmp/j-key2.pem -out /tmp/j-cert2.p12 -passout pass:j12-secret"
+      register: j9
+      ignore_errors: true
+      changed_when: false
+    - ansible.builtin.debug:
+        msg: "J9 failed={{ j9.failed }} changed={{ j9.changed | default('none') }}"
+
+    - name: "J10 first import creates the keystore"
+      community.general.java_cert:
+        cert_path: /tmp/j-cert.pem
+        cert_alias: krikri
+        keystore_path: /tmp/j-keystore.jks
+        keystore_pass: krikri-pass
+        keystore_create: true
+      register: j10
+      ignore_errors: true
+    - name: "J10b keystore file exists with the alias"
+      ansible.builtin.shell: "keytool -list -keystore /tmp/j-keystore.jks -storepass krikri-pass 2>/dev/null | grep -c krikri || true"
+      register: j10b
+      changed_when: false
+    - ansible.builtin.debug:
+        msg: "J10 failed={{ j10.failed }} changed={{ j10.changed | default('none') }} aliases={{ j10b.stdout | default('none') }}"
+
+    - name: "J11 re-import same cert is idempotent"
+      community.general.java_cert:
+        cert_path: /tmp/j-cert.pem
+        cert_alias: krikri
+        keystore_path: /tmp/j-keystore.jks
+        keystore_pass: krikri-pass
+      register: j11
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "J11 failed={{ j11.failed }} changed={{ j11.changed }}"
+
+    - name: "J12 check-mode import of a different cert claims change"
+      community.general.java_cert:
+        cert_path: /tmp/j-cert2.pem
+        cert_alias: krikri
+        keystore_path: /tmp/j-keystore.jks
+        keystore_pass: krikri-pass
+      check_mode: true
+      register: j12
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "J12 failed={{ j12.failed }} changed={{ j12.changed | default('none') }}"
+
+    - name: "J13 pkcs12 import with the right password"
+      community.general.java_cert:
+        pkcs12_path: /tmp/j-cert2.p12
+        pkcs12_password: j12-secret
+        cert_alias: krikri-p12
+        keystore_path: /tmp/j-keystore.jks
+        keystore_pass: krikri-pass
+      register: j13
+      ignore_errors: true
+    - name: "J13b both aliases now present"
+      ansible.builtin.shell: "keytool -list -keystore /tmp/j-keystore.jks -storepass krikri-pass 2>/dev/null | grep -c krikri || true"
+      register: j13b
+      changed_when: false
+    - ansible.builtin.debug:
+        msg: "J13 failed={{ j13.failed }} changed={{ j13.changed | default('none') }} aliases={{ j13b.stdout | default('none') }}"
+
+    - name: "J14 pkcs12 import with the wrong password fails"
+      community.general.java_cert:
+        pkcs12_path: /tmp/j-cert2.p12
+        pkcs12_password: wrong-pass
+        cert_alias: krikri-wrong
+        keystore_path: /tmp/j-keystore.jks
+        keystore_pass: krikri-pass
+      register: j14
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "J14 failed={{ j14.failed }} changed={{ j14.changed | default('none') }}"
+
+    - name: "J15 state=absent removes the alias"
+      community.general.java_cert:
+        cert_alias: krikri
+        keystore_path: /tmp/j-keystore.jks
+        keystore_pass: krikri-pass
+        state: absent
+      register: j15
+      ignore_errors: true
+    - name: "J15b alias gone"
+      ansible.builtin.shell: "keytool -list -keystore /tmp/j-keystore.jks -storepass krikri-pass 2>/dev/null | grep -c krikri || true"
+      register: j15b
+      changed_when: false
+    - ansible.builtin.debug:
+        msg: "J15 failed={{ j15.failed }} changed={{ j15.changed | default('none') }} aliases={{ j15b.stdout | default('none') }}"
+
+    - name: "J16 state=absent again is a no-op"
+      community.general.java_cert:
+        cert_alias: krikri
+        keystore_path: /tmp/j-keystore.jks
+        keystore_pass: krikri-pass
+        state: absent
+      register: j16
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "J16 failed={{ j16.failed }} changed={{ j16.changed }}"
