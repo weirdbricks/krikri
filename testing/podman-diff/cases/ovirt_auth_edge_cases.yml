@@ -1,0 +1,133 @@
+# ovirt_auth module edge cases. Validation-surface + missing-SDK only
+# (no oVirt/RHV engine in either container, and ovirt-engine-sdk-python
+# is a libcurl C extension with no Debian package, so neither engine can
+# get past the collection's own check_sdk() probe for valid args). Real
+# ovirt.ovirt.ovirt_auth's AnsibleModule spec checks (type conversion
+# for timeout/insecure/compress/kerberos/headers/ovirt_auth, state
+# choices, required_if state-absent-needs-ovirt_auth, unsupported
+# params) fire BEFORE check_sdk(); a VALID invocation fails on the
+# missing ovirtsdk4 import in both engines.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "O1 state=absent without ovirt_auth (required_if)"
+      ovirt.ovirt.ovirt_auth:
+        state: absent
+      register: r1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "O1 failed={{ r1.failed | default('none') }} msg={{ r1.msg | default('none') }}"
+
+    - name: "O2 state outside the choices list"
+      ovirt.ovirt.ovirt_auth:
+        state: bogus
+        url: https://engine.example.com/ovirt-engine/api
+      register: r2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "O2 failed={{ r2.failed | default('none') }} msg={{ r2.msg | default('none') }}"
+
+    - name: "O3 timeout non-integer"
+      ovirt.ovirt.ovirt_auth:
+        url: https://engine.example.com/ovirt-engine/api
+        timeout: not-a-number
+      register: r3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "O3 failed={{ r3.failed | default('none') }} msg={{ r3.msg | default('none') }}"
+
+    - name: "O4 insecure non-bool"
+      ovirt.ovirt.ovirt_auth:
+        url: https://engine.example.com/ovirt-engine/api
+        insecure: banana
+      register: r4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "O4 failed={{ r4.failed | default('none') }} msg={{ r4.msg | default('none') | regex_replace('Valid booleans include:.*', 'VALID-BOOLEANS') }}"
+
+    - name: "O5 headers not a dict"
+      ovirt.ovirt.ovirt_auth:
+        url: https://engine.example.com/ovirt-engine/api
+        headers: not-a-dict
+      register: r5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "O5 failed={{ r5.failed | default('none') }} msg={{ r5.msg | default('none') }}"
+
+    - name: "O6 ovirt_auth not a dict"
+      ovirt.ovirt.ovirt_auth:
+        url: https://engine.example.com/ovirt-engine/api
+        state: absent
+        ovirt_auth: not-a-dict
+      register: r6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "O6 failed={{ r6.failed | default('none') }} msg={{ r6.msg | default('none') }}"
+
+    - name: "O7 unsupported parameter"
+      ovirt.ovirt.ovirt_auth:
+        url: https://engine.example.com/ovirt-engine/api
+        bogusparam: 1
+      register: r7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "O7 failed={{ r7.failed | default('none') }} msg={{ r7.msg | default('none') }}"
+
+    - name: "O8 type conversion beats choices (bad timeout AND bad state)"
+      ovirt.ovirt.ovirt_auth:
+        url: https://engine.example.com/ovirt-engine/api
+        timeout: not-a-number
+        state: bogus
+      register: r8
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "O8 failed={{ r8.failed | default('none') }} msg={{ r8.msg | default('none') }}"
+
+    - name: "O9 no url and no hostname (neither param nor env)"
+      ovirt.ovirt.ovirt_auth:
+        username: admin@internal
+        password: secret
+      register: r9
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "O9 failed={{ r9.failed | default('none') }} msg={{ r9.msg | default('none') }}"
+
+    - name: "O10 valid args - fails on the missing ovirtsdk4 import"
+      ovirt.ovirt.ovirt_auth:
+        url: https://engine.example.com/ovirt-engine/api
+        username: admin@internal
+        password: secret
+      register: r10
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "O10 failed={{ r10.failed | default('none') }} msg={{ r10.msg | default('none') }}"
+
+    - name: "O11 valid args with token and hostname spelling - same missing-SDK gate"
+      ovirt.ovirt.ovirt_auth:
+        hostname: engine.example.com
+        token: sso-token-abc
+      register: r11
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "O11 failed={{ r11.failed | default('none') }} msg={{ r11.msg | default('none') }}"
+
+    - name: "O12 bad state AND no url - choices beats both the url check and the SDK gate"
+      ovirt.ovirt.ovirt_auth:
+        state: bogus
+        username: admin@internal
+        password: secret
+      register: r12
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "O12 failed={{ r12.failed | default('none') }} msg={{ r12.msg | default('none') }}"
+
+    - name: "O13 unsupported param AND no url - unsupported-params beats the SDK gate"
+      ovirt.ovirt.ovirt_auth:
+        bogusparam: 1
+        username: admin@internal
+        password: secret
+      register: r13
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "O13 failed={{ r13.failed | default('none') }} msg={{ r13.msg | default('none') }}"

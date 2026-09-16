@@ -299,6 +299,20 @@ if printf '%s\n' "${cases[@]}" | grep -qE '^(ec2_|iam_)'; then
     || { log "FATAL: amazon.aws install failed"; exit 1; }
 fi
 
+# ovirt_auth cases are argument-validation + missing-SDK only (no oVirt
+# engine in either container, and ovirt-engine-sdk-python - a
+# libcurl-based C extension, un-packaged in Debian - cannot be installed
+# here, so valid-argument cases fail on the collection's own check_sdk()
+# probe in both engines). The real side needs the ovirt.ovirt collection
+# (a collection module, not shipped with ansible-core). Gated on the
+# requested case list like the amazon.aws cases above.
+if printf '%s\n' "${cases[@]}" | grep -q '^ovirt_'; then
+  log "installing ovirt.ovirt collection for ovirt_auth cases"
+  podman exec "$NAME_A" bash -c "ansible-galaxy collection install ovirt.ovirt >/dev/null 2>&1" \
+    || podman exec "$NAME_A" bash -c "ansible-galaxy collection install --no-deps git+https://github.com/ovirt/ovirt-ansible-collection.git >/dev/null 2>&1" \
+    || { log "FATAL: ovirt.ovirt install failed"; exit 1; }
+fi
+
 # rabbitmq_user cases are argument-validation only (no RabbitMQ server
 # or even rabbitmqctl binary in either container - both engines must
 # fail identically on the missing binary / missing args). The real side
