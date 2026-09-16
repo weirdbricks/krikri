@@ -155,11 +155,12 @@ if printf '%s\n' "${cases[@]}" | grep -qE '^(get_certificate|x509_certificate)';
   done
 fi
 
-# openssh_keypair cases need ssh-keygen in BOTH containers (real
-# community.crypto.openssh_keypair and krikri's plugin both drive it -
-# directly or via the cryptography/ssh-keygen split).
-if printf '%s\n' "${cases[@]}" | grep -q '^openssh_keypair'; then
-  log "installing openssh-client for openssh_keypair cases"
+# openssh_keypair/openssl_publickey cases need ssh-keygen in BOTH
+# containers (real community.crypto.openssh_keypair and krikri's plugin
+# both drive it - directly or via the cryptography/ssh-keygen split;
+# openssl_publickey needs it for format=OpenSSH).
+if printf '%s\n' "${cases[@]}" | grep -qE '^(openssh_keypair|openssl_publickey)'; then
+  log "installing openssh-client for openssh_keypair/openssl_publickey cases"
   for c in "$NAME_A" "$NAME_B"; do
     podman exec "$c" bash -c "apt-get install -y -qq --no-install-recommends openssh-client >/dev/null" \
       || { log "FATAL: openssh-client install failed in $c"; exit 1; }

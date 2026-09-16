@@ -2,6 +2,7 @@
 
 require "json"
 require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/ansible_arg_validation"
 require "../src/krikri/plugin_helpers/x509_cert_info"
 
 module Krikri
@@ -25,11 +26,40 @@ module Krikri
   # A passphrase-protected key works through both openssl and
   # ssh-keygen's own passphrase flags.
   class OpensslPublickeyPlugin < BasePlugin
-    def execute : PluginResult
-      path = @params["path"]?
-      return failure("missing required arguments: path") unless path
+    include PluginHelpers::AnsibleArgValidation
 
-      path = expand_tilde(path)
+    # The real module's argument_spec plus the file-common args its
+    # add_file_common_args=True injects (the only alias is
+    # attributes->attr).
+    SPEC = {
+      "state"                 => [] of String,
+      "force"                 => [] of String,
+      "path"                  => [] of String,
+      "privatekey_path"       => [] of String,
+      "privatekey_content"    => [] of String,
+      "format"                => [] of String,
+      "privatekey_passphrase" => [] of String,
+      "backup"                => [] of String,
+      "select_crypto_backend" => [] of String,
+      "return_content"        => [] of String,
+      "mode"                  => [] of String,
+      "owner"                 => [] of String,
+      "group"                 => [] of String,
+      "seuser"                => [] of String,
+      "serole"                => [] of String,
+      "selevel"               => [] of String,
+      "setype"                => [] of String,
+      "attributes"            => ["attr"],
+      "unsafe_writes"         => [] of String,
+    }
+
+    def execute : PluginResult
+      if err = validate_arguments
+        return err
+      end
+
+      path = @params["path"]?
+      path = expand_tilde(path.not_nil!)
       state = @params["state"]? || "present"
       check_mode = true?(@params["check_mode"]?)
 
@@ -78,6 +108,44 @@ module Krikri
 
     private def failure(msg : String) : PluginResult
       PluginResult.new(changed: false, failed: true, msg: msg)
+    end
+
+    # Real AnsibleModule validation order (ArgumentSpecValidator.validate):
+    # required -> types (spec declaration order) -> choices -> required_if
+    # -> mutually_exclusive -> unsupported (deferred last).
+    private def validate_arguments : PluginResult?
+      return missing_required_error(["path"]) unless @params["path"]?
+
+      %w[force backup return_content unsafe_writes].each do |param|
+        if raw = @params[param]?
+          return bool_type_error(param, raw) unless bool_convertible?(raw)
+        end
+      end
+
+      {"state"                 => %w[present absent],
+       "format"                => %w[OpenSSH PEM],
+       "select_crypto_backend" => %w[auto cryptography]}.each do |param, allowed|
+        if value = @params[param]?
+          unless allowed.includes?(value)
+            return choices_error(param, allowed, value)
+          end
+        end
+      end
+
+      if (@params["state"]? || "present") == "present" &&
+         !@params["privatekey_path"]? && !@params["privatekey_content"]?
+        return failure("state is present but any of the following are missing: privatekey_path, privatekey_content")
+      end
+
+      if @params["privatekey_path"]? && @params["privatekey_content"]?
+        return failure("parameters are mutually exclusive: privatekey_path|privatekey_content")
+      end
+
+      unsupported = unsupported_param_keys(@params, SPEC)
+      unless unsupported.empty?
+        return unsupported_params_error("community.crypto.openssl_publickey", unsupported, SPEC)
+      end
+      nil
     end
 
     private def remove(path : String, check_mode : Bool) : PluginResult
