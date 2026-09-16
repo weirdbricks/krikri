@@ -111,3 +111,23 @@
       ignore_errors: true
     - ansible.builtin.debug:
         msg: "O11 failed={{ r11.failed | default('none') }} msg={{ r11.msg | default('none') }}"
+
+    - name: "O12 bad state AND no url - choices beats both the url check and the SDK gate"
+      ovirt.ovirt.ovirt_auth:
+        state: bogus
+        username: admin@internal
+        password: secret
+      register: r12
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "O12 failed={{ r12.failed | default('none') }} msg={{ r12.msg | default('none') }}"
+
+    - name: "O13 unsupported param AND no url - unsupported-params beats the SDK gate"
+      ovirt.ovirt.ovirt_auth:
+        bogusparam: 1
+        username: admin@internal
+        password: secret
+      register: r13
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "O13 failed={{ r13.failed | default('none') }} msg={{ r13.msg | default('none') }}"
