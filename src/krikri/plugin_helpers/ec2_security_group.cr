@@ -479,7 +479,7 @@ module Krikri
           )
         end
 
-        check_mode = bool_param(params["check_mode"]?)
+        check_mode = bool_param(params["_ansible_check_mode"]?)
 
         # state: absent never carries group fields - the group is gone (or
         # was never there), so there's nothing to describe; real Ansible

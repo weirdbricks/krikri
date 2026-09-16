@@ -24,7 +24,7 @@ module Krikri
       state = @params["state"]? || "present"
       size = (@params["size"]? || "4096").to_i
       force = true?(@params["force"]?)
-      check_mode = true?(@params["check_mode"]?)
+      check_mode = true?(@params["_ansible_check_mode"]?)
 
       base_dir = File.dirname(path)
       unless Dir.exists?(base_dir)

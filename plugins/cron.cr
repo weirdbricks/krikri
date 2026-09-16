@@ -129,7 +129,7 @@ module Krikri
 
       new_line = state == "present" ? build_line(job || "", include_user: true) : nil
 
-      check_mode = true?(@params["check_mode"]?)
+      check_mode = true?(@params["_ansible_check_mode"]?)
 
       original_content = File.exists?(cron_file) ? File.read(cron_file) : ""
       new_content, changed = PluginHelpers::CronTable.upsert(original_content, name, new_line)
@@ -158,7 +158,7 @@ module Krikri
 
       new_line = state == "present" ? build_line(job || "", include_user: false) : nil
 
-      check_mode = true?(@params["check_mode"]?)
+      check_mode = true?(@params["_ansible_check_mode"]?)
 
       # A user with no crontab yet makes `crontab -l` exit non-zero
       # ("no crontab for <user>") - not a real error, just "start from
@@ -185,7 +185,7 @@ module Krikri
 
     private def execute_env_file(raw_cron_file : String, name : String, job : String?, state : String, insertafter : String?, insertbefore : String?) : PluginResult
       cron_file = resolve_cron_file(raw_cron_file)
-      check_mode = true?(@params["check_mode"]?)
+      check_mode = true?(@params["_ansible_check_mode"]?)
 
       original_content = File.exists?(cron_file) ? File.read(cron_file) : ""
       new_content, changed, missing_target = PluginHelpers::CronTable.upsert_env(
@@ -212,7 +212,7 @@ module Krikri
     private def execute_env_user_crontab(name : String, job : String?, state : String, insertafter : String?, insertbefore : String?) : PluginResult
       target_user = @params["user"]?
       crontab_target = target_user ? "-u #{shell_single_quote(target_user)}" : ""
-      check_mode = true?(@params["check_mode"]?)
+      check_mode = true?(@params["_ansible_check_mode"]?)
 
       list_result = remote_exec("crontab #{crontab_target} -l 2>/dev/null")
       original_content = list_result[:exit_code] == 0 ? list_result[:stdout] : ""

@@ -41,7 +41,7 @@ end
 
 describe "apt plugin cache_updated result key" do
   it "reports cache_updated: false when update_cache is not requested" do
-    result = PluginSpecHelper.run("apt", {"update_cache" => "false", "check_mode" => "true"})
+    result = PluginSpecHelper.run("apt", {"update_cache" => "false", "_ansible_check_mode" => "true"})
 
     result["cache_updated"]?.should_not be_nil
     result["cache_updated"].as_bool.should be_false
@@ -51,7 +51,7 @@ describe "apt plugin cache_updated result key" do
     result = PluginSpecHelper.run("apt", {
       "update_cache"     => "true",
       "cache_valid_time" => "999999999",
-      "check_mode"       => "true",
+      "_ansible_check_mode" => "true",
     })
 
     result["cache_updated"]?.should_not be_nil
@@ -59,7 +59,7 @@ describe "apt plugin cache_updated result key" do
   end
 
   it "reports cache_updated: false in check mode (the update never actually ran)" do
-    result = PluginSpecHelper.run("apt", {"update_cache" => "true", "check_mode" => "true"})
+    result = PluginSpecHelper.run("apt", {"update_cache" => "true", "_ansible_check_mode" => "true"})
 
     result["cache_updated"]?.should_not be_nil
     result["cache_updated"].as_bool.should be_false

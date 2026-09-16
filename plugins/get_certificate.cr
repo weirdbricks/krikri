@@ -54,7 +54,7 @@ module Krikri
         return failure("The directory #{base_dir} does not exist or the file is not a directory") unless Dir.exists?(base_dir)
         if !File.exists?(path) || normalize(File.read(path)) != normalize(cert_pem)
           changed = true
-          unless true?(@params["check_mode"]?)
+          unless true?(@params["_ansible_check_mode"]?)
             backup_file = backup(path)
             File.write(path, cert_pem)
             File.chmod(path, 0o666 & ~current_umask) unless @params["mode"]?

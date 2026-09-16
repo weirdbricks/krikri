@@ -115,7 +115,7 @@ describe "mount plugin" do
     fstab = fresh_fstab("mounted-check.fstab")
 
     result = PluginSpecHelper.run("mount", {
-      "path" => "/mnt/checkmode", "src" => "/dev/fake", "fstype" => "ext4", "state" => "mounted", "fstab" => fstab, "check_mode" => "true",
+      "path" => "/mnt/checkmode", "src" => "/dev/fake", "fstype" => "ext4", "state" => "mounted", "fstab" => fstab, "_ansible_check_mode" => "true",
     })
 
     result["changed"].as_bool.should be_true
@@ -163,7 +163,7 @@ describe "mount plugin" do
     fstab = fresh_fstab("write-check.fstab", "UUID=abc / ext4 errors=remount-ro 0 1\n")
 
     result = PluginSpecHelper.run("mount", {
-      "path" => "/mnt/checkmode", "src" => "/dev/fake", "fstype" => "ext4", "state" => "present", "fstab" => fstab, "check_mode" => "true",
+      "path" => "/mnt/checkmode", "src" => "/dev/fake", "fstype" => "ext4", "state" => "present", "fstab" => fstab, "_ansible_check_mode" => "true",
     })
 
     result["changed"].as_bool.should be_true
@@ -179,7 +179,7 @@ describe "mount plugin" do
   # unmounted's own specs above already use.
   it "reports it would remount (check mode, no real remount attempted)" do
     result = PluginSpecHelper.run("mount", {
-      "path" => "/mnt/checkmode", "state" => "remounted", "check_mode" => "true",
+      "path" => "/mnt/checkmode", "state" => "remounted", "_ansible_check_mode" => "true",
     })
 
     result["changed"].as_bool.should be_true

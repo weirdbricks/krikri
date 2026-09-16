@@ -47,7 +47,7 @@ module Krikri
 
       module_name = @params["module_name"]? || "custom_module"
       new_style = @params["new_style"]? != "false"
-      check_mode = true?(@params["check_mode"]?)
+      check_mode = true?(@params["_ansible_check_mode"]?)
       args_json = @params["module_args"]? || "{}"
       kv_argv = @params["kv_argv"]? || "[]"
 

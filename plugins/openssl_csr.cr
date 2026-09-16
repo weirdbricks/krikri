@@ -55,7 +55,7 @@ module Krikri
 
       path = expand_tilde(path)
       state = @params["state"]? || "present"
-      check_mode = true?(@params["check_mode"]?)
+      check_mode = true?(@params["_ansible_check_mode"]?)
 
       return remove(path, check_mode) if state == "absent"
 

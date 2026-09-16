@@ -378,7 +378,7 @@ module Krikri
       ResolvedParams.new(
         type: type, state: state, privs: privs, roles_raw: roles_raw, objs: objs, all_in_schema: all_in_schema,
         target_roles: target_roles,
-        schema: schema, login_db: login_db, check_mode: true?(@params["check_mode"]?),
+        schema: schema, login_db: login_db, check_mode: true?(@params["_ansible_check_mode"]?),
         grant_option: @params["grant_option"]?.try { |v| true?(v) },
         session_role: @params["session_role"]?, fail_on_role: true?(@params["fail_on_role"]?, default: true),
       )

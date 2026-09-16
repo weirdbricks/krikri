@@ -77,7 +77,7 @@ module Krikri
       state_string = want_enabled ? "enabled" : "disabled"
       a2mod_binary = want_enabled ? "a2enmod" : "a2dismod"
       success_msg = "Module #{name} #{state_string}"
-      check_mode = true?(@params["check_mode"]?)
+      check_mode = true?(@params["_ansible_check_mode"]?)
 
       currently_enabled, _ = module_is_enabled(identifier, name)
       if currently_enabled == want_enabled

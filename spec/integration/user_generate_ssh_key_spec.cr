@@ -81,7 +81,7 @@ describe "user plugin generate_ssh_key" do
         "name"             => TEST_USER,
         "generate_ssh_key" => "true",
         "ssh_key_file"     => key_path,
-        "check_mode"       => "true",
+        "_ansible_check_mode" => "true",
       })
 
       result["changed"].as_bool.should be_true

@@ -81,7 +81,7 @@ module Krikri
                        "name", "nobest", "releasever", "security", "skip_broken",
                        "sslverify", "state", "update_cache", "update_only",
                        "validate_certs", "use_backend", "expire-cache", "pkg"}
-      yum_internal = {"check_mode", "diff_mode", "_verbosity", "_environment"}
+      yum_internal = {"_ansible_check_mode", "_ansible_diff", "_verbosity", "_environment"}
       unsupported = @params.keys.reject { |k| yum_supported.includes?(k) || yum_internal.includes?(k) }
       unless unsupported.empty?
         unsupported_sorted = unsupported.sort

@@ -154,7 +154,7 @@ describe "apache2_module plugin" do
     write_modules_file(file, [" status_module (shared)"])
 
     result = PluginSpecHelper.run("apache2_module", {
-      "name" => "rewrite", "check_mode" => "true", "_environment" => env_for(file),
+      "name" => "rewrite", "_ansible_check_mode" => "true", "_environment" => env_for(file),
     })
 
     result["changed"].as_bool.should be_true

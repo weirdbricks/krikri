@@ -11,14 +11,14 @@ describe "package plugin" do
     # found via bertvv.rh-base's own `package: state: installed` task
     # (round 60086), which failed here where real Ansible succeeded.
     result = PluginSpecHelper.run("package",
-      {"name" => "definitely-not-a-real-package-xyz", "state" => "installed", "check_mode" => "true"})
+      {"name" => "definitely-not-a-real-package-xyz", "state" => "installed", "_ansible_check_mode" => "true"})
 
     result["msg"].as_s.should_not contain("Invalid state")
   end
 
   it "accepts state: removed as a synonym for absent" do
     result = PluginSpecHelper.run("package",
-      {"name" => "definitely-not-a-real-package-xyz", "state" => "removed", "check_mode" => "true"})
+      {"name" => "definitely-not-a-real-package-xyz", "state" => "removed", "_ansible_check_mode" => "true"})
 
     result["msg"].as_s.should_not contain("Invalid state")
   end
@@ -46,7 +46,7 @@ describe "package plugin" do
     # check-mode reports "would install" - where the apt backend (the
     # auto-detected one on this host) reports "already installed".
     result = PluginSpecHelper.run("package",
-      {"name" => "bash", "state" => "present", "check_mode" => "true", "use" => "dnf"})
+      {"name" => "bash", "state" => "present", "_ansible_check_mode" => "true", "use" => "dnf"})
 
     result["changed"].as_bool.should be_true
     result["msg"].as_s.should contain("Would install")
@@ -54,7 +54,7 @@ describe "package plugin" do
 
   it "use: apt selects the apt backend explicitly" do
     result = PluginSpecHelper.run("package",
-      {"name" => "bash", "state" => "present", "check_mode" => "true", "use" => "apt"})
+      {"name" => "bash", "state" => "present", "_ansible_check_mode" => "true", "use" => "apt"})
 
     result["failed"]?.try(&.as_bool).should be_falsey
     result["changed"].as_bool.should be_false
@@ -66,12 +66,12 @@ describe "package plugin" do
     # auto-detection, while an explicit `use:` option still takes
     # precedence over the variable.
     with_var = PluginSpecHelper.run("package",
-      {"name" => "bash", "state" => "present", "check_mode" => "true"},
+      {"name" => "bash", "state" => "present", "_ansible_check_mode" => "true"},
       {"ansible_package_use" => "dnf"})
     with_var["changed"].as_bool.should be_true
 
     with_both = PluginSpecHelper.run("package",
-      {"name" => "bash", "state" => "present", "check_mode" => "true", "use" => "apt"},
+      {"name" => "bash", "state" => "present", "_ansible_check_mode" => "true", "use" => "apt"},
       {"ansible_package_use" => "dnf"})
     with_both["changed"].as_bool.should be_false
     with_both["msg"].as_s.should contain("already installed")

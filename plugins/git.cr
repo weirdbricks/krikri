@@ -83,7 +83,7 @@ module Krikri
       single_branch = true?(@params["single_branch"]?)
       track_submodules = true?(@params["track_submodules"]?)
       verify_commit = true?(@params["verify_commit"]?)
-      check_mode = true?(@params["check_mode"]?)
+      check_mode = true?(@params["_ansible_check_mode"]?)
       @depth = @params["depth"]?
       @refspec = @params["refspec"]?
       @reference = @params["reference"]?

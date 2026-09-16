@@ -41,7 +41,7 @@ module Krikri
       return missing_param("path") unless path
       path = expand_tilde(path)
 
-      check_mode = true?(@params["check_mode"]?)
+      check_mode = true?(@params["_ansible_check_mode"]?)
       block = @params["block"]? || @params["content"]?
       state = block.nil? || block.empty? ? "absent" : (@params["state"]? || "present")
 

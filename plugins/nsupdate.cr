@@ -385,7 +385,7 @@ module Krikri
         return {false, false}
       end
 
-      check_mode = true?(@params["check_mode"]?)
+      check_mode = true?(@params["_ansible_check_mode"]?)
       return PluginResult.new(changed: true, failed: false, msg: "check mode") if check_mode
 
       rcode = 0
@@ -540,7 +540,7 @@ module Krikri
       return exists if exists.is_a?(PluginResult)
       return {false, false} if exists == 0
 
-      check_mode = true?(@params["check_mode"]?)
+      check_mode = true?(@params["_ansible_check_mode"]?)
       return PluginResult.new(changed: true, failed: false, msg: "check mode") if check_mode
 
       failure = send_update(server, port, protocol, zone, [] of PluginHelpers::NsupdateMessage::RR,

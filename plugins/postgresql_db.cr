@@ -111,7 +111,7 @@ module Krikri
       uri = build_maintenance_uri
       DB.open(uri) do |dbcon|
         exists = dbcon.query_all("SELECT datname FROM pg_database", as: String).includes?(name)
-        apply_state(state, dbcon, name, exists, true?(@params["check_mode"]?))
+        apply_state(state, dbcon, name, exists, true?(@params["_ansible_check_mode"]?))
       end
     rescue ex : DB::ConnectionRefused
       PluginHelpers::DbErrors.connection_failed(ex, "PostgreSQL")
@@ -188,7 +188,7 @@ module Krikri
       target = @params["target"]?
       return PluginResult.new(changed: false, failed: true, msg: "target is required when state is dump or restore") unless target
 
-      if true?(@params["check_mode"]?)
+      if true?(@params["_ansible_check_mode"]?)
         return PluginResult.new(changed: true, failed: false, msg: "Would #{state} database #{name} #{state == "dump" ? "to" : "from"} #{target} (check mode)")
       end
 

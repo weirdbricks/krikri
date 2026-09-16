@@ -49,7 +49,7 @@ module Krikri
 
       start_monotonic = Time.monotonic
 
-      if true?(@params["check_mode"]?)
+      if true?(@params["_ansible_check_mode"]?)
         return PluginResult.new(changed: false, failed: false,
           msg: "`wait_for_connection` did not execute due to check mode",
           skipped: true)

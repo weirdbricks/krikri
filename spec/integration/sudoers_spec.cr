@@ -89,7 +89,7 @@ describe "sudoers plugin" do
     dir = tmp_path("sudoers-check-mode")
     `rm -rf #{dir}`
 
-    result = PluginSpecHelper.run("sudoers", {"name" => "allow-backup", "user" => "backup", "commands" => "/usr/local/bin/backup", "sudoers_path" => dir, "validation" => "absent", "check_mode" => "true"})
+    result = PluginSpecHelper.run("sudoers", {"name" => "allow-backup", "user" => "backup", "commands" => "/usr/local/bin/backup", "sudoers_path" => dir, "validation" => "absent", "_ansible_check_mode" => "true"})
 
     result["changed"].as_bool.should be_true
     File.exists?(File.join(dir, "allow-backup")).should be_false

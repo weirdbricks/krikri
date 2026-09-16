@@ -155,7 +155,7 @@ describe "cronvar plugin" do
       "name"       => "MAILTO",
       "value"      => "root",
       "cron_file"  => path,
-      "check_mode" => "true",
+      "_ansible_check_mode" => "true",
     })
 
     result["changed"].as_bool.should be_true

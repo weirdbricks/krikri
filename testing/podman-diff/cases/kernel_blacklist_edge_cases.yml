@@ -1,0 +1,137 @@
+# kernel_blacklist module edge cases (community.general.kernel_blacklist).
+# Prefix KB; failed=/changed= booleans, msg presence, and on-disk file
+# content (via cat) matter; error-message WORDING is compared directly for
+# the validation cases (live-verified wordings). Real's StateModuleHelper
+# result has NO msg key, so msg={{ r.msg | default('none') }} must show
+# 'none' on success in BOTH engines. The default blacklist file
+# /etc/modprobe.d/blacklist-ansible.conf is used for the default-file
+# cases (its parent dir is pre-created by the KBpre task - real's append
+# open cannot create parent dirs and dies with a wrapped Errno 2, which
+# KB13 covers); a throwaway file under /tmp for the rest.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "KBpre create /etc/modprobe.d (missing in the slim container)"
+      ansible.builtin.file:
+        path: /etc/modprobe.d
+        state: directory
+      register: kbpre
+
+    - name: "KB0 missing required name"
+      community.general.kernel_blacklist:
+      register: kb0
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "KB0 failed={{ kb0.failed | default('none') }} changed={{ kb0.changed | default('none') }} msg={{ kb0.msg | default('none') }}"
+
+    - name: "KB1 invalid state choice"
+      community.general.kernel_blacklist:
+        name: krikri_mod
+        state: bogus
+      register: kb1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "KB1 failed={{ kb1.failed | default('none') }} changed={{ kb1.changed | default('none') }} msg={{ kb1.msg | default('none') }}"
+
+    - name: "KB2 unsupported parameter"
+      community.general.kernel_blacklist:
+        name: krikri_mod
+        krikri_param: yes
+      register: kb2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "KB2 failed={{ kb2.failed | default('none') }} changed={{ kb2.changed | default('none') }} msg={{ kb2.msg | default('none') }}"
+
+    - name: "KB3 default-file blacklist write (creates the file)"
+      community.general.kernel_blacklist:
+        name: krikri_mod
+      register: kb3
+    - ansible.builtin.debug:
+        msg: "KB3 failed={{ kb3.failed | default('none') }} changed={{ kb3.changed | default('none') }} msg={{ kb3.msg | default('none') }}"
+
+    - name: "KB4 default-file re-run is a no-op"
+      community.general.kernel_blacklist:
+        name: krikri_mod
+      register: kb4
+    - ansible.builtin.debug:
+        msg: "KB4 failed={{ kb4.failed | default('none') }} changed={{ kb4.changed | default('none') }} msg={{ kb4.msg | default('none') }}"
+
+    - name: "KB5 seed a custom blacklist file (incl. trailing-whitespace line)"
+      ansible.builtin.copy:
+        content: "# krikri comment\nblacklist other   \n"
+        dest: /tmp/krikri-blacklist.conf
+      register: kb5
+    - ansible.builtin.debug:
+        msg: "KB5 failed={{ kb5.failed | default('none') }}"
+
+    - name: "KB6 append to the custom file (trailing whitespace is rstripped on rewrite)"
+      community.general.kernel_blacklist:
+        name: krikri_second
+        blacklist_file: /tmp/krikri-blacklist.conf
+      register: kb6
+    - ansible.builtin.debug:
+        msg: "KB6 failed={{ kb6.failed | default('none') }} changed={{ kb6.changed | default('none') }} msg={{ kb6.msg | default('none') }}"
+
+    - name: "KB7 read back the custom file"
+      ansible.builtin.command: cat /tmp/krikri-blacklist.conf
+      register: kb7
+    - ansible.builtin.debug:
+        msg: "KB7 rc={{ kb7.rc | default('none') }} out={{ kb7.stdout_lines | default([]) | join(' | ') }}"
+
+    - name: "KB8 absent removes the matching entry"
+      community.general.kernel_blacklist:
+        name: krikri_second
+        state: absent
+        blacklist_file: /tmp/krikri-blacklist.conf
+      register: kb8
+    - ansible.builtin.debug:
+        msg: "KB8 failed={{ kb8.failed | default('none') }} changed={{ kb8.changed | default('none') }} msg={{ kb8.msg | default('none') }}"
+
+    - name: "KB8b read back after removal"
+      ansible.builtin.command: cat /tmp/krikri-blacklist.conf
+      register: kb8b
+    - ansible.builtin.debug:
+        msg: "KB8b rc={{ kb8b.rc | default('none') }} out={{ kb8b.stdout_lines | default([]) | join(' | ') }}"
+
+    - name: "KB9 absent on a not-present entry is a no-op"
+      community.general.kernel_blacklist:
+        name: krikri_second
+        state: absent
+        blacklist_file: /tmp/krikri-blacklist.conf
+      register: kb9
+    - ansible.builtin.debug:
+        msg: "KB9 failed={{ kb9.failed | default('none') }} changed={{ kb9.changed | default('none') }} msg={{ kb9.msg | default('none') }}"
+
+    - name: "KB10 check mode creates a missing file but writes nothing to it"
+      community.general.kernel_blacklist:
+        name: krikri_ck
+        blacklist_file: /tmp/krikri-blacklist-ck.conf
+      check_mode: true
+      register: kb10
+    - ansible.builtin.debug:
+        msg: "KB10 failed={{ kb10.failed | default('none') }} changed={{ kb10.changed | default('none') }} msg={{ kb10.msg | default('none') }}"
+
+    - name: "KB11 read back the check-mode file (exists, empty)"
+      ansible.builtin.command: cat /tmp/krikri-blacklist-ck.conf
+      register: kb11
+    - ansible.builtin.debug:
+        msg: "KB11 rc={{ kb11.rc | default('none') }} out={{ kb11.stdout | default('none') }}"
+
+    - name: "KB12 absent against a missing file still reports changed (file creation)"
+      community.general.kernel_blacklist:
+        name: krikri_abs
+        state: absent
+        blacklist_file: /tmp/krikri-blacklist-absent.conf
+      register: kb12
+    - ansible.builtin.debug:
+        msg: "KB12 failed={{ kb12.failed | default('none') }} changed={{ kb12.changed | default('none') }} msg={{ kb12.msg | default('none') }}"
+
+    - name: "KB13 missing parent dir fails with real's wrapped Errno-2 open failure"
+      community.general.kernel_blacklist:
+        name: krikri_orphan
+        blacklist_file: /tmp/krikri-no-dir/blacklist.conf
+      register: kb13
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "KB13 failed={{ kb13.failed | default('none') }} changed={{ kb13.changed | default('none') }} msg={{ kb13.msg | default('none') }}"

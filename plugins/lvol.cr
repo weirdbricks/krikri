@@ -47,7 +47,7 @@ module Krikri
       return PluginResult.new(changed: false, failed: true,
         msg: "one of the following is required: lv, thinpool") unless lv || thinpool
 
-      check_mode = true?(@params["check_mode"]?)
+      check_mode = true?(@params["_ansible_check_mode"]?)
       state = @params["state"]? || "present"
       return PluginResult.new(changed: false, failed: true,
         msg: "state must be 'present' or 'absent', got '#{state}'") unless ["present", "absent"].includes?(state)

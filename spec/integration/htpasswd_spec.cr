@@ -91,7 +91,7 @@ describe "htpasswd plugin" do
     path = tmp_path("htpasswd-check-mode")
     File.delete(path) if File.exists?(path)
 
-    result = PluginSpecHelper.run("htpasswd", {"path" => path, "name" => "johndoe", "password" => "supersecure", "check_mode" => "true"})
+    result = PluginSpecHelper.run("htpasswd", {"path" => path, "name" => "johndoe", "password" => "supersecure", "_ansible_check_mode" => "true"})
 
     result["changed"].as_bool.should be_true
     File.exists?(path).should be_false

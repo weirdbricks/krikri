@@ -96,7 +96,7 @@ describe "blockinfile plugin" do
     path = File.tempname("blockinfile-spec")
     File.write(path, "line1\n")
 
-    result = PluginSpecHelper.run("blockinfile", {"path" => path, "block" => "x", "check_mode" => "true"})
+    result = PluginSpecHelper.run("blockinfile", {"path" => path, "block" => "x", "_ansible_check_mode" => "true"})
     result["changed"].as_bool.should be_true
     File.read(path).should eq("line1\n")
   ensure

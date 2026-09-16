@@ -43,7 +43,7 @@ module Krikri
         # matching real Ansible's get_url behavior.
       end
 
-      if true?(@params["check_mode"]?)
+      if true?(@params["_ansible_check_mode"]?)
         result = PluginResult.new(changed: true, failed: false, msg: "would download #{url} to #{dest} (check mode)", dest: dest)
         add_path_info(result, dest)
         return result
@@ -98,7 +98,7 @@ module Krikri
     # changed: true with msg "file already exists but file attributes
     # changed".
     private def check_existing_dest(dest : String, checksum : {String, String}?) : PluginResult?
-      check_mode = true?(@params["check_mode"]?)
+      check_mode = true?(@params["_ansible_check_mode"]?)
 
       if checksum
         algorithm, expected = checksum

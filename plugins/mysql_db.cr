@@ -97,7 +97,7 @@ module Krikri
       end
 
       state = @params["state"]? || "present"
-      check_mode = true?(@params["check_mode"]?)
+      check_mode = true?(@params["_ansible_check_mode"]?)
 
       if state == "dump" || state == "import"
         return run_dump_or_import(state, name)
@@ -161,7 +161,7 @@ module Krikri
       target = @params["target"]?
       return PluginResult.new(changed: false, failed: true, msg: "target is required when state is dump or import") unless target
 
-      check_mode = true?(@params["check_mode"]?)
+      check_mode = true?(@params["_ansible_check_mode"]?)
       if check_mode
         return PluginResult.new(changed: true, failed: false, msg: "Would #{state} database #{name} #{state == "dump" ? "to" : "from"} #{target} (check mode)")
       end

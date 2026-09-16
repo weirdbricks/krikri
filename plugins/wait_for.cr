@@ -44,7 +44,7 @@ module Krikri
   # same outer poll/sleep loop on any timeout/disconnect either way).
   class WaitForPlugin < BasePlugin
     def execute : PluginResult
-      if true?(@params["check_mode"]?)
+      if true?(@params["_ansible_check_mode"]?)
         return PluginResult.new(changed: false, failed: false, msg: "remote module (wait_for) does not support check mode", skipped: true)
       end
 

@@ -47,7 +47,7 @@ module Krikri
       mechanism = detect_mechanism
       return mechanism if mechanism.is_a?(PluginResult)
 
-      check_mode = true?(@params["check_mode"]?)
+      check_mode = true?(@params["_ansible_check_mode"]?)
 
       locale_a = remote_exec("locale -a")
       locale_a_output = locale_a[:exit_code] == 0 ? locale_a[:stdout] : ""

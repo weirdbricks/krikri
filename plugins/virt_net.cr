@@ -47,7 +47,7 @@ module Krikri
       uri = @params["uri"]? || "qemu:///system"
       xml = @params["xml"]?
       autostart = @params["autostart"]? ? true?(@params["autostart"]?) : nil
-      check_mode = true?(@params["check_mode"]?)
+      check_mode = true?(@params["_ansible_check_mode"]?)
 
       # Real AnsibleModule construction - choices for state/command and
       # the required_if name for the entry commands all fire here,

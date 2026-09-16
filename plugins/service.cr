@@ -98,7 +98,7 @@ module Krikri
 
     def initialize(config : JSON::Any)
       super(config)
-      @check_mode = true?(@params["check_mode"]?)
+      @check_mode = true?(@params["_ansible_check_mode"]?)
     end
 
     # Which params of #SYSTEMD_UNUSED_PARAMS were actually given, with real

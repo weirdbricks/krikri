@@ -68,7 +68,7 @@ module Krikri
 
       state = @params["state"]? || "present"
       password = @params["password"]?
-      check_mode = true?(@params["check_mode"]?)
+      check_mode = true?(@params["_ansible_check_mode"]?)
 
       desired_flags = @params["role_attr_flags"]?.try { |spec| PluginHelpers::PostgresqlRoleFlags.parse(spec) }
 

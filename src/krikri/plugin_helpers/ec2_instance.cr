@@ -420,7 +420,7 @@ module Krikri
                  end
                end
 
-        check_mode = bool_param(params["check_mode"]?)
+        check_mode = bool_param(params["_ansible_check_mode"]?)
         return Krikri::PluginResult.new(changed: plan.changed, failed: false, msg: "#{plan.msg} (check mode)") if check_mode
 
         created_ids = [] of String

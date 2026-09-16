@@ -91,7 +91,7 @@ module Krikri
 
       force = true?(@params["force"]?)
       opts = @params["opts"]?.try(&.split) || [] of String
-      check_mode = true?(@params["check_mode"]?)
+      check_mode = true?(@params["_ansible_check_mode"]?)
 
       exists_result = remote_exec("test -e #{shell_quote(dev)}")
       unless exists_result[:exit_code] == 0

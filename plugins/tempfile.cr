@@ -26,7 +26,7 @@ module Krikri
       # T6). This plugin used to run the real mktemp remotely AND report
       # changed:true: a genuine side effect under check mode plus a
       # wrong skip/ok accounting.
-      if true?(@params["check_mode"]?)
+      if true?(@params["_ansible_check_mode"]?)
         invoked = @params["_module_name"]? || "ansible.builtin.tempfile"
         return PluginResult.new(changed: false, failed: false, msg: "remote module (#{invoked}) does not support check mode", skipped: true)
       end

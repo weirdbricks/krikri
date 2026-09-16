@@ -50,7 +50,7 @@ module Krikri
       end
 
       state = @params["state"]? || "present"
-      check_mode = true?(@params["check_mode"]?)
+      check_mode = true?(@params["_ansible_check_mode"]?)
       create = @params["create"]?.nil? ? true : true?(@params["create"]?)
 
       if res = missing_file_result(path, state, create)

@@ -69,7 +69,7 @@ module Krikri
         diversion_wanted["divert"] = divert_param || "#{path}.distrib"
       end
 
-      check_mode = true?(@params["check_mode"]?)
+      check_mode = true?(@params["_ansible_check_mode"]?)
       unchanged = diversion_wanted == diversion_before
       run_command = check_mode || unchanged ? PluginHelpers::DpkgDivertCommand.with_test(main_command) : main_command
 

@@ -167,7 +167,7 @@ module Krikri
       end
 
       # Check for diff mode
-      @diff_mode = true?(@params["diff_mode"]?)
+      @diff_mode = true?(@params["_ansible_diff"]?)
     end
 
     # Abstract method - must be implemented by subclasses

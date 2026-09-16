@@ -33,7 +33,7 @@ module Krikri
     @failure : String?
 
     def execute : PluginResult
-      check_mode = true?(@params["check_mode"]?)
+      check_mode = true?(@params["_ansible_check_mode"]?)
       ip_version = @params["ip_version"]? || "ipv4"
       binaries = ip_version == "both" ? ["iptables", "ip6tables"] : [ip_version == "ipv6" ? "ip6tables" : "iptables"]
 

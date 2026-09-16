@@ -38,7 +38,7 @@ module Krikri
 
     def initialize(config : JSON::Any)
       super(config)
-      @check_mode = true?(@params["check_mode"]?)
+      @check_mode = true?(@params["_ansible_check_mode"]?)
     end
 
     def execute : PluginResult
@@ -61,7 +61,7 @@ module Krikri
                           "masked", "daemon_reload", "daemon-reload",
                           "daemon_reexec", "daemon-reexec", "force",
                           "no_block", "scope"}
-      internal_keys = {"check_mode", "diff_mode", "_verbosity", "_environment"}
+      internal_keys = {"_ansible_check_mode", "_ansible_diff", "_verbosity", "_environment"}
       unsupported = @params.keys.reject { |k| supported_params.includes?(k) || internal_keys.includes?(k) }
       unless unsupported.empty?
         return PluginResult.new(

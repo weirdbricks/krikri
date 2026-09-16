@@ -69,7 +69,7 @@ module Krikri
       end
 
       statements = parse_statements(raw_query)
-      check_mode = true?(@params["check_mode"]?)
+      check_mode = true?(@params["_ansible_check_mode"]?)
       if check_mode
         return PluginResult.new(changed: true, failed: false, msg: "Would execute #{statements.size} statement(s) (check mode)")
       end

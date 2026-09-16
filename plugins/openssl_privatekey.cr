@@ -65,7 +65,7 @@ module Krikri
 
       path = expand_tilde(path)
       state = @params["state"]? || "present"
-      check_mode = true?(@params["check_mode"]?)
+      check_mode = true?(@params["_ansible_check_mode"]?)
 
       return remove(path, check_mode) if state == "absent"
 
@@ -167,7 +167,7 @@ module Krikri
 
     private def write_key(regen : Bool, convert : Bool, path : String, type : String, size : Int32,
                           curve : String?, passphrase : String?, cipher : String, format : String) : PluginResult
-      return result(true, path, type, size, curve, nil) if true?(@params["check_mode"]?)
+      return result(true, path, type, size, curve, nil) if true?(@params["_ansible_check_mode"]?)
 
       backup_file = backup(path)
       error = regen ? generate(path, type, size, curve, passphrase, cipher, format) : convert_format(path, type, passphrase, cipher, format)

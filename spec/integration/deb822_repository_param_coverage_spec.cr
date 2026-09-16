@@ -32,7 +32,7 @@ describe "deb822_repository param coverage" do
       "uris"       => "https://example.com/repo",
       "suites"     => "stable",
       "components" => "[\"main\", \"contrib\", \"non-free\"]",
-      "check_mode" => "true",
+      "_ansible_check_mode" => "true",
     })
 
     result["failed"]?.try(&.as_bool).should be_falsey
@@ -45,7 +45,7 @@ describe "deb822_repository param coverage" do
       "uris"       => "https://example.com/repo",
       "suites"     => "stable",
       "types"      => "[\"deb\", \"deb-src\"]",
-      "check_mode" => "true",
+      "_ansible_check_mode" => "true",
     })
 
     result["repo"].as_s.should contain("Types: deb deb-src")
@@ -57,7 +57,7 @@ describe "deb822_repository param coverage" do
       "uris"       => "https://example.com/repo",
       "suites"     => "stable",
       "components" => "main,contrib",
-      "check_mode" => "true",
+      "_ansible_check_mode" => "true",
     })
 
     result["repo"].as_s.should contain("Components: main contrib")
@@ -71,7 +71,7 @@ describe "deb822_repository param coverage" do
       "architectures" => "[\"amd64\", \"i386\"]",
       "languages"     => "[\"en\", \"de\"]",
       "targets"       => "[\"deb\"]",
-      "check_mode"    => "true",
+      "_ansible_check_mode" => "true",
     })
 
     result["repo"].as_s.should contain("Architectures: amd64 i386")
@@ -87,7 +87,7 @@ describe "deb822_repository param coverage" do
       "trusted"    => "true",
       "enabled"    => "false",
       "pdiffs"     => "yes",
-      "check_mode" => "true",
+      "_ansible_check_mode" => "true",
     })
 
     repo = result["repo"].as_s
@@ -103,7 +103,7 @@ describe "deb822_repository param coverage" do
       "name"       => "param-audit-types-default",
       "uris"       => "https://example.com/repo",
       "suites"     => "stable",
-      "check_mode" => "true",
+      "_ansible_check_mode" => "true",
     })
 
     result["repo"].as_s.should contain("Types: deb")
@@ -115,7 +115,7 @@ describe "deb822_repository param coverage" do
       "uris"           => "https://example.com/repo",
       "suites"         => "stable",
       "inrelease_path" => "stable/InRelease",
-      "check_mode"     => "true",
+      "_ansible_check_mode" => "true",
     })
 
     result["repo"].as_s.should contain("Inrelease-Path: stable/InRelease")
@@ -127,7 +127,7 @@ describe "deb822_repository param coverage" do
       "uris"       => "https://example.com/repo",
       "suites"     => "stable",
       "include"    => "[\"goodpkg\"]",
-      "check_mode" => "true",
+      "_ansible_check_mode" => "true",
     })
 
     repo = result["repo"].as_s
@@ -158,7 +158,7 @@ describe "deb822_repository param coverage" do
       "trusted"                     => "true",
       "types"                       => "[\"deb\", \"deb-src\"]",
       "uris"                        => "https://example.com/repo",
-      "check_mode"                  => "true",
+      "_ansible_check_mode" => "true",
     })
 
     result["repo"].as_s.should eq(
@@ -191,7 +191,7 @@ describe "deb822_repository param coverage" do
       "name"       => "Param Audit Slug",
       "uris"       => "https://example.com/repo",
       "suites"     => "stable",
-      "check_mode" => "true",
+      "_ansible_check_mode" => "true",
     })
 
     msg = result["msg"].as_s

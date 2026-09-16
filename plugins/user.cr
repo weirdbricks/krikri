@@ -139,7 +139,7 @@ module Krikri
       end
 
       state = @params["state"]? || "present"
-      check_mode = true?(@params["check_mode"]?)
+      check_mode = true?(@params["_ansible_check_mode"]?)
       current = lookup(name)
 
       if state == "absent"

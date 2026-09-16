@@ -115,7 +115,7 @@ module Krikri
       state = @params["state"]? || "updated"
       dir = expand_tilde(@params["path"]? || "/etc/pam.d")
       path = File.join(dir, name)
-      check_mode = true?(@params["check_mode"]?)
+      check_mode = true?(@params["_ansible_check_mode"]?)
 
       unless File.exists?(path)
         return PluginResult.new(changed: false, failed: true, msg: "Unable to open/read PAM module file #{path} with error [Errno 2] No such file or directory: '#{path}'.")

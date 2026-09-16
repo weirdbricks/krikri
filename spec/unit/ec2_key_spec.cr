@@ -233,7 +233,7 @@ describe Krikri::PluginHelpers::Ec2Key do
     end
 
     it "returns key null in check mode" do
-      result = run_module({"name" => "deploy", "state" => "present", "region" => "us-east-1", "check_mode" => "true"}, ->(region : String, body : String) { DESCRIBE_NONE })
+      result = run_module({"name" => "deploy", "state" => "present", "region" => "us-east-1", "_ansible_check_mode" => "true"}, ->(region : String, body : String) { DESCRIBE_NONE })
       result["changed"].should eq(true)
       result["key"].should eq(nil)
     end

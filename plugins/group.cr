@@ -64,7 +64,7 @@ module Krikri
       end
 
       state = @params["state"]? || "present"
-      check_mode = true?(@params["check_mode"]?)
+      check_mode = true?(@params["_ansible_check_mode"]?)
 
       # Real Ansible's own group_exists guard for local: os.path.exists on
       # /etc/group first, exact message (it fails BEFORE any state read).

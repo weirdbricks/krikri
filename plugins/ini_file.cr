@@ -22,7 +22,7 @@ module Krikri
       create = @params["create"]? ? true?(@params["create"]) : true
       exclusive = @params["exclusive"]? ? true?(@params["exclusive"]) : true
       no_extra_spaces = true?(@params["no_extra_spaces"]?)
-      check_mode = true?(@params["check_mode"]?)
+      check_mode = true?(@params["_ansible_check_mode"]?)
 
       if err = validate_inputs(path, section, option, value, state, create)
         return err

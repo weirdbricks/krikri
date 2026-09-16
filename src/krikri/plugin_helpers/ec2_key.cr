@@ -125,7 +125,7 @@ module Krikri
         existing = describe_key_pairs(region, credentials, name)
         key_material = params["key_material"]?
         force = bool_param(params["force"]?)
-        check_mode = bool_param(params["check_mode"]?)
+        check_mode = bool_param(params["_ansible_check_mode"]?)
 
         plan = if state == "absent"
                  plan_absent(name, existing)

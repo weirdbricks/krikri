@@ -63,7 +63,7 @@ module Krikri
       end
 
       sysctl_file = @params["sysctl_file"]? || DEFAULT_SYSCTL_FILE
-      check_mode = true?(@params["check_mode"]?)
+      check_mode = true?(@params["_ansible_check_mode"]?)
       reload = true?(@params["reload"]?, default: true)
 
       # Real SysctlModule.process() order: read the live value, read the

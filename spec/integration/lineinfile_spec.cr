@@ -88,7 +88,7 @@ describe "lineinfile plugin" do
       "path"       => path,
       "line"       => "added line",
       "state"      => "present",
-      "check_mode" => "true",
+      "_ansible_check_mode" => "true",
     })
 
     result["changed"].as_bool.should be_true

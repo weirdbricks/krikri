@@ -105,13 +105,13 @@ describe "make plugin" do
     Dir.mkdir_p(TMP_DIR)
     File.write(File.join(TMP_DIR, "Makefile"), "all:\n\t@echo built-all\n")
 
-    stale = PluginSpecHelper.run("make", {"chdir" => TMP_DIR, "target" => "all", "check_mode" => "true"})
+    stale = PluginSpecHelper.run("make", {"chdir" => TMP_DIR, "target" => "all", "_ansible_check_mode" => "true"})
     stale["changed"].as_bool.should be_true
     stale["msg"]?.should be_nil
 
     File.write(File.join(TMP_DIR, "Makefile"), "out.txt:\n\t@echo rebuilt > out.txt\nall:\n\t@echo built-all\n")
     PluginSpecHelper.run("make", {"chdir" => TMP_DIR, "target" => "out.txt"})
-    fresh = PluginSpecHelper.run("make", {"chdir" => TMP_DIR, "target" => "out.txt", "check_mode" => "true"})
+    fresh = PluginSpecHelper.run("make", {"chdir" => TMP_DIR, "target" => "out.txt", "_ansible_check_mode" => "true"})
     fresh["changed"].as_bool.should be_false
     fresh["msg"]?.should be_nil
   end

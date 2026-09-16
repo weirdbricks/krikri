@@ -66,7 +66,7 @@ module Krikri
       serange = @params["selevel"]? || @params["serange"]?
       state = @params["state"]? || "present"
       ignore_selinux_state = true?(@params["ignore_selinux_state"]?)
-      check_mode = true?(@params["check_mode"]?)
+      check_mode = true?(@params["_ansible_check_mode"]?)
 
       unless ignore_selinux_state
         enforce = remote_exec("getenforce")

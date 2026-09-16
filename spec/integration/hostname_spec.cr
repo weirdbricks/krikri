@@ -32,7 +32,7 @@ describe "hostname plugin" do
     target = "krikri-playbook-hostname-spec-target"
     before = `hostname`.strip
 
-    result = PluginSpecHelper.run("hostname", {"name" => target, "check_mode" => "true"})
+    result = PluginSpecHelper.run("hostname", {"name" => target, "_ansible_check_mode" => "true"})
 
     result["changed"].as_bool.should be_true
     result["failed"]?.try(&.as_bool).should be_falsey
@@ -47,7 +47,7 @@ describe "hostname plugin" do
     # Belt-and-braces: re-run the no-change path with check_mode explicitly
     # off to ensure even the non-check path is a no-op when nothing differs.
     current = `hostname`.strip
-    result = PluginSpecHelper.run("hostname", {"name" => current, "check_mode" => "false"})
+    result = PluginSpecHelper.run("hostname", {"name" => current, "_ansible_check_mode" => "false"})
 
     result["changed"].as_bool.should be_false
     result["failed"]?.try(&.as_bool).should be_falsey

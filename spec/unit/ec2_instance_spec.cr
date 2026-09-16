@@ -522,7 +522,7 @@ describe Krikri::PluginHelpers::Ec2Instance do
         "name"       => "web",
         "image_id"   => "ami-123",
         "region"     => "us-east-1",
-        "check_mode" => "true",
+        "_ansible_check_mode" => "true",
       }, handler)
 
       result["changed"].should eq(true)

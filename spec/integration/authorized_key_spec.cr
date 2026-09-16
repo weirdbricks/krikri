@@ -83,14 +83,14 @@ describe "authorized_key plugin" do
     path = tmp_path("authorized-key-check-mode")
     File.delete(path) if File.exists?(path)
 
-    result = PluginSpecHelper.run("authorized_key", {"path" => path, "key" => RSA_KEY, "check_mode" => "true"})
+    result = PluginSpecHelper.run("authorized_key", {"path" => path, "key" => RSA_KEY, "_ansible_check_mode" => "true"})
 
     result["changed"].as_bool.should be_true
     File.exists?(path).should be_false
   end
 
   it "resolves the keyfile path from a user's home directory (NSS) when no path override is given" do
-    result = PluginSpecHelper.run("authorized_key", {"user" => "root", "key" => RSA_KEY, "check_mode" => "true"})
+    result = PluginSpecHelper.run("authorized_key", {"user" => "root", "key" => RSA_KEY, "_ansible_check_mode" => "true"})
 
     result["failed"]?.try(&.as_bool).should be_falsey
     # Real Ansible echoes the resolved path back as `keyfile` (its own
@@ -125,7 +125,7 @@ describe "authorized_key plugin" do
 
   it "fails in check mode with real Ansible's own check-mode message for a nonexistent user" do
     result = PluginSpecHelper.run("authorized_key", {
-      "user" => "definitely-not-a-user-xyz", "key" => RSA_KEY, "check_mode" => "true",
+      "user" => "definitely-not-a-user-xyz", "key" => RSA_KEY, "_ansible_check_mode" => "true",
     })
 
     result["failed"].as_bool.should be_true
@@ -151,14 +151,14 @@ describe "authorized_key plugin" do
     `rm -rf #{tmp_path("authorized-key-explicit-cm")}`
 
     result = PluginSpecHelper.run("authorized_key", {
-      "user" => "definitely-not-a-user-xyz", "path" => path, "key" => RSA_KEY, "check_mode" => "true",
+      "user" => "definitely-not-a-user-xyz", "path" => path, "key" => RSA_KEY, "_ansible_check_mode" => "true",
     })
 
     result["failed"]?.try(&.as_bool).should be_falsey
   end
 
   it "still succeeds for a user that genuinely exists, resolving the real NSS home" do
-    result = PluginSpecHelper.run("authorized_key", {"user" => "root", "key" => RSA_KEY, "check_mode" => "true"})
+    result = PluginSpecHelper.run("authorized_key", {"user" => "root", "key" => RSA_KEY, "_ansible_check_mode" => "true"})
 
     result["failed"]?.try(&.as_bool).should be_falsey
     result["keyfile"].as_s.should eq("/root/.ssh/authorized_keys")

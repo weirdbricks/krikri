@@ -54,7 +54,7 @@ module Krikri
       state = @params["state"]? || "present"
       sudoers_path = @params["sudoers_path"]? || "/etc/sudoers.d"
       file = File.join(sudoers_path, name)
-      check_mode = true?(@params["check_mode"]?)
+      check_mode = true?(@params["_ansible_check_mode"]?)
 
       return remove_rule(file, name, check_mode) if state == "absent"
 

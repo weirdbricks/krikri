@@ -11,7 +11,7 @@ describe "user plugin" do
   it "reports no change for an existing user whose attributes already match (read-only getent check)" do
     shell = `getent passwd root`.split(":")[6].strip
 
-    result = PluginSpecHelper.run("user", {"name" => "root", "shell" => shell, "check_mode" => "true"})
+    result = PluginSpecHelper.run("user", {"name" => "root", "shell" => shell, "_ansible_check_mode" => "true"})
 
     result["changed"].as_bool.should be_false
     result["failed"]?.try(&.as_bool).should be_falsey
@@ -26,7 +26,7 @@ describe "user plugin" do
   it "resolves the user: alias of name:" do
     shell = `getent passwd root`.split(":")[6].strip
 
-    result = PluginSpecHelper.run("user", {"user" => "root", "shell" => shell, "check_mode" => "true"})
+    result = PluginSpecHelper.run("user", {"user" => "root", "shell" => shell, "_ansible_check_mode" => "true"})
 
     result["failed"]?.try(&.as_bool).should be_falsey
     result["changed"].as_bool.should be_false
@@ -45,7 +45,7 @@ describe "user plugin" do
     root_uid = `id -u root`.strip.to_i64
     root_shell = `getent passwd root`.split(":")[6].strip
 
-    result = PluginSpecHelper.run("user", {"name" => "root", "check_mode" => "true"})
+    result = PluginSpecHelper.run("user", {"name" => "root", "_ansible_check_mode" => "true"})
 
     result["home"].as_s.should eq(root_home)
     result["uid"].as_i64.should eq(root_uid)
@@ -56,14 +56,14 @@ describe "user plugin" do
   it "reports no change when group: is given by name and already matches (getent passwd's own gid field is numeric, not a name)" do
     root_group_name = `id -gn root`.strip
 
-    result = PluginSpecHelper.run("user", {"name" => "root", "group" => root_group_name, "check_mode" => "true"})
+    result = PluginSpecHelper.run("user", {"name" => "root", "group" => root_group_name, "_ansible_check_mode" => "true"})
 
     result["changed"].as_bool.should be_false
     result["failed"]?.try(&.as_bool).should be_falsey
   end
 
   it "reports it would modify an existing user when an attribute differs (check mode, no real change)" do
-    result = PluginSpecHelper.run("user", {"name" => "root", "shell" => "/bin/totally-fake-shell", "check_mode" => "true"})
+    result = PluginSpecHelper.run("user", {"name" => "root", "shell" => "/bin/totally-fake-shell", "_ansible_check_mode" => "true"})
 
     result["changed"].as_bool.should be_true
     result["msg"].as_s.should contain("check mode")
@@ -71,7 +71,7 @@ describe "user plugin" do
   end
 
   it "reports it would create a user that does not exist yet (check mode, no real creation)" do
-    result = PluginSpecHelper.run("user", {"name" => NONEXISTENT_USER, "check_mode" => "true"})
+    result = PluginSpecHelper.run("user", {"name" => NONEXISTENT_USER, "_ansible_check_mode" => "true"})
 
     result["changed"].as_bool.should be_true
     result["msg"].as_s.should contain("check mode")
@@ -86,7 +86,7 @@ describe "user plugin" do
   end
 
   it "reports it would remove an existing user (check mode, no real removal)" do
-    result = PluginSpecHelper.run("user", {"name" => "root", "state" => "absent", "check_mode" => "true"})
+    result = PluginSpecHelper.run("user", {"name" => "root", "state" => "absent", "_ansible_check_mode" => "true"})
 
     result["changed"].as_bool.should be_true
     `getent passwd root`.strip.should_not be_empty
@@ -105,7 +105,7 @@ describe "user plugin" do
   it "echoes state plus the modify-path append/move_home and a given groups value (check mode)" do
     result = PluginSpecHelper.run("user", {
       "name" => "root", "state" => "present", "groups" => "root",
-      "append" => "true", "check_mode" => "true",
+      "append" => "true", "_ansible_check_mode" => "true",
     })
 
     result["state"].as_s.should eq("present")
@@ -115,7 +115,7 @@ describe "user plugin" do
   end
 
   it "echoes the create-path system/create_home flags for a not-yet-existing user (check mode)" do
-    result = PluginSpecHelper.run("user", {"name" => NONEXISTENT_USER, "check_mode" => "true"})
+    result = PluginSpecHelper.run("user", {"name" => NONEXISTENT_USER, "_ansible_check_mode" => "true"})
 
     result["state"].as_s.should eq("present")
     result["system"].as_bool.should be_false
@@ -126,7 +126,7 @@ describe "user plugin" do
 
   it "masks a given password as NOT_LOGGING_PASSWORD" do
     result = PluginSpecHelper.run("user", {
-      "name" => "root", "password" => "$6$salt$hash", "check_mode" => "true",
+      "name" => "root", "password" => "$6$salt$hash", "_ansible_check_mode" => "true",
     })
 
     result["password"].as_s.should eq("NOT_LOGGING_PASSWORD")

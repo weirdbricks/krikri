@@ -299,7 +299,7 @@ module Krikri
                   (state == "enabled" && !currently_enabled) || (state == "disabled" && currently_enabled)
                 end
 
-      if true?(@params["check_mode"]?)
+      if true?(@params["_ansible_check_mode"]?)
         return PluginResult.new(changed: changed, failed: false, msg: "Would run: #{ufw_bin_cmd(cmd)} (check mode)")
       end
 
@@ -318,7 +318,7 @@ module Krikri
     end
 
     private def run_simple(cmd : String, ufw_state_key : String? = nil, ufw_state_value : String? = nil) : PluginResult
-      if true?(@params["check_mode"]?)
+      if true?(@params["_ansible_check_mode"]?)
         return PluginResult.new(changed: true, failed: false, msg: "Would run: #{cmd} (check mode)")
       end
 
@@ -391,7 +391,7 @@ module Krikri
     # the only thing that distinguishes "re-applied an identical rule"
     # from "changed one".
     private def run_rule : PluginResult
-      check_mode = true?(@params["check_mode"]?)
+      check_mode = true?(@params["_ansible_check_mode"]?)
       cmd = PluginHelpers::UfwCommand.rule_command(resolved_insert_params, dry_run: check_mode)
 
       # Real community.general does NOT read `changed` out of the ufw

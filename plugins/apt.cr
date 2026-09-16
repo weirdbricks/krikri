@@ -89,7 +89,7 @@ module Krikri
 
     def initialize(config : JSON::Any)
       super(config)
-      @check_mode = true?(@params["check_mode"]?)
+      @check_mode = true?(@params["_ansible_check_mode"]?)
     end
 
     def execute_inner : PluginResult
@@ -107,7 +107,7 @@ module Krikri
       # and _policy_rc_d_path is the spec seam above - none are part of
       # the real argument_spec, so none are rejected.
       apt_supported = {"allow_change_held_packages", "allow_downgrade", "allow_unauthenticated", "autoclean", "autoremove", "cache_valid_time", "clean", "deb", "default_release", "dpkg_options", "fail_on_autoremove", "force", "force_apt_get", "install_recommends", "lock_timeout", "only_upgrade", "package", "policy_rc_d", "purge", "state", "update_cache", "update_cache_retries", "update_cache_retry_max_delay", "upgrade", "allow-downgrade", "allow-downgrades", "allow-unauthenticated", "allow_downgrades", "default-release", "install-recommends", "name", "pkg", "update-cache"}
-      apt_internal = {"check_mode", "diff_mode", "_verbosity", "_environment", "_policy_rc_d_path"}
+      apt_internal = {"_ansible_check_mode", "_ansible_diff", "_verbosity", "_environment", "_policy_rc_d_path"}
       unsupported = @params.keys.reject { |k| apt_supported.includes?(k) || apt_internal.includes?(k) }
       unless unsupported.empty?
         return PluginResult.new(

@@ -106,7 +106,7 @@ describe "subversion plugin - parameter coverage" do
     result = run_subversion(dir, log, {
       "repo"       => "svn+ssh://example.com/repo",
       "dest"       => File.join(dir, "wc"),
-      "check_mode" => "yes",
+      "_ansible_check_mode" => "yes",
     })
 
     result["changed"].as_bool.should be_truthy

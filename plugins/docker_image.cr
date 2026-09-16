@@ -95,7 +95,7 @@ module Krikri
             msg: "docker_image: only source: pull is implemented, got '#{source}'")
         end
       end
-      check_mode = true?(@params["check_mode"]?)
+      check_mode = true?(@params["_ansible_check_mode"]?)
 
       ref_name, default_tag = PluginHelpers::DockerRef.split(name)
       ref_tag = @params["tag"]? || default_tag
