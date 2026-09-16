@@ -1,0 +1,136 @@
+# openssl_dhparam edge cases. The openssl CLI is installed in BOTH
+# containers by run.sh's ^openssl gate. failed=/changed= and on-disk
+# state (openssl dhparam can read the params, observed bit size) are
+# what matter; error MESSAGE WORDING may differ.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "D1 missing required path"
+      community.crypto.openssl_dhparam:
+        size: 512
+      register: d1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D1 failed={{ d1.failed }} changed={{ d1.changed | default('none') }}"
+
+    - name: "D2 size that is not an int"
+      community.crypto.openssl_dhparam:
+        path: /tmp/dh-a.pem
+        size: not-a-size
+      register: d2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D2 failed={{ d2.failed }} changed={{ d2.changed | default('none') }}"
+
+    - name: "D3 force that is not a bool"
+      community.crypto.openssl_dhparam:
+        path: /tmp/dh-a.pem
+        force: banana
+      register: d3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D3 failed={{ d3.failed }} changed={{ d3.changed | default('none') }}"
+
+    - name: "D4 invalid state choice"
+      community.crypto.openssl_dhparam:
+        path: /tmp/dh-a.pem
+        state: banana
+      register: d4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D4 failed={{ d4.failed }} changed={{ d4.changed | default('none') }}"
+
+    - name: "D5 invalid select_crypto_backend choice"
+      community.crypto.openssl_dhparam:
+        path: /tmp/dh-a.pem
+        select_crypto_backend: banana
+      register: d5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D5 failed={{ d5.failed }} changed={{ d5.changed | default('none') }}"
+
+    - name: "D6 unsupported parameter"
+      community.crypto.openssl_dhparam:
+        path: /tmp/dh-a.pem
+        banana: true
+      register: d6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D6 failed={{ d6.failed }} changed={{ d6.changed | default('none') }}"
+
+    - name: "D7 missing parent directory fails"
+      community.crypto.openssl_dhparam:
+        path: /tmp/dh-nope/params.pem
+        size: 512
+      register: d7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D7 failed={{ d7.failed }} changed={{ d7.changed | default('none') }}"
+
+    - name: "D8 generate 512-bit params"
+      community.crypto.openssl_dhparam:
+        path: /tmp/dh-a.pem
+        size: 512
+      register: d8
+      ignore_errors: true
+    - name: "D8b openssl can read the params, 512 bit"
+      ansible.builtin.shell: "openssl dhparam -text -noout -in /tmp/dh-a.pem 2>/dev/null | grep -c '512 bit' || true"
+      register: d8b
+      changed_when: false
+    - ansible.builtin.debug:
+        msg: "D8 failed={{ d8.failed }} changed={{ d8.changed | default('none') }} bits512={{ d8b.stdout | default('none') }}"
+
+    - name: "D9 re-run is idempotent"
+      community.crypto.openssl_dhparam:
+        path: /tmp/dh-a.pem
+        size: 512
+      register: d9
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D9 failed={{ d9.failed }} changed={{ d9.changed }}"
+
+    - name: "D10 different size regenerates"
+      community.crypto.openssl_dhparam:
+        path: /tmp/dh-a.pem
+        size: 1024
+      register: d10
+      ignore_errors: true
+    - name: "D10b params are now 1024 bit"
+      ansible.builtin.shell: "openssl dhparam -text -noout -in /tmp/dh-a.pem 2>/dev/null | grep -c '1024 bit' || true"
+      register: d10b
+      changed_when: false
+    - ansible.builtin.debug:
+        msg: "D10 failed={{ d10.failed }} changed={{ d10.changed | default('none') }} bits1024={{ d10b.stdout | default('none') }}"
+
+    - name: "D11 check-mode with different size claims change"
+      community.crypto.openssl_dhparam:
+        path: /tmp/dh-a.pem
+        size: 512
+      check_mode: true
+      register: d11
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D11 failed={{ d11.failed }} changed={{ d11.changed | default('none') }}"
+
+    - name: "D12 state=absent removes the file"
+      community.crypto.openssl_dhparam:
+        path: /tmp/dh-a.pem
+        state: absent
+      register: d12
+      ignore_errors: true
+    - name: "D12b file gone"
+      ansible.builtin.stat:
+        path: /tmp/dh-a.pem
+      register: d12b
+    - ansible.builtin.debug:
+        msg: "D12 failed={{ d12.failed }} changed={{ d12.changed | default('none') }} exists={{ d12b.stat.exists | default('none') }}"
+
+    - name: "D13 state=absent again is a no-op"
+      community.crypto.openssl_dhparam:
+        path: /tmp/dh-a.pem
+        state: absent
+      register: d13
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D13 failed={{ d13.failed }} changed={{ d13.changed }}"
