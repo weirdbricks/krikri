@@ -598,8 +598,23 @@ for case_file in "${cases[@]}"; do
   podman cp "$DIFF_DIR/cases/$case_file" "$NAME_A:/work/case.yml"
   podman cp "$DIFF_DIR/cases/$case_file" "$NAME_B:/work/case.yml"
 
+  # IPTABLES_ANSIBLE/DEB822_ANSIBLE are only set (non-empty) when SOME
+  # case in this whole invocation needs the venv's newer ansible-core -
+  # only apply either to a case that actually belongs to that group.
+  # Applying it unconditionally to every case in the loop (the bug this
+  # replaces) silently ran EVERY OTHER case's real side under the wrong
+  # ansible-core version whenever a deb822_repository/dpkg_selections/
+  # iptables case happened to share the invocation - the real fix for
+  # a wave of "DIVERGENT" full-sweep results that were pure harness
+  # bugs, not krikri regressions or collection/version drift.
+  case_ansible="ansible-playbook"
+  if [[ -n "$IPTABLES_ANSIBLE" && "$case_name" == iptables* ]]; then
+    case_ansible="$IPTABLES_ANSIBLE"
+  elif [[ -n "$DEB822_ANSIBLE" && "$case_name" =~ ^(deb822|dpkg_selections) ]]; then
+    case_ansible="$DEB822_ANSIBLE"
+  fi
   podman exec "$NAME_A" bash -c \
-    "cd /work && ANSIBLE_NOCOLOR=1 ${IPTABLES_ANSIBLE:-${DEB822_ANSIBLE:-ansible-playbook}} -i inventory.ini case.yml" \
+    "cd /work && ANSIBLE_NOCOLOR=1 $case_ansible -i inventory.ini case.yml" \
     > "$RESULTS/${case_name}_real.log" 2>&1
   rc_a=$?
 
