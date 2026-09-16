@@ -3,6 +3,7 @@
 require "json"
 require "mysql"
 require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/ansible_arg_validation"
 require "../src/krikri/plugin_helpers/db_errors"
 require "../src/krikri/plugin_helpers/mysql_connection"
 require "../src/krikri/plugin_helpers/mysql_info_version"
@@ -44,7 +45,37 @@ module Krikri
   #
   # Never reports changed (a pure read), matches real Ansible.
   class MysqlInfoPlugin < BasePlugin
+    include PluginHelpers::AnsibleArgValidation
+
+    # The real module's merged argument_spec (community.mysql's
+    # mysql_common_argument_spec + mysql_info's own update) in
+    # declaration order - values are the spec's aliases.
+    SPEC = {
+      "login_user"       => [] of String,
+      "login_password"   => [] of String,
+      "login_host"       => [] of String,
+      "login_port"       => [] of String,
+      "login_unix_socket" => [] of String,
+      "config_file"      => [] of String,
+      "connect_timeout"  => [] of String,
+      "client_cert"      => ["ssl_cert"],
+      "client_key"       => ["ssl_key"],
+      "ca_cert"          => ["ssl_ca"],
+      "check_hostname"   => [] of String,
+      "login_db"         => [] of String,
+      "filter"           => [] of String,
+      "exclude_fields"   => [] of String,
+      "return_empty_dbs" => [] of String,
+    }
+
+    INT_PARAMS = {"login_port", "connect_timeout"}
+    BOOL_PARAMS = {"check_hostname", "return_empty_dbs"}
+
     def execute : PluginResult
+      if err = validate_arguments
+        return err
+      end
+
       filters = (@params["filter"]? || "").split(',').map(&.strip).reject(&.empty?).to_set
 
       uri = PluginHelpers::MysqlConnection.build_uri(
@@ -68,6 +99,31 @@ module Krikri
       PluginResult.new(changed: false, failed: true, msg: "unable to connect to database, check login_user and login_password are correct or login_unix_socket password is empty: #{ex.message}")
     rescue ex : MySql::Connection::PacketError
       PluginHelpers::DbErrors.query_failed(ex, "MySQL")
+    end
+
+    # Real AnsibleModule setup order for this spec (no required /
+    # mutually-exclusive / choices constraints): type conversion per
+    # param in spec declaration order, then unsupported params last
+    # (arg_spec.py's ArgumentSpecValidator appends UnsupportedError
+    # after everything else, and the module surfaces errors[0]).
+    private def validate_arguments : PluginResult?
+      SPEC.each_key do |param|
+        value = @params[param]?
+        next unless value
+        if INT_PARAMS.includes?(param) && !value.strip.matches?(/^[+-]?\d+$/)
+          return int_type_error(param, value)
+        end
+        if BOOL_PARAMS.includes?(param) && !bool_convertible?(value)
+          return bool_type_error(param, value)
+        end
+      end
+
+      unsupported = unsupported_param_keys(@params, SPEC)
+      unless unsupported.empty?
+        return unsupported_params_error("community.mysql.mysql_info", unsupported, SPEC)
+      end
+
+      nil
     end
 
     private def fetch_version(db : DB::Database) : JSON::Any

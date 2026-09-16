@@ -1,0 +1,124 @@
+# postgresql_query edge cases. NO PostgreSQL server in the harness
+# containers (real-server lifecycle belongs to the Atlantic.net role
+# rounds), so these are validation-only cases: argument-spec failures
+# and the module-body checks that run BEFORE the first connection/
+# library failure compare msg verbatim; anything that reaches the
+# connection (neither engine can succeed) compares the failed=/changed=
+# shape only. Real community.postgresql needs the collection installed
+# (run.sh's ^postgresql gated block). Prefix: PQ.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "PQ1 nothing passed at all"
+      community.postgresql.postgresql_query:
+      register: pq1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "PQ1 failed={{ pq1.failed | default('none') }} changed={{ pq1.changed | default('none') }}"
+
+    - name: "PQ2 positional_args and named_args together"
+      community.postgresql.postgresql_query:
+        query: "SELECT 1"
+        db: krikri_db
+        positional_args:
+          - 1
+        named_args:
+          krikri: 1
+      register: pq2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "PQ2 failed={{ pq2.failed | default('none') }} msg={{ pq2.msg | default('none') }}"
+
+    - name: "PQ3 query without a db"
+      community.postgresql.postgresql_query:
+        query: "SELECT 1"
+        login_host: 127.0.0.1
+        login_port: 13399
+      register: pq3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "PQ3 failed={{ pq3.failed | default('none') }} changed={{ pq3.changed | default('none') }}"
+
+    - name: "PQ4 unsupported parameter"
+      community.postgresql.postgresql_query:
+        query: "SELECT 1"
+        db: krikri_db
+        krikri_bogus: x
+      register: pq4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "PQ4 failed={{ pq4.failed | default('none') }} msg={{ pq4.msg | default('none') }}"
+
+    - name: "PQ5 invalid ssl_mode choice"
+      community.postgresql.postgresql_query:
+        query: "SELECT 1"
+        db: krikri_db
+        ssl_mode: bogus
+      register: pq5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "PQ5 failed={{ pq5.failed | default('none') }} msg={{ pq5.msg | default('none') }}"
+
+    - name: "PQ6 login_port not an int"
+      community.postgresql.postgresql_query:
+        query: "SELECT 1"
+        db: krikri_db
+        login_port: notaport
+      register: pq6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "PQ6 failed={{ pq6.failed | default('none') }} msg={{ pq6.msg | default('none') }}"
+
+    - name: "PQ7 autocommit not a bool"
+      community.postgresql.postgresql_query:
+        query: "SELECT 1"
+        db: krikri_db
+        autocommit: notabool
+      register: pq7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "PQ7 failed={{ pq7.failed | default('none') }} msg={{ pq7.msg | default('none') }}"
+
+    - name: "PQ8 trust_input not a bool"
+      community.postgresql.postgresql_query:
+        query: "SELECT 1"
+        db: krikri_db
+        trust_input: notabool
+      register: pq8
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "PQ8 failed={{ pq8.failed | default('none') }} msg={{ pq8.msg | default('none') }}"
+
+    - name: "PQ9 autocommit with task-level check mode"
+      community.postgresql.postgresql_query:
+        query: "SELECT 1"
+        db: krikri_db
+        autocommit: true
+        check_mode: true
+      register: pq9
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "PQ9 failed={{ pq9.failed | default('none') }} msg={{ pq9.msg | default('none') }}"
+
+    - name: "PQ10 db alias login_db accepted"
+      community.postgresql.postgresql_query:
+        query: "SELECT 1"
+        login_db: krikri_db
+        login_host: 127.0.0.1
+        login_port: 13399
+      register: pq10
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "PQ10 failed={{ pq10.failed | default('none') }} changed={{ pq10.changed | default('none') }}"
+
+    - name: "PQ11 task-level check mode with autocommit"
+      community.postgresql.postgresql_query:
+        query: "SELECT 1"
+        db: krikri_db
+        autocommit: true
+      check_mode: true
+      register: pq11
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "PQ11 failed={{ pq11.failed | default('none') }} msg={{ pq11.msg | default('none') }}"

@@ -596,7 +596,7 @@ for case_file in "${cases[@]}"; do
     # its raw unrendered template and show as a phantom divergence.
     sed -E '/^[0-9]+[[:space:]]/d' "$1" \
       | grep -oE '\b[A-Z]+[0-9]+[a-c]? [a-zA-Z_]+=.*' \
-      | sed -E 's/\\\\/\x01/g; s/\\n/ | /g; s/\\t/\t/g; s/\x01/\\/g; s/\\"/"/g; s/"\}?(,)?$//; s/[[:space:]]*\*+[[:space:]]*$//; s/=[^ ]*[0-9]{2,6}\.[0-9]{4}-[0-9]{2}-[0-9]{2}@[0-9:]{8}~/=<backup-path>/g'
+      | sed -E 's/\\\\/\x01/g; s/\\n/ | /g; s/\\t/\t/g; s/\x01/\\/g; s/\\"/"/g; s/"\}?(,)?$//; s/[[:space:]]*\*+[[:space:]]*$//; s/=[^ ]*[0-9]{2,6}\.[0-9]{4}-[0-9]{2}-[0-9]{2}@[0-9:]{8}~/=<backup-path>/g; s/Valid booleans include:.*/Valid booleans include: <booleans>/g'
   }
   extract "$RESULTS/${case_name}_real.log" > "$msgs_a"
   extract "$RESULTS/${case_name}_krikri.log" > "$msgs_b"

@@ -8,8 +8,11 @@
 # unavailable -> rc=4 "unavailable modules").
 #
 # Semantics matching the real module:
-# - variable required and validated against ^[0-9A-Za-z_.]+$
-#   ("invalid variable name \"X\""); unknown variable ->
+# - variable is required=True in the real argument_spec, so a missing
+#   variable fails at module setup with "missing required arguments:
+#   variable" (the module body's own "Cannot run without variable to
+#   operate with" check is unreachable dead code in the real module -
+#   not reproduced); unknown variable ->
 #   "Variable not available \"X\"".
 # - no value -> pure read: exits with the variable's current value as
 #   msg, changed=false.
@@ -19,19 +22,57 @@
 #   difference issues SET GLOBAL (mode: global/persist/persist_only).
 # - returns queries=[executed SET ...] on change, msg
 #   "Variable change succeeded prev_value=X".
+# - the real module declares no supports_check_mode, so real Ansible
+#   skips the task with "remote module (...) does not support check
+#   mode" after argument validation - reproduced.
 require "json"
 require "mysql"
 require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/ansible_arg_validation"
 require "../src/krikri/plugin_helpers/db_errors"
 require "../src/krikri/plugin_helpers/mysql_connection"
 require "../src/krikri/plugin_helpers/mysql_variables"
 
 module Krikri
   class MysqlVariablesPlugin < BasePlugin
+    include PluginHelpers::AnsibleArgValidation
+
+    # The real module's merged argument_spec (mysql_common_argument_spec
+    # + mysql_variables' own update) in declaration order.
+    SPEC = {
+      "login_user"        => [] of String,
+      "login_password"    => [] of String,
+      "login_host"        => [] of String,
+      "login_port"        => [] of String,
+      "login_unix_socket" => [] of String,
+      "config_file"       => [] of String,
+      "connect_timeout"   => [] of String,
+      "client_cert"       => ["ssl_cert"],
+      "client_key"        => ["ssl_key"],
+      "ca_cert"           => ["ssl_ca"],
+      "check_hostname"    => [] of String,
+      "variable"          => [] of String,
+      "value"             => [] of String,
+      "mode"              => [] of String,
+    }
+
+    INT_PARAMS  = {"login_port", "connect_timeout"}
+    BOOL_PARAMS = {"check_hostname"}
+
     def execute : PluginResult
+      if err = validate_arguments
+        return err
+      end
+
+      check_mode = true?(@params["_ansible_check_mode"]?)
+      if check_mode
+        invoked = @params["_module_name"]? || "community.mysql.mysql_variables"
+        return PluginResult.new(changed: false, failed: false,
+          msg: "remote module (#{invoked}) does not support check mode", skipped: true)
+      end
+
       variable = @params["variable"]?
-      return PluginResult.new(changed: false, failed: true,
-        msg: "Cannot run without variable to operate with") unless variable
+      variable = variable.not_nil!
 
       unless PluginHelpers::MysqlVariables.valid_name?(variable)
         return PluginResult.new(changed: false, failed: true,
@@ -40,10 +81,6 @@ module Krikri
 
       value = @params["value"]?
       mode = @params["mode"]? || "global"
-      unless ["global", "persist", "persist_only"].includes?(mode)
-        return PluginResult.new(changed: false, failed: true,
-          msg: "value of mode must be one of: global, persist, persist_only, got #{mode}")
-      end
 
       uri = PluginHelpers::MysqlConnection.build_uri(
         host: @params["login_host"]?,
@@ -82,6 +119,45 @@ module Krikri
       PluginResult.new(changed: false, failed: true, msg: "unable to connect to database, check login_user and login_password are correct or login_unix_socket password is empty: #{ex.message}")
     rescue ex : MySql::Connection::PacketError
       PluginHelpers::DbErrors.query_failed(ex, "MySQL")
+    end
+
+    # Real AnsibleModule setup order for this spec (no mutually-exclusive
+    # constraints): required args, then the spec's types in declaration
+    # order, then the mode choices (all arg_spec.py errors, of which the
+    # module surfaces errors[0] in that collection order), then
+    # unsupported params LAST (UnsupportedError is appended after
+    # everything else by ArgumentSpecValidator.validate). The
+    # variable-name regex check is the module BODY's first real check
+    # and only runs once setup passed.
+    private def validate_arguments : PluginResult?
+      unless @params["variable"]?
+        return PluginResult.new(changed: false, failed: true, msg: "missing required arguments: variable")
+      end
+
+      SPEC.each_key do |param|
+        value = @params[param]?
+        next unless value
+        if INT_PARAMS.includes?(param) && !value.strip.matches?(/^[+-]?\d+$/)
+          return int_type_error(param, value)
+        end
+        if BOOL_PARAMS.includes?(param) && !bool_convertible?(value)
+          return bool_type_error(param, value)
+        end
+      end
+
+      if mode = @params["mode"]?
+        unless ["global", "persist", "persist_only"].includes?(mode)
+          return PluginResult.new(changed: false, failed: true,
+            msg: "value of mode must be one of: global, persist, persist_only, got: #{mode}")
+        end
+      end
+
+      unsupported = unsupported_param_keys(@params, SPEC)
+      unless unsupported.empty?
+        return unsupported_params_error("community.mysql.mysql_variables", unsupported, SPEC)
+      end
+
+      nil
     end
 
     private def read_variable(connection : DB::Database, variable : String) : String?

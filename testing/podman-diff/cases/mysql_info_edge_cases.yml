@@ -1,0 +1,87 @@
+# mysql_info module edge cases, against a real MariaDB running in BOTH
+# harness containers (run.sh's mysql gate installs mariadb-server in
+# each). Argument-validation surface (unsupported params, int/bool type
+# conversion) plus functional filter behavior. Prefix: MI.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "MI1 filter version,settings (functional)"
+      community.mysql.mysql_info:
+        filter: "version,settings"
+        login_user: root
+        login_unix_socket: /run/mysqld/mysqld.sock
+      register: mi1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "MI1 failed={{ mi1.failed | default('none') }} changed={{ mi1.changed | default('none') }} major={{ mi1.version.major | default('none') }} minor={{ mi1.version.minor | default('none') }}"
+
+    - name: "MI2 filter version only as a string"
+      community.mysql.mysql_info:
+        filter: "version"
+        login_user: root
+        login_unix_socket: /run/mysqld/mysqld.sock
+      register: mi2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "MI2 failed={{ mi2.failed | default('none') }} major={{ mi2.version.major | default('none') }} settings={{ mi2.settings | default('none') }}"
+
+    - name: "MI3 filter as a YAML list"
+      community.mysql.mysql_info:
+        filter:
+          - version
+        login_user: root
+        login_unix_socket: /run/mysqld/mysqld.sock
+      register: mi3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "MI3 failed={{ mi3.failed | default('none') }} major={{ mi3.version.major | default('none') }} settings={{ mi3.settings | default('none') }}"
+
+    - name: "MI4 unsupported parameter"
+      community.mysql.mysql_info:
+        krikri_bogus: x
+        login_user: root
+        login_unix_socket: /run/mysqld/mysqld.sock
+      register: mi4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "MI4 failed={{ mi4.failed | default('none') }} msg={{ mi4.msg | default('none') }}"
+
+    - name: "MI5 login_port not an int"
+      community.mysql.mysql_info:
+        login_port: notaport
+        login_user: root
+        login_unix_socket: /run/mysqld/mysqld.sock
+      register: mi5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "MI5 failed={{ mi5.failed | default('none') }} msg={{ mi5.msg | default('none') }}"
+
+    - name: "MI6 return_empty_dbs not a bool"
+      community.mysql.mysql_info:
+        return_empty_dbs: notabool
+        login_user: root
+        login_unix_socket: /run/mysqld/mysqld.sock
+      register: mi6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "MI6 failed={{ mi6.failed | default('none') }} msg={{ mi6.msg | default('none') }}"
+
+    - name: "MI7 connect_timeout not an int"
+      community.mysql.mysql_info:
+        connect_timeout: xyz
+        login_user: root
+        login_unix_socket: /run/mysqld/mysqld.sock
+      register: mi7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "MI7 failed={{ mi7.failed | default('none') }} msg={{ mi7.msg | default('none') }}"
+
+    - name: "MI8 no filter (functional, spot-check keys)"
+      community.mysql.mysql_info:
+        login_user: root
+        login_unix_socket: /run/mysqld/mysqld.sock
+      register: mi8
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "MI8 failed={{ mi8.failed | default('none') }} major={{ mi8.version.major | default('none') }} datadir={{ mi8.settings.datadir | default('none') }} changed={{ mi8.changed | default('none') }}"

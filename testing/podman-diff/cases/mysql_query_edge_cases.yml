@@ -1,0 +1,148 @@
+# mysql_query module edge cases, against a real MariaDB running in BOTH
+# harness containers (run.sh's mysql gate installs mariadb-server in
+# each). Argument-validation surface (required query, positional|named
+# mutual exclusion, bool conversion, unsupported params) plus
+# functional DDL/DML/SELECT behavior. Prefix: MQ.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "MQ1 missing query"
+      community.mysql.mysql_query:
+        login_user: root
+        login_unix_socket: /run/mysqld/mysqld.sock
+      register: mq1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "MQ1 failed={{ mq1.failed | default('none') }} msg={{ mq1.msg | default('none') }}"
+
+    - name: "MQ2 positional_args and named_args together"
+      community.mysql.mysql_query:
+        query: "SELECT 1"
+        positional_args:
+          - 1
+        named_args:
+          krikri: 1
+        login_user: root
+        login_unix_socket: /run/mysqld/mysqld.sock
+      register: mq2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "MQ2 failed={{ mq2.failed | default('none') }} msg={{ mq2.msg | default('none') }}"
+
+    - name: "MQ3 single_transaction not a bool"
+      community.mysql.mysql_query:
+        query: "SELECT 1"
+        single_transaction: notabool
+        login_user: root
+        login_unix_socket: /run/mysqld/mysqld.sock
+      register: mq3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "MQ3 failed={{ mq3.failed | default('none') }} msg={{ mq3.msg | default('none') }}"
+
+    - name: "MQ4 unsupported parameter"
+      community.mysql.mysql_query:
+        query: "SELECT 1"
+        krikri_bogus: x
+        login_user: root
+        login_unix_socket: /run/mysqld/mysqld.sock
+      register: mq4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "MQ4 failed={{ mq4.failed | default('none') }} msg={{ mq4.msg | default('none') }}"
+
+    - name: "MQ5 CREATE TABLE (functional DDL)"
+      community.mysql.mysql_query:
+        query: "CREATE TABLE IF NOT EXISTS krikri_mq (id INT)"
+        login_user: root
+        login_unix_socket: /run/mysqld/mysqld.sock
+      register: mq5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "MQ5 failed={{ mq5.failed | default('none') }} changed={{ mq5.changed | default('none') }} rowcount0={{ mq5.rowcount.0 | default('none') }}"
+
+    - name: "MQ6 INSERT one row (functional DML)"
+      community.mysql.mysql_query:
+        query: "INSERT INTO krikri_mq VALUES (1)"
+        login_user: root
+        login_unix_socket: /run/mysqld/mysqld.sock
+      register: mq6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "MQ6 failed={{ mq6.failed | default('none') }} changed={{ mq6.changed | default('none') }} rowcount0={{ mq6.rowcount.0 | default('none') }}"
+
+    - name: "MQ7 SELECT the row back (functional read)"
+      community.mysql.mysql_query:
+        query: "SELECT id FROM krikri_mq"
+        login_user: root
+        login_unix_socket: /run/mysqld/mysqld.sock
+      register: mq7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "MQ7 failed={{ mq7.failed | default('none') }} changed={{ mq7.changed | default('none') }} rowcount0={{ mq7.rowcount.0 | default('none') }} result={{ mq7.query_result | default('none') }}"
+
+    - name: "MQ8 query as a list of two SELECTs"
+      community.mysql.mysql_query:
+        query:
+          - "SELECT 1"
+          - "SELECT 2"
+        login_user: root
+        login_unix_socket: /run/mysqld/mysqld.sock
+      register: mq8
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "MQ8 failed={{ mq8.failed | default('none') }} changed={{ mq8.changed | default('none') }} rowcount0={{ mq8.rowcount.0 | default('none') }} rowcount1={{ mq8.rowcount.1 | default('none') }} result={{ mq8.query_result | default('none') }}"
+
+    - name: "MQ5b CREATE TABLE with login_db (functional DDL success path)"
+      community.mysql.mysql_query:
+        query: "CREATE TABLE IF NOT EXISTS krikri_mq2 (id INT)"
+        login_db: mysql
+        login_user: root
+        login_unix_socket: /run/mysqld/mysqld.sock
+      register: mq5b
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "MQ5b failed={{ mq5b.failed | default('none') }} changed={{ mq5b.changed | default('none') }} rowcount0={{ mq5b.rowcount.0 | default('none') }}"
+
+    - name: "MQ6b INSERT one row with login_db (functional DML success path)"
+      community.mysql.mysql_query:
+        query: "INSERT INTO krikri_mq2 VALUES (1)"
+        login_db: mysql
+        login_user: root
+        login_unix_socket: /run/mysqld/mysqld.sock
+      register: mq6b
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "MQ6b failed={{ mq6b.failed | default('none') }} changed={{ mq6b.changed | default('none') }} rowcount0={{ mq6b.rowcount.0 | default('none') }} result={{ mq6b.query_result | default('none') }}"
+
+    - name: "MQ7b SELECT the row back with login_db"
+      community.mysql.mysql_query:
+        query: "SELECT id FROM krikri_mq2"
+        login_db: mysql
+        login_user: root
+        login_unix_socket: /run/mysqld/mysqld.sock
+      register: mq7b
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "MQ7b failed={{ mq7b.failed | default('none') }} changed={{ mq7b.changed | default('none') }} rowcount0={{ mq7b.rowcount.0 | default('none') }} result={{ mq7b.query_result | default('none') }}"
+
+    - name: "MQ9 SQL error on a missing table"
+      community.mysql.mysql_query:
+        query: "SELECT * FROM krikri_no_such_table"
+        login_user: root
+        login_unix_socket: /run/mysqld/mysqld.sock
+      register: mq9
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "MQ9 failed={{ mq9.failed | default('none') }} changed={{ mq9.changed | default('none') }}"
+
+    - name: "MQ10 non-DML non-DDL statement keeps changed=false"
+      community.mysql.mysql_query:
+        query: "SHOW DATABASES"
+        login_user: root
+        login_unix_socket: /run/mysqld/mysqld.sock
+      register: mq10
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "MQ10 failed={{ mq10.failed | default('none') }} changed={{ mq10.changed | default('none') }} rowcount0={{ mq10.rowcount.0 | default('none') }}"
