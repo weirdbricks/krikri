@@ -1,0 +1,86 @@
+# openssl_publickey_info edge cases. The openssl CLI is installed in
+# BOTH containers by run.sh's ^openssl gate. failed=/changed= and the
+# parse outcome are what matter; error MESSAGE WORDING may differ.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "Q1 generate fixture keys"
+      ansible.builtin.shell: "openssl genrsa -out /tmp/qi-key.pem 2048 2>/dev/null && openssl rsa -in /tmp/qi-key.pem -pubout -out /tmp/qi-pub.pem 2>/dev/null"
+      register: q1
+      ignore_errors: true
+      changed_when: false
+
+    - name: "Q2 neither path nor content"
+      community.crypto.openssl_publickey_info:
+      register: q2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "Q2 failed={{ q2.failed }} changed={{ q2.changed | default('none') }}"
+
+    - name: "Q3 both path and content"
+      community.crypto.openssl_publickey_info:
+        path: /tmp/qi-pub.pem
+        content: "banana"
+      register: q3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "Q3 failed={{ q3.failed }} changed={{ q3.changed | default('none') }}"
+
+    - name: "Q4 invalid select_crypto_backend choice"
+      community.crypto.openssl_publickey_info:
+        path: /tmp/qi-pub.pem
+        select_crypto_backend: banana
+      register: q4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "Q4 failed={{ q4.failed }} changed={{ q4.changed | default('none') }}"
+
+    - name: "Q5 unsupported parameter"
+      community.crypto.openssl_publickey_info:
+        path: /tmp/qi-pub.pem
+        banana: true
+      register: q5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "Q5 failed={{ q5.failed }} changed={{ q5.changed | default('none') }}"
+
+    - name: "Q6 missing file"
+      community.crypto.openssl_publickey_info:
+        path: /tmp/qi-nope.pem
+      register: q6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "Q6 failed={{ q6.failed }} changed={{ q6.changed | default('none') }}"
+
+    - name: "Q7 garbage file"
+      community.crypto.openssl_publickey_info:
+        path: /etc/hostname
+      register: q7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "Q7 failed={{ q7.failed }} changed={{ q7.changed | default('none') }} can_parse={{ q7.can_parse_key | default('none') }}"
+
+    - name: "Q8 valid parse reports the key"
+      community.crypto.openssl_publickey_info:
+        path: /tmp/qi-pub.pem
+      register: q8
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "Q8 failed={{ q8.failed }} changed={{ q8.changed | default('none') }} type={{ q8.type | default('none') }}"
+
+    - name: "Q9 content parse works"
+      community.crypto.openssl_publickey_info:
+        content: "{{ lookup('ansible.builtin.file', '/tmp/qi-pub.pem') }}"
+      register: q9
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "Q9 failed={{ q9.failed }} changed={{ q9.changed | default('none') }} type={{ q9.type | default('none') }}"
+
+    - name: "Q10 a private key is not a public key"
+      community.crypto.openssl_publickey_info:
+        path: /tmp/qi-key.pem
+      register: q10
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "Q10 failed={{ q10.failed }} changed={{ q10.changed | default('none') }}"
