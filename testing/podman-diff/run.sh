@@ -51,7 +51,7 @@ log "installing collections in $NAME_A (ansible.posix, community.general, commun
 # installs with --no-deps (same content, resolved from GitHub, no
 # Galaxy API round trip; these collections have no hard deps) when it
 # does.
-podman exec "$NAME_A" bash -c "ansible-galaxy collection install ansible.posix community.general community.mysql community.crypto >/dev/null 2>&1" \
+podman exec "$NAME_A" bash -c "ansible-galaxy collection install ansible.posix:==2.2.2 community.general:==13.4.0 community.mysql:==5.0.2 community.crypto:==3.4.0 >/dev/null 2>&1" \
   || podman exec "$NAME_A" bash -c "ansible-galaxy collection install --no-deps git+https://github.com/ansible-collections/ansible.posix.git git+https://github.com/ansible-collections/community.general.git git+https://github.com/ansible-collections/community.mysql.git git+https://github.com/ansible-collections/community.crypto.git >/dev/null 2>&1" \
   || { log "FATAL: collection install failed"; exit 1; }
 
@@ -81,7 +81,7 @@ fi
 # case list so ordinary runs don't pay the mariadb-server install.
 if printf '%s\n' "${cases[@]}" | grep -q '^mysql'; then
   log "installing mariadb-server (+ PyMySQL + community.mysql) for mysql cases"
-  podman exec "$NAME_A" bash -c "apt-get install -y -qq --no-install-recommends mariadb-server python3-pymysql >/dev/null && service mariadb start >/dev/null && sleep 3 && ansible-galaxy collection install community.mysql >/dev/null 2>&1" \
+  podman exec "$NAME_A" bash -c "apt-get install -y -qq --no-install-recommends mariadb-server python3-pymysql >/dev/null && service mariadb start >/dev/null && sleep 3 && ansible-galaxy collection install community.mysql:==5.0.2 >/dev/null 2>&1" \
     || { log "FATAL: mariadb/community.mysql install failed"; exit 1; }
   podman exec "$NAME_B" bash -c "apt-get install -y -qq --no-install-recommends mariadb-server >/dev/null && service mariadb start >/dev/null && sleep 3" \
     || { log "FATAL: mariadb install failed"; exit 1; }
@@ -93,7 +93,7 @@ fi
 # or every case fails on the SDK import instead of on the args.
 if printf '%s\n' "${cases[@]}" | grep -q '^docker'; then
   log "installing community.docker + Docker SDK for docker cases"
-  podman exec "$NAME_A" bash -c "apt-get install -y -qq --no-install-recommends python3-docker >/dev/null && ansible-galaxy collection install community.docker >/dev/null 2>&1" \
+  podman exec "$NAME_A" bash -c "apt-get install -y -qq --no-install-recommends python3-docker >/dev/null && ansible-galaxy collection install community.docker:==5.3.0 >/dev/null 2>&1" \
     || { log "FATAL: community.docker/Docker SDK install failed"; exit 1; }
 fi
 
@@ -104,7 +104,7 @@ fi
 # Gated on the requested case list like the docker cases above.
 if printf '%s\n' "${cases[@]}" | grep -q '^podman'; then
   log "installing containers.podman collection for podman cases"
-  podman exec "$NAME_A" bash -c "ansible-galaxy collection install containers.podman >/dev/null 2>&1" \
+  podman exec "$NAME_A" bash -c "ansible-galaxy collection install containers.podman:==1.20.2 >/dev/null 2>&1" \
     || { log "FATAL: containers.podman install failed"; exit 1; }
 fi
 
@@ -124,7 +124,7 @@ fi
 DEB822_ANSIBLE=""
 if printf '%s\n' "${cases[@]}" | grep -qE '^(deb822|dpkg_selections)'; then
   log "installing venv ansible-core (>=2.15) for deb822/dpkg_selections cases (+ python3-debian for deb822)"
-  podman exec "$NAME_A" bash -c "apt-get install -y -qq --no-install-recommends python3-venv python3-debian >/dev/null && python3 -m venv /opt/ansible215 && /opt/ansible215/bin/pip install -q ansible-core" \
+  podman exec "$NAME_A" bash -c "apt-get install -y -qq --no-install-recommends python3-venv python3-debian >/dev/null && python3 -m venv /opt/ansible215 && /opt/ansible215/bin/pip install -q ansible-core==2.19.13" \
     || { log "FATAL: venv ansible-core install failed"; exit 1; }
   DEB822_ANSIBLE="/opt/ansible215/bin/ansible-playbook"
 fi
@@ -233,7 +233,7 @@ fi
 # the requested case list like the mysql cases above.
 if printf '%s\n' "${cases[@]}" | grep -q '^postgresql'; then
   log "installing community.postgresql collection for postgresql cases"
-  podman exec "$NAME_A" bash -c "ansible-galaxy collection install community.postgresql >/dev/null 2>&1" \
+  podman exec "$NAME_A" bash -c "ansible-galaxy collection install community.postgresql:==5.0.0 >/dev/null 2>&1" \
     || { log "FATAL: community.postgresql install failed"; exit 1; }
 fi
 
@@ -245,7 +245,7 @@ fi
 # Gated on the requested case list like the postgresql cases.
 if printf '%s\n' "${cases[@]}" | grep -q '^current_container_facts'; then
   log "installing community.docker collection for current_container_facts cases"
-  podman exec "$NAME_A" bash -c "ansible-galaxy collection install community.docker >/dev/null 2>&1" \
+  podman exec "$NAME_A" bash -c "ansible-galaxy collection install community.docker:==5.3.0 >/dev/null 2>&1" \
     || { log "FATAL: community.docker install failed"; exit 1; }
 fi
 
@@ -295,7 +295,7 @@ fi
 # postgresql cases.
 if printf '%s\n' "${cases[@]}" | grep -qE '^(ec2_|iam_)'; then
   log "installing amazon.aws collection for the ec2_/iam_ cases"
-  podman exec "$NAME_A" bash -c "ansible-galaxy collection install amazon.aws >/dev/null 2>&1" \
+  podman exec "$NAME_A" bash -c "ansible-galaxy collection install amazon.aws:==11.4.0 >/dev/null 2>&1" \
     || { log "FATAL: amazon.aws install failed"; exit 1; }
 fi
 
@@ -308,7 +308,7 @@ fi
 # requested case list like the amazon.aws cases above.
 if printf '%s\n' "${cases[@]}" | grep -q '^ovirt_'; then
   log "installing ovirt.ovirt collection for ovirt_auth cases"
-  podman exec "$NAME_A" bash -c "ansible-galaxy collection install ovirt.ovirt >/dev/null 2>&1" \
+  podman exec "$NAME_A" bash -c "ansible-galaxy collection install ovirt.ovirt:==3.2.2 >/dev/null 2>&1" \
     || podman exec "$NAME_A" bash -c "ansible-galaxy collection install --no-deps git+https://github.com/ovirt/ovirt-ansible-collection.git >/dev/null 2>&1" \
     || { log "FATAL: ovirt.ovirt install failed"; exit 1; }
 fi
@@ -322,7 +322,7 @@ fi
 # postgresql cases.
 if printf '%s\n' "${cases[@]}" | grep -q '^rabbitmq'; then
   log "installing community.rabbitmq collection for rabbitmq cases"
-  podman exec "$NAME_A" bash -c "ansible-galaxy collection install community.rabbitmq >/dev/null 2>&1" \
+  podman exec "$NAME_A" bash -c "ansible-galaxy collection install community.rabbitmq:==1.7.0 >/dev/null 2>&1" \
     || { log "FATAL: community.rabbitmq install failed"; exit 1; }
 fi
 
@@ -383,7 +383,7 @@ if printf '%s\n' "${cases[@]}" | grep -q '^iptables'; then
   done
   if ! podman exec "$NAME_A" test -x /opt/ansible215/bin/ansible-playbook; then
     log "installing venv ansible-core (>=2.15) for iptables cases (2.14 lacks ansible.builtin.iptables)"
-    podman exec "$NAME_A" bash -c "apt-get install -y -qq --no-install-recommends python3-venv >/dev/null && python3 -m venv /opt/ansible215 && /opt/ansible215/bin/pip install -q ansible-core" \
+    podman exec "$NAME_A" bash -c "apt-get install -y -qq --no-install-recommends python3-venv >/dev/null && python3 -m venv /opt/ansible215 && /opt/ansible215/bin/pip install -q ansible-core==2.19.13" \
       || { log "FATAL: venv ansible-core install failed"; exit 1; }
   fi
   IPTABLES_ANSIBLE="/opt/ansible215/bin/ansible-playbook"
@@ -555,7 +555,7 @@ fi
 # Gated on the requested case list like the postgresql cases.
 if printf '%s\n' "${cases[@]}" | grep -q '^virt_net'; then
   log "installing community.libvirt collection for virt_net cases"
-  podman exec "$NAME_A" bash -c "ansible-galaxy collection install community.libvirt >/dev/null 2>&1" \
+  podman exec "$NAME_A" bash -c "ansible-galaxy collection install community.libvirt:==2.3.0 >/dev/null 2>&1" \
     || { log "FATAL: community.libvirt install failed"; exit 1; }
 fi
 
