@@ -45,7 +45,14 @@ podman exec "$NAME_A" bash -c "apt-get update -qq && apt-get install -y -qq --no
   || { log "FATAL: ansible-core install failed"; exit 1; }
 
 log "installing collections in $NAME_A (ansible.posix, community.general, community.crypto)"
+# Galaxy's API intermittently fails old ansible-galaxy's version lookup
+# ("error when getting available versions ...: 'results'", 502s on
+# /api/v1/) while the service itself is up - fall back to git+https
+# installs with --no-deps (same content, resolved from GitHub, no
+# Galaxy API round trip; these collections have no hard deps) when it
+# does.
 podman exec "$NAME_A" bash -c "ansible-galaxy collection install ansible.posix community.general community.mysql community.crypto >/dev/null 2>&1" \
+  || podman exec "$NAME_A" bash -c "ansible-galaxy collection install --no-deps git+https://github.com/ansible-collections/ansible.posix.git git+https://github.com/ansible-collections/community.general.git git+https://github.com/ansible-collections/community.mysql.git git+https://github.com/ansible-collections/community.crypto.git >/dev/null 2>&1" \
   || { log "FATAL: collection install failed"; exit 1; }
 
 log "staging krikri-playbook in $NAME_B"
@@ -396,6 +403,23 @@ if printf '%s\n' "${cases[@]}" | grep -q '^htpasswd'; then
   for c in "$NAME_A" "$NAME_B"; do
     podman exec "$c" bash -c "apt-get install -y -qq --no-install-recommends openssl >/dev/null" \
       || { log "FATAL: openssl install failed in $c"; exit 1; }
+  done
+fi
+
+# lvol cases are argument-validation + VG-absent only: a PV needs a
+# loop device, and the host-owned /dev/loop-control ioctl is EPERM
+# denied inside a ROOTLESS podman container even with --privileged
+# (and there is no other block device to make a PV out of), so no
+# VG/LV can ever exist here. The lvm2 userland (vgs/lvs) is still
+# installed in BOTH containers so discovery actually runs and the
+# "Volume group ... does not exist." failure path is exercised rather
+# than a get_bin_path/executable-not-found artifact on the real side.
+# Gated on the requested case list like the modprobe cases above.
+if printf '%s\n' "${cases[@]}" | grep -q '^lvol'; then
+  log "installing lvm2 for lvol cases"
+  for c in "$NAME_A" "$NAME_B"; do
+    podman exec "$c" bash -c "apt-get install -y -qq --no-install-recommends lvm2 >/dev/null" \
+      || { log "FATAL: lvm2 install failed in $c"; exit 1; }
   done
 fi
 

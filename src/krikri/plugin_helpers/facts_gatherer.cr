@@ -968,6 +968,18 @@ module Krikri
     end
 
     def gather_network_facts(facts)
+      # Real Ansible's LinuxNetwork.populate bails out to an empty dict
+      # BEFORE any gathering when `get_bin_path('ip')` is None - no
+      # interfaces, no default_ipv4, no addresses, nothing (network/
+      # linux.py: "if ip_path is None: return network_facts"). A
+      # debian:bookworm-slim podman container ships no iproute2 and
+      # live-verified there that real setup reports NO network facts at
+      # all even though /sys/class/net still lists lo - which is
+      # exactly what this gate must reproduce, or `when: 'lo' in
+      # ansible_interfaces` diverges between the engines in that
+      # container.
+      return unless find_fact_binary("ip")
+
       # `ip -4 route get 1` prints one line shaped like
       # "1.0.0.0 via 192.168.1.1 dev eth0 src 192.168.1.50 uid 0" - $3 is the
       # gateway (only present when the route actually has a "via" hop), $7
@@ -1483,6 +1495,16 @@ module Krikri
           source = fields[sep + 2]?
           next if fstype.nil? || source.nil?
 
+          # Real Ansible's own device-path filter (hardware/linux.py
+          # get_mount_facts): a mount only counts when its device looks
+          # like a local device path ("/", "\\" prefix) or an NFS
+          # export (":/" in device), and never when fstype is "none".
+          # In a container every mount device is overlay/proc/tmpfs/
+          # udev etc, so live-verified real setup reports an EMPTY
+          # ansible_mounts there despite /proc/mounts listing 150+
+          # entries - without this filter krikri reported all of them.
+          next unless real_mount_device_kept?(source, fstype)
+
           # mountinfo options are comma-joined with escaping; keep them raw -
           # roles only compare/map on mount/fstype, not individual options here.
           opts = fields[5]?
@@ -1502,6 +1524,7 @@ module Krikri
           File.read_lines("/etc/mtab").each do |line|
             parts = line.split(/\s+/)
             next unless parts.size >= 3
+            next unless real_mount_device_kept?(parts[0], parts[2])
             entry = {
               "mount"  => parts[1],
               "device" => parts[0],
@@ -1517,6 +1540,20 @@ module Krikri
       end
 
       facts["ansible_mounts"] = mounts unless mounts.empty?
+    end
+
+    # Real Ansible's own keep-or-skip rule for a mount's device field
+    # (hardware/linux.py get_mount_facts, live-verified): local device
+    # paths ("/dev/...", "/...") and NFS-style exports ("host:/path")
+    # are kept; pseudo-filesystem devices (overlay, proc, tmpfs, udev,
+    # cgroup, ...) are dropped, as is any fstype of exactly "none".
+    # Deliberately NOT private: the podman-diff setup_edge_cases_v2 FS3
+    # divergence (real reports an empty ansible_mounts inside a
+    # container, krikri reported every /proc/mountinfo entry) is pinned
+    # per-rule in facts_mount_network_scoping_spec.cr against this.
+    def real_mount_device_kept?(device : String, fstype : String) : Bool
+      return false if fstype == "none"
+      device.starts_with?('/') || device.starts_with?('\\') || device.includes?(":/")
     end
 
     # Real Ansible's own `ansible_facts['mounts']` entries always include

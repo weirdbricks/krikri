@@ -1,0 +1,260 @@
+# apt module edge cases. Unlike apt_key/apt_repository (which are
+# validation-only here), the real package manager IS functional in the
+# Debian harness containers - these exercise real installs/removes with
+# tiny throwaway packages (ed, sl - both dependency-free on bookworm),
+# version pins, cache-refresh-only invocations, and the argument-
+# validation surface. Print failed=/changed= plus msg: only where the
+# wording itself is the contract (validation errors); install/remove
+# msg text is apt-get output shape and may legitimately differ in
+# detail, so those compare the verdict fields. Prefix: A.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "A1 install a tiny package (state=present)"
+      ansible.builtin.apt:
+        name: ed
+        state: present
+      register: a1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A1 failed={{ a1.failed | default('none') }} changed={{ a1.changed | default('none') }}"
+
+    - name: "A1b reinstall the same package (idempotent, changed=false)"
+      ansible.builtin.apt:
+        name: ed
+        state: present
+      register: a1b
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A1b failed={{ a1b.failed | default('none') }} changed={{ a1b.changed | default('none') }}"
+
+    - name: "A1c install a second tiny package from a name list"
+      ansible.builtin.apt:
+        name:
+          - sl
+          - ed
+        state: present
+      register: a1c
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A1c failed={{ a1c.failed | default('none') }} changed={{ a1c.changed | default('none') }}"
+
+    - name: "A2 remove one of them (state=absent)"
+      ansible.builtin.apt:
+        name: sl
+        state: absent
+      register: a2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A2 failed={{ a2.failed | default('none') }} changed={{ a2.changed | default('none') }}"
+
+    - name: "A2b remove again (idempotent, changed=false)"
+      ansible.builtin.apt:
+        name: sl
+        state: absent
+      register: a2b
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A2b failed={{ a2b.failed | default('none') }} changed={{ a2b.changed | default('none') }}"
+
+    - name: "A3 state=latest on an already-latest package (changed=false)"
+      ansible.builtin.apt:
+        name: ed
+        state: latest
+      register: a3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A3 failed={{ a3.failed | default('none') }} changed={{ a3.changed | default('none') }}"
+
+    - name: "A4 nonexistent package (state=present)"
+      ansible.builtin.apt:
+        name: krikri-no-such-package-zzz
+        state: present
+      register: a4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A4 failed={{ a4.failed | default('none') }} changed={{ a4.changed | default('none') }} msg={{ a4.msg | default('none') }}"
+
+    - name: "A5 version-pinned install with a nonexistent version"
+      ansible.builtin.apt:
+        name: ed=99.99-krikri
+        state: present
+      register: a5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A5 failed={{ a5.failed | default('none') }} changed={{ a5.changed | default('none') }} msg={{ a5.msg | default('none') }}"
+
+    - name: "A6 name and upgrade together (mutually exclusive usage)"
+      ansible.builtin.apt:
+        name: ed
+        state: present
+        upgrade: true
+      register: a6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A6 failed={{ a6.failed | default('none') }} changed={{ a6.changed | default('none') }} msg={{ a6.msg | default('none') }}"
+
+    - name: "A7 invalid state value"
+      ansible.builtin.apt:
+        name: ed
+        state: installed-nowhere
+      register: a7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A7 failed={{ a7.failed | default('none') }} changed={{ a7.changed | default('none') }} msg={{ a7.msg | default('none') }}"
+
+    - name: "A8 out-of-spec parameter"
+      ansible.builtin.apt:
+        name: ed
+        state: present
+        krikri_not_an_apt_param: true
+      register: a8
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A8 failed={{ a8.failed | default('none') }} changed={{ a8.changed | default('none') }} msg={{ a8.msg | default('none') }}"
+
+    - name: "A9 invalid boolean for a bool-typed param"
+      ansible.builtin.apt:
+        name: ed
+        state: present
+        install_recommends: sometimes
+      register: a9
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A9 failed={{ a9.failed | default('none') }} changed={{ a9.changed | default('none') }} msg={{ a9.msg | default('none') }}"
+
+    - name: "A10 no name, no upgrade, no deb, no update_cache"
+      ansible.builtin.apt:
+        state: present
+      register: a10
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A10 failed={{ a10.failed | default('none') }} changed={{ a10.changed | default('none') }} msg={{ a10.msg | default('none') }}"
+
+    - name: "A11 cache-refresh-only invocation (update_cache, no name)"
+      ansible.builtin.apt:
+        update_cache: true
+      register: a11
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A11 failed={{ a11.failed | default('none') }} changed={{ a11.changed | default('none') }} cache_updated={{ a11.cache_updated | default('none') }}"
+
+    - name: "A11b cache-refresh-only via cache_valid_time (cache just refreshed by A11)"
+      ansible.builtin.apt:
+        cache_valid_time: 3600
+      register: a11b
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A11b failed={{ a11b.failed | default('none') }} changed={{ a11b.changed | default('none') }} cache_updated={{ a11b.cache_updated | default('none') }}"
+
+    - name: "A12 update_cache together with a name (cache change must not leak into changed)"
+      ansible.builtin.apt:
+        name: ed
+        state: present
+        update_cache: true
+      register: a12
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A12 failed={{ a12.failed | default('none') }} changed={{ a12.changed | default('none') }} cache_updated={{ a12.cache_updated | default('none') }}"
+
+    - name: "A13 build a local .deb fixture"
+      ansible.builtin.shell: |
+        set -e
+        rm -rf /tmp/krikri-deb-root /tmp/krikri-deb-pkg_1.0_all.deb
+        mkdir -p /tmp/krikri-deb-root/DEBIAN /tmp/krikri-deb-root/usr/bin
+        printf '#!/bin/sh\necho krikri-deb-ok\n' > /tmp/krikri-deb-root/usr/bin/krikri-deb-pkg
+        chmod 755 /tmp/krikri-deb-root/usr/bin/krikri-deb-pkg
+        printf 'Package: krikri-deb-pkg\nVersion: 1.0\nSection: utils\nPriority: optional\nArchitecture: all\nMaintainer: krikri <k@kri.kri>\nDescription: krikri podman-diff fixture package\n' > /tmp/krikri-deb-root/DEBIAN/control
+        dpkg-deb --build /tmp/krikri-deb-root /tmp/krikri-deb-pkg_1.0_all.deb >/dev/null
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: "A13b install the local .deb (deb: param)"
+      ansible.builtin.apt:
+        deb: /tmp/krikri-deb-pkg_1.0_all.deb
+        state: present
+      register: a13b
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A13b failed={{ a13b.failed | default('none') }} changed={{ a13b.changed | default('none') }}"
+
+    - name: "A13c reinstall the same .deb (idempotent)"
+      ansible.builtin.apt:
+        deb: /tmp/krikri-deb-pkg_1.0_all.deb
+        state: present
+      register: a13c
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A13c failed={{ a13c.failed | default('none') }} changed={{ a13c.changed | default('none') }}"
+
+    - name: "A14 verify the .deb's binary actually runs"
+      ansible.builtin.command:
+        cmd: krikri-deb-pkg
+      register: a14
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A14 failed={{ a14.failed | default('none') }} rc={{ a14.rc | default('none') }} stdout={{ a14.stdout | default('none') }}"
+
+    - name: "A15 remove the .deb-installed package (state=absent)"
+      ansible.builtin.apt:
+        name: krikri-deb-pkg
+        state: absent
+      register: a15
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A15 failed={{ a15.failed | default('none') }} changed={{ a15.changed | default('none') }}"
+
+    - name: "A16 missing name with update_cache=false explicitly (nothing to operate on)"
+      ansible.builtin.apt:
+        state: present
+        update_cache: false
+      register: a16
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A16 failed={{ a16.failed | default('none') }} changed={{ a16.changed | default('none') }} msg={{ a16.msg | default('none') }}"
+
+    - name: "A17 purge on remove (state=absent, purge=true)"
+      ansible.builtin.apt:
+        name: ed
+        state: absent
+        purge: true
+      register: a17
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A17 failed={{ a17.failed | default('none') }} changed={{ a17.changed | default('none') }}"
+
+    - name: "A17b reinstall ed for the remaining cases (purge removed it)"
+      ansible.builtin.apt:
+        name: ed
+        state: present
+      changed_when: false
+
+    - name: "A18 state=build-dep (apt.py's build-dep path)"
+      ansible.builtin.apt:
+        name: ed
+        state: build-dep
+      register: a18
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A18 failed={{ a18.failed | default('none') }} changed={{ a18.changed | default('none') }}"
+
+    - name: "A19 state=fixed on an installed package (ok, changed=false)"
+      ansible.builtin.apt:
+        name: ed
+        state: fixed
+      register: a19
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "A19 failed={{ a19.failed | default('none') }} changed={{ a19.changed | default('none') }}"
+
+    # A20 was `upgrade: true` alone: bookworm's apt.py documents it as an
+    # alias of safe, and BOTH engines ran an upgrade for it - but the
+    # upgrade is a real environment-dependent package set (the krikri
+    # container's runtime-lib gate installs libpcre2-8-0 at the current
+    # security version the real container doesn't have), so the
+    # changed=/msg comparison flips on container state, not engine
+    # behavior. Parity for the flag handling itself was confirmed live;
+    # no deterministic harness case is possible without a full
+    # apt-get upgrade in both gates.

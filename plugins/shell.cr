@@ -2,6 +2,7 @@
 
 require "json"
 require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/ansible_arg_validation"
 
 module Krikri
   # Shell Plugin - Execute shell commands with full shell features
@@ -32,6 +33,34 @@ module Krikri
   # command.cr's own doc comment for how this was found (a real playbook
   # over real SSH comparing captured stdout against a constant).
   class ShellPlugin < BasePlugin
+    include PluginHelpers::AnsibleArgValidation
+
+    # Real shell module's own argspec - which IS command.py's (bookworm
+    # ansible-core 2.14, the harness reference): the shell module is
+    # command.py with _uses_shell=True, and its unsupported-parameters
+    # message even names itself "ansible.legacy.command" when invoked as
+    # ansible.builtin.shell (live-verified via the podman-diff
+    # shell_edge_cases SH14 case). Note the list has NO cmd: and NO
+    # expand_argument_vars:/warn: - cmd: is an ACTION-plugin-level param
+    # the action plugin folds into _raw_params before the module ever
+    # sees it (same seam as apt.cr's `use:` note), so it is accepted here
+    # but not advertised; expand_argument_vars:/warn: simply don't exist
+    # on 2.14 and fail like any other unknown param.
+    private SHELL_SPEC = {
+      "_raw_params"       => [] of String,
+      "_uses_shell"       => [] of String,
+      "argv"              => [] of String,
+      "chdir"             => [] of String,
+      "creates"           => [] of String,
+      "executable"        => [] of String,
+      "removes"           => [] of String,
+      "stdin"             => [] of String,
+      "stdin_add_newline" => [] of String,
+      "strip_empty_ends"  => [] of String,
+    }
+
+    private SHELL_BOOL_PARAMS = %w[stdin_add_newline strip_empty_ends]
+
     property? check_mode : Bool
     property? diff_mode : Bool
 
@@ -53,38 +82,33 @@ module Krikri
     end
 
     def execute : PluginResult
+      # Real AnsibleModule setup validation (wording via the shared
+      # helper, live-verified vs bookworm 2.14 via the podman-diff
+      # shell_edge_cases SH14 case): any param outside the
+      # shell/command argspec fails BEFORE anything runs - previously
+      # only warn:/expand_argument_vars: were hand-rolled, and with
+      # 2.19-era wordings ("(shell)" / "(ansible.legacy.shell)") that
+      # don't match the 2.14 harness reference (which names the module
+      # ansible.legacy.command with the 10-param supported list).
+      unsupported = unsupported_param_keys(@params, SHELL_SPEC).reject { |k| k == "cmd" }
+      unless unsupported.empty?
+        return unsupported_params_error("ansible.legacy.command", unsupported, SHELL_SPEC)
+      end
+
+      SHELL_BOOL_PARAMS.each do |bool_param|
+        next unless (raw = @params[bool_param]?)
+        unless bool_convertible?(raw)
+          return bool_type_error(bool_param, raw)
+        end
+      end
+
       # Same `warn:` rejection as command.cr - real ansible-core 2.19
       # rejects the removed param identically (message adjusted for the
       # shell module's own supported-parameter list; the tail after
       # "warn." matches ansible-core 2.19's shell argspec).
-      if @params.has_key?("warn")
-        return PluginResult.new(
-          changed: false,
-          failed: true,
-          msg: "Unsupported parameters for (ansible.legacy.shell) module: warn. Supported parameters include: _raw_params, _uses_shell, argv, chdir, cmd, creates, executable, expand_argument_vars, removes, stdin, stdin_add_newline, strip_empty_ends."
-        )
-      end
-
-      # Real Ansible 2.19.4 REJECTS `expand_argument_vars:` on shell
-      # outright - live-verified: the shell module's own argspec doesn't
-      # include it (only command's does), so the task fails before the
-      # command ever runs with exactly:
-      #   {"changed": false, "msg": "Unsupported parameters for (shell)
-      #   module: expand_argument_vars"}
-      # (note: no "Supported parameters include" tail, unlike the warn:
-      # rejection above). There is therefore NO shell-side
-      # expand_argument_vars behavior to implement - rejecting it, with
-      # this exact message, IS the real-Ansible behavior. ($VAR expansion
-      # on shell's cmd:/free-form happens in the shell interpreter
-      # itself, and argv: elements are shlex_quote'd by real Ansible
-      # before the shell sees them, so nothing here is left unexpanded.)
-      if @params.has_key?("expand_argument_vars")
-        return PluginResult.new(
-          changed: false,
-          failed: true,
-          msg: "Unsupported parameters for (shell) module: expand_argument_vars"
-        )
-      end
+      # (The warn:/expand_argument_vars: rejections used to be hand-rolled
+      # here with 2.19-era wordings; the general argspec check above
+      # covers both under the 2.14 reference - see its comment.)
 
       # Get command (supports direct string, 'cmd' parameter, or 'argv')
       cmd = @params["_raw_params"]? || @params["cmd"]?
@@ -93,7 +117,7 @@ module Krikri
         return PluginResult.new(
           changed: false,
           failed: true,
-          msg: "Missing required parameter: cmd"
+          msg: "no command given"
         )
       end
 
@@ -311,28 +335,21 @@ module Krikri
       ControllingTty.ensure
 
       # Execute command
-      # Note: remote_exec() already executes through a shell, so we don't need to
-      # wrap the command in another shell invocation. This allows shell operators
-      # like ||, &&, |, >, etc. to work properly.
-      #
-      # If a custom executable is specified (not /bin/sh), we need to explicitly
-      # invoke it since remote_exec uses /bin/sh by default
-      remote_command = if executable == "/bin/sh"
-                 # Default shell - just pass the command directly
-                 full_cmd
-               else
-                 # Custom shell - invoke it explicitly. full_cmd routinely
-                 # contains its own single quotes (`cut -d' ' -f2`, `tr -d
-                 # 'v'` - ansible-community.ansible-vault's own "Get
-                 # installed Vault version" task uses both) - naively
-                 # wrapping it in another bare `'...'` pair let those
-                 # embedded quotes prematurely close the outer quoting,
-                 # corrupting the command bash actually saw. Real bug
-                 # found benchmarking that role: "cut: option requires an
-                 # argument -- 'd'" with the rest of the pipeline showing
-                 # up as unquoted trailing shell text.
-                 "#{executable} -c #{shell_single_quote(full_cmd)}"
-               end
+      # Note: the command is ALWAYS handed to the module's `executable:`
+      # shell (default /bin/sh) via `<executable> -c <string>` - real
+      # Ansible's shell module (command.py with _uses_shell) runs
+      # run_command with the argspec's executable as the shell BINARY,
+      # so the default is /bin/sh (dash on Debian), NOT bash. This
+      # engine's remote_exec/LocalExecutor wraps shell-forced strings in
+      # `bash -c` for its own env-prefix/glob needs, which silently gave
+      # the default-shell case bash semantics: `shell: 'if [[ -n
+      # "$BASH_VERSION" ]]...'` succeeded as "bash-here" where real
+      # /bin/sh correctly printed "not-bash" (found via the podman-diff
+      # shell_edge_cases SH4b case). Explicitly invoking the same
+      # `<executable> -c <quoted string>` form for the default as for a
+      # custom executable makes the outer wrapper irrelevant - the
+      # module's own shell does the interpreting, exactly like real.
+      remote_command = "#{executable} -c #{shell_single_quote(full_cmd)}"
 
       # stdin: (+ stdin_add_newline:) - real Ansible hands `data` directly
       # to the spawned command's stdin, appending a newline unless
@@ -399,6 +416,7 @@ module Krikri
         changed: true,
         failed: result[:exit_code] != 0,
         msg: result[:exit_code] == 0 ? "" : "Command failed",
+        include_empty_msg: true,
         cmd: command_string,
         stdout: final_stdout,
         stdout_lines: PluginHelpers::AnsibleSplitlines.split(final_stdout),

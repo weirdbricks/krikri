@@ -1,0 +1,128 @@
+# lvol module edge cases. ARGUMENT-VALIDATION + VG-ABSENT ONLY: real
+# LVM-in-a-container is infeasible in this harness - the loop-device
+# path a PV needs is denied in a ROOTLESS podman container even with
+# --privileged (the host-owned /dev/loop-control ioctl returns EPERM,
+# and there is no other block device to make a PV out of), so no VG/LV
+# can ever exist here. What IS testable with the lvm2 userland
+# installed in BOTH containers (run.sh gate): the full
+# AnsibleModule argument-validation surface and the vgs-backed
+# "Volume group ... does not exist." discovery failure and its
+# state=absent changed=false variant. Prefix: LV. Modules used by
+# their community.general FQCN (bookworm's ansible-core 2.14 predates
+# the ansible.builtin.lvol redirect; krikri registers both).
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "LV1 missing required vg"
+      community.general.lvol:
+        lv: krikri-lv
+        size: 4
+      register: lv1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "LV1 failed={{ lv1.failed | default('none') }} changed={{ lv1.changed | default('none') }} msg={{ lv1.msg | default('none') }}"
+
+    - name: "LV2 missing both lv and thinpool"
+      community.general.lvol:
+        vg: krikri-lvol-nosuch-vg
+        size: 4
+      register: lv2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "LV2 failed={{ lv2.failed | default('none') }} changed={{ lv2.changed | default('none') }} msg={{ lv2.msg | default('none') }}"
+
+    - name: "LV3 out-of-spec parameter"
+      community.general.lvol:
+        vg: krikri-lvol-nosuch-vg
+        lv: krikri-lv
+        size: 4
+        krikri_not_an_lvol_param: true
+      register: lv3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "LV3 failed={{ lv3.failed | default('none') }} changed={{ lv3.changed | default('none') }} msg={{ lv3.msg | default('none') }}"
+
+    - name: "LV4 invalid boolean for a bool-typed param"
+      community.general.lvol:
+        vg: krikri-lvol-nosuch-vg
+        lv: krikri-lv
+        size: 4
+        force: sometimes
+      register: lv4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "LV4 failed={{ lv4.failed | default('none') }} changed={{ lv4.changed | default('none') }} msg={{ lv4.msg | default('none') }}"
+
+    - name: "LV5 invalid state value"
+      community.general.lvol:
+        vg: krikri-lvol-nosuch-vg
+        lv: krikri-lv
+        size: 4
+        state: mounted
+      register: lv5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "LV5 failed={{ lv5.failed | default('none') }} changed={{ lv5.changed | default('none') }} msg={{ lv5.msg | default('none') }}"
+
+    - name: "LV6 create against a nonexistent VG (state=present)"
+      community.general.lvol:
+        vg: krikri-lvol-nosuch-vg
+        lv: krikri-lv
+        size: 4
+      register: lv6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "LV6 failed={{ lv6.failed | default('none') }} changed={{ lv6.changed | default('none') }} msg={{ lv6.msg | default('none') }}"
+
+    - name: "LV7 remove against a nonexistent VG (state=absent, changed=false)"
+      community.general.lvol:
+        vg: krikri-lvol-nosuch-vg
+        lv: krikri-lv
+        state: absent
+        force: true
+      register: lv7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "LV7 failed={{ lv7.failed | default('none') }} changed={{ lv7.changed | default('none') }} msg={{ lv7.msg | default('none') }}"
+
+    - name: "LV8 snapshot without size against a nonexistent origin"
+      community.general.lvol:
+        vg: krikri-lvol-nosuch-vg
+        lv: krikri-lv
+        snapshot: krikri-snap
+      register: lv8
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "LV8 failed={{ lv8.failed | default('none') }} changed={{ lv8.changed | default('none') }} msg={{ lv8.msg | default('none') }}"
+
+    - name: "LV9 percentage-of-VG size against a nonexistent VG"
+      community.general.lvol:
+        vg: krikri-lvol-nosuch-vg
+        lv: krikri-lv
+        size: 50%VG
+      register: lv9
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "LV9 failed={{ lv9.failed | default('none') }} changed={{ lv9.changed | default('none') }} msg={{ lv9.msg | default('none') }}"
+
+    - name: "LV10 size with a shrink operator against a nonexistent VG (create-with-minus)"
+      community.general.lvol:
+        vg: krikri-lvol-nosuch-vg
+        lv: krikri-lv
+        size: -4
+      register: lv10
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "LV10 failed={{ lv10.failed | default('none') }} changed={{ lv10.changed | default('none') }} msg={{ lv10.msg | default('none') }}"
+
+    - name: "LV11 check mode against a nonexistent VG (discovery still fails)"
+      community.general.lvol:
+        vg: krikri-lvol-nosuch-vg
+        lv: krikri-lv
+        size: 4
+      check_mode: true
+      register: lv11
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "LV11 failed={{ lv11.failed | default('none') }} changed={{ lv11.changed | default('none') }} msg={{ lv11.msg | default('none') }}"

@@ -1,0 +1,79 @@
+# setup (gather_facts) module edge cases, round 2. setup_edge_cases.yml
+# (round 0.9.1096) covered filter/gather_subset mechanics via
+# facts-dict SIZE; this one probes the most commonly-relied-upon fact
+# KEYS' presence and SHAPE with equality/type/structure checks that
+# are container-invariant (values like hostname/fqdn/MAC necessarily
+# differ between the two engines' separate containers; distribution,
+# family, architecture, uid, and dict/list structure do not). Prefix:
+# FS.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "FS1 gather_facts: full run (play-level implicit setup shape)"
+      ansible.builtin.setup:
+      register: fs1
+    - ansible.builtin.debug:
+        msg: "FS1 failed={{ fs1.failed | default('none') }} dist={{ fs1.ansible_facts.ansible_distribution }} family={{ fs1.ansible_facts.ansible_os_family }} arch={{ fs1.ansible_facts.ansible_architecture }} pkg_mgr={{ fs1.ansible_facts.ansible_pkg_mgr }} uid={{ fs1.ansible_facts.ansible_user_id }}"
+
+    - name: "FS2 ansible_default_ipv4 shape (keys and types, not values)"
+      ansible.builtin.setup:
+        filter: ansible_default_ipv4
+      register: fs2
+    - ansible.builtin.debug:
+        msg: "FS2 shape={{ fs2.ansible_facts.ansible_default_ipv4 | default({}) | to_json }}"
+
+    - name: "FS3 ansible_mounts shape (list of mounts with mount/size_total keys)"
+      ansible.builtin.setup:
+        filter: ansible_mounts
+      register: fs3
+    - ansible.builtin.debug:
+        msg: "FS3 count={{ fs3.ansible_facts.ansible_mounts | default([]) | length }} first_has_mount={{ fs3.ansible_facts.ansible_mounts[0].mount is defined }} first_has_size_total={{ fs3.ansible_facts.ansible_mounts[0].size_total is defined }}"
+      ignore_errors: true
+
+    - name: "FS4 ansible_memory_mb shape (real/nocache/swap structure)"
+      ansible.builtin.setup:
+        filter: ansible_memory_mb
+      register: fs4
+    - ansible.builtin.debug:
+        msg: "FS4 has_real={{ 'real' in (fs4.ansible_facts.ansible_memory_mb | default({})) }} has_nocache={{ 'nocache' in (fs4.ansible_facts.ansible_memory_mb | default({})) }} has_swap={{ 'swap' in (fs4.ansible_facts.ansible_memory_mb | default({})) }}"
+
+    - name: "FS5 env/date_time/processor scalar shapes"
+      ansible.builtin.setup:
+        filter:
+          - ansible_env
+          - ansible_date_time
+          - ansible_processor_vcpus
+          - ansible_python_version
+          - ansible_interfaces
+      register: fs5
+    - ansible.builtin.debug:
+        msg: "FS5 has_path={{ 'PATH' in (fs5.ansible_facts.ansible_env | default({})) }} epoch_type={{ fs5.ansible_facts.ansible_date_time | default({}) | length > 0 }} vcpus_is_int={{ fs5.ansible_facts.ansible_processor_vcpus | default(0) is number }} py3={{ (fs5.ansible_facts.ansible_python_version | default('')) is match('3\\.') }} has_lo={{ 'lo' in (fs5.ansible_facts.ansible_interfaces | default([])) }}"
+
+    - name: "FS6 gather_subset network (network fact keys present, others still all)"
+      ansible.builtin.setup:
+        gather_subset: network
+      register: fs6
+    - ansible.builtin.debug:
+        msg: "FS6 has_all_ipv4={{ 'ansible_all_ipv4_addresses' in fs6.ansible_facts }} has_default_ipv4={{ 'ansible_default_ipv4' in fs6.ansible_facts }} has_distribution={{ 'ansible_distribution' in fs6.ansible_facts }}"
+
+    - name: "FS7 gather_subset hardware,!default_ipv4 (exclusion of one network subset)"
+      ansible.builtin.setup:
+        gather_subset: 'hardware,!default_ipv4'
+      register: fs7
+    - ansible.builtin.debug:
+        msg: "FS7 has_default_ipv4={{ 'ansible_default_ipv4' in fs7.ansible_facts }} has_memory_mb={{ 'ansible_memory_mb' in fs7.ansible_facts }} has_distribution={{ 'ansible_distribution' in fs7.ansible_facts }}"
+
+    - name: "FS8 filter as a single exact key"
+      ansible.builtin.setup:
+        filter: ansible_os_family
+      register: fs8
+    - ansible.builtin.debug:
+        msg: "FS8 family={{ fs8.ansible_facts.ansible_os_family | default('missing') }} key_count={{ fs8.ansible_facts.keys() | list | length }}"
+
+    - name: "FS9 hostname/fqdn are strings (values differ per container, types do not)"
+      ansible.builtin.setup:
+        filter: ansible_*
+      register: fs9
+    - ansible.builtin.debug:
+        msg: "FS9 fqdn_is_str={{ fs9.ansible_facts.ansible_fqdn is string }} hostname_is_str={{ fs9.ansible_facts.ansible_hostname is string }} kernel_is_str={{ fs9.ansible_facts.ansible_kernel is string }} service_mgr={{ fs9.ansible_facts.ansible_service_mgr | default('missing') }}"

@@ -2,6 +2,7 @@
 
 require "json"
 require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/ansible_arg_validation"
 require "../src/krikri/plugin_helpers/lvol_size"
 
 module Krikri
@@ -38,19 +39,71 @@ module Krikri
   #     roles pass flags like "--type cache-pool" / "-r 16"; quoted
   #     opt values are not supported)
   class LvolPlugin < BasePlugin
+    include PluginHelpers::AnsibleArgValidation
+
+    # Real lvol.py's own argument_spec (community.general, declaration
+    # order) - drives the module-setup validation below exactly the way
+    # real AnsibleModule does.
+    private LVOL_SPEC = {
+      "vg"       => [] of String,
+      "lv"       => [] of String,
+      "size"     => [] of String,
+      "opts"     => [] of String,
+      "state"    => [] of String,
+      "force"    => [] of String,
+      "shrink"   => [] of String,
+      "active"   => [] of String,
+      "snapshot" => [] of String,
+      "pvs"      => [] of String,
+      "resizefs" => [] of String,
+      "thinpool" => [] of String,
+    }
+
+    private LVOL_BOOL_PARAMS = %w[force shrink active resizefs]
+
+    private LVOL_STATES = %w[absent present]
+
     def execute : PluginResult
+      # Real AnsibleModule setup validation, in real order: unsupported
+      # params first (message wording live-verified via the podman-diff
+      # lvol_edge_cases LV3 case: "Unsupported parameters for
+      # (community.general.lvol) module: X. Supported parameters
+      # include: ..."), then required (LV1: "missing required
+      # arguments: vg" - the previous hand-rolled singular
+      # "missing required argument: vg" was never real), then
+      # required_one_of (LV2), then state choices (LV5: real's choice
+      # list is [absent, present] - active/inactive are NOT real
+      # choices) and bool-typed params (LV4).
+      unsupported = unsupported_param_keys(@params, LVOL_SPEC)
+      unless unsupported.empty?
+        return unsupported_params_error(
+          @params["_module_name"]? || "community.general.lvol",
+          unsupported, LVOL_SPEC,
+        )
+      end
+
       vg = @params["vg"]?
-      return missing_required("vg") unless vg
+      return missing_required_error(["vg"]) unless vg
 
       lv = @params["lv"]?
       thinpool = @params["thinpool"]?
       return PluginResult.new(changed: false, failed: true,
         msg: "one of the following is required: lv, thinpool") unless lv || thinpool
 
+      state = @params["state"]? || "present"
+      unless LVOL_STATES.includes?(state)
+        return choices_error("state", LVOL_STATES, state)
+      end
+
+      LVOL_BOOL_PARAMS.each do |bool_param|
+        next unless (raw = @params[bool_param]?)
+        unless bool_convertible?(raw)
+          return bool_type_error(bool_param, raw)
+        end
+      end
+
       check_mode = true?(@params["_ansible_check_mode"]?)
       state = @params["state"]? || "present"
-      return PluginResult.new(changed: false, failed: true,
-        msg: "state must be 'present' or 'absent', got '#{state}'") unless ["present", "absent"].includes?(state)
 
       parsed_size, size_error = PluginHelpers::LvolSize.parse(@params["size"]?)
       return failed(size_error.not_nil!) if size_error
@@ -325,14 +378,14 @@ module Krikri
 
     private def absent_vg_result(vg : String, state : String) : PluginResult
       if state == "absent"
-        PluginResult.new(changed: false, failed: false, msg: "Volume group #{vg} does not exist.")
+        # Real module: state=absent against a missing VG exits ok with
+        # changed=false and NO msg (live-verified via the podman-diff
+        # lvol_edge_cases LV7 case - the "Volume group ... does not
+        # exist." msg was this engine's own invention there).
+        PluginResult.new(changed: false, failed: false)
       else
         failed("Volume group #{vg} does not exist.")
       end
-    end
-
-    private def missing_required(name : String) : PluginResult
-      PluginResult.new(changed: false, failed: true, msg: "missing required argument: #{name}")
     end
 
     private def failed(msg : String) : PluginResult

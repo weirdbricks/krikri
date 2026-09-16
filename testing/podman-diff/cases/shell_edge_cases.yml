@@ -1,0 +1,220 @@
+# shell module (ansible.builtin.shell / ansible.legacy.shell) edge
+# cases beyond command_edge_cases' shell coverage: free-form vs cmd:,
+# multi-line scripts, executable: (bash vs sh semantics), chdir:,
+# creates:/removes: skips, the environment: task keyword, stdin: (+
+# stdin_add_newline:), strip_empty_ends: trailing-newline handling
+# (compared via stdout_len, not raw output - a raw multi-line stdout
+# can't survive the msg extraction), pipefail semantics, stderr
+# separation, and argument-validation rejections. Prefix: SH.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "SH1 free-form string invocation"
+      ansible.builtin.shell: echo sh1-hello
+      register: sh1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "SH1 failed={{ sh1.failed }} changed={{ sh1.changed }} rc={{ sh1.rc }} stdout={{ sh1.stdout }}"
+
+    - name: "SH2 multi-line script with comment lines"
+      ansible.builtin.shell: |
+        # a comment line
+        echo line-one
+        # another comment
+        echo line-two
+      register: sh2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "SH2 failed={{ sh2.failed }} changed={{ sh2.changed }} rc={{ sh2.rc }} stdout={{ sh2.stdout_lines | join(' | ') }} lines={{ sh2.stdout_lines | length }}"
+
+    - name: "SH3 cmd: with chdir: to an existing directory"
+      ansible.builtin.shell:
+        cmd: pwd
+        chdir: /tmp
+      register: sh3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "SH3 failed={{ sh3.failed }} changed={{ sh3.changed }} rc={{ sh3.rc }} stdout={{ sh3.stdout }}"
+
+    - name: "SH4 executable: /bin/bash and a bash-only construct"
+      ansible.builtin.shell:
+        cmd: 'if [[ -n "$BASH_VERSION" ]]; then echo bash-here; else echo not-bash; fi'
+        executable: /bin/bash
+      register: sh4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "SH4 failed={{ sh4.failed }} changed={{ sh4.changed }} rc={{ sh4.rc }} stdout={{ sh4.stdout }}"
+
+    - name: "SH4b default /bin/sh must NOT have bash-only [[ ]]"
+      ansible.builtin.shell:
+        cmd: 'if [[ -n "$BASH_VERSION" ]]; then echo bash-here; else echo not-bash; fi'
+      register: sh4b
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "SH4b failed={{ sh4b.failed }} changed={{ sh4b.changed }} rc={{ sh4b.rc }} stdout={{ sh4b.stdout }}"
+
+    - name: "SH5 pipefail semantics under bash (true | false = failure)"
+      ansible.builtin.shell:
+        cmd: "set -o pipefail; true | false; echo pipeline-rc=$?"
+        executable: /bin/bash
+      register: sh5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "SH5 failed={{ sh5.failed }} changed={{ sh5.changed }} rc={{ sh5.rc }} stdout={{ sh5.stdout }}"
+
+    - name: "SH6 stderr stays separate from stdout"
+      ansible.builtin.shell:
+        cmd: echo to-out; echo to-err 1>&2
+      register: sh6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "SH6 failed={{ sh6.failed }} rc={{ sh6.rc }} stdout={{ sh6.stdout }} stderr={{ sh6.stderr }}"
+
+    - name: "SH7 nonzero exit propagates"
+      ansible.builtin.shell:
+        cmd: exit 7
+      register: sh7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "SH7 failed={{ sh7.failed }} changed={{ sh7.changed }} rc={{ sh7.rc }}"
+
+    - name: "SH8 creates: pointing at a MISSING file (runs; result still has msg/empty stdout)"
+      ansible.builtin.shell:
+        cmd: touch /tmp/podman-diff-sh8-ran.txt
+        creates: /tmp/podman-diff-sh8-ran.txt
+      register: sh8
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "SH8 failed={{ sh8.failed }} changed={{ sh8.changed }} rc={{ sh8.rc | default('none') }} stdout={{ sh8.stdout }} msg={{ sh8.msg }}"
+
+    - name: "SH9 removes: skip (file missing)"
+      ansible.builtin.shell:
+        cmd: touch /tmp/podman-diff-sh9-ran.txt
+        removes: /tmp/podman-diff-sh9-missing.txt
+      register: sh9
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "SH9 failed={{ sh9.failed }} changed={{ sh9.changed }} rc={{ sh9.rc | default('none') }} stdout={{ sh9.stdout }} msg={{ sh9.msg }}"
+
+    - name: "SH10 environment: task keyword reaches the command"
+      ansible.builtin.shell:
+        cmd: echo "env=[$KRIKRI_DIFF_ENV]"
+      environment:
+        KRIKRI_DIFF_ENV: hello-env
+      register: sh10
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "SH10 failed={{ sh10.failed }} changed={{ sh10.changed }} stdout={{ sh10.stdout }}"
+
+    - name: "SH11 stdin: reaches the command (tr consumes it)"
+      ansible.builtin.shell:
+        cmd: tr a-z A-Z
+        stdin: hello-stdin
+      register: sh11
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "SH11 failed={{ sh11.failed }} changed={{ sh11.changed }} rc={{ sh11.rc }} stdout={{ sh11.stdout }}"
+
+    - name: "SH11b stdin with stdin_add_newline: false (no trailing newline added)"
+      ansible.builtin.shell:
+        cmd: wc -l
+        stdin: line1
+        stdin_add_newline: false
+      register: sh11b
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "SH11b failed={{ sh11b.failed }} rc={{ sh11b.rc }} stdout={{ sh11b.stdout }}"
+
+    - name: "SH11c stdin default adds a newline (wc -l counts it)"
+      ansible.builtin.shell:
+        cmd: wc -l
+        stdin: line1
+      register: sh11c
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "SH11c failed={{ sh11c.failed }} rc={{ sh11c.rc }} stdout={{ sh11c.stdout }}"
+
+    - name: "SH12 strip_empty_ends default collapses trailing newlines"
+      ansible.builtin.shell:
+        cmd: printf 'a\n\n\n'
+      register: sh12
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "SH12 failed={{ sh12.failed }} rc={{ sh12.rc }} stdout_len={{ sh12.stdout | length }} stdout={{ sh12.stdout }}"
+
+    - name: "SH12b strip_empty_ends: false keeps them"
+      ansible.builtin.shell:
+        cmd: printf 'a\n\n\n'
+        strip_empty_ends: false
+      register: sh12b
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "SH12b failed={{ sh12b.failed }} rc={{ sh12b.rc }} stdout_len={{ sh12b.stdout | length }}"
+
+    - name: "SH13 argv: form (element-wise quoting, run through the shell)"
+      ansible.builtin.shell:
+        argv:
+          - echo
+          - hello world
+          - from-argv
+      register: sh13
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "SH13 failed={{ sh13.failed }} changed={{ sh13.changed }} rc={{ sh13.rc }} stdout={{ sh13.stdout }}"
+
+    - name: "SH14 expand_argument_vars rejected (shell has no such param)"
+      ansible.builtin.shell:
+        cmd: echo should-not-run
+        expand_argument_vars: true
+      register: sh14
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "SH14 failed={{ sh14.failed | default('none') }} changed={{ sh14.changed | default('none') }} msg={{ sh14.msg | default('none') }}"
+
+    - name: "SH15 no command at all (no cmd, no argv, no free-form)"
+      ansible.builtin.shell: {}
+      register: sh15
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "SH15 failed={{ sh15.failed | default('none') }} changed={{ sh15.changed | default('none') }} msg={{ sh15.msg | default('none') }}"
+
+    - name: "SH16 check the creates: skip really did not run"
+      ansible.builtin.stat:
+        path: /tmp/podman-diff-sh8-ran.txt
+      register: sh16
+    - ansible.builtin.debug:
+        msg: "SH16 exists={{ sh16.stat.exists }}"
+
+    - name: "SH17 warn: is not a 2.14 shell param (unsupported like any other)"
+      ansible.builtin.shell:
+        cmd: echo should-not-run
+        warn: true
+      register: sh17
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "SH17 failed={{ sh17.failed | default('none') }} changed={{ sh17.changed | default('none') }} msg={{ sh17.msg | default('none') }}"
+
+    - name: "SH18 stdin_add_newline: invalid boolean fails at argument validation"
+      ansible.builtin.shell:
+        cmd: echo should-not-run
+        stdin_add_newline: sometimes
+      register: sh18
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "SH18 failed={{ sh18.failed | default('none') }} changed={{ sh18.changed | default('none') }} msg={{ sh18.msg | default('none') }}"
+
+    - name: "SH19 creates: skip setup (SH8 ran because the target was missing)"
+      ansible.builtin.file:
+        path: /tmp/podman-diff-sh8-ran.txt
+        state: touch
+        mode: "0644"
+
+    - name: "SH19b creates: skip for real now (target exists)"
+      ansible.builtin.shell:
+        cmd: touch /tmp/podman-diff-sh19-ran.txt
+        creates: /tmp/podman-diff-sh8-ran.txt
+      register: sh19b
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "SH19b failed={{ sh19b.failed }} changed={{ sh19b.changed }} rc={{ sh19b.rc | default('none') }} stdout={{ sh19b.stdout }} msg={{ sh19b.msg }}"

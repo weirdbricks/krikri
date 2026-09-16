@@ -2,6 +2,7 @@
 
 require "json"
 require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/ansible_arg_validation"
 require "../src/krikri/plugin_helpers/apt_lock_retry"
 
 module Krikri
@@ -42,6 +43,48 @@ module Krikri
   #     update_cache: yes
   class AptPlugin < BasePlugin
     include AptLockRetry
+    include PluginHelpers::AnsibleArgValidation
+
+    # Real apt.py's own argument_spec (bookworm's ansible-core 2.14,
+    # the harness reference) - names mapped to their alias lists. Drives
+    # the unsupported-param/choices/bool-type validation below the same
+    # way real AnsibleModule setup does.
+    private APT_SPEC = {
+      "state"                       => [] of String,
+      "update_cache"                => ["update-cache"],
+      "update_cache_retries"        => [] of String,
+      "update_cache_retry_max_delay" => [] of String,
+      "cache_valid_time"            => [] of String,
+      "purge"                       => [] of String,
+      "package"                     => ["pkg", "name"],
+      "deb"                         => [] of String,
+      "default_release"             => ["default-release"],
+      "install_recommends"          => ["install-recommends"],
+      "force"                       => [] of String,
+      "upgrade"                     => [] of String,
+      "dpkg_options"                => [] of String,
+      "autoremove"                  => [] of String,
+      "autoclean"                   => [] of String,
+      "fail_on_autoremove"          => [] of String,
+      "policy_rc_d"                 => [] of String,
+      "only_upgrade"                => [] of String,
+      "force_apt_get"               => [] of String,
+      "clean"                       => [] of String,
+      "allow_unauthenticated"       => ["allow-unauthenticated"],
+      "allow_downgrade"             => ["allow-downgrade", "allow-downgrades", "allow_downgrades"],
+      "allow_change_held_packages"  => [] of String,
+      "lock_timeout"                => [] of String,
+    }
+
+    # apt.py's bool-typed params, in argument_spec declaration order -
+    # real AnsibleModule's type validation walks the spec in declaration
+    # order and only ever surfaces the first error.
+    private APT_BOOL_PARAMS = %w[update_cache purge install_recommends force autoremove autoclean
+                                 fail_on_autoremove only_upgrade force_apt_get clean
+                                 allow_unauthenticated allow_downgrade allow_change_held_packages]
+
+    # apt.py's state choice list (2.14: includes build-dep and fixed).
+    private APT_STATES = %w[absent build-dep fixed latest present]
 
     property? check_mode : Bool
 
@@ -106,22 +149,64 @@ module Krikri
       # internal keys injected by the executor (see build_plugin_config),
       # and _policy_rc_d_path is the spec seam above - none are part of
       # the real argument_spec, so none are rejected.
-      apt_supported = {"allow_change_held_packages", "allow_downgrade", "allow_unauthenticated", "autoclean", "autoremove", "cache_valid_time", "clean", "deb", "default_release", "dpkg_options", "fail_on_autoremove", "force", "force_apt_get", "install_recommends", "lock_timeout", "only_upgrade", "package", "policy_rc_d", "purge", "state", "update_cache", "update_cache_retries", "update_cache_retry_max_delay", "upgrade", "allow-downgrade", "allow-downgrades", "allow-unauthenticated", "allow_downgrades", "default-release", "install-recommends", "name", "pkg", "update-cache"}
-      apt_internal = {"_ansible_check_mode", "_ansible_diff", "_verbosity", "_environment", "_policy_rc_d_path"}
-      unsupported = @params.keys.reject { |k| apt_supported.includes?(k) || apt_internal.includes?(k) }
+      unsupported = unsupported_param_keys(@params, APT_SPEC)
       unless unsupported.empty?
+        return unsupported_params_error(
+          @params["_module_name"]? || "ansible.builtin.apt",
+          unsupported, APT_SPEC,
+        )
+      end
+
+      # apt.py's own mutually_exclusive=[['deb', 'package', 'upgrade']] -
+      # checked at AnsibleModule setup, BEFORE anything else in main().
+      # The message lists the WHOLE conflicting group sorted, not just
+      # the members that were passed (live-verified: `name:` + `upgrade:`
+      # yields "parameters are mutually exclusive: deb|package|upgrade"
+      # even though no deb: was given). `upgrade` counts as given even
+      # when falsy (`upgrade: false` is "is not None"), matching
+      # AnsibleModule's own check_mutually_exclusive. Previously this
+      # engine let name+upgrade through to its own later
+      # "unable to install additional packages when upgrading all
+      # installed packages" guard - real Ansible's mutually-exclusive
+      # check fires first and that wording is only reachable via
+      # state=latest + name "*" + extra packages (kept there).
+      mutex_group = [] of String
+      mutex_group << "deb" if @params["deb"]?
+      mutex_group << "package" if name_or_pkg_param?
+      mutex_group << "upgrade" if @params.has_key?("upgrade")
+      if mutex_group.size > 1
         return PluginResult.new(
           changed: false,
           failed: true,
-          msg: "Unsupported parameters for (ansible.builtin.apt) module: #{unsupported.sort.join(", ")}. " \
-               "Supported parameters include: " \
-               "allow_change_held_packages, allow_downgrade, allow_unauthenticated, autoclean, autoremove, " \
-               "cache_valid_time, clean, deb, default_release, dpkg_options, fail_on_autoremove, force, " \
-               "force_apt_get, install_recommends, lock_timeout, only_upgrade, package, policy_rc_d, purge, " \
-               "state, update_cache, update_cache_retries, update_cache_retry_max_delay, upgrade " \
-               "(allow-downgrade, allow-downgrades, allow-unauthenticated, allow_downgrades, default-release, " \
-               "install-recommends, name, pkg, update-cache)."
+          msg: "parameters are mutually exclusive: deb|package|upgrade"
         )
+      end
+
+      # state choices (apt.py's own choice list, checked at setup before
+      # main() - live-verified wording: "value of state must be one of:
+      # absent, build-dep, fixed, latest, present, got: <value>").
+      # Previously the rejection came from this plugin's own fall-through
+      # ("Invalid state: ... Must be present, absent, or latest") and
+      # only recognized a third of real's choice list.
+      state = @params["state"]? || "present"
+      unless APT_STATES.includes?(state)
+        return choices_error("state", APT_STATES, state)
+      end
+
+      # Bool-typed params: a non-boolean string value fails the module
+      # at setup the same way (real check_type_bool via
+      # validate_argument_types; wording live-verified: "argument
+      # 'install_recommends' is of type <class 'str'> and we were unable
+      # to convert to bool: The value 'sometimes' is not a valid
+      # boolean.  Valid booleans include: ..."). Previously this plugin
+      # silently coerced anything non-"true" to false and happily
+      # proceeded where real Ansible never gets past argument
+      # validation.
+      APT_BOOL_PARAMS.each do |bool_param|
+        next unless (raw = @params[bool_param]?)
+        unless bool_convertible?(raw)
+          return bool_type_error(bool_param, raw)
+        end
       end
 
       # Real ansible's apt module on a non-Debian-family host: it first
@@ -515,10 +600,16 @@ module Krikri
             stdout: upgrade_stdout
           )
         else
+          # Bookworm's apt.py (the harness reference) has NO
+          # required_one_of - `apt: {state: present}` with no name, no
+          # upgrade, no deb and no cache refresh just exits ok with
+          # changed: false and no msg (live-verified via the
+          # podman-diff apt_edge_cases A10/A14 cases). The previous
+          # "Missing required parameter: name (unless using
+          # update_cache)" failure was this engine's own invention.
           return PluginResult.new(
             changed: false,
-            failed: true,
-            msg: "Missing required parameter: name (unless using update_cache)"
+            failed: false
           )
         end
       end
@@ -549,10 +640,12 @@ module Krikri
             stdout: upgrade_stdout
           )
         else
+          # Same no-name-ok behavior for the empty-name-list case (see
+          # the branch above) - real Ansible's install()/remove() no-ops
+          # exit_json with nothing to say, not a "Nothing to do" msg.
           return PluginResult.new(
             changed: false,
-            failed: false,
-            msg: "Nothing to do"
+            failed: false
           )
         end
       end
@@ -598,12 +691,14 @@ module Krikri
         else
           handle_latest(packages, messages, false, lock_timeout)
         end
+      when "build-dep"
+        handle_install(packages, messages, false, lock_timeout, build_dep: true)
+      when "fixed"
+        handle_install(packages, messages, false, lock_timeout, fixed_state: true)
       else
-        PluginResult.new(
-          changed: false,
-          failed: true,
-          msg: "Invalid state: #{state}. Must be present, absent, or latest"
-        )
+        # Unreachable in practice: state was already validated against
+        # real apt.py's choice list at module-setup above.
+        choices_error("state", APT_STATES, state)
       end
     end
 
@@ -678,6 +773,32 @@ module Krikri
     private def split_name_version(pkg : String) : {String, String?}
       idx = pkg.index('=')
       idx ? {pkg[0...idx], pkg[(idx + 1)..]} : {pkg, nil}
+    end
+
+    # Real install()'s per-spec candidate probe: can apt resolve this
+    # package name at all? A plain `apt-get install --dry-run` is the
+    # same resolution real's python-apt cache does, including virtual
+    # packages (resolved to their providers -> rc 0) vs unknown names
+    # (rc 100, "Unable to locate package").
+    private def package_resolvable?(name : String) : Bool
+      probe = remote_exec("DEBIAN_FRONTEND=noninteractive apt-get install --dry-run -y #{shell_single_quote(name)} 2>/dev/null")
+      probe[:exit_code] == 0
+    end
+
+    # Real install()'s pinned-version probe: version_installable in
+    # package_status() is "does this exact version exist in the apt
+    # cache" - apt-cache policy's own version table is the CLI-equivalent
+    # source. Wildcard pins (name=1.19*) are left to apt-get itself (real
+    # fnmatches them, but any pin that matches nothing fails in apt-get
+    # the same way).
+    private def pinned_version_installable?(name : String, version : String) : Bool
+      return false if version.includes?('*')
+      probe = remote_exec("apt-cache policy #{shell_single_quote(name)}")
+      probe[:exit_code] == 0 && probe[:stdout].split('\n').any? do |line|
+        tokens = line.strip.split
+        tokens.delete("***")
+        tokens.first? == version
+      end
     end
 
     # Parses the version column (3rd whitespace-separated field) out of
@@ -804,8 +925,12 @@ module Krikri
       PluginResult.new(changed: true, failed: false, msg: "Installed #{pkg_name || path}", stdout: install_result[:stdout])
     end
 
-    # Handle installing packages
-    private def handle_install(packages : Array(String), messages : Array(String), changed : Bool, lock_timeout : Int32) : PluginResult
+    # Handle installing packages. build_dep: is real apt.py's
+    # state=build-dep (install() with build_dep=True: every spec goes to
+    # `apt-get build-dep` verbatim, no installed-status short-circuit);
+    # fixed_state: is state=fixed (the normal install path plus
+    # --fix-broken).
+    private def handle_install(packages : Array(String), messages : Array(String), changed : Bool, lock_timeout : Int32, build_dep : Bool = false, fixed_state : Bool = false) : PluginResult
       # An empty package name (from `name: ""` or an empty comma
       # segment - parse_package_names keeps those now) is a hard failure
       # in real Ansible's apt module, same as any other name missing
@@ -826,10 +951,53 @@ module Krikri
       install_stdout = ""
       install_stderr = ""
 
-      # Check which packages need installation - one batched query for
-      # the whole list (see dpkg_installed_status).
+      # One batched dpkg-query round trip for the whole list (see
+      # dpkg_installed_status), shared by the candidate probe and the
+      # to_install split below.
       installed_status = dpkg_installed_status(packages)
+
+      # Real Ansible's install() resolves each spec against the apt cache
+      # BEFORE running apt-get, failing on the first spec it can't
+      # satisfy (live-verified wordings via the podman-diff
+      # apt_edge_cases A4/A5 cases):
+      #   - an unknown package name: "No package matching 'X' is
+      #     available"
+      #   - an unknown pinned version on a known package: "no available
+      #     installation candidate for X=V"
+      # Previously this engine deferred both to `apt-get install`'s own
+      # "E: Unable to locate package ..."/"E: Version ... was not found"
+      # and wrapped them in a "Failed to install ...: <stderr>" msg -
+      # entirely different wording, and the same wrong-first-error for a
+      # name LIST where real fails on the first unsatisfiable spec.
+      unless build_dep
+        packages.each do |pkg|
+          base_name, pinned_version = split_name_version(pkg)
+          installed_probe, installed_ver_probe = installed_status[base_name]?.try { |pair| pair } || {false, nil}
+          # installed specs never reach the candidate check (real's
+          # installed_version short-circuit)
+          next if installed_probe && (pinned_version.nil? || installed_ver_probe == pinned_version)
+          next if @only_upgrade && !installed_probe
+          if pinned_version
+            unless pinned_version_installable?(base_name, pinned_version)
+              return PluginResult.new(
+                changed: false,
+                failed: true,
+                msg: "no available installation candidate for #{pkg}"
+              )
+            end
+          elsif !package_resolvable?(base_name)
+            return PluginResult.new(
+              changed: false,
+              failed: true,
+              msg: "No package matching '#{base_name}' is available"
+            )
+          end
+        end
+      end
+
+      # Check which packages need installation.
       packages.each do |pkg|
+        next if build_dep
         base_name, pinned_version = split_name_version(pkg)
         installed, installed_ver = installed_status[base_name]?.try { |pair| pair } || {false, nil}
         if installed && (pinned_version.nil? || installed_ver == pinned_version)
@@ -844,6 +1012,7 @@ module Krikri
           to_install << pkg
         end
       end
+      to_install = packages if build_dep
 
       # Install packages that aren't already installed
       unless to_install.empty?
@@ -851,7 +1020,7 @@ module Krikri
           messages << "Would install #{to_install.join(", ")}"
           changed = true
         else
-          pkg_list = to_install.join(" ")
+          pkg_list = to_install.map { |pkg| shell_single_quote(pkg) }.join(" ")
           # `apt-get install` of named packages contends for the dpkg lock
           # - wrap with lock_timeout retry, matching real Ansible's
           # `apt` module behavior. The DEBIAN_FRONTEND=noninteractive +
@@ -864,7 +1033,12 @@ module Krikri
           # (not a plain locate-miss on a valid cache) the whole install
           # is retried once behind an implicit `apt-get update` (see
           # apt_install_with_implicit_cache_retry).
-          install_cmd = "DEBIAN_FRONTEND=noninteractive apt-get install -y #{expand_dpkg_options}#{apt_install_leading_flags} #{pkg_list}#{apt_install_trailing_flags}".squeeze(' ')
+          install_cmd = if build_dep
+                          "DEBIAN_FRONTEND=noninteractive apt-get build-dep -y #{expand_dpkg_options} #{pkg_list}".squeeze(' ')
+                        else
+                          fixed_flag = fixed_state ? " --fix-broken" : ""
+                          "DEBIAN_FRONTEND=noninteractive apt-get install -y#{fixed_flag} #{expand_dpkg_options}#{apt_install_leading_flags} #{pkg_list}#{apt_install_trailing_flags}".squeeze(' ')
+                        end
           install_result = with_policy_rc_d { apt_install_with_implicit_cache_retry(install_cmd, lock_timeout, ->remote_exec(String)) }
           install_stdout = install_result[:stdout]
           install_stderr = install_result[:stderr]
