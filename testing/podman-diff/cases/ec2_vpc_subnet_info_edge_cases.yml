@@ -1,0 +1,34 @@
+# ec2_vpc_subnet_info module edge cases. Validation-surface only (no
+# AWS API in the containers): real amazon.aws.ec2_vpc_subnet_info's
+# AnsibleModule spec checks (dict conversion, unsupported params over
+# the merged AWS base spec incl. the subnet_id alias) fire before the
+# boto3 import check; a VALID invocation fails on the missing
+# boto3/botocore import in both engines. The hostname/interpreter in
+# the boto3 message is normalized out.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "VS1 unsupported parameter"
+      amazon.aws.ec2_vpc_subnet_info:
+        bogus: 1
+      register: r1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "VS1 failed={{ r1.failed | default('none') }} msg={{ r1.msg | default('none') }}"
+
+    - name: "VS2 filters not a dict"
+      amazon.aws.ec2_vpc_subnet_info:
+        filters: foo
+      register: r2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "VS2 failed={{ r2.failed | default('none') }} msg={{ r2.msg | default('none') }}"
+
+    - name: "VS3 subnet_id alias accepted, then boto3 gate"
+      amazon.aws.ec2_vpc_subnet_info:
+        subnet_id: subnet-0123456
+      register: r3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "VS3 failed={{ r3.failed | default('none') }} msg={{ r3.msg | default('none') | regex_replace(\"on [0-9a-f]+'s Python\", \"on HOST's Python\") }}"

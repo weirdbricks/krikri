@@ -1,0 +1,60 @@
+# ec2_ami_info module edge cases. Validation-surface only: there is no
+# AWS API in the podman-diff containers. Real amazon.aws.ec2_ami_info
+# (AnsibleAWSModule) validates the argument spec FIRST (AnsibleModule
+# wordings), then fails any VALID invocation on the missing
+# boto3/botocore import - krikri's plugin mirrors both. The
+# hostname/interpreter in the boto3 message and the PYTHONHASHSEED
+# random booleans list are normalized out (both differ between the two
+# containers / between runs).
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "AI1 unknown parameter"
+      amazon.aws.ec2_ami_info:
+        bogusparam: 1
+      register: r1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "AI1 failed={{ r1.failed | default('none') }} msg={{ r1.msg | default('none') }}"
+
+    - name: "AI2 filters not a dict (plain string)"
+      amazon.aws.ec2_ami_info:
+        filters: foo
+      register: r2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "AI2 failed={{ r2.failed | default('none') }} msg={{ r2.msg | default('none') }}"
+
+    - name: "AI3 image_ids as dict"
+      amazon.aws.ec2_ami_info:
+        image_ids: {a: b}
+      register: r3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "AI3 failed={{ r3.failed | default('none') }} msg={{ r3.msg | default('none') }}"
+
+    - name: "AI4 describe_image_attributes non-bool"
+      amazon.aws.ec2_ami_info:
+        describe_image_attributes: notabool
+      register: r4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "AI4 failed={{ r4.failed | default('none') }} msg={{ r4.msg | default('none') | regex_replace('Valid booleans include:.*', 'VALID-BOOLEANS') }}"
+
+    - name: "AI5 valid args - fails on the missing boto3 import"
+      amazon.aws.ec2_ami_info:
+        owners:
+          - self
+      register: r5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "AI5 failed={{ r5.failed | default('none') }} msg={{ r5.msg | default('none') | regex_replace(\"on [0-9a-f]+'s Python\", \"on HOST's Python\") }}"
+
+    - name: "AI6 image_id alias accepted, then boto3 gate"
+      amazon.aws.ec2_ami_info:
+        image_id: ami-0123456789abcdef0
+      register: r6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "AI6 failed={{ r6.failed | default('none') }} msg={{ r6.msg | default('none') | regex_replace(\"on [0-9a-f]+'s Python\", \"on HOST's Python\") }}"

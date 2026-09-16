@@ -1,0 +1,71 @@
+# ec2_key module edge cases. Validation-surface only (no AWS API in
+# the containers): real amazon.aws.ec2_key's AnsibleModule spec checks
+# (required, choices, bool conversion, mutually_exclusive
+# key_material|key_type, unsupported params over the merged AWS base
+# spec) fire before the boto3 import check; a VALID invocation fails
+# on the missing boto3/botocore import in both engines. The
+# hostname/interpreter in the boto3 message and the random
+# booleans-list order are normalized out.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "K1 missing required name"
+      amazon.aws.ec2_key:
+      register: r1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "K1 failed={{ r1.failed | default('none') }} msg={{ r1.msg | default('none') }}"
+
+    - name: "K2 state outside the choices list"
+      amazon.aws.ec2_key:
+        name: k
+        state: bogus
+      register: r2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "K2 failed={{ r2.failed | default('none') }} msg={{ r2.msg | default('none') }}"
+
+    - name: "K3 force non-bool"
+      amazon.aws.ec2_key:
+        name: k
+        force: notabool
+      register: r3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "K3 failed={{ r3.failed | default('none') }} msg={{ r3.msg | default('none') | regex_replace('Valid booleans include:.*', 'VALID-BOOLEANS') }}"
+
+    - name: "K4 unsupported parameter"
+      amazon.aws.ec2_key:
+        bogusparam: 1
+      register: r4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "K4 failed={{ r4.failed | default('none') }} msg={{ r4.msg | default('none') }}"
+
+    - name: "K5 key_material and key_type are mutually exclusive"
+      amazon.aws.ec2_key:
+        name: k
+        key_material: ssh-rsa AAAAB3NzaC1yc2E
+        key_type: rsa
+      register: r5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "K5 failed={{ r5.failed | default('none') }} msg={{ r5.msg | default('none') }}"
+
+    - name: "K6 tags not a dict"
+      amazon.aws.ec2_key:
+        name: k
+        tags: foo
+      register: r6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "K6 failed={{ r6.failed | default('none') }} msg={{ r6.msg | default('none') }}"
+
+    - name: "K7 valid args - fails on the missing boto3 import"
+      amazon.aws.ec2_key:
+        name: deploy-key
+      register: r7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "K7 failed={{ r7.failed | default('none') }} msg={{ r7.msg | default('none') | regex_replace(\"on [0-9a-f]+'s Python\", \"on HOST's Python\") }}"

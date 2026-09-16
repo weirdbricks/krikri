@@ -1,0 +1,120 @@
+# ec2_instance module edge cases. Validation-surface only (no AWS API,
+# no boto3 in the containers): real amazon.aws.ec2_instance's
+# AnsibleModule argument-spec checks (types, choices, sub-spec
+# options= validation) fire before the boto3 import check; any VALID
+# invocation fails on the missing boto3/botocore import in both
+# engines. Hostname/interpreter and the random booleans-list order are
+# normalized out.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "IN1 state outside the choices list"
+      amazon.aws.ec2_instance:
+        state: bogus
+      register: r1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "IN1 failed={{ r1.failed | default('none') }} msg={{ r1.msg | default('none') }}"
+
+    - name: "IN2 wait_timeout not an int"
+      amazon.aws.ec2_instance:
+        wait_timeout: abc
+      register: r2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "IN2 failed={{ r2.failed | default('none') }} msg={{ r2.msg | default('none') }}"
+
+    - name: "IN3 wait non-bool"
+      amazon.aws.ec2_instance:
+        wait: notabool
+      register: r3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "IN3 failed={{ r3.failed | default('none') }} msg={{ r3.msg | default('none') | regex_replace('Valid booleans include:.*', 'VALID-BOOLEANS') }}"
+
+    - name: "IN4 unsupported image sub-option"
+      amazon.aws.ec2_instance:
+        image:
+          bogus_sub: x
+      register: r4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "IN4 failed={{ r4.failed | default('none') }} msg={{ r4.msg | default('none') }}"
+
+    - name: "IN5 cpu_options missing required core_count"
+      amazon.aws.ec2_instance:
+        cpu_options:
+          threads_per_core: 2
+      register: r5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "IN5 failed={{ r5.failed | default('none') }} msg={{ r5.msg | default('none') }}"
+
+    - name: "IN6 metadata_options sub-option choice violation"
+      amazon.aws.ec2_instance:
+        metadata_options:
+          http_endpoint: bogus
+      register: r6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "IN6 failed={{ r6.failed | default('none') }} msg={{ r6.msg | default('none') }}"
+
+    - name: "IN7 volumes element not a dict (no options= wording)"
+      amazon.aws.ec2_instance:
+        volumes:
+          - foo
+      register: r7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "IN7 failed={{ r7.failed | default('none') }} msg={{ r7.msg | default('none') }}"
+
+    - name: "IN8 image scalar string (bare dict-parse wording)"
+      amazon.aws.ec2_instance:
+        image: notadict
+      register: r8
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "IN8 failed={{ r8.failed | default('none') }} msg={{ r8.msg | default('none') }}"
+
+    - name: "IN9 cpu_options sub-option int conversion failure"
+      amazon.aws.ec2_instance:
+        cpu_options:
+          core_count: abc
+          threads_per_core: 2
+      register: r9
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "IN9 failed={{ r9.failed | default('none') }} msg={{ r9.msg | default('none') }}"
+
+    - name: "IN10 tenancy choice violation"
+      amazon.aws.ec2_instance:
+        tenancy: bogus
+      register: r10
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "IN10 failed={{ r10.failed | default('none') }} msg={{ r10.msg | default('none') }}"
+
+    - name: "IN11 purge_tags non-bool"
+      amazon.aws.ec2_instance:
+        purge_tags: notabool
+      register: r11
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "IN11 failed={{ r11.failed | default('none') }} msg={{ r11.msg | default('none') | regex_replace('Valid booleans include:.*', 'VALID-BOOLEANS') }}"
+
+    - name: "IN12 top-level unsupported parameter"
+      amazon.aws.ec2_instance:
+        bogusparam: 1
+      register: r12
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "IN12 failed={{ r12.failed | default('none') }} msg={{ r12.msg | default('none') }}"
+
+    - name: "IN13 valid args - fails on the missing boto3 import"
+      amazon.aws.ec2_instance:
+        image_id: ami-0123456789abcdef0
+      register: r13
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "IN13 failed={{ r13.failed | default('none') }} msg={{ r13.msg | default('none') | regex_replace(\"on [0-9a-f]+'s Python\", \"on HOST's Python\") }}"

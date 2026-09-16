@@ -3,6 +3,8 @@
 require "json"
 require "../src/krikri/base_plugin"
 require "../src/krikri/plugin_helpers/ec2_api"
+require "../src/krikri/plugin_helpers/aws_module_args"
+require "../src/krikri/plugin_helpers/aws_module_specs"
 require "../src/krikri/plugin_helpers/ec2_instance"
 
 module Krikri
@@ -24,6 +26,12 @@ module Krikri
   # purge_tags, region, check_mode.
   class Ec2InstancePlugin < BasePlugin
     def execute : PluginResult
+      if result = PluginHelpers::AwsModuleArgs.validate(PluginHelpers::AwsModuleSpecs::EC2_INSTANCE, @params)
+        return result
+      end
+      if result = PluginHelpers::AwsModuleArgs.boto3_gate(@params)
+        return result
+      end
       PluginHelpers::Ec2Instance.run(@params)
     end
   end

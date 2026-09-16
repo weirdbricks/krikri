@@ -25,11 +25,19 @@
 require "json"
 require "../src/krikri/base_plugin"
 require "../src/krikri/plugin_helpers/iam_api"
+require "../src/krikri/plugin_helpers/aws_module_args"
+require "../src/krikri/plugin_helpers/aws_module_specs"
 require "../src/krikri/plugin_helpers/iam_user"
 
 module Krikri
   class IamUserInfoPlugin < BasePlugin
     def execute : PluginResult
+      if result = PluginHelpers::AwsModuleArgs.validate(PluginHelpers::AwsModuleSpecs::IAM_USER_INFO, @params)
+        return result
+      end
+      if result = PluginHelpers::AwsModuleArgs.boto3_gate(@params)
+        return result
+      end
       PluginHelpers::IamUser.run(@params)
     end
   end

@@ -1,0 +1,177 @@
+# ec2_security_group module edge cases. Validation-surface only (no
+# AWS API in the containers): real amazon.aws.ec2_security_group's
+# AnsibleModule spec checks fire before the boto3 import check -
+# required_one_of name|group_id, required_if state=present ->
+# name+description, state choices, bool conversion, the rules=/
+# rules_egress= sub-spec (element dict check, port/ICMP mutual
+# exclusions, per-rule required target, required_by icmp_code ->
+# icmp_type, unsupported rule keys), then the merged-AWS-spec
+# unsupported-params check. A VALID invocation fails on the missing
+# boto3/botocore import in both engines. The hostname/interpreter in
+# the boto3 message and the random booleans-list order are normalized
+# out.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "SG1 no name or group_id"
+      amazon.aws.ec2_security_group:
+      register: r1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "SG1 failed={{ r1.failed | default('none') }} msg={{ r1.msg | default('none') }}"
+
+    - name: "SG2 group_id with state=present (required_if missing name+description)"
+      amazon.aws.ec2_security_group:
+        group_id: sg-0123456
+        state: present
+      register: r2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "SG2 failed={{ r2.failed | default('none') }} msg={{ r2.msg | default('none') }}"
+
+    - name: "SG3 name but no description with state=present"
+      amazon.aws.ec2_security_group:
+        name: web
+        state: present
+      register: r3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "SG3 failed={{ r3.failed | default('none') }} msg={{ r3.msg | default('none') }}"
+
+    - name: "SG4 state=absent still requires name or group_id"
+      amazon.aws.ec2_security_group:
+        state: absent
+      register: r4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "SG4 failed={{ r4.failed | default('none') }} msg={{ r4.msg | default('none') }}"
+
+    - name: "SG5 state outside the choices list"
+      amazon.aws.ec2_security_group:
+        name: web
+        description: d
+        state: bogus
+      register: r5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "SG5 failed={{ r5.failed | default('none') }} msg={{ r5.msg | default('none') }}"
+
+    - name: "SG6 rule with ports and to_port (mutually exclusive)"
+      amazon.aws.ec2_security_group:
+        name: web
+        description: d
+        state: present
+        rules:
+          - proto: tcp
+            ports:
+              - '22'
+            to_port: 80
+            cidr_ip: 0.0.0.0/0
+      register: r6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "SG6 failed={{ r6.failed | default('none') }} msg={{ r6.msg | default('none') }}"
+
+    - name: "SG7 rule without a target (required_one_of found in rules)"
+      amazon.aws.ec2_security_group:
+        name: web
+        description: d
+        state: present
+        rules:
+          - proto: tcp
+            to_port: 80
+      register: r7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "SG7 failed={{ r7.failed | default('none') }} msg={{ r7.msg | default('none') }}"
+
+    - name: "SG8 icmp_code without icmp_type (required_by)"
+      amazon.aws.ec2_security_group:
+        name: web
+        description: d
+        state: present
+        rules:
+          - proto: tcp
+            cidr_ip: 0.0.0.0/0
+            icmp_code: 1
+      register: r8
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "SG8 failed={{ r8.failed | default('none') }} msg={{ r8.msg | default('none') }}"
+
+    - name: "SG9 unsupported rule sub-option"
+      amazon.aws.ec2_security_group:
+        name: web
+        description: d
+        state: present
+        rules:
+          - proto: tcp
+            cidr_ip: 0.0.0.0/0
+            bogus_rule: x
+      register: r9
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "SG9 failed={{ r9.failed | default('none') }} msg={{ r9.msg | default('none') }}"
+
+    - name: "SG10 rule element not a dict (bare dict-parse wording)"
+      amazon.aws.ec2_security_group:
+        name: web
+        description: d
+        state: present
+        rules:
+          - foo
+      register: r10
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "SG10 failed={{ r10.failed | default('none') }} msg={{ r10.msg | default('none') }}"
+
+    - name: "SG11 rules_egress icmp_code + to_port (mutually exclusive)"
+      amazon.aws.ec2_security_group:
+        name: web
+        description: d
+        state: absent
+        rules_egress:
+          - proto: tcp
+            cidr_ip: 0.0.0.0/0
+            to_port: 1
+            icmp_code: 2
+      register: r11
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "SG11 failed={{ r11.failed | default('none') }} msg={{ r11.msg | default('none') }}"
+
+    - name: "SG12 rule from_port not an int (sub-option type error)"
+      amazon.aws.ec2_security_group:
+        name: web
+        description: d
+        state: present
+        rules:
+          - proto: tcp
+            cidr_ip: 0.0.0.0/0
+            from_port: abc
+      register: r12
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "SG12 failed={{ r12.failed | default('none') }} msg={{ r12.msg | default('none') }}"
+
+    - name: "SG13 purge_rules non-bool"
+      amazon.aws.ec2_security_group:
+        name: web
+        description: d
+        state: present
+        purge_rules: notabool
+      register: r13
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "SG13 failed={{ r13.failed | default('none') }} msg={{ r13.msg | default('none') | regex_replace('Valid booleans include:.*', 'VALID-BOOLEANS') }}"
+
+    - name: "SG14 valid args - fails on the missing boto3 import"
+      amazon.aws.ec2_security_group:
+        name: web
+        description: d
+        state: present
+      register: r14
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "SG14 failed={{ r14.failed | default('none') }} msg={{ r14.msg | default('none') | regex_replace(\"on [0-9a-f]+'s Python\", \"on HOST's Python\") }}"
