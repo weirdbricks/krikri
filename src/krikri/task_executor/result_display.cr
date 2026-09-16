@@ -5,6 +5,20 @@ require "../timing_profile"
 require "../variable_substitutor/filter_core"
 
 module Krikri
+  # A module result's "failed" flag read the way real Ansible's Python
+  # truthiness reads it: the wire protocol normally carries a JSON bool,
+  # but real ansible-core's TaskExecutor puts INTEGER 0 in the async
+  # fire-and-forget launch result ("failed: 0" - confirmed via the
+  # podman-diff async_status cases), and a hard as_bool cast crashes the
+  # executor on it. 0 is falsy, 1 truthy, matching Python.
+  def self.result_failed_flag(result : JSON::Any) : Bool
+    case raw = result["failed"]?.try(&.raw)
+    when Bool  then raw
+    when Int64 then raw != 0
+    else            false
+    end
+  end
+
   # ResultDisplay - Handles displaying task results and diffs
   module ResultDisplay
     # Display task result with appropriate formatting.
@@ -18,7 +32,7 @@ module Krikri
 
     private def self.display_result_measured(host : Host, result : JSON::Any, diff_mode : Bool, item_label : String? = nil, ignore_errors : Bool = false, no_log : Bool = false) : Nil
       changed = result["changed"]?.try(&.as_bool) || false
-      failed = result["failed"]?.try(&.as_bool) || false
+      failed = Krikri.result_failed_flag(result)
       msg = result["msg"]?.try(&.as_s) || ""
 
       # no_log: print the status line and NOTHING else - no msg, no
@@ -203,7 +217,7 @@ module Krikri
 
     def self.display_adhoc_result(host : Host, result : JSON::Any, diff_mode : Bool = false, module_name : String? = nil) : Nil
       changed = result["changed"]?.try(&.as_bool) || false
-      failed = result["failed"]?.try(&.as_bool) || false
+      failed = Krikri.result_failed_flag(result)
       unreachable = result["unreachable"]?.try(&.as_bool) || false
 
       state, color_code = adhoc_state_and_color(changed, failed, unreachable)
@@ -277,7 +291,7 @@ module Krikri
     # keeps its other keys (verified live). Status derivation stays with
     # the caller - stripping here is display-only.
     def self.adhoc_result_json(result : JSON::Any, module_name : String? = nil, oneline : Bool = false) : String
-      failed = result["failed"]?.try(&.as_bool) || false
+      failed = Krikri.result_failed_flag(result)
       unreachable = result["unreachable"]?.try(&.as_bool) || false
       verbose_always = result["_ansible_verbose_always"]?.try(&.as_bool) || false
       cleaned = clean_for_display(result)
@@ -460,7 +474,7 @@ module Krikri
     # ignored failure doesn't fail the play or the process exit code.
     def self.update_stats(stats : Hash(String, Int32), result : JSON::Any, ignore_errors : Bool = false) : Nil
       changed = result["changed"]?.try(&.as_bool) || false
-      failed = result["failed"]?.try(&.as_bool) || false
+      failed = Krikri.result_failed_flag(result)
 
       if failed && !ignore_errors
         stats["failed"] += 1

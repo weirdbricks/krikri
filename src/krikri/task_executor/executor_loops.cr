@@ -1049,7 +1049,7 @@ module Krikri
           merge_ansible_facts(fact_hosts.try(&.[idx]) || host, result, task.module_name.ends_with?("set_fact"))
 
           changed = result["changed"]?.try(&.as_bool) || false
-          failed = result["failed"]?.try(&.as_bool) || false
+          failed = Krikri.result_failed_flag(result)
           any_changed ||= changed
           any_failed ||= failed
           any_unreachable ||= unreachable_task_result?(result)
@@ -1210,7 +1210,7 @@ module Krikri
       return unless result
 
       changed = result["changed"]?.try(&.as_bool) || false
-      failed = result["failed"]?.try(&.as_bool) || false
+      failed = Krikri.result_failed_flag(result)
       if changed && (notify_list = task.notify)
         notify_handlers(task, host, notify_list)
       end

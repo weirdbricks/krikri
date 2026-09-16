@@ -1,0 +1,102 @@
+# async_status module edge cases. Each case registers its result and
+# prints a "D<n> key=value" debug line for run.sh's diff extraction.
+# failed=/changed=/behavior are what matter; error-message WORDING may
+# legitimately differ and is not a bug.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "D1 async_status with no jid (must fail)"
+      ansible.builtin.async_status:
+      register: d1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D1 failed={{ d1.failed }} changed={{ d1.changed }}"
+
+    - name: "D2 async_status jid for a job that never ran (must fail)"
+      ansible.builtin.async_status:
+        jid: "999999999.999zzz"
+      register: d2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D2 failed={{ d2.failed }} changed={{ d2.changed }}"
+
+    - name: "D2b async_status mode=cleanup for a job that never ran"
+      ansible.builtin.async_status:
+        jid: "999999999.999zzz"
+        mode: cleanup
+      register: d2b
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D2b failed={{ d2b.failed }} changed={{ d2b.changed }}"
+
+    - name: "D3 launch a real async job (fire and forget)"
+      ansible.builtin.command:
+        cmd: "sleep 0.1"
+      async: 30
+      poll: 0
+      register: d3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D3 failed={{ d3.failed }} changed={{ d3.changed }} has_jid={{ d3.ansible_job_id is defined and (d3.ansible_job_id | length > 0) }} finished={{ d3.finished | default('none') }}"
+
+    - name: "D4 async_status on the launched job (must report finished)"
+      ansible.builtin.async_status:
+        jid: "{{ d3.ansible_job_id }}"
+      register: d4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D4 failed={{ d4.failed }} changed={{ d4.changed }} finished={{ d4.finished | default('none') }} rc={{ d4.rc | default('none') }}"
+
+    - name: "D5 async_status mode=cleanup on the completed job"
+      ansible.builtin.async_status:
+        jid: "{{ d3.ansible_job_id }}"
+        mode: cleanup
+      register: d5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D5 failed={{ d5.failed }} changed={{ d5.changed }}"
+
+    - name: "D6 async_status on the cleaned-up job (must now fail: job gone)"
+      ansible.builtin.async_status:
+        jid: "{{ d3.ansible_job_id }}"
+      register: d6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D6 failed={{ d6.failed }} changed={{ d6.changed }}"
+
+    - name: "D7 plain async task with default polling (blocks until done)"
+      ansible.builtin.command:
+        cmd: "echo done"
+      async: 30
+      register: d7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D7 failed={{ d7.failed }} changed={{ d7.changed }} stdout={{ d7.stdout | default('none') }} finished={{ d7.finished | default('none') }}"
+
+    - name: "D8 async task that fails asynchronously (nonzero exit)"
+      ansible.builtin.command:
+        cmd: "sh -c 'exit 7'"
+      async: 30
+      poll: 0
+      register: d8
+      ignore_errors: true
+    - name: "D8b poll the failing async job to completion"
+      ansible.builtin.async_status:
+        jid: "{{ d8.ansible_job_id }}"
+      register: d8b
+      until: d8b.finished
+      retries: 30
+      delay: 1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D8 failed={{ d8.failed }} changed={{ d8.changed }} D8b failed={{ d8b.failed }} rc={{ d8b.rc | default('none') }} finished={{ d8b.finished | default('none') }}"
+
+    - name: "D9 cleanup the failing job too"
+      ansible.builtin.async_status:
+        jid: "{{ d8.ansible_job_id }}"
+        mode: cleanup
+      register: d9
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "D9 failed={{ d9.failed }} changed={{ d9.changed }}"
