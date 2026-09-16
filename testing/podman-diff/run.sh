@@ -400,6 +400,19 @@ if printf '%s\n' "${cases[@]}" | grep -q '^acl'; then
   done
 fi
 
+# sudoers cases need visudo (the sudo package) in BOTH containers -
+# real community.general.sudoers (via get_bin_path) and krikri's plugin
+# both validate generated content with `visudo -c -f -` when validation
+# is detect/required, and debian:bookworm-slim ships without it. Gated
+# on the requested case list like the modprobe cases above.
+if printf '%s\n' "${cases[@]}" | grep -q '^sudoers'; then
+  log "installing sudo (visudo) for sudoers cases"
+  for c in "$NAME_A" "$NAME_B"; do
+    podman exec "$c" bash -c "apt-get install -y -qq --no-install-recommends sudo >/dev/null" \
+      || { log "FATAL: sudo install failed in $c"; exit 1; }
+  done
+fi
+
 # capabilities cases need libcap2-bin (getcap/setcap) in BOTH
 # containers - real community.general.capabilities and krikri's plugin
 # both shell to them, and debian:bookworm-slim ships without them.
