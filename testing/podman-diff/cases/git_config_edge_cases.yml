@@ -1,0 +1,184 @@
+# git_config module edge cases (community.general.git_config). Prefix GC;
+# failed=/changed= booleans and on-disk config values (via `git config
+# --get-all`) matter; error-message WORDING is compared directly for the
+# validation cases (live-verified wordings). Both containers have git
+# installed by the harness.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "GC0 missing required name"
+      community.general.git_config:
+      register: gc0
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "GC0 failed={{ gc0.failed | default('none') }} changed={{ gc0.changed | default('none') }} msg={{ gc0.msg | default('none') }}"
+
+    - name: "GC1 invalid add_mode choice"
+      community.general.git_config:
+        name: krikri.opt
+        value: a
+        add_mode: bogus
+      register: gc1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "GC1 failed={{ gc1.failed | default('none') }} changed={{ gc1.changed | default('none') }} msg={{ gc1.msg | default('none') }}"
+
+    - name: "GC2 invalid scope choice"
+      community.general.git_config:
+        name: krikri.opt
+        value: a
+        scope: bogus
+      register: gc2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "GC2 failed={{ gc2.failed | default('none') }} changed={{ gc2.changed | default('none') }} msg={{ gc2.msg | default('none') }}"
+
+    - name: "GC3 invalid state choice"
+      community.general.git_config:
+        name: krikri.opt
+        value: a
+        state: bogus
+      register: gc3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "GC3 failed={{ gc3.failed | default('none') }} changed={{ gc3.changed | default('none') }} msg={{ gc3.msg | default('none') }}"
+
+    - name: "GC4 scope local without repo (required_if)"
+      community.general.git_config:
+        name: krikri.opt
+        value: a
+        scope: local
+      register: gc4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "GC4 failed={{ gc4.failed | default('none') }} changed={{ gc4.changed | default('none') }} msg={{ gc4.msg | default('none') }}"
+
+    - name: "GC5 scope file without file (required_if)"
+      community.general.git_config:
+        name: krikri.opt
+        value: a
+        scope: file
+      register: gc5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "GC5 failed={{ gc5.failed | default('none') }} changed={{ gc5.changed | default('none') }} msg={{ gc5.msg | default('none') }}"
+
+    - name: "GC6 state present without value (required_if)"
+      community.general.git_config:
+        name: krikri.opt
+        state: present
+        scope: global
+      register: gc6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "GC6 failed={{ gc6.failed | default('none') }} changed={{ gc6.changed | default('none') }} msg={{ gc6.msg | default('none') }}"
+
+    - name: "GC7 unsupported parameter"
+      community.general.git_config:
+        name: krikri.opt
+        value: a
+        scope: global
+        krikri_param: yes
+      register: gc7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "GC7 failed={{ gc7.failed | default('none') }} changed={{ gc7.changed | default('none') }} msg={{ gc7.msg | default('none') }}"
+
+    - name: "GC8 empty-string value with state present (post-setup guard)"
+      community.general.git_config:
+        name: krikri.opt
+        value: ""
+        scope: global
+      register: gc8
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "GC8 failed={{ gc8.failed | default('none') }} changed={{ gc8.changed | default('none') }} msg={{ gc8.msg | default('none') }}"
+
+    - name: "GC9 global scope write"
+      community.general.git_config:
+        name: krikri.email
+        value: krikri@example.com
+        scope: global
+      register: gc9
+    - ansible.builtin.debug:
+        msg: "GC9 failed={{ gc9.failed | default('none') }} changed={{ gc9.changed | default('none') }} msg={{ gc9.msg | default('none') }}"
+
+    - name: "GC9b global scope re-run is a no-op"
+      community.general.git_config:
+        name: krikri.email
+        value: krikri@example.com
+        scope: global
+      register: gc9b
+    - ansible.builtin.debug:
+        msg: "GC9b failed={{ gc9b.failed | default('none') }} changed={{ gc9b.changed | default('none') }} msg={{ gc9b.msg | default('none') }}"
+
+    - name: "GC10 absent on a never-set name is a no-op"
+      community.general.git_config:
+        name: krikri.never
+        state: absent
+        scope: global
+      register: gc10
+    - ansible.builtin.debug:
+        msg: "GC10 failed={{ gc10.failed | default('none') }} changed={{ gc10.changed | default('none') }} msg={{ gc10.msg | default('none') }}"
+
+    - name: "GC11 seed a scratch repo"
+      ansible.builtin.command: git init /tmp/krikri-repo
+      register: gc11
+    - ansible.builtin.debug:
+        msg: "GC11 rc={{ gc11.rc | default('none') }}"
+
+    - name: "GC12 local scope write into the scratch repo"
+      community.general.git_config:
+        name: krikri.local
+        value: yes-local
+        scope: local
+        repo: /tmp/krikri-repo
+      register: gc12
+    - ansible.builtin.debug:
+        msg: "GC12 failed={{ gc12.failed | default('none') }} changed={{ gc12.changed | default('none') }} msg={{ gc12.msg | default('none') }}"
+
+    - name: "GC13 file scope write"
+      community.general.git_config:
+        name: krikri.filesc
+        value: fileval
+        scope: file
+        file: /tmp/krikri-gitconfig
+      register: gc13
+    - ansible.builtin.debug:
+        msg: "GC13 failed={{ gc13.failed | default('none') }} changed={{ gc13.changed | default('none') }} msg={{ gc13.msg | default('none') }}"
+
+    - name: "GC14 add_mode add accumulates values"
+      community.general.git_config:
+        name: krikri.opt
+        value: "{{ item }}"
+        scope: global
+        add_mode: add
+      loop:
+        - first
+        - second
+      register: gc14
+    - ansible.builtin.debug:
+        msg: "GC14 failed={{ gc14.failed | default('none') }} changed={{ gc14.changed | default('none') }}"
+
+    - name: "GC15 read back the accumulated global values"
+      ansible.builtin.command: git config --global --get-all krikri.opt
+      register: gc15
+    - ansible.builtin.debug:
+        msg: "GC15 rc={{ gc15.rc | default('none') }} out={{ gc15.stdout | default('none') }}"
+
+    - name: "GC16 unset the added option"
+      community.general.git_config:
+        name: krikri.opt
+        state: absent
+        scope: global
+      register: gc16
+    - ansible.builtin.debug:
+        msg: "GC16 failed={{ gc16.failed | default('none') }} changed={{ gc16.changed | default('none') }} msg={{ gc16.msg | default('none') }}"
+
+    - name: "GC17 read back after unset"
+      ansible.builtin.command: git config --global --get-all krikri.opt
+      register: gc17
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "GC17 rc={{ gc17.rc | default('none') }} out={{ gc17.stdout | default('none') }}"

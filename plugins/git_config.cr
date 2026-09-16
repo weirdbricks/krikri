@@ -19,19 +19,50 @@ module Krikri
   #   file: required when scope: file - path to an ad-hoc config file
   #   add_mode: add / replace-all (default: replace-all)
   class GitConfigPlugin < BasePlugin
-    def execute : PluginResult
-      name = @params["name"]?
-      return missing_param("name") unless name
+    include PluginHelpers::AnsibleArgValidation
 
+    # Real argument_spec (community.general git_config.py) - no aliases,
+    # so the unsupported-params message has no parenthetical.
+    SPEC = {
+      "add_mode" => %w[],
+      "file"     => %w[],
+      "name"     => %w[],
+      "repo"     => %w[],
+      "scope"    => %w[],
+      "state"    => %w[],
+      "value"    => %w[],
+    }
+
+    EXTRA_BIN_DIRS = %w[/sbin /usr/sbin /bin /usr/bin]
+    @searched_paths = ""
+
+    def execute : PluginResult
+      if error = validate_arguments
+        return error
+      end
+
+      # get_bin_path('git', required=True) runs right after module
+      # validation, before any config work.
+      unless find_binary("git")
+        return PluginResult.new(changed: false, failed: true,
+          msg: PluginHelpers::GetBinPath.missing_executable_error("git", @searched_paths))
+      end
+
+      name = @params["name"].not_nil!
       state = @params["state"]? || "present"
       unset = state == "absent"
       value = @params["value"]? || ""
       add_mode = @params["add_mode"]? || "replace-all"
       scope = @params["scope"]?
-      check_mode = true?(@params["check_mode"]?)
+      check_mode = true?(@params["_ansible_check_mode"]?)
 
-      validation_error = validate_params(unset, value, scope)
-      return validation_error if validation_error
+      # Real main()'s own post-setup guard: the spec's required_if only
+      # fires on a MISSING value key, so an empty-string value reaches
+      # this check instead.
+      if !unset && value.empty?
+        return PluginResult.new(changed: false, failed: true,
+          msg: "If state=present, a value must be specified. Use the community.general.git_config_info module to read a config value.")
+      end
 
       effective_scope = scope || "system"
       cwd = (effective_scope == "local" ? @params["repo"] : "/").as(String)
@@ -58,16 +89,51 @@ module Krikri
       nil
     end
 
-    private def validate_params(unset : Bool, value : String, scope : String?) : PluginResult?
-      if !unset && value.empty?
-        return PluginResult.new(changed: false, failed: true, msg: "If state=present, a value must be specified.")
+    # Real AnsibleModule setup surface, in the validator's errors[0]
+    # order (arg_spec.py: required -> choices -> required_if ->
+    # unsupported). No bool/int params in the spec, so no type checks.
+    private def validate_arguments : PluginResult?
+      unless @params["name"]?
+        return missing_required_error(["name"])
       end
+
+      if add_mode = @params["add_mode"]?
+        unless %w[add replace-all].includes?(add_mode)
+          return choices_error("add_mode", %w[add replace-all], add_mode)
+        end
+      end
+
+      if scope = @params["scope"]?
+        unless %w[file local global system].includes?(scope)
+          return choices_error("scope", %w[file local global system], scope)
+        end
+      end
+
+      state = @params["state"]? || "present"
+      unless %w[present absent].includes?(state)
+        return choices_error("state", %w[present absent], state)
+      end
+
+      # required_if, declaration order; only a MISSING key fails.
       if scope == "local" && !@params["repo"]?
-        return missing_param("repo (required when scope: local)")
+        return PluginResult.new(changed: false, failed: true,
+          msg: "scope is local but all of the following are missing: repo")
       end
       if scope == "file" && !@params["file"]?
-        return missing_param("file (required when scope: file)")
+        return PluginResult.new(changed: false, failed: true,
+          msg: "scope is file but all of the following are missing: file")
       end
+      if state == "present" && !@params["value"]?
+        return PluginResult.new(changed: false, failed: true,
+          msg: "state is present but all of the following are missing: value")
+      end
+
+      if unsupported = unsupported_param_keys(@params, SPEC)
+        unless unsupported.empty?
+          return unsupported_params_error("community.general.git_config", unsupported, SPEC)
+        end
+      end
+
       nil
     end
 
@@ -110,12 +176,27 @@ module Krikri
       PluginResult.new(changed: true, failed: false, msg: "setting changed")
     end
 
-    private def shell_quote(str : String) : String
-      "'" + str.gsub("'", "'\\''") + "'"
+    private def find_binary(name : String) : String?
+      script = <<-SH
+      found=""
+      for d in $(printf '%s' "$PATH" | tr ':' ' ') #{EXTRA_BIN_DIRS.join(' ')}; do
+        if [ -z "$found" ] && [ -x "$d/#{name}" ]; then found="$d/#{name}"; fi
+      done
+      searched=""
+      for d in $(printf '%s' "$PATH" | tr ':' ' ') #{EXTRA_BIN_DIRS.join(' ')}; do
+        case ":$searched:" in *":$d:"*) ;; *) searched="${searched:+$searched:}$d" ;; esac
+      done
+      printf '%s\\n%s' "$found" "$searched"
+      SH
+
+      result = remote_exec(script)
+      found, _, searched = result[:stdout].to_s.strip.partition("\n")
+      @searched_paths = searched
+      found.empty? ? nil : found
     end
 
-    private def missing_param(name : String) : PluginResult
-      PluginResult.new(changed: false, failed: true, msg: "Missing required parameter: #{name}")
+    private def shell_quote(str : String) : String
+      "'" + str.gsub("'", "'\\''") + "'"
     end
   end
 end
