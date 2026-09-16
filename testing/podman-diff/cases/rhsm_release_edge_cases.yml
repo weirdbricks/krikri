@@ -1,0 +1,45 @@
+# rhsm_release (community.general) edge cases. Argument-validation
+# only: the Debian container has no subscription-manager (and is not a
+# Red Hat system), so every case that survives the module's own
+# release_matcher validation must fail on the missing binary (or the
+# real module's root check) - identically, failed=True/changed=False,
+# on both engines. The release regex (release_matcher, findall
+# semantics: any release-like SUBSTRING validates, so 9.4-validSuffix
+# passes while 100Server does not) fires BEFORE any binary check on
+# the real side; krikri must also report failed=True/changed=False
+# there. Msg wording differs and is not compared.
+# Prefix E.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "E1 valid release (fails on missing binary)"
+      community.general.rhsm_release:
+        release: "9.4"
+      register: e1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "E1 failed={{ e1.failed | default('none') }} changed={{ e1.changed | default('none') }}"
+
+    - name: "E2 release-shaped suffix still validates (findall semantics)"
+      community.general.rhsm_release:
+        release: "9.4-krikri"
+      register: e2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "E2 failed={{ e2.failed | default('none') }} changed={{ e2.changed | default('none') }}"
+
+    - name: "E3 100Server is NOT a valid release"
+      community.general.rhsm_release:
+        release: "100Server"
+      register: e3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "E3 failed={{ e3.failed | default('none') }} changed={{ e3.changed | default('none') }}"
+
+    - name: "E4 release omitted (unset path; fails on missing binary)"
+      community.general.rhsm_release:
+      register: e4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "E4 failed={{ e4.failed | default('none') }} changed={{ e4.changed | default('none') }}"
