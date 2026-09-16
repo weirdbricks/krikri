@@ -1,0 +1,106 @@
+# subversion (ansible.builtin.subversion) edge cases - fully testable
+# here: run.sh's gated block installs svn + svnadmin in BOTH containers
+# and seeds an identical local file:// repo (file:///work/krikri_repo,
+# one krikri.txt at the repo root). Scenarios: a repo URL that does not
+# exist, a dest that already exists as a non-svn directory, checkout=no
+# over a missing dest (no-op ok), missing required repo, dest omitted,
+# a REAL checkout, its warm idempotent re-run, and an export. Msg
+# wording differs and is not compared; failed=/changed= and on-disk
+# state matter.
+# Prefix V.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "V0 create a plain non-svn dest directory"
+      ansible.builtin.file:
+        path: /work/krikri_dest_plain
+        state: directory
+        mode: "0755"
+
+    - name: "V1 repo URL does not exist"
+      ansible.builtin.subversion:
+        repo: file:///work/krikri_nonexistent_repo
+        dest: /work/krikri_wc_v1
+      register: v1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "V1 failed={{ v1.failed | default('none') }} changed={{ v1.changed | default('none') }}"
+
+    - name: "V2 dest exists but is not a svn working copy"
+      ansible.builtin.subversion:
+        repo: file:///work/krikri_repo
+        dest: /work/krikri_dest_plain
+      register: v2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "V2 failed={{ v2.failed | default('none') }} changed={{ v2.changed | default('none') }}"
+
+    - name: "V3 checkout=no over a missing dest (no-op)"
+      ansible.builtin.subversion:
+        repo: file:///work/krikri_repo
+        dest: /work/krikri_wc_v3
+        checkout: no
+        update: no
+      register: v3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "V3 failed={{ v3.failed | default('none') }} changed={{ v3.changed | default('none') }}"
+
+    - name: "V4 missing required repo"
+      ansible.builtin.subversion:
+        dest: /work/krikri_wc_v4
+      register: v4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "V4 failed={{ v4.failed | default('none') }} changed={{ v4.changed | default('none') }}"
+
+    - name: "V5 dest omitted with default checkout/update"
+      ansible.builtin.subversion:
+        repo: file:///work/krikri_repo
+      register: v5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "V5 failed={{ v5.failed | default('none') }} changed={{ v5.changed | default('none') }}"
+
+    - name: "V6 real checkout from the local file:// repo"
+      ansible.builtin.subversion:
+        repo: file:///work/krikri_repo
+        dest: /work/krikri_wc
+      register: v6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "V6 failed={{ v6.failed | default('none') }} changed={{ v6.changed | default('none') }}"
+
+    - name: "V7 warm re-run (idempotent update)"
+      ansible.builtin.subversion:
+        repo: file:///work/krikri_repo
+        dest: /work/krikri_wc
+      register: v7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "V7 failed={{ v7.failed | default('none') }} changed={{ v7.changed | default('none') }}"
+
+    - name: "V8 svn export"
+      ansible.builtin.subversion:
+        repo: file:///work/krikri_repo
+        dest: /work/krikri_export
+        export: yes
+      register: v8
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "V8 failed={{ v8.failed | default('none') }} changed={{ v8.changed | default('none') }}"
+
+    - name: "V8b exported file landed on disk"
+      ansible.builtin.stat:
+        path: /work/krikri_export/krikri.txt
+      register: v8b
+    - ansible.builtin.debug:
+        msg: "V8b exists={{ v8b.stat.exists | default('none') }}"
+
+    - name: "V8c checked-out file landed on disk"
+      ansible.builtin.stat:
+        path: /work/krikri_wc/krikri.txt
+      register: v8c
+    - ansible.builtin.debug:
+        msg: "V8c exists={{ v8c.stat.exists | default('none') }}"

@@ -361,6 +361,21 @@ if printf '%s\n' "${cases[@]}" | grep -q '^py_module'; then
   done
 fi
 
+# subversion cases need the real svn + svnadmin binaries in BOTH
+# containers (real ansible.builtin.subversion and krikri's plugin both
+# shell out to svn), plus a seeded local file:// repo so real
+# checkout/update/export/idempotency paths actually run. Gated on the
+# requested case list like the modprobe cases above.
+if printf '%s\n' "${cases[@]}" | grep -q '^subversion'; then
+  log "installing subversion + seeding a local file:// repo for subversion cases"
+  for c in "$NAME_A" "$NAME_B"; do
+    podman exec "$c" bash -c "apt-get install -y -qq --no-install-recommends subversion >/dev/null" \
+      || { log "FATAL: subversion install failed in $c"; exit 1; }
+    podman exec "$c" bash -c "rm -rf /work/krikri_repo /work/krikri_src && mkdir -p /work/krikri_src && echo krikri > /work/krikri_src/krikri.txt && svnadmin create /work/krikri_repo && svn import --non-interactive -m krikri /work/krikri_src file:///work/krikri_repo >/dev/null" \
+      || { log "FATAL: svn repo seeding failed in $c"; exit 1; }
+  done
+fi
+
 overall_rc=0
 for case_file in "${cases[@]}"; do
   case_name="${case_file%.yml}"
