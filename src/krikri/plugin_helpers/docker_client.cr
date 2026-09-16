@@ -63,6 +63,30 @@ module Krikri
     # here, a meaningfully bigger change than anything else in this
     # file).
     module DockerClient
+      # Real community.docker's DOCKER_COMMON_ARGS (module_utils/_util.py):
+      # the connection parameters every API module's argument_spec merges
+      # in (the module spec overrides these on key collision), with their
+      # aliases. Keys the plugins' own validation must treat as legal and
+      # type-convert (timeout int; tls/use_ssh_client/validate_certs/debug
+      # bool) - real AnsibleModule validation runs over the MERGED spec,
+      # so an invalid `timeout:` fails a docker_network task exactly the
+      # same as a docker_login one.
+      COMMON_SPEC = {
+        "api_version"    => %w[docker_api_version],
+        "ca_path"        => %w[ca_cert cacert_path tls_ca_cert],
+        "client_cert"    => %w[cert_path tls_client_cert],
+        "client_key"     => %w[key_path tls_client_key],
+        "debug"          => [] of String,
+        "docker_host"    => %w[docker_url],
+        "timeout"        => [] of String,
+        "tls"            => [] of String,
+        "tls_hostname"   => [] of String,
+        "use_ssh_client" => [] of String,
+        "validate_certs" => %w[tls_verify],
+      }
+      # _util.py's DOCKER_REQUIRED_TOGETHER - shared by every API module.
+      COMMON_REQUIRED_TOGETHER = %w[client_cert client_key]
+
       def self.build(params : Hash(String, String)) : {Docr::Client, String}
         docker_host = params["docker_host"]? || ENV["DOCKER_HOST"]?
 

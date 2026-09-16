@@ -3,6 +3,7 @@
 require "json"
 require "docr"
 require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/ansible_arg_validation"
 require "../src/krikri/plugin_helpers/docker_client"
 
 module Krikri
@@ -20,9 +21,15 @@ module Krikri
   # - name: network name (required) - a network name, or a long/short
   #   network ID (matched by exact name or ID prefix, matching real
   #   Ansible's own `get_network()` lookup).
-  # - docker_host: / tls: / validate_certs: (alias tls_verify:) / cacert_path: /
-  #   cert_path: / key_path: - see PluginHelpers::DockerClient's own doc
-  #   comment for exact behavior.
+  # - docker_host: / tls: / validate_certs: (alias tls_verify:) / ca_path:
+  #   (aliases cacert_path: etc.) / client_cert: / client_key: /
+  #   tls_hostname: / api_version: / timeout: / use_ssh_client: - the
+  #   common connection surface real merges into every API module's
+  #   argument_spec (see PluginHelpers::DockerClient.COMMON_SPEC), and
+  #   which real AnsibleModule therefore validates on every call - the
+  #   validation below mirrors that (required name, common-arg type
+  #   conversion, client_cert/client_key required-together, unsupported
+  #   params) BEFORE the daemon connection is attempted.
   #
   # Result (matching real Ansible's own two return values, both always
   # present, changed always false - this is an info module, never a
@@ -41,11 +48,18 @@ module Krikri
   # cannot reach the daemon, and a skip here would leave a registered
   # result without `exists:`, corrupting a later `when: check.exists`.
   class DockerNetworkInfoPlugin < BasePlugin
+    include PluginHelpers::AnsibleArgValidation
+
+    # Real merged argument_spec: DOCKER_COMMON_ARGS + name (required, no
+    # aliases on this module).
+    SPEC = PluginHelpers::DockerClient::COMMON_SPEC.merge({"name" => [] of String})
+
     def execute : PluginResult
-      name = @params["name"]?
-      unless name
-        return PluginResult.new(changed: false, failed: true, msg: "missing required argument: name")
+      if err = validate_arguments
+        return err
       end
+
+      name = @params["name"]?.to_s
 
       client, docker_host_description = PluginHelpers::DockerClient.build(@params)
       api = Docr::API.new(client)
@@ -69,6 +83,61 @@ module Krikri
     private def raw_get(client : Docr::Client, path : String) : String
       headers = HTTP::Headers{"Content-Type" => "application/json"}
       client.call("GET", path, headers, &.body_io.gets_to_end)
+    end
+
+    # Real AnsibleModule validation over the merged spec, in
+    # arg_spec.ArgumentSpecValidator.validate order: required -> types
+    # (merged-spec order: common args first) -> required_together ->
+    # unsupported (deferred to last). No choices/required_if on this
+    # module; the daemon connection only happens after all of it.
+    private def validate_arguments : PluginResult?
+      if err = validate_required
+        return err
+      end
+
+      if err = validate_types
+        return err
+      end
+
+      if err = validate_required_together
+        return err
+      end
+
+      validate_unsupported
+    end
+
+    private def validate_required : PluginResult?
+      return nil if @params["name"]?
+      missing_required_error(["name"])
+    end
+
+    private def validate_types : PluginResult?
+      {"timeout" => "int", "tls" => "bool", "use_ssh_client" => "bool", "validate_certs" => "bool", "debug" => "bool"}.each do |param, type|
+        next unless raw = @params[param]?
+        if type == "int"
+          next if raw.to_i32?
+          return int_type_error(param, raw)
+        else
+          next if bool_convertible?(raw)
+          return bool_type_error(param, raw)
+        end
+      end
+      nil
+    end
+
+    private def validate_required_together : PluginResult?
+      has_cert = @params["client_cert"]? || @params["cert_path"]? || @params["tls_client_cert"]?
+      has_key = @params["client_key"]? || @params["key_path"]? || @params["tls_client_key"]?
+      if (has_cert || has_key) && !(has_cert && has_key)
+        return required_together_error(PluginHelpers::DockerClient::COMMON_REQUIRED_TOGETHER)
+      end
+      nil
+    end
+
+    private def validate_unsupported : PluginResult?
+      unsupported = unsupported_param_keys(@params, SPEC)
+      return nil if unsupported.empty?
+      unsupported_params_error("community.docker.docker_network_info", unsupported, SPEC)
     end
   end
 end

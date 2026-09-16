@@ -1,0 +1,161 @@
+# docker_compose_v2 edge cases. NO docker daemon OR docker CLI inside
+# either harness container (no docker-in-podman), so only the
+# argument-validation surface real Ansible performs BEFORE any CLI/daemon
+# contact is fully comparable (required_one_of, choice checks, mutually
+# exclusive, required_by - all deterministic AnsibleModule/argspec text,
+# rendered). The real side needs community.docker installed (run.sh gates
+# it); no Docker SDK is needed - docker_compose_v2 is CLI-only.
+# Once past arg validation the module probes `docker compose version`,
+# which fails identically on both sides (no docker binary); those cases
+# compare failed=/changed= only - the version-probe / CLI error wording
+# is not deterministic across engines.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "C1 missing required project_src (required_one_of)"
+      community.docker.docker_compose_v2:
+        state: present
+      register: c1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "C1 failed={{ c1.failed | default('none') }} changed={{ c1.changed | default('none') }} msg={{ c1.msg | default('none') }}"
+
+    - name: "C2 invalid state choice"
+      community.docker.docker_compose_v2:
+        project_src: /tmp/krikri-compose
+        state: banana
+      register: c2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "C2 failed={{ c2.failed | default('none') }} changed={{ c2.changed | default('none') }} msg={{ c2.msg | default('none') }}"
+
+    - name: "C3 invalid pull policy choice"
+      community.docker.docker_compose_v2:
+        project_src: /tmp/krikri-compose
+        pull: banana
+      register: c3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "C3 failed={{ c3.failed | default('none') }} changed={{ c3.changed | default('none') }} msg={{ c3.msg | default('none') }}"
+
+    - name: "C4 invalid build choice"
+      community.docker.docker_compose_v2:
+        project_src: /tmp/krikri-compose
+        build: banana
+      register: c4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "C4 failed={{ c4.failed | default('none') }} changed={{ c4.changed | default('none') }} msg={{ c4.msg | default('none') }}"
+
+    - name: "C5 invalid recreate choice"
+      community.docker.docker_compose_v2:
+        project_src: /tmp/krikri-compose
+        recreate: banana
+      register: c5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "C5 failed={{ c5.failed | default('none') }} changed={{ c5.changed | default('none') }} msg={{ c5.msg | default('none') }}"
+
+    - name: "C6 invalid remove_images choice"
+      community.docker.docker_compose_v2:
+        project_src: /tmp/krikri-compose
+        state: absent
+        remove_images: banana
+      register: c6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "C6 failed={{ c6.failed | default('none') }} changed={{ c6.changed | default('none') }} msg={{ c6.msg | default('none') }}"
+
+    - name: "C7 definition without project_name (required_by)"
+      community.docker.docker_compose_v2:
+        definition:
+          services:
+            foo:
+              image: alpine
+      register: c7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "C7 failed={{ c7.failed | default('none') }} changed={{ c7.changed | default('none') }} msg={{ c7.msg | default('none') }}"
+
+    - name: "C8 definition + project_src (mutually exclusive)"
+      community.docker.docker_compose_v2:
+        project_src: /tmp/krikri-compose
+        project_name: krikri
+        definition:
+          services:
+            foo:
+              image: alpine
+      register: c8
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "C8 failed={{ c8.failed | default('none') }} changed={{ c8.changed | default('none') }} msg={{ c8.msg | default('none') }}"
+
+    - name: "C9 definition + files (mutually exclusive)"
+      community.docker.docker_compose_v2:
+        project_name: krikri
+        files:
+          - compose.yaml
+        definition:
+          services:
+            foo:
+              image: alpine
+      register: c9
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "C9 failed={{ c9.failed | default('none') }} changed={{ c9.changed | default('none') }} msg={{ c9.msg | default('none') }}"
+
+    - name: "C10 valid definition + project_name but no docker CLI (both fail)"
+      community.docker.docker_compose_v2:
+        project_name: krikri
+        definition:
+          services:
+            foo:
+              image: alpine
+      register: c10
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "C10 failed={{ c10.failed | default('none') }} changed={{ c10.changed | default('none') }}"
+
+    - name: "C11 valid project_src, dir missing, no docker CLI (both fail)"
+      community.docker.docker_compose_v2:
+        project_src: /tmp/krikri-no-such-dir
+      register: c11
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "C11 failed={{ c11.failed | default('none') }} changed={{ c11.changed | default('none') }}"
+
+    - name: "C12 valid project_src, dir exists but no compose file, no docker CLI"
+      community.docker.docker_compose_v2:
+        project_src: /tmp
+      register: c12
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "C12 failed={{ c12.failed | default('none') }} changed={{ c12.changed | default('none') }}"
+
+    - name: "C13 timeout type coercion (string int accepted, fails later at CLI)"
+      community.docker.docker_compose_v2:
+        project_src: /tmp/krikri-compose
+        timeout: "30"
+      register: c13
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "C13 failed={{ c13.failed | default('none') }} changed={{ c13.changed | default('none') }}"
+
+    - name: "C14 timeout type coercion failure (non-numeric string)"
+      community.docker.docker_compose_v2:
+        project_src: /tmp/krikri-compose
+        timeout: banana
+      register: c14
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "C14 failed={{ c14.failed | default('none') }} changed={{ c14.changed | default('none') }} msg={{ c14.msg | default('none') }}"
+
+    - name: "C15 scale dict type coercion failure (plain string value)"
+      community.docker.docker_compose_v2:
+        project_src: /tmp/krikri-compose
+        scale: banana
+      register: c15
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "C15 failed={{ c15.failed | default('none') }} changed={{ c15.changed | default('none') }} msg={{ c15.msg | default('none') }}"

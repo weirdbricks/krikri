@@ -1,0 +1,74 @@
+# docker_login edge cases. NO docker daemon inside either harness
+# container: real AnsibleDockerClient eagerly pings the daemon at module
+# init, so EVERY case past argument validation fails there with a
+# connection error (failed=True changed=False) - while krikri's plugin
+# deliberately needs no daemon for the config-file paths (it shells to
+# `docker login`, or rewrites config.json directly for logout). The
+# byte-comparable surface is therefore ONLY the AnsibleModule argument
+# validation below, which real runs before the client init (required_if
+# creds, state choices, reauthorize bool conversion, unsupported
+# params). Cases past validation would compare failed=/changed= only -
+# and even that fails for state=absent (real fails at the daemon ping,
+# krikri succeeds) - so none are included; on a host with a live daemon
+# both engines reach the same result. The real side needs
+# community.docker + Docker SDK installed (run.sh gates it).
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "L1 missing required username+password (required_if state=present)"
+      community.docker.docker_login:
+      register: l1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "L1 failed={{ l1.failed | default('none') }} changed={{ l1.changed | default('none') }} msg={{ l1.msg | default('none') }}"
+
+    - name: "L2 invalid state choice"
+      community.docker.docker_login:
+        username: krikri
+        password: sekret
+        state: banana
+      register: l2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "L2 failed={{ l2.failed | default('none') }} changed={{ l2.changed | default('none') }} msg={{ l2.msg | default('none') }}"
+
+    - name: "L3 non-boolean reauthorize (bool list order is a Python set iteration - failed/changed only)"
+      community.docker.docker_login:
+        username: krikri
+        password: sekret
+        reauthorize: banana
+      register: l3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "L3 failed={{ l3.failed | default('none') }} changed={{ l3.changed | default('none') }}"
+
+    - name: "L4 non-integer timeout (common arg type conversion)"
+      community.docker.docker_login:
+        username: krikri
+        password: sekret
+        timeout: banana
+      register: l4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "L4 failed={{ l4.failed | default('none') }} changed={{ l4.changed | default('none') }} msg={{ l4.msg | default('none') }}"
+
+    - name: "L5 client_cert without client_key (required_together)"
+      community.docker.docker_login:
+        username: krikri
+        password: sekret
+        client_cert: /tmp/cert.pem
+      register: l5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "L5 failed={{ l5.failed | default('none') }} changed={{ l5.changed | default('none') }} msg={{ l5.msg | default('none') }}"
+
+    - name: "L6 unsupported parameter (deferred past every other check)"
+      community.docker.docker_login:
+        username: krikri
+        password: sekret
+        banana: yes
+      register: l6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "L6 failed={{ l6.failed | default('none') }} changed={{ l6.changed | default('none') }} msg={{ l6.msg | default('none') }}"

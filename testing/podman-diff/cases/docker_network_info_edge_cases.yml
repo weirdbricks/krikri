@@ -1,0 +1,55 @@
+# docker_network_info edge cases. NO docker daemon inside either
+# harness container: real AnsibleDockerClient eagerly pings the daemon
+# at module init, so the valid-args case fails there (failed=True
+# changed=False) and krikri reaches the same failed=/changed= via its
+# own connection attempt - compared failed=/changed= only. The
+# byte-comparable surface is the AnsibleModule argument validation real
+# runs BEFORE the client init (required name, merged-spec type
+# conversion over DOCKER_COMMON_ARGS, client_cert/client_key
+# required-together, unsupported params). The real side needs
+# community.docker + Docker SDK installed (run.sh gates it).
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "I1 missing required name"
+      community.docker.docker_network_info:
+      register: i1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "I1 failed={{ i1.failed | default('none') }} changed={{ i1.changed | default('none') }} msg={{ i1.msg | default('none') }}"
+
+    - name: "I2 non-integer timeout (common arg type conversion)"
+      community.docker.docker_network_info:
+        name: krikri-net
+        timeout: banana
+      register: i2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "I2 failed={{ i2.failed | default('none') }} changed={{ i2.changed | default('none') }} msg={{ i2.msg | default('none') }}"
+
+    - name: "I3 client_cert without client_key (required_together)"
+      community.docker.docker_network_info:
+        name: krikri-net
+        client_cert: /tmp/cert.pem
+      register: i3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "I3 failed={{ i3.failed | default('none') }} changed={{ i3.changed | default('none') }} msg={{ i3.msg | default('none') }}"
+
+    - name: "I4 unsupported parameter (deferred past every other check)"
+      community.docker.docker_network_info:
+        name: krikri-net
+        banana: yes
+      register: i4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "I4 failed={{ i4.failed | default('none') }} changed={{ i4.changed | default('none') }} msg={{ i4.msg | default('none') }}"
+
+    - name: "I5 valid args, daemon unreachable on both engines (failed/changed only)"
+      community.docker.docker_network_info:
+        name: krikri-net
+      register: i5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "I5 failed={{ i5.failed | default('none') }} changed={{ i5.changed | default('none') }}"

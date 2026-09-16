@@ -75,13 +75,21 @@ module Krikri
       pull = @params["pull"]? || "policy"
       build = @params["build"]? || "policy"
       recreate = @params["recreate"]? || "auto"
+      # Real AnsibleModule validation order (arg_spec.ArgumentSpecValidator
+      # .validate): mutually_exclusive -> type conversion -> choices ->
+      # required_one_of -> required_by.
+      if err = validate_mutually_exclusive
+        return err
+      end
+
+      if err = validate_arg_types
+        return err
+      end
+
       if err = validate_choices
         return err
       end
 
-      # definition: (dict) and project_src: are mutually exclusive, and
-      # definition: requires project_name: (the real module's
-      # required_one_of/required_by/mutually_exclusive).
       if err = resolve_project
         return err
       end
@@ -107,23 +115,26 @@ module Krikri
     end
 
     # The real module's argspec choices - each param validated against
-    # its own list (AnsibleModule fails the task with the same text).
+    # its own list, in argument_spec declaration order (AnsibleModule
+    # renders them in that order).
+    CHOICE_VALUES = {
+      "state"         => %w[absent present stopped restarted],
+      "pull"          => %w[always missing never policy],
+      "build"         => %w[always never policy],
+      "recreate"      => %w[always never auto],
+      "remove_images" => %w[all local],
+    }
     CHOICE_DEFAULTS = {
       "state"    => "present",
       "pull"     => "policy",
       "build"    => "policy",
       "recreate" => "auto",
     }
-    CHOICE_VALUES = {
-      "state"    => %w[present absent stopped restarted],
-      "pull"     => %w[always missing never policy],
-      "build"    => %w[always never policy],
-      "recreate" => %w[always never auto],
-    }
 
     private def validate_choices : PluginResult?
       CHOICE_VALUES.each do |param, allowed|
-        value = @params[param]? || CHOICE_DEFAULTS[param]
+        value = @params[param]? || CHOICE_DEFAULTS[param]?
+        next if value.nil?
         next if allowed.includes?(value)
         return PluginResult.new(changed: false, failed: true,
           msg: "value of #{param} must be one of: #{allowed.join(", ")}, got: #{value}")
@@ -131,15 +142,114 @@ module Krikri
       nil
     end
 
+    # Real module's mutually_exclusive: [(definition, project_src),
+    # (definition, files)] - key-presence based (count_terms intersects
+    # parameter names, not values).
+    private def validate_mutually_exclusive : PluginResult?
+      return nil unless @params["definition"]?
+      if @params["project_src"]?
+        return mutually_exclusive_error("definition", "project_src")
+      end
+      if @params["files"]?
+        return mutually_exclusive_error("definition", "files")
+      end
+      nil
+    end
+
+    private def mutually_exclusive_error(a : String, b : String) : PluginResult
+      PluginResult.new(changed: false, failed: true,
+        msg: "parameters are mutually exclusive: #{a}|#{b}")
+    end
+
+    # Real parameters.py type conversion, which runs before choice
+    # validation: timeout/wait_timeout are int, definition/scale are dict.
+    private def validate_arg_types : PluginResult?
+      {"timeout", "wait_timeout"}.each do |param|
+        next unless raw = @params[param]?
+        next if int_convertible?(raw)
+        type_name = json_type_name(raw)
+        return type_error(param, type_name, "int", "#{type_name} cannot be converted to an int")
+      end
+      {"definition", "scale"}.each do |param|
+        next unless raw = @params[param]?
+        if err = convert_dict(param, raw)
+          return err
+        end
+      end
+      nil
+    end
+
+    private def int_convertible?(raw : String) : Bool
+      parsed = JSON.parse(raw) rescue nil
+      return raw.to_i32? != nil if parsed.nil? || parsed.as_s?
+      case parsed.raw
+      when Int64, Float64 then true
+      else                     false
+      end
+    end
+
+    # Incoming YAML type of a param value as it arrives on the wire (a
+    # JSON string) - the real error messages embed Python's type(value).
+    private def json_type_name(raw : String) : String
+      parsed = JSON.parse(raw) rescue return "<class 'str'>"
+      case parsed.raw
+      when Hash   then "<class 'dict'>"
+      when Array  then "<class 'list'>"
+      when Int64  then "<class 'int'>"
+      when Float64 then "<class 'float'>"
+      when Bool   then "<class 'bool'>"
+      else             "<class 'str'>"
+      end
+    end
+
+    private def type_error(param : String, type_name : String, wanted : String, detail : String) : PluginResult
+      PluginResult.new(changed: false, failed: true,
+        msg: "argument '#{param}' is of type #{type_name} and we were unable to convert to #{wanted}: #{detail}")
+    end
+
+    # Real check_type_dict: dict passes; list (and other non-dict
+    # containers/scalars) fail with "<class X> cannot be converted to a
+    # dict"; strings try JSON then key=value pairs.
+    private def convert_dict(param : String, raw : String) : PluginResult?
+      parsed = JSON.parse(raw) rescue nil
+      type_name = json_type_name(raw)
+      case parsed.try(&.raw)
+      when Hash
+        nil
+      when Array
+        type_error(param, type_name, "dict", "#{type_name} cannot be converted to a dict")
+      when String
+        convert_dict_string(param, type_name, parsed.not_nil!.as_s)
+      when Nil
+        # Not valid JSON at all - a plain (unquoted-on-the-wire) string.
+        convert_dict_string(param, type_name, raw)
+      else
+        type_error(param, type_name, "dict", "#{type_name} cannot be converted to a dict")
+      end
+    end
+
+    private def convert_dict_string(param : String, type_name : String, value : String) : PluginResult?
+      stripped = value.strip
+      if stripped.starts_with?("{")
+        begin
+          return nil if JSON.parse(stripped).as_h?
+        rescue
+        end
+        return type_error(param, type_name, "dict", "unable to evaluate string as dictionary")
+      end
+      return nil if value.includes?("=")
+      type_error(param, type_name, "dict", "dictionary requested, could not parse JSON or key=value")
+    end
+
     private def resolve_project : PluginResult?
-      definition = @config["params"]?.try(&.["definition"]?)
+      definition = parse_definition_param
       project_src = @params["project_src"]?
       project_name = @params["project_name"]?
-      if definition && definition.as_h?.try { |dict| !dict.empty? }
-        return PluginResult.new(changed: false, failed: true,
-          msg: "project_name is required when definition is used") unless project_name
-        return PluginResult.new(changed: false, failed: true,
-          msg: "definition and project_src are mutually exclusive") if project_src
+      if definition
+        unless project_name
+          return PluginResult.new(changed: false, failed: true,
+            msg: "missing parameter(s) required by 'definition': project_name")
+        end
         @project_src = write_definition(definition)
       else
         if project_src.nil? || project_src.empty?
@@ -149,6 +259,17 @@ module Krikri
         @project_src = expand_tilde(project_src)
       end
       nil
+    end
+
+    # definition: arrives on the wire as the stringified JSON of the
+    # YAML dict (BasePlugin flattens every param to a String) - parse it
+    # back out. A JSON null means the param was YAML null, i.e. the real
+    # module's None (treated as not provided).
+    private def parse_definition_param : JSON::Any?
+      raw = @params["definition"]?
+      return nil if raw.nil?
+      parsed = JSON.parse(raw) rescue return nil
+      parsed.as_h? ? parsed : nil
     end
 
     # Real module's minimum Compose version gate (same failure message).
@@ -265,11 +386,12 @@ module Krikri
       args
     end
 
-    # scale: arrives as a JSON object (dict) - read it from the raw
-    # config params rather than the stringified @params view.
+    # scale: arrives as the stringified JSON of the YAML dict - parse it
+    # back out (dict-ness was already enforced by validate_arg_types).
     private def scale : Array({String, String})
-      scale_param = @config["params"]?.try(&.["scale"]?)
-      h = scale_param.try(&.as_h?)
+      raw = @params["scale"]?
+      return [] of {String, String} if raw.nil?
+      h = JSON.parse(raw).as_h? rescue nil
       return [] of {String, String} if h.nil? || h.empty?
       h.to_a.sort_by(&.[0]).map { |pair| {pair[0], pair[1].to_s} }
     end

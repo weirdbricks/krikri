@@ -1,0 +1,202 @@
+# docker_image_build edge cases. NO docker daemon OR docker CLI inside
+# either harness container (no docker-in-podman), so only the
+# argument-validation surface real Ansible performs BEFORE its
+# `docker buildx version` probe is byte-comparable (required args,
+# choice checks, bool conversion, secrets/outputs sub-spec validation -
+# all deterministic AnsibleModule text, rendered). Path/dockerfile
+# existence checks happen AFTER the buildx probe in the real module, so
+# those cases (and any valid-args build attempt) compare failed=/
+# changed= only - the probe failure wording is not deterministic across
+# engines. The real side needs community.docker installed (run.sh
+# gates it); no Docker SDK is needed - docker_image_build is CLI-only.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "B1 missing required name"
+      community.docker.docker_image_build:
+        path: /tmp/krikri-build
+      register: b1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "B1 failed={{ b1.failed | default('none') }} changed={{ b1.changed | default('none') }} msg={{ b1.msg | default('none') }}"
+
+    - name: "B2 missing required path"
+      community.docker.docker_image_build:
+        name: krikri/test
+      register: b2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "B2 failed={{ b2.failed | default('none') }} changed={{ b2.changed | default('none') }} msg={{ b2.msg | default('none') }}"
+
+    - name: "B3 missing both required name and path"
+      community.docker.docker_image_build:
+        tag: latest
+      register: b3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "B3 failed={{ b3.failed | default('none') }} changed={{ b3.changed | default('none') }} msg={{ b3.msg | default('none') }}"
+
+    - name: "B4 invalid rebuild choice"
+      community.docker.docker_image_build:
+        name: krikri/test
+        path: /tmp/krikri-build
+        rebuild: banana
+      register: b4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "B4 failed={{ b4.failed | default('none') }} changed={{ b4.changed | default('none') }} msg={{ b4.msg | default('none') }}"
+
+    - name: "B5 non-boolean pull"
+      community.docker.docker_image_build:
+        name: krikri/test
+        path: /tmp/krikri-build
+        pull: banana
+      register: b5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "B5 failed={{ b5.failed | default('none') }} changed={{ b5.changed | default('none') }} msg={{ b5.msg | default('none') }}"
+
+    - name: "B6 non-boolean nocache"
+      community.docker.docker_image_build:
+        name: krikri/test
+        path: /tmp/krikri-build
+        nocache: banana
+      register: b6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "B6 failed={{ b6.failed | default('none') }} changed={{ b6.changed | default('none') }} msg={{ b6.msg | default('none') }}"
+
+    - name: "B7 secret missing type"
+      community.docker.docker_image_build:
+        name: krikri/test
+        path: /tmp/krikri-build
+        secrets:
+          - id: mysecret
+      register: b7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "B7 failed={{ b7.failed | default('none') }} changed={{ b7.changed | default('none') }} msg={{ b7.msg | default('none') }}"
+
+    - name: "B8 secret type=file without id and src"
+      community.docker.docker_image_build:
+        name: krikri/test
+        path: /tmp/krikri-build
+        secrets:
+          - type: file
+      register: b8
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "B8 failed={{ b8.failed | default('none') }} changed={{ b8.changed | default('none') }} msg={{ b8.msg | default('none') }}"
+
+    - name: "B9 secret invalid type choice"
+      community.docker.docker_image_build:
+        name: krikri/test
+        path: /tmp/krikri-build
+        secrets:
+          - id: mysecret
+            type: banana
+      register: b9
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "B9 failed={{ b9.failed | default('none') }} changed={{ b9.changed | default('none') }} msg={{ b9.msg | default('none') }}"
+
+    - name: "B10 secret type=value without value (required_if)"
+      community.docker.docker_image_build:
+        name: krikri/test
+        path: /tmp/krikri-build
+        secrets:
+          - id: mysecret
+            type: value
+      register: b10
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "B10 failed={{ b10.failed | default('none') }} changed={{ b10.changed | default('none') }} msg={{ b10.msg | default('none') }}"
+
+    - name: "B11 secret src+value (mutually exclusive)"
+      community.docker.docker_image_build:
+        name: krikri/test
+        path: /tmp/krikri-build
+        secrets:
+          - id: mysecret
+            type: file
+            src: /tmp/f
+            value: v
+      register: b11
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "B11 failed={{ b11.failed | default('none') }} changed={{ b11.changed | default('none') }} msg={{ b11.msg | default('none') }}"
+
+    - name: "B12 output invalid type choice"
+      community.docker.docker_image_build:
+        name: krikri/test
+        path: /tmp/krikri-build
+        outputs:
+          - type: banana
+      register: b12
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "B12 failed={{ b12.failed | default('none') }} changed={{ b12.changed | default('none') }} msg={{ b12.msg | default('none') }}"
+
+    - name: "B13 output type=local without dest (required_if)"
+      community.docker.docker_image_build:
+        name: krikri/test
+        path: /tmp/krikri-build
+        outputs:
+          - type: local
+      register: b13
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "B13 failed={{ b13.failed | default('none') }} changed={{ b13.changed | default('none') }} msg={{ b13.msg | default('none') }}"
+
+    - name: "B14 output dest+name (mutually exclusive)"
+      community.docker.docker_image_build:
+        name: krikri/test
+        path: /tmp/krikri-build
+        outputs:
+          - type: local
+            dest: /tmp/d
+            name:
+              - n
+      register: b14
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "B14 failed={{ b14.failed | default('none') }} changed={{ b14.changed | default('none') }} msg={{ b14.msg | default('none') }}"
+
+    - name: "B15 secrets as plain string (list-of-dict element type)"
+      community.docker.docker_image_build:
+        name: krikri/test
+        path: /tmp/krikri-build
+        secrets: banana
+      register: b15
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "B15 failed={{ b15.failed | default('none') }} changed={{ b15.changed | default('none') }} msg={{ b15.msg | default('none') }}"
+
+    - name: "B16 valid args but no docker CLI (both engines fail)"
+      community.docker.docker_image_build:
+        name: krikri/test
+        path: /tmp/krikri-build
+      register: b16
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "B16 failed={{ b16.failed | default('none') }} changed={{ b16.changed | default('none') }}"
+
+    - name: "B17 path directory missing (past probe - failed/changed only)"
+      community.docker.docker_image_build:
+        name: krikri/test
+        path: /tmp/krikri-no-such-dir
+      register: b17
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "B17 failed={{ b17.failed | default('none') }} changed={{ b17.changed | default('none') }}"
+
+    - name: "B18 dockerfile missing (past probe - failed/changed only)"
+      community.docker.docker_image_build:
+        name: krikri/test
+        path: /tmp
+        dockerfile: no-such-Dockerfile
+      register: b18
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "B18 failed={{ b18.failed | default('none') }} changed={{ b18.changed | default('none') }}"
