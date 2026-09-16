@@ -83,6 +83,23 @@ describe "debconf plugin - required_together (question/vtype/value)" do
     FileUtils.rm_rf(dir) if dir
   end
 
+  it "rejects an invalid vtype choice before any debconf call (real Ansible's choices check)" do
+    dir, log = debconf_shim_dir("bad-vtype")
+    result = PluginSpecHelper.run("debconf", {
+      "name"         => "spec.pkg",
+      "question"     => "spec.pkg/keyboard-layout",
+      "vtype"        => "krikri_vtype",
+      "value"        => "us",
+      "_environment" => debconf_env(dir, log, ""),
+    })
+
+    result["failed"].as_bool.should be_true
+    result["msg"].as_s.should eq("value of vtype must be one of: boolean, error, multiselect, note, password, seen, select, string, text, title, got: krikri_vtype")
+    File.exists?(log).should be_false
+  ensure
+    FileUtils.rm_rf(dir) if dir
+  end
+
   it "accepts all three together and applies the selection" do
     dir, log = debconf_shim_dir("all-three")
     result = PluginSpecHelper.run("debconf", {

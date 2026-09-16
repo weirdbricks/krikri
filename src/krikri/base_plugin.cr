@@ -85,18 +85,21 @@ module Krikri
     property msg : String
     property diff : JSON::Any?
     property extra : Hash(String, JSON::Any)
+    property omit_changed : Bool
 
     def initialize(
       changed : Bool,
       failed : Bool,
       msg : String = "",
       diff : JSON::Any? = nil,
+      omit_changed : Bool = false,
       **kwargs,
     )
       @changed = changed
       @failed = failed
       @msg = msg
       @diff = diff
+      @omit_changed = omit_changed
       @extra = Hash(String, JSON::Any).new
       kwargs.each do |key, value|
         @extra[key.to_s] = JSON.parse(value.to_json)
@@ -105,7 +108,16 @@ module Krikri
 
     def to_json(io : IO) : Nil
       result = Hash(String, JSON::Any::Type).new
-      result["changed"] = @changed
+      # omit_changed reproduces real Ansible's CONTROLLER-SIDE failure
+      # shape (an uncaught AnsibleError from an action plugin, e.g.
+      # fetch's makedirs_safe blowing up on a file-parent dest): the
+      # executor's exception handling produces {failed, msg} with no
+      # `changed` key at all - unlike a module fail_json result, which
+      # _return_formatted always backfills with changed: false. A
+      # registered variable from such a failure has `changed`
+      # UNDEFINED, and `when: r.changed` on it raises the same
+      # "has no attribute" error real Ansible raises.
+      result["changed"] = @changed unless @omit_changed
       # Real Ansible's module protocol (module_utils/basic.py) only adds
       # `failed`/`msg` to the result dict on a fail_json exit - a
       # successful module's wire result never carries either key at all
@@ -345,9 +357,21 @@ module Krikri
     # doesn't exist (or isn't statable for some other reason - permission
     # denied, a dangling symlink with follow: true, etc.).
     protected def native_stat(path : String, follow : Bool) : Hash(String, JSON::Any)?
+      stat_or_errno = native_stat_ex(path, follow)
+      stat_or_errno.is_a?(Hash(String, JSON::Any)) ? stat_or_errno : nil
+    end
+
+    # The errno-bearing variant: real Ansible's stat module only treats
+    # ENOENT as "exists: false" and hard-fails on every other OSError
+    # with strerror as the message (stat.py, all active branches) - a
+    # stat whose parent is a file (ENOTDIR) or an unreadable ancestor
+    # (EACCES) is a failed task, not a silent exists: false. Callers
+    # that reproduce the real module's error surface use this and map
+    # non-ENOENT errnos to failure themselves.
+    protected def native_stat_ex(path : String, follow : Bool) : Hash(String, JSON::Any)? | Errno
       stat = uninitialized LibC::Stat
       result = follow ? LibC.stat(path, pointerof(stat)) : LibC.lstat(path, pointerof(stat))
-      return nil unless result == 0
+      return Errno.value if result != 0
 
       # An orphaned uid/gid with no matching /etc/passwd or /etc/group
       # entry resolves to an EMPTY string in real Ansible's own stat

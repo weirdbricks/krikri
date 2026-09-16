@@ -146,7 +146,7 @@ module Krikri
             rc = hash["rc"]?.try(&.as_i?) || hash["rc"]?.try(&.as_s?).try(&.to_i?)
             hash["failed"] = JSON::Any.new(!(rc.nil? || rc == 0))
           end
-          hash["changed"] = JSON::Any.new(false) unless hash.has_key?("changed")
+          hash["changed"] = JSON::Any.new(false) if !hash.has_key?("changed") && !hash["failed"].as_bool?
         end
 
         results[index.to_s] = parsed

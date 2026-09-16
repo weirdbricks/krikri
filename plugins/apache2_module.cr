@@ -50,7 +50,12 @@ module Krikri
 
       state = @params["state"]? || "present"
       unless state == "present" || state == "absent"
-        return PluginResult.new(changed: false, failed: true, msg: "state must be present or absent, got: #{state}")
+        # Real argument_spec gives state its choices list, so
+        # AnsibleModule's choice check (parameters.py's exact wording)
+        # fires before anything module-body-wise - previously a bogus
+        # state got the plugin's own paraphrase.
+        return PluginResult.new(changed: false, failed: true,
+          msg: "value of state must be one of: absent, present, got: #{state}")
       end
 
       identifier = @params["identifier"]?.presence || PluginHelpers::Apache2Module.create_identifier(name)
@@ -76,11 +81,11 @@ module Krikri
 
       currently_enabled, _ = module_is_enabled(identifier, name)
       if currently_enabled == want_enabled
-        return PluginResult.new(changed: false, failed: false, msg: success_msg, result: success_msg)
+        return PluginResult.new(changed: false, failed: false, result: success_msg)
       end
 
       if check_mode
-        return PluginResult.new(changed: true, failed: false, msg: success_msg, result: success_msg)
+        return PluginResult.new(changed: true, failed: false, result: success_msg)
       end
 
       # Real get_bin_path(a2mod_binary) - only checked once a change is
@@ -116,14 +121,14 @@ module Krikri
       success_msg = "Module #{name} #{state_string}"
       now_enabled, configcheck_failed = module_is_enabled(identifier, name)
       if now_enabled == want_enabled
-        PluginResult.new(changed: true, failed: false, msg: success_msg, result: success_msg)
+        PluginResult.new(changed: true, failed: false, result: success_msg)
       elsif configcheck_failed
         # apache2ctl -M could not confirm the new state because the
         # configuration is broken for a reason unrelated to this module.
         # Since a2enmod/a2dismod itself succeeded above, fall back to its
         # own wording to tell whether this was a real change.
         changed = !run[:stdout].includes?("already #{state_string}")
-        PluginResult.new(changed: changed, failed: false, msg: success_msg, result: success_msg)
+        PluginResult.new(changed: changed, failed: false, result: success_msg)
       else
         PluginResult.new(
           changed: false,
@@ -177,7 +182,7 @@ module Krikri
     end
 
     private def missing_param(name : String) : PluginResult
-      PluginResult.new(changed: false, failed: true, msg: "Missing required parameter: #{name}")
+      PluginResult.new(changed: false, failed: true, msg: "missing required arguments: #{name}")
     end
 
     class ModuleError < Exception

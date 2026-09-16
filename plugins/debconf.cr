@@ -53,6 +53,17 @@ module Krikri
           msg: "parameters are required together: question, vtype, value")
       end
 
+      # Real Ansible's argument_spec restricts vtype to a choices list
+      # (debconf.py); AnsibleModule's choice check (parameters.py's
+      # exact wording) fires for a full triple with a bad vtype before
+      # any debconf-show/debconf-set-selections call - previously a bad
+      # vtype sailed through and the task reported changed: true.
+      vtype_choices = ["boolean", "error", "multiselect", "note", "password", "seen", "select", "string", "text", "title"]
+      if vtype && !vtype_choices.includes?(vtype)
+        return PluginResult.new(changed: false, failed: true,
+          msg: "value of vtype must be one of: #{vtype_choices.join(", ")}, got: #{vtype}")
+      end
+
       if question.nil? || vtype.nil? || value.nil?
         return PluginResult.new(changed: false, failed: false, msg: "No question given, nothing to set")
       end

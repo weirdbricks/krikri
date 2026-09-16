@@ -1,0 +1,157 @@
+# debconf edge cases. Fully testable here: the harness containers are
+# real Debian (debconf-show/debconf-set-selections ship with the debconf
+# package the base image already has), and real Ansible's own module
+# shells to the same binaries this plugin drives - no gate needed. The
+# two engines run in SEPARATE containers, so the tzdata state-mutation
+# sequence is independent per engine. Msg wording differs between
+# engines and is not a bug (only failed=/changed= and debconf-database
+# state matter).
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "B1 missing name"
+      ansible.builtin.debconf:
+      register: b1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "B1 failed={{ b1.failed | default('none') }} changed={{ b1.changed | default('none') }}"
+
+    - name: "B2 query a package that was never installed"
+      ansible.builtin.debconf:
+        name: krikri-nonexistent-pkg
+      register: b2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "B2 failed={{ b2.failed | default('none') }} changed={{ b2.changed | default('none') }}"
+
+    - name: "B3 query-only on an installed, configured package"
+      ansible.builtin.debconf:
+        name: tzdata
+      register: b3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "B3 failed={{ b3.failed | default('none') }} changed={{ b3.changed | default('none') }}"
+
+    - name: "B4 question without vtype and value (required_together)"
+      ansible.builtin.debconf:
+        name: tzdata
+        question: tzdata/Areas
+      register: b4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "B4 failed={{ b4.failed | default('none') }} changed={{ b4.changed | default('none') }}"
+
+    - name: "B5 value without question (required_together)"
+      ansible.builtin.debconf:
+        name: tzdata
+        value: Europe/Athens
+      register: b5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "B5 failed={{ b5.failed | default('none') }} changed={{ b5.changed | default('none') }}"
+
+    - name: "B6 vtype without question and value (required_together)"
+      ansible.builtin.debconf:
+        name: tzdata
+        vtype: select
+      register: b6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "B6 failed={{ b6.failed | default('none') }} changed={{ b6.changed | default('none') }}"
+
+    - name: "B7 two of three (question+value, no vtype) still fails required_together"
+      ansible.builtin.debconf:
+        name: tzdata
+        question: tzdata/Areas
+        value: Europe/Athens
+      register: b7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "B7 failed={{ b7.failed | default('none') }} changed={{ b7.changed | default('none') }}"
+
+    - name: "B8 invalid vtype choice"
+      ansible.builtin.debconf:
+        name: tzdata
+        question: tzdata/Areas
+        vtype: krikri_vtype
+        value: Europe/Athens
+      register: b8
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "B8 failed={{ b8.failed | default('none') }} changed={{ b8.changed | default('none') }}"
+
+    - name: "B9 first-time set of a real question"
+      ansible.builtin.debconf:
+        name: tzdata
+        question: tzdata/Areas
+        vtype: select
+        value: Europe/Athens
+      register: b9
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "B9 failed={{ b9.failed | default('none') }} changed={{ b9.changed | default('none') }}"
+    - name: "B9b the value actually landed in the debconf database"
+      ansible.builtin.command: debconf-show tzdata
+      register: b9db
+      changed_when: false
+    - ansible.builtin.set_fact:
+        b9value: "{{ b9db.stdout | regex_findall('Areas:\\s*(\\S+)') | first | default('ABSENT') }}"
+    - ansible.builtin.debug:
+        msg: "B9a dbvalue={{ b9value }}"
+
+    - name: "B10 re-run identical set is idempotent"
+      ansible.builtin.debconf:
+        name: tzdata
+        question: tzdata/Areas
+        vtype: select
+        value: Europe/Athens
+      register: b10
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "B10 failed={{ b10.failed | default('none') }} changed={{ b10.changed | default('none') }}"
+
+    - name: "B11 setting a different value reports changed"
+      ansible.builtin.debconf:
+        name: tzdata
+        question: tzdata/Areas
+        vtype: select
+        value: Europe/Lisbon
+      register: b11
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "B11 failed={{ b11.failed | default('none') }} changed={{ b11.changed | default('none') }}"
+
+    - name: "B12 unseen: true on an already-matching value is a no-op"
+      ansible.builtin.debconf:
+        name: tzdata
+        question: tzdata/Areas
+        vtype: select
+        value: Europe/Lisbon
+        unseen: true
+      register: b12
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "B12 failed={{ b12.failed | default('none') }} changed={{ b12.changed | default('none') }}"
+
+    - name: "B13 question that does not exist in the package's templates"
+      ansible.builtin.debconf:
+        name: tzdata
+        question: tzdata/KrikriFakeQuestion
+        vtype: select
+        value: krikri
+      register: b13
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "B13 failed={{ b13.failed | default('none') }} changed={{ b13.changed | default('none') }}"
+
+    - name: "B14 unknown package with a full question triple"
+      ansible.builtin.debconf:
+        name: krikri-nonexistent-pkg
+        question: tzdata/Areas
+        vtype: select
+        value: Europe/Athens
+      register: b14
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "B14 failed={{ b14.failed | default('none') }} changed={{ b14.changed | default('none') }}"

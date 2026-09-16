@@ -90,7 +90,18 @@ module Krikri
         )
       end
 
-      stat_hash = native_stat(path, follow)
+      stat_or_errno = native_stat_ex(path, follow)
+      if stat_or_errno.is_a?(Errno)
+        # ENOENT is the only errno real stat.py treats as a successful
+        # exists: false; every other OSError fails with strerror as the
+        # message ("Not a directory" for a file-parent path, "Permission
+        # denied" for an unreadable ancestor, ...).
+        unless stat_or_errno == Errno::ENOENT
+          return PluginResult.new(changed: false, failed: true, msg: stat_or_errno.message)
+        end
+        return PluginResult.new(changed: false, failed: false, msg: "", stat: {"exists" => false})
+      end
+      stat_hash = stat_or_errno.as?(Hash(String, JSON::Any))
       unless stat_hash
         return PluginResult.new(changed: false, failed: false, msg: "", stat: {"exists" => false})
       end

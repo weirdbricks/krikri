@@ -1,0 +1,178 @@
+# fetch edge cases. Fully testable here: fetch pulls from the "remote"
+# (the same container under ansible_connection=local), so real file
+# pulls, dest-path construction (dest/<hostname>/<src> for flat: false,
+# dest[/basename] for flat: true) and checksum idempotency all run for
+# real in both containers. Path behavior is probed with follow-up stat
+# tasks (existence + isdir of the exact landing paths) rather than
+# trusting the module's own dest field. Msg wording differs between
+# engines and is not a bug (only failed=/changed=/on-disk layout
+# matter).
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "H1 missing required src"
+      ansible.builtin.fetch:
+        dest: /tmp/fetchh1
+      register: h1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "H1 failed={{ h1.failed | default('none') }} changed={{ h1.changed | default('none') }}"
+
+    - name: "H2 missing required dest"
+      ansible.builtin.fetch:
+        src: /etc/hostname
+      register: h2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "H2 failed={{ h2.failed | default('none') }} changed={{ h2.changed | default('none') }}"
+
+    - name: "H3 src does not exist"
+      ansible.builtin.fetch:
+        src: /tmp/fetch-no-such-file
+        dest: /tmp/fetchh3
+      register: h3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "H3 failed={{ h3.failed | default('none') }} changed={{ h3.changed | default('none') }}"
+
+    - name: "H3b src does not exist with fail_on_missing=false"
+      ansible.builtin.fetch:
+        src: /tmp/fetch-no-such-file
+        dest: /tmp/fetchh3
+        fail_on_missing: false
+      register: h3b
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "H3b failed={{ h3b.failed | default('none') }} changed={{ h3b.changed | default('none') }}"
+
+    - name: "H4 src is a directory"
+      ansible.builtin.fetch:
+        src: /etc
+        dest: /tmp/fetchh4
+      register: h4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "H4 failed={{ h4.failed | default('none') }} changed={{ h4.changed | default('none') }}"
+
+    - name: "H5 flat=false fetch lands at dest/<hostname>/<src>"
+      ansible.builtin.fetch:
+        src: /etc/hostname
+        dest: /tmp/fetchh5
+      register: h5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "H5 failed={{ h5.failed | default('none') }} changed={{ h5.changed | default('none') }}"
+    - ansible.builtin.stat:
+        path: /tmp/fetchh5/target/etc/hostname
+      register: h5s
+    - ansible.builtin.debug:
+        msg: "H5a exists={{ h5s.stat.exists | default('none') }} isreg={{ h5s.stat.isreg | default('none') }}"
+    - ansible.builtin.stat:
+        path: /tmp/fetchh5/hostname
+      register: h5s2
+    - ansible.builtin.debug:
+        msg: "H5b exists={{ h5s2.stat.exists | default('none') }}"
+
+    - name: "H6 re-run same fetch is idempotent (checksum match)"
+      ansible.builtin.fetch:
+        src: /etc/hostname
+        dest: /tmp/fetchh5
+      register: h6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "H6 failed={{ h6.failed | default('none') }} changed={{ h6.changed | default('none') }}"
+
+    - name: "H7 flat=true dest without trailing slash is the file path itself"
+      ansible.builtin.fetch:
+        src: /etc/hostname
+        dest: /tmp/fetchh7-out
+        flat: true
+      register: h7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "H7 failed={{ h7.failed | default('none') }} changed={{ h7.changed | default('none') }}"
+    - ansible.builtin.stat:
+        path: /tmp/fetchh7-out
+      register: h7s
+    - ansible.builtin.debug:
+        msg: "H7a exists={{ h7s.stat.exists | default('none') }} isreg={{ h7s.stat.isreg | default('none') }}"
+    - ansible.builtin.stat:
+        path: /tmp/fetchh7-out/hostname
+      register: h7s2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "H7b failed={{ h7s2.failed | default('none') }} exists={{ h7s2.stat.exists | default('none') }}"
+
+    - name: "H8 flat=true dest with trailing slash becomes dir/basename"
+      ansible.builtin.fetch:
+        src: /etc/hostname
+        dest: /tmp/fetchh8/
+        flat: true
+      register: h8
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "H8 failed={{ h8.failed | default('none') }} changed={{ h8.changed | default('none') }}"
+    - ansible.builtin.stat:
+        path: /tmp/fetchh8/hostname
+      register: h8s
+    - ansible.builtin.debug:
+        msg: "H8a exists={{ h8s.stat.exists | default('none') }} isreg={{ h8s.stat.isreg | default('none') }}"
+
+    - name: "H9 flat=false dest is an existing file, not a directory"
+      ansible.builtin.fetch:
+        src: /etc/hostname
+        dest: /etc/passwd
+      register: h9
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "H9 failed={{ h9.failed | default('none') }} changed={{ h9.changed | default('none') }}"
+
+    - name: "H10 fetched content matches the source"
+      ansible.builtin.slurp:
+        src: /tmp/fetchh7-out
+      register: h10c
+    - ansible.builtin.set_fact:
+        h10content: "{{ h10c.content | b64decode | trim }}"
+    - ansible.builtin.debug:
+        msg: "H10 content_nonempty={{ h10content | length > 0 }}"
+
+    - name: "H11 relative src fetch (cwd-relative under local connection)"
+      ansible.builtin.copy:
+        content: "krikri-fetch-rel\n"
+        dest: /work/fetchrel-src.txt
+      register: h11pre
+    - ansible.builtin.fetch:
+        src: fetchrel-src.txt
+        dest: /tmp/fetchh11
+        flat: true
+      register: h11
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "H11 failed={{ h11.failed | default('none') }} changed={{ h11.changed | default('none') }} prefailed={{ h11pre.failed | default('none') }}"
+    - ansible.builtin.stat:
+        path: /tmp/fetchh11
+      register: h11s
+    - ansible.builtin.debug:
+        msg: "H11a exists={{ h11s.stat.exists | default('none') }}"
+
+    - name: "H12 fetch a changed source over an existing flat copy"
+      ansible.builtin.copy:
+        content: "v2\n"
+        dest: /work/fetchrel-src.txt
+      register: h12pre
+    - ansible.builtin.fetch:
+        src: fetchrel-src.txt
+        dest: /tmp/fetchh11
+        flat: true
+      register: h12
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "H12 failed={{ h12.failed | default('none') }} changed={{ h12.changed | default('none') }} prechanged={{ h12pre.changed | default('none') }}"
+    - ansible.builtin.slurp:
+        src: /tmp/fetchh11
+      register: h12c
+    - ansible.builtin.set_fact:
+        h12content: "{{ h12c.content | b64decode | trim }}"
+    - ansible.builtin.debug:
+        msg: "H12a content_is_v2={{ h12content == 'v2' }}"
