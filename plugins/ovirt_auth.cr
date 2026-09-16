@@ -5,6 +5,7 @@ require "uri"
 require "openssl"
 require "http/client"
 require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/ansible_arg_validation"
 require "../src/krikri/plugin_helpers/ovirt_auth_command"
 
 module Krikri
@@ -50,21 +51,62 @@ module Krikri
   # `headers:` pass-through (the SDK threads them into every API call;
   # this module only ever talks to the token endpoints).
   class OvirtAuthPlugin < BasePlugin
+    include PluginHelpers::AnsibleArgValidation
+
+    # The real module's argument_spec in declaration order (no aliases).
+    SPEC = {
+      "url"        => [] of String,
+      "hostname"   => [] of String,
+      "username"   => [] of String,
+      "password"   => [] of String,
+      "ca_file"    => [] of String,
+      "insecure"   => [] of String,
+      "timeout"    => [] of String,
+      "compress"   => [] of String,
+      "kerberos"   => [] of String,
+      "headers"    => [] of String,
+      "state"      => [] of String,
+      "token"      => [] of String,
+      "ovirt_auth" => [] of String,
+    }
+
+    BOOL_PARAMS = {"insecure", "compress", "kerberos"}
+    INT_PARAMS  = {"timeout"}
+    DICT_PARAMS = {"headers", "ovirt_auth"}
+
     def execute : PluginResult
       state = @params["state"]? || "present"
-      return PluginResult.new(changed: false, failed: true,
-        msg: "value of state must be one of: present, absent, got #{state}") unless ["present", "absent"].includes?(state)
 
+      # Real AnsibleModule setup order (arg_spec.py's
+      # ArgumentSpecValidator surfaces errors[0]): type conversion per
+      # param in spec declaration order, state choices, required_if,
+      # unsupported params - then the collection's check_sdk() gate
+      # before the module body ever runs.
       if failure = validate_arg_types
         return failure
       end
 
-      if state == "absent"
-        # required_if: ('state', 'absent', ['ovirt_auth'])
-        raw = @params["ovirt_auth"]?
+      unless ["present", "absent"].includes?(state)
+        return choices_error("state", ["present", "absent"], state)
+      end
+
+      # required_if: ('state', 'absent', ['ovirt_auth'])
+      if state == "absent" && !@params["ovirt_auth"]?
         return PluginResult.new(changed: false, failed: true,
-          msg: "state is absent but all of the following are missing: ovirt_auth") unless raw
-        return revoke(raw)
+          msg: "state is absent but all of the following are missing: ovirt_auth")
+      end
+
+      unsupported = unsupported_param_keys(@params, SPEC)
+      unless unsupported.empty?
+        return unsupported_params_error("ovirt.ovirt.ovirt_auth", unsupported, SPEC)
+      end
+
+      if failure = PluginHelpers::OvirtAuthCommand.sdk_gate
+        return failure
+      end
+
+      if state == "absent"
+        return revoke(@params["ovirt_auth"].not_nil!)
       end
 
       url = param_or_env("url", "OVIRT_URL")
@@ -80,7 +122,7 @@ module Krikri
 
       insecure_param = @params["insecure"]?
       insecure = insecure_param ? true?(insecure_param) : !ca_file
-      timeout = (@params["timeout"]? || "0").to_i? || 0
+      timeout = python_int(@params["timeout"]? || "0")
       compress = @params["compress"]? ? true?(@params["compress"]?, default: true) : true
       kerberos = true?(@params["kerberos"]?)
 
@@ -109,27 +151,21 @@ module Krikri
     end
 
     # AnsibleModule's parameter.py type conversion, which runs before the
-    # module body: timeout is int, insecure/compress/kerberos are bool,
-    # headers/ovirt_auth are dict (JSON object or k=v pairs).
+    # module body, per param in spec declaration order: timeout is int,
+    # insecure/compress/kerberos are bool, headers/ovirt_auth are dict
+    # (JSON object or k=v pairs). ca_file is type 'path' and the str
+    # params never fail conversion, so neither can produce an error.
     private def validate_arg_types : PluginResult?
-      unless (@params["timeout"]? || "0").to_i32?
-        return PluginResult.new(changed: false, failed: true,
-          msg: "argument 'timeout' is of type <class 'str'> and we were unable to convert to int: " \
-               "<class 'str'> cannot be converted to an int")
-      end
-
-      valid_booleans = {"0", "1", "true", "off", "yes", "t", "false", "on", "f", "n", "y", "no"}
-      {"insecure", "compress", "kerberos"}.each do |param|
-        if (value = @params[param]?) && !valid_booleans.includes?(value.downcase)
-          return PluginResult.new(changed: false, failed: true,
-            msg: "argument '#{param}' is of type <class 'str'> and we were unable to convert to bool: " \
-                 "The value '#{value}' is not a valid boolean.  " \
-                 "Valid booleans include: 0, 1, 'f', 'on', 'n', 't', '1', 'false', 'y', 'true', 'off', 'yes', '0', 'no'")
+      SPEC.each_key do |param|
+        value = @params[param]?
+        next unless value
+        if BOOL_PARAMS.includes?(param) && !bool_convertible?(value)
+          return bool_type_error(param, value)
         end
-      end
-
-      {"headers", "ovirt_auth"}.each do |param|
-        if (value = @params[param]?) && !dict_param?(value)
+        if INT_PARAMS.includes?(param) && !int_convertible?(value)
+          return int_type_error(param, value)
+        end
+        if DICT_PARAMS.includes?(param) && !dict_param?(value)
           return PluginResult.new(changed: false, failed: true,
             msg: "argument '#{param}' is of type <class 'str'> and we were unable to convert to dict: " \
                  "dictionary requested, could not parse JSON or key=value")
@@ -137,6 +173,29 @@ module Krikri
       end
 
       nil
+    end
+
+    # check_type_int semantics: a JSON int/bool/float converts (bool ->
+    # 1/0, float truncates), but a string must be an integer literal -
+    # int("not-a-number") is the TypeError that fails the module.
+    def int_convertible?(raw : String) : Bool
+      v = raw.strip
+      return true if v.matches?(/^[+-]?\d+$/)
+      return true if bool_convertible?(raw)
+      return true if v.matches?(/[.eE]/) && !v.to_f64?.nil?
+      false
+    end
+
+    private def python_int(raw : String?) : Int64
+      return 0i64 unless raw
+      v = raw.strip
+      if v.matches?(/^[+-]?\d+$/)
+        return v.to_i64? || 0i64
+      end
+      return v.downcase == "true" ? 1i64 : 0i64 if bool_convertible?(raw)
+      (v.to_f64 || 0.0).to_i64
+    rescue
+      0i64
     end
 
     private def dict_param?(value : String) : Bool

@@ -5,6 +5,22 @@ require "../../src/krikri/plugin_helpers/ovirt_auth_command"
 # URL/body/error logic (read from the SDK source) - the plugin's HTTP
 # paths need a live oVirt/RHV engine, the string shapes don't.
 describe Krikri::PluginHelpers::OvirtAuthCommand do
+  describe ".sdk_gate" do
+    # Mirrors module_utils/ovirt.py's HAS_SDK probe: the gate passes
+    # (nil) only when a host python can import ovirtsdk4 >= 4.4.0.
+    it "fails with the collection's check_sdk message when ovirtsdk4 is missing" do
+      gate = Krikri::PluginHelpers::OvirtAuthCommand.sdk_gate
+      if gate
+        gate.failed?.should be_true
+        gate.msg.should eq("ovirtsdk4 version 4.4.0 or higher is required for this module")
+      else
+        # This host has the SDK installed - the probe passing is the
+        # same behavior real Ansible shows on an SDK-equipped host.
+        gate.should be_nil
+      end
+    end
+  end
+
   describe ".sso_url" do
     it "derives the token endpoint exactly like the SDK's _get_access_token" do
       Krikri::PluginHelpers::OvirtAuthCommand.sso_url("https://engine.example.com/ovirt-engine/api")

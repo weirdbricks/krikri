@@ -1,4 +1,5 @@
 require "uri"
+require "../base_plugin"
 
 module Krikri
   module PluginHelpers
@@ -11,6 +12,27 @@ module Krikri
     module OvirtAuthCommand
       SSO_TOKEN_PATH  = "/ovirt-engine/sso/oauth/token"
       SSO_REVOKE_PATH = "/ovirt-engine/services/sso-logout"
+
+      # The collection's check_sdk() gate (module_utils/ovirt.py's
+      # HAS_SDK probe): with args that survived AnsibleModule
+      # validation, the real module's next act is importing ovirtsdk4
+      # (>= 4.4.0), and a host without it fails with exactly this
+      # message before the module body ever runs. krikri probes the
+      # host's python3 the same way; a host that HAS the SDK gets the
+      # native SSO HTTP flow.
+      def self.sdk_gate : Krikri::PluginResult?
+        ["python3", "python"].each do |name|
+          io = IO::Memory.new
+          status = Process.run(name, {"-c", "import sys; print(sys.executable)"}, output: io, error: Process::Redirect::Close)
+          path = io.to_s.strip
+          next unless status.success? && !path.empty?
+          probe = Process.run(path, {"-c", "import ovirtsdk4, ovirtsdk4.version, ovirtsdk4.types; from ovirtsdk4.version import VERSION; assert tuple(int(x) for x in VERSION.split('.')[:2]) >= (4, 4)"}, error: Process::Redirect::Close)
+          return nil if probe.success?
+          return Krikri::PluginResult.new(changed: false, failed: true,
+            msg: "ovirtsdk4 version 4.4.0 or higher is required for this module")
+        end
+        nil
+      end
 
       # The SDK strips the API URL to scheme://netloc and appends the
       # fixed engine paths - anything before /ovirt-engine/api in the
