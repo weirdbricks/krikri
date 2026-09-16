@@ -1,0 +1,151 @@
+# community.general.archive edge cases. No extra packages needed (the
+# formats are built natively by krikri's plugin and by python's
+# tarfile/zipfile on the real side). Each case registers its result and
+# prints a "B<n> key=value" debug line for run.sh's diff extraction.
+# failed=/changed=/on-disk behavior are what matter; error-message
+# WORDING may legitimately differ and is not a bug.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "B1 setup: parent and subdir directories for the touch loop"
+      ansible.builtin.file:
+        path: "/tmp/podman-diff-b1-src/{{ item }}"
+        state: directory
+      loop:
+        - .
+        - sub
+
+    - name: "B1b setup the source files the archive cases operate on"
+      ansible.builtin.file:
+        path: "/tmp/podman-diff-b1-src/{{ item }}"
+        state: touch
+      loop:
+        - keep1.txt
+        - keep2.txt
+        - drop1.txt
+        - sub/keep3.txt
+
+    - name: "B2 archive from a path that does not exist (must fail)"
+      community.general.archive:
+        path: /tmp/podman-diff-b2-nonexistent
+        dest: /tmp/podman-diff-b2.tar.gz
+      register: b2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "B2 failed={{ b2.failed }} changed={{ b2.changed }}"
+    - name: "B2b verify no archive was created for the failed case"
+      ansible.builtin.stat:
+        path: /tmp/podman-diff-b2.tar.gz
+      register: b2b
+    - ansible.builtin.debug:
+        msg: "B2b exists={{ b2b.stat.exists }}"
+
+    - name: "B3 archive with an invalid format value (must fail)"
+      community.general.archive:
+        path: /tmp/podman-diff-b1-src
+        dest: /tmp/podman-diff-b3.rar
+        format: rar
+      register: b3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "B3 failed={{ b3.failed }} changed={{ b3.changed }}"
+
+    - name: "B4 archive with exclude_path dropping one file (tar, should change)"
+      community.general.archive:
+        path: /tmp/podman-diff-b1-src
+        dest: /tmp/podman-diff-b4.tar
+        format: tar
+        exclude_path: /tmp/podman-diff-b1-src/drop1.txt
+      register: b4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "B4 failed={{ b4.failed }} changed={{ b4.changed }}"
+    - name: "B4b list the archive contents (drop1.txt must be absent, keep1/sub/keep3 present)"
+      ansible.builtin.command:
+        cmd: "tar -tf /tmp/podman-diff-b4.tar"
+      register: b4b
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "B4b failed={{ b4b.failed }} rc={{ b4b.rc | default('none') }} has_keep1={{ 'keep1.txt' in (b4b.stdout | default('')) }} has_drop1={{ 'drop1.txt' in (b4b.stdout | default('')) }} has_keep3={{ 'sub/keep3.txt' in (b4b.stdout | default('')) }}"
+
+    - name: "B5 re-run the identical archive (idempotency, should not change)"
+      community.general.archive:
+        path: /tmp/podman-diff-b1-src
+        dest: /tmp/podman-diff-b4.tar
+        format: tar
+        exclude_path: /tmp/podman-diff-b1-src/drop1.txt
+      register: b5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "B5 failed={{ b5.failed }} changed={{ b5.changed }}"
+
+    - name: "B6 archive to a dest that already exists as a plain FILE (not an archive)"
+      ansible.builtin.copy:
+        content: "not an archive"
+        dest: /tmp/podman-diff-b6.tar
+    - name: "B6b archive over it without any force flag"
+      community.general.archive:
+        path: /tmp/podman-diff-b1-src
+        dest: /tmp/podman-diff-b6.tar
+        format: tar
+      register: b6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "B6 failed={{ b6.failed }} changed={{ b6.changed }}"
+
+    - name: "B7 zip format with exclude_path as a glob"
+      community.general.archive:
+        path: /tmp/podman-diff-b1-src
+        dest: /tmp/podman-diff-b7.zip
+        format: zip
+        exclude_path: "/tmp/podman-diff-b1-src/drop*.txt"
+      register: b7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "B7 failed={{ b7.failed }} changed={{ b7.changed }}"
+    - name: "B7b list the zip contents (drop1.txt must be absent)"
+      ansible.builtin.command:
+        cmd: "python3 -c \"import zipfile; print('\\n'.join(zipfile.ZipFile('/tmp/podman-diff-b7.zip').namelist()))\""
+      register: b7b
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "B7b failed={{ b7b.failed }} rc={{ b7b.rc | default('none') }} has_drop1={{ 'drop1.txt' in (b7b.stdout | default('')) }}"
+
+    - name: "B8 single-file compression (gz, no tar wrapper) should change"
+      community.general.archive:
+        path: /tmp/podman-diff-b1-src/keep1.txt
+        dest: /tmp/podman-diff-b8.gz
+      register: b8
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "B8 failed={{ b8.failed }} changed={{ b8.changed }}"
+
+    - name: "B9 same single-file compression again (idempotency)"
+      community.general.archive:
+        path: /tmp/podman-diff-b1-src/keep1.txt
+        dest: /tmp/podman-diff-b8.gz
+      register: b9
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "B9 failed={{ b9.failed }} changed={{ b9.changed }}"
+
+    - name: "B10 setup: source tree for the remove case"
+      ansible.builtin.file:
+        path: /tmp/podman-diff-b10-src/one.txt
+        state: touch
+
+    - name: "B10b archive with remove: (source files should disappear)"
+      community.general.archive:
+        path: /tmp/podman-diff-b10-src
+        dest: /tmp/podman-diff-b10.tar
+        format: tar
+        remove: true
+      register: b10
+      ignore_errors: true
+    - name: "B10c verify source removed after successful archive+remove"
+      ansible.builtin.stat:
+        path: /tmp/podman-diff-b10-src
+      register: b10b
+    - ansible.builtin.debug:
+        msg: "B10 failed={{ b10.failed }} changed={{ b10.changed }} B10b exists={{ b10b.stat.exists }}"

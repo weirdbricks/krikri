@@ -246,6 +246,20 @@ module Krikri
         return PluginResult.new(changed: false, failed: true, msg: "failed to build archive")
       end
 
+      # Real community.general.archive overwrites an existing dest that
+      # is not a valid archive for gz/bz2/xz/zip (its dest-checksums
+      # fallback yields an empty set, so the rewrite reports
+      # changed=True) - but with format=tar the same fallback calls
+      # _open_compressed_file with "tar", which fail_json's with
+      # "tar is not a valid format". Confirmed against real
+      # ansible-playbook via the podman-diff archive cases (B6): an
+      # existing plain-text dest + format=tar fails changed=False on
+      # the real side, every other format overwrites changed=True.
+      if format == "tar" && !single_compress && File.exists?(dest) && !valid_tar?(dest)
+        File.delete?(tmp_dest)
+        return PluginResult.new(changed: false, failed: true, msg: "tar is not a valid format")
+      end
+
       old_signature = File.exists?(dest) ? signature(dest, format, single_compress) : nil
       new_signature = signature(tmp_dest, format, single_compress)
       changed = old_signature != new_signature
@@ -531,6 +545,24 @@ module Krikri
           digest.update(entry.io.gets_to_end) unless entry.flag == Crystar::DIR.ord.to_u8
         end
       end
+    end
+
+    private def valid_tar?(path : String) : Bool
+      # Python's tarfile (what the real module reads the existing dest
+      # with) requires the ustar magic at offset 257 and rejects
+      # anything else as ReadError - which for format=tar becomes the
+      # module-failing fallback. Crystal's Crystar instead treats a
+      # short/garbage file as an empty archive, so mirror tarfile's own
+      # header check rather than "did Crystar raise".
+      return false if File.size(path) < 512
+      magic = Bytes.new(6)
+      File.open(path, "r") do |file|
+        file.seek(257)
+        file.read_fully?(magic)
+      end
+      magic[0, 5] == "ustar".to_slice
+    rescue
+      false
     end
 
     private def remove_sources(found_paths : Array(String)) : Nil
