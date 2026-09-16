@@ -36,8 +36,8 @@ module Krikri
     include PluginHelpers::AnsibleArgValidation
 
     # The real module's argument_spec plus the file-common args its
-    # add_file_common_args=True injects - no aliases, so the
-    # unsupported-params message has no trailing parenthetical.
+    # add_file_common_args=True injects - the only alias is
+    # attributes->attr (ansible-core's FILE_COMMON_ARGUMENTS).
     SPEC = {
       "cert_url"        => [] of String,
       "cert_path"       => [] of String,
@@ -54,7 +54,7 @@ module Krikri
       "keystore_type"   => [] of String,
       "executable"      => [] of String,
       "state"           => [] of String,
-      "attributes"      => [] of String,
+      "attributes"      => ["attr"],
       "group"           => [] of String,
       "mode"            => [] of String,
       "owner"           => [] of String,
