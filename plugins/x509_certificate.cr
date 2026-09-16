@@ -3,6 +3,7 @@
 require "json"
 require "random/secure"
 require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/ansible_arg_validation"
 
 module Krikri
   # x509_certificate plugin (community.crypto.x509_certificate) -
@@ -37,68 +38,207 @@ module Krikri
   #     defaults to true), or every run with a relative `+3650d` would
   #     reissue
   class X509CertificatePlugin < BasePlugin
+    include PluginHelpers::AnsibleArgValidation
+
+    # The real module's fully-resolved argument_spec (the
+    # get_certificate_argument_spec base plus the acme/ownca/selfsigned
+    # provider keys and the module's own state/path/backup/return_content,
+    # in resolution order) plus the file-common args its
+    # add_file_common_args=True injects. Aliases: attributes->attr and
+    # selfsigned_not_before/after's camelCase aliases.
+    SPEC = {
+      "provider"                             => [] of String,
+      "force"                                => [] of String,
+      "csr_path"                             => [] of String,
+      "csr_content"                          => [] of String,
+      "ignore_timestamps"                    => [] of String,
+      "select_crypto_backend"                 => [] of String,
+      "privatekey_path"                      => [] of String,
+      "privatekey_content"                   => [] of String,
+      "privatekey_passphrase"                 => [] of String,
+      "state"                                => [] of String,
+      "path"                                 => [] of String,
+      "backup"                               => [] of String,
+      "return_content"                       => [] of String,
+      "acme_accountkey_path"                  => [] of String,
+      "acme_challenge_path"                   => [] of String,
+      "acme_chain"                           => [] of String,
+      "acme_directory"                       => [] of String,
+      "ownca_path"                           => [] of String,
+      "ownca_content"                        => [] of String,
+      "ownca_privatekey_path"                 => [] of String,
+      "ownca_privatekey_content"              => [] of String,
+      "ownca_privatekey_passphrase"           => [] of String,
+      "ownca_digest"                         => [] of String,
+      "ownca_version"                        => [] of String,
+      "ownca_not_before"                     => [] of String,
+      "ownca_not_after"                      => [] of String,
+      "ownca_create_subject_key_identifier"   => [] of String,
+      "ownca_create_authority_key_identifier" => [] of String,
+      "selfsigned_version"                   => [] of String,
+      "selfsigned_digest"                    => [] of String,
+      "selfsigned_not_before"                 => ["selfsigned_notBefore"],
+      "selfsigned_not_after"                  => ["selfsigned_notAfter"],
+      "selfsigned_create_subject_key_identifier" => [] of String,
+      "mode"                                 => [] of String,
+      "owner"                                => [] of String,
+      "group"                                => [] of String,
+      "seuser"                               => [] of String,
+      "serole"                               => [] of String,
+      "selevel"                              => [] of String,
+      "setype"                               => [] of String,
+      "attributes"                           => ["attr"],
+      "unsafe_writes"                        => [] of String,
+    }
+
     def execute : PluginResult
-      path = @params["path"]?
-      return failure("missing required arguments: path") unless path
-
-      path = expand_tilde(path)
-      state = @params["state"]? || "present"
-      check_mode = true?(@params["check_mode"]?)
-
-      return remove(path, check_mode) if state == "absent"
-
-      provider = @params["provider"]?
-      return failure("state is present but all of the following are missing: provider") unless provider
-      unless ["selfsigned", "ownca"].includes?(provider)
-        return failure("The provider '#{provider}' is not supported by this implementation; only 'selfsigned' and 'ownca' are.")
+      if err = validate_arguments
+        return err
       end
 
-      csr_path = @params["csr_path"]?.try { |value| expand_tilde(value) }
-      return failure("csr_path is required") unless csr_path
-      return failure("The certificate signing request file #{csr_path} does not exist") unless File.exists?(csr_path)
+      temp_files = [] of String
+      begin
+        path = @params["path"]?
+        path = expand_tilde(path.not_nil!)
+        state = @params["state"]? || "present"
+        check_mode = true?(@params["check_mode"]?)
 
-      privatekey_path = @params["privatekey_path"]?.try { |value| expand_tilde(value) }
-      ownca_path = @params["ownca_path"]?.try { |value| expand_tilde(value) }
-      ownca_privatekey_path = @params["ownca_privatekey_path"]?.try { |value| expand_tilde(value) }
+        return remove(path, check_mode) if state == "absent"
 
-      if provider == "selfsigned"
-        return failure("privatekey_path is required for the selfsigned provider") unless privatekey_path
-        return failure("The private key #{privatekey_path} does not exist") unless File.exists?(privatekey_path)
-      else
-        return failure("ownca_path is required for the ownca provider") unless ownca_path
-        return failure("ownca_privatekey_path is required for the ownca provider") unless ownca_privatekey_path
-        return failure("The CA certificate #{ownca_path} does not exist") unless File.exists?(ownca_path)
-        return failure("The CA private key #{ownca_privatekey_path} does not exist") unless File.exists?(ownca_privatekey_path)
-      end
-
-      base_dir = File.dirname(path)
-      return failure("The directory #{base_dir} does not exist or the file is not a directory") unless Dir.exists?(base_dir)
-
-      changed = true?(@params["force"]?) || !File.exists?(path) ||
-                needs_regeneration?(path, provider, privatekey_path, csr_path, ownca_path)
-
-      if changed && !check_mode
-        backup_file = backup(path)
-        if error = generate(path, provider, privatekey_path, csr_path, ownca_path, ownca_privatekey_path)
-          return failure(error)
+        provider = @params["provider"]?
+        return failure("state is present but all of the following are missing: provider") unless provider
+        unless ["selfsigned", "ownca"].includes?(provider)
+          return failure("The provider '#{provider}' is not supported by this implementation; only 'selfsigned' and 'ownca' are.")
         end
-        # A certificate is public: the umask decides unless the user
-        # asked for something specific (matches the real module, which
-        # writes 0644-by-umask here rather than the 0600 a private key
-        # gets).
-        File.chmod(path, 0o666 & ~current_umask) unless @params["mode"]?
-        apply_owner_group_mode(path, @params["owner"]?, @params["group"]?, @params["mode"]?)
-        return result(true, path, privatekey_path, csr_path, backup_file)
+
+        csr_path = resolve_content_param(temp_files, "csr_path", "csr_content")
+        return failure("csr_path is required") unless csr_path
+        return failure("The certificate signing request file #{csr_path} does not exist") unless File.exists?(csr_path)
+
+        privatekey_path = resolve_content_param(temp_files, "privatekey_path", "privatekey_content")
+        ownca_path = resolve_content_param(temp_files, "ownca_path", "ownca_content")
+        ownca_privatekey_path = resolve_content_param(temp_files, "ownca_privatekey_path", "ownca_privatekey_content")
+
+        if provider == "selfsigned"
+          return failure("privatekey_path is required for the selfsigned provider") unless privatekey_path
+          return failure("The private key #{privatekey_path} does not exist") unless File.exists?(privatekey_path)
+        else
+          return failure("ownca_path is required for the ownca provider") unless ownca_path
+          return failure("ownca_privatekey_path is required for the ownca provider") unless ownca_privatekey_path
+          return failure("The CA certificate #{ownca_path} does not exist") unless File.exists?(ownca_path)
+          return failure("The CA private key #{ownca_privatekey_path} does not exist") unless File.exists?(ownca_privatekey_path)
+        end
+
+        base_dir = File.dirname(path)
+        return failure("The directory #{base_dir} does not exist or the file is not a directory") unless Dir.exists?(base_dir)
+
+        changed = true?(@params["force"]?) || !File.exists?(path) ||
+                  needs_regeneration?(path, provider, privatekey_path, csr_path, ownca_path)
+
+        if changed && !check_mode
+          backup_file = backup(path)
+          if error = generate(path, provider, privatekey_path, csr_path, ownca_path, ownca_privatekey_path)
+            return failure(error)
+          end
+          # A certificate is public: the umask decides unless the user
+          # asked for something specific (matches the real module, which
+          # writes 0644-by-umask here rather than the 0600 a private key
+          # gets).
+          File.chmod(path, 0o666 & ~current_umask) unless @params["mode"]?
+          apply_owner_group_mode(path, @params["owner"]?, @params["group"]?, @params["mode"]?)
+          return result(true, path, privatekey_path, csr_path, backup_file)
+        end
+
+        return result(true, path, privatekey_path, csr_path, nil) if changed
+
+        attrs_changed = apply_attrs(path)
+        result(attrs_changed, path, privatekey_path, csr_path, nil)
+      ensure
+        temp_files.each { |file| File.delete(file) rescue nil }
       end
+    end
 
-      return result(true, path, privatekey_path, csr_path, nil) if changed
-
-      attrs_changed = apply_attrs(path)
-      result(attrs_changed, path, privatekey_path, csr_path, nil)
+    # Content variants of the path parameters (csr_content,
+    # privatekey_content, ownca_content, ownca_privatekey_content) are
+    # materialized to temp files and used in place of the path variant
+    # whenever the path itself is not given - the real module reads the
+    # bytes straight from params.
+    private def resolve_content_param(temp_files : Array(String), path_param : String, content_param : String) : String?
+      if path_param_value = @params[path_param]?
+        return expand_tilde(path_param_value)
+      end
+      if content = @params[content_param]?
+        file = File.tempname("x509-content")
+        File.write(file, content)
+        temp_files << file
+        return file
+      end
+      nil
     end
 
     private def failure(msg : String) : PluginResult
       PluginResult.new(changed: false, failed: true, msg: msg)
+    end
+
+    # Real AnsibleModule validation order (ArgumentSpecValidator.validate):
+    # required -> types (spec declaration order) -> choices -> required_if
+    # -> mutually_exclusive -> unsupported (deferred last).
+    private def validate_arguments : PluginResult?
+      return missing_required_error(["path"]) unless @params["path"]?
+
+      %w[ownca_version selfsigned_version].each do |param|
+        if raw = @params[param]?
+          return int_type_error(param, raw) unless raw.to_i32?
+        end
+      end
+      %w[force ignore_timestamps acme_chain ownca_create_authority_key_identifier
+         backup return_content unsafe_writes].each do |param|
+        if raw = @params[param]?
+          return bool_type_error(param, raw) unless bool_convertible?(raw)
+        end
+      end
+
+      {"provider"                             => %w[acme ownca selfsigned],
+       "select_crypto_backend"                 => %w[auto cryptography],
+       "ownca_version"                        => %w[3],
+       "ownca_create_subject_key_identifier"   => %w[create_if_not_provided always_create never_create],
+       "selfsigned_version"                    => %w[3],
+       "selfsigned_create_subject_key_identifier" => %w[create_if_not_provided always_create never_create],
+       "state"                                => %w[present absent]}.each do |param, allowed|
+        if value = @params[param]?
+          unless allowed.includes?(value)
+            return choices_error(param, allowed, value)
+          end
+        end
+      end
+
+      if (@params["state"]? || "present") == "present" && !@params["provider"]?
+        return failure("state is present but all of the following are missing: provider")
+      end
+
+      # The real backends run every not_before/not_after through
+      # get_relative_time_option before touching any file.
+      %w[ownca_not_before ownca_not_after selfsigned_not_before selfsigned_not_after].each do |param|
+        if value = @params[param]?
+          unless crypto_time_spec_valid?(value)
+            return failure("The time spec \"#{value}\" for #{param} is invalid")
+          end
+        end
+      end
+
+      [%w[csr_path csr_content], %w[privatekey_path privatekey_content],
+       %w[ownca_path ownca_content],
+       %w[ownca_privatekey_path ownca_privatekey_content]].each do |pair|
+        if pair.all? { |param| @params[param]? }
+          return failure("parameters are mutually exclusive: #{pair.join("|")}")
+        end
+      end
+
+      unsupported = unsupported_param_keys(@params, SPEC)
+      unless unsupported.empty?
+        return unsupported_params_error("community.crypto.x509_certificate", unsupported, SPEC)
+      end
+      nil
     end
 
     private def remove(path : String, check_mode : Bool) : PluginResult
@@ -119,12 +259,34 @@ module Krikri
     private def generate(path : String, provider : String, privatekey_path : String?,
                          csr_path : String, ownca_path : String?, ownca_privatekey_path : String?) : String?
       tmp = File.tempname("x509-cert", dir: File.dirname(path))
+      ext_file = File.tempname("x509-ext")
       begin
         digest = @params[provider == "ownca" ? "ownca_digest" : "selfsigned_digest"]? || "sha256"
         days = validity_days(provider)
 
         args = ["x509", "-req", "-in", csr_path, "-out", tmp, "-#{digest}",
                 "-days", days.to_s, "-set_serial", serial.to_s, "-copy_extensions", "copyall"]
+
+        # The real backends create a SubjectKeyIdentifier (and an
+        # AuthorityKeyIdentifier for ownca) when the CSR does not
+        # provide one - create_if_not_provided is the default and
+        # ownca_create_authority_key_identifier defaults to true. Bookworm's
+        # OpenSSL 3.0 does not auto-add any SKI, so without this the
+        # generated cert never matches the real module's output and
+        # every re-run regenerates.
+        ext_lines = [] of String
+        ski_param = provider == "ownca" ? "ownca_create_subject_key_identifier" : "selfsigned_create_subject_key_identifier"
+        if @params[ski_param]? != "never_create" && !csr_has_extension?(csr_path, "Subject Key Identifier")
+          ext_lines << "subjectKeyIdentifier=hash"
+        end
+        if provider == "ownca" && true?(@params["ownca_create_authority_key_identifier"]? || "true") &&
+           !csr_has_extension?(csr_path, "Authority Key Identifier")
+          ext_lines << "authorityKeyIdentifier=keyid"
+        end
+        unless ext_lines.empty?
+          File.write(ext_file, ext_lines.join("\n") + "\n")
+          args += ["-extfile", ext_file]
+        end
 
         if error = add_signing_args(args, provider, privatekey_path, ownca_path, ownca_privatekey_path)
           return error
@@ -137,7 +299,12 @@ module Krikri
         nil
       ensure
         File.delete(tmp) if File.exists?(tmp)
+        File.delete(ext_file) if File.exists?(ext_file)
       end
+    end
+
+    private def csr_has_extension?(csr_path : String, label : String) : Bool
+      (extension_lines(csr_path, csr: true) || [] of String).any?(&.starts_with?(label))
     end
 
     private def add_signing_args(args : Array(String), provider : String, privatekey_path : String?,
@@ -222,8 +389,9 @@ module Krikri
 
       return true unless subject_matches?(path, csr_path)
       return true unless extensions_match?(path, csr_path)
-      if provider == "ownca" && (ca_path = ownca_path)
-        return true unless ownca_matches?(path, ca_path)
+      if provider == "ownca"
+        ca_path = ownca_path || return true
+        return true if ownca_matches?(path, ca_path)
       end
 
       false
@@ -270,7 +438,9 @@ module Krikri
       # comparison alone cannot see; its key identifier changes.
       ca_ski = key_identifier(ownca_path, "X509v3 Subject Key Identifier")
       cert_aki = key_identifier(path, "X509v3 Authority Key Identifier")
-      !(ca_ski && cert_aki && ca_ski != cert_aki)
+      return false if ca_ski.nil? && cert_aki.nil?
+      return true if cert_aki.nil? || ca_ski.nil?
+      ca_ski != cert_aki
     end
 
     private def pubkey_of(args : Array(String)) : String?
