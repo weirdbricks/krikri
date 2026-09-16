@@ -58,7 +58,7 @@ describe "file-common result fields (real Ansible's add_path_info)" do
     it "adds no stat fields when the dest doesn't exist (check mode would-change)" do
       dest = File.tempname("copy-fields-check")
 
-      result = PluginSpecHelper.run("copy", {"content" => "new\n", "dest" => dest, "check_mode" => "true"})
+      result = PluginSpecHelper.run("copy", {"content" => "new\n", "dest" => dest, "_ansible_check_mode" => "true"})
 
       result["changed"].as_bool.should be_true
       File.exists?(dest).should be_false
@@ -77,7 +77,7 @@ describe "file-common result fields (real Ansible's add_path_info)" do
       File.write(path, content)
       File.chmod(path, 0o640)
 
-      result = PluginSpecHelper.run("file", {"path" => path, "state" => "absent", "check_mode" => "true"})
+      result = PluginSpecHelper.run("file", {"path" => path, "state" => "absent", "_ansible_check_mode" => "true"})
 
       result["changed"].as_bool.should be_true
       File.exists?(path).should be_true

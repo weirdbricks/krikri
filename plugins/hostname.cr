@@ -73,7 +73,7 @@ module Krikri
 
     def initialize(config : JSON::Any)
       super(config)
-      @check_mode = true?(@params["check_mode"]?)
+      @check_mode = true?(@params["_ansible_check_mode"]?)
     end
 
     # Real Ansible's STRATS dict (ansible/modules/hostname.py), in its own

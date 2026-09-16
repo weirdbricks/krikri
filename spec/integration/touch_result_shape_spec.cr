@@ -40,7 +40,7 @@ describe "file state=touch result shape (live-verified vs ansible-core 2.19.4)" 
     File.write(path, "hi\n")
     File.chmod(path, 0o640)
 
-    result = PluginSpecHelper.run("file", {"path" => path, "state" => "touch", "check_mode" => "true"})
+    result = PluginSpecHelper.run("file", {"path" => path, "state" => "touch", "_ansible_check_mode" => "true"})
 
     result["changed"].as_bool.should be_true
     result["dest"].as_s.should eq(path)
@@ -73,7 +73,7 @@ describe "file state=touch result shape (live-verified vs ansible-core 2.19.4)" 
   it "new file, check mode: changed + dest only (no stat fields, no msg, no state echo)" do
     path = File.tempname("touch-new-check")
 
-    result = PluginSpecHelper.run("file", {"path" => path, "state" => "touch", "check_mode" => "true"})
+    result = PluginSpecHelper.run("file", {"path" => path, "state" => "touch", "_ansible_check_mode" => "true"})
 
     result["changed"].as_bool.should be_true
     result["dest"].as_s.should eq(path)

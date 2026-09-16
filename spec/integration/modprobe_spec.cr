@@ -25,12 +25,12 @@ describe "modprobe plugin" do
     loaded = File.read("/proc/modules").each_line.map { |line| line.split.first? }.to_a.compact.first?
     pending!("no loaded modules visible in /proc/modules") unless loaded
 
-    result = PluginSpecHelper.run("modprobe", {"name" => loaded, "state" => "absent", "check_mode" => "true"})
+    result = PluginSpecHelper.run("modprobe", {"name" => loaded, "state" => "absent", "_ansible_check_mode" => "true"})
     result["failed"]?.try(&.as_bool).should be_falsey
     result["changed"].as_bool.should be_true
 
     dashed = loaded.gsub('_', '-')
-    result2 = PluginSpecHelper.run("modprobe", {"name" => dashed, "state" => "absent", "check_mode" => "true"})
+    result2 = PluginSpecHelper.run("modprobe", {"name" => dashed, "state" => "absent", "_ansible_check_mode" => "true"})
     result2["failed"]?.try(&.as_bool).should be_falsey
     result2["changed"].as_bool.should be_true
   end

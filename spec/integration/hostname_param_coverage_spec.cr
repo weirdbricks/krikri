@@ -183,7 +183,7 @@ describe "hostname plugin - use: parameter coverage" do
     it "reports would-change in check mode without any set-hostname call" do
       with_hostname_shims("oldstatic", "oldtrans") do |env, log|
         result = PluginSpecHelper.run("hostname", {
-          "name" => "newhost", "use" => "systemd", "check_mode" => "true", "_environment" => env,
+          "name" => "newhost", "use" => "systemd", "_ansible_check_mode" => "true", "_environment" => env,
         })
         expect_ok(result)
         result["changed"].as_bool.should be_true
@@ -204,7 +204,7 @@ describe "hostname plugin - use: parameter coverage" do
 
       with_hostname_shims("oldstatic", "oldtrans") do |env, _log|
         result = PluginSpecHelper.run("hostname", {
-          "name" => long_name, "use" => "systemd", "check_mode" => "true", "_environment" => env,
+          "name" => long_name, "use" => "systemd", "_ansible_check_mode" => "true", "_environment" => env,
         })
         expect_ok(result)
         result["changed"].as_bool.should be_true
@@ -282,7 +282,7 @@ describe "hostname plugin - use: parameter coverage" do
     it "fails with real Ansible's exact message when /etc/sysconfig/network has no HOSTNAME entry (live-verified text, check mode included)" do
       pending!("/etc/sysconfig/network exists on this machine; the no-entry failure needs to control the file") if File.exists?("/etc/sysconfig/network")
       result = PluginSpecHelper.run("hostname", {
-        "name" => "web01", "use" => "redhat", "check_mode" => "true",
+        "name" => "web01", "use" => "redhat", "_ansible_check_mode" => "true",
       })
       result["failed"].as_bool.should be_true
       result["msg"].as_s.should eq("Unable to locate HOSTNAME entry in /etc/sysconfig/network")
@@ -293,7 +293,7 @@ describe "hostname plugin - use: parameter coverage" do
     it "reads a missing /etc/conf.d/hostname as \"\" and reports would-change in check mode (live-verified semantics)" do
       pending!("/etc/conf.d/hostname exists on this machine") if File.exists?("/etc/conf.d/hostname")
       result = PluginSpecHelper.run("hostname", {
-        "name" => "newhost", "use" => "openrc", "check_mode" => "true",
+        "name" => "newhost", "use" => "openrc", "_ansible_check_mode" => "true",
       })
       expect_ok(result)
       result["changed"].as_bool.should be_true

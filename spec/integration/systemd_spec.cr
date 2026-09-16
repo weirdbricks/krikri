@@ -46,7 +46,7 @@ describe "systemd plugin" do
       "name"       => "nonexistent-krikri-playbook-unit.service",
       "enabled"    => "true",
       "force"      => "true",
-      "check_mode" => "true",
+      "_ansible_check_mode" => "true",
     })
     result["failed"]?.try(&.as_bool).should be_falsey
     result["changed"].as_bool.should be_true
@@ -58,7 +58,7 @@ describe "systemd plugin" do
       "name"       => "nonexistent-krikri-playbook-unit.service",
       "state"      => "started",
       "no_block"   => "yes",
-      "check_mode" => "true",
+      "_ansible_check_mode" => "true",
     })
     result["failed"]?.try(&.as_bool).should be_falsey
     result["changed"].as_bool.should be_true
@@ -110,7 +110,7 @@ describe "systemd plugin" do
     # `systemd: {daemon_reload: true}` task: real Ansible's own module
     # has no notion of daemon-reload "changedness" and always reports
     # `ok:`, in check mode and for real.
-    result = PluginSpecHelper.run("systemd", {"daemon_reload" => "true", "check_mode" => "true"})
+    result = PluginSpecHelper.run("systemd", {"daemon_reload" => "true", "_ansible_check_mode" => "true"})
     result["failed"]?.try(&.as_bool).should be_falsey
     result["changed"].as_bool.should be_false
   end
@@ -123,7 +123,7 @@ describe "systemd plugin" do
     # and failed outright instead of running the reexec real
     # ansible-playbook performs (same "no changed signal" semantics as
     # daemon_reload above).
-    result = PluginSpecHelper.run("systemd", {"daemon_reexec" => "true", "check_mode" => "true"})
+    result = PluginSpecHelper.run("systemd", {"daemon_reexec" => "true", "_ansible_check_mode" => "true"})
     result["failed"]?.try(&.as_bool).should be_falsey
     result["changed"].as_bool.should be_false
   end
@@ -132,7 +132,7 @@ describe "systemd plugin" do
     result = PluginSpecHelper.run("systemd", {
       "name"       => "nonexistent-krikri-playbook-unit.service",
       "state"      => "started",
-      "check_mode" => "true",
+      "_ansible_check_mode" => "true",
     })
     # This is a unit that almost certainly does not exist (is-active fails),
     # so check mode predicts a change — and never actually runs systemctl.
@@ -159,7 +159,7 @@ describe "systemd plugin" do
       "name"       => "nonexistent-krikri-playbook-user-unit.service",
       "state"      => "started",
       "scope"      => "user",
-      "check_mode" => "true",
+      "_ansible_check_mode" => "true",
     })
     result["failed"]?.try(&.as_bool).should be_falsey
     result["changed"].as_bool.should be_true
@@ -181,7 +181,7 @@ describe "systemd plugin" do
     result = PluginSpecHelper.run("systemd", {
       "name"       => "nonexistent-krikri-playbook-unit.service",
       "state"      => "reloaded",
-      "check_mode" => "true",
+      "_ansible_check_mode" => "true",
     })
     result["failed"]?.try(&.as_bool).should be_falsey
     result["changed"].as_bool.should be_true

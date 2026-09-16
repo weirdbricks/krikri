@@ -1,0 +1,108 @@
+# timezone edge cases (community.general.timezone). Prefix T;
+# failed=/changed= booleans matter; error-message WORDING may legitimately
+# differ between engines. The harness containers have NO systemd/timedatectl,
+# so both engines take real's NosystemdTimezone branch (file edits + ln -sf +
+# dpkg-reconfigure) - a working-timedatectl host exercises the same flow
+# through SystemdTimezone instead. hwclock's `hwclock --systohc` fails in
+# ANY container (no accessible RTC), which itself is a comparable failure.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "T0 no name/hwclock (required_one_of)"
+      community.general.timezone:
+      register: t0
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "T0 failed={{ t0.failed | default('none') }} changed={{ t0.changed | default('none') }}"
+
+    - name: "T1 invalid hwclock choice"
+      community.general.timezone:
+        hwclock: krikri_clock
+      register: t1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "T1 failed={{ t1.failed | default('none') }} changed={{ t1.changed | default('none') }}"
+
+    - name: "T2 unsupported parameter"
+      community.general.timezone:
+        name: Etc/UTC
+        krikri_param: yes
+      register: t2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "T2 failed={{ t2.failed | default('none') }} changed={{ t2.changed | default('none') }}"
+
+    - name: "T3 nonexistent zone (init-time verify)"
+      community.general.timezone:
+        name: Krikri/Zone
+      register: t3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "T3 failed={{ t3.failed | default('none') }} changed={{ t3.changed | default('none') }}"
+
+    - name: "T4 already-current zone is a no-op"
+      community.general.timezone:
+        name: Etc/UTC
+      register: t4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "T4 failed={{ t4.failed | default('none') }} changed={{ t4.changed | default('none') }}"
+
+    - name: "T5 check-mode change reports changed without touching anything"
+      community.general.timezone:
+        name: Asia/Tokyo
+      check_mode: true
+      register: t5
+    - ansible.builtin.debug:
+        msg: "T5 failed={{ t5.failed | default('none') }} changed={{ t5.changed | default('none') }}"
+
+    - name: "T5b check mode really did not touch /etc/localtime"
+      ansible.builtin.command: readlink /etc/localtime
+      register: t5b
+      changed_when: false
+    - ansible.builtin.debug:
+        msg: "T5b rc={{ t5b.rc }} line={{ t5b.stdout }}"
+
+    - name: "T6 set a different zone"
+      community.general.timezone:
+        name: Asia/Tokyo
+      register: t6
+    - ansible.builtin.debug:
+        msg: "T6 failed={{ t6.failed | default('none') }} changed={{ t6.changed | default('none') }}"
+
+    - name: "T6b /etc/timezone now holds the zone"
+      ansible.builtin.command: cat /etc/timezone
+      register: t6b
+      changed_when: false
+    - ansible.builtin.debug:
+        msg: "T6b rc={{ t6b.rc }} line={{ t6b.stdout }}"
+
+    - name: "T6c /etc/localtime symlink follows"
+      ansible.builtin.command: readlink /etc/localtime
+      register: t6c
+      changed_when: false
+    - ansible.builtin.debug:
+        msg: "T6c rc={{ t6c.rc }} line={{ t6c.stdout }}"
+
+    - name: "T7 idempotent re-run of the same zone"
+      community.general.timezone:
+        name: Asia/Tokyo
+      register: t7
+    - ansible.builtin.debug:
+        msg: "T7 failed={{ t7.failed | default('none') }} changed={{ t7.changed | default('none') }}"
+
+    - name: "T8 rtc alias (required_one_of via alias; hwclock itself fails on the missing RTC)"
+      community.general.timezone:
+        rtc: local
+      register: t8
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "T8 failed={{ t8.failed | default('none') }} changed={{ t8.changed | default('none') }}"
+
+    - name: "T9 rtc alias did not edit /etc/localtime (only rcS/hwclock path)"
+      ansible.builtin.command: cat /etc/timezone
+      register: t9
+      changed_when: false
+    - ansible.builtin.debug:
+        msg: "T9 rc={{ t9.rc }} line={{ t9.stdout }}"

@@ -36,7 +36,7 @@ module Krikri
       link = @params["link"]?
       priority_param = @params["priority"]?.try(&.to_i)
       subcommands = @params["subcommands"]?.try { |str| Array(JSON::Any).from_json(str) }
-      check_mode = true?(@params["check_mode"]?)
+      check_mode = true?(@params["_ansible_check_mode"]?)
 
       current_mode, current_path, current_link, current_alternatives = parse_display(name)
 

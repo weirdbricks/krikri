@@ -84,7 +84,7 @@ describe Krikri::PythonModuleRunner do
   it "re-types JSON-encoded params and adds the reserved _ansible keys" do
     args = JSON.parse(Krikri::PythonModuleRunner.build_module_args(
       {"name" => "x", "list" => %q(["a", "b"]), "count" => "3",
-       "check_mode" => "false", "diff_mode" => "false", "_verbosity" => "0"},
+       "_ansible_check_mode" => "false", "_ansible_diff" => "false", "_verbosity" => "0"},
       check_mode: false,
     ))
     args["name"].as_s.should eq("x")
@@ -97,8 +97,12 @@ describe Krikri::PythonModuleRunner do
   end
 
   it "builds the old-style key=value argv" do
-    argv = Krikri::PythonModuleRunner.build_kv_argv({"path" => "/tmp/x", "mode" => "0640", "check_mode" => "false"})
-    argv.should eq(["path=/tmp/x", "mode=0640"])
+    # Real Ansible's old-style (non-AnsibleModule) protocol passes
+    # _ansible_* special vars as ordinary key=value pairs in the argv
+    # string - they are NOT stripped, unlike the plugin-config
+    # bookkeeping keys (check_mode/diff_mode) checked above.
+    argv = Krikri::PythonModuleRunner.build_kv_argv({"path" => "/tmp/x", "mode" => "0640", "_ansible_check_mode" => "false"})
+    argv.should eq(["path=/tmp/x", "mode=0640", "_ansible_check_mode=false"])
   end
 
   # ---- result-JSON extraction ----
@@ -130,7 +134,7 @@ describe Krikri::PythonModuleRunner do
       "module_source" => Base64.strict_encode(source),
       "new_style"     => "false",
       "kv_argv"       => %q(["path=/tmp/x"]),
-      "check_mode"    => "false",
+      "_ansible_check_mode" => "false",
     })
     result["changed"].as_bool.should be_true
     result["msg"].as_s.should eq("ran")
@@ -154,7 +158,7 @@ describe Krikri::PythonModuleRunner do
       "module_source" => Base64.strict_encode(source),
       "new_style"     => "true",
       "module_args"   => %q({"name": "hello", "_ansible_check_mode": false}),
-      "check_mode"    => "false",
+      "_ansible_check_mode" => "false",
     })
     result["msg"].as_s.should eq("hello")
     result["changed"].as_bool.should be_false
@@ -168,7 +172,7 @@ describe Krikri::PythonModuleRunner do
       "module_source" => Base64.strict_encode(source),
       "new_style"     => "false",
       "kv_argv"       => "[]",
-      "check_mode"    => "false",
+      "_ansible_check_mode" => "false",
     })
     result["failed"].as_bool.should be_true
     result["msg"].as_s.should contain("MODULE FAILURE")

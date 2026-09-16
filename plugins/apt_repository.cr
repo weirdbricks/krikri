@@ -137,7 +137,7 @@ module Krikri
 
       state = @params["state"]? || "present"
       update_cache = true?(@params["update_cache"]?, default: true)
-      check_mode = true?(@params["check_mode"]?)
+      check_mode = true?(@params["_ansible_check_mode"]?)
 
       if ppa = PluginHelpers::AptPpa.parse(repo)
         return handle_ppa(ppa, state, update_cache, check_mode)

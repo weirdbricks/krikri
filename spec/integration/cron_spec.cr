@@ -115,7 +115,7 @@ describe "cron plugin" do
       "name"       => "would add",
       "job"        => "/bin/true",
       "cron_file"  => path,
-      "check_mode" => "true",
+      "_ansible_check_mode" => "true",
     })
 
     result["changed"].as_bool.should be_true
@@ -395,7 +395,7 @@ describe "cron plugin" do
         "name"       => "a job",
         "job"        => "/bin/true",
         "backup"     => "true",
-        "check_mode" => "true",
+        "_ansible_check_mode" => "true",
         "cron_file"  => path,
       })
 

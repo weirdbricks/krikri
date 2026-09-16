@@ -36,7 +36,7 @@ module Krikri
       raw_path = @params["path"]?
       raw_path = "~/.ssh/known_hosts" if raw_path.nil? || raw_path.empty?
       path = expand_tilde(raw_path)
-      check_mode = true?(@params["check_mode"]?)
+      check_mode = true?(@params["_ansible_check_mode"]?)
 
       existing = lookup_existing(name, path)
 

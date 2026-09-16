@@ -65,7 +65,7 @@ module Krikri
         end
       end
 
-      check_mode = true?(@params["check_mode"]?)
+      check_mode = true?(@params["_ansible_check_mode"]?)
 
       # Real modprobe.py resolves (and requires) the binary before
       # looking at module state at all - reproduce that ordering, or a

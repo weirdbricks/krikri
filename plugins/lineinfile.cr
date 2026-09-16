@@ -43,7 +43,7 @@ module Krikri
       firstmatch = true?(@params["firstmatch"]?)
       backrefs = true?(@params["backrefs"]?)
       state = @params["state"]? || "present"
-      check_mode = true?(@params["check_mode"]?)
+      check_mode = true?(@params["_ansible_check_mode"]?)
 
       if error = validate(state, line, regexp, search_string, backrefs)
         return error

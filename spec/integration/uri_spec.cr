@@ -190,7 +190,7 @@ describe "uri plugin" do
   end
 
   it "is skipped under check_mode regardless of method" do
-    result = PluginSpecHelper.run("uri", {"url" => "#{uri_base}/text", "check_mode" => "true"})
+    result = PluginSpecHelper.run("uri", {"url" => "#{uri_base}/text", "_ansible_check_mode" => "true"})
     result["failed"]?.try(&.as_bool).should be_falsey
     result["changed"].as_bool.should be_false
     result["skipped"].as_bool.should be_true

@@ -44,7 +44,7 @@ describe "file plugin" do
 
     it "reports changed but doesn't create anything in check mode" do
       path = tmp_path("checkmodedir")
-      result = PluginSpecHelper.run("file", {"path" => path, "state" => "directory", "check_mode" => "true"})
+      result = PluginSpecHelper.run("file", {"path" => path, "state" => "directory", "_ansible_check_mode" => "true"})
 
       result["changed"].as_bool.should be_true
       Dir.exists?(path).should be_false
@@ -530,7 +530,7 @@ describe "file plugin" do
       path = tmp_path("attr_check.txt")
       File.write(path, "x")
 
-      result = PluginSpecHelper.run("file", {"path" => path, "attr" => "-i", "check_mode" => "true"})
+      result = PluginSpecHelper.run("file", {"path" => path, "attr" => "-i", "_ansible_check_mode" => "true"})
       result["changed"].as_bool.should be_true
       result["failed"]?.try(&.as_bool).should be_falsey
     end
@@ -543,7 +543,7 @@ describe "file plugin" do
       path = tmp_path("attr_set_i.txt")
       File.write(path, "x")
 
-      result = PluginSpecHelper.run("file", {"path" => path, "attr" => "i", "check_mode" => "true"})
+      result = PluginSpecHelper.run("file", {"path" => path, "attr" => "i", "_ansible_check_mode" => "true"})
       result["changed"].as_bool.should be_true
       result["failed"]?.try(&.as_bool).should be_falsey
     end

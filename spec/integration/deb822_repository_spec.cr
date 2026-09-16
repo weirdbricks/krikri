@@ -31,7 +31,7 @@ describe "deb822_repository plugin" do
   it "succeeds without uris/suites (real Ansible treats both as optional - a name-only task writes just X-Repolib-Name + Types: deb)" do
     result = PluginSpecHelper.run("deb822_repository", {
       "name"       => "testrepo-name-only",
-      "check_mode" => "true",
+      "_ansible_check_mode" => "true",
     })
 
     result["failed"]?.try(&.as_bool).should be_falsey
@@ -59,7 +59,7 @@ describe "deb822_repository plugin" do
       "types"      => "[\"deb\", \"deb-src\"]",
       "uris"       => "https://example.com/repo",
       "suites"     => "stable",
-      "check_mode" => "true",
+      "_ansible_check_mode" => "true",
     })
 
     result["failed"]?.try(&.as_bool).should be_falsey
@@ -72,7 +72,7 @@ describe "deb822_repository plugin" do
       "types"      => "deb deb-src",
       "uris"       => "https://example.com/repo",
       "suites"     => "stable",
-      "check_mode" => "true",
+      "_ansible_check_mode" => "true",
     })
 
     result["failed"].as_bool.should be_true
@@ -86,7 +86,7 @@ describe "deb822_repository plugin" do
       "uris"       => "https://packages.totally-fake-example.com/repo",
       "suites"     => "stable",
       "components" => "main",
-      "check_mode" => "true",
+      "_ansible_check_mode" => "true",
     })
 
     result["changed"].as_bool.should be_true
@@ -108,7 +108,7 @@ describe "deb822_repository plugin" do
         "uris"       => "https://example.com/repo",
         "suites"     => "stable",
         "signed_by"  => "-----BEGIN PGP PUBLIC KEY BLOCK-----\nmQINBGF...\n-----END PGP PUBLIC KEY BLOCK-----",
-        "check_mode" => "true",
+        "_ansible_check_mode" => "true",
       })
 
       result["changed"].as_bool.should be_true
@@ -121,7 +121,7 @@ describe "deb822_repository plugin" do
         "uris"       => "https://example.com/repo",
         "suites"     => "stable",
         "signed_by"  => "ABCD1234EFGH5678ABCD1234EFGH5678ABCD1234",
-        "check_mode" => "true",
+        "_ansible_check_mode" => "true",
       })
 
       result["changed"].as_bool.should be_true
@@ -134,7 +134,7 @@ describe "deb822_repository plugin" do
         "uris"       => "https://example.com/repo",
         "suites"     => "stable",
         "signed_by"  => "",
-        "check_mode" => "true",
+        "_ansible_check_mode" => "true",
       })
 
       result["failed"]?.try(&.as_bool).should be_falsey
@@ -146,7 +146,7 @@ describe "deb822_repository plugin" do
       "name"       => "test-repolib-name",
       "uris"       => "https://example.com/repo",
       "suites"     => "stable",
-      "check_mode" => "true",
+      "_ansible_check_mode" => "true",
     })
 
     result["changed"].as_bool.should be_true

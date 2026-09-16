@@ -115,7 +115,7 @@ module Krikri
       connected = @params["connected"]?.try(&.split(',').map(&.strip).reject(&.empty?)) || [] of String
       appends = true?(@params["appends"]?)
       state = @params["state"]? || "present"
-      check_mode = true?(@params["check_mode"]?)
+      check_mode = true?(@params["_ansible_check_mode"]?)
 
       client, docker_host_description = PluginHelpers::DockerClient.build(@params)
       api = Docr::API.new(client)

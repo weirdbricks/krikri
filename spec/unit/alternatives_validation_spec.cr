@@ -65,7 +65,7 @@ describe "alternatives install guard" do
         "name"       => "krikri-spec-alt-check",
         "path"       => "/bin/sh",
         "link"       => link,
-        "check_mode" => "true",
+        "_ansible_check_mode" => "true",
       })
       result["changed"].as_bool.should be_true
       result["failed"]?.should be_nil

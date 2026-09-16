@@ -163,7 +163,7 @@ describe "subversion plugin - result shape" do
     result = run_subversion(dir, log, {
       "repo"       => "svn+ssh://example.com/repo",
       "dest"       => File.join(dir, "wc"),
-      "check_mode" => "yes",
+      "_ansible_check_mode" => "yes",
       "switch"     => "no",
     })
 

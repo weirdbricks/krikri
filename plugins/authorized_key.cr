@@ -56,7 +56,7 @@ module Krikri
       end
 
       state = @params["state"]? || "present"
-      check_mode = true?(@params["check_mode"]?)
+      check_mode = true?(@params["_ansible_check_mode"]?)
       manage_dir = @params["manage_dir"]?.nil? || true?(@params["manage_dir"]?)
       exclusive = true?(@params["exclusive"]?)
 

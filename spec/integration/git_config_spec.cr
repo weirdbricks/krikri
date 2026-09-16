@@ -76,7 +76,7 @@ describe "git_config plugin" do
     repo = tmp_path("git-config-check-mode")
     build_repo(repo)
 
-    result = PluginSpecHelper.run("git_config", {"name" => "user.email", "value" => "test@example.com", "scope" => "local", "repo" => repo, "check_mode" => "true"})
+    result = PluginSpecHelper.run("git_config", {"name" => "user.email", "value" => "test@example.com", "scope" => "local", "repo" => repo, "_ansible_check_mode" => "true"})
 
     result["changed"].as_bool.should be_true
     status = Process.run("git", ["config", "--local", "--get", "user.email"], chdir: repo)
@@ -94,5 +94,47 @@ describe "git_config plugin" do
 
     result = PluginSpecHelper.run("git_config", {"name" => "user.email", "scope" => "local", "repo" => repo})
     result["failed"].as_bool.should be_true
+  end
+
+  it "reports real's missing-required-arguments wording for a missing name" do
+    result = PluginSpecHelper.run("git_config", {} of String => String)
+    result["failed"].as_bool.should be_true
+    result["msg"].as_s.should eq("missing required arguments: name")
+  end
+
+  it "reports real's choices wordings in the spec's declaration order" do
+    result = PluginSpecHelper.run("git_config", {"name" => "k", "value" => "v", "add_mode" => "bogus"})
+    result["msg"].as_s.should eq("value of add_mode must be one of: add, replace-all, got: bogus")
+
+    result = PluginSpecHelper.run("git_config", {"name" => "k", "value" => "v", "scope" => "bogus"})
+    result["msg"].as_s.should eq("value of scope must be one of: file, local, global, system, got: bogus")
+
+    result = PluginSpecHelper.run("git_config", {"name" => "k", "value" => "v", "state" => "bogus"})
+    result["msg"].as_s.should eq("value of state must be one of: present, absent, got: bogus")
+  end
+
+  it "reports real's required_if wordings in declaration order" do
+    result = PluginSpecHelper.run("git_config", {"name" => "k", "value" => "v", "scope" => "local"})
+    result["msg"].as_s.should eq("scope is local but all of the following are missing: repo")
+
+    result = PluginSpecHelper.run("git_config", {"name" => "k", "value" => "v", "scope" => "file"})
+    result["msg"].as_s.should eq("scope is file but all of the following are missing: file")
+
+    result = PluginSpecHelper.run("git_config", {"name" => "k", "state" => "present", "scope" => "global"})
+    result["msg"].as_s.should eq("state is present but all of the following are missing: value")
+  end
+
+  it "reports real's unsupported-parameters wording" do
+    result = PluginSpecHelper.run("git_config", {"name" => "k", "value" => "v", "scope" => "global", "krikri_param" => "yes"})
+    result["failed"].as_bool.should be_true
+    result["msg"].as_s.should eq("Unsupported parameters for (community.general.git_config) module: krikri_param. " \
+                                 "Supported parameters include: add_mode, file, name, repo, scope, state, value.")
+  end
+
+  it "reports real's post-setup guard for an empty-string value (required_if only fires on a missing key)" do
+    result = PluginSpecHelper.run("git_config", {"name" => "k", "value" => "", "scope" => "global"})
+    result["failed"].as_bool.should be_true
+    result["msg"].as_s.should eq("If state=present, a value must be specified. " \
+                                 "Use the community.general.git_config_info module to read a config value.")
   end
 end

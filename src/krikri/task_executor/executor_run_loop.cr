@@ -1700,7 +1700,7 @@ module Krikri
       py_params["module_name"] = module_name
       py_params["module_source"] = Base64.strict_encode(source_text)
       py_params["new_style"] = new_style.to_s
-      py_params["check_mode"] = check_mode.to_s
+      py_params["_ansible_check_mode"] = check_mode.to_s
       if new_style
         py_params["module_args"] = PythonModuleRunner.build_module_args(substituted_params, check_mode)
       else

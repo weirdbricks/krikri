@@ -91,7 +91,7 @@ module Krikri
       end
 
       full_command = command.map { |part| shlex_quote(part) }.join(' ')
-      check_mode = true?(@params["check_mode"]?)
+      check_mode = true?(@params["_ansible_check_mode"]?)
 
       query_result = remote_exec("cd #{shell_quote(chdir)} && #{full_command} -q")
       needs_rebuild = query_result[:exit_code] != 0

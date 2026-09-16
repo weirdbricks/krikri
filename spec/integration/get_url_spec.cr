@@ -251,7 +251,7 @@ describe "get_url plugin" do
   it "reports changed without downloading under check_mode" do
     dest = File.tempname("get-url-spec")
 
-    result = PluginSpecHelper.run("get_url", {"url" => "#{get_url_base}/file.txt", "dest" => dest, "check_mode" => "true"})
+    result = PluginSpecHelper.run("get_url", {"url" => "#{get_url_base}/file.txt", "dest" => dest, "_ansible_check_mode" => "true"})
 
     result["changed"].as_bool.should be_true
     File.exists?(dest).should be_false

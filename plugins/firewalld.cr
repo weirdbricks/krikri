@@ -200,7 +200,7 @@ module Krikri
 
       return PluginResult.new(changed: false, failed: false, msg: "", zone: zone) if zone_target(content) == desired
 
-      if true?(@params["check_mode"]?)
+      if true?(@params["_ansible_check_mode"]?)
         return PluginResult.new(changed: true, failed: false, msg: "", zone: zone)
       end
 
@@ -231,7 +231,7 @@ module Krikri
       return PluginResult.new(changed: false, failed: true, msg: built[:error] || "invalid port_forward value") unless value = built[:value]
 
       want_present = state == "enabled"
-      check_mode = true?(@params["check_mode"]?)
+      check_mode = true?(@params["_ansible_check_mode"]?)
       changed = false
 
       if @do_runtime
@@ -281,7 +281,7 @@ module Krikri
 
     private def run(zone : String, state : String, key : String, value : String) : PluginResult
       want_present = state == "enabled"
-      check_mode = true?(@params["check_mode"]?)
+      check_mode = true?(@params["_ansible_check_mode"]?)
       changed = false
 
       if @do_runtime

@@ -474,7 +474,7 @@ describe Krikri::PluginHelpers::Ec2SecurityGroup do
         bodies << body
         DESCRIBE_NONE
       end
-      result = run_module({"name" => "web", "state" => "present", "region" => "us-east-1", "check_mode" => "true"}, handler)
+      result = run_module({"name" => "web", "state" => "present", "region" => "us-east-1", "_ansible_check_mode" => "true"}, handler)
       result["changed"].should eq(true)
       result["group_id"].raw.should be_nil
       result["msg"]?.should be_nil
@@ -489,7 +489,7 @@ describe Krikri::PluginHelpers::Ec2SecurityGroup do
         DESCRIBE_ONE
       end
       rules = %([{"proto": "tcp", "from_port": 90, "to_port": 90, "cidr_ip": "0.0.0.0/0"}])
-      result = run_module({"name" => "web", "description" => "web group", "state" => "present", "region" => "us-east-1", "rules" => rules, "check_mode" => "true"}, handler)
+      result = run_module({"name" => "web", "description" => "web group", "state" => "present", "region" => "us-east-1", "rules" => rules, "_ansible_check_mode" => "true"}, handler)
       result["changed"].should eq(true)
       result["group_id"].should eq("sg-111")
       result["group_name"].should eq("web")

@@ -38,7 +38,7 @@ module Krikri
 
     def initialize(config : JSON::Any)
       super(config)
-      @check_mode = true?(@params["check_mode"]?)
+      @check_mode = true?(@params["_ansible_check_mode"]?)
     end
 
     def execute : PluginResult
@@ -56,7 +56,7 @@ module Krikri
       # parenthesized alias list mirrors real Ansible's msg (attr, dest,
       # destfile, name).
       replace_supported = {"after", "attributes", "backup", "before", "encoding", "group", "mode", "owner", "path", "regexp", "replace", "selevel", "serole", "setype", "seuser", "unsafe_writes", "validate", "attr", "dest", "destfile", "name"}
-      replace_internal = {"check_mode", "diff_mode", "_verbosity", "_environment"}
+      replace_internal = {"_ansible_check_mode", "_ansible_diff", "_verbosity", "_environment"}
       unsupported = @params.keys.reject { |k| replace_supported.includes?(k) || replace_internal.includes?(k) }
       unless unsupported.empty?
         return PluginResult.new(

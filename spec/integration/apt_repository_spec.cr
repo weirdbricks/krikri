@@ -18,7 +18,7 @@ describe "apt_repository plugin" do
   it "reports it would add a repository that isn't present yet (check mode, no real change)" do
     result = PluginSpecHelper.run("apt_repository", {
       "repo"       => "deb https://packages.totally-fake-example.com/repo stable main",
-      "check_mode" => "true",
+      "_ansible_check_mode" => "true",
     })
 
     result["changed"].as_bool.should be_true
@@ -28,7 +28,7 @@ describe "apt_repository plugin" do
   it "normalizes whitespace before checking/reporting the repo line" do
     result = PluginSpecHelper.run("apt_repository", {
       "repo"       => "  deb   https://packages.totally-fake-example.com/repo   stable main  ",
-      "check_mode" => "true",
+      "_ansible_check_mode" => "true",
     })
 
     result["repo"].as_s.should eq("deb https://packages.totally-fake-example.com/repo stable main")
@@ -70,7 +70,7 @@ describe "apt_repository plugin" do
   # by hand in a container instead - see git log.
   it "expands ppa: to the exact real-Ansible deb line shape and reports it would add (check mode, no network)" do
     result = PluginSpecHelper.run("apt_repository", {
-      "repo" => "ppa:nginx/stable", "codename" => "jammy", "check_mode" => "true",
+      "repo" => "ppa:nginx/stable", "codename" => "jammy", "_ansible_check_mode" => "true",
     })
 
     result["changed"].as_bool.should be_true

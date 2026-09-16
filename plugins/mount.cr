@@ -108,7 +108,7 @@ module Krikri
       # not part of the real argument_spec, so none are rejected. The
       # parenthesized alias list mirrors real Ansible's msg (name).
       mount_supported = {"backup", "boot", "dump", "fstab", "fstype", "opts", "opts_no_log", "passno", "path", "src", "state", "name"}
-      mount_internal = {"check_mode", "diff_mode", "_verbosity", "_environment"}
+      mount_internal = {"_ansible_check_mode", "_ansible_diff", "_verbosity", "_environment"}
       unsupported = @params.keys.reject { |k| mount_supported.includes?(k) || mount_internal.includes?(k) }
       unless unsupported.empty?
         return PluginResult.new(
@@ -144,7 +144,7 @@ module Krikri
 
     private def run(path : String, state : String) : PluginResult
       fstab = @params["fstab"]? || DEFAULT_FSTAB
-      check_mode = true?(@params["check_mode"]?)
+      check_mode = true?(@params["_ansible_check_mode"]?)
 
       case state
       when "present", "mounted" then run_present(path, state, fstab, check_mode)

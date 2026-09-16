@@ -46,7 +46,7 @@ describe "copy plugin - __precomputed_match" do
       "dest"                => dest,
       "src"                 => "/nonexistent/path/should-never-be-read",
       "__precomputed_match" => "true",
-      "check_mode"          => "true",
+      "_ansible_check_mode" => "true",
     })
 
     result["changed"].as_bool.should be_false

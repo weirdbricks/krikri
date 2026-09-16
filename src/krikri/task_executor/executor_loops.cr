@@ -1124,11 +1124,23 @@ module Krikri
 
       if register_name = task.register
         unless register_name.empty?
+          # Real Ansible's loop-aggregate register shape (ansible-core's
+          # itemized-task handler): `failed` is only present when an item
+          # actually failed (same on-failure-only rule as a module's own
+          # wire result), and `msg` is "All items completed" / "One or
+          # more items failed" - a loop aggregate that always carried
+          # failed: false made `r.failed | default('none')` print False
+          # where real prints None (live-verified, git_config GC14).
           aggregate = {
             "changed" => JSON::Any.new(any_changed),
-            "failed"  => JSON::Any.new(any_failed),
             "results" => JSON::Any.new(results),
           }
+          if any_failed
+            aggregate["failed"] = JSON::Any.new(true)
+            aggregate["msg"] = JSON::Any.new("One or more items failed")
+          else
+            aggregate["msg"] = JSON::Any.new("All items completed")
+          end
           @registered_vars[host.name][register_name] = JSON::Any.new(aggregate)
           @hv_generation += 1
         end

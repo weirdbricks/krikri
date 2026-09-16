@@ -62,8 +62,8 @@ module Krikri
 
       existing = File.exists?(dest) ? File.read(dest) : nil
       changed = existing != content
-      check_mode = true?(@params["check_mode"]?)
-      diff_mode = true?(@params["diff_mode"]?)
+      check_mode = true?(@params["_ansible_check_mode"]?)
+      diff_mode = true?(@params["_ansible_diff"]?)
 
       diff = diff_mode ? generate_unified_diff(existing || "", content, dest, dest) : nil
       backup_file = ""

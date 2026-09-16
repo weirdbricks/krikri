@@ -1,0 +1,316 @@
+# sudoers module edge cases (community.general.sudoers). run.sh's
+# gated block installs sudo (visudo) in BOTH containers - validation:
+# detect/required shells to `visudo -c -f -`. Prefix S; failed=/changed=
+# booleans and on-disk file content (via cat) matter; error-message
+# WORDING may legitimately differ between engines.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "S1 state absent on a never-created sudoers.d file"
+      community.general.sudoers:
+        name: never-created
+        state: absent
+      register: s1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S1 failed={{ s1.failed }} changed={{ s1.changed }}"
+
+    - name: "S2 present without commands (required_if)"
+      community.general.sudoers:
+        name: s2
+        user: testu
+      register: s2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S2 failed={{ s2.failed }} changed={{ s2.changed }}"
+
+    - name: "S3 present without user/group"
+      community.general.sudoers:
+        name: s3
+        commands: ALL
+      register: s3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S3 failed={{ s3.failed }} changed={{ s3.changed }}"
+
+    - name: "S4 valid present rule"
+      community.general.sudoers:
+        name: s4
+        user: testu
+        commands: ALL
+      register: s4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S4 failed={{ s4.failed }} changed={{ s4.changed }}"
+
+    - name: "S4b read it back"
+      ansible.builtin.command: cat /etc/sudoers.d/s4
+      register: s4b
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S4b rc={{ s4b.rc }} stdout={{ s4b.stdout }}"
+
+    - name: "S5 re-run the same rule (idempotent)"
+      community.general.sudoers:
+        name: s4
+        user: testu
+        commands: ALL
+      register: s5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S5 failed={{ s5.failed }} changed={{ s5.changed }}"
+
+    - name: "S6 user and group together (mutually exclusive)"
+      community.general.sudoers:
+        name: s6
+        user: testu
+        group: testg
+        commands: ALL
+      register: s6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S6 failed={{ s6.failed }} changed={{ s6.changed }}"
+
+    - name: "S7 name with invalid characters"
+      community.general.sudoers:
+        name: bad name!
+        user: testu
+        commands: ALL
+      register: s7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S7 failed={{ s7.failed }} changed={{ s7.changed }}"
+
+    - name: "S7b read it back"
+      ansible.builtin.command:
+        argv: [cat, /etc/sudoers.d/bad name!]
+      register: s7b
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S7b rc={{ s7b.rc }} stdout={{ s7b.stdout }}"
+
+    - name: "S8 commands as comma-separated string (no per-element strip)"
+      community.general.sudoers:
+        name: s8
+        user: testu
+        commands: cmd1, cmd2
+      register: s8
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S8 failed={{ s8.failed }} changed={{ s8.changed }}"
+
+    - name: "S8b read it back"
+      ansible.builtin.command: cat /etc/sudoers.d/s8
+      register: s8b
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S8b rc={{ s8b.rc }} stdout={{ s8b.stdout }}"
+
+    - name: "S9 invalid content, validation detect (default)"
+      community.general.sudoers:
+        name: s9
+        user: testu
+        commands: "!!!"
+      register: s9
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S9 failed={{ s9.failed }} changed={{ s9.changed }}"
+
+    - name: "S10 invalid content, validation absent"
+      community.general.sudoers:
+        name: s10
+        user: testu
+        commands: "!!!"
+        validation: absent
+      register: s10
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S10 failed={{ s10.failed }} changed={{ s10.changed }}"
+
+    - name: "S10b read it back"
+      ansible.builtin.command: cat /etc/sudoers.d/s10
+      register: s10b
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S10b rc={{ s10b.rc }} stdout={{ s10b.stdout }}"
+
+    - name: "S11 validation required, valid content"
+      community.general.sudoers:
+        name: s11
+        user: testu
+        commands: ALL
+        validation: required
+      register: s11
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S11 failed={{ s11.failed }} changed={{ s11.changed }}"
+
+    - name: "S12 sudoers_path that does not exist"
+      community.general.sudoers:
+        name: s12
+        user: testu
+        commands: ALL
+        sudoers_path: /tmp/ks-dir-missing
+      register: s12
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S12 failed={{ s12.failed }} changed={{ s12.changed }}"
+
+    - name: "S12b was the missing dir created?"
+      ansible.builtin.command: test -d /tmp/ks-dir-missing
+      register: s12b
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S12b rc={{ s12b.rc }} dir_created={{ s12b.rc == 0 }}"
+
+    - name: "S13 state absent on the S4 rule"
+      community.general.sudoers:
+        name: s4
+        state: absent
+      register: s13
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S13 failed={{ s13.failed }} changed={{ s13.changed }}"
+
+    - name: "S13b is it really gone?"
+      ansible.builtin.command: test -e /etc/sudoers.d/s4
+      register: s13b
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S13b rc={{ s13b.rc }} exists={{ s13b.rc == 0 }}"
+
+    - name: "S14 state absent again (already absent)"
+      community.general.sudoers:
+        name: s4
+        state: absent
+      register: s14
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S14 failed={{ s14.failed }} changed={{ s14.changed }}"
+
+    - name: "S15 every flag on"
+      community.general.sudoers:
+        name: s15
+        user: testu
+        host: myhost
+        runas: root
+        noexec: true
+        nopassword: false
+        setenv: true
+        commands: cmd
+      register: s15
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S15 failed={{ s15.failed }} changed={{ s15.changed }}"
+
+    - name: "S15b read it back"
+      ansible.builtin.command: cat /etc/sudoers.d/s15
+      register: s15b
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S15b rc={{ s15b.rc }} stdout={{ s15b.stdout }}"
+
+    - name: "S16 defaults directive"
+      community.general.sudoers:
+        name: s16
+        user: testu
+        commands: ALL
+        defaults: ["!targetpw"]
+      register: s16
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S16 failed={{ s16.failed }} changed={{ s16.changed }}"
+
+    - name: "S16b read it back (line 1)"
+      ansible.builtin.command: sed -n 1p /etc/sudoers.d/s16
+      register: s16b
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S16b rc={{ s16b.rc }} stdout={{ s16b.stdout }}"
+
+    - name: "S16c read it back (line 2)"
+      ansible.builtin.command: sed -n 2p /etc/sudoers.d/s16
+      register: s16c
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S16c rc={{ s16c.rc }} stdout={{ s16c.stdout }}"
+
+    - name: "S17 invalid validation choice"
+      community.general.sudoers:
+        name: s17
+        user: testu
+        commands: ALL
+        validation: bogus
+      register: s17
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S17 failed={{ s17.failed }} changed={{ s17.changed }}"
+
+    - name: "S18 invalid state choice"
+      community.general.sudoers:
+        name: s18
+        user: testu
+        commands: ALL
+        state: bogus
+      register: s18
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S18 failed={{ s18.failed }} changed={{ s18.changed }}"
+
+    - name: "S19 user+group mutually exclusive even for state absent"
+      community.general.sudoers:
+        name: s4
+        state: absent
+        user: testu
+        group: testg
+      register: s19
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S19 failed={{ s19.failed }} changed={{ s19.changed }}"
+
+    - name: "S19b did S19 delete the S4 file anyway? (uses s11's file)"
+      ansible.builtin.command: test -e /etc/sudoers.d/s11
+      register: s19b
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S19b rc={{ s19b.rc }} s11_still_there={{ s19b.rc == 0 }}"
+
+    - name: "S20 empty commands list, validation absent (required_if passes - key present)"
+      community.general.sudoers:
+        name: s20
+        user: testu
+        commands: []
+        validation: absent
+      register: s20
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S20 failed={{ s20.failed }} changed={{ s20.changed }}"
+
+    - name: "S20b read it back"
+      ansible.builtin.command: cat /etc/sudoers.d/s20
+      register: s20b
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S20b rc={{ s20b.rc }} stdout={{ s20b.stdout }}"
+
+    - name: "S21 empty commands list with default validation (visudo syntax error)"
+      community.general.sudoers:
+        name: s21
+        user: testu
+        commands: []
+      register: s21
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S21 failed={{ s21.failed }} changed={{ s21.changed }}"
+
+    - name: "S22 unsupported parameter"
+      community.general.sudoers:
+        name: s22
+        user: testu
+        commands: ALL
+        bogus: 1
+      register: s22
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S22 failed={{ s22.failed }} changed={{ s22.changed }}"

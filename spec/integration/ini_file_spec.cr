@@ -153,7 +153,7 @@ describe "ini_file plugin" do
     path = tmp_path("ini_file-check-mode")
     File.delete(path) if File.exists?(path)
 
-    result = PluginSpecHelper.run("ini_file", {"path" => path, "section" => "mysqld", "option" => "port", "value" => "3306", "check_mode" => "true"})
+    result = PluginSpecHelper.run("ini_file", {"path" => path, "section" => "mysqld", "option" => "port", "value" => "3306", "_ansible_check_mode" => "true"})
 
     result["changed"].as_bool.should be_true
     File.exists?(path).should be_false

@@ -62,7 +62,7 @@ module Krikri
       return PluginResult.new(changed: false, failed: true, msg: "parameters are mutually exclusive: positional_args|named_args") if positional && named
 
       autocommit = true?(@params["autocommit"]?)
-      check_mode = true?(@params["check_mode"]?)
+      check_mode = true?(@params["_ansible_check_mode"]?)
       return PluginResult.new(changed: false, failed: true, msg: "Using autocommit is mutually exclusive with check_mode") if autocommit && check_mode
 
       search_path = @params["search_path"]?

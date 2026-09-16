@@ -94,7 +94,7 @@ describe "SynchronizeActionPlugin delegate_to localhost munging" do
       plugin = Krikri::SynchronizeActionPlugin.new({
         "src"        => "#{src}/",
         "dest"       => "#{dest}/",
-        "check_mode" => "true",
+        "_ansible_check_mode" => "true",
       }, Hash(String, JSON::Any).new, delegate)
       result = plugin.execute
 

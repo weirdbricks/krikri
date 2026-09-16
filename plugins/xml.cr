@@ -810,7 +810,7 @@ module Krikri
     end
 
     private def check_mode? : Bool
-      true?(@params["check_mode"]?)
+      true?(@params["_ansible_check_mode"]?)
     end
   end
 end

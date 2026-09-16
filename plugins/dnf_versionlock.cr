@@ -44,7 +44,7 @@ module Krikri
 
       patterns = parse_names
       raw = true?(@params["raw"]?)
-      check_mode = true?(@params["check_mode"]?)
+      check_mode = true?(@params["_ansible_check_mode"]?)
 
       param_error = validate_state_params(state, patterns)
       return param_error if param_error

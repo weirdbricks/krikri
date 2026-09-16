@@ -54,7 +54,7 @@ module Krikri
         return PluginResult.new(changed: false, failed: true, msg: "parameters are mutually exclusive: (insertbefore|insertafter)")
       end
 
-      check_mode = true?(@params["check_mode"]?)
+      check_mode = true?(@params["_ansible_check_mode"]?)
 
       cron_file = @params["cron_file"]?
       cron_file ? execute_file(cron_file, name, value, state, insertbefore, insertafter, check_mode) : execute_user_crontab(name, value, state, insertbefore, insertafter, check_mode)

@@ -339,8 +339,8 @@ fi
 # and selinux reads/writes /etc/selinux/config itself, so krikri needs
 # nothing. (The container genuinely has no SELinux - that's the point;
 # see the case files' own headers.)
-if printf '%s\n' "${cases[@]}" | grep -qE '^(seboolean|seport|selinux)'; then
-  log "installing python3-selinux + python3-semanage for seboolean/seport/selinux cases"
+if printf '%s\n' "${cases[@]}" | grep -qE '^(seboolean|seport|selinux|sefcontext)'; then
+  log "installing python3-selinux + python3-semanage for seboolean/seport/selinux/sefcontext cases"
   podman exec "$NAME_A" bash -c "apt-get install -y -qq --no-install-recommends python3-selinux python3-semanage >/dev/null" \
     || { log "FATAL: SELinux python libs install failed"; exit 1; }
 fi
@@ -397,6 +397,19 @@ if printf '%s\n' "${cases[@]}" | grep -q '^acl'; then
   for c in "$NAME_A" "$NAME_B"; do
     podman exec "$c" bash -c "apt-get install -y -qq --no-install-recommends acl >/dev/null" \
       || { log "FATAL: acl install failed in $c"; exit 1; }
+  done
+fi
+
+# sudoers cases need visudo (the sudo package) in BOTH containers -
+# real community.general.sudoers (via get_bin_path) and krikri's plugin
+# both validate generated content with `visudo -c -f -` when validation
+# is detect/required, and debian:bookworm-slim ships without it. Gated
+# on the requested case list like the modprobe cases above.
+if printf '%s\n' "${cases[@]}" | grep -q '^sudoers'; then
+  log "installing sudo (visudo) for sudoers cases"
+  for c in "$NAME_A" "$NAME_B"; do
+    podman exec "$c" bash -c "apt-get install -y -qq --no-install-recommends sudo >/dev/null" \
+      || { log "FATAL: sudo install failed in $c"; exit 1; }
   done
 fi
 
@@ -524,10 +537,12 @@ for case_file in "${cases[@]}"; do
   # `  F1 failed=...` - the label+key=value pattern (not just "F1")
   # is what lets this match both formats while skipping TASK-name
   # lines like "F1 touch a file ..." that also contain "F1 " but no
-  # trailing key=value. The label shape is general: one uppercase
-  # letter (the case-file's prefix - F=file, T=template, S=set_fact,
-  # C=command, ...), digits, and an optional lowercase a-c sub-case
-  # suffix, so new case files only need to pick an unused prefix.
+  # trailing key=value. The label shape is general: one or more
+  # uppercase letters (the case-file's prefix - F=file, T=template,
+  # S=set_fact, C=command, KB=kernel_blacklist, GC=git_config, ...),
+  # digits, and an optional lowercase a-c sub-case suffix. The old
+  # single-letter-only shape silently extracted nothing (empty .msgs,
+  # vacuous MATCHes) for two-letter prefixes.
   msgs_a="$RESULTS/${case_name}_real.msgs"
   msgs_b="$RESULTS/${case_name}_krikri.msgs"
   # Real ansible-playbook prints msg as a JSON string, so backslashes
@@ -546,8 +561,8 @@ for case_file in "${cases[@]}"; do
     # which would otherwise double-extract the PREVIOUS debug label with
     # its raw unrendered template and show as a phantom divergence.
     sed -E '/^[0-9]+[[:space:]]/d' "$1" \
-      | grep -oE '\b[A-Z][0-9]+[a-c]? [a-zA-Z_]+=.*' \
-      | sed -E 's/\\\\/\x01/g; s/\\n/ | /g; s/\x01/\\/g; s/\\"/"/g; s/"\}?(,)?$//; s/[[:space:]]*\*+[[:space:]]*$//; s/=[^ ]*[0-9]{2,6}\.[0-9]{4}-[0-9]{2}-[0-9]{2}@[0-9:]{8}~/=<backup-path>/g'
+      | grep -oE '\b[A-Z]+[0-9]+[a-c]? [a-zA-Z_]+=.*' \
+      | sed -E 's/\\\\/\x01/g; s/\\n/ | /g; s/\\t/\t/g; s/\x01/\\/g; s/\\"/"/g; s/"\}?(,)?$//; s/[[:space:]]*\*+[[:space:]]*$//; s/=[^ ]*[0-9]{2,6}\.[0-9]{4}-[0-9]{2}-[0-9]{2}@[0-9:]{8}~/=<backup-path>/g'
   }
   extract "$RESULTS/${case_name}_real.log" > "$msgs_a"
   extract "$RESULTS/${case_name}_krikri.log" > "$msgs_b"

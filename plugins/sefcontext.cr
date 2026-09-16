@@ -2,35 +2,63 @@
 
 require "json"
 require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/ansible_arg_validation"
 require "../src/krikri/plugin_helpers/sefcontext_commands"
 
 module Krikri
   # sefcontext plugin (community.general.sefcontext) - manages SELinux
   # file context mapping definitions via the `semanage fcontext` CLI,
   # the same tool the real module's libsemanage binding drives.
-  # Params (real module's argument spec):
+  # Params (real module's argument spec, declaration order):
   # - target: required (alias path). The path expression.
+  # - ftype: one of a/b/c/d/f/l/p/s, default "a" (all files).
   # - setype: SELinux type. Required for state=present unless
   #   substitute: is given; mutually exclusive with it.
   # - substitute (alias equal): path-equivalence target; mutually
-  #   exclusive with setype/seuser/selevel and ignored ftype.
-  # - ftype: one of a/b/c/d/f/l/p/s, default "a" (all files).
+  #   exclusive with setype/ftype/seuser/selevel.
   # - seuser: default system_u on add, existing value on modify.
   # - selevel (alias serange): default s0 on add, existing on modify.
   # - state: present (default) / absent.
-  # - reload: accepted for compatibility (the CLI reloads the running
-  #   policy on every commit; there is no way to suppress that from
-  #   `semanage`).
+  # - reload: bool, default true (the CLI reloads the running policy on
+  #   every commit; there is no way to suppress that from `semanage`).
   # - ignore_selinux_state: skip the getenforce pre-check.
+  #
+  # Real AnsibleModule setup surface (live-verified against the real
+  # module via the podman-diff sefcontext case): missing required-args,
+  # then choices/bool conversion in spec declaration order, then
+  # mutually-exclusive pairs in tuple order (ONE pair per error, first
+  # match wins), then required_if - which uses the all=True variant, so
+  # real's wording is "state is present but any of the following are
+  # missing: setype, substitute" - then unsupported params (sorted).
+  # All of that runs BEFORE the SELinux-enabled gate.
   #
   # The real module never relabels existing files (its own documented
   # note) - a mapping change is persistent policy only, and idempotency
   # compares the exact (target, ftype) record's type/user/range.
   class SefcontextPlugin < BasePlugin
-    def execute : PluginResult
-      target = @params["target"]? || @params["path"]?
-      return PluginResult.new(changed: false, failed: true, msg: "missing required argument: target") unless target
+    include PluginHelpers::AnsibleArgValidation
 
+    # Real argument_spec, declaration order, with aliases.
+    SPEC = {
+      "ignore_selinux_state" => %w[],
+      "target"               => %w[path],
+      "ftype"                => %w[],
+      "setype"               => %w[],
+      "substitute"           => %w[equal],
+      "seuser"               => %w[],
+      "selevel"              => %w[serange],
+      "state"                => %w[],
+      "reload"               => %w[],
+    }
+
+    FTYPE_CHOICES = %w[a b c d f l p s]
+
+    def execute : PluginResult
+      if err = validate_arguments
+        return err
+      end
+
+      target = (@params["target"]? || @params["path"]?).not_nil!
       setype = @params["setype"]?
       substitute = @params["substitute"]? || @params["equal"]?
       ftype = @params["ftype"]? || "a"
@@ -38,23 +66,7 @@ module Krikri
       serange = @params["selevel"]? || @params["serange"]?
       state = @params["state"]? || "present"
       ignore_selinux_state = true?(@params["ignore_selinux_state"]?)
-      check_mode = true?(@params["check_mode"]?)
-
-      unless Krikri::PluginHelpers::SefcontextCommands::FILE_TYPE_STR.has_key?(ftype)
-        return PluginResult.new(changed: false, failed: true, msg: "value of ftype must be one of: a, b, c, d, f, l, p, s, got #{ftype}")
-      end
-      unless state == "present" || state == "absent"
-        return PluginResult.new(changed: false, failed: true, msg: "value of state must be one of: present, absent, got #{state}")
-      end
-      if setype && substitute
-        return PluginResult.new(changed: false, failed: true, msg: "parameters are mutually exclusive: setype|substitute")
-      end
-      if substitute && (@params["seuser"]? || @params["selevel"]? || @params["serange"]? || @params["ftype"]?)
-        return PluginResult.new(changed: false, failed: true, msg: "parameters are mutually exclusive: substitute|ftype|seuser|selevel")
-      end
-      if state == "present" && !setype && !substitute
-        return PluginResult.new(changed: false, failed: true, msg: "one of the following is required: setype, substitute")
-      end
+      check_mode = true?(@params["_ansible_check_mode"]?)
 
       unless ignore_selinux_state
         enforce = remote_exec("getenforce")
@@ -140,6 +152,59 @@ module Krikri
       parts = context.split(':')
       return {nil, nil, nil} unless parts.size >= 3
       {parts[0], parts[2], parts[3]?}
+    end
+
+    # Real AnsibleModule setup surface, live-verified via the podman-diff
+    # sefcontext case: missing required-args (sorted plural), then
+    # choices/bool conversion in spec declaration order, then the
+    # mutually-exclusive tuples in their own order (one per error,
+    # canonical name on both sides - real prints selevel for the
+    # selevel/serange alias), then required_if's all=True wording
+    # ("but any of the following are missing"), then unsupported params
+    # (sorted, single trailing parenthetical of all aliases).
+    private def validate_arguments : PluginResult?
+      target = @params["target"]? || @params["path"]?
+      return missing_required_error(["target"]) unless target
+
+      if ftype = @params["ftype"]?
+        unless FTYPE_CHOICES.includes?(ftype)
+          return choices_error("ftype", FTYPE_CHOICES, ftype)
+        end
+      end
+
+      if state = @params["state"]?
+        unless ["absent", "present"].includes?(state)
+          return choices_error("state", %w[absent present], state)
+        end
+      end
+
+      {"reload", "ignore_selinux_state"}.each do |param|
+        if raw = @params[param]?
+          return bool_type_error(param, raw) unless bool_convertible?(raw)
+        end
+      end
+
+      substitute = @params["substitute"]? || @params["equal"]?
+      if substitute
+        return PluginResult.new(changed: false, failed: true, msg: "parameters are mutually exclusive: setype|substitute") if @params["setype"]?
+        return PluginResult.new(changed: false, failed: true, msg: "parameters are mutually exclusive: substitute|ftype") if @params["ftype"]?
+        return PluginResult.new(changed: false, failed: true, msg: "parameters are mutually exclusive: substitute|seuser") if @params["seuser"]?
+        return PluginResult.new(changed: false, failed: true, msg: "parameters are mutually exclusive: substitute|selevel") if @params["selevel"]? || @params["serange"]?
+      end
+
+      state = @params["state"]? || "present"
+      if state == "present" && !@params["setype"]? && !substitute
+        return PluginResult.new(changed: false, failed: true,
+          msg: "state is present but any of the following are missing: setype, substitute")
+      end
+
+      if unsupported = unsupported_param_keys(@params, SPEC)
+        unless unsupported.empty?
+          return unsupported_params_error("community.general.sefcontext", unsupported, SPEC)
+        end
+      end
+
+      nil
     end
 
     private def capture_semanage(cmd : Array(String)) : {Int32, String, String}

@@ -263,7 +263,7 @@ describe "openssl_privatekey plugin" do
   it "reports the change without writing anything in check mode" do
     path = key_path("checkmode.key")
     result = PluginSpecHelper.run("openssl_privatekey",
-      {"path" => path, "size" => "2048", "check_mode" => "true"})
+      {"path" => path, "size" => "2048", "_ansible_check_mode" => "true"})
 
     result["changed"].as_bool.should be_true
     File.exists?(path).should be_false

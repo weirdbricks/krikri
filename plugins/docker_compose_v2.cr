@@ -70,7 +70,7 @@ module Krikri
     record Event, type : String, id : String, status : String?, msg : String? = nil
 
     def execute : PluginResult
-      check_mode = true?(@params["check_mode"]?)
+      check_mode = true?(@params["_ansible_check_mode"]?)
       state = @params["state"]? || "present"
       pull = @params["pull"]? || "policy"
       build = @params["build"]? || "policy"

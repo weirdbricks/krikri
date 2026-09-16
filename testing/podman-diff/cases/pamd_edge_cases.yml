@@ -1,0 +1,331 @@
+# pamd module edge cases (community.general.pamd). Prefix M; failed=/changed=
+# booleans and on-disk rule lines (via grep) matter; error-message WORDING may
+# legitimately differ between engines. The setup file lives at
+# /etc/pam.d/krikri-m1test (a throwaway service name - nothing reads it).
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "P0 seed the service file"
+      ansible.builtin.copy:
+        content: |
+          # krikri test file
+          auth required pam_first.so
+          account sufficient pam_second.so arg1 arg2
+          session [success=1 default=ignore] pam_third.so opt
+        dest: /etc/pam.d/krikri-m1test
+      register: p0
+    - ansible.builtin.debug:
+        msg: "P0 failed={{ p0.failed }}"
+
+    - name: "P1 name: a PAM service file that does not exist"
+      community.general.pamd:
+        name: krikri-no-such-service
+        type: auth
+        control: required
+        module_path: pam_first.so
+      register: p1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P1 failed={{ p1.failed }} changed={{ p1.changed }}"
+
+    - name: "P2 type: invalid choice"
+      community.general.pamd:
+        name: krikri-m1test
+        type: bogus
+        control: required
+        module_path: pam_first.so
+      register: p2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P2 failed={{ p2.failed }} changed={{ p2.changed }}"
+
+    - name: "P3 state: invalid choice"
+      community.general.pamd:
+        name: krikri-m1test
+        type: auth
+        control: required
+        module_path: pam_first.so
+        state: bogus
+      register: p3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P3 failed={{ p3.failed }} changed={{ p3.changed }}"
+
+    - name: "P4 state before without the new_* triple"
+      community.general.pamd:
+        name: krikri-m1test
+        type: auth
+        control: required
+        module_path: pam_first.so
+        state: before
+      register: p4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P4 failed={{ p4.failed }} changed={{ p4.changed }}"
+
+    - name: "P5 state before on a nonexistent rule"
+      community.general.pamd:
+        name: krikri-m1test
+        type: session
+        control: required
+        module_path: pam_nothere.so
+        new_type: auth
+        new_control: required
+        new_module_path: pam_new.so
+        state: before
+      register: p5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P5 failed={{ p5.failed }} changed={{ p5.changed }}"
+
+    - name: "P6 state after on a nonexistent rule"
+      community.general.pamd:
+        name: krikri-m1test
+        type: session
+        control: required
+        module_path: pam_nothere.so
+        new_type: auth
+        new_control: required
+        new_module_path: pam_new.so
+        state: after
+      register: p6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P6 failed={{ p6.failed }} changed={{ p6.changed }}"
+
+    - name: "P7 state args_absent on a nonexistent rule"
+      community.general.pamd:
+        name: krikri-m1test
+        type: session
+        control: required
+        module_path: pam_nothere.so
+        module_arguments: use_uid
+        state: args_absent
+      register: p7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P7 failed={{ p7.failed }} changed={{ p7.changed }}"
+
+    - name: "P8 state args_present without module_arguments"
+      community.general.pamd:
+        name: krikri-m1test
+        type: auth
+        control: required
+        module_path: pam_first.so
+        state: args_present
+      register: p8
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P8 failed={{ p8.failed }} changed={{ p8.changed }}"
+
+    - name: "P9 args_present with bracketed module_arguments"
+      community.general.pamd:
+        name: krikri-m1test
+        type: auth
+        control: required
+        module_path: pam_first.so
+        module_arguments: "[success=1]"
+        state: args_present
+      register: p9
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P9 failed={{ p9.failed }} changed={{ p9.changed }}"
+
+    - name: "P10 updated to an invalid simple control"
+      community.general.pamd:
+        name: krikri-m1test
+        type: account
+        control: sufficient
+        module_path: pam_second.so
+        new_control: bogus
+      register: p10
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P10 failed={{ p10.failed }} changed={{ p10.changed }}"
+
+    - name: "P10b was the rule rewritten anyway?"
+      ansible.builtin.command: grep -c "bogus" /etc/pam.d/krikri-m1test
+      register: p10b
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P10b rc={{ p10b.rc }} wrote={{ p10b.rc == 0 }}"
+
+    - name: "P11 updated to an invalid bracketed control action"
+      community.general.pamd:
+        name: krikri-m1test
+        type: account
+        control: sufficient
+        module_path: pam_second.so
+        new_control: "[success=1 default=bogusaction]"
+      register: p11
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P11 failed={{ p11.failed }} changed={{ p11.changed }}"
+
+    - name: "P12 seed a file with an unparseable line"
+      ansible.builtin.copy:
+        content: |
+          auth required pam_ok.so
+          this is garbage
+        dest: /etc/pam.d/krikri-m1garbage
+      register: p12
+    - ansible.builtin.debug:
+        msg: "P12 failed={{ p12.failed }}"
+
+    - name: "P13 update a rule in the garbage file (validation fails)"
+      community.general.pamd:
+        name: krikri-m1garbage
+        type: auth
+        control: required
+        module_path: pam_ok.so
+        new_control: sufficient
+      register: p13
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P13 failed={{ p13.failed }} changed={{ p13.changed }}"
+
+    - name: "P13b was the garbage file rewritten anyway?"
+      ansible.builtin.command: grep -c sufficient /etc/pam.d/krikri-m1garbage
+      register: p13b
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P13b rc={{ p13b.rc }} wrote={{ p13b.rc == 0 }}"
+
+    - name: "P14 updated to a valid bracketed control"
+      community.general.pamd:
+        name: krikri-m1test
+        type: account
+        control: sufficient
+        module_path: pam_second.so
+        new_control: "[success=2 default=ignore]"
+      register: p14
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P14 failed={{ p14.failed }} changed={{ p14.changed }}"
+
+    - name: "P14b read the rule back"
+      ansible.builtin.command: grep pam_second /etc/pam.d/krikri-m1test
+      register: p14b
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P14b rc={{ p14b.rc }} line={{ p14b.stdout }}"
+
+    - name: "P15 args_absent an existing argument"
+      community.general.pamd:
+        name: krikri-m1test
+        type: account
+        control: "[success=2 default=ignore]"
+        module_path: pam_second.so
+        module_arguments: arg1
+        state: args_absent
+      register: p15
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P15 failed={{ p15.failed }} changed={{ p15.changed }}"
+
+    - name: "P15b read the rule back"
+      ansible.builtin.command: grep pam_second /etc/pam.d/krikri-m1test
+      register: p15b
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P15b rc={{ p15b.rc }} line={{ p15b.stdout }}"
+
+    - name: "P16 updated module_arguments replace the rule's args"
+      community.general.pamd:
+        name: krikri-m1test
+        type: session
+        control: "[success=1 default=ignore]"
+        module_path: pam_third.so
+        module_arguments: newarg key=val
+      register: p16
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P16 failed={{ p16.failed }} changed={{ p16.changed }}"
+
+    - name: "P16b read the rule back"
+      ansible.builtin.command: grep pam_third /etc/pam.d/krikri-m1test
+      register: p16b
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P16b rc={{ p16b.rc }} line={{ p16b.stdout }}"
+
+    - name: "P17 re-run the same update (idempotent)"
+      community.general.pamd:
+        name: krikri-m1test
+        type: session
+        control: "[success=1 default=ignore]"
+        module_path: pam_third.so
+        module_arguments: newarg key=val
+      register: p17
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P17 failed={{ p17.failed }} changed={{ p17.changed }}"
+
+    - name: "P18 state absent removes the rule"
+      community.general.pamd:
+        name: krikri-m1test
+        type: account
+        control: "[success=2 default=ignore]"
+        module_path: pam_second.so
+        state: absent
+      register: p18
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P18 failed={{ p18.failed }} changed={{ p18.changed }}"
+
+    - name: "P18b is the rule really gone?"
+      ansible.builtin.command: grep -c pam_second /etc/pam.d/krikri-m1test
+      register: p18b
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P18b rc={{ p18b.rc }} gone={{ p18b.rc != 0 }}"
+
+    - name: "P19 state absent again (already absent)"
+      community.general.pamd:
+        name: krikri-m1test
+        type: account
+        control: "[success=2 default=ignore]"
+        module_path: pam_second.so
+        state: absent
+      register: p19
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P19 failed={{ p19.failed }} changed={{ p19.changed }}"
+
+    - name: "P20 insert before an existing rule"
+      community.general.pamd:
+        name: krikri-m1test
+        type: auth
+        control: required
+        module_path: pam_first.so
+        new_type: password
+        new_control: requisite
+        new_module_path: pam_pwhistory.so
+        state: before
+      register: p20
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P20 failed={{ p20.failed }} changed={{ p20.changed }}"
+
+    - name: "P21 insert before again (idempotent - previous rule matches)"
+      community.general.pamd:
+        name: krikri-m1test
+        type: auth
+        control: required
+        module_path: pam_first.so
+        new_type: password
+        new_control: requisite
+        new_module_path: pam_pwhistory.so
+        state: before
+      register: p21
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P21 failed={{ p21.failed }} changed={{ p21.changed }}"
+
+    - name: "P21b count pwhistory rules"
+      ansible.builtin.command: grep -c pam_pwhistory /etc/pam.d/krikri-m1test
+      register: p21b
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "P21b rc={{ p21b.rc }} count={{ p21b.stdout }}"

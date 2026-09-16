@@ -76,7 +76,7 @@ describe "sysctl plugin" do
     conf = fresh_conf("check-mode.conf", "net.ipv4.ip_forward=1\n")
 
     result = PluginSpecHelper.run("sysctl", {
-      "name" => "vm.swappiness", "value" => "10", "sysctl_file" => conf, "reload" => "false", "check_mode" => "true",
+      "name" => "vm.swappiness", "value" => "10", "sysctl_file" => conf, "reload" => "false", "_ansible_check_mode" => "true",
     })
 
     result["changed"].as_bool.should be_true

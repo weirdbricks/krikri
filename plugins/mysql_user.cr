@@ -97,7 +97,7 @@ module Krikri
       password = @params["password"]?
       priv = @params["priv"]?
       update_password = @params["update_password"]? || "always"
-      check_mode = true?(@params["check_mode"]?)
+      check_mode = true?(@params["_ansible_check_mode"]?)
       host_all = true?(@params["host_all"]?)
 
       plugin = @params["plugin"]?

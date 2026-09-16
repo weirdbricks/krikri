@@ -114,7 +114,7 @@ describe "copy plugin - parameter coverage (checksum/attributes/SELinux/follow/l
       dest = File.tempname("copy-attr-check-dest")
       File.write(dest, "x")
 
-      result = PluginSpecHelper.run("copy", {"content" => "x\n", "dest" => dest, "attributes" => "-i", "check_mode" => "true"})
+      result = PluginSpecHelper.run("copy", {"content" => "x\n", "dest" => dest, "attributes" => "-i", "_ansible_check_mode" => "true"})
       result["changed"].as_bool.should be_true
     ensure
       File.delete(dest) if dest && File.exists?(dest)

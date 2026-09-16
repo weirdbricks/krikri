@@ -71,11 +71,16 @@ module Krikri
 
       # Real _get_unsupported_parameters: any param key outside the spec
       # names and their aliases. Engine-internal executor keys never
-      # reach the real module's params (see apt.cr's same exclusion).
+      # reach the real module's params - real strips the _ansible_*
+      # internal-args namespace generically before argspec validation
+      # (check_mode/diff_mode ride in there), while a user-supplied
+      # check_mode is NOT in that namespace and fails validation like
+      # any other unsupported param.
       def unsupported_param_keys(params : Hash(String, String), spec : Hash(String, Array(String)), sub_spec_keys : Hash(String, Array(String)) = {} of String => Array(String)) : Array(String)
         unsupported = params.keys.reject do |key|
           spec.has_key?(key) || spec.values.any?(&.includes?(key)) ||
-            sub_spec_keys.has_key?(key) || INTERNAL.includes?(key)
+            sub_spec_keys.has_key?(key) || INTERNAL.includes?(key) ||
+            key.starts_with?("_ansible_")
         end
         sub_spec_keys.each do |param, suboptions|
           raw = params[param]?
@@ -106,7 +111,7 @@ module Krikri
         end
       end
 
-      private INTERNAL = {"check_mode", "diff_mode", "_module_name", "_verbosity", "_environment"}
+      private INTERNAL = {"_ansible_check_mode", "_ansible_diff", "_module_name", "_verbosity", "_environment"}
     end
   end
 end

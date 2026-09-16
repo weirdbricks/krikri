@@ -1,0 +1,117 @@
+# getent edge cases (ansible.builtin.getent). Prefix G; failed=/changed=
+# booleans matter; error-message WORDING may legitimately differ between
+# engines EXCEPT where noted (the rc-mapped msg texts are compared
+# directly). Both containers have the same bookworm-slim /etc/{passwd,
+# group,shadow} content. Only local-file-backed databases (passwd,
+# group, shadow) are exercised here: hosts/services go through NSS and
+# have hung the harness before, and their parse behavior is covered by
+# the unit spec instead.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "G0 no database (missing required argument)"
+      ansible.builtin.getent:
+      register: g0
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "G0 failed={{ g0.failed | default('none') }} changed={{ g0.changed | default('none') }} msg={{ g0.msg | default('none') }}"
+
+    - name: "G1 unknown database (getent rc 1)"
+      ansible.builtin.getent:
+        database: krikri_db
+      register: g1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "G1 failed={{ g1.failed | default('none') }} changed={{ g1.changed | default('none') }} msg={{ g1.msg | default('none') }}"
+
+    - name: "G2 unsupported parameter"
+      ansible.builtin.getent:
+        database: passwd
+        krikri_param: yes
+      register: g2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "G2 failed={{ g2.failed | default('none') }} changed={{ g2.changed | default('none') }}"
+
+    - name: "G3 fail_key not a bool"
+      ansible.builtin.getent:
+        database: passwd
+        fail_key: banana
+      register: g3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "G3 failed={{ g3.failed | default('none') }} changed={{ g3.changed | default('none') }}"
+
+    - name: "G4 passwd key root"
+      ansible.builtin.getent:
+        database: passwd
+        key: root
+      register: g4
+    - ansible.builtin.debug:
+        msg: "G4 failed={{ g4.failed | default('none') }} changed={{ g4.changed | default('none') }} uid={{ g4.ansible_facts.getent_passwd.root[1] }} shell={{ g4.ansible_facts.getent_passwd.root[5] }}"
+
+    - name: "G5 passwd key missing (fail_key default true)"
+      ansible.builtin.getent:
+        database: passwd
+        key: krikri_nouser
+      register: g5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "G5 failed={{ g5.failed | default('none') }} changed={{ g5.changed | default('none') }} msg={{ g5.msg | default('none') }}"
+
+    - name: "G6 passwd key missing, fail_key false (rc 2 -> null value, success)"
+      ansible.builtin.getent:
+        database: passwd
+        key: krikri_nouser
+        fail_key: false
+      register: g6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "G6 failed={{ g6.failed | default('none') }} changed={{ g6.changed | default('none') }} msg={{ g6.msg | default('none') }} is_none={{ g6.ansible_facts.getent_passwd.krikri_nouser == none }}"
+
+    - name: "G7 group keyed lookup root"
+      ansible.builtin.getent:
+        database: group
+        key: root
+      register: g7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "G7 failed={{ g7.failed | default('none') }} changed={{ g7.changed | default('none') }} gid={{ g7.ansible_facts.getent_group.root[2] | default('none') }}"
+
+    - name: "G9 passwd enumeration (no key)"
+      ansible.builtin.getent:
+        database: passwd
+      register: g9
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "G9 failed={{ g9.failed | default('none') }} changed={{ g9.changed | default('none') }} has_root={{ 'root' in g9.ansible_facts.getent_passwd }}"
+
+    - name: "G10 explicit split ':' on passwd"
+      ansible.builtin.getent:
+        database: passwd
+        key: root
+        split: ':'
+      register: g10
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "G10 failed={{ g10.failed | default('none') }} changed={{ g10.changed | default('none') }} uid={{ g10.ansible_facts.getent_passwd.root[1] | default('none') }}"
+
+    - name: "G11 service: files accepted"
+      ansible.builtin.getent:
+        database: passwd
+        key: root
+        service: files
+      register: g11
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "G11 failed={{ g11.failed | default('none') }} changed={{ g11.changed | default('none') }} uid={{ g11.ansible_facts.getent_passwd.root[1] | default('none') }}"
+
+    - name: "G12 shadow keyed lookup (root, container runs as root)"
+      ansible.builtin.getent:
+        database: shadow
+        key: root
+      register: g12
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "G12 failed={{ g12.failed | default('none') }} changed={{ g12.changed | default('none') }} nfields={{ g12.ansible_facts.getent_shadow.root | default([], true) | length }}"

@@ -26,7 +26,7 @@ describe "apt_repository plugin - parameter coverage (update_cache_retries/insta
   it "accepts install_python_apt and validate_certs without error (documented no-ops here)" do
     result = PluginSpecHelper.run("apt_repository", {
       "repo"               => "deb https://packages.totally-fake-example.com/repo stable main",
-      "check_mode"         => "true",
+      "_ansible_check_mode" => "true",
       "install_python_apt" => "false",
       "validate_certs"     => "false",
       # defaults (true) exercised implicitly by every other spec here

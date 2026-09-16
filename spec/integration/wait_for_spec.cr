@@ -8,7 +8,7 @@ describe "wait_for plugin" do
   end
 
   it "is skipped under check_mode, matching real Ansible's own skip text" do
-    result = PluginSpecHelper.run("wait_for", {"timeout" => "1", "check_mode" => "true"})
+    result = PluginSpecHelper.run("wait_for", {"timeout" => "1", "_ansible_check_mode" => "true"})
     result["failed"]?.try(&.as_bool).should be_falsey
     result["skipped"].as_bool.should be_true
     result["msg"].as_s.should eq("remote module (wait_for) does not support check mode")

@@ -118,7 +118,7 @@ module Krikri
       # own check_mode injection, so synchronize (whose check-mode
       # behavior IS the rsync --dry-run flag, real module's own shape)
       # reads it back from here.
-      params["check_mode"] = check_mode.to_s
+      params["_ansible_check_mode"] = check_mode.to_s
 
       # Create and execute action plugin
       action_plugin = plugin_class.new(params, vars, host, inventory, task_host)

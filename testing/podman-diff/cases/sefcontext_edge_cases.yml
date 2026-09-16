@@ -1,0 +1,171 @@
+# sefcontext edge cases (community.general.sefcontext). Prefix S;
+# failed=/changed= booleans matter; error-message WORDING may
+# legitimately differ between engines. NO SELinux in the harness
+# containers - same situation as the seport cases: everything up to and
+# including the "SELinux is disabled" runtime gate IS testable (with
+# python3-selinux + python3-semanage installed via run.sh's ^sefcontext
+# gate); the actual semanage store mutation path is not.
+- hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: "S0 missing required target"
+      community.general.sefcontext:
+        setype: krikri_type_t
+      register: s0
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S0 failed={{ s0.failed | default('none') }} changed={{ s0.changed | default('none') }}"
+
+    - name: "S1 invalid ftype choice"
+      community.general.sefcontext:
+        target: /srv/krikri(/.*)?
+        ftype: krikri_ftype
+        setype: krikri_type_t
+        ignore_selinux_state: true
+      register: s1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S1 failed={{ s1.failed | default('none') }} changed={{ s1.changed | default('none') }}"
+
+    - name: "S2 invalid state choice"
+      community.general.sefcontext:
+        target: /srv/krikri(/.*)?
+        setype: krikri_type_t
+        state: krikri_state
+      register: s2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S2 failed={{ s2.failed | default('none') }} changed={{ s2.changed | default('none') }}"
+
+    - name: "S3 mutually exclusive setype+substitute"
+      community.general.sefcontext:
+        target: /srv/krikri(/.*)?
+        setype: krikri_type_t
+        substitute: /var/lib/krikri
+        ignore_selinux_state: true
+      register: s3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S3 failed={{ s3.failed | default('none') }} changed={{ s3.changed | default('none') }}"
+
+    - name: "S4 mutually exclusive substitute+ftype"
+      community.general.sefcontext:
+        target: /srv/krikri(/.*)?
+        substitute: /var/lib/krikri
+        ftype: d
+        ignore_selinux_state: true
+      register: s4
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S4 failed={{ s4.failed | default('none') }} changed={{ s4.changed | default('none') }}"
+
+    - name: "S5 mutually exclusive substitute+seuser"
+      community.general.sefcontext:
+        target: /srv/krikri(/.*)?
+        substitute: /var/lib/krikri
+        seuser: krikri_u
+        ignore_selinux_state: true
+      register: s5
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S5 failed={{ s5.failed | default('none') }} changed={{ s5.changed | default('none') }}"
+
+    - name: "S6 mutually exclusive substitute+selevel (serange alias)"
+      community.general.sefcontext:
+        target: /srv/krikri(/.*)?
+        substitute: /var/lib/krikri
+        selevel: s0
+        ignore_selinux_state: true
+      register: s6
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S6 failed={{ s6.failed | default('none') }} changed={{ s6.changed | default('none') }}"
+
+    - name: "S7 state present with neither setype nor substitute (required_if all)"
+      community.general.sefcontext:
+        target: /srv/krikri(/.*)?
+      register: s7
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S7 failed={{ s7.failed | default('none') }} changed={{ s7.changed | default('none') }}"
+
+    - name: "S8 invalid reload bool"
+      community.general.sefcontext:
+        target: /srv/krikri(/.*)?
+        setype: krikri_type_t
+        reload: krikri-not-a-bool
+        ignore_selinux_state: true
+      register: s8
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S8 failed={{ s8.failed | default('none') }} changed={{ s8.changed | default('none') }}"
+
+    - name: "S9 invalid ignore_selinux_state bool"
+      community.general.sefcontext:
+        target: /srv/krikri(/.*)?
+        setype: krikri_type_t
+        ignore_selinux_state: krikri-not-a-bool
+      register: s9
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S9 failed={{ s9.failed | default('none') }} changed={{ s9.changed | default('none') }}"
+
+    - name: "S10 unsupported parameter"
+      community.general.sefcontext:
+        target: /srv/krikri(/.*)?
+        setype: krikri_type_t
+        backup: true
+        ignore_selinux_state: true
+      register: s10
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S10 failed={{ s10.failed | default('none') }} changed={{ s10.changed | default('none') }}"
+
+    - name: "S11 valid args, SELinux disabled without the ignore flag"
+      community.general.sefcontext:
+        target: /srv/krikri(/.*)?
+        setype: krikri_type_t
+      register: s11
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S11 failed={{ s11.failed | default('none') }} changed={{ s11.changed | default('none') }}"
+
+    - name: "S12 ignore true, state present fails on the store-less host"
+      community.general.sefcontext:
+        target: /srv/krikri(/.*)?
+        setype: krikri_type_t
+        ignore_selinux_state: true
+      register: s12
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S12 failed={{ s12.failed | default('none') }} changed={{ s12.changed | default('none') }}"
+
+    - name: "S13 ignore true, state absent also fails on the store-less host"
+      community.general.sefcontext:
+        target: /srv/krikri(/.*)?
+        state: absent
+        ignore_selinux_state: true
+      register: s13
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S13 failed={{ s13.failed | default('none') }} changed={{ s13.changed | default('none') }}"
+
+    - name: "S14 check mode does not bypass the disabled-host gate"
+      community.general.sefcontext:
+        target: /srv/krikri(/.*)?
+        setype: krikri_type_t
+        check_mode: true
+      register: s14
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S14 failed={{ s14.failed | default('none') }} changed={{ s14.changed | default('none') }}"
+
+    - name: "S15 path alias accepted up to the gate"
+      community.general.sefcontext:
+        path: /srv/krikri(/.*)?
+        setype: krikri_type_t
+      register: s15
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "S15 failed={{ s15.failed | default('none') }} changed={{ s15.changed | default('none') }}"

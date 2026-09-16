@@ -45,7 +45,7 @@ module Krikri
       validate_certs = true?(@params["validate_certs"]?)
       revision = @params["revision"]? || "HEAD"
       force = true?(@params["force"]?)
-      check_mode = true?(@params["check_mode"]?)
+      check_mode = true?(@params["_ansible_check_mode"]?)
       svn = @params["executable"]? || "svn"
       auth = build_auth_args(validate_certs)
 

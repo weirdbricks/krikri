@@ -36,7 +36,7 @@ module Krikri
       vtype = @params["vtype"]?
       value = debconf_value
       unseen = true?(@params["unseen"]?)
-      check_mode = true?(@params["check_mode"]?)
+      check_mode = true?(@params["_ansible_check_mode"]?)
 
       # Real Ansible's module declares
       # `required_together=(['question', 'vtype', 'value'],)` - if any

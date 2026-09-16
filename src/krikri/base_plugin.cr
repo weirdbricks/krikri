@@ -86,6 +86,7 @@ module Krikri
     property diff : JSON::Any?
     property extra : Hash(String, JSON::Any)
     property omit_changed : Bool
+    property? include_empty_msg : Bool
 
     def initialize(
       changed : Bool,
@@ -93,6 +94,7 @@ module Krikri
       msg : String = "",
       diff : JSON::Any? = nil,
       omit_changed : Bool = false,
+      include_empty_msg : Bool = false,
       **kwargs,
     )
       @changed = changed
@@ -100,6 +102,7 @@ module Krikri
       @msg = msg
       @diff = diff
       @omit_changed = omit_changed
+      @include_empty_msg = include_empty_msg
       @extra = Hash(String, JSON::Any).new
       kwargs.each do |key, value|
         @extra[key.to_s] = JSON.parse(value.to_json)
@@ -122,8 +125,11 @@ module Krikri
       # `failed`/`msg` to the result dict on a fail_json exit - a
       # successful module's wire result never carries either key at all
       # (not a display-layer strip; callbacks pass the dict through).
+      # Exception: a module that passes msg='' to exit_json EXPLICITLY
+      # (e.g. git_config's already-converged no-op) still gets the empty
+      # key - include_empty_msg opts into that.
       result["failed"] = @failed if @failed
-      result["msg"] = @msg unless @msg.empty?
+      result["msg"] = @msg if !@msg.empty? || @include_empty_msg
 
       # Add diff if present
       if diff = @diff
@@ -167,7 +173,7 @@ module Krikri
       end
 
       # Check for diff mode
-      @diff_mode = true?(@params["diff_mode"]?)
+      @diff_mode = true?(@params["_ansible_diff"]?)
     end
 
     # Abstract method - must be implemented by subclasses

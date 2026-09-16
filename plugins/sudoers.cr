@@ -2,6 +2,7 @@
 
 require "json"
 require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/ansible_arg_validation"
 
 module Krikri
   # sudoers plugin - manages /etc/sudoers.d/-style rule files.
@@ -14,6 +15,8 @@ module Krikri
   #   user / group: mutually exclusive; owner of the rule
   #   commands: required when state: present - list (or comma-separated
   #     string) of allowed commands, or "ALL"
+  #   defaults: list of Defaults directives written before the rule,
+  #     scoped to the user/group owner (real's 13.1.0 `defaults` param)
   #   noexec / nopassword (default true) / setenv: bools
   #   host: default "ALL"
   #   runas: optional target user
@@ -21,20 +24,88 @@ module Krikri
   #   validation: detect (default) / required / absent - whether to run
   #     `visudo -c -f -` against the generated content before writing
   class SudoersPlugin < BasePlugin
+    include PluginHelpers::AnsibleArgValidation
+
     FILE_MODE = 0o440
 
-    def execute : PluginResult
-      name = @params["name"]?
-      return missing_param("name") unless name
+    # Real argument_spec (community.general sudoers.py) - no aliases.
+    SPEC = {
+      "commands"     => %w[],
+      "defaults"     => %w[],
+      "group"        => %w[],
+      "host"         => %w[],
+      "name"         => %w[],
+      "noexec"       => %w[],
+      "nopassword"   => %w[],
+      "runas"        => %w[],
+      "setenv"       => %w[],
+      "state"        => %w[],
+      "sudoers_path" => %w[],
+      "user"         => %w[],
+      "validation"   => %w[],
+    }
 
+    def execute : PluginResult
+      if err = validate_arguments
+        return err
+      end
+
+      name = @params["name"].not_nil!
       state = @params["state"]? || "present"
       sudoers_path = @params["sudoers_path"]? || "/etc/sudoers.d"
       file = File.join(sudoers_path, name)
-      check_mode = true?(@params["check_mode"]?)
+      check_mode = true?(@params["_ansible_check_mode"]?)
 
       return remove_rule(file, name, check_mode) if state == "absent"
 
       write_rule(file, name, sudoers_path, check_mode)
+    end
+
+    # Real AnsibleModule setup surface, in the validator's errors[0]
+    # order (arg_spec.py: mutually exclusive -> required -> types ->
+    # choices -> required_if -> unsupported).
+    private def validate_arguments : PluginResult?
+      if @params["user"]? && @params["group"]?
+        return PluginResult.new(changed: false, failed: true,
+          msg: "parameters are mutually exclusive: user|group")
+      end
+
+      unless @params["name"]?
+        return missing_required_error(["name"])
+      end
+
+      {"noexec", "nopassword", "setenv"}.each do |param|
+        next unless raw = @params[param]?
+        next if bool_convertible?(raw)
+        return bool_type_error(param, raw)
+      end
+
+      state = @params["state"]? || "present"
+      unless %w[present absent].includes?(state)
+        return choices_error("state", %w[present absent], state)
+      end
+
+      validation = @params["validation"]? || "detect"
+      unless %w[absent detect required].includes?(validation)
+        return choices_error("validation", %w[absent detect required], validation)
+      end
+
+      # required_if=[("state", "present", ["commands"])]: only a MISSING
+      # key fails. An empty list passes real's required_if (the key is
+      # present) and dies at visudo/write instead - S20 vs S21 in the
+      # podman-diff case file.
+      if state == "present" && !@params["commands"]?
+        return PluginResult.new(changed: false, failed: true,
+          msg: "state is present but all of the following are missing: commands")
+      end
+
+      if unsupported = unsupported_param_keys(@params, SPEC)
+        unless unsupported.empty?
+          return unsupported_params_error("community.general.sudoers", unsupported, SPEC)
+        end
+      end
+
+      nil
     end
 
     private def remove_rule(file : String, name : String, check_mode : Bool) : PluginResult
@@ -54,7 +125,14 @@ module Krikri
 
       return PluginResult.new(changed: true, failed: false, msg: "Would write sudoers rule #{name} (check mode)") if check_mode
 
-      Dir.mkdir_p(sudoers_path) unless Dir.exists?(sudoers_path)
+      # Real write() opens the file directly - a missing sudoers_path is
+      # a failed write (FileNotFoundError), NOT an auto-created
+      # directory.
+      unless Dir.exists?(sudoers_path)
+        return PluginResult.new(changed: false, failed: true,
+          msg: "[Errno 2] No such file or directory: '#{file}'")
+      end
+
       File.write(file, content.as(String))
       File.chmod(file, FILE_MODE)
 
@@ -62,18 +140,13 @@ module Krikri
     end
 
     private def build_validated_content : {String?, PluginResult?}
-      commands = parse_commands
-      if commands.empty?
-        return {nil, PluginResult.new(changed: false, failed: true, msg: "state is present but 'commands' is missing")}
-      end
-
       user = @params["user"]?
       group = @params["group"]?
       if !user && !group
         return {nil, PluginResult.new(changed: false, failed: true, msg: "one of the following is required: user, group")}
       end
 
-      content = build_content(user, group, commands)
+      content = build_content(user, group, parse_list_param("commands"))
       validation = @params["validation"]? || "detect"
 
       if validation != "absent"
@@ -94,32 +167,33 @@ module Krikri
       runas_str = runas ? "(#{runas})" : ""
       commands_str = commands.join(", ")
 
-      "#{owner} #{host}=#{runas_str}#{noexec_str}#{nopassword_str}#{setenv_str} #{commands_str}\n"
+      defaults_str = parse_list_param("defaults").map { |d| "Defaults:#{owner} #{d}" }
+                      .join("\n")
+      defaults_str += "\n" unless defaults_str.empty?
+
+      "#{defaults_str}#{owner} #{host}=#{runas_str}#{noexec_str}#{nopassword_str}#{setenv_str} #{commands_str}\n"
     end
 
-    # commands: is a real Ansible list-typed param - see this repo's
-    # dnf.cr's own "list" param handling for the exact same JSON-vs-
-    # Python-repr-string parsing this mirrors.
-    private def parse_commands : Array(String)
-      raw = @params["commands"]?
+    # A real list-typed param's wire shape: a whole-value `{{ list_var }}`
+    # arrives as the double-quoted JSON the wire serialized it to (see
+    # apt.cr's parse_package_names); everything else is a plain string,
+    # which real check_type_list comma-splits WITHOUT stripping the
+    # elements ("cmd1, cmd2" -> ["cmd1", " cmd2"], podman-diff S8).
+    private def parse_list_param(key : String) : Array(String)
+      raw = @params[key]?
       return [] of String unless raw
 
-      begin
-        parsed = JSON.parse(raw)
-        return parsed.as_a.map(&.as_s) if parsed.as_a?
-        return [parsed.as_s] if parsed.as_s?
-      rescue
+      value = (JSON.parse(raw) rescue nil)
+      value = value.nil? ? raw : value.raw
+
+      case value
+      when Array
+        value.map { |entry| entry.as_s? ? entry.as_s : entry.to_s }
+      when String
+        value.split(",")
+      else
+        [value.to_s]
       end
-
-      # ONLY valid JSON - never a Python-repr repair pass: a value that
-      # merely LOOKS like a container is a plain STRING in real
-      # ansible-core (live-verified vs ansible-playbook 2.19.11, see
-      # apt.cr's parse_package_names). A whole-value `{{ list_var }}`
-      # container arg arrives as the double-quoted JSON the wire
-      # serialized it to (see substitute_task_params's whole-single-span
-      # comment), which the JSON.parse above already handles.
-
-      raw.includes?(",") ? raw.split(",").map(&.strip) : [raw]
     end
 
     private def validate(content : String, validation : String) : PluginResult?
@@ -145,9 +219,6 @@ module Krikri
       ["/usr/sbin/visudo", "/sbin/visudo"].find { |path| File.exists?(path) } || Process.find_executable("visudo")
     end
 
-    private def missing_param(name : String) : PluginResult
-      PluginResult.new(changed: false, failed: true, msg: "Missing required parameter: #{name}")
-    end
   end
 end
 

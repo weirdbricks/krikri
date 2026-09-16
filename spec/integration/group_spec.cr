@@ -12,14 +12,14 @@ describe "group plugin" do
   it "reports no change for an existing group whose gid already matches (read-only getent check)" do
     root_gid = `getent group root`.split(":")[2].strip
 
-    result = PluginSpecHelper.run("group", {"name" => "root", "gid" => root_gid, "check_mode" => "true"})
+    result = PluginSpecHelper.run("group", {"name" => "root", "gid" => root_gid, "_ansible_check_mode" => "true"})
 
     result["changed"].as_bool.should be_false
     result["failed"]?.try(&.as_bool).should be_falsey
   end
 
   it "reports it would modify an existing group when the gid differs (check mode, no real change)" do
-    result = PluginSpecHelper.run("group", {"name" => "root", "gid" => "999999", "check_mode" => "true"})
+    result = PluginSpecHelper.run("group", {"name" => "root", "gid" => "999999", "_ansible_check_mode" => "true"})
 
     result["changed"].as_bool.should be_true
     result["msg"].as_s.should contain("check mode")
@@ -27,7 +27,7 @@ describe "group plugin" do
   end
 
   it "reports it would create a group that does not exist yet (check mode, no real creation)" do
-    result = PluginSpecHelper.run("group", {"name" => NONEXISTENT_GROUP, "check_mode" => "true"})
+    result = PluginSpecHelper.run("group", {"name" => NONEXISTENT_GROUP, "_ansible_check_mode" => "true"})
 
     result["changed"].as_bool.should be_true
     result["msg"].as_s.should contain("check mode")
@@ -42,7 +42,7 @@ describe "group plugin" do
   end
 
   it "reports it would remove an existing group (check mode, no real removal)" do
-    result = PluginSpecHelper.run("group", {"name" => "root", "state" => "absent", "check_mode" => "true"})
+    result = PluginSpecHelper.run("group", {"name" => "root", "state" => "absent", "_ansible_check_mode" => "true"})
 
     result["changed"].as_bool.should be_true
     `getent group root`.strip.should_not be_empty

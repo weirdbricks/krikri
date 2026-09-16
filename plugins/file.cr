@@ -83,8 +83,8 @@ module Krikri
 
     def initialize(config : JSON::Any)
       super(config)
-      @check_mode = true?(@params["check_mode"]?)
-      @diff_mode = true?(@params["diff_mode"]?)
+      @check_mode = true?(@params["_ansible_check_mode"]?)
+      @diff_mode = true?(@params["_ansible_diff"]?)
     end
 
     def execute : PluginResult

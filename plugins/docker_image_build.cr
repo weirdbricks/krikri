@@ -56,7 +56,7 @@ module Krikri
     }
     # Engine-internal executor keys that never reach the real module's
     # params (see apt.cr's same exclusion list).
-    INTERNAL_PARAMS = {"check_mode", "diff_mode", "_verbosity", "_environment"}
+    INTERNAL_PARAMS = {"_ansible_check_mode", "_ansible_diff", "_verbosity", "_environment"}
     # Sub-spec option names, for the deferred unsupported-params check.
     SECRETS_SUBOPTIONS = %w[id type src env value]
     OUTPUTS_SUBOPTIONS = %w[type dest context name push]
@@ -104,7 +104,7 @@ module Krikri
       ref_name, default_tag = PluginHelpers::DockerRef.split(name)
       tag = @params["tag"]? || default_tag
       rebuild = @params["rebuild"]? || "never"
-      check_mode = true?(@params["check_mode"]?)
+      check_mode = true?(@params["_ansible_check_mode"]?)
 
       client, docker_host_description = PluginHelpers::DockerClient.build(@params)
       existing_image = image_id(client, PluginHelpers::DockerRef.join(ref_name, tag))

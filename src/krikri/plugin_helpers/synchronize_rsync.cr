@@ -111,7 +111,7 @@ module Krikri
       # Real module: `if module.check_mode: cmd.append('--dry-run')` -
       # the predicted changes still itemize (so changed: true still
       # registers), nothing is written.
-      argv << "--dry-run" if bool(params["check_mode"]?)
+      argv << "--dry-run" if bool(params["_ansible_check_mode"]?)
 
       unless link_dest.empty?
         argv << "-H"

@@ -72,7 +72,7 @@ describe "fetch plugin" do
   end
 
   it "is skipped under check_mode" do
-    result = PluginSpecHelper.run("fetch", {"src" => "/etc/hostname", "dest" => "/tmp/", "check_mode" => "true"}, LOCAL_VARS)
+    result = PluginSpecHelper.run("fetch", {"src" => "/etc/hostname", "dest" => "/tmp/", "_ansible_check_mode" => "true"}, LOCAL_VARS)
     result["failed"]?.try(&.as_bool).should be_falsey
     result["skipped"].as_bool.should be_true
     result["msg"].as_s.should eq("check mode not (yet) supported for this module")

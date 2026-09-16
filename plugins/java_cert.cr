@@ -84,7 +84,7 @@ module Krikri
           msg: "Module require existing keystore at keystore_path '#{keystore_path}'")
       end
 
-      check_mode = true?(@params["check_mode"]?)
+      check_mode = true?(@params["_ansible_check_mode"]?)
       keystore_pass_str = keystore_pass.not_nil!
 
       alias_exists, alias_exists_output = check_cert_present(executable, keystore_path, keystore_pass_str, cert_alias || "", keystore_type)

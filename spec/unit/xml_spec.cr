@@ -241,7 +241,7 @@ describe "community.general.xml plugin" do
     it "reports changed without writing" do
       path = File.tempname("xmlspec", ".xml")
       File.write(path, %(<business><rating>10</rating></business>))
-      result = run_xml(xml_params({"path" => path, "xpath" => "/business/rating", "value" => "11", "check_mode" => "true"}))
+      result = run_xml(xml_params({"path" => path, "xpath" => "/business/rating", "value" => "11", "_ansible_check_mode" => "true"}))
       result["changed"].should be_true
       File.read(path).should contain("<rating>10</rating>")
       File.delete(path)

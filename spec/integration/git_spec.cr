@@ -119,7 +119,7 @@ describe "git plugin" do
     dest = tmp_path("git-clone-check-mode-dest")
     `rm -rf #{dest}`
 
-    result = PluginSpecHelper.run("git", {"repo" => repo, "dest" => dest, "check_mode" => "true"})
+    result = PluginSpecHelper.run("git", {"repo" => repo, "dest" => dest, "_ansible_check_mode" => "true"})
 
     result["changed"].as_bool.should be_true
     Dir.exists?(dest).should be_false
@@ -173,7 +173,7 @@ describe "git plugin" do
     `rm -rf #{dest}`
     PluginSpecHelper.run("git", {"repo" => repo, "dest" => dest, "version" => "v1"})
 
-    result = PluginSpecHelper.run("git", {"repo" => repo, "dest" => dest, "version" => "main", "check_mode" => "true"})
+    result = PluginSpecHelper.run("git", {"repo" => repo, "dest" => dest, "version" => "main", "_ansible_check_mode" => "true"})
 
     result["changed"].as_bool.should be_true
     File.read(File.join(dest, "file.txt")).strip.should eq("one")

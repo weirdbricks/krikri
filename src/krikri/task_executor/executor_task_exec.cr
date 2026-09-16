@@ -1167,8 +1167,8 @@ module Krikri
     ) : String
       # Add check_mode and diff_mode to params
       final_params = params.dup
-      final_params["check_mode"] = resolve_task_check_mode(task, vars_context).to_s
-      final_params["diff_mode"] = @diff_mode.to_s
+      final_params["_ansible_check_mode"] = resolve_task_check_mode(task, vars_context).to_s
+      final_params["_ansible_diff"] = @diff_mode.to_s
       # The module name exactly as the playbook invoked it - real
       # Ansible's check-mode skip message echoes it ("remote module
       # (ansible.builtin.tempfile) does not support check mode", see

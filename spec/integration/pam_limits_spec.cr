@@ -97,7 +97,11 @@ describe "pam_limits plugin" do
     })
 
     result["changed"].as_bool.should be_true
-    File.read(dest).should eq("*\thard\tcore\t0\t#old comment\n")
+    # The trailing blank line is real pam_limits.py's own behavior
+    # (live-verified 2026-09-16): old_comment is taken from the RAW
+    # line, which still carries its newline, so the rewritten entry
+    # embeds it before the f-string's own \n.
+    File.read(dest).should eq("*\thard\tcore\t0\t#old comment\n\n")
   end
 
   it "fails when required params are missing" do
