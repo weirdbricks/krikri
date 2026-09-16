@@ -185,6 +185,18 @@ if printf '%s\n' "${cases[@]}" | grep -q '^postgresql'; then
     || { log "FATAL: community.postgresql install failed"; exit 1; }
 fi
 
+# current_container_facts is a community.docker module (no Docker SDK
+# import, pure /proc detection) - the REAL container still needs the
+# collection or every case fails on module lookup. The two engines run
+# in DIFFERENT throwaway podman containers so the detected container id
+# necessarily differs; the case file prints shape checks, not the id.
+# Gated on the requested case list like the postgresql cases.
+if printf '%s\n' "${cases[@]}" | grep -q '^current_container_facts'; then
+  log "installing community.docker collection for current_container_facts cases"
+  podman exec "$NAME_A" bash -c "ansible-galaxy collection install community.docker >/dev/null 2>&1" \
+    || { log "FATAL: community.docker install failed"; exit 1; }
+fi
+
 # ec2_metadata_facts cases need the amazon.aws collection in the REAL
 # container (collection module, not shipped with ansible-core).
 # Validation-only + unreachable-endpoint cases - the real IMDS endpoint
