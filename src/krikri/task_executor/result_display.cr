@@ -76,24 +76,25 @@ module Krikri
       # against real ansible-core 2.19.4 (quiet success prints a bare
       # `ok:` line; quiet failure output is unchanged).
       quiet_success = result["_ansible_quiet"]?.try(&.as_bool) || false
-      # Real Ansible displays a successful debug task as a pretty JSON
-      # dump of its payload keys ("msg" or the var NAME - never
-      # "changed"): `ok: [host] => {\n    "msg": "..."\n}`. The raw
-      # multi-line-text display this engine used instead kept a msg
-      # CONTAINING newlines (e.g. a debug echoing another task's
-      # multi-line failure msg) across several physical output lines,
-      # which nothing downstream that compares real's single JSON-escaped
-      # line against could ever line up with (podman-diff
+      # Real Ansible displays a successful debug task as a JSON dump, so
+      # a msg CONTAINING newlines arrives as ONE physical line with \n
+      # escapes - this engine's raw multi-line display could never line
+      # up with anything comparing real's single-line form (podman-diff
       # set_fact_edge_cases S1: identical msg content, unmatchable
-      # shape). Scoped to debug results (assert also tags
-      # _ansible_verbose_always but keeps its own established display
-      # shape).
+      # shape). Keep the established raw-text display (single-line msgs
+      # print exactly as before), but for a debug result escape the
+      # newlines onto one line the way real's dump does. A var: result
+      # (no msg, payload under the var-name key) dumps as real does.
       if !failed && module_name.try(&.ends_with?("debug")) && result["_ansible_verbose_always"]?.try(&.as_bool)
-        cleaned = clean_for_display(result)
-        if h = cleaned.as_h?
-          h.delete("changed")
+        if msg.empty?
+          cleaned = clean_for_display(result)
+          if h = cleaned.as_h?
+            h.delete("changed")
+          end
+          puts dump_pretty(cleaned)
+        else
+          puts "  #{msg.gsub("\n", "\\n")}".colorize(:white)
         end
-        puts dump_pretty(cleaned)
       elsif !failed && msg && !msg.empty? && !quiet_success && !["ok", "Command executed successfully", "File already exists with identical content"].includes?(msg)
         # Format multi-line messages nicely
         if msg.includes?("\n")
