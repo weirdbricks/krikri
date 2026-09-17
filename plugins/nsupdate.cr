@@ -149,8 +149,18 @@ module Krikri
         # importing gssapi, so this fires even without the library
         return PluginResult.new(changed: false, failed: true,
           msg: "key_name cannot be used with GSS-TSIG") if @params["key_name"]?
+        # Real nsupdate.py's check_gssapi fails through AnsibleModule's
+        # missing_required_lib wording - hostname, the interpreter path,
+        # the module's own reason ("for gss-tsig keys") and doc URL all
+        # included (found via the podman-diff nsupdate_edge_cases N12
+        # case, where this used to be a made-up "not supported by this
+        # implementation" message).
         return PluginResult.new(changed: false, failed: true,
-          msg: "gss-tsig authentication is not supported by this implementation")
+          msg: "Failed to import the required Python library (gssapi) on #{System.hostname}'s Python /usr/bin/python3. " \
+               "This is required for gss-tsig keys. See https://github.com/pythongssapi/python-gssapi for more info. " \
+               "Please read the module documentation and install it in the appropriate location. " \
+               "If the required library is installed, but Ansible is using the wrong Python interpreter, " \
+               "please consult the documentation on ansible_python_interpreter")
       end
 
       key_name = @params["key_name"]?
@@ -160,11 +170,23 @@ module Krikri
       return PluginResult.new(changed: false, failed: true,
         msg: "Missing key_secret") unless key_secret
 
+      # Real nsupdate.py decodes the secret with Python's base64.b64decode
+      # (validate=False: characters outside the base64 alphabet are
+      # silently DISCARDED first, then the remaining data characters are
+      # checked - a count of 1 mod 4 is binascii's "cannot be 1 more than
+      # a multiple of 4" error, anything else padding-short decodes as
+      # "Incorrect padding"). Crystal's Base64 raises its own generic
+      # "base64 decoding failed" for all of these (found via the N8 case).
+      if error = python_base64_error(key_secret)
+        return PluginResult.new(changed: false, failed: true,
+          msg: "TSIG key error: #{error}")
+      end
+
       begin
         secret = Base64.decode(key_secret)
       rescue
         return PluginResult.new(changed: false, failed: true,
-          msg: "TSIG key error: base64 decoding failed")
+          msg: "TSIG key error: Incorrect padding")
       end
 
       algorithm = key_algorithm == "hmac-md5" ? "HMAC-MD5.SIG-ALG.REG.INT" : key_algorithm
@@ -228,8 +250,46 @@ module Krikri
         end
       rescue e
         PluginResult.new(changed: false, failed: true,
-          msg: "DNS server error: (#{e.class.name.split("::").last}): #{e.message}")
+          msg: "DNS server error: #{python_transport_error(e, protocol)}")
       end
+    end
+
+    # Python's binascii.a2b_base64 (what base64.b64decode and dnspython's
+    # TSIG key setup end up in) validates the DATA-CHARACTER count after
+    # discarding everything outside the base64 alphabet - its two error
+    # wordings are what real's "TSIG key error: ..." wraps.
+    private def python_base64_error(secret : String) : String?
+      data_chars = secret.chars.count do |c|
+        c.alphanumeric? || c == '+' || c == '/'
+      end
+      remainder = data_chars % 4
+      return "Invalid base64-encoded string: number of data characters (#{data_chars}) cannot be 1 more than a multiple of 4" if remainder == 1
+      return "Incorrect padding" if remainder == 2 || remainder == 3
+      nil
+    end
+
+    # Real nsupdate.py surfaces dnspython's exceptions, whose str() is
+    # Python's own OSError shape - the exception CLASS name plus
+    # "[Errno <n>] <strerror>" (e.g. "(ConnectionRefusedError): [Errno 111]
+    # Connection refused"), with dnspython's own dns.exception.Timeout
+    # ("(Timeout): The DNS operation timed out.") for the timed-out case.
+    # The UDP transport never surfaces the kernel's ECONNREFUSED (the
+    # ICMP refusal arrives on a later recv, which dnspython's select loop
+    # ignores until its lifetime expires), so a UDP failure is ALWAYS
+    # reported as a timeout - exactly what N17's real side shows.
+    private def python_transport_error(e : Exception, protocol : String) : String
+      return "(Timeout): The DNS operation timed out." if protocol == "udp" || e.is_a?(IO::TimeoutError)
+
+      errno = e.as?(Socket::Error).try(&.os_error).as?(Errno)
+      return "(#{e.class.name.split("::").last}): #{e.message}" unless errno
+
+      py_class = case errno
+                 when .econnrefused? then "ConnectionRefusedError"
+                 when .etimedout?    then "TimeoutError"
+                 when .eacces?       then "PermissionError"
+                 else                     "OSError"
+                 end
+      "(#{py_class}): [Errno #{errno.value}] #{String.new(LibC.strerror(errno.value))}"
     end
 
     # Sends a message, checks the response id; returns the parsed
