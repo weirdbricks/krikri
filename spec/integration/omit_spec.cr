@@ -106,7 +106,9 @@ describe "omit" do
       YAML
     # Same whole-span native typing as above (live-verified: real
     # Ansible prints msg as a real dict with only the omit key dropped).
-    output.should contain(%({"a":1}))
+    # Debug displays as real's own pretty JSON dump, so the quotes in
+    # the msg text arrive JSON-escaped.
+    output.should contain(%({\\\"a\\\":1}))
   end
 
   it "does not swallow genuinely falsy values alongside it" do
@@ -123,8 +125,9 @@ describe "omit" do
       YAML
     # Same whole-span native typing as above (live-verified: real
     # Ansible keeps "", 0 and False in the natively-typed containers).
-    output.should contain(%(["kept","",0,false]))
-    output.should contain(%({"a":0,"b":false,"c":""}))
+    # Debug displays as real's own pretty JSON dump (quotes escaped).
+    output.should contain(%([\\\"kept\\\",\\\"\\\",0,false]))
+    output.should contain(%({\\\"a\\\":0,\\\"b\\\":false,\\\"c\\\":\\\"\\\"}))
   end
 
   it "treats a block-tag template rendering to nothing as omitted, not empty" do

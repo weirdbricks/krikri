@@ -47,12 +47,13 @@ module Krikri
       required_verbosity = @params["verbosity"]?.try(&.to_i) || 0
       current_verbosity = @params["_verbosity"]?.try(&.to_i) || 0
 
-      # Skip if verbosity too low
+      # Skip if verbosity too low - real's registered result for a
+      # verbosity-skipped debug carries skipped but NO msg key at all
+      # (podman-diff debug_edge_cases D3).
       if current_verbosity < required_verbosity
         return PluginResult.new(
           changed: false,
           failed: false,
-          msg: "skipped",
           skipped: true
         )
       end
@@ -66,30 +67,22 @@ module Krikri
       # like - broke the play.
       msg = "Hello world!" if !msg && !var_name
 
-      # Build the debug output
-      debug_output = if var_name
-                       # Print variable name and value
-                       # The var_name might be a path like "result.stdout" or just "myvar"
-                       var_value = lookup_variable(var_name)
-
-                       if var_value
-                         # Format as readable output
-                         value_str = format_value(var_value)
-                         "#{var_name}: #{value_str}"
-                       else
-                         "#{var_name}: VARIABLE IS NOT DEFINED!"
-                       end
-                     else
-                       # Print message (already substituted by task executor)
-                       msg.to_s
-                     end
-
-      # Debug always succeeds and never changes anything
-      PluginResult.new(
+      # Build the debug output. Real debug's var: result carries the
+      # value under the VARIABLE NAME key, not under msg (podman-diff
+      # debug_edge_cases D1/D4); an unresolvable var: name maps to the
+      # literal string "VARIABLE IS NOT DEFINED!" and the task still
+      # succeeds.
+      result = PluginResult.new(
         changed: false,
-        failed: false,
-        msg: debug_output
+        failed: false
       )
+      if var_name
+        var_value = lookup_variable(var_name)
+        result.extra[var_name] = JSON::Any.new(var_value ? format_value(var_value) : "VARIABLE IS NOT DEFINED!")
+      else
+        result.msg = msg.to_s
+      end
+      result
     end
 
     # Look up a variable (supports nested paths like "result.stdout")

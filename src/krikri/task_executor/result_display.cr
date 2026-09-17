@@ -24,13 +24,13 @@ module Krikri
     # Display task result with appropriate formatting.
     # item_label is set for looped tasks, rendering `ok: [host] => (item=x)`
     # to match how Ansible annotates per-iteration output.
-    def self.display_result(host : Host, result : JSON::Any, diff_mode : Bool, item_label : String? = nil, ignore_errors : Bool = false, no_log : Bool = false) : Nil
+    def self.display_result(host : Host, result : JSON::Any, diff_mode : Bool, item_label : String? = nil, ignore_errors : Bool = false, no_log : Bool = false, module_name : String? = nil) : Nil
       TimingProfile.measure("display.result", "display") do
-        display_result_measured(host, result, diff_mode, item_label, ignore_errors, no_log)
+        display_result_measured(host, result, diff_mode, item_label, ignore_errors, no_log, module_name)
       end
     end
 
-    private def self.display_result_measured(host : Host, result : JSON::Any, diff_mode : Bool, item_label : String? = nil, ignore_errors : Bool = false, no_log : Bool = false) : Nil
+    private def self.display_result_measured(host : Host, result : JSON::Any, diff_mode : Bool, item_label : String? = nil, ignore_errors : Bool = false, no_log : Bool = false, module_name : String? = nil) : Nil
       changed = result["changed"]?.try(&.as_bool) || false
       failed = Krikri.result_failed_flag(result)
       msg = result["msg"]?.try(&.as_s) || ""
@@ -76,7 +76,25 @@ module Krikri
       # against real ansible-core 2.19.4 (quiet success prints a bare
       # `ok:` line; quiet failure output is unchanged).
       quiet_success = result["_ansible_quiet"]?.try(&.as_bool) || false
-      if !failed && msg && !msg.empty? && !quiet_success && !["ok", "Command executed successfully", "File already exists with identical content"].includes?(msg)
+      # Real Ansible displays a successful debug task as a pretty JSON
+      # dump of its payload keys ("msg" or the var NAME - never
+      # "changed"): `ok: [host] => {\n    "msg": "..."\n}`. The raw
+      # multi-line-text display this engine used instead kept a msg
+      # CONTAINING newlines (e.g. a debug echoing another task's
+      # multi-line failure msg) across several physical output lines,
+      # which nothing downstream that compares real's single JSON-escaped
+      # line against could ever line up with (podman-diff
+      # set_fact_edge_cases S1: identical msg content, unmatchable
+      # shape). Scoped to debug results (assert also tags
+      # _ansible_verbose_always but keeps its own established display
+      # shape).
+      if !failed && module_name.try(&.ends_with?("debug")) && result["_ansible_verbose_always"]?.try(&.as_bool)
+        cleaned = clean_for_display(result)
+        if h = cleaned.as_h?
+          h.delete("changed")
+        end
+        puts dump_pretty(cleaned)
+      elsif !failed && msg && !msg.empty? && !quiet_success && !["ok", "Command executed successfully", "File already exists with identical content"].includes?(msg)
         # Format multi-line messages nicely
         if msg.includes?("\n")
           puts msg.split("\n").map { |line| "  #{line}" }.join("\n")
