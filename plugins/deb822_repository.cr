@@ -88,7 +88,7 @@ module Krikri
       # keys injected by the executor (see build_plugin_config), not
       # part of the real argument_spec, so none are rejected.
       deb822_supported = {"allow_downgrade_to_insecure", "allow_insecure", "allow_weak", "architectures", "by_hash", "check_date", "check_valid_until", "components", "date_max_future", "enabled", "exclude", "include", "inrelease_path", "languages", "mode", "name", "pdiffs", "signed_by", "state", "suites", "targets", "trusted", "types", "uris"}
-      deb822_internal = {"_ansible_check_mode", "_ansible_diff", "_verbosity", "_environment"}
+      deb822_internal = {"_ansible_check_mode", "_ansible_diff", "_module_name", "_verbosity", "_environment"}
       unsupported = @params.keys.reject { |k| deb822_supported.includes?(k) || deb822_internal.includes?(k) }
       unless unsupported.empty?
         return PluginResult.new(

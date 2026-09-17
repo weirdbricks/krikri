@@ -152,4 +152,22 @@ describe "deb822_repository plugin" do
     result["changed"].as_bool.should be_true
     result["failed"]?.try(&.as_bool).should be_falsey
   end
+
+  it "does not reject the executor-injected _module_name internal param" do
+    # The task executor injects `_module_name` into EVERY task's plugin
+    # params (the invoked spelling real Ansible's check-mode skip
+    # messages echo); the plugin's own internal-keys set predating that
+    # injection rejected it as unsupported, failing every single
+    # deb822_repository task with "Unsupported parameters ...
+    # _module_name" (podman-diff deb822_repository_edge_cases: every
+    # valid case failed on the krikri side).
+    result = PluginSpecHelper.run("deb822_repository", {
+      "name"          => "testrepo-module-name",
+      "_module_name"  => "ansible.builtin.deb822_repository",
+      "_ansible_check_mode" => "true",
+    })
+
+    result["failed"]?.try(&.as_bool).should be_falsey
+    result["msg"]?.to_s.should_not contain("Unsupported parameters")
+  end
 end
