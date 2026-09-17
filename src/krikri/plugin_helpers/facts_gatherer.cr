@@ -1539,7 +1539,16 @@ module Krikri
         end
       end
 
-      facts["ansible_mounts"] = mounts unless mounts.empty?
+      # Real Ansible ALWAYS carries the ansible_mounts key once the
+      # hardware/mounts family ran - even when the keep-filter leaves the
+      # list empty (in a container real's own device-path filter drops
+      # every entry but the key stays, as an empty list; podman-diff
+      # setup_edge_cases W3/W5 diff on the missing KEY, facts_len off by
+      # one, not on the entries). Omitting it instead made any
+      # `ansible_mounts | default([])` template agree while a strict
+      # `ansible_facts['ansible_mounts']` read failed here where real
+      # succeeds.
+      facts["ansible_mounts"] = mounts
     end
 
     # Real Ansible's own keep-or-skip rule for a mount's device field
