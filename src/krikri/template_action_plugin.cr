@@ -49,9 +49,14 @@ module Krikri
         return ActionResult.failure("Missing required parameter: src")
       end
 
-      # Check if template file exists on CONTROLLER
+      # Check if template file exists on CONTROLLER - real Ansible's own
+      # _find_needle/copy action wording for a missing source (the
+      # newline is literal: real's msg is the two-line
+      # "Could not find or access '<path>' on the Ansible Controller.\n"
+      # "If you are using a module and expect the file to exist on the
+      # remote, see the remote_src option").
       unless File.exists?(src)
-        return ActionResult.failure("Template file not found on controller: #{src}")
+        return ActionResult.failure("Could not find or access '#{src}' on the Ansible Controller.\nIf you are using a module and expect the file to exist on the remote, see the remote_src option")
       end
 
       # Read template content

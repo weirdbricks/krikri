@@ -130,15 +130,7 @@ module Krikri
         )
       end
 
-      result = begin
-        dispatch_state(state, path)
-      rescue InvalidModeError
-        PluginResult.new(
-          changed: false,
-          failed: true,
-          msg: "mode must be in octal or symbolic form"
-        )
-      end
+      result = dispatch_state_rescued(state, path)
 
       # Real Ansible's file module always echoes the resolved state:
       # back in its result (dev-sec os_hardening's own molecule test
@@ -199,6 +191,33 @@ module Krikri
       else
         PluginResult.new(changed: false, failed: true, msg: "Unhandled state: #{state}")
       end
+    end
+
+    # dispatch_state with the failure-mode rescues: the InvalidModeError
+    # branch is real Ansible's own mode-validation wording; the generic
+    # branch exists because helper raises like resolve_uid's "chown
+    # failed: failed to look up user <name>" are meant to surface as the
+    # task's own msg (real Ansible's basic.py set_owner_if_different
+    # fails with exactly that string) - left unrescued they fell through
+    # to plugin_manager.cr's generic top-level handler, which prepends
+    # its own "Plugin execution failed: " wrapper real never produces
+    # (found via the podman-diff file_edge_cases F2 case). Every
+    # deliberate raise inside this plugin's call chain is already a
+    # user-facing failure message, so surface it verbatim.
+    private def dispatch_state_rescued(state : String, path : String) : PluginResult
+      dispatch_state(state, path)
+    rescue InvalidModeError
+      PluginResult.new(
+        changed: false,
+        failed: true,
+        msg: "mode must be in octal or symbolic form"
+      )
+    rescue ex
+      PluginResult.new(
+        changed: false,
+        failed: true,
+        msg: ex.message || "Unknown error"
+      )
     end
 
     # Handle state=directory
@@ -535,38 +554,63 @@ module Krikri
       nil
     end
 
-    # Handle state=hard (hard link)
-    private def handle_hard_link(path : String) : PluginResult
-      src = @params["src"]?
-      unless src
+    # state=hard's src setup checks: required-param, then real Ansible's
+    # own "src does not exist" hard failure (file.py, before anything
+    # else touches the filesystem, check mode included). Returns the
+    # failure result, or nil when src is present and exists.
+    private def hard_link_src_failure : PluginResult?
+      raw_src = @params["src"]?
+      unless raw_src
         return PluginResult.new(
           changed: false,
           failed: true,
           msg: "src parameter required for state=hard"
         )
       end
-      src = expand_tilde(src)
+
+      unless File.exists?(expand_tilde(raw_src))
+        return PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: "src does not exist"
+        )
+      end
+
+      nil
+    end
+
+    # The already-linked verdict: check mode reports it without the
+    # dest/src echo (nothing was created for a later stat to describe).
+    private def hard_link_existing_result(path : String, src : String) : PluginResult
+      if @check_mode
+        return PluginResult.new(
+          changed: false,
+          failed: false,
+          msg: "Hard link already exists (check mode)"
+        )
+      end
+
+      PluginResult.new(
+        changed: false,
+        failed: false,
+        msg: "Hard link already exists",
+        dest: path,
+        src: src
+      )
+    end
+
+    # Handle state=hard (hard link)
+    private def handle_hard_link(path : String) : PluginResult
+      if failure = hard_link_src_failure
+        return failure
+      end
+      src = expand_tilde(@params["src"] || "")
 
       # Check if hard link already exists (same inode)
       src_stat = lstat(src)
       dest_stat = lstat(path)
       if src_stat && dest_stat && src_stat.st_ino == dest_stat.st_ino
-        # Hard link exists
-        if @check_mode
-          return PluginResult.new(
-            changed: false,
-            failed: false,
-            msg: "Hard link already exists (check mode)"
-          )
-        end
-
-        return PluginResult.new(
-          changed: false,
-          failed: false,
-          msg: "Hard link already exists",
-          dest: path,
-          src: src
-        )
+        return hard_link_existing_result(path, src)
       end
 
       # Hard link doesn't exist
@@ -680,17 +724,23 @@ module Krikri
       # umask like real Ansible (umask 002 -> 0664, umask 022 -> 0644).
       # On an EXISTING path the perm arg is ignored by open(2), so a
       # touch never rewrites an existing file's mode.
+      # On failure real Ansible's file module reports the wrapped OS
+      # error itself - "Error, could not touch target: [Errno 2] No such
+      # file or directory: b'<path>'" (os.open/os.utime OSError str, with
+      # the path in Python bytes repr) - not a bare "Failed to create
+      # file" (found via the podman-diff file_edge_cases F1 case).
       created = begin
         File.open(path, "w", 0o666) { }
         true
       rescue ex : File::Error
+        @last_error = oserror_repr(path, ex)
         false
       end
       unless created
         return PluginResult.new(
           changed: false,
           failed: true,
-          msg: "Failed to create file"
+          msg: "Error, could not touch target: #{@last_error}"
         )
       end
 
@@ -1280,6 +1330,17 @@ module Krikri
       if result[:exit_code] != 0
         raise "set selinux context failed"
       end
+    end
+
+    # Python's str(OSError) shape for a failed file syscall on *path*:
+    # "[Errno 2] No such file or directory: b'<path>'" - errno text from
+    # strerror(3), path in Python bytes repr (real Ansible hands the file
+    # module's paths around as bytes, so every OSError it surfaces carries
+    # the b'' prefix). Used by the touch failure path.
+    private def oserror_repr(path : String, ex : File::Error) : String
+      errno = ex.os_error.try(&.value)
+      return ex.message || "OSError" unless errno
+      "[Errno #{errno}] #{String.new(LibC.strerror(errno))}: b'#{path}'"
     end
 
     private def resolve_uid(owner : String) : Int32
