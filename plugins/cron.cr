@@ -93,6 +93,12 @@ module Krikri
       state = @params["state"]? || "present"
       job = @params["job"]?
 
+      # Real cron.py's user-input validation (the 2.x-era block still
+      # shipped in ansible-core 2.14, which is what the harness's real
+      # side runs): special_time and explicit time/date fields are
+      # mutually exclusive - compared against the argument_spec's literal
+      # "*" defaults, so only an explicitly-SET field rejects, not the
+      # implicit defaults.
       if failure = validate_present_params(state, job, env, insertafter, insertbefore)
         return failure
       end
@@ -109,9 +115,28 @@ module Krikri
       end
     end
 
-    # Shared state=present validation (job required; insertafter/
-    # insertbefore are env-only). Returns the failure result, or nil.
+    # Real cron.py's special_time vs time-fields mutual exclusion: any of
+    # the five schedule fields explicitly set (i.e. not the argument
+    # spec's "*" default) alongside special_time rejects.
+    private def special_time_conflict? : Bool
+      return false unless @params["special_time"]?
+      ["minute", "hour", "day", "month", "weekday"].any? do |field|
+        value = @params[field]?
+        value != nil && value != "*"
+      end
+    end
+
+    # Shared state=present validation (real cron.py's 2.x-era user-input
+    # validation block, still shipped in ansible-core 2.14: special_time
+    # and explicit time/date fields are mutually exclusive - compared
+    # against the argument_spec's literal "*" defaults, so only an
+    # explicitly-SET field rejects, not the implicit defaults; job
+    # required when installing; insertafter/insertbefore are env-only).
+    # Returns the failure result, or nil.
     private def validate_present_params(state : String, job : String?, env : Bool, insertafter : String?, insertbefore : String?) : PluginResult?
+      if special_time_conflict?
+        return PluginResult.new(changed: false, failed: true, msg: "You must specify time and date fields or special time.")
+      end
       return nil unless state == "present"
       return PluginResult.new(changed: false, failed: true, msg: "job parameter required when state=present") unless job
       if (insertafter || insertbefore) && !env
@@ -289,8 +314,17 @@ module Krikri
         # blank line at the end of the installed crontab, which
         # `crontab -l` then read back verbatim, making the very next
         # run's own upsert see a "changed" diff against itself
-        # forever (never converging to idempotent).
-        File.write(tmp_path, new_content.empty? ? "\n" : new_content)
+        # forever (never converging to idempotent). The empty case
+        # gets the exact content too (an empty file, no newline):
+        # installing a literal "\n" made `crontab -l` read back a
+        # newline-only crontab, whose normalize() baseline is "\n"
+        # while the next run's upsert of it computed "" - a permanent
+        # changed=true on every state=absent rerun (found via the
+        # podman-diff cron_edge_cases C7 case). An empty crontab is
+        # installed fine by `crontab <file>` and lists back as empty
+        # output with exit 0, which the read above already treats as
+        # the start-from-empty baseline.
+        File.write(tmp_path, new_content)
         File.chmod(tmp_path, 0o600)
         install_result = remote_exec("crontab #{crontab_target} #{shell_single_quote(tmp_path)}")
         unless install_result[:exit_code] == 0
