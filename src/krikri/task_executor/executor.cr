@@ -394,6 +394,12 @@ module Krikri
       @remote_user : String? = nil,
       # See Play#debugger.
       @debugger : String? = nil,
+      # The playbook FILE path (not just #playbook_dir) - real Ansible's
+      # task-arg templating failures embed the offending task's source
+      # location from the playbook YAML (see
+      # #finalize_args_failure_message). nil (specs, ad-hoc) omits that
+      # context block.
+      @playbook_file : String? = nil,
     )
       @results = Hash(String, Hash(String, Int32)).new
       @registered_vars = Hash(String, Hash(String, JSON::Any)).new

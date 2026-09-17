@@ -1339,7 +1339,7 @@ module Krikri
         failed = JSON.parse({
           "changed" => false,
           "failed"  => true,
-          "msg"     => ex.message || "Failed to resolve task arguments",
+          "msg"     => finalize_args_failure_message(ex, task),
         }.to_json)
         return apply_changed_failed_when(task, failed, vars_context, host)
       end
@@ -1533,7 +1533,7 @@ module Krikri
         # yml F2 in the podman-diff harness).
         result = JSON.parse({
           "failed" => true,
-          "msg"    => ex.message || "Failed to resolve task arguments",
+          "msg"    => finalize_args_failure_message(ex, task),
         }.to_json)
         return apply_changed_failed_when(task, result, vars_context, host)
       end
