@@ -651,9 +651,27 @@ for case_file in "${cases[@]}"; do
     # prefixed with a line number ("37         msg: \"V2b failed=...\""),
     # which would otherwise double-extract the PREVIOUS debug label with
     # its raw unrendered template and show as a phantom divergence.
+    # The awk pass then rejoins krikri's multi-line msg rendering: a
+    # multi-line msg prints its continuation lines 2-space-indented
+    # ("  T1 failed=True msg=first line" / "  second line"), while real
+    # keeps the whole msg on one JSON line with a literal \n (which the
+    # sed below turns into the same " | " separator) - without the
+    # rejoin, only the first line of every wrapped krikri msg got
+    # extracted and every multi-line message showed as a phantom
+    # divergence. 4-space-indented lines (real's JSON, krikri's nested
+    # detail dumps) are never continuation lines; records reset at TASK
+    # headers so a failed task's own "  Message: ..." detail can never
+    # bleed into a later label.
     sed -E '/^[0-9]+[[:space:]]/d' "$1" \
+      | awk '
+          /^TASK \[/                          { if (open != "") print open; open = ""; next }
+          /^  [A-Z]+[0-9]+[a-c]? [a-zA-Z_]+=/ { if (open != "") print open; open = substr($0, 3); next }
+          /^  [^ ]/                           { if (open != "") open = open " | " substr($0, 3); next }
+                                              { if (open != "") { print open; open = "" }; print }
+          END                                 { if (open != "") print open }
+        ' \
       | grep -oE '\b[A-Z]+[0-9]+[a-c]? [a-zA-Z_]+=.*' \
-      | sed -E 's/\\\\/\x01/g; s/\\n/ | /g; s/\\t/\t/g; s/\x01/\\/g; s/\\"/"/g; s/"\}?(,)?$//; s/[[:space:]]*\*+[[:space:]]*$//; s/=[^ ]*[0-9]{2,6}\.[0-9]{4}-[0-9]{2}-[0-9]{2}@[0-9:]{8}~/=<backup-path>/g; s/Valid booleans include:.*/Valid booleans include: <booleans>/g'
+      | sed -E 's/\\\\/\x01/g; s/\\n/ | /g; s/\\t/\t/g; s/\x01/\\/g; s/\\"/"/g; s/"\}?(,)?$//; s/[[:space:]]*\*+[[:space:]]*$//; s/=[^ ]*[0-9]{2,6}\.[0-9]{4}-[0-9]{2}-[0-9]{2}@[0-9:]{8}~/=<backup-path>/g; s/Valid booleans include:.*/Valid booleans include: <booleans>/g; s/on [0-9a-f]+.s Python [^ ,.]+/on <hostname>.s Python <python>/g'
   }
   extract "$RESULTS/${case_name}_real.log" > "$msgs_a"
   extract "$RESULTS/${case_name}_krikri.log" > "$msgs_b"
