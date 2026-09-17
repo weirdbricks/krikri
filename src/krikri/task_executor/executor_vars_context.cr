@@ -1372,6 +1372,81 @@ module Krikri
       result
     end
 
+    # The msg real Ansible produces when a task-arg templating failure
+    # (strict-undefined during module-arg finalization) fails the task -
+    # NOT the bare inner error text. Real wraps every
+    # AnsibleUndefinedVariable with "The task includes an option with an
+    # undefined variable. The error was: <text>. <text>" (the doubled
+    # copy is real's own message+orig_exc concatenation), then appends
+    # its AnsibleError-obj context: the offending task's source location
+    # from the playbook YAML and the surrounding lines with a caret.
+    # Live-captured from real ansible-core 2.14 (podman-diff
+    # set_fact_edge_cases S1):
+    #
+    #   "The task includes an option with an undefined variable. The
+    #   error was: 'undefined_source_var' is undefined.
+    #   'undefined_source_var' is undefined\n\nThe error appears to be
+    #   in '/work/case.yml': line 10, column 7, but may\nbe elsewhere in
+    #   the file depending on the exact syntax problem.\n\nThe offending
+    #   line appears to be:\n\n  tasks:\n    - name: \"S1 ...\"\n      ^ here\n"
+    #
+    # The location block is best-effort: the parser doesn't track
+    # per-task source positions, so the task is located by scanning the
+    # playbook file for its `- name:` line (or its module key line when
+    # nameless) - tasks defined in role/include files report the
+    # playbook file's block only when that search happens to find them,
+    # and otherwise get the prefix without the context. Non-undefined
+    # errors (lookup failures etc.) and already-wrapped environment:/
+    # name: keyword errors keep their own real-verified wording.
+    private def finalize_args_failure_message(ex : Exception, task : Task) : String
+      msg = ex.message || "Failed to resolve task arguments"
+      return msg unless ex.is_a?(UndefinedVariableError)
+      return msg if msg.starts_with?("Error processing keyword") || msg.starts_with?("Task failed:")
+
+      base = "The task includes an option with an undefined variable. The error was: #{msg}. #{msg}"
+      base + task_arg_error_context(task)
+    end
+
+    private def task_arg_error_context(task : Task) : String
+      path = @playbook_file
+      return "" unless path && File.file?(path)
+
+      lines = File.read_lines(path)
+      target_idx = nil
+      lines.each_with_index do |line, idx|
+        stripped = line.strip
+        if (name_match = stripped.match(/\A-\s*name:\s*(.+)\z/)) &&
+           name_match[1].strip.gsub(/\A["']|["']\z/, "") == task.name
+          target_idx = idx
+          break
+        end
+      end
+      unless target_idx
+        # Nameless task: real points at the module-key line the same way
+        # ("    - <module>:"), first key column of the task's mapping.
+        lines.each_with_index do |line, idx|
+          if line.strip == "- #{task.module_name}:"
+            target_idx = idx
+            break
+          end
+        end
+      end
+      return "" unless target_idx
+
+      target_line = lines[target_idx].chomp
+      column = target_line.size - target_line.lstrip.size + 3
+      prev_line = target_idx > 0 ? lines[target_idx - 1].chomp : nil
+
+      String.build do |io|
+        io << "\n\nThe error appears to be in '" << File.expand_path(path) << "': line " << (target_idx + 1)
+        io << ", column " << column << ", but may\nbe elsewhere in the file depending on the exact syntax problem."
+        io << "\n\nThe offending line appears to be:\n\n"
+        io << prev_line << "\n" if prev_line
+        io << target_line << "\n"
+        io << (" " * (column - 1)) << "^ here\n"
+      end
+    end
+
     # environment: - strict-undefined substitution for both accepted
     # forms, meant to run inside the same protected "finalization of task
     # args" block as substitute_task_params so a referenced-but-undefined

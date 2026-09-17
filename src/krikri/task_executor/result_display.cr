@@ -24,13 +24,13 @@ module Krikri
     # Display task result with appropriate formatting.
     # item_label is set for looped tasks, rendering `ok: [host] => (item=x)`
     # to match how Ansible annotates per-iteration output.
-    def self.display_result(host : Host, result : JSON::Any, diff_mode : Bool, item_label : String? = nil, ignore_errors : Bool = false, no_log : Bool = false) : Nil
+    def self.display_result(host : Host, result : JSON::Any, diff_mode : Bool, item_label : String? = nil, ignore_errors : Bool = false, no_log : Bool = false, module_name : String? = nil) : Nil
       TimingProfile.measure("display.result", "display") do
-        display_result_measured(host, result, diff_mode, item_label, ignore_errors, no_log)
+        display_result_measured(host, result, diff_mode, item_label, ignore_errors, no_log, module_name)
       end
     end
 
-    private def self.display_result_measured(host : Host, result : JSON::Any, diff_mode : Bool, item_label : String? = nil, ignore_errors : Bool = false, no_log : Bool = false) : Nil
+    private def self.display_result_measured(host : Host, result : JSON::Any, diff_mode : Bool, item_label : String? = nil, ignore_errors : Bool = false, no_log : Bool = false, module_name : String? = nil) : Nil
       changed = result["changed"]?.try(&.as_bool) || false
       failed = Krikri.result_failed_flag(result)
       msg = result["msg"]?.try(&.as_s) || ""
@@ -76,7 +76,26 @@ module Krikri
       # against real ansible-core 2.19.4 (quiet success prints a bare
       # `ok:` line; quiet failure output is unchanged).
       quiet_success = result["_ansible_quiet"]?.try(&.as_bool) || false
-      if !failed && msg && !msg.empty? && !quiet_success && !["ok", "Command executed successfully", "File already exists with identical content"].includes?(msg)
+      # Real Ansible displays a successful debug task as a JSON dump, so
+      # a msg CONTAINING newlines arrives as ONE physical line with \n
+      # escapes - this engine's raw multi-line display could never line
+      # up with anything comparing real's single-line form (podman-diff
+      # set_fact_edge_cases S1: identical msg content, unmatchable
+      # shape). Keep the established raw-text display (single-line msgs
+      # print exactly as before), but for a debug result escape the
+      # newlines onto one line the way real's dump does. A var: result
+      # (no msg, payload under the var-name key) dumps as real does.
+      if !failed && module_name.try(&.ends_with?("debug")) && result["_ansible_verbose_always"]?.try(&.as_bool)
+        if msg.empty?
+          cleaned = clean_for_display(result)
+          if h = cleaned.as_h?
+            h.delete("changed")
+          end
+          puts dump_pretty(cleaned)
+        else
+          puts "  #{msg.gsub("\n", "\\n")}".colorize(:white)
+        end
+      elsif !failed && msg && !msg.empty? && !quiet_success && !["ok", "Command executed successfully", "File already exists with identical content"].includes?(msg)
         # Format multi-line messages nicely
         if msg.includes?("\n")
           puts msg.split("\n").map { |line| "  #{line}" }.join("\n")

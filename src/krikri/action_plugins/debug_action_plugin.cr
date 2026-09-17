@@ -32,7 +32,12 @@ module Krikri
       current_verbosity = @params["_verbosity"]?.try(&.to_i) || 0
 
       if current_verbosity < required_verbosity
-        return ActionResult.final(result_json(changed: false, failed: false, msg: "skipped", extra: {"skipped" => JSON::Any.new(true)}))
+        # Real Ansible's registered result for a verbosity-skipped debug
+        # carries skipped (and skip_reason) but NO msg key at all (live:
+        # podman-diff debug_edge_cases D3 - a follow-up
+        # `d3.msg | default('none')` prints 'none' on real). The old
+        # msg: "skipped" leaked into the registered var.
+        return ActionResult.final(result_json(changed: false, failed: false, msg: "", extra: {"skipped" => JSON::Any.new(true)}))
       end
 
       # Real ansible.builtin.debug documents msg as defaulting to
@@ -46,24 +51,23 @@ module Krikri
         return ActionResult.final(result_json(changed: false, failed: true, msg: "msg or var parameter required"))
       end
 
-      debug_output = if var_name
-                       var_value = VariableSubstitutor::VariableLookup.new(@vars).resolve(var_name)
-                       if var_value
-                         "#{var_name}: #{format_value(var_value)}"
-                       else
-                         "#{var_name}: VARIABLE IS NOT DEFINED!"
-                       end
-                     else
-                       msg.to_s
-                     end
+      # Real debug's var: result carries the value under the VARIABLE
+      # NAME key, not under msg (live: podman-diff debug_edge_cases
+      # D1/D4 - `d1.msg` is undefined on real, `d1[varname]` is the
+      # value). An unresolvable var: name maps to the literal string
+      # "VARIABLE IS NOT DEFINED!" under that same key and the task
+      # still SUCCEEDS. _ansible_verbose_always keeps the display dump
+      # unconditional (see ResultDisplay's empty-msg branch).
+      if var_name
+        var_value = VariableSubstitutor::VariableLookup.new(@vars).resolve(var_name)
+        var_output = var_value ? format_value(var_value) : "VARIABLE IS NOT DEFINED!"
+        return ActionResult.final(result_json(false, false, "", {
+          "_ansible_verbose_always" => JSON::Any.new(true),
+          var_name                  => JSON::Any.new(var_output),
+        }))
+      end
 
-      # Real debug tags its success result _ansible_verbose_always (the
-      # key that makes the stdout callbacks dump its JSON at any
-      # verbosity, and what flips oneline/tree's indent to 4) - the
-      # executor strips it before register:, and ResultDisplay strips it
-      # from the displayed dump, so only oneline/tree's indent behavior
-      # ever sees it.
-      ActionResult.final(result_json(false, false, debug_output, {"_ansible_verbose_always" => JSON::Any.new(true)}))
+      ActionResult.final(result_json(false, false, msg.to_s, {"_ansible_verbose_always" => JSON::Any.new(true)}))
     end
 
     private def format_array(value : JSON::Any) : String

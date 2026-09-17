@@ -522,7 +522,7 @@ module Krikri
         result = JSON.parse({
           "changed" => false,
           "failed"  => true,
-          "msg"     => ex.message || "Failed to resolve task arguments",
+          "msg"     => finalize_args_failure_message(ex, handler),
         }.to_json)
         result = apply_changed_failed_when(handler, result, vars_context, host)
         if register_name = handler.register
