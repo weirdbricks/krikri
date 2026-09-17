@@ -58,15 +58,31 @@ module Krikri
       # and an absolute `executable:` override identically to how the
       # shell itself will later resolve `npm_binary` in #run_npm's own
       # command string.
-      bin = npm_binary
-      check = remote_exec("which #{bin}")
-      if check[:exit_code] != 0
-        return PluginResult.new(changed: false, failed: true,
-          msg: "Failed to find required executable \"#{bin}\" in paths: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
-      end
-
       global = true?(@params["global"]?)
       path = @params["path"]?
+
+      bin = npm_binary
+      if (exe = @params["executable"]?) && exe.includes?("/")
+        # Real npm runs an `executable:` PATH VERBATIM (community.general
+        # npm: `kwargs["executable"].split(" ")` bypasses get_bin_path;
+        # CmdRunner only re-resolves a bare name) - so a missing path
+        # surfaces as the raw OSError from run_command, failed with
+        # rc=errno and the command string (podman-diff npm_edge_cases
+        # N7), NOT the get_bin_path wording. The `which` pre-check
+        # below stays for the bare-name/default case only.
+        check = remote_exec("test -e #{exe}")
+        if check[:exit_code] != 0
+          return PluginResult.new(changed: false, failed: true,
+            msg: "[Errno 2] No such file or directory: b'#{exe}'",
+            rc: 2, cmd: "#{exe} list --json --long#{global ? " --global" : ""}")
+        end
+      else
+        check = remote_exec("which #{bin}")
+        if check[:exit_code] != 0
+          return PluginResult.new(changed: false, failed: true,
+            msg: "Failed to find required executable \"#{bin}\" in paths: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
+        end
+      end
 
       version = @params["version"]?
       name_version = version ? "#{name}@#{version}" : name
@@ -88,15 +104,19 @@ module Krikri
     # Validate the parameter combinations; returns the failure result or
     # nil when the arguments are valid.
     private def validate_npm_args(state : String, name : String?) : PluginResult?
-      # Real Ansible's own arg-spec only requires `name:` when `state:
+      # Real Ansible's own arg-spec requires `name:` when `state:
       # absent` (uninstalling with no target makes no sense) - `state:
       # present`/`latest` with no name installs from the local
       # package.json in `path`/cwd, matching plain `npm install`.
-      return PluginResult.new(changed: false, failed: true, msg: "name is required") if state == "absent" && !name
+      # Both messages are real's own required_if wording (community.general
+      # npm argument_spec: `required_if=[("state", "absent", ["name"]),
+      # ("global", False, ["path"])]` - "<option> is <value> but all of
+      # the following are missing: <missing>").
+      return PluginResult.new(changed: false, failed: true, msg: "state is absent but all of the following are missing: name") if state == "absent" && !name
 
       global = true?(@params["global"]?)
       path = @params["path"]?
-      return PluginResult.new(changed: false, failed: true, msg: "path is required when global is false") if !global && !path
+      return PluginResult.new(changed: false, failed: true, msg: "global is False but all of the following are missing: path") if !global && !path
 
       nil
     end
