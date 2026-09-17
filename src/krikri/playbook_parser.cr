@@ -3765,8 +3765,12 @@ module Krikri
         params["cmd"] = cmd
         special.each { |key, value| params[key] = value }
       else
-        parse_inline_kv_params(raw_args).each { |key, value| params[key] = value }
-        params["_raw_params"] = raw_args
+        # Same "_raw_params" rule as the playbook-task string branch of
+        # #parse_module_params below: only when leftover non-kv tokens
+        # exist, never for a fully key=value string.
+        kv_params, raw_leftover = parse_inline_kv_params(raw_args)
+        kv_params.each { |key, value| params[key] = value }
+        params["_raw_params"] = raw_leftover if raw_leftover
       end
 
       # `that=<condition>` on an ad-hoc `-a` string is a single bare
@@ -3972,8 +3976,19 @@ module Krikri
           params["cmd"] = cmd
           special.each { |key, value| params[key] = value }
         else
-          parse_inline_kv_params(yaml.as_s).each { |key, value| params[key] = value }
-          params["_raw_params"] = yaml.as_s
+        # Real Ansible's parse_kv (the function this mirrors for
+        # non-command modules) only puts "_raw_params" in the result when
+        # the string actually contained tokens with no "=" (leftover
+        # free-form text); a fully key=value string
+        # (`pkg=unzip={{ v }} state=present`, azavea.unzip's own
+        # "Install unzip" task, round-found) produces NO "_raw_params" at
+        # all. Setting it unconditionally made every strictly-validating
+        # module (apt first among them) reject the task with "Unsupported
+        # parameters ...: _raw_params" even though both real params had
+        # been parsed fine.
+        kv_params, raw_leftover = parse_inline_kv_params(yaml.as_s)
+        kv_params.each { |key, value| params[key] = value }
+        params["_raw_params"] = raw_leftover if raw_leftover
         end
       else
         # Other types
@@ -4005,14 +4020,22 @@ module Krikri
       parse_module_params(YAML::Any.new(s), module_name)
     end
 
-    private def self.parse_inline_kv_params(s : String) : Hash(String, String)
+    # Returns the key=value params plus, as a second tuple element, the
+    # leftover free-form text (tokens with no "=" - real Ansible's
+    # parse_kv raw_params list, joined back with single spaces) or nil
+    # when every token was a key=value pair.
+    private def self.parse_inline_kv_params(s : String) : {Hash(String, String), String?}
       params = Hash(String, String).new
+      raw_tokens = [] of String
       split_shell_like(s).each do |token, _end_offset|
         key, sep, value = token.partition('=')
-        next if sep.empty? || key.empty?
-        params[key] = unquote_inline_value(value)
+        if sep.empty? || key.empty?
+          raw_tokens << token
+        else
+          params[key] = unquote_inline_value(value)
+        end
       end
-      params
+      {params, raw_tokens.empty? ? nil : raw_tokens.join(" ")}
     end
 
     # Returns each whitespace-delimited token alongside its END offset
