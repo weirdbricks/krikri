@@ -61,8 +61,8 @@ module Krikri
                           "masked", "daemon_reload", "daemon-reload",
                           "daemon_reexec", "daemon-reexec", "force",
                           "no_block", "scope"}
-      internal_keys = {"_ansible_check_mode", "_ansible_diff", "_verbosity", "_environment"}
-      unsupported = @params.keys.reject { |k| supported_params.includes?(k) || internal_keys.includes?(k) }
+      internal_keys = {"_ansible_check_mode", "_ansible_diff", "_module_name", "_verbosity", "_environment"}
+      unsupported = @params.keys.reject { |k| supported_params.includes?(k) || internal_keys.includes?(k) || k.starts_with?("_") }
       unless unsupported.empty?
         return PluginResult.new(
           changed: false,

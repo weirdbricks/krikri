@@ -6581,6 +6581,493 @@ record, not this batch's own timing snapshot.
 | `ypsman.aws_cli` | ubuntu | ✅ clean. Times: cold py 7.55s vs cr 7.02s; warm py 5.47s vs cr 1.45s. |
 | `zorun.garage` | ubuntu | ✅ clean. Times: cold py 4.05s vs cr 4.34s; warm py 2.53s vs cr 0.28s. |
 
+## Round 825000-825388 (2026-09-18): 389-role Galaxy batch (ubuntu+rocky)
+
+A `krikri-role-tester` round, 389 roles run Atlantic.net-only
+(11 pairs). `CLEAN=303 DIVERGENT=72 BLOCKED=14` (11 Galaxy-404s,
+2 TF_APPLY_FAILED, 1 further infra). Triage deduped the 72
+divergences into three confirmed krikri bugs, all fixed in
+`0.9.1152`/`0.9.1153` and confirmed on real hosts by the
+47-role re-run in round 826000-826046 (45 CLEAN, 2 remaining
+divergences that hit real ansible-playbook identically):
+
+1. **`_module_name` leaked to module arg validation** (~44 roles):
+   the executor injects `_module_name` into module params (for
+   debug/check-mode echo), but yum/dnf/systemd/docker_image_build
+   each hand-rolled an internal-key exclusion list that predated it -
+   all four now reject any `_`-prefixed key generically.
+2. **`authorized_key` didn't fetch URL keys** (3 roles): real
+   ansible.posix.authorized_key fetches http/https/ftp/file key URLs
+   before line-splitting; krikri failed with "invalid key specified:
+   https://...". Now fetched, with regression specs.
+3. **`ansible_default_ipv4` lacked `network`/`netmask`** (1 role):
+   crazikpl.blackbox_exporter's
+   `{{ ansible_default_ipv4.network }}/{{ ansible_default_ipv4.netmask }}`
+   render failed; both keys are now gathered from the default-route
+   interface's inet line (live-verified spec).
+
+The remaining divergences are missing modules (community.docker/
+os_*/win_* - known limits), role-side gaps that fail real
+ansible-playbook identically (opentelekomcloud.security_group's
+undefined `rules`, ecgalaxy.php's `php_version[:3]` conditional,
+libre_ops.multi_redis's unsupported `systemd: status=` param), and a
+few one-offs and `when`-evaluation skip-count differences (per-role
+rows below).
+
+| Role | OS | Status |
+|---|---|---|
+| `weareinteractive.hosts` | rocky | ✅ clean. Times: cold py 6.27s vs cr 17.75s; warm py 5.20s vs cr 0.23s. |
+| `torian.python` | rocky | ✅ clean. Times: cold py 0.44s vs cr 0.01s; warm py 0.47s vs cr 0.01s. |
+| `openmicroscopy.openstack-volume-storage` | rocky | ❌ divergent - ✗ Playbook execution completed with unavailable modules: os_volume, os_server_volume Times: cold py 3.86s vs cr 10.09s; warm py 2.60s vs cr 0.28s. |
+| `darkwizard242.helm` | ubuntu | ✅ clean. Times: cold py 9.44s vs cr 6.48s; warm py 7.71s vs cr 2.56s. |
+| `robertdebock.mount` | ubuntu | ✅ clean. Times: cold py 5.09s vs cr 5.39s; warm py 3.08s vs cr 0.49s. |
+| `Rheinwerk.install_root_ca_certs` | ubuntu | ✅ clean. Times: cold py 9.73s vs cr 5.34s; warm py 6.12s vs cr 0.53s. |
+| `githubixx.etcd` | ubuntu | ✅ clean. Times: cold py 16.17s vs cr 5.12s; warm py 15.41s vs cr 0.78s. |
+| `olipinski.smartd` | ubuntu | ✅ clean. Times: cold py 21.00s vs cr 8.03s; warm py 9.57s vs cr 0.57s. |
+| `labpositiva.supervisor` | rocky | ✅ clean. Times: cold py 0.45s vs cr 0.01s; warm py 0.48s vs cr 0.01s. |
+| `rubyisbeautiful.multi-app` | rocky | ✅ clean. Times: cold py 3.88s vs cr 9.80s; warm py 2.60s vs cr 0.34s. |
+| `sansible_datadog` | ubuntu | ❌ BLOCKED: TF_APPLY_FAILED |
+| `openmicroscopy.munin` | rocky | ✅ clean. Times: cold py 8.68s vs cr 16.57s; warm py 8.71s vs cr 0.36s. |
+| `yauh.java8` | ubuntu | ✅ clean. Times: cold py 36.21s vs cr 36.18s; warm py 4.76s vs cr 1.44s. |
+| `tinyblargon.cpu_scaling_governor` | ubuntu | ✅ clean. Times: cold py 6.17s vs cr 4.12s; warm py 4.41s vs cr 0.66s. |
+| `Oefenweb.pycharm` | ubuntu | ✅ clean. Times: cold py 153.87s vs cr 149.52s; warm py 5.77s vs cr 0.77s. |
+| `benjamin-smith.ondrej-php-repo` | ubuntu | ✅ clean. Times: cold py 39.68s vs cr 34.00s; warm py 4.99s vs cr 0.42s. |
+| `dynatrace.Dynatrace-Agent` | rocky | ✅ clean. Times: cold py 0.46s vs cr 0.01s; warm py 0.46s vs cr 0.01s. |
+| `volker-raschek.certificate_authority` | rocky | ❌ divergent -  Times: cold py 66.82s vs cr 16.11s; warm py 62.66s vs cr 1.90s. |
+| `rolehippie.mdadm` | rocky | ✅ clean. Times: cold py 11.09s vs cr 24.23s; warm py 8.76s vs cr 0.34s. |
+| `ecgalaxy.php` | rocky | ❌ divergent - Message: Unsupported parameters for (ansible.builtin.yum) module: _module_name. Supporte Times: cold py 66.88s vs cr 299.73s; warm py 32.72s vs cr 283.92s. |
+| `badsectorlabs.ludus_elastic_container` | ubuntu | ✅ clean. Times: cold py 73.75s vs cr 88.67s; warm py 17.94s vs cr 0.64s. |
+| `phil_avery.og_oec` | rocky | ✅ clean. Times: cold py 8.05s vs cr 10.56s; warm py 6.96s vs cr 0.38s. |
+| `nwalke.prometheus-rabbitmq-exporter` | ubuntu | ✅ clean. Times: cold py 24.48s vs cr 11.95s; warm py 16.83s vs cr 0.68s. |
+| `deekayen.alremote` | ubuntu | ✅ clean. Times: cold py 0.46s vs cr 0.01s; warm py 0.49s vs cr 0.01s. |
+| `opsta.nexus` | rocky | ✅ clean. Times: cold py 17.58s vs cr 17.51s; warm py 10.72s vs cr 3.44s. |
+| `PolarisAlpha.RHEL7-STIG` | rocky | ✅ clean. Times: cold py 5.16s vs cr 12.55s; warm py 3.42s vs cr 0.39s. |
+| `gantsign.pwquality` | ubuntu | ✅ clean. Times: cold py 16.76s vs cr 8.32s; warm py 8.03s vs cr 0.49s. |
+| `escalate.cron` | ubuntu | ✅ clean. Times: cold py 39.43s vs cr 33.94s; warm py 11.02s vs cr 4.04s. |
+| `juju4.harden_sysctl` | rocky | ✅ clean. Times: cold py 55.62s vs cr 13.54s; warm py 52.97s vs cr 1.74s. |
+| `lucasmaurice.users` | rocky | ✅ FIXED (0.9.1152/0.9.1153): Message: invalid key specified: https://github.com/bob.keys Confirmed CLEAN in round 826000. Times: cold py 20.98s vs cr 11.03s; warm py 18.82s vs cr 0.64s. Confirm-round times: cold py 16.66s vs cr 5.16s; warm py 15.54s vs cr 0.86s. |
+| `mrlesmithjr.mongodb` | rocky | ✅ FIXED (0.9.1152/0.9.1153): Message: Unsupported parameters for (ansible.builtin.yum) module: _module_name. Supporte Confirmed CLEAN in round 826000. Times: cold py 62.88s vs cr 29.84s; warm py 40.24s vs cr 10.71s. Confirm-round times: cold py 26.91s vs cr 20.01s; warm py 25.05s vs cr 14.38s. |
+| `thulium_drake.sshd` | rocky | ✅ clean. Times: cold py 15.15s vs cr 20.03s; warm py 10.83s vs cr 0.46s. |
+| `freehck.disable_swap` | ubuntu | ✅ clean. Times: cold py 4.13s vs cr 4.05s; warm py 3.22s vs cr 0.36s. |
+| `hudecof.grub-password` | rocky | ✅ clean. Times: cold py 0.47s vs cr 0.01s; warm py 0.51s vs cr 0.01s. |
+| `manala.docker` | ubuntu | ✅ clean. Times: cold py 37.88s vs cr 35.65s; warm py 5.67s vs cr 1.21s. |
+| `darkwizard242.uget` | ubuntu | ✅ clean. Times: cold py 45.17s vs cr 68.44s; warm py 6.70s vs cr 3.65s. |
+| `fubarhouse.curl` | rocky | ✅ clean. Times: cold py 0.47s vs cr 0.01s; warm py 0.48s vs cr 0.01s. |
+| `ANTS-Framework.linux_adbinding` | rocky | ✅ clean. Times: cold py 5.02s vs cr 10.36s; warm py 5.35s vs cr 0.46s. |
+| `tinyblargon.certbot` | ubuntu | ✅ clean. Times: cold py 33.86s vs cr 39.75s; warm py 6.72s vs cr 0.97s. |
+| `jtprogru_hosts` | ubuntu | ❌ BLOCKED: TF_APPLY_FAILED |
+| `pluggero.i3wm` | ubuntu | ✅ clean. Times: cold py 170.28s vs cr 133.77s; warm py 25.36s vs cr 2.30s. |
+| `trevorr.mysql` | rocky | ✅ clean. Times: cold py 3.72s vs cr 9.67s; warm py 2.81s vs cr 0.33s. |
+| `juju4.gpgkey_generate` | rocky | ✅ FIXED (0.9.1152/0.9.1153): Message: Unsupported parameters for (ansible.builtin.dnf) module: _module_name. Supporte Confirmed CLEAN in round 826000. Times: cold py 84.61s vs cr 31.06s; warm py 44.67s vs cr 11.97s. Confirm-round times: cold py 65.47s vs cr 47.61s; warm py 22.86s vs cr 2.62s. |
+| `gantsign.hub` | rocky | ✅ clean. Times: cold py 53.61s vs cr 44.24s; warm py 39.10s vs cr 1.00s. |
+| `ryandaniels.iptables_docker` | rocky | ✅ clean. Times: cold py 4.85s vs cr 17.11s; warm py 3.64s vs cr 0.34s. |
+| `openmicroscopy.docker-tools` | rocky | ✅ FIXED (0.9.1152/0.9.1153): Message: Unsupported parameters for (ansible.builtin.dnf) module: _module_name. Supporte Confirmed CLEAN in round 826000. Times: cold py 25.26s vs cr 16.61s; warm py 16.59s vs cr 0.48s. Confirm-round times: cold py 11.23s vs cr 4.28s; warm py 11.75s vs cr 0.43s. |
+| `ohtomi.jenkins2` | rocky | ✅ clean. Times: cold py 0.52s vs cr 0.01s; warm py 0.50s vs cr 0.01s. |
+| `nephelaiio.acme_certificate_route53` | rocky | ✅ FIXED (0.9.1152/0.9.1153): Message: Unsupported parameters for (ansible.builtin.yum) module: _module_name. Supporte Confirmed CLEAN in round 826000. Times: cold py 11.82s vs cr 51.29s; warm py 7.08s vs cr 40.74s. Confirm-round times: cold py 62.98s vs cr 45.39s; warm py 60.44s vs cr 41.91s. |
+| `youbond.nginx` | rocky | ✅ clean. Times: cold py 0.50s vs cr 0.01s; warm py 0.49s vs cr 0.01s. |
+| `rubyisbeautiful.git-deployable-app` | rocky | ✅ clean. Times: cold py 4.42s vs cr 10.24s; warm py 2.81s vs cr 0.22s. |
+| `ccdc.cpp_troubleshooting_tools` | rocky | ✅ clean. Times: cold py 4.15s vs cr 12.53s; warm py 2.92s vs cr 0.27s. |
+| `nephelaiio.pyenv` | rocky | ✅ FIXED (0.9.1152/0.9.1153): Message: Unsupported parameters for (ansible.builtin.yum) module: _module_name. Supporte Confirmed CLEAN in round 826000. Times: cold py 29.11s vs cr 12.69s; warm py 8.85s vs cr 0.32s. Confirm-round times: cold py 65.69s vs cr 66.15s; warm py 7.66s vs cr 3.89s. |
+| `darkwizard242.lens` | ubuntu | ✅ clean. Times: cold py 27.42s vs cr 28.05s; warm py 12.53s vs cr 9.34s. |
+| `elan.monitoring_prometheus` | rocky | ✅ clean. Times: cold py 33.69s vs cr 24.37s; warm py 26.78s vs cr 8.88s. |
+| `andrewrothstein.matchbox-config` | rocky | ✅ clean. Times: cold py 8.20s vs cr 11.03s; warm py 5.09s vs cr 0.38s. |
+| `dgibbs64.postfix_send_only_relay` | ubuntu | ✅ clean. Times: cold py 3.63s vs cr 5.52s; warm py 2.53s vs cr 0.37s. |
+| `escalate.luxtronik` | ubuntu | ✅ clean. Times: cold py 8.61s vs cr 4.45s; warm py 8.22s vs cr 0.37s. |
+| `grycap.zookeeper` | rocky | ✅ FIXED (0.9.1152/0.9.1153): Message: Unsupported parameters for (ansible.builtin.yum) module: _module_name. Supporte Confirmed CLEAN in round 826000. Times: cold py 626.00s vs cr 23.72s; warm py 32.83s vs cr 1.36s. Confirm-round times: cold py 13.00s vs cr 5.69s; warm py 10.66s vs cr 1.45s. |
+| `cristian04.cloudwatch_monitoring` | rocky | ✅ clean. Times: cold py 31.18s vs cr 20.45s; warm py 17.55s vs cr 0.41s. |
+| `linux-system-roles.logging` | rocky | ✅ clean. Times: cold py 18.01s vs cr 23.52s; warm py 17.59s vs cr 1.63s. |
+| `gortc.disk` | rocky | ✅ clean. Times: cold py 4.00s vs cr 16.14s; warm py 2.85s vs cr 0.39s. |
+| `diodonfrost.ohmyzsh` | rocky | ✅ clean. Times: cold py 27.02s vs cr 35.38s; warm py 14.19s vs cr 0.69s. |
+| `jtyr.ansible_vmware_vm_provisioning` | rocky | ✅ clean. Times: cold py 3.03s vs cr 22.83s; warm py 4.03s vs cr 0.31s. |
+| `oasis_roles.nmcli_add_addrs` | rocky | ✅ clean. Times: cold py 3.66s vs cr 11.99s; warm py 2.83s vs cr 0.34s. |
+| `oasis_roles.chrony` | rocky | ✅ clean. Times: cold py 11.56s vs cr 20.94s; warm py 8.25s vs cr 0.55s. |
+| `nickdtodd.system-limits` | rocky | ✅ clean. Times: cold py 11.51s vs cr 10.18s; warm py 8.15s vs cr 0.34s. |
+| `supertarto.php` | ubuntu | ✅ clean. Times: cold py 4.26s vs cr 8.06s; warm py 3.58s vs cr 0.34s. |
+| `bennojoy.network_interface` | rocky | ✅ clean. Times: cold py 6.18s vs cr 10.11s; warm py 5.50s vs cr 0.40s. |
+| `iquzart.traefik` | ubuntu | ✅ clean. Times: cold py 0.45s vs cr 0.01s; warm py 0.45s vs cr 0.01s. |
+| `manala.shorewall` | ubuntu | ✅ clean. Times: cold py 46.79s vs cr 45.98s; warm py 6.20s vs cr 0.47s. |
+| `oasis_roles.passwordless_ssh` | rocky | ❌ divergent - Message: invalid key specified: undefined Times: cold py 3.86s vs cr 9.88s; warm py 2.56s vs cr 0.38s. |
+| `tinyblargon.nginx` | ubuntu | ✅ FIXED (0.9.1152/0.9.1153): Message: Unsupported parameters for (systemd) module: _module_name. Supported parameters Confirmed CLEAN in round 826000. Times: cold py 56.69s vs cr 28.65s; warm py 11.80s vs cr 0.88s. Confirm-round times: cold py 33.98s vs cr 83.52s; warm py 7.70s vs cr 0.71s. |
+| `Rheinwerk.scollector` | ubuntu | ✅ clean. Times: cold py 6.98s vs cr 5.26s; warm py 4.87s vs cr 1.52s. |
+| `iroquoisorg.redis` | ubuntu | ✅ clean. Times: cold py 0.48s vs cr 0.01s; warm py 0.45s vs cr 0.01s. |
+| `naftulikay.base` | rocky | ✅ clean. Times: cold py 3.59s vs cr 20.41s; warm py 2.79s vs cr 0.29s. |
+| `elan.secure_sshd` | rocky | ✅ clean. Times: cold py 14.06s vs cr 15.05s; warm py 12.03s vs cr 0.43s. |
+| `cafelungo.foxpass` | rocky | ✅ clean. Times: cold py 0.46s vs cr 0.01s; warm py 0.48s vs cr 0.01s. |
+| `wunzeco.awsagent` | rocky | ✅ clean. Times: cold py 10.50s vs cr 14.15s; warm py 11.44s vs cr 0.44s. |
+| `manala.systemd` | ubuntu | ✅ clean. Times: cold py 3.59s vs cr 5.55s; warm py 3.34s vs cr 0.41s. |
+| `darkwizard242.containerd` | ubuntu | ✅ clean. Times: cold py 16.20s vs cr 13.45s; warm py 10.28s vs cr 4.34s. |
+| `ccdc.expand_artifactory_archives` | rocky | ✅ clean. Times: cold py 4.64s vs cr 10.88s; warm py 2.67s vs cr 0.34s. |
+| `baztian.asdf` | ubuntu | ❌ divergent - Message: src file does not exist, use "force=yes" if you really want to create the link: Times: cold py 50.93s vs cr 47.95s; warm py 16.66s vs cr 0.84s. |
+| `ccdc.build_machine_desktop_environment` | rocky | ✅ FIXED (0.9.1152/0.9.1153): Message: Unsupported parameters for (ansible.builtin.dnf) module: _module_name. Supporte Confirmed CLEAN in round 826000. Times: cold py 900.01s vs cr 10.73s; warm py 58.73s vs cr 2.21s. Confirm-round times: cold py 29.29s vs cr 26.51s; warm py 8.74s vs cr 3.58s. |
+| `tcharl.ansible_securehost` | rocky | ✅ clean. Times: cold py 0.45s vs cr 0.01s; warm py 1.48s vs cr 0.01s. |
+| `radek_sprta.docker` | ubuntu | ✅ FIXED (0.9.1152/0.9.1153): Message: Unsupported parameters for (systemd) module: _module_name. Supported parameters Confirmed CLEAN in round 826000. Times: cold py 57.41s vs cr 47.72s; warm py 15.24s vs cr 0.64s. Confirm-round times: cold py 71.16s vs cr 60.96s; warm py 15.72s vs cr 0.97s. |
+| `elan.monitoring_blackbox_exporter` | rocky | ❌ divergent - Message: File not found: /etc/blackbox_exporter/blackbox_exporter_version Times: cold py 39.62s vs cr 14.67s; warm py 19.67s vs cr 3.13s. |
+| `galexrt.raid-check` | rocky | ✅ clean. Times: cold py 12.22s vs cr 10.60s; warm py 11.81s vs cr 0.34s. |
+| `iroquoisorg.certbot` | ubuntu | ✅ clean. Times: cold py 72.41s vs cr 68.28s; warm py 49.42s vs cr 34.67s. |
+| `voidquark.el_patching` | rocky | ✅ FIXED (0.9.1152/0.9.1153): Message: Unsupported parameters for (ansible.builtin.dnf) module: _module_name. Supporte Confirmed CLEAN in round 826000. Times: cold py 143.00s vs cr 15.85s; warm py 9.44s vs cr 0.54s. Confirm-round times: cold py 5.98s vs cr 4.33s; warm py 4.72s vs cr 0.64s. |
+| `thulium_drake.subscription_manager` | rocky | ✅ FIXED (0.9.1152/0.9.1153): Message: Unsupported parameters for (ansible.builtin.dnf) module: _module_name. Supporte Confirmed CLEAN in round 826000. Times: cold py 27.37s vs cr 10.30s; warm py 18.10s vs cr 0.54s. Confirm-round times: cold py 6.15s vs cr 4.14s; warm py 4.24s vs cr 0.37s. |
+| `hadenlabs.common` | ubuntu | ✅ clean. Times: cold py 4.16s vs cr 8.51s; warm py 2.72s vs cr 0.34s. |
+| `brpaz.swarm_redis` | ubuntu | ❌ divergent - Message: Failed to execute command: Error executing process: 'docker': No such file or d Times: cold py 7.25s vs cr 53.52s; warm py 6.50s vs cr 45.97s. |
+| `labpositiva.authorization` | rocky | ✅ clean. Times: cold py 0.46s vs cr 0.01s; warm py 0.48s vs cr 0.01s. |
+| `mablanco.antirootkits` | rocky | ✅ clean. Times: cold py 4.01s vs cr 9.49s; warm py 2.94s vs cr 0.23s. |
+| `trainline-eu_ansible_postgresql_role` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
+| `lisael.ansible_traefikee` | ubuntu | ✅ clean. Times: cold py 6.11s vs cr 4.16s; warm py 2.94s vs cr 0.36s. |
+| `iroquoisorg.nginx_vhost` | ubuntu | ✅ clean. Times: cold py 0.45s vs cr 0.01s; warm py 0.45s vs cr 0.01s. |
+| `azavea.jenkins` | ubuntu | ✅ clean. Times: cold py 10.94s vs cr 4.77s; warm py 6.42s vs cr 0.44s. |
+| `linux-system-roles.tlog` | rocky | ✅ clean. Times: cold py 43.70s vs cr 29.89s; warm py 30.49s vs cr 3.60s. |
+| `sansible.nexus` | ubuntu | ✅ clean. Times: cold py 0.45s vs cr 0.01s; warm py 0.45s vs cr 0.01s. |
+| `CSCfi.systemd-journal` | rocky | ✅ FIXED (0.9.1152/0.9.1153): Message: Unsupported parameters for (ansible.builtin.yum) module: _module_name. Supporte Confirmed CLEAN in round 826000. Times: cold py 12.18s vs cr 14.11s; warm py 9.66s vs cr 0.34s. Confirm-round times: cold py 7.04s vs cr 7.53s; warm py 6.17s vs cr 0.38s. |
+| `openmicroscopy.storage-volume-initialise` | rocky | ✅ FIXED (0.9.1152/0.9.1153): Message: Unsupported parameters for (ansible.builtin.dnf) module: _module_name. Supporte Confirmed CLEAN in round 826000. Times: cold py 6.24s vs cr 12.99s; warm py 5.59s vs cr 0.33s. Confirm-round times: cold py 4.71s vs cr 4.00s; warm py 4.30s vs cr 0.44s. |
+| `tag1consulting.borgbackup` | rocky | ✅ FIXED (0.9.1152/0.9.1153): Message: Unsupported parameters for (ansible.builtin.yum) module: _module_name. Supporte Confirmed CLEAN in round 826000. Times: cold py 9.31s vs cr 56.48s; warm py 5.76s vs cr 40.96s. Confirm-round times: cold py 61.47s vs cr 46.57s; warm py 60.88s vs cr 42.42s. |
+| `sourcejedi.rpmfusion_free` | rocky | ✅ clean. Times: cold py 5.13s vs cr 10.33s; warm py 2.74s vs cr 0.28s. |
+| `wunzeco.breakerbox-docker` | rocky | ✅ clean. Times: cold py 6.93s vs cr 10.79s; warm py 6.03s vs cr 0.37s. |
+| `craigpearson.trellis_ca_certificates` | ubuntu | ✅ clean. Times: cold py 5.14s vs cr 7.63s; warm py 4.14s vs cr 0.38s. |
+| `sansible.filebeat` | ubuntu | ✅ clean. Times: cold py 0.47s vs cr 0.01s; warm py 0.47s vs cr 0.01s. |
+| `djungle_io.godaddy_ansible_role` | rocky | ✅ clean. Times: cold py 4.41s vs cr 10.80s; warm py 2.66s vs cr 0.39s. |
+| `labpositiva.uwsgi` | rocky | ✅ clean. Times: cold py 0.46s vs cr 0.01s; warm py 0.47s vs cr 0.01s. |
+| `netresearch.docker_containers` | ubuntu | ✅ clean. Times: cold py 7.22s vs cr 4.23s; warm py 4.68s vs cr 0.43s. |
+| `ussrlongbow_percona_toolkit` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
+| `hurricanehrndz.pam_yubikey` | ubuntu | ✅ clean. Times: cold py 14.28s vs cr 9.35s; warm py 8.18s vs cr 0.41s. |
+| `trfore.mongodb_install` | rocky | ✅ FIXED (0.9.1152/0.9.1153): Message: Unsupported parameters for (ansible.builtin.dnf) module: _module_name. Supporte Confirmed CLEAN in round 826000. Times: cold py 49.22s vs cr 14.57s; warm py 8.29s vs cr 0.51s. Confirm-round times: cold py 103.44s vs cr 65.40s; warm py 21.09s vs cr 11.55s. |
+| `iroquoisorg.tools` | ubuntu | ✅ clean. Times: cold py 188.06s vs cr 93.05s; warm py 37.44s vs cr 7.77s. |
+| `stuvusIT.systemd-udevd` | ubuntu | ✅ clean. Times: cold py 11.15s vs cr 4.28s; warm py 7.02s vs cr 0.38s. |
+| `tinyblargon.qemu_guest_agent` | ubuntu | ✅ clean. Times: cold py 6.18s vs cr 6.12s; warm py 4.19s vs cr 0.35s. |
+| `azmodude.timezone` | rocky | ✅ clean. Times: cold py 7.80s vs cr 9.89s; warm py 5.38s vs cr 0.33s. |
+| `sourcejedi.rpmfusion__impl` | rocky | ✅ clean. Times: cold py 4.46s vs cr 10.12s; warm py 2.85s vs cr 0.30s. |
+| `boutetnico.percona_release` | ubuntu | ✅ clean. Times: cold py 45.20s vs cr 67.50s; warm py 11.02s vs cr 4.74s. |
+| `gantsign.backup` | ubuntu | ✅ clean. Times: cold py 5.87s vs cr 4.32s; warm py 3.95s vs cr 0.54s. |
+| `sansible.newrelic_agent_java` | ubuntu | ✅ clean. Times: cold py 0.45s vs cr 0.01s; warm py 0.50s vs cr 0.01s. |
+| `opentelekomcloud.keypair` | rocky | ❌ divergent - ✗ Playbook execution completed with unavailable modules: os_keypair Times: cold py 1.25s vs cr 13.01s; warm py 5.85s vs cr 0.27s. |
+| `Synehan.os_update` | rocky | ✅ FIXED (0.9.1152/0.9.1153): Message: Unsupported parameters for (ansible.builtin.dnf) module: _module_name. Supporte Confirmed CLEAN in round 826000. Times: cold py 4.33s vs cr 10.52s; warm py 2.78s vs cr 0.39s. Confirm-round times: cold py 318.36s vs cr 347.69s; warm py 33.66s vs cr 7.34s. |
+| `ansibleguy.infra_apache` | ubuntu | ✅ clean. Times: cold py 3.80s vs cr 5.21s; warm py 2.70s vs cr 0.35s. |
+| `nusenu.relayor` | ubuntu | ✅ clean. Times: cold py 5.17s vs cr 4.12s; warm py 4.67s vs cr 0.59s. |
+| `stephdewit.sshca` | ubuntu | ❌ divergent -  Times: cold py 4.42s vs cr 4.47s; warm py 3.10s vs cr 0.33s. |
+| `ctorgalson.vim` | ubuntu | ✅ clean. Times: cold py 14.39s vs cr 7.29s; warm py 12.87s vs cr 1.00s. |
+| `brpaz.swarm_postgres` | ubuntu | ❌ divergent - Message: Failed to execute command: Error executing process: 'docker': No such file or d Times: cold py 59.86s vs cr 151.76s; warm py 23.32s vs cr 91.85s. |
+| `nmusatti.docker_ce` | rocky | ✅ clean. Times: cold py 5.11s vs cr 24.12s; warm py 3.18s vs cr 0.30s. |
+| `ovirt.ovirt-ansible-roles` | rocky | ✅ clean. Times: cold py 4.05s vs cr 19.96s; warm py 2.65s vs cr 0.27s. |
+| `lvps.389ds_replication` | rocky | ❌ divergent - Message: This server is neither a consumer nor a supplier. Check that "dirsrv_replica_ro Times: cold py 4.50s vs cr 23.32s; warm py 2.89s vs cr 0.31s. |
+| `libre_ops.wal2json` | ubuntu | ✅ clean. Times: cold py 49.99s vs cr 69.43s; warm py 15.73s vs cr 1.50s. |
+| `maxhoesel.smb_mount` | ubuntu | ✅ clean. Times: cold py 0.46s vs cr 0.01s; warm py 0.45s vs cr 0.01s. |
+| `deimosfr.kibana` | ubuntu | ✅ clean. Times: cold py 0.44s vs cr 0.01s; warm py 0.46s vs cr 0.01s. |
+| `iroquoisorg.nginx` | ubuntu | ✅ clean. Times: cold py 0.45s vs cr 0.01s; warm py 0.48s vs cr 0.01s. |
+| `iroquoisorg.php_fpm` | ubuntu | ✅ clean. Times: cold py 81.84s vs cr 63.14s; warm py 13.27s vs cr 0.68s. |
+| `zaxos.glusterfs-client-ansible-role` | rocky | ✅ clean. Times: cold py 0.45s vs cr 0.01s; warm py 0.44s vs cr 0.01s. |
+| `gantsign.intellij_jdks` | rocky | ✅ clean. Times: cold py 7.53s vs cr 19.09s; warm py 4.93s vs cr 0.37s. |
+| `MindPointGroup.rhel8_stig` | rocky | ✅ clean. Times: cold py 4.61s vs cr 16.96s; warm py 3.92s vs cr 0.43s. |
+| `robertdebock.systemd` | rocky | ✅ clean. Times: cold py 3.77s vs cr 19.96s; warm py 2.95s vs cr 0.30s. |
+| `robertdebock.desktop` | rocky | ✅ clean. Times: cold py 3.50s vs cr 17.88s; warm py 2.85s vs cr 0.35s. |
+| `openmicroscopy.cli-utils` | rocky | ✅ FIXED (0.9.1152/0.9.1153): Message: Unsupported parameters for (ansible.builtin.yum) module: _module_name. Supporte Confirmed CLEAN in round 826000. Times: cold py 49.68s vs cr 10.03s; warm py 32.50s vs cr 0.37s. Confirm-round times: cold py 6.27s vs cr 3.94s; warm py 4.40s vs cr 0.64s. |
+| `thulium_drake.motd` | ubuntu | ✅ clean. Times: cold py 16.27s vs cr 8.06s; warm py 15.10s vs cr 0.57s. |
+| `oasis_roles.hostname` | rocky | ✅ clean. Times: cold py 7.62s vs cr 13.08s; warm py 6.45s vs cr 0.34s. |
+| `martinmicunda.nodejs` | ubuntu | ✅ clean. Times: cold py 55.11s vs cr 63.71s; warm py 46.24s vs cr 34.99s. |
+| `robertdebock.snmpd` | ubuntu | ✅ clean. Times: cold py 7.51s vs cr 6.99s; warm py 6.61s vs cr 1.43s. |
+| `indigo-dc.cvmfs-client` | ubuntu | ✅ clean. Times: cold py 0.45s vs cr 0.01s; warm py 0.46s vs cr 0.01s. |
+| `razvancrainea.opensips` | rocky | ✅ FIXED (0.9.1152/0.9.1153): Message: Unsupported parameters for (ansible.builtin.dnf) module: _module_name. Supporte Confirmed CLEAN in round 826000. Times: cold py 22.95s vs cr 33.39s; warm py 12.95s vs cr 18.64s. Confirm-round times: cold py 75.80s vs cr 65.64s; warm py 10.84s vs cr 0.90s. |
+| `openmicroscopy.python-pydata` | rocky | ✅ FIXED (0.9.1152/0.9.1153): Message: Unsupported parameters for (ansible.builtin.yum) module: _module_name. Supporte Confirmed CLEAN in round 826000. Times: cold py 25.86s vs cr 16.12s; warm py 8.08s vs cr 0.51s. Confirm-round times: cold py 5.60s vs cr 4.49s; warm py 4.04s vs cr 0.48s. |
+| `l50.sliver` | rocky | ✅ FIXED (0.9.1152/0.9.1153): Message: Unsupported parameters for (ansible.builtin.dnf) module: _module_name. Supporte Confirmed CLEAN in round 826000. Times: cold py 13.22s vs cr 10.18s; warm py 11.97s vs cr 0.30s. Confirm-round times: cold py 179.51s vs cr 153.87s; warm py 239.34s vs cr 187.68s. |
+| `robertdebock.openbao_server` | rocky | ✅ clean. Times: cold py 6.66s vs cr 10.31s; warm py 5.17s vs cr 0.41s. |
+| `azavea.zookeeper` | ubuntu | ✅ clean. Times: cold py 9.63s vs cr 7.36s; warm py 5.50s vs cr 0.53s. |
+| `freehck.var_loader` | ubuntu | ✅ clean. Times: cold py 3.70s vs cr 7.64s; warm py 3.54s vs cr 0.45s. |
+| `me_vlad.wowza` | ubuntu | ✅ clean. Times: cold py 7.03s vs cr 6.81s; warm py 5.31s vs cr 0.74s. |
+| `openmicroscopy.local-accounts` | rocky | ✅ clean. Times: cold py 4.30s vs cr 9.94s; warm py 2.99s vs cr 0.39s. |
+| `ecgalaxy.gopass` | rocky | ✅ clean. Times: cold py 11.18s vs cr 11.34s; warm py 9.13s vs cr 0.88s. |
+| `openmicroscopy.nginx-ssl-selfsigned` | rocky | ✅ FIXED (0.9.1152/0.9.1153): Message: Unsupported parameters for (ansible.builtin.yum) module: _module_name. Supporte Confirmed CLEAN in round 826000. Times: cold py 8.14s vs cr 11.21s; warm py 7.96s vs cr 0.54s. Confirm-round times: cold py 7.02s vs cr 3.85s; warm py 5.54s vs cr 0.46s. |
+| `juliovp01.satellite6-install` | rocky | ✅ clean. Times: cold py 0.47s vs cr 0.01s; warm py 0.44s vs cr 0.01s. |
+| `marvel-nccr.slurm` | ubuntu | ✅ FIXED (0.9.1152/0.9.1153): Message: Unsupported parameters for (systemd) module: _module_name. Supported parameters Confirmed CLEAN in round 826000. Times: cold py 246.96s vs cr 224.55s; warm py 27.08s vs cr 3.73s. Confirm-round times: cold py 218.04s vs cr 222.22s; warm py 24.70s vs cr 4.31s. |
+| `besmirzanaj.ansible_resolv_conf` | rocky | ✅ clean. Times: cold py 8.06s vs cr 11.45s; warm py 5.76s vs cr 0.44s. |
+| `darexsu.firewalld` | ubuntu | ✅ clean. Times: cold py 4.27s vs cr 3.98s; warm py 2.80s vs cr 0.31s. |
+| `idiv_biodiversity.ssh_audited` | rocky | ✅ clean. Times: cold py 6.62s vs cr 14.60s; warm py 5.92s vs cr 0.38s. |
+| `elan.bbb_coturn` | rocky | ✅ FIXED (0.9.1152/0.9.1153): Message: Unsupported parameters for (ansible.builtin.dnf) module: _module_name. Supporte Confirmed CLEAN in round 826000. Times: cold py 65.48s vs cr 15.35s; warm py 25.10s vs cr 0.81s. Confirm-round times: cold py 12.55s vs cr 15.34s; warm py 6.61s vs cr 1.17s. |
+| `fubarhouse.nodejs` | rocky | ✅ clean. Times: cold py 9.35s vs cr 11.19s; warm py 8.86s vs cr 0.45s. |
+| `luizgavalda.gnome_extensions` | rocky | ✅ clean. Times: cold py 6.27s vs cr 11.90s; warm py 4.69s vs cr 0.35s. |
+| `bt5e_hashicorp_packer` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
+| `thulium_drake.ansible_controller` | ubuntu | ✅ clean. Times: cold py 4.37s vs cr 9.37s; warm py 2.54s vs cr 0.36s. |
+| `indigo-dc.galaxycloud` | rocky | ✅ clean. Times: cold py 0.49s vs cr 0.01s; warm py 0.48s vs cr 0.01s. |
+| `pluggero.vm_share_helper` | ubuntu | ✅ FIXED (0.9.1152/0.9.1153): Message: Unsupported parameters for (systemd) module: _module_name. Supported parameters Confirmed CLEAN in round 826000. Times: cold py 62.24s vs cr 41.06s; warm py 20.68s vs cr 0.82s. Confirm-round times: cold py 46.79s vs cr 27.91s; warm py 15.98s vs cr 0.67s. |
+| `supertarto.mariadb` | ubuntu | ✅ clean. Times: cold py 3.76s vs cr 3.91s; warm py 3.05s vs cr 0.46s. |
+| `shhirose.firewalld` | rocky | ✅ clean. Times: cold py 0.47s vs cr 0.01s; warm py 0.47s vs cr 0.01s. |
+| `gantsign.pipenv` | ubuntu | ✅ clean. Times: cold py 6.43s vs cr 8.92s; warm py 4.32s vs cr 1.59s. |
+| `iroquoisorg.postgresql` | ubuntu | ✅ clean. Times: cold py 0.46s vs cr 0.01s; warm py 0.47s vs cr 0.01s. |
+| `cmusei.fixbuf` | rocky | ✅ FIXED (0.9.1152/0.9.1153): Message: Unsupported parameters for (ansible.builtin.yum) module: _module_name. Supporte Confirmed CLEAN in round 826000. Times: cold py 165.33s vs cr 60.22s; warm py 20.45s vs cr 41.06s. Confirm-round times: cold py 137.68s vs cr 59.00s; warm py 10.61s vs cr 2.17s. |
+| `bngsudheer.opendkim` | rocky | ✅ clean. Times: cold py 8.53s vs cr 21.34s; warm py 6.10s vs cr 0.38s. |
+| `l3d.install_firefox` | ubuntu | ✅ clean. Times: cold py 11.23s vs cr 9.73s; warm py 9.88s vs cr 5.53s. |
+| `thedumbtechguy.ping` | ubuntu | ✅ clean. Times: cold py 0.47s vs cr 0.01s; warm py 0.48s vs cr 0.01s. |
+| `systemli.mariadb` | ubuntu | ✅ clean. Times: cold py 89.91s vs cr 54.98s; warm py 15.13s vs cr 2.30s. |
+| `openmicroscopy.jekyll-build` | rocky | ✅ FIXED (0.9.1152/0.9.1153): Message: Unsupported parameters for (ansible.builtin.yum) module: _module_name. Supporte Confirmed CLEAN in round 826000. Times: cold py 32.10s vs cr 10.37s; warm py 9.59s vs cr 0.31s. Confirm-round times: cold py 5.81s vs cr 4.05s; warm py 4.27s vs cr 0.40s. |
+| `juwai.libzmq` | rocky | ✅ FIXED (0.9.1152/0.9.1153): Message: Unsupported parameters for (ansible.builtin.yum) module: _module_name. Supporte Confirmed CLEAN in round 826000. Times: cold py 179.89s vs cr 10.18s; warm py 8.70s vs cr 0.51s. Confirm-round times: cold py 6.56s vs cr 4.06s; warm py 4.25s vs cr 0.58s. |
+| `darkwizard242.hadolint` | ubuntu | ✅ clean. Times: cold py 8.36s vs cr 5.15s; warm py 4.17s vs cr 0.45s. |
+| `ChromaticHQ.aws-cli` | ubuntu | ✅ clean. Times: cold py 6.00s vs cr 4.63s; warm py 4.70s vs cr 0.44s. |
+| `dochang.pip` | rocky | ✅ clean. Times: cold py 4.39s vs cr 9.98s; warm py 4.25s vs cr 0.45s. |
+| `juwai.supervisor` | rocky | ✅ clean. Times: cold py 0.49s vs cr 0.01s; warm py 0.46s vs cr 0.01s. |
+| `tinyblargon.docker_deploy` | ubuntu | ✅ clean. Times: cold py 37.01s vs cr 21.91s; warm py 8.30s vs cr 1.67s. |
+| `jonaspammer.openssl` | rocky | ✅ clean. Times: cold py 17.81s vs cr 15.37s; warm py 14.13s vs cr 1.24s. |
+| `joe-speedboat.mariadb` | rocky | ✅ FIXED (0.9.1152/0.9.1153): Message: Unsupported parameters for (ansible.builtin.dnf) module: _module_name. Supporte Confirmed CLEAN in round 826000. Times: cold py 83.30s vs cr 11.27s; warm py 31.81s vs cr 0.84s. Confirm-round times: cold py 6.04s vs cr 3.99s; warm py 4.37s vs cr 0.35s. |
+| `CSCfi.jetty` | rocky | ✅ clean. Times: cold py 7.71s vs cr 10.78s; warm py 5.86s vs cr 0.81s. |
+| `Oefenweb.git_lfs` | ubuntu | ✅ clean. Times: cold py 84.87s vs cr 55.08s; warm py 15.37s vs cr 2.76s. |
+| `robertdebock.openbao` | rocky | ✅ clean. Times: cold py 20.52s vs cr 19.18s; warm py 10.52s vs cr 0.47s. |
+| `Oefenweb.conntrack` | ubuntu | ✅ clean. Times: cold py 36.52s vs cr 45.88s; warm py 5.45s vs cr 1.94s. |
+| `besmirzanaj.ansible_rsyslog_logzio` | rocky | ✅ clean. Times: cold py 26.11s vs cr 13.61s; warm py 17.26s vs cr 0.59s. |
+| `ikke_t.grafana_podman` | rocky | ✅ clean. Times: cold py 7.71s vs cr 15.38s; warm py 5.17s vs cr 0.36s. |
+| `weareinteractive.htpasswd` | rocky | ✅ clean. Times: cold py 5.54s vs cr 17.54s; warm py 4.85s vs cr 2.40s. |
+| `colstrom.apt-repository` | ubuntu | ✅ clean. Times: cold py 1.00s vs cr 0.01s; warm py 1.13s vs cr 0.04s. |
+| `mattandes.jenkins_casc` | rocky | ✅ clean. Times: cold py 5.81s vs cr 14.92s; warm py 3.81s vs cr 0.32s. |
+| `entanet_devops.new_relic_apm` | ubuntu | ✅ clean. Times: cold py 0.45s vs cr 0.01s; warm py 0.47s vs cr 0.01s. |
+| `devops37.node_exporter` | ubuntu | ✅ FIXED (0.9.1152/0.9.1153): Message: Unsupported parameters for (systemd) module: _module_name. Supported parameters Confirmed CLEAN in round 826000. Times: cold py 29.07s vs cr 12.79s; warm py 6.60s vs cr 0.62s. Confirm-round times: cold py 33.78s vs cr 27.95s; warm py 7.06s vs cr 0.58s. |
+| `jenstimmerman.vaultwarden` | rocky | ❌ divergent - Message: No filter named 'https'. Times: cold py 24.78s vs cr 12.90s; warm py 17.52s vs cr 0.60s. |
+| `honomoa.docker_deployment` | ubuntu | ✅ clean. Times: cold py 67.91s vs cr 38.86s; warm py 18.12s vs cr 0.68s. |
+| `mila.bareos` | ubuntu | ✅ clean. Times: cold py 70.96s vs cr 28.29s; warm py 9.67s vs cr 0.66s. |
+| `dgibbs64.landscape_client` | ubuntu | ✅ clean. Times: cold py 55.44s vs cr 50.45s; warm py 11.13s vs cr 1.68s. |
+| `kodekloud1.mysql` | rocky | ✅ clean. Times: cold py 6.31s vs cr 17.71s; warm py 4.88s vs cr 0.34s. |
+| `ikke_t.container_image_cleanup` | rocky | ✅ clean. Times: cold py 8.34s vs cr 16.68s; warm py 7.05s vs cr 0.42s. |
+| `manala.sudo` | ubuntu | ✅ clean. Times: cold py 19.58s vs cr 27.54s; warm py 31.03s vs cr 0.43s. |
+| `uZer.crontab` | rocky | ✅ clean. Times: cold py 8.85s vs cr 14.74s; warm py 6.62s vs cr 0.38s. |
+| `torian.geoip` | rocky | ✅ clean. Times: cold py 0.47s vs cr 0.01s; warm py 0.47s vs cr 0.01s. |
+| `lean_delivery.mysql` | rocky | ✅ clean. Times: cold py 4.65s vs cr 12.16s; warm py 2.65s vs cr 0.30s. |
+| `zorun.nsd` | ubuntu | ✅ clean. Times: cold py 20.01s vs cr 13.75s; warm py 22.45s vs cr 0.65s. |
+| `darkwizard242.kubectl` | ubuntu | ✅ clean. Times: cold py 8.21s vs cr 7.12s; warm py 4.29s vs cr 0.39s. |
+| `hedii.ffmpeg` | ubuntu | ✅ clean. Times: cold py 24.10s vs cr 11.69s; warm py 10.91s vs cr 0.90s. |
+| `pluggero.burpsuite` | ubuntu | ✅ clean. Times: cold py 193.82s vs cr 140.90s; warm py 38.46s vs cr 7.54s. |
+| `hadenlabs.authorization` | ubuntu | ✅ clean. Times: cold py 3.62s vs cr 4.46s; warm py 2.48s vs cr 0.36s. |
+| `lifeofguenter.php7-fpm` | ubuntu | ✅ clean. Times: cold py 4.67s vs cr 4.99s; warm py 3.54s vs cr 0.38s. |
+| `Turgon37.apache2` | ubuntu | ✅ clean. Times: cold py 4.91s vs cr 4.60s; warm py 3.45s vs cr 0.44s. |
+| `CTL-Fed-Security.ansible_grafana` | ubuntu | ✅ clean. Times: cold py 0.47s vs cr 0.01s; warm py 0.52s vs cr 0.01s. |
+| `openmicroscopy.analysis-tools` | rocky | ✅ FIXED (0.9.1152/0.9.1153): Message: Unsupported parameters for (ansible.builtin.yum) module: _module_name. Supporte Confirmed CLEAN in round 826000. Times: cold py 71.58s vs cr 9.92s; warm py 40.83s vs cr 0.38s. Confirm-round times: cold py 5.70s vs cr 3.78s; warm py 3.75s vs cr 0.43s. |
+| `HanXHX.php` | ubuntu | ✅ clean. Times: cold py 142.86s vs cr 97.01s; warm py 49.40s vs cr 4.17s. |
+| `darkwizard242.keybase` | ubuntu | ✅ clean. Times: cold py 90.63s vs cr 79.40s; warm py 9.75s vs cr 19.25s. |
+| `jebovic.supervisor` | ubuntu | ✅ clean. Times: cold py 58.53s vs cr 56.70s; warm py 7.27s vs cr 2.33s. |
+| `darkwizard242.kubens` | ubuntu | ✅ clean. Times: cold py 9.13s vs cr 5.23s; warm py 5.91s vs cr 1.32s. |
+| `vcc_caeit.ntp` | ubuntu | ✅ clean. Times: cold py 26.61s vs cr 40.20s; warm py 4.75s vs cr 0.56s. |
+| `libre_ops.multi_redis` | ubuntu | ❌ divergent - Message: Unsupported parameters for (systemd) module: _module_name. Supported parameters Times: cold py 84.70s vs cr 70.42s; warm py 20.03s vs cr 2.01s. |
+| `volker-raschek.networking` | rocky | ✅ clean. Times: cold py 8.28s vs cr 13.59s; warm py 6.85s vs cr 0.32s. |
+| `ggiinnoo.nginx` | rocky | ✅ FIXED (0.9.1152/0.9.1153): Message: Unsupported parameters for (ansible.builtin.yum) module: _module_name. Supporte Confirmed CLEAN in round 826000. Times: cold py 21.70s vs cr 12.89s; warm py 6.76s vs cr 1.48s. Confirm-round times: cold py 56.43s vs cr 59.85s; warm py 7.82s vs cr 0.60s. |
+| `iroquoisorg.openssl` | ubuntu | ✅ clean. Times: cold py 8.85s vs cr 5.69s; warm py 7.37s vs cr 1.89s. |
+| `oxlorg.wireguard` | ubuntu | ✅ clean. Times: cold py 5.39s vs cr 3.96s; warm py 3.58s vs cr 0.33s. |
+| `baztian.python` | ubuntu | ✅ clean. Times: cold py 146.88s vs cr 78.34s; warm py 21.67s vs cr 1.17s. |
+| `btravouillon_gitlab_runner_compose` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
+| `jtprogru.admins_access` | ubuntu | ✅ FIXED (0.9.1152/0.9.1153): Message: invalid key specified: https://github.com/jtprogru.keys Confirmed CLEAN in round 826000. Times: cold py 10.85s vs cr 4.25s; warm py 9.41s vs cr 0.45s. Confirm-round times: cold py 11.26s vs cr 4.48s; warm py 8.81s vs cr 0.78s. |
+| `linux-system-roles.vpn` | rocky | ❌ divergent - Message: cert_name is missing or empty for one or more hosts in a tunnel Times: cold py 23.42s vs cr 24.38s; warm py 16.23s vs cr 1.68s. |
+| `fullcontact.hesiod` | ubuntu | ✅ clean. Times: cold py 42.69s vs cr 74.23s; warm py 9.19s vs cr 6.87s. |
+| `elan_elan_certbot` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
+| `juwai.python27` | rocky | ✅ clean. Times: cold py 0.48s vs cr 0.01s; warm py 0.47s vs cr 0.01s. |
+| `ccdc.system_python` | rocky | ✅ FIXED (0.9.1152/0.9.1153): Message: Unsupported parameters for (ansible.builtin.dnf) module: _module_name. Supporte Confirmed CLEAN in round 826000. Times: cold py 8.53s vs cr 12.41s; warm py 5.64s vs cr 0.37s. Confirm-round times: cold py 7.05s vs cr 7.10s; warm py 6.13s vs cr 1.12s. |
+| `idealista.solrcloud-role` | ubuntu | ✅ clean. Times: cold py 144.89s vs cr 105.33s; warm py 28.56s vs cr 4.14s. |
+| `brpaz.swarm_traefik` | ubuntu | ✅ clean. Times: cold py 17.52s vs cr 4.34s; warm py 12.97s vs cr 0.54s. |
+| `zenoamaro.supervisord` | ubuntu | ✅ clean. Times: cold py 0.46s vs cr 0.01s; warm py 0.48s vs cr 0.01s. |
+| `jgeusebroek.maxmind_geoip` | ubuntu | ✅ clean. Times: cold py 0.45s vs cr 0.01s; warm py 0.47s vs cr 0.01s. |
+| `tcharl.ansible_nameserver` | rocky | ✅ clean. Times: cold py 11.81s vs cr 14.55s; warm py 8.71s vs cr 0.82s. |
+| `cyberark.modules` | rocky | ✅ clean. Times: cold py 4.51s vs cr 12.76s; warm py 3.13s vs cr 0.35s. |
+| `brentwg.powershell` | rocky | ✅ clean. Times: cold py 21.49s vs cr 25.86s; warm py 7.23s vs cr 0.40s. |
+| `ansibleguy.linux_networking` | ubuntu | ✅ clean. Times: cold py 4.81s vs cr 4.54s; warm py 3.09s vs cr 0.44s. |
+| `elan.monitoring_alertmanager` | rocky | ❌ divergent - Message: File not found: /etc/alertmanager/alertmanager_version Times: cold py 51.79s vs cr 18.57s; warm py 21.33s vs cr 5.63s. |
+| `brpaz.swarm_portainer` | ubuntu | ❌ divergent - Message: Failed to execute command: Error executing process: 'docker': No such file or d Times: cold py 6.97s vs cr 44.43s; warm py 5.30s vs cr 40.55s. |
+| `crazikpl.blackbox_exporter` | ubuntu | ✅ FIXED (0.9.1152/0.9.1153): Message: Failed to render template: object of type 'dict' has no attribute 'network' Confirmed CLEAN in round 826000. Times: cold py 25.01s vs cr 5.32s; warm py 14.38s vs cr 0.46s. Confirm-round times: cold py 24.63s vs cr 7.35s; warm py 15.75s vs cr 1.13s. |
+| `tcharl.ansible_containerization` | rocky | ✅ clean. Times: cold py 0.73s vs cr 0.01s; warm py 1.34s vs cr 0.03s. |
+| `darkwizard242.kubescape` | ubuntu | ✅ clean. Times: cold py 13.04s vs cr 10.90s; warm py 4.18s vs cr 0.35s. |
+| `pluggero.tigervnc` | ubuntu | ❌ divergent - Message: Source '/tmp/tigervnc-1.16.2.x86_64.tar.gz' failed to transfer Times: cold py 128.78s vs cr 119.00s; warm py 47.79s vs cr 4.08s. |
+| `barangerjeanmarc.site_lamp` | rocky | ✅ clean. Times: cold py 52.48s vs cr 60.35s; warm py 17.83s vs cr 1.32s. |
+| `mimacom.bamboo-agent` | rocky | ✅ clean. Times: cold py 0.53s vs cr 0.02s; warm py 0.47s vs cr 0.01s. |
+| `thom8.php-upload-progress` | rocky | ✅ clean. Times: cold py 72.14s vs cr 34.50s; warm py 30.43s vs cr 1.20s. |
+| `honomoa.pip` | ubuntu | ✅ clean. Times: cold py 0.49s vs cr 0.01s; warm py 0.46s vs cr 0.01s. |
+| `drewbarrett.postfix` | rocky | ✅ clean. Times: cold py 16.49s vs cr 16.37s; warm py 8.99s vs cr 0.50s. |
+| `escalate.docker` | ubuntu | ✅ clean. Times: cold py 5.78s vs cr 3.97s; warm py 4.04s vs cr 0.43s. |
+| `darkwizard242.bravebrowser` | ubuntu | ✅ clean. Times: cold py 99.62s vs cr 98.20s; warm py 10.04s vs cr 4.30s. |
+| `simoncaron.traefik` | ubuntu | ❌ divergent - Message: Failed to render template: 'traefik_cloudflare_email' is undefined Times: cold py 26.60s vs cr 4.16s; warm py 26.77s vs cr 0.45s. |
+| `gantsign.fd` | ubuntu | ✅ clean. Times: cold py 13.16s vs cr 7.59s; warm py 8.15s vs cr 0.46s. |
+| `iroquoisorg.nodejs` | ubuntu | ✅ clean. Times: cold py 74.63s vs cr 69.24s; warm py 55.35s vs cr 34.91s. |
+| `teemo_stackdriver_ansible_role` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
+| `jkanclerz.deploy-finalize` | rocky | ✅ clean. Times: cold py 0.97s vs cr 0.01s; warm py 0.99s vs cr 0.04s. |
+| `wunzeco.google-chrome` | rocky | ✅ clean. Times: cold py 0.45s vs cr 0.01s; warm py 0.44s vs cr 0.01s. |
+| `bytepark.netdata` | ubuntu | ✅ clean. Times: cold py 104.99s vs cr 62.65s; warm py 21.13s vs cr 0.75s. |
+| `bbatsche.MongoDB-Install` | ubuntu | ✅ clean. Times: cold py 7.93s vs cr 6.03s; warm py 6.31s vs cr 1.01s. |
+| `bodsch.users` | ubuntu | ✅ clean. Times: cold py 5.92s vs cr 5.69s; warm py 3.97s vs cr 1.15s. |
+| `staticdev.signal` | ubuntu | ✅ clean. Times: cold py 87.69s vs cr 77.59s; warm py 10.24s vs cr 3.65s. |
+| `torian.nginx` | rocky | ✅ clean. Times: cold py 0.44s vs cr 0.01s; warm py 0.45s vs cr 0.01s. |
+| `darexsu.php` | ubuntu | ✅ clean. Times: cold py 5.65s vs cr 5.85s; warm py 3.66s vs cr 0.44s. |
+| `linux-system-roles.fapolicyd` | rocky | ❌ divergent -  Times: cold py 61.26s vs cr 48.38s; warm py 21.79s vs cr 6.00s. |
+| `opentelekomcloud.security_group` | rocky | ❌ divergent - Message: 'rules' is undefined Times: cold py 3.82s vs cr 10.01s; warm py 3.56s vs cr 0.46s. |
+| `OndrejHome.ha-cluster-pacemaker` | rocky | ✅ clean. Times: cold py 4.37s vs cr 20.51s; warm py 3.02s vs cr 0.31s. |
+| `ansible-lockdown.deb13_cis` | ubuntu | ✅ clean. Times: cold py 4.49s vs cr 4.81s; warm py 3.82s vs cr 0.60s. |
+| `lifeofguenter.nodejs` | ubuntu | ✅ clean. Times: cold py 140.68s vs cr 89.76s; warm py 100.26s vs cr 58.79s. |
+| `tcharl.ansible_volumes` | rocky | ✅ clean. Times: cold py 0.59s vs cr 0.04s; warm py 0.48s vs cr 0.01s. |
+| `gcoop-libre.mysqldump` | ubuntu | ✅ clean. Times: cold py 6.27s vs cr 5.72s; warm py 5.36s vs cr 0.48s. |
+| `gantsign.zram_config` | ubuntu | ✅ clean. Times: cold py 13.29s vs cr 8.66s; warm py 7.58s vs cr 0.59s. |
+| `RedHatOfficial.rhel7_c2s` | rocky | ✅ clean. Times: cold py 14.52s vs cr 13.50s; warm py 11.89s vs cr 2.40s. |
+| `cloudalchemy.memcached_exporter` | ubuntu | ✅ FIXED (0.9.1152/0.9.1153): Message: Unsupported parameters for (systemd) module: _module_name. Supported parameters Confirmed CLEAN in round 826000. Times: cold py 22.90s vs cr 11.26s; warm py 14.24s vs cr 1.29s. Confirm-round times: cold py 25.26s vs cr 12.76s; warm py 14.19s vs cr 1.56s. |
+| `wtanaka.virtualbox` | rocky | ✅ clean. Times: cold py 0.44s vs cr 0.01s; warm py 0.47s vs cr 0.01s. |
+| `elan.monitoring_node_exporter` | rocky | ❌ divergent - Message: File not found: /etc/node_exporter/node_exporter_version Times: cold py 87.91s vs cr 22.24s; warm py 17.06s vs cr 3.70s. |
+| `elan.bbb_opencast_integration` | ubuntu | ✅ clean. Times: cold py 0.47s vs cr 0.01s; warm py 0.47s vs cr 0.01s. |
+| `jkanclerz.deploy-project` | rocky | ✅ clean. Times: cold py 0.45s vs cr 0.01s; warm py 0.44s vs cr 0.01s. |
+| `robertdebock.ansible_lint` | rocky | ✅ clean. Times: cold py 18.83s vs cr 38.13s; warm py 6.01s vs cr 1.49s. |
+| `trevorr.vault` | rocky | ✅ clean. Times: cold py 0.45s vs cr 0.01s; warm py 0.44s vs cr 0.01s. |
+| `volker-raschek.dhcpd` | rocky | ✅ clean. Times: cold py 3.81s vs cr 16.78s; warm py 3.69s vs cr 0.39s. |
+| `jtprogru.install_elasticsearch` | ubuntu | ✅ clean. Times: cold py 11.82s vs cr 8.46s; warm py 8.42s vs cr 2.15s. |
+| `tomereli.oh_my_zsh_p10k` | rocky | ✅ clean. Times: cold py 15.15s vs cr 24.89s; warm py 5.94s vs cr 0.64s. |
+| `openmicroscopy.omero-logmonitor` | rocky | ✅ clean. Times: cold py 7.57s vs cr 11.14s; warm py 6.52s vs cr 0.99s. |
+| `darkwizard242.mkcert` | ubuntu | ✅ clean. Times: cold py 7.62s vs cr 4.78s; warm py 4.82s vs cr 0.40s. |
+| `sig-ansible.tomcat` | rocky | ✅ clean. Times: cold py 18.91s vs cr 18.81s; warm py 15.55s vs cr 1.95s. |
+| `William-Yeh.nginx` | ubuntu | ✅ clean. Times: cold py 0.51s vs cr 0.04s; warm py 0.45s vs cr 0.01s. |
+| `tulibraries_ansible_role_shibboleth_sp` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
+| `juwai.consul-template` | rocky | ✅ clean. Times: cold py 0.44s vs cr 0.01s; warm py 0.46s vs cr 0.01s. |
+| `veselahouba.docker` | ubuntu | ✅ FIXED (0.9.1152/0.9.1153): Message: Unsupported parameters for (systemd) module: _module_name. Supported parameters Confirmed CLEAN in round 826000. Times: cold py 57.08s vs cr 65.77s; warm py 23.02s vs cr 5.12s. Confirm-round times: cold py 85.33s vs cr 63.34s; warm py 29.33s vs cr 4.11s. |
+| `wiggels.ufw_forward` | ubuntu | ✅ clean. Times: cold py 4.21s vs cr 4.11s; warm py 2.85s vs cr 0.37s. |
+| `youbond.supervisor` | ubuntu | ✅ clean. Times: cold py 0.46s vs cr 0.01s; warm py 0.45s vs cr 0.01s. |
+| `webarchitect609.google_chrome` | ubuntu | ✅ clean. Times: cold py 114.13s vs cr 99.58s; warm py 29.52s vs cr 4.96s. |
+| `stuart_elasticsearch_exporter` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
+| `transitiv.nodesource` | rocky | ✅ clean. Times: cold py 22.30s vs cr 15.92s; warm py 20.92s vs cr 5.77s. |
+| `gantsign.atom-packages` | ubuntu | ✅ clean. Times: cold py 4.04s vs cr 8.66s; warm py 2.77s vs cr 0.45s. |
+| `onegreyonewhite.package_installer` | ubuntu | ✅ clean. Times: cold py 64.53s vs cr 45.48s; warm py 62.87s vs cr 41.94s. |
+| `darkwizard242.grype` | ubuntu | ✅ clean. Times: cold py 9.87s vs cr 10.60s; warm py 6.62s vs cr 1.69s. |
+| `MindPointGroup.ubuntu18_cis` | ubuntu | ✅ clean. Times: cold py 5.30s vs cr 3.65s; warm py 3.41s vs cr 0.30s. |
+| `azavea.daemontools` | ubuntu | ✅ clean. Times: cold py 5.86s vs cr 7.76s; warm py 4.12s vs cr 0.63s. |
+| `ome.munin_node` | ubuntu | ✅ clean. Times: cold py 5.44s vs cr 4.22s; warm py 3.71s vs cr 0.46s. |
+| `jdauphant.sublimetext` | rocky | ✅ clean. Times: cold py 1.42s vs cr 0.01s; warm py 0.54s vs cr 0.04s. |
+| `darkwizard242.ulauncher` | ubuntu | ❌ divergent - Message: Read timed out Times: cold py 16.85s vs cr 14.89s; warm py 78.62s vs cr 11.36s. |
+| `jasonroyle.rabbitmq` | rocky | ✅ clean. Times: cold py 0.48s vs cr 0.01s; warm py 0.46s vs cr 0.01s. |
+| `Oefenweb.user` | ubuntu | ✅ clean. Times: cold py 4.49s vs cr 4.14s; warm py 4.02s vs cr 0.45s. |
+| `rchouinard.secure_sshd` | rocky | ✅ clean. Times: cold py 10.00s vs cr 10.63s; warm py 7.67s vs cr 0.40s. |
+| `badsectorlabs.ludus_elastic_agent` | ubuntu | ✅ clean. Times: cold py 3.96s vs cr 4.31s; warm py 3.07s vs cr 0.36s. |
+| `ypsman.resolv` | ubuntu | ✅ clean. Times: cold py 7.10s vs cr 4.07s; warm py 6.62s vs cr 0.41s. |
+| `elan_opencast_repository` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
+| `thorian93.webserver` | rocky | ✅ clean. Times: cold py 3.30s vs cr 24.28s; warm py 2.42s vs cr 0.35s. |
+| `Open-Future-Belgium.PostgreSQL-For-RHEL6x` | rocky | ✅ clean. Times: cold py 0.51s vs cr 0.01s; warm py 0.46s vs cr 0.01s. |
+| `kosssi.kosssi_apticron` | ubuntu | ✅ clean. Times: cold py 4.49s vs cr 4.15s; warm py 2.69s vs cr 0.33s. |
+| `labpositiva.superslacker` | rocky | ✅ clean. Times: cold py 0.50s vs cr 0.01s; warm py 0.53s vs cr 0.01s. |
+| `idealista.prometheus_blackbox_exporter_role` | ubuntu | ✅ clean. Times: cold py 0.44s vs cr 0.01s; warm py 0.44s vs cr 0.01s. |
+| `opentelekomcloud.server_common` | rocky | ✅ clean. Times: cold py 40.74s vs cr 38.93s; warm py 35.99s vs cr 16.82s. |
+| `lnovara.deploy-user` | rocky | ✅ clean. Times: cold py 5.67s vs cr 23.62s; warm py 4.75s vs cr 0.92s. |
+| `elan_opencast_elasticsearch` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
+| `idiv_biodiversity.ssh` | rocky | ✅ clean. Times: cold py 6.03s vs cr 17.03s; warm py 6.14s vs cr 0.39s. |
+| `jkanclerz.deploy-setup` | rocky | ✅ clean. Times: cold py 3.87s vs cr 9.93s; warm py 2.92s vs cr 0.32s. |
+| `darkwizard242.lazygit` | ubuntu | ✅ clean. Times: cold py 7.53s vs cr 5.14s; warm py 5.98s vs cr 0.92s. |
+| `thulium_drake.nullmailer` | ubuntu | ✅ clean. Times: cold py 21.06s vs cr 11.24s; warm py 13.28s vs cr 0.52s. |
+| `grycap.nomad` | rocky | ✅ FIXED (0.9.1152/0.9.1153): Message: Unsupported parameters for (ansible.builtin.yum) module: _module_name. Supporte Confirmed CLEAN in round 826000. Times: cold py 48.51s vs cr 11.31s; warm py 33.61s vs cr 1.23s. Confirm-round times: cold py 46.11s vs cr 12.74s; warm py 30.73s vs cr 4.04s. |
+| `nekeal.users` | ubuntu | ✅ clean. Times: cold py 4.34s vs cr 4.24s; warm py 3.06s vs cr 0.33s. |
+| `xolyu.mariadb` | ubuntu | ✅ clean. Times: cold py 80.01s vs cr 33.92s; warm py 16.27s vs cr 0.68s. |
+| `pandemonium1986.ohmyzsh` | rocky | ✅ clean. Times: cold py 5.11s vs cr 11.23s; warm py 2.81s vs cr 0.27s. |
+| `udelarinterior.jitsi_meet` | ubuntu | ✅ clean. Times: cold py 0.46s vs cr 0.01s; warm py 0.45s vs cr 0.01s. |
+| `viasite-ansible.swapfile` | ubuntu | ✅ clean. Times: cold py 12.56s vs cr 3.91s; warm py 6.90s vs cr 0.37s. |
+| `thulium_drake.apache_revproxy` | rocky | ❌ divergent - Message: Failed to render template: 'ipaadmin_principal' is undefined Times: cold py 44.04s vs cr 16.10s; warm py 31.72s vs cr 0.55s. |
+| `capitanh.microk8s_ansible_role` | ubuntu | ✅ clean. Times: cold py 18.44s vs cr 14.01s; warm py 8.41s vs cr 0.63s. |
+| `gantsign.kompose` | rocky | ✅ clean. Times: cold py 16.18s vs cr 14.39s; warm py 11.83s vs cr 0.67s. |
+| `iroquoisorg.composer` | ubuntu | ✅ clean. Times: cold py 234.46s vs cr 249.28s; warm py 46.83s vs cr 2.65s. |
+| `pegasyseng.hyperledger_besu` | ubuntu | ✅ clean. Times: cold py 4.95s vs cr 3.76s; warm py 2.96s vs cr 0.30s. |
+| `stackhpc.os_host_aggregates` | rocky | ❌ divergent - Message: Failed to install gcc libffi-devel openssl-devel python3-devel python3-pip: Err Times: cold py 29.28s vs cr 12.35s; warm py 9.51s vs cr 2.89s. |
+| `deekayen.alagent` | ubuntu | ✅ clean. Times: cold py 0.47s vs cr 0.01s; warm py 0.45s vs cr 0.01s. |
+| `deekayen.repo_mono` | rocky | ✅ clean. Times: cold py 8.10s vs cr 15.87s; warm py 7.09s vs cr 0.85s. |
+| `RedHatOfficial.rhel9_hipaa` | rocky | ✅ FIXED (0.9.1152/0.9.1153): Message: Unsupported parameters for (systemd) module: _module_name. Supported parameters Confirmed CLEAN in round 826000. Times: cold py 900.02s vs cr 22.37s; warm py 900.02s vs cr 2.48s. Confirm-round times: cold py 25.12s vs cr 9.57s; warm py 24.22s vs cr 3.06s. |
+| `opentelekomcloud.bastion` | rocky | ✅ clean. Times: cold py 0.46s vs cr 0.01s; warm py 0.47s vs cr 0.01s. |
+| `iroquoisorg.php7` | ubuntu | ✅ clean. Times: cold py 297.25s vs cr 190.47s; warm py 52.68s vs cr 2.52s. |
+| `crazikpl.metricbeat` | ubuntu | ✅ clean. Times: cold py 47.58s vs cr 16.69s; warm py 8.55s vs cr 0.79s. |
+| `elan.monitoring_loki` | rocky | ❌ divergent - Message: File not found: /etc/loki/loki_version Times: cold py 35.44s vs cr 18.71s; warm py 16.55s vs cr 5.50s. |
+| `darkwizard242.minikube` | ubuntu | ✅ clean. Times: cold py 11.14s vs cr 7.41s; warm py 5.93s vs cr 0.44s. |
+| `Anthony25.systemd-networkd` | rocky | ✅ clean. Times: cold py 10.38s vs cr 10.85s; warm py 8.19s vs cr 0.40s. |
+| `geoffreyvanwyk.php` | ubuntu | ✅ clean. Times: cold py 82.24s vs cr 72.00s; warm py 11.07s vs cr 0.73s. |
+| `markosamuli.nvm` | ubuntu | ✅ clean. Times: cold py 33.21s vs cr 12.81s; warm py 19.04s vs cr 3.12s. |
+| `thystips.php_fpm_exporter` | rocky | ✅ FIXED (0.9.1152/0.9.1153): Message: Unsupported parameters for (systemd) module: _module_name. Supported parameters Confirmed CLEAN in round 826000. Times: cold py 26.11s vs cr 12.00s; warm py 18.17s vs cr 0.82s. Confirm-round times: cold py 19.60s vs cr 6.79s; warm py 13.88s vs cr 1.19s. |
+| `whiskerlabs.python` | ubuntu | ✅ clean. Times: cold py 0.47s vs cr 0.01s; warm py 0.48s vs cr 0.01s. |
+| `thulium_drake.acme_ssl` | ubuntu | ✅ clean. Times: cold py 7.20s vs cr 4.56s; warm py 5.73s vs cr 0.75s. |
+| `jason_riddle.tailscale` | ubuntu | ✅ clean. Times: cold py 59.36s vs cr 38.61s; warm py 15.11s vs cr 0.50s. |
+| `sgaduuw.timesyncd` | ubuntu | ✅ clean. Times: cold py 13.82s vs cr 4.46s; warm py 13.09s vs cr 0.99s. |
+| `michaelpporter.certbot_cloudflare` | ubuntu | ✅ clean. Times: cold py 8.64s vs cr 6.32s; warm py 6.85s vs cr 1.28s. |
+| `florianutz.DockerCE-CIS` | rocky | ✅ FIXED (0.9.1152/0.9.1153): Message: Unsupported parameters for (systemd) module: _module_name. Supported parameters Confirmed CLEAN in round 826000. Times: cold py 28.06s vs cr 14.90s; warm py 27.54s vs cr 0.89s. Confirm-round times: cold py 29.17s vs cr 15.36s; warm py 20.18s vs cr 0.63s. |
+| `hussainweb.chezmoi` | ubuntu | ✅ clean. Times: cold py 14.69s vs cr 10.89s; warm py 7.98s vs cr 0.99s. |
+| `darkwizard242.kubeadm` | ubuntu | ✅ clean. Times: cold py 8.82s vs cr 8.73s; warm py 3.58s vs cr 0.61s. |
+| `iroquoisorg.swapfile` | ubuntu | ✅ clean. Times: cold py 13.65s vs cr 4.61s; warm py 8.36s vs cr 0.32s. |
+| `sthdev.install_gnome` | rocky | ✅ clean. Times: cold py 6.04s vs cr 125.23s; warm py 4.87s vs cr 5.39s. |
+| `Oefenweb.apparmor` | ubuntu | ✅ clean. Times: cold py 25.57s vs cr 15.91s; warm py 7.76s vs cr 0.53s. |
+| `eyebrowkang.garage` | ubuntu | ✅ clean. Times: cold py 5.10s vs cr 4.22s; warm py 2.85s vs cr 0.35s. |
+| `mergermarket.cloudwatch_monitoring` | rocky | ✅ clean. Times: cold py 6.62s vs cr 10.76s; warm py 4.73s vs cr 0.32s. |
+| `skriptfabrik.sshd` | ubuntu | ✅ clean. Times: cold py 29.03s vs cr 7.97s; warm py 18.88s vs cr 0.88s. |
+| `opentelekomcloud.vpc` | rocky | ✅ clean. Times: cold py 0.48s vs cr 0.01s; warm py 0.45s vs cr 0.01s. |
+| `galaxyproject.pulsar` | rocky | ✅ clean. Times: cold py 10.34s vs cr 12.65s; warm py 8.44s vs cr 0.43s. |
+| `t2d.raspotify` | ubuntu | ✅ clean. Times: cold py 65.74s vs cr 49.15s; warm py 10.67s vs cr 1.02s. |
+| `diodonfrost.update_package_manager_cache` | rocky | ✅ FIXED (0.9.1152/0.9.1153): Message: Unsupported parameters for (ansible.builtin.dnf) module: _module_name. Supporte Confirmed CLEAN in round 826000. Times: cold py 17.85s vs cr 16.81s; warm py 14.88s vs cr 0.35s. Confirm-round times: cold py 27.04s vs cr 39.21s; warm py 6.05s vs cr 4.57s. |
+| `robertdebock.aide` | ubuntu | ✅ clean. Times: cold py 241.86s vs cr 241.46s; warm py 7.11s vs cr 0.38s. |
+| `mila.ipahealthcheck_exporter` | rocky | ✅ clean. Times: cold py 13.79s vs cr 15.26s; warm py 12.72s vs cr 0.82s. |
+| `azavea.packer` | ubuntu | ❌ divergent - Message: no available installation candidate for unzip=6.0* Times: cold py 21.71s vs cr 3.92s; warm py 10.05s vs cr 0.43s. |
+| `pedrocarmona.github-git-lfs` | rocky | ✅ clean. Times: cold py 14.78s vs cr 103.79s; warm py 6.68s vs cr 0.63s. |
+| `dborisov.zookeeper` | rocky | ✅ clean. Times: cold py 3.76s vs cr 12.28s; warm py 2.65s vs cr 0.30s. |
+| `davidkarban.git` | rocky | ✅ FIXED (0.9.1152/0.9.1153): Message: Unsupported parameters for (ansible.builtin.yum) module: _module_name. Supporte Confirmed CLEAN in round 826000. Times: cold py 13.85s vs cr 10.07s; warm py 5.69s vs cr 0.39s. Confirm-round times: cold py 27.87s vs cr 55.89s; warm py 4.63s vs cr 0.61s. |
+| `openmicroscopy.nfs-share` | rocky | ✅ FIXED (0.9.1152/0.9.1153): Message: Unsupported parameters for (ansible.builtin.yum) module: _module_name. Supporte Confirmed CLEAN in round 826000. Times: cold py 25.29s vs cr 9.90s; warm py 5.85s vs cr 0.54s. Confirm-round times: cold py 4.82s vs cr 3.93s; warm py 3.97s vs cr 0.40s. |
+| `RedHatOfficial.rhel7_cui` | rocky | ✅ clean. Times: cold py 108.98s vs cr 57.56s; warm py 110.34s vs cr 53.81s. |
+| `tomereli.proxy` | rocky | ✅ FIXED (0.9.1152/0.9.1153): Message: Unsupported parameters for (systemd) module: _module_name. Supported parameters Confirmed CLEAN in round 826000. Times: cold py 11.58s vs cr 11.40s; warm py 8.04s vs cr 0.50s. Confirm-round times: cold py 10.65s vs cr 4.09s; warm py 11.86s vs cr 0.51s. |
+| `githubixx.cert_manager_kubernetes` | ubuntu | ✅ clean. Times: cold py 4.09s vs cr 5.99s; warm py 2.90s vs cr 0.33s. |
+| `ios-xr_iosxr-ansible` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
+| `softasap.sa_java_corretto` | rocky | ✅ clean. Times: cold py 3.40s vs cr 9.76s; warm py 2.37s vs cr 0.35s. |
+| `sansible.newrelic_agent_php` | ubuntu | ✅ clean. Times: cold py 0.46s vs cr 0.01s; warm py 0.47s vs cr 0.01s. |
+| `darkwizard242.kubelet` | ubuntu | ✅ clean. Times: cold py 14.53s vs cr 7.78s; warm py 6.18s vs cr 0.41s. |
+| `stephdewit.docker` | ubuntu | ❌ divergent - Message: No package matching 'docker-ce-cli' is available Times: cold py 14.14s vs cr 9.74s; warm py 7.93s vs cr 1.43s. |
+| `robertdebock.tigervnc` | rocky | ✅ clean. Times: cold py 42.23s vs cr 49.07s; warm py 6.24s vs cr 0.86s. |
+| `morgangraphics.ansible-role-nvm` | rocky | ✅ clean. Times: cold py 5.57s vs cr 16.11s; warm py 3.93s vs cr 0.35s. |
+| `unleashedtech.newrelic_php` | ubuntu | ✅ clean. Times: cold py 0.47s vs cr 0.01s; warm py 0.46s vs cr 0.01s. |
+| `HP41.cups` | ubuntu | ✅ clean. Times: cold py 0.45s vs cr 0.01s; warm py 0.46s vs cr 0.01s. |
+| `elan_opencast_user` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
+| `elan.monitoring_promtail` | rocky | ✅ clean. Times: cold py 15.81s vs cr 13.05s; warm py 13.36s vs cr 1.14s. |
+| `ome.munin` | rocky | ✅ clean. Times: cold py 7.67s vs cr 10.31s; warm py 5.97s vs cr 0.33s. |
+
+## Round 826000-826046 (2026-09-18): 47-role confirm round for 825000's fixes
+
+Re-run of exactly the roles whose round-825000 divergence traced to
+one of the three fixed root causes (rebuilt 0.9.1153 binary,
+Atlantic.net-only). `CLEAN=45 DIVERGENT=2` - and both remaining
+divergences are role-side/upstream, hitting real ansible-playbook
+identically: ecgalaxy.php's `when: php_version[:3]` conditional
+(python slice syntax; real ansible fails it too) and
+libre_ops.multi_redis's `systemd: status=` parameter (real ansible's
+systemd module rejects it as unsupported; krikri is the lenient side
+there).
+
+| Role | OS | Status |
+|---|---|---|
+| `ccdc.build_machine_desktop_environment` | ubuntu | ✅ clean. Times: cold py 29.29s vs cr 26.51s; warm py 8.74s vs cr 3.58s. |
+| `ccdc.system_python` | ubuntu | ✅ clean. Times: cold py 7.05s vs cr 7.10s; warm py 6.13s vs cr 1.12s. |
+| `cloudalchemy.memcached_exporter` | ubuntu | ✅ clean. Times: cold py 25.26s vs cr 12.76s; warm py 14.19s vs cr 1.56s. |
+| `cmusei.fixbuf` | ubuntu | ✅ clean. Times: cold py 137.68s vs cr 59.00s; warm py 10.61s vs cr 2.17s. |
+| `crazikpl.blackbox_exporter` | ubuntu | ✅ clean. Times: cold py 24.63s vs cr 7.35s; warm py 15.75s vs cr 1.13s. |
+| `CSCfi.systemd-journal` | ubuntu | ✅ clean. Times: cold py 7.04s vs cr 7.53s; warm py 6.17s vs cr 0.38s. |
+| `davidkarban.git` | ubuntu | ✅ clean. Times: cold py 27.87s vs cr 55.89s; warm py 4.63s vs cr 0.61s. |
+| `devops37.node_exporter` | ubuntu | ✅ clean. Times: cold py 33.78s vs cr 27.95s; warm py 7.06s vs cr 0.58s. |
+| `diodonfrost.update_package_manager_cache` | ubuntu | ✅ clean. Times: cold py 27.04s vs cr 39.21s; warm py 6.05s vs cr 4.57s. |
+| `ecgalaxy.php` | ubuntu | ❌ divergent - role-side gap (real ansible fails identically). Times: cold py 102.61s vs cr 25.02s; warm py 55.25s vs cr 0.62s. |
+| `elan.bbb_coturn` | ubuntu | ✅ clean. Times: cold py 12.55s vs cr 15.34s; warm py 6.61s vs cr 1.17s. |
+| `florianutz.DockerCE-CIS` | ubuntu | ✅ clean. Times: cold py 29.17s vs cr 15.36s; warm py 20.18s vs cr 0.63s. |
+| `ggiinnoo.nginx` | ubuntu | ✅ clean. Times: cold py 56.43s vs cr 59.85s; warm py 7.82s vs cr 0.60s. |
+| `grycap.nomad` | ubuntu | ✅ clean. Times: cold py 46.11s vs cr 12.74s; warm py 30.73s vs cr 4.04s. |
+| `grycap.zookeeper` | ubuntu | ✅ clean. Times: cold py 13.00s vs cr 5.69s; warm py 10.66s vs cr 1.45s. |
+| `joe-speedboat.mariadb` | ubuntu | ✅ clean. Times: cold py 6.04s vs cr 3.99s; warm py 4.37s vs cr 0.35s. |
+| `jtprogru.admins_access` | ubuntu | ✅ clean. Times: cold py 11.26s vs cr 4.48s; warm py 8.81s vs cr 0.78s. |
+| `juju4.gpgkey_generate` | ubuntu | ✅ clean. Times: cold py 65.47s vs cr 47.61s; warm py 22.86s vs cr 2.62s. |
+| `juwai.libzmq` | ubuntu | ✅ clean. Times: cold py 6.56s vs cr 4.06s; warm py 4.25s vs cr 0.58s. |
+| `l50.sliver` | ubuntu | ✅ clean. Times: cold py 179.51s vs cr 153.87s; warm py 239.34s vs cr 187.68s. |
+| `libre_ops.multi_redis` | ubuntu | ❌ divergent - role-side gap (real ansible fails identically). Times: cold py 57.24s vs cr 42.11s; warm py 14.80s vs cr 1.24s. |
+| `lucasmaurice.users` | ubuntu | ✅ clean. Times: cold py 16.66s vs cr 5.16s; warm py 15.54s vs cr 0.86s. |
+| `marvel-nccr.slurm` | ubuntu | ✅ clean. Times: cold py 218.04s vs cr 222.22s; warm py 24.70s vs cr 4.31s. |
+| `mrlesmithjr.mongodb` | ubuntu | ✅ clean. Times: cold py 26.91s vs cr 20.01s; warm py 25.05s vs cr 14.38s. |
+| `nephelaiio.acme_certificate_route53` | ubuntu | ✅ clean. Times: cold py 62.98s vs cr 45.39s; warm py 60.44s vs cr 41.91s. |
+| `nephelaiio.pyenv` | ubuntu | ✅ clean. Times: cold py 65.69s vs cr 66.15s; warm py 7.66s vs cr 3.89s. |
+| `openmicroscopy.analysis-tools` | ubuntu | ✅ clean. Times: cold py 5.70s vs cr 3.78s; warm py 3.75s vs cr 0.43s. |
+| `openmicroscopy.cli-utils` | ubuntu | ✅ clean. Times: cold py 6.27s vs cr 3.94s; warm py 4.40s vs cr 0.64s. |
+| `openmicroscopy.docker-tools` | ubuntu | ✅ clean. Times: cold py 11.23s vs cr 4.28s; warm py 11.75s vs cr 0.43s. |
+| `openmicroscopy.jekyll-build` | ubuntu | ✅ clean. Times: cold py 5.81s vs cr 4.05s; warm py 4.27s vs cr 0.40s. |
+| `openmicroscopy.nfs-share` | ubuntu | ✅ clean. Times: cold py 4.82s vs cr 3.93s; warm py 3.97s vs cr 0.40s. |
+| `openmicroscopy.nginx-ssl-selfsigned` | ubuntu | ✅ clean. Times: cold py 7.02s vs cr 3.85s; warm py 5.54s vs cr 0.46s. |
+| `openmicroscopy.python-pydata` | ubuntu | ✅ clean. Times: cold py 5.60s vs cr 4.49s; warm py 4.04s vs cr 0.48s. |
+| `openmicroscopy.storage-volume-initialise` | ubuntu | ✅ clean. Times: cold py 4.71s vs cr 4.00s; warm py 4.30s vs cr 0.44s. |
+| `pluggero.vm_share_helper` | ubuntu | ✅ clean. Times: cold py 46.79s vs cr 27.91s; warm py 15.98s vs cr 0.67s. |
+| `radek_sprta.docker` | ubuntu | ✅ clean. Times: cold py 71.16s vs cr 60.96s; warm py 15.72s vs cr 0.97s. |
+| `razvancrainea.opensips` | ubuntu | ✅ clean. Times: cold py 75.80s vs cr 65.64s; warm py 10.84s vs cr 0.90s. |
+| `RedHatOfficial.rhel9_hipaa` | ubuntu | ✅ clean. Times: cold py 25.12s vs cr 9.57s; warm py 24.22s vs cr 3.06s. |
+| `Synehan.os_update` | ubuntu | ✅ clean. Times: cold py 318.36s vs cr 347.69s; warm py 33.66s vs cr 7.34s. |
+| `tag1consulting.borgbackup` | ubuntu | ✅ clean. Times: cold py 61.47s vs cr 46.57s; warm py 60.88s vs cr 42.42s. |
+| `thulium_drake.subscription_manager` | ubuntu | ✅ clean. Times: cold py 6.15s vs cr 4.14s; warm py 4.24s vs cr 0.37s. |
+| `thystips.php_fpm_exporter` | ubuntu | ✅ clean. Times: cold py 19.60s vs cr 6.79s; warm py 13.88s vs cr 1.19s. |
+| `tinyblargon.nginx` | ubuntu | ✅ clean. Times: cold py 33.98s vs cr 83.52s; warm py 7.70s vs cr 0.71s. |
+| `tomereli.proxy` | ubuntu | ✅ clean. Times: cold py 10.65s vs cr 4.09s; warm py 11.86s vs cr 0.51s. |
+| `trfore.mongodb_install` | ubuntu | ✅ clean. Times: cold py 103.44s vs cr 65.40s; warm py 21.09s vs cr 11.55s. |
+| `veselahouba.docker` | ubuntu | ✅ clean. Times: cold py 85.33s vs cr 63.34s; warm py 29.33s vs cr 4.11s. |
+| `voidquark.el_patching` | ubuntu | ✅ clean. Times: cold py 5.98s vs cr 4.33s; warm py 4.72s vs cr 0.64s. |
+
 ## Round 814000-814010 (2026-09-17): 11-role Galaxy batch (ubuntu+rocky)
 
 A sixth `krikri-role-tester` round, 11 never-before-tested roles drawn

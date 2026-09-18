@@ -1007,6 +1007,27 @@ module Krikri
         default_ipv4 = {"address" => ipv4}
         default_ipv4["interface"] = interface unless interface.empty?
         default_ipv4["gateway"] = gateway unless gateway.empty?
+
+        # `network` and `netmask` - real Ansible's default_ipv4 always
+        # carries the subnet address ("192.168.1.0") and dotted netmask
+        # ("255.255.255.0") of the default route's interface; both come
+        # from the same per-interface inet line (`address/prefix`) real
+        # Ansible's netifaces pass reads. Found benchmarking
+        # crazikpl.blackbox_exporter's defaults:
+        # `"{{ ansible_default_ipv4.network }}/{{ ansible_default_ipv4.netmask }}"`
+        # failed the whole render with "object of type 'dict' has no
+        # attribute 'network'".
+        unless interface.empty?
+          inet_line = `ip -4 addr show dev #{interface} 2>/dev/null | grep 'inet ' | head -1`.strip
+          if inet_match = inet_line.match(/inet\s+(\d+\.\d+\.\d+\.\d+)\/(\d+)/)
+            prefix = inet_match[2].to_i
+            octets = inet_match[1].split('.').map(&.to_u8)
+            mask_octets = prefix == 0 ? [0, 0, 0, 0] : (0...4).map { |i| prefix >= (i + 1) * 8 ? 255_u8 : (prefix > i * 8 ? (256 - (1 << (8 * (i + 1) - prefix))).to_u8 : 0_u8) }
+            default_ipv4["netmask"] = mask_octets.join('.')
+            default_ipv4["network"] = octets.zip(mask_octets).map { |o, m| o & m }.join('.')
+          end
+        end
+
         facts["ansible_default_ipv4"] = default_ipv4
       end
 

@@ -91,8 +91,8 @@ module Krikri
                        "name", "nobest", "releasever", "security", "skip_broken",
                        "sslverify", "state", "update_cache", "update_only",
                        "validate_certs", "use_backend", "expire-cache", "pkg"}
-      dnf_internal = {"_ansible_check_mode", "_ansible_diff", "_verbosity", "_environment"}
-      unsupported = @params.keys.reject { |k| dnf_supported.includes?(k) || dnf_internal.includes?(k) }
+      dnf_internal = {"_ansible_check_mode", "_ansible_diff", "_module_name", "_verbosity", "_environment"}
+      unsupported = @params.keys.reject { |k| dnf_supported.includes?(k) || dnf_internal.includes?(k) || k.starts_with?("_") }
       unless unsupported.empty?
         unsupported_sorted = unsupported.sort
         return PluginResult.new(

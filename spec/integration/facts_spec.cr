@@ -147,5 +147,22 @@ describe "facts plugin" do
       default_ipv4["gateway"]?.should_not be_nil
       default_ipv4["gateway"].as_s.should match(/^\d+\.\d+\.\d+\.\d+$/)
     end
+
+    # round 825388 batch (crazikpl.blackbox_exporter): real Ansible's
+    # default_ipv4 always carries `network` (subnet address) and
+    # `netmask` (dotted); krikri's dict never had either, so a template
+    # reading `"{{ ansible_default_ipv4.network }}/{{ ansible_default_ipv4.netmask }}"`
+    # failed with "object of type 'dict' has no attribute 'network'".
+    it "includes network and netmask alongside address" do
+      result = PluginSpecHelper.run("facts", {} of String => String)
+
+      default_ipv4 = result["ansible_facts"]["ansible_default_ipv4"]?
+      pending! "no default route on this host" unless default_ipv4 && default_ipv4["address"]?
+
+      netmask = default_ipv4["netmask"]?.should_not be_nil
+      netmask.as_s.should match(/^(\d+\.){3}\d+$/)
+      network = default_ipv4["network"]?.should_not be_nil
+      network.as_s.should match(/^(\d+\.){3}\d+$/)
+    end
   end
 end

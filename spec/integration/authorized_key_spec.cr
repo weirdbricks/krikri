@@ -220,6 +220,39 @@ describe "authorized_key plugin" do
     File.exists?(path).should be_false
   end
 
+  # round 825388 batch (lucasmaurice.users, jtprogru.hosts): real
+  # ansible.posix.authorized_key fetches a key that looks like a URL
+  # (http/https/ftp/file) before line-splitting - "invalid key
+  # specified: https://github.com/bob.keys" never happens on real
+  # Ansible. file:// is spec'd here (network-independent); the http(s)
+  # path shares the same dispatch.
+  it "fetches a file:// URL key instead of failing with invalid-key" do
+    key_file = tmp_path("authorized-key-url-src")
+    `rm -rf #{key_file}`
+    File.write(key_file, RSA_KEY)
+    path = tmp_path("authorized-key-url")
+    `rm -rf #{tmp_path("authorized-key-url")}`
+
+    result = PluginSpecHelper.run("authorized_key", {
+      "path" => path, "key" => "file://#{key_file}",
+    })
+
+    File.read(path).should contain(RSA_KEY)
+  end
+
+  it "fails with a fetch error message when a file:// URL key is missing" do
+    path = tmp_path("authorized-key-url-missing")
+    `rm -rf #{tmp_path("authorized-key-url-missing")}`
+
+    result = PluginSpecHelper.run("authorized_key", {
+      "path" => path, "key" => "file://#{tmp_path("does-not-exist.keys")}",
+    })
+
+    result["failed"].as_bool.should be_true
+    result["msg"].as_s.should contain("Failed to fetch")
+    File.exists?(path).should be_false
+  end
+
   it "accepts a multi-line key param, landing every key" do
     path = tmp_path("authorized-key-multi")
     `rm -rf #{tmp_path("authorized-key-multi")}`

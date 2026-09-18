@@ -1,6 +1,9 @@
 #!/usr/bin/env crystal
 
 require "json"
+require "http/client"
+require "uri"
+require "openssl"
 require "../src/krikri/base_plugin"
 require "../src/krikri/plugin_helpers/authorized_keys_file"
 
@@ -54,6 +57,13 @@ module Krikri
       if failure = empty_key_result(key)
         return failure
       end
+
+      # Real module's looks_like_url/fetch_file: a key that is a URL
+      # (http/https/ftp/file) is fetched first and the fetched body
+      # becomes the key material - "invalid key specified: https://..."
+      # never happens on real Ansible (lucasmaurice.users, jtprogru.hosts).
+      key = fetch_url_key(key)
+      return PluginResult.new(changed: false, failed: true, msg: @fetch_error) if key.nil?
 
       state = @params["state"]? || "present"
       check_mode = true?(@params["_ansible_check_mode"]?)
@@ -130,6 +140,47 @@ module Krikri
 
     private def json_string(value : String?) : JSON::Any
       JSON::Any.new(value)
+    end
+
+    private URL_PREFIX = /^(http|https|ftp|file):\/\//
+
+    @fetch_error : String = ""
+
+    # Mirrors the real module's fetch_file: file:// reads the local path,
+    # http(s):// fetches over the network (validate_certs honored), and a
+    # failed fetch is a task failure, never silently treated as key
+    # material. ftp:// is not supported by this engine's fetch.
+    private def fetch_url_key(key : String) : String?
+      return key unless key.strip.matches?(URL_PREFIX)
+
+      url = key.strip
+      if url.starts_with?("file://")
+        path = url.sub("file://", "")
+        begin
+          return File.read(path)
+        rescue e
+          @fetch_error = "Failed to fetch #{url}: #{e.message}"
+          return nil
+        end
+      end
+
+      unless url.starts_with?("http://") || url.starts_with?("https://")
+        @fetch_error = "Failed to fetch #{url}: unsupported scheme"
+        return nil
+      end
+
+      validate = @params["validate_certs"]?.nil? || true?(@params["validate_certs"]?)
+      ctx = OpenSSL::SSL::Context::Client.new
+      ctx.verify_mode = validate ? OpenSSL::SSL::VerifyMode::PEER : OpenSSL::SSL::VerifyMode::NONE
+      response = HTTP::Client.get(url, tls: url.starts_with?("https://") ? ctx : nil)
+      unless response.success?
+        @fetch_error = "Failed to fetch #{url}: HTTP #{response.status_code}"
+        return nil
+      end
+      response.body
+    rescue e : Socket::Error | IO::Error | OpenSSL::SSL::Error
+      @fetch_error = "Failed to fetch #{url}: #{e.message}"
+      nil
     end
 
     # A real Ansible playbook can legitimately compute an empty key

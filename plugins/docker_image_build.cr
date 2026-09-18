@@ -56,8 +56,10 @@ module Krikri
     }
     # Engine-internal executor keys that never reach the real module's
     # params (see apt.cr's same exclusion list).
-    INTERNAL_PARAMS = {"_ansible_check_mode", "_ansible_diff", "_verbosity", "_environment"}
+    INTERNAL_PARAMS = {"_ansible_check_mode", "_ansible_diff", "_module_name", "_verbosity", "_environment"}
     # Sub-spec option names, for the deferred unsupported-params check.
+    # Any executor-internal underscore-prefixed key (now or future) is also
+    # excluded by validate_unsupported, so this set can't drift stale again.
     SECRETS_SUBOPTIONS = %w[id type src env value]
     OUTPUTS_SUBOPTIONS = %w[type dest context name push]
     # Only the secrets sub-spec has a no_log option (value).

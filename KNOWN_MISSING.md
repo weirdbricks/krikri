@@ -18,7 +18,54 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.1151`.**
+**Currently at `0.9.1153`.**
+
+## Round 825000-825388: 389-role Galaxy batch, 3 real bugs fixed (0.9.1151 -> 0.9.1153)
+
+389-role Atlantic.net-only round (`CLEAN=303 DIVERGENT=72 BLOCKED=14`),
+47-role confirm round 826000-826046 re-ran every role whose divergence
+traced to one of the three fixed root causes: `CLEAN=45 DIVERGENT=2`,
+both remaining divergences role-side (real ansible-playbook fails them
+identically - ecgalaxy.php's `php_version[:3]` conditional and
+libre_ops.multi_redis's unsupported `systemd: status=` param, where
+krikri is the lenient side).
+
+- `0.9.1152`: `_module_name` leaked into module argument validation
+  (~44 divergent roles). The executor deliberately injects
+  `_module_name` into module params (debug's verbosity gate and
+  check-mode skip messages read it back), but `yum`, `dnf`, `systemd`
+  and `docker_image_build` each hand-rolled an internal-key exclusion
+  list that predated the injection - `unsupported_param_keys`'s own
+  `INTERNAL` set already carried the key, so only the hand-rolled
+  copies had drifted. All four now reject any `_`-prefixed key
+  generically in addition to their explicit lists, so a future
+  executor-internal key can't re-trigger the same class.
+- `0.9.1152`: `authorized_key` didn't fetch URL keys (3 roles:
+  lucasmaurice.users, jtprogru.hosts, +1). Real ansible.posix.
+  authorized_key fetches a `key:` value that looks like a URL
+  (http/https/ftp/file) before line-splitting; krikri failed with
+  "invalid key specified: https://github.com/...". The plugin now
+  fetches first (validate_certs honored), failing the task with a
+  "Failed to fetch" message on error, with file://-based regression
+  specs.
+- `0.9.1153`: `ansible_default_ipv4` lacked `network` and `netmask`
+  (crazikpl.blackbox_exporter). The gatherer only parsed
+  `ip -4 route get 1` for address/interface/gateway; real Ansible's
+  default_ipv4 always carries the subnet address and dotted netmask
+  too. Both now derive from the default-route interface's
+  `ip -4 addr show dev <iface>` inet line, live-verified spec.
+
+The remaining divergences split into: missing modules
+(community.docker.*, os_*, win_* - Open gaps below), role-side gaps
+that fail real ansible-playbook identically (opentelekomcloud.
+security_group's undefined `rules` var, ecgalaxy.php, libre_ops.
+multi_redis), a handful of `when`-evaluation skip-count differences
+(volker-raschek.certificate_authority ok=29/skipped=14 vs py ok=37/
+skipped=6, stephdewit.sshca, linux-system-roles.fapolicyd - not yet
+root-caused), and one-offs (baztian.asdf's symlink, the `https`
+filter-name parse error in jenstimmerman.vaultwarden, Synehan.
+os_update's unzip candidate, etc.) that need individual
+investigation before being classed either way.
 
 ## Open-gaps sweep, no benchmark round (0.9.1150 -> 0.9.1151)
 
