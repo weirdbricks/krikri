@@ -93,7 +93,14 @@ module Krikri
       dir = connection_dir
       return unless dir
       Dir.mkdir_p(dir) unless Dir.exists?(dir)
-      File.write(path_for(host_name), facts.to_json)
+      # Cached facts frequently embed ansible_env (the controller's whole
+      # environment - API tokens included) and set_fact-ed secrets: store
+      # them owner-only rather than umask-default 0644.
+      path = path_for(host_name)
+      File.open(path, "w") do |f|
+        f.chmod(0o600)
+        f.write(facts.to_json.to_slice)
+      end
     rescue
     end
   end

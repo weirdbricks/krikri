@@ -3329,14 +3329,14 @@ module Krikri
         # interactively - which is what actually made that role fail
         # under this engine while real ansible-playbook ran it clean.
         if path == "/dev/null"
-          return Array.new(length) { PASSWORD_CHARS.sample }.join
+          return Array.new(length) { PASSWORD_CHARS.sample(Random::Secure) }.join
         end
 
         if File.exists?(resolved_path)
           return File.read(resolved_path).chomp
         end
 
-        password = Array.new(length) { PASSWORD_CHARS.sample }.join
+        password = Array.new(length) { PASSWORD_CHARS.sample(Random::Secure) }.join
         begin
           dir = File.dirname(resolved_path)
           Dir.mkdir_p(dir) unless Dir.exists?(dir)

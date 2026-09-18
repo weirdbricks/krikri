@@ -1975,10 +1975,17 @@ module Krikri
     # rule it introduced in 2.19; this project's benchmark harness has
     # set it on the real-Ansible side since round 20, so honouring it
     # here keeps both engines comparable under the same environment.
+    @@broken_conditionals_warned = false
+
     def self.allow_broken_conditionals? : Bool
       value = ENV["ANSIBLE_ALLOW_BROKEN_CONDITIONALS"]?
       return false unless value
-      ["true", "yes", "1", "on"].includes?(value.strip.downcase)
+      enabled = ["true", "yes", "1", "on"].includes?(value.strip.downcase)
+      if enabled && !@@broken_conditionals_warned
+        @@broken_conditionals_warned = true
+        STDERR.puts "[WARNING]: ANSIBLE_ALLOW_BROKEN_CONDITIONALS is set: conditional-evaluation errors are downgraded to warnings (non-boolean `when:` results pass through instead of failing the task)"
+      end
+      enabled
     end
 
     # Evaluate truthiness of a value

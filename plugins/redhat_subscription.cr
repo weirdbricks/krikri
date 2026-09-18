@@ -74,14 +74,19 @@ module Krikri
     end
 
     private def activation_args(activationkey : String?, token : String?, username : String?) : String
+      # Every value is shell-quoted: these come straight from task params,
+      # and a credential containing a quote/backtick/$() previously broke
+      # out of the command string and executed on the managed host. (The
+      # password still rides argv, matching the real module's own
+      # subscription-manager invocation - injection is what's fixed here.)
       args = ""
       if activationkey && !activationkey.to_s.empty?
-        args += " --activationkey=#{activationkey}"
-        args += " --org=#{@params["org_id"]}" if @params["org_id"]?
+        args += " --activationkey=#{shell_single_quote(activationkey.to_s)}"
+        args += " --org=#{shell_single_quote(@params["org_id"].to_s)}" if @params["org_id"]?
       elsif token && !token.to_s.empty?
-        args += " --token=#{token}"
+        args += " --token=#{shell_single_quote(token.to_s)}"
       else
-        args += " --username=#{username} --password='#{@params["password"]?}'"
+        args += " --username=#{shell_single_quote(username.to_s)} --password=#{shell_single_quote(@params["password"]?.to_s)}"
       end
       args
     end

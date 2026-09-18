@@ -2,6 +2,7 @@
 
 require "json"
 require "mysql"
+require "base64"
 require "compress/gzip"
 require "xz"
 require "bz2"
@@ -186,7 +187,7 @@ module Krikri
         cmd_str << " " << @params["dump_extra_args"] if @params["dump_extra_args"]?
       end
 
-      result = remote_exec(cmd)
+      result = remote_exec(mysql_client_wrapper(cmd))
       return PluginResult.new(changed: false, failed: true, msg: result[:stderr]) unless result[:exit_code] == 0
 
       write_target(target, result[:stdout])
@@ -204,7 +205,7 @@ module Krikri
         cmd_str << " --one-database " << quote(name) unless name == "all"
       end
       cmd += " < #{quote(sql_path)}"
-      result = remote_exec(cmd)
+      result = remote_exec(mysql_client_wrapper(cmd))
       File.delete?(sql_path) if sql_path != target
 
       return PluginResult.new(changed: false, failed: true, msg: result[:stderr]) unless result[:exit_code] == 0
@@ -224,14 +225,53 @@ module Krikri
       "#{flag}#{quote(config_file)} "
     end
 
+    # When a login_password was given and the user did NOT name their own
+    # config file, stage the credentials into a temporary
+    # --defaults-extra-file instead of `--password=` on the command line:
+    # the cleartext would otherwise sit in the tool's argv, readable from
+    # the target's /proc/<pid>/cmdline by any local user for the
+    # dump/import's duration. Same pattern as postgresql_db.cr's .pgpass
+    # staging - the password is base64-framed in the command string so it
+    # never appears in argv at all, and the file is 0600 and always
+    # removed, preserving the tool's exit code. (With a user-supplied
+    # config_file: the old --password= argv form remains, since only one
+    # defaults file may be given - matching real Ansible's own behavior
+    # when config_file is passed.)
+    private def stages_defaults_file? : Bool
+      pw = @params["login_password"]?
+      !pw.nil? && !pw.empty? && !@params["config_file"]?
+    end
+
+    private def defaults_file_prefix : String
+      return "" unless stages_defaults_file?
+      content = "[client]\n"
+      content += "user=#{@params["login_user"]}\n" if @params["login_user"]?
+      content += "password=#{@params["login_password"]}\n"
+      encoded = Base64.strict_encode(content)
+      "__krikri_mydefaults=$(mktemp); printf %s #{quote(encoded)} | base64 -d > \"$__krikri_mydefaults\"; chmod 600 \"$__krikri_mydefaults\"; "
+    end
+
+    private def defaults_file_cleanup : String
+      return "" unless stages_defaults_file?
+      "; __krikri_rc=$?; rm -f \"$__krikri_mydefaults\"; exit $__krikri_rc"
+    end
+
+    private def mysql_client_wrapper(cmd : String) : String
+      "#{defaults_file_prefix}#{cmd}#{defaults_file_cleanup}"
+    end
+
     private def ignore_tables : Array(String)
       @params["ignore_tables"]?.try(&.split(',').map(&.strip).reject(&.empty?)) || [] of String
     end
 
     private def login_flags : String
       String.build do |flags|
-        flags << "--user=" << quote(@params["login_user"]) << " " if @params["login_user"]?
-        flags << "--password=" << quote(@params["login_password"]) << " " if @params["login_password"]?
+        # user/password ride the staged defaults file (see
+        # stages_defaults_file?) whenever it's in play - never argv.
+        unless stages_defaults_file?
+          flags << "--user=" << quote(@params["login_user"]) << " " if @params["login_user"]?
+          flags << "--password=" << quote(@params["login_password"]) << " " if @params["login_password"]?
+        end
         if socket = @params["login_unix_socket"]?
           flags << "--socket=" << quote(socket) << " "
         else

@@ -1,5 +1,6 @@
 require "json"
 require "base64"
+require "../shell"
 
 module Krikri
   module PluginHelpers
@@ -83,10 +84,18 @@ module Krikri
       # the registry argument (the CLI's own default), everything else
       # passes the URL; --config points the CLI at the config file's
       # directory for custom config_path support.
+      #
+      # The password travels via --password-stdin, base64-framed in the
+      # command string: `docker login -p <pw>` puts the cleartext
+      # credential in the remote process's argv, readable from
+      # /proc/<pid>/cmdline by any local user for the login's duration.
+      # The base64 form keeps it out of argv entirely (same framing the
+      # batch transport and postgresql_db's .pgpass staging use).
       def self.login_command(registry_url : String, username : String, password : String, config_dir : String?) : String
-        cmd = "docker"
-        cmd += " --config '#{config_dir}'" if config_dir
-        cmd += " login -u '#{username.gsub("'", "'\\''")}' -p '#{password.gsub("'", "'\\''")}'"
+        encoded = Base64.strict_encode(password)
+        cmd = "printf %s #{Shell.single_quote(encoded)} | base64 -d | docker"
+        cmd += " --config #{Shell.single_quote(config_dir)}" if config_dir
+        cmd += " login -u #{Shell.single_quote(username)} --password-stdin"
         cmd += " #{registry_url}" unless hub?(registry_url)
         cmd
       end

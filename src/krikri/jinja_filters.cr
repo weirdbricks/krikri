@@ -2553,11 +2553,11 @@ module Krikri
       # ExpressionEvaluator#evaluate_password_lookup's own comment for
       # how the missing case was found (imntreal.smallstep_ca wrote
       # empty password files, and `step ca init` then prompted).
-      return Array.new(length) { PASSWORD_CHARS.sample }.join if path == "/dev/null"
+      return Array.new(length) { PASSWORD_CHARS.sample(Random::Secure) }.join if path == "/dev/null"
 
       return File.read(resolved_path).chomp if File.exists?(resolved_path)
 
-      password = Array.new(length) { PASSWORD_CHARS.sample }.join
+      password = Array.new(length) { PASSWORD_CHARS.sample(Random::Secure) }.join
       begin
         dir = File.dirname(resolved_path)
         Dir.mkdir_p(dir) unless Dir.exists?(dir)

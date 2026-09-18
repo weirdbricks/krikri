@@ -205,11 +205,23 @@ module Krikri
 
     private def write_config(config_path : String, content : String) : Nil
       remote_exec("mkdir -p '#{File.dirname(config_path)}'")
-      tmp = "/tmp/.docker-login-#{Process.pid}"
-      File.write(tmp, content)
-      remote_upload(tmp, config_path)
-      remote_exec("chmod 600 '#{config_path}'")
-      File.delete(tmp)
+      # The config carries base64 user:pass auth: stage it 0600
+      # controller-side (not the old predictable 0644 /tmp name), and
+      # tighten the remote copy the moment it lands with a verified
+      # chmod (an unchecked chmod under a hardening role's restrictive
+      # policy previously left the credential file 0644 for good).
+      tmp = File.join(Dir.tempdir, ".docker-login-#{Random::Secure.hex(8)}")
+      File.open(tmp, "w") do |f|
+        f.chmod(0o600)
+        f.write(content.to_slice)
+      end
+      begin
+        remote_upload(tmp, config_path)
+        r = remote_exec("chmod 600 '#{config_path}'")
+        raise "chmod 600 on #{config_path} failed: #{r[:stderr]}" if r[:exit_code] != 0
+      ensure
+        File.delete?(tmp)
+      end
     end
   end
 end

@@ -99,17 +99,17 @@ describe Krikri::PluginHelpers::DockerLogin do
   describe ".login_command" do
     it "omits the registry argument for hub logins" do
       Krikri::PluginHelpers::DockerLogin.login_command("https://index.docker.io/v1/", "docker", "rekcod", nil)
-        .should eq("docker login -u 'docker' -p 'rekcod'")
+        .should eq("printf %s 'cmVrY29k' | base64 -d | docker login -u 'docker' --password-stdin")
     end
 
     it "passes custom registries and config dirs through" do
       Krikri::PluginHelpers::DockerLogin.login_command("your.private.registry.io", "yourself", "secrets3", "/tmp/.mydocker")
-        .should eq("docker --config '/tmp/.mydocker' login -u 'yourself' -p 'secrets3' your.private.registry.io")
+        .should eq("printf %s 'c2VjcmV0czM=' | base64 -d | docker --config '/tmp/.mydocker' login -u 'yourself' --password-stdin your.private.registry.io")
     end
 
-    it "shell-escapes single quotes in credentials" do
+    it "keeps single quotes in credentials out of argv entirely" do
       Krikri::PluginHelpers::DockerLogin.login_command("https://index.docker.io/v1/", "user", "pa'ss", nil)
-        .should eq(%(docker login -u 'user' -p 'pa'\\''ss'))
+        .should eq("printf %s 'cGEnc3M=' | base64 -d | docker login -u 'user' --password-stdin")
     end
   end
 
