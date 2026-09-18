@@ -1392,6 +1392,32 @@ module Krikri
     #
     # The location block is best-effort: the parser doesn't track
     # per-task source positions, so the task is located by scanning the
+    # Expands a `_templated_args` param (see playbook_parser.cr's
+    # whole-args-template branch, calvinbui.ansible_apt's
+    # `apt: "{{ item }}"`): the value has already been substituted
+    # (native whole-span rendering carries the double-quoted JSON form),
+    # so a dict render becomes the module's real params and anything
+    # else falls back to free-form k=v parsing - real Ansible's own
+    # post-template dispatch for a string args value. The sentinel key
+    # never reaches the plugin (every plugin's validation now ignores
+    # `_`-prefixed keys anyway).
+    private def expand_templated_args(params : Hash(String, String)) : Hash(String, String)
+      raw = params.delete("_templated_args") || return params
+      rendered = raw.strip
+      expanded = params.dup
+      json = (JSON.parse(rendered) rescue nil)
+      if json && json.as_h?
+        json.as_h.each do |key, value|
+          expanded[key] = value.as_s? ? value.as_s : value.to_json
+        end
+      else
+        kv, leftover = PlaybookParser.parse_inline_kv_params_public(rendered)
+        kv.each { |key, value| expanded[key] = value }
+        expanded["_raw_params"] = leftover if leftover
+      end
+      expanded
+    end
+
     # playbook file for its `- name:` line (or its module key line when
     # nameless) - tasks defined in role/include files report the
     # playbook file's block only when that search happens to find them,

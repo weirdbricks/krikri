@@ -3989,6 +3989,19 @@ module Krikri
           params["cmd"] = cmd
           special.each { |key, value| params[key] = value }
         else
+        # A string arg that is ENTIRELY one `{{ ... }}` expression
+        # (`apt: "{{ item }}"` with a loop:, calvinbui.ansible_apt) is
+        # real Ansible's whole-args-template shape: the expression
+        # renders to a dict at run time and THAT dict becomes the
+        # module params (or a string, re-parsed as free-form k=v).
+        # Stashing it here (an `_`-prefixed internal key every plugin's
+        # validation ignores) defers the resolution to run time - at
+        # parse time `item` doesn't exist yet, and kv-parsing the raw
+        # template text wrongly produced `_raw_params`, which strict
+        # modules reject.
+        if yaml.as_s.strip.matches?(/\A\{\{.*\}\}\z/m) && !RAW_COMMAND_MODULES.includes?(module_name)
+          params["_templated_args"] = yaml.as_s.strip
+        else
         # Real Ansible's parse_kv (the function this mirrors for
         # non-command modules) only puts "_raw_params" in the result when
         # the string actually contained tokens with no "=" (leftover
@@ -4002,6 +4015,7 @@ module Krikri
         kv_params, raw_leftover = parse_inline_kv_params(yaml.as_s)
         kv_params.each { |key, value| params[key] = value }
         params["_raw_params"] = raw_leftover if raw_leftover
+        end
         end
       else
         # Other types
@@ -4037,6 +4051,10 @@ module Krikri
     # leftover free-form text (tokens with no "=" - real Ansible's
     # parse_kv raw_params list, joined back with single spaces) or nil
     # when every token was a key=value pair.
+    def self.parse_inline_kv_params_public(s : String) : {Hash(String, String), String?}
+      parse_inline_kv_params(s)
+    end
+
     private def self.parse_inline_kv_params(s : String) : {Hash(String, String), String?}
       params = Hash(String, String).new
       raw_tokens = [] of String

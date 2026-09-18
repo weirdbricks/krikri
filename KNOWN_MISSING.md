@@ -18,7 +18,35 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.1153`.**
+**Currently at `0.9.1154`.**
+
+## Round 827000-827399: 400-role Galaxy batch, 1 real bug fixed (0.9.1153 -> 0.9.1154)
+
+400-role Atlantic.net-only round of never-before-tested Galaxy roles
+(`CLEAN=268 DIVERGENT=69 BLOCKED=63`, all 63 blocked roles
+GALAXY_MISSING). One confirmed krikri bug out of the 69 divergences:
+
+- `0.9.1154`: a whole-args template (`apt: "{{ item }}"` with a
+  `loop:`, calvinbui.ansible_apt) was kv-parsed at parse time, found
+  no `=` tokens, and dumped the raw template text into `_raw_params` -
+  which apt's strict argument spec then rejected ("Unsupported
+  parameters ...: _raw_params"). Real Ansible templates the args
+  string first and, when the rendered value is a dict, uses it AS the
+  module's params. The parser now defers any string-args value that is
+  entirely one `{{ ... }}` expression to run time (internal
+  `_templated_args` key), and the executor expands it post-substitution
+  into dict params - or falls back to free-form k=v parsing for a
+  string render. Regression specs in
+  `spec/integration/whole_args_template_spec.cr`; confirmed CLEAN
+  against the real host by round 828000.
+
+The other divergences are not krikri bugs: 15 Dell-Networking.* roles
+real ansible-playbook itself can't run (its own dellos module
+resolution fails on a plain install); 20 ceph.* roles where both
+engines fail, real ansible first on the role's own undefined
+`mds_group_name` (only its site.yml wrapper defines it); the rest are
+win_*/other known-missing modules or host-environment gaps (docker
+daemon, pip, brew, broken apt packages).
 
 ## Round 825000-825388: 389-role Galaxy batch, 3 real bugs fixed (0.9.1151 -> 0.9.1153)
 

@@ -6581,6 +6581,438 @@ record, not this batch's own timing snapshot.
 | `ypsman.aws_cli` | ubuntu | ✅ clean. Times: cold py 7.55s vs cr 7.02s; warm py 5.47s vs cr 1.45s. |
 | `zorun.garage` | ubuntu | ✅ clean. Times: cold py 4.05s vs cr 4.34s; warm py 2.53s vs cr 0.28s. |
 
+## Round 827000-827399 (2026-09-18): 400-role Galaxy batch (ubuntu+rocky)
+
+A `krikri-role-tester` round, 400 never-before-tested roles from the
+Galaxy top-download list (pages 1-100, diffed against every
+`ROLES_TESTED.md` role). `CLEAN=268 DIVERGENT=69 BLOCKED=63` (all 63
+Galaxy-404s). Triage: one confirmed krikri bug
+(calvinbui.ansible_apt's `apt: "{{ item }}"` whole-args template
+kv-parsed into `_raw_params` and rejected by apt's strict spec - fixed
+in `0.9.1154`, confirmed CLEAN by round 828000). The remaining
+divergences: 15 Dell-Networking.* roles real ansible-playbook itself
+can't run (its own `dellemc.os9`/dellos module resolution fails on a
+plain install); 20 ceph.* roles where BOTH engines fail (real ansible
+first fails on the role's own undefined `mds_group_name`, which only
+its site.yml wrapper defines - krikri gets further and fails at
+`containerized_deployment`); the rest are win_*/other known-missing
+modules or host-environment gaps (docker daemon, pip, brew, broken
+apt packages).
+
+| Role | OS | Status |
+|---|---|---|
+| `Dell-Networking.dellos-image-upgrade` | ubuntu | ⚠️ role-side - real ansible-playbook can't resolve the dellos modules either. Times: cold py 0.46s vs cr 4.57s; warm py 0.45s vs cr 0.33s. |
+| `telus_openssh` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
+| `telus_silversearcher` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
+| `telus_sodium` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
+| `buluma.update_pip_packages` | ubuntu | ✅ clean. Times: cold py 8.50s vs cr 4.07s; warm py 7.10s vs cr 0.48s. |
+| `buluma.zabbix_proxy` | ubuntu | ✅ clean. Times: cold py 7.19s vs cr 5.83s; warm py 6.87s vs cr 1.39s. |
+| `irixjp.role_example_hello` | ubuntu | ✅ clean. Times: cold py 4.12s vs cr 4.75s; warm py 3.36s vs cr 0.46s. |
+| `liquibase.liquibase` | ubuntu | ✅ clean. Times: cold py 31.34s vs cr 15.36s; warm py 15.46s vs cr 0.91s. |
+| `buluma.umask` | ubuntu | ✅ clean. Times: cold py 5.80s vs cr 4.70s; warm py 5.64s vs cr 0.50s. |
+| `sabre1041_redhat-csp-download` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
+| `buluma.kernel` | ubuntu | ✅ clean. Times: cold py 7.20s vs cr 5.67s; warm py 5.12s vs cr 1.06s. |
+| `telus_locale` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
+| `elan_elan_certbot` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
+| `buluma.openjdk` | ubuntu | ✅ clean. Times: cold py 125.10s vs cr 88.05s; warm py 20.74s vs cr 3.49s. |
+| `David-Igou.haproxy` | ubuntu | ✅ clean. Times: cold py 80.60s vs cr 10.13s; warm py 12.04s vs cr 0.64s. |
+| `buluma.firefox` | ubuntu | ✅ clean. Times: cold py 78.65s vs cr 104.58s; warm py 12.83s vs cr 0.71s. |
+| `buluma.glusterfs` | ubuntu | ✅ clean. Times: cold py 26.62s vs cr 20.30s; warm py 9.39s vs cr 0.52s. |
+| `shinesolutions_opensource.vars_schema_validator` | ubuntu | ✅ clean. Times: cold py 4.23s vs cr 3.79s; warm py 2.72s vs cr 0.36s. |
+| `bradfordwagner.go-releaser-install` | ubuntu | ✅ clean. Times: cold py 12.27s vs cr 8.06s; warm py 6.59s vs cr 0.49s. |
+| `zeerayne.openwrt` | ubuntu | ✅ clean. Times: cold py 5.85s vs cr 3.73s; warm py 2.81s vs cr 0.35s. |
+| `barkingiguana.chage` | ubuntu | ✅ clean. Times: cold py 4.16s vs cr 4.17s; warm py 2.42s vs cr 0.36s. |
+| `tcharl.ansible_hostname` | ubuntu | ✅ clean. Times: cold py 43.97s vs cr 31.25s; warm py 12.21s vs cr 0.99s. |
+| `buluma.perforce` | ubuntu | ✅ clean. Times: cold py 47.24s vs cr 67.93s; warm py 7.10s vs cr 2.46s. |
+| `jdauphant.dns` | ubuntu | ✅ clean. Times: cold py 11.46s vs cr 4.65s; warm py 11.46s vs cr 0.79s. |
+| `chasinglogic.podman` | ubuntu | ✅ clean. Times: cold py 57.98s vs cr 55.53s; warm py 11.00s vs cr 3.55s. |
+| `ashwin_sid.gaia_fw1` | ubuntu | ✅ clean. Times: cold py 0.50s vs cr 0.01s; warm py 0.46s vs cr 0.01s. |
+| `ednxzu_manage_apt_packages` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
+| `suzuki-shunsuke.rbenv-module` | ubuntu | ✅ clean. Times: cold py 3.95s vs cr 4.04s; warm py 2.96s vs cr 0.40s. |
+| `MindPointGroup.windows_2022_cis` | ubuntu | ❌ divergent - Message: The lookup plugin 'file' failed: Unable to access the file './templates/banner. Times: cold py 7.78s vs cr 4.54s; warm py 7.02s vs cr 0.57s. |
+| `suzuki-shunsuke.rbenv` | ubuntu | ✅ clean. Times: cold py 1.54s vs cr 0.01s; warm py 0.48s vs cr 0.01s. |
+| `yourlabs.firewall` | ubuntu | ✅ clean. Times: cold py 5.75s vs cr 11.90s; warm py 4.67s vs cr 0.54s. |
+| `professormanhattan_snapd` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
+| `idiv_biodiversity_ntp` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
+| `pluggero.rofi` | ubuntu | ✅ clean. Times: cold py 615.73s vs cr 382.52s; warm py 24.22s vs cr 2.43s. |
+| `elan_opencast_repository` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
+| `buluma.maven` | ubuntu | ✅ clean. Times: cold py 73.40s vs cr 102.31s; warm py 15.27s vs cr 0.77s. |
+| `yourlabs.remember` | ubuntu | ❌ divergent - Message: module (remember) is missing interpreter line Times: cold py 10.15s vs cr 4.05s; warm py 7.38s vs cr 0.36s. |
+| `buluma.mediawiki` | ubuntu | ✅ clean. Times: cold py 83.31s vs cr 45.85s; warm py 22.47s vs cr 0.96s. |
+| `raven428_mega_launch` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
+| `yourlabs.compose` | ubuntu | ❌ divergent - Message: Could not find or access '/home/labros/scratch/krt-results/827039_atlantic_your Times: cold py 3.89s vs cr 7.11s; warm py 2.81s vs cr 1.02s. |
+| `paloaltonetworks.spatula` | ubuntu | ✅ clean. Times: cold py 4.80s vs cr 4.32s; warm py 3.08s vs cr 0.47s. |
+| `yourlabs.timer` | ubuntu | ✅ clean. Times: cold py 4.31s vs cr 3.99s; warm py 3.21s vs cr 0.31s. |
+| `yourlabs.pip` | ubuntu | ✅ clean. Times: cold py 8.17s vs cr 5.72s; warm py 6.12s vs cr 0.98s. |
+| `l3d.role_install_workstaton_packages` | ubuntu | ✅ clean. Times: cold py 0.47s vs cr 0.01s; warm py 0.45s vs cr 0.01s. |
+| `l3d.role_pulseaudio_archlinux` | ubuntu | ✅ clean. Times: cold py 10.05s vs cr 4.63s; warm py 6.78s vs cr 0.98s. |
+| `yourlabs.docker` | ubuntu | ✅ clean. Times: cold py 5.68s vs cr 4.28s; warm py 4.81s vs cr 0.35s. |
+| `nifcloud_nifcloud` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
+| `yourlabs.aptrepo` | ubuntu | ✅ clean. Times: cold py 46.69s vs cr 39.76s; warm py 6.43s vs cr 0.51s. |
+| `buluma.apt_repository` | ubuntu | ✅ clean. Times: cold py 4.58s vs cr 4.51s; warm py 3.23s vs cr 0.43s. |
+| `thulium_drake.docker_services` | ubuntu | ❌ divergent - Message: Could not connect to the Docker daemon (default socket /var/run/docker.sock): c Times: cold py 6.06s vs cr 4.70s; warm py 4.77s vs cr 0.38s. |
+| `telus_ssl-certificate` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
+| `f5devcentral.bigiq_onboard` | ubuntu | ✅ clean. Times: cold py 254.46s vs cr 214.88s; warm py 251.48s vs cr 211.09s. |
+| `jpmat296.upgrade_powershell` | ubuntu | ❌ divergent - Message: The task includes an option with an undefined variable. The error was: object o Times: cold py 5.67s vs cr 3.79s; warm py 2.67s vs cr 0.37s. |
+| `Dell-Networking.dellos-interface` | ubuntu | ✅ clean. Times: cold py 3.96s vs cr 5.51s; warm py 3.79s vs cr 0.45s. |
+| `elan_opencast_user` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
+| `quinot.lookup_ldap` | ubuntu | ✅ clean. Times: cold py 6.12s vs cr 4.47s; warm py 2.73s vs cr 0.36s. |
+| `rileyschuit.rpi-opensprinkler` | ubuntu | ✅ clean. Times: cold py 8.67s vs cr 7.65s; warm py 7.29s vs cr 1.75s. |
+| `Yannik.enable-standard-cronjobs` | ubuntu | ✅ clean. Times: cold py 0.44s vs cr 0.01s; warm py 0.46s vs cr 0.01s. |
+| `buluma.ruby_gems` | ubuntu | ✅ clean. Times: cold py 793.16s vs cr 776.62s; warm py 21.02s vs cr 2.97s. |
+| `andrewrothstein.ipxe` | ubuntu | ✅ clean. Times: cold py 6.00s vs cr 4.15s; warm py 4.42s vs cr 0.60s. |
+| `telus_mariadb` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
+| `idiv_biodiversity_nvidia-driver` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
+| `david-igou.openshift_agent_install` | ubuntu | ✅ clean. Times: cold py 4.80s vs cr 4.20s; warm py 3.38s vs cr 0.51s. |
+| `telus_aws-inspector` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
+| `andrewrothstein.sonarscannercli` | ubuntu | ✅ clean. Times: cold py 22.23s vs cr 11.07s; warm py 8.56s vs cr 0.85s. |
+| `ansible-network.vyos` | ubuntu | ✅ clean. Times: cold py 4.05s vs cr 3.97s; warm py 2.57s vs cr 0.38s. |
+| `idiv_biodiversity_repo-xcat` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
+| `withmethod_google-chrome` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
+| `ednz_cloud_manage_apt_packages` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
+| `ccdc.ci_cleanup` | ubuntu | ✅ clean. Times: cold py 4.62s vs cr 4.29s; warm py 3.01s vs cr 0.48s. |
+| `wittdennis.alpine_distro_upgrade` | ubuntu | ✅ clean. Times: cold py 4.43s vs cr 3.84s; warm py 3.15s vs cr 0.28s. |
+| `trainline-eu_ansible_postgresql_role` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
+| `idiv_biodiversity_sysstat` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
+| `telus_motd` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
+| `buluma_ansible_lint` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
+| `0x28d_docker_ce` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
+| `reallyenglish_logrotate` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
+| `raven428_mega_var` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
+| `buluma.ad_auth` | ubuntu | ✅ clean. Times: cold py 8.19s vs cr 5.93s; warm py 5.11s vs cr 1.19s. |
+| `joezollo.windows_admin_center` | ubuntu | ❌ divergent - ✗ Playbook execution completed with unavailable modules: win_get_url, win_package Times: cold py 4.59s vs cr 4.51s; warm py 2.64s vs cr 0.38s. |
+| `RealSalmon_mysql-client` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
+| `Dell-Networking.dellos-lag` | ubuntu | ⚠️ role-side - real ansible-playbook can't resolve the dellos modules either. Times: cold py 0.96s vs cr 4.56s; warm py 0.45s vs cr 0.32s. |
+| `jtprogru.hosts` | ubuntu | ✅ clean. Times: cold py 6.39s vs cr 4.39s; warm py 5.36s vs cr 0.45s. |
+| `ccdc.macos_cpp_developer_mode` | ubuntu | ✅ clean. Times: cold py 0.50s vs cr 0.01s; warm py 0.46s vs cr 0.01s. |
+| `Dell-Networking.dellos-lldp` | ubuntu | ⚠️ role-side - real ansible-playbook can't resolve the dellos modules either. Times: cold py 0.98s vs cr 4.41s; warm py 0.49s vs cr 0.39s. |
+| `infOpen.sysfs` | ubuntu | ✅ clean. Times: cold py 11.89s vs cr 10.75s; warm py 6.17s vs cr 0.57s. |
+| `jtprogru.macos` | ubuntu | ❌ divergent - Message: Failed to find required executable brew in paths: /usr/local/bin:/opt/homebrew/ Times: cold py 12.49s vs cr 4.89s; warm py 10.68s vs cr 0.84s. |
+| `ten7.flightdeck_base` | ubuntu | ❌ divergent - Message: Destination directory /home/flightdeck does not exist Times: cold py 9.50s vs cr 4.32s; warm py 3.78s vs cr 0.42s. |
+| `idiv_biodiversity_hosts` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
+| `megabyte-labs_snapd` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
+| `ednz_cloud_manage_repositories` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
+| `ansible-lockdown.windows_2022_cis` | ubuntu | ❌ divergent - Message: The lookup plugin 'file' failed: Unable to access the file './templates/banner. Times: cold py 6.84s vs cr 4.07s; warm py 5.17s vs cr 0.44s. |
+| `MindPointGroup.suse15_cis` | ubuntu | ✅ clean. Times: cold py 4.89s vs cr 3.81s; warm py 4.32s vs cr 0.39s. |
+| `nmasse-itix.threescale-cicd` | ubuntu | ✅ clean. Times: cold py 4.37s vs cr 3.86s; warm py 2.98s vs cr 0.54s. |
+| `telus_upstart` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
+| `Dell-Networking.dellos-dns` | ubuntu | ⚠️ role-side - real ansible-playbook can't resolve the dellos modules either. Times: cold py 0.49s vs cr 4.24s; warm py 0.47s vs cr 0.32s. |
+| `Dell-Networking.dellos-copy-config` | ubuntu | ⚠️ role-side - real ansible-playbook can't resolve the dellos modules either. Times: cold py 0.46s vs cr 3.92s; warm py 0.49s vs cr 0.34s. |
+| `Dell-Networking.dellos-acl` | ubuntu | ⚠️ role-side - real ansible-playbook can't resolve the dellos modules either. Times: cold py 0.49s vs cr 3.62s; warm py 0.45s vs cr 0.39s. |
+| `wittdennis.install_etcdctl` | ubuntu | ❌ divergent - Message: Error while evaluating conditional: 'in <string>' requires string as left opera Times: cold py 14.99s vs cr 4.16s; warm py 5.57s vs cr 0.35s. |
+| `ccdc.windows_long_paths` | ubuntu | ✅ clean. Times: cold py 3.39s vs cr 4.34s; warm py 3.10s vs cr 0.34s. |
+| `Dell-Networking.dellos-bgp` | ubuntu | ✅ clean. Times: cold py 4.69s vs cr 4.17s; warm py 3.21s vs cr 0.40s. |
+| `michalschott_terraform` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
+| `udondan.ssh-reconnect` | ubuntu | ✅ clean. Times: cold py 3.56s vs cr 5.07s; warm py 2.89s vs cr 0.47s. |
+| `elan_opencast_elasticsearch` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
+| `buluma.keepalived` | ubuntu | ✅ clean. Times: cold py 8.87s vs cr 5.10s; warm py 5.72s vs cr 1.24s. |
+| `lotusnoir.apps_graylog_exporter` | ubuntu | ✅ clean. Times: cold py 14.35s vs cr 6.20s; warm py 7.84s vs cr 1.27s. |
+| `tulibraries_ansible_role_shibboleth_sp` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
+| `andrewrothstein.qemu` | ubuntu | ✅ clean. Times: cold py 10.68s vs cr 9.32s; warm py 5.64s vs cr 1.86s. |
+| `michalschott_packer` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
+| `buluma.sensu` | ubuntu | ✅ clean. Times: cold py 45.28s vs cr 53.73s; warm py 10.38s vs cr 0.68s. |
+| `ontic.hostname` | ubuntu | ✅ clean. Times: cold py 5.80s vs cr 6.14s; warm py 4.02s vs cr 0.46s. |
+| `buluma_gotop` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
+| `trombik.sysctl` | ubuntu | ✅ clean. Times: cold py 3.86s vs cr 4.19s; warm py 2.96s vs cr 0.35s. |
+| `pluggero.git` | ubuntu | ✅ clean. Times: cold py 43.15s vs cr 29.27s; warm py 12.12s vs cr 0.98s. |
+| `realorangeone.reflector` | ubuntu | ✅ clean. Times: cold py 5.31s vs cr 7.18s; warm py 4.56s vs cr 0.99s. |
+| `Dell-Networking.dellos-aaa` | ubuntu | ⚠️ role-side - real ansible-playbook can't resolve the dellos modules either. Times: cold py 0.50s vs cr 4.10s; warm py 0.47s vs cr 0.31s. |
+| `Dell-Networking.dellos-prefix-list` | ubuntu | ⚠️ role-side - real ansible-playbook can't resolve the dellos modules either. Times: cold py 0.46s vs cr 3.88s; warm py 0.47s vs cr 0.37s. |
+| `ussrlongbow_percona_toolkit` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
+| `staticdev_brave` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
+| `Dell-Networking.dellos-vrf` | ubuntu | ✅ clean. Times: cold py 4.21s vs cr 4.29s; warm py 2.61s vs cr 0.30s. |
+| `buluma.revealmd` | ubuntu | ✅ clean. Times: cold py 0.46s vs cr 0.01s; warm py 0.46s vs cr 0.01s. |
+| `Dell-Networking.dellos-dcb` | ubuntu | ⚠️ role-side - real ansible-playbook can't resolve the dellos modules either. Times: cold py 0.48s vs cr 5.49s; warm py 0.44s vs cr 0.33s. |
+| `buluma.ssh_chroot_jail` | ubuntu | ✅ clean. Times: cold py 130.99s vs cr 40.81s; warm py 65.63s vs cr 1.10s. |
+| `Dell-Networking.dellos-ecmp` | ubuntu | ⚠️ role-side - real ansible-playbook can't resolve the dellos modules either. Times: cold py 0.45s vs cr 3.75s; warm py 0.44s vs cr 0.51s. |
+| `hsingh.elastic_beanstalk` | ubuntu | ✅ clean. Times: cold py 4.09s vs cr 4.08s; warm py 2.44s vs cr 0.44s. |
+| `Dell-Networking.dellos-route-map` | ubuntu | ⚠️ role-side - real ansible-playbook can't resolve the dellos modules either. Times: cold py 0.45s vs cr 3.77s; warm py 1.15s vs cr 0.42s. |
+| `buluma.sosreport` | ubuntu | ❌ divergent -  Times: cold py 39.45s vs cr 44.20s; warm py 9.40s vs cr 0.65s. |
+| `Dell-Networking.dellos-vrrp` | ubuntu | ⚠️ role-side - real ansible-playbook can't resolve the dellos modules either. Times: cold py 0.49s vs cr 6.04s; warm py 0.49s vs cr 0.38s. |
+| `jborean93.win_laps` | ubuntu | ✅ clean. Times: cold py 4.27s vs cr 4.31s; warm py 2.60s vs cr 0.27s. |
+| `MindPointGroup.amazon2_cis` | ubuntu | ✅ clean. Times: cold py 4.45s vs cr 4.13s; warm py 3.43s vs cr 0.37s. |
+| `gmazoyer.peering_manager` | ubuntu | ✅ clean. Times: cold py 34.58s vs cr 19.27s; warm py 35.90s vs cr 13.35s. |
+| `Dell-Networking.dellos-flow-monitor` | ubuntu | ⚠️ role-side - real ansible-playbook can't resolve the dellos modules either. Times: cold py 0.47s vs cr 3.81s; warm py 0.45s vs cr 0.33s. |
+| `sparknsh.patching_windows` | ubuntu | ❌ divergent - ✗ Playbook execution completed with unavailable modules: win_updates Times: cold py 4.70s vs cr 3.82s; warm py 3.17s vs cr 0.32s. |
+| `dbrennand.beszel` | ubuntu | ✅ clean. Times: cold py 3.52s vs cr 4.19s; warm py 2.66s vs cr 0.33s. |
+| `frank6866_zookeeper` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
+| `Dell-Networking.dellos-qos` | ubuntu | ⚠️ role-side - real ansible-playbook can't resolve the dellos modules either. Times: cold py 0.48s vs cr 3.91s; warm py 0.46s vs cr 0.37s. |
+| `Dell-Networking.dellos-sflow` | ubuntu | ⚠️ role-side - real ansible-playbook can't resolve the dellos modules either. Times: cold py 1.56s vs cr 4.06s; warm py 0.45s vs cr 0.39s. |
+| `lotusnoir.apps_kea` | ubuntu | ❌ divergent -  Times: cold py 546.68s vs cr 4.17s; warm py 470.40s vs cr 0.34s. |
+| `kclinden.windows_2016_stig` | ubuntu | ✅ clean. Times: cold py 4.72s vs cr 6.59s; warm py 3.12s vs cr 0.34s. |
+| `raven428.mega_service` | ubuntu | ✅ clean. Times: cold py 4.41s vs cr 4.57s; warm py 2.69s vs cr 0.32s. |
+| `klems_partition-and-mount-disks` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
+| `charlesrocket.dotfiles` | ubuntu | ✅ clean. Times: cold py 7.63s vs cr 6.05s; warm py 4.50s vs cr 0.87s. |
+| `noobient.selinux_cil` | ubuntu | ✅ clean. Times: cold py 4.33s vs cr 4.52s; warm py 2.39s vs cr 0.35s. |
+| `telus_aws-infrastructure` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
+| `roles-ansible.weechat` | ubuntu | ✅ clean. Times: cold py 139.50s vs cr 77.98s; warm py 29.78s vs cr 1.16s. |
+| `l3d.weechat` | ubuntu | ✅ clean. Times: cold py 89.73s vs cr 91.65s; warm py 14.18s vs cr 0.92s. |
+| `darkwizard242.infracost` | ubuntu | ✅ clean. Times: cold py 14.00s vs cr 11.47s; warm py 8.20s vs cr 4.31s. |
+| `darkwizard242.terrascan` | ubuntu | ✅ clean. Times: cold py 9.14s vs cr 9.97s; warm py 6.46s vs cr 3.17s. |
+| `badsectorlabs.ludus_adcs` | ubuntu | ❌ divergent - Message: The task includes an option with an undefined variable. The error was: 'ludus_a Times: cold py 5.25s vs cr 4.04s; warm py 3.15s vs cr 0.38s. |
+| `bodsch.grafana_dashboards` | ubuntu | ❌ divergent - Message: Failed to clone repository: fatal: repository '' does not exist Times: cold py 11.20s vs cr 8.42s; warm py 8.71s vs cr 3.86s. |
+| `buluma.nodejs` | ubuntu | ✅ clean. Times: cold py 87.52s vs cr 38.09s; warm py 26.37s vs cr 1.34s. |
+| `sansible.datadog` | ubuntu | ✅ clean. Times: cold py 0.46s vs cr 0.01s; warm py 0.45s vs cr 0.01s. |
+| `buluma.jitsi` | ubuntu | ❌ divergent - Message: /bin/bash: -c: line 1: syntax error near unexpected token `)' Times: cold py 47.25s vs cr 27.42s; warm py 16.13s vs cr 0.88s. |
+| `Dalee.install-nodejs` | ubuntu | ✅ clean. Times: cold py 100.71s vs cr 105.40s; warm py 81.13s vs cr 67.46s. |
+| `danbohea.rbenv` | ubuntu | ✅ clean. Times: cold py 5.53s vs cr 4.33s; warm py 4.26s vs cr 0.59s. |
+| `usegalaxy_eu.ssh_manager` | ubuntu | ✅ clean. Times: cold py 6.46s vs cr 4.02s; warm py 5.31s vs cr 0.44s. |
+| `michaelford85_ansible_servicenow_cmdb` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
+| `pacifica.ansible_travis` | ubuntu | ✅ clean. Times: cold py 4.45s vs cr 4.06s; warm py 3.51s vs cr 0.31s. |
+| `infOpen.docker` | ubuntu | ✅ clean. Times: cold py 884.46s vs cr 90.16s; warm py 850.34s vs cr 42.74s. |
+| `lean_delivery.solr_standalone` | ubuntu | ✅ clean. Times: cold py 35.77s vs cr 18.59s; warm py 31.04s vs cr 13.42s. |
+| `thulium_drake.dns_server` | ubuntu | ✅ clean. Times: cold py 8.56s vs cr 6.31s; warm py 6.40s vs cr 1.47s. |
+| `ceph.ceph_common` | ubuntu | ⚠️ both engines fail - real ansible fails first on the role's own undefined mds_group_name. Times: cold py 4.17s vs cr 3.79s; warm py 2.63s vs cr 0.43s. |
+| `ios-xr_iosxr-ansible` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
+| `stuart_elasticsearch_exporter` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
+| `dudefellah_nagios` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
+| `ceph.ceph_mon` | ubuntu | ⚠️ both engines fail - real ansible fails first on the role's own undefined mds_group_name. Times: cold py 3.69s vs cr 4.06s; warm py 2.86s vs cr 0.42s. |
+| `devoperate_docker_compose` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
+| `ceph.ceph_osd` | ubuntu | ⚠️ both engines fail - real ansible fails first on the role's own undefined mds_group_name. Times: cold py 3.92s vs cr 7.58s; warm py 2.66s vs cr 0.41s. |
+| `ceph.ceph_mgr` | ubuntu | ⚠️ both engines fail - real ansible fails first on the role's own undefined mds_group_name. Times: cold py 4.23s vs cr 4.63s; warm py 3.13s vs cr 0.40s. |
+| `ceph.ceph_mds` | ubuntu | ⚠️ both engines fail - real ansible fails first on the role's own undefined mds_group_name. Times: cold py 5.49s vs cr 3.91s; warm py 3.12s vs cr 0.35s. |
+| `ceph.ceph_defaults` | ubuntu | ⚠️ both engines fail - real ansible fails first on the role's own undefined mds_group_name. Times: cold py 4.40s vs cr 3.54s; warm py 2.71s vs cr 0.36s. |
+| `ceph.ceph_config` | ubuntu | ⚠️ both engines fail - real ansible fails first on the role's own undefined mds_group_name. Times: cold py 4.54s vs cr 3.75s; warm py 3.11s vs cr 0.38s. |
+| `ceph.ceph_container_common` | ubuntu | ⚠️ both engines fail - real ansible fails first on the role's own undefined mds_group_name. Times: cold py 4.72s vs cr 3.84s; warm py 3.62s vs cr 0.34s. |
+| `ceph.ceph_nfs` | ubuntu | ⚠️ both engines fail - real ansible fails first on the role's own undefined mds_group_name. Times: cold py 4.53s vs cr 4.27s; warm py 2.80s vs cr 0.37s. |
+| `ceph.ceph_infra` | ubuntu | ⚠️ both engines fail - real ansible fails first on the role's own undefined mds_group_name. Times: cold py 3.86s vs cr 4.11s; warm py 2.91s vs cr 0.30s. |
+| `ceph.ceph_facts` | ubuntu | ⚠️ both engines fail - real ansible fails first on the role's own undefined mds_group_name. Times: cold py 4.49s vs cr 4.07s; warm py 2.80s vs cr 0.34s. |
+| `ceph.installer_checkpoint` | ubuntu | ⚠️ both engines fail - real ansible fails first on the role's own undefined mds_group_name. Times: cold py 4.60s vs cr 3.91s; warm py 3.62s vs cr 0.39s. |
+| `ceph.ceph_validate` | ubuntu | ⚠️ both engines fail - real ansible fails first on the role's own undefined mds_group_name. Times: cold py 4.44s vs cr 3.97s; warm py 3.09s vs cr 0.57s. |
+| `ceph.ceph_rgw` | ubuntu | ⚠️ both engines fail - real ansible fails first on the role's own undefined mds_group_name. Times: cold py 3.93s vs cr 3.88s; warm py 3.35s vs cr 0.41s. |
+| `ceph.ceph_handler` | ubuntu | ⚠️ both engines fail - real ansible fails first on the role's own undefined mds_group_name. Times: cold py 4.16s vs cr 4.25s; warm py 2.83s vs cr 0.38s. |
+| `ceph.ceph_agent` | ubuntu | ⚠️ both engines fail - real ansible fails first on the role's own undefined mds_group_name. Times: cold py 4.22s vs cr 4.16s; warm py 3.62s vs cr 0.36s. |
+| `ceph.ceph_rbd_mirror` | ubuntu | ⚠️ both engines fail - real ansible fails first on the role's own undefined mds_group_name. Times: cold py 3.24s vs cr 3.84s; warm py 2.49s vs cr 0.26s. |
+| `ceph.ceph_fetch_keys` | ubuntu | ⚠️ both engines fail - real ansible fails first on the role's own undefined mds_group_name. Times: cold py 4.03s vs cr 3.98s; warm py 2.88s vs cr 0.42s. |
+| `ceph.ceph_iscsi_gw` | ubuntu | ⚠️ both engines fail - real ansible fails first on the role's own undefined mds_group_name. Times: cold py 4.92s vs cr 4.69s; warm py 2.65s vs cr 0.31s. |
+| `ceph.ceph_client` | ubuntu | ⚠️ both engines fail - real ansible fails first on the role's own undefined mds_group_name. Times: cold py 4.01s vs cr 3.92s; warm py 2.74s vs cr 0.32s. |
+| `danbohea.homebrew` | ubuntu | ✅ clean. Times: cold py 6.31s vs cr 5.12s; warm py 4.23s vs cr 0.50s. |
+| `andrewrothstein.pivnet` | ubuntu | ✅ clean. Times: cold py 7.73s vs cr 4.48s; warm py 5.91s vs cr 0.49s. |
+| `teemo.stackdriver_ansible_role` | ubuntu | ✅ clean. Times: cold py 64.22s vs cr 54.59s; warm py 46.70s vs cr 30.78s. |
+| `ontic.ntp` | ubuntu | ✅ clean. Times: cold py 13.02s vs cr 4.48s; warm py 10.13s vs cr 0.83s. |
+| `Rheinwerk.ansible` | ubuntu | ✅ clean. Times: cold py 5.73s vs cr 4.01s; warm py 4.44s vs cr 0.39s. |
+| `darkwizard242.dive` | ubuntu | ✅ clean. Times: cold py 6.91s vs cr 5.60s; warm py 5.15s vs cr 0.87s. |
+| `azavea.phantomjs` | ubuntu | ✅ clean. Times: cold py 5.85s vs cr 5.19s; warm py 6.59s vs cr 0.64s. |
+| `fnzv.beats` | ubuntu | ✅ clean. Times: cold py 45.03s vs cr 53.83s; warm py 7.98s vs cr 1.31s. |
+| `darkwizard242.hostctl` | ubuntu | ✅ clean. Times: cold py 8.10s vs cr 5.04s; warm py 5.70s vs cr 0.99s. |
+| `jimbo8098.windows_docker_role` | ubuntu | ❌ divergent - ✗ Playbook execution completed with unavailable modules: ansible.windows.win_package, wi Times: cold py 5.35s vs cr 5.19s; warm py 3.13s vs cr 0.39s. |
+| `manala.network` | ubuntu | ✅ clean. Times: cold py 64.98s vs cr 37.69s; warm py 8.52s vs cr 0.54s. |
+| `oatakan.windows_powershell_upgrade` | ubuntu | ❌ divergent - Message: powershell not found. will re-check... Times: cold py 126.16s vs cr 125.88s; warm py 124.70s vs cr 120.74s. |
+| `openmicroscopy.munin-node` | ubuntu | ✅ clean. Times: cold py 5.57s vs cr 4.22s; warm py 3.96s vs cr 0.49s. |
+| `supertarto.glpi` | ubuntu | ✅ clean. Times: cold py 6.49s vs cr 5.20s; warm py 5.83s vs cr 1.56s. |
+| `stdevel_sentinelone_client` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
+| `buluma.transmission` | ubuntu | ✅ clean. Times: cold py 33.89s vs cr 20.44s; warm py 30.43s vs cr 14.08s. |
+| `iroquoisorg.blackfire` | ubuntu | ✅ clean. Times: cold py 319.18s vs cr 207.17s; warm py 58.23s vs cr 2.83s. |
+| `btravouillon_gitlab_runner_compose` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
+| `robertdebock.filesystem` | ubuntu | ✅ clean. Times: cold py 5.47s vs cr 4.65s; warm py 4.04s vs cr 0.39s. |
+| `Oefenweb.cron_apt` | ubuntu | ✅ clean. Times: cold py 63.68s vs cr 58.57s; warm py 7.74s vs cr 1.92s. |
+| `levonet.docker_postgres` | ubuntu | ✅ clean. Times: cold py 5.91s vs cr 4.83s; warm py 4.68s vs cr 0.36s. |
+| `avinetworks_avicontroller_vmware` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
+| `opichon.docker-mysql` | ubuntu | ✅ clean. Times: cold py 19.68s vs cr 4.25s; warm py 14.31s vs cr 0.51s. |
+| `azavea.scala` | ubuntu | ✅ clean. Times: cold py 12.14s vs cr 4.70s; warm py 6.31s vs cr 0.53s. |
+| `thulium_drake.apt` | ubuntu | ❌ divergent -  Times: cold py 91.20s vs cr 14.50s; warm py 21.55s vs cr 1.11s. |
+| `sorrowless.prometheus_grok_exporter` | ubuntu | ✅ clean. Times: cold py 28.35s vs cr 9.32s; warm py 19.56s vs cr 1.48s. |
+| `erjac77.module-f5bigip` | ubuntu | ✅ clean. Times: cold py 4.50s vs cr 4.14s; warm py 2.56s vs cr 0.47s. |
+| `darexsu.nginx` | ubuntu | ✅ clean. Times: cold py 3.71s vs cr 3.85s; warm py 2.28s vs cr 0.39s. |
+| `Oefenweb.ca_certificates` | ubuntu | ✅ clean. Times: cold py 53.83s vs cr 50.64s; warm py 6.61s vs cr 1.80s. |
+| `yourlabs.ssh` | ubuntu | ✅ clean. Times: cold py 0.45s vs cr 0.01s; warm py 0.45s vs cr 0.01s. |
+| `Oefenweb.docker` | ubuntu | ✅ clean. Times: cold py 167.42s vs cr 82.18s; warm py 24.22s vs cr 1.74s. |
+| `buluma.fathom` | ubuntu | ✅ clean. Times: cold py 64.88s vs cr 39.09s; warm py 15.60s vs cr 0.58s. |
+| `telus_php` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
+| `yourlabs.nginx` | ubuntu | ❌ divergent - Message: Error while evaluating conditional: 'acme' is undefined Times: cold py 1.47s vs cr 4.78s; warm py 0.46s vs cr 0.41s. |
+| `rolehippie.graylog_sidecar` | ubuntu | ✅ clean. Times: cold py 16.77s vs cr 11.31s; warm py 11.03s vs cr 1.79s. |
+| `sansible.aws_ena_driver` | ubuntu | ✅ clean. Times: cold py 0.49s vs cr 0.01s; warm py 0.47s vs cr 0.01s. |
+| `pluggero.borgbackup` | ubuntu | ✅ clean. Times: cold py 5.09s vs cr 3.76s; warm py 2.64s vs cr 0.32s. |
+| `yourlabs.fqdn` | ubuntu | ✅ clean. Times: cold py 4.51s vs cr 4.69s; warm py 3.42s vs cr 0.37s. |
+| `yourlabs.traefik` | ubuntu | ❌ divergent - Message: Unable to find any of pip3 to use.  pip needs to be installed. Times: cold py 0.54s vs cr 4.03s; warm py 0.47s vs cr 0.38s. |
+| `lucasmaurice.node_exporter` | ubuntu | ✅ clean. Times: cold py 31.15s vs cr 9.36s; warm py 22.46s vs cr 1.64s. |
+| `vozerov_sudo` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
+| `sorrowless.rbenv` | ubuntu | ✅ clean. Times: cold py 9.42s vs cr 7.80s; warm py 7.11s vs cr 1.62s. |
+| `pluggero.openssh` | ubuntu | ✅ clean. Times: cold py 38.25s vs cr 29.07s; warm py 18.06s vs cr 1.57s. |
+| `stdevel_pulse_client` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
+| `yourlabs.k8s` | ubuntu | ✅ clean. Times: cold py 0.47s vs cr 0.01s; warm py 0.98s vs cr 0.01s. |
+| `yourlabs.drone` | ubuntu | ❌ divergent - Message: The task includes an option with an undefined variable. The error was: 'rpc_pas Times: cold py 0.50s vs cr 3.81s; warm py 0.46s vs cr 0.31s. |
+| `buluma.powertools` | ubuntu | ✅ clean. Times: cold py 5.20s vs cr 4.03s; warm py 2.85s vs cr 0.45s. |
+| `calvinbui.ansible_apt` | ubuntu | ✅ FIXED (0.9.1154): whole-args template `module: "{{ item }}"` became _raw_params. Confirmed CLEAN in round 828000. Times: cold py 35.87s vs cr 105.33s; warm py 242.58s vs cr 101.48s. |
+| `jradtilbrook.grafana` | ubuntu | ✅ clean. Times: cold py 68.31s vs cr 47.95s; warm py 50.77s vs cr 29.67s. |
+| `bt5e_hashicorp_packer` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
+| `William-Yeh.reset-locale` | ubuntu | ✅ clean. Times: cold py 10.44s vs cr 4.38s; warm py 9.95s vs cr 0.49s. |
+| `telus_nodejs` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
+| `SeleniumHQ.selenium` | ubuntu | ✅ clean. Times: cold py 5.03s vs cr 3.69s; warm py 2.57s vs cr 0.39s. |
+| `layereight.wifi` | ubuntu | ✅ clean. Times: cold py 47.28s vs cr 59.37s; warm py 8.82s vs cr 0.59s. |
+| `gwerlas.libvirt` | ubuntu | ❌ divergent -  Times: cold py 4.65s vs cr 0.01s; warm py 4.21s vs cr 0.01s. |
+| `bsmeding.webmin` | ubuntu | ✅ clean. Times: cold py 218.90s vs cr 141.32s; warm py 92.52s vs cr 29.61s. |
+| `boutetnico.ca_certificates` | ubuntu | ✅ clean. Times: cold py 36.62s vs cr 26.39s; warm py 6.88s vs cr 3.24s. |
+| `freehck.crontask` | ubuntu | ✅ clean. Times: cold py 6.19s vs cr 4.35s; warm py 3.29s vs cr 0.43s. |
+| `jpnewman.json` | ubuntu | ✅ clean. Times: cold py 3.87s vs cr 3.91s; warm py 2.37s vs cr 0.34s. |
+| `nickjj.letsencrypt` | ubuntu | ✅ clean. Times: cold py 13.31s vs cr 4.52s; warm py 11.88s vs cr 0.65s. |
+| `Rheinwerk.awscli` | ubuntu | ✅ clean. Times: cold py 8.80s vs cr 6.03s; warm py 5.94s vs cr 1.49s. |
+| `manala.vault` | ubuntu | ✅ clean. Times: cold py 31.68s vs cr 19.15s; warm py 6.01s vs cr 0.63s. |
+| `provizanta.clang` | ubuntu | ✅ clean. Times: cold py 63.10s vs cr 55.65s; warm py 52.91s vs cr 30.88s. |
+| `matisku.teamcity-agent` | ubuntu | ✅ clean. Times: cold py 0.45s vs cr 0.01s; warm py 0.46s vs cr 0.01s. |
+| `AnsibleShipyard.nodejs` | ubuntu | ✅ clean. Times: cold py 0.45s vs cr 0.01s; warm py 0.45s vs cr 0.01s. |
+| `lucasmaurice.openvpn_client` | ubuntu | ✅ clean. Times: cold py 22.12s vs cr 11.57s; warm py 12.75s vs cr 0.56s. |
+| `luizgavalda.aur` | ubuntu | ✅ clean. Times: cold py 4.12s vs cr 5.32s; warm py 2.70s vs cr 0.39s. |
+| `Oefenweb.duply_backup` | ubuntu | ✅ clean. Times: cold py 6.01s vs cr 3.80s; warm py 4.11s vs cr 0.42s. |
+| `Temelio.ssmtp` | ubuntu | ✅ clean. Times: cold py 0.45s vs cr 0.01s; warm py 0.46s vs cr 0.01s. |
+| `noobient.rpm_policy` | ubuntu | ✅ clean. Times: cold py 6.74s vs cr 6.05s; warm py 3.40s vs cr 0.40s. |
+| `tcharl.ansible_role_libvirt_host` | ubuntu | ✅ clean. Times: cold py 4.90s vs cr 5.78s; warm py 3.82s vs cr 0.35s. |
+| `thorian93.apache2` | ubuntu | ✅ clean. Times: cold py 5.48s vs cr 5.20s; warm py 2.91s vs cr 0.36s. |
+| `atosatto.alertmanager` | ubuntu | ✅ clean. Times: cold py 0.46s vs cr 0.01s; warm py 0.49s vs cr 0.01s. |
+| `martinmicunda.bower` | ubuntu | ✅ clean. Times: cold py 68.65s vs cr 53.20s; warm py 51.10s vs cr 30.20s. |
+| `xilonz.trellis_backup` | ubuntu | ✅ clean. Times: cold py 0.91s vs cr 0.03s; warm py 0.46s vs cr 0.01s. |
+| `Rheinwerk.transparent_hugepage_setup` | ubuntu | ✅ clean. Times: cold py 6.69s vs cr 3.97s; warm py 5.01s vs cr 0.30s. |
+| `ANXS.nodejs` | ubuntu | ✅ clean. Times: cold py 0.51s vs cr 0.01s; warm py 0.48s vs cr 0.01s. |
+| `kirill_zak.docker` | ubuntu | ✅ clean. Times: cold py 56.20s vs cr 56.08s; warm py 14.08s vs cr 2.70s. |
+| `buluma.local` | ubuntu | ✅ clean. Times: cold py 5.78s vs cr 4.02s; warm py 3.98s vs cr 0.67s. |
+| `vmware.ansible_role_greengrass_awscli` | ubuntu | ✅ clean. Times: cold py 18.77s vs cr 9.43s; warm py 11.26s vs cr 1.61s. |
+| `bodsch.php` | ubuntu | ❌ divergent - Message: php version is missing or wrong major version Times: cold py 128.09s vs cr 4.53s; warm py 51.88s vs cr 0.60s. |
+| `brpaz.swarm` | ubuntu | ✅ clean. Times: cold py 4.82s vs cr 4.28s; warm py 3.43s vs cr 0.40s. |
+| `Stouts.graphite-api` | ubuntu | ✅ clean. Times: cold py 0.45s vs cr 0.01s; warm py 0.47s vs cr 0.01s. |
+| `thulium_drake.vmware` | ubuntu | ❌ divergent - ✗ Playbook execution completed with unavailable modules: community.general.python_requir Times: cold py 4.13s vs cr 4.22s; warm py 3.14s vs cr 0.53s. |
+| `buluma.sonarqube` | ubuntu | ✅ clean. Times: cold py 0.46s vs cr 0.01s; warm py 0.46s vs cr 0.01s. |
+| `HanXHX.mysql` | ubuntu | ✅ clean. Times: cold py 11.73s vs cr 6.37s; warm py 8.60s vs cr 1.51s. |
+| `Feverup.augeas` | ubuntu | ✅ clean. Times: cold py 4.86s vs cr 4.04s; warm py 3.28s vs cr 0.36s. |
+| `robertdebock.alternatives` | ubuntu | ✅ clean. Times: cold py 6.73s vs cr 3.91s; warm py 6.12s vs cr 0.40s. |
+| `rhythmictech.ansible_role_efs_utils` | ubuntu | ✅ clean. Times: cold py 11.49s vs cr 6.80s; warm py 7.72s vs cr 1.42s. |
+| `CyVerse-Ansible.unixodbc-cfg` | ubuntu | ✅ clean. Times: cold py 4.27s vs cr 4.19s; warm py 3.30s vs cr 0.52s. |
+| `andrewrothstein.om` | ubuntu | ✅ clean. Times: cold py 18.62s vs cr 11.42s; warm py 5.54s vs cr 0.64s. |
+| `CoffeeITWorks.ansible_burp2_server` | ubuntu | ✅ clean. Times: cold py 0.51s vs cr 0.01s; warm py 1.46s vs cr 0.01s. |
+| `charliemaiors.nodejs` | ubuntu | ✅ clean. Times: cold py 141.66s vs cr 150.56s; warm py 101.46s vs cr 96.83s. |
+| `azavea.logstash` | ubuntu | ❌ divergent - Message: Failed to update apt cache: W: http://packages.elasticsearch.org/logstash/1.4/d Times: cold py 4.74s vs cr 67.42s; warm py 4.38s vs cr 33.64s. |
+| `openmicroscopy.rsync-server` | ubuntu | ✅ clean. Times: cold py 6.32s vs cr 4.07s; warm py 3.96s vs cr 0.37s. |
+| `mrlesmithjr.keepalived` | ubuntu | ✅ clean. Times: cold py 28.68s vs cr 17.60s; warm py 28.53s vs cr 13.18s. |
+| `William-Yeh.monit` | ubuntu | ✅ clean. Times: cold py 0.45s vs cr 0.01s; warm py 0.45s vs cr 0.01s. |
+| `buluma.podman` | ubuntu | ✅ clean. Times: cold py 46.69s vs cr 44.58s; warm py 22.15s vs cr 13.14s. |
+| `Rheinwerk.sshd` | ubuntu | ✅ clean. Times: cold py 12.03s vs cr 4.30s; warm py 8.85s vs cr 0.56s. |
+| `Temelio.statsd` | ubuntu | ✅ clean. Times: cold py 93.88s vs cr 89.09s; warm py 84.98s vs cr 65.25s. |
+| `iroquoisorg.pip` | ubuntu | ✅ clean. Times: cold py 7.90s vs cr 7.04s; warm py 6.04s vs cr 1.74s. |
+| `thorian93.php` | ubuntu | ✅ clean. Times: cold py 11.45s vs cr 9.93s; warm py 8.56s vs cr 4.90s. |
+| `joenyland.dropbear_initramfs` | ubuntu | ✅ clean. Times: cold py 84.18s vs cr 55.65s; warm py 6.48s vs cr 2.99s. |
+| `vaulttec.zsh` | ubuntu | ✅ clean. Times: cold py 283.75s vs cr 798.62s; warm py 275.90s vs cr 786.57s. |
+| `RealSalmon_unattended-upgrades` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
+| `azavea.virtualbox` | ubuntu | ✅ clean. Times: cold py 34.89s vs cr 19.97s; warm py 10.92s vs cr 1.56s. |
+| `buluma.azure_cli` | ubuntu | ✅ clean. Times: cold py 57.70s vs cr 69.39s; warm py 47.59s vs cr 33.99s. |
+| `brpaz.swarm_grafana_alloy` | ubuntu | ❌ divergent - Message: Failed to execute command: Error executing process: 'docker': No such file or d Times: cold py 13.61s vs cr 50.23s; warm py 11.40s vs cr 46.35s. |
+| `skriptfabrik.pacemaker` | ubuntu | ✅ clean. Times: cold py 5.77s vs cr 4.49s; warm py 4.46s vs cr 0.36s. |
+| `tcharl_ansible_users` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
+| `avinetworks_avicontroller_gke` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
+| `coopdevs.monitoring_role` | ubuntu | ✅ clean. Times: cold py 70.09s vs cr 51.84s; warm py 17.12s vs cr 0.96s. |
+| `pluggero.swaywm` | ubuntu | ✅ clean. Times: cold py 282.39s vs cr 114.02s; warm py 70.22s vs cr 2.65s. |
+| `buluma.docker_compose` | ubuntu | ✅ clean. Times: cold py 8.44s vs cr 7.36s; warm py 6.23s vs cr 1.35s. |
+| `morbidick.ansible-role-oauth2-proxy` | ubuntu | ✅ clean. Times: cold py 31.91s vs cr 6.68s; warm py 20.86s vs cr 0.82s. |
+| `suzuki-shunsuke.nvm` | ubuntu | ❌ divergent - Message: Failed to init/update submodules: Submodule 'test/fixtures/nvmrc' (https://gith Times: cold py 900.01s vs cr 6.43s; warm py 900.01s vs cr 2.24s. |
+| `iroquoisorg.fail2ban` | ubuntu | ✅ clean. Times: cold py 33.55s vs cr 15.33s; warm py 22.05s vs cr 3.00s. |
+| `nikosch86.proxmox_backup_server` | ubuntu | ✅ clean. Times: cold py 19.77s vs cr 4.46s; warm py 15.85s vs cr 0.57s. |
+| `thulium_drake.ipa_ssl` | ubuntu | ✅ clean. Times: cold py 5.47s vs cr 4.70s; warm py 4.25s vs cr 0.50s. |
+| `donat-b.restic` | ubuntu | ✅ clean. Times: cold py 0.48s vs cr 0.01s; warm py 0.47s vs cr 0.01s. |
+| `iroquoisorg.ufw` | ubuntu | ✅ clean. Times: cold py 0.49s vs cr 0.01s; warm py 0.45s vs cr 0.01s. |
+| `jffz.netdata` | ubuntu | ✅ clean. Times: cold py 0.48s vs cr 0.01s; warm py 0.45s vs cr 0.01s. |
+| `andrewrothstein.skaffold` | ubuntu | ✅ clean. Times: cold py 11.54s vs cr 8.04s; warm py 5.95s vs cr 0.97s. |
+| `CyVerse-Ansible.ansible_k3s` | ubuntu | ✅ clean. Times: cold py 5.79s vs cr 4.55s; warm py 5.96s vs cr 0.49s. |
+| `rdeknijf.chromedriver` | ubuntu | ✅ clean. Times: cold py 50.41s vs cr 34.59s; warm py 7.93s vs cr 0.68s. |
+| `mrlesmithjr.haproxy` | ubuntu | ✅ clean. Times: cold py 77.96s vs cr 64.88s; warm py 52.23s vs cr 36.84s. |
+| `ansibleguy.sw_zoneminder` | ubuntu | ✅ clean. Times: cold py 4.36s vs cr 5.25s; warm py 3.26s vs cr 0.38s. |
+| `buluma.munin` | ubuntu | ✅ clean. Times: cold py 111.41s vs cr 84.82s; warm py 21.13s vs cr 0.69s. |
+| `constrict0r.aptitude` | ubuntu | ✅ clean. Times: cold py 7.35s vs cr 7.67s; warm py 5.57s vs cr 1.71s. |
+| `Traackr.elasticsearch` | ubuntu | ✅ clean. Times: cold py 0.45s vs cr 0.01s; warm py 0.49s vs cr 0.01s. |
+| `iquzart.windows_exporter` | ubuntu | ✅ clean. Times: cold py 4.17s vs cr 3.91s; warm py 3.41s vs cr 0.33s. |
+| `pluggero.satty` | ubuntu | ✅ clean. Times: cold py 87.19s vs cr 107.05s; warm py 19.68s vs cr 1.50s. |
+| `appsilon.python_install` | ubuntu | ✅ clean. Times: cold py 232.19s vs cr 180.07s; warm py 45.39s vs cr 11.66s. |
+| `jahrik.yay` | ubuntu | ✅ clean. Times: cold py 4.37s vs cr 5.06s; warm py 2.60s vs cr 0.33s. |
+| `ansibleguy.sw_semaphore` | ubuntu | ✅ clean. Times: cold py 4.43s vs cr 4.13s; warm py 2.91s vs cr 0.37s. |
+| `Rheinwerk_rs_collector` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
+| `hadrienpatte.self_signed_certificate` | ubuntu | ✅ clean. Times: cold py 15.67s vs cr 7.62s; warm py 13.98s vs cr 0.75s. |
+| `buluma.teams` | ubuntu | ✅ clean. Times: cold py 52.27s vs cr 49.26s; warm py 28.98s vs cr 14.38s. |
+| `FlatKey.firewalld` | ubuntu | ✅ clean. Times: cold py 6.59s vs cr 4.42s; warm py 4.54s vs cr 0.48s. |
+| `juwai.nginx` | ubuntu | ✅ clean. Times: cold py 5.68s vs cr 4.76s; warm py 4.10s vs cr 0.54s. |
+| `mk-ansible-roles.setup_nfs_server` | ubuntu | ✅ clean. Times: cold py 4.47s vs cr 4.32s; warm py 2.91s vs cr 0.39s. |
+| `mk-ansible-roles.check_reboot` | ubuntu | ❌ divergent - Message: Failed to install *: E: Unable to correct problems, you have held broken packag Times: cold py 7.49s vs cr 9.20s; warm py 7.12s vs cr 4.23s. |
+| `kbrebanov.erlang` | ubuntu | ✅ clean. Times: cold py 0.96s vs cr 0.01s; warm py 0.95s vs cr 0.04s. |
+| `jetune.java` | ubuntu | ✅ clean. Times: cold py 3.98s vs cr 4.48s; warm py 2.56s vs cr 0.37s. |
+| `andrewrothstein.gitlab` | ubuntu | ✅ clean. Times: cold py 55.90s vs cr 70.73s; warm py 13.78s vs cr 4.08s. |
+| `bertvv.wordpress` | ubuntu | ✅ clean. Times: cold py 4.83s vs cr 4.31s; warm py 2.93s vs cr 0.38s. |
+| `jkanclerz.deploy-project-php-symfony` | ubuntu | ✅ clean. Times: cold py 0.44s vs cr 0.01s; warm py 0.44s vs cr 0.01s. |
+| `geoffreyvanwyk.moodle` | ubuntu | ❌ divergent -  Times: cold py 5.36s vs cr 6.39s; warm py 2.94s vs cr 0.35s. |
+| `buluma.swap` | ubuntu | ✅ clean. Times: cold py 5.10s vs cr 3.84s; warm py 4.00s vs cr 0.32s. |
+| `leonidas.nvm` | ubuntu | ✅ clean. Times: cold py 0.45s vs cr 0.01s; warm py 0.46s vs cr 0.01s. |
+| `grycap.nvidia_driver` | ubuntu | ✅ clean. Times: cold py 38.80s vs cr 43.00s; warm py 19.40s vs cr 5.26s. |
+| `rbicker.nextcloud` | ubuntu | ✅ clean. Times: cold py 13.56s vs cr 7.79s; warm py 12.44s vs cr 3.75s. |
+| `ansibleguy.addons_nftables` | ubuntu | ✅ clean. Times: cold py 4.02s vs cr 3.99s; warm py 2.41s vs cr 0.45s. |
+| `thorian93.ssh` | ubuntu | ✅ clean. Times: cold py 4.21s vs cr 4.72s; warm py 3.18s vs cr 0.38s. |
+| `idealista.clickhouse` | ubuntu | ✅ clean. Times: cold py 3.89s vs cr 3.80s; warm py 3.32s vs cr 0.42s. |
+| `darexsu.mariadb` | ubuntu | ✅ clean. Times: cold py 5.05s vs cr 3.99s; warm py 2.87s vs cr 0.27s. |
+| `ccdc.xdummy` | ubuntu | ✅ clean. Times: cold py 4.45s vs cr 4.70s; warm py 4.40s vs cr 0.38s. |
+| `iesplin.burp_suite` | ubuntu | ❌ divergent - Message: Failed to retrieve latest version for Burp Suite Community (Stable) Times: cold py 18.90s vs cr 5.41s; warm py 11.41s vs cr 1.22s. |
+| `elan.opencast_mariadb` | ubuntu | ✅ clean. Times: cold py 8.30s vs cr 6.08s; warm py 6.35s vs cr 1.63s. |
+| `MaximeThoonsen_ubuntu-xdebug` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
+| `indigo-dc.galaxycloud-os` | ubuntu | ✅ clean. Times: cold py 0.51s vs cr 0.03s; warm py 0.46s vs cr 0.01s. |
+| `apolloclark.osquery` | ubuntu | ✅ clean. Times: cold py 66.52s vs cr 66.42s; warm py 22.34s vs cr 5.65s. |
+| `ccdc.teamcity_agent` | ubuntu | ✅ clean. Times: cold py 9.17s vs cr 6.89s; warm py 7.28s vs cr 1.04s. |
+| `goooseman.nvm` | ubuntu | ✅ clean. Times: cold py 31.77s vs cr 70.12s; warm py 5.30s vs cr 0.65s. |
+| `Primexz.sp_utm_beszel` | ubuntu | ✅ clean. Times: cold py 8.17s vs cr 7.06s; warm py 2.99s vs cr 0.41s. |
+| `Stouts.sentry` | ubuntu | ✅ clean. Times: cold py 0.45s vs cr 0.01s; warm py 0.44s vs cr 0.01s. |
+| `openmicroscopy.omero_prometheus_exporter` | ubuntu | ✅ clean. Times: cold py 5.13s vs cr 3.82s; warm py 5.20s vs cr 0.67s. |
+| `usegalaxy_eu.grafana_matrix_forwarder` | ubuntu | ✅ clean. Times: cold py 7.54s vs cr 4.91s; warm py 3.90s vs cr 0.98s. |
+| `brentwg.packages` | ubuntu | ✅ clean. Times: cold py 6.84s vs cr 5.90s; warm py 5.09s vs cr 1.87s. |
+| `ansibleguy.infra_wireguard` | ubuntu | ✅ clean. Times: cold py 4.45s vs cr 3.69s; warm py 2.44s vs cr 0.27s. |
+| `yethal.nushell` | ubuntu | ✅ clean. Times: cold py 28.41s vs cr 19.63s; warm py 4.83s vs cr 0.96s. |
+| `tbaczynski.auditbeat` | ubuntu | ❌ divergent -  Times: cold py 80.37s vs cr 37.55s; warm py 18.80s vs cr 1.13s. |
+| `veselahouba.docker_container` | ubuntu | ✅ clean. Times: cold py 9.27s vs cr 6.46s; warm py 6.74s vs cr 1.45s. |
+| `cchurch.scm` | ubuntu | ✅ clean. Times: cold py 5.05s vs cr 5.43s; warm py 4.39s vs cr 0.41s. |
+| `elnebuloso.package-cleanup` | ubuntu | ✅ clean. Times: cold py 8.31s vs cr 6.53s; warm py 7.50s vs cr 0.88s. |
+| `bertvv.vsftpd` | ubuntu | ✅ clean. Times: cold py 24.09s vs cr 12.90s; warm py 10.32s vs cr 0.64s. |
+| `hwwilliams.zfs` | ubuntu | ✅ clean. Times: cold py 4.43s vs cr 4.19s; warm py 2.73s vs cr 0.33s. |
+| `mrlesmithjr.logstash` | ubuntu | ✅ clean. Times: cold py 0.46s vs cr 0.01s; warm py 0.45s vs cr 0.01s. |
+| `mrlesmithjr.elk-kibana` | ubuntu | ✅ clean. Times: cold py 1.03s vs cr 0.01s; warm py 0.98s vs cr 0.01s. |
+| `andrewrothstein.gradle` | ubuntu | ✅ clean. Times: cold py 26.25s vs cr 13.34s; warm py 10.61s vs cr 0.49s. |
+| `Oefenweb.htop` | ubuntu | ✅ clean. Times: cold py 44.72s vs cr 38.21s; warm py 12.65s vs cr 2.07s. |
+| `buluma.rclone` | ubuntu | ✅ clean. Times: cold py 66.37s vs cr 58.50s; warm py 35.36s vs cr 12.07s. |
+| `idealista.consul_keystore_role` | ubuntu | ✅ clean. Times: cold py 3.61s vs cr 3.98s; warm py 3.15s vs cr 0.29s. |
+| `andrewrothstein.luarocks` | ubuntu | ✅ clean. Times: cold py 6.86s vs cr 4.28s; warm py 5.17s vs cr 0.31s. |
+| `elnur.spring-boot-app` | ubuntu | ✅ clean. Times: cold py 307.03s vs cr 304.27s; warm py 305.66s vs cr 300.60s. |
+| `entercloudsuite.pmm_client` | ubuntu | ✅ clean. Times: cold py 6.54s vs cr 4.61s; warm py 5.82s vs cr 0.77s. |
+| `chrismeyersfsu.required_vars` | ubuntu | ✅ clean. Times: cold py 0.46s vs cr 0.01s; warm py 0.47s vs cr 0.01s. |
+| `Rheinwerk.sysdig_user_audit` | ubuntu | ✅ clean. Times: cold py 15.38s vs cr 4.48s; warm py 12.14s vs cr 0.65s. |
+| `darexsu.mysql` | ubuntu | ✅ clean. Times: cold py 4.32s vs cr 4.18s; warm py 2.60s vs cr 0.40s. |
+| `constrict0r.sourcez` | ubuntu | ✅ clean. Times: cold py 8.28s vs cr 5.85s; warm py 5.81s vs cr 0.99s. |
+| `racqspace.unattended_upgrades` | ubuntu | ✅ clean. Times: cold py 37.64s vs cr 69.24s; warm py 13.33s vs cr 1.35s. |
+| `telusdigital-archive_zeromq` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
+| `automium.haproxy` | ubuntu | ✅ clean. Times: cold py 78.75s vs cr 71.07s; warm py 51.92s vs cr 35.76s. |
+| `finalgene.users` | ubuntu | ✅ clean. Times: cold py 5.06s vs cr 4.13s; warm py 2.74s vs cr 0.34s. |
+| `thorian93.upgrade` | ubuntu | ✅ clean. Times: cold py 3.49s vs cr 4.02s; warm py 3.09s vs cr 0.43s. |
+| `elnur.ec2-complete` | ubuntu | ✅ clean. Times: cold py 4.54s vs cr 4.46s; warm py 3.06s vs cr 0.32s. |
+| `jasonheecs.ubuntu-python-raw` | ubuntu | ✅ clean. Times: cold py 4.90s vs cr 4.37s; warm py 3.07s vs cr 0.31s. |
+| `telus_postgresql` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
+| `indigo-dc.oneclient` | ubuntu | ✅ clean. Times: cold py 0.45s vs cr 0.01s; warm py 0.49s vs cr 0.01s. |
+| `JRemitz.jenkins_docker_base` | ubuntu | ✅ clean. Times: cold py 18.33s vs cr 4.36s; warm py 12.07s vs cr 0.53s. |
+| `trombik.language_ruby` | ubuntu | ✅ clean. Times: cold py 0.47s vs cr 0.01s; warm py 0.49s vs cr 0.01s. |
+| `darkwizard242.istioctl` | ubuntu | ✅ clean. Times: cold py 8.75s vs cr 7.92s; warm py 7.10s vs cr 3.41s. |
+| `mrlesmithjr.config-interfaces` | ubuntu | ✅ clean. Times: cold py 33.26s vs cr 16.56s; warm py 33.52s vs cr 12.17s. |
+| `markahesketh.ufw` | ubuntu | ✅ clean. Times: cold py 63.98s vs cr 41.55s; warm py 12.09s vs cr 1.08s. |
+| `githubixx.traefik_kubernetes` | ubuntu | ✅ clean. Times: cold py 4.30s vs cr 5.39s; warm py 3.13s vs cr 0.39s. |
+| `weareinteractive.timezone` | ubuntu | ✅ clean. Times: cold py 0.47s vs cr 0.01s; warm py 0.50s vs cr 0.01s. |
+| `buluma.dsvpn` | ubuntu | ✅ clean. Times: cold py 10.57s vs cr 4.72s; warm py 6.00s vs cr 0.70s. |
+| `chriscowley.unifi_exporter` | ubuntu | ✅ clean. Times: cold py 19.25s vs cr 6.45s; warm py 18.28s vs cr 1.12s. |
+| `kbrebanov.pip` | ubuntu | ✅ clean. Times: cold py 1.06s vs cr 0.03s; warm py 0.50s vs cr 0.01s. |
+| `sgaunet.awscli` | ubuntu | ✅ clean. Times: cold py 64.81s vs cr 69.31s; warm py 17.73s vs cr 5.31s. |
+| `PCextreme.mariadb` | ubuntu | ✅ clean. Times: cold py 0.44s vs cr 0.01s; warm py 0.44s vs cr 0.01s. |
+| `hashbangcode.sendmail` | ubuntu | ✅ clean. Times: cold py 5.53s vs cr 4.75s; warm py 3.56s vs cr 0.40s. |
+| `Primexz.sp_utm_node_exporter` | ubuntu | ✅ clean. Times: cold py 21.64s vs cr 7.26s; warm py 6.07s vs cr 0.36s. |
+| `ansibleguy.linux_bootstrap` | ubuntu | ❌ divergent - Message: The task includes an option with an undefined variable. The error was: 'ansible Times: cold py 65.44s vs cr 4.47s; warm py 40.56s vs cr 0.84s. |
+| `stdevel_omd` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
+
+
+## Round 828000 (2026-09-18): 1-role confirm round for 827000's fix
+
+Re-run of calvinbui.ansible_apt (the only role whose 827000
+divergence was a krikri bug) against the rebuilt 0.9.1154 binary:
+`CLEAN=1`.
+
+| Role | OS | Status |
+|---|---|---|
+| `calvinbui.ansible_apt` | ubuntu | ✅ clean. Times: cold py 40.00s vs cr 39.82s; warm py 245.58s vs cr 285.19s. |
+
 ## Round 825000-825388 (2026-09-18): 389-role Galaxy batch (ubuntu+rocky)
 
 A `krikri-role-tester` round, 389 roles run Atlantic.net-only
