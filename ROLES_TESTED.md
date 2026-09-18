@@ -6580,3 +6580,25 @@ record, not this batch's own timing snapshot.
 | `wunzeco.users` | rocky | ✅ clean. Times: cold py 5.06s vs cr 10.08s; warm py 4.21s vs cr 0.42s. |
 | `ypsman.aws_cli` | ubuntu | ✅ clean. Times: cold py 7.55s vs cr 7.02s; warm py 5.47s vs cr 1.45s. |
 | `zorun.garage` | ubuntu | ✅ clean. Times: cold py 4.05s vs cr 4.34s; warm py 2.53s vs cr 0.28s. |
+
+## Round 814000-814010 (2026-09-17): 11-role Galaxy batch (ubuntu+rocky)
+
+A sixth `krikri-role-tester` round, 11 never-before-tested roles drawn
+from an existing 400-role candidate queue, run Atlantic.net-only.
+`CLEAN=9 DIVERGENT=1 GALAXY_MISSING=1`; the one divergence
+(`azavea.kibana`) was a real krikri bug, fixed in `0.9.1150` (see
+`KNOWN_MISSING.md`'s round narrative).
+
+| Role | OS | Status |
+|---|---|---|
+| `azavea.kibana` | ubuntu | ✅ FIXED (0.9.1150): via `azavea.unzip`'s `apt: pkg=unzip={{ unzip_version }} state=present` task - krikri's PlaybookParser unconditionally set `_raw_params` on fully-key=value inline task args, which apt's strict argument-spec validation rejected. See KNOWN_MISSING.md's round 814000-814010 entry. Times: cold py 10.41s vs cr 5.41s; warm py 8.07s vs cr 0.61s. |
+| `ctorgalson.dotfiles` | ubuntu | ✅ clean. Times: cold py 4.27s vs cr 7.52s; warm py 2.94s vs cr 0.32s. |
+| `darkwizard242.msteams` | ubuntu | ✅ clean. Times: cold py 37.40s vs cr 29.66s; warm py 9.72s vs cr 3.40s. |
+| `jahrik.nerd_fonts` | ubuntu | ✅ clean. Times: cold py 68.83s vs cr 59.91s; warm py 7.21s vs cr 0.71s. |
+| `juwai.memcached` | rocky | ✅ clean. Times: cold py 0.44s vs cr 0.01s; warm py 0.44s vs cr 0.01s. |
+| `lrk.td-agent` | rocky | ❌ untestable - Galaxy install failed (role not found / install error). |
+| `mambaorg.micromamba` | ubuntu | ✅ clean. Times: cold py 34.36s vs cr 20.24s; warm py 9.49s vs cr 0.64s. |
+| `mitre.yedit` | rocky | ✅ clean. Times: cold py 3.84s vs cr 13.37s; warm py 2.33s vs cr 0.28s. |
+| `pluggero.wireshark` | ubuntu | ✅ clean. Times: cold py 173.56s vs cr 204.59s; warm py 61.89s vs cr 5.61s. |
+| `Rheinwerk.aws_jdk` | ubuntu | ✅ clean. Times: cold py 60.63s vs cr 46.54s; warm py 14.04s vs cr 5.25s. |
+| `tschifftner.mariadb` | ubuntu | ✅ clean. Times: cold py 0.45s vs cr 0.01s; warm py 0.46s vs cr 0.01s. |

@@ -18,10 +18,37 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.1066`.** Vendored `crinja` fork now at tag
-`crystal-play-0.9.32` (see `shard.yml`; 0.9.32 fixes a no-parenthesis
-filter-call grammar bug where a COMMA legitimately following a `|
-somefilter` was mistaken for the start of an implicit argument).
+**Currently at `0.9.1150`.**
+
+## Round 814000-814010: 11-role Galaxy batch, 1 real bug fixed (0.9.1149 -> 0.9.1150)
+
+11-role Atlantic.net-only round (fresh roles drawn from an existing
+400-role candidate queue not yet covered in `ROLES_TESTED.md`):
+`CLEAN=9 DIVERGENT=1 GALAXY_MISSING=1`.
+
+- `0.9.1150`: `PlaybookParser`'s inline `key=value` task-argument parsing
+  (`apt: pkg=unzip={{ unzip_version }} state=present`, the old-style
+  shorthand seen in `azavea.unzip`'s `tasks/main.yml`, pulled in via the
+  `azavea.kibana` role) unconditionally set `_raw_params` on the task's
+  params alongside the split `pkg`/`state` keys, even though every token
+  parsed cleanly as `key=value`. Real Ansible's `parse_kv` only produces
+  `_raw_params` from leftover non-`key=value` tokens - a fully-`k=v`
+  string produces none. Any module with strict `AnsibleModule`
+  argument-spec validation (`apt` first; `user`, `debug`, and the rest of
+  the non-command/shell/script/raw modules were affected too, just more
+  permissively) then rejected the bogus `_raw_params` as an unsupported
+  parameter. Fixed at both `PlaybookParser` call sites (the playbook-task
+  string branch and the ad-hoc `-a` branch) to only set `_raw_params`
+  from genuine leftover tokens, matching real's `join_args(raw_params)`
+  exactly - command/shell/script/raw's free-form handling is untouched.
+
+This round followed a large local differential-testing sweep earlier the
+same session (see `testing/podman-diff/` and its `run.sh` history) that
+found and fixed ~15 more plugin/engine bugs and a harness bug of its own
+(`IPTABLES_ANSIBLE`/`DEB822_ANSIBLE` leaking into every case's real-side
+execution) - those aren't repeated here since they were caught by the
+local harness, not this round, but the `git log` between `0.9.1143` and
+`0.9.1149` covers them.
 
 ## Round 811000-812999: 400-role Galaxy batch + 55-role confirm rerun, 18 real bugs fixed (0.9.1050 -> 0.9.1066)
 
