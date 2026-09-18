@@ -51,6 +51,20 @@ module Krikri
       File.read(path).strip
     end
 
+    # Atomic (write-to-random-temp-then-rename), 0600. Renaming replaces
+    # the target itself rather than following a symlink planted at it -
+    # File.write would truncate whatever the symlink points at, letting
+    # another local user redirect a decrypt's plaintext output to a path
+    # of their choosing. Every file-writing subcommand goes through this.
+    private def self.atomic_write(path : String, content : String) : Nil
+      tmp = File.join(File.dirname(path), ".#{File.basename(path)}.#{Random::Secure.hex(6)}.tmp")
+      File.open(tmp, "w") do |f|
+        f.chmod(0o600)
+        f.write(content.to_slice)
+      end
+      File.rename(tmp, path)
+    end
+
     # Public: also used directly by krikri-playbook.cr's --ask-vault-pass for
     # running a playbook (not just the `vault` subcommands here).
     def self.prompt_password(prompt : String = "Vault password: ") : String
@@ -119,7 +133,7 @@ module Krikri
           next
         end
 
-        File.write(output_path || file, Vault.encrypt(content, password))
+        atomic_write(output_path || file, Vault.encrypt(content, password))
         puts "Encryption successful"
       end
     end
@@ -141,7 +155,7 @@ module Krikri
 
       files.each do |file|
         content = File.read(file)
-        File.write(output_path || file, Vault.decrypt(content, password))
+        atomic_write(output_path || file, Vault.decrypt(content, password))
         puts "Decryption successful"
       end
     end
@@ -213,16 +227,8 @@ module Krikri
         plaintext = Vault.decrypt(File.read(target_file), old_password)
         # Atomic (write-to-temp-then-rename): an interrupt mid-write used
         # to leave the vault file truncated/destroyed - same pattern
-        # async_jobs.cr's write_status uses. The temp name is randomized
-        # (a predictable name in a shared directory lets another local
-        # user pre-create/symlink it and clobber an arbitrary target) and
-        # 0600 (it holds fresh ciphertext; no reason for default perms).
-        tmp = File.join(File.dirname(target_file), ".#{File.basename(target_file)}.rekey.#{Random::Secure.hex(6)}.tmp")
-        File.open(tmp, "w") do |f|
-          f.chmod(0o600)
-          f.write(Vault.encrypt(plaintext, new_password).to_slice)
-        end
-        File.rename(tmp, target_file)
+        # async_jobs.cr's write_status uses (atomic_write).
+        atomic_write(target_file, Vault.encrypt(plaintext, new_password))
         puts "Rekey successful"
       end
     end

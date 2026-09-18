@@ -933,7 +933,16 @@ module Krikri
       @halted_hosts.add(host.name) unless ignore_errors
       unless defer_display
         suffix = item_label ? " => (item=#{item_label})" : ""
-        puts "fatal: [#{host.connection_host}]#{suffix}: FAILED! => #{msg}".colorize(:red)
+        # no_log is a task-level security control: the conditional's
+        # error text embeds the rendered condition, which can quote
+        # variable values the task asked to keep out of the output. Real
+        # Ansible stamps _ansible_no_log onto these action failures and
+        # shows the censored JSON - mirror that shape here.
+        if resolve_task_no_log(task)
+          puts %(fatal: [#{host.connection_host}]#{suffix}: FAILED! => {"censored": "the output has been hidden due to the fact that 'no_log: true' was specified for this result"}).colorize(:red)
+        else
+          puts "fatal: [#{host.connection_host}]#{suffix}: FAILED! => #{msg}".colorize(:red)
+        end
         puts "...ignoring".colorize(:red) if ignore_errors
       end
       register_name = task.register

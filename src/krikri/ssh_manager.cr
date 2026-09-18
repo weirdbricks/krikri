@@ -92,6 +92,14 @@ module Krikri
       # group/world-readable (0700 also blocks another local user
       # pre-creating the dir before we do and hijacking the sockets).
       File.chmod(@@control_path_dir, 0o700)
+      # Close the mkdir->chmod window: verify the directory we now own is
+      # actually OURS and not a foreign-owned dir planted (or left) at
+      # this predictable path - same exit condition the batch dir's
+      # parent check uses. Better to hard-fail than multiplex over
+      # sockets a third party can read.
+      if File.info(@@control_path_dir).owner_id.to_s != LibC.getuid.to_s
+        raise "SSH control path dir #{@@control_path_dir} is not owned by the current user - refusing to use it"
+      end
       @@control_dir_ready = true
     end
 

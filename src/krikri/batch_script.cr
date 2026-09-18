@@ -136,6 +136,13 @@ module Krikri
         io << "mkdir -p \"$P\"\n"
         io << "chmod 700 \"$P\" 2>/dev/null || true\n"
         io << "if [ -L \"$P\" ] || [ \"$(stat -c %u \"$P\" 2>/dev/null)\" != \"$(id -u)\" ]; then echo 'krikri batch dir parent unsafe (symlink or foreign owner)' >&2; exit 75; fi\n"
+        # Sweep stale batch dirs: dump's rm -rf only runs on normal
+        # completion - a SIGKILLed SSH connection orphans the dir (and
+        # its step output) on the host indefinitely. Only dirs older
+        # than an hour, owned by us, go - a concurrent run's live batch
+        # is minutes old at most (ids are SecureRandom, so no collision
+        # either way).
+        io << "find \"$P\" -maxdepth 1 -name 'batch-*' -type d -user \"$(id -u)\" -mmin +60 -exec rm -rf {} + 2>/dev/null || true\n"
         io << "D=" << dir << "\n"
         io << "mkdir -p \"$D\"\n"
         io << "chmod 700 \"$D\"\n"
