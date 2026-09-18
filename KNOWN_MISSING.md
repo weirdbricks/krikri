@@ -20,6 +20,19 @@ narrative, newest first.
 
 **Currently at `0.9.1154`.**
 
+## Round 829000-829799: 800-role Galaxy batch (ubuntu+rocky), no new krikri bug (0.9.1154)
+
+800-role Atlantic.net-only round, alternating ubuntu/rocky per role
+(`CLEAN=651 DIVERGENT=57 BLOCKED=92` - 91 Galaxy-404s, 1
+TF_APPLY_FAILED). No confirmed krikri bug out of the 57 divergences:
+py-side infra failures (ssh reset, timeout on slow dhparam
+generation), `when`-evaluation skip-count differences
+(linux-system-roles.sudo et al, not yet root-caused), four
+"object of type 'dict' has no attribute X" template-render failures
+(ansible_env.TEMP, RedHat, instances, status_code - not yet
+root-caused), win_*/kubernetes.core.helm/docker_compose
+known-missing modules, and host-environment gaps.
+
 ## Round 827000-827399: 400-role Galaxy batch, 1 real bug fixed (0.9.1153 -> 0.9.1154)
 
 400-role Atlantic.net-only round of never-before-tested Galaxy roles
