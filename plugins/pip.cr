@@ -485,7 +485,35 @@ module Krikri
     # the version-operator suffix (existing behavior) AND any trailing
     # `[...]` extras.
     private def distribution_name(package : String) : String
+      if vcs_name = vcs_distribution_name(package)
+        return vcs_name
+      end
       package.split(/[=<>!~]/, 2)[0].sub(/\[[^\]]*\]\z/, "")
+    end
+
+    # A VCS requirement (`git+https://github.com/grycap/clues.git@master`)
+    # never matches a bare distribution name - the whole URL+ref string
+    # reached `pip show` verbatim, which always fails ("Package(s) not
+    # found"), so `already_installed?` always returned false and every
+    # rerun re-installed, reporting `changed: true` where real Ansible's
+    # own pip module pre-checks installed packages by their DERIVED name
+    # and reports ok. Found live via grycap.clues (rounds 700036/820004):
+    # its second `pip: {name: git+...clues.git@master}` "Install CLUES2"
+    # task reported changed where real ansible-playbook reported ok.
+    # Name derivation mirrors real pip's own VCS handling: an `#egg=`
+    # fragment wins (PEP 508 direct-reference convention), otherwise the
+    # URL's basename with the `.git` suffix stripped (`.../clues.git@master`
+    # -> "clues"). The `@ref` suffix only appears at the END of a VCS URL
+    # (pip's `@` ref separator), so splitting on the first `@` is safe for
+    # the egg-less form.
+    private def vcs_distribution_name(package : String) : String?
+      return nil unless {"git+", "hg+", "bzr+", "svn+"}.any? { |prefix| package.starts_with?(prefix) }
+      if egg = package.split("#egg=")[1]?
+        return egg.split(/[&=<>!~]/, 2)[0].sub(/\[[^\]]*\]\z/, "")
+      end
+      base = package.split('@')[0].rstrip('/')
+      base = base.rchop(".git").split('/').last
+      base.empty? ? nil : base
     end
 
     private def already_installed?(pip_bin : String, package : String) : Bool
