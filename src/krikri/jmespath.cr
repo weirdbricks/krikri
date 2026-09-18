@@ -930,7 +930,12 @@ module Krikri
                   raw = args[0]?.try(&.raw)
                   case raw
                   when Int64, Float64 then args[0]
-                  when String         then (JSON.parse(raw) rescue NULL)
+                  when String
+                    begin
+                      JSON.parse(raw)
+                    rescue JSON::ParseException
+                      NULL
+                    end
                   else                     NULL
                   end
                 when "to_array"

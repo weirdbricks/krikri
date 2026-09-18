@@ -121,10 +121,6 @@ Lint/SpecEqWithBoolOrNilLiteral:
   - spec/unit/variable_lookup_spec.cr
   - spec/unit/vault_spec.cr
 
-Lint/TrailingRescueException:
-  Excluded:
-  - src/krikri/jmespath.cr
-
 Lint/UnreachableCode:
   Excluded:
   - spec/unit/ssh_manager_timeout_spec.cr
