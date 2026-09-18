@@ -62,8 +62,8 @@ describe "ansible_mounts stat types" do
     rendered.should contain("nvme0n1p1")
     rendered.should contain("384.0GB")
     # sort(attribute='device'): 'n' < 'v', so nvme0n1p1 sorts first
-    vda_pos = rendered.index("vda2").not_nil!
-    nvme_pos = rendered.index("nvme0n1p1").not_nil!
+    vda_pos = rendered.index!("vda2")
+    nvme_pos = rendered.index!("nvme0n1p1")
     vda_pos.should be > nvme_pos
   end
 end

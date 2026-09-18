@@ -269,7 +269,7 @@ describe Krikri::PluginHelpers::Ec2Instance do
       result["instances"][0]["instance_id"].should eq("i-new")
       result["instances"][0]["state"]["name"].should eq("running")
 
-      run_body = bodies.find { |b| URI::Params.parse(b)["Action"] == "RunInstances" }.not_nil!
+      run_body = bodies.find! { |b| URI::Params.parse(b)["Action"] == "RunInstances"}
       run_params = URI::Params.parse(run_body)
       run_params["ImageId"].should eq("ami-123")
       run_params["InstanceType"].should eq("t3.micro")
@@ -279,7 +279,7 @@ describe Krikri::PluginHelpers::Ec2Instance do
       run_params["MaxCount"].should eq("1")
       run_params["UserData"].should eq(Base64.strict_encode("hello world"))
 
-      tag_body = bodies.find { |b| URI::Params.parse(b)["Action"] == "CreateTags" }.not_nil!
+      tag_body = bodies.find! { |b| URI::Params.parse(b)["Action"] == "CreateTags"}
       tag_params = URI::Params.parse(tag_body)
       tag_params["ResourceId.1"].should eq("i-new")
       tag_params.fetch_all("Tag.1.Key").should eq(["Name"])
@@ -344,7 +344,7 @@ describe Krikri::PluginHelpers::Ec2Instance do
       result = run_module({"name" => "web", "state" => "absent", "region" => "us-east-1"}, handler)
 
       result["changed"].should be_true
-      term_body = bodies.find { |b| URI::Params.parse(b)["Action"] == "TerminateInstances" }.not_nil!
+      term_body = bodies.find! { |b| URI::Params.parse(b)["Action"] == "TerminateInstances"}
       URI::Params.parse(term_body)["InstanceId.1"].should eq("i-abc")
       result["instances"][0]["state"]["name"].should eq("terminated")
     end
@@ -374,7 +374,7 @@ describe Krikri::PluginHelpers::Ec2Instance do
       result = run_module({"name" => "web", "state" => "running", "region" => "us-east-1"}, handler)
 
       result["changed"].should be_true
-      start_body = bodies.find { |b| URI::Params.parse(b)["Action"] == "StartInstances" }.not_nil!
+      start_body = bodies.find! { |b| URI::Params.parse(b)["Action"] == "StartInstances"}
       URI::Params.parse(start_body)["InstanceId.1"].should eq("i-abc")
       result["instances"][0]["state"]["name"].should eq("running")
     end
@@ -403,7 +403,7 @@ describe Krikri::PluginHelpers::Ec2Instance do
       result = run_module({"name" => "web", "state" => "stopped", "region" => "us-east-1"}, handler)
 
       result["changed"].should be_true
-      stop_body = bodies.find { |b| URI::Params.parse(b)["Action"] == "StopInstances" }.not_nil!
+      stop_body = bodies.find! { |b| URI::Params.parse(b)["Action"] == "StopInstances"}
       URI::Params.parse(stop_body)["InstanceId.1"].should eq("i-abc")
       result["instances"][0]["state"]["name"].should eq("stopped")
       describe_count.should eq(3)
@@ -448,7 +448,7 @@ describe Krikri::PluginHelpers::Ec2Instance do
       }, handler)
 
       result["changed"].should be_true
-      run_body = bodies.find { |b| URI::Params.parse(b)["Action"] == "RunInstances" }.not_nil!
+      run_body = bodies.find! { |b| URI::Params.parse(b)["Action"] == "RunInstances"}
       URI::Params.parse(run_body)["MaxCount"].should eq("2")
       result["msg"].as_s.should contain("exact_count 3")
     end
@@ -476,13 +476,13 @@ describe Krikri::PluginHelpers::Ec2Instance do
       }, handler)
 
       result["changed"].should be_true
-      create_body = bodies.find { |b| URI::Params.parse(b)["Action"] == "CreateTags" }.not_nil!
+      create_body = bodies.find! { |b| URI::Params.parse(b)["Action"] == "CreateTags"}
       create_params = URI::Params.parse(create_body)
       create_params["ResourceId.1"].should eq("i-abc")
       create_params["Tag.1.Key"].should eq("team")
       create_params["Tag.1.Value"].should eq("infra")
 
-      delete_body = bodies.find { |b| URI::Params.parse(b)["Action"] == "DeleteTags" }.not_nil!
+      delete_body = bodies.find! { |b| URI::Params.parse(b)["Action"] == "DeleteTags"}
       delete_params = URI::Params.parse(delete_body)
       delete_params.fetch_all("Tag.1.Key").should eq(["env"])
     end

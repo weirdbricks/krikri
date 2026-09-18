@@ -1889,7 +1889,7 @@ module Krikri
             capabilities = [] of String
           else
             enforced = "True"
-            raw = current.index('=') ? current[(current.index('=').not_nil! + 1)..] : current
+            raw = current.index!('=') ? current[(current.index!('=') + 1)..] : current
             capabilities = raw.split(',').map(&.strip).reject(&.empty?)
           end
         end

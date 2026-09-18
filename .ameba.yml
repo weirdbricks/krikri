@@ -76,14 +76,6 @@ Lint/NotNil:
   - spec/unit/virt_net_spec.cr
   - src/krikri/variable_substitutor/expression_evaluator.cr
 
-Lint/NotNilAfterNoBang:
-  Excluded:
-  - spec/unit/ansible_mounts_numeric_stats_spec.cr
-  - spec/unit/ec2_instance_spec.cr
-  - spec/unit/ec2_key_spec.cr
-  - spec/unit/ec2_security_group_spec.cr
-  - spec/unit/rhsm_repository_spec.cr
-
 Lint/UnusedRescueVariable:
   Excluded:
   - plugins/archive.cr

@@ -109,8 +109,8 @@ describe Krikri::PluginHelpers::RhsmRepository do
       plan.changed?.should be_true
       plan.disable.should eq(["rhel-7-server-optional-rpms"])
       plan.enable.empty?.should be_true
-      plan.updated.find { |r| r.id == "rhel-7-server-optional-rpms" }.not_nil!.enabled?.should be_false
-      plan.updated.find { |r| r.id == "rhel-7-server-rpms" }.not_nil!.enabled?.should be_true
+      plan.updated.find! { |r| r.id == "rhel-7-server-optional-rpms" }.enabled?.should be_false
+      plan.updated.find! { |r| r.id == "rhel-7-server-rpms" }.enabled?.should be_true
     end
 
     it "purge leaves already-disabled repos alone" do

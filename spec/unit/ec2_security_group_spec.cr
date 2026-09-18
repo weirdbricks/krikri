@@ -271,7 +271,7 @@ describe Krikri::PluginHelpers::Ec2SecurityGroup do
         end
       end
       run_module({"name" => "web", "description" => "d", "state" => "present", "region" => "us-east-1", "tags" => %({"env": "test"})}, handler)
-      tags_body = bodies.find { |b| URI::Params.parse(b)["Action"] == "CreateTags" }.not_nil!
+      tags_body = bodies.find! { |b| URI::Params.parse(b)["Action"] == "CreateTags"}
       tags_body.should contain("ResourceId.1=sg-new")
       tags_body.should contain("Tag.1.Key=env")
     end
@@ -410,10 +410,10 @@ describe Krikri::PluginHelpers::Ec2SecurityGroup do
 
       actions = bodies.map { |b| URI::Params.parse(b)["Action"] }
       actions.should eq(["DescribeSecurityGroups", "CreateSecurityGroup", "RevokeSecurityGroupEgress", "AuthorizeSecurityGroupIngress", "AuthorizeSecurityGroupEgress", "DescribeSecurityGroups"])
-      authorize_body = bodies.find { |b| URI::Params.parse(b)["Action"] == "AuthorizeSecurityGroupIngress" }.not_nil!
+      authorize_body = bodies.find! { |b| URI::Params.parse(b)["Action"] == "AuthorizeSecurityGroupIngress"}
       authorize_body.should contain("GroupId=sg-new")
       authorize_body.should contain("IpPermissions.1.IpProtocol=tcp")
-      revoke_body = bodies.find { |b| URI::Params.parse(b)["Action"] == "RevokeSecurityGroupEgress" }.not_nil!
+      revoke_body = bodies.find! { |b| URI::Params.parse(b)["Action"] == "RevokeSecurityGroupEgress"}
       revoke_body.should contain("GroupId=sg-new")
       revoke_body.should contain("IpPermissions.1.IpRanges.1.CidrIp=0.0.0.0%2F0")
     end
@@ -426,7 +426,7 @@ describe Krikri::PluginHelpers::Ec2SecurityGroup do
       end
       rules = %([{"proto": "tcp", "from_port": 80, "to_port": 80, "cidr_ip": "0.0.0.0/0"}])
       run_module({"name" => "web", "state" => "present", "region" => "us-east-1", "rules" => rules}, handler)
-      authorize_body = bodies.find { |b| URI::Params.parse(b)["Action"] == "AuthorizeSecurityGroupIngress" }.not_nil!
+      authorize_body = bodies.find! { |b| URI::Params.parse(b)["Action"] == "AuthorizeSecurityGroupIngress"}
       authorize_body.should contain("GroupId=sg-111")
     end
 
@@ -437,7 +437,7 @@ describe Krikri::PluginHelpers::Ec2SecurityGroup do
         DESCRIBE_NONE
       end
       run_module({"name" => "web", "state" => "present", "region" => "us-east-1", "vpc_id" => "vpc-1"}, handler)
-      describe_body = bodies.find { |b| URI::Params.parse(b)["Action"] == "DescribeSecurityGroups" }.not_nil!
+      describe_body = bodies.find! { |b| URI::Params.parse(b)["Action"] == "DescribeSecurityGroups"}
       describe_body.should contain("Filter.1.Name=group-name")
       describe_body.should contain("Filter.1.Value.1=web")
       describe_body.should contain("Filter.2.Name=vpc-id")
