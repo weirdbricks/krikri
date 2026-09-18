@@ -125,12 +125,12 @@ describe Krikri::PluginHelpers::Ec2Info do
       vpc["vpc_id"].should eq("vpc-1234")
       vpc["cidr_block"].should eq("10.0.0.0/16")
       vpc["state"].should eq("available")
-      vpc["is_default"].should eq(true)
+      vpc["is_default"].should be_true
       vpc["instance_tenancy"].should eq("default")
       vpc["dhcp_options_id"].should eq("dopt-1")
       vpc["owner_id"].should eq("123456789012")
-      vpc["enable_dns_support"].should eq(true)
-      vpc["enable_dns_hostnames"].should eq(false)
+      vpc["enable_dns_support"].should be_true
+      vpc["enable_dns_hostnames"].should be_false
       vpc["tags"]["Name"].should eq("main")
       assoc = vpc["cidr_block_association_set"][0]
       assoc["association_id"].should eq("vpc-cidr-assoc-0")
@@ -194,7 +194,7 @@ describe Krikri::PluginHelpers::Ec2Info do
 
     it "fails with the API error message when the describe call errors" do
       result = run_module({"region" => "us-east-1"}, ->(region : String, body : String) { raise Krikri::PluginHelpers::Ec2Api::Error.new("UnauthorizedOperation: fake") })
-      result["failed"].should eq(true)
+      result["failed"].should be_true
       result["msg"].should eq("UnauthorizedOperation: fake")
     end
   end

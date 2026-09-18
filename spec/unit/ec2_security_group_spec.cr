@@ -358,7 +358,7 @@ describe Krikri::PluginHelpers::Ec2SecurityGroup do
       end
       result = run_module({"name" => "web", "description" => "web group", "state" => "present", "region" => "us-east-1"}, handler)
 
-      result["changed"].should eq(true)
+      result["changed"].should be_true
       result["failed"]?.should be_falsey
       result["msg"]?.should be_nil
       result["name"]?.should be_nil
@@ -446,7 +446,7 @@ describe Krikri::PluginHelpers::Ec2SecurityGroup do
 
     it "is a no-op when the group already matches" do
       result = run_module({"name" => "web", "description" => "web group", "state" => "present", "region" => "us-east-1"}, ->(region : String, body : String) { DESCRIBE_ONE })
-      result["changed"].should eq(false)
+      result["changed"].should be_false
       result["group_id"].should eq("sg-111")
       result["group_name"].should eq("web")
       result["owner_id"].should eq("123456789012")
@@ -456,7 +456,7 @@ describe Krikri::PluginHelpers::Ec2SecurityGroup do
 
     it "returns just changed and a null group_id for state absent" do
       result = run_module({"name" => "web", "state" => "absent", "region" => "us-east-1"}, ->(region : String, body : String) { DESCRIBE_ONE })
-      result["changed"].should eq(true)
+      result["changed"].should be_true
       result["group_id"].raw.should be_nil
       result["msg"]?.should be_nil
       result["group_name"]?.should be_nil
@@ -464,7 +464,7 @@ describe Krikri::PluginHelpers::Ec2SecurityGroup do
 
     it "returns just changed and a null group_id for an absent-when-absent delete" do
       result = run_module({"name" => "web", "state" => "absent", "region" => "us-east-1"}, ->(region : String, body : String) { DESCRIBE_NONE })
-      result["changed"].should eq(false)
+      result["changed"].should be_false
       result["group_id"].raw.should be_nil
     end
 
@@ -475,7 +475,7 @@ describe Krikri::PluginHelpers::Ec2SecurityGroup do
         DESCRIBE_NONE
       end
       result = run_module({"name" => "web", "state" => "present", "region" => "us-east-1", "_ansible_check_mode" => "true"}, handler)
-      result["changed"].should eq(true)
+      result["changed"].should be_true
       result["group_id"].raw.should be_nil
       result["msg"]?.should be_nil
       result["group_name"]?.should be_nil
@@ -490,7 +490,7 @@ describe Krikri::PluginHelpers::Ec2SecurityGroup do
       end
       rules = %([{"proto": "tcp", "from_port": 90, "to_port": 90, "cidr_ip": "0.0.0.0/0"}])
       result = run_module({"name" => "web", "description" => "web group", "state" => "present", "region" => "us-east-1", "rules" => rules, "_ansible_check_mode" => "true"}, handler)
-      result["changed"].should eq(true)
+      result["changed"].should be_true
       result["group_id"].should eq("sg-111")
       result["group_name"].should eq("web")
       result["description"].should eq("web group")
@@ -501,13 +501,13 @@ describe Krikri::PluginHelpers::Ec2SecurityGroup do
 
     it "fails with the API error message when a call errors" do
       result = run_module({"name" => "web", "state" => "present", "region" => "us-east-1"}, ->(region : String, body : String) { raise Krikri::PluginHelpers::Ec2Api::Error.new("UnauthorizedOperation: fake") })
-      result["failed"].should eq(true)
+      result["failed"].should be_true
       result["msg"].should eq("UnauthorizedOperation: fake")
     end
 
     it "fails on a missing name" do
       result = run_module({"state" => "present", "region" => "us-east-1"}, ->(region : String, body : String) { DESCRIBE_NONE })
-      result["failed"].should eq(true)
+      result["failed"].should be_true
       result["msg"].as_s.should contain("name")
     end
   end

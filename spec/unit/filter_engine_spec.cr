@@ -326,8 +326,8 @@ describe Krikri::VariableSubstitutor::FilterEngine do
     engine.apply(s("42"), "int").as_i.should eq(42)
     engine.apply(s("3.5"), "float").as_f.should eq(3.5)
     engine.apply(JSON::Any.new(7_i64), "string").as_s.should eq("7")
-    engine.apply(s(""), "bool").as_bool.should eq(false)
-    engine.apply(s("yes"), "bool").as_bool.should eq(true)
+    engine.apply(s(""), "bool").as_bool.should be_false
+    engine.apply(s("yes"), "bool").as_bool.should be_true
   end
 
   it "raises on a numeric or bool `length` operand, like Python's len()" do
@@ -366,8 +366,8 @@ describe Krikri::VariableSubstitutor::FilterEngine do
     # here - verified directly against real ansible-playbook (`{{
     # 'gitlab_restart.rc != 0' | bool }}` renders "false") that an
     # unrecognized string must render false, not true.
-    engine.apply(s("gitlab_restart.rc != 0"), "bool").as_bool.should eq(false)
-    engine.apply(s("some random text"), "bool").as_bool.should eq(false)
+    engine.apply(s("gitlab_restart.rc != 0"), "bool").as_bool.should be_false
+    engine.apply(s("some random text"), "bool").as_bool.should be_false
   end
 
   it "returns first/last/min/max of an array" do
@@ -550,8 +550,8 @@ describe Krikri::VariableSubstitutor::FilterEngine do
     # whole default() call to JSON null - which stringifies to "" - not
     # the literal false it was supposed to substitute.
     engine = Krikri::VariableSubstitutor::FilterEngine.new(Hash(String, JSON::Any).new)
-    engine.apply(JSON::Any.new(""), "default(false, true)").as_bool.should eq(false)
-    engine.apply(JSON::Any.new(""), "default(true, true)").as_bool.should eq(true)
+    engine.apply(JSON::Any.new(""), "default(false, true)").as_bool.should be_false
+    engine.apply(JSON::Any.new(""), "default(true, true)").as_bool.should be_true
   end
 
   it "audit pass: re-templates default()'s own fallback variable when its raw value is unrendered Jinja" do

@@ -124,7 +124,7 @@ describe Krikri::PluginHelpers::Ec2Info do
       image["image_id"].should eq("ami-older")
       image["state"].should eq("available")
       image["owner_id"].should eq("123456789012")
-      image["public"].should eq(true)
+      image["public"].should be_true
       image["architecture"].should eq("x86_64")
       image["image_type"].should eq("machine")
       image["name"].should eq("web-2024-01")
@@ -134,7 +134,7 @@ describe Krikri::PluginHelpers::Ec2Info do
       image["virtualization_type"].should eq("hvm")
       image["hypervisor"].should eq("xen")
       image["sriov_net_support"].should eq("simple")
-      image["ena_support"].should eq(true)
+      image["ena_support"].should be_true
       image["platform_details"].should eq("Linux/UNIX")
       image["usage_operation"].should eq("RunInstances")
       image["tags"]["Name"].should eq("web")
@@ -145,7 +145,7 @@ describe Krikri::PluginHelpers::Ec2Info do
       mapping = result["images"][0]["block_device_mappings"][0]
       mapping["device_name"].should eq("/dev/xvda")
       mapping["ebs"]["volume_size"].should eq(8)
-      mapping["ebs"]["delete_on_termination"].should eq(true)
+      mapping["ebs"]["delete_on_termination"].should be_true
       mapping["ebs"]["volume_type"].should eq("gp3")
     end
 
@@ -237,7 +237,7 @@ describe Krikri::PluginHelpers::Ec2Info do
 
     it "fails with the API error message when a call errors" do
       result = run_module({"region" => "us-east-1"}, ->(region : String, body : String) { raise Krikri::PluginHelpers::Ec2Api::Error.new("UnauthorizedOperation: fake") })
-      result["failed"].should eq(true)
+      result["failed"].should be_true
       result["msg"].should eq("UnauthorizedOperation: fake")
     end
   end

@@ -118,9 +118,9 @@ describe Krikri::PluginHelpers::Ec2Info do
       subnet["availability_zone_id"].should eq("use1-az6")
       subnet["state"].should eq("available")
       subnet["available_ip_address_count"].should eq(251)
-      subnet["default_for_az"].should eq(false)
-      subnet["map_public_ip_on_launch"].should eq(true)
-      subnet["assign_ipv6_address_on_creation"].should eq(false)
+      subnet["default_for_az"].should be_false
+      subnet["map_public_ip_on_launch"].should be_true
+      subnet["assign_ipv6_address_on_creation"].should be_false
       subnet["owner_id"].should eq("123456789012")
       subnet["tags"]["Name"].should eq("web")
       subnet["tags"]["env"].should eq("staging")
@@ -176,7 +176,7 @@ describe Krikri::PluginHelpers::Ec2Info do
 
     it "fails with the API error message when a call errors" do
       result = run_module({"region" => "us-east-1"}, ->(region : String, body : String) { raise Krikri::PluginHelpers::Ec2Api::Error.new("UnauthorizedOperation: fake") })
-      result["failed"].should eq(true)
+      result["failed"].should be_true
       result["msg"].should eq("UnauthorizedOperation: fake")
     end
 
@@ -186,7 +186,7 @@ describe Krikri::PluginHelpers::Ec2Info do
       ENV.delete("AWS_DEFAULT_REGION")
       begin
         result = run_module(EMPTY_PARAMS, ->(region : String, body : String) { DESCRIBE_NONE })
-        result["failed"].should eq(true)
+        result["failed"].should be_true
         result["msg"].as_s.should contain("region")
       ensure
         ENV["AWS_REGION"] = old_region if old_region

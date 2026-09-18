@@ -260,9 +260,9 @@ describe Krikri::VariableSubstitutor::VariableLookup do
     v = Hash(String, JSON::Any).new
     v["s"] = JSON::Any.new("node_exporter-1.8.2.linux-amd64.tar.gz")
     lookup = Krikri::VariableSubstitutor::VariableLookup.new(v)
-    (lookup.resolve("s.startswith('node_exporter')") || raise "unexpected nil").as_bool.should eq(true)
-    (lookup.resolve("s.endswith('.tar.gz')") || raise "unexpected nil").as_bool.should eq(true)
-    (lookup.resolve("s.startswith('other')") || raise "unexpected nil").as_bool.should eq(false)
+    (lookup.resolve("s.startswith('node_exporter')") || raise "unexpected nil").as_bool.should be_true
+    (lookup.resolve("s.endswith('.tar.gz')") || raise "unexpected nil").as_bool.should be_true
+    (lookup.resolve("s.startswith('other')") || raise "unexpected nil").as_bool.should be_false
   end
 
   it "re-renders a bare-identifier INDEX KEY (dict[some_var]) that is itself still-unrendered {{ }} text" do

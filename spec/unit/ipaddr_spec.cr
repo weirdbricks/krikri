@@ -88,7 +88,7 @@ describe Krikri::IpAddrCore do
 
   it "broadcast only exists for prefixes longer than /31" do
     Krikri::IpAddrCore.ipaddr(j("192.168.0.1/24"), "broadcast").should eq(j("192.168.0.255"))
-    Krikri::IpAddrCore.ipaddr(j("192.168.0.0/31"), "broadcast").raw.should eq(false)
+    Krikri::IpAddrCore.ipaddr(j("192.168.0.0/31"), "broadcast").raw.should be_false
     Krikri::IpAddrCore.ipaddr(j("192.168.0.0/31"), "address").should eq(j("192.168.0.0"))
   end
 
@@ -113,7 +113,7 @@ describe Krikri::IpAddrCore do
       {"fe80::1", "link-local", "fe80::1"},
     }.each do |(value, query, expected)|
       got = Krikri::IpAddrCore.ipaddr(j(value), query)
-      expected ? got.should(eq(j(expected))) : got.raw.should(eq(false))
+      expected ? got.should(eq(j(expected))) : got.raw.should(be_false)
     end
   end
 
@@ -132,13 +132,13 @@ describe Krikri::IpAddrCore do
     Krikri::IpAddrCore.ipaddr(j("192.168.0.1/24"), "24").should eq(j("192.168.0.24/24"))
     Krikri::IpAddrCore.ipaddr(j("192.168.32.0/24"), "1").should eq(j("192.168.32.1/24"))
     Krikri::IpAddrCore.ipaddr(j("192.168.32.0/24"), "-1").should eq(j("192.168.32.255/24"))
-    Krikri::IpAddrCore.ipaddr(j("192.168.32.0/24"), "300").raw.should eq(false)
+    Krikri::IpAddrCore.ipaddr(j("192.168.32.0/24"), "300").raw.should be_false
     Krikri::IpAddrCore.ipaddr(j("192.168.0.1"), "0").should eq(j("192.168.0.1"))
   end
 
   it "supports the cidr_lookup query for containment checks" do
     Krikri::IpAddrCore.ipaddr(j("192.168.0.5"), "192.168.0.0/24").should eq(j("192.168.0.5"))
-    Krikri::IpAddrCore.ipaddr(j("10.0.0.5"), "192.168.0.0/24").raw.should eq(false)
+    Krikri::IpAddrCore.ipaddr(j("10.0.0.5"), "192.168.0.0/24").raw.should be_false
   end
 
   it "supports the wrap query and revdns" do
@@ -182,7 +182,7 @@ describe Krikri::IpAddrCore do
     Krikri::IpAddrCore.ipsubnet(j("192.168.0.0/24"), "25", "-1").should eq(j("192.168.0.128/25"))
     Krikri::IpAddrCore.ipsubnet(j("192.168.0.1/32"), "24", "0").should eq(j("192.168.0.0/24"))
     Krikri::IpAddrCore.ipsubnet(j("192.168.0.1/32"), "24", "1").should eq(j("192.168.0.0/25"))
-    Krikri::IpAddrCore.ipsubnet(j("192.168.0.1/32"), "33").raw.should eq(false)
+    Krikri::IpAddrCore.ipsubnet(j("192.168.0.1/32"), "33").raw.should be_false
   end
 
   it "finds the parent subnet of an address" do
@@ -209,7 +209,7 @@ describe Krikri::IpAddrCore do
   it "walks n usable hosts forward and backward" do
     Krikri::IpAddrCore.next_nth_usable(j("192.168.32.5/24"), 2).should eq(j("192.168.32.7"))
     Krikri::IpAddrCore.previous_nth_usable(j("192.168.32.5/24"), 3).should eq(j("192.168.32.2"))
-    Krikri::IpAddrCore.next_nth_usable(j("192.168.32.250/24"), 10).raw.should eq(false)
+    Krikri::IpAddrCore.next_nth_usable(j("192.168.32.250/24"), 10).raw.should be_false
   end
 
   it "checks containment including network/broadcast, or usable hosts only" do

@@ -84,21 +84,6 @@ Lint/NotNilAfterNoBang:
   - spec/unit/ec2_security_group_spec.cr
   - spec/unit/rhsm_repository_spec.cr
 
-Lint/SpecEqWithBoolOrNilLiteral:
-  Excluded:
-  - spec/unit/ec2_ami_info_spec.cr
-  - spec/unit/ec2_instance_spec.cr
-  - spec/unit/ec2_key_spec.cr
-  - spec/unit/ec2_security_group_spec.cr
-  - spec/unit/ec2_vpc_net_info_spec.cr
-  - spec/unit/ec2_vpc_subnet_info_spec.cr
-  - spec/unit/filter_engine_spec.cr
-  - spec/unit/iam_user_spec.cr
-  - spec/unit/ipaddr_spec.cr
-  - spec/unit/python_module_runner_spec.cr
-  - spec/unit/variable_lookup_spec.cr
-  - spec/unit/vault_spec.cr
-
 Lint/UnusedArgument:
   Excluded:
   - spec/unit/ec2_ami_info_spec.cr

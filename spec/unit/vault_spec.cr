@@ -117,7 +117,7 @@ describe Krikri::Vault do
 
     it "leaves non-string values untouched" do
       Krikri::Vault.maybe_decrypt_json(JSON::Any.new(42_i64)).as_i64.should eq(42)
-      Krikri::Vault.maybe_decrypt_json(JSON::Any.new(true)).as_bool.should eq(true)
+      Krikri::Vault.maybe_decrypt_json(JSON::Any.new(true)).as_bool.should be_true
     end
 
     it "recurses into arrays" do

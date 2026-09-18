@@ -159,7 +159,7 @@ describe Krikri::PluginHelpers::Ec2Key do
         end
       end)
 
-      result["changed"].should eq(true)
+      result["changed"].should be_true
       result["failed"]?.should be_falsey
       result["msg"].should eq("key pair created")
       key = result["key"]
@@ -207,7 +207,7 @@ describe Krikri::PluginHelpers::Ec2Key do
 
     it "is a no-op when the key already exists and force is not set" do
       result = run_module({"name" => "deploy", "state" => "present", "region" => "us-east-1"}, ->(region : String, body : String) { DESCRIBE_ONE })
-      result["changed"].should eq(false)
+      result["changed"].should be_false
       result["msg"].should eq("key pair already exists")
       key = result["key"]
       key["name"].should eq("deploy")
@@ -220,33 +220,33 @@ describe Krikri::PluginHelpers::Ec2Key do
 
     it "returns key null and the real module's msg when deleting" do
       result = run_module({"name" => "deploy", "state" => "absent", "region" => "us-east-1"}, ->(region : String, body : String) { DESCRIBE_ONE })
-      result["changed"].should eq(true)
+      result["changed"].should be_true
       result["msg"].should eq("key deleted")
-      result["key"].should eq(nil)
+      result["key"].raw.should be_nil
     end
 
     it "returns key null and 'key did not exist' when deleting a missing key" do
       result = run_module({"name" => "deploy", "state" => "absent", "region" => "us-east-1"}, ->(region : String, body : String) { DESCRIBE_NONE })
-      result["changed"].should eq(false)
+      result["changed"].should be_false
       result["msg"].should eq("key did not exist")
-      result["key"].should eq(nil)
+      result["key"].raw.should be_nil
     end
 
     it "returns key null in check mode" do
       result = run_module({"name" => "deploy", "state" => "present", "region" => "us-east-1", "_ansible_check_mode" => "true"}, ->(region : String, body : String) { DESCRIBE_NONE })
-      result["changed"].should eq(true)
-      result["key"].should eq(nil)
+      result["changed"].should be_true
+      result["key"].raw.should be_nil
     end
 
     it "fails with the API error message when a call errors" do
       result = run_module({"name" => "deploy", "state" => "present", "region" => "us-east-1"}, ->(region : String, body : String) { raise Krikri::PluginHelpers::Ec2Api::Error.new("UnauthorizedOperation: fake") })
-      result["failed"].should eq(true)
+      result["failed"].should be_true
       result["msg"].should eq("UnauthorizedOperation: fake")
     end
 
     it "fails on a missing name" do
       result = run_module({"state" => "present", "region" => "us-east-1"}, ->(region : String, body : String) { DESCRIBE_NONE })
-      result["failed"].should eq(true)
+      result["failed"].should be_true
       result["msg"].as_s.should contain("name")
     end
   end

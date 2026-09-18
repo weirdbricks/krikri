@@ -264,7 +264,7 @@ describe Krikri::PluginHelpers::Ec2Instance do
         "region"        => "us-east-1",
       }, handler)
 
-      result["changed"].should eq(true)
+      result["changed"].should be_true
       result["failed"]?.should be_falsey
       result["instances"][0]["instance_id"].should eq("i-new")
       result["instances"][0]["state"]["name"].should eq("running")
@@ -299,7 +299,7 @@ describe Krikri::PluginHelpers::Ec2Instance do
       end
       result = run_module({"name" => "web", "image_id" => "ami-123", "instance_type" => "t3.micro", "region" => "us-east-1"}, handler)
 
-      result["changed"].should eq(false)
+      result["changed"].should be_false
       result["instances"][0]["instance_id"].should eq("i-abc")
       actions = bodies.map { |b| URI::Params.parse(b)["Action"] }
       actions.should eq(["DescribeInstances"])
@@ -343,7 +343,7 @@ describe Krikri::PluginHelpers::Ec2Instance do
       end
       result = run_module({"name" => "web", "state" => "absent", "region" => "us-east-1"}, handler)
 
-      result["changed"].should eq(true)
+      result["changed"].should be_true
       term_body = bodies.find { |b| URI::Params.parse(b)["Action"] == "TerminateInstances" }.not_nil!
       URI::Params.parse(term_body)["InstanceId.1"].should eq("i-abc")
       result["instances"][0]["state"]["name"].should eq("terminated")
@@ -351,7 +351,7 @@ describe Krikri::PluginHelpers::Ec2Instance do
 
     it "is a no-op for state=absent when nothing matches" do
       result = run_module({"name" => "web", "state" => "absent", "region" => "us-east-1"}, ->(region : String, body : String) { DESCRIBE_NONE })
-      result["changed"].should eq(false)
+      result["changed"].should be_false
       result["msg"].should eq("no matching instances found")
     end
 
@@ -373,7 +373,7 @@ describe Krikri::PluginHelpers::Ec2Instance do
       end
       result = run_module({"name" => "web", "state" => "running", "region" => "us-east-1"}, handler)
 
-      result["changed"].should eq(true)
+      result["changed"].should be_true
       start_body = bodies.find { |b| URI::Params.parse(b)["Action"] == "StartInstances" }.not_nil!
       URI::Params.parse(start_body)["InstanceId.1"].should eq("i-abc")
       result["instances"][0]["state"]["name"].should eq("running")
@@ -402,7 +402,7 @@ describe Krikri::PluginHelpers::Ec2Instance do
       end
       result = run_module({"name" => "web", "state" => "stopped", "region" => "us-east-1"}, handler)
 
-      result["changed"].should eq(true)
+      result["changed"].should be_true
       stop_body = bodies.find { |b| URI::Params.parse(b)["Action"] == "StopInstances" }.not_nil!
       URI::Params.parse(stop_body)["InstanceId.1"].should eq("i-abc")
       result["instances"][0]["state"]["name"].should eq("stopped")
@@ -418,7 +418,7 @@ describe Krikri::PluginHelpers::Ec2Instance do
       end
       result = run_module({"name" => "web", "state" => "restarted", "region" => "us-east-1"}, handler)
 
-      result["changed"].should eq(true)
+      result["changed"].should be_true
       actions = bodies.map { |b| URI::Params.parse(b)["Action"] }
       actions.should contain("StopInstances")
       actions.should contain("StartInstances")
@@ -447,7 +447,7 @@ describe Krikri::PluginHelpers::Ec2Instance do
         "region"      => "us-east-1",
       }, handler)
 
-      result["changed"].should eq(true)
+      result["changed"].should be_true
       run_body = bodies.find { |b| URI::Params.parse(b)["Action"] == "RunInstances" }.not_nil!
       URI::Params.parse(run_body)["MaxCount"].should eq("2")
       result["msg"].as_s.should contain("exact_count 3")
@@ -460,7 +460,7 @@ describe Krikri::PluginHelpers::Ec2Instance do
         "image_id"    => "ami-123",
         "region"      => "us-east-1",
       }, ->(region : String, body : String) { DESCRIBE_RUNNING })
-      result["changed"].should eq(false)
+      result["changed"].should be_false
     end
 
     it "purges tags not in the desired set (aws: reserved keys spared)" do
@@ -475,7 +475,7 @@ describe Krikri::PluginHelpers::Ec2Instance do
         "region" => "us-east-1",
       }, handler)
 
-      result["changed"].should eq(true)
+      result["changed"].should be_true
       create_body = bodies.find { |b| URI::Params.parse(b)["Action"] == "CreateTags" }.not_nil!
       create_params = URI::Params.parse(create_body)
       create_params["ResourceId.1"].should eq("i-abc")
@@ -489,25 +489,25 @@ describe Krikri::PluginHelpers::Ec2Instance do
 
     it "fails when no targeting param is given" do
       result = run_module({"state" => "present", "region" => "us-east-1"}, ->(region : String, body : String) { DESCRIBE_NONE })
-      result["failed"].should eq(true)
+      result["failed"].should be_true
       result["msg"].as_s.should contain("required")
     end
 
     it "fails on an invalid state" do
       result = run_module({"name" => "web", "state" => "paused", "region" => "us-east-1"}, ->(region : String, body : String) { DESCRIBE_NONE })
-      result["failed"].should eq(true)
+      result["failed"].should be_true
       result["msg"].as_s.should contain("state")
     end
 
     it "fails when creating without image_id" do
       result = run_module({"name" => "web", "instance_type" => "t3.micro", "region" => "us-east-1"}, ->(region : String, body : String) { DESCRIBE_NONE })
-      result["failed"].should eq(true)
+      result["failed"].should be_true
       result["msg"].as_s.should contain("image_id")
     end
 
     it "fails with the API error message when a call errors" do
       result = run_module({"name" => "web", "region" => "us-east-1"}, ->(region : String, body : String) { raise Krikri::PluginHelpers::Ec2Api::Error.new("UnauthorizedOperation: fake") })
-      result["failed"].should eq(true)
+      result["failed"].should be_true
       result["msg"].should eq("UnauthorizedOperation: fake")
     end
 
@@ -525,7 +525,7 @@ describe Krikri::PluginHelpers::Ec2Instance do
         "_ansible_check_mode" => "true",
       }, handler)
 
-      result["changed"].should eq(true)
+      result["changed"].should be_true
       result["msg"].as_s.should contain("check mode")
       actions = bodies.map { |b| URI::Params.parse(b)["Action"] }
       actions.should eq(["DescribeInstances"])
