@@ -275,7 +275,7 @@ module Krikri
       hex = hex.strip
       raise Error.new("Malformed vault content: odd-length hex data") if hex.size.odd?
       Bytes.new(hex.size // 2) { |i| hex[i * 2, 2].to_u8(16) }
-    rescue ex : ArgumentError
+    rescue ArgumentError
       raise Error.new("Malformed vault content: invalid hex data")
     end
 

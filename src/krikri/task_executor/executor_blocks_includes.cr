@@ -731,7 +731,7 @@ module Krikri
         rendered = substitutor.substitute(raw_matching, strict: true).strip
         begin
           files_matching = Regex.new(rendered)
-        rescue ex : ArgumentError
+        rescue ArgumentError
           finish_include_vars_failure(task, host, "Invalid regular expression: #{rendered}")
           return
         end
@@ -741,7 +741,7 @@ module Krikri
         rendered = substitutor.substitute(raw_pattern, strict: true).strip
         begin
           Regex.new(rendered + "$")
-        rescue ex : ArgumentError
+        rescue ArgumentError
           finish_include_vars_failure(task, host, "Invalid regular expression: #{rendered}")
           return
         end

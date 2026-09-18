@@ -3396,7 +3396,7 @@ module Krikri
 
         lines = response.body.lines.map(&.strip).reject(&.empty?)
         lines.to_json
-      rescue ex : Socket::Error | IO::Error
+      rescue Socket::Error | IO::Error
         # Genuine connection-level failures (DNS resolution, connection
         # refused, timeout) still degrade softly to "undefined" rather
         # than failing outright - only a real HTTP-level error response

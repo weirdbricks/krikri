@@ -51,7 +51,7 @@ module Krikri
       return PluginResult.new(changed: false, failed: false,
         msg: current.to_s, current_release: current) if target == current
 
-      set = remote_exec("export LANGUAGE=C LC_ALL=C; #{bin} #{PluginHelpers::RhsmRelease.set_arguments(target)}")
+      set = remote_exec("export LANGUAGE=C LC_ALL=C; #{bin} #{PluginHelpers::RhsmRelease.release_arguments(target)}")
       return PluginResult.new(changed: false, failed: true,
         msg: set[:stderr].empty? ? set[:stdout] : set[:stderr]) if set[:exit_code] != 0
 

@@ -76,30 +76,6 @@ Lint/NotNil:
   - spec/unit/virt_net_spec.cr
   - src/krikri/variable_substitutor/expression_evaluator.cr
 
-Lint/UnusedRescueVariable:
-  Excluded:
-  - plugins/archive.cr
-  - plugins/blockinfile.cr
-  - plugins/copy.cr
-  - plugins/file.cr
-  - plugins/find.cr
-  - plugins/get_certificate.cr
-  - plugins/get_url.cr
-  - plugins/lineinfile.cr
-  - plugins/replace.cr
-  - plugins/slurp.cr
-  - plugins/template.cr
-  - plugins/uri.cr
-  - plugins/xml.cr
-  - spec/unit/conditional_filter_prepass_spec.cr
-  - src/krikri/async_jobs.cr
-  - src/krikri/base_plugin.cr
-  - src/krikri/plugin_helpers/ec2_info.cr
-  - src/krikri/task_executor/executor_blocks_includes.cr
-  - src/krikri/variable_substitutor/crinja_renderer.cr
-  - src/krikri/variable_substitutor/expression_evaluator.cr
-  - src/krikri/vault.cr
-
 Lint/UselessAssign:
   Excluded:
   - plugins/command.cr

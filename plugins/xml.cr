@@ -384,7 +384,7 @@ module Krikri
         when XML::NodeSet then result.to_a
         else                   [] of XML::Node
         end
-      rescue ex : XML::Error
+      rescue XML::Error
         [] of XML::Node
       end
     end

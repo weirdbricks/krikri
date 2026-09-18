@@ -39,9 +39,9 @@ module Krikri
 
       begin
         bytes = File.read(src).to_slice
-      rescue ex : File::NotFoundError
+      rescue File::NotFoundError
         return PluginResult.new(changed: false, failed: true, msg: "File not found: #{src}")
-      rescue ex : File::AccessDeniedError
+      rescue File::AccessDeniedError
         return PluginResult.new(changed: false, failed: true, msg: "File is not readable: #{src}")
       rescue ex
         return PluginResult.new(changed: false, failed: true, msg: "Unable to slurp file: #{src}: #{ex.message}")

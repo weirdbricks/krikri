@@ -64,7 +64,7 @@ module Krikri
       if src = @params["src"]?
         begin
           src_body = File.read(expand_tilde(src))
-        rescue ex : File::Error
+        rescue File::Error
           return PluginResult.new(changed: false, failed: true, msg: "Unable to open source file #{src}", url: url, status: -1, elapsed: 0, redirected: false)
         end
       end
@@ -457,7 +457,7 @@ module Krikri
           else
             Process.run("chmod", [mode, path], output: Process::Redirect::Close, error: Process::Redirect::Close)
           end
-        rescue ex : File::Error
+        rescue File::Error
           # Mode setting failed, continue anyway
         end
       end
@@ -480,7 +480,7 @@ module Krikri
       before.permissions != after.permissions ||
         before.owner_id != after.owner_id ||
         before.group_id != after.group_id
-    rescue ex : File::Error
+    rescue File::Error
       # A chown/chmod failure (e.g. not running as root/owner) shouldn't
       # fail the whole task - matches copy.cr/file.cr's own rescue.
       false

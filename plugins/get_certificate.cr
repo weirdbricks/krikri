@@ -141,7 +141,7 @@ module Krikri
         scanner = scanner[(stop + 25)..]
       end
       certs.empty? ? nil : certs
-    rescue ex : IO::TimeoutError
+    rescue IO::TimeoutError
       nil
     end
   end

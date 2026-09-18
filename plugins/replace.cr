@@ -270,7 +270,7 @@ module Krikri
           else
             Process.run("chmod", [mode, path], output: Process::Redirect::Close, error: Process::Redirect::Close)
           end
-        rescue ex : File::Error
+        rescue File::Error
           # Mode setting failed, continue anyway
         end
       end
@@ -293,7 +293,7 @@ module Krikri
       before.permissions != after.permissions ||
         before.owner_id != after.owner_id ||
         before.group_id != after.group_id
-    rescue ex : File::Error
+    rescue File::Error
       # A chown/chmod failure (e.g. not running as root/owner) shouldn't
       # fail the whole task - matches copy.cr's own identical rescue.
       false
@@ -348,7 +348,7 @@ module Krikri
         begin
           File.chmod(temp_file, info.permissions)
           File.chown(temp_file, uid: info.owner_id.to_i, gid: info.group_id.to_i)
-        rescue ex : File::Error
+        rescue File::Error
           nil
         end
       end
