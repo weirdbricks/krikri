@@ -292,10 +292,6 @@ Naming/QueryBoolMethods:
   - src/krikri/plugin_helpers/rhsm_repository.cr
   - src/krikri/task_executor/executor_run_loop.cr
 
-Naming/RescuedExceptionsVariableName:
-  Excluded:
-  - plugins/template.cr
-
 Performance/AnyInsteadOfPresent:
   Excluded:
   - krikri-playbook.cr

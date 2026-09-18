@@ -393,7 +393,7 @@ module Krikri
           File.write(dest_dir_stage, "")
           FileUtils.mv(temp_file, dest_dir_stage)
           File.rename(dest_dir_stage, dest)
-        rescue fallback_ex
+        rescue ex
           File.delete(dest_dir_stage) if dest_dir_stage && File.exists?(dest_dir_stage)
           File.delete(temp_file) if File.exists?(temp_file)
           if true?(@params["unsafe_writes"]?)
@@ -405,18 +405,18 @@ module Krikri
             # it see the new content.
             begin
               File.write(dest, content_bytes)
-            rescue write_ex
+            rescue ex
               return PluginResult.new(
                 changed: false,
                 failed: true,
-                msg: "Failed to write destination file (unsafe_writes): #{write_ex.message}"
+                msg: "Failed to write destination file (unsafe_writes): #{ex.message}"
               )
             end
           else
             return PluginResult.new(
               changed: false,
               failed: true,
-              msg: "Failed to replace #{dest} with the rendered template: #{fallback_ex.message}"
+              msg: "Failed to replace #{dest} with the rendered template: #{ex.message}"
             )
           end
         end
