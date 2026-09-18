@@ -942,7 +942,7 @@ module Krikri
         end
 
         # Apply group vars to all hosts in the group
-        group.hosts.each do |hostname, host|
+        group.hosts.each do |_hostname, host|
           group.vars.each do |key, value|
             # Only set if not already set on host
             host.vars[key] ||= value
@@ -952,7 +952,7 @@ module Krikri
         # Recursively apply child group vars
         group.children.each do |child_name|
           if child_group = inventory.groups[child_name]?
-            child_group.hosts.each do |hostname, host|
+            child_group.hosts.each do |_hostname, host|
               group.vars.each do |key, value|
                 host.vars[key] ||= value
               end

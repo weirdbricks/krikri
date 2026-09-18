@@ -117,7 +117,7 @@ describe Krikri::PluginHelpers::Ec2Info do
 
   describe ".run_images" do
     it "shapes images with the real module's field names" do
-      result = run_module({"region" => "us-east-1"}, ->(region : String, body : String) { DESCRIBE_TWO })
+      result = run_module({"region" => "us-east-1"}, ->(_region : String, _body : String) { DESCRIBE_TWO })
 
       result["failed"]?.should be_falsey
       image = result["images"][0]
@@ -141,7 +141,7 @@ describe Krikri::PluginHelpers::Ec2Info do
     end
 
     it "shapes block device mappings" do
-      result = run_module({"region" => "us-east-1"}, ->(region : String, body : String) { DESCRIBE_TWO })
+      result = run_module({"region" => "us-east-1"}, ->(_region : String, _body : String) { DESCRIBE_TWO })
       mapping = result["images"][0]["block_device_mappings"][0]
       mapping["device_name"].should eq("/dev/xvda")
       mapping["ebs"]["volume_size"].should eq(8)
@@ -150,7 +150,7 @@ describe Krikri::PluginHelpers::Ec2Info do
     end
 
     it "sorts images by creation_date" do
-      result = run_module({"region" => "us-east-1"}, ->(region : String, body : String) { DESCRIBE_TWO })
+      result = run_module({"region" => "us-east-1"}, ->(_region : String, _body : String) { DESCRIBE_TWO })
       result["images"].as_a.map { |image| image["image_id"].as_s }.should eq(["ami-older", "ami-newer"])
     end
 
@@ -161,7 +161,7 @@ describe Krikri::PluginHelpers::Ec2Info do
     end
 
     it "returns an empty list when no images match" do
-      result = run_module({"region" => "us-east-1"}, ->(region : String, body : String) { DESCRIBE_NONE })
+      result = run_module({"region" => "us-east-1"}, ->(_region : String, _body : String) { DESCRIBE_NONE })
       result["images"].as_a.should be_empty
     end
 
@@ -169,7 +169,7 @@ describe Krikri::PluginHelpers::Ec2Info do
       result = run_module({
         "region"                    => "us-east-1",
         "describe_image_attributes" => "true",
-      }, ->(region : String, body : String) do
+      }, ->(_region : String, body : String) do
         URI::Params.parse(body)["Action"] == "DescribeImageAttribute" ? LAUNCH_PERMISSION : DESCRIBE_TWO
       end)
 
@@ -184,7 +184,7 @@ describe Krikri::PluginHelpers::Ec2Info do
       result = run_module({
         "region"                    => "us-east-1",
         "describe_image_attributes" => "true",
-      }, ->(region : String, body : String) do
+      }, ->(_region : String, body : String) do
         URI::Params.parse(body)["Action"] == "DescribeImageAttribute" ? raise Krikri::PluginHelpers::Ec2Api::Error.new("AuthFailure: not permitted") : DESCRIBE_TWO
       end)
 
@@ -195,7 +195,7 @@ describe Krikri::PluginHelpers::Ec2Info do
 
     it "converts numeric owners to an owner-id filter and keeps self as an Owner param" do
       bodies = [] of String
-      handler = ->(region : String, body : String) do
+      handler = ->(_region : String, body : String) do
         bodies << body
         DESCRIBE_NONE
       end
@@ -219,7 +219,7 @@ describe Krikri::PluginHelpers::Ec2Info do
 
     it "sends ImageId.N and ExecutableUser.N wire params" do
       bodies = [] of String
-      handler = ->(region : String, body : String) do
+      handler = ->(_region : String, body : String) do
         bodies << body
         DESCRIBE_NONE
       end
@@ -236,7 +236,7 @@ describe Krikri::PluginHelpers::Ec2Info do
     end
 
     it "fails with the API error message when a call errors" do
-      result = run_module({"region" => "us-east-1"}, ->(region : String, body : String) { raise Krikri::PluginHelpers::Ec2Api::Error.new("UnauthorizedOperation: fake") })
+      result = run_module({"region" => "us-east-1"}, ->(_region : String, _body : String) { raise Krikri::PluginHelpers::Ec2Api::Error.new("UnauthorizedOperation: fake") })
       result["failed"].should be_true
       result["msg"].should eq("UnauthorizedOperation: fake")
     end

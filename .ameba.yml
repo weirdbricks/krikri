@@ -84,16 +84,6 @@ Lint/NotNilAfterNoBang:
   - spec/unit/ec2_security_group_spec.cr
   - spec/unit/rhsm_repository_spec.cr
 
-Lint/UnusedArgument:
-  Excluded:
-  - spec/unit/ec2_ami_info_spec.cr
-  - spec/unit/ec2_instance_spec.cr
-  - spec/unit/ec2_key_spec.cr
-  - spec/unit/ec2_security_group_spec.cr
-  - spec/unit/ec2_vpc_net_info_spec.cr
-  - spec/unit/ec2_vpc_subnet_info_spec.cr
-  - src/krikri/inventory_parser.cr
-
 Lint/UnusedRescueVariable:
   Excluded:
   - plugins/archive.cr

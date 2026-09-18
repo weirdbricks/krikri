@@ -107,7 +107,7 @@ describe Krikri::PluginHelpers::Ec2Info do
 
   describe ".run_vpcs" do
     it "shapes a VPC with the real module's field names, DNS attributes included" do
-      result = run_module({"region" => "us-east-1"}, ->(region : String, body : String) do
+      result = run_module({"region" => "us-east-1"}, ->(_region : String, body : String) do
         action = URI::Params.parse(body)["Action"]
         case action
         when "DescribeVpcs" then DESCRIBE_ONE
@@ -155,7 +155,7 @@ describe Krikri::PluginHelpers::Ec2Info do
 
     it "makes the two per-VPC DescribeVpcAttribute calls" do
       attributes = [] of String
-      handler = ->(region : String, body : String) do
+      handler = ->(_region : String, body : String) do
         params = URI::Params.parse(body)
         if params["Action"] == "DescribeVpcAttribute"
           attributes << params["Attribute"]
@@ -169,13 +169,13 @@ describe Krikri::PluginHelpers::Ec2Info do
     end
 
     it "returns an empty list when no VPCs match" do
-      result = run_module({"region" => "us-east-1"}, ->(region : String, body : String) { DESCRIBE_NONE })
+      result = run_module({"region" => "us-east-1"}, ->(_region : String, _body : String) { DESCRIBE_NONE })
       result["vpcs"].as_a.should be_empty
     end
 
     it "sends VpcId.N and Filter.N.Name/Value.M wire params" do
       bodies = [] of String
-      handler = ->(region : String, body : String) do
+      handler = ->(_region : String, body : String) do
         bodies << body if URI::Params.parse(body)["Action"] == "DescribeVpcs"
         DESCRIBE_NONE
       end
@@ -193,7 +193,7 @@ describe Krikri::PluginHelpers::Ec2Info do
     end
 
     it "fails with the API error message when the describe call errors" do
-      result = run_module({"region" => "us-east-1"}, ->(region : String, body : String) { raise Krikri::PluginHelpers::Ec2Api::Error.new("UnauthorizedOperation: fake") })
+      result = run_module({"region" => "us-east-1"}, ->(_region : String, _body : String) { raise Krikri::PluginHelpers::Ec2Api::Error.new("UnauthorizedOperation: fake") })
       result["failed"].should be_true
       result["msg"].should eq("UnauthorizedOperation: fake")
     end

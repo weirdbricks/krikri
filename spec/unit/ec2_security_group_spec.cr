@@ -255,7 +255,7 @@ describe Krikri::PluginHelpers::Ec2SecurityGroup do
 
     it "injects ResourceId on the create-path CreateTags call" do
       bodies = [] of String
-      handler = ->(region : String, body : String) do
+      handler = ->(_region : String, body : String) do
         bodies << body
         action = URI::Params.parse(body)["Action"]
         if action == "DescribeSecurityGroups"
@@ -342,7 +342,7 @@ describe Krikri::PluginHelpers::Ec2SecurityGroup do
   describe ".run" do
     it "returns the real module's full field coverage on the create path" do
       describes = 0
-      handler = ->(region : String, body : String) do
+      handler = ->(_region : String, body : String) do
         action = URI::Params.parse(body)["Action"]
         if action == "DescribeSecurityGroups"
           describes += 1
@@ -390,7 +390,7 @@ describe Krikri::PluginHelpers::Ec2SecurityGroup do
 
     it "targets the just-created group on the create-with-rules authorize calls" do
       bodies = [] of String
-      handler = ->(region : String, body : String) do
+      handler = ->(_region : String, body : String) do
         bodies << body
         action = URI::Params.parse(body)["Action"]
         if action == "DescribeSecurityGroups"
@@ -420,7 +420,7 @@ describe Krikri::PluginHelpers::Ec2SecurityGroup do
 
     it "targets the existing group on update authorize calls" do
       bodies = [] of String
-      handler = ->(region : String, body : String) do
+      handler = ->(_region : String, body : String) do
         bodies << body
         DESCRIBE_ONE
       end
@@ -432,7 +432,7 @@ describe Krikri::PluginHelpers::Ec2SecurityGroup do
 
     it "sends the group-name filter on the describe call" do
       bodies = [] of String
-      handler = ->(region : String, body : String) do
+      handler = ->(_region : String, body : String) do
         bodies << body
         DESCRIBE_NONE
       end
@@ -445,7 +445,7 @@ describe Krikri::PluginHelpers::Ec2SecurityGroup do
     end
 
     it "is a no-op when the group already matches" do
-      result = run_module({"name" => "web", "description" => "web group", "state" => "present", "region" => "us-east-1"}, ->(region : String, body : String) { DESCRIBE_ONE })
+      result = run_module({"name" => "web", "description" => "web group", "state" => "present", "region" => "us-east-1"}, ->(_region : String, _body : String) { DESCRIBE_ONE })
       result["changed"].should be_false
       result["group_id"].should eq("sg-111")
       result["group_name"].should eq("web")
@@ -455,7 +455,7 @@ describe Krikri::PluginHelpers::Ec2SecurityGroup do
     end
 
     it "returns just changed and a null group_id for state absent" do
-      result = run_module({"name" => "web", "state" => "absent", "region" => "us-east-1"}, ->(region : String, body : String) { DESCRIBE_ONE })
+      result = run_module({"name" => "web", "state" => "absent", "region" => "us-east-1"}, ->(_region : String, _body : String) { DESCRIBE_ONE })
       result["changed"].should be_true
       result["group_id"].raw.should be_nil
       result["msg"]?.should be_nil
@@ -463,14 +463,14 @@ describe Krikri::PluginHelpers::Ec2SecurityGroup do
     end
 
     it "returns just changed and a null group_id for an absent-when-absent delete" do
-      result = run_module({"name" => "web", "state" => "absent", "region" => "us-east-1"}, ->(region : String, body : String) { DESCRIBE_NONE })
+      result = run_module({"name" => "web", "state" => "absent", "region" => "us-east-1"}, ->(_region : String, _body : String) { DESCRIBE_NONE })
       result["changed"].should be_false
       result["group_id"].raw.should be_nil
     end
 
     it "reports check mode against a missing group without group fields" do
       bodies = [] of String
-      handler = ->(region : String, body : String) do
+      handler = ->(_region : String, body : String) do
         bodies << body
         DESCRIBE_NONE
       end
@@ -484,7 +484,7 @@ describe Krikri::PluginHelpers::Ec2SecurityGroup do
 
     it "describes the existing group in check mode like real ansible" do
       bodies = [] of String
-      handler = ->(region : String, body : String) do
+      handler = ->(_region : String, body : String) do
         bodies << body
         DESCRIBE_ONE
       end
@@ -500,13 +500,13 @@ describe Krikri::PluginHelpers::Ec2SecurityGroup do
     end
 
     it "fails with the API error message when a call errors" do
-      result = run_module({"name" => "web", "state" => "present", "region" => "us-east-1"}, ->(region : String, body : String) { raise Krikri::PluginHelpers::Ec2Api::Error.new("UnauthorizedOperation: fake") })
+      result = run_module({"name" => "web", "state" => "present", "region" => "us-east-1"}, ->(_region : String, _body : String) { raise Krikri::PluginHelpers::Ec2Api::Error.new("UnauthorizedOperation: fake") })
       result["failed"].should be_true
       result["msg"].should eq("UnauthorizedOperation: fake")
     end
 
     it "fails on a missing name" do
-      result = run_module({"state" => "present", "region" => "us-east-1"}, ->(region : String, body : String) { DESCRIBE_NONE })
+      result = run_module({"state" => "present", "region" => "us-east-1"}, ->(_region : String, _body : String) { DESCRIBE_NONE })
       result["failed"].should be_true
       result["msg"].as_s.should contain("name")
     end

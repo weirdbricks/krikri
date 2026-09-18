@@ -242,7 +242,7 @@ describe Krikri::PluginHelpers::Ec2Instance do
       # wall-clock time (poll_interval is 0 in tests) until its 600s
       # default wait_timeout - a slow, CPU-burning false failure mode,
       # not a hang in the plugin itself.
-      handler = ->(region : String, body : String) do
+      handler = ->(_region : String, body : String) do
         bodies << body
         action = URI::Params.parse(body)["Action"]
         case action
@@ -293,7 +293,7 @@ describe Krikri::PluginHelpers::Ec2Instance do
 
     it "is a no-op when a match already exists in the target state" do
       bodies = [] of String
-      handler = ->(region : String, body : String) do
+      handler = ->(_region : String, body : String) do
         bodies << body
         DESCRIBE_RUNNING
       end
@@ -307,7 +307,7 @@ describe Krikri::PluginHelpers::Ec2Instance do
 
     it "sends the tag:Name and non-terminated state filters on the idempotency lookup" do
       bodies = [] of String
-      handler = ->(region : String, body : String) do
+      handler = ->(_region : String, body : String) do
         bodies << body
         DESCRIBE_RUNNING
       end
@@ -327,7 +327,7 @@ describe Krikri::PluginHelpers::Ec2Instance do
     it "terminates an existing match for state=absent" do
       bodies = [] of String
       describe_calls = 0
-      handler = ->(region : String, body : String) do
+      handler = ->(_region : String, body : String) do
         bodies << body
         action = URI::Params.parse(body)["Action"]
         if action == "DescribeInstances"
@@ -350,7 +350,7 @@ describe Krikri::PluginHelpers::Ec2Instance do
     end
 
     it "is a no-op for state=absent when nothing matches" do
-      result = run_module({"name" => "web", "state" => "absent", "region" => "us-east-1"}, ->(region : String, body : String) { DESCRIBE_NONE })
+      result = run_module({"name" => "web", "state" => "absent", "region" => "us-east-1"}, ->(_region : String, _body : String) { DESCRIBE_NONE })
       result["changed"].should be_false
       result["msg"].should eq("no matching instances found")
     end
@@ -358,7 +358,7 @@ describe Krikri::PluginHelpers::Ec2Instance do
     it "starts a stopped match for state=running" do
       bodies = [] of String
       describe_calls = 0
-      handler = ->(region : String, body : String) do
+      handler = ->(_region : String, body : String) do
         bodies << body
         action = URI::Params.parse(body)["Action"]
         if action == "DescribeInstances"
@@ -382,7 +382,7 @@ describe Krikri::PluginHelpers::Ec2Instance do
     it "stops a running match for state=stopped, polling until stopped" do
       bodies = [] of String
       describe_count = 0
-      handler = ->(region : String, body : String) do
+      handler = ->(_region : String, body : String) do
         bodies << body
         action = URI::Params.parse(body)["Action"]
         if action == "DescribeInstances"
@@ -411,7 +411,7 @@ describe Krikri::PluginHelpers::Ec2Instance do
 
     it "restarts a running instance for state=restarted" do
       bodies = [] of String
-      handler = ->(region : String, body : String) do
+      handler = ->(_region : String, body : String) do
         bodies << body
         action = URI::Params.parse(body)["Action"]
         action == "DescribeInstances" ? DESCRIBE_RUNNING : DESCRIBE_NEW_RUNNING
@@ -427,7 +427,7 @@ describe Krikri::PluginHelpers::Ec2Instance do
     it "launches the difference for exact_count below the target" do
       bodies = [] of String
       describe_calls = 0
-      handler = ->(region : String, body : String) do
+      handler = ->(_region : String, body : String) do
         bodies << body
         action = URI::Params.parse(body)["Action"]
         if action == "DescribeInstances"
@@ -459,13 +459,13 @@ describe Krikri::PluginHelpers::Ec2Instance do
         "exact_count" => "1",
         "image_id"    => "ami-123",
         "region"      => "us-east-1",
-      }, ->(region : String, body : String) { DESCRIBE_RUNNING })
+      }, ->(_region : String, _body : String) { DESCRIBE_RUNNING })
       result["changed"].should be_false
     end
 
     it "purges tags not in the desired set (aws: reserved keys spared)" do
       bodies = [] of String
-      handler = ->(region : String, body : String) do
+      handler = ->(_region : String, body : String) do
         bodies << body
         DESCRIBE_RUNNING
       end
@@ -488,32 +488,32 @@ describe Krikri::PluginHelpers::Ec2Instance do
     end
 
     it "fails when no targeting param is given" do
-      result = run_module({"state" => "present", "region" => "us-east-1"}, ->(region : String, body : String) { DESCRIBE_NONE })
+      result = run_module({"state" => "present", "region" => "us-east-1"}, ->(_region : String, _body : String) { DESCRIBE_NONE })
       result["failed"].should be_true
       result["msg"].as_s.should contain("required")
     end
 
     it "fails on an invalid state" do
-      result = run_module({"name" => "web", "state" => "paused", "region" => "us-east-1"}, ->(region : String, body : String) { DESCRIBE_NONE })
+      result = run_module({"name" => "web", "state" => "paused", "region" => "us-east-1"}, ->(_region : String, _body : String) { DESCRIBE_NONE })
       result["failed"].should be_true
       result["msg"].as_s.should contain("state")
     end
 
     it "fails when creating without image_id" do
-      result = run_module({"name" => "web", "instance_type" => "t3.micro", "region" => "us-east-1"}, ->(region : String, body : String) { DESCRIBE_NONE })
+      result = run_module({"name" => "web", "instance_type" => "t3.micro", "region" => "us-east-1"}, ->(_region : String, _body : String) { DESCRIBE_NONE })
       result["failed"].should be_true
       result["msg"].as_s.should contain("image_id")
     end
 
     it "fails with the API error message when a call errors" do
-      result = run_module({"name" => "web", "region" => "us-east-1"}, ->(region : String, body : String) { raise Krikri::PluginHelpers::Ec2Api::Error.new("UnauthorizedOperation: fake") })
+      result = run_module({"name" => "web", "region" => "us-east-1"}, ->(_region : String, _body : String) { raise Krikri::PluginHelpers::Ec2Api::Error.new("UnauthorizedOperation: fake") })
       result["failed"].should be_true
       result["msg"].should eq("UnauthorizedOperation: fake")
     end
 
     it "reports the plan in check mode without executing it" do
       bodies = [] of String
-      handler = ->(region : String, body : String) do
+      handler = ->(_region : String, body : String) do
         bodies << body
         action = URI::Params.parse(body)["Action"]
         action == "DescribeInstances" ? DESCRIBE_NONE : RUN_PENDING

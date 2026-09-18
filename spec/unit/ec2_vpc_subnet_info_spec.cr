@@ -105,7 +105,7 @@ describe Krikri::PluginHelpers::Ec2Info do
 
   describe ".run_subnets" do
     it "shapes a subnet with the real module's field names" do
-      result = run_module({"region" => "us-east-1"}, ->(region : String, body : String) { DESCRIBE_ONE })
+      result = run_module({"region" => "us-east-1"}, ->(_region : String, _body : String) { DESCRIBE_ONE })
 
       result["failed"]?.should be_falsey
       subnet = result["subnets"][0]
@@ -127,7 +127,7 @@ describe Krikri::PluginHelpers::Ec2Info do
     end
 
     it "shapes the nested ipv6 association set" do
-      result = run_module({"region" => "us-east-1"}, ->(region : String, body : String) { DESCRIBE_ONE })
+      result = run_module({"region" => "us-east-1"}, ->(_region : String, _body : String) { DESCRIBE_ONE })
       v6 = result["subnets"][0]["ipv6_cidr_block_association_set"][0]
       v6["association_id"].should eq("subnet-cidr-assoc-1")
       v6["ipv6_cidr_block"].should eq("2001:db8::/64")
@@ -135,7 +135,7 @@ describe Krikri::PluginHelpers::Ec2Info do
     end
 
     it "returns an empty list when no subnets match" do
-      result = run_module({"region" => "us-east-1"}, ->(region : String, body : String) { DESCRIBE_NONE })
+      result = run_module({"region" => "us-east-1"}, ->(_region : String, _body : String) { DESCRIBE_NONE })
       result["subnets"].as_a.should be_empty
     end
 
@@ -153,7 +153,7 @@ describe Krikri::PluginHelpers::Ec2Info do
 
     it "sends SubnetId.N and Filter.N.Name/Value.M wire params" do
       bodies = [] of String
-      handler = ->(region : String, body : String) do
+      handler = ->(_region : String, body : String) do
         bodies << body
         DESCRIBE_NONE
       end
@@ -175,7 +175,7 @@ describe Krikri::PluginHelpers::Ec2Info do
     end
 
     it "fails with the API error message when a call errors" do
-      result = run_module({"region" => "us-east-1"}, ->(region : String, body : String) { raise Krikri::PluginHelpers::Ec2Api::Error.new("UnauthorizedOperation: fake") })
+      result = run_module({"region" => "us-east-1"}, ->(_region : String, _body : String) { raise Krikri::PluginHelpers::Ec2Api::Error.new("UnauthorizedOperation: fake") })
       result["failed"].should be_true
       result["msg"].should eq("UnauthorizedOperation: fake")
     end
@@ -185,7 +185,7 @@ describe Krikri::PluginHelpers::Ec2Info do
       ENV.delete("AWS_REGION")
       ENV.delete("AWS_DEFAULT_REGION")
       begin
-        result = run_module(EMPTY_PARAMS, ->(region : String, body : String) { DESCRIBE_NONE })
+        result = run_module(EMPTY_PARAMS, ->(_region : String, _body : String) { DESCRIBE_NONE })
         result["failed"].should be_true
         result["msg"].as_s.should contain("region")
       ensure
