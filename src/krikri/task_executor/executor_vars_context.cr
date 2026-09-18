@@ -1100,7 +1100,11 @@ module Krikri
       if (expr = task.check_mode_expr) && (vars = vars_context)
         substitutor = VarSubstitutor.new(vars: vars, host_name: "")
         rendered = substitutor.substitute(expr)
-        return ConditionalEvaluator.evaluate(rendered, {} of String => JSON::Any) rescue @check_mode
+        begin
+          return ConditionalEvaluator.evaluate(rendered, {} of String => JSON::Any)
+        rescue
+          return @check_mode
+        end
       end
 
       value = task.check_mode?

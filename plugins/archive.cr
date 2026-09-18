@@ -424,7 +424,7 @@ module Krikri
 
       if info.symlink?
         h.flag = Crystar::SYMLINK.ord.to_u8
-        h.link_name = File.readlink(member) rescue ""
+        h.link_name = (File.readlink(member) rescue "")
       elsif info.directory?
         h.flag = Crystar::DIR.ord.to_u8
         h.name += "/" unless h.name.ends_with?('/')

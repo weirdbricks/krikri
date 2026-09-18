@@ -498,7 +498,7 @@ module Krikri
       return 1 if rrs.is_a?(PluginResult)
 
       failure = send_update(server, port, protocol, zone, [] of PluginHelpers::NsupdateMessage::RR, rrs.as(Array(PluginHelpers::NsupdateMessage::RR)))
-      1 if failure
+
       @dns_rc
     end
 
@@ -544,7 +544,7 @@ module Krikri
       end
 
       failure = send_update(server, port, protocol, zone, [] of PluginHelpers::NsupdateMessage::RR, updates)
-      1 if failure
+
       @dns_rc
     end
 

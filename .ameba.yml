@@ -94,12 +94,6 @@ Lint/UnusedArgument:
   - spec/unit/ec2_vpc_subnet_info_spec.cr
   - src/krikri/inventory_parser.cr
 
-Lint/UnusedExpression:
-  Excluded:
-  - plugins/archive.cr
-  - plugins/nsupdate.cr
-  - src/krikri/task_executor/executor_vars_context.cr
-
 Lint/UnusedRescueVariable:
   Excluded:
   - plugins/archive.cr
