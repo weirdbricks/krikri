@@ -2142,7 +2142,7 @@ module Krikri
       @renderer = nil
     end
 
-    def get_vars : Hash(String, JSON::Any)
+    def vars : Hash(String, JSON::Any)
       @vars
     end
 

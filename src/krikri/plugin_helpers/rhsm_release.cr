@@ -27,7 +27,7 @@ module Krikri
       end
 
       # set/unset argv: nil release -> --unset, else --set <release>.
-      def self.set_arguments(release : String?) : String
+      def self.release_arguments(release : String?) : String
         release ? "release --set #{release}" : "release --unset"
       end
     end

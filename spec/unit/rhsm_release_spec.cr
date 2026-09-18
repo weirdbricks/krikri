@@ -39,13 +39,13 @@ describe Krikri::PluginHelpers::RhsmRelease do
     end
   end
 
-  describe ".set_arguments" do
+  describe ".release_arguments" do
     it "builds --set with the release" do
-      Krikri::PluginHelpers::RhsmRelease.set_arguments("8.4").should eq("release --set 8.4")
+      Krikri::PluginHelpers::RhsmRelease.release_arguments("8.4").should eq("release --set 8.4")
     end
 
     it "builds --unset when the release is nil" do
-      Krikri::PluginHelpers::RhsmRelease.set_arguments(nil).should eq("release --unset")
+      Krikri::PluginHelpers::RhsmRelease.release_arguments(nil).should eq("release --unset")
     end
   end
 end

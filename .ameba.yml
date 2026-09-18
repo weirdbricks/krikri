@@ -234,11 +234,6 @@ Metrics/CyclomaticComplexity:
   - src/krikri/variable_substitutor/expression_evaluator.cr
   - src/krikri/variable_substitutor/filter_engine.cr
 
-Naming/AccessorMethodName:
-  Excluded:
-  - src/krikri/plugin_helpers/rhsm_release.cr
-  - src/krikri/variable_substitutor.cr
-
 Naming/BlockParameterName:
   Excluded:
   - plugins/kernel_blacklist.cr
