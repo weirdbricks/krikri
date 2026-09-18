@@ -59,7 +59,14 @@ if ARGV[0]? == "__async_run"
   result_hash["finished"] = JSON::Any.new(1_i64)
 
   tmp_path = "#{status_path}.tmp"
-  File.write(tmp_path, JSON::Any.new(result_hash).to_json)
+  # Same 0600 discipline as AsyncJobs.write_status (status payloads can
+  # carry module output, and the path is predictable) - the chmod must
+  # happen BEFORE the bytes land, not after, or the secret-bearing tmp
+  # file is briefly (here: permanently, this process then exits) 0644.
+  File.open(tmp_path, "w") do |f|
+    f.chmod(0o600)
+    f.write(JSON::Any.new(result_hash).to_json.to_slice)
+  end
   File.rename(tmp_path, status_path)
   File.delete(config_path) rescue nil
   exit

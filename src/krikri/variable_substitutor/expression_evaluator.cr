@@ -3340,7 +3340,13 @@ module Krikri
         begin
           dir = File.dirname(resolved_path)
           Dir.mkdir_p(dir) unless Dir.exists?(dir)
-          File.write(resolved_path, password + "\n")
+          # 0600, chmod BEFORE the bytes land - real Ansible's password
+          # lookup also stores generated passwords owner-only; a default
+          # 0644 lets any local user read the password while it persists.
+          File.open(resolved_path, "w") do |f|
+            f.chmod(0o600)
+            f.write((password + "\n").to_slice)
+          end
         rescue
         end
         password

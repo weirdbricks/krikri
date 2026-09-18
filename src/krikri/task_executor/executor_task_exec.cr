@@ -443,7 +443,7 @@ module Krikri
       # recap'd `unreachable=1 failed=0` and halted the host at
       # Gathering Facts, this engine booked `failed=2` and ran on.
       if unreachable_task_result?(result)
-        report_unreachable(task, host, result["stderr"]?.try(&.as_s?))
+        report_unreachable(task, host, result["stderr"]?.try(&.as_s?), no_log: resolve_task_no_log(task, vars_context))
         # Only a host whose unreachability is FATAL (not
         # ignore_unreachable:'d away) is remembered: an ignored
         # unreachable keeps being retried per task, exactly like real
@@ -694,11 +694,21 @@ module Krikri
         # real name.
         if size > INLINE_COPY_MAX_BYTES || !decrypted.valid_encoding?
           tmpdir = File.join(Dir.tempdir, "krikri-copy-vault-#{Random::Secure.hex(8)}")
-          Dir.mkdir_p(tmpdir)
+          Dir.mkdir_p(tmpdir, 0o700)
           staged = File.join(tmpdir, File.basename(src))
-          File.write(staged, decrypted)
-          result = stage_large_copy_source(params, staged, host, vars_context)
-          FileUtils.rm_r(tmpdir)
+          # Decrypted plaintext: restrict perms before the bytes land, and
+          # guarantee cleanup even if the transfer raises mid-flight - a
+          # leaked copy of the secret must not outlive this call.
+          File.chmod(tmpdir, 0o700)
+          File.open(staged, "w") do |f|
+            f.chmod(0o600)
+            f.write(decrypted.to_slice)
+          end
+          begin
+            result = stage_large_copy_source(params, staged, host, vars_context)
+          ensure
+            FileUtils.rm_r(tmpdir)
+          end
           return result
         end
 

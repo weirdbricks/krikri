@@ -792,18 +792,18 @@ module Krikri
       write_script = String.build do |str|
         if !rsync_ok && !representatives.empty?
           representatives.each do |plugin_name|
-            str << "chmod 755 #{staging_dir}/#{plugin_name}\n"
+            str << "chmod 755 " << Shell.single_quote("#{staging_dir}/#{plugin_name}") << "\n"
           end
         end
         by_md5.each do |md5, names|
           source = remote_name_by_md5[md5]? || names.first
           names.each do |name|
             next if name == source
-            str << "ln -f #{staging_dir}/#{source} #{staging_dir}/#{name} 2>/dev/null || cp -p #{staging_dir}/#{source} #{staging_dir}/#{name}\n"
+            str << "ln -f " << Shell.single_quote("#{staging_dir}/#{source}") << " " << Shell.single_quote("#{staging_dir}/#{name}") << " 2>/dev/null || cp -p " << Shell.single_quote("#{staging_dir}/#{source}") << " " << Shell.single_quote("#{staging_dir}/#{name}") << "\n"
           end
         end
         plugins_to_upload.each do |plugin_name|
-          str << "echo '#{local_md5s[plugin_name]}' > #{staging_dir}/#{plugin_name}.md5\n"
+          str << "echo " << Shell.single_quote(local_md5s[plugin_name].to_s) << " > " << Shell.single_quote("#{staging_dir}/#{plugin_name}.md5") << "\n"
         end
       end
       SSHManager.exec_script(connection_host, user, write_script, host.port, identity_file: identity_file)

@@ -62,8 +62,14 @@ module Krikri
         return PluginResult.new(changed: false, failed: true, msg: "py_module: no python3/python on the target - cannot run custom module #{module_name}")
       end
 
-      work_dir = File.join(Dir.tempdir, "krikri-pymod-#{Process.pid}-#{Random.rand(1_000_000)}")
-      Dir.mkdir_p(work_dir)
+      # 0700 + Random::Secure: the dir (and anything we write into it,
+      # including the shim bundle below) must not be readable by other
+      # local users, and the name must not be predictable enough to
+      # race (a pre-planted dir with symlinked contents would otherwise
+      # turn File.write below into an arbitrary-file-write).
+      work_dir = File.join(Dir.tempdir, "krikri-pymod-#{Random::Secure.hex(8)}")
+      Dir.mkdir_p(work_dir, 0o700)
+      File.chmod(work_dir, 0o700)
       module_path = File.join(work_dir, "#{module_name.gsub(/[^\w.-]/, "_")}.py")
       File.write(module_path, source)
       File.chmod(module_path, 0o500)

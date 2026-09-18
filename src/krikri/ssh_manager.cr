@@ -1,6 +1,7 @@
 require "process"
 require "file_utils"
 require "json"
+require "openssl"
 
 # SSH Manager - CLI-based implementation
 # Uses native SSH command with ControlMaster for connection pooling
@@ -605,8 +606,15 @@ module Krikri
       io.flush
     end
 
+    # A frame larger than this is corrupt/hostile input (e.g. a MITM'd or
+    # compromised daemon sending a garbage length prefix) - refuse to
+    # allocate for it rather than OOM'ing the controller on a 4 GiB
+    # Bytes.new. Real payloads (plugin result JSON) are nowhere near this.
+    MAX_DAEMON_FRAME_BYTES = 256_u64 * 1024 * 1024
+
     private def self.read_daemon_frame(io : IO) : String
       length = io.read_bytes(UInt32, IO::ByteFormat::BigEndian)
+      raise "daemon frame too large (#{length} bytes)" if length.to_u64 > MAX_DAEMON_FRAME_BYTES
       bytes = Bytes.new(length)
       io.read_fully(bytes)
       String.new(bytes)
@@ -794,7 +802,7 @@ module Krikri
       # files and can fold one chmod into a round trip it already makes -
       # otherwise this costs an extra round trip *per file*.
       if mode && mode != 0o644
-        exec(host, user, "chmod #{mode.to_s(8)} #{remote_path}", port, identity_file: identity_file)
+        exec(host, user, "chmod #{mode.to_s(8)} #{Shell.single_quote(remote_path)}", port, identity_file: identity_file)
       end
     end
 
@@ -990,7 +998,14 @@ module Krikri
       @@control_path_cache.fetch({host, user, port}) do
         # Create a unique socket path for this connection
         # Format: /tmp/.krikri-playbook-ssh/user@host:port
+        # The sanitized name alone can COLLIDE for distinct (user, host)
+        # pairs (e.g. "a/b" vs "a_b") - the second connection would then
+        # attach to the FIRST target's mux socket and silently run
+        # against the wrong host. A hash of the raw triple disambiguates.
         socket_name = "#{user}@#{host}:#{port}".gsub(/[^a-zA-Z0-9@:.-]/, "_")
+        digest = OpenSSL::Digest.new("SHA256")
+        digest.update("#{user}\0#{host}\0#{port}")
+        socket_name += "-#{digest.final.hexstring[0, 16]}"
         @@control_path_cache[{host, user, port}] = "#{@@control_path_dir}/#{socket_name}"
       end
     end

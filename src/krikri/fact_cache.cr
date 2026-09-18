@@ -51,7 +51,14 @@ module Krikri
       # explicit nil-check instead of not_nil! (ameba Lint/NotNil)
       dir = connection_dir
       raise "fact cache path requested with no connection dir" unless dir
-      File.join(dir, host_name)
+      # Guard the filename: a host name from a dynamic inventory's
+      # hostvars keys / add_host: containing "/" or being "." / ".."
+      # would escape the cache dir and write attacker-influenced JSON
+      # elsewhere. (Real Ansible has the same shape; we sanitize instead
+      # of inheriting it.)
+      safe = host_name.gsub('/', '_')
+      safe = "_dot_" if safe.empty? || safe == "." || safe == ".."
+      File.join(dir, safe)
     end
 
     # Returns the cached facts for *host_name* if the cache is enabled,

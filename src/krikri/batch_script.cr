@@ -125,8 +125,20 @@ module Krikri
       s = String.build do |io|
         io << "#!/bin/bash\n"
         io << "set -u\n"
+        io << "umask 077\n"
+        io << "P=" << Shell.single_quote(File.dirname(REMOTE_DIR_PREFIX)) << "\n"
+        # Parent dir ownership check: same threat class the plugin staging
+        # path defends against (a local user pre-creating the directory
+        # before our first run, then reading - or swapping - everything we
+        # put under it). Step .out/.err files carry module stdout/stderr,
+        # which can contain secrets.
+        io << "if [ -e \"$P\" ] && ! [ -d \"$P\" ]; then echo 'krikri batch dir parent is not a directory' >&2; exit 75; fi\n"
+        io << "mkdir -p \"$P\"\n"
+        io << "chmod 700 \"$P\" 2>/dev/null || true\n"
+        io << "if [ -L \"$P\" ] || [ \"$(stat -c %u \"$P\" 2>/dev/null)\" != \"$(id -u)\" ]; then echo 'krikri batch dir parent unsafe (symlink or foreign owner)' >&2; exit 75; fi\n"
         io << "D=" << dir << "\n"
         io << "mkdir -p \"$D\"\n"
+        io << "chmod 700 \"$D\"\n"
         io << dump_function << "\n"
 
         steps.each_with_index do |step, idx|

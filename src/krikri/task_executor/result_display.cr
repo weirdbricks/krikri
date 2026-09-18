@@ -293,7 +293,12 @@ module Krikri
                     else
                       dump_compact(cleaned, ", ")
                     end
-        File.write(File.join(tree_dir, host.name), tree_dump)
+        # Same sanitization as the fact cache: a host name with "/" (or
+        # "." / "..") from a dynamic inventory must not turn --tree into
+        # an arbitrary-path write.
+        safe_name = host.name.gsub('/', '_')
+        safe_name = "_dot_" if safe_name.empty? || safe_name == "." || safe_name == ".."
+        File.write(File.join(tree_dir, safe_name), tree_dump)
       end
     end
 

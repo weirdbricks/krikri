@@ -63,10 +63,25 @@ module Krikri
         false
       end
 
-      password = STDIN.gets.try(&.chomp) || ""
+      # Fail closed only where the risk is real: when stdin is a TTY but
+      # echo couldn't be disabled (no stty), the typed password would be
+      # echoed into shell history/CI logs - refuse. When stdin is a
+      # pipe/file (automation), there's no terminal to echo to, so read
+      # normally. Always restore echo via ensure, so a raised read can't
+      # leave the terminal with echo permanently off.
+      if STDIN.tty? && !echo_disabled
+        puts
+        STDERR.puts "ERROR! Can't disable terminal echo; refusing to read the vault password insecurely (use --vault-password-file on a non-TTY stdin)"
+        exit 1
+      end
 
-      if echo_disabled
-        Process.run("stty", ["echo"], input: Process::Redirect::Inherit, output: Process::Redirect::Inherit, error: Process::Redirect::Inherit) rescue nil
+      begin
+        password = STDIN.gets.try(&.chomp) || ""
+      ensure
+        begin
+          Process.run("stty", ["echo"], input: Process::Redirect::Inherit, output: Process::Redirect::Inherit, error: Process::Redirect::Inherit)
+        rescue
+        end
       end
       puts
 
@@ -198,9 +213,15 @@ module Krikri
         plaintext = Vault.decrypt(File.read(target_file), old_password)
         # Atomic (write-to-temp-then-rename): an interrupt mid-write used
         # to leave the vault file truncated/destroyed - same pattern
-        # async_jobs.cr's write_status uses.
-        tmp = "#{target_file}.rekey.tmp"
-        File.write(tmp, Vault.encrypt(plaintext, new_password))
+        # async_jobs.cr's write_status uses. The temp name is randomized
+        # (a predictable name in a shared directory lets another local
+        # user pre-create/symlink it and clobber an arbitrary target) and
+        # 0600 (it holds fresh ciphertext; no reason for default perms).
+        tmp = File.join(File.dirname(target_file), ".#{File.basename(target_file)}.rekey.#{Random::Secure.hex(6)}.tmp")
+        File.open(tmp, "w") do |f|
+          f.chmod(0o600)
+          f.write(Vault.encrypt(plaintext, new_password).to_slice)
+        end
         File.rename(tmp, target_file)
         puts "Rekey successful"
       end

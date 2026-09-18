@@ -27,8 +27,12 @@ module Krikri
       Dir.mkdir_p(DIR)
       path = status_path(jid)
       tmp = "#{path}.tmp"
-      File.write(tmp, data.to_json)
-      File.chmod(tmp, 0o600)
+      # chmod BEFORE writing: a chmod-after-write leaves the tmp file
+      # 0644 (umask-dependent) while it already holds the payload.
+      File.open(tmp, "w") do |f|
+        f.chmod(0o600)
+        f.write(data.to_json.to_slice)
+      end
       File.rename(tmp, path)
     end
 

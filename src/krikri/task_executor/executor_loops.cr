@@ -1107,7 +1107,7 @@ module Krikri
         # non-looped path, and report_unreachable has already halted (or
         # ignored) the host, so the failed-based halt below is skipped.
         if any_unreachable
-          report_unreachable(task, host)
+          report_unreachable(task, host, no_log: resolve_task_no_log(task, base_vars_context))
           @unreachable_hosts << host.name unless task.ignore_unreachable?
         else
           aggregate_result = JSON.parse({

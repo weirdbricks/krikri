@@ -33,6 +33,7 @@ module Krikri
     # same way.
     private def self.read_frame(io : IO) : Bytes
       length = io.read_bytes(UInt32, IO::ByteFormat::BigEndian)
+      raise "frame too large (#{length} bytes)" if length.to_u64 > 256_u64 * 1024 * 1024
       bytes = Bytes.new(length)
       io.read_fully(bytes)
       bytes
