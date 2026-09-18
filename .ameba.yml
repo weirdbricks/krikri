@@ -117,10 +117,6 @@ Lint/SpecEqWithBoolOrNilLiteral:
   - spec/unit/variable_lookup_spec.cr
   - spec/unit/vault_spec.cr
 
-Lint/UnreachableCode:
-  Excluded:
-  - spec/unit/ssh_manager_timeout_spec.cr
-
 Lint/UnusedArgument:
   Excluded:
   - spec/unit/ec2_ami_info_spec.cr

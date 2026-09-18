@@ -56,7 +56,6 @@ describe Krikri::SSHManager do
       process = Process.new("true", [] of String)
       result = Krikri::SSHManager.run_with_timeout(process, 5) do |_proc|
         raise "synthetic block failure"
-        {exit_code: 0, stdout: "", stderr: ""}
       end
 
       result[:exit_code].should eq(255)
