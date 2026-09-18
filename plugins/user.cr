@@ -24,6 +24,12 @@ module Krikri
   #     actual `create_user_useradd`/`modify_user_usermod` source, not
   #     assumed) - `password_lock: true` prefixes the hash with `!`,
   #     `usermod`'s own lock-account convention.
+  #     SECURITY NOTE (deliberate, compatibility-preserving): the hash
+  #     rides argv, so it is briefly visible in the target's process
+  #     list - real Ansible's own module execs useradd/usermod the same
+  #     way (argv list, hash included), so this parity is kept rather
+  #     than switching to a chpasswd/stdin form that would change the
+  #     command shape and result semantics.
   #   update_password (optional, default "always"): "always" reissues
   #     `-p` whenever the given hash doesn't match what's already in
   #     `/etc/shadow` for an *existing* account; "on_create" only ever

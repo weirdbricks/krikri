@@ -2456,6 +2456,13 @@ module Krikri
       end
 
       private def evaluate_lookup_file(lookup_type : String?, parts : Array(String), kwargs : Array(String)) : String?
+        # SECURITY NOTE (deliberate, compatibility-preserving): file/pipe/
+        # env lookups read controller files, EXECUTE controller commands,
+        # and read controller env vars with no gating beyond playbook
+        # authorship - exactly real Ansible's trust boundary (playbooks
+        # are trusted input; an untrusted-author playbook is a lost game
+        # in real Ansible too). Not a defect to gate here; doing so would
+        # break roles that legitimately use lookup('pipe', ...).
         case lookup_type
         when "file"
           lookup_file(parts)

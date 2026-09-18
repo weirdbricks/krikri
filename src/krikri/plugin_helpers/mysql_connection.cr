@@ -88,6 +88,11 @@ module Krikri
         # TLS configuration anywhere in this codebase's mysql_db/mysql_user
         # plugins, so there's no way for a caller to opt out short of this -
         # explicitly disable it here instead.
+        # SECURITY NOTE (deliberate, compatibility-preserving divergence):
+        # real Ansible's PyMySQL connection defaults to ssl-mode=preferred,
+        # so mysql_* traffic is TLS when the server supports it. Here it is
+        # always plaintext for TCP until the vendored shard grows working
+        # TLS - known, documented, NOT fixed so behavior stays shippable.
         # The initial database (login_db) rides in the query string rather
         # than the URI path on purpose: for unix-socket connections the
         # shard reads the socket path FROM uri.path, so a `/dbname` path
