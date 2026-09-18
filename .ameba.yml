@@ -313,10 +313,6 @@ Performance/ExcessiveAllocations:
   - src/krikri/inventory_parser.cr
   - src/krikri/task_executor/result_display.cr
 
-Performance/FirstLastAfterFilter:
-  Excluded:
-  - src/krikri/plugin_helpers/maven_artifact_command.cr
-
 Style/HeredocEscape:
   Excluded:
   - spec/integration/apache2_module_spec.cr

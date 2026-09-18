@@ -54,7 +54,7 @@ module Krikri
       def self.latest_version(metadata_xml : String) : String?
         doc = XML.parse(metadata_xml)
         versions_node = versions_node(doc) || return nil
-        versions_node.children.select { |c| c.name == "version" }.last?.try(&.text)
+        versions_node.children.to_a.reverse_each.find { |c| c.name == "version" }.try(&.text)
       end
 
       # Snapshot resolution for find_uri_for_artifact: prefer the
