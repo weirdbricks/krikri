@@ -110,7 +110,7 @@ module Krikri
         end
       end
 
-      raise last_error || Error.new("Unable to decrypt vault-encrypted content with any supplied vault password")
+      raise(last_error || Error.new("Unable to decrypt vault-encrypted content with any supplied vault password"))
     end
 
     # Like maybe_decrypt, but for a parsed variable value rather than a raw

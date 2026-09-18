@@ -102,10 +102,6 @@ Lint/NotNilAfterNoBang:
   - spec/unit/ec2_security_group_spec.cr
   - spec/unit/rhsm_repository_spec.cr
 
-Lint/RequireParentheses:
-  Excluded:
-  - src/krikri/vault.cr
-
 Lint/SpecEqWithBoolOrNilLiteral:
   Excluded:
   - spec/unit/ec2_ami_info_spec.cr
