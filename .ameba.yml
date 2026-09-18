@@ -249,11 +249,6 @@ Naming/BlockParameterName:
   - src/krikri/plugin_helpers/maven_artifact_command.cr
   - src/krikri/plugin_helpers/nsupdate_message.cr
 
-Naming/QueryBoolMethods:
-  Excluded:
-  - src/krikri/plugin_helpers/rhsm_repository.cr
-  - src/krikri/task_executor/executor_run_loop.cr
-
 Performance/AnyInsteadOfPresent:
   Excluded:
   - krikri-playbook.cr

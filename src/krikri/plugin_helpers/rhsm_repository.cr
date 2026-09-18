@@ -13,7 +13,7 @@ module Krikri
         getter id : String
         getter name : String
         getter url : String
-        getter enabled : Bool
+        getter? enabled : Bool
 
         def initialize(id : String, name : String, url : String, enabled : Bool)
           @id = id
@@ -76,7 +76,7 @@ module Krikri
       struct Plan
         getter enable : Array(String)
         getter disable : Array(String)
-        getter changed : Bool
+        getter? changed : Bool
         getter updated : Array(Repo)
         getter invalid_pattern : String?
 
@@ -113,17 +113,17 @@ module Krikri
 
         want_enabled = state == "enabled"
         matched_repos.each do |repo|
-          if !want_enabled && repo.enabled
+          if !want_enabled && repo.enabled?
             changed = true
             disable << repo.id
-          elsif want_enabled && !repo.enabled
+          elsif want_enabled && !repo.enabled?
             changed = true
             enable << repo.id
           end
         end
 
         updated = repos.map do |repo|
-          if matched_ids.includes?(repo.id) && repo.enabled != want_enabled
+          if matched_ids.includes?(repo.id) && repo.enabled? != want_enabled
             Repo.new(repo.id, repo.name, repo.url, want_enabled)
           else
             repo
@@ -133,12 +133,12 @@ module Krikri
         if purge
           repos.each do |repo|
             next if matched_ids.includes?(repo.id)
-            next unless repo.enabled
+            next unless repo.enabled?
             changed = true
             disable << repo.id
           end
           updated = updated.map do |repo|
-            next repo if matched_ids.includes?(repo.id) || !repo.enabled
+            next repo if matched_ids.includes?(repo.id) || !repo.enabled?
             Repo.new(repo.id, repo.name, repo.url, false)
           end
         end

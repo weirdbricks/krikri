@@ -85,7 +85,7 @@ module Krikri
     property msg : String
     property diff : JSON::Any?
     property extra : Hash(String, JSON::Any)
-    property omit_changed : Bool
+    property? omit_changed : Bool
     property? include_empty_msg : Bool
 
     def initialize(

@@ -46,10 +46,10 @@ describe Krikri::PluginHelpers::RhsmRepository do
       repos = Krikri::PluginHelpers::RhsmRepository.parse_list(sample_listing)
       repos.size.should eq(3)
       repos[0].id.should eq("rhel-7-server-rpms")
-      repos[0].enabled.should be_true
+      repos[0].enabled?.should be_true
       repos[0].url.should eq("https://cdn.redhat.com/content/el7/x86_64/os")
       repos[1].id.should eq("rhel-7-server-extras-rpms")
-      repos[1].enabled.should be_false
+      repos[1].enabled?.should be_false
     end
 
     it "skips the header/banner lines" do
@@ -81,50 +81,50 @@ describe Krikri::PluginHelpers::RhsmRepository do
   describe ".plan" do
     it "enables a disabled repo (state=enabled)" do
       plan = Krikri::PluginHelpers::RhsmRepository.plan(sample_repos, ["rhel-7-server-extras-rpms"], "enabled", false)
-      plan.changed.should be_true
+      plan.changed?.should be_true
       plan.enable.should eq(["rhel-7-server-extras-rpms"])
       plan.disable.empty?.should be_true
     end
 
     it "is a no-op when the repo is already in the desired state" do
       plan = Krikri::PluginHelpers::RhsmRepository.plan(sample_repos, ["rhel-7-server-rpms"], "enabled", false)
-      plan.changed.should be_false
+      plan.changed?.should be_false
       plan.enable.empty?.should be_true
     end
 
     it "disables an enabled repo (state=disabled)" do
       plan = Krikri::PluginHelpers::RhsmRepository.plan(sample_repos, ["rhel-7-server-rpms"], "disabled", false)
-      plan.changed.should be_true
+      plan.changed?.should be_true
       plan.disable.should eq(["rhel-7-server-rpms"])
     end
 
     it "fails when a pattern matches no repo" do
       plan = Krikri::PluginHelpers::RhsmRepository.plan(sample_repos, ["not-a-repo"], "enabled", false)
       plan.invalid_pattern.should eq("not-a-repo")
-      plan.changed.should be_false
+      plan.changed?.should be_false
     end
 
     it "purge disables enabled repos outside the requested list" do
       plan = Krikri::PluginHelpers::RhsmRepository.plan(sample_repos, ["rhel-7-server-rpms"], "enabled", true)
-      plan.changed.should be_true
+      plan.changed?.should be_true
       plan.disable.should eq(["rhel-7-server-optional-rpms"])
       plan.enable.empty?.should be_true
-      plan.updated.find { |r| r.id == "rhel-7-server-optional-rpms" }.not_nil!.enabled.should be_false
-      plan.updated.find { |r| r.id == "rhel-7-server-rpms" }.not_nil!.enabled.should be_true
+      plan.updated.find { |r| r.id == "rhel-7-server-optional-rpms" }.not_nil!.enabled?.should be_false
+      plan.updated.find { |r| r.id == "rhel-7-server-rpms" }.not_nil!.enabled?.should be_true
     end
 
     it "purge leaves already-disabled repos alone" do
       plan = Krikri::PluginHelpers::RhsmRepository.plan(sample_repos, ["rhel-7-server-rpms", "rhel-7-server-optional-rpms"], "enabled", true)
-      plan.changed.should be_false
+      plan.changed?.should be_false
       plan.disable.should eq([] of String)
       plan.enable.should eq([] of String)
     end
 
     it "wildcard names enable everything under purge" do
       plan = Krikri::PluginHelpers::RhsmRepository.plan(sample_repos, ["*"], "enabled", true)
-      plan.changed.should be_true
+      plan.changed?.should be_true
       plan.enable.should eq(["rhel-7-server-extras-rpms"])
-      plan.updated.all?(&.enabled).should be_true
+      plan.updated.all?(&.enabled?).should be_true
     end
   end
 end

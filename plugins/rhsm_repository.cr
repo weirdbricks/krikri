@@ -95,7 +95,7 @@ module Krikri
           "id"      => JSON::Any.new(repo.id),
           "name"    => JSON::Any.new(repo.name),
           "url"     => JSON::Any.new(repo.url),
-          "enabled" => JSON::Any.new(repo.enabled),
+          "enabled" => JSON::Any.new(repo.enabled?),
         })
       end
       JSON::Any.new(entries)
