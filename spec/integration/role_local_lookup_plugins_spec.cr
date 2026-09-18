@@ -178,7 +178,7 @@ describe "role-local lookup_plugins/*.py custom lookups" do
     # Same shape as before the custom-lookup support existed: query()
     # collapses the unknown lookup to an empty list, the run proceeds.
     status.success?.should be_true, output
-    output.should contain("missing: []"), output
+    output.should contain("\"missing\": \"[]\""), output
   ensure
     FileUtils.rm_rf(root) if root
   end

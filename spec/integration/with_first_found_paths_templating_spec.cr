@@ -65,7 +65,7 @@ describe "with_first_found: a custom paths: entry containing {{ role_path }}" do
 
     status.success?.should be_true
     output.to_s.should_not contain("skipping: [localhost]")
-    output.to_s.should contain("myvar: from_debian_yml")
+    output.to_s.should contain("\"myvar\": \"from_debian_yml\"")
   ensure
     FileUtils.rm_rf(src_dir) if src_dir
   end

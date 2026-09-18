@@ -1250,6 +1250,19 @@ module Krikri
       # `lvol` plugin binary.
       "ansible.builtin.lvol",
       "community.general.lvol",
+      # parted/lvg (0.9.1151): disk partition and LVM volume-group
+      # management from the round-811000 open-gaps list (liksi.
+      # mount_data_disk wrote bare `parted:`/`lvg:`; community.general
+      # is already in MODULE_SEARCH_COLLECTIONS so the bare spellings
+      # resolve). See plugins/parted.cr and plugins/lvg.cr.
+      "community.general.parted",
+      "community.general.lvg",
+      # snap/deploy_helper (0.9.1151): snap package management
+      # (mircomasa.microk8s, racqspace.microk8s) and the
+      # capistrano-style release-directory module (f500.project_deploy).
+      # See plugins/snap.cr and plugins/deploy_helper.cr.
+      "community.general.snap",
+      "community.general.deploy_helper",
       # dpkg_divert (0.9.929): Debian file-diversion management
       # (ansible-lockdown ubuntu24 CIS and MindPointGroup debian11 CIS
       # rounds both hard-stopped on it). Debian-family only by nature -

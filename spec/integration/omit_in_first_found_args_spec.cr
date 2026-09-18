@@ -65,7 +65,7 @@ describe "the `omit` magic bareword inside a first_found lookup's args" do
     status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output, chdir: src_dir)
 
     status.success?.should be_true
-    output.to_s.should contain("commonvar: from_common_yml")
+    output.to_s.should contain("\"commonvar\": \"from_common_yml\"")
     output.to_s.should_not contain("is undefined")
   ensure
     FileUtils.rm_rf(src_dir) if src_dir

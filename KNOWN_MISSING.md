@@ -18,7 +18,26 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.1150`.**
+**Currently at `0.9.1151`.**
+
+## Open-gaps sweep, no benchmark round (0.9.1150 -> 0.9.1151)
+
+- `0.9.1151`: four missing modules implemented from the Open gaps
+  list - `community.general.parted`, `community.general.lvg`
+  (liksi.mount_data_disk), `community.general.snap`
+  (mircomasa.microk8s, racqspace.microk8s) and
+  `community.general.deploy_helper` (f500.project_deploy), each a
+  native port following the real module's own control flow, with
+  parameter-validation specs in
+  `spec/integration/parted_lvg_snap_deploy_helper_spec.cr`. Also
+  pruned stale Open-gaps bullets: `community.general.cronvar` was
+  already implemented, the round-811000 `parted`/`lvg`/`snap`/
+  `deploy_helper` entries are now fixed, the `diodonfrost.vagrant`
+  "undefined leak" was role-local `filter_plugins/sort_versions.py`
+  already supported (regression spec exists), and `buluma.fish`'s
+  repo-metadata failure reproduces identically on real
+  ansible-playbook (role-side gap, no Rocky entry in its own vars
+  dict).
 
 ## Round 814000-814010: 11-role Galaxy batch, 1 real bug fixed (0.9.1149 -> 0.9.1150)
 
@@ -203,16 +222,16 @@ independently-provisioned hosts in that round, not an engine defect.
 
 ## Open gaps
 
-- **Round 811000-812999: 6 single-role missing modules** (400-role
+- **Round 811000-812999: 3 single-role missing modules** (400-role
   Galaxy top-download batch, ubuntu+rocky): `k8s`
-  (`dymurray.memcached_operator_role`),
-  `community.general.deploy_helper` (`f500.project_deploy`),
-  `community.general.cronvar` (`mergermarket.npm_client`, already
-  tracked below too), `community.general.snap`
-  (`mircomasa.microk8s`, `racqspace.microk8s`), `parted`+`lvg`
-  (`liksi.mount_data_disk`) - genuinely missing, unimplemented modules
-  correctly caught by the 0.9.1052 end-of-run safety net rather than
-  silently skipped.
+  (`dymurray.memcached_operator_role`; real ansible-playbook doesn't
+  complete cleanly on the one role that hits it either, low value),
+  `community.general.deploy_helper` REMOVED - implemented 0.9.1151,
+  and `community.general.cronvar` - also removed, it had already been
+  implemented (`plugins/cronvar.cr`) and the bullet was stale.
+  `community.general.snap` (`mircomasa.microk8s`,
+  `racqspace.microk8s`) and `parted`+`lvg` (`liksi.mount_data_disk`)
+  REMOVED - all implemented 0.9.1151.
 - **Round 700000-701129 + 702000-702046 requeue: 26 single-role missing
   modules** (400-role Galaxy top-download batch, ubuntu+rocky, plus the
   47-role kata-recovery requeue): `os_nova_flavor`, `os_keypair`,
@@ -223,7 +242,7 @@ independently-provisioned hosts in that round, not an engine defect.
   `win_shell`, `win_file`, `ansible.windows.win_command`,
   `community.general.apk` (2 roles), `community.general.zypper`,
   `community.general.zypper_repository`,
-  `community.general.dnf_config_manager`, `community.general.cronvar`,
+  `community.general.dnf_config_manager`,
   `community.general.homebrew_cask`, `community.general.launchd`,
   `community.general.dconf`, `community.general.portage` - genuinely
   missing, one role each unless noted. See `ROLES_TESTED.md` for the
@@ -243,11 +262,14 @@ independently-provisioned hosts in that round, not an engine defect.
   mismatches, no shared pattern found yet. (`ccdc.ntp_configuration`,
   `so5.ssh_hostbased_auth`, `so5.pbspro` - the `with_first_found:`
   wrong-subdir-search cluster also once listed here - are now fixed,
-  see git log.) Two show an `undefined`-looking value leaking into
-  rendered output (`diodonfrost.vagrant`'s URL literally contains
-  `vagrant_undefined_linux_amd64`; `buluma.fish`'s repo metadata is
-  similarly broken) - possibly the recursive-re-templating bug class
-  already known elsewhere in this file, not yet confirmed.
+  see git log.) The two "undefined-looking value leaking into rendered
+  output" cases (`diodonfrost.vagrant`, `buluma.fish`) are RESOLVED
+  from this list: the vagrant one was role-local filter_plugins
+  (`sort_versions.py`) already supported since 0.9.819 (regression
+  spec: spec/integration/role_local_filter_plugins_spec.cr), and
+  buluma.fish's real ansible-playbook side fails identically on its
+  Rocky host (its own `_fish_repo_strings` dict has no Rocky key), a
+  role-side gap.
 - **47-role kata-recovery requeue (round 702000-702046): 47 BOOT_FAILED
   roles from the original ubuntu batch (round 700113-700197), all pure
   Kata infra flakiness** - re-run via Atlantic.net and now reflected in
