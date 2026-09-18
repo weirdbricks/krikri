@@ -76,24 +76,6 @@ Lint/NotNil:
   - spec/unit/virt_net_spec.cr
   - src/krikri/variable_substitutor/expression_evaluator.cr
 
-Lint/UselessAssign:
-  Excluded:
-  - plugins/command.cr
-  - plugins/docker_login.cr
-  - plugins/lvol.cr
-  - plugins/nsupdate.cr
-  - plugins/openssl_privatekey.cr
-  - plugins/ovirt_auth.cr
-  - plugins/package.cr
-  - plugins/postgresql_user.cr
-  - plugins/rabbitmq_user.cr
-  - plugins/replace.cr
-  - spec/integration/synchronize_spec.cr
-  - spec/unit/lvol_size_spec.cr
-  - src/krikri/jmespath.cr
-  - src/krikri/plugin_helpers/facts_gatherer.cr
-  - src/krikri/plugin_helpers/mysql_connection.cr
-
 Metrics/CyclomaticComplexity:
   Excluded:
   - plugins/acl.cr

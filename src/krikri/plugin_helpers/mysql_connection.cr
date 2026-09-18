@@ -142,7 +142,6 @@ module Krikri
         empty = {user: nil, password: nil, socket: nil}
         return empty if config_file.nil? || config_file.empty?
 
-        client = {} of String => String
         begin
           path = resolve_option_file_path(config_file)
           return empty if path.nil? || !File.exists?(path)

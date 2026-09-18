@@ -47,8 +47,6 @@ module Krikri
   #   where the real runtime state can't be queried).
   class SebooleanPlugin < BasePlugin
     def execute : PluginResult
-      name = @params["name"]?
-      state_param = @params["state"]?
 
       missing = ["name", "state"].select { |arg| @params[arg]?.nil? }
       unless missing.empty?
@@ -60,7 +58,6 @@ module Krikri
       desired_on = parse_bool(state_param)
       return bool_conversion_failure("state") unless desired_on.is_a?(Bool)
 
-      persistent = true
       if value = @params["persistent"]?
         persistent = parse_bool(value)
         return bool_conversion_failure("persistent") unless persistent.is_a?(Bool)

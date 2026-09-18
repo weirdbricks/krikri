@@ -90,7 +90,6 @@ module Krikri
 
     private def present_vg(vg : String, pvs : Array(String), vg_exists : Bool, check_mode : Bool) : PluginResult
       pesize = @params["pesize"]? || "4"
-      pv_options = @params["pv_options"]?.try(&.split) || [] of String
       vg_options = @params["vg_options"]?.try(&.split) || [] of String
 
       # Which of the requested PVs are already part of the VG (if it

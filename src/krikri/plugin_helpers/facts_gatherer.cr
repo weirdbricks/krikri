@@ -2057,7 +2057,6 @@ module Krikri
           next
         end
 
-        content = ""
         if executable
           err = IO::Memory.new
           out_io = IO::Memory.new

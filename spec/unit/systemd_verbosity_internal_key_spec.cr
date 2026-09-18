@@ -39,7 +39,7 @@ describe "systemd: _verbosity is an accepted engine-internal param" do
     }.to_json
 
     stdout = IO::Memory.new
-    status = Process.run("bin/plugins/systemd", input: IO::Memory.new(config), output: stdout, error: stdout)
+    Process.run("bin/plugins/systemd", input: IO::Memory.new(config), output: stdout, error: stdout)
     output = JSON.parse(stdout.to_s)
 
     if output["failed"].as_bool

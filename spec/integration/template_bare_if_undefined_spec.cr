@@ -55,7 +55,7 @@ describe "a bare {% if undefined_var %} condition in a real .j2 template" do
   end
 
   it "still renders the correct branch when the variable is defined (true)" do
-    status, output, dest = run_template_task(
+    status, _output, dest = run_template_task(
       "{% if some_undefined_var %}yes{% else %}no{% endif %}\n",
       "vars:\n    some_undefined_var: true",
     )
@@ -64,7 +64,7 @@ describe "a bare {% if undefined_var %} condition in a real .j2 template" do
   end
 
   it "still renders the correct branch when the variable is defined (false)" do
-    status, output, dest = run_template_task(
+    status, _output, dest = run_template_task(
       "{% if some_undefined_var %}yes{% else %}no{% endif %}\n",
       "vars:\n    some_undefined_var: false",
     )
@@ -76,7 +76,7 @@ describe "a bare {% if undefined_var %} condition in a real .j2 template" do
     # The most common real-world guarded idiom - default() only ever
     # tests undefined? and never evaluates the StrictUndefined, exactly
     # as real Jinja2's StrictUndefined permits.
-    status, output, dest = run_template_task(
+    status, _output, dest = run_template_task(
       "{% if some_undefined_var | default(false) %}yes{% else %}no{% endif %}\n",
     )
     status.success?.should be_true

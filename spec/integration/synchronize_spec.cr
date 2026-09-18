@@ -127,7 +127,7 @@ describe "synchronize plugin" do
       File.write(File.join(src, "keep2.txt"), "keep\n")
       File.write(File.join(dest, "stale2.txt"), "stale\n")
 
-      result = PluginSpecHelper.run("synchronize", {"src" => "#{src}/", "dest" => "#{dest}/"})
+      PluginSpecHelper.run("synchronize", {"src" => "#{src}/", "dest" => "#{dest}/"})
 
       File.exists?(File.join(dest, "stale2.txt")).should be_true
     ensure

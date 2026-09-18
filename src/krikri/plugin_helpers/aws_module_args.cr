@@ -327,7 +327,7 @@ module Krikri
         when Array
           elements = [] of JSON::Any
           raw_value.each do |element|
-            if hash = element.as_h?
+            if element.as_h?
               elements << element
             elsif text = element.as_s?
               return nil unless kv_dict?(text)

@@ -233,7 +233,7 @@ describe "authorized_key plugin" do
     path = tmp_path("authorized-key-url")
     `rm -rf #{tmp_path("authorized-key-url")}`
 
-    result = PluginSpecHelper.run("authorized_key", {
+    PluginSpecHelper.run("authorized_key", {
       "path" => path, "key" => "file://#{key_file}",
     })
 

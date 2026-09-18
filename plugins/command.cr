@@ -294,7 +294,6 @@ module Krikri
       # Execute command using Crystal's Process
       stdout = IO::Memory.new
       stderr = IO::Memory.new
-      exit_code = 0
 
       # Parse command into array (simple split on spaces)
       # Note: This doesn't handle quoted arguments perfectly

@@ -124,7 +124,6 @@ module Krikri
       return absent_vg_result(vg, state) if vgs_result[:exit_code] != 0
       this_vg = parse_vgs(vgs_result[:stdout])
       return failed("Volume group #{vg} does not exist.") if this_vg.empty?
-      vg_info = this_vg.first
 
       lvs_result = remote_exec(lvs_command(vg, parsed_size.try(&.units_flag) || "m"))
       return absent_vg_result(vg, state) if lvs_result[:exit_code] != 0

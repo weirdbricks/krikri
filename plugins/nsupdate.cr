@@ -448,7 +448,6 @@ module Krikri
       check_mode = true?(@params["_ansible_check_mode"]?)
       return PluginResult.new(changed: true, failed: false, msg: "check mode") if check_mode
 
-      rcode = 0
       if exists == 0
         unless values
           return PluginResult.new(changed: false, failed: true,
@@ -497,7 +496,7 @@ module Krikri
       rrs = encode_values(record, type_code, ttl, values)
       return 1 if rrs.is_a?(PluginResult)
 
-      failure = send_update(server, port, protocol, zone, [] of PluginHelpers::NsupdateMessage::RR, rrs.as(Array(PluginHelpers::NsupdateMessage::RR)))
+      send_update(server, port, protocol, zone, [] of PluginHelpers::NsupdateMessage::RR, rrs.as(Array(PluginHelpers::NsupdateMessage::RR)))
 
       @dns_rc
     end
@@ -514,7 +513,7 @@ module Krikri
         # afterwards (see the real module's modify_record).
         id = new_id
         message = PluginHelpers::NsupdateMessage.build_query(id, record, type_code, @tsig)
-        if (failure = do_query(server, port, protocol, message))
+        if do_query(server, port, protocol, message)
           return 1
         end
 
@@ -543,7 +542,7 @@ module Krikri
         updates += rrs.as(Array(PluginHelpers::NsupdateMessage::RR))
       end
 
-      failure = send_update(server, port, protocol, zone, [] of PluginHelpers::NsupdateMessage::RR, updates)
+      send_update(server, port, protocol, zone, [] of PluginHelpers::NsupdateMessage::RR, updates)
 
       @dns_rc
     end

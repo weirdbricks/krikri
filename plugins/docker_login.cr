@@ -79,7 +79,7 @@ module Krikri
       username = username.not_nil!
       password = password.not_nil!
 
-      config, config_raw = read_config(config_path)
+      config, _config_raw = read_config(config_path)
       if !reauthorize && (stored = PluginHelpers::DockerLogin.stored_credentials(config, registry_url))
         if stored[:username] == username && stored[:password] == password
           return PluginResult.new(changed: false, failed: false,

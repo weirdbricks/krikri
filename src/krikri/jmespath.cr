@@ -531,7 +531,6 @@ module Krikri
 
       private def parse_slice_or_index(left : Node) : Node
         start = nil
-        stop = nil
         step : Int64? = nil
 
         if token = accept(TokenKind::Number)

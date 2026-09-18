@@ -234,8 +234,6 @@ module Krikri
       # real Ansible which also sets them even on a no-matches run.
       attr_changed = apply_attributes(path)
 
-      new_content = content.byte_slice(0, section_start) + new_section +
-                    content.byte_slice(section_end, content.bytesize - section_end)
       msg = if changed || attr_changed
               "Replaced matches in #{path}"
             else

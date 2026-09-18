@@ -64,7 +64,6 @@ module Krikri
     end
 
     private def configure_user(user : String, existing : Bool, current_tags : Array(String)?) : PluginResult
-      changed = false
       begin
         changed = add_user_if_missing(user, existing)
         tags_failed = set_tags_if_needed(user, current_tags)
