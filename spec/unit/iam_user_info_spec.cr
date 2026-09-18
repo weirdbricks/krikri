@@ -55,7 +55,7 @@ describe Krikri::PluginHelpers::IamApi do
     end
     root = Krikri::PluginHelpers::IamApi.call("GetUser", {"UserName" => "test"})
     result = Krikri::PluginHelpers::IamApi.child(root, "GetUserResult")
-    user = result.try { |r| Krikri::PluginHelpers::IamApi.child(r, "User") }
+    user = result.try { |result_json| Krikri::PluginHelpers::IamApi.child(result_json, "User") }
     Krikri::PluginHelpers::IamApi.text(user.not_nil!, "arn").should eq("arn:aws:iam::123456789012:user/test")
   end
 

@@ -186,21 +186,6 @@ Metrics/CyclomaticComplexity:
   - src/krikri/variable_substitutor/expression_evaluator.cr
   - src/krikri/variable_substitutor/filter_engine.cr
 
-Naming/BlockParameterName:
-  Excluded:
-  - plugins/kernel_blacklist.cr
-  - plugins/nsupdate.cr
-  - plugins/postgresql_query.cr
-  - plugins/replace.cr
-  - plugins/virt_net.cr
-  - plugins/zfs.cr
-  - spec/unit/ec2_security_group_spec.cr
-  - spec/unit/iam_user_info_spec.cr
-  - spec/unit/rhsm_repository_spec.cr
-  - src/krikri/plugin_helpers/homebrew.cr
-  - src/krikri/plugin_helpers/maven_artifact_command.cr
-  - src/krikri/plugin_helpers/nsupdate_message.cr
-
 Performance/AnyInsteadOfPresent:
   Excluded:
   - krikri-playbook.cr

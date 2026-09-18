@@ -117,7 +117,7 @@ module Krikri
       # uris/suites are NOT required by real Ansible: a name-only task
       # succeeds and writes just X-Repolib-Name + the Types: deb default.
       if types = @params["types"]?
-        bad = parse_list_param(types).reject { |t| %w[deb deb-src].includes?(t) }
+        bad = parse_list_param(types).reject { |type| %w[deb deb-src].includes?(type) }
         return PluginResult.new(changed: false, failed: true, msg: "value of types must be one or more of: deb, deb-src. Got no match for: #{bad.join(", ")}") unless bad.empty?
       end
 

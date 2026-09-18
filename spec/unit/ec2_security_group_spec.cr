@@ -192,7 +192,7 @@ describe Krikri::PluginHelpers::Ec2SecurityGroup do
 
     it "expands multiple discrete ports into one rule per port" do
       rules = Krikri::PluginHelpers::Ec2SecurityGroup.parse_rules(%([{"proto": "tcp", "ports": [80, 443], "cidr_ip": "0.0.0.0/0"}]))
-      rules.map { |r| {r.from_port, r.to_port} }.should eq([{"80", "80"}, {"443", "443"}])
+      rules.map { |rule| {rule.from_port, rule.to_port} }.should eq([{"80", "80"}, {"443", "443"}])
     end
 
     it "expands a range string into from/to and sorts reversed bounds" do

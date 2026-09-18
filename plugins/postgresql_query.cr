@@ -154,7 +154,7 @@ module Krikri
 
       res = PluginResult.new(changed: outcome.changed, failed: false, msg: outcome.statusmessage)
       res.extra["query"] = JSON::Any.new(outcome.last_sql)
-      res.extra["query_list"] = JSON::Any.new(queries.map { |q| JSON::Any.new(q) })
+      res.extra["query_list"] = JSON::Any.new(queries.map { |query| JSON::Any.new(query) })
       res.extra["query_result"] = JSON::Any.new(outcome.last_result.map { |row| JSON::Any.new(row) })
       res.extra["query_all_results"] = JSON::Any.new(outcome.all_results)
       res.extra["rowcount"] = JSON::Any.new(outcome.rowcount)
@@ -260,12 +260,12 @@ module Krikri
 
       if keyword == "SELECT" || keyword == "SHOW" || keyword == "WITH" || keyword == "TABLE"
         rows = [] of Hash(String, JSON::Any)
-        conn.query(sql, args: args) do |rs|
-          columns = rs.column_names
-          rs.each do
+        conn.query(sql, args: args) do |result_set|
+          columns = result_set.column_names
+          result_set.each do
             row = Hash(String, JSON::Any).new
             columns.each_with_index do |column, _index|
-              row[column] = to_json_any(rs.read)
+              row[column] = to_json_any(result_set.read)
             end
             rows << row
           end

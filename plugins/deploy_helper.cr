@@ -97,7 +97,7 @@ module Krikri
           msg: "release #{release} would be created")
       end
 
-      mk = remote_exec("mkdir -p #{[path, releases_path, shared_path, new_release_path, current_path].map { |p| Shell.single_quote(p) }.join(' ')}")
+      mk = remote_exec("mkdir -p #{[path, releases_path, shared_path, new_release_path, current_path].map { |path| Shell.single_quote(path) }.join(' ')}")
       unless mk[:exit_code] == 0
         return PluginResult.new(changed: false, failed: true,
           msg: "failed to create deploy layout: #{mk[:stderr].strip}")
@@ -151,12 +151,12 @@ module Krikri
       # Sorted lexically ascending; the newest are the last N. The
       # current release is always kept even when old.
       sorted = releases.sort
-      to_remove = sorted[0...sorted.size - keep_releases].reject { |r| "#{releases_path}/#{r}" == target }
+      to_remove = sorted[0...sorted.size - keep_releases].reject { |release| "#{releases_path}/#{release}" == target }
 
       return PluginResult.new(changed: true, failed: false,
         msg: "#{to_remove.size} old releases would be removed") if check_mode || to_remove.empty?
 
-      args = to_remove.map { |r| Shell.single_quote("#{releases_path}/#{r}") }.join(' ')
+      args = to_remove.map { |release| Shell.single_quote("#{releases_path}/#{release}") }.join(' ')
       result = remote_exec("rm -rf #{args}")
       unless result[:exit_code] == 0
         return PluginResult.new(changed: false, failed: true,

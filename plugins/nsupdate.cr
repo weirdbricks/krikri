@@ -259,8 +259,8 @@ module Krikri
     # discarding everything outside the base64 alphabet - its two error
     # wordings are what real's "TSIG key error: ..." wraps.
     private def python_base64_error(secret : String) : String?
-      data_chars = secret.chars.count do |c|
-        c.alphanumeric? || c == '+' || c == '/'
+      data_chars = secret.chars.count do |char|
+        char.alphanumeric? || char == '+' || char == '/'
       end
       remainder = data_chars % 4
       return "Invalid base64-encoded string: number of data characters (#{data_chars}) cannot be 1 more than a multiple of 4" if remainder == 1
@@ -326,14 +326,14 @@ module Krikri
         end
 
         response = @last_response.not_nil!
-        response.answer.each do |rr|
-          if rr.type_code == 6 && PluginHelpers::NsupdateMessage.names_equal?(rr.name, name)
-            return rr.name
+        response.answer.each do |record|
+          if record.type_code == 6 && PluginHelpers::NsupdateMessage.names_equal?(record.name, name)
+            return record.name
           end
         end
-        response.authority.each do |rr|
-          if rr.type_code == 6 && PluginHelpers::NsupdateMessage.subdomain_of?(name, rr.name)
-            return rr.name
+        response.authority.each do |record|
+          if record.type_code == 6 && PluginHelpers::NsupdateMessage.subdomain_of?(name, record.name)
+            return record.name
           end
         end
 
@@ -520,8 +520,8 @@ module Krikri
 
         lookup = @last_response.not_nil!
         existing = lookup.answer.empty? ? lookup.authority : lookup.answer
-        stale = existing.flat_map do |rr|
-          decode_rr_values(rr, type)
+        stale = existing.flat_map do |record|
+          decode_rr_values(record, type)
         end.reject { |entry| values.includes?(entry) }
 
         rrs = encode_values(record, type_code, ttl, values)
@@ -571,7 +571,7 @@ module Krikri
             parts << String.new(data[pos + 1, len])
             pos += 1 + len
           end
-          parts.map { |p| "\"#{p}\"" }
+          parts.map { |part| "\"#{part}\"" }
         rescue
           [] of String
         end

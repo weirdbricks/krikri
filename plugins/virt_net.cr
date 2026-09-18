@@ -72,8 +72,8 @@ module Krikri
       return fail("The `libvirt` module is not importable. Check the requirements.") unless executable_in_path?("virsh")
 
       if state && command == "list_nets"
-        nets = list_nets(uri).select { |n| net_state(uri, n) == state }
-        return ok(false, "list_nets", JSON::Any.new(nets.map { |n| JSON::Any.new(n) }))
+        nets = list_nets(uri).select { |net| net_state(uri, net) == state }
+        return ok(false, "list_nets", JSON::Any.new(nets.map { |net| JSON::Any.new(net) }))
       end
 
       if state
@@ -158,7 +158,7 @@ module Krikri
         elsif HOST_COMMANDS.includes?(command)
           case command
           when "list_nets"
-            return ok(false, command, JSON::Any.new(list_nets(uri).map { |n| JSON::Any.new(n) }))
+            return ok(false, command, JSON::Any.new(list_nets(uri).map { |net| JSON::Any.new(net) }))
           when "facts", "info"
             networks = gather_facts(uri, name)
             if command == "facts"
@@ -254,7 +254,7 @@ module Krikri
       requested = Krikri::PluginHelpers::VirshNet.parse_dhcp_hosts(xml).first?
       raise "updating this is not supported yet #{xml}" unless requested
 
-      existing = Krikri::PluginHelpers::VirshNet.parse_dhcp_hosts(dump).find { |h| h.mac == requested.mac }
+      existing = Krikri::PluginHelpers::VirshNet.parse_dhcp_hosts(dump).find { |host| host.mac == requested.mac }
       if existing && existing.name == requested.name && existing.ip == requested.ip
         return false
       end

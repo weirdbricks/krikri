@@ -120,7 +120,7 @@ module Krikri
       encoding = @params["encoding"]?.presence || "utf-8"
 
       begin
-        content = File.open(path, "r", encoding: encoding) { |f| f.gets_to_end }
+        content = File.open(path, "r", encoding: encoding) { |file| file.gets_to_end }
       rescue ex
         return PluginResult.new(
           changed: false,

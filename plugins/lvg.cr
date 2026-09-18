@@ -45,7 +45,7 @@ module Krikri
       end
 
       pvs_param = @params["pvs"]?
-      pvs = pvs_param.try { |p| p.split(/[\s,]+/).reject(&.empty?) } || [] of String
+      pvs = pvs_param.try { |device| device.split(/[\s,]+/).reject(&.empty?) } || [] of String
       if state == "present" && pvs.empty?
         return PluginResult.new(changed: false, failed: true,
           msg: "state is present but all of the following are missing: pvs")
@@ -108,7 +108,7 @@ module Krikri
         return PluginResult.new(changed: true, failed: false,
           msg: "Volume group #{vg} would be extended") if check_mode
 
-        result = remote_exec("vgextend #{vg_options.map { |o| Shell.single_quote(o) }.join(' ')} #{Shell.single_quote(vg)} #{missing.map { |p| Shell.single_quote(p) }.join(' ')}")
+        result = remote_exec("vgextend #{vg_options.map { |option| Shell.single_quote(option) }.join(' ')} #{Shell.single_quote(vg)} #{missing.map { |device| Shell.single_quote(device) }.join(' ')}")
         unless result[:exit_code] == 0
           return PluginResult.new(changed: false, failed: true,
             msg: "Failed to extend volume group #{vg}: #{result[:stderr].strip}")
@@ -120,7 +120,7 @@ module Krikri
       return PluginResult.new(changed: true, failed: false,
         msg: "Volume group #{vg} would be created") if check_mode
 
-      result = remote_exec("vgcreate -s #{Shell.single_quote(pesize)} #{vg_options.map { |o| Shell.single_quote(o) }.join(' ')} #{Shell.single_quote(vg)} #{pvs.map { |p| Shell.single_quote(p) }.join(' ')}")
+      result = remote_exec("vgcreate -s #{Shell.single_quote(pesize)} #{vg_options.map { |option| Shell.single_quote(option) }.join(' ')} #{Shell.single_quote(vg)} #{pvs.map { |device| Shell.single_quote(device) }.join(' ')}")
       unless result[:exit_code] == 0
         return PluginResult.new(changed: false, failed: true,
           msg: "Failed to create volume group #{vg}: #{result[:stderr].strip}")
@@ -141,7 +141,7 @@ module Krikri
         next unless fields.size >= 2
         in_vg << fields[0] if fields[1] == vg
       end
-      pvs.reject { |p| in_vg.includes?(p) }
+      pvs.reject { |device| in_vg.includes?(device) }
     end
   end
 end

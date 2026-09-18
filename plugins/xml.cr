@@ -63,7 +63,7 @@ module Krikri
       # Real module argument validation (AnsibleModule init), which runs
       # before any XML parsing: mutually exclusive action params, choice
       # enums, and required_by/required_if relationships.
-      action_count = ["add_children", "content", "count", "print_match", "set_children", "value"].count { |p| raw[p]? }
+      action_count = ["add_children", "content", "count", "print_match", "set_children", "value"].count { |prop| raw[prop]? }
       if action_count > 1
         return PluginResult.new(changed: false, failed: true,
           msg: "parameters are mutually exclusive: add_children|content|count|print_match|set_children|value")

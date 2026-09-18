@@ -1024,7 +1024,7 @@ module Krikri
             octets = inet_match[1].split('.').map(&.to_u8)
             mask_octets = prefix == 0 ? [0, 0, 0, 0] : (0...4).map { |i| prefix >= (i + 1) * 8 ? 255_u8 : (prefix > i * 8 ? (256 - (1 << (8 * (i + 1) - prefix))).to_u8 : 0_u8) }
             default_ipv4["netmask"] = mask_octets.join('.')
-            default_ipv4["network"] = octets.zip(mask_octets).map { |o, m| o & m }.join('.')
+            default_ipv4["network"] = octets.zip(mask_octets).map { |octet, mask| octet & mask }.join('.')
           end
         end
 
@@ -1328,7 +1328,7 @@ module Krikri
       rescue
         ""
       end
-      form_factor = chassis_type.to_i?.try { |ct| CHASSIS_TYPES[ct]? } || "NA"
+      form_factor = chassis_type.to_i?.try { |chassis_type| CHASSIS_TYPES[chassis_type]? } || "NA"
       facts["ansible_form_factor"] = form_factor
 
       # ansible_lvm - real Ansible's LvmFactCollector always reports the
@@ -1848,14 +1848,14 @@ module Krikri
         case tokens[0]
         when "nameserver"
           nameservers = dns["nameservers"]?.try(&.as_a?) || [] of JSON::Any
-          tokens[1..].each { |ns| nameservers << JSON::Any.new(ns) }
+          tokens[1..].each { |nameserver| nameservers << JSON::Any.new(nameserver) }
           dns["nameservers"] = JSON::Any.new(nameservers)
         when "domain"
           dns["domain"] = JSON::Any.new(tokens[1]) if tokens.size > 1
         when "search"
-          dns["search"] = JSON::Any.new(tokens[1..].map { |s| JSON::Any.new(s) })
+          dns["search"] = JSON::Any.new(tokens[1..].map { |token| JSON::Any.new(token) })
         when "sortlist"
-          dns["sortlist"] = JSON::Any.new(tokens[1..].map { |s| JSON::Any.new(s) })
+          dns["sortlist"] = JSON::Any.new(tokens[1..].map { |token| JSON::Any.new(token) })
         when "options"
           options = {} of String => JSON::Any
           tokens[1..].each do |option|
