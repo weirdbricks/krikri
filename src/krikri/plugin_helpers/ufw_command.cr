@@ -17,7 +17,6 @@ module Krikri
         when "disabled" then "ufw disable"
         when "reloaded" then "ufw --force reload"
         when "reset"    then "ufw --force reset"
-        else                 nil
         end
       end
 

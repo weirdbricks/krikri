@@ -8,24 +8,6 @@
 # `ameba --ignore-config --only RuleName`.
 
 
-Lint/ElseNil:
-  Excluded:
-  - plugins/getent.cr
-  - src/krikri/conditional_evaluator.cr
-  - src/krikri/ipaddr_core.cr
-  - src/krikri/jinja_filters.cr
-  - src/krikri/playbook_parser.cr
-  - src/krikri/plugin_helpers/acl_command.cr
-  - src/krikri/plugin_helpers/distribution_facts.cr
-  - src/krikri/plugin_helpers/ufw_command.cr
-  - src/krikri/task_executor/executor_blocks_includes.cr
-  - src/krikri/task_executor/executor_vars_context.cr
-  - src/krikri/variable_substitutor.cr
-  - src/krikri/variable_substitutor/comparison_evaluator.cr
-  - src/krikri/variable_substitutor/expression_evaluator.cr
-  - src/krikri/variable_substitutor/filter_engine.cr
-  - src/krikri/variable_substitutor/variable_lookup.cr
-
 Lint/Formatting:
   Excluded:
   - plugins/lvol.cr

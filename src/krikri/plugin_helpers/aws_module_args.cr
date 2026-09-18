@@ -340,8 +340,6 @@ module Krikri
         when String
           return nil unless kv_dict?(raw_value)
           [JSON.parse(kv_to_json(raw_value))]
-        else
-          nil
         end
       end
 
@@ -528,11 +526,7 @@ module Krikri
             PluginResult.new(changed: false, failed: true,
               msg: "argument '#{name}' is of type <class 'dict'> and we were unable to convert to list: " \
                    "<class 'dict'> cannot be converted to a list")
-          else
-            nil
           end
-        else
-          nil
         end
       end
 
@@ -553,8 +547,6 @@ module Krikri
           else
             sub_int_type_error(param, name, pyclass)
           end
-        else
-          nil
         end
       end
 

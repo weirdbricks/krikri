@@ -1024,8 +1024,6 @@ module Krikri
                     idx ? raw[idx]? : nil
                   when Crinja::Dictionary
                     raw[Crinja::Value.new(target.to_s)]?
-                  else
-                    nil
                   end
 
       if extracted && !arguments["morekeys"].undefined?
@@ -1884,8 +1882,6 @@ module Krikri
                Time.unix(raw)
              when String
                raw.to_i64? ? Time.unix(raw.to_i64) : nil
-             else
-               nil
              end
       if time
         Crinja::Value.new(time.to_s(arguments["format"].to_s))

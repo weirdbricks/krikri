@@ -162,8 +162,6 @@ module Krikri
           "Slackware"
         when "Altlinux"
           "Altlinux"
-        else
-          nil
         end
       end
 

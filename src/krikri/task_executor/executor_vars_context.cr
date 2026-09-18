@@ -1522,8 +1522,6 @@ module Krikri
           stringified = Hash(String, String).new
           resolved_object.each { |key, value| stringified[key] = value.as_s? ? value.as_s : value.to_s }
           stringified
-        else
-          nil
         end
       rescue e : UndefinedVariableError
         raise UndefinedVariableError.new("Error processing keyword 'environment': #{e.message}")
