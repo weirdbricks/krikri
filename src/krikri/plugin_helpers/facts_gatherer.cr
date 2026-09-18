@@ -1328,7 +1328,7 @@ module Krikri
       rescue
         ""
       end
-      form_factor = chassis_type.to_i?.try { |chassis_type| CHASSIS_TYPES[chassis_type]? } || "NA"
+      form_factor = chassis_type.to_i?.try { |type_id| CHASSIS_TYPES[type_id]? } || "NA"
       facts["ansible_form_factor"] = form_factor
 
       # ansible_lvm - real Ansible's LvmFactCollector always reports the

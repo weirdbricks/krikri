@@ -149,8 +149,16 @@ module Krikri
         end
 
         if declared_type = spec["type"]?.try(&.as_s?)
-          unless argument_type_matches?(value, declared_type)
-            errors << "argument '#{option_name}' is of type #{json_type_name(value)} and we were unable to convert to #{declared_type}"
+          # A null value (the role default is the YAML literal `null` -
+          # grzegorzfranus.github_runner's `github_runner_user_uid: null`
+          # with `type: int`) is real Ansible's "not provided": the
+          # validator skips type conversion for None entirely ("if value
+          # is None: continue") - it never says "of type str and we were
+          # unable to convert to int" against a None.
+          unless value.raw.nil?
+            unless argument_type_matches?(value, declared_type)
+              errors << "argument '#{option_name}' is of type #{json_type_name(value)} and we were unable to convert to #{declared_type}"
+            end
           end
         end
       end
@@ -700,9 +708,9 @@ module Krikri
           # guarantee cleanup even if the transfer raises mid-flight - a
           # leaked copy of the secret must not outlive this call.
           File.chmod(tmpdir, 0o700)
-          File.open(staged, "w") do |f|
-            f.chmod(0o600)
-            f.write(decrypted.to_slice)
+          File.open(staged, "w") do |file|
+            file.chmod(0o600)
+            file.write(decrypted.to_slice)
           end
           begin
             result = stage_large_copy_source(params, staged, host, vars_context)

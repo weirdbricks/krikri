@@ -814,7 +814,22 @@ module Krikri
       # Array/Hash values too, matching real Ansible's own recursive
       # re-templating at every level of a nested structure.
       @vars.each do |key, value|
-        value = VariableSubstitutor::CrinjaRenderer.rerender_nested_templates(value, substitutor)
+        # Lenient per-var: real Ansible templates a .j2's variables LAZILY
+        # (on reference), so a role default whose own value references an
+        # undefined variable (`win_download_path: '{{ ansible_env.TEMP }}/
+        # filebeat"'`, lean_delivery.filebeat - TEMP is a Windows env var,
+        # undefined on the Linux hosts this template rendered on) never
+        # fails a render that never USES that var. The eager all-vars
+        # pass here used to be strict, so one unused-but-undefined
+        # default failed every template: task in the role. Undefined
+        # vars keep their RAW text here (a var the template actually
+        # references and whose root is itself missing still fails the
+        # render through StrictTemplating's own strict-undefined pass).
+        begin
+          value = VariableSubstitutor::CrinjaRenderer.rerender_nested_templates(value, substitutor)
+        rescue Krikri::UndefinedVariableError
+          # leave the raw (unrendered) value in place
+        end
         # hostvars gets the HostVarsVars treatment (raising attribute
         # miss under strict templating, matching real Ansible's own
         # wrapper) - same conversion the lazy `{% %}` context uses, so

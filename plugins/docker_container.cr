@@ -341,7 +341,20 @@ module Krikri
     ) : PluginResult
       return PluginResult.new(changed: true, failed: false, msg: "Container #{name} would be started") if check_mode
 
-      api.containers.start(existing.id)
+      begin
+        api.containers.start(existing.id)
+      rescue ex : Docr::Errors::DockerAPIError
+        # HTTP 304 Not Modified - the container was started between the
+        # state read above and the start call (or is already running
+        # under a different state spelling like "restarting"). Real
+        # Ansible's docker_container treats a 304 on start as a no-op
+        # success, not an error (grycap.chronos' warm rerun: "Docker API
+        # error: Code: 304 Message: No response body" failed the task
+        # where real ansible-playbook's warm run reported ok).
+        raise ex unless ex.message.try(&.includes?("Code: 304"))
+        connected, disconnected = sync_networks!(api, existing.id, requested_networks)
+        return PluginResult.new(changed: false, failed: false, msg: "Container #{name} already started#{network_suffix(connected, disconnected)}")
+      end
       connected, disconnected = sync_networks!(api, existing.id, requested_networks)
       PluginResult.new(changed: true, failed: false, msg: "Started container #{name}#{network_suffix(connected, disconnected)}")
     end

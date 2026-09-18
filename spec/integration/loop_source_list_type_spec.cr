@@ -1,4 +1,5 @@
 require "../spec_helper"
+require "file_utils"
 
 # A loop: source that IS defined but isn't a list is a hard type error in
 # real Ansible, with its own distinct wording. Live-verified against
@@ -226,5 +227,46 @@ describe "loop: source must resolve to a list" do
     status.success?.should be_false
     output.should contain("The `loop` value must resolve to a 'list', not 'str'.")
     output.should contain("failed=1")
+  end
+end
+
+# Round 829240 (ngine_io.blocky_dns): a single-element with_items entry
+# that is mixed text around TWO spans ("{{ a }}/{{ b }}") also starts
+# with "{{" and ends with "}}" - the old check treated it as a
+# list-producing loop SOURCE, stripped it greedily into the expression
+# "a }}/{{ b", and failed with "'a }}/{{ b' is undefined". Real Ansible
+# treats it as one literal loop item whose embedded templates render at
+# item time.
+describe "single-element with_items with TWO spans" do
+  it "is one literal loop item, rendered at item time" do
+    src_dir = File.tempname("two-span-loop-item")
+    Dir.mkdir_p(src_dir)
+    File.write(File.join(src_dir, "pb.yml"), <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          base: /tmp/two-span-loop
+          version: "1.0.0"
+        tasks:
+          - file:
+              path: "{{ item }}"
+              state: directory
+              mode: "0755"
+            with_items:
+              - "{{ base }}/{{ version }}"
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, File.join(src_dir, "pb.yml")],
+      output: output, error: output, chdir: src_dir)
+    text = output.to_s
+    status.success?.should be_true, text
+    text.should_not contain("is undefined")
+    text.should contain("changed:")
+    File.directory?("/tmp/two-span-loop/1.0.0").should be_true
+  ensure
+    FileUtils.rm_rf(src_dir) if src_dir
+    `rm -rf /tmp/two-span-loop`
   end
 end

@@ -662,6 +662,21 @@ module Krikri
           return nil if skippable
         end
         raise WhenEvaluationError.new(ex.message)
+      rescue ex : Exception
+        # A lookup failure inside a loop item's own template (`lookup('file',
+        # '~/.ssh/id_rsa.pub')` on a host without that file, ngine_io.
+        # exoscale_compute) is a failed TASK in real Ansible ("The lookup
+        # plugin 'file' failed: ..."), never a process crash - this render
+        # ran OUTSIDE every other rescue (the substitute_task_params one,
+        # the resolve_loop_items_or_raise one above), so the bare Exception
+        # escaped to #run and killed the whole binary with a stack trace
+        # instead of failing exactly this task. Deliberately NOT routed
+        # through the when:-skippable check above: real Ansible fails the
+        # task even when a `when:` would have skipped it (its keyword
+        # finalization happens before the when: verdict matters - the
+        # dockpack.gitlab_runner delegate_to case), and a lookup error is
+        # a host-state problem, not an undefined reference.
+        raise WhenEvaluationError.new(ex.message || "Failed to render loop item")
       end
     end
 

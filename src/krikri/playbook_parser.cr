@@ -2189,11 +2189,16 @@ module Krikri
     end
 
     # <role>/tasks(/…nested) -> <role>, or nil if file_dir isn't under a
-    # "tasks" directory at all (a bare playbook-level include, which has
-    # no role root to fall back to).
+    # "tasks" directory at all. "handlers" counts too - a handler's own
+    # include_tasks: (`handlers/main.yml`'s `include_tasks: tasks/
+    # restart_unbound.yml`, aruhier.ansible_role_unbound) resolves
+    # against the ROLE's tasks/ tree in real Ansible: its include search
+    # from a role handler considers the role root and the role's tasks/
+    # dir, and the role-relative "tasks/..." prefix then lands exactly
+    # on <role>/tasks/restart_unbound.yml.
     private def self.role_root_from_tasks_dir(file_dir : String) : String?
       parts = file_dir.split(File::SEPARATOR)
-      tasks_index = parts.rindex("tasks")
+      tasks_index = parts.rindex { |part| part == "tasks" || part == "handlers" }
       return nil unless tasks_index
       parts[0...tasks_index].join(File::SEPARATOR)
     end
@@ -2420,7 +2425,15 @@ module Krikri
           if arr.size == 1
             inner = arr.first?.try(&.as_s?)
             stripped = inner.try(&.strip)
-            return {key, inner, true} if inner && stripped && stripped.starts_with?("{{") && stripped.ends_with?("}}")
+            # Exactly ONE {{ }} span, not just starts/ends with one: a
+            # mixed-text element with TWO spans ("{{ a }}/{{ b }}",
+            # ngine_io.blocky_dns's with_items entry) also starts with
+            # "{{" and ends with "}}" - the old check stripped it
+            # greedily into the expression "a }}/{{ b" and failed the
+            # task with "'a }}/{{ b' is undefined", where real Ansible
+            # treats it as a single literal loop item whose embedded
+            # templates render at item time.
+            return {key, inner, true} if inner && stripped && stripped.starts_with?("{{") && stripped.ends_with?("}}") && stripped.scan("{{").size == 1
           end
         end
       end

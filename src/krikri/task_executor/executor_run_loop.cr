@@ -1877,11 +1877,18 @@ module Krikri
           if failed_when
             hash["failed"] = JSON::Any.new(ConditionalEvaluator.evaluate(substitutor.substitute(failed_when), eval_context, strict: true, raise_undefined: true))
           end
-        rescue e : ConditionalEvaluator::ConditionalBooleanError | ConditionalEvaluator::UndefinedVariableError
+        rescue e : ConditionalEvaluator::ConditionalBooleanError | ConditionalEvaluator::UndefinedVariableError | VariableSubstitutor::FilterEngine::UnknownFilterError
           # Matches real Ansible: a changed_when:/failed_when: whose value
           # resolves to None (not a real boolean), or whose evaluation hits
           # an undefined variable / missing dict attribute, fails the task
           # outright rather than being silently truthy-converted to false.
+          # UnknownFilterError joins the same rescue (jasonheecs.
+          # digitalocean's `changed_when: not python_check.stdout |
+          # search('/bin/python')` - `search` is a real-Ansible TEST, not
+          # a filter, so real ansible fails the task with "No filter named
+          # 'search'.") - previously only the two conditional errors were
+          # caught here and the unknown-filter raise escaped all the way
+          # out of #run, crashing the whole binary with a stack trace.
           hash["failed"] = JSON::Any.new(true)
           hash["msg"] = JSON::Any.new(e.message || "")
         end

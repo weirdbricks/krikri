@@ -321,6 +321,15 @@ module Krikri
         roots << File.join(File.dirname(vars_dir), "defaults")
       end
       task.include_file_dir.try { |dir| roots << dir }
+      # The ROLE ROOT itself - heytrav.influxdb's own tasks/debian.yml
+      # does `include_vars: file: vars/debian.yml`, i.e. the path is
+      # written role-relative ("<role>/vars/debian.yml"), not relative
+      # to the vars/ dir or the including file's dir. Real Ansible's
+      # include_vars first-found search covers the role root; this
+      # engine's root list didn't and the include failed with "file
+      # not found: vars/debian.yml" where real ansible-playbook
+      # succeeded.
+      task.role_path.try { |role_dir| roots << role_dir }
       # A relative include_vars: path in a role's own top-level tasks/
       # main.yml (not reached via include_tasks:, so include_file_dir
       # above is nil) resolves against that file's own directory, real

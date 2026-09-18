@@ -60,6 +60,13 @@ module Krikri
       roots.each do |root|
         candidate = File.join(root, "#{short}.py")
         return candidate if File.file?(candidate)
+        # Extensionless module file - real Ansible's own action-plugin
+        # module finder accepts any file in library/ regardless of
+        # extension (the shebang line determines the interpreter;
+        # kunik.deploy-metadata's own library/deployment_facts has no
+        # .py extension and real ansible-playbook ran it fine).
+        extensionless = File.join(root, short)
+        return extensionless if File.file?(extensionless)
       end
       nil
     end
