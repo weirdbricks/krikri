@@ -998,7 +998,7 @@ playbook.plays.each_with_index do |play, _play_index|
 
     # any_errors_fatal:/max_fail_percentage: stop the whole play, so the
     # remaining serial: batches must not start either.
-    break if executor.play_aborted
+    break if executor.play_aborted?
   end
 end
 

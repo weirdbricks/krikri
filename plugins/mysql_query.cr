@@ -198,10 +198,10 @@ module Krikri
     private def dml_or_ddl_changed?(stmt : String, changed_so_far : Bool, count : Int64) : Bool
       return changed_so_far if changed_so_far
       prefix = stmt.strip.upcase[0, KEYWORD_SCAN_LEN]
-      if DML_QUERY_KEYWORDS.any? { |kw| prefix.includes?(kw) }
+      if DML_QUERY_KEYWORDS.any? { |keyword| prefix.includes?(keyword) }
         return count > 0
       end
-      DDL_QUERY_KEYWORDS.any? { |kw| prefix.includes?(kw) }
+      DDL_QUERY_KEYWORDS.any? { |keyword| prefix.includes?(keyword) }
     end
 
     private def validate_arguments : PluginResult?

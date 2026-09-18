@@ -81,7 +81,7 @@ describe "FilterEngine::KNOWN_FILTER_NAMES registry" do
     Krikri::VariableSubstitutor::FilterEngine::KNOWN_FILTER_NAMES.each do |name|
       begin
         engine.apply(JSON::Any.new(nil), name)
-      rescue ex : Krikri::VariableSubstitutor::FilterEngine::UnknownFilterError
+      rescue Krikri::VariableSubstitutor::FilterEngine::UnknownFilterError
         raise "filter '#{name}' is listed in KNOWN_FILTER_NAMES but apply() raises UnknownFilterError for it"
       rescue
         # A type/argument error from feeding nil into a real filter is

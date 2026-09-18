@@ -59,7 +59,7 @@ module Krikri
         {% end %}
         tap = entry["tap"]?.try(&.as_s?)
         unless tap.nil? || tap.empty?
-          names.each { |n| names << "#{tap}/#{n}" }
+          names.each { |name| names << "#{tap}/#{name}" }
         end
         names
       end

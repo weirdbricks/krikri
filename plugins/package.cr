@@ -115,7 +115,6 @@ module Krikri
       # never splits a single list item apart) installed the real group
       # fine. Found via robertdebock.gnome on Rocky 9.6 (`gnome_
       # packages: ["@Server with GUI"]`, RedHat's own default).
-      single_name = false
       trimmed = name.strip
       # `names` is built directly per-branch (never re-derived by
       # re-splitting the space-joined `name` display string below) - a
@@ -153,7 +152,6 @@ module Krikri
         # up) - the old single-quote repair here decomposed it into a
         # real list and installed both packages instead.
         if parsed
-          single_name = parsed.size == 1
           names = parsed
           name = parsed.join(" ")
         end
@@ -169,7 +167,6 @@ module Krikri
         # "No package matching '' is available" for one (live-verified
         # for the apt backend, see apt.cr's parse_package_names).
         parts = trimmed.split(',').map(&.strip)
-        single_name = parts.size == 1
         names = parts
         name = parts.join(" ")
       else

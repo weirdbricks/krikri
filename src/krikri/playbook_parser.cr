@@ -4333,11 +4333,7 @@ module Krikri
           true
         when "false", "no", "off"
           false
-        else
-          nil
         end
-      else
-        nil
       end
     end
 
@@ -4400,8 +4396,6 @@ module Krikri
       when String
         return true if raw.strip.starts_with?("{{")
         raw.strip.downcase.in?("true", "yes", "1")
-      else
-        nil
       end
     end
 

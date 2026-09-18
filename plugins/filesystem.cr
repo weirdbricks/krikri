@@ -145,7 +145,7 @@ module Krikri
       force : Bool, opts : Array(String), check_mode : Bool,
     ) : PluginResult
       command_info = FSTYPE_COMMANDS[fstype]
-      mkfs_argv, force_flags, blkid_name = command_info
+      mkfs_argv, force_flags, _blkid_name = command_info
 
       create_filesystem(
         dev, current_fs, fs_class_of(current_fs), fs_class_of(fstype),

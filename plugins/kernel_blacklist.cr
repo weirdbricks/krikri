@@ -95,7 +95,7 @@ module Krikri
       new_lines, changed = PluginHelpers::KernelBlacklistFile.apply(lines, name, state)
 
       if changed && !check_mode
-        File.write(file, new_lines.map { |l| l + "\n" }.join)
+        File.write(file, new_lines.map { |line| line + "\n" }.join)
       end
 
       PluginResult.new(

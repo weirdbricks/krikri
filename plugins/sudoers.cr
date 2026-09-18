@@ -167,7 +167,7 @@ module Krikri
       runas_str = runas ? "(#{runas})" : ""
       commands_str = commands.join(", ")
 
-      defaults_str = parse_list_param("defaults").map { |d| "Defaults:#{owner} #{d}" }
+      defaults_str = parse_list_param("defaults").map { |default| "Defaults:#{owner} #{default}" }
                       .join("\n")
       defaults_str += "\n" unless defaults_str.empty?
 

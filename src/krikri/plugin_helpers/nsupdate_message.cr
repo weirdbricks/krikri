@@ -157,8 +157,8 @@ module Krikri
         when "A"
           parts = value.split(".")
           raise MalformedValueError.new unless parts.size == 4
-          bytes = parts.map do |p|
-            octet = p.to_i?
+          bytes = parts.map do |part|
+            octet = part.to_i?
             raise MalformedValueError.new unless octet && octet >= 0 && octet <= 255
             octet.to_u8
           end
@@ -207,8 +207,8 @@ module Krikri
         raise MalformedValueError.new if fill < 0
         groups = head_groups + Array.new(fill, "0") + tail_groups
         raise MalformedValueError.new unless groups.size == 8
-        groups.each_with_index do |g, i|
-          num = g.to_i?(16)
+        groups.each_with_index do |group, i|
+          num = group.to_i?(16)
           raise MalformedValueError.new unless num && num >= 0 && num <= 0xFFFF
           bytes[i * 2] = (num >> 8).to_u8
           bytes[i * 2 + 1] = (num & 0xFF).to_u8
@@ -277,8 +277,8 @@ module Krikri
         put16(io, updates.size.to_u16)          # UPCOUNT
         put16(io, tsig ? 1u16 : 0u16)           # ARCOUNT
         io.write(encode_name(zone))
-        prerequisites.each { |rr| pack_rr(io, rr) }
-        updates.each { |rr| pack_rr(io, rr) }
+        prerequisites.each { |record| pack_rr(io, record) }
+        updates.each { |record| pack_rr(io, record) }
         append_tsig(io, tsig, id) if tsig
         io.to_slice
       end

@@ -875,7 +875,7 @@ module Krikri
         return true if is_dir && recursive_attributes_need_update?(child_path)
       end
       false
-    rescue ex : File::Error
+    rescue File::Error
       # Permission denied, etc. - matches walk_apply_attributes's own
       # skip-rather-than-fail behavior for the same case.
       false
@@ -1057,7 +1057,7 @@ module Krikri
         info = File.info?(child_path, follow_symlinks: false)
         walk_apply_attributes(child_path) if info && info.directory? && !info.symlink?
       end
-    rescue ex : File::Error
+    rescue File::Error
       # Permission denied, etc. - skip this directory rather than
       # failing the whole task (matches the previous shell implementation
       # not checking chown -R/chmod -R's exit code either).
@@ -1136,7 +1136,7 @@ module Krikri
         if mode = @params["mode"]?
           apply_mode(path, mode)
         end
-      rescue ex : File::Error
+      rescue File::Error
         # A chmod/chown SYSCALL failure (e.g. not running as root/owner)
         # shouldn't fail the whole task - matches the previous shell
         # implementation's behavior of not checking these commands' exit
@@ -1413,7 +1413,7 @@ module Krikri
     private def touch_now(path : String) : Bool
       File.utime(Time.utc, Time.utc, path)
       true
-    rescue ex : File::Error
+    rescue File::Error
       false
     end
 
@@ -1479,7 +1479,7 @@ module Krikri
       new_atime = atime || Time.unix(Krikri.stat_atime_sec(current))
       new_mtime = mtime || Time.unix(Krikri.stat_mtime_sec(current))
       File.utime(new_atime, new_mtime, path)
-    rescue ex : File::Error
+    rescue File::Error
     end
 
     private def stat(path : String) : LibC::Stat?
@@ -1663,7 +1663,7 @@ module Krikri
 
     private def try_readlink(path : String) : String?
       File.readlink(path)
-    rescue ex : File::Error
+    rescue File::Error
       nil
     end
 

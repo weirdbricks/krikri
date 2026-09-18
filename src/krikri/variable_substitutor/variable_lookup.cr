@@ -798,7 +798,6 @@ module Krikri
         case raw = resolved.raw
         when String       then raw
         when Int64, Int32 then raw.to_i
-        else                   nil
         end
       end
 
@@ -880,8 +879,6 @@ module Krikri
           return nil unless idx
           char = current.as_s[idx]?
           char ? JSON::Any.new(char.to_s) : nil
-        else
-          nil
         end
       end
 

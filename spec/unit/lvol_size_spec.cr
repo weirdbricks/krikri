@@ -74,7 +74,7 @@ describe Krikri::PluginHelpers::LvolSize do
     end
 
     it "rejects a bare operator with no value" do
-      parsed, error = Krikri::PluginHelpers::LvolSize.parse("+512")
+      parsed, _error = Krikri::PluginHelpers::LvolSize.parse("+512")
       parsed.not_nil!.operator.should eq("+")
     end
   end

@@ -107,7 +107,7 @@ describe Krikri::PluginHelpers::Ec2Info do
 
   describe ".run_vpcs" do
     it "shapes a VPC with the real module's field names, DNS attributes included" do
-      result = run_module({"region" => "us-east-1"}, ->(region : String, body : String) do
+      result = run_module({"region" => "us-east-1"}, ->(_region : String, body : String) do
         action = URI::Params.parse(body)["Action"]
         case action
         when "DescribeVpcs" then DESCRIBE_ONE
@@ -125,12 +125,12 @@ describe Krikri::PluginHelpers::Ec2Info do
       vpc["vpc_id"].should eq("vpc-1234")
       vpc["cidr_block"].should eq("10.0.0.0/16")
       vpc["state"].should eq("available")
-      vpc["is_default"].should eq(true)
+      vpc["is_default"].should be_true
       vpc["instance_tenancy"].should eq("default")
       vpc["dhcp_options_id"].should eq("dopt-1")
       vpc["owner_id"].should eq("123456789012")
-      vpc["enable_dns_support"].should eq(true)
-      vpc["enable_dns_hostnames"].should eq(false)
+      vpc["enable_dns_support"].should be_true
+      vpc["enable_dns_hostnames"].should be_false
       vpc["tags"]["Name"].should eq("main")
       assoc = vpc["cidr_block_association_set"][0]
       assoc["association_id"].should eq("vpc-cidr-assoc-0")
@@ -155,7 +155,7 @@ describe Krikri::PluginHelpers::Ec2Info do
 
     it "makes the two per-VPC DescribeVpcAttribute calls" do
       attributes = [] of String
-      handler = ->(region : String, body : String) do
+      handler = ->(_region : String, body : String) do
         params = URI::Params.parse(body)
         if params["Action"] == "DescribeVpcAttribute"
           attributes << params["Attribute"]
@@ -169,13 +169,13 @@ describe Krikri::PluginHelpers::Ec2Info do
     end
 
     it "returns an empty list when no VPCs match" do
-      result = run_module({"region" => "us-east-1"}, ->(region : String, body : String) { DESCRIBE_NONE })
+      result = run_module({"region" => "us-east-1"}, ->(_region : String, _body : String) { DESCRIBE_NONE })
       result["vpcs"].as_a.should be_empty
     end
 
     it "sends VpcId.N and Filter.N.Name/Value.M wire params" do
       bodies = [] of String
-      handler = ->(region : String, body : String) do
+      handler = ->(_region : String, body : String) do
         bodies << body if URI::Params.parse(body)["Action"] == "DescribeVpcs"
         DESCRIBE_NONE
       end
@@ -193,8 +193,8 @@ describe Krikri::PluginHelpers::Ec2Info do
     end
 
     it "fails with the API error message when the describe call errors" do
-      result = run_module({"region" => "us-east-1"}, ->(region : String, body : String) { raise Krikri::PluginHelpers::Ec2Api::Error.new("UnauthorizedOperation: fake") })
-      result["failed"].should eq(true)
+      result = run_module({"region" => "us-east-1"}, ->(_region : String, _body : String) { raise Krikri::PluginHelpers::Ec2Api::Error.new("UnauthorizedOperation: fake") })
+      result["failed"].should be_true
       result["msg"].should eq("UnauthorizedOperation: fake")
     end
   end

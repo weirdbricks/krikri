@@ -2542,7 +2542,6 @@ module Krikri
       case value
       when Int64  then value.to_f64
       when String then value.to_f64?
-      else             nil
       end
     end
 

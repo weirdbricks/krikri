@@ -1100,7 +1100,11 @@ module Krikri
       if (expr = task.check_mode_expr) && (vars = vars_context)
         substitutor = VarSubstitutor.new(vars: vars, host_name: "")
         rendered = substitutor.substitute(expr)
-        return ConditionalEvaluator.evaluate(rendered, {} of String => JSON::Any) rescue @check_mode
+        begin
+          return ConditionalEvaluator.evaluate(rendered, {} of String => JSON::Any)
+        rescue
+          return @check_mode
+        end
       end
 
       value = task.check_mode?
@@ -1522,8 +1526,6 @@ module Krikri
           stringified = Hash(String, String).new
           resolved_object.each { |key, value| stringified[key] = value.as_s? ? value.as_s : value.to_s }
           stringified
-        else
-          nil
         end
       rescue e : UndefinedVariableError
         raise UndefinedVariableError.new("Error processing keyword 'environment': #{e.message}")

@@ -100,7 +100,6 @@ module Krikri
       # the order of its checks - the passphrase check comes first and
       # short-circuits the type/size one, because a key that cannot be
       # decrypted cannot be inspected either.
-      regen = false
       if force || regenerate == "always" || !existing
         regen = true
       else

@@ -327,7 +327,7 @@ module Krikri
         when Array
           elements = [] of JSON::Any
           raw_value.each do |element|
-            if hash = element.as_h?
+            if element.as_h?
               elements << element
             elsif text = element.as_s?
               return nil unless kv_dict?(text)
@@ -340,8 +340,6 @@ module Krikri
         when String
           return nil unless kv_dict?(raw_value)
           [JSON.parse(kv_to_json(raw_value))]
-        else
-          nil
         end
       end
 
@@ -438,7 +436,7 @@ module Krikri
       private def self.sub_required_by(param : String, sub : SubSpec, given : Hash(String, JSON::Any)) : Krikri::PluginResult?
         sub.required_by.each do |name, required|
           next unless given.has_key?(name)
-          missing = required.reject { |r| given.has_key?(r) }
+          missing = required.reject { |required_key| given.has_key?(required_key) }
           next if missing.empty?
           return PluginResult.new(changed: false, failed: true,
             msg: "missing parameter(s) required by '#{name}': #{missing.join(", ")} found in #{param}")
@@ -528,11 +526,7 @@ module Krikri
             PluginResult.new(changed: false, failed: true,
               msg: "argument '#{name}' is of type <class 'dict'> and we were unable to convert to list: " \
                    "<class 'dict'> cannot be converted to a list")
-          else
-            nil
           end
-        else
-          nil
         end
       end
 
@@ -553,8 +547,6 @@ module Krikri
           else
             sub_int_type_error(param, name, pyclass)
           end
-        else
-          nil
         end
       end
 

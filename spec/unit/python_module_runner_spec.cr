@@ -109,7 +109,7 @@ describe Krikri::PythonModuleRunner do
 
   it "parses a single-line result JSON" do
     Krikri::PythonModuleRunner.parse_module_output(%({"changed": true, "msg": "ok"}))
-      .try(&.["changed"]?.try(&.as_bool?)).should eq(true)
+      .try(&.["changed"]?.try(&.as_bool?)).should be_true
   end
 
   it "parses a pretty-printed result JSON preceded by other output" do

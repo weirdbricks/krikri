@@ -245,7 +245,7 @@ describe Krikri::PluginHelpers::FirewalldCommand do
       attrs.should eq({"port" => "8080", "protocol" => "tcp", "to-port" => "8090"})
 
       entry = JSON.parse(%({"port": 8080, "proto": "tcp", "toport": 8090, "toaddr": "10.0.0.1"}))
-      element, attrs = Krikri::PluginHelpers::FirewalldCommand.forward_port_element(entry)
+      _element, attrs = Krikri::PluginHelpers::FirewalldCommand.forward_port_element(entry)
       attrs.should eq({"port" => "8080", "protocol" => "tcp", "to-port" => "8090", "to-addr" => "10.0.0.1"})
     end
 

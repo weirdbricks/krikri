@@ -93,7 +93,7 @@ module Krikri
       # Real expect.py os.chdir's the module process before the
       # creates/removes checks, so relative guards resolve against chdir.
       # (Unlike command.py, these are plain os.path.exists - NO glob.)
-      guard_base = chdir.try { |c| File.expand_path(c) }
+      guard_base = chdir.try { |dir| File.expand_path(dir) }
 
       if creates = @params["creates"]?
         if File.exists?(resolve_guard(creates, guard_base))

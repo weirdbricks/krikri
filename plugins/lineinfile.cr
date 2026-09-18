@@ -284,7 +284,7 @@ module Krikri
         begin
           File.chmod(temp_file, info.permissions)
           File.chown(temp_file, uid: info.owner_id.to_i, gid: info.group_id.to_i)
-        rescue ex : File::Error
+        rescue File::Error
           nil
         end
       end

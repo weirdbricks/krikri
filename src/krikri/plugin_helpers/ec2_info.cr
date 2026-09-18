@@ -317,7 +317,7 @@ module Krikri
           end
         end
         image
-      rescue ex : Ec2Api::Error
+      rescue Ec2Api::Error
         image
       end
     end

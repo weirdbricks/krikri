@@ -127,7 +127,7 @@ module Krikri
     # - real Ansible does not start the next batch after an abort
     # (verified: `serial: 1` + any_errors_fatal with h2 failing runs h1's
     # batch fully, then stops; h3 never runs at all).
-    getter play_aborted : Bool = false
+    getter? play_aborted : Bool = false
 
     private def abort_play?(hosts : Array(Host)) : Bool
       return true if @play_aborted

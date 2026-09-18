@@ -143,7 +143,7 @@ module Krikri
           msg: "state is absent but all of the following are missing: number")
       end
 
-      unless current.any? { |p| p["number"] == number.to_s }
+      unless current.any? { |part| part["number"] == number.to_s }
         return PluginResult.new(changed: false, failed: false,
           msg: "partition number #{number} not found on device #{device}")
       end
@@ -165,7 +165,7 @@ module Krikri
       changed = false
       msgs = [] of String
 
-      existing = number ? current.find { |p| p["number"] == number.to_s } : nil
+      existing = number ? current.find { |part| part["number"] == number.to_s } : nil
 
       if existing.nil?
         return PluginResult.new(changed: true, failed: false,

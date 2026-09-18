@@ -531,7 +531,6 @@ module Krikri
 
       private def parse_slice_or_index(left : Node) : Node
         start = nil
-        stop = nil
         step : Int64? = nil
 
         if token = accept(TokenKind::Number)
@@ -930,7 +929,12 @@ module Krikri
                   raw = args[0]?.try(&.raw)
                   case raw
                   when Int64, Float64 then args[0]
-                  when String         then (JSON.parse(raw) rescue NULL)
+                  when String
+                    begin
+                      JSON.parse(raw)
+                    rescue JSON::ParseException
+                      NULL
+                    end
                   else                     NULL
                   end
                 when "to_array"

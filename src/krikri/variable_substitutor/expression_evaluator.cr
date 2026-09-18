@@ -1553,8 +1553,6 @@ module Krikri
           # Python's bool is an int subclass (True == 1, False == 0), so
           # `true * 2` is 2 in real Jinja2, not a type error.
           raw ? 1.0 : 0.0
-        else
-          nil
         end
       end
 
@@ -1572,7 +1570,6 @@ module Krikri
         when Bool    then raw ? 1_i64 : 0_i64
         when Int64   then raw
         when Float64 then raw
-        else              nil
         end
       end
 
@@ -3058,7 +3055,7 @@ module Krikri
           # plugins themselves, silently degrading every role shipping
           # one (manala.cron's own manala_cron_files_env.py) to
           # "undefined".
-          nil
+          # (No handler above matches: fall through with nil.)
         end
       end
 
@@ -3412,7 +3409,7 @@ module Krikri
 
         lines = response.body.lines.map(&.strip).reject(&.empty?)
         lines.to_json
-      rescue ex : Socket::Error | IO::Error
+      rescue Socket::Error | IO::Error
         # Genuine connection-level failures (DNS resolution, connection
         # refused, timeout) still degrade softly to "undefined" rather
         # than failing outright - only a real HTTP-level error response

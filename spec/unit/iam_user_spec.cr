@@ -135,7 +135,7 @@ describe Krikri::PluginHelpers::IamUser do
       profile = result["iam_users"][0]["login_profile"]
       profile["user_name"].should eq("lchaidas")
       profile["create_date"].should eq("2026-01-01T00:00:00+00:00")
-      profile["password_reset_required"].should eq(true)
+      profile["password_reset_required"].should be_true
     end
 
     it "walks ListUsers by path_prefix when no name is given" do
@@ -162,7 +162,7 @@ describe Krikri::PluginHelpers::IamUser do
       result = run_module({"name" => "lchaidas"}, ->(_body : String) do
         raise Krikri::PluginHelpers::IamApi::Error.new("IAM GetUser: AccessDenied: not authorized")
       end)
-      result["failed"].should eq(true)
+      result["failed"].should be_true
       result["msg"].as_s.should contain("AccessDenied")
     end
   end

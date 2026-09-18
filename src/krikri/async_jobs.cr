@@ -62,7 +62,7 @@ module Krikri
         begin
           File.delete(path)
           removed = true
-        rescue ex : File::Error
+        rescue File::Error
           # Vanished between the exists? check and the delete - counts
           # as cleaned up either way.
         end
@@ -81,7 +81,7 @@ module Krikri
       Dir.each_child(DIR) do |name|
         File.delete(File.join(DIR, name))
         removed += 1
-      rescue ex : File::Error
+      rescue File::Error
         # A concurrent job's transient file - leave it.
       end
       removed

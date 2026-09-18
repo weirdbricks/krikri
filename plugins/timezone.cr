@@ -340,7 +340,7 @@ module Krikri
       insert_at = matched.first? || 0
       matched.reverse_each { |i| lines.delete_at(i) }
       lines.insert(insert_at, new_line.chomp)
-      File.write(path, lines.map { |l| "#{l}\n" }.join)
+      File.write(path, lines.map { |line| "#{line}\n" }.join)
       matched.size
     end
 

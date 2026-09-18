@@ -38,7 +38,6 @@ module Krikri
             when .try(&.starts_with?("g")) then "group"
             when .try(&.starts_with?("m")) then "mask"
             when .try(&.starts_with?("o")) then "other"
-            else                                nil
             end
 
         {d, t, e, p}

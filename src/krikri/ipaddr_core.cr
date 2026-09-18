@@ -207,8 +207,6 @@ module Krikri
             Net.new(4, a, p, "network")
           elsif p <= 128
             Net.new(6, a, p, "network")
-          else
-            nil
           end
         else
           parse_qualified(addr, pref)

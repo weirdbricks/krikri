@@ -731,7 +731,7 @@ module Krikri
         rendered = substitutor.substitute(raw_matching, strict: true).strip
         begin
           files_matching = Regex.new(rendered)
-        rescue ex : ArgumentError
+        rescue ArgumentError
           finish_include_vars_failure(task, host, "Invalid regular expression: #{rendered}")
           return
         end
@@ -741,7 +741,7 @@ module Krikri
         rendered = substitutor.substitute(raw_pattern, strict: true).strip
         begin
           Regex.new(rendered + "$")
-        rescue ex : ArgumentError
+        rescue ArgumentError
           finish_include_vars_failure(task, host, "Invalid regular expression: #{rendered}")
           return
         end
@@ -1654,7 +1654,6 @@ module Krikri
                when "ansible.builtin.template" then "templates"
                when "ansible.builtin.assemble" then "files"
                when "ansible.posix.synchronize" then "files"
-               else                                 nil
                end
       return params unless subdir
 
@@ -1677,7 +1676,6 @@ module Krikri
                    task.role_templates_dir || task.role_path
                  when "ansible.builtin.assemble" then task.role_files_dir
                  when "ansible.posix.synchronize" then task.role_files_dir
-                 else                                 nil
                  end
       return params unless role_dir
 

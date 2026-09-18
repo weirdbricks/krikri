@@ -120,7 +120,7 @@ module Krikri
       encoding = @params["encoding"]?.presence || "utf-8"
 
       begin
-        content = File.open(path, "r", encoding: encoding) { |f| f.gets_to_end }
+        content = File.open(path, "r", encoding: encoding) { |file| file.gets_to_end }
       rescue ex
         return PluginResult.new(
           changed: false,
@@ -234,8 +234,6 @@ module Krikri
       # real Ansible which also sets them even on a no-matches run.
       attr_changed = apply_attributes(path)
 
-      new_content = content.byte_slice(0, section_start) + new_section +
-                    content.byte_slice(section_end, content.bytesize - section_end)
       msg = if changed || attr_changed
               "Replaced matches in #{path}"
             else
@@ -270,7 +268,7 @@ module Krikri
           else
             Process.run("chmod", [mode, path], output: Process::Redirect::Close, error: Process::Redirect::Close)
           end
-        rescue ex : File::Error
+        rescue File::Error
           # Mode setting failed, continue anyway
         end
       end
@@ -293,7 +291,7 @@ module Krikri
       before.permissions != after.permissions ||
         before.owner_id != after.owner_id ||
         before.group_id != after.group_id
-    rescue ex : File::Error
+    rescue File::Error
       # A chown/chmod failure (e.g. not running as root/owner) shouldn't
       # fail the whole task - matches copy.cr's own identical rescue.
       false
@@ -348,7 +346,7 @@ module Krikri
         begin
           File.chmod(temp_file, info.permissions)
           File.chown(temp_file, uid: info.owner_id.to_i, gid: info.group_id.to_i)
-        rescue ex : File::Error
+        rescue File::Error
           nil
         end
       end

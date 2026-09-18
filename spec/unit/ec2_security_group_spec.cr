@@ -192,7 +192,7 @@ describe Krikri::PluginHelpers::Ec2SecurityGroup do
 
     it "expands multiple discrete ports into one rule per port" do
       rules = Krikri::PluginHelpers::Ec2SecurityGroup.parse_rules(%([{"proto": "tcp", "ports": [80, 443], "cidr_ip": "0.0.0.0/0"}]))
-      rules.map { |r| {r.from_port, r.to_port} }.should eq([{"80", "80"}, {"443", "443"}])
+      rules.map { |rule| {rule.from_port, rule.to_port} }.should eq([{"80", "80"}, {"443", "443"}])
     end
 
     it "expands a range string into from/to and sorts reversed bounds" do
@@ -255,7 +255,7 @@ describe Krikri::PluginHelpers::Ec2SecurityGroup do
 
     it "injects ResourceId on the create-path CreateTags call" do
       bodies = [] of String
-      handler = ->(region : String, body : String) do
+      handler = ->(_region : String, body : String) do
         bodies << body
         action = URI::Params.parse(body)["Action"]
         if action == "DescribeSecurityGroups"
@@ -271,7 +271,7 @@ describe Krikri::PluginHelpers::Ec2SecurityGroup do
         end
       end
       run_module({"name" => "web", "description" => "d", "state" => "present", "region" => "us-east-1", "tags" => %({"env": "test"})}, handler)
-      tags_body = bodies.find { |b| URI::Params.parse(b)["Action"] == "CreateTags" }.not_nil!
+      tags_body = bodies.find! { |b| URI::Params.parse(b)["Action"] == "CreateTags"}
       tags_body.should contain("ResourceId.1=sg-new")
       tags_body.should contain("Tag.1.Key=env")
     end
@@ -342,7 +342,7 @@ describe Krikri::PluginHelpers::Ec2SecurityGroup do
   describe ".run" do
     it "returns the real module's full field coverage on the create path" do
       describes = 0
-      handler = ->(region : String, body : String) do
+      handler = ->(_region : String, body : String) do
         action = URI::Params.parse(body)["Action"]
         if action == "DescribeSecurityGroups"
           describes += 1
@@ -358,7 +358,7 @@ describe Krikri::PluginHelpers::Ec2SecurityGroup do
       end
       result = run_module({"name" => "web", "description" => "web group", "state" => "present", "region" => "us-east-1"}, handler)
 
-      result["changed"].should eq(true)
+      result["changed"].should be_true
       result["failed"]?.should be_falsey
       result["msg"]?.should be_nil
       result["name"]?.should be_nil
@@ -390,7 +390,7 @@ describe Krikri::PluginHelpers::Ec2SecurityGroup do
 
     it "targets the just-created group on the create-with-rules authorize calls" do
       bodies = [] of String
-      handler = ->(region : String, body : String) do
+      handler = ->(_region : String, body : String) do
         bodies << body
         action = URI::Params.parse(body)["Action"]
         if action == "DescribeSecurityGroups"
@@ -410,34 +410,34 @@ describe Krikri::PluginHelpers::Ec2SecurityGroup do
 
       actions = bodies.map { |b| URI::Params.parse(b)["Action"] }
       actions.should eq(["DescribeSecurityGroups", "CreateSecurityGroup", "RevokeSecurityGroupEgress", "AuthorizeSecurityGroupIngress", "AuthorizeSecurityGroupEgress", "DescribeSecurityGroups"])
-      authorize_body = bodies.find { |b| URI::Params.parse(b)["Action"] == "AuthorizeSecurityGroupIngress" }.not_nil!
+      authorize_body = bodies.find! { |b| URI::Params.parse(b)["Action"] == "AuthorizeSecurityGroupIngress"}
       authorize_body.should contain("GroupId=sg-new")
       authorize_body.should contain("IpPermissions.1.IpProtocol=tcp")
-      revoke_body = bodies.find { |b| URI::Params.parse(b)["Action"] == "RevokeSecurityGroupEgress" }.not_nil!
+      revoke_body = bodies.find! { |b| URI::Params.parse(b)["Action"] == "RevokeSecurityGroupEgress"}
       revoke_body.should contain("GroupId=sg-new")
       revoke_body.should contain("IpPermissions.1.IpRanges.1.CidrIp=0.0.0.0%2F0")
     end
 
     it "targets the existing group on update authorize calls" do
       bodies = [] of String
-      handler = ->(region : String, body : String) do
+      handler = ->(_region : String, body : String) do
         bodies << body
         DESCRIBE_ONE
       end
       rules = %([{"proto": "tcp", "from_port": 80, "to_port": 80, "cidr_ip": "0.0.0.0/0"}])
       run_module({"name" => "web", "state" => "present", "region" => "us-east-1", "rules" => rules}, handler)
-      authorize_body = bodies.find { |b| URI::Params.parse(b)["Action"] == "AuthorizeSecurityGroupIngress" }.not_nil!
+      authorize_body = bodies.find! { |b| URI::Params.parse(b)["Action"] == "AuthorizeSecurityGroupIngress"}
       authorize_body.should contain("GroupId=sg-111")
     end
 
     it "sends the group-name filter on the describe call" do
       bodies = [] of String
-      handler = ->(region : String, body : String) do
+      handler = ->(_region : String, body : String) do
         bodies << body
         DESCRIBE_NONE
       end
       run_module({"name" => "web", "state" => "present", "region" => "us-east-1", "vpc_id" => "vpc-1"}, handler)
-      describe_body = bodies.find { |b| URI::Params.parse(b)["Action"] == "DescribeSecurityGroups" }.not_nil!
+      describe_body = bodies.find! { |b| URI::Params.parse(b)["Action"] == "DescribeSecurityGroups"}
       describe_body.should contain("Filter.1.Name=group-name")
       describe_body.should contain("Filter.1.Value.1=web")
       describe_body.should contain("Filter.2.Name=vpc-id")
@@ -445,8 +445,8 @@ describe Krikri::PluginHelpers::Ec2SecurityGroup do
     end
 
     it "is a no-op when the group already matches" do
-      result = run_module({"name" => "web", "description" => "web group", "state" => "present", "region" => "us-east-1"}, ->(region : String, body : String) { DESCRIBE_ONE })
-      result["changed"].should eq(false)
+      result = run_module({"name" => "web", "description" => "web group", "state" => "present", "region" => "us-east-1"}, ->(_region : String, _body : String) { DESCRIBE_ONE })
+      result["changed"].should be_false
       result["group_id"].should eq("sg-111")
       result["group_name"].should eq("web")
       result["owner_id"].should eq("123456789012")
@@ -455,27 +455,27 @@ describe Krikri::PluginHelpers::Ec2SecurityGroup do
     end
 
     it "returns just changed and a null group_id for state absent" do
-      result = run_module({"name" => "web", "state" => "absent", "region" => "us-east-1"}, ->(region : String, body : String) { DESCRIBE_ONE })
-      result["changed"].should eq(true)
+      result = run_module({"name" => "web", "state" => "absent", "region" => "us-east-1"}, ->(_region : String, _body : String) { DESCRIBE_ONE })
+      result["changed"].should be_true
       result["group_id"].raw.should be_nil
       result["msg"]?.should be_nil
       result["group_name"]?.should be_nil
     end
 
     it "returns just changed and a null group_id for an absent-when-absent delete" do
-      result = run_module({"name" => "web", "state" => "absent", "region" => "us-east-1"}, ->(region : String, body : String) { DESCRIBE_NONE })
-      result["changed"].should eq(false)
+      result = run_module({"name" => "web", "state" => "absent", "region" => "us-east-1"}, ->(_region : String, _body : String) { DESCRIBE_NONE })
+      result["changed"].should be_false
       result["group_id"].raw.should be_nil
     end
 
     it "reports check mode against a missing group without group fields" do
       bodies = [] of String
-      handler = ->(region : String, body : String) do
+      handler = ->(_region : String, body : String) do
         bodies << body
         DESCRIBE_NONE
       end
       result = run_module({"name" => "web", "state" => "present", "region" => "us-east-1", "_ansible_check_mode" => "true"}, handler)
-      result["changed"].should eq(true)
+      result["changed"].should be_true
       result["group_id"].raw.should be_nil
       result["msg"]?.should be_nil
       result["group_name"]?.should be_nil
@@ -484,13 +484,13 @@ describe Krikri::PluginHelpers::Ec2SecurityGroup do
 
     it "describes the existing group in check mode like real ansible" do
       bodies = [] of String
-      handler = ->(region : String, body : String) do
+      handler = ->(_region : String, body : String) do
         bodies << body
         DESCRIBE_ONE
       end
       rules = %([{"proto": "tcp", "from_port": 90, "to_port": 90, "cidr_ip": "0.0.0.0/0"}])
       result = run_module({"name" => "web", "description" => "web group", "state" => "present", "region" => "us-east-1", "rules" => rules, "_ansible_check_mode" => "true"}, handler)
-      result["changed"].should eq(true)
+      result["changed"].should be_true
       result["group_id"].should eq("sg-111")
       result["group_name"].should eq("web")
       result["description"].should eq("web group")
@@ -500,14 +500,14 @@ describe Krikri::PluginHelpers::Ec2SecurityGroup do
     end
 
     it "fails with the API error message when a call errors" do
-      result = run_module({"name" => "web", "state" => "present", "region" => "us-east-1"}, ->(region : String, body : String) { raise Krikri::PluginHelpers::Ec2Api::Error.new("UnauthorizedOperation: fake") })
-      result["failed"].should eq(true)
+      result = run_module({"name" => "web", "state" => "present", "region" => "us-east-1"}, ->(_region : String, _body : String) { raise Krikri::PluginHelpers::Ec2Api::Error.new("UnauthorizedOperation: fake") })
+      result["failed"].should be_true
       result["msg"].should eq("UnauthorizedOperation: fake")
     end
 
     it "fails on a missing name" do
-      result = run_module({"state" => "present", "region" => "us-east-1"}, ->(region : String, body : String) { DESCRIBE_NONE })
-      result["failed"].should eq(true)
+      result = run_module({"state" => "present", "region" => "us-east-1"}, ->(_region : String, _body : String) { DESCRIBE_NONE })
+      result["failed"].should be_true
       result["msg"].as_s.should contain("name")
     end
   end

@@ -47,14 +47,14 @@ module Krikri
       # /metadata/versioning/versions.
       private def self.versions_node(doc : XML::Document) : XML::Node?
         root = doc.root || return nil
-        versioning = root.children.find { |c| c.name == "versioning" } || return nil
-        versioning.children.find { |c| c.name == "versions" }
+        versioning = root.children.find { |child| child.name == "versioning" } || return nil
+        versioning.children.find { |child| child.name == "versions" }
       end
 
       def self.latest_version(metadata_xml : String) : String?
         doc = XML.parse(metadata_xml)
         versions_node = versions_node(doc) || return nil
-        versions_node.children.select { |c| c.name == "version" }.last?.try(&.text)
+        versions_node.children.to_a.reverse_each.find { |child| child.name == "version" }.try(&.text)
       end
 
       # Snapshot resolution for find_uri_for_artifact: prefer the
@@ -64,19 +64,19 @@ module Krikri
       def self.snapshot_version(metadata_xml : String, classifier : String, extension : String) : String?
         doc = XML.parse(metadata_xml)
         root = doc.root || return nil
-        versioning = root.children.find { |c| c.name == "versioning" } || return nil
-        snapshot_versions = versioning.children.find { |c| c.name == "snapshotVersions" } || return nil
+        versioning = root.children.find { |child| child.name == "versioning" } || return nil
+        snapshot_versions = versioning.children.find { |child| child.name == "snapshotVersions" } || return nil
         candidates = [] of {String, String}
-        snapshot_versions.children.select { |c| c.name == "snapshotVersion" }.each do |sv|
-          sv_classifier = sv.children.find { |c| c.name == "classifier" }.try(&.text) || ""
-          sv_extension = sv.children.find { |c| c.name == "extension" }.try(&.text) || ""
+        snapshot_versions.children.select { |child| child.name == "snapshotVersion" }.each do |snapshot_version|
+          sv_classifier = snapshot_version.children.find { |child| child.name == "classifier" }.try(&.text) || ""
+          sv_extension = snapshot_version.children.find { |child| child.name == "extension" }.try(&.text) || ""
           next unless sv_classifier == classifier && sv_extension == extension
-          value = sv.children.find { |c| c.name == "value" }.try(&.text)
-          updated = sv.children.find { |c| c.name == "updated" }.try(&.text) || ""
+          value = snapshot_version.children.find { |child| child.name == "value" }.try(&.text)
+          updated = snapshot_version.children.find { |child| child.name == "updated" }.try(&.text) || ""
           candidates << {updated, value} if value
         end
         # updated is yyyymmddHHMMSS, so lexical max == newest
-        candidates.max_by { |c| c[0] }[1]? unless candidates.empty?
+        candidates.max_by { |candidate| candidate[0] }[1]? unless candidates.empty?
       end
 
       # The timestamp/buildNumber fallback, given the base version
@@ -84,10 +84,10 @@ module Krikri
       def self.snapshot_timestamp_version(metadata_xml : String, version : String) : String?
         doc = XML.parse(metadata_xml)
         root = doc.root || return nil
-        versioning = root.children.find { |c| c.name == "versioning" } || return nil
-        snapshot_node = versioning.children.find { |c| c.name == "snapshot" } || return nil
-        timestamp = snapshot_node.children.find { |c| c.name == "timestamp" }.try(&.text)
-        build_number = snapshot_node.children.find { |c| c.name == "buildNumber" }.try(&.text)
+        versioning = root.children.find { |child| child.name == "versioning" } || return nil
+        snapshot_node = versioning.children.find { |child| child.name == "snapshot" } || return nil
+        timestamp = snapshot_node.children.find { |child| child.name == "timestamp" }.try(&.text)
+        build_number = snapshot_node.children.find { |child| child.name == "buildNumber" }.try(&.text)
         timestamp && build_number ? version.sub("SNAPSHOT", "#{timestamp}-#{build_number}") : nil
       end
 

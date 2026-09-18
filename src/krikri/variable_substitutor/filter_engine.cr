@@ -1843,7 +1843,6 @@ module Krikri
         when Int64   then raw
         when Float64 then raw.to_i64
         when String  then raw.strip.to_i64?
-        else              nil
         end
       end
 

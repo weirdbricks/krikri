@@ -110,7 +110,7 @@ module Krikri
         end
       end
 
-      raise last_error || Error.new("Unable to decrypt vault-encrypted content with any supplied vault password")
+      raise(last_error || Error.new("Unable to decrypt vault-encrypted content with any supplied vault password"))
     end
 
     # Like maybe_decrypt, but for a parsed variable value rather than a raw
@@ -275,7 +275,7 @@ module Krikri
       hex = hex.strip
       raise Error.new("Malformed vault content: odd-length hex data") if hex.size.odd?
       Bytes.new(hex.size // 2) { |i| hex[i * 2, 2].to_u8(16) }
-    rescue ex : ArgumentError
+    rescue ArgumentError
       raise Error.new("Malformed vault content: invalid hex data")
     end
 

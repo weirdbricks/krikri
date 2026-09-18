@@ -44,7 +44,7 @@ module Krikri
         return PluginResult.new(changed: false, failed: true, msg: "value of state must be one of: absent, present, got: #{state}")
       end
 
-      origin = @params["origin"]?.try { |o| o.empty? ? nil : o }
+      origin = @params["origin"]?.try { |origin| origin.empty? ? nil : origin }
       properties = parse_properties
 
       # Real's main() runs this check before Zfs.__init__ does the

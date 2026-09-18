@@ -977,8 +977,6 @@ module Krikri
       case value.raw
       when Int64, Float64, Bool
         value.to_s
-      else
-        nil
       end
     end
 
@@ -1210,8 +1208,6 @@ module Krikri
         end
       elsif stripped.starts_with?("if ") || stripped.starts_with?("elif ")
         {nil, stripped.sub(/^(if|elif)\s+/, "")}
-      else
-        nil
       end
     end
 
@@ -2146,7 +2142,7 @@ module Krikri
       @renderer = nil
     end
 
-    def get_vars : Hash(String, JSON::Any)
+    def vars : Hash(String, JSON::Any)
       @vars
     end
 

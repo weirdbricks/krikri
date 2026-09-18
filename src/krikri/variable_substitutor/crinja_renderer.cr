@@ -283,7 +283,7 @@ module Krikri
           if self.class.ensure_python_filter?(filter_name, @vars)
             begin
               return render!(text)
-            rescue e : Crinja::FeatureLibrary::UnknownFeatureError
+            rescue Crinja::FeatureLibrary::UnknownFeatureError
               raise FilterEngine::UnknownFilterError.new("No filter named '#{filter_name}'.")
             end
           end
