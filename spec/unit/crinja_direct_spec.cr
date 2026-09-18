@@ -208,4 +208,18 @@ describe "raw Crinja (rebase canary)" do
     crinja_render("{{ x | float }}", {"x" => "0.1"}).should eq("0.1")
     crinja_render("{{ x | float }}", {"x" => "not a number"}).should eq("0.0")
   end
+
+  # Real bug found via linux-system-roles.ssh (round 700466): the
+  # vendored trim filter casts its target to String and raises "Cast from
+  # Bool to (SafeString | String) failed" on a non-string. Real Jinja2's
+  # trim applies soft_str (Python str()) to its target first, so
+  # `true | trim` renders "True" (capitalized) and strips fine -
+  # ssh_config.j2 guards default options with
+  # `__ssh_skip_defaults | trim | bool`, where __ssh_skip_defaults is a
+  # native bool.
+  it "trim filter stringifies a non-string target instead of raising" do
+    crinja_render("{{ x | trim }}", {"x" => true}).should eq("True")
+    crinja_render("{{ x | trim }}", {"x" => false}).should eq("False")
+    crinja_render("{{ x | trim }}", {"x" => "  padded  "}).should eq("padded")
+  end
 end

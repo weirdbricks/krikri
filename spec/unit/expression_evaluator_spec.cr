@@ -834,6 +834,16 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
     JSON.parse(evaluator.evaluate("lookup('items', l1, l2)")).as_a.map(&.as_i).should eq([1, 2, 3, 4])
   end
 
+  it "evaluates lookup('flattened', ...) deep-flattening nested list terms" do
+    v = Hash(String, JSON::Any).new
+    v["l1"] = JSON.parse(%([1, [2, 3]]))
+    v["l2"] = JSON.parse(%(4))
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
+
+    evaluator.evaluate("lookup('flattened', l1, l2)").should eq("1,2,3,4")
+    JSON.parse(evaluator.evaluate("lookup('flattened', l1, l2, wantlist=True)")).as_a.map(&.as_i).should eq([1, 2, 3, 4])
+  end
+
   it "evaluates lookup('together', ...) zipping lists, padding shorter ones with null" do
     v = Hash(String, JSON::Any).new
     v["l1"] = JSON.parse(%([1, 2, 3]))

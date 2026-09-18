@@ -206,6 +206,23 @@ module Krikri
       )
     end
 
+    # `trim` - override the vendored Crinja trim filter, which casts its
+    # target to String and raises "Cast from Bool to (SafeString | String)
+    # failed" on a non-string. Real Jinja2's trim applies soft_str (Python
+    # str()) to its target first, so `true | trim` renders "True"
+    # (capitalized) and strips fine. Found via linux-system-roles.ssh
+    # (round 700466): its ssh_config.j2 guards default options with
+    # `__ssh_skip_defaults | trim | bool`, where __ssh_skip_defaults is a
+    # native bool - the cast error failed the whole template render where
+    # real ansible-playbook rendered the config file fine.
+    Crinja.filter(:trim) do
+      if target.undefined?
+        ""
+      else
+        env.stringify(target, false, true).strip
+      end
+    end
+
     # `float` - override the vendored Crinja float filter, which answers
     # the DEFAULT (0.0) for any already-numeric target: its guard is
     # `raw.responds_to?(:to_f?)`, and Crystal's own Float64/Int64 have no
@@ -432,6 +449,19 @@ module Krikri
         raw = raw.raw
       end
       raw
+    end
+
+    # Real Ansible's own flattened lookup runs every term through
+    # module_utils' deep `flatten` - nested lists flattened recursively,
+    # non-list scalars kept as whole items (a string is never split).
+    def self.flatten_crinja_terms(terms : Array(Crinja::Value)) : Array(Crinja::Value)
+      terms.flat_map do |term|
+        if term.sequence?
+          flatten_crinja_terms(term.to_a)
+        else
+          [term]
+        end
+      end
     end
 
     # Full JSON::Any -> Crinja::Value tree conversion (unlike
@@ -2166,9 +2196,21 @@ module Krikri
                  Crinja::Value.new(hash.map { |k, v| Crinja::Value.new({"key" => Crinja::Value.new(k.to_s), "value" => v}) })
                when "list"
                  Crinja::Value.new(variadic_terms)
-               when "items"
-                 Crinja::Value.new(variadic_terms.flat_map { |tval| tval.sequence? ? tval.to_a : [tval] })
-               when "together"
+              when "items"
+              Crinja::Value.new(variadic_terms.flat_map { |tval| tval.sequence? ? tval.to_a : [tval] })
+              when "flattened"
+              # lookup('flattened', t1, t2, ...) - real Ansible's own
+              # flattened lookup: deep-flattens every term (nested lists
+              # flattened recursively, non-list scalars kept as whole
+              # items) and comma-joins the results via the scalar
+              # `lookup()` spelling (wantlist=True stays a real list).
+              # .j2 twin of ExpressionEvaluator's own flattened case
+              # (HanXHX.debian_bootstrap, round 821001) - the two
+              # evaluators share no implementation.
+              wantlist = arguments.kwargs["wantlist"]?.try(&.truthy?) || false
+              items = JinjaFilters.flatten_crinja_terms(variadic_terms)
+              wantlist ? Crinja::Value.new(items) : Crinja::Value.new(items.map(&.to_string).join(","))
+              when "together"
                  arrays = variadic_terms.map { |tval| tval.sequence? ? tval.to_a : [] of Crinja::Value }
                  size = arrays.max_of?(&.size) || 0
                  Crinja::Value.new((0...size).map { |i| Crinja::Value.new(arrays.map { |arr| arr[i]? || Crinja::Value.new(nil) }) })

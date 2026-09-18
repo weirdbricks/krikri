@@ -1983,7 +1983,7 @@ module Krikri
 
         evaluate_lookup_scalar(lookup_type, parts, kwargs, query_mode) ||
           evaluate_lookup_file(lookup_type, parts, kwargs) ||
-          evaluate_lookup_list(lookup_type, parts, kwargs) ||
+          evaluate_lookup_list(lookup_type, parts, kwargs, query_mode) ||
           evaluate_lookup_misc(lookup_type, parts, kwargs) ||
           evaluate_lookup_file_parsers(lookup_type, parts, kwargs) ||
           evaluate_custom_python_lookup(lookup_type, parts, kwargs, query_mode) ||
@@ -2650,7 +2650,7 @@ module Krikri
         end
       end
 
-      private def evaluate_lookup_list(lookup_type : String?, parts : Array(String), kwargs : Array(String)) : String?
+      private def evaluate_lookup_list(lookup_type : String?, parts : Array(String), kwargs : Array(String), query_mode : Bool = false) : String?
         case lookup_type
         when "list"
           # lookup('list', a, b, c) - real Ansible's own list lookup:
@@ -2663,6 +2663,21 @@ module Krikri
           # items lookup: flattens the given list terms one level
           # (itertools.chain, not a deep flatten).
           parts[1..].flat_map { |part| lookup_array(evaluate_lookup_term(part.strip)) }.to_json
+        when "flattened"
+          # lookup('flattened', t1, t2, ...) - real Ansible's own flattened
+          # lookup: deep-flattens every term (nested lists flattened
+          # recursively, non-list scalars kept as whole items - a string is
+          # never split) and returns the flat list; via the scalar
+          # `lookup()` spelling real Ansible comma-joins the results. Was
+          # entirely unimplemented here - fell through every case to the
+          # "undefined" fallback, feeding the literal string "undefined" to
+          # the consumer: HanXHX.debian_bootstrap's
+          # `pkg: "{{ lookup('flattened', dbs_packages,
+          # dbs_distro_packages) }}"` (round 821001) made the apt plugin
+          # fail with "No package matching 'undefined' is available".
+          items = lookup_flatten(parts[1..].map { |part| evaluate_lookup_term(part.strip) })
+          wantlist = kwargs.any? { |part| part.strip.downcase.starts_with?("wantlist=true") }
+          (query_mode || wantlist) ? items.to_json : items.map { |item| item.raw.is_a?(String) ? item.as_s : item.to_json }.join(",")
         when "together"
           evaluate_lookup_together(parts)
         when "nested"
@@ -2694,6 +2709,19 @@ module Krikri
         lists = parts[1..].map { |part| lookup_array(evaluate_lookup_term(part.strip)) }
         size = lists.max_of?(&.size) || 0
         (0...size).map { |i| lists.map { |list| list[i]? || JSON::Any.new(nil) } }.to_json
+      end
+
+      # Real Ansible's own flattened lookup runs every term through
+      # module_utils' deep `flatten` - nested lists flattened recursively,
+      # non-list scalars kept as whole items (a string is never split).
+      private def lookup_flatten(values : Array(JSON::Any)) : Array(JSON::Any)
+        values.flat_map do |value|
+          if (arr = value.as_a?)
+            lookup_flatten(arr)
+          else
+            [value]
+          end
+        end
       end
 
       # lookup('varnames', 'regex1', 'regex2', ...) - real Ansible's own
