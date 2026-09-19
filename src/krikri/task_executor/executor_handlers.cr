@@ -258,6 +258,7 @@ module Krikri
           handler.loop_items ||
             resolve_loop_template(handler, vars_context) ||
             resolve_loop_nested(handler, vars_context, host.name) ||
+            resolve_loop_together(handler, vars_context, host.name) ||
             resolve_loop_flattened(handler, vars_context, host.name) ||
             resolve_loop_subelements(handler, vars_context) ||
             resolve_loop_filetree(handler, host, vars_context)

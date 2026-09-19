@@ -945,6 +945,38 @@ describe Krikri::PlaybookParser do
       task.loop_nested_sources.should eq(["{{ users }}", "{{ groups }}"])
     end
 
+    it "parses with_together: into an elementwise-zip loop" do
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.debug:
+            msg: "{{ item }}"
+          with_together:
+            - [a, b]
+            - [x, y]
+        YAML
+
+      items = task.loop_items.as(Array(JSON::Any))
+      items.map(&.as_a.map(&.as_s)).should eq([["a", "x"], ["b", "y"]])
+    end
+
+    it "defers a with_together: array with templated scalar sources to runtime" do
+      # manala.accounts-shaped: each source is a whole-list variable
+      # reference (and may be empty), so the zip's row count is only
+      # knowable at execution time - same defer design as with_nested's
+      # own templated-source shape above.
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.debug:
+            msg: "{{ item }}"
+          with_together:
+            - "{{ users }}"
+            - "{{ groups }}"
+        YAML
+
+      task.loop_items.should be_nil
+      task.loop_together_sources.should eq(["{{ users }}", "{{ groups }}"])
+    end
+
     it "parses with_sequence: into a numeric range" do
       task = single_task(<<-YAML)
         - name: t

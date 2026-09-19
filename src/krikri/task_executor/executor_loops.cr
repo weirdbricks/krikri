@@ -6,7 +6,7 @@ module Krikri
     private def task_has_loop?(task : Task) : Bool
       !task.loop_items.nil? || !task.loop_fileglob.nil? || !task.loop_first_found.nil? ||
         !task.loop_template.nil? || !task.loop_flattened.nil? || !task.loop_subelements_list.nil? ||
-        !task.loop_nested_sources.nil? || !task.loop_filetree.nil?
+        !task.loop_nested_sources.nil? || !task.loop_together_sources.nil? || !task.loop_filetree.nil?
     end
 
     # Runs *tasks* against *hosts* as one shared batch: one "TASK [...]"
@@ -552,6 +552,47 @@ module Krikri
         end
       end
       LoopResolver.with_nested(lists)
+    end
+
+    # with_together: resolve each raw source string exactly as
+    # resolve_loop_nested does (same undefined-handling, same
+    # resolve_template_value/expression_evaluator/parse_list_result calls),
+    # then zip the resulting lists elementwise via LoopResolver.with_together
+    # instead of taking their cartesian product (round 700096/820006,
+    # manala.accounts).
+    private def resolve_loop_together(task : Task, vars_context : Hash(String, JSON::Any), host_name : String = "localhost") : Array(JSON::Any)?
+      sources = task.loop_together_sources
+      return nil unless sources
+
+      substitutor = VarSubstitutor.new(vars: vars_context, host_name: host_name)
+      lists = sources.map do |raw|
+        value = resolve_template_value(raw, vars_context)
+
+        unless value
+          bare = raw.strip
+          if bare.starts_with?("{{") && bare.ends_with?("}}")
+            bare = bare[2..-3].strip
+            result = expression_evaluator_for(vars_context).evaluate(bare)
+            if result == "undefined"
+              raise UndefinedVariableError.new(Krikri.strict_undefined_message(bare, vars_context))
+            end
+            parsed = parse_list_result(result, vars_context)
+            value = JSON::Any.new(parsed) if parsed
+          end
+        end
+
+        if value
+          value.as_a? || [value]
+        else
+          substituted = substitutor.substitute(raw).strip
+          if substituted.starts_with?('[') && (parsed = (JSON.parse(substituted).as_a? rescue nil))
+            parsed
+          else
+            [JSON::Any.new(substituted)]
+          end
+        end
+      end
+      LoopResolver.with_together(lists)
     end
 
     # Resolve a bare "{{ expr }}" template (optionally with leading/trailing

@@ -27,6 +27,17 @@ module Krikri
       combos.map { |combo| JSON::Any.new(combo) }
     end
 
+    # with_together: [[a, b], [x, y]] -> [[a,x], [b,y]]
+    # Real Ansible zips the sources elementwise (itertools.zip_longest),
+    # padding every shorter list with None, so the row count is the LONGEST
+    # source's size - unlike with_nested's cartesian product above. Access
+    # in a task via item[0], item[1], ... (round 700096/820006,
+    # manala.accounts).
+    def self.with_together(lists : Array(Array(JSON::Any))) : Array(JSON::Any)
+      size = lists.max_of?(&.size) || 0
+      (0...size).map { |i| JSON::Any.new(lists.map { |list| list[i]? || JSON::Any.new(nil) }) }
+    end
+
     # with_community.general.flattened: flattens a set of per-source lists
     # into one flat list of items, in order - this module's own copy was
     # dead code (never called from anywhere - grep for `LoopResolver.
