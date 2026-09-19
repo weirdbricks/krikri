@@ -18,7 +18,7 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.1171`.**
+**Currently at `0.9.1173`.**
 
 ## Round 829000-829799: 800-role Galaxy batch (ubuntu+rocky), no new krikri bug (0.9.1154)
 
@@ -335,23 +335,35 @@ independently-provisioned hosts in that round, not an engine defect.
   `community.general.dconf`, `community.general.portage` - genuinely
   missing, one role each unless noted. See `ROLES_TESTED.md` for the
   exact affected role per module.
-- **Round 700000-701129: real divergences, not yet root-caused**
-  (400-role Galaxy top-download batch, ubuntu+rocky) - each needs its
-  own confirmed repro before treating as a real krikri bug, per this
-  file's workflow: `inverse_inc.gitlab_buildpkg_tools`,
-  `alannix_lw.lacework_agent_ansible_role`,
-  `redhat_sap.sap_hana_deployment`, `manala.environment`,
-  `ChristopherDavenport.apache-portable-runtime`,
-  `manala.accounts`, `buluma.confluence`, `xanmanning.helm`,
-  `buluma.jira`,
-  `reimarstier.jetbrains_installer`, `darkwizard242.packer`,
-  `openmicroscopy.upgrade-distpackages`, `buluma.gitlab_ee`,
-  `redhat_sap.sap_hana_hsr` - one-off recap
-  mismatches, no shared pattern found yet. `grycap.clues` (a `pip:`
+- **Round 700000-701129: `xanmanning.helm` - cosmetic message-only gap,
+  not a behavioral divergence.** Re-confirmed live (round 820008): both
+  engines fail the SAME task (`Ensure helm_projects_dir exists`) with the
+  SAME error class (a strict-conditional-type error - a bare `when:
+  helm_projects_dir` truthy-string check under ansible-core's strict
+  conditional typing). krikri's message just omits the `at
+  '<file>:line:col>'` source-location suffix real Ansible appends when the
+  offending value originated from a role default rather than the task
+  itself - cosmetic text-diff only, not a different outcome (recap counts
+  identical). Left as-is; not worth the source-location-tracking
+  architecture for one cosmetic suffix. The rest of this round's original
+  "not yet root-caused" list is now fully closed: `grycap.clues` (a `pip:`
   VCS-requirement idempotency bug), `HanXHX.debian_bootstrap`
   (`lookup('flattened', ...)` unimplemented), and
-  `linux-system-roles.ssh` (`trim` filter crashing on a native bool)
-  are now FIXED - see git log. (`ccdc.ntp_configuration`,
+  `linux-system-roles.ssh` (`trim` filter crashing on a native bool) are
+  FIXED (0.9.1160-0.9.1161); `manala.accounts` (`with_together:` loop
+  keyword entirely unimplemented) and `redhat_sap.sap_hana_hsr` (a task's
+  `when:` was evaluated too leniently against an undefined loop-source
+  variable unrelated to `item`, wrongly skipping instead of failing) are
+  FIXED (0.9.1172-0.9.1173) - see git log for both. `inverse_inc.
+  gitlab_buildpkg_tools`, `alannix_lw.lacework_agent_ansible_role`,
+  `redhat_sap.sap_hana_deployment`, `manala.environment`,
+  `ChristopherDavenport.apache-portable-runtime`, `buluma.confluence`,
+  `buluma.jira`, `reimarstier.jetbrains_installer`,
+  `darkwizard242.packer`, `openmicroscopy.upgrade-distpackages`, and
+  `buluma.gitlab_ee` are RE-CONFIRMED CLEAN (round 820000-821005 -
+  identical py/crystal recaps, cold and warm; the remaining recap
+  failures on some of these are role/environment-side, e.g. a required
+  env var never set in this harness, not krikri bugs). (`ccdc.ntp_configuration`,
   `so5.ssh_hostbased_auth`, `so5.pbspro` - the `with_first_found:`
   wrong-subdir-search cluster also once listed here - are now fixed,
   see git log.) The two "undefined-looking value leaking into rendered
