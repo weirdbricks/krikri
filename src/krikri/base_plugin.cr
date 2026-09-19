@@ -292,7 +292,23 @@ module Krikri
       env = Hash(String, String).from_json(env_json)
       return command if env.empty?
 
-      exports = env.map { |key, value| "export #{key}=#{shell_single_quote(value)}" }.join("; ")
+      # The KEY must be a valid POSIX identifier before it can be
+      # interpolated into the export list: the export string is executed by
+      # a real shell (LocalExecutor falls through to /bin/bash -c, and the
+      # remote side runs `ssh host <string>`), so a task-controlled key like
+      # `X; touch /tmp/pwned; #` would execute there. The VALUE side is
+      # safe (Shell.single_quote below); real Ansible hands the dict to
+      # subprocess's env and cannot execute through a key, so any key it
+      # would have honored as a real env name passes this check too.
+      exports = env.map do |key, value|
+        unless key.matches?(/\A[A-Za-z_][A-Za-z0-9_]*\z/)
+          raise ArgumentError.new(
+            "Invalid environment variable name #{key.inspect} in task " \
+            "environment: keys must match [A-Za-z_][A-Za-z0-9_]*"
+          )
+        end
+        "export #{key}=#{shell_single_quote(value)}"
+      end.join("; ")
       "#{exports}; #{command}"
     end
 
