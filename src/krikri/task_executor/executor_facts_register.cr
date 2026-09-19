@@ -119,7 +119,16 @@ module Krikri
 
         if success
           puts "ok: [#{connection_host}]".colorize(:green)
-          @results[host.name]["ok"] += 1
+          # A successful implicit Gathering Facts task is deliberately NOT
+          # counted in the recap - real ansible-core 2.19's recap excludes it
+          # entirely (live-verified against 2.19.11: facts + one `command:
+          # /bin/true` task recaps ok=1, and facts + zero tasks recaps
+          # nothing at all, while an EXPLICIT `setup:` task in the task list
+          # counts as ok=1 normally; a FAILED implicit setup does still count
+          # as failed=1 and halts the host - case verified live too). The
+          # phantom ok= here made every play's recap one ok too high, e.g.
+          # round900836 NINEJKH.git: facts + one ignore_errors:-swallowed
+          # command failure recapped ok=2 changed=1 here vs real ok=1.
         else
           puts "failed: [#{connection_host}]".colorize(:red)
           puts "  Error gathering facts: #{error_message}".colorize(:red)
