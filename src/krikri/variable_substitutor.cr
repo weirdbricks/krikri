@@ -1592,10 +1592,22 @@ module Krikri
         # set-target/loop-var, never the enclosing loop's (round 813222,
         # pluggero.burpsuite, "'ext' is undefined").
         active_loop_vars = stack.reduce(Set(String).new) { |acc, frame| acc | frame.loop_vars }
-        scan_block_tag_refs(cond_no_strings, loop_var, active_guarantee, active_loop_vars)
+        # A condition's OWN leading `X is defined` and-clause guards its own
+        # later and-clauses: real Jinja/Python `and` evaluates left-to-right
+        # with short-circuit, so by the time any later and-clause runs, the
+        # earlier `X is defined` clause has already proven truthy and X is
+        # guaranteed. Without unioning this condition's own guard set in,
+        # `github_token is defined and github_token | length` (round 900944,
+        # noobient.github_release's headers:) raised "'github_token' is
+        # undefined" where real ansible-playbook renders the else branch -
+        # Crinja's own `and` operator already short-circuits correctly, so
+        # only this pre-scan's inherited-from-outer-frames-only guarantee
+        # was missing the same-clause case.
+        own_guards = block_tag_defined_guards(cond_no_strings)
+        scan_block_tag_refs(cond_no_strings, loop_var, active_guarantee | own_guards, active_loop_vars)
 
         if stripped.starts_with?("if ")
-          stack.push(BlockTagFrame.new(:if, block_tag_defined_guards(cond_no_strings)))
+          stack.push(BlockTagFrame.new(:if, own_guards))
         elsif stripped.starts_with?("elif ")
           if (top = stack.last?) && top.kind == :if
             top.guaranteed_defined = block_tag_defined_guards(cond_no_strings)

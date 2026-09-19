@@ -109,6 +109,51 @@ describe Krikri::VarSubstitutor do
         sub.substitute("{% if some_var == \"x\" %}yes{% endif %}", strict: true)
       end
     end
+    it "does not raise for a bare ref guarded by the SAME condition's own leading `X is defined` and-clause (round 900944, noobient.github_release)" do
+      # Found via noobient.github_release's headers: param (round 900944):
+      # "{% if github_token is defined and github_token | length %}Bearer
+      # {{ github_token }}{% else %}None{% endif %}" with github_token
+      # genuinely undefined. Real ansible-playbook renders "None" - `and`
+      # short-circuits left-to-right, so the `is defined` clause being
+      # false means the later `github_token | length` clause never runs.
+      # Crinja's own `and` operator already does this correctly; the strict
+      # pre-scan raised "'github_token' is undefined" because it only fed
+      # a condition's guard set to NESTED tags, never to the condition's
+      # own same-clause references.
+      v = {} of String => JSON::Any
+      sub = Krikri::VarSubstitutor.new(vars: v)
+      sub.substitute(
+        "{% if github_token is defined and github_token | length %}Bearer {{ github_token }}{% else %}None{% endif %}",
+        strict: true
+      ).should eq("None")
+    end
+
+    it "still takes the true branch when the same-clause-guarded var is defined and truthy" do
+      v = {
+        "github_token" => JSON::Any.new("s3cr3t"),
+      } of String => JSON::Any
+      sub = Krikri::VarSubstitutor.new(vars: v)
+      sub.substitute(
+        "{% if github_token is defined and github_token | length %}Bearer {{ github_token }}{% else %}None{% endif %}",
+        strict: true
+      ).should eq("Bearer s3cr3t")
+    end
+
+    it "still raises for `false and undefined_var` (no is-defined guard, out of scope for the same-clause fix)" do
+      # Deliberate limit, not an oversight: the same-clause guard unioning
+      # only covers a leading `X is defined` conjunct that the and-chain
+      # has PROVEN true by the time a later clause runs. A bare literal
+      # conjunct like `false and github_token` proves nothing about
+      # github_token's definedness, so this scan still raises - matching
+      # the deliberate no-literal-value-analysis scope of
+      # block_tag_defined_guards itself.
+      v = {} of String => JSON::Any
+      sub = Krikri::VarSubstitutor.new(vars: v)
+      expect_raises(Krikri::UndefinedVariableError, /'github_token' is undefined/) do
+        sub.substitute("{% if false and github_token %}yes{% else %}no{% endif %}", strict: true)
+      end
+    end
+
     it "does not false-positive on a for-loop variable referenced inside a nested {% set %} tag (round 813222, pluggero.burpsuite)" do
       # Found via pluggero.burpsuite's
       # tasks/noauto_extensions_sort_by_priority.yml (round 813222): a
