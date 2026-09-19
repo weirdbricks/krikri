@@ -268,7 +268,17 @@ module Krikri
       String.build do |flags|
         # user/password ride the staged defaults file (see
         # stages_defaults_file?) whenever it's in play - never argv.
-        unless stages_defaults_file?
+        # The --defaults-extra-file= pointing at that staged file is
+        # emitted here as the first flag (mysqldump/mysql demand a
+        # defaults flag come before everything else, see
+        # config_file_flag above); when staging is active
+        # config_file_flag is empty by construction, so this really is
+        # the first option on the tool's argv. The path is the
+        # $__krikri_mydefaults shell variable set by
+        # defaults_file_prefix in the same /bin/bash -c string.
+        if stages_defaults_file?
+          flags << "--defaults-extra-file=\"$__krikri_mydefaults\" "
+        else
           flags << "--user=" << quote(@params["login_user"]) << " " if @params["login_user"]?
           flags << "--password=" << quote(@params["login_password"]) << " " if @params["login_password"]?
         end
