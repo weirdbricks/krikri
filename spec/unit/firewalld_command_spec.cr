@@ -206,7 +206,7 @@ describe Krikri::PluginHelpers::FirewalldCommand do
     end
 
     it "adds an element and serializes back to parseable zone XML" do
-      content = Krikri::PluginHelpers::FirewalldCommand.zone_add(zone_xml, "service", {"name" => "http"}).not_nil!
+      content = Krikri::PluginHelpers::FirewalldCommand.zone_add(zone_xml, "service", {"name" => "http"}) || raise "zone_add returned nil"
       Krikri::PluginHelpers::FirewalldCommand.zone_query(content, "service", {"name" => "http"}).should be_true
       Krikri::PluginHelpers::FirewalldCommand.zone_query(content, "service", {"name" => "ssh"}).should be_true
       content.should contain(%(<service name="http"/>))
@@ -217,7 +217,7 @@ describe Krikri::PluginHelpers::FirewalldCommand do
     end
 
     it "removes an element" do
-      content = Krikri::PluginHelpers::FirewalldCommand.zone_remove(zone_xml, "port", {"port" => "8891", "protocol" => "tcp"}).not_nil!
+      content = Krikri::PluginHelpers::FirewalldCommand.zone_remove(zone_xml, "port", {"port" => "8891", "protocol" => "tcp"}) || raise "zone_remove returned nil"
       Krikri::PluginHelpers::FirewalldCommand.zone_query(content, "port", {"port" => "8891", "protocol" => "tcp"}).should be_false
       Krikri::PluginHelpers::FirewalldCommand.zone_query(content, "service", {"name" => "ssh"}).should be_true
     end
