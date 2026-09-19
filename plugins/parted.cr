@@ -52,6 +52,40 @@ module Krikri
       end
 
       unit = @params["unit"]? || "KiB"
+      if error = validate_unit_and_label(unit)
+        return error
+      end
+
+      check_mode = true?(@params["_ansible_check_mode"]?)
+      number, part_start, part_end, label, fs_type, flags = resolve_partition_params
+
+      # state: info - real runs print and returns the parsed output.
+      if state == "info"
+        return info_result(device, unit)
+      end
+
+      current = stat_and_read(device, unit)
+      return current if current.is_a?(PluginResult)
+
+      if state == "absent"
+        return absent_partition(device, current, number, check_mode)
+      end
+
+      present_partition(device, current, number, part_start, part_end,
+        unit, label, fs_type, flags, check_mode)
+    end
+
+    private def resolve_partition_params : {Int32?, String, String, String, String, String?}
+      number = @params["number"]?.try { |v| v.to_i? }
+      part_start = @params["part_start"]? || "0%"
+      part_end = @params["part_end"]? || "100%"
+      label = @params["label"]? || "msdos"
+      fs_type = @params["fs_type"]? || "ext2"
+      flags = @params["flags"]? # comma/space-separated or single
+      {number, part_start, part_end, label, fs_type, flags}
+    end
+
+    private def validate_unit_and_label(unit : String) : PluginResult?
       unless PARTED_UNITS.includes?(unit)
         return PluginResult.new(changed: false, failed: true,
           msg: "value of unit must be one of: #{PARTED_UNITS.join(", ")}, got: #{unit}")
@@ -63,29 +97,23 @@ module Krikri
             msg: "value of label must be one of: #{PARTED_LABELS.join(", ")}, got: #{label}")
         end
       end
+      nil
+    end
 
-      check_mode = true?(@params["_ansible_check_mode"]?)
-      number = @params["number"]?.try { |v| v.to_i? }
-      part_start = @params["part_start"]? || "0%"
-      part_end = @params["part_end"]? || "100%"
-      label = @params["label"]? || "msdos"
-      fs_type = @params["fs_type"]? || "ext2"
-      flags = @params["flags"]? # comma/space-separated or single
-
-      # state: info - real runs print and returns the parsed output.
-      if state == "info"
-        result = read_partitions(device, unit)
-        if result.is_a?(String)
-          return PluginResult.new(changed: false, failed: true, msg: result)
-        end
-        return PluginResult.new(changed: false, failed: false,
-          msg: "Current partitions on device:\n#{device}",
-          other: JSON.parse(%({"partitions": #{result.to_json}})))
+    private def info_result(device : String, unit : String) : PluginResult
+      result = read_partitions(device, unit)
+      if result.is_a?(String)
+        return PluginResult.new(changed: false, failed: true, msg: result)
       end
+      PluginResult.new(changed: false, failed: false,
+        msg: "Current partitions on device:\n#{device}",
+        other: JSON.parse(%({"partitions": #{result.to_json}})))
+    end
 
-      # Real parted.py runs `parted -s <device> print` early to check
-      # the device exists; a missing/unreadable device fails with
-      # "Error: Could not stat device <dev> - No such file or directory."
+    # Real parted.py runs `parted -s <device> print` early to check
+    # the device exists; a missing/unreadable device fails with
+    # "Error: Could not stat device <dev> - No such file or directory."
+    private def stat_and_read(device : String, unit : String) : Array(Hash(String, String)) | PluginResult
       device_exists = remote_exec("test -e #{Shell.single_quote(device)}")
       unless device_exists[:exit_code] == 0
         return PluginResult.new(changed: false, failed: true,
@@ -93,16 +121,8 @@ module Krikri
       end
 
       current = read_partitions(device, unit)
-      if current.is_a?(String)
-        return PluginResult.new(changed: false, failed: true, msg: current)
-      end
-
-      if state == "absent"
-        return absent_partition(device, current, number, check_mode)
-      end
-
-      present_partition(device, current, number, part_start, part_end,
-        unit, label, fs_type, flags, check_mode)
+      return PluginResult.new(changed: false, failed: true, msg: current) if current.is_a?(String)
+      current
     end
 
     # Runs `parted -s <dev> -m unit <unit> print` and parses the
