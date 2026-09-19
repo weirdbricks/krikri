@@ -637,7 +637,7 @@ module Krikri
       return unless result
 
       fact_host = (task.delegate_facts? && task.delegate_to) ? exec_host : host
-      finish_single_task(task, host, result, fact_host, vars_context: vars_context)
+      finish_single_task(task, host, result, fact_host, vars_context: vars_context, exec_host: exec_host)
     end
 
     # Resolve delegate_to: to the Host whose connection the module should

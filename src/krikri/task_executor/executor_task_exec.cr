@@ -454,7 +454,7 @@ module Krikri
     # result field like "result.rc" does). Same substitute-then-evaluate
     # pipeline as when_condition/until_condition.
     private def finish_single_task(task : Task, host : Host, result : JSON::Any, fact_host : Host = host,
-                                   vars_context : Hash(String, JSON::Any)? = nil) : Nil
+                                   vars_context : Hash(String, JSON::Any)? = nil, exec_host : Host? = nil) : Nil
       result = debug_if_requested(task, host, result)
       merge_ansible_facts(fact_host, result, task.module_name.ends_with?("set_fact"))
 
@@ -516,7 +516,7 @@ module Krikri
       if @adhoc
         ResultDisplay.display_adhoc_result(host, result, @diff_mode, module_name: task.module_name)
       else
-        ResultDisplay.display_result(host, result, @diff_mode, ignore_errors: ignore_errors, no_log: no_log, module_name: task.module_name)
+        ResultDisplay.display_result(host, result, @diff_mode, ignore_errors: ignore_errors, no_log: no_log, module_name: task.module_name, delegate_target: exec_host && exec_host != host ? exec_host.connection_host : nil)
       end
       ResultDisplay.update_stats(@results[host.name], result, ignore_errors)
       halt_if_failed(task, host, failed)

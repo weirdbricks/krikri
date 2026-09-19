@@ -831,6 +831,11 @@ module Krikri
       # diverges from `host` in the non-batched branch below (batching is
       # excluded outright for a delegate_to: task by loop_batch_eligible?).
       fact_hosts = Array(Host).new(rendered_items.size, host)
+      # Per-item delegate target for the `ok: [source -> target]` host
+      # line - tracked separately from fact_hosts (which only diverges
+      # under delegate_facts:; the delegated DISPLAY applies to any
+      # delegate_to: task).
+      delegate_hosts = Array(Host).new(rendered_items.size, host)
 
       item_results = if loop_batch_eligible?(task, host, exec_host, base_vars_context)
                        execute_looped_task_batched(task, host, base_vars_context, rendered_items)
@@ -924,6 +929,7 @@ module Krikri
                          # Host literally named "undefined".
                          item_exec_host = task.delegate_to ? resolve_delegate_host(task, host, vars_context, strict: true) : exec_host
                          fact_hosts[idx] = item_exec_host if task.delegate_facts? && task.delegate_to
+                         delegate_hosts[idx] = item_exec_host if task.delegate_to
 
                          item_label = item_label_for(task, item, vars_context, host)
                          result = if (until_condition = task.until_condition) && !resolve_task_check_mode(task, vars_context)
@@ -943,7 +949,7 @@ module Krikri
                        end
                      end
 
-      finish_looped_task(task, host, rendered_items, item_results, fact_hosts, base_vars_context)
+      finish_looped_task(task, host, rendered_items, item_results, fact_hosts, base_vars_context, delegate_hosts)
     end
 
     # Whether execute_looped_task can send every surviving item through
@@ -1090,7 +1096,7 @@ module Krikri
     # both the batched and one-at-a-time paths) so register:/notify:/
     # stats/halt bookkeeping stays byte-identical regardless of which
     # transport produced the results.
-    private def finish_looped_task(task : Task, host : Host, loop_items : Array(JSON::Any), item_results : Array(JSON::Any?), fact_hosts : Array(Host)? = nil, base_vars_context : Hash(String, JSON::Any)? = nil) : Nil
+    private def finish_looped_task(task : Task, host : Host, loop_items : Array(JSON::Any), item_results : Array(JSON::Any?), fact_hosts : Array(Host)? = nil, base_vars_context : Hash(String, JSON::Any)? = nil, delegate_hosts : Array(Host)? = nil) : Nil
       results = [] of JSON::Any
       any_changed = false
       any_failed = false
@@ -1179,7 +1185,7 @@ module Krikri
           any_failed ||= failed
           any_unreachable ||= unreachable_task_result?(result)
 
-          ResultDisplay.display_result(host, result, @diff_mode, item_label: item_label, ignore_errors: resolve_task_ignore_errors(task, base_vars_context), no_log: resolve_task_no_log(task, base_vars_context))
+          ResultDisplay.display_result(host, result, @diff_mode, item_label: item_label, ignore_errors: resolve_task_ignore_errors(task, base_vars_context), no_log: resolve_task_no_log(task, base_vars_context), delegate_target: (dh = delegate_hosts.try(&.[idx])) && dh != host ? dh.connection_host : nil)
         end
 
         result_hash = result.as_h.dup
