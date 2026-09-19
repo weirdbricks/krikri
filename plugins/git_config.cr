@@ -48,7 +48,7 @@ module Krikri
           msg: PluginHelpers::GetBinPath.missing_executable_error("git", @searched_paths))
       end
 
-      name = @params["name"].not_nil!
+      name = @params["name"]
       state = @params["state"]? || "present"
       unset = state == "absent"
       value = @params["value"]? || ""
