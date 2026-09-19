@@ -160,6 +160,48 @@ describe Krikri::FactsGatherer do
     end
   end
 
+  describe "#parse_lsb_release" do
+    # Real Ansible's LSBFactCollector always derives major_release from
+    # release whenever the lsb dict has a release at all (lsb.py:
+    # `lsb_facts['major_release'] = lsb_facts['release'].split('.')[0]`),
+    # confirmed live: `ansible localhost -m setup -a filter=ansible_lsb`
+    # on LMDE 7 (release "7", no dot) reports major_release "7" verbatim.
+    # This engine only set id/description/release/codename, so avnes.plank's
+    # own `when: ansible_lsb.major_release|int >= 16` raised
+    # "'ansible_lsb.major_release' is undefined" where real Ansible's
+    # when: passed cleanly (round900297).
+    it "derives major_release as the portion of release before the first dot" do
+      lsb = Krikri::FactsGatherer.parse_lsb_release(
+        %(DISTRIB_ID=Ubuntu\nDISTRIB_RELEASE="22.04"\nDISTRIB_CODENAME="jammy"\nDISTRIB_DESCRIPTION="Ubuntu 22.04.5 LTS"\n)
+      )
+      lsb["major_release"].should eq("22")
+      lsb["release"].should eq("22.04")
+    end
+
+    it "passes a dotless release through verbatim as major_release" do
+      # Python's str.split('.')[0] is the whole string when there is no
+      # dot - LMDE 7's release is just "7" and real Ansible reports
+      # major_release "7" (verified live on this machine).
+      lsb = Krikri::FactsGatherer.parse_lsb_release(
+        %(DISTRIB_ID=Linuxmint\nDISTRIB_RELEASE=7\nDISTRIB_CODENAME=gigi\nDISTRIB_DESCRIPTION="LMDE 7 (gigi)"\n)
+      )
+      lsb["major_release"].should eq("7")
+    end
+
+    it "omits major_release (like the other keys) when release is absent" do
+      # Real Ansible gates the derivation on `'release' in lsb_facts` - a
+      # dict without release stays without major_release.
+      lsb = Krikri::FactsGatherer.parse_lsb_release(%(DISTRIB_ID=Debian\nDISTRIB_CODENAME=bookworm\n))
+      lsb.has_key?("major_release").should be_false
+      lsb.has_key?("release").should be_false
+      lsb["id"].should eq("Debian")
+    end
+
+    it "returns an empty dict for empty content, matching the always-defined-but-possibly-empty ansible_lsb" do
+      Krikri::FactsGatherer.parse_lsb_release("").should be_empty
+    end
+  end
+
   describe "#detect_virtualization" do
     it "returns a non-empty string on this real host, matching real Ansible's always-populated virtualization_type" do
       # Live-environment smoke test, not a controlled-input unit test -

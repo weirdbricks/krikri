@@ -450,6 +450,36 @@ module Krikri
       ""
     end
 
+    # Parse an /etc/lsb-release payload into the ansible_lsb dict as a pure
+    # function so it's testable without the real file (extracted from
+    # #gather_os_facts, same shape as #parse_container_env).
+    def parse_lsb_release(content : String) : Hash(String, String)
+      lsb_info = {} of String => String
+      content.each_line do |line|
+        key, sep, value = line.partition('=')
+        next if sep.empty?
+        lsb_info[key.strip] = value.strip.strip('"')
+      end
+      lsb_facts = {} of String => String
+      lsb_facts["id"] = lsb_info["DISTRIB_ID"] if lsb_info["DISTRIB_ID"]?
+      lsb_facts["description"] = lsb_info["DISTRIB_DESCRIPTION"] if lsb_info["DISTRIB_DESCRIPTION"]?
+      lsb_facts["release"] = lsb_info["DISTRIB_RELEASE"] if lsb_info["DISTRIB_RELEASE"]?
+      lsb_facts["codename"] = lsb_info["DISTRIB_CODENAME"] if lsb_info["DISTRIB_CODENAME"]?
+      if release = lsb_facts["release"]?
+        # Real Ansible's LSBFactCollector derives major_release from release
+        # whenever the lsb dict has a release at all (lsb.py:
+        # `lsb_facts['major_release'] = lsb_facts['release'].split('.')[0]`),
+        # so a dotless release string passes through verbatim - live check
+        # `ansible localhost -m setup -a filter=ansible_lsb` on LMDE 7
+        # reports release "7" alongside major_release "7". Without the key a
+        # role's `when: ansible_lsb.major_release|int >= 16` raised
+        # "'ansible_lsb.major_release' is undefined" where real Ansible's
+        # when: passed cleanly (round900297 avnes.plank).
+        lsb_facts["major_release"] = release.partition('.').first
+      end
+      lsb_facts
+    end
+
     # Gather OS facts
     def gather_os_facts(facts)
       os_info = parse_os_release
@@ -590,20 +620,8 @@ module Krikri
       # fails evaluating the second clause ('dict' object has no
       # attribute 'id', since lsb_facts has no 'id' key at all on
       # Debian), krikri silently skipped instead.
-      lsb_info = {} of String => String
-      if File.exists?("/etc/lsb-release")
-        File.each_line("/etc/lsb-release") do |line|
-          key, sep, value = line.partition('=')
-          next if sep.empty?
-          lsb_info[key.strip] = value.strip.strip('"')
-        end
-      end
-      lsb_facts = {} of String => String
-      lsb_facts["id"] = lsb_info["DISTRIB_ID"] if lsb_info["DISTRIB_ID"]?
-      lsb_facts["description"] = lsb_info["DISTRIB_DESCRIPTION"] if lsb_info["DISTRIB_DESCRIPTION"]?
-      lsb_facts["release"] = lsb_info["DISTRIB_RELEASE"] if lsb_info["DISTRIB_RELEASE"]?
-      lsb_facts["codename"] = lsb_info["DISTRIB_CODENAME"] if lsb_info["DISTRIB_CODENAME"]?
-      facts["ansible_lsb"] = lsb_facts
+      lsb_content = File.exists?("/etc/lsb-release") ? File.read("/etc/lsb-release") : ""
+      facts["ansible_lsb"] = parse_lsb_release(lsb_content)
 
       facts["ansible_pkg_mgr"] = detect_pkg_mgr
 
