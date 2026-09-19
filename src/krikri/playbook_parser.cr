@@ -957,6 +957,23 @@ module Krikri
   class StaticImportUndefinedError < Exception
   end
 
+  # Raised at PARSE time when an import_tasks: path templates fine but
+  # the resolved file genuinely doesn't exist. Real ansible-playbook
+  # aborts the WHOLE run there - "[ERROR]: Unable to retrieve file
+  # contents. Could not find or access '<resolved>' on the Ansible
+  # Controller.", no PLAY RECAP (verified against ansible-core 2.19.11
+  # with a minimal repro, both as a templated path that resolves to a
+  # missing file and as a plain literal missing path - identical fatal
+  # shape; lucascbeyeler.zimbra's `import_tasks: "vars/{{ zimbra_version
+  # }}.yml"` -> vars/8.8.12.yml with only vars/8.8.15.yml on disk, round
+  # 900185). Bypasses parse_tasks's generic per-task rescue (same
+  # mechanism as StaticImportUndefinedError) - the bare-Exception raise
+  # this used to be got swallowed into a "Warning: Skipping task N" and
+  # the run went on without the import's tasks, exit 0, instead of
+  # failing the playbook the way real Ansible does.
+  class StaticImportMissingFileError < Exception
+  end
+
   # Raised at RUN time - from `TaskExecutor#notify_handlers`, at the
   # moment a task actually notifies - when the notified name matches no
   # handler's name and no handler's `listen:` topic. Real Ansible aborts
@@ -1723,6 +1740,10 @@ module Krikri
             raise ex
           rescue ex : StaticImportUndefinedError
             raise ex
+          rescue ex : StaticImportMissingFileError
+            # Same bypass - a missing import target is fatal the way real
+            # Ansible is, not a soft warning. See that class's own comment.
+            raise ex
           rescue ex : RoleNotFoundError
             raise ex
           rescue ex
@@ -1759,6 +1780,9 @@ module Krikri
         rescue ex : StaticImportUndefinedError
           # Same bypass, same reason - see StaticImportUndefinedError's
           # own comment.
+          raise ex
+        rescue ex : StaticImportMissingFileError
+          # Same bypass, same reason - see that class's own comment.
           raise ex
         rescue ex : RoleNotFoundError
           # Same bypass, same reason - see RoleNotFoundError's own
@@ -2104,6 +2128,9 @@ module Krikri
           # Same bypass as RemovedActionError above, same reason - see
           # that class's own comment and StaticImportUndefinedError's.
           raise ex
+        rescue ex : StaticImportMissingFileError
+          # Same bypass - see that class's own comment.
+          raise ex
         rescue ex : RoleNotFoundError
           # Same bypass, same reason - see RoleNotFoundError's own
           # comment. Newly reachable from here (not just #load_role
@@ -2276,7 +2303,15 @@ module Krikri
       end
 
       resolved_path = resolve_include_path(file_rel, file_dir)
-      raise "Imported tasks file not found: #{resolved_path}" unless File.exists?(resolved_path)
+      # Typed fatal, not a bare string raise: real ansible-playbook
+      # hard-stops the whole run here (see
+      # StaticImportMissingFileError's own comment), and a bare Exception
+      # was swallowed by parse_tasks's generic per-task rescue into a
+      # warning + silent drop of the import (lucascbeyeler.zimbra,
+      # round 900185).
+      raise StaticImportMissingFileError.new(
+        "Unable to retrieve file contents.\n" \
+        "Could not find or access '#{resolved_path}' on the Ansible Controller.") unless File.exists?(resolved_path)
 
       imported_yaml = YAML.parse(Vault.maybe_decrypt(File.read(resolved_path)))
       # A comment-only (or entirely blank) tasks file - real Ansible

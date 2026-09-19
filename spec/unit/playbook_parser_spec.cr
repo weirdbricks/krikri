@@ -1644,6 +1644,47 @@ describe Krikri::PlaybookParser do
       playbook.plays[0].tasks.map(&.name).should eq(["debian branch"])
     end
 
+    it "raises a fatal StaticImportMissingFileError (aborts the whole playbook) when an import_tasks: path resolves to a file that doesn't exist" do
+      # lucascbeyeler.zimbra (round 900185), reduced to a minimal case
+      # and verified directly against real ansible-playbook
+      # (ansible-core 2.19.11): `import_tasks: "vars/{{ zimbra_version
+      # }}.yml"` templates fine at parse time (zimbra_version IS
+      # defined) but points at vars/8.8.12.yml when only vars/8.8.15.yml
+      # exists - real Ansible refuses the WHOLE RUN ("[ERROR]: Unable to
+      # retrieve file contents. Could not find or access '...vars/
+      # 8.8.12.yml' on the Ansible Controller.", no PLAY RECAP; a plain
+      # literal missing path fails identically). This engine raised a
+      # bare-String exception that parse_tasks's generic per-task rescue
+      # swallowed into a "Warning: Skipping task" - the play "succeeded"
+      # with the import's tasks simply missing (exit 0) instead of the
+      # fatal abort.
+      root = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "playbook_parser_import_tasks_missing_file_spec")
+      FileUtils.rm_rf(root) if Dir.exists?(root)
+      Dir.mkdir_p(File.join(root, "roles", "myrole", "tasks"))
+      Dir.mkdir_p(File.join(root, "roles", "myrole", "tasks", "vars"))
+      Dir.mkdir_p(File.join(root, "roles", "myrole", "defaults"))
+      File.write(File.join(root, "roles", "myrole", "defaults", "main.yml"), "zimbra_version: 8.8.12\n")
+      File.write(File.join(root, "roles", "myrole", "tasks", "main.yml"), <<-YAML)
+        - import_tasks: "vars/{{ zimbra_version }}.yml"
+        YAML
+      File.write(File.join(root, "roles", "myrole", "tasks", "vars", "8.8.15.yml"), <<-YAML)
+        - name: the version that exists
+          ansible.builtin.debug:
+            msg: hi
+        YAML
+
+      playbook_yaml = <<-YAML
+        - name: play
+          hosts: all
+          roles:
+            - myrole
+        YAML
+
+      expect_raises(Krikri::StaticImportMissingFileError, /Could not find or access '.*vars\/8\.8\.12\.yml' on the Ansible Controller\./) do
+        Krikri::PlaybookParser.parse_string(playbook_yaml, File.join(root, "site.yml"))
+      end
+    end
+
     it "raises a hard RoleNotFoundError (rc=1 at the top level) when a role can't be found, matching real Ansible's own immediate refusal" do
       root = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "playbook_parser_missing_role_spec")
       FileUtils.rm_rf(root) if Dir.exists?(root)
@@ -1987,20 +2028,26 @@ describe Krikri::PlaybookParser do
       playbook.plays[0].tasks.map(&.name).should eq(["innermost task"])
     end
 
-    it "warns and continues (not a hard failure) when the imported file doesn't exist" do
+    it "hard-fails (not warns) when the imported file doesn't exist" do
+      # Updated from "warns and continues" to the fatal behavior real
+      # ansible-playbook itself has (ansible-core 2.19.11, verified live
+      # with a minimal repro: "[ERROR]: Unable to retrieve file
+      # contents. Could not find or access '...does_not_exist.yml' on
+      # the Ansible Controller.", no PLAY RECAP, whole run aborted) -
+      # see StaticImportMissingFileError's own comment (round 900185).
       root = import_tasks_root("import_tasks_missing_spec")
 
-      playbook = Krikri::PlaybookParser.parse_string(<<-YAML, File.join(root, "site.yml"))
-        - name: play
-          hosts: all
-          tasks:
-            - import_tasks: does_not_exist.yml
-            - name: own task
-              ansible.builtin.debug:
-                msg: hi
-        YAML
-
-      playbook.plays[0].tasks.map(&.name).should eq(["own task"])
+      expect_raises(Krikri::StaticImportMissingFileError, /Could not find or access '.*does_not_exist\.yml'/) do
+        Krikri::PlaybookParser.parse_string(<<-YAML, File.join(root, "site.yml"))
+          - name: play
+            hosts: all
+            tasks:
+              - import_tasks: does_not_exist.yml
+              - name: own task
+                ansible.builtin.debug:
+                  msg: hi
+          YAML
+      end
     end
 
     # Round 188: parent `when:` is PREPENDED, not appended, specifically
