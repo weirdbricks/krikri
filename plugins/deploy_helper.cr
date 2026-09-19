@@ -97,7 +97,7 @@ module Krikri
           msg: "release #{release} would be created")
       end
 
-      mk = remote_exec("mkdir -p #{[path, releases_path, shared_path, new_release_path, current_path].map { |path| Shell.single_quote(path) }.join(' ')}")
+      mk = remote_exec("mkdir -p #{[path, releases_path, shared_path, new_release_path, current_path].map { |dir| Shell.single_quote(dir) }.join(' ')}")
       unless mk[:exit_code] == 0
         return PluginResult.new(changed: false, failed: true,
           msg: "failed to create deploy layout: #{mk[:stderr].strip}")
