@@ -13,6 +13,7 @@ module Krikri
           CommandInsteadOfShellRule.new,
           CommandInsteadOfModuleRule.new,
           NoChangedWhenRule.new,
+          RiskyFilePermissionsRule.new,
         ])
       end
 
