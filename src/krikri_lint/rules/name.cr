@@ -29,7 +29,7 @@ module Krikri
           if name.nil? || name.empty?
             # Upstream reports name[missing] at the task line with no column.
             violations << Violation.new(file.path, task.line, 0,
-              "name[missing]", severity, "All tasks should be named.")
+              "name[missing]", severity, "All tasks should be named.", task.line)
             next
           end
           name_value = task.name_node
@@ -38,12 +38,12 @@ module Krikri
           if name[0].letter? && name[0].lowercase?
             violations << Violation.new(file.path, line, column,
               "name[casing]", severity,
-              "All names should start with an uppercase letter.")
+              "All names should start with an uppercase letter.", task.line)
           end
           if templated_inside?(name)
             violations << Violation.new(file.path, line, column,
               "name[template]", severity,
-              "Jinja templates should only be at the end of 'name'")
+              "Jinja templates should only be at the end of 'name'", task.line)
           end
         end
       end

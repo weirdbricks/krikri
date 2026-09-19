@@ -30,7 +30,7 @@ module Krikri
           next if shell_feature_in?(unjinja(cmd_text(task)))
           violations << Violation.new(
             file.path, task.line, 0, id, severity,
-            "Shell should only be used when piping, redirecting or chaining commands (and Ansible would be preferred for some of those!)"
+            "Shell should only be used when piping, redirecting or chaining commands (and Ansible would be preferred for some of those!)", task.line,
           )
         end
       end

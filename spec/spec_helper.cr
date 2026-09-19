@@ -53,3 +53,15 @@ def lint_yaml(rule : Krikri::Lint::Rule, yaml : String, file_type : Krikri::Lint
 ensure
   File.delete(path) if path
 end
+
+# Runner-level helper: runs only the fqcn rule through the full Runner
+# pipeline (config, noqa, profile gating).
+def run_fqcn_yaml(yaml : String, config : Krikri::Lint::LintConfig = Krikri::Lint::LintConfig.new) : Array(Krikri::Lint::Violation)
+  path = File.tempname("lintrunner", ".yml")
+  File.write(path, yaml)
+  file = Krikri::Lint::PositionedFile.new(path, Krikri::Lint::FileType::PLAYBOOK, YAML::Nodes.parse(yaml).nodes.first?, nil)
+  registry = Krikri::Lint::RuleRegistry.new([Krikri::Lint::FqcnActionCoreRule.new] of Krikri::Lint::Rule)
+  Krikri::Lint::Runner.new(registry, config).run([path])
+ensure
+  File.delete(path) if path
+end

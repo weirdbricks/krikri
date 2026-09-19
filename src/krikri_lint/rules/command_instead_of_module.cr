@@ -68,7 +68,7 @@ module Krikri
           next unless replacement = MODULES[executable]?
           violations << Violation.new(
             file.path, task.line, 0, id, severity,
-            "#{executable} used in place of #{replacement} module"
+            "#{executable} used in place of #{replacement} module", task.line,
           )
         end
       end

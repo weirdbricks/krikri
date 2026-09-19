@@ -21,6 +21,12 @@ module Krikri::Lint
     format = "brief"
     quiet = false
     verbose = 0
+    cli_profile : String? = nil
+    cli_config_file : String? = nil
+    cli_skip = [] of String
+    cli_warn = [] of String
+    cli_enable = [] of String
+    cli_tags = [] of String
 
     OptionParser.parse(argv) do |parser|
       parser.banner = "Usage: krikri-lint [options] TARGET [TARGET ...]"
@@ -44,6 +50,24 @@ module Krikri::Lint
       end
       parser.on("-v", "--verbose", "Increase verbosity (repeatable)") do
         verbose += 1
+      end
+      parser.on("--profile PROFILE", "Only run rules in this profile") do |value|
+        cli_profile = value
+      end
+      parser.on("-x", "--skip-list LIST", "Comma-separated rule ids to skip") do |value|
+        cli_skip.concat(value.split(',').map(&.strip))
+      end
+      parser.on("-w", "--warn-list LIST", "Comma-separated rule ids to warn about") do |value|
+        cli_warn.concat(value.split(',').map(&.strip))
+      end
+      parser.on("--enable-list LIST", "Comma-separated rule ids to force-enable") do |value|
+        cli_enable.concat(value.split(',').map(&.strip))
+      end
+      parser.on("-t", "--tags TAGS", "Only run rules matching these tags") do |value|
+        cli_tags.concat(value.split(',').map(&.strip))
+      end
+      parser.on("-c", "--config-file FILE", "Path to .ansible-lint config") do |value|
+        cli_config_file = value
       end
       parser.on("--version", "Show version and exit") do
         show_version = true
@@ -84,7 +108,7 @@ module Krikri::Lint
 
     if list_tags
       puts "# List of tags and rules they cover"
-      tag_rules = Hash(String, Array(String)).new { |h, k| h[k] = [] of String }
+      tag_rules = Hash(String, Array(String)).new { |hash, tag| hash[tag] = [] of String }
       registry.rules.each do |rule|
         rule.tags.each { |tag| tag_rules[tag] << rule.id }
       end
@@ -101,10 +125,27 @@ module Krikri::Lint
       exit 2
     end
 
+    config = if file = cli_config_file
+               LintConfig.from_file(file)
+             else
+               LintConfig.discover
+             end
+    if p = cli_profile
+      unless Profile.valid?(p)
+        STDERR.puts "krikri-lint: unknown profile: #{p}"
+        exit 2
+      end
+      config = LintConfig.new(config.skip_list, config.warn_list,
+        config.enable_list, config.tags, config.exclude_paths, p, config.config_dir)
+    end
+    config = LintConfig.new(config.skip_list + cli_skip, config.warn_list + cli_warn,
+      config.enable_list + cli_enable, config.tags + cli_tags,
+      config.exclude_paths, config.profile, config.config_dir)
+
     files = FileDiscovery.discover(targets)
 
     violations = begin
-      Runner.new(registry).run(files)
+      Runner.new(registry, config).run(files)
     rescue ex
       STDERR.puts "krikri-lint: internal error: #{ex.message}"
       exit 3
@@ -112,7 +153,8 @@ module Krikri::Lint
 
     violations.sort_by! { |v| {v.path, v.line, v.column} }
 
-    if violations.empty?
+    failures = violations.reject(&.warning?)
+    if failures.empty?
       exit 0
     end
 
@@ -120,7 +162,7 @@ module Krikri::Lint
 
     case
     when format == "json"
-      puts Violation.toJson(violations)
+      puts Violation.to_json(violations)
     else
       violations.each do |v|
         if parseable

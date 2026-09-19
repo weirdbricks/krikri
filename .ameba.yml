@@ -169,6 +169,7 @@ Metrics/CyclomaticComplexity:
   - src/krikri/variable_substitutor/filter_engine.cr
   - src/krikri_lint/rules/risky_file_permissions.cr
   - src/krikri_lint/rules/risky_octal.cr
+  - krikri-lint.cr
 
 Performance/AnyInsteadOfPresent:
   Excluded:

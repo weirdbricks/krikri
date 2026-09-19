@@ -9,11 +9,21 @@ module Krikri
       getter rule_id : String
       getter severity : Severity
       getter message : String
+      # Enclosing task's first line, for noqa range matching. Nil for
+      # file-level rules (yaml[*], syntax-check).
+      getter task_line : Int32?
+      getter? warning : Bool
 
-      def initialize(@path, @line, @column, @rule_id, @severity, @message)
+      def initialize(@path, @line, @column, @rule_id, @severity, @message,
+                     @task_line = nil, @warning = false)
       end
 
-      def self.toJson(violations : Array(Violation)) : String
+      def as_warning : Violation
+        Violation.new(path, line, column, rule_id, severity, message,
+          task_line, true)
+      end
+
+      def self.to_json(violations : Array(Violation)) : String
         JSON.build do |json|
           json.array do
             violations.each do |v|

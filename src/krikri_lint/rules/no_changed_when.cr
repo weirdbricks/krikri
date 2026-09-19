@@ -30,7 +30,7 @@ module Krikri
           # Upstream reports this rule at the task line with no column.
           violations << Violation.new(
             file.path, task.line, 0, id, severity,
-            "Commands should not change things if nothing needs doing."
+            "Commands should not change things if nothing needs doing.", task.line,
           )
         end
       end
