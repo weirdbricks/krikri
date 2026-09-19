@@ -132,7 +132,7 @@ module Krikri
         begin
           existing_bytes = File.open(dest, "rb", &.getb_to_end)
           existing_content = String.new(existing_bytes, "UTF-8", invalid: :skip)
-        rescue 
+        rescue
           # File exists but can't read - continue anyway
         end
       end
