@@ -326,9 +326,9 @@ module Krikri
         end
 
         response = @last_response.not_nil!
-        response.answer.each do |record|
-          if record.type_code == 6 && PluginHelpers::NsupdateMessage.names_equal?(record.name, name)
-            return record.name
+        response.answer.each do |rr|
+          if rr.type_code == 6 && PluginHelpers::NsupdateMessage.names_equal?(rr.name, name)
+            return rr.name
           end
         end
         response.authority.each do |record|
