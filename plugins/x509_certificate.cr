@@ -47,48 +47,48 @@ module Krikri
     # add_file_common_args=True injects. Aliases: attributes->attr and
     # selfsigned_not_before/after's camelCase aliases.
     SPEC = {
-      "provider"                             => [] of String,
-      "force"                                => [] of String,
-      "csr_path"                             => [] of String,
-      "csr_content"                          => [] of String,
-      "ignore_timestamps"                    => [] of String,
-      "select_crypto_backend"                 => [] of String,
-      "privatekey_path"                      => [] of String,
-      "privatekey_content"                   => [] of String,
-      "privatekey_passphrase"                 => [] of String,
-      "state"                                => [] of String,
-      "path"                                 => [] of String,
-      "backup"                               => [] of String,
-      "return_content"                       => [] of String,
-      "acme_accountkey_path"                  => [] of String,
-      "acme_challenge_path"                   => [] of String,
-      "acme_chain"                           => [] of String,
-      "acme_directory"                       => [] of String,
-      "ownca_path"                           => [] of String,
-      "ownca_content"                        => [] of String,
-      "ownca_privatekey_path"                 => [] of String,
-      "ownca_privatekey_content"              => [] of String,
-      "ownca_privatekey_passphrase"           => [] of String,
-      "ownca_digest"                         => [] of String,
-      "ownca_version"                        => [] of String,
-      "ownca_not_before"                     => [] of String,
-      "ownca_not_after"                      => [] of String,
-      "ownca_create_subject_key_identifier"   => [] of String,
-      "ownca_create_authority_key_identifier" => [] of String,
-      "selfsigned_version"                   => [] of String,
-      "selfsigned_digest"                    => [] of String,
-      "selfsigned_not_before"                 => ["selfsigned_notBefore"],
-      "selfsigned_not_after"                  => ["selfsigned_notAfter"],
+      "provider"                                 => [] of String,
+      "force"                                    => [] of String,
+      "csr_path"                                 => [] of String,
+      "csr_content"                              => [] of String,
+      "ignore_timestamps"                        => [] of String,
+      "select_crypto_backend"                    => [] of String,
+      "privatekey_path"                          => [] of String,
+      "privatekey_content"                       => [] of String,
+      "privatekey_passphrase"                    => [] of String,
+      "state"                                    => [] of String,
+      "path"                                     => [] of String,
+      "backup"                                   => [] of String,
+      "return_content"                           => [] of String,
+      "acme_accountkey_path"                     => [] of String,
+      "acme_challenge_path"                      => [] of String,
+      "acme_chain"                               => [] of String,
+      "acme_directory"                           => [] of String,
+      "ownca_path"                               => [] of String,
+      "ownca_content"                            => [] of String,
+      "ownca_privatekey_path"                    => [] of String,
+      "ownca_privatekey_content"                 => [] of String,
+      "ownca_privatekey_passphrase"              => [] of String,
+      "ownca_digest"                             => [] of String,
+      "ownca_version"                            => [] of String,
+      "ownca_not_before"                         => [] of String,
+      "ownca_not_after"                          => [] of String,
+      "ownca_create_subject_key_identifier"      => [] of String,
+      "ownca_create_authority_key_identifier"    => [] of String,
+      "selfsigned_version"                       => [] of String,
+      "selfsigned_digest"                        => [] of String,
+      "selfsigned_not_before"                    => ["selfsigned_notBefore"],
+      "selfsigned_not_after"                     => ["selfsigned_notAfter"],
       "selfsigned_create_subject_key_identifier" => [] of String,
-      "mode"                                 => [] of String,
-      "owner"                                => [] of String,
-      "group"                                => [] of String,
-      "seuser"                               => [] of String,
-      "serole"                               => [] of String,
-      "selevel"                              => [] of String,
-      "setype"                               => [] of String,
-      "attributes"                           => ["attr"],
-      "unsafe_writes"                        => [] of String,
+      "mode"                                     => [] of String,
+      "owner"                                    => [] of String,
+      "group"                                    => [] of String,
+      "seuser"                                   => [] of String,
+      "serole"                                   => [] of String,
+      "selevel"                                  => [] of String,
+      "setype"                                   => [] of String,
+      "attributes"                               => ["attr"],
+      "unsafe_writes"                            => [] of String,
     }
 
     def execute : PluginResult
@@ -192,19 +192,19 @@ module Krikri
         end
       end
       %w[force ignore_timestamps acme_chain ownca_create_authority_key_identifier
-         backup return_content unsafe_writes].each do |param|
+        backup return_content unsafe_writes].each do |param|
         if raw = @params[param]?
           return bool_type_error(param, raw) unless bool_convertible?(raw)
         end
       end
 
-      {"provider"                             => %w[acme ownca selfsigned],
-       "select_crypto_backend"                 => %w[auto cryptography],
-       "ownca_version"                        => %w[3],
-       "ownca_create_subject_key_identifier"   => %w[create_if_not_provided always_create never_create],
-       "selfsigned_version"                    => %w[3],
+      {"provider"                                 => %w[acme ownca selfsigned],
+       "select_crypto_backend"                    => %w[auto cryptography],
+       "ownca_version"                            => %w[3],
+       "ownca_create_subject_key_identifier"      => %w[create_if_not_provided always_create never_create],
+       "selfsigned_version"                       => %w[3],
        "selfsigned_create_subject_key_identifier" => %w[create_if_not_provided always_create never_create],
-       "state"                                => %w[present absent]}.each do |param, allowed|
+       "state"                                    => %w[present absent]}.each do |param, allowed|
         if value = @params[param]?
           unless allowed.includes?(value)
             return choices_error(param, allowed, value)
