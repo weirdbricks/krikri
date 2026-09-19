@@ -1,4 +1,5 @@
 require "json"
+require "./param_sentinels"
 require "./variable_substitutor/expression_evaluator"
 require "./variable_substitutor/comparison_evaluator"
 require "./variable_substitutor/filter_engine"

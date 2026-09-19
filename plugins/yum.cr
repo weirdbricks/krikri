@@ -122,6 +122,30 @@ module Krikri
         )
       end
 
+      # Real AnsibleModule's `type: list` argspec coercion fails an
+      # EXPLICIT None with its generic list-conversion message (param
+      # name substituted), while an omitted param and an empty string
+      # both coerce to an empty list and pass - live-verified against
+      # ansible-core 2.19.11 for each of yum's four `type: list` params
+      # (`use_backend: yum4` forced on a Debian host to reach argspec
+      # validation at all). Round 900905 officel.httpd found the gap:
+      # every loop item's `enablerepo: ~` default made real
+      # ansible-playbook fail the task while this engine silently
+      # dropped the null and installed the packages anyway. The
+      # explicit-null gate (not a plain empty-string check) is what
+      # keeps an omitted param - and a legitimately empty string -
+      # working exactly as before.
+      yum_list_params = {"name", "enablerepo", "disablerepo", "exclude"}
+      null_list = yum_list_params.select { |key| explicit_null_param?(key) }.sort!
+      unless null_list.empty?
+        return PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: "argument '#{null_list.first}' is of type NoneType and we were unable to convert to list: " \
+               "<class 'NoneType'> cannot be converted to a list"
+        )
+      end
+
       nil
     end
 

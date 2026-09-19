@@ -9,6 +9,7 @@ require "./host"
 require "./shell"
 require "./ssh_manager"
 require "./local_executor"
+require "./param_sentinels"
 require "./plugin_helpers/stat_fields"
 require "./plugin_helpers/controlling_tty"
 require "./plugin_helpers/ansible_splitlines"
@@ -153,6 +154,14 @@ module Krikri
     property config : JSON::Any
     property? diff_mode : Bool
 
+    # Params the module call carried as an explicit null/None - see
+    # NONE_SENTINEL for why this needs bookkeeping at all.
+    @null_params = Set(String).new
+
+    def explicit_null_param?(key : String) : Bool
+      @null_params.includes?(key)
+    end
+
     def initialize(@config : JSON::Any)
       @host = Host.from_json(@config["host"])
 
@@ -160,7 +169,17 @@ module Krikri
       @params = Hash(String, String).new
       if params_json = @config["params"]?
         params_json.as_h.each do |key, value|
-          @params[key] = value.to_s
+          # An explicit JSON null on the wire (or the executor's
+          # NONE_SENTINEL for a template that natively resolved to
+          # Python None) records as a null param and demotes to "" -
+          # NOT value.to_s, which would erase the null-vs-empty-string
+          # distinction real Ansible's argspec coercion cares about.
+          if value.raw.nil? || value.as_s? == NONE_SENTINEL
+            @null_params << key
+            @params[key] = ""
+          else
+            @params[key] = value.to_s
+          end
         end
       end
 
