@@ -61,32 +61,9 @@ module Krikri
       end
 
       state = @params["state"]?.try { |str| str.empty? ? nil : str } || "present"
-      # Real argument_spec gives state/fstype choices lists, so
-      # AnsibleModule's choice check (parameters.py's exact wording)
-      # fires before anything else param-wise - previously a bogus
-      # state silently behaved as present and a bogus fstype fell
-      # through to the device/blkid checks first. Real's choice list
-      # is set-ordered (nondeterministic wording across runs); the
-      # set of choices matches (minus FreeBSD-only ufs) and the
-      # podman-diff case only compares failed=/changed= here.
-      unless ["present", "absent"].includes?(state)
-        return PluginResult.new(changed: false, failed: true,
-          msg: "value of state must be one of: present, absent, got: #{state}")
-      end
-
       fstype = @params["fstype"]?
-      if fstype && !FSTYPE_COMMANDS.has_key?(fstype)
-        return PluginResult.new(changed: false, failed: true,
-          msg: "value of fstype must be one of: #{FSTYPE_COMMANDS.keys.sort.join(", ")}, got: #{fstype}")
-      end
-
-      # required_if=[('state', 'present', ['fstype'])] - and real
-      # AnsibleModule's required_if check runs before the module body,
-      # so even a nonexistent dev with no fstype reports the missing
-      # parameter, not "Device ... not found.".
-      if state == "present" && !fstype
-        return PluginResult.new(changed: false, failed: true,
-          msg: "state is present but all of the following are missing: fstype")
+      if error = validate_state_fstype(state, fstype)
+        return error
       end
 
       force = true?(@params["force"]?)
@@ -110,6 +87,36 @@ module Krikri
           msg: "state is present but all of the following are missing: fstype")
       end
       present_result(dev, current_fs, state, fstype, force, opts, check_mode)
+    end
+
+    # Real argument_spec gives state/fstype choices lists, so
+    # AnsibleModule's choice check (parameters.py's exact wording)
+    # fires before anything else param-wise - previously a bogus
+    # state silently behaved as present and a bogus fstype fell
+    # through to the device/blkid checks first. Real's choice list
+    # is set-ordered (nondeterministic wording across runs); the
+    # set of choices matches (minus FreeBSD-only ufs) and the
+    # podman-diff case only compares failed=/changed= here.
+    private def validate_state_fstype(state : String, fstype : String?) : PluginResult?
+      unless ["present", "absent"].includes?(state)
+        return PluginResult.new(changed: false, failed: true,
+          msg: "value of state must be one of: present, absent, got: #{state}")
+      end
+
+      if fstype && !FSTYPE_COMMANDS.has_key?(fstype)
+        return PluginResult.new(changed: false, failed: true,
+          msg: "value of fstype must be one of: #{FSTYPE_COMMANDS.keys.sort.join(", ")}, got: #{fstype}")
+      end
+
+      # required_if=[('state', 'present', ['fstype'])] - and real
+      # AnsibleModule's required_if check runs before the module body,
+      # so even a nonexistent dev with no fstype reports the missing
+      # parameter, not "Device ... not found.".
+      if state == "present" && !fstype
+        return PluginResult.new(changed: false, failed: true,
+          msg: "state is present but all of the following are missing: fstype")
+      end
+      nil
     end
 
     private def missing_device_result(dev : String, state : String) : PluginResult
