@@ -17,6 +17,7 @@ module Krikri
           RiskyOctalRule.new,
           NameRule.new,
           FqcnActionCoreRule.new,
+          YamlLineLengthRule.new,
         ])
       end
 
