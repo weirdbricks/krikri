@@ -228,7 +228,7 @@ module Krikri
         unsupported = params.keys.reject { |key| legal.includes?(key) || internal_key?(key) }.sort!
         return nil if unsupported.empty?
 
-        names = spec.args.keys.sort
+        names = spec.args.keys.sort!
         aliases = spec.args.values.flat_map(&.aliases).sort
         supported = aliases.empty? ? names.join(", ") : "#{names.join(", ")} (#{aliases.join(", ")})"
         PluginResult.new(changed: false, failed: true,
