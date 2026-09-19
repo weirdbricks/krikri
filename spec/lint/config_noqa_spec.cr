@@ -55,7 +55,7 @@ module Krikri::Lint
       config = LintConfig.new(warn_list: ["fqcn[action-core]"])
       v = run_fqcn_yaml(yaml, config)
       v.size.should eq(1)
-      v.first.warning.should be_true
+      v.first.warning?.should be_true
     end
 
     it "suppresses noqa'd tasks" do
