@@ -104,21 +104,8 @@ module Krikri
 
       before = planned.keys.to_h { |key| {key, get_value(key, systemd_backend, planned[key])} }
 
-      if @check_mode
-        after = planned.dup
-      else
-        begin
-          planned.each do |key, value|
-            set_value(key, value, systemd_backend) if before[key] != value
-          end
-        rescue e : TimezoneCommandFailure
-          return PluginResult.new(changed: false, failed: true, msg: e.message.to_s)
-        end
-        after = planned.keys.to_h { |key| {key, get_value(key, systemd_backend, planned[key])} }
-        if after != planned
-          return fail("still not desired state, though changes have made - planned: #{planned}, after: #{after}")
-        end
-      end
+      after, apply_error = apply_changes(planned, systemd_backend, before)
+      return apply_error if apply_error
 
       changed = before != after
       PluginResult.new(
@@ -127,6 +114,26 @@ module Krikri
         msg: @msg.empty? ? "" : @msg.join("\n"),
         diff: generate_attribute_diff(before, after),
       )
+    end
+
+    private def apply_changes(planned : Hash(String, String), systemd_backend : Bool, before : Hash(String, String)) : {Hash(String, String), PluginResult?}
+      if @check_mode
+        return {planned.dup, nil}
+      end
+
+      begin
+        planned.each do |key, value|
+          set_value(key, value, systemd_backend) if before[key] != value
+        end
+      rescue e : TimezoneCommandFailure
+        return {planned, PluginResult.new(changed: false, failed: true, msg: e.message.to_s)}
+      end
+
+      after = planned.keys.to_h { |key| {key, get_value(key, systemd_backend, planned[key])} }
+      if after != planned
+        return {after, fail("still not desired state, though changes have made - planned: #{planned}, after: #{after}")}
+      end
+      {after, nil}
     end
 
     private def validate_params : PluginResult?
