@@ -1293,6 +1293,39 @@ module Krikri
           substituted_value = OMIT_SENTINEL
         end
 
+        # A whole-span template whose rendered result is empty text is
+        # ambiguous at this string layer: a real empty string and a real
+        # Python None both render as "", yet real Ansible keeps the two
+        # natively apart and its own module argspecs treat them
+        # differently - an explicit None fails every `type: list` param
+        # with the generic NoneType-conversion message while an empty
+        # string (and an omitted param) coerce to an empty list just fine
+        # (live-verified against ansible-core 2.19.11 for all four of
+        # yum/dnf's `type: list` params). Found via round 900905
+        # officel.httpd: every loop item's `enablerepo: ~` default made
+        # real ansible-playbook fail the task while this engine installed
+        # the packages anyway. The hand-rolled FilterEngine's
+        # nil-as-undefined collapse hides the None behind
+        # `item.enablerepo | default('')` (real Jinja2's default filter
+        # never triggers on a DEFINED None - live-verified), but Crinja's
+        # is Jinja2-faithful, so the structural re-resolution here sees
+        # through it; evaluate_structured returns nil for a genuinely
+        # undefined expression, which must NOT mark the param (only
+        # strict-mode bare refs already raise for those, above). The
+        # None-ness rides the string-only wire as NONE_SENTINEL, which
+        # BasePlugin demotes back to "" for every plugin that never
+        # consults explicit_null_param? - same pattern as OMIT_SENTINEL
+        # directly above.
+        if whole_single_span && substituted_value.empty?
+          structured = begin
+            VariableSubstitutor::ExpressionEvaluator.new(substitutor.vars)
+              .evaluate_structured(stripped_value[2..-3].strip)
+          rescue
+            nil
+          end
+          substituted_value = Krikri::NONE_SENTINEL if structured && structured.raw.nil?
+        end
+
         # `mode:` piped through a variable (`mode: "{{ redis_conf_mode
         # }}"`, geerlingguy.redis's own style) loses its octal-ness the
         # same way a *direct* unquoted `mode: 0770` literal does (see

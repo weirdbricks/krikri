@@ -68,6 +68,33 @@ module Krikri
         env = Crinja.new
         env.config.trim_blocks = true
         env.config.lstrip_blocks = false
+        # Real Jinja2's `default` filter only ever triggers on an
+        # UNDEFINED value - a DEFINED None passes straight through
+        # (live-verified against ansible-core 2.19.11:
+        # `{{ nv | default('') }}` with `nv: ~` set_fact's null, not
+        # ''). Crinja's builtin instead also triggers on nil, which
+        # made `enablerepo: "{{ item.enablerepo | default('') }}"` (the
+        # officel.httpd shape, round 900905) collapse a real Python
+        # None to an empty string both when rendering and in the
+        # whole-span null detection that feeds yum/dnf's argument-spec
+        # NoneType check - where real ansible-playbook fails the task.
+        # The boolean form keeps triggering on falsy values (None
+        # included), exactly like real Jinja2's `default(x, true)`.
+        # The hand-rolled FilterEngine keeps its own nil-as-undefined
+        # semantics (its nil is the engine's internal lookup-miss
+        # representation, indistinguishable from a real None by the
+        # time a filter sees it) - the two evaluators share no
+        # implementation, see CLAUDE.md.
+        default_filter = Crinja.filter({default_value: "", boolean: false}) do
+          default_value = arguments["default_value"]
+          if target.undefined? || (arguments["boolean"].truthy? && !target.truthy?)
+            default_value
+          else
+            target
+          end
+        end
+        env.filters["default"] = default_filter
+        env.filters["d"] = default_filter
         @@env = env
       end
 
