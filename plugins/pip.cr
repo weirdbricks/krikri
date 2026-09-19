@@ -615,8 +615,42 @@ module Krikri
     # start of dependency specifier", which flipped that round's PLAY
     # RECAP counts (a downstream `when: ...failed` task then ran
     # differently than in real Ansible).
+    #
+    # Commas INSIDE a PEP 508 extras bracket are not separators at all:
+    # real pip's own requirement grammar treats `pkg[extra1,extra2]` as
+    # one atomic token (pip's parser - not Ansible's module - is what
+    # makes bracket-interior commas non-separating; a truncated
+    # `horovod[keras` is rejected outright with "Expected matching
+    # RIGHT_BRACKET"). Real Ansible reassembles bracket-interior
+    # pieces the same way (pip.py's `_recover_package_name` tracks an
+    # in-brackets state across its comma-split pieces and joins them
+    # back verbatim). Confirmed live in round900263 (grycap.horovod):
+    # `name: "horovod[keras,pytorch,tensorflow]"` must reach pip as
+    # ONE argv word, and `name: "pkgA[e1,e2],pkgB==1.0"` as two -
+    # real ansible-playbook -vvv was checked against both before this
+    # fix. So a comma only separates requirements when no `[` is
+    # currently open; everything inside stays part of the piece,
+    # brackets included.
     private def split_requirements(spec : String) : Array(String)
-      pieces = spec.split(',').map(&.strip)
+      pieces = [] of String
+      current = IO::Memory.new
+      depth = 0
+      spec.each_char do |char|
+        case char
+        when '['
+          depth += 1
+        when ']'
+          depth -= 1 if depth > 0
+        when ','
+          if depth.zero?
+            pieces << current.to_s.strip
+            current = IO::Memory.new
+            next
+          end
+        end
+        current << char
+      end
+      pieces << current.to_s.strip
       merged = [] of String
       pieces.each do |piece|
         if !merged.empty? && piece =~ /\A[<>=!~]/

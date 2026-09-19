@@ -163,6 +163,88 @@ describe "pip plugin" do
     end
   end
 
+  it "keeps a bracketed multi-extra requirement as ONE pip word, not three pieces" do
+    # Real bug found benchmarking grycap.horovod (round 900263):
+    # `name: "horovod[keras,pytorch,tensorflow]"` - the commas are
+    # pip's own extras syntax, part of one PEP 508 requirement token,
+    # not separators between packages. Real pip's requirement grammar
+    # treats `pkg[e1,e2]` atomically (a truncated `horovod[keras` is
+    # rejected outright: "Expected matching RIGHT_BRACKET"), and real
+    # Ansible's pip.py reassembles bracket-interior comma pieces
+    # verbatim (`_recover_package_name`'s in-brackets state) - verified
+    # against real ansible-playbook -vvv: the whole bracketed string
+    # reaches pip as one argv word. Naive comma-splitting sent pip
+    # three pieces and pip failed with its own "Invalid requirement:
+    # 'horovod[keras'" before ever attempting the install. The shim
+    # records its argv, so the assertion is on what pip actually got.
+    shim_dir = File.tempname("/tmp", ".krikri-spec-pip-bin")
+    Dir.mkdir(shim_dir)
+    pip = write_pip_shim(shim_dir)
+    begin
+      result = PluginSpecHelper.run("pip", {
+        "name"       => "horovod[keras,pytorch,tensorflow]",
+        "executable" => pip,
+      })
+
+      result["failed"]?.try(&.as_bool).should_not be_true
+      marker = File.read(File.join(shim_dir, "marker"))
+      marker.should contain("horovod[keras,pytorch,tensorflow]")
+    ensure
+      FileUtils.rm_rf(shim_dir)
+    end
+  end
+
+  it "still splits a plain multi-package comma-separated name: string into separate pip words" do
+    # The bracket-aware split must not regress the pre-existing real
+    # behavior it exists for: a single `name:` string carrying several
+    # package specs (the parser comma-joins a YAML list into exactly
+    # this shape). Each spec must still reach pip as its own argv word,
+    # not one comma-glued "package" (the konstruktoid.docker_rootless
+    # bug this split originally fixed, 0.9.616).
+    shim_dir = File.tempname("/tmp", ".krikri-spec-pip-bin")
+    Dir.mkdir(shim_dir)
+    pip = write_pip_shim(shim_dir)
+    begin
+      result = PluginSpecHelper.run("pip", {
+        "name"       => "pkgB==1.0,pkgC",
+        "executable" => pip,
+      })
+
+      result["failed"]?.try(&.as_bool).should_not be_true
+      marker = File.read(File.join(shim_dir, "marker"))
+      marker.should contain("pkgB==1.0")
+      marker.should contain("pkgC")
+      marker.should_not contain("pkgB==1.0,pkgC")
+    ensure
+      FileUtils.rm_rf(shim_dir)
+    end
+  end
+
+  it "splits a mixed bracketed-extras + pinned-spec string into two pip words, extras intact" do
+    # Mixed shape verified against real ansible-playbook -vvv before
+    # this fix: `name: "pkgA[extra1,extra2],pkgB==1.0"` reaches real
+    # pip as exactly two argv words - `pkgA[extra1,extra2]` (extras
+    # commas kept, matching pip.py's _recover_package_name) and
+    # `pkgB==1.0` (a genuine separator comma still splits).
+    shim_dir = File.tempname("/tmp", ".krikri-spec-pip-bin")
+    Dir.mkdir(shim_dir)
+    pip = write_pip_shim(shim_dir)
+    begin
+      result = PluginSpecHelper.run("pip", {
+        "name"       => "fakepkgA[extra1,extra2],fakepkgB==1.0",
+        "executable" => pip,
+      })
+
+      result["failed"]?.try(&.as_bool).should_not be_true
+      marker = File.read(File.join(shim_dir, "marker"))
+      marker.should contain("fakepkgA[extra1,extra2]")
+      marker.should contain("fakepkgB==1.0")
+      marker.should_not contain("fakepkgB==1.0]")
+    ensure
+      FileUtils.rm_rf(shim_dir)
+    end
+  end
+
   # The plugin's default virtualenv_command is real Ansible's own
   # argument_spec default ("virtualenv", the classic tool - often NOT
   # installed on minimal hosts, which is real Ansible's behavior too:
