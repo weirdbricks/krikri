@@ -90,3 +90,75 @@ describe "ignore_errors: on a controller-side failure counts as ok+ignored, not 
     output.should match(/ignored=0\b/)
   end
 end
+
+# Recap tallying for the implicit Gathering Facts task + ignore_errors:
+# interactions, verified live against real ansible-core 2.19.11 (both by
+# running ansible-playbook and by instrumenting its own
+# AggregateStats.increment). Found via round900836 NINEJKH.git: facts +
+# one ignore_errors:-swallowed command failure recapped ok=2 changed=1
+# here vs real ok=1 - the phantom ok came from counting the implicit
+# facts task, which real Ansible's recap never credits (an ignored
+# failure's own ok/ignored/changed counting was already correct).
+describe "PLAY RECAP tallying for implicit facts and ignored failures" do
+  it "a successful implicit Gathering Facts task adds no ok to the recap" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        tasks:
+          - name: the only ok task
+            debug:
+              msg: hi
+      YAML
+
+    status.success?.should be_true
+    output.should match(/ok=1\b/)
+  end
+
+  it "a failed-and-ignored command task counts ok+ignored, never failed, and facts add no ok" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        tasks:
+          - name: fail but ignore it
+            command: /bin/false
+            ignore_errors: true
+      YAML
+
+    status.success?.should be_true
+    # Real 2.19.11 recaps exactly ok=1 changed=1 ignored=1 here: the
+    # ignored failure itself is the one ok (the implicit facts task adds
+    # nothing), and the command module reports changed=true on a
+    # non-zero rc, which the ignored tally carries into `changed=`.
+    output.should match(/ok=1\b/)
+    output.should match(/changed=1\b/)
+    output.should match(/failed=0\b/)
+    output.should match(/ignored=1\b/)
+  end
+
+  it "a changed-then-failed-but-ignored task still counts changed" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: succeeds, then failed_when flips it, then ignored
+            command: /bin/true
+            failed_when: true
+            ignore_errors: true
+      YAML
+
+    status.success?.should be_true
+    # Real 2.19.11 recaps ok=1 changed=1 ignored=1 for exactly this
+    # shape (verified live): the task DID change, so `changed=` counts
+    # even though the task failed, and the ignored failure counts as ok
+    # + ignored, never failed - update_stats' overlapping-counter
+    # semantics must hold for the changed-and-then-ignored combination,
+    # not just the plain-failure one.
+    output.should match(/ok=1\b/)
+    output.should match(/changed=1\b/)
+    output.should match(/failed=0\b/)
+    output.should match(/ignored=1\b/)
+  end
+end
