@@ -17,7 +17,7 @@ end
 describe "apt_repository plugin" do
   it "reports it would add a repository that isn't present yet (check mode, no real change)" do
     result = PluginSpecHelper.run("apt_repository", {
-      "repo"       => "deb https://packages.totally-fake-example.com/repo stable main",
+      "repo"                => "deb https://packages.totally-fake-example.com/repo stable main",
       "_ansible_check_mode" => "true",
     })
 
@@ -27,7 +27,7 @@ describe "apt_repository plugin" do
 
   it "normalizes whitespace before checking/reporting the repo line" do
     result = PluginSpecHelper.run("apt_repository", {
-      "repo"       => "  deb   https://packages.totally-fake-example.com/repo   stable main  ",
+      "repo"                => "  deb   https://packages.totally-fake-example.com/repo   stable main  ",
       "_ansible_check_mode" => "true",
     })
 
