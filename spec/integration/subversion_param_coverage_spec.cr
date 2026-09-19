@@ -104,8 +104,8 @@ describe "subversion plugin - parameter coverage" do
     write_svn_shim(dir, log)
 
     result = run_subversion(dir, log, {
-      "repo"       => "svn+ssh://example.com/repo",
-      "dest"       => File.join(dir, "wc"),
+      "repo"                => "svn+ssh://example.com/repo",
+      "dest"                => File.join(dir, "wc"),
       "_ansible_check_mode" => "yes",
     })
 
