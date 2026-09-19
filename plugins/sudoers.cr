@@ -81,6 +81,20 @@ module Krikri
       end
 
       state = @params["state"]? || "present"
+      if error = validate_choices_and_required_if(state)
+        return error
+      end
+
+      if unsupported = unsupported_param_keys(@params, SPEC)
+        unless unsupported.empty?
+          return unsupported_params_error("community.general.sudoers", unsupported, SPEC)
+        end
+      end
+
+      nil
+    end
+
+    private def validate_choices_and_required_if(state : String) : PluginResult?
       unless %w[present absent].includes?(state)
         return choices_error("state", %w[present absent], state)
       end
@@ -98,13 +112,6 @@ module Krikri
         return PluginResult.new(changed: false, failed: true,
           msg: "state is present but all of the following are missing: commands")
       end
-
-      if unsupported = unsupported_param_keys(@params, SPEC)
-        unless unsupported.empty?
-          return unsupported_params_error("community.general.sudoers", unsupported, SPEC)
-        end
-      end
-
       nil
     end
 
