@@ -25,7 +25,7 @@ module Krikri
           module_name = task.module_name
           next if module_name.starts_with?("ansible.builtin.") ||
                   module_name.starts_with?("ansible.legacy.")
-          alias_name = MODERNIZATION.builtin_alias(module_name) || next
+          next if MODERNIZATION.builtin_alias(module_name).nil?
           violations << Violation.new(
             file.path, task.line, NodeUtil.column(task.node), id, severity,
             "Use FQCN for builtin module actions (#{module_name})."
