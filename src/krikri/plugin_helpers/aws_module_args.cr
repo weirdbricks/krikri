@@ -500,33 +500,45 @@ module Krikri
         pyclass = python_class(value)
 
         case type
-        when "bool"
-          return nil if value.raw.is_a?(Bool) || pyclass == "int" || pyclass == "float"
-          return nil if pyclass == "str" && bool_convertible?(value.as_s)
-          bool_type_error(name, value)
-        when "int"
-          case value.raw
-          when Int64, Float64, Bool then nil
-          when String
-            return nil if value.as_s.strip.matches?(/\A[+-]?\d+\z/)
-            int_type_error(name, pyclass)
-          else
-            int_type_error(name, pyclass)
-          end
-        when "dict"
-          return nil if value.raw.is_a?(Hash)
-          return nil if pyclass == "str" && kv_dict?(value.as_s)
+        when "bool" then bool_type_check(name, value, pyclass)
+        when "int"  then int_type_check(name, value, pyclass)
+        when "dict" then dict_type_check(name, value, pyclass)
+        when "list" then list_type_check(name, value)
+        end
+      end
+
+      private def self.bool_type_check(name : String, value : JSON::Any, pyclass : String) : Krikri::PluginResult?
+        return nil if value.raw.is_a?(Bool) || pyclass == "int" || pyclass == "float"
+        return nil if pyclass == "str" && bool_convertible?(value.as_s)
+        bool_type_error(name, value)
+      end
+
+      private def self.int_type_check(name : String, value : JSON::Any, pyclass : String) : Krikri::PluginResult?
+        case value.raw
+        when Int64, Float64, Bool then nil
+        when String
+          return nil if value.as_s.strip.matches?(/\A[+-]?\d+\z/)
+          int_type_error(name, pyclass)
+        else
+          int_type_error(name, pyclass)
+        end
+      end
+
+      private def self.dict_type_check(name : String, value : JSON::Any, pyclass : String) : Krikri::PluginResult?
+        return nil if value.raw.is_a?(Hash)
+        return nil if pyclass == "str" && kv_dict?(value.as_s)
+        PluginResult.new(changed: false, failed: true,
+          msg: "argument '#{name}' is of type #{class_repr(pyclass)} and we were unable to convert to dict: " \
+               "dictionary requested, could not parse JSON or key=value")
+      end
+
+      private def self.list_type_check(name : String, value : JSON::Any) : Krikri::PluginResult?
+        case value.raw
+        when Array then nil
+        when Hash
           PluginResult.new(changed: false, failed: true,
-            msg: "argument '#{name}' is of type #{class_repr(pyclass)} and we were unable to convert to dict: " \
-                 "dictionary requested, could not parse JSON or key=value")
-        when "list"
-          case value.raw
-          when Array then nil
-          when Hash
-            PluginResult.new(changed: false, failed: true,
-              msg: "argument '#{name}' is of type <class 'dict'> and we were unable to convert to list: " \
-                   "<class 'dict'> cannot be converted to a list")
-          end
+            msg: "argument '#{name}' is of type <class 'dict'> and we were unable to convert to list: " \
+                 "<class 'dict'> cannot be converted to a list")
         end
       end
 
