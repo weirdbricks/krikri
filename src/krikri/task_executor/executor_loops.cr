@@ -1164,7 +1164,11 @@ module Krikri
         # ansible-playbook (ansible-core 2.19).
         if result["skipped"]?.try(&.as_bool) || false
           connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
-          puts "skipping: [#{connection_host}] => (item=#{item_label})".colorize(:cyan)
+          # no_log censors the loop item on the skipping line too (real
+          # Ansible prints `(item=(censored due to no_log))` - the item
+          # can itself be the secret)
+          item_shown = resolve_task_no_log(task, base_vars_context) ? "(censored due to no_log)" : item_label
+          puts "skipping: [#{connection_host}] => (item=#{item_shown})".colorize(:cyan)
         else
           executed_count += 1
           merge_ansible_facts(fact_hosts.try(&.[idx]) || host, result, task.module_name.ends_with?("set_fact"))

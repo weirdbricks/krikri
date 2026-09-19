@@ -49,7 +49,11 @@ module Krikri
                       else
                         "ok".colorize(:green)
                       end
-        suffix_only = item_label ? " => (item=#{item_label})" : ""
+        # Real Ansible censors the loop item too under no_log - the item
+      # value can itself be a secret (e.g. `loop: "{{ keepass_attrs }}"`
+      # on a credential-reading task), so `(item=<value>)` must never
+      # print verbatim.
+      suffix_only = item_label ? " => (item=(censored due to no_log))" : ""
         puts "#{status_only}: [#{host.connection_host}]#{suffix_only}"
         return
       end

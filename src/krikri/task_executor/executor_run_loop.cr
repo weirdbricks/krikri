@@ -896,7 +896,11 @@ module Krikri
       # print is deferred and emitted by execute_task when it consumes the
       # nil (skipped) result from the batch cache, in proper task order.
       unless defer_display
-        suffix = item_label ? " => (item=#{item_label})" : ""
+        # no_log censors the loop item on the skipping line too (real
+        # Ansible prints `(item=(censored due to no_log))` - the item
+        # can itself be the secret)
+        shown = resolve_task_no_log(task) ? "(censored due to no_log)" : item_label
+        suffix = shown ? " => (item=#{shown})" : ""
         puts "skipping: [#{host.connection_host}]#{suffix}".colorize(:cyan)
       end
       register_skip_result(task, host)
@@ -958,6 +962,7 @@ module Krikri
         # Ansible stamps _ansible_no_log onto these action failures and
         # shows the censored JSON - mirror that shape here.
         if resolve_task_no_log(task)
+          suffix = item_label ? " => (item=(censored due to no_log))" : ""
           puts %(fatal: [#{host.connection_host}]#{suffix}: FAILED! => {"censored": "the output has been hidden due to the fact that 'no_log: true' was specified for this result"}).colorize(:red)
         else
           puts "fatal: [#{host.connection_host}]#{suffix}: FAILED! => #{msg}".colorize(:red)

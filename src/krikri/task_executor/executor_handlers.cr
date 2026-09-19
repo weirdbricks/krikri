@@ -422,7 +422,7 @@ module Krikri
       if handler.unavailable_module && python_module_source_for(handler).nil?
         register_reachable_unavailable_module(handler, vars_context, host)
         connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
-        suffix = (item = vars_context["item"]?) ? " => (item=#{item_display(item)})" : ""
+        suffix = (item = vars_context["item"]?) ? " => (item=#{resolve_task_no_log(handler, vars_context) ? "(censored due to no_log)" : item_display(item)})" : ""
         puts "skipping: [#{connection_host}]#{suffix}".colorize(:cyan)
         return JSON.parse({
           "changed" => false,
@@ -463,7 +463,7 @@ module Krikri
 
         unless when_result
           connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
-          suffix = (item = vars_context["item"]?) ? " => (item=#{item_display(item)})" : ""
+          suffix = (item = vars_context["item"]?) ? " => (item=#{resolve_task_no_log(handler, vars_context) ? "(censored due to no_log)" : item_display(item)})" : ""
           puts "skipping: [#{connection_host}]#{suffix}".colorize(:cyan)
           return JSON.parse({
             "changed" => false,
