@@ -47,21 +47,8 @@ module Krikri
       # `vtype:`/`value:` alone (or question+value without vtype)
       # silently "succeeded" as "No question given, nothing to set"
       # instead of failing like real Ansible.
-      given_count = [question, vtype, value].count { |v| v }
-      if 0 < given_count < 3
-        return PluginResult.new(changed: false, failed: true,
-          msg: "parameters are required together: question, vtype, value")
-      end
-
-      # Real Ansible's argument_spec restricts vtype to a choices list
-      # (debconf.py); AnsibleModule's choice check (parameters.py's
-      # exact wording) fires for a full triple with a bad vtype before
-      # any debconf-show/debconf-set-selections call - previously a bad
-      # vtype sailed through and the task reported changed: true.
-      vtype_choices = ["boolean", "error", "multiselect", "note", "password", "seen", "select", "string", "text", "title"]
-      if vtype && !vtype_choices.includes?(vtype)
-        return PluginResult.new(changed: false, failed: true,
-          msg: "value of vtype must be one of: #{vtype_choices.join(", ")}, got: #{vtype}")
+      if error = validate_question_triple(question, vtype, value)
+        return error
       end
 
       if question.nil? || vtype.nil? || value.nil?
@@ -84,6 +71,26 @@ module Krikri
     # question:/selection:/setting: are documented aliases of each other
     private def debconf_question : String?
       @params["question"]? || @params["selection"]? || @params["setting"]?
+    end
+
+    private def validate_question_triple(question : String?, vtype : String?, value : String?) : PluginResult?
+      given_count = [question, vtype, value].count { |v| v }
+      if 0 < given_count < 3
+        return PluginResult.new(changed: false, failed: true,
+          msg: "parameters are required together: question, vtype, value")
+      end
+
+      # Real Ansible's argument_spec restricts vtype to a choices list
+      # (debconf.py); AnsibleModule's choice check (parameters.py's
+      # exact wording) fires for a full triple with a bad vtype before
+      # any debconf-show/debconf-set-selections call - previously a bad
+      # vtype sailed through and the task reported changed: true.
+      vtype_choices = ["boolean", "error", "multiselect", "note", "password", "seen", "select", "string", "text", "title"]
+      if vtype && !vtype_choices.includes?(vtype)
+        return PluginResult.new(changed: false, failed: true,
+          msg: "value of vtype must be one of: #{vtype_choices.join(", ")}, got: #{vtype}")
+      end
+      nil
     end
 
     # value:/answer: are documented aliases of each other
