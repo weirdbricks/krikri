@@ -49,8 +49,8 @@ describe "apt plugin cache_updated result key" do
 
   it "reports cache_updated: false when the cache is already fresh (cache_valid_time not exceeded)" do
     result = PluginSpecHelper.run("apt", {
-      "update_cache"     => "true",
-      "cache_valid_time" => "999999999",
+      "update_cache"        => "true",
+      "cache_valid_time"    => "999999999",
       "_ansible_check_mode" => "true",
     })
 
