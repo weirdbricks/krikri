@@ -102,7 +102,12 @@ module Krikri
       tmp_path = nil
       begin
         if key.includes?("://")
-          tmp_path = "/tmp/.krikri-playbook-rpm-key-#{Random.rand(100000..999999)}"
+          # File.tempfile (unguessable name + O_EXCL + 0600), not
+          # Random.rand: the old guessable name let a local user plant a
+          # symlink that curl -o then wrote through as root.
+          tmp = File.tempfile(".krikri-playbook-rpm-key-", nil)
+          tmp_path = tmp.path
+          tmp.close
           if error = download_key(key, tmp_path)
             return PluginResult.new(changed: false, failed: true, msg: error)
           end

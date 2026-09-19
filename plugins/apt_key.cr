@@ -128,7 +128,13 @@ module Krikri
         return PluginResult.new(changed: false, failed: true, msg: "Missing required parameter: url or data")
       end
 
-      tmp_path = "/tmp/.krikri-playbook-apt-key-#{Random.rand(100000..999999)}"
+      # File.tempfile, not Random.rand(100000..999999): the old name was
+      # guessable and every consumer of tmp_path (curl -o, cp,
+      # File.write) follows a symlink planted at it. O_EXCL creation
+      # makes a pre-planted path fail loudly instead.
+      tmp = File.tempfile(".krikri-playbook-apt-key-", nil)
+      tmp_path = tmp.path
+      tmp.close
       staged = false
       added = false
       begin
@@ -260,8 +266,11 @@ module Krikri
       # on Ubuntu 22.04, so this parse gets its OWN throwaway `--homedir`
       # it can't poison shared state through. (`rm -rf` runs before
       # `exit`, so the shell's exit status is gpg's own.)
-      tmp_home = "/tmp/.krikri-playbook-apt-key-gnupghome-#{Random.rand(100000..999999)}"
-      result = remote_exec("mkdir -p #{tmp_home} && chmod 700 #{tmp_home} && gpg --homedir #{tmp_home} --with-colons #{path} 2>/dev/null; gpg_rc=$?; rm -rf #{tmp_home}; exit $gpg_rc")
+      # Random::Secure + a bare `mkdir` (no -p): mkdir -p happily
+      # followed a symlink planted at the guessable Random.rand path,
+      # pointing gpg's root-side homedir writes anywhere.
+      tmp_home = "/tmp/.krikri-playbook-apt-key-gnupghome-#{Random::Secure.hex(8)}"
+      result = remote_exec("mkdir #{tmp_home} && chmod 700 #{tmp_home} && gpg --homedir #{tmp_home} --with-colons #{path} 2>/dev/null; gpg_rc=$?; rm -rf #{tmp_home}; exit $gpg_rc")
       keys = parse_output_for_keys(result[:stdout])
       {exit_code: result[:exit_code], key_id: keys.first?}
     end

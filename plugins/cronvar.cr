@@ -121,15 +121,20 @@ module Krikri
     # Install the updated crontab via a tmp file. Returns the failure
     # result when `crontab` rejects it, nil on success.
     private def install_user_crontab(crontab_target : String, new_content : String) : PluginResult?
-      tmp_path = "/tmp/.krikri-playbook-crontab-#{Random.rand(100000..999999)}"
+      # File.tempfile (unguessable name + O_EXCL + 0600), not a
+      # predictable Random.rand path: File.write followed a symlink
+      # planted there. Same class of fix cron.cr already made for its
+      # own crontab tmp.
+      tmp_file = File.tempfile(".krikri-playbook-crontab-", nil)
       begin
-        File.write(tmp_path, new_content.empty? ? "\n" : new_content)
-        install_result = remote_exec("crontab #{crontab_target} #{tmp_path}")
+        tmp_file.print(new_content.empty? ? "\n" : new_content)
+        tmp_file.close
+        install_result = remote_exec("crontab #{crontab_target} #{tmp_file.path}")
         unless install_result[:exit_code] == 0
           return PluginResult.new(changed: false, failed: true, msg: "crontab install failed: #{install_result[:stderr]}")
         end
       ensure
-        File.delete(tmp_path) rescue nil
+        tmp_file.delete rescue nil
       end
 
       nil

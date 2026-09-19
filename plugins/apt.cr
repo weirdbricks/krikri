@@ -866,18 +866,27 @@ module Krikri
       path = deb_source
 
       if deb_source.starts_with?("http://") || deb_source.starts_with?("https://")
-        path = "/tmp/#{File.basename(deb_source).split('?').first}"
-
         if @check_mode
-          messages << "Would download #{deb_source} to #{path}"
+          messages << "Would download #{deb_source} to a private /tmp staging file"
         else
-          download_result = remote_exec("curl -fsSL -o #{shell_single_quote(path)} #{shell_single_quote(deb_source)}")
-          if download_result[:exit_code] != 0
-            return PluginResult.new(
-              changed: false,
-              failed: true,
-              msg: "Failed to download #{deb_source}: #{download_result[:stderr]}"
-            )
+          # File.tempfile (unguessable name + O_EXCL + 0600), not the
+          # URL's own basename: /tmp/<basename> was fully predictable,
+          # and curl -o follows a symlink planted there, clobbering an
+          # arbitrary file as root.
+          tmp = File.tempfile(".krikri-playbook-deb-", nil)
+          path = tmp.path
+          begin
+            tmp.close
+            download_result = remote_exec("curl -fsSL -o #{shell_single_quote(path)} #{shell_single_quote(deb_source)}")
+            if download_result[:exit_code] != 0
+              return PluginResult.new(
+                changed: false,
+                failed: true,
+                msg: "Failed to download #{deb_source}: #{download_result[:stderr]}"
+              )
+            end
+          ensure
+            File.delete(path) rescue nil
           end
         end
       end

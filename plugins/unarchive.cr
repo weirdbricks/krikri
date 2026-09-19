@@ -169,10 +169,17 @@ module Krikri
     private def resolve_src(src : String) : PluginResult | {String, String?}
       return {src, nil} unless src.starts_with?("http://") || src.starts_with?("https://")
 
-      tmp_download_path = "/tmp/.krikri-playbook-unarchive-#{Random.rand(100000..999999)}"
+      # File.tempfile (unguessable name + O_EXCL + 0600), not a
+      # predictable Random.rand path: the archive download then followed
+      # a symlink planted at it. The O_EXCL pre-create means a planted
+      # path fails loudly instead of being written through.
+      tmp_file = File.tempfile(".krikri-playbook-unarchive-", nil)
+      tmp_download_path = tmp_file.path
+      tmp_file.close
       begin
         download(src, tmp_download_path)
       rescue ex
+        File.delete(tmp_download_path) rescue nil
         return PluginResult.new(changed: false, failed: true, msg: "Source '#{src}' failed to transfer: #{ex.message}")
       end
       {tmp_download_path, tmp_download_path}
