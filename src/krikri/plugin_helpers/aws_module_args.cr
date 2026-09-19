@@ -450,7 +450,7 @@ module Krikri
         return nil if unsupported.empty?
 
         unsupported = unsupported.map { |key| "#{param}.#{key}" }
-        supported = sub.args.keys.sort.join(", ")
+        supported = sub.args.keys.sort!.join(", ")
         PluginResult.new(changed: false, failed: true,
           msg: "Unsupported parameters for (#{spec.module_name}) module: #{unsupported.join(", ")}. " \
                "Supported parameters include: #{supported}.")
