@@ -8565,7 +8565,7 @@ Crinja `%` operator) and Deliberate Limits for `aem_design.aem_license`.
 | `P4T12ICK.ar_guacamole` | ubuntu | ✅ clean. Times: cold py 284.15s vs cr 212.37s; warm py 76.47s vs cr 16.55s. |
 | `HarryHarcourt.Ansible-RHEL7-CIS-Benchmarks` | ubuntu | ✅ clean. Times: cold py 0.50s vs cr 0.01s; warm py 0.47s vs cr 0.01s. |
 | `lirlia.ruby` | ubuntu | ✅ clean. Times: cold py 71.26s vs cr 62.98s; warm py 16.44s vs cr 2.51s. |
-| `githubixx.kubernetes_ca` | ubuntu | ⚠️ DIVERGENT (not root-caused/fixed this round). Times: cold py 4.55s vs cr 4.56s; warm py 2.87s vs cr 0.61s. |
+| `githubixx.kubernetes_ca` | ubuntu | ⚠️ partially fixed 0.9.1195 (YAML `>`-folded-scalar + trailing `\` shell commands now match real bash), role still can't complete end-to-end - it needs inventory groups (`k8s_ca_controller_nodes_group`/etc.) this harness's generic single-host setup doesn't provide. Times: cold py 4.55s vs cr 4.56s; warm py 2.87s vs cr 0.61s. |
 | `tvmalmeida.windows_update` | ubuntu | 🚫 out of scope: unsupported community module (ansible.windows.win_reboot), not tracked - see KNOWN_MISSING.md's coverage policy. |
 | `thorian93.unattended_upgrade` | ubuntu | ✅ clean. Times: cold py 5.12s vs cr 4.07s; warm py 4.47s vs cr 0.40s. |
 | `kibatic.docker-systemd` | ubuntu | ✅ clean. Times: cold py 0.45s vs cr 0.01s; warm py 0.45s vs cr 0.01s. |
