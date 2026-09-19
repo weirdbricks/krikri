@@ -403,8 +403,11 @@ module Krikri
       # a file literally named "undefined" (the old bug: the engine's
       # own "undefined" sentinel string leaking through as a filename).
       begin
-        loop_items = resolve_loop_items_or_raise(task, host, vars_context) do
-          task.loop_items || resolve_loop_template(task, vars_context) || resolve_loop_nested(task, vars_context, host.name) || resolve_loop_together(task, vars_context, host.name) || resolve_fileglob(task, host, vars_context)
+        # Loop-source resolution sees the alias-free snapshot (real
+        # Ansible's own scoping - see #synthesize_legacy_ssh_aliases).
+        loop_vars_context = loop_source_vars_context(task, host, vars_context)
+        loop_items = resolve_loop_items_or_raise(task, host, loop_vars_context) do
+          task.loop_items || resolve_loop_template(task, loop_vars_context) || resolve_loop_nested(task, loop_vars_context, host.name) || resolve_loop_together(task, loop_vars_context, host.name) || resolve_fileglob(task, host, loop_vars_context)
         end
       rescue ex : WhenEvaluationError
         finish_include_vars_failure(task, host, ex.message || "is undefined")
@@ -431,7 +434,7 @@ module Krikri
         # item isn't appended, a narrower gap than the fully generic
         # looped-module path.
         item_results = [] of JSON::Any
-        rendered_items = loop_items.map { |item| deep_render_item(item, vars_context, host.name, strict: false) }
+        rendered_items = loop_items.map { |item| deep_render_item(item, loop_vars_context, host.name, strict: false) }
         rendered_items = flatten_with_items_one_level(rendered_items) if task.loop_items_needs_flatten?
         rendered_items.each_with_index do |item, loop_index|
           item_context = vars_context.dup
@@ -1162,14 +1165,17 @@ module Krikri
       # below is the same task-level (no item_label) failure shape run_
       # include_tasks_once's own WhenEvaluationError rescue uses.
       begin
-        loop_items = resolve_loop_items_or_raise(task, host, base_vars_context) do
-          task.loop_items || resolve_first_found(task, host, base_vars_context) ||
-            resolve_loop_template(task, base_vars_context) ||
-            resolve_loop_nested(task, base_vars_context, host.name) ||
-            resolve_loop_together(task, base_vars_context, host.name) ||
-            resolve_loop_flattened(task, base_vars_context, host.name) ||
-            resolve_loop_subelements(task, base_vars_context) ||
-            resolve_loop_filetree(task, host, base_vars_context)
+        # Loop-source resolution sees the alias-free snapshot (real
+        # Ansible's own scoping - see #synthesize_legacy_ssh_aliases).
+        loop_vars_context = loop_source_vars_context(task, host, base_vars_context)
+        loop_items = resolve_loop_items_or_raise(task, host, loop_vars_context) do
+          task.loop_items || resolve_first_found(task, host, loop_vars_context) ||
+            resolve_loop_template(task, loop_vars_context) ||
+            resolve_loop_nested(task, loop_vars_context, host.name) ||
+            resolve_loop_together(task, loop_vars_context, host.name) ||
+            resolve_loop_flattened(task, loop_vars_context, host.name) ||
+            resolve_loop_subelements(task, loop_vars_context) ||
+            resolve_loop_filetree(task, host, loop_vars_context)
         end
       rescue ex : WhenEvaluationError
         swallow_when_error(task, host, ex)
@@ -1199,7 +1205,7 @@ module Krikri
           # real array it resolves to) - flatten only makes sense against
           # the rendered values.
           loop_items = flatten_with_items_one_level(
-            loop_items.map { |item| deep_render_item(item, base_vars_context, host.name, strict: false) }
+            loop_items.map { |item| deep_render_item(item, loop_vars_context, host.name, strict: false) }
           )
         end
         loop_items.each_with_index do |item, idx|
@@ -1211,7 +1217,10 @@ module Krikri
           # `{{ }}` for ConditionalEvaluator to render through) sees the
           # literal unrendered "{{ os_mnt_tmp_enabled }}" text, which the
           # `bool` filter treats as truthy regardless of the real value.
-          rendered_item = deep_render_item(item, vars_context, host.name, strict: false)
+          # Item rendering is loop-source-grade templating, so it renders
+          # against the alias-free snapshot, while the per-iteration
+          # context the included tasks see keeps the full one.
+          rendered_item = deep_render_item(item, loop_vars_context, host.name, strict: false)
           vars_context["item"] = rendered_item
           vars_context[loop_var] = rendered_item if loop_var
           vars_context[index_var] = JSON::Any.new(idx.to_i64) if index_var
@@ -1454,14 +1463,17 @@ module Krikri
       # Ansible never enters the role at all on an undefined loop:
       # source).
       begin
-        loop_items = resolve_loop_items_or_raise(task, host, base_vars_context) do
+        # Loop-source resolution sees the alias-free snapshot (real
+        # Ansible's own scoping - see #synthesize_legacy_ssh_aliases).
+        loop_vars_context = loop_source_vars_context(task, host, base_vars_context)
+        loop_items = resolve_loop_items_or_raise(task, host, loop_vars_context) do
           task.loop_items ||
-            resolve_loop_template(task, base_vars_context) ||
-            resolve_loop_nested(task, base_vars_context, host.name) ||
-            resolve_loop_together(task, base_vars_context, host.name) ||
-            resolve_loop_flattened(task, base_vars_context, host.name) ||
-            resolve_loop_subelements(task, base_vars_context) ||
-            resolve_loop_filetree(task, host, base_vars_context)
+            resolve_loop_template(task, loop_vars_context) ||
+            resolve_loop_nested(task, loop_vars_context, host.name) ||
+            resolve_loop_together(task, loop_vars_context, host.name) ||
+            resolve_loop_flattened(task, loop_vars_context, host.name) ||
+            resolve_loop_subelements(task, loop_vars_context) ||
+            resolve_loop_filetree(task, host, loop_vars_context)
         end
       rescue ex : WhenEvaluationError
         swallow_when_error(task, host, ex)
@@ -1473,7 +1485,7 @@ module Krikri
         index_var = task.index_var
         if task.loop_items_needs_flatten?
           loop_items = flatten_with_items_one_level(
-            loop_items.map { |item| deep_render_item(item, base_vars_context, host.name, strict: false) }
+            loop_items.map { |item| deep_render_item(item, loop_vars_context, host.name, strict: false) }
           )
         end
         loop_items.each_with_index do |item, idx|

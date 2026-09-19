@@ -809,7 +809,11 @@ module Krikri
       # non-empty string regardless of what it would have rendered to,
       # so `item != ""` was always true and a should-have-been-skipped
       # item ran for real, on a bogus literal path.
-      rendered_items = render_loop_items_strict_or_raise(task, loop_items, base_vars_context, host.name)
+      # Item rendering is part of loop-SOURCE resolution - the strict
+      # render sees the alias-free snapshot (real Ansible's own scoping,
+      # see #synthesize_legacy_ssh_aliases), while the per-iteration
+      # task-arg context below keeps the full one.
+      rendered_items = render_loop_items_strict_or_raise(task, loop_items, loop_source_vars_context(task, host, base_vars_context), host.name)
       if rendered_items.nil?
         # Strict item templating failed but the task's own when: evaluates
         # False without `item` bound - real Ansible evaluates the when:

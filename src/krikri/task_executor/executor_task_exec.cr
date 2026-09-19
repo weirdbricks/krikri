@@ -40,6 +40,10 @@ module Krikri
       merged = Hash(String, JSON::Any).new
       base = base_context_a_for(host).dup
       base_context_b_for(host).each { |key, value| base[key] = value }
+      # vars_files paths are play/task-arg-grade templating, not loop-
+      # source resolution - real Ansible's legacy-alias synthesis applies
+      # here (see #synthesize_legacy_ssh_aliases).
+      synthesize_legacy_ssh_aliases(base)
       substitutor = VarSubstitutor.new(vars: base, host_name: host.name)
 
       @vars_files.each do |candidates|
