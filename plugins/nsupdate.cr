@@ -331,9 +331,9 @@ module Krikri
             return rr.name
           end
         end
-        response.authority.each do |record|
-          if record.type_code == 6 && PluginHelpers::NsupdateMessage.subdomain_of?(name, record.name)
-            return record.name
+        response.authority.each do |rr|
+          if rr.type_code == 6 && PluginHelpers::NsupdateMessage.subdomain_of?(name, rr.name)
+            return rr.name
           end
         end
 
