@@ -79,6 +79,10 @@ module Krikri
       unless persistent
         return result unless selinux_enabled?
       end
+      set_boolean(name, desired_on, persistent, result)
+    end
+
+    private def set_boolean(name : String, desired_on : Bool, persistent : Bool, result : PluginResult) : PluginResult
       current = remote_exec("getsebool #{name}")
       unless current[:exit_code] == 0
         result.failed = true
