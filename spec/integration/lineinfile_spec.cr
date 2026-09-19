@@ -85,9 +85,9 @@ describe "lineinfile plugin" do
     File.write(path, "original\n")
 
     result = PluginSpecHelper.run("lineinfile", {
-      "path"       => path,
-      "line"       => "added line",
-      "state"      => "present",
+      "path"                => path,
+      "line"                => "added line",
+      "state"               => "present",
       "_ansible_check_mode" => "true",
     })
 
