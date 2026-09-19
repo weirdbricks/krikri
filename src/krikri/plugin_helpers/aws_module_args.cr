@@ -446,7 +446,7 @@ module Krikri
 
       private def self.sub_unsupported(spec : Spec, param : String, sub : SubSpec, options : Hash(String, JSON::Any)) : Krikri::PluginResult?
         legal = sub.args.keys.to_set
-        unsupported = options.keys.reject { |key| legal.includes?(key) }.sort
+        unsupported = options.keys.reject { |key| legal.includes?(key) }.sort!
         return nil if unsupported.empty?
 
         unsupported = unsupported.map { |key| "#{param}.#{key}" }
