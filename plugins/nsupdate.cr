@@ -519,8 +519,8 @@ module Krikri
 
         lookup = @last_response.not_nil!
         existing = lookup.answer.empty? ? lookup.authority : lookup.answer
-        stale = existing.flat_map do |record|
-          decode_rr_values(record, type)
+        stale = existing.flat_map do |rr|
+          decode_rr_values(rr, type)
         end.reject { |entry| values.includes?(entry) }
 
         rrs = encode_values(record, type_code, ttl, values)
