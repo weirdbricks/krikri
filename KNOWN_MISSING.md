@@ -193,11 +193,48 @@ not even comparable to the real-Ansible failure it was originally paired
 with. There is no remaining evidence of a real parse-time-leniency gap
 from this round.
 
-The remaining ~40 unresolved roles split into genuine `CORE_BUG`
-candidates for a future fix round (including the still-open
-`practical-ansible.nginx_docker`/`nginx_project` half of the
-include_vars/`failed_when:` item this round never got back to) and a
-smaller set still genuinely `UNCLEAR` pending individual repro.
+The remaining ~40 unresolved roles were individually triaged in a
+follow-up CORE_BUG round (2026-09-19), landing 6 more real fixes
+(0.9.1190-0.9.1193): an explicit empty `owner:`/`group:` silently
+ignored instead of failing (shared file-common helper, round900811
+kilip.chezmoi), the implicit Gathering Facts task wrongly credited
+toward the PLAY RECAP `ok=` tally on every play (round900836
+NINEJKH.git - this one affects every recap, not just this role),
+`apt:`'s `deb:` URL download deleting its own temp file before the
+install step ran (round900223 j91321.sysmon), and `include_vars:`
+ignoring `failed_when:` on its own file-not-found failure (round900991/
+900994 practical-ansible.nginx_docker/nginx_project - the item this
+round never got back to). A further 14 roles reclassified to
+unsupported-community or infra/role-side (see `ROLES_TESTED.md`). Still
+open, deliberately not dispatched yet: role `argument_specs:` validation
+(a new engine feature, not a small fix - affects `volker-raschek.rspamd`
+and `pimvh.systemd_failmail`), `f500.bashrc`'s `ansible_ssh_user`
+synthesis (needs live re-verification against the round168
+geerlingguy.phergie fix it would risk regressing before touching),
+`philnewm.gnome`'s Crinja nested-for/dict-mutation parser gap (vendored
+fork, candidate for a combined Crinja-hardening pass alongside the
+Jinja2 differential-harness findings below), a "`set: command not
+found`" shell-invocation symptom on `githubixx.kubernetes_ca` (role
+itself is infra-side, but this specific symptom may be separable and
+worth its own look), and `hspaans.fd`'s too-lenient `with_items:`
+templating (low value). A handful of roles remain genuinely `UNCLEAR`.
+
+**Crinja/Jinja2 differential health check (2026-09-19):** ran the
+vendored Crinja fork against real Jinja2 3.1.6's own upstream test
+suite (`test_filters.py`/`test_core_tags.py`/`test_lexnparse.py`/
+`test_tests.py`/`test_runtime.py`) via a one-off differential harness -
+279 extracted cases, 191 pass, 88 fail across 40 distinct root-cause
+groups (diagnostic only, nothing merged - see the harness's own
+`report.md`, not preserved in this repo). Highest-value groups: the
+`is eq`/`lt`/`le`/`gt`/`ge` test aliases entirely unregistered,
+`groupby()`'s `case_sensitive`/`default` kwargs ignored and its output
+ordering wrong, `loop.previtem`/`nextitem`/`changed()` all broken,
+`none`/`None` rendering as an empty string instead of `"None"`,
+numeric literals with underscores/hex/octal/binary/scientific notation
+failing to parse, chained comparisons (`4 < 2 < 3`) raising instead of
+evaluating, `dictsort` returning lists instead of tuples, and `min`/
+`max` doing case-sensitive-only comparison. Not yet dispatched pending
+a decision on scope.
 
 ## Round 829000-829799: 800-role Galaxy batch (ubuntu+rocky), no new krikri bug (0.9.1154)
 

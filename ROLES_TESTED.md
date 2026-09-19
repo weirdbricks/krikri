@@ -8581,7 +8581,7 @@ Crinja `%` operator) and Deliberate Limits for `aem_design.aem_license`.
 | `salamachinas.sudoers` | ubuntu | ❌ GALAXY_MISSING |
 | `rolehippie.elasticsearch` | ubuntu | ⚠️ DIVERGENT (not root-caused/fixed this round). Times: cold py 214.07s vs cr 152.50s; warm py 38.74s vs cr 7.10s. |
 | `justereseau.haproxy` | ubuntu | ✅ clean. Times: cold py 14.59s vs cr 9.48s; warm py 11.90s vs cr 4.50s. |
-| `j91321.sysmon` | ubuntu | ⚠️ DIVERGENT (not root-caused/fixed this round). Times: cold py 65.89s vs cr 9.52s; warm py 19.15s vs cr 0.83s. |
+| `j91321.sysmon` | ubuntu | ✅ FIXED 0.9.1192: apt: deb: <URL> deleted the downloaded temp before install. |
 | `darexsu.openvpn` | ubuntu | ✅ clean. Times: cold py 4.79s vs cr 4.36s; warm py 2.93s vs cr 0.32s. |
 | `trombik.haproxy` | ubuntu | ✅ clean. Times: cold py 0.58s vs cr 0.02s; warm py 0.53s vs cr 0.01s. |
 | `opsta.ntp` | ubuntu | ✅ clean. Times: cold py 10.08s vs cr 3.86s; warm py 9.30s vs cr 0.59s. |
@@ -9169,7 +9169,7 @@ Crinja `%` operator) and Deliberate Limits for `aem_design.aem_license`.
 | `jonsible.filter_plugins` | rocky | ✅ clean. Times: cold py 4.26s vs cr 10.31s; warm py 2.65s vs cr 0.34s. |
 | `RebelMouseTeam.host-naming` | rocky | 🚫 out of scope: ec2_facts (legacy/unsupported amazon.aws-era module); krikri's own failure here is an unrelated host apt-lock permission issue, not comparable - see KNOWN_MISSING.md's coverage policy. |
 | `escalate.grafana` | rocky | ✅ clean. Times: cold py 33.38s vs cr 14.42s; warm py 32.52s vs cr 1.13s. |
-| `kilip.chezmoi` | rocky | ⚠️ DIVERGENT (not root-caused/fixed this round). Times: cold py 5.95s vs cr 13.48s; warm py 6.43s vs cr 1.28s. |
+| `kilip.chezmoi` | rocky | ✅ FIXED 0.9.1190: empty-string owner:/group: silently ignored instead of failing. |
 | `labpositiva.postgresql` | rocky | ✅ clean. Times: cold py 0.46s vs cr 0.01s; warm py 0.50s vs cr 0.01s. |
 | `labpositiva.redis` | rocky | ✅ clean. Times: cold py 0.60s vs cr 0.01s; warm py 1.36s vs cr 0.04s. |
 | `caseraw.ansible_role_chrony` | rocky | ✅ clean. Times: cold py 19.43s vs cr 12.94s; warm py 15.76s vs cr 2.61s. |
@@ -9194,7 +9194,7 @@ Crinja `%` operator) and Deliberate Limits for `aem_design.aem_license`.
 | `jonatasbaldin.squid3` | rocky | ❌ GALAXY_MISSING |
 | `roles-ansible.nginx_exporter` | rocky | ✅ clean. Times: cold py 7.00s vs cr 18.43s; warm py 7.40s vs cr 8.57s. |
 | `uos.smb_backup` | rocky | ✅ clean. Times: cold py 15.04s vs cr 17.60s; warm py 8.39s vs cr 0.66s. |
-| `NINEJKH.git` | rocky | ⚠️ DIVERGENT (not root-caused/fixed this round). Times: cold py 6.99s vs cr 10.86s; warm py 5.95s vs cr 0.39s. |
+| `NINEJKH.git` | rocky | ✅ FIXED 0.9.1191: implicit Gathering Facts wrongly credited toward recap ok=. |
 | `bilalcaliskan.remi` | rocky | ✅ clean. Times: cold py 5.12s vs cr 10.61s; warm py 4.00s vs cr 0.32s. |
 | `gesof.aerospike` | rocky | ✅ clean. Times: cold py 6.30s vs cr 12.73s; warm py 5.53s vs cr 1.75s. |
 | `thulium_drake.yum_repository` | rocky | ✅ clean. Times: cold py 13.04s vs cr 16.49s; warm py 8.67s vs cr 1.34s. |
@@ -9349,10 +9349,10 @@ Crinja `%` operator) and Deliberate Limits for `aem_design.aem_license`.
 | `mrlesmithjr.timezone` | rocky | ✅ clean. Times: cold py 6.26s vs cr 15.78s; warm py 4.00s vs cr 0.49s. |
 | `ansible-city.users_and_groups` | rocky | ✅ clean. Times: cold py 0.44s vs cr 0.01s; warm py 0.89s vs cr 0.01s. |
 | `ISU-Ansible.chrony` | rocky | ✅ clean. Times: cold py 13.38s vs cr 11.56s; warm py 10.13s vs cr 0.61s. |
-| `practical-ansible.nginx_docker` | rocky | ⚠️ DIVERGENT (not root-caused/fixed this round). Times: cold py 3.91s vs cr 10.48s; warm py 3.39s vs cr 0.31s. |
+| `practical-ansible.nginx_docker` | rocky | ✅ FIXED 0.9.1193: include_vars: ignored failed_when: on its own file-not-found failure. |
 | `suhlig.caddy_file_server` | rocky | ✅ clean. Times: cold py 3.64s vs cr 15.90s; warm py 2.85s vs cr 0.32s. |
 | `trombik.pip` | rocky | ✅ clean. Times: cold py 0.44s vs cr 0.01s; warm py 0.45s vs cr 0.01s. |
-| `practical-ansible.nginx_project` | rocky | ⚠️ DIVERGENT (not root-caused/fixed this round). Times: cold py 4.52s vs cr 10.33s; warm py 4.01s vs cr 0.35s. |
+| `practical-ansible.nginx_project` | rocky | ✅ FIXED 0.9.1193: include_vars: ignored failed_when: on its own file-not-found failure. |
 | `hpcloud-mon.storm` | rocky | ✅ clean. Times: cold py 0.43s vs cr 0.01s; warm py 0.44s vs cr 0.01s. |
 | `mikecher.ansible_prometheus_ssl_exporter` | rocky | ✅ clean. Times: cold py 16.41s vs cr 14.44s; warm py 28.40s vs cr 0.75s. |
 | `gikeymarcia.neovim` | rocky | ✅ clean. Times: cold py 16.09s vs cr 12.07s; warm py 22.68s vs cr 0.56s. |
