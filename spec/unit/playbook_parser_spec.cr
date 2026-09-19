@@ -530,6 +530,56 @@ describe Krikri::PlaybookParser do
       end
     end
 
+    it "hard-stops the parse for docker_compose (v1), removed from community.docker in v4.0.0, with its own removal message" do
+      # lucasmaurice.awx (round 900444) writes the BARE `docker_compose:`
+      # (compose v1) - community.docker removed the module in v4.0.0
+      # (docker-compose v1 is End-of-Life; docker_compose_v2 is the
+      # replacement) and community.general's redirect lands on that
+      # tombstone, so real ansible-playbook hard-stops with the
+      # collection's OWN removal message, not the generic
+      # couldn't-resolve wording (verified live against ansible-core
+      # 2.19.11 with a minimal repro for all three spellings - bare,
+      # community.general.- and community.docker.-qualified - each
+      # printing the identical community.docker.docker_compose message,
+      # no PLAY RECAP). This engine previously fell through to the
+      # unavailable-module path and failed at RUN time with a misleading
+      # "docker: No such file or directory" instead.
+      removal_message = "The 'community.docker.docker_compose' module has been removed. " \
+                         "This module uses docker-compose v1, which is End of Life since July 2022. " \
+                         "Please migrate to community.docker.docker_compose_v2. " \
+                         "This feature was removed from collection 'community.docker' version 4.0.0."
+
+      ["docker_compose", "community.general.docker_compose", "community.docker.docker_compose"].each do |name|
+        expect_raises(Krikri::UnresolvedModuleError, removal_message) do
+          Krikri::PlaybookParser.parse_string(<<-YAML
+            - hosts: all
+              tasks:
+                - name: removed compose v1 module
+                  #{name}:
+                    project_src: /tmp/x
+            YAML
+          )
+        end
+      end
+    end
+
+    it "still resolves docker_compose_v2 (it is a separate, implemented plugin, not the removed v1)" do
+      # Guard for the tombstone above: docker_compose_v2 is a distinct,
+      # fully-implemented module - tombstoning docker_compose v1 must
+      # not catch it.
+      playbook = Krikri::PlaybookParser.parse_string(<<-YAML
+        - hosts: all
+          tasks:
+            - name: compose v2 stays fine
+              community.docker.docker_compose_v2:
+                project_src: /tmp/x
+        YAML
+      )
+
+      playbook.plays[0].tasks.size.should eq(1)
+      playbook.plays[0].tasks[0].unavailable_module.should be_nil
+    end
+
     it "keeps a module from a collection with zero krikri modules as unavailable_module, no longer raising (0.9.1050)" do
       # Round 811000 reversed 0.9.903's unconditional parse-time
       # hard-stop for plain unimplemented modules: kubernetes.core and

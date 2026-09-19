@@ -1617,21 +1617,37 @@ module Krikri
       "community.libvirt.virt_net" => "virt_net",
     }
 
+    # community.docker's own removal text for docker_compose v1
+    # (End-of-Life since July 2022; removed from community.docker in
+    # v4.0.0, docker_compose_v2 is the replacement) - real
+    # ansible-playbook's exact hard-stop wording, verified live against
+    # ansible-core 2.19.11. Shared verbatim by all three tombstone
+    # spellings (bare, community.general.- and community.docker.-
+    # qualified): real Ansible echoes the RESOLVED module name, never
+    # the as-written spelling, for this one.
+    DOCKER_COMPOSE_REMOVAL_MESSAGE = "The 'community.docker.docker_compose' module has been removed. " \
+                                     "This module uses docker-compose v1, which is End of Life since July 2022. " \
+                                     "Please migrate to community.docker.docker_compose_v2. " \
+                                     "This feature was removed from collection 'community.docker' version 4.0.0."
+
     # Bare module names real ansible-core can no longer resolve in ANY
     # collection (removed from ansible-core years ago and from the
     # collections that absorbed them), so every real ansible-playbook
-    # install hard-stops on them with "couldn't resolve module/action"
-    # (verified live against ansible-core 2.19.4, including the
-    # amazon.aws-qualified spelling - amazon.aws's own runtime.yml
-    # tombstoned it too). Deliberately minimal: an entry here hard-stops
-    # the whole run at parse time, so a name belongs here only when it
-    # is unresolvable on EVERY real controller - never a module that a
-    # current collection still ships. Widening = adding entries here.
-    REMOVED_MODULE_TOMBSTONES = Set{
-      "ec2_remote_facts",
-      "ansible.builtin.ec2_remote_facts",
-      "ansible.legacy.ec2_remote_facts",
-      "amazon.aws.ec2_remote_facts",
+    # install hard-stops on them. Deliberately minimal: an entry here
+    # hard-stops the whole run at parse time, so a name belongs here
+    # only when it is unresolvable on EVERY real controller - never a
+    # module that a current collection still ships. Widening = adding
+    # entries here. Value is real Ansible's own hard-stop error text for
+    # that name: nil means the generic couldn't-resolve wording (what
+    # ansible-core prints when nothing anywhere resolves the name),
+    # while some removed names have real Ansible print its own specific
+    # removal message instead - verified live against ansible-core
+    # 2.19.11, including which names get which wording.
+    REMOVED_MODULE_TOMBSTONES = {
+      "ec2_remote_facts"                 => nil,
+      "ansible.builtin.ec2_remote_facts" => nil,
+      "ansible.legacy.ec2_remote_facts"  => nil,
+      "amazon.aws.ec2_remote_facts"      => nil,
       # Removed from community.general in v10.0.0 (its own runtime.yml
       # tombstones the FQCN), so every controller on a current
       # collection hard-fails on it (idealista.consul-role, round 033).
@@ -1641,8 +1657,8 @@ module Krikri
       # bare-name task (like idealista.consul-role's own sibling roles
       # might write) slipped through ungracefully-skipped instead of
       # hard-stopped, same bug class as docker_service below.
-      "community.general.consul_acl",
-      "consul_acl",
+      "community.general.consul_acl"     => nil,
+      "consul_acl"                       => nil,
       # Removed from community.general in v2.0.0 (superseded by
       # `docker_compose`), so every controller on a current collection
       # hard-fails on it. krzysztof-magosa.docker writes the BARE name
@@ -1651,27 +1667,49 @@ module Krikri
       # normalization there) meant only the FQCN spelling was ever
       # caught; confirmed live against the rebuilt 0.9.891 binary still
       # gracefully skipping the bare form instead of hard-stopping.
-      "community.general.docker_service",
-      "docker_service",
+      "community.general.docker_service" => nil,
+      "docker_service"                   => nil,
+      # docker_compose (the compose v1 module) - community.docker
+      # removed it in v4.0.0 (docker-compose v1 is End-of-Life since
+      # July 2022; community.docker.docker_compose_v2 is the
+      # replacement) and community.general's own redirect now lands on
+      # that tombstone, so every current controller hard-stops. The
+      # message is the collection's own removal text, NOT the generic
+      # couldn't-resolve wording, and it names the RESOLVED
+      # community.docker.docker_compose spelling, never the as-written
+      # one - identical for all three spellings (bare,
+      # community.general.- and community.docker.-qualified; verified
+      # live against ansible-core 2.19.11 with a minimal repro).
+      # lucasmaurice.awx (round 900444) writes the bare name; this
+      # engine previously fell through to the unavailable-module path
+      # and failed at RUN time with a misleading "docker: No such file
+      # or directory" instead of matching real Ansible's own
+      # removed-module hard stop. docker_compose_v2 itself is a
+      # separate, fully-implemented plugin (plugins/docker_compose_v2.cr)
+      # - this tombstones only the removed v1 module.
+      "community.docker.docker_compose"  => DOCKER_COMPOSE_REMOVAL_MESSAGE,
+      "community.general.docker_compose" => DOCKER_COMPOSE_REMOVAL_MESSAGE,
+      "docker_compose"                   => DOCKER_COMPOSE_REMOVAL_MESSAGE,
     }
 
     # Raises UnresolvedModuleError for the tombstoned-removed hard-stop
-    # shape (real Ansible's own exact wording - real Ansible also
-    # hard-stops there, for its own genuine reason), returns normally
-    # for every other name. as_written is the module/action name exactly
-    # as the task wrote it - real Ansible's message echoes the source
-    # spelling, not any resolved form.
+    # shape - with real Ansible's own exact wording for that name (the
+    # generic couldn't-resolve text, or the collection's own specific
+    # removal message where real Ansible prints one instead) - returns
+    # normally for every other name. as_written is the module/action
+    # name exactly as the task wrote it - real Ansible's message echoes
+    # the source spelling, not any resolved form (except a tombstone
+    # with its own fixed message, like docker_compose's).
     def self.raise_unresolvable_module_error(as_written : String) : Nil
       # A templated module name resolves (or fails) at run time, never
       # here - the raw `{{ }}` text is not an unresolvable name.
       return if as_written.includes?("{{")
 
-      message = "couldn't resolve module/action '#{as_written}'. " \
-                "This often indicates a misspelling, missing collection, or incorrect module path."
+      return unless REMOVED_MODULE_TOMBSTONES.has_key?(as_written)
 
-      if REMOVED_MODULE_TOMBSTONES.includes?(as_written)
-        raise UnresolvedModuleError.new(message)
-      end
+      raise UnresolvedModuleError.new(REMOVED_MODULE_TOMBSTONES[as_written] ||
+        "couldn't resolve module/action '#{as_written}'. " \
+        "This often indicates a misspelling, missing collection, or incorrect module path.")
     end
 
     # Deliberately no "krikri hasn't implemented this" sibling anymore:
