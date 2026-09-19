@@ -43,9 +43,9 @@ describe "systemd plugin" do
 
   it "accepts force: with enabled: in check mode (flags only affect the real invocations)" do
     result = PluginSpecHelper.run("systemd", {
-      "name"       => "nonexistent-krikri-playbook-unit.service",
-      "enabled"    => "true",
-      "force"      => "true",
+      "name"                => "nonexistent-krikri-playbook-unit.service",
+      "enabled"             => "true",
+      "force"               => "true",
       "_ansible_check_mode" => "true",
     })
     result["failed"]?.try(&.as_bool).should be_falsey
@@ -55,9 +55,9 @@ describe "systemd plugin" do
 
   it "accepts no_block: with state: started in check mode (flags only affect the real invocations)" do
     result = PluginSpecHelper.run("systemd", {
-      "name"       => "nonexistent-krikri-playbook-unit.service",
-      "state"      => "started",
-      "no_block"   => "yes",
+      "name"                => "nonexistent-krikri-playbook-unit.service",
+      "state"               => "started",
+      "no_block"            => "yes",
       "_ansible_check_mode" => "true",
     })
     result["failed"]?.try(&.as_bool).should be_falsey
@@ -130,8 +130,8 @@ describe "systemd plugin" do
 
   it "predicts a start for a stopped unit in check mode" do
     result = PluginSpecHelper.run("systemd", {
-      "name"       => "nonexistent-krikri-playbook-unit.service",
-      "state"      => "started",
+      "name"                => "nonexistent-krikri-playbook-unit.service",
+      "state"               => "started",
       "_ansible_check_mode" => "true",
     })
     # This is a unit that almost certainly does not exist (is-active fails),
@@ -156,9 +156,9 @@ describe "systemd plugin" do
   # convention.
   it "accepts scope: user without rejecting the parameter" do
     result = PluginSpecHelper.run("systemd", {
-      "name"       => "nonexistent-krikri-playbook-user-unit.service",
-      "state"      => "started",
-      "scope"      => "user",
+      "name"                => "nonexistent-krikri-playbook-user-unit.service",
+      "state"               => "started",
+      "scope"               => "user",
       "_ansible_check_mode" => "true",
     })
     result["failed"]?.try(&.as_bool).should be_falsey
@@ -179,8 +179,8 @@ describe "systemd plugin" do
   # START, not a reload.
   it "predicts a start (not a reload) for an inactive unit with state: reloaded in check mode" do
     result = PluginSpecHelper.run("systemd", {
-      "name"       => "nonexistent-krikri-playbook-unit.service",
-      "state"      => "reloaded",
+      "name"                => "nonexistent-krikri-playbook-unit.service",
+      "state"               => "reloaded",
       "_ansible_check_mode" => "true",
     })
     result["failed"]?.try(&.as_bool).should be_falsey
