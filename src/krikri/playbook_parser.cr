@@ -1412,6 +1412,14 @@ module Krikri
       "ansible.builtin.git_config",
       "community.general.sudoers",
       "community.general.dnf_versionlock",
+      # yum_versionlock (the yum-era sibling of dnf_versionlock above):
+      # add/delete package locks via the yum-plugin-versionlock package.
+      # Registered bare alongside the FQCN - simple_plugin_name strips
+      # both spellings to the same `yum_versionlock` binary (and the bare
+      # spelling would also resolve through MODULE_SEARCH_COLLECTIONS'
+      # community.general entry, as dnf_versionlock's does).
+      "yum_versionlock",
+      "community.general.yum_versionlock",
       "community.docker.docker_image_build",
       "amazon.aws.ec2_metadata_facts",
       # amazon.aws EC2 management modules (the signed-Query-API cluster
