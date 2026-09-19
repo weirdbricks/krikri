@@ -104,8 +104,8 @@ describe "virt_net plugin - argument validation before the HAS_VIRT probe" do
   # `virsh` installed.
   it "rejects an invalid state choice with parameters.py wording" do
     result = PluginSpecHelper.run("virt_net", {
-      "name"   => "krikri-net",
-      "state"  => "krikri_bogus",
+      "name"  => "krikri-net",
+      "state" => "krikri_bogus",
     })
     result["failed"].as_bool.should be_true
     result["msg"].as_s.should eq("value of state must be one of: active, inactive, present, absent, got: krikri_bogus")
