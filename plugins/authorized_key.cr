@@ -99,6 +99,10 @@ module Krikri
         key_lines = key_lines.map { |line| apply_key_options(line, key_options) }
       end
 
+      write_key_result(key, key_lines, path, state, exclusive, check_mode, manage_dir)
+    end
+
+    private def write_key_result(key : String, key_lines : Array(String), path : String, state : String, exclusive : Bool, check_mode : Bool, manage_dir : Bool) : PluginResult
       original_content = File.exists?(path) ? File.read(path) : ""
       new_content, changed = PluginHelpers::AuthorizedKeysFile.ensure_keys(original_content, key_lines, state == "present", exclusive)
 

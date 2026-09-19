@@ -107,6 +107,24 @@ module Krikri
         return missing_required_error(["name"])
       end
 
+      if error = check_choice_params
+        return error
+      end
+
+      if error = check_required_if
+        return error
+      end
+
+      if unsupported = unsupported_param_keys(@params, SPEC)
+        unless unsupported.empty?
+          return unsupported_params_error("community.general.git_config", unsupported, SPEC)
+        end
+      end
+
+      nil
+    end
+
+    private def check_choice_params : PluginResult?
       if add_mode = @params["add_mode"]?
         unless %w[add replace-all].includes?(add_mode)
           return choices_error("add_mode", %w[add replace-all], add_mode)
@@ -123,27 +141,23 @@ module Krikri
       unless %w[present absent].includes?(state)
         return choices_error("state", %w[present absent], state)
       end
+      nil
+    end
 
-      # required_if, declaration order; only a MISSING key fails.
-      if scope == "local" && !@params["repo"]?
+    # required_if, declaration order; only a MISSING key fails.
+    private def check_required_if : PluginResult?
+      if @params["scope"]? == "local" && !@params["repo"]?
         return PluginResult.new(changed: false, failed: true,
           msg: "scope is local but all of the following are missing: repo")
       end
-      if scope == "file" && !@params["file"]?
+      if @params["scope"]? == "file" && !@params["file"]?
         return PluginResult.new(changed: false, failed: true,
           msg: "scope is file but all of the following are missing: file")
       end
-      if state == "present" && !@params["value"]?
+      if (@params["state"]? || "present") == "present" && !@params["value"]?
         return PluginResult.new(changed: false, failed: true,
           msg: "state is present but all of the following are missing: value")
       end
-
-      if unsupported = unsupported_param_keys(@params, SPEC)
-        unless unsupported.empty?
-          return unsupported_params_error("community.general.git_config", unsupported, SPEC)
-        end
-      end
-
       nil
     end
 
