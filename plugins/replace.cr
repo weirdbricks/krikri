@@ -129,7 +129,21 @@ module Krikri
         )
       end
 
-      replace = @params["replace"]? || ""
+      # Real replace.py feeds the `replace:` string through Python re.sub's
+      # own replacement-template parser, which interprets control escapes
+      # BEFORE any backreference expansion - so in YAML single quotes
+      # '\t' (two literal chars: backslash, t) lands in the file as a REAL
+      # tab byte. Round900159 juju4.harden_apache's apache-security.yml
+      # failed real `apache2ctl -t` on this engine with
+      # `Invalid command '\tOptions'` for exactly this reason: the literal
+      # two-char sequence was written into apache2.conf. Backreference
+      # forms are left byte-for-byte intact for Crystal's own gsub
+      # replacement parser (string.cr scan_backreferences: single-digit
+      # \0-\9 and \k<name>), which must still see them; `\g<name>` (the
+      # Python-only spelling) also passes through untouched. Unrecognized
+      # escapes keep the previous literal pass-through (real Python raises
+      # "bad escape" on unknown letters - not reproduced here on purpose).
+      replace = interpret_re_sub_escapes(@params["replace"]? || "")
 
       # Real Ansible compiles the regexp with re.MULTILINE (replace.py), so
       # ^ and $ anchor at every line boundary, not just the start/end of the
@@ -248,6 +262,59 @@ module Krikri
       )
       add_path_info(result, path)
       result
+    end
+
+    # One pass of Python re.sub's replacement-template escape interpretation
+    # (sre_parse.parse_template's ESCAPES subset), applied BEFORE the string
+    # reaches Regex#gsub so both escape processing and backreference
+    # expansion happen in the same order real replace.py gets them for free
+    # from re.sub. A trailing lone backslash and unknown escape pairs are
+    # emitted unchanged, preserving the pre-fix literal behavior.
+    private def interpret_re_sub_escapes(replacement : String) : String
+      return replacement unless replacement.includes?('\\')
+
+      String.build do |buffer|
+        index = 0
+        while index < replacement.size
+          char = replacement[index]
+          if char != '\\'
+            buffer << char
+            index += 1
+            next
+          end
+
+          next_index = index + 1
+          if next_index >= replacement.size
+            buffer << char
+            break
+          end
+
+          peek = replacement[next_index]
+          # Backreference syntax must survive to Crystal's own gsub parser:
+          # \0-\9 (single digit) and \k<name> are what scan_backreferences
+          # recognizes, and \g<name> is Python's spelling of the same idea.
+          if peek.ascii_number? ||
+             ((peek == 'k' || peek == 'g') &&
+              next_index + 1 < replacement.size && replacement[next_index + 1] == '<')
+            buffer << char << peek
+            index += 2
+            next
+          end
+
+          case peek
+          when 't'  then buffer << '\t'
+          when 'n'  then buffer << '\n'
+          when 'r'  then buffer << '\r'
+          when 'a'  then buffer << '\a'
+          when 'f'  then buffer << '\f'
+          when 'v'  then buffer << '\v'
+          when '\\' then buffer << '\\'
+          else
+            buffer << char << peek
+          end
+          index += 2
+        end
+      end
     end
 
     # Applies mode if given; returns whether it changed. owner/group would

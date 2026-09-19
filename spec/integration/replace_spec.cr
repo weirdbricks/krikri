@@ -25,6 +25,42 @@ describe "replace plugin" do
     File.read(path).should eq("gpgcheck=1\n")
   end
 
+  it "interprets Python re.sub control escapes in the replacement (round900159 juju4.harden_apache)" do
+    # Real replace.py runs `replace:` through Python re.sub's own
+    # replacement-template parser, so a YAML single-quoted '\t' (two
+    # literal chars) lands in the file as a REAL tab byte - this engine
+    # used to write the literal backslash-t, which then failed
+    # `apache2ctl -t` with `Invalid command '\tOptions'` on
+    # apache2.conf. Note the Crystal source "\\t" below is exactly the
+    # two-character sequence a single-quoted YAML value carries.
+    path = fresh_file("escapes.conf", "XOptions Foo\n")
+
+    result = PluginSpecHelper.run("replace", {"path" => path, "regexp" => "^X", "replace" => "\\tY\\nZ\\r"})
+
+    result["changed"].as_bool.should be_true
+    File.read(path).should eq("\tY\nZ\rOptions Foo\n")
+  end
+
+  it "still substitutes \\1 backreferences in the replacement" do
+    # The escape-interpretation pass must not consume digits Crystal's own
+    # gsub parser needs: \1 reaches scan_backreferences untouched.
+    path = fresh_file("backref.conf", "Xq\n")
+
+    result = PluginSpecHelper.run("replace", {"path" => path, "regexp" => "(X)q", "replace" => "\\1-y"})
+
+    result["changed"].as_bool.should be_true
+    File.read(path).should eq("X-y\n")
+  end
+
+  it "turns a literal \\\\ in the replacement into one backslash (not double-processed)" do
+    path = fresh_file("backslash.conf", "Xq\n")
+
+    result = PluginSpecHelper.run("replace", {"path" => path, "regexp" => "^X", "replace" => "a\\\\b"})
+
+    result["changed"].as_bool.should be_true
+    File.read(path).should eq("a\\bq\n")
+  end
+
   it "reports changed: false on an idempotent rerun" do
     path = fresh_file("idem.conf", "gpgcheck=1\n")
     params = {"path" => path, "regexp" => "^\\s*gpgcheck.*", "replace" => "gpgcheck=1"}
