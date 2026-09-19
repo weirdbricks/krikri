@@ -62,11 +62,23 @@ module Krikri
       typed.nil? || typed.empty? ? default : typed
     end
 
-    # Reads without echoing, restoring the terminal afterwards. Falls
-    # back to a plain read if `stty` is unavailable.
+    # Reads without echoing, restoring the terminal afterwards. When echo
+    # can't be disabled (stty missing or failing), real Ansible's private
+    # prompt goes through getpass, whose documented fallback is a warning
+    # and then an ECHOED read - it does not fail closed (unlike this
+    # codebase's own vault prompt, which deliberately does). Mirror the
+    # getpass behavior exactly: warn before reading, and never crash on
+    # a missing stty.
     private def self.read_hidden : String?
-      unless Process.run("stty", ["-echo"], input: Process::Redirect::Inherit,
-               output: Process::Redirect::Close, error: Process::Redirect::Close).success?
+      echo_disabled = begin
+        Process.run("stty", ["-echo"], input: Process::Redirect::Inherit,
+          output: Process::Redirect::Close, error: Process::Redirect::Close).success?
+      rescue
+        false
+      end
+
+      unless echo_disabled
+        STDERR.puts "Warning: Password input may be echoed."
         return STDIN.gets.try(&.chomp)
       end
 
