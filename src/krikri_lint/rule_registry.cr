@@ -16,6 +16,7 @@ module Krikri
           RiskyFilePermissionsRule.new,
           RiskyOctalRule.new,
           NameRule.new,
+          FqcnActionCoreRule.new,
         ])
       end
 
