@@ -254,14 +254,17 @@ module Krikri
       loop_items = nil
       when_error = nil
       begin
-        loop_items = resolve_loop_items_or_raise(handler, host, vars_context) do
+        # Loop-source resolution sees the alias-free snapshot (real
+        # Ansible's own scoping - see #synthesize_legacy_ssh_aliases).
+        loop_vars_context = loop_source_vars_context(handler, host, vars_context)
+        loop_items = resolve_loop_items_or_raise(handler, host, loop_vars_context) do
           handler.loop_items ||
-            resolve_loop_template(handler, vars_context) ||
-            resolve_loop_nested(handler, vars_context, host.name) ||
-            resolve_loop_together(handler, vars_context, host.name) ||
-            resolve_loop_flattened(handler, vars_context, host.name) ||
-            resolve_loop_subelements(handler, vars_context) ||
-            resolve_loop_filetree(handler, host, vars_context)
+            resolve_loop_template(handler, loop_vars_context) ||
+            resolve_loop_nested(handler, loop_vars_context, host.name) ||
+            resolve_loop_together(handler, loop_vars_context, host.name) ||
+            resolve_loop_flattened(handler, loop_vars_context, host.name) ||
+            resolve_loop_subelements(handler, loop_vars_context) ||
+            resolve_loop_filetree(handler, host, loop_vars_context)
         end
       rescue ex : WhenEvaluationError
         when_error = ex
@@ -325,8 +328,11 @@ module Krikri
       loop_items : Array(JSON::Any),
     ) : JSON::Any
       if handler.loop_items_needs_flatten?
+        # Item rendering is loop-source-grade templating - the alias-free
+        # snapshot (see #synthesize_legacy_ssh_aliases), not the full
+        # per-iteration context below.
         loop_items = flatten_with_items_one_level(
-          loop_items.map { |item| deep_render_item(item, base_vars_context, host.name, strict: false) }
+          loop_items.map { |item| deep_render_item(item, loop_source_vars_context(handler, host, base_vars_context), host.name, strict: false) }
         )
       end
       loop_var = handler.loop_var

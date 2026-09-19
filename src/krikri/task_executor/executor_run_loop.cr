@@ -508,8 +508,17 @@ module Krikri
       # apply_changed_failed_when still builds its own, and must: it
       # evaluates against a different context (see there).
       shared_sub = nil.as(VarSubstitutor?)
+      # Loop-SOURCE resolution runs against the alias-free snapshot (real
+      # Ansible's own scoping - see #synthesize_legacy_ssh_aliases), while
+      # delegate_to: and everything downstream of loop resolution keeps
+      # the full task-arg context.
+      loop_vars_context = loop_source_vars_context(task, host, vars_context)
+      loop_shared_sub = nil.as(VarSubstitutor?)
       if task.delegate_to || task.loop_fileglob || task.loop_file
         shared_sub = VarSubstitutor.new(vars: vars_context, host_name: host.name)
+        if task.loop_fileglob || task.loop_file
+          loop_shared_sub = VarSubstitutor.new(vars: loop_vars_context, host_name: host.name)
+        end
       end
 
       # A looped task's delegate_to: may reference the loop variable
@@ -554,16 +563,16 @@ module Krikri
       # comment for the shared when:-gate + strict-undefined-rescue shape
       # every one of the five loop-resolution call sites uses.
       begin
-        loop_items = resolve_loop_items_or_raise(task, host, vars_context) do
-          task.loop_items || resolve_first_found(task, host, vars_context) ||
-            resolve_fileglob(task, host, vars_context, shared: shared_sub) ||
-            resolve_with_file(task, host, vars_context, shared: shared_sub) ||
-            resolve_loop_template(task, vars_context) ||
-            resolve_loop_nested(task, vars_context, host.name) ||
-            resolve_loop_together(task, vars_context, host.name) ||
-            resolve_loop_flattened(task, vars_context, host.name) ||
-            resolve_loop_subelements(task, vars_context) ||
-            resolve_loop_filetree(task, host, vars_context, shared: shared_sub)
+        loop_items = resolve_loop_items_or_raise(task, host, loop_vars_context) do
+          task.loop_items || resolve_first_found(task, host, loop_vars_context) ||
+            resolve_fileglob(task, host, loop_vars_context, shared: loop_shared_sub) ||
+            resolve_with_file(task, host, loop_vars_context, shared: loop_shared_sub) ||
+            resolve_loop_template(task, loop_vars_context) ||
+            resolve_loop_nested(task, loop_vars_context, host.name) ||
+            resolve_loop_together(task, loop_vars_context, host.name) ||
+            resolve_loop_flattened(task, loop_vars_context, host.name) ||
+            resolve_loop_subelements(task, loop_vars_context) ||
+            resolve_loop_filetree(task, host, loop_vars_context, shared: loop_shared_sub)
         end
       rescue ex : WhenEvaluationError
         # Same shape execute_task_once's own WhenEvaluationError rescue

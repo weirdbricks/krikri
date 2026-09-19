@@ -2,7 +2,7 @@ require "./executor"
 
 module Krikri
   class TaskExecutor
-    private def build_vars_context(task : Task, host : Host) : Hash(String, JSON::Any)
+    private def build_vars_context(task : Task, host : Host, include_legacy_ssh_aliases : Bool = true) : Hash(String, JSON::Any)
       # See the @base_context_a_cache/@base_context_b_cache ivar comments
       # above for why this is 2 caches, not 1, and exactly what real
       # precedence order each preserves. role_defaults < baseA
@@ -26,6 +26,10 @@ module Krikri
       # via unconditional overwrite-in-priority-order instead.
       vars_context = base_context_a_for(host).dup
 
+      # Synthesized here (not in the cached baseA below) so the legacy
+      # spellings can be withheld from loop-source resolution - see
+      # #synthesize_legacy_ssh_aliases and #loop_source_vars_context.
+      synthesize_legacy_ssh_aliases(vars_context) if include_legacy_ssh_aliases
       # vars_files: sit ABOVE play vars and below role/task vars - real
       # Ansible's documented order, verified live: a name set in both
       # `vars:` and a vars_file resolves to the FILE's value, and a later
@@ -274,6 +278,62 @@ module Krikri
       vars_context
     end
 
+    # Real Ansible's variable manager treats `ansible_ssh_user`/
+    # `ansible_ssh_host`/`ansible_ssh_port` as deprecated-but-still-
+    # honored aliases of `ansible_user`/`ansible_host`/`ansible_port` -
+    # but only in the FINAL task-argument templating context. Loop-source
+    # resolution (and the loop items it recursively renders) sees an
+    # earlier vars snapshot where the synthesis never happened, so
+    # `loop: ["{{ ansible_ssh_user }}"]` - or a role default like
+    # f500.bashrc's own `bashrc_users: ["{{ ansible_ssh_user }}"]`
+    # (round900321) later fed to `with_items:` - hard-fails with
+    # "'ansible_ssh_user' is undefined" on real ansible-playbook, while
+    # the same reference in a plain task arg (or a `when:`, or a role
+    # default reached through task-arg templating - round168's
+    # geerlingguy.phergie `phergie_user: "{{ ansible_ssh_user }}"`
+    # default feeding `file: {owner: "{{ phergie_user }}"}`) resolves
+    # fine. Live-verified all four shapes against real ansible-playbook
+    # this session. This engine used to synthesize the aliases inside the
+    # cached baseA layer, making them visible to EVERYTHING - which
+    # resolved f500.bashrc's defaults the way phergie's resolve, where
+    # real Ansible fails them. Synthesized with `||=` in both directions,
+    # so an inventory line that already sets the legacy spelling
+    # explicitly still wins and stays a REAL variable - visible in loop
+    # sources too, exactly as real Ansible treats an explicitly-set var.
+    private def synthesize_legacy_ssh_aliases(vars_context : Hash(String, JSON::Any)) : Nil
+      if user = vars_context["ansible_user"]?
+        vars_context["ansible_ssh_user"] ||= user
+      elsif ssh_user = vars_context["ansible_ssh_user"]?
+        vars_context["ansible_user"] ||= ssh_user
+      end
+      if host_val = vars_context["ansible_host"]?
+        vars_context["ansible_ssh_host"] ||= host_val
+      elsif ssh_host = vars_context["ansible_ssh_host"]?
+        vars_context["ansible_host"] ||= ssh_host
+      end
+      if port = vars_context["ansible_port"]?
+        vars_context["ansible_ssh_port"] ||= port
+      elsif ssh_port = vars_context["ansible_ssh_port"]?
+        vars_context["ansible_port"] ||= ssh_port
+      end
+    end
+
+    # The vars snapshot loop-SOURCE resolution must see: identical to the
+    # task-arg context except that synthesized legacy ssh aliases are
+    # absent (real Ansible's own scoping - see #build_vars_context's
+    # synthesis comment for the verified matrix). Cheap in the common
+    # case: a full alias-free rebuild is only needed when a legacy
+    # spelling is present at all - if none of the three keys is in the
+    # context, neither a synthesized nor an explicit copy exists, so any
+    # lookup resolves identically either way and the caller's own context
+    # is returned as-is. An EXPLICITLY-set legacy spelling (inventory/
+    # play vars/task vars) survives the rebuild - it's a real variable,
+    # visible in loop sources exactly as real Ansible treats it.
+    private def loop_source_vars_context(task : Task, host : Host, vars_context : Hash(String, JSON::Any)) : Hash(String, JSON::Any)
+      return vars_context unless {"ansible_ssh_user", "ansible_ssh_host", "ansible_ssh_port"}.any? { |key| vars_context.has_key?(key) }
+      build_vars_context(task, host, include_legacy_ssh_aliases: false)
+    end
+
     # First of the 2 #build_vars_context base caches - see the
     # @base_context_a_cache ivar's own comment for why there are 2 and
     # what order this preserves. @play_vars is fixed for this
@@ -293,36 +353,17 @@ module Krikri
       host.vars.each { |key, value| result[key] = value }
       @registered_vars[host.name].each { |key, value| result[key] = value }
 
-      # Real Ansible's variable manager treats `ansible_ssh_user`/
-      # `ansible_ssh_host`/`ansible_ssh_port` as deprecated-but-still-
-      # honored aliases of `ansible_user`/`ansible_host`/`ansible_port` -
-      # a role referencing the legacy spelling (geerlingguy.phergie's own
-      # `phergie_user: "{{ ansible_ssh_user }}"` default) sees the SAME
-      # value either way. This engine only ever populated the canonical
-      # spelling (naturally, since that's the literal inventory var name
-      # in the overwhelmingly common case) - the legacy alias resolved to
-      # nothing, rendering "undefined" wherever a role's own default used
-      # it (here: `file: {owner: "{{ phergie_user }}"}` -> "chown failed:
-      # failed to look up user undefined"). Synthesized both ways (`||=`,
-      # so an inventory line that already sets the legacy spelling
-      # explicitly still wins) so either spelling always resolves to
-      # whichever one is actually present. Found benchmarking round168's
-      # geerlingguy.phergie on Ubuntu 22.04.
-      if user = result["ansible_user"]?
-        result["ansible_ssh_user"] ||= user
-      elsif ssh_user = result["ansible_ssh_user"]?
-        result["ansible_user"] ||= ssh_user
-      end
-      if host_val = result["ansible_host"]?
-        result["ansible_ssh_host"] ||= host_val
-      elsif ssh_host = result["ansible_ssh_host"]?
-        result["ansible_host"] ||= ssh_host
-      end
-      if port = result["ansible_port"]?
-        result["ansible_ssh_port"] ||= port
-      elsif ssh_port = result["ansible_ssh_port"]?
-        result["ansible_port"] ||= ssh_port
-      end
+      # (round168's geerlingguy.phergie) sees the SAME value either way
+      # in task-arg templating. The synthesis itself lives in
+      # #build_vars_context now, not here: baseA is cached and shared by
+      # every consumer, but real Ansible's alias synthesis is visible
+      # only in final task-arg templating - loop-source resolution (and
+      # the loop items it recursively renders) sees a vars snapshot
+      # without it (round900321 f500.bashrc's
+      # `bashrc_users: ["{{ ansible_ssh_user }}"]` default fails
+      # `with_items: "{{ bashrc_users }}"` on real ansible-playbook).
+      # See #build_vars_context's own synthesis comment for the full
+      # verified matrix.
 
       # Ordinary gathered facts (setup:/package_facts:/service_facts:/
       # etc, i.e. everything in @facts that ISN'T also in @set_facts)
