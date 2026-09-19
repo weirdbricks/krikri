@@ -30,15 +30,28 @@ module Krikri
       end
 
       def param(key : String) : String?
-        action = @action_node.as?(YAML::Nodes::Mapping) || return nil
-        if (entry = NodeUtil.entry(action, key)) && (v = NodeUtil.scalar_value(entry[1]))
-          v
+        [action_node, args_node].each do |source|
+          mapping = source.as?(YAML::Nodes::Mapping) || next
+          if (entry = NodeUtil.entry(mapping, key)) && (v = NodeUtil.scalar_value(entry[1]))
+            return v
+          end
         end
+        nil
       end
 
       def has_param?(key : String) : Bool
-        action = @action_node.as?(YAML::Nodes::Mapping) || return false
-        !NodeUtil.entry(action, key).nil?
+        [action_node, args_node].each do |source|
+          mapping = source.as?(YAML::Nodes::Mapping) || next
+          return true unless NodeUtil.entry(mapping, key).nil?
+        end
+        false
+      end
+
+      # Task-level `args:` mapping (Ansible merges it into module params).
+      def args_node : YAML::Nodes::Node?
+        if (entry = NodeUtil.entry(@node, "args"))
+          entry[1]
+        end
       end
 
       def has_task_key?(key : String) : Bool
@@ -128,44 +141,60 @@ module Krikri
       #  - tasks/handlers files: the root list (or a block)
       #  - playbooks: plays' pre_tasks/tasks/post_tasks/handlers
       # Recurses into block/rescue/always sublists.
-      def self.each_task(file : PositionedFile, &)
-        root = file.root || return
-        list = root.as?(YAML::Nodes::Sequence) || return
-        if file.file_type.playbook?
+      def self.collect_tasks(file : PositionedFile) : Array(LintTask)
+        tasks = [] of LintTask
+        root = file.root || return tasks
+        list = root.as?(YAML::Nodes::Sequence) || return tasks
+        # A root list of mappings is a playbook only when its entries are
+        # plays (they carry `hosts:`); otherwise it is a task/handler file.
+        playbook_like = list.nodes.any? do |item|
+          next false unless item.is_a?(YAML::Nodes::Mapping)
+          !NodeUtil.entry(item, "hosts").nil? ||
+            !NodeUtil.entry(item, "tasks").nil? ||
+            !NodeUtil.entry(item, "pre_tasks").nil? ||
+            !NodeUtil.entry(item, "post_tasks").nil? ||
+            !NodeUtil.entry(item, "handlers").nil?
+        end
+        if playbook_like
           list.nodes.each do |play_node|
             play = play_node.as?(YAML::Nodes::Mapping) || next
             %w[pre_tasks tasks post_tasks handlers].each do |section|
               if (entry = NodeUtil.entry(play, section)) &&
-                 (tasks = entry[1].as?(YAML::Nodes::Sequence))
-                walk_list(tasks, file) { |task| yield task }
+                 (tasks_list = entry[1].as?(YAML::Nodes::Sequence))
+                walk_list(tasks_list, file, tasks)
               end
             end
           end
         else
-          walk_list(list, file) { |task| yield task }
+          walk_list(list, file, tasks)
         end
+        tasks
       end
 
-      private def self.walk_list(list : YAML::Nodes::Sequence, file : PositionedFile, &)
+      def self.each_task(file : PositionedFile, &)
+        collect_tasks(file).each { |task| yield task }
+      end
+
+      private def self.walk_list(list : YAML::Nodes::Sequence, file : PositionedFile, tasks : Array(LintTask)) : Nil
         list.nodes.each do |item|
           node = item.as?(YAML::Nodes::Mapping) || next
-          if (block_entry = NodeUtil.entry(node, "block"))
+          if !NodeUtil.entry(node, "block").nil?
             %w[block rescue always].each do |section|
               if (entry = NodeUtil.entry(node, section)) &&
                  (sub = entry[1].as?(YAML::Nodes::Sequence))
-                walk_list(sub, file) { |task| yield task }
+                walk_list(sub, file, tasks)
               end
             end
             next
           end
           if (task = from_mapping(node, file))
-            yield task
+            tasks << task
           end
         end
       end
 
       def self.from_mapping(node : YAML::Nodes::Mapping, file : PositionedFile) : LintTask?
-        return nil if !NodeUtil.entry(node, "block").nil?
+        return nil unless NodeUtil.entry(node, "block").nil?
         action_entry = nil
         NodeUtil.each_entry(node) do |k, v|
           next unless action_entry.nil?
@@ -174,9 +203,8 @@ module Krikri
             action_entry = {key.value, v}
           end
         end
-        return nil unless action_entry
-        module_name, action_node = action_entry
-        LintTask.new(node, file, module_name.not_nil!, action_node.not_nil!)
+        return nil unless entry = action_entry
+        LintTask.new(node, file, entry[0], entry[1])
       end
     end
   end

@@ -10,6 +10,7 @@ module Krikri
       def self.default : RuleRegistry
         new([
           SyntaxCheckRule.new,
+          CommandInsteadOfShellRule.new,
         ])
       end
 
