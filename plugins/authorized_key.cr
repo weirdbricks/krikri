@@ -303,10 +303,10 @@ module Krikri
     private def os_error_text(e : File::Error, dir : String) : String
       errno = e.os_error.try(&.value)
       case errno
-      when 2   then "[Errno 2] No such file or directory: '#{dir}'"
-      when 13  then "[Errno 13] Permission denied: '#{dir}'"
-      when 20  then "[Errno 20] Not a directory: '#{dir}'"
-      else          "[Errno #{errno}] #{e.message}"
+      when  2 then "[Errno 2] No such file or directory: '#{dir}'"
+      when 13 then "[Errno 13] Permission denied: '#{dir}'"
+      when 20 then "[Errno 20] Not a directory: '#{dir}'"
+      else         "[Errno #{errno}] #{e.message}"
       end
     end
 
