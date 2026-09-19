@@ -1445,7 +1445,12 @@ module Krikri
       elsif group.matches?(/\A\d+\z/)
         group.to_i
       else
-        raise "chown failed: failed to look up group #{group}"
+        # "chgrp failed", not "chown failed" - real Ansible's basic.py
+        # set_group_if_different (basic.py:830) fails with exactly this
+        # string, verified live against ansible-core 2.19.11 (a
+        # nonexistent name AND an explicit empty group: "" both produce
+        # "chgrp failed: failed to look up group <name>").
+        raise "chgrp failed: failed to look up group #{group}"
       end
     end
 

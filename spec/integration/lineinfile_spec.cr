@@ -591,4 +591,37 @@ describe "lineinfile plugin - parameter coverage (firstmatch/search_string/valid
       File.delete(path) if path && File.exists?(path)
     end
   end
+
+  # lineinfile resolves owner:/group: through the shared
+  # BasePlugin#resolve_owner_uid/resolve_group_gid resolvers (a different
+  # code shape from copy/get_url's apply_file_attributes), so it gets its
+  # own regression for the round900811 kilip.chezmoi empty-string bug: a
+  # present-but-empty owner: must fail the task with real Ansible's exact
+  # basic.py:789 message (trailing space included), not be silently
+  # skipped the way the old `return false unless user = find_by?` guard
+  # skipped it. Omitting owner: entirely is unchanged - the existing
+  # owner-less specs above pin that.
+  it "fails with real Ansible's exact message when owner: is an explicit empty string" do
+    path = tmp_path("lineinfile-empty-owner.txt")
+    File.write(path, "x\n")
+
+    result = PluginSpecHelper.run("lineinfile", {"path" => path, "line" => "x", "owner" => ""})
+
+    result["failed"].as_bool.should be_true
+    result["msg"].as_s.should eq("chown failed: failed to look up user ")
+  ensure
+    File.delete(path) if path && File.exists?(path)
+  end
+
+  it "fails with real Ansible's exact message when group: is an explicit empty string" do
+    path = tmp_path("lineinfile-empty-group.txt")
+    File.write(path, "x\n")
+
+    result = PluginSpecHelper.run("lineinfile", {"path" => path, "line" => "x", "group" => ""})
+
+    result["failed"].as_bool.should be_true
+    result["msg"].as_s.should eq("chgrp failed: failed to look up group ")
+  ensure
+    File.delete(path) if path && File.exists?(path)
+  end
 end

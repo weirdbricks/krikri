@@ -582,15 +582,16 @@ module Krikri
     end
 
     private def apply_dest_attributes(dest : String) : Nil
+      # A present owner:/group: value (explicit empty string included)
+      # is always resolved - and an unresolvable name fails the task
+      # like real Ansible's basic.py (round900811 kilip.chezmoi) -
+      # instead of silently skipping the chown whenever the lookup came
+      # back empty.
       if owner = @params["owner"]?
-        if user = System::User.find_by?(name: owner)
-          File.chown(dest, uid: user.id.to_i, gid: -1)
-        end
+        File.chown(dest, uid: resolve_owner_uid(owner), gid: -1)
       end
       if group = @params["group"]?
-        if grp = System::Group.find_by?(name: group)
-          File.chown(dest, uid: -1, gid: grp.id.to_i)
-        end
+        File.chown(dest, uid: -1, gid: resolve_group_gid(group))
       end
       if mode = @params["mode"]?
         if permissions = mode.to_i?(8)

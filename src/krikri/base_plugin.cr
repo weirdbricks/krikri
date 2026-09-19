@@ -146,6 +146,18 @@ module Krikri
     end
   end
 
+  # Raised by the shared owner/group resolvers when a PRESENT owner:/
+  # group: value doesn't resolve to a real system user/group. Real
+  # Ansible's basic.py set_owner_if_different/set_group_if_different
+  # only skip the chown/chgrp when the param is None - an explicit empty
+  # string is still looked up and fails the task with exactly
+  # "chown failed: failed to look up user <name>" (basic.py:789) or
+  # "chgrp failed: failed to look up group <name>" (basic.py:830),
+  # trailing space included when <name> is empty. Found benchmarking
+  # kilip.chezmoi (round900811): owner: "" was silently treated as "no
+  # ownership change requested" instead of failing like this.
+  class OwnerLookupFailure < Exception; end
+
   # Base class for all plugins
   abstract class BasePlugin
     property host : Host
@@ -215,6 +227,17 @@ module Krikri
     # own driver trailer) is unaffected.
     def run_and_capture : String
       execute.to_json
+    rescue ex : OwnerLookupFailure
+      # The message is already the exact user-facing failure real
+      # Ansible produces ("chown failed: failed to look up user <name>"
+      # / "chgrp failed: failed to look up group <name>") - surface it
+      # verbatim instead of under the generic "Plugin execution failed: "
+      # wrapper real never produces (same reasoning as file.cr's own
+      # dispatch_state_rescued). The shared resolvers deliberately raise
+      # rather than return PluginResult so every plugin applying
+      # file-common owner:/group: args gets real Ansible's failure shape
+      # without each one hand-rolling it.
+      PluginResult.new(changed: false, failed: true, msg: ex.message || "owner lookup failed").to_json
     rescue ex : Exception
       error_result = PluginResult.new(
         changed: false,
@@ -656,6 +679,33 @@ module Krikri
       ["false", "no", "0", "off", "n", "f"].includes?(value.downcase)
     end
 
+    # Owner/group name -> uid/gid for the file-common owner:/group: args,
+    # shared by every plugin that applies them. Real Ansible's basic.py
+    # treats only a None owner/group as "no change requested" - a present
+    # value, INCLUDING an explicit empty string, is always looked up and
+    # an unresolvable name fails the task (see OwnerLookupFailure). All-
+    # digit strings are raw uid/gids, matching real Ansible's int(owner)
+    # fast path (and file.cr's own resolve_uid/resolve_gid).
+    protected def resolve_owner_uid(owner : String) : Int32
+      if user = System::User.find_by?(name: owner)
+        user.id.to_i
+      elsif owner.matches?(/\A\d+\z/)
+        owner.to_i
+      else
+        raise OwnerLookupFailure.new("chown failed: failed to look up user #{owner}")
+      end
+    end
+
+    protected def resolve_group_gid(group : String) : Int32
+      if grp = System::Group.find_by?(name: group)
+        grp.id.to_i
+      elsif group.matches?(/\A\d+\z/)
+        group.to_i
+      else
+        raise OwnerLookupFailure.new("chgrp failed: failed to look up group #{group}")
+      end
+    end
+
     # Applies owner/group/numeric mode to a single path natively
     # (`File.chown`/`File.chmod`) instead of shelling to
     # `chown`/`chgrp`/`chmod` - shared by plugins (`apt_repository`,
@@ -664,24 +714,14 @@ module Krikri
     # be resolved without reimplementing chmod(1)'s symbolic grammar, so
     # it still shells to `chmod` for that one case - see `file.cr`'s own
     # class doc comment for the same trade-off, made first there.
-    # Failures (unknown owner/group name, EPERM) are swallowed, matching
-    # every prior shell-based version of this logic: none of them checked
-    # chown/chgrp/chmod's exit code either.
+    # EPERM and friends are swallowed (as in every prior shell-based
+    # version of this logic, which never checked chown/chgrp/chmod's exit
+    # code), but an unresolvable owner/group NAME fails the task like
+    # real Ansible's basic.py - an empty string included (see
+    # OwnerLookupFailure).
     protected def apply_owner_group_mode(path : String, owner : String?, group : String?, mode : String?) : Nil
-      uid = -1
-      gid = -1
-
-      if owner
-        if user = System::User.find_by?(name: owner)
-          uid = user.id.to_i
-        end
-      end
-
-      if group
-        if grp = System::Group.find_by?(name: group)
-          gid = grp.id.to_i
-        end
-      end
+      uid = owner ? resolve_owner_uid(owner) : -1
+      gid = group ? resolve_group_gid(group) : -1
 
       File.chown(path, uid: uid, gid: gid) if uid != -1 || gid != -1
 
@@ -693,8 +733,9 @@ module Krikri
         end
       end
     rescue File::Error
-      # EPERM and friends - the documented swallow (unknown owner/group
-      # names are already nil-checked above; only the syscalls raise).
+      # EPERM and friends - the documented swallow (unresolvable
+      # owner/group names fail above via OwnerLookupFailure instead;
+      # only the syscalls raise here).
     end
 
     # Generate unified diff
