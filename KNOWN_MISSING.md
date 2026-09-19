@@ -2,7 +2,18 @@
 
 The goal is 100% behavioral compatibility with `ansible-playbook`,
 verified against real runs rather than assumed - not "cover the common
-cases." This file tracks what's actually missing **today**. It does
+cases" - for **core (`ansible.builtin`) modules**. For community
+modules, krikri chooses which ones it supports: a module explicitly
+promoted to supported owes the same 100%-parity bar as core, but krikri
+is not trying to reimplement every community module that exists (an
+unbounded, ever-growing target). A divergence whose root cause is an
+**unsupported** community module doesn't belong in this file at all -
+not as an Open gap, not as a Deliberate limit - it isn't scope, so it
+isn't tracked here. (See `krikri-role-tester`'s own
+`COMMUNITY_MODULE_MISSING` classification and its
+`SUPPORTED_COMMUNITY_MODULES` list for how a round's results already
+reflect this before anything reaches this file.) This file tracks
+what's actually missing **today** within that scope. It does
 **not** carry implementation history or root-cause narrative for fixed
 bugs - that lives in `git log` commit messages; search there (e.g.
 `git log --all --grep=auth_socket`) rather than in a second, easily-

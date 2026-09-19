@@ -96,6 +96,13 @@ from this repo.
      assumed) before treating it as a krikri-playbook bug - plenty of "bugs" turn out to be broken
      upstream repos, missing Galaxy roles, or role-side gaps (e.g. `php-mysql`'s own repo ships no
      `vars/Debian.yml` at all) that affect real Ansible identically.
+   - **Coverage bar: 100% for core (`ansible.builtin`) modules, 100% for community modules krikri
+     has deliberately chosen to support, and zero obligation for every other community module.**
+     A divergence whose root cause is an unsupported community module doesn't count - not a bug to
+     fix, not an open gap to log, not scope at all - regardless of whether the cause is a missing
+     module (`COMMUNITY_MODULE_MISSING` in `krikri-role-tester`'s own classification) or a
+     behavioral quirk in one it partially implements. Check whether the responsible module is core
+     or on the supported list before spending investigation time on a divergence.
 
 3. **Triage:** run `bin/krikri-role-tester report ~/scratch/krt-results --round-start 1000
    --round-end <N>` once the batch finishes, then dedupe the collected divergences - if two or
