@@ -130,6 +130,28 @@ module Krikri
         )
       end
 
+      # A path that is PRESENT but resolves to '' must fail like real
+      # Ansible, not silently "succeed" (round900912 rolehippie.storage:
+      # storage_path defaults to '', so its "Create required path" task
+      # has to fail the play - this engine used to create a directory at
+      # '' instead and carry on). The message is state-specific
+      # (live-verified against ansible-core 2.19.4): state=directory
+      # aborts out of ensure_directory's os.makedirs with the OSError str
+      # - "There was an issue creating  as requested: ..." (double space:
+      # the empty path interpolates to nothing; errno text via the same
+      # b'' bytes-repr convention as oserror_repr); state=file fails
+      # ensure_file's "file () is absent, cannot continue" with the
+      # result echoing state "absent"; state=touch fails "Error, could
+      # not touch target.". state=absent with an empty path is a genuine
+      # no-op ok in real Ansible (changed: false), and state=link/hard
+      # fail later inside their own symlink/link syscall handling, so
+      # those three fall through untouched here. Checked AFTER state
+      # resolution for exactly that reason - a pre-state check would
+      # break the absent no-op that real Ansible still performs.
+      if empty_path_failure = empty_path_result(path, state)
+        return empty_path_failure
+      end
+
       result = dispatch_state_rescued(state, path)
 
       # Real Ansible's file module always echoes the resolved state:
@@ -159,6 +181,53 @@ module Krikri
       # field for any state, file or otherwise.
       add_path_info(result, path)
       result
+    end
+
+    # A path that is PRESENT but resolves to '' must fail like real
+    # Ansible, not silently "succeed" (round900912 rolehippie.storage:
+    # storage_path defaults to '', so its "Create required path" task
+    # has to fail the play - this engine used to create a directory at
+    # '' instead and carry on). The message is state-specific
+    # (live-verified against ansible-core 2.19.4): state=directory
+    # aborts out of ensure_directory's os.makedirs with the OSError str
+    # - "There was an issue creating  as requested: ..." (double space:
+    # the empty path interpolates to nothing; errno text via the same
+    # b'' bytes-repr convention as oserror_repr); state=file fails
+    # ensure_file's "file () is absent, cannot continue" with the
+    # result echoing state "absent"; state=touch fails "Error, could
+    # not touch target.". state=absent with an empty path is a genuine
+    # no-op ok in real Ansible (changed: false), and state=link/hard
+    # fail later inside their own symlink/link syscall handling, so
+    # those three fall through untouched here (return nil).
+    private def empty_path_result(path : String, state : String) : PluginResult?
+      return nil unless path.empty?
+
+      case state
+      when "directory"
+        PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: "There was an issue creating  as requested: #{oserror_text(2, "")}",
+          path: ""
+        )
+      when "file"
+        PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: "file () is absent, cannot continue",
+          path: "",
+          state: "absent"
+        )
+      when "touch"
+        # The empty-path touch failure in real Ansible carries no errno
+        # suffix, unlike an existing-path touch failure's oserror_repr text.
+        PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: "Error, could not touch target.",
+          path: ""
+        )
+      end
     end
 
     # Real Ansible does NOT default to "file" unconditionally
@@ -260,10 +329,17 @@ module Krikri
           apply_file_attributes(path, recursive: true?(@params["recurse"]?))
         end
 
+        # Real Ansible's file module result carries NO msg at all on an
+        # unchanged directory - just the stat fields (round900902
+        # juju4.adduser: this engine reported "Directory attributes
+        # updated" alongside changed: false on every converged re-run,
+        # where real Ansible's result has no msg key). msg: ""
+        # serializes as no msg key - PluginResult omits empty msgs
+        # unless include_empty_msg.
         return PluginResult.new(
           changed: changed,
           failed: false,
-          msg: "Directory attributes updated",
+          msg: changed ? "Directory attributes updated" : "",
           path: path
         )
       end
@@ -378,7 +454,9 @@ module Krikri
         return PluginResult.new(
           changed: changed,
           failed: false,
-          msg: "Directory attributes updated",
+          # Same no-msg-on-unchanged shape as handle_directory's own
+          # existing-directory branch (round900902 juju4.adduser).
+          msg: changed ? "Directory attributes updated" : "",
           path: path
         )
       end
@@ -1340,6 +1418,14 @@ module Krikri
     private def oserror_repr(path : String, ex : File::Error) : String
       errno = ex.os_error.try(&.value)
       return ex.message || "OSError" unless errno
+      oserror_text(errno, path)
+    end
+
+    # The exception-free sibling of oserror_repr, for failure paths that
+    # must reproduce Python's OSError string without an actually raised
+    # File::Error - the empty-path aborts in execute fail before any
+    # syscall ever runs.
+    private def oserror_text(errno : Int32 | UInt16 | UInt32, path : String) : String
       "[Errno #{errno}] #{String.new(LibC.strerror(errno))}: b'#{path}'"
     end
 

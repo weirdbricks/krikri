@@ -49,6 +49,78 @@ describe "file plugin" do
       result["changed"].as_bool.should be_true
       Dir.exists?(path).should be_false
     end
+
+    it "carries no msg when the directory's attributes already match (round900902 juju4.adduser)" do
+      # Real Ansible's file module result on an unchanged directory has
+      # NO msg key at all - just the stat fields; this engine used to
+      # report "Directory attributes updated" alongside changed: false
+      # on every converged re-run.
+      path = tmp_path("unchanged_msg_dir")
+      Dir.mkdir_p(path)
+      File.chmod(path, 0o755)
+
+      result = PluginSpecHelper.run("file", {"path" => path, "state" => "directory", "mode" => "0755"})
+
+      result["changed"].as_bool.should be_false
+      result["msg"]?.should be_nil
+    end
+
+    it "still reports the update msg when a directory's attributes genuinely change" do
+      path = tmp_path("changed_msg_dir")
+      Dir.mkdir_p(path)
+      File.chmod(path, 0o755)
+
+      result = PluginSpecHelper.run("file", {"path" => path, "state" => "directory", "mode" => "0700"})
+
+      result["changed"].as_bool.should be_true
+      result["msg"].as_s.should eq("Directory attributes updated")
+    end
+  end
+
+  describe "present-but-empty path (round900912 rolehippie.storage)" do
+    # Live-verified against ansible-core 2.19.4: a path param that is
+    # present but resolves to '' fails - never a silent create. The
+    # message is state-specific, and the directory msg interpolates the
+    # empty path to nothing ("issue creating  as" - double space) with
+    # the errno text in Python's b'' bytes-repr, same convention as
+    # oserror_repr.
+    it "fails state=directory with real Ansible's ensure_directory OSError abort" do
+      result = PluginSpecHelper.run("file", {"path" => "", "state" => "directory"})
+
+      result["failed"].as_bool.should be_true
+      result["changed"].as_bool.should be_false
+      result["msg"].as_s.should eq("There was an issue creating  as requested: [Errno 2] No such file or directory: b''")
+      result["path"].as_s.should eq("")
+    end
+
+    it "fails state=file with ensure_file's absent-continuation abort" do
+      result = PluginSpecHelper.run("file", {"path" => "", "state" => "file"})
+
+      result["failed"].as_bool.should be_true
+      result["msg"].as_s.should eq("file () is absent, cannot continue")
+      result["state"].as_s.should eq("absent")
+    end
+
+    it "fails state=touch with the bare touch-target abort (no errno suffix)" do
+      result = PluginSpecHelper.run("file", {"path" => "", "state" => "touch"})
+
+      result["failed"].as_bool.should be_true
+      result["msg"].as_s.should eq("Error, could not touch target.")
+    end
+
+    it "is a no-op ok for state=absent (real Ansible's empty-path absent)" do
+      result = PluginSpecHelper.run("file", {"path" => "", "state" => "absent"})
+
+      result["failed"]?.try(&.as_bool).should be_falsey
+      result["changed"].as_bool.should be_false
+    end
+
+    it "fails through the dest: alias too (path/dest/name are interchangeable)" do
+      result = PluginSpecHelper.run("file", {"dest" => "", "state" => "directory"})
+
+      result["failed"].as_bool.should be_true
+      result["msg"].as_s.should eq("There was an issue creating  as requested: [Errno 2] No such file or directory: b''")
+    end
   end
 
   describe "state=touch" do
