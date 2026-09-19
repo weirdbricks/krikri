@@ -193,12 +193,12 @@ module Krikri
     private def json_type_name(raw : String) : String
       parsed = JSON.parse(raw) rescue return "<class 'str'>"
       case parsed.raw
-      when Hash   then "<class 'dict'>"
-      when Array  then "<class 'list'>"
-      when Int64  then "<class 'int'>"
+      when Hash    then "<class 'dict'>"
+      when Array   then "<class 'list'>"
+      when Int64   then "<class 'int'>"
       when Float64 then "<class 'float'>"
-      when Bool   then "<class 'bool'>"
-      else             "<class 'str'>"
+      when Bool    then "<class 'bool'>"
+      else              "<class 'str'>"
       end
     end
 
