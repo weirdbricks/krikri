@@ -225,7 +225,7 @@ module Krikri
 
       private def self.check_unsupported(spec : Spec, params : Hash(String, String)) : Krikri::PluginResult?
         legal = spec.args.flat_map { |name, arg| arg.aliases + [name] }.to_set
-        unsupported = params.keys.reject { |key| legal.includes?(key) || internal_key?(key) }.sort
+        unsupported = params.keys.reject { |key| legal.includes?(key) || internal_key?(key) }.sort!
         return nil if unsupported.empty?
 
         names = spec.args.keys.sort
