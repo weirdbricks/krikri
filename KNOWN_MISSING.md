@@ -18,7 +18,7 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.1154`.**
+**Currently at `0.9.1171`.**
 
 ## Round 829000-829799: 800-role Galaxy batch (ubuntu+rocky), no new krikri bug (0.9.1154)
 
