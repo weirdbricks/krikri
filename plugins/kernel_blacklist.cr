@@ -68,7 +68,7 @@ module Krikri
         return error
       end
 
-      name = @params["name"].not_nil!
+      name = @params["name"]
       state = @params["state"]? || "present"
       file = @params["blacklist_file"]? || "/etc/modprobe.d/blacklist-ansible.conf"
       check_mode = true?(@params["_ansible_check_mode"]?)
