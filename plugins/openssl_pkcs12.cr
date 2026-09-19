@@ -75,8 +75,7 @@ module Krikri
 
       temp_files = [] of String
       begin
-        path = @params["path"]?
-        path = expand_tilde(path.not_nil!)
+        path = expand_tilde(@params["path"])
         state = @params["state"]? || "present"
         check_mode = true?(@params["_ansible_check_mode"]?)
         action = @params["action"]? || "export"
@@ -111,10 +110,10 @@ module Krikri
         # friendly-name guard. An up-to-date archive without force
         # reaches neither.
         changed = true?(@params["force"]?) || !File.exists?(path) ||
-                  !matches?(path, privatekey_path.not_nil!, certificate_path, temp_files)
+                  !matches?(path, privatekey_path, certificate_path, temp_files)
 
         if certificate_path && (check_mode || changed) &&
-           !key_matches_cert?(privatekey_path.not_nil!, certificate_path)
+           !key_matches_cert?(privatekey_path, certificate_path)
           return failure("Failed to create PKCS12 (does the key match the certificate?)")
         end
 
@@ -128,7 +127,7 @@ module Krikri
           friendly_name = @params["friendly_name"]?
           return failure("Friendly_name is required") if friendly_name.nil? || friendly_name.empty?
 
-          return write_export(path, privatekey_path.not_nil!, certificate_path, temp_files)
+          return write_export(path, privatekey_path, certificate_path, temp_files)
         end
 
         attrs_changed = apply_attrs(path)
