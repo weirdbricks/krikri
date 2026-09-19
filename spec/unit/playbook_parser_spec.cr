@@ -3005,10 +3005,17 @@ describe Krikri::PlaybookParser do
     it "does not touch a dict-form cmd: value or post-render text (real split_args only sees parse-time free-form strings)" do
       # Dict-form `shell: {cmd: ...}` bypasses the free-form branch
       # entirely - the backslash survives into cmd, as in real Ansible.
+      # Escaping is two layers deep here: the Crystal heredoc needs
+      # `\\` for one literal backslash in the YAML text, and the YAML
+      # must be SINGLE-quoted because in double-quoted YAML `\ ` is the
+      # YAML 1.1 escaped-space escape - PyYAML (real Ansible's own
+      # loader) drops it at load time too. Only the single-quoted form
+      # actually exercises "a literal backslash reached the parser and
+      # was not stripped".
       task = single_task(<<-YAML)
         - name: t
           ansible.builtin.shell:
-            cmd: "set -o errexit; \\ set -o pipefail; echo done"
+            cmd: 'set -o errexit; \\ set -o pipefail; echo done'
         YAML
 
       task.params["cmd"].should eq(%q(set -o errexit; \ set -o pipefail; echo done))
