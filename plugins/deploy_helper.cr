@@ -47,7 +47,10 @@ module Krikri
           msg: "value of state must be one of: #{DEPLOY_STATES.join(", ")}, got: #{state}")
       end
 
-      releases_path, shared_path, current_path, keep_releases = resolve_paths(path)
+      releases_path = @params["releases_path"]? || "#{path}/releases"
+      shared_path = @params["shared_path"]? || "#{path}/shared"
+      current_path = @params["current_path"]? || "#{path}/current"
+      keep_releases = @params["keep_releases"]?.try(&.to_i?) || 5
       release = @params["release"]?
       check_mode = true?(@params["_ansible_check_mode"]?)
 
@@ -65,14 +68,6 @@ module Krikri
       else # query
         query(releases_path)
       end
-    end
-
-    private def resolve_paths(path : String) : {String, String, String, Int32}
-      releases_path = @params["releases_path"]? || "#{path}/releases"
-      shared_path = @params["shared_path"]? || "#{path}/shared"
-      current_path = @params["current_path"]? || "#{path}/current"
-      keep_releases = @params["keep_releases"]?.try(&.to_i?) || 5
-      {releases_path, shared_path, current_path, keep_releases}
     end
 
     private def absent_path(path : String, check_mode : Bool) : PluginResult
@@ -102,7 +97,7 @@ module Krikri
           msg: "release #{release} would be created")
       end
 
-      mk = remote_exec("mkdir -p #{[path, releases_path, shared_path, new_release_path, current_path].map { |dir| Shell.single_quote(dir) }.join(' ')}")
+      mk = remote_exec("mkdir -p #{[path, releases_path, shared_path, new_release_path, current_path].map { |path| Shell.single_quote(path) }.join(' ')}")
       unless mk[:exit_code] == 0
         return PluginResult.new(changed: false, failed: true,
           msg: "failed to create deploy layout: #{mk[:stderr].strip}")
