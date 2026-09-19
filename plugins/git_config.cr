@@ -59,9 +59,8 @@ module Krikri
       # Real main()'s own post-setup guard: the spec's required_if only
       # fires on a MISSING value key, so an empty-string value reaches
       # this check instead.
-      if !unset && value.empty?
-        return PluginResult.new(changed: false, failed: true,
-          msg: "If state=present, a value must be specified. Use the community.general.git_config_info module to read a config value.")
+      if error = check_value_present(unset, value)
+        return error
       end
 
       effective_scope = scope || "system"
@@ -77,6 +76,14 @@ module Krikri
       return PluginResult.new(changed: true, failed: false, msg: "setting changed (check mode)") if check_mode
 
       apply_setting(base_args, cwd, name, value, unset, add_mode)
+    end
+
+    private def check_value_present(unset : Bool, value : String) : PluginResult?
+      if !unset && value.empty?
+        return PluginResult.new(changed: false, failed: true,
+          msg: "If state=present, a value must be specified. Use the community.general.git_config_info module to read a config value.")
+      end
+      nil
     end
 
     private def already_converged?(unset : Bool, has_out : Bool, old_values : Array(String), value : String, add_mode : String) : PluginResult?
