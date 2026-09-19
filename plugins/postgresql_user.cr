@@ -108,7 +108,6 @@ module Krikri
       db : DB::Database, name : String, existing_flags : Hash(String, Bool)?,
       password : String?, desired_flags : Hash(String, Bool)?, check_mode : Bool,
     ) : PluginResult
-
       if existing_flags
         changed = update_existing_role(db, name, existing_flags, password, desired_flags, check_mode)
       else

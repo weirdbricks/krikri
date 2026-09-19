@@ -37,18 +37,11 @@ module Krikri
     @searched_paths = ""
 
     def execute : PluginResult
-      if error = validate_arguments
+      if error = validate_and_locate_git
         return error
       end
 
-      # get_bin_path('git', required=True) runs right after module
-      # validation, before any config work.
-      unless find_binary("git")
-        return PluginResult.new(changed: false, failed: true,
-          msg: PluginHelpers::GetBinPath.missing_executable_error("git", @searched_paths))
-      end
-
-      name = @params["name"].not_nil!
+      name = @params["name"]
       state = @params["state"]? || "present"
       unset = state == "absent"
       value = @params["value"]? || ""
@@ -79,6 +72,20 @@ module Krikri
       apply_setting(base_args, cwd, name, value, unset, add_mode)
     end
 
+    # get_bin_path('git', required=True) runs right after module
+    # validation, before any config work.
+    private def validate_and_locate_git : PluginResult?
+      if error = validate_arguments
+        return error
+      end
+
+      unless find_binary("git")
+        return PluginResult.new(changed: false, failed: true,
+          msg: PluginHelpers::GetBinPath.missing_executable_error("git", @searched_paths))
+      end
+      nil
+    end
+
     private def already_converged?(unset : Bool, has_out : Bool, old_values : Array(String), value : String, add_mode : String) : PluginResult?
       return PluginResult.new(changed: false, failed: false, msg: "no setting to unset") if unset && !has_out
       return nil if unset
@@ -96,10 +103,26 @@ module Krikri
     # order (arg_spec.py: required -> choices -> required_if ->
     # unsupported). No bool/int params in the spec, so no type checks.
     private def validate_arguments : PluginResult?
-      unless @params["name"]?
-        return missing_required_error(["name"])
+      return missing_required_error(["name"]) unless @params["name"]?
+
+      if error = validate_choice_params
+        return error
       end
 
+      if error = validate_required_if_params
+        return error
+      end
+
+      if unsupported = unsupported_param_keys(@params, SPEC)
+        unless unsupported.empty?
+          return unsupported_params_error("community.general.git_config", unsupported, SPEC)
+        end
+      end
+
+      nil
+    end
+
+    private def validate_choice_params : PluginResult?
       if add_mode = @params["add_mode"]?
         unless %w[add replace-all].includes?(add_mode)
           return choices_error("add_mode", %w[add replace-all], add_mode)
@@ -116,8 +139,13 @@ module Krikri
       unless %w[present absent].includes?(state)
         return choices_error("state", %w[present absent], state)
       end
+      nil
+    end
 
-      # required_if, declaration order; only a MISSING key fails.
+    # required_if, declaration order; only a MISSING key fails.
+    private def validate_required_if_params : PluginResult?
+      scope = @params["scope"]?
+      state = @params["state"]? || "present"
       if scope == "local" && !@params["repo"]?
         return PluginResult.new(changed: false, failed: true,
           msg: "scope is local but all of the following are missing: repo")
@@ -130,13 +158,6 @@ module Krikri
         return PluginResult.new(changed: false, failed: true,
           msg: "state is present but all of the following are missing: value")
       end
-
-      if unsupported = unsupported_param_keys(@params, SPEC)
-        unless unsupported.empty?
-          return unsupported_params_error("community.general.git_config", unsupported, SPEC)
-        end
-      end
-
       nil
     end
 
@@ -181,16 +202,16 @@ module Krikri
 
     private def find_binary(name : String) : String?
       script = <<-SH
-      found=""
-      for d in $(printf '%s' "$PATH" | tr ':' ' ') #{EXTRA_BIN_DIRS.join(' ')}; do
-        if [ -z "$found" ] && [ -x "$d/#{name}" ]; then found="$d/#{name}"; fi
-      done
-      searched=""
-      for d in $(printf '%s' "$PATH" | tr ':' ' ') #{EXTRA_BIN_DIRS.join(' ')}; do
-        case ":$searched:" in *":$d:"*) ;; *) searched="${searched:+$searched:}$d" ;; esac
-      done
-      printf '%s\\n%s' "$found" "$searched"
-      SH
+        found=""
+        for d in $(printf '%s' "$PATH" | tr ':' ' ') #{EXTRA_BIN_DIRS.join(' ')}; do
+          if [ -z "$found" ] && [ -x "$d/#{name}" ]; then found="$d/#{name}"; fi
+        done
+        searched=""
+        for d in $(printf '%s' "$PATH" | tr ':' ' ') #{EXTRA_BIN_DIRS.join(' ')}; do
+          case ":$searched:" in *":$d:"*) ;; *) searched="${searched:+$searched:}$d" ;; esac
+        done
+        printf '%s\\n%s' "$found" "$searched"
+        SH
 
       result = remote_exec(script)
       found, _, searched = result[:stdout].to_s.strip.partition("\n")

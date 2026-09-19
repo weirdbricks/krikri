@@ -104,21 +104,8 @@ module Krikri
 
       before = planned.keys.to_h { |key| {key, get_value(key, systemd_backend, planned[key])} }
 
-      if @check_mode
-        after = planned.dup
-      else
-        begin
-          planned.each do |key, value|
-            set_value(key, value, systemd_backend) if before[key] != value
-          end
-        rescue e : TimezoneCommandFailure
-          return PluginResult.new(changed: false, failed: true, msg: e.message.to_s)
-        end
-        after = planned.keys.to_h { |key| {key, get_value(key, systemd_backend, planned[key])} }
-        if after != planned
-          return fail("still not desired state, though changes have made - planned: #{planned}, after: #{after}")
-        end
-      end
+      after, apply_error = apply_changes(planned, systemd_backend, before)
+      return apply_error if apply_error
 
       changed = before != after
       PluginResult.new(
@@ -127,6 +114,26 @@ module Krikri
         msg: @msg.empty? ? "" : @msg.join("\n"),
         diff: generate_attribute_diff(before, after),
       )
+    end
+
+    private def apply_changes(planned : Hash(String, String), systemd_backend : Bool, before : Hash(String, String)) : {Hash(String, String), PluginResult?}
+      if @check_mode
+        return {planned.dup, nil}
+      end
+
+      begin
+        planned.each do |key, value|
+          set_value(key, value, systemd_backend) if before[key] != value
+        end
+      rescue e : TimezoneCommandFailure
+        return {planned, PluginResult.new(changed: false, failed: true, msg: e.message.to_s)}
+      end
+
+      after = planned.keys.to_h { |key| {key, get_value(key, systemd_backend, planned[key])} }
+      if after != planned
+        return {after, fail("still not desired state, though changes have made - planned: #{planned}, after: #{after}")}
+      end
+      {after, nil}
     end
 
     private def validate_params : PluginResult?
@@ -234,16 +241,16 @@ module Krikri
       return value unless value == planned
 
       out = remote_exec(<<-SH)[:stdout].to_s.strip
-      if [ -L /etc/localtime ]; then
-        if [ -e /etc/localtime ]; then
-          readlink /etc/localtime
+        if [ -L /etc/localtime ]; then
+          if [ -e /etc/localtime ]; then
+            readlink /etc/localtime
+          else
+            echo __BROKEN__
+          fi
         else
-          echo __BROKEN__
+          echo __NOTLINK__
         fi
-      else
-        echo __NOTLINK__
-      fi
-      SH
+        SH
       return "n/a" if out == "__BROKEN__"
       if out == "__NOTLINK__"
         cmp = remote_exec("cmp -s /etc/localtime #{shell_single_quote("/usr/share/zoneinfo/#{planned}")} && echo same || echo diff")
@@ -369,19 +376,19 @@ module Krikri
 
     private def resolve_binaries : Nil
       script = <<-SH
-      for name in timedatectl cp hwclock dpkg-reconfigure ln tzdata-update; do
-        found=""
-        for d in $(printf '%s' "$PATH" | tr ':' ' ') #{EXTRA_BIN_DIRS.join(' ')}; do
-          if [ -z "$found" ] && [ -x "$d/$name" ]; then found="$d/$name"; fi
+        for name in timedatectl cp hwclock dpkg-reconfigure ln tzdata-update; do
+          found=""
+          for d in $(printf '%s' "$PATH" | tr ':' ' ') #{EXTRA_BIN_DIRS.join(' ')}; do
+            if [ -z "$found" ] && [ -x "$d/$name" ]; then found="$d/$name"; fi
+          done
+          printf 'bin:%s=%s\\n' "$name" "$found"
         done
-        printf 'bin:%s=%s\\n' "$name" "$found"
-      done
-      searched=""
-      for d in $(printf '%s' "$PATH" | tr ':' ' ') #{EXTRA_BIN_DIRS.join(' ')}; do
-        case ":$searched:" in *":$d:"*) ;; *) searched="${searched:+$searched:}$d" ;; esac
-      done
-      printf 'searched=%s\\n' "$searched"
-      SH
+        searched=""
+        for d in $(printf '%s' "$PATH" | tr ':' ' ') #{EXTRA_BIN_DIRS.join(' ')}; do
+          case ":$searched:" in *":$d:"*) ;; *) searched="${searched:+$searched:}$d" ;; esac
+        done
+        printf 'searched=%s\\n' "$searched"
+        SH
 
       remote_exec(script)[:stdout].to_s.each_line do |line|
         key, _, value = line.strip.partition('=')

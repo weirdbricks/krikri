@@ -50,7 +50,7 @@ module Krikri
         return err
       end
 
-      name = @params["name"].not_nil!
+      name = @params["name"]
       state = @params["state"]? || "present"
       sudoers_path = @params["sudoers_path"]? || "/etc/sudoers.d"
       file = File.join(sudoers_path, name)
@@ -81,6 +81,20 @@ module Krikri
       end
 
       state = @params["state"]? || "present"
+      if error = validate_choices_and_required_if(state)
+        return error
+      end
+
+      if unsupported = unsupported_param_keys(@params, SPEC)
+        unless unsupported.empty?
+          return unsupported_params_error("community.general.sudoers", unsupported, SPEC)
+        end
+      end
+
+      nil
+    end
+
+    private def validate_choices_and_required_if(state : String) : PluginResult?
       unless %w[present absent].includes?(state)
         return choices_error("state", %w[present absent], state)
       end
@@ -98,13 +112,6 @@ module Krikri
         return PluginResult.new(changed: false, failed: true,
           msg: "state is present but all of the following are missing: commands")
       end
-
-      if unsupported = unsupported_param_keys(@params, SPEC)
-        unless unsupported.empty?
-          return unsupported_params_error("community.general.sudoers", unsupported, SPEC)
-        end
-      end
-
       nil
     end
 
@@ -168,7 +175,7 @@ module Krikri
       commands_str = commands.join(", ")
 
       defaults_str = parse_list_param("defaults").map { |default| "Defaults:#{owner} #{default}" }
-                      .join("\n")
+        .join("\n")
       defaults_str += "\n" unless defaults_str.empty?
 
       "#{defaults_str}#{owner} #{host}=#{runas_str}#{noexec_str}#{nopassword_str}#{setenv_str} #{commands_str}\n"
@@ -218,7 +225,6 @@ module Krikri
     private def find_visudo : String?
       ["/usr/sbin/visudo", "/sbin/visudo"].find { |path| File.exists?(path) } || Process.find_executable("visudo")
     end
-
   end
 end
 

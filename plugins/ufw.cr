@@ -224,35 +224,13 @@ module Krikri
       SPEC.each do |param, _aliases|
         raw = @params[param]?
         next unless raw
-        if allowed = CHOICES[param]?
-          unless allowed.includes?(raw)
-            return choices_error(param, allowed, raw)
-          end
-        end
-        case param
-        when "delete", "route", "log"
-          return bool_type_error(param, raw) unless bool_convertible?(raw)
-        when "insert"
-          unless raw.strip.matches?(/\A[+-]?\d(_?\d)*\z/)
-            return int_type_error(param, raw)
-          end
+        if error = validate_param_value(param, raw)
+          return error
         end
       end
 
-      if @params.has_key?("name") || @params.has_key?("proto") || @params.has_key?("logging")
-        present = {"name", "proto", "logging"}.count { |key| @params.has_key?(key) }
-        if present > 1
-          return PluginResult.new(changed: false, failed: true,
-            msg: "parameters are mutually exclusive: name|proto|logging")
-        end
-      end
-      if @params.has_key?("direction") && @params.has_key?("interface_in")
-        return PluginResult.new(changed: false, failed: true,
-          msg: "parameters are mutually exclusive: direction|interface_in")
-      end
-      if @params.has_key?("direction") && @params.has_key?("interface_out")
-        return PluginResult.new(changed: false, failed: true,
-          msg: "parameters are mutually exclusive: direction|interface_out")
+      if error = check_mutually_exclusive
+        return error
       end
 
       unless {"state", "default", "rule", "logging"}.any? { |key| @params.has_key?(key) }
@@ -271,6 +249,42 @@ module Krikri
         end
       end
 
+      nil
+    end
+
+    private def validate_param_value(param : String, raw : String) : PluginResult?
+      if allowed = CHOICES[param]?
+        unless allowed.includes?(raw)
+          return choices_error(param, allowed, raw)
+        end
+      end
+      case param
+      when "delete", "route", "log"
+        return bool_type_error(param, raw) unless bool_convertible?(raw)
+      when "insert"
+        unless raw.strip.matches?(/\A[+-]?\d(_?\d)*\z/)
+          return int_type_error(param, raw)
+        end
+      end
+      nil
+    end
+
+    private def check_mutually_exclusive : PluginResult?
+      if @params.has_key?("name") || @params.has_key?("proto") || @params.has_key?("logging")
+        present = {"name", "proto", "logging"}.count { |key| @params.has_key?(key) }
+        if present > 1
+          return PluginResult.new(changed: false, failed: true,
+            msg: "parameters are mutually exclusive: name|proto|logging")
+        end
+      end
+      if @params.has_key?("direction") && @params.has_key?("interface_in")
+        return PluginResult.new(changed: false, failed: true,
+          msg: "parameters are mutually exclusive: direction|interface_in")
+      end
+      if @params.has_key?("direction") && @params.has_key?("interface_out")
+        return PluginResult.new(changed: false, failed: true,
+          msg: "parameters are mutually exclusive: direction|interface_out")
+      end
       nil
     end
 

@@ -112,9 +112,9 @@ describe "cron plugin" do
     File.delete(path) if File.exists?(path)
 
     result = PluginSpecHelper.run("cron", {
-      "name"       => "would add",
-      "job"        => "/bin/true",
-      "cron_file"  => path,
+      "name"                => "would add",
+      "job"                 => "/bin/true",
+      "cron_file"           => path,
       "_ansible_check_mode" => "true",
     })
 
@@ -392,11 +392,11 @@ describe "cron plugin" do
       before = Dir.glob("/tmp/crontab*").size
 
       result = PluginSpecHelper.run("cron", {
-        "name"       => "a job",
-        "job"        => "/bin/true",
-        "backup"     => "true",
+        "name"                => "a job",
+        "job"                 => "/bin/true",
+        "backup"              => "true",
         "_ansible_check_mode" => "true",
-        "cron_file"  => path,
+        "cron_file"           => path,
       })
 
       result["changed"].as_bool.should be_true

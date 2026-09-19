@@ -200,7 +200,7 @@ describe Krikri::PluginHelpers::Ec2Key do
         DESCRIBE_NONE
       end
       run_module({"name" => "deploy", "state" => "present", "region" => "us-east-1"}, handler)
-      describe_body = bodies.find! { |b| URI::Params.parse(b)["Action"] == "DescribeKeyPairs"}
+      describe_body = bodies.find! { |b| URI::Params.parse(b)["Action"] == "DescribeKeyPairs" }
       describe_body.should contain("Filter.1.Name=key-name")
       describe_body.should contain("Filter.1.Value.1=deploy")
     end

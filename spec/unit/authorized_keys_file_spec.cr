@@ -3,9 +3,9 @@ require "../../src/krikri/plugin_helpers/authorized_keys_file"
 
 private alias AuthorizedKeysFile = Krikri::PluginHelpers::AuthorizedKeysFile
 
-private RSA_KEY = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC test@example.com"
+private RSA_KEY     = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC test@example.com"
 private ED25519_KEY = "ssh-ed25519 AAAAC3 m2@example"
-private KEEP_KEY = "ssh-ed25519 AAAAC3 keep@host"
+private KEEP_KEY    = "ssh-ed25519 AAAAC3 keep@host"
 
 describe AuthorizedKeysFile do
   describe ".key_signature" do
@@ -62,8 +62,6 @@ describe AuthorizedKeysFile do
   end
 
   describe ".ensure_keys (multi-key present)" do
-
-
     it "appends every new key after existing ones in the order given" do
       text, changed = AuthorizedKeysFile.ensure_keys(
         "ssh-ed25519 AAAAC3-old old@host\n",
@@ -88,8 +86,6 @@ describe AuthorizedKeysFile do
   end
 
   describe ".ensure_keys (exclusive)" do
-
-
     it "removes every existing key whose signature isn't among the new keys" do
       existing = "#{RSA_KEY}\nssh-ed25519 AAAAC3-drop drop@host\n"
 

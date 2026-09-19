@@ -14,7 +14,7 @@ require "../../src/krikri/plugin_helpers/easy_install"
 describe "plugin task params cannot inject shell operations" do
   it "systemd treats an injected name as one literal unit name, not extra commands" do
     pwned = "/tmp/krikri-pwn-systemd-#{Random::Secure.hex(8)}"
-    result = PluginSpecHelper.run("systemd", {
+    PluginSpecHelper.run("systemd", {
       "name"  => "x; touch #{pwned}; #",
       "state" => "stopped",
     })
@@ -35,7 +35,7 @@ describe "plugin task params cannot inject shell operations" do
 
   it "debconf set_selections cannot break out through an apostrophe in value/pkg" do
     pwned = "/tmp/krikri-pwn-debconf-#{Random::Secure.hex(8)}"
-    result = PluginSpecHelper.run("debconf", {
+    PluginSpecHelper.run("debconf", {
       "name"     => "krikri-spec-package",
       "question" => "krikri-spec/question",
       "vtype"    => "string",
@@ -47,7 +47,7 @@ describe "plugin task params cannot inject shell operations" do
 
   it "stat stats an injected path as one literal path, not extra commands" do
     pwned = "/tmp/krikri-pwn-stat-#{Random::Secure.hex(8)}"
-    result = PluginSpecHelper.run("stat", {
+    PluginSpecHelper.run("stat", {
       "path" => "/tmp; touch #{pwned}; #",
     })
 

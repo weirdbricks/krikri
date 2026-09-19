@@ -25,10 +25,10 @@ end
 describe "apt_repository plugin - parameter coverage (update_cache_retries/install_python_apt/validate_certs)" do
   it "accepts install_python_apt and validate_certs without error (documented no-ops here)" do
     result = PluginSpecHelper.run("apt_repository", {
-      "repo"               => "deb https://packages.totally-fake-example.com/repo stable main",
+      "repo"                => "deb https://packages.totally-fake-example.com/repo stable main",
       "_ansible_check_mode" => "true",
-      "install_python_apt" => "false",
-      "validate_certs"     => "false",
+      "install_python_apt"  => "false",
+      "validate_certs"      => "false",
       # defaults (true) exercised implicitly by every other spec here
       "update_cache_retries"         => "5",
       "update_cache_retry_max_delay" => "12",

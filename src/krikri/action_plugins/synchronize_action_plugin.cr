@@ -81,19 +81,8 @@ module Krikri
       # vars) and rsync fails with its own hostname-resolution error
       # when the name doesn't resolve - the munging decision reads only
       # the task host's inventory address, never its connection.
-      if task_host = @task_host
-        if task_host.name != @host.name && local_connection? && !localhost_addr?(task_host.connection_host)
-          user = SynchronizeRsync.bool(@params["set_remote_user"]?, default: true) ?
-            @vars["ansible_user"]?.try(&.as_s?) : nil
-          if mode == "pull"
-            src = SynchronizeRsync.format_rsh_target(task_host.connection_host, src, user)
-          else
-            dest = SynchronizeRsync.format_rsh_target(task_host.connection_host, dest, user)
-          end
-          dest_port = resolve_dest_port(task_host)
-          argv = SynchronizeRsync.build_argv(src, dest, @params, private_key, dest_port)
-          return finish(argv)
-        end
+      if result = delegate_to_local_controller_path(src, dest, mode, private_key)
+        return result
       end
 
       # The delegate-resolved host (@host) is the sync endpoint. When its
@@ -112,6 +101,23 @@ module Krikri
 
       argv = SynchronizeRsync.build_argv(src, dest, @params, private_key, dest_port)
       finish(argv)
+    end
+
+    private def delegate_to_local_controller_path(src : String, dest : String, mode : String, private_key : String?) : ActionResult?
+      if task_host = @task_host
+        if task_host.name != @host.name && local_connection? && !localhost_addr?(task_host.connection_host)
+          user = SynchronizeRsync.bool(@params["set_remote_user"]?, default: true) ? @vars["ansible_user"]?.try(&.as_s?) : nil
+          if mode == "pull"
+            src = SynchronizeRsync.format_rsh_target(task_host.connection_host, src, user)
+          else
+            dest = SynchronizeRsync.format_rsh_target(task_host.connection_host, dest, user)
+          end
+          dest_port = resolve_dest_port(task_host)
+          argv = SynchronizeRsync.build_argv(src, dest, @params, private_key, dest_port)
+          return finish(argv)
+        end
+      end
+      nil
     end
 
     # Shared tail: run the rsync argv and translate its outcome into the

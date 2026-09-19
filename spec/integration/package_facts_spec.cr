@@ -220,7 +220,7 @@ describe "package_facts plugin" do
 
     packages = result["ansible_facts"]["packages"].as_h
     entry = packages[packages.keys.first].as_a.first.as_h
-    entry.keys.sort.should eq(["arch", "category", "name", "origin", "source", "version"])
+    entry.keys.sort!.should eq(["arch", "category", "name", "origin", "source", "version"])
     entry["arch"].as_s.should_not be_empty
     entry["category"].as_s.should_not be_empty
     entry["origin"].as_s.should_not be_nil

@@ -62,9 +62,9 @@ describe "alternatives install guard" do
     with_temp_dir do |dir|
       link = File.join(dir, "krikri-sh")
       result = PluginSpecHelper.run("alternatives", {
-        "name"       => "krikri-spec-alt-check",
-        "path"       => "/bin/sh",
-        "link"       => link,
+        "name"                => "krikri-spec-alt-check",
+        "path"                => "/bin/sh",
+        "link"                => link,
         "_ansible_check_mode" => "true",
       })
       result["changed"].as_bool.should be_true

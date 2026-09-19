@@ -71,8 +71,7 @@ module Krikri
           msg: "remote module (#{invoked}) does not support check mode", skipped: true)
       end
 
-      variable = @params["variable"]?
-      variable = variable.not_nil!
+      variable = @params["variable"]
 
       unless PluginHelpers::MysqlVariables.valid_name?(variable)
         return PluginResult.new(changed: false, failed: true,

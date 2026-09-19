@@ -154,7 +154,7 @@ module Krikri
 
       res = PluginResult.new(changed: outcome.changed, failed: false, msg: outcome.statusmessage)
       res.extra["query"] = JSON::Any.new(outcome.last_sql)
-      res.extra["query_list"] = JSON::Any.new(queries.map { |query| JSON::Any.new(query) })
+      res.extra["query_list"] = JSON::Any.new(queries.map { |sql| JSON::Any.new(sql) })
       res.extra["query_result"] = JSON::Any.new(outcome.last_result.map { |row| JSON::Any.new(row) })
       res.extra["query_all_results"] = JSON::Any.new(outcome.all_results)
       res.extra["rowcount"] = JSON::Any.new(outcome.rowcount)

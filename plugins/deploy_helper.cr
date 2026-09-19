@@ -34,6 +34,14 @@ module Krikri
   class DeployHelperPlugin < BasePlugin
     private DEPLOY_STATES = %w[finalize absent clean present query unfinished]
 
+    private def resolve_deploy_paths(path : String) : Tuple(String, String, String)
+      {
+        @params["releases_path"]? || "#{path}/releases",
+        @params["shared_path"]? || "#{path}/shared",
+        @params["current_path"]? || "#{path}/current",
+      }
+    end
+
     def execute : PluginResult
       path = @params["path"]?
       unless path
@@ -47,9 +55,7 @@ module Krikri
           msg: "value of state must be one of: #{DEPLOY_STATES.join(", ")}, got: #{state}")
       end
 
-      releases_path = @params["releases_path"]? || "#{path}/releases"
-      shared_path = @params["shared_path"]? || "#{path}/shared"
-      current_path = @params["current_path"]? || "#{path}/current"
+      releases_path, shared_path, current_path = resolve_deploy_paths(path)
       keep_releases = @params["keep_releases"]?.try(&.to_i?) || 5
       release = @params["release"]?
       check_mode = true?(@params["_ansible_check_mode"]?)
@@ -97,7 +103,7 @@ module Krikri
           msg: "release #{release} would be created")
       end
 
-      mk = remote_exec("mkdir -p #{[path, releases_path, shared_path, new_release_path, current_path].map { |path| Shell.single_quote(path) }.join(' ')}")
+      mk = remote_exec("mkdir -p #{[path, releases_path, shared_path, new_release_path, current_path].map { |dir| Shell.single_quote(dir) }.join(' ')}")
       unless mk[:exit_code] == 0
         return PluginResult.new(changed: false, failed: true,
           msg: "failed to create deploy layout: #{mk[:stderr].strip}")
@@ -170,7 +176,7 @@ module Krikri
     # when release is empty - real's documented behavior for
     # finalize's "no release given" case).
     private def do_finalize(current_path : String, release : String?, shared_path : String,
-                         releases_path : String, check_mode : Bool) : PluginResult
+                            releases_path : String, check_mode : Bool) : PluginResult
       target = if release && !release.empty?
                  "#{releases_path}/#{release}"
                else

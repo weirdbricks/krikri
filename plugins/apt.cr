@@ -50,38 +50,38 @@ module Krikri
     # the unsupported-param/choices/bool-type validation below the same
     # way real AnsibleModule setup does.
     private APT_SPEC = {
-      "state"                       => [] of String,
-      "update_cache"                => ["update-cache"],
-      "update_cache_retries"        => [] of String,
+      "state"                        => [] of String,
+      "update_cache"                 => ["update-cache"],
+      "update_cache_retries"         => [] of String,
       "update_cache_retry_max_delay" => [] of String,
-      "cache_valid_time"            => [] of String,
-      "purge"                       => [] of String,
-      "package"                     => ["pkg", "name"],
-      "deb"                         => [] of String,
-      "default_release"             => ["default-release"],
-      "install_recommends"          => ["install-recommends"],
-      "force"                       => [] of String,
-      "upgrade"                     => [] of String,
-      "dpkg_options"                => [] of String,
-      "autoremove"                  => [] of String,
-      "autoclean"                   => [] of String,
-      "fail_on_autoremove"          => [] of String,
-      "policy_rc_d"                 => [] of String,
-      "only_upgrade"                => [] of String,
-      "force_apt_get"               => [] of String,
-      "clean"                       => [] of String,
-      "allow_unauthenticated"       => ["allow-unauthenticated"],
-      "allow_downgrade"             => ["allow-downgrade", "allow-downgrades", "allow_downgrades"],
-      "allow_change_held_packages"  => [] of String,
-      "lock_timeout"                => [] of String,
+      "cache_valid_time"             => [] of String,
+      "purge"                        => [] of String,
+      "package"                      => ["pkg", "name"],
+      "deb"                          => [] of String,
+      "default_release"              => ["default-release"],
+      "install_recommends"           => ["install-recommends"],
+      "force"                        => [] of String,
+      "upgrade"                      => [] of String,
+      "dpkg_options"                 => [] of String,
+      "autoremove"                   => [] of String,
+      "autoclean"                    => [] of String,
+      "fail_on_autoremove"           => [] of String,
+      "policy_rc_d"                  => [] of String,
+      "only_upgrade"                 => [] of String,
+      "force_apt_get"                => [] of String,
+      "clean"                        => [] of String,
+      "allow_unauthenticated"        => ["allow-unauthenticated"],
+      "allow_downgrade"              => ["allow-downgrade", "allow-downgrades", "allow_downgrades"],
+      "allow_change_held_packages"   => [] of String,
+      "lock_timeout"                 => [] of String,
     }
 
     # apt.py's bool-typed params, in argument_spec declaration order -
     # real AnsibleModule's type validation walks the spec in declaration
     # order and only ever surfaces the first error.
     private APT_BOOL_PARAMS = %w[update_cache purge install_recommends force autoremove autoclean
-                                 fail_on_autoremove only_upgrade force_apt_get clean
-                                 allow_unauthenticated allow_downgrade allow_change_held_packages]
+      fail_on_autoremove only_upgrade force_apt_get clean
+      allow_unauthenticated allow_downgrade allow_change_held_packages]
 
     # apt.py's state choice list (2.14: includes build-dep and fixed).
     private APT_STATES = %w[absent build-dep fixed latest present]

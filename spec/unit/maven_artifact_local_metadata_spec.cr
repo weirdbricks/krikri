@@ -11,18 +11,18 @@ private def with_local_repo(&)
   Dir.mkdir_p(File.join(repo, "krikri", "test", "1.0"))
   File.write(File.join(repo, "krikri", "test", "maven-metadata-local.xml"),
     <<-XML
-    <?xml version="1.0" encoding="UTF-8"?>
-    <metadata>
-      <groupId>krikri</groupId>
-      <artifactId>test</artifactId>
-      <versioning>
-        <versions>
-          <version>0.9</version>
-          <version>1.0</version>
-        </versions>
-      </versioning>
-    </metadata>
-    XML
+      <?xml version="1.0" encoding="UTF-8"?>
+      <metadata>
+        <groupId>krikri</groupId>
+        <artifactId>test</artifactId>
+        <versioning>
+          <versions>
+            <version>0.9</version>
+            <version>1.0</version>
+          </versions>
+        </versioning>
+      </metadata>
+      XML
   )
   jar = File.join(repo, "krikri", "test", "1.0", "test-1.0.jar")
   File.write(jar, "krikri-test-jar-content")

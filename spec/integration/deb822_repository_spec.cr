@@ -30,7 +30,7 @@ describe "deb822_repository plugin" do
 
   it "succeeds without uris/suites (real Ansible treats both as optional - a name-only task writes just X-Repolib-Name + Types: deb)" do
     result = PluginSpecHelper.run("deb822_repository", {
-      "name"       => "testrepo-name-only",
+      "name"                => "testrepo-name-only",
       "_ansible_check_mode" => "true",
     })
 
@@ -55,10 +55,10 @@ describe "deb822_repository plugin" do
 
   it "accepts a real YAML list of valid types choices (check mode)" do
     result = PluginSpecHelper.run("deb822_repository", {
-      "name"       => "testrepo-multitypes",
-      "types"      => "[\"deb\", \"deb-src\"]",
-      "uris"       => "https://example.com/repo",
-      "suites"     => "stable",
+      "name"                => "testrepo-multitypes",
+      "types"               => "[\"deb\", \"deb-src\"]",
+      "uris"                => "https://example.com/repo",
+      "suites"              => "stable",
       "_ansible_check_mode" => "true",
     })
 
@@ -68,10 +68,10 @@ describe "deb822_repository plugin" do
 
   it "fails on a space-separated types scalar like real Ansible's comma-only check_type_list split" do
     result = PluginSpecHelper.run("deb822_repository", {
-      "name"       => "testrepo-spacetype",
-      "types"      => "deb deb-src",
-      "uris"       => "https://example.com/repo",
-      "suites"     => "stable",
+      "name"                => "testrepo-spacetype",
+      "types"               => "deb deb-src",
+      "uris"                => "https://example.com/repo",
+      "suites"              => "stable",
       "_ansible_check_mode" => "true",
     })
 
@@ -81,11 +81,11 @@ describe "deb822_repository plugin" do
 
   it "reports it would add a repository that isn't present yet (check mode, no real change)" do
     result = PluginSpecHelper.run("deb822_repository", {
-      "name"       => "totally-fake-example-repo",
-      "types"      => "deb",
-      "uris"       => "https://packages.totally-fake-example.com/repo",
-      "suites"     => "stable",
-      "components" => "main",
+      "name"                => "totally-fake-example-repo",
+      "types"               => "deb",
+      "uris"                => "https://packages.totally-fake-example.com/repo",
+      "suites"              => "stable",
+      "components"          => "main",
       "_ansible_check_mode" => "true",
     })
 
@@ -104,10 +104,10 @@ describe "deb822_repository plugin" do
   describe "signed_by" do
     it "renders with an inline ASCII-armored key without crashing (check mode)" do
       result = PluginSpecHelper.run("deb822_repository", {
-        "name"       => "test-armored-repo",
-        "uris"       => "https://example.com/repo",
-        "suites"     => "stable",
-        "signed_by"  => "-----BEGIN PGP PUBLIC KEY BLOCK-----\nmQINBGF...\n-----END PGP PUBLIC KEY BLOCK-----",
+        "name"                => "test-armored-repo",
+        "uris"                => "https://example.com/repo",
+        "suites"              => "stable",
+        "signed_by"           => "-----BEGIN PGP PUBLIC KEY BLOCK-----\nmQINBGF...\n-----END PGP PUBLIC KEY BLOCK-----",
         "_ansible_check_mode" => "true",
       })
 
@@ -117,10 +117,10 @@ describe "deb822_repository plugin" do
 
     it "renders with a key fingerprint on one line (check mode)" do
       result = PluginSpecHelper.run("deb822_repository", {
-        "name"       => "test-fingerprint-repo",
-        "uris"       => "https://example.com/repo",
-        "suites"     => "stable",
-        "signed_by"  => "ABCD1234EFGH5678ABCD1234EFGH5678ABCD1234",
+        "name"                => "test-fingerprint-repo",
+        "uris"                => "https://example.com/repo",
+        "suites"              => "stable",
+        "signed_by"           => "ABCD1234EFGH5678ABCD1234EFGH5678ABCD1234",
         "_ansible_check_mode" => "true",
       })
 
@@ -130,10 +130,10 @@ describe "deb822_repository plugin" do
 
     it "handles an empty signed_by gracefully" do
       result = PluginSpecHelper.run("deb822_repository", {
-        "name"       => "test-empty-owner-repo",
-        "uris"       => "https://example.com/repo",
-        "suites"     => "stable",
-        "signed_by"  => "",
+        "name"                => "test-empty-owner-repo",
+        "uris"                => "https://example.com/repo",
+        "suites"              => "stable",
+        "signed_by"           => "",
         "_ansible_check_mode" => "true",
       })
 
@@ -143,9 +143,9 @@ describe "deb822_repository plugin" do
 
   it "renders with X-Repolib-Name in the output (check mode, no file written)" do
     result = PluginSpecHelper.run("deb822_repository", {
-      "name"       => "test-repolib-name",
-      "uris"       => "https://example.com/repo",
-      "suites"     => "stable",
+      "name"                => "test-repolib-name",
+      "uris"                => "https://example.com/repo",
+      "suites"              => "stable",
       "_ansible_check_mode" => "true",
     })
 
@@ -162,8 +162,8 @@ describe "deb822_repository plugin" do
     # _module_name" (podman-diff deb822_repository_edge_cases: every
     # valid case failed on the krikri side).
     result = PluginSpecHelper.run("deb822_repository", {
-      "name"          => "testrepo-module-name",
-      "_module_name"  => "ansible.builtin.deb822_repository",
+      "name"                => "testrepo-module-name",
+      "_module_name"        => "ansible.builtin.deb822_repository",
       "_ansible_check_mode" => "true",
     })
 

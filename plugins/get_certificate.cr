@@ -50,8 +50,8 @@ module Krikri
       if err = validate_arguments
         return err
       end
-      host = @params["host"].not_nil!
-      port = @params["port"].not_nil!.to_i
+      host = @params["host"]
+      port = @params["port"].to_i
 
       return failure("ca_cert file does not exist") if (ca_cert = @params["ca_cert"]?) && !File.exists?(expand_tilde(ca_cert))
 

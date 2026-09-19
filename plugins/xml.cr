@@ -132,8 +132,8 @@ module Krikri
       # boolean". The engine's param pipeline carries these as strings,
       # so validate before the lenient true?() coercion.
       valid_bools = {"0" => false, "1" => true, "f" => false, "n" => false, "t" => true, "y" => true,
-                      "false" => false, "no" => false, "off" => false, "on" => true,
-                      "true" => true, "yes" => true}
+                     "false" => false, "no" => false, "off" => false, "on" => true,
+                     "true" => true, "yes" => true}
       {"count", "print_match", "pretty_print", "backup", "insertbefore", "insertafter", "create_if_missing"}.each do |bool_param|
         if (val = @params[bool_param]?) && !valid_bools.has_key?(val.downcase)
           return PluginResult.new(changed: false, failed: true,
@@ -277,14 +277,14 @@ module Krikri
         # (make_pretty: "Modifying a string is not considered a change"
         # does not apply - it explicitly compares and reports changed).
         final_changed = if read_only
-          false
-        elsif op_ran || xpath
-          tree_changed
-        elsif pretty_print
-          new_serial != xmlstring
-        else
-          tree_changed
-        end
+                          false
+                        elsif op_ran || xpath
+                          tree_changed
+                        elsif pretty_print
+                          new_serial != xmlstring
+                        else
+                          tree_changed
+                        end
         result = build_result(final_changed, xpath, state, count_result, matches_result, msg)
         result.extra["xmlstring"] = JSON::Any.new(new_serial)
         return result
@@ -300,14 +300,14 @@ module Krikri
       # changed=false regardless of formatting differences (real module
       # never writes).
       final_changed = if read_only
-        false
-      elsif op_ran || xpath
-        tree_changed
-      elsif pretty_print
-        new_serial != original_bytes
-      else
-        false
-      end
+                        false
+                      elsif op_ran || xpath
+                        tree_changed
+                      elsif pretty_print
+                        new_serial != original_bytes
+                      else
+                        false
+                      end
       backup_file = ""
       if final_changed && !check_mode?
         if backup && File.exists?(p)

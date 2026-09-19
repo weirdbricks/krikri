@@ -70,39 +70,43 @@ module Krikri
       key_file = File.tempname("pkeyinfo")
       File.write(key_file, key_data)
       begin
-        args = ["pkey", "-in", key_file]
-        args.concat(["-passin", "pass:#{@params["passphrase"]}"]) if @params["passphrase"]?
-
-        stdout_io = IO::Memory.new
-        err = IO::Memory.new
-        status = Process.run("openssl", args + ["-noout"], output: stdout_io, error: err)
-        unless status.success?
-          res = failure(status_err_text(err))
-          res.extra["can_load_key"] = JSON::Any.new(true)
-          res.extra["can_parse_key"] = JSON::Any.new(false)
-          res.extra["key_is_consistent"] = JSON::Any.new(nil)
-          return res
-        end
-
-        pub_pem = openssl_out(args + ["-pubout"])
-        spki_der = openssl_der(args + ["-pubout", "-outform", "DER"])
-        text = openssl_out(args + ["-noout", "-text"])
-
-        res = PluginResult.new(changed: false, failed: false, msg: "")
-        res.extra["can_load_key"] = JSON::Any.new(true)
-        res.extra["can_parse_key"] = JSON::Any.new(true)
-        res.extra["key_is_consistent"] = JSON::Any.new(nil)
-        res.extra["public_key"] = JSON::Any.new(pub_pem) if pub_pem
-        res.extra["public_key_fingerprints"] = X509CertInfo.fingerprints_any(spki_der) if spki_der
-
-        key_type, public_data, private_data = classify_key(text || "")
-        res.extra["type"] = JSON::Any.new(key_type)
-        res.extra["public_data"] = JSON::Any.new(public_data.to_h { |k, v| {k, v} })
-        res.extra["private_data"] = JSON::Any.new(private_data.to_h { |k, v| {k, v} }) if true?(@params["return_private_key_data"]?)
-        res
+        probe_key(key_file)
       ensure
         File.delete(key_file) if File.exists?(key_file)
       end
+    end
+
+    private def probe_key(key_file : String) : PluginResult
+      args = ["pkey", "-in", key_file]
+      args.concat(["-passin", "pass:#{@params["passphrase"]}"]) if @params["passphrase"]?
+
+      stdout_io = IO::Memory.new
+      err = IO::Memory.new
+      status = Process.run("openssl", args + ["-noout"], output: stdout_io, error: err)
+      unless status.success?
+        res = failure(status_err_text(err))
+        res.extra["can_load_key"] = JSON::Any.new(true)
+        res.extra["can_parse_key"] = JSON::Any.new(false)
+        res.extra["key_is_consistent"] = JSON::Any.new(nil)
+        return res
+      end
+
+      pub_pem = openssl_out(args + ["-pubout"])
+      spki_der = openssl_der(args + ["-pubout", "-outform", "DER"])
+      text = openssl_out(args + ["-noout", "-text"])
+
+      res = PluginResult.new(changed: false, failed: false, msg: "")
+      res.extra["can_load_key"] = JSON::Any.new(true)
+      res.extra["can_parse_key"] = JSON::Any.new(true)
+      res.extra["key_is_consistent"] = JSON::Any.new(nil)
+      res.extra["public_key"] = JSON::Any.new(pub_pem) if pub_pem
+      res.extra["public_key_fingerprints"] = X509CertInfo.fingerprints_any(spki_der) if spki_der
+
+      key_type, public_data, private_data = classify_key(text || "")
+      res.extra["type"] = JSON::Any.new(key_type)
+      res.extra["public_data"] = JSON::Any.new(public_data.to_h { |k, v| {k, v} })
+      res.extra["private_data"] = JSON::Any.new(private_data.to_h { |k, v| {k, v} }) if true?(@params["return_private_key_data"]?)
+      res
     end
 
     # Real AnsibleModule validation order (ArgumentSpecValidator.validate):

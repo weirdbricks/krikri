@@ -127,6 +127,5 @@ module Krikri
       h["msg"] = JSON::Any.new(msg)
       JSON::Any.new(h)
     end
-
   end
 end

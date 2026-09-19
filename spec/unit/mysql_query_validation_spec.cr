@@ -34,10 +34,10 @@ describe "mysql_query plugin argument validation" do
 
   it "fails a non-boolean single_transaction" do
     result = PluginSpecHelper.run("mysql_query", {
-      "query"               => "SELECT 1",
-      "single_transaction"  => "notabool",
-      "login_user"          => "root",
-      "login_unix_socket"   => "/run/mysqld/mysqld.sock",
+      "query"              => "SELECT 1",
+      "single_transaction" => "notabool",
+      "login_user"         => "root",
+      "login_unix_socket"  => "/run/mysqld/mysqld.sock",
     })
 
     result["failed"].as_bool.should be_true

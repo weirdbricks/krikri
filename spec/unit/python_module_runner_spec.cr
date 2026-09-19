@@ -130,10 +130,10 @@ describe Krikri::PythonModuleRunner do
     source = "#!/usr/bin/python\n" \
              "print('{\"changed\": true, \"msg\": \"ran\", \"custom_field\": 7}')\n"
     result = PluginSpecHelper.run("py_module", {
-      "module_name"   => "testmod",
-      "module_source" => Base64.strict_encode(source),
-      "new_style"     => "false",
-      "kv_argv"       => %q(["path=/tmp/x"]),
+      "module_name"         => "testmod",
+      "module_source"       => Base64.strict_encode(source),
+      "new_style"           => "false",
+      "kv_argv"             => %q(["path=/tmp/x"]),
       "_ansible_check_mode" => "false",
     })
     result["changed"].as_bool.should be_true
@@ -154,10 +154,10 @@ describe Krikri::PythonModuleRunner do
              "args = json.loads(sys.stdin.read())['ANSIBLE_MODULE_ARGS']\n" \
              "print(json.dumps({'changed': False, 'msg': args.get('name', '')}))\n"
     result = PluginSpecHelper.run("py_module", {
-      "module_name"   => "testmod_new",
-      "module_source" => Base64.strict_encode(source),
-      "new_style"     => "true",
-      "module_args"   => %q({"name": "hello", "_ansible_check_mode": false}),
+      "module_name"         => "testmod_new",
+      "module_source"       => Base64.strict_encode(source),
+      "new_style"           => "true",
+      "module_args"         => %q({"name": "hello", "_ansible_check_mode": false}),
       "_ansible_check_mode" => "false",
     })
     result["msg"].as_s.should eq("hello")
@@ -168,10 +168,10 @@ describe Krikri::PythonModuleRunner do
     pending("python3 not available") unless File.exists?("/usr/bin/python3")
     source = "#!/usr/bin/python\nraise SystemExit('boom')\n"
     result = PluginSpecHelper.run("py_module", {
-      "module_name"   => "testmod_fail",
-      "module_source" => Base64.strict_encode(source),
-      "new_style"     => "false",
-      "kv_argv"       => "[]",
+      "module_name"         => "testmod_fail",
+      "module_source"       => Base64.strict_encode(source),
+      "new_style"           => "false",
+      "kv_argv"             => "[]",
       "_ansible_check_mode" => "false",
     })
     result["failed"].as_bool.should be_true

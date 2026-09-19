@@ -52,6 +52,40 @@ module Krikri
       end
 
       unit = @params["unit"]? || "KiB"
+      if error = validate_unit_and_label(unit)
+        return error
+      end
+
+      check_mode = true?(@params["_ansible_check_mode"]?)
+      number, part_start, part_end, label, fs_type, flags = resolve_partition_params
+
+      # state: info - real runs print and returns the parsed output.
+      if state == "info"
+        return info_result(device, unit)
+      end
+
+      current = stat_and_read(device, unit)
+      return current if current.is_a?(PluginResult)
+
+      if state == "absent"
+        return absent_partition(device, current, number, check_mode)
+      end
+
+      present_partition(device, current, number, part_start, part_end,
+        unit, label, fs_type, flags, check_mode)
+    end
+
+    private def resolve_partition_params : {Int32?, String, String, String, String, String?}
+      number = @params["number"]?.try { |v| v.to_i? }
+      part_start = @params["part_start"]? || "0%"
+      part_end = @params["part_end"]? || "100%"
+      label = @params["label"]? || "msdos"
+      fs_type = @params["fs_type"]? || "ext2"
+      flags = @params["flags"]? # comma/space-separated or single
+      {number, part_start, part_end, label, fs_type, flags}
+    end
+
+    private def validate_unit_and_label(unit : String) : PluginResult?
       unless PARTED_UNITS.includes?(unit)
         return PluginResult.new(changed: false, failed: true,
           msg: "value of unit must be one of: #{PARTED_UNITS.join(", ")}, got: #{unit}")
@@ -63,29 +97,23 @@ module Krikri
             msg: "value of label must be one of: #{PARTED_LABELS.join(", ")}, got: #{label}")
         end
       end
+      nil
+    end
 
-      check_mode = true?(@params["_ansible_check_mode"]?)
-      number = @params["number"]?.try { |v| v.to_i? }
-      part_start = @params["part_start"]? || "0%"
-      part_end = @params["part_end"]? || "100%"
-      label = @params["label"]? || "msdos"
-      fs_type = @params["fs_type"]? || "ext2"
-      flags = @params["flags"]? # comma/space-separated or single
-
-      # state: info - real runs print and returns the parsed output.
-      if state == "info"
-        result = read_partitions(device, unit)
-        if result.is_a?(String)
-          return PluginResult.new(changed: false, failed: true, msg: result)
-        end
-        return PluginResult.new(changed: false, failed: false,
-          msg: "Current partitions on device:\n#{device}",
-          other: JSON.parse(%({"partitions": #{result.to_json}})))
+    private def info_result(device : String, unit : String) : PluginResult
+      result = read_partitions(device, unit)
+      if result.is_a?(String)
+        return PluginResult.new(changed: false, failed: true, msg: result)
       end
+      PluginResult.new(changed: false, failed: false,
+        msg: "Current partitions on device:\n#{device}",
+        other: JSON.parse(%({"partitions": #{result.to_json}})))
+    end
 
-      # Real parted.py runs `parted -s <device> print` early to check
-      # the device exists; a missing/unreadable device fails with
-      # "Error: Could not stat device <dev> - No such file or directory."
+    # Real parted.py runs `parted -s <device> print` early to check
+    # the device exists; a missing/unreadable device fails with
+    # "Error: Could not stat device <dev> - No such file or directory."
+    private def stat_and_read(device : String, unit : String) : Array(Hash(String, String)) | PluginResult
       device_exists = remote_exec("test -e #{Shell.single_quote(device)}")
       unless device_exists[:exit_code] == 0
         return PluginResult.new(changed: false, failed: true,
@@ -93,16 +121,8 @@ module Krikri
       end
 
       current = read_partitions(device, unit)
-      if current.is_a?(String)
-        return PluginResult.new(changed: false, failed: true, msg: current)
-      end
-
-      if state == "absent"
-        return absent_partition(device, current, number, check_mode)
-      end
-
-      present_partition(device, current, number, part_start, part_end,
-        unit, label, fs_type, flags, check_mode)
+      return PluginResult.new(changed: false, failed: true, msg: current) if current.is_a?(String)
+      current
     end
 
     # Runs `parted -s <dev> -m unit <unit> print` and parses the
@@ -168,39 +188,15 @@ module Krikri
       existing = number ? current.find { |part| part["number"] == number.to_s } : nil
 
       if existing.nil?
-        return PluginResult.new(changed: true, failed: false,
-          msg: "Partition would be created on #{device}") if check_mode
-
-        mkpart_args = ["unit", unit, "mkpart"]
-        # msdos/dvh/amiga take a primary/extended/logical part type;
-        # GPT-family labels take no part type and the 3rd arg is the
-        # partition NAME (real passes fs_type there). msdos uses
-        # fs_type as the filesystem-type argument after the part type.
-        if ["msdos", "dvh", "amiga"].includes?(label)
-          mkpart_args << "primary" << fs_type
-        else
-          mkpart_args << fs_type
-        end
-        mkpart_args << part_start << part_end
-
-        result = remote_exec("parted -s #{Shell.single_quote(device)} #{mkpart_args.map { |a| Shell.single_quote(a) }.join(' ')}")
-        unless result[:exit_code] == 0
-          return PluginResult.new(changed: false, failed: true,
-            msg: "Error: parted mkpart failed: #{result[:stderr].strip}")
+        if failure = create_partition(device, unit, label, fs_type, part_start, part_end, check_mode, msgs)
+          return failure
         end
         changed = true
-        msgs << "partition created"
       elsif resize_enabled? && (existing["end"] != part_end)
-        return PluginResult.new(changed: true, failed: false,
-          msg: "Partition #{number} on #{device} would be resized") if check_mode
-
-        result = remote_exec("parted -s #{Shell.single_quote(device)} unit #{Shell.single_quote(unit)} resizepart #{number} #{Shell.single_quote(part_end)}")
-        unless result[:exit_code] == 0
-          return PluginResult.new(changed: false, failed: true,
-            msg: "Error: parted resizepart failed: #{result[:stderr].strip}")
+        if failure = resize_partition(device, unit, number, part_end, check_mode, msgs)
+          return failure
         end
         changed = true
-        msgs << "partition resized"
       end
 
       if flags
@@ -215,6 +211,44 @@ module Krikri
 
       PluginResult.new(changed: changed, failed: false,
         msg: msgs.empty? ? "" : "Partitions on #{device}: #{msgs.join(", ")}")
+    end
+
+    private def create_partition(device : String, unit : String, label : String, fs_type : String, part_start : String, part_end : String, check_mode : Bool, msgs : Array(String)) : PluginResult?
+      return PluginResult.new(changed: true, failed: false,
+        msg: "Partition would be created on #{device}") if check_mode
+
+      mkpart_args = ["unit", unit, "mkpart"]
+      # msdos/dvh/amiga take a primary/extended/logical part type;
+      # GPT-family labels take no part type and the 3rd arg is the
+      # partition NAME (real passes fs_type there). msdos uses
+      # fs_type as the filesystem-type argument after the part type.
+      if ["msdos", "dvh", "amiga"].includes?(label)
+        mkpart_args << "primary" << fs_type
+      else
+        mkpart_args << fs_type
+      end
+      mkpart_args << part_start << part_end
+
+      result = remote_exec("parted -s #{Shell.single_quote(device)} #{mkpart_args.map { |a| Shell.single_quote(a) }.join(' ')}")
+      unless result[:exit_code] == 0
+        return PluginResult.new(changed: false, failed: true,
+          msg: "Error: parted mkpart failed: #{result[:stderr].strip}")
+      end
+      msgs << "partition created"
+      nil
+    end
+
+    private def resize_partition(device : String, unit : String, number : Int32?, part_end : String, check_mode : Bool, msgs : Array(String)) : PluginResult?
+      return PluginResult.new(changed: true, failed: false,
+        msg: "Partition #{number} on #{device} would be resized") if check_mode
+
+      result = remote_exec("parted -s #{Shell.single_quote(device)} unit #{Shell.single_quote(unit)} resizepart #{number} #{Shell.single_quote(part_end)}")
+      unless result[:exit_code] == 0
+        return PluginResult.new(changed: false, failed: true,
+          msg: "Error: parted resizepart failed: #{result[:stderr].strip}")
+      end
+      msgs << "partition resized"
+      nil
     end
 
     private def resize_enabled? : Bool

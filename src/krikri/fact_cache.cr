@@ -97,9 +97,9 @@ module Krikri
       # environment - API tokens included) and set_fact-ed secrets: store
       # them owner-only rather than umask-default 0644.
       path = path_for(host_name)
-      File.open(path, "w") do |f|
-        f.chmod(0o600)
-        f.write(facts.to_json.to_slice)
+      File.open(path, "w") do |io|
+        io.chmod(0o600)
+        io.write(facts.to_json.to_slice)
       end
     rescue
     end

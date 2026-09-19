@@ -58,8 +58,7 @@ module Krikri
         return err
       end
 
-      path = @params["path"]?
-      path = expand_tilde(path.not_nil!)
+      path = expand_tilde(@params["path"])
       state = @params["state"]? || "present"
       check_mode = true?(@params["_ansible_check_mode"]?)
 

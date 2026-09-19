@@ -161,10 +161,10 @@ describe "subversion plugin - result shape" do
     FileUtils.mkdir_p(File.join(dir, "wc", ".svn"))
 
     result = run_subversion(dir, log, {
-      "repo"       => "svn+ssh://example.com/repo",
-      "dest"       => File.join(dir, "wc"),
+      "repo"                => "svn+ssh://example.com/repo",
+      "dest"                => File.join(dir, "wc"),
       "_ansible_check_mode" => "yes",
-      "switch"     => "no",
+      "switch"              => "no",
     })
 
     result["changed"].as_bool.should be_falsey

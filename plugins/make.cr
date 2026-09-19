@@ -41,7 +41,7 @@ module Krikri
       return PluginResult.new(changed: false, failed: true, msg: "missing required arguments: chdir") unless chdir
 
       target = @params["target"]?
-      targets = @params["targets"]?.try { |target| target.split(',').map(&.strip).reject(&.empty?) }
+      targets = @params["targets"]?.try { |value| value.split(',').map(&.strip).reject(&.empty?) }
 
       # Real AnsibleModule's mutually_exclusive check counts non-empty
       # values, in parameters.py's exact wording.
@@ -83,10 +83,10 @@ module Krikri
           # becomes "True"/"False", a number its decimal digits), a bare
           # key for None.
           command << if value.raw.nil?
-                       key
-                     else
-                       "#{key}=#{py_str(value)}"
-                     end
+            key
+          else
+            "#{key}=#{py_str(value)}"
+          end
         end
       end
 
@@ -116,11 +116,11 @@ module Krikri
 
     private def py_str(value : JSON::Any) : String
       case value.raw
-      when String   then value.as_s
-      when Bool     then value.as_bool ? "True" : "False"
-      when Int64    then value.as_i64.to_s
-      when Float64  then value.as_f.to_s
-      else               value.to_s
+      when String  then value.as_s
+      when Bool    then value.as_bool ? "True" : "False"
+      when Int64   then value.as_i64.to_s
+      when Float64 then value.as_f.to_s
+      else              value.to_s
       end
     end
 

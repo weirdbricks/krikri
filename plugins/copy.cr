@@ -253,7 +253,7 @@ module Krikri
             add_path_info(result, dest)
             return result
           end
-        rescue 
+        rescue
           # File read failed, continue with copy
         end
       end

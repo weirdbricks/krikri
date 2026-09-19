@@ -51,24 +51,24 @@ module Krikri
     # mysql_common_argument_spec + mysql_info's own update) in
     # declaration order - values are the spec's aliases.
     SPEC = {
-      "login_user"       => [] of String,
-      "login_password"   => [] of String,
-      "login_host"       => [] of String,
-      "login_port"       => [] of String,
+      "login_user"        => [] of String,
+      "login_password"    => [] of String,
+      "login_host"        => [] of String,
+      "login_port"        => [] of String,
       "login_unix_socket" => [] of String,
-      "config_file"      => [] of String,
-      "connect_timeout"  => [] of String,
-      "client_cert"      => ["ssl_cert"],
-      "client_key"       => ["ssl_key"],
-      "ca_cert"          => ["ssl_ca"],
-      "check_hostname"   => [] of String,
-      "login_db"         => [] of String,
-      "filter"           => [] of String,
-      "exclude_fields"   => [] of String,
-      "return_empty_dbs" => [] of String,
+      "config_file"       => [] of String,
+      "connect_timeout"   => [] of String,
+      "client_cert"       => ["ssl_cert"],
+      "client_key"        => ["ssl_key"],
+      "ca_cert"           => ["ssl_ca"],
+      "check_hostname"    => [] of String,
+      "login_db"          => [] of String,
+      "filter"            => [] of String,
+      "exclude_fields"    => [] of String,
+      "return_empty_dbs"  => [] of String,
     }
 
-    INT_PARAMS = {"login_port", "connect_timeout"}
+    INT_PARAMS  = {"login_port", "connect_timeout"}
     BOOL_PARAMS = {"check_hostname", "return_empty_dbs"}
 
     def execute : PluginResult

@@ -39,7 +39,9 @@ module Krikri
       # origin check and the zfs/zpool binary lookup below.
       missing = ["name", "state"].select { |arg| arg == "name" ? !name : !state }
       return PluginResult.new(changed: false, failed: true, msg: "missing required arguments: #{missing.join(", ")}") unless missing.empty?
-      name = name.not_nil!
+      unless name
+        return PluginResult.new(changed: false, failed: true, msg: "missing required arguments: #{missing.join(", ")}")
+      end
       unless state == "present" || state == "absent"
         return PluginResult.new(changed: false, failed: true, msg: "value of state must be one of: absent, present, got: #{state}")
       end

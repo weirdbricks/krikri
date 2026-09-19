@@ -2601,9 +2601,9 @@ module Krikri
         Dir.mkdir_p(dir) unless Dir.exists?(dir)
         # 0600, chmod before the bytes land - see the same fix in
         # ExpressionEvaluator#evaluate_password_lookup.
-        File.open(resolved_path, "w") do |f|
-          f.chmod(0o600)
-          f.write((password + "\n").to_slice)
+        File.open(resolved_path, "w") do |io|
+          io.chmod(0o600)
+          io.write((password + "\n").to_slice)
         end
       rescue
       end

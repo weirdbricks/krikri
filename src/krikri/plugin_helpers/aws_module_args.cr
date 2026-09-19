@@ -225,11 +225,11 @@ module Krikri
 
       private def self.check_unsupported(spec : Spec, params : Hash(String, String)) : Krikri::PluginResult?
         legal = spec.args.flat_map { |name, arg| arg.aliases + [name] }.to_set
-        unsupported = params.keys.reject { |key| legal.includes?(key) || internal_key?(key) }.sort
+        unsupported = params.keys.reject { |key| legal.includes?(key) || internal_key?(key) }.sort!
         return nil if unsupported.empty?
 
-        names = spec.args.keys.sort
-        aliases = spec.args.values.flat_map(&.aliases).sort
+        names = spec.args.keys.sort!
+        aliases = spec.args.values.flat_map(&.aliases).sort!
         supported = aliases.empty? ? names.join(", ") : "#{names.join(", ")} (#{aliases.join(", ")})"
         PluginResult.new(changed: false, failed: true,
           msg: "Unsupported parameters for (#{spec.module_name}) module: #{unsupported.join(", ")}. " \
@@ -446,11 +446,11 @@ module Krikri
 
       private def self.sub_unsupported(spec : Spec, param : String, sub : SubSpec, options : Hash(String, JSON::Any)) : Krikri::PluginResult?
         legal = sub.args.keys.to_set
-        unsupported = options.keys.reject { |key| legal.includes?(key) }.sort
+        unsupported = options.keys.reject { |key| legal.includes?(key) }.sort!
         return nil if unsupported.empty?
 
         unsupported = unsupported.map { |key| "#{param}.#{key}" }
-        supported = sub.args.keys.sort.join(", ")
+        supported = sub.args.keys.sort!.join(", ")
         PluginResult.new(changed: false, failed: true,
           msg: "Unsupported parameters for (#{spec.module_name}) module: #{unsupported.join(", ")}. " \
                "Supported parameters include: #{supported}.")
@@ -500,33 +500,45 @@ module Krikri
         pyclass = python_class(value)
 
         case type
-        when "bool"
-          return nil if value.raw.is_a?(Bool) || pyclass == "int" || pyclass == "float"
-          return nil if pyclass == "str" && bool_convertible?(value.as_s)
-          bool_type_error(name, value)
-        when "int"
-          case value.raw
-          when Int64, Float64, Bool then nil
-          when String
-            return nil if value.as_s.strip.matches?(/\A[+-]?\d+\z/)
-            int_type_error(name, pyclass)
-          else
-            int_type_error(name, pyclass)
-          end
-        when "dict"
-          return nil if value.raw.is_a?(Hash)
-          return nil if pyclass == "str" && kv_dict?(value.as_s)
+        when "bool" then bool_type_check(name, value, pyclass)
+        when "int"  then int_type_check(name, value, pyclass)
+        when "dict" then dict_type_check(name, value, pyclass)
+        when "list" then list_type_check(name, value)
+        end
+      end
+
+      private def self.bool_type_check(name : String, value : JSON::Any, pyclass : String) : Krikri::PluginResult?
+        return nil if value.raw.is_a?(Bool) || pyclass == "int" || pyclass == "float"
+        return nil if pyclass == "str" && bool_convertible?(value.as_s)
+        bool_type_error(name, value)
+      end
+
+      private def self.int_type_check(name : String, value : JSON::Any, pyclass : String) : Krikri::PluginResult?
+        case value.raw
+        when Int64, Float64, Bool then nil
+        when String
+          return nil if value.as_s.strip.matches?(/\A[+-]?\d+\z/)
+          int_type_error(name, pyclass)
+        else
+          int_type_error(name, pyclass)
+        end
+      end
+
+      private def self.dict_type_check(name : String, value : JSON::Any, pyclass : String) : Krikri::PluginResult?
+        return nil if value.raw.is_a?(Hash)
+        return nil if pyclass == "str" && kv_dict?(value.as_s)
+        PluginResult.new(changed: false, failed: true,
+          msg: "argument '#{name}' is of type #{class_repr(pyclass)} and we were unable to convert to dict: " \
+               "dictionary requested, could not parse JSON or key=value")
+      end
+
+      private def self.list_type_check(name : String, value : JSON::Any) : Krikri::PluginResult?
+        case value.raw
+        when Array then nil
+        when Hash
           PluginResult.new(changed: false, failed: true,
-            msg: "argument '#{name}' is of type #{class_repr(pyclass)} and we were unable to convert to dict: " \
-                 "dictionary requested, could not parse JSON or key=value")
-        when "list"
-          case value.raw
-          when Array then nil
-          when Hash
-            PluginResult.new(changed: false, failed: true,
-              msg: "argument '#{name}' is of type <class 'dict'> and we were unable to convert to list: " \
-                   "<class 'dict'> cannot be converted to a list")
-          end
+            msg: "argument '#{name}' is of type <class 'dict'> and we were unable to convert to list: " \
+                 "<class 'dict'> cannot be converted to a list")
         end
       end
 

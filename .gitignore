@@ -55,3 +55,4 @@ scripts/crinja_corpus/divergence_report.md
 /testing/ipreuse/key
 /testing/ipreuse/key.pub
 testing/podman-diff/results/
+plugin_manager

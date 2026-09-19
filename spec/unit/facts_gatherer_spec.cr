@@ -374,10 +374,10 @@ describe Krikri::FactsGatherer do
     it "reports the DMI set under the default gather" do
       facts = JSON.parse(Krikri::FactsGatherer.run(nil))["ansible_facts"].as_h
       %w[ansible_system_vendor ansible_product_version ansible_product_name
-         ansible_product_serial ansible_product_uuid ansible_bios_vendor
-         ansible_bios_version ansible_bios_date ansible_board_vendor
-         ansible_board_name ansible_chassis_vendor ansible_form_factor
-         ansible_lvm ansible_device_links].each do |key|
+        ansible_product_serial ansible_product_uuid ansible_bios_vendor
+        ansible_bios_version ansible_bios_date ansible_board_vendor
+        ansible_board_name ansible_chassis_vendor ansible_form_factor
+        ansible_lvm ansible_device_links].each do |key|
         facts[key]?.should_not be_nil
       end
       # The lvs/vgs dicts are always present (empty on hosts without LVM).

@@ -18,7 +18,7 @@ private def run_zfs(params : Hash(String, String), path : String? = nil) : JSON:
   raise "Plugin binary not found: #{binary} (run ./build.sh first)" unless File.exists?(binary)
 
   config = {
-    "host"   => {
+    "host" => {
       "name" => "localhost",
       "user" => ENV["USER"]? || "root",
       "port" => 22,

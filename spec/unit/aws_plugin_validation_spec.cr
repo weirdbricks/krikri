@@ -21,7 +21,7 @@ end
 describe "ec2_instance plugin: argument-spec validation" do
   it "fails with the bare dict-parse error for a scalar image (dict with options= sub-spec)" do
     result = run_aws_plugin("ec2_instance", {
-      "image"        => "ami-123456",
+      "image"         => "ami-123456",
       "instance_type" => "t3.micro",
     })
     result["failed"].as_bool.should be_true
@@ -30,9 +30,9 @@ describe "ec2_instance plugin: argument-spec validation" do
 
   it "fails with the prefixed dict error for a plain dict param without a sub-spec" do
     result = run_aws_plugin("ec2_instance", {
-      "image_id"  => "ami-123456",
+      "image_id"      => "ami-123456",
       "instance_type" => "t3.micro",
-      "tags"      => "not-a-dict",
+      "tags"          => "not-a-dict",
     })
     result["failed"].as_bool.should be_true
     result["msg"].as_s.should contain("argument 'tags' is of type <class 'str'> and we were unable to convert to dict")
@@ -42,7 +42,7 @@ end
 describe "ec2_key plugin: argument-spec validation" do
   it "rejects an out-of-spec parameter at the plugin boundary" do
     result = run_aws_plugin("ec2_key", {
-      "name"     => "deploy",
+      "name"                        => "deploy",
       "krikri_not_an_ec2_key_param" => "true",
     })
     result["failed"].as_bool.should be_true
