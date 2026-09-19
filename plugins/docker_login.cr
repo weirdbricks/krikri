@@ -211,9 +211,9 @@ module Krikri
       # chmod (an unchecked chmod under a hardening role's restrictive
       # policy previously left the credential file 0644 for good).
       tmp = File.join(Dir.tempdir, ".docker-login-#{Random::Secure.hex(8)}")
-      File.open(tmp, "w") do |f|
-        f.chmod(0o600)
-        f.write(content.to_slice)
+      File.open(tmp, "w") do |io|
+        io.chmod(0o600)
+        io.write(content.to_slice)
       end
       begin
         remote_upload(tmp, config_path)
