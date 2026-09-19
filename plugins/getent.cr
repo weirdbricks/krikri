@@ -227,16 +227,16 @@ module Krikri
 
     private def find_binary(name : String) : String?
       script = <<-SH
-      found=""
-      for d in $(printf '%s' "$PATH" | tr ':' ' ') #{EXTRA_BIN_DIRS.join(' ')}; do
-        if [ -z "$found" ] && [ -x "$d/#{name}" ]; then found="$d/#{name}"; fi
-      done
-      searched=""
-      for d in $(printf '%s' "$PATH" | tr ':' ' ') #{EXTRA_BIN_DIRS.join(' ')}; do
-        case ":$searched:" in *":$d:"*) ;; *) searched="${searched:+$searched:}$d" ;; esac
-      done
-      printf '%s\\n%s' "$found" "$searched"
-      SH
+        found=""
+        for d in $(printf '%s' "$PATH" | tr ':' ' ') #{EXTRA_BIN_DIRS.join(' ')}; do
+          if [ -z "$found" ] && [ -x "$d/#{name}" ]; then found="$d/#{name}"; fi
+        done
+        searched=""
+        for d in $(printf '%s' "$PATH" | tr ':' ' ') #{EXTRA_BIN_DIRS.join(' ')}; do
+          case ":$searched:" in *":$d:"*) ;; *) searched="${searched:+$searched:}$d" ;; esac
+        done
+        printf '%s\\n%s' "$found" "$searched"
+        SH
 
       result = remote_exec(script)
       found, _, searched = result[:stdout].to_s.strip.partition("\n")
