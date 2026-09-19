@@ -170,7 +170,7 @@ module Krikri
     # when release is empty - real's documented behavior for
     # finalize's "no release given" case).
     private def do_finalize(current_path : String, release : String?, shared_path : String,
-                         releases_path : String, check_mode : Bool) : PluginResult
+                            releases_path : String, check_mode : Bool) : PluginResult
       target = if release && !release.empty?
                  "#{releases_path}/#{release}"
                else
