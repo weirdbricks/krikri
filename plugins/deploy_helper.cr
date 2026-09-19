@@ -25,7 +25,16 @@ module Krikri
   #   - state=finalize: points `current` symlink at the release (or at
   #     shared when release is empty - real's behavior), creating the
   #     symlink atomically via ln -sfn
-  #   - state=absent: removes the whole <path> tree
+  #   - state=absent: removes the whole <path> tree, and publishes
+  #     ansible_facts.deploy_helper as an empty LIST (real main()'s own
+  #     "destroy the facts" sentinel - not a dict)
+  #   - state=present/query: publishes ansible_facts.deploy_helper (real
+  #     gather_facts()' dict; round900881
+  #     mbaran0v.ansible_role_prometheus_rabbitmq_exporter's follow-up
+  #     tasks read deploy_helper.new_release_path, which failed with
+  #     "undefined variable" before this published anything)
+  #   - state=finalize/clean: publish NO ansible_facts (real main() sets
+  #     none for these states)
   #   - check mode: discovery runs for real, mutations are not run
   #
   # `new_release_state` (deprecated upstream arg) is accepted and
@@ -72,22 +81,28 @@ module Krikri
       when "finalize"
         do_finalize(current_path, release, shared_path, releases_path, check_mode)
       else # query
-        query(releases_path)
+        query(path, releases_path, shared_path, current_path, release)
       end
     end
 
     private def absent_path(path : String, check_mode : Bool) : PluginResult
       exists = remote_exec("test -e #{Shell.single_quote(path)}")
-      return PluginResult.new(changed: false, failed: false, msg: "") unless exists[:exit_code] == 0
+      # Real main() publishes {"deploy_helper": []} for state=absent -
+      # an empty list, its deliberate "destroy the facts" sentinel - on
+      # every non-failed exit, including the nothing-to-remove no-op.
+      return PluginResult.new(changed: false, failed: false, msg: "",
+        ansible_facts: {"deploy_helper" => [] of String}) unless exists[:exit_code] == 0
       return PluginResult.new(changed: true, failed: false,
-        msg: "path #{path} would be removed") if check_mode
+        msg: "path #{path} would be removed",
+        ansible_facts: {"deploy_helper" => [] of String}) if check_mode
 
       result = remote_exec("rm -rf #{Shell.single_quote(path)}")
       unless result[:exit_code] == 0
         return PluginResult.new(changed: false, failed: true,
           msg: "failed to remove #{path}: #{result[:stderr].strip}")
       end
-      PluginResult.new(changed: true, failed: false, msg: "")
+      PluginResult.new(changed: true, failed: false, msg: "",
+        ansible_facts: {"deploy_helper" => [] of String})
     end
 
     # Creates the directory layout + new release dir. Returns the
@@ -97,10 +112,12 @@ module Krikri
                         current_path : String, release : String?, check_mode : Bool) : PluginResult
       release ||= Time.utc.to_s("%Y%m%d%H%M%S")
       new_release_path = "#{releases_path}/#{release}"
+      facts = gather_facts(path, releases_path, shared_path, current_path, release)
 
       if check_mode
         return PluginResult.new(changed: true, failed: false,
-          msg: "release #{release} would be created")
+          msg: "release #{release} would be created",
+          ansible_facts: {"deploy_helper" => facts})
       end
 
       mk = remote_exec("mkdir -p #{[path, releases_path, shared_path, new_release_path, current_path].map { |dir| Shell.single_quote(dir) }.join(' ')}")
@@ -109,7 +126,8 @@ module Krikri
           msg: "failed to create deploy layout: #{mk[:stderr].strip}")
       end
 
-      PluginResult.new(changed: true, failed: false, msg: "release #{release} created", release: release, new_release: release)
+      PluginResult.new(changed: true, failed: false, msg: "release #{release} created", release: release, new_release: release,
+        ansible_facts: {"deploy_helper" => facts})
     end
 
     # Removes a release dir only when it is not the one `current`
@@ -208,10 +226,52 @@ module Krikri
         msg: "current points at #{target}")
     end
 
-    private def query(releases_path : String) : PluginResult
+    # Mirrors real gather_facts(): publishes the fact dict that real
+    # main() attaches to result["ansible_facts"] for state present/query
+    # (round900881 mbaran0v.ansible_role_prometheus_rabbitmq_exporter:
+    # its follow-up "create release directory" task reads
+    # deploy_helper.new_release_path, which was undefined before this
+    # dict existed). previous_release/previous_release_path come from
+    # the `current` symlink's realpath (nil when there is no symlink
+    # yet); a falsy shared_path param publishes null, matching real's
+    # `if self.shared_path` guard.
+    private def gather_facts(path : String, releases_path : String, shared_path : String,
+                             current_path : String, release : String?) : Hash(String, String?)
+      previous_release = nil
+      previous_release_path = nil
+      probe = remote_exec("readlink -f #{Shell.single_quote(current_path)} 2>/dev/null")
+      if probe[:exit_code] == 0 && !(out = probe[:stdout].strip).empty?
+        previous_release_path = out
+        previous_release = out.split("/").last
+      end
+
+      shared_param = @params["shared_path"]?
+      shared_fact = shared_param && shared_param.empty? ? nil : shared_path
+
+      {
+        "project_path"          => path,
+        "current_path"          => current_path,
+        "releases_path"         => releases_path,
+        "shared_path"           => shared_fact,
+        "previous_release"      => previous_release,
+        "previous_release_path" => previous_release_path,
+        "new_release"           => release,
+        "new_release_path"      => release ? "#{releases_path}/#{release}" : nil,
+        "unfinished_filename"   => @params["unfinished_filename"]? || "DEPLOY_UNFINISHED",
+      }
+    end
+
+    private def query(path : String, releases_path : String, shared_path : String,
+                      current_path : String, release : String?) : PluginResult
+      # Real gather_facts() generates a fresh YYYYmmddHHMMSS new_release
+      # for state=query too when release: is omitted, so query's facts
+      # carry the same prospective release a follow-up present would use.
+      release ||= Time.utc.to_s("%Y%m%d%H%M%S")
+      facts = gather_facts(path, releases_path, shared_path, current_path, release)
       listing = remote_exec("ls -1 #{Shell.single_quote(releases_path)} 2>/dev/null")
       releases = listing[:exit_code] == 0 ? listing[:stdout].lines.map(&.strip).reject(&.empty?) : [] of String
-      PluginResult.new(changed: false, failed: false, msg: "", releases: releases)
+      PluginResult.new(changed: false, failed: false, msg: "", releases: releases,
+        ansible_facts: {"deploy_helper" => facts})
     end
 
     # Resolves where the `current` symlink points (nil when it doesn't
