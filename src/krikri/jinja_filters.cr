@@ -1048,20 +1048,52 @@ module Krikri
     # is used as an index/key into *container*.
     Crinja.filter({container: Crinja::UNDEFINED, morekeys: Crinja::UNDEFINED}, :extract) do
       container = arguments["container"]
-      extracted = case raw = container.raw
-                  when Array(Crinja::Value)
-                    idx = target.to_s.to_i?
-                    idx ? raw[idx]? : nil
-                  when Crinja::Dictionary
-                    raw[Crinja::Value.new(target.to_s)]?
-                  end
+      container = arguments["container"]
+      # real Ansible/Jinja raises when the key is absent from a hash
+      # container (e.g. `map('extract', hostvars, 'ansible_host')` with
+      # no host carrying `ansible_host`) - a silent nil changes control
+      # flow, so mirror the raise. hostvars' per-host dicts arrive as
+      # Krikri::HostVarsVarsDict wrappers whose own crinja_attribute
+      # already implements the raise-on-force semantics, so they resolve
+      # through it; plain dicts raise directly on a miss.
+      container_raw = container.raw
+      key = target.to_s
 
-      if extracted && !arguments["morekeys"].undefined?
+      extracted =
+        if container_raw.is_a?(HostVarsVarsDict)
+          container_raw.crinja_attribute(Crinja::Value.new(key))
+        else
+          case raw = container_raw
+          when Array(Crinja::Value)
+            idx = key.to_i?
+            raise "extract: list index #{key} out of range" unless idx && idx >= 0 && idx < raw.size
+            raw[idx]
+          when Crinja::Dictionary
+            raise "extract: key '#{key}' not found" unless raw.has_key?(Crinja::Value.new(key))
+            raw[Crinja::Value.new(key)]
+          else
+            raise "extract: object of type #{container.class} has no attribute '#{key}'"
+          end
+        end
+
+      if !arguments["morekeys"].undefined?
         morekeys = arguments["morekeys"]
-        keys = morekeys.sequence? ? morekeys.to_a.map(&.to_s) : [morekeys.to_s]
-        keys.reduce(extracted) { |acc, key| acc.raw.is_a?(Crinja::Dictionary) ? (acc.raw.as(Crinja::Dictionary)[Crinja::Value.new(key)]? || Crinja::Value.new(nil)) : Crinja::Value.new(nil) }
+        # a String is a SINGLE key, never a character sequence (a naive
+        # sequence? test exploded "node_ip" into its characters)
+        keys = morekeys.sequence? && !morekeys.raw.is_a?(String) ? morekeys.to_a.map(&.to_s) : [morekeys.to_s]
+        keys.reduce(extracted) do |acc, key|
+          acc_raw = acc.raw
+          if acc_raw.is_a?(HostVarsVarsDict)
+            acc_raw.crinja_attribute(Crinja::Value.new(key))
+          elsif acc_raw.is_a?(Crinja::Dictionary)
+            raise "extract: key '#{key}' not found" unless acc_raw.has_key?(Crinja::Value.new(key))
+            acc_raw[Crinja::Value.new(key)]
+          else
+            raise "extract: object of type #{acc.class} has no attribute '#{key}'"
+          end
+        end
       else
-        extracted || Crinja::Value.new(nil)
+        extracted
       end
     end
 

@@ -916,6 +916,13 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
     renderer.render(%({{ 1 | extract(container) }})).should eq("one")
   end
 
+  it "extract reads a hash key from the piped value" do
+    v = Hash(String, JSON::Any).new
+    v["hostvars"] = JSON.parse(%({"host-a": {"node_ip": "10.0.0.1"}}))
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer.render(%({{ "host-a" | extract(hostvars, "node_ip") }})).should eq("10.0.0.1")
+  end
+
   it "from_yaml_all parses a multi-document YAML string" do
     v = Hash(String, JSON::Any).new
     renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
