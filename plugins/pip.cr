@@ -217,7 +217,7 @@ module Krikri
       if executable = @params["executable"]?
         return executable if executable.starts_with?("/")
 
-        unless remote_exec("sh -c 'command -v #{executable}'")[:exit_code] == 0
+        unless remote_exec("sh -c #{Shell.single_quote("command -v #{executable}")}")[:exit_code] == 0
           return PluginResult.new(changed: false, failed: true, msg: "Unable to find any of #{executable} to use.  pip needs to be installed.")
         end
         return executable
@@ -430,7 +430,7 @@ module Krikri
       if true?(@params["virtualenv_site_packages"]?)
         parts << "--system-site-packages"
       else
-        help = remote_exec("#{cmd0} --help")
+        help = remote_exec("#{Shell.single_quote(cmd0)} --help")
         unless help[:exit_code] == 0
           return PluginResult.new(changed: false, failed: true, msg: "Could not get output from #{cmd0} --help: #{help[:stdout]}#{help[:stderr]}")
         end
@@ -446,7 +446,7 @@ module Krikri
       end
 
       parts << venv
-      result = remote_exec(parts.join(" "))
+      result = remote_exec(parts.map { |part| Shell.single_quote(part) }.join(" "))
       unless result[:exit_code] == 0
         return PluginResult.new(changed: false, failed: true, msg: "Failed to create virtualenv: #{result[:stderr]}")
       end
@@ -466,7 +466,7 @@ module Krikri
 
     private def with_chdir(command : String) : String
       if chdir = @params["chdir"]?
-        "cd #{expand_tilde(chdir)} && #{command}"
+        "cd #{shell_single_quote(expand_tilde(chdir))} && #{command}"
       else
         command
       end
@@ -518,12 +518,12 @@ module Krikri
 
     private def already_installed?(pip_bin : String, package : String) : Bool
       bare_name = distribution_name(package)
-      remote_exec("#{pip_bin} show #{bare_name}")[:exit_code] == 0
+      remote_exec("#{quoted_command(pip_bin)} show #{Shell.single_quote(bare_name)}")[:exit_code] == 0
     end
 
     private def installed_version(pip_bin : String, package : String) : String?
       bare_name = distribution_name(package)
-      result = remote_exec("#{pip_bin} show #{bare_name} 2>/dev/null")
+      result = remote_exec("#{quoted_command(pip_bin)} show #{Shell.single_quote(bare_name)} 2>/dev/null")
       return nil unless result[:exit_code] == 0
 
       result[:stdout].each_line do |line|
@@ -571,7 +571,7 @@ module Krikri
       # through the `elsif spec` branch above and are handled directly
       # below, one per name.
       quoted_target = requirements ? target : split_requirements(target).map { |tval| Process.quote(tval) }.join(" ")
-      cmd = with_umask(with_chdir("#{break_system_packages_env}#{pip_bin} install #{upgrade ? "--upgrade " : ""}#{extra} #{quoted_target}".strip))
+      cmd = with_umask(with_chdir("#{break_system_packages_env}#{quoted_command(pip_bin)} install #{upgrade ? "--upgrade " : ""}#{extra_tokens(extra)} #{quoted_target}".strip))
       result = remote_exec(cmd)
 
       unless result[:exit_code] == 0
@@ -592,7 +592,7 @@ module Krikri
     # spec, or the missing-argument failure.
     private def install_target(spec : String?, requirements : String?) : String | PluginResult
       if requirements
-        "-r #{requirements}"
+        "-r #{Process.quote(requirements)}"
       elsif spec
         spec
       else
@@ -654,6 +654,21 @@ module Krikri
       end
     end
 
+    # Each extra_args token is shell-quoted individually so an
+    # `extra_args:` value can't inject extra shell operations - real
+    # Ansible shlex-splits it into argv elements, and one quoted shell
+    # word per token is the same argv.
+    private def extra_tokens(extra : String) : String
+      extra.split(' ').reject(&.empty?).map { |token| Process.quote(token) }.join(" ")
+    end
+
+    # pip_bin can be a multi-token command (`python3.9 -m pip` from the
+    # interpreter-discovery fallback), so it's quoted per token - one
+    # quoted shell word per argv element, safe tokens left verbatim.
+    private def quoted_command(command : String) : String
+      command.split(' ').reject(&.empty?).map { |token| Process.quote(token) }.join(" ")
+    end
+
     # PEP 668 externally-managed environments (newer Debian/Ubuntu)
     # reject pip mutations outright unless overridden - real Ansible's
     # pip.py sets PIP_BREAK_SYSTEM_PACKAGES=1 in the module's own
@@ -669,7 +684,7 @@ module Krikri
     private def remove(pip_bin : String, name : String) : PluginResult
       bare_name = name.split(/[=<>!~]/, 2)[0]
 
-      cmd = with_umask(with_chdir("#{break_system_packages_env}#{pip_bin} uninstall -y #{bare_name}"))
+      cmd = with_umask(with_chdir("#{break_system_packages_env}#{quoted_command(pip_bin)} uninstall -y #{Shell.single_quote(bare_name)}"))
       result = remote_exec(cmd)
 
       unless result[:exit_code] == 0

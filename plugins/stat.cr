@@ -145,14 +145,14 @@ module Krikri
     end
 
     private def add_mime(stat_hash : Hash(String, JSON::Any), path : String) : Nil
-      result = remote_exec("file --mime-type --mime-encoding '#{path}'")
+      result = remote_exec("file --mime-type --mime-encoding #{shell_single_quote(path)}")
       mimetype, charset = result[:exit_code] == 0 ? PluginHelpers::FileAttributes.parse_mime(result[:stdout]) : {"unknown", "unknown"}
       stat_hash["mimetype"] = JSON::Any.new(mimetype)
       stat_hash["charset"] = JSON::Any.new(charset)
     end
 
     private def add_attributes(stat_hash : Hash(String, JSON::Any), path : String) : Nil
-      result = remote_exec("lsattr -vd '#{path}'")
+      result = remote_exec("lsattr -vd #{shell_single_quote(path)}")
       version, attr_flags, attributes = result[:exit_code] == 0 ? PluginHelpers::FileAttributes.parse_lsattr(result[:stdout]) : {nil, "", [] of String}
       stat_hash["version"] = version ? JSON::Any.new(version) : JSON::Any.new(nil)
       stat_hash["attr_flags"] = JSON::Any.new(attr_flags)

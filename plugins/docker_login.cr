@@ -182,7 +182,7 @@ module Krikri
     end
 
     private def read_config(config_path : String) : {JSON::Any?, String?}
-      result = remote_exec("cat '#{config_path}'")
+      result = remote_exec("cat #{shell_single_quote(config_path)}")
       return {nil, nil} if result[:exit_code] != 0 || result[:stdout].strip.empty?
       parsed = JSON.parse(result[:stdout]) rescue nil
       parsed ? {parsed, result[:stdout]} : {nil, nil}
@@ -204,7 +204,7 @@ module Krikri
     end
 
     private def write_config(config_path : String, content : String) : Nil
-      remote_exec("mkdir -p '#{File.dirname(config_path)}'")
+      remote_exec("mkdir -p #{shell_single_quote(File.dirname(config_path))}")
       # The config carries base64 user:pass auth: stage it 0600
       # controller-side (not the old predictable 0644 /tmp name), and
       # tighten the remote copy the moment it lands with a verified
@@ -217,7 +217,7 @@ module Krikri
       end
       begin
         remote_upload(tmp, config_path)
-        r = remote_exec("chmod 600 '#{config_path}'")
+        r = remote_exec("chmod 600 #{shell_single_quote(config_path)}")
         raise "chmod 600 on #{config_path} failed: #{r[:stderr]}" if r[:exit_code] != 0
       ensure
         File.delete?(tmp)

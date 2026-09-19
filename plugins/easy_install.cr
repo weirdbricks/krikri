@@ -41,9 +41,9 @@ module Krikri
 
       if virtualenv
         activate = PluginHelpers::EasyInstall.venv_activate_path(virtualenv)
-        exists = remote_exec("test -f #{activate}")
+        exists = remote_exec("test -f #{Process.quote(activate)}")
         if exists[:exit_code] != 0
-          venv_bin = remote_exec("command -v #{virtualenv_command}")
+          venv_bin = remote_exec("command -v #{Process.quote(virtualenv_command)}")
           return PluginResult.new(changed: false, failed: true,
             msg: "Failed to find required executable #{virtualenv_command} in paths: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin") if venv_bin[:exit_code] != 0
           create = remote_exec(PluginHelpers::EasyInstall.venv_create_command(virtualenv_command, virtualenv, site_packages))
@@ -54,7 +54,7 @@ module Krikri
       end
 
       easy_install = PluginHelpers::EasyInstall.resolve_executable(executable, virtualenv)
-      found = remote_exec("command -v #{easy_install.split("/").last} || test -x #{easy_install}")
+      found = remote_exec("command -v #{Process.quote(easy_install.split("/").last)} || test -x #{Process.quote(easy_install)}")
       return PluginResult.new(changed: false, failed: true,
         msg: "Failed to find required executable #{easy_install} in paths: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin") if found[:exit_code] != 0
 

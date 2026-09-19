@@ -61,7 +61,7 @@ module Krikri
         enabled_lines.each do |line|
           next if line.includes?(" ")
           next if plugins.includes?(line)
-          r = remote_exec("#{bin} disable #{line}")
+          r = remote_exec("#{Process.quote(bin)} disable #{Process.quote(line)}")
           return PluginResult.new(changed: false, failed: true,
             msg: "Failed to disable plugin #{line}: #{r[:stderr]}") if r[:exit_code] != 0
           disabled << line
@@ -69,7 +69,7 @@ module Krikri
       end
       plugins.each do |plugin|
         next if enabled_lines.includes?(plugin)
-        r = remote_exec("#{bin} enable #{plugin}")
+        r = remote_exec("#{Process.quote(bin)} enable #{Process.quote(plugin)}")
         return PluginResult.new(changed: false, failed: true,
           msg: "Failed to enable plugin #{plugin}: #{r[:stderr]}") if r[:exit_code] != 0
         enabled << plugin
@@ -80,7 +80,7 @@ module Krikri
     private def apply_disabled_state(bin : String, plugins : Array(String), enabled_lines : Array(String), disabled : Array(String)) : PluginResult?
       enabled_lines.each do |line|
         next unless plugins.includes?(line)
-        r = remote_exec("#{bin} disable #{line}")
+        r = remote_exec("#{Process.quote(bin)} disable #{Process.quote(line)}")
         return PluginResult.new(changed: false, failed: true,
           msg: "Failed to disable plugin #{line}: #{r[:stderr]}") if r[:exit_code] != 0
         disabled << line
@@ -112,7 +112,7 @@ module Krikri
       new_basedir = @params["new_basedir"]?
       bin = prefix ? "#{prefix}/usr/lib/rabbitmq/bin/rabbitmq-plugins" : "rabbitmq-plugins"
       bin = "#{new_basedir}/rabbitmq-plugins" if new_basedir
-      bin
+      Process.quote(bin)
     end
 
     private def enabled_plugin_lines(listing : NamedTuple(exit_code: Int32, stdout: String, stderr: String)) : Array(String)

@@ -438,7 +438,7 @@ module Krikri
     # Runs with cwd=project_src (the real module passes cwd= to every
     # call, so relative --file/--env-file paths resolve the same way).
     private def capture_cmd(cmd_args : Array(String)) : String
-      "cd #{q(project_src!)} && #{base_cli} #{compose_base_args.join(" ")} #{cmd_args.join(" ")}"
+      "cd #{q(project_src!)} && #{base_cli} #{compose_base_args.join(" ")} #{cmd_args.map { |arg| q(arg) }.join(" ")}"
     end
 
     private def project_src! : String

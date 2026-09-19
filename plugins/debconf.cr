@@ -110,7 +110,7 @@ module Krikri
     # known question (`*` marks it "seen") - strip the leading `*`/
     # whitespace off the key, same as real Ansible's own `get_selections`.
     private def get_selections(pkg : String) : Hash(String, String)
-      result = remote_exec("debconf-show #{pkg} 2>/dev/null")
+      result = remote_exec("debconf-show #{shell_single_quote(pkg)} 2>/dev/null")
       selections = Hash(String, String).new
       result[:stdout].each_line do |line|
         key, sep, val = line.partition(':')
@@ -124,10 +124,6 @@ module Krikri
       flag = unseen ? "-u " : ""
       data = "#{pkg} #{question} #{vtype} #{value}"
       remote_exec("echo #{shell_single_quote(data)} | debconf-set-selections #{flag}".strip)
-    end
-
-    private def shell_single_quote(str : String) : String
-      "'" + str.gsub("'", "'\\\\''") + "'"
     end
   end
 end

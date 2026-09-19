@@ -225,8 +225,8 @@ module Krikri
     end
 
     private def detect_handler(src : String) : Symbol?
-      return :tar if remote_exec("tar tf #{src} > /dev/null 2>&1")[:exit_code] == 0
-      return :zip if remote_exec("unzip -l #{src} > /dev/null 2>&1")[:exit_code] == 0
+      return :tar if remote_exec("tar tf #{shell_single_quote(src)} > /dev/null 2>&1")[:exit_code] == 0
+      return :zip if remote_exec("unzip -l #{shell_single_quote(src)} > /dev/null 2>&1")[:exit_code] == 0
       nil
     end
 
@@ -337,16 +337,16 @@ module Krikri
     end
 
     private def members(handler : Symbol, src : String) : Array(String)
-      cmd = handler == :tar ? "tar tf #{src}" : "unzip -Z1 #{src}"
+      cmd = handler == :tar ? "tar tf #{shell_single_quote(src)}" : "unzip -Z1 #{shell_single_quote(src)}"
       remote_exec(cmd)[:stdout].split("\n").map(&.strip).reject(&.empty?)
     end
 
     private def tar_flags(exclude : Array(String), include_files : Array(String), keep_newer : Bool, extra_opts : Array(String) = [] of String) : String
       String.build do |str|
         str << " --keep-newer-files" if keep_newer
-        extra_opts.each { |opt| str << " #{opt}" }
-        exclude.each { |pattern| str << " --exclude=\"#{pattern}\"" }
-        str << " " << include_files.map { |path| "\"#{path}\"" }.join(" ") unless include_files.empty?
+        extra_opts.each { |opt| str << " " << shell_single_quote(opt) }
+        exclude.each { |pattern| str << " --exclude=#{shell_single_quote(pattern)}" }
+        str << " " << include_files.map { |path| shell_single_quote(path) }.join(" ") unless include_files.empty?
       end
     end
 
@@ -373,7 +373,7 @@ module Krikri
     MISSING_FILE_WARNING = /: Warning: Cannot stat: No such file or directory$/
 
     private def tar_changed?(src : String, dest : String, exclude : Array(String), include_files : Array(String), keep_newer : Bool, extra_opts : Array(String) = [] of String) : Bool
-      cmd = "tar --compare -C #{dest} -f #{src}#{tar_flags(exclude, include_files, keep_newer, extra_opts)}"
+      cmd = "tar --compare -C #{shell_single_quote(dest)} -f #{shell_single_quote(src)}#{tar_flags(exclude, include_files, keep_newer, extra_opts)}"
       result = remote_exec(cmd)
       lines = (result[:stdout].split("\n") + result[:stderr].split("\n"))
 
@@ -432,14 +432,14 @@ module Krikri
     end
 
     private def extract_tar(src : String, dest : String, exclude : Array(String), include_files : Array(String), keep_newer : Bool, extra_opts : Array(String) = [] of String) : Bool
-      cmd = "tar --extract -C #{dest} -f #{src}#{tar_flags(exclude, include_files, keep_newer, extra_opts)}"
+      cmd = "tar --extract -C #{shell_single_quote(dest)} -f #{shell_single_quote(src)}#{tar_flags(exclude, include_files, keep_newer, extra_opts)}"
       remote_exec(cmd)[:exit_code] == 0
     end
 
     private def zip_flags(exclude : Array(String), include_files : Array(String)) : String
       String.build do |str|
-        str << " " << include_files.map { |path| "\"#{path}\"" }.join(" ") unless include_files.empty?
-        str << " -x " << exclude.map { |pattern| "\"#{pattern}\"" }.join(" ") unless exclude.empty?
+        str << " " << include_files.map { |path| shell_single_quote(path) }.join(" ") unless include_files.empty?
+        str << " -x " << exclude.map { |pattern| shell_single_quote(pattern) }.join(" ") unless exclude.empty?
       end
     end
 
@@ -467,23 +467,23 @@ module Krikri
         # such archive permanently non-idempotent (re-extracted on
         # every single run). Found benchmarking robertdebock.sudo_pair.
         # `readlink` (not dereferenced) is the correct comparison.
-        symlink_result = remote_exec("test -L #{dest_path} && readlink #{dest_path}")
+        symlink_result = remote_exec("test -L #{shell_single_quote(dest_path)} && readlink #{shell_single_quote(dest_path)}")
         if symlink_result[:exit_code] == 0
-          archive_checksum = remote_exec("unzip -p #{src} \"#{member}\" 2>/dev/null")[:stdout].strip
+          archive_checksum = remote_exec("unzip -p #{shell_single_quote(src)} #{shell_single_quote(member)} 2>/dev/null")[:stdout].strip
           next archive_checksum != symlink_result[:stdout].strip
         end
 
         next true unless remote_file_exists?(dest_path)
 
-        archive_checksum = remote_exec("unzip -p #{src} \"#{member}\" 2>/dev/null | md5sum")[:stdout].strip
-        dest_checksum = remote_exec("md5sum < #{dest_path} 2>/dev/null")[:stdout].strip
+        archive_checksum = remote_exec("unzip -p #{shell_single_quote(src)} #{shell_single_quote(member)} 2>/dev/null | md5sum")[:stdout].strip
+        dest_checksum = remote_exec("md5sum < #{shell_single_quote(dest_path)} 2>/dev/null")[:stdout].strip
         archive_checksum.split(" ").first? != dest_checksum.split(" ").first?
       end
     end
 
     private def extract_zip(src : String, dest : String, exclude : Array(String), include_files : Array(String), keep_newer : Bool) : Bool
       overwrite_flag = keep_newer ? "-n" : "-o"
-      cmd = "unzip -q #{overwrite_flag} -d #{dest} #{src}#{zip_flags(exclude, include_files)}"
+      cmd = "unzip -q #{overwrite_flag} -d #{shell_single_quote(dest)} #{shell_single_quote(src)}#{zip_flags(exclude, include_files)}"
       remote_exec(cmd)[:exit_code] == 0
     end
 
@@ -650,19 +650,19 @@ module Krikri
       member_paths.each_slice(MEMBER_CHUNK_SIZE) do |chunk|
         member_args = "#{chunk.join(" ")} -maxdepth 0 -exec"
         if owner = @params["owner"]?
-          result = remote_exec("find #{member_args} chown #{owner} {} +")
+          result = remote_exec("find #{member_args} chown #{shell_single_quote(owner)} {} +")
           if result[:exit_code] != 0
             return PluginResult.new(changed: true, failed: true, msg: "Failed to set owner under #{dest}: #{result[:stderr]}")
           end
         end
         if group = @params["group"]?
-          result = remote_exec("find #{member_args} chgrp #{group} {} +")
+          result = remote_exec("find #{member_args} chgrp #{shell_single_quote(group)} {} +")
           if result[:exit_code] != 0
             return PluginResult.new(changed: true, failed: true, msg: "Failed to set group under #{dest}: #{result[:stderr]}")
           end
         end
         if mode = @params["mode"]?
-          result = remote_exec("find #{member_args} chmod #{mode} {} +")
+          result = remote_exec("find #{member_args} chmod #{shell_single_quote(mode)} {} +")
           if result[:exit_code] != 0
             return PluginResult.new(changed: true, failed: true, msg: "Failed to set mode under #{dest}: #{result[:stderr]}")
           end
@@ -672,7 +672,7 @@ module Krikri
     end
 
     private def dest_stat_fields(dest : String) : NamedTuple(size: Int64, uid: Int64, gid: Int64, owner: String, group: String, mode: String)
-      result = remote_exec("stat -c '%s|%u|%g|%U|%G|%a' #{dest} 2>/dev/null")
+      result = remote_exec("stat -c '%s|%u|%g|%U|%G|%a' #{shell_single_quote(dest)} 2>/dev/null")
       fields = result[:stdout].strip.split("|")
 
       if result[:exit_code] == 0 && fields.size == 6

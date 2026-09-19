@@ -513,8 +513,8 @@ module Krikri
           # dj-wasabi.telegraf's version-pinned case (round 158) - the
           # SAME bug class already independently present in dnf.cr's
           # and yum.cr's own copies of this exact check.
-          remote_exec("rpm -q #{pkg}")[:exit_code] == 0 ||
-            remote_exec("rpm -q --whatprovides #{pkg}")[:exit_code] == 0
+          remote_exec("rpm -q #{shell_single_quote(pkg)}")[:exit_code] == 0 ||
+            remote_exec("rpm -q --whatprovides #{shell_single_quote(pkg)}")[:exit_code] == 0
         end
       end
       shell_pkg = pkg_tokens

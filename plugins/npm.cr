@@ -70,14 +70,14 @@ module Krikri
         # rc=errno and the command string (podman-diff npm_edge_cases
         # N7), NOT the get_bin_path wording. The `which` pre-check
         # below stays for the bare-name/default case only.
-        check = remote_exec("test -e #{exe}")
+        check = remote_exec("test -e #{Process.quote(exe)}")
         if check[:exit_code] != 0
           return PluginResult.new(changed: false, failed: true,
             msg: "[Errno 2] No such file or directory: b'#{exe}'",
             rc: 2, cmd: "#{exe} list --json --long#{global ? " --global" : ""}")
         end
       else
-        check = remote_exec("which #{bin}")
+        check = remote_exec("which #{Process.quote(bin)}")
         if check[:exit_code] != 0
           return PluginResult.new(changed: false, failed: true,
             msg: "Failed to find required executable \"#{bin}\" in paths: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
@@ -88,7 +88,7 @@ module Krikri
       name_version = version ? "#{name}@#{version}" : name
 
       if path && !remote_dir_exists?(path)
-        remote_exec("mkdir -p #{path}")
+        remote_exec("mkdir -p #{Process.quote(path)}")
       end
 
       installed, missing = list(name, name_version, global, path)
@@ -206,8 +206,8 @@ module Krikri
       args << "--global" if global
       append_npm_args(args, mutating, name_version)
 
-      cmd = "#{npm_binary} #{args.join(' ')}"
-      cmd = "cd #{expand_tilde(path)} && #{cmd}" if path
+      cmd = "#{Process.quote(npm_binary)} #{args.map { |arg| Process.quote(arg) }.join(' ')}"
+      cmd = "cd #{Process.quote(expand_tilde(path))} && #{cmd}" if path
       remote_exec(cmd)
     end
 

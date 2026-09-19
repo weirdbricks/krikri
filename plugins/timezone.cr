@@ -194,7 +194,7 @@ module Krikri
     # _verify_timezone: the planned zone must exist as a zoneinfo FILE.
     private def verify_timezone(tz : String) : PluginResult?
       tzfile = "/usr/share/zoneinfo/#{tz}"
-      rc = remote_exec("[ -f '#{tzfile}' ] && echo y || echo n")
+      rc = remote_exec("[ -f #{shell_single_quote(tzfile)} ] && echo y || echo n")
       if rc[:stdout].to_s.strip == "n"
         return fail(%(given timezone "#{tz}" is not available))
       end
@@ -246,7 +246,7 @@ module Krikri
       SH
       return "n/a" if out == "__BROKEN__"
       if out == "__NOTLINK__"
-        cmp = remote_exec("cmp -s /etc/localtime /usr/share/zoneinfo/#{planned} && echo same || echo diff")
+        cmp = remote_exec("cmp -s /etc/localtime #{shell_single_quote("/usr/share/zoneinfo/#{planned}")} && echo same || echo diff")
         return cmp[:stdout].to_s.strip == "same" ? value : "n/a"
       end
       if link_tz = out.match(/(?:\/(?:usr\/share|etc)\/zoneinfo\/)(.+)/m).try(&.[1])
@@ -283,7 +283,7 @@ module Krikri
       if systemd_backend
         subcmd = key == "name" ? "set-timezone" : "set-local-rtc"
         arg = key == "hwclock" ? (value == "local" ? "yes" : "no") : value
-        run_checked("#{@bins["timedatectl"]} #{subcmd} #{arg}", log: true)
+        run_checked("#{@bins["timedatectl"]} #{subcmd} #{shell_single_quote(arg)}", log: true)
       elsif key == "name"
         set_timezone_nosystemd(value)
       else
@@ -303,12 +303,12 @@ module Krikri
 
       tzfile = "/usr/share/zoneinfo/#{value}"
       if @debian
-        remote_exec("ln -sf '#{tzfile}' /etc/localtime")
+        remote_exec("ln -sf #{shell_single_quote(tzfile)} /etc/localtime")
         remote_exec("#{@bins["dpkg-reconfigure"]} --frontend noninteractive tzdata")
       else
         is_link = remote_exec("[ -L /etc/localtime ] && echo y || echo n")[:stdout].to_s.strip == "y"
         if is_link
-          remote_exec("cp --remove-destination '#{tzfile}' /etc/localtime")
+          remote_exec("cp --remove-destination #{shell_single_quote(tzfile)} /etc/localtime")
         elsif !@bins["tzdata-update"].empty?
           remote_exec("#{@bins["tzdata-update"]}")
         end

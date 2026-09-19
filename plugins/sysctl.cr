@@ -200,7 +200,7 @@ module Krikri
         # changed-flag, so the only difference is an empty seed file.
         File.read_lines(sysctl_file)
       else
-        content = remote_exec("cat #{sysctl_file}")[:stdout]
+        content = remote_exec("cat #{shell_single_quote(sysctl_file)}")[:stdout]
         lines = content.split("\n")
         lines.pop if !lines.empty? && lines.last.empty? && content.ends_with?("\n")
         lines
@@ -233,7 +233,7 @@ module Krikri
       # first and then chokes on the second as a bogus bare key, failing
       # the whole command where real ansible.posix.sysctl's own quoted
       # write succeeds. Found via juju4.harden_sysctl, round 60128.
-      result = remote_exec("LANG=C LC_ALL=C LC_MESSAGES=C sysctl #{ignore_flag}-w #{token}=#{Process.quote(value)}")
+      result = remote_exec("LANG=C LC_ALL=C LC_MESSAGES=C sysctl #{ignore_flag}-w #{Process.quote(token)}=#{Process.quote(value)}")
       if result[:exit_code] != 0 || stderr_failed?(result[:stderr])
         return PluginResult.new(
           changed: false,
@@ -256,7 +256,7 @@ module Krikri
     # text is "Failed to reload sysctl: <out><err>".
     private def reload_sysctl(sysctl_file : String) : PluginResult?
       ignore_flag = true?(@params["ignoreerrors"]?) ? "-e" : ""
-      result = remote_exec("LANG=C LC_ALL=C LC_MESSAGES=C sysctl #{ignore_flag} -p #{sysctl_file}")
+      result = remote_exec("LANG=C LC_ALL=C LC_MESSAGES=C sysctl #{ignore_flag} -p #{shell_single_quote(sysctl_file)}")
       if result[:exit_code] != 0 || stderr_failed?(result[:stderr])
         return PluginResult.new(
           changed: false,

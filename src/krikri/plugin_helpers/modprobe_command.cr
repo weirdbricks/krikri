@@ -14,7 +14,11 @@ module Krikri
       # (self.modprobe_bin), so the resolved path is passed in rather
       # than a bare "modprobe" hoping for $PATH lookup.
       def self.load_command(bin_path : String, name : String, params : String?) : String
-        params && !params.empty? ? "#{bin_path} #{name} #{params}" : "#{bin_path} #{name}"
+        # One quoted shell word per token: real modprobe.py shlex-splits
+        # `params:` into separate argv elements, so each token gets its
+        # own quoting (Process.quote leaves safe tokens verbatim).
+        params_tokens = params && !params.empty? ? params.split(' ').reject(&.empty?).map { |token| Process.quote(token) }.join(" ") : ""
+        params_tokens.empty? ? "#{bin_path} #{Process.quote(name)}" : "#{bin_path} #{Process.quote(name)} #{params_tokens}"
       end
 
       # Parses the ModprobePlugin binary-resolution probe's output

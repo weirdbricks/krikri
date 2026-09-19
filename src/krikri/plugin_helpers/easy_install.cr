@@ -29,11 +29,11 @@ module Krikri
       end
 
       def self.probe_command(executable : String, arguments : Array(String), name : String) : String
-        ([executable] + arguments + ["--dry-run", name]).reject(&.empty?).join(" ")
+        ([executable] + arguments + ["--dry-run", name]).reject(&.empty?).map { |token| Process.quote(token) }.join(" ")
       end
 
       def self.install_command(executable : String, arguments : Array(String), name : String) : String
-        ([executable] + arguments + [name]).reject(&.empty?).join(" ")
+        ([executable] + arguments + [name]).reject(&.empty?).map { |token| Process.quote(token) }.join(" ")
       end
 
       def self.venv_activate_path(virtualenv : String) : String
@@ -41,7 +41,7 @@ module Krikri
       end
 
       def self.venv_create_command(virtualenv_command : String, virtualenv : String, site_packages : Bool) : String
-        cmd = "#{virtualenv_command} #{virtualenv}"
+        cmd = "#{Process.quote(virtualenv_command)} #{Process.quote(virtualenv)}"
         cmd += " --system-site-packages" if site_packages
         cmd
       end

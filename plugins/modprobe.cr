@@ -193,7 +193,7 @@ module Krikri
       return PluginResult.new(changed: false, failed: false, msg: "#{name} already unloaded") unless loaded
       return PluginResult.new(changed: true, failed: false, msg: "Would unload #{name}") if check_mode
 
-      result = remote_exec("#{modprobe_path} -r #{name}")
+      result = remote_exec("#{modprobe_path} -r #{Process.quote(name)}")
       unless result[:exit_code] == 0
         return PluginResult.new(changed: false, failed: true, msg: result[:stderr].to_s, stderr: result[:stderr])
       end

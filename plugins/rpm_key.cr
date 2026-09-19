@@ -75,7 +75,7 @@ module Krikri
     # 4 of a `pub`/`sub` colon line) since rpm keys are matched by short
     # keyid, not fingerprint, by default.
     private def parse_key_material(path : String) : Array({String, String})
-      result = remote_exec("gpg --with-colons --import-options show-only --import #{path} 2>/dev/null")
+      result = remote_exec("gpg --with-colons --import-options show-only --import #{shell_single_quote(path)} 2>/dev/null")
       pairs = [] of {String, String}
       pending_keyid = nil
       result[:stdout].each_line do |line|
@@ -123,7 +123,7 @@ module Krikri
           return PluginResult.new(changed: false, failed: false, msg: "Key already present")
         end
 
-        result = remote_exec("rpm --import #{keyfile}")
+        result = remote_exec("rpm --import #{shell_single_quote(keyfile)}")
         unless result[:exit_code] == 0
           return PluginResult.new(changed: false, failed: true, msg: result[:stderr])
         end

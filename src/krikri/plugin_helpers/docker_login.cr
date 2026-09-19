@@ -96,7 +96,7 @@ module Krikri
         cmd = "printf %s #{Shell.single_quote(encoded)} | base64 -d | docker"
         cmd += " --config #{Shell.single_quote(config_dir)}" if config_dir
         cmd += " login -u #{Shell.single_quote(username)} --password-stdin"
-        cmd += " #{registry_url}" unless hub?(registry_url)
+        cmd += " #{Shell.single_quote(registry_url)}" unless hub?(registry_url)
         cmd
       end
 

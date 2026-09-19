@@ -87,7 +87,7 @@ module Krikri
       unless persistent
         return result unless selinux_enabled?
       end
-      current = remote_exec("getsebool #{name}")
+      current = remote_exec("getsebool #{shell_single_quote(name)}")
       unless current[:exit_code] == 0
         result.failed = true
         result.msg = "Failed to determine current state for boolean #{name}"
@@ -101,7 +101,7 @@ module Krikri
 
       value = desired_on ? "on" : "off"
       flag = persistent ? "-P " : ""
-      set_result = remote_exec("setsebool #{flag}#{name} #{value}")
+      set_result = remote_exec("setsebool #{flag}#{shell_single_quote(name)} #{value}")
       unless set_result[:exit_code] == 0
         result.failed = true
         result.msg = "Failed to set boolean #{name} to #{value}: #{set_result[:stderr]}"

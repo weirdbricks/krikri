@@ -885,7 +885,7 @@ module Krikri
       # Read the .deb's own control metadata to find its real package
       # name/version, the same identity real Ansible's apt module checks
       # against dpkg's installed-package database for idempotency.
-      info_result = remote_exec("dpkg-deb -f #{path} Package Version")
+      info_result = remote_exec("dpkg-deb -f #{shell_single_quote(path)} Package Version")
       if info_result[:exit_code] != 0
         return PluginResult.new(
           changed: false,
@@ -905,7 +905,7 @@ module Krikri
       end
 
       if pkg_name && pkg_version
-        check_result = remote_exec("dpkg -l #{pkg_name} 2>/dev/null | grep '^ii'")
+        check_result = remote_exec("dpkg -l #{shell_single_quote(pkg_name)} 2>/dev/null | grep '^ii'")
         if check_result[:exit_code] == 0 && installed_version(check_result[:stdout]) == pkg_version
           return PluginResult.new(changed: false, failed: false, msg: "#{pkg_name} already at version #{pkg_version}")
         end
@@ -921,7 +921,7 @@ module Krikri
       # passes them to its dependency resolution install(); its own
       # dpkg -i invocation is below our apt-get-install abstraction),
       # and the whole thing sits inside the policy-rc.d lifecycle.
-      install_result = with_policy_rc_d { apt_with_lock_retry("DEBIAN_FRONTEND=noninteractive apt-get -y #{expand_dpkg_options} install #{path}".squeeze(' '), lock_timeout, ->remote_exec(String)) }
+      install_result = with_policy_rc_d { apt_with_lock_retry("DEBIAN_FRONTEND=noninteractive apt-get -y #{expand_dpkg_options} install #{shell_single_quote(path)}".squeeze(' '), lock_timeout, ->remote_exec(String)) }
       if install_result[:exit_code] != 0
         return PluginResult.new(
           changed: false,

@@ -104,7 +104,12 @@ describe Krikri::PluginHelpers::DockerLogin do
 
     it "passes custom registries and config dirs through" do
       Krikri::PluginHelpers::DockerLogin.login_command("your.private.registry.io", "yourself", "secrets3", "/tmp/.mydocker")
-        .should eq("printf %s 'c2VjcmV0czM=' | base64 -d | docker --config '/tmp/.mydocker' login -u 'yourself' --password-stdin your.private.registry.io")
+        .should eq("printf %s 'c2VjcmV0czM=' | base64 -d | docker --config '/tmp/.mydocker' login -u 'yourself' --password-stdin 'your.private.registry.io'")
+    end
+
+    it "shell-quotes the registry so it can't inject extra shell operations" do
+      Krikri::PluginHelpers::DockerLogin.login_command("reg.io; touch /tmp/pwned", "user", "pw", nil)
+        .should eq("printf %s 'cHc=' | base64 -d | docker login -u 'user' --password-stdin 'reg.io; touch /tmp/pwned'")
     end
 
     it "keeps single quotes in credentials out of argv entirely" do

@@ -443,7 +443,7 @@ module Krikri
       end
 
       if apt_key = Process.find_executable("apt-key")
-        remote_exec("#{apt_key} adv --recv-keys --no-tty --keyserver #{KEYSERVER} #{fingerprint}")
+        remote_exec("#{apt_key} adv --recv-keys --no-tty --keyserver #{KEYSERVER} #{shell_single_quote(fingerprint)}")
         return nil
       end
 
@@ -460,7 +460,7 @@ module Krikri
       end
 
       keyfile = File.join(keydir, PluginHelpers::AptPpa.keyfile_name(ppa, codename))
-      remote_exec("gpg --no-tty --keyserver #{KEYSERVER} --export #{fingerprint} > #{keyfile}")
+      remote_exec("gpg --no-tty --keyserver #{KEYSERVER} --export #{shell_single_quote(fingerprint)} > #{shell_single_quote(keyfile)}")
 
       unless File.exists?(keyfile) && File.size(keyfile) > 0
         return PluginResult.new(changed: false, failed: true, msg: "Unable to get required signing key")

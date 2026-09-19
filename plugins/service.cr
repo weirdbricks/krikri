@@ -310,7 +310,7 @@ module Krikri
       @svc_cmd = cmd
       @enable_cmd = cmd
 
-      remote_exec("#{cmd} show #{name} --property=LoadState --property=ActiveState 2>/dev/null")[:stdout].to_s.each_line do |line|
+      remote_exec("#{cmd} show #{shell_single_quote(name)} --property=LoadState --property=ActiveState 2>/dev/null")[:stdout].to_s.each_line do |line|
         key, _, value = line.strip.partition('=')
         case key
         when "LoadState"   then @systemd_load_state = value
@@ -501,13 +501,13 @@ module Krikri
       return would("#{action} #{name}") if @check_mode
 
       if should_enable && @rc_kill_links == 0
-        result = remote_exec("#{cmd} #{name} defaults")
+        result = remote_exec("#{cmd} #{shell_single_quote(name)} defaults")
         unless result[:exit_code] == 0
           return failure(result[:stderr].to_s.empty? ? result[:stdout].to_s : result[:stderr].to_s)
         end
       end
 
-      result = remote_exec("#{cmd} #{name} #{action}")
+      result = remote_exec("#{cmd} #{shell_single_quote(name)} #{action}")
       if result[:exit_code] == 0
         changed("Service #{should_enable ? "enabled" : "disabled"}")
       else
@@ -518,11 +518,11 @@ module Krikri
     private def enable_via_chkconfig(name : String, should_enable : Bool, cmd : String) : NamedTuple(changed: Bool, message: String, failure: PluginResult?)
       action = should_enable ? "on" : "off"
 
-      listing = remote_exec("#{cmd} --list #{name}")
+      listing = remote_exec("#{cmd} --list #{shell_single_quote(name)}")
       out = listing[:stdout].to_s
       if listing[:stderr].to_s.includes?("chkconfig --add #{name}")
-        remote_exec("#{cmd} --add #{name}")
-        out = remote_exec("#{cmd} --list #{name}")[:stdout].to_s
+        remote_exec("#{cmd} --add #{shell_single_quote(name)}")
+        out = remote_exec("#{cmd} --list #{shell_single_quote(name)}")[:stdout].to_s
       end
 
       unless out.includes?(name)
@@ -535,7 +535,7 @@ module Krikri
       return unchanged if out.includes?("3:#{action}") && out.includes?("5:#{action}")
       return would("#{should_enable ? "enable" : "disable"} #{name}") if @check_mode
 
-      result = remote_exec("#{cmd} #{name} #{action}")
+      result = remote_exec("#{cmd} #{shell_single_quote(name)} #{action}")
       if result[:exit_code] == 0
         changed("Service #{should_enable ? "enabled" : "disabled"}")
       else
@@ -564,7 +564,7 @@ module Krikri
       return unchanged unless needs_change
       return would("#{should_enable ? "enable" : "disable"} #{name}") if @check_mode
 
-      result = remote_exec("#{cmd} #{action} #{name} #{runlevel}")
+      result = remote_exec("#{cmd} #{action} #{shell_single_quote(name)} #{shell_single_quote(runlevel)}")
       if result[:exit_code] == 0
         changed("Service #{should_enable ? "enabled" : "disabled"}")
       else
@@ -576,14 +576,14 @@ module Krikri
     # (`-n -v`) that reports on stderr what it WOULD do - which is how
     # real Ansible decides whether anything needs changing.
     private def enable_via_insserv(name : String, should_enable : Bool, cmd : String) : NamedTuple(changed: Bool, message: String, failure: PluginResult?)
-      dry_run = should_enable ? "#{cmd} -n -v #{name}" : "#{cmd} -n -r -v #{name}"
+      dry_run = should_enable ? "#{cmd} -n -v #{shell_single_quote(name)}" : "#{cmd} -n -r -v #{shell_single_quote(name)}"
       marker = should_enable ? "enable service" : "remove service"
       needs_change = remote_exec(dry_run)[:stderr].to_s.each_line.any?(&.includes?(marker))
 
       return unchanged unless needs_change
       return would("#{should_enable ? "enable" : "disable"} #{name}") if @check_mode
 
-      result = remote_exec(should_enable ? "#{cmd} #{name}" : "#{cmd} -r #{name}")
+      result = remote_exec(should_enable ? "#{cmd} #{shell_single_quote(name)}" : "#{cmd} -r #{shell_single_quote(name)}")
       if result[:exit_code] != 0 || !result[:stderr].to_s.empty?
         verb = should_enable ? "install" : "remove"
         return failure("Failed to #{verb} service. rc: #{result[:exit_code]}, out: #{result[:stdout]}, err: #{result[:stderr]}")
@@ -657,7 +657,7 @@ module Krikri
         # doesn't get restarted (and reported changed) on every run.
         {"active", "activating"}.includes?(@systemd_active_state)
       when Manager::OpenRC
-        result = remote_exec("#{@svc_cmd} #{name} status")
+        result = remote_exec("#{@svc_cmd} #{shell_single_quote(name)} status")
         result[:stdout].to_s.includes?("started")
       else
         sysv_running?(name)
@@ -706,7 +706,7 @@ module Krikri
           remote_exec("systemctl #{action} #{shell_single_quote(name)}")
         when Manager::OpenRC
           # Every OpenRC service supports restart natively.
-          remote_exec("#{@svc_cmd} #{name} #{action}#{init_arguments_suffix}")
+          remote_exec("#{@svc_cmd} #{shell_single_quote(name)} #{action}#{init_arguments_suffix}")
         else
           if action == "restart"
             # Real Ansible does NOT trust a SysV init script to implement
@@ -747,9 +747,9 @@ module Krikri
     # service_control() appends it for every action, status included).
     private def run_sysv(name : String, action : String) : NamedTuple(exit_code: Int32, stdout: String, stderr: String)
       if svc_cmd = @svc_cmd
-        remote_exec("#{svc_cmd} #{name} #{action}#{init_arguments_suffix}")
+        remote_exec("#{svc_cmd} #{shell_single_quote(name)} #{action}#{init_arguments_suffix}")
       else
-        remote_exec("#{@svc_initscript} #{action}#{init_arguments_suffix}")
+        remote_exec("#{shell_single_quote(@svc_initscript.to_s)} #{action}#{init_arguments_suffix}")
       end
     end
 

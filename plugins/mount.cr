@@ -304,7 +304,7 @@ module Krikri
         # false)` satisfied).
         File.read_lines(fstab, chomp: false)
       else
-        remote_exec("cat #{fstab}")[:stdout].lines(chomp: false)
+        remote_exec("cat #{shell_single_quote(fstab)}")[:stdout].lines(chomp: false)
       end
     end
 
@@ -324,12 +324,12 @@ module Krikri
     # mount.py's backup): <fstab>.<file-owner-uid>.<YYYY-MM-DD@HH:MM:SS>~
     # - live-verified against real ansible 2026-09-13.
     private def backup_fstab(fstab : String) : String
-      uid = remote_exec("stat -c %u #{fstab}")[:stdout].strip
+      uid = remote_exec("stat -c %u #{shell_single_quote(fstab)}")[:stdout].strip
       backup_path = "#{fstab}.#{uid}.#{Time.local.to_s("%Y-%m-%d@%H:%M:%S")}~"
       if local_connection?
         File.copy(fstab, backup_path)
       else
-        remote_exec("cp #{fstab} #{backup_path}")
+        remote_exec("cp #{shell_single_quote(fstab)} #{shell_single_quote(backup_path)}")
       end
       backup_path
     end
@@ -350,7 +350,7 @@ module Krikri
     end
 
     private def currently_mounted?(path : String) : Bool
-      remote_exec("mountpoint -q #{path}")[:exit_code] == 0
+      remote_exec("mountpoint -q #{shell_single_quote(path)}")[:exit_code] == 0
     end
 
     # Returns {changed, error_message_or_nil}. Proactive audit fix (the
@@ -371,12 +371,12 @@ module Krikri
       if local_connection?
         Dir.mkdir_p(path)
       else
-        remote_exec("mkdir -p #{path}")
+        remote_exec("mkdir -p #{shell_single_quote(path)}")
       end
       src = @params["src"]? || ""
       fstype = @params["fstype"]? || ""
       opts = desired_opts
-      result = remote_exec("mount -t #{fstype} -o #{opts} #{src} #{path}")
+      result = remote_exec("mount -t #{shell_single_quote(fstype)} -o #{shell_single_quote(opts)} #{shell_single_quote(src)} #{shell_single_quote(path)}")
       return {false, "Error mounting #{path}: #{result[:stdout]}#{result[:stderr]}"} if result[:exit_code] != 0
 
       {true, nil}
@@ -386,7 +386,7 @@ module Krikri
       return {false, nil} unless currently_mounted?(path)
       return {true, nil} if check_mode
 
-      result = remote_exec("umount #{path}")
+      result = remote_exec("umount #{shell_single_quote(path)}")
       return {false, "Error unmounting #{path}: #{result[:stdout]}#{result[:stderr]}"} if result[:exit_code] != 0
 
       {true, nil}
@@ -406,10 +406,10 @@ module Krikri
       fstab = @params["fstab"]?
 
       cmd = String.build do |cmd_builder|
-        cmd_builder << "mount -o remount"
-        cmd_builder << ",#{opts}" if custom_opts
-        cmd_builder << " -T #{fstab}" if fstab && fstab != DEFAULT_FSTAB
-        cmd_builder << " " << path
+        cmd_builder << "mount -o "
+        cmd_builder << shell_single_quote(custom_opts ? "remount,#{opts}" : "remount")
+        cmd_builder << " -T #{shell_single_quote(fstab.to_s)}" if fstab && fstab != DEFAULT_FSTAB
+        cmd_builder << " " << shell_single_quote(path)
       end
 
       result = remote_exec(cmd)
@@ -444,7 +444,7 @@ module Krikri
     end
 
     private def remount_via_umount_mount(path : String, fstab : String?) : PluginResult
-      umount_result = remote_exec("umount #{path}")
+      umount_result = remote_exec("umount #{shell_single_quote(path)}")
       if umount_result[:exit_code] != 0
         return PluginResult.new(
           changed: false, failed: true,
@@ -455,8 +455,8 @@ module Krikri
 
       mount_cmd = String.build do |cmd_builder|
         cmd_builder << "mount"
-        cmd_builder << " -T #{fstab}" if fstab && fstab != DEFAULT_FSTAB
-        cmd_builder << " " << path
+        cmd_builder << " -T #{shell_single_quote(fstab.to_s)}" if fstab && fstab != DEFAULT_FSTAB
+        cmd_builder << " " << shell_single_quote(path)
       end
 
       mount_result = remote_exec(mount_cmd)
@@ -487,10 +487,10 @@ module Krikri
       if local_connection?
         Dir.mkdir_p(path)
       else
-        remote_exec("mkdir -p #{path}")
+        remote_exec("mkdir -p #{shell_single_quote(path)}")
       end
 
-      result = remote_exec("mount -t #{fstype} -o #{desired_opts} #{src} #{path}")
+      result = remote_exec("mount -t #{shell_single_quote(fstype)} -o #{shell_single_quote(desired_opts)} #{shell_single_quote(src)} #{shell_single_quote(path)}")
       if result[:exit_code] != 0
         return PluginResult.new(changed: false, failed: true, msg: "Error mounting #{path}: #{result[:stdout]}#{result[:stderr]}", name: path)
       end
@@ -539,9 +539,9 @@ module Krikri
     private def ephemeral_remount_command(path : String, src : String, fstype : String) : String
       opts = desired_opts
       String.build do |cmd|
-        cmd << "mount -o remount -t " << fstype
-        cmd << " -o " << opts if opts != "defaults"
-        cmd << " " << src << " " << path
+        cmd << "mount -o remount -t " << shell_single_quote(fstype)
+        cmd << " -o " << shell_single_quote(opts) if opts != "defaults"
+        cmd << " " << shell_single_quote(src) << " " << shell_single_quote(path)
       end
     end
 

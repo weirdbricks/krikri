@@ -106,7 +106,7 @@ module Krikri
       if local_connection?
         native_checksum(src, "sha1")
       else
-        result = remote_exec("sha1sum '#{src}'")
+        result = remote_exec("sha1sum #{shell_single_quote(src)}")
         result[:stdout].split.first? || ""
       end
     end

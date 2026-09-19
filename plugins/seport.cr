@@ -97,7 +97,7 @@ module Krikri
 
         if state == "absent"
           next if current_type.nil? || current_type != setype
-          result = remote_exec("semanage port -d -t #{setype} -p #{proto} #{port}")
+          result = remote_exec("semanage port -d -t #{shell_single_quote(setype)} -p #{shell_single_quote(proto)} #{shell_single_quote(port)}")
           unless result[:exit_code] == 0
             return PluginResult.new(changed: changed, failed: true, msg: "Failed to remove port #{port}/#{proto} from #{setype}: #{result[:stderr]}")
           end
@@ -105,7 +105,7 @@ module Krikri
         else
           next if current_type == setype
           flag = current_type.nil? ? "-a" : "-m"
-          result = remote_exec("semanage port #{flag} -t #{setype} -p #{proto} #{port}")
+          result = remote_exec("semanage port #{flag} -t #{shell_single_quote(setype)} -p #{shell_single_quote(proto)} #{shell_single_quote(port)}")
           unless result[:exit_code] == 0
             return PluginResult.new(changed: changed, failed: true, msg: "Failed to set port #{port}/#{proto} to #{setype}: #{result[:stderr]}")
           end

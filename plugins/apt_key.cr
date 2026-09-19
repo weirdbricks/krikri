@@ -321,7 +321,7 @@ module Krikri
     # #key_present? for the empty-keybox side effect being avoided.
     private def all_keys : Array(String)?
       if keyring = @params["keyring"]?
-        exists = remote_exec("test -e #{keyring}")
+        exists = remote_exec("test -e #{shell_single_quote(keyring)}")
         return [] of String if exists[:exit_code] != 0
       end
 
@@ -362,7 +362,7 @@ module Krikri
         return PluginResult.new(changed: false, failed: false, msg: "Key already absent")
       end
 
-      result = remote_exec("apt-key #{keyring_flag}del #{key_id}")
+      result = remote_exec("apt-key #{keyring_flag}del #{shell_single_quote(key_id)}")
       unless result[:exit_code] == 0
         return PluginResult.new(changed: false, failed: true, msg: "apt-key del failed: #{result[:stderr]}")
       end
@@ -391,7 +391,7 @@ module Krikri
       # keyring: file isn't there yet. Found benchmarking round167's
       # buluma.gitlab_ce on Ubuntu 22.04.
       if keyring = @params["keyring"]?
-        exists = remote_exec("test -e #{keyring}")
+        exists = remote_exec("test -e #{shell_single_quote(keyring)}")
         return false if exists[:exit_code] != 0
       end
 

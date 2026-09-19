@@ -195,7 +195,7 @@ module Krikri
             messages << "Would mask #{name}"
             changed = true
           else
-            mask_result = remote_exec("#{scope_env_prefix}systemctl#{scope_flag}#{force_flag} mask #{name}")
+            mask_result = remote_exec("#{scope_env_prefix}systemctl#{scope_flag}#{force_flag} mask #{shell_single_quote(name.to_s)}")
             if mask_result[:exit_code] == 0
               messages << "Unit masked"
               changed = true
@@ -212,7 +212,7 @@ module Krikri
             messages << "Would unmask #{name}"
             changed = true
           else
-            unmask_result = remote_exec("#{scope_env_prefix}systemctl#{scope_flag}#{force_flag} unmask #{name}")
+            unmask_result = remote_exec("#{scope_env_prefix}systemctl#{scope_flag}#{force_flag} unmask #{shell_single_quote(name.to_s)}")
             if unmask_result[:exit_code] == 0
               messages << "Unit unmasked"
               changed = true
@@ -239,7 +239,7 @@ module Krikri
             messages << "Would enable #{name}"
             changed = true
           else
-            enable_result = remote_exec("#{scope_env_prefix}systemctl#{scope_flag}#{force_flag} enable #{name}")
+            enable_result = remote_exec("#{scope_env_prefix}systemctl#{scope_flag}#{force_flag} enable #{shell_single_quote(name.to_s)}")
             if enable_result[:exit_code] == 0
               messages << "Unit enabled"
               changed = true
@@ -256,7 +256,7 @@ module Krikri
             messages << "Would disable #{name}"
             changed = true
           else
-            disable_result = remote_exec("#{scope_env_prefix}systemctl#{scope_flag}#{force_flag} disable #{name}")
+            disable_result = remote_exec("#{scope_env_prefix}systemctl#{scope_flag}#{force_flag} disable #{shell_single_quote(name.to_s)}")
             if disable_result[:exit_code] == 0
               messages << "Unit disabled"
               changed = true
@@ -282,7 +282,7 @@ module Krikri
               messages << "Would start #{name}"
               changed = true
             else
-              start_result = remote_exec("#{scope_env_prefix}systemctl#{scope_flag}#{no_block_flag} start #{name}")
+              start_result = remote_exec("#{scope_env_prefix}systemctl#{scope_flag}#{no_block_flag} start #{shell_single_quote(name.to_s)}")
               if start_result[:exit_code] == 0
                 messages << "Unit started"
                 changed = true
@@ -301,7 +301,7 @@ module Krikri
               messages << "Would stop #{name}"
               changed = true
             else
-              stop_result = remote_exec("#{scope_env_prefix}systemctl#{scope_flag}#{no_block_flag} stop #{name}")
+              stop_result = remote_exec("#{scope_env_prefix}systemctl#{scope_flag}#{no_block_flag} stop #{shell_single_quote(name.to_s)}")
               if stop_result[:exit_code] == 0
                 messages << "Unit stopped"
                 changed = true
@@ -319,7 +319,7 @@ module Krikri
             messages << "Would restart #{name}"
             changed = true
           else
-            restart_result = remote_exec("#{scope_env_prefix}systemctl#{scope_flag}#{no_block_flag} restart #{name}")
+            restart_result = remote_exec("#{scope_env_prefix}systemctl#{scope_flag}#{no_block_flag} restart #{shell_single_quote(name.to_s)}")
             if restart_result[:exit_code] == 0
               messages << "Unit restarted"
               changed = true
@@ -351,7 +351,7 @@ module Krikri
             messages << (is_running ? "Would reload #{name}" : "Would start #{name}")
             changed = true
           elsif !is_running
-            start_result = remote_exec("#{scope_env_prefix}systemctl#{scope_flag}#{no_block_flag} start #{name}")
+            start_result = remote_exec("#{scope_env_prefix}systemctl#{scope_flag}#{no_block_flag} start #{shell_single_quote(name.to_s)}")
             if start_result[:exit_code] == 0
               messages << "Unit started"
               changed = true
@@ -363,7 +363,7 @@ module Krikri
               )
             end
           else
-            reload_result = remote_exec("#{scope_env_prefix}systemctl#{scope_flag}#{no_block_flag} reload #{name}")
+            reload_result = remote_exec("#{scope_env_prefix}systemctl#{scope_flag}#{no_block_flag} reload #{shell_single_quote(name.to_s)}")
             if reload_result[:exit_code] == 0
               messages << "Unit reloaded"
               changed = true
@@ -416,7 +416,7 @@ module Krikri
     # UnitFileState, etc.) into a plain string-keyed hash, matching
     # what real Ansible's systemd module exposes as `.status`.
     private def systemctl_show(name : String) : Hash(String, String)
-      result = remote_exec("#{scope_env_prefix}systemctl#{scope_flag} show #{name}")
+      result = remote_exec("#{scope_env_prefix}systemctl#{scope_flag} show #{shell_single_quote(name.to_s)}")
       status = Hash(String, String).new
       result[:stdout].each_line do |line|
         key, sep, value = line.partition('=')
@@ -438,7 +438,7 @@ module Krikri
     # benchmarking cloudalchemy.cortex's "ensure cortex all-in-one service
     # is started and enabled" task.
     private def active?(name : String) : Bool
-      active_state = remote_exec("#{scope_env_prefix}systemctl#{scope_flag} show #{name} --property=ActiveState --value 2>/dev/null")[:stdout].to_s.strip
+      active_state = remote_exec("#{scope_env_prefix}systemctl#{scope_flag} show #{shell_single_quote(name.to_s)} --property=ActiveState --value 2>/dev/null")[:stdout].to_s.strip
       {"active", "activating"}.includes?(active_state)
     end
 
@@ -449,14 +449,14 @@ module Krikri
     # file (like `AptLockRetry`) so a spec can require the pure decision
     # logic without a real `systemctl` or this plugin's STDIN entry point.
     private def enabled?(name : String) : Bool
-      result = remote_exec("#{scope_env_prefix}systemctl#{scope_flag} is-enabled '#{name}' -l 2>/dev/null")
+      result = remote_exec("#{scope_env_prefix}systemctl#{scope_flag} is-enabled #{shell_single_quote(name.to_s)} -l 2>/dev/null")
       SystemdEnabledState.enabled_from_is_enabled?(result[:exit_code], result[:stdout])
     end
 
     # Whether the unit is masked.
     private def masked?(name : String) : Bool
       # Masked units show the literal word "masked" from `is-enabled`.
-      result = remote_exec("#{scope_env_prefix}systemctl#{scope_flag} is-enabled #{name} 2>/dev/null")
+      result = remote_exec("#{scope_env_prefix}systemctl#{scope_flag} is-enabled #{shell_single_quote(name.to_s)} 2>/dev/null")
       result[:stdout].strip == "masked"
     end
 

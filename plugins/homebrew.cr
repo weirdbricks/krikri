@@ -174,7 +174,7 @@ module Krikri
 
       path.split(":").each do |dir|
         candidate = "#{dir}/brew"
-        test = remote_exec("test -x #{candidate} && echo found")
+        test = remote_exec("test -x #{Process.quote(candidate)} && echo found")
         return candidate if test[:exit_code] == 0 && test[:stdout].includes?("found")
       end
       nil

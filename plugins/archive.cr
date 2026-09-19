@@ -606,7 +606,7 @@ module Krikri
       mod = attributes[0].in?('+', '-') ? attributes[0] : '='
       flags = attributes[0].in?('+', '-') ? attributes[1..] : attributes
 
-      result = remote_exec("chattr #{mod}#{flags} #{dest}")
+      result = remote_exec("chattr #{mod}#{shell_single_quote(flags.to_s)} #{shell_single_quote(dest)}")
       if result[:exit_code] != 0 || !result[:stderr].empty?
         return PluginResult.new(changed: false, failed: true, msg: "chattr failed: #{result[:stdout]}#{result[:stderr]}")
       end
@@ -632,13 +632,13 @@ module Krikri
       return nil unless File.exists?("/sys/fs/selinux/enforce")
 
       flags = [] of String
-      flags << "-u #{@params["seuser"]}" if @params["seuser"]?
-      flags << "-r #{@params["serole"]}" if @params["serole"]?
-      flags << "-t #{@params["setype"]}" if @params["setype"]?
-      flags << "-l #{@params["selevel"]}" if @params["selevel"]?
+      flags << "-u #{shell_single_quote(@params["seuser"].to_s)}" if @params["seuser"]?
+      flags << "-r #{shell_single_quote(@params["serole"].to_s)}" if @params["serole"]?
+      flags << "-t #{shell_single_quote(@params["setype"].to_s)}" if @params["setype"]?
+      flags << "-l #{shell_single_quote(@params["selevel"].to_s)}" if @params["selevel"]?
       return nil if flags.empty?
 
-      result = remote_exec("chcon #{flags.join(" ")} #{dest}")
+      result = remote_exec("chcon #{flags.join(" ")} #{shell_single_quote(dest)}")
       if result[:exit_code] != 0
         return PluginResult.new(changed: false, failed: true, msg: "invalid selinux context: #{result[:stderr]}")
       end
