@@ -863,6 +863,66 @@ module Krikri
     end
 
     private def finish_include_vars_failure(task : Task, host : Host, message : String) : Nil
+      # Real Ansible's own failed_when: override applies to include_vars:'s
+      # OWN file-not-found failure exactly as to any module result - the
+      # include_vars action's failure is an ordinary task result dict real
+      # Ansible runs through the same failed_when: evaluation as everything
+      # else. Verified live against ansible-core 2.19: `include_vars: {file:
+      # definitely_does_not_exist.yml}, failed_when: false` shows the task as
+      # plain `ok` (recap ok+=1 - NOT `ignored`, unlike ignore_errors:),
+      # registers `{changed: false, failed: false, ansible_facts: {}, ...}`,
+      # defines the `name:` var as an empty hash, and the play continues;
+      # the same missing file with failed_when: true (or omitted) still
+      # halts as fatal. Found via round900991/900994 practical-ansible.
+      # nginx_docker/nginx_project: both roles' `include_vars: {file:
+      # package.json, name: npm}` + `failed_when: false` (the file belongs
+      # to the consumer project, not the role) halted this engine's play
+      # unconditionally where real ansible-playbook sailed on.
+      # build_vars_context is re-run (not passed in) because this failure
+      # path is reached both after it succeeded (file-not-found) and from
+      # inside its own rescue (unknown filter in the vars: block) - a
+      # second raise here falls back to an empty context, where only a
+      # literal failed_when: can still suppress.
+      suppressed = begin
+        vars_context = build_vars_context(task, host)
+        result = apply_changed_failed_when(task, JSON::Any.new({
+          "changed"       => JSON::Any.new(false),
+          "failed"        => JSON::Any.new(true),
+          "msg"           => JSON::Any.new(message),
+          "ansible_facts" => JSON::Any.new({} of String => JSON::Any),
+        } of String => JSON::Any), vars_context, host)
+        !result["failed"].as_bool
+      rescue
+        false
+      end
+
+      if suppressed
+        store = (@included_vars[host.name] ||= Hash(String, JSON::Any).new)
+        # Real Ansible defines the `name:` var as an empty hash even on a
+        # suppressed missing-file include_vars: (`npm defined=True`,
+        # ansible_facts: {}) - the consumer's `when: npm is defined`
+        # guards rely on that shape.
+        if name = task.include_vars_name
+          store[name] = JSON::Any.new(Hash(String, JSON::Any).new)
+        end
+        # Bump the context-cache generation whenever anything changed -
+        # the included_vars store is generation-keyed, so a skipped bump
+        # leaves every later task reading the pre-include context.
+        @hv_generation += 1
+        if register_name = task.register
+          unless register_name.empty?
+            @registered_vars[host.name][register_name] = JSON::Any.new({
+              "changed"       => JSON::Any.new(false),
+              "failed"        => JSON::Any.new(false),
+              "ansible_facts" => JSON::Any.new({} of String => JSON::Any),
+            } of String => JSON::Any)
+          end
+        end
+        puts "ok: [#{host.name}]".colorize(:green)
+        @results[host.name]["ok"] += 1
+        return
+      end
+
       puts "failed: [#{host.name}]".colorize(:red)
       puts "  Message: #{message}".colorize(:red)
       # ignore_errors: on a failed include_vars: - matching real
