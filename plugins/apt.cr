@@ -864,6 +864,7 @@ module Krikri
     # name/version is already installed.
     private def handle_deb(deb_source : String, messages : Array(String), changed : Bool, lock_timeout : Int32) : PluginResult
       path = deb_source
+      downloaded_tmp : String? = nil
 
       if deb_source.starts_with?("http://") || deb_source.starts_with?("https://")
         if @check_mode
@@ -875,22 +876,38 @@ module Krikri
           # arbitrary file as root.
           tmp = File.tempfile(".krikri-playbook-deb-", nil)
           path = tmp.path
-          begin
-            tmp.close
-            download_result = remote_exec("curl -fsSL -o #{shell_single_quote(path)} #{shell_single_quote(deb_source)}")
-            if download_result[:exit_code] != 0
-              return PluginResult.new(
-                changed: false,
-                failed: true,
-                msg: "Failed to download #{deb_source}: #{download_result[:stderr]}"
-              )
-            end
-          ensure
+          downloaded_tmp = tmp.path
+          tmp.close
+          download_result = remote_exec("curl -fsSL -o #{shell_single_quote(path)} #{shell_single_quote(deb_source)}")
+          if download_result[:exit_code] != 0
             File.delete(path) rescue nil
+            return PluginResult.new(
+              changed: false,
+              failed: true,
+              msg: "Failed to download #{deb_source}: #{download_result[:stderr]}"
+            )
           end
         end
       end
 
+      # Real Ansible's fetch_file registers the downloaded temp with
+      # module.add_cleanup_file, so it lives for the whole module run
+      # (the very next thing apt.py does with it is `dpkg-deb -f`) and is
+      # removed only at module exit. An ensure-scoped delete around just
+      # the download removed the file before that first metadata read,
+      # failing every URL deb: with "No such file or directory"
+      # (round900223, j91321.sysmon's packages-microsoft-prod.deb task).
+      begin
+        install_deb_file(path, lock_timeout)
+      ensure
+        File.delete(downloaded_tmp) if downloaded_tmp
+      end
+    end
+
+    # The metadata-read + idempotency + install half of #handle_deb,
+    # shared by the URL (downloaded temp path) and local-file cases so a
+    # local deb: path never gains URL-only behavior.
+    private def install_deb_file(path : String, lock_timeout : Int32) : PluginResult
       # Read the .deb's own control metadata to find its real package
       # name/version, the same identity real Ansible's apt module checks
       # against dpkg's installed-package database for idempotency.
