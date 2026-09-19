@@ -68,6 +68,11 @@ module Krikri
       def builtin_alias : String?
         MODERNIZATION.builtin_alias(module_name)
       end
+
+      # Module name with ansible.builtin./ansible.legacy. prefix stripped.
+      def bare_module : String
+        module_name.sub("ansible.builtin.", "").sub("ansible.legacy.", "")
+      end
     end
 
     module TaskKeywords

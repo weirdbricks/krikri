@@ -2,19 +2,6 @@ require "../spec_helper"
 require "../../src/krikri_lint/lint"
 
 module Krikri::Lint
-  # Shared helper for task-oriented rule specs: write YAML, load it,
-  # run one rule, return violations.
-  def self.lint_yaml(rule : Rule, yaml : String, file_type : FileType = FileType::PLAYBOOK) : Array(Violation)
-    path = File.tempname("lintrule", ".yml")
-    File.write(path, yaml)
-    file = PositionedFile.new(path, file_type, YAML::Nodes.parse(yaml).nodes.first?, nil)
-    violations = [] of Violation
-    rule.check(file, violations)
-    violations
-  ensure
-    File.delete(path) if path
-  end
-
   describe CommandInsteadOfShellRule do
     rule = CommandInsteadOfShellRule.new
 

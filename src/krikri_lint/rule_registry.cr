@@ -11,6 +11,7 @@ module Krikri
         new([
           SyntaxCheckRule.new,
           CommandInsteadOfShellRule.new,
+          CommandInsteadOfModuleRule.new,
         ])
       end
 
