@@ -1,6 +1,11 @@
 # krikri-lint — a plan for an ansible-lint clone
 
-Status: planning document. Nothing here is implemented yet.
+Status: planning document. Phase 0 skeleton implemented (2026-09):
+`krikri-lint` binary with CLI (targets, `-p/--parseable`, `--nocolor`,
+`--list-rules`, `--version`, exit codes 0/2/3), file discovery,
+positioned `YAML::Nodes` loader, rule registry, `syntax-check` rule,
+and unit specs under `spec/lint/`. Rules from Phase 1 onward are not
+implemented yet.
 
 ## What this is
 
