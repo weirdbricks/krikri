@@ -50,7 +50,7 @@ module Krikri
         return err
       end
 
-      name = @params["name"].not_nil!
+      name = @params["name"]
       state = @params["state"]? || "present"
       sudoers_path = @params["sudoers_path"]? || "/etc/sudoers.d"
       file = File.join(sudoers_path, name)
