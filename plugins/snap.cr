@@ -64,8 +64,7 @@ module Krikri
       check_mode = true?(@params["_ansible_check_mode"]?)
       classic = true?(@params["classic"]?)
 
-      changed = false
-      msgs = [] of String
+      run = SnapRun.new
 
       names.each do |name|
         listing = snap_info(snap_bin, name)
@@ -73,65 +72,92 @@ module Krikri
           return PluginResult.new(changed: false, failed: true, msg: listing)
         end
 
-        case state
-        when "absent"
-          if listing
-            return PluginResult.new(changed: true, failed: false,
-              msg: "snap #{name} would be removed") if check_mode
-            result = remote_exec("#{snap_bin} remove #{Shell.single_quote(name)}")
-            unless result[:exit_code] == 0
-              return PluginResult.new(changed: false, failed: true,
-                msg: "could not remove snap #{name}: #{result[:stderr].strip}")
-            end
-            changed = true
-            msgs << "#{name} removed"
-          end
-        when "present"
-          if listing.nil?
-            return PluginResult.new(changed: true, failed: false,
-              msg: "snap #{name} would be installed") if check_mode
-            cmd = "#{snap_bin} install"
-            cmd += " --classic" if classic
-            if channel = @params["channel"]?
-              cmd += " --channel #{Shell.single_quote(channel)}"
-            end
-            cmd += " #{Shell.single_quote(name)}"
-            result = remote_exec(cmd)
-            unless result[:exit_code] == 0
-              return PluginResult.new(changed: false, failed: true,
-                msg: "could not install snap #{name}: #{result[:stderr].strip}")
-            end
-            changed = true
-            msgs << "#{name} installed"
-          end
-          if opt_changed = apply_options(snap_bin, name, check_mode)
-            return PluginResult.new(changed: false, failed: true, msg: opt_changed) if opt_changed.is_a?(String)
-            changed = true
-          end
-        when "enabled", "disabled"
-          unless listing
-            return PluginResult.new(changed: false, failed: true,
-              msg: "snap #{name} is not installed, cannot change its state to #{state}")
-          end
-          is_disabled = listing.includes?("disabled")
-          want_disabled = state == "disabled"
-          if is_disabled != want_disabled
-            return PluginResult.new(changed: true, failed: false,
-              msg: "snap #{name} would be #{state}") if check_mode
-            verb = want_disabled ? "disable" : "enable"
-            result = remote_exec("#{snap_bin} #{verb} #{Shell.single_quote(name)}")
-            unless result[:exit_code] == 0
-              return PluginResult.new(changed: false, failed: true,
-                msg: "could not #{verb} snap #{name}: #{result[:stderr].strip}")
-            end
-            changed = true
-            msgs << "#{name} #{state}"
-          end
+        if failure = apply_snap_state(snap_bin, name, state, classic, listing, check_mode, run)
+          return failure
         end
       end
 
-      PluginResult.new(changed: changed, failed: false,
-        msg: msgs.empty? ? "" : "snaps changed: #{msgs.join(", ")}")
+      PluginResult.new(changed: run.changed, failed: false,
+        msg: run.msgs.empty? ? "" : "snaps changed: #{run.msgs.join(", ")}")
+    end
+
+    private class SnapRun
+      property changed : Bool = false
+      property msgs : Array(String) = [] of String
+    end
+
+    private def apply_snap_state(snap_bin : String, name : String, state : String, classic : Bool, listing : String?, check_mode : Bool, run : SnapRun) : PluginResult?
+      case state
+      when "absent"
+        remove_snap(snap_bin, name, listing, check_mode, run)
+      when "present"
+        install_snap(snap_bin, name, classic, listing, check_mode, run)
+      when "enabled", "disabled"
+        toggle_snap(snap_bin, name, state, listing, check_mode, run)
+      else
+        nil
+      end
+    end
+
+    private def remove_snap(snap_bin : String, name : String, listing : String?, check_mode : Bool, run : SnapRun) : PluginResult?
+      return nil unless listing
+      return PluginResult.new(changed: true, failed: false,
+        msg: "snap #{name} would be removed") if check_mode
+      result = remote_exec("#{snap_bin} remove #{Shell.single_quote(name)}")
+      unless result[:exit_code] == 0
+        return PluginResult.new(changed: false, failed: true,
+          msg: "could not remove snap #{name}: #{result[:stderr].strip}")
+      end
+      run.changed = true
+      run.msgs << "#{name} removed"
+      nil
+    end
+
+    private def install_snap(snap_bin : String, name : String, classic : Bool, listing : String?, check_mode : Bool, run : SnapRun) : PluginResult?
+      if listing.nil?
+        return PluginResult.new(changed: true, failed: false,
+          msg: "snap #{name} would be installed") if check_mode
+        cmd = "#{snap_bin} install"
+        cmd += " --classic" if classic
+        if channel = @params["channel"]?
+          cmd += " --channel #{Shell.single_quote(channel)}"
+        end
+        cmd += " #{Shell.single_quote(name)}"
+        result = remote_exec(cmd)
+        unless result[:exit_code] == 0
+          return PluginResult.new(changed: false, failed: true,
+            msg: "could not install snap #{name}: #{result[:stderr].strip}")
+        end
+        run.changed = true
+        run.msgs << "#{name} installed"
+      end
+      if opt_changed = apply_options(snap_bin, name, check_mode)
+        return PluginResult.new(changed: false, failed: true, msg: opt_changed) if opt_changed.is_a?(String)
+        run.changed = true
+      end
+      nil
+    end
+
+    private def toggle_snap(snap_bin : String, name : String, state : String, listing : String?, check_mode : Bool, run : SnapRun) : PluginResult?
+      unless listing
+        return PluginResult.new(changed: false, failed: true,
+          msg: "snap #{name} is not installed, cannot change its state to #{state}")
+      end
+      is_disabled = listing.includes?("disabled")
+      want_disabled = state == "disabled"
+      if is_disabled != want_disabled
+        return PluginResult.new(changed: true, failed: false,
+          msg: "snap #{name} would be #{state}") if check_mode
+        verb = want_disabled ? "disable" : "enable"
+        result = remote_exec("#{snap_bin} #{verb} #{Shell.single_quote(name)}")
+        unless result[:exit_code] == 0
+          return PluginResult.new(changed: false, failed: true,
+            msg: "could not #{verb} snap #{name}: #{result[:stderr].strip}")
+        end
+        run.changed = true
+        run.msgs << "#{name} #{state}"
+      end
+      nil
     end
 
     private def find_snap_binary : String?
