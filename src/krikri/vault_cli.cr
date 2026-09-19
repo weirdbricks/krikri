@@ -58,9 +58,9 @@ module Krikri
     # of their choosing. Every file-writing subcommand goes through this.
     private def self.atomic_write(path : String, content : String) : Nil
       tmp = File.join(File.dirname(path), ".#{File.basename(path)}.#{Random::Secure.hex(6)}.tmp")
-      File.open(tmp, "w") do |f|
-        f.chmod(0o600)
-        f.write(content.to_slice)
+      File.open(tmp, "w") do |io|
+        io.chmod(0o600)
+        io.write(content.to_slice)
       end
       File.rename(tmp, path)
     end
