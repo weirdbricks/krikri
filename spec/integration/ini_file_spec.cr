@@ -139,6 +139,65 @@ describe "ini_file plugin" do
     File.read(path).should eq("[mysqld]\nport = 3306\n")
   end
 
+  # `values:` arrives JSON-encoded (parse_module_params encodes the list
+  # for ini_file the way it already does for assert.that/mysql_query
+  # argv), so the specs pass the same wire string the parser produces.
+  it "inserts every values: list entry in order, including an empty string as a real value" do
+    # round900703 RedHatOfficial.rhel9_cui's ExecStart task, verified
+    # byte-for-byte against real community.general.ini_file 12.5.0
+    # (ansible-core 2.19.11): with allow_no_value at its false default
+    # the empty string is a REAL value producing a bare `ExecStart = `
+    # line, and both entries land in original list order.
+    path = tmp_path("ini_file-values-list")
+    File.write(path, "[Service]\n")
+
+    result = PluginSpecHelper.run("ini_file", {"path" => path, "section" => "Service", "option" => "ExecStart",
+                                               "values" => %(["", "-/usr/lib/systemd/systemd-sulogin-shell rescue"])})
+
+    result["changed"].as_bool.should be_true
+    result["msg"].as_s.should eq("option added")
+    File.read(path).should eq("[Service]\nExecStart = \nExecStart = -/usr/lib/systemd/systemd-sulogin-shell rescue\n")
+  end
+
+  it "is idempotent when every values: list entry is already present" do
+    path = tmp_path("ini_file-values-idempotent")
+    File.write(path, "[Service]\nExecStart = \nExecStart = -/usr/lib/systemd/systemd-sulogin-shell rescue\n")
+
+    result = PluginSpecHelper.run("ini_file", {"path" => path, "section" => "Service", "option" => "ExecStart",
+                                               "values" => %(["", "-/usr/lib/systemd/systemd-sulogin-shell rescue"])})
+
+    result["changed"].as_bool.should be_false
+    File.read(path).should eq("[Service]\nExecStart = \nExecStart = -/usr/lib/systemd/systemd-sulogin-shell rescue\n")
+  end
+
+  it "claims existing correctly-valued lines, overwrites a stale line in place, and inserts the rest before trailing blank lines (real do_ini's exclusive algorithm)" do
+    # Verified byte-for-byte against real community.general.ini_file
+    # 12.5.0: the stale `ExecStart=foo` line absorbs the first unplaced
+    # value in place, and the remaining value is inserted after the
+    # section's last non-blank/non-comment line - NOT after the blank
+    # line that separates the section from the next header.
+    path = tmp_path("ini_file-values-stale")
+    File.write(path, "[Service]\nExecStart=foo\nType=oneshot\n\n[Other]\nx=1\n")
+
+    result = PluginSpecHelper.run("ini_file", {"path" => path, "section" => "Service", "option" => "ExecStart",
+                                               "values" => %(["", "-/usr/lib/systemd/systemd-sulogin-shell rescue"])})
+
+    result["changed"].as_bool.should be_true
+    File.read(path).should eq("[Service]\nExecStart = \nType=oneshot\nExecStart = -/usr/lib/systemd/systemd-sulogin-shell rescue\n\n[Other]\nx=1\n")
+  end
+
+  it "fails with real Ansible's mutual-exclusion error when value and values are both given" do
+    path = tmp_path("ini_file-values-exclusive-params")
+    File.write(path, "[Service]\n")
+
+    result = PluginSpecHelper.run("ini_file", {"path" => path, "section" => "Service", "option" => "ExecStart",
+                                               "value" => "x", "values" => %(["y"])})
+
+    result["failed"].as_bool.should be_true
+    result["msg"].as_s.should eq("parameters are mutually exclusive: value|values")
+    File.read(path).should eq("[Service]\n")
+  end
+
   it "supports no_extra_spaces" do
     path = tmp_path("ini_file-no-extra-spaces")
     File.delete(path) if File.exists?(path)

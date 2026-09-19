@@ -18,20 +18,38 @@ module Krikri
       section = @params["section"]?
       option = @params["option"]?
       value = @params["value"]?
+      values_param = @params["values"]?
       state = @params["state"]? || "present"
       create = @params["create"]? ? true?(@params["create"]) : true
       exclusive = @params["exclusive"]? ? true?(@params["exclusive"]) : true
       no_extra_spaces = true?(@params["no_extra_spaces"]?)
       check_mode = true?(@params["_ansible_check_mode"]?)
 
-      if err = validate_inputs(path, section, option, value, state, create)
+      # Real ini_file accepts either `value` (a single string, sugar for a
+      # one-element list) or `values` (the list form), never both - its
+      # argspec declares mutually_exclusive=[['value', 'values']] and
+      # ansible-core rejects the combination with the standard mutual
+      # exclusion failure (same wording blockinfile.cr already uses).
+      if value && values_param
+        return PluginResult.new(changed: false, failed: true, msg: "parameters are mutually exclusive: value|values")
+      end
+
+      # RedHatOfficial.rhel9_cui (round900703) ships tasks passing `values:`
+      # as a list of plain strings (two ExecStart= lines under [Service]) -
+      # this engine only ever read `value:` and silently ignored `values:`,
+      # failing outright with the value-required error. Both params funnel
+      # into one internal list from here on, mirroring real do_ini's own
+      # `if value is not None: values = [value]` merge.
+      values = values_param ? parse_values_list(values_param) : (value ? [value] : nil)
+
+      if err = validate_inputs(path, section, option, values, state, create)
         return err
       end
 
       original = File.exists?(path) ? File.read(path) : ""
       lines = initial_lines(original)
 
-      new_lines, changed, branch_msg = apply(lines, section, option, value, state, create, exclusive, no_extra_spaces)
+      new_lines, changed, branch_msg = apply(lines, section, option, values, state, create, exclusive, no_extra_spaces)
 
       finish_execute(path, original, new_lines, changed, branch_msg, check_mode)
     end
@@ -91,9 +109,26 @@ module Krikri
       new_content
     end
 
-    private def validate_inputs(path : String, section : String?, option : String?, value : String?,
+    # `values` arrives as the JSON-stringified list form (params are
+    # flattened to strings by BasePlugin); same parse convention as
+    # rhsm_repository.cr's name list. A non-list or malformed value is
+    # reported as nil so validate_inputs produces the value-required
+    # failure rather than a raw JSON parse crash.
+    private def parse_values_list(raw : String) : Array(String)?
+      parsed = JSON.parse(raw)
+      return nil unless parsed.as_a?
+      parsed.as_a.map(&.as_s)
+    rescue
+      nil
+    end
+
+    private def validate_inputs(path : String, section : String?, option : String?, values : Array(String)?,
                                 state : String, create : Bool) : PluginResult?
-      if state == "present" && option && !value
+      # Real main(): `if state == 'present' and not allow_no_value and
+      # value is None and not values` - an EMPTY values list fails the
+      # same required check as an absent one (allow_no_value is not
+      # supported here at all, so the condition reduces to this).
+      if state == "present" && option && (values.nil? || values.try(&.empty?))
         return PluginResult.new(changed: false, failed: true, msg: "Value must be set when state=present and option is defined")
       end
 
@@ -194,7 +229,7 @@ module Krikri
       no_extra_spaces ? "#{option}=#{value}" : "#{option} = #{value}"
     end
 
-    private def apply(lines : Array(String), section : String?, option : String?, value : String?,
+    private def apply(lines : Array(String), section : String?, option : String?, values : Array(String)?,
                       state : String, create : Bool, exclusive : Bool, no_extra_spaces : Bool) : {Array(String), Bool, String?}
       new_lines = lines.dup
       changed = false
@@ -207,7 +242,7 @@ module Krikri
       block_end = find_block_end(new_lines, block_start)
 
       if option
-        option_changed, option_msg = apply_option(new_lines, option, value, state, block_start, block_end, exclusive, no_extra_spaces)
+        option_changed, option_msg = apply_option(new_lines, option, values, state, block_start, block_end, exclusive, no_extra_spaces)
         if option_changed
           changed = true
           msg = option_msg
@@ -258,7 +293,22 @@ module Krikri
     # the option line is newly inserted, "option changed" for an
     # in-place rewrite, a dedup removal, or a state=absent removal,
     # nil ("OK" upstream) when nothing changed.
-    private def apply_option(new_lines : Array(String), option : String, value : String?,
+    #
+    # `values` is the merged list form of real do_ini's own value/values
+    # params (a singular `value:` enters here as a one-element list, and
+    # the list is deduped like do_ini's values_unique). The multi-value
+    # algorithm follows real do_ini's own four documented steps for
+    # state=present (round900703 RedHatOfficial.rhel9_cui's ExecStart
+    # values list): 1) claim existing lines already holding one of the
+    # requested values, 2) with exclusive (the default) overwrite
+    # remaining unclaimed option lines with still-unplaced values and
+    # delete whatever option lines are left over, 3) insert unplaced
+    # values at the end of the section, 4) changed if anything was
+    # touched. Without exclusive the legacy single-value behavior is
+    # kept instead: rewrite unclaimed matching lines in place with the
+    # unplaced values, never delete, insert only what no existing line
+    # could absorb.
+    private def apply_option(new_lines : Array(String), option : String, values : Array(String)?,
                              state : String, block_start : Int32, block_end : Int32,
                              exclusive : Bool, no_extra_spaces : Bool) : {Bool, String?}
       # state=absent only ever matches ACTIVE (uncommented) option lines,
@@ -267,26 +317,26 @@ module Krikri
       matches = (block_start...block_end).select { |i| option_line_index?(new_lines[i], option, active_only) }
 
       if state == "present"
-        formatted = format_option(option, (value || raise "ini_file: value is required"), no_extra_spaces)
+        # do_ini dedupes the values list (values_unique) before any of
+        # its matching passes run.
+        remaining = dedupe_values(values || [] of String)
+        claimed = Set(Int32).new
 
-        if matches.empty?
-          new_lines.insert(block_end, formatted)
+        changed = claim_requested_values(new_lines, option, matches, remaining, claimed, no_extra_spaces)
+        changed = replace_unclaimed_lines(new_lines, option, matches, remaining, claimed, exclusive, no_extra_spaces) || changed
+
+        # Insertion pass - values no existing line could claim go in at
+        # the end of the section, i.e. after its last non-blank,
+        # non-comment line (do_ini searches backwards for exactly that
+        # point), kept in original list order.
+        unless remaining.empty?
+          insert_at = section_insert_index(new_lines, block_start, block_end)
+          remaining.reverse_each do |value|
+            new_lines.insert(insert_at, format_option(option, value, no_extra_spaces))
+          end
           return {true, "option added"}
         end
 
-        first = matches.first
-        changed = false
-        if new_lines[first] != formatted
-          new_lines[first] = formatted
-          changed = true
-        end
-
-        if exclusive && matches.size > 1
-          matches[1..].reverse_each do |i|
-            new_lines.delete_at(i)
-            changed = true
-          end
-        end
         return {true, "option changed"} if changed
       else
         unless matches.empty?
@@ -296,6 +346,88 @@ module Krikri
       end
 
       {false, nil}
+    end
+
+    # Claim pass - an existing line whose parsed value is still requested
+    # is rewritten with its own (canonical) value in place and that value
+    # is consumed, exactly like do_ini's first loop with
+    # `values.remove(matched_value)`.
+    private def claim_requested_values(new_lines : Array(String), option : String, matches : Array(Int32),
+                                       remaining : Array(String), claimed : Set(Int32), no_extra_spaces : Bool) : Bool
+      changed = false
+      matches.each do |i|
+        existing = option_line_value(new_lines[i], option)
+        next unless existing && remaining.includes?(existing)
+        changed = rewrite_option_line(new_lines, i, option, existing, no_extra_spaces) || changed
+        remaining.delete(existing)
+        claimed << i
+      end
+      changed
+    end
+
+    # Exclusive: stale option lines (value not requested) absorb the
+    # still-unplaced values in list order - do_ini's exclusive
+    # `values.pop(0)` replacement - and whatever option lines remain
+    # unclaimed after that carry values not requested anymore and are
+    # deleted. Non-exclusive keeps this engine's historical semantics for
+    # a singular value (rewrite the first matching line in place, never
+    # delete duplicates) generalized to the list.
+    private def replace_unclaimed_lines(new_lines : Array(String), option : String, matches : Array(Int32),
+                                        remaining : Array(String), claimed : Set(Int32),
+                                        exclusive : Bool, no_extra_spaces : Bool) : Bool
+      changed = false
+      matches.each do |i|
+        next if claimed.includes?(i)
+        break if remaining.empty?
+        changed = rewrite_option_line(new_lines, i, option, remaining.shift, no_extra_spaces) || changed
+        claimed << i if exclusive
+      end
+      if exclusive
+        matches.reverse_each do |i|
+          next if claimed.includes?(i)
+          new_lines.delete_at(i)
+          changed = true
+        end
+      end
+      changed
+    end
+
+    private def rewrite_option_line(new_lines : Array(String), index : Int32, option : String,
+                                    value : String, no_extra_spaces : Bool) : Bool
+      formatted = format_option(option, value, no_extra_spaces)
+      return false if new_lines[index] == formatted
+      new_lines[index] = formatted
+      true
+    end
+
+    private def dedupe_values(values : Array(String)) : Array(String)
+      unique = [] of String
+      values.each { |v| unique << v unless unique.includes?(v) }
+      unique
+    end
+
+    # Extracts the value part of a matched option line the way real
+    # match_opt's group(8) does: everything after `=` with the spaces and
+    # tabs immediately following it consumed, trailing content (including
+    # trailing whitespace) kept verbatim.
+    private def option_line_value(line : String, option : String) : String?
+      match = line.match(/^[ \t]*[#;]?[ \t]*#{Regex.escape(option)}[ \t]*=(.*)$/)
+      return nil unless match
+      match[1].lstrip(" \t")
+    end
+
+    # Real do_ini inserts new option lines after the section's last
+    # non-blank, non-comment line (its non_blank_non_comment_pattern
+    # backward scan), NOT at the raw end of the section - trailing blank
+    # lines between this section and the next `[header]` stay after the
+    # inserted options. The section header itself always terminates the
+    # backward scan, so block_start is the fallback.
+    private def section_insert_index(lines : Array(String), block_start : Int32, block_end : Int32) : Int32
+      (block_start...block_end).reverse_each do |i|
+        stripped = lines[i].strip
+        return i + 1 unless stripped.empty? || stripped.starts_with?('#') || stripped.starts_with?(';')
+      end
+      block_start
     end
 
     private def write_backup(path : String) : String
