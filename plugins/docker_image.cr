@@ -70,30 +70,9 @@ module Krikri
       # fire before the required_if source check and before anything
       # daemon-contacting - previously a bogus state silently fell into
       # the absent branch and a bogus source got the scope-cut paraphrase.
-      unless ["absent", "present"].includes?(state)
-        return PluginResult.new(changed: false, failed: true,
-          msg: "value of state must be one of: absent, present, got: #{state}")
-      end
-
       source = @params["source"]?
-      if source && !["build", "load", "pull", "local"].includes?(source)
-        return PluginResult.new(changed: false, failed: true,
-          msg: "value of source must be one of: build, load, pull, local, got: #{source}")
-      end
-
-      if state == "present"
-        unless source
-          return PluginResult.new(changed: false, failed: true,
-            msg: "state is present but all of the following are missing: source")
-        end
-        unless source == "pull"
-          # A VALID non-pull source is the documented scope cut (real
-          # module needs the daemon for build/load/local anyway, so on a
-          # daemon-less host both engines fail here - wording differs,
-          # failed=/changed= match).
-          return PluginResult.new(changed: false, failed: true,
-            msg: "docker_image: only source: pull is implemented, got '#{source}'")
-        end
+      if error = validate_state_and_source(state, source)
+        return error
       end
       check_mode = true?(@params["_ansible_check_mode"]?)
 
@@ -117,6 +96,34 @@ module Krikri
       PluginResult.new(changed: false, failed: true, msg: "Docker API error: #{ex.message}")
     rescue ex : Socket::ConnectError
       PluginResult.new(changed: false, failed: true, msg: "Could not connect to the Docker daemon (#{docker_host_description}): #{ex.message}")
+    end
+
+    private def validate_state_and_source(state : String, source : String?) : PluginResult?
+      unless ["absent", "present"].includes?(state)
+        return PluginResult.new(changed: false, failed: true,
+          msg: "value of state must be one of: absent, present, got: #{state}")
+      end
+
+      if source && !["build", "load", "pull", "local"].includes?(source)
+        return PluginResult.new(changed: false, failed: true,
+          msg: "value of source must be one of: build, load, pull, local, got: #{source}")
+      end
+
+      if state == "present"
+        unless source
+          return PluginResult.new(changed: false, failed: true,
+            msg: "state is present but all of the following are missing: source")
+        end
+        unless source == "pull"
+          # A VALID non-pull source is the documented scope cut (real
+          # module needs the daemon for build/load/local anyway, so on a
+          # daemon-less host both engines fail here - wording differs,
+          # failed=/changed= match).
+          return PluginResult.new(changed: false, failed: true,
+            msg: "docker_image: only source: pull is implemented, got '#{source}'")
+        end
+      end
+      nil
     end
 
     private def present_result(
