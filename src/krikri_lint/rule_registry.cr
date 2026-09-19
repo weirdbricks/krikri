@@ -14,6 +14,7 @@ module Krikri
           CommandInsteadOfModuleRule.new,
           NoChangedWhenRule.new,
           RiskyFilePermissionsRule.new,
+          RiskyOctalRule.new,
         ])
       end
 
