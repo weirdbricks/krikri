@@ -957,6 +957,42 @@ module Krikri
   class StaticImportUndefinedError < Exception
   end
 
+  # Raised at PARSE time when an import_tasks: path templates fine but
+  # the resolved file genuinely doesn't exist. Real ansible-playbook
+  # aborts the WHOLE run there - "[ERROR]: Unable to retrieve file
+  # contents. Could not find or access '<resolved>' on the Ansible
+  # Controller.", no PLAY RECAP (verified against ansible-core 2.19.11
+  # with a minimal repro, both as a templated path that resolves to a
+  # missing file and as a plain literal missing path - identical fatal
+  # shape; lucascbeyeler.zimbra's `import_tasks: "vars/{{ zimbra_version
+  # }}.yml"` -> vars/8.8.12.yml with only vars/8.8.15.yml on disk, round
+  # 900185). Bypasses parse_tasks's generic per-task rescue (same
+  # mechanism as StaticImportUndefinedError) - the bare-Exception raise
+  # this used to be got swallowed into a "Warning: Skipping task N" and
+  # the run went on without the import's tasks, exit 0, instead of
+  # failing the playbook the way real Ansible does.
+  class StaticImportMissingFileError < Exception
+  end
+
+  # Raised at PARSE time when a task's `register:` value is not a legal
+  # variable-name identifier. Real ansible-playbook validates the RAW
+  # string (it never templates the value - `register: '{{ x }}'` is
+  # rejected as-is, whatever x resolves to) at task-load time and
+  # refuses the whole run: "Invalid 'register' specified: Invalid
+  # variable name '<value>'." plus "Variable names must be strings
+  # starting with a letter or underscore character, and contain only
+  # letters, numbers and underscores." (rc=4, no PLAY RECAP - verified
+  # against ansible-core 2.19.11 with a minimal repro for
+  # '{{sources_register}}', '123bad', 'foo bar' and ''). webbylab.
+  # sources' own `register: '{{sources_register}}'` with the empty
+  # default (round 900914) previously sailed through parsing and
+  # failed later with a confusing runtime error. Bypasses parse_tasks's
+  # generic per-task rescue (same mechanism as StaticImportUndefinedError)
+  # so it propagates to the top-level parse-error handler like real
+  # Ansible's own hard stop.
+  class InvalidRegisterError < Exception
+  end
+
   # Raised at RUN time - from `TaskExecutor#notify_handlers`, at the
   # moment a task actually notifies - when the notified name matches no
   # handler's name and no handler's `listen:` topic. Real Ansible aborts
@@ -1600,21 +1636,37 @@ module Krikri
       "community.libvirt.virt_net" => "virt_net",
     }
 
+    # community.docker's own removal text for docker_compose v1
+    # (End-of-Life since July 2022; removed from community.docker in
+    # v4.0.0, docker_compose_v2 is the replacement) - real
+    # ansible-playbook's exact hard-stop wording, verified live against
+    # ansible-core 2.19.11. Shared verbatim by all three tombstone
+    # spellings (bare, community.general.- and community.docker.-
+    # qualified): real Ansible echoes the RESOLVED module name, never
+    # the as-written spelling, for this one.
+    DOCKER_COMPOSE_REMOVAL_MESSAGE = "The 'community.docker.docker_compose' module has been removed. " \
+                                     "This module uses docker-compose v1, which is End of Life since July 2022. " \
+                                     "Please migrate to community.docker.docker_compose_v2. " \
+                                     "This feature was removed from collection 'community.docker' version 4.0.0."
+
     # Bare module names real ansible-core can no longer resolve in ANY
     # collection (removed from ansible-core years ago and from the
     # collections that absorbed them), so every real ansible-playbook
-    # install hard-stops on them with "couldn't resolve module/action"
-    # (verified live against ansible-core 2.19.4, including the
-    # amazon.aws-qualified spelling - amazon.aws's own runtime.yml
-    # tombstoned it too). Deliberately minimal: an entry here hard-stops
-    # the whole run at parse time, so a name belongs here only when it
-    # is unresolvable on EVERY real controller - never a module that a
-    # current collection still ships. Widening = adding entries here.
-    REMOVED_MODULE_TOMBSTONES = Set{
-      "ec2_remote_facts",
-      "ansible.builtin.ec2_remote_facts",
-      "ansible.legacy.ec2_remote_facts",
-      "amazon.aws.ec2_remote_facts",
+    # install hard-stops on them. Deliberately minimal: an entry here
+    # hard-stops the whole run at parse time, so a name belongs here
+    # only when it is unresolvable on EVERY real controller - never a
+    # module that a current collection still ships. Widening = adding
+    # entries here. Value is real Ansible's own hard-stop error text for
+    # that name: nil means the generic couldn't-resolve wording (what
+    # ansible-core prints when nothing anywhere resolves the name),
+    # while some removed names have real Ansible print its own specific
+    # removal message instead - verified live against ansible-core
+    # 2.19.11, including which names get which wording.
+    REMOVED_MODULE_TOMBSTONES = {
+      "ec2_remote_facts"                 => nil,
+      "ansible.builtin.ec2_remote_facts" => nil,
+      "ansible.legacy.ec2_remote_facts"  => nil,
+      "amazon.aws.ec2_remote_facts"      => nil,
       # Removed from community.general in v10.0.0 (its own runtime.yml
       # tombstones the FQCN), so every controller on a current
       # collection hard-fails on it (idealista.consul-role, round 033).
@@ -1624,8 +1676,8 @@ module Krikri
       # bare-name task (like idealista.consul-role's own sibling roles
       # might write) slipped through ungracefully-skipped instead of
       # hard-stopped, same bug class as docker_service below.
-      "community.general.consul_acl",
-      "consul_acl",
+      "community.general.consul_acl"     => nil,
+      "consul_acl"                       => nil,
       # Removed from community.general in v2.0.0 (superseded by
       # `docker_compose`), so every controller on a current collection
       # hard-fails on it. krzysztof-magosa.docker writes the BARE name
@@ -1634,27 +1686,78 @@ module Krikri
       # normalization there) meant only the FQCN spelling was ever
       # caught; confirmed live against the rebuilt 0.9.891 binary still
       # gracefully skipping the bare form instead of hard-stopping.
-      "community.general.docker_service",
-      "docker_service",
+      "community.general.docker_service" => nil,
+      "docker_service"                   => nil,
+      # docker_compose (the compose v1 module) - community.docker
+      # removed it in v4.0.0 (docker-compose v1 is End-of-Life since
+      # July 2022; community.docker.docker_compose_v2 is the
+      # replacement) and community.general's own redirect now lands on
+      # that tombstone, so every current controller hard-stops. The
+      # message is the collection's own removal text, NOT the generic
+      # couldn't-resolve wording, and it names the RESOLVED
+      # community.docker.docker_compose spelling, never the as-written
+      # one - identical for all three spellings (bare,
+      # community.general.- and community.docker.-qualified; verified
+      # live against ansible-core 2.19.11 with a minimal repro).
+      # lucasmaurice.awx (round 900444) writes the bare name; this
+      # engine previously fell through to the unavailable-module path
+      # and failed at RUN time with a misleading "docker: No such file
+      # or directory" instead of matching real Ansible's own
+      # removed-module hard stop. docker_compose_v2 itself is a
+      # separate, fully-implemented plugin (plugins/docker_compose_v2.cr)
+      # - this tombstones only the removed v1 module.
+      "community.docker.docker_compose"  => DOCKER_COMPOSE_REMOVAL_MESSAGE,
+      "community.general.docker_compose" => DOCKER_COMPOSE_REMOVAL_MESSAGE,
+      "docker_compose"                   => DOCKER_COMPOSE_REMOVAL_MESSAGE,
     }
 
     # Raises UnresolvedModuleError for the tombstoned-removed hard-stop
-    # shape (real Ansible's own exact wording - real Ansible also
-    # hard-stops there, for its own genuine reason), returns normally
-    # for every other name. as_written is the module/action name exactly
-    # as the task wrote it - real Ansible's message echoes the source
-    # spelling, not any resolved form.
+    # shape - with real Ansible's own exact wording for that name (the
+    # generic couldn't-resolve text, or the collection's own specific
+    # removal message where real Ansible prints one instead) - returns
+    # normally for every other name. as_written is the module/action
+    # name exactly as the task wrote it - real Ansible's message echoes
+    # the source spelling, not any resolved form (except a tombstone
+    # with its own fixed message, like docker_compose's).
     def self.raise_unresolvable_module_error(as_written : String) : Nil
       # A templated module name resolves (or fails) at run time, never
       # here - the raw `{{ }}` text is not an unresolvable name.
       return if as_written.includes?("{{")
 
-      message = "couldn't resolve module/action '#{as_written}'. " \
-                "This often indicates a misspelling, missing collection, or incorrect module path."
+      return unless REMOVED_MODULE_TOMBSTONES.has_key?(as_written)
 
-      if REMOVED_MODULE_TOMBSTONES.includes?(as_written)
-        raise UnresolvedModuleError.new(message)
+      raise UnresolvedModuleError.new(REMOVED_MODULE_TOMBSTONES[as_written] ||
+        "couldn't resolve module/action '#{as_written}'. " \
+        "This often indicates a misspelling, missing collection, or incorrect module path.")
+    end
+
+    # Real Ansible validates `register:`'s value as a variable-name
+    # identifier at task-load time and refuses the whole run for anything
+    # else - see InvalidRegisterError's own comment. The value is checked
+    # RAW: real Ansible never templates a register: value, so
+    # `register: '{{ var }}'` is rejected whatever var resolves to
+    # (webbylab.sources, round 900914).
+    def self.validate_register_name(value : String) : Nil
+      return if register_identifier?(value)
+
+      raise InvalidRegisterError.new(
+        "Invalid 'register' specified: Invalid variable name '#{value}'. " \
+        "Variable names must be strings starting with a letter or underscore character, " \
+        "and contain only letters, numbers and underscores.")
+    end
+
+    # Python's str.isidentifier semantics, which is what real Ansible's
+    # own check (validate_variable_names) ultimately rests on: first
+    # character a letter or underscore, the rest letters, digits or
+    # underscores.
+    private def self.register_identifier?(value : String) : Bool
+      return false if value.empty?
+
+      value.chars.each_with_index do |char, index|
+        return false unless char.letter? || char == '_' || (index > 0 && char.number?)
       end
+
+      true
     end
 
     # Deliberately no "krikri hasn't implemented this" sibling anymore:
@@ -1723,6 +1826,14 @@ module Krikri
             raise ex
           rescue ex : StaticImportUndefinedError
             raise ex
+          rescue ex : StaticImportMissingFileError
+            # Same bypass - a missing import target is fatal the way real
+            # Ansible is, not a soft warning. See that class's own comment.
+            raise ex
+          rescue ex : InvalidRegisterError
+            # Same bypass - real Ansible refuses the whole run for an
+            # invalid register: at load time. See that class's own comment.
+            raise ex
           rescue ex : RoleNotFoundError
             raise ex
           rescue ex
@@ -1759,6 +1870,13 @@ module Krikri
         rescue ex : StaticImportUndefinedError
           # Same bypass, same reason - see StaticImportUndefinedError's
           # own comment.
+          raise ex
+        rescue ex : StaticImportMissingFileError
+          # Same bypass, same reason - see that class's own comment.
+          raise ex
+        rescue ex : InvalidRegisterError
+          # Same bypass - real Ansible refuses the whole run for an
+          # invalid register: at load time. See that class's own comment.
           raise ex
         rescue ex : RoleNotFoundError
           # Same bypass, same reason - see RoleNotFoundError's own
@@ -2104,6 +2222,13 @@ module Krikri
           # Same bypass as RemovedActionError above, same reason - see
           # that class's own comment and StaticImportUndefinedError's.
           raise ex
+        rescue ex : StaticImportMissingFileError
+          # Same bypass - see that class's own comment.
+          raise ex
+        rescue ex : InvalidRegisterError
+          # Same bypass - real Ansible refuses the whole run for an
+          # invalid register: at load time. See that class's own comment.
+          raise ex
         rescue ex : RoleNotFoundError
           # Same bypass, same reason - see RoleNotFoundError's own
           # comment. Newly reachable from here (not just #load_role
@@ -2276,7 +2401,15 @@ module Krikri
       end
 
       resolved_path = resolve_include_path(file_rel, file_dir)
-      raise "Imported tasks file not found: #{resolved_path}" unless File.exists?(resolved_path)
+      # Typed fatal, not a bare string raise: real ansible-playbook
+      # hard-stops the whole run here (see
+      # StaticImportMissingFileError's own comment), and a bare Exception
+      # was swallowed by parse_tasks's generic per-task rescue into a
+      # warning + silent drop of the import (lucascbeyeler.zimbra,
+      # round 900185).
+      raise StaticImportMissingFileError.new(
+        "Unable to retrieve file contents.\n" \
+        "Could not find or access '#{resolved_path}' on the Ansible Controller.") unless File.exists?(resolved_path)
 
       imported_yaml = YAML.parse(Vault.maybe_decrypt(File.read(resolved_path)))
       # A comment-only (or entirely blank) tasks file - real Ansible
@@ -2794,7 +2927,11 @@ module Krikri
 
       # Parse task-level settings - FIXED to handle boolean values safely
       parse_common_task_attributes(task, task_hash)
-      task.register = task_hash["register"]?.try { |v| safe_yaml_to_string(v) }
+      task.register = task_hash["register"]?.try do |v|
+        register_value = safe_yaml_to_string(v)
+        validate_register_name(register_value)
+        register_value
+      end
       task.check_mode = parse_optional_bool_or_template(task_hash["check_mode"]?)
       task.check_mode_expr = template_expression(task_hash["check_mode"]?)
       task.diff_mode = parse_optional_bool_or_template(task_hash["diff"]?)
@@ -3208,7 +3345,11 @@ module Krikri
       # idiom) silently dropped the register entirely - task.register
       # stayed nil, so vars_result was never bound and any later
       # reference raised "'vars_result.results' is undefined".
-      task.register = task_hash["register"]?.try { |v| safe_yaml_to_string(v) }
+      task.register = task_hash["register"]?.try do |v|
+        register_value = safe_yaml_to_string(v)
+        validate_register_name(register_value)
+        register_value
+      end
 
       if tags_yaml = task_hash["tags"]?
         task.tags = tags_yaml.as_a?.try(&.map(&.as_s)) || [tags_yaml.as_s]

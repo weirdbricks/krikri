@@ -365,6 +365,49 @@ describe Krikri::PlaybookParser do
       end
     end
 
+    it "raises a fatal InvalidRegisterError (aborts the whole playbook) when register: is not a legal identifier" do
+      # webbylab.sources (round 900914), reduced to a minimal case and
+      # verified directly against real ansible-playbook (ansible-core
+      # 2.19.11): the role's `register: '{{sources_register}}'` (default
+      # sources_register: "") - real Ansible validates the RAW register:
+      # value as a variable-name identifier at task-load time (it never
+      # templates the value) and refuses the WHOLE RUN: "Invalid
+      # 'register' specified: Invalid variable name '{{sources_register}}'."
+      # (rc=4, no PLAY RECAP; '123bad', 'foo bar' and '' fail identically).
+      # This engine previously accepted it at parse time and failed later
+      # with a confusing runtime error instead.
+      ["{{sources_register}}", "123bad", "foo bar", ""].each do |bad|
+        expect_raises(Krikri::InvalidRegisterError,
+          "Invalid 'register' specified: Invalid variable name '#{bad}'. " \
+          "Variable names must be strings starting with a letter or underscore character, " \
+          "and contain only letters, numbers and underscores.") do
+          Krikri::PlaybookParser.parse_string(<<-YAML
+            - hosts: all
+              tasks:
+                - name: bad register
+                  ansible.builtin.debug:
+                    msg: hi
+                  register: '#{bad}'
+            YAML
+          )
+        end
+      end
+    end
+
+    it "still accepts a legal register: identifier, including underscores and digits after the first character" do
+      playbook = Krikri::PlaybookParser.parse_string(<<-YAML
+        - hosts: all
+          tasks:
+            - name: good register
+              ansible.builtin.debug:
+                msg: hi
+              register: result_2
+        YAML
+      )
+
+      playbook.plays[0].tasks[0].register.should eq("result_2")
+    end
+
     it "aborts the whole playbook parse for a removed ansible.builtin.include: task, not just skips it" do
       # Real bug found benchmarking robertdebock.awx (round 162): real
       # ansible-core removed the `include:` action entirely after
@@ -528,6 +571,56 @@ describe Krikri::PlaybookParser do
           YAML
         )
       end
+    end
+
+    it "hard-stops the parse for docker_compose (v1), removed from community.docker in v4.0.0, with its own removal message" do
+      # lucasmaurice.awx (round 900444) writes the BARE `docker_compose:`
+      # (compose v1) - community.docker removed the module in v4.0.0
+      # (docker-compose v1 is End-of-Life; docker_compose_v2 is the
+      # replacement) and community.general's redirect lands on that
+      # tombstone, so real ansible-playbook hard-stops with the
+      # collection's OWN removal message, not the generic
+      # couldn't-resolve wording (verified live against ansible-core
+      # 2.19.11 with a minimal repro for all three spellings - bare,
+      # community.general.- and community.docker.-qualified - each
+      # printing the identical community.docker.docker_compose message,
+      # no PLAY RECAP). This engine previously fell through to the
+      # unavailable-module path and failed at RUN time with a misleading
+      # "docker: No such file or directory" instead.
+      removal_message = "The 'community.docker.docker_compose' module has been removed. " \
+                        "This module uses docker-compose v1, which is End of Life since July 2022. " \
+                        "Please migrate to community.docker.docker_compose_v2. " \
+                        "This feature was removed from collection 'community.docker' version 4.0.0."
+
+      ["docker_compose", "community.general.docker_compose", "community.docker.docker_compose"].each do |name|
+        expect_raises(Krikri::UnresolvedModuleError, removal_message) do
+          Krikri::PlaybookParser.parse_string(<<-YAML
+            - hosts: all
+              tasks:
+                - name: removed compose v1 module
+                  #{name}:
+                    project_src: /tmp/x
+            YAML
+          )
+        end
+      end
+    end
+
+    it "still resolves docker_compose_v2 (it is a separate, implemented plugin, not the removed v1)" do
+      # Guard for the tombstone above: docker_compose_v2 is a distinct,
+      # fully-implemented module - tombstoning docker_compose v1 must
+      # not catch it.
+      playbook = Krikri::PlaybookParser.parse_string(<<-YAML
+        - hosts: all
+          tasks:
+            - name: compose v2 stays fine
+              community.docker.docker_compose_v2:
+                project_src: /tmp/x
+        YAML
+      )
+
+      playbook.plays[0].tasks.size.should eq(1)
+      playbook.plays[0].tasks[0].unavailable_module.should be_nil
     end
 
     it "keeps a module from a collection with zero krikri modules as unavailable_module, no longer raising (0.9.1050)" do
@@ -1644,6 +1737,47 @@ describe Krikri::PlaybookParser do
       playbook.plays[0].tasks.map(&.name).should eq(["debian branch"])
     end
 
+    it "raises a fatal StaticImportMissingFileError (aborts the whole playbook) when an import_tasks: path resolves to a file that doesn't exist" do
+      # lucascbeyeler.zimbra (round 900185), reduced to a minimal case
+      # and verified directly against real ansible-playbook
+      # (ansible-core 2.19.11): `import_tasks: "vars/{{ zimbra_version
+      # }}.yml"` templates fine at parse time (zimbra_version IS
+      # defined) but points at vars/8.8.12.yml when only vars/8.8.15.yml
+      # exists - real Ansible refuses the WHOLE RUN ("[ERROR]: Unable to
+      # retrieve file contents. Could not find or access '...vars/
+      # 8.8.12.yml' on the Ansible Controller.", no PLAY RECAP; a plain
+      # literal missing path fails identically). This engine raised a
+      # bare-String exception that parse_tasks's generic per-task rescue
+      # swallowed into a "Warning: Skipping task" - the play "succeeded"
+      # with the import's tasks simply missing (exit 0) instead of the
+      # fatal abort.
+      root = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "playbook_parser_import_tasks_missing_file_spec")
+      FileUtils.rm_rf(root) if Dir.exists?(root)
+      Dir.mkdir_p(File.join(root, "roles", "myrole", "tasks"))
+      Dir.mkdir_p(File.join(root, "roles", "myrole", "tasks", "vars"))
+      Dir.mkdir_p(File.join(root, "roles", "myrole", "defaults"))
+      File.write(File.join(root, "roles", "myrole", "defaults", "main.yml"), "zimbra_version: 8.8.12\n")
+      File.write(File.join(root, "roles", "myrole", "tasks", "main.yml"), <<-YAML)
+        - import_tasks: "vars/{{ zimbra_version }}.yml"
+        YAML
+      File.write(File.join(root, "roles", "myrole", "tasks", "vars", "8.8.15.yml"), <<-YAML)
+        - name: the version that exists
+          ansible.builtin.debug:
+            msg: hi
+        YAML
+
+      playbook_yaml = <<-YAML
+        - name: play
+          hosts: all
+          roles:
+            - myrole
+        YAML
+
+      expect_raises(Krikri::StaticImportMissingFileError, /Could not find or access '.*vars\/8\.8\.12\.yml' on the Ansible Controller\./) do
+        Krikri::PlaybookParser.parse_string(playbook_yaml, File.join(root, "site.yml"))
+      end
+    end
+
     it "raises a hard RoleNotFoundError (rc=1 at the top level) when a role can't be found, matching real Ansible's own immediate refusal" do
       root = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "playbook_parser_missing_role_spec")
       FileUtils.rm_rf(root) if Dir.exists?(root)
@@ -1987,20 +2121,26 @@ describe Krikri::PlaybookParser do
       playbook.plays[0].tasks.map(&.name).should eq(["innermost task"])
     end
 
-    it "warns and continues (not a hard failure) when the imported file doesn't exist" do
+    it "hard-fails (not warns) when the imported file doesn't exist" do
+      # Updated from "warns and continues" to the fatal behavior real
+      # ansible-playbook itself has (ansible-core 2.19.11, verified live
+      # with a minimal repro: "[ERROR]: Unable to retrieve file
+      # contents. Could not find or access '...does_not_exist.yml' on
+      # the Ansible Controller.", no PLAY RECAP, whole run aborted) -
+      # see StaticImportMissingFileError's own comment (round 900185).
       root = import_tasks_root("import_tasks_missing_spec")
 
-      playbook = Krikri::PlaybookParser.parse_string(<<-YAML, File.join(root, "site.yml"))
-        - name: play
-          hosts: all
-          tasks:
-            - import_tasks: does_not_exist.yml
-            - name: own task
-              ansible.builtin.debug:
-                msg: hi
-        YAML
-
-      playbook.plays[0].tasks.map(&.name).should eq(["own task"])
+      expect_raises(Krikri::StaticImportMissingFileError, /Could not find or access '.*does_not_exist\.yml'/) do
+        Krikri::PlaybookParser.parse_string(<<-YAML, File.join(root, "site.yml"))
+          - name: play
+            hosts: all
+            tasks:
+              - import_tasks: does_not_exist.yml
+              - name: own task
+                ansible.builtin.debug:
+                  msg: hi
+          YAML
+      end
     end
 
     # Round 188: parent `when:` is PREPENDED, not appended, specifically
