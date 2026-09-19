@@ -67,6 +67,27 @@ describe "script plugin" do
     result["stdout"].as_s.should eq("via-interpreter")
   end
 
+  it "skips without running the script under _ansible_check_mode" do
+    # Real Ansible's script module does not support check mode: under
+    # --check the task reports `skipping:` and the script never runs
+    # (found via the dirless-infra findings - krikri executed the
+    # script for real under --check).
+    path = sc_path("script_check_mode.sh")
+    File.write(path, "#!/bin/sh\ntouch #{sc_path("script_check_mode_marker")}\n")
+    File.chmod(path, 0o755)
+    marker = sc_path("script_check_mode_marker")
+    File.delete?(marker)
+
+    result = PluginSpecHelper.run("script", {"cmd" => path, "_ansible_check_mode" => "true"})
+
+    result["changed"].as_bool.should be_false
+    result["skipped"].as_bool.should be_true
+    File.exists?(marker).should be_false
+  ensure
+    File.delete(marker) if marker && File.exists?(marker)
+    File.delete(path) if path && File.exists?(path)
+  end
+
   it "runs from _raw_params alone (free-form/bare-string form)" do
     path = sc_path("script_raw_params.sh")
     File.write(path, "#!/bin/sh\necho from-raw-params\n")
