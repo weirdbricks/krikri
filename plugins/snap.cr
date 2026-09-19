@@ -94,8 +94,6 @@ module Krikri
         install_snap(snap_bin, name, classic, listing, check_mode, run)
       when "enabled", "disabled"
         toggle_snap(snap_bin, name, state, listing, check_mode, run)
-      else
-        nil
       end
     end
 
