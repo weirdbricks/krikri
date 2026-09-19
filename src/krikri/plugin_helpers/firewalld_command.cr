@@ -1,5 +1,6 @@
 require "json"
 require "xml"
+require "../shell"
 
 module Krikri
   module PluginHelpers
@@ -64,16 +65,16 @@ module Krikri
       # editor (`firewall-offline-cmd`, no daemon needed) - the flags
       # after the binary are identical between the two.
       def self.query_command(zone : String, thing : String, value : String, binary : String = "firewall-offline-cmd") : String
-        "#{binary} --zone=#{zone} --query-#{flag_name(thing)}#{value_suffix(thing, value)}"
+        "#{binary} --zone=#{Shell.quote_if_needed(zone)} --query-#{flag_name(thing)}#{value_suffix(thing, value)}"
       end
 
       def self.add_command(zone : String, thing : String, value : String, binary : String = "firewall-offline-cmd") : String
-        "#{binary} --zone=#{zone} --add-#{flag_name(thing)}#{value_suffix(thing, value)}"
+        "#{binary} --zone=#{Shell.quote_if_needed(zone)} --add-#{flag_name(thing)}#{value_suffix(thing, value)}"
       end
 
       def self.remove_command(zone : String, thing : String, value : String, binary : String = "firewall-offline-cmd") : String
         flag = thing == "service" ? "remove-service-from-zone" : "remove-#{flag_name(thing)}"
-        "#{binary} --zone=#{zone} --#{flag}#{value_suffix(thing, value)}"
+        "#{binary} --zone=#{Shell.quote_if_needed(zone)} --#{flag}#{value_suffix(thing, value)}"
       end
 
       # Single-quoted (not double-quoted) since a rich_rule value
@@ -81,8 +82,12 @@ module Krikri
       # (`rule family="ipv4" ...`) - single quotes need no escaping of
       # those. Caught by an actual failure running a real rich_rule
       # against firewall-offline-cmd with the value left unquoted.
+      # Shell.single_quote (not a bare '#{'...'}' wrap) so an embedded
+      # APOSTROPHE is escaped too - a bare wrap let a `'` in the value
+      # terminate the quoting and run arbitrary commands under
+      # /bin/bash -c.
       private def self.value_suffix(thing : String, value : String) : String
-        NO_VALUE_THINGS.includes?(thing) ? "" : "='#{value}'"
+        NO_VALUE_THINGS.includes?(thing) ? "" : "=#{Shell.single_quote(value)}"
       end
 
       # Builds the compound `port=X:proto=Y:toport=Z[:toaddr=W]` value
@@ -113,15 +118,15 @@ module Krikri
       end
 
       def self.forward_port_query_command(zone : String, value : String, binary : String = "firewall-offline-cmd") : String
-        "#{binary} --zone=#{zone} --query-forward-port='#{value}'"
+        "#{binary} --zone=#{Shell.quote_if_needed(zone)} --query-forward-port=#{Shell.single_quote(value)}"
       end
 
       def self.forward_port_add_command(zone : String, value : String, binary : String = "firewall-offline-cmd") : String
-        "#{binary} --zone=#{zone} --add-forward-port='#{value}'"
+        "#{binary} --zone=#{Shell.quote_if_needed(zone)} --add-forward-port=#{Shell.single_quote(value)}"
       end
 
       def self.forward_port_remove_command(zone : String, value : String, binary : String = "firewall-offline-cmd") : String
-        "#{binary} --zone=#{zone} --remove-forward-port='#{value}'"
+        "#{binary} --zone=#{Shell.quote_if_needed(zone)} --remove-forward-port=#{Shell.single_quote(value)}"
       end
 
       # --- ZoneXml: direct zone-config-file (offline) backend ---

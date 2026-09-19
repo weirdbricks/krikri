@@ -473,4 +473,37 @@ describe Krikri::PluginHelpers::IptablesCommand do
       err.should eq("parameters are mutually exclusive: set_dscp_mark|set_dscp_mark_class")
     end
   end
+
+  # Every command string these builders produce is executed through
+  # /bin/bash -c on the target (the plugin's remote_exec), so a task
+  # param carrying a shell metacharacter must arrive at iptables as a
+  # literal argv word, never as shell syntax.
+  describe "shell-injection regression" do
+    it "escapes a rule value containing an apostrophe-breakout payload" do
+      rule = Krikri::PluginHelpers::IptablesCommand.construct_rule({
+        "source" => "10.0.0.1'; touch /tmp/krikri-spec-iptables-pwn; #",
+      })
+      rule.should eq(["-s", "'10.0.0.1'\\''; touch /tmp/krikri-spec-iptables-pwn; #'"])
+    end
+
+    it "escapes a chain name carrying an apostrophe-breakout payload" do
+      payload = "IN'; touch /tmp/krikri-spec-iptables-pwn; '"
+      cmd = Krikri::PluginHelpers::IptablesCommand.push_arguments("iptables", "-A", payload, "filter")
+      cmd.should eq("iptables -t filter -A 'IN'\\''; touch /tmp/krikri-spec-iptables-pwn; '\\'''")
+
+      # Swap the binary for printf so a real bash -c reveals exactly what
+      # argv each token would become - the payload must be ONE word.
+      stdout = IO::Memory.new
+      Process.new("/bin/bash", ["-c", cmd.sub("iptables ", "printf '[%s]' ")], output: stdout).wait
+      stdout.to_s.should eq("[-t][filter][-A][#{payload}]")
+      File.exists?("/tmp/krikri-spec-iptables-pwn").should be_false
+    end
+
+    it "escapes rule_num and wait the same way" do
+      cmd = Krikri::PluginHelpers::IptablesCommand.push_arguments(
+        "iptables", "-I", "INPUT", "filter", rule_num: "1; touch /tmp/x", wait: "5'; touch /tmp/y; #"
+      )
+      cmd.should eq("iptables -t filter -I INPUT '1; touch /tmp/x' -w '5'\\''; touch /tmp/y; #'")
+    end
+  end
 end

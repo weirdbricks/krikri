@@ -14,5 +14,17 @@ module Krikri
     def self.single_quote(str : String) : String
       "'" + str.gsub("'", "'\\''") + "'"
     end
+
+    # Like single_quote, but leaves already-shell-safe tokens (bare words,
+    # IPs/CIDRs, port lists, multi-word values such as iptables'
+    # set_counters "10 20") untouched, so command strings built from
+    # well-formed input stay byte-identical to their unquoted form.
+    # Anything containing a shell metacharacter (including an embedded
+    # apostrophe) is single-quoted with the correct `'\''` escape, so a
+    # task param can never terminate the quoting and append commands.
+    def self.quote_if_needed(str : String) : String
+      return str if str.matches?(/\A[\w@%+=:,.\-\/ \t]*\z/)
+      single_quote(str)
+    end
   end
 end

@@ -255,4 +255,41 @@ describe Krikri::PluginHelpers::FirewalldCommand do
       Krikri::PluginHelpers::FirewalldCommand.zone_set_target(content, "default").should_not contain("target=")
     end
   end
+
+  # The query/add/remove commands are executed through /bin/bash -c (the
+  # plugin's remote_exec), so a task param carrying a shell metacharacter
+  # must arrive at the firewall CLI as a literal argv word, never as
+  # shell syntax.
+  describe "shell-injection regression" do
+    it "escapes a zone carrying an apostrophe-breakout payload" do
+      payload = "pub'; touch /tmp/krikri-spec-fw-pwn; #"
+      cmd = Krikri::PluginHelpers::FirewalldCommand.add_command(payload, "service", "http")
+      cmd.should eq("firewall-offline-cmd --zone='pub'\\''; touch /tmp/krikri-spec-fw-pwn; #' --add-service='http'")
+
+      # Swap the binary for printf so a real bash -c reveals exactly what
+      # argv each token would become - the zone must be ONE word.
+      File.delete("/tmp/krikri-spec-fw-pwn") if File.exists?("/tmp/krikri-spec-fw-pwn")
+      stdout = IO::Memory.new
+      Process.new("/bin/bash", ["-c", cmd.sub("firewall-offline-cmd ", "printf '[%s]' ")], output: stdout).wait
+      stdout.to_s.should eq("[--zone=#{payload}][--add-service=http]")
+      File.exists?("/tmp/krikri-spec-fw-pwn").should be_false
+    end
+
+    it "escapes an embedded apostrophe inside a rich_rule value" do
+      value = %(rule family="ipv4' ; touch /tmp/krikri-spec-fw-pwn; ' accept)
+      cmd = Krikri::PluginHelpers::FirewalldCommand.add_command("public", "rich_rule", value)
+      cmd.should eq(
+        %(firewall-offline-cmd --zone=public --add-rich-rule='rule family="ipv4'\\'' ; touch /tmp/krikri-spec-fw-pwn; '\\'' accept')
+      )
+    end
+
+    it "escapes an apostrophe inside a forward-port value" do
+      cmd = Krikri::PluginHelpers::FirewalldCommand.forward_port_add_command(
+        "public", "port=80:proto=tcp:toport=8080'; touch /tmp/x; #"
+      )
+      cmd.should eq(
+        "firewall-offline-cmd --zone=public --add-forward-port='port=80:proto=tcp:toport=8080'\\''; touch /tmp/x; #'"
+      )
+    end
+  end
 end

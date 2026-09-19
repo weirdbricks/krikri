@@ -39,4 +39,31 @@ describe Krikri::Shell do
       stdout.to_s.should eq(value)
     end
   end
+
+  describe ".quote_if_needed" do
+    it "leaves shell-safe tokens byte-identical (bare words, IPs/CIDRs, port lists, multi-word values)" do
+      Krikri::Shell.quote_if_needed("any").should eq("any")
+      Krikri::Shell.quote_if_needed("192.168.1.0/24").should eq("192.168.1.0/24")
+      Krikri::Shell.quote_if_needed("80,443").should eq("80,443")
+      Krikri::Shell.quote_if_needed("10 20").should eq("10 20")
+      Krikri::Shell.quote_if_needed("ESTABLISHED,RELATED").should eq("ESTABLISHED,RELATED")
+      Krikri::Shell.quote_if_needed("").should eq("")
+    end
+
+    it "single-quotes anything carrying a shell metacharacter, with the apostrophe escaped" do
+      Krikri::Shell.quote_if_needed("x; touch /tmp/pwned; #").should eq("'x; touch /tmp/pwned; #'")
+      Krikri::Shell.quote_if_needed("it's").should eq("'it'\\''s'")
+      Krikri::Shell.quote_if_needed("$(id)").should eq("'$(id)'")
+      Krikri::Shell.quote_if_needed("a\nb").should eq("'a\nb'")
+    end
+
+    it "round-trips a metacharacter-bearing value through bash unchanged" do
+      nasty = "it's a $(id > /tmp/krikri-spec-quote-pwn); `id` | foo;bar"
+      stdout = IO::Memory.new
+      process = Process.new("/bin/bash", ["-c", "printf %s #{Krikri::Shell.quote_if_needed(nasty)}"], output: stdout)
+      process.wait
+      stdout.to_s.should eq(nasty)
+      File.exists?("/tmp/krikri-spec-quote-pwn").should be_false
+    end
+  end
 end

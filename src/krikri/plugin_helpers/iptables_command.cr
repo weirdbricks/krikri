@@ -47,7 +47,7 @@ module Krikri
         if dports = params["destination_ports"]?
           unless dports.empty?
             rule.concat(["-m", "multiport"]) unless rule.includes?("multiport")
-            rule.concat(["--dports", dports])
+            rule.concat(["--dports", quote_if_needed(dports)])
           end
         end
         append_param(rule, params["to_source"]?, "--to-source")
@@ -117,7 +117,7 @@ module Krikri
           # string "--icmp-type --icmpv6-type" followed by the one value -
           # i.e. both flags share the one value, on both binaries'
           # identical rule string.
-          rule.concat(["--icmp-type", "--icmpv6-type", icmp])
+          rule.concat(["--icmp-type", "--icmpv6-type", quote_if_needed(icmp)])
         else
           icmp_flag = (params["ip_version"]? == "ipv6") ? "--icmpv6-type" : "--icmp-type"
           append_param(rule, params["icmp_type"]?, icmp_flag)
@@ -137,10 +137,10 @@ module Krikri
       def self.push_arguments(bin : String, action : String, chain : String?, table : String,
                               rule : Array(String) = [] of String, rule_num : String? = nil,
                               wait : String? = nil, numeric : Bool = false) : String
-        parts = [bin, "-t", table, action]
-        parts << chain if chain
-        parts << rule_num if action == "-I" && rule_num && !rule_num.empty?
-        parts.concat(["-w", wait]) if wait && !wait.empty?
+        parts = [bin, "-t", quote_if_needed(table), action]
+        parts << quote_if_needed(chain) if chain
+        parts << quote_if_needed(rule_num) if action == "-I" && rule_num && !rule_num.empty?
+        parts.concat(["-w", quote_if_needed(wait)]) if wait && !wait.empty?
         parts.concat(rule)
         parts << "--numeric" if numeric
         parts.join(" ")
@@ -220,11 +220,11 @@ module Krikri
 
       private def self.append_ctstate(rule : Array(String), ctstate : String, matches : Array(String)) : Nil
         if matches.includes?("conntrack")
-          rule.concat(["--ctstate", ctstate])
+          rule.concat(["--ctstate", quote_if_needed(ctstate)])
         elsif matches.includes?("state")
-          rule.concat(["--state", ctstate])
+          rule.concat(["--state", quote_if_needed(ctstate)])
         else
-          rule.concat(["-m", "conntrack", "--ctstate", ctstate])
+          rule.concat(["-m", "conntrack", "--ctstate", quote_if_needed(ctstate)])
         end
       end
 
@@ -236,9 +236,9 @@ module Krikri
       private def self.append_param(rule : Array(String), value : String?, flag : String) : Nil
         return unless value
         if value.starts_with?('!')
-          rule.concat(["!", flag, value[1..]])
+          rule.concat(["!", flag, quote_if_needed(value[1..])])
         else
-          rule.concat([flag, value])
+          rule.concat([flag, quote_if_needed(value)])
         end
       end
 
@@ -252,7 +252,7 @@ module Krikri
         flags = parsed["flags"]?
         flags_set = parsed["flags_set"]?
         return unless flags && flags_set
-        rule.concat(["--tcp-flags", csv_join(flags), csv_join(flags_set)])
+        rule.concat(["--tcp-flags", quote_if_needed(csv_join(flags)), quote_if_needed(csv_join(flags_set))])
       end
 
       private def self.csv_join(node : JSON::Any) : String
@@ -283,6 +283,15 @@ module Krikri
       # apostrophe; the shared one uses the correct `'\''` convention).
       def self.shell_single_quote(str : String) : String
         Shell.single_quote(str)
+      end
+
+      # Every rule value here ends up in a /bin/bash -c command string
+      # (the plugin's remote_exec), so a value carrying a shell
+      # metacharacter is quoted - safely, with the shared primitive -
+      # while well-formed values (IPs, ports, "10 20", comma lists)
+      # pass through byte-identical.
+      private def self.quote_if_needed(str : String) : String
+        Shell.quote_if_needed(str)
       end
     end
   end

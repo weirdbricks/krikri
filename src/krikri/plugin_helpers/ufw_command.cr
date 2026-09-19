@@ -1,3 +1,5 @@
+require "../shell"
+
 module Krikri
   module PluginHelpers
     # UfwCommand - pure logic for building the `ufw` command line for a
@@ -42,7 +44,7 @@ module Krikri
         parts << "delete" if truthy?(params["delete"]?)
 
         if insert = params["insert"]?
-          parts << "insert #{insert}" unless truthy?(params["delete"]?)
+          parts << "insert #{Shell.quote_if_needed(insert)}" unless truthy?(params["delete"]?)
         end
 
         parts << params["rule"].to_s
@@ -66,8 +68,8 @@ module Krikri
 
       private def self.append_trailing_clauses(parts : Array(String), params : Hash(String, String)) : Nil
         parts << "proto #{params["proto"]}" if (v = params["proto"]?) && !v.empty?
-        parts << "app '#{params["name"]}'" if (v = params["name"]?) && !v.empty?
-        parts << "comment '#{params["comment"]}'" if (v = params["comment"]?) && !v.empty?
+        parts << "app #{Shell.single_quote(params["name"])}" if (v = params["name"]?) && !v.empty?
+        parts << "comment #{Shell.single_quote(params["comment"])}" if (v = params["comment"]?) && !v.empty?
       end
 
       # from_ip/from_port/to_ip/to_port are four independent appends in
@@ -98,10 +100,10 @@ module Krikri
         # like every other one: real Ansible gates on the value's
         # truthiness, and a role's own `default('')` mapping produces
         # exactly that.
-        parts << "from #{params.has_key?("from_ip") ? params["from_ip"] : "any"}" if !params.has_key?("from_ip") || present?(params, "from_ip")
-        parts << "port #{params["from_port"]}" if present?(params, "from_port")
-        parts << "to #{params.has_key?("to_ip") ? params["to_ip"] : "any"}" if !params.has_key?("to_ip") || present?(params, "to_ip")
-        parts << "port #{params["to_port"]}" if present?(params, "to_port")
+        parts << "from #{Shell.quote_if_needed(params.has_key?("from_ip") ? params["from_ip"] : "any")}" if !params.has_key?("from_ip") || present?(params, "from_ip")
+        parts << "port #{Shell.quote_if_needed(params["from_port"])}" if present?(params, "from_port")
+        parts << "to #{Shell.quote_if_needed(params.has_key?("to_ip") ? params["to_ip"] : "any")}" if !params.has_key?("to_ip") || present?(params, "to_ip")
+        parts << "port #{Shell.quote_if_needed(params["to_port"])}" if present?(params, "to_port")
       end
 
       # Real Ansible builds its command as a list of [value, template]
@@ -120,9 +122,9 @@ module Krikri
       #     interface_in and interface_out emits both clauses there and
       #     only the first here.
       private def self.append_interface(parts : Array(String), params : Hash(String, String)) : Nil
-        parts << "on #{params["interface"]}" if present?(params, "interface")
-        parts << "in on #{params["interface_in"]}" if present?(params, "interface_in")
-        parts << "out on #{params["interface_out"]}" if present?(params, "interface_out")
+        parts << "on #{Shell.quote_if_needed(params["interface"])}" if present?(params, "interface")
+        parts << "in on #{Shell.quote_if_needed(params["interface_in"])}" if present?(params, "interface_in")
+        parts << "out on #{Shell.quote_if_needed(params["interface_out"])}" if present?(params, "interface_out")
       end
 
       private def self.present?(params : Hash(String, String), key : String) : Bool

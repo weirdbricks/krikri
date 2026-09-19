@@ -67,6 +67,46 @@ describe Krikri::PluginHelpers::UfwCommand do
     end
   end
 
+  # rule_command output is executed through /bin/bash -c (the plugin's
+  # remote_exec), so a task param carrying a shell metacharacter must
+  # arrive at ufw as a literal argv word, never as shell syntax.
+  describe "shell-injection regression" do
+    it "escapes from_ip carrying an apostrophe-breakout payload" do
+      payload = "1.2.3.4'; touch /tmp/krikri-spec-ufw-pwn; #"
+      cmd = Krikri::PluginHelpers::UfwCommand.rule_command({"rule" => "allow", "from_ip" => payload})
+      cmd.should eq("ufw allow from '1.2.3.4'\\''; touch /tmp/krikri-spec-ufw-pwn; #' to any")
+
+      # Swap the binary for printf so a real bash -c reveals exactly what
+      # argv each token would become - the payload must be ONE word.
+      File.delete("/tmp/krikri-spec-ufw-pwn") if File.exists?("/tmp/krikri-spec-ufw-pwn")
+      stdout = IO::Memory.new
+      Process.new("/bin/bash", ["-c", cmd.sub("ufw ", "printf '[%s]' ")], output: stdout).wait
+      stdout.to_s.should eq("[allow][from][#{payload}][to][any]")
+      File.exists?("/tmp/krikri-spec-ufw-pwn").should be_false
+    end
+
+    it "escapes an embedded apostrophe in name/comment instead of letting it break the quoting" do
+      cmd = Krikri::PluginHelpers::UfwCommand.rule_command(
+        {"rule" => "allow", "name" => "my'app", "comment" => "it's'; touch /tmp/krikri-spec-ufw-pwn; #"}
+      )
+      cmd.should eq("ufw allow from any to any app 'my'\\''app' comment 'it'\\''s'\\''; touch /tmp/krikri-spec-ufw-pwn; #'")
+    end
+
+    it "escapes interface, ports, and to_ip carrying shell metacharacters" do
+      cmd = Krikri::PluginHelpers::UfwCommand.rule_command({
+        "rule"      => "allow",
+        "interface" => "eth0; touch /tmp/krikri-spec-ufw-pwn",
+        "from_port" => "$(reboot)",
+        "to_ip"     => "10.0.0.1' & reboot",
+        "to_port"   => "22",
+      })
+      cmd.should eq(
+        "ufw allow on 'eth0; touch /tmp/krikri-spec-ufw-pwn' from any " \
+        "port '$(reboot)' to '10.0.0.1'\\'' & reboot' port 22"
+      )
+    end
+  end
+
   describe ".changed_from_output?" do
     it "is false when the output contains 'Skipping' (ufw's own no-op signal)" do
       Krikri::PluginHelpers::UfwCommand.changed_from_output?("Skipping adding existing rule").should be_false
