@@ -95,13 +95,13 @@ module Krikri
 
       if raw = @params["valid_at"]?
         if parsed = (JSON.parse(raw).as_h? rescue nil)
-          parsed.each do |key, value|
-            unless value.as_s?
-              return failure("The value for valid_at.#{key} must be of type string (got #{value.class.to_s.split("::").last})")
+          parsed.each do |key, entry|
+            unless entry.as_s?
+              return failure("The value for valid_at.#{key} must be of type string (got #{entry.class.to_s.split("::").last})")
             end
           end
-          parsed.each do |key, value|
-            spec = value.as_s?
+          parsed.each do |key, entry|
+            spec = entry.as_s?
             if spec && !crypto_time_spec_valid?(spec)
               return failure("The time spec \"#{spec}\" for valid_at.#{key} is invalid")
             end
