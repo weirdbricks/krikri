@@ -168,7 +168,7 @@ module Krikri
       commands_str = commands.join(", ")
 
       defaults_str = parse_list_param("defaults").map { |default| "Defaults:#{owner} #{default}" }
-                      .join("\n")
+        .join("\n")
       defaults_str += "\n" unless defaults_str.empty?
 
       "#{defaults_str}#{owner} #{host}=#{runas_str}#{noexec_str}#{nopassword_str}#{setenv_str} #{commands_str}\n"
@@ -218,7 +218,6 @@ module Krikri
     private def find_visudo : String?
       ["/usr/sbin/visudo", "/sbin/visudo"].find { |path| File.exists?(path) } || Process.find_executable("visudo")
     end
-
   end
 end
 
