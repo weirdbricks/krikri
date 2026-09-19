@@ -15,9 +15,14 @@ module Krikri
   #   is running) when omitted, matching real Ansible's own documented
   #   behavior ("the default zone can be configured per system but
   #   public is default from upstream") rather than requiring it.
-  # - state: enabled | disabled for every "thing" below except target: -
-  #   present/absent are ONLY valid for target: (a zone-level operation);
-  #   using them with any other thing fails with real Ansible's own
+  # - state: enabled | disabled for every "thing" below. present/absent
+  #   are ONLY valid for zone-level operations - which in real
+  #   ansible.posix.firewalld's own main() means exactly two things: a
+  #   bare zone: with no "thing" param at all (ZoneTransaction - real
+  #   Ansible accepts `zone: myzone state: present permanent: true`
+  #   with nothing else as a zone create/delete; round900593
+  #   Thulium-Drake.firewalld), or target: (ZoneTargetTransaction).
+  #   Using them with any other thing fails with real Ansible's own
   #   "absent and present state can only be used in zone level
   #   operations" message (verified live against a real ansible-playbook
   #   run - this plugin previously accepted present/absent everywhere as
@@ -147,15 +152,20 @@ module Krikri
       # Real Ansible's own validation ("absent and present state can
       # only be used in zone level operations" - verified live against
       # a real `ansible-playbook`/`ansible.posix.firewalld` run):
-      # `present`/`absent` are only valid for `target:` operations
-      # (handled above, already returned). Every other "thing" -
-      # service/port/rich_rule/port_forward/etc - requires
+      # `present`/`absent` are only valid for zone-level operations -
+      # in the real module's main() that means a bare zone: with NO
+      # "thing" param at all (ZoneTransaction: creates/deletes the zone
+      # itself - round900593 Thulium-Drake.firewalld found this engine
+      # rejecting exactly that) or `target:` (handled above). Any other
+      # "thing" - service/port/rich_rule/port_forward/etc - requires
       # `enabled`/`disabled` instead. Found live testing `port_forward:`
       # against real Ansible in a round-34 host round: this plugin
       # previously accepted `present`/`absent` as silent synonyms for
       # every thing, more lenient than real Ansible rather than matching
       # it.
       if state == "present" || state == "absent"
+        thing_present = (PluginHelpers::FirewalldCommand::SUPPORTED_THINGS + ["port_forward"]).any? { |key| @params[key]? }
+        return run_zone_transaction(zone, state) unless thing_present
         return PluginResult.new(changed: false, failed: true, msg: "absent and present state can only be used in zone level operations")
       end
 
@@ -215,6 +225,43 @@ module Krikri
       root = XML.parse(content).root
       return "default" unless root && root.name == "zone"
       root["target"]? || "default"
+    end
+
+    # The bare `zone:` + `state: present/absent` operation - real
+    # Ansible's own ZoneTransaction (permanent-only; every immediate
+    # variant fails with the same tx_not_permanent_error_msg run_target
+    # raises). present creates the zone when missing and is idempotent
+    # (changed=false) when it already exists; absent deletes the /etc
+    # zone file, is a no-op for a missing zone, and fails with real
+    # firewalld's own BUILTIN_ZONE error for a zone that only exists as
+    # a /usr/lib stock zone (firewalld's fw_config.remove_zone refuses
+    # to touch builtin zones - verified against its source). The created
+    # zone file is `<zone>` with no target attribute, matching what
+    # `firewall-cmd --permanent --new-zone=` itself writes (firewalld's
+    # zone_writer omits target when it equals the DEFAULT_ZONE_TARGET
+    # sentinel).
+    private def run_zone_transaction(zone : String, state : String) : PluginResult
+      if @do_runtime
+        return PluginResult.new(changed: false, failed: true, msg: "Zone operations must be permanent. Make sure you didn't set the 'permanent' flag to 'false' or the 'immediate' flag to 'true'.", zone: zone)
+      end
+
+      want_present = state == "present"
+      exists = read_zone_xml(zone) ? true : false
+
+      return PluginResult.new(changed: false, failed: false, msg: "", zone: zone) if exists == want_present
+      return PluginResult.new(changed: true, failed: false, msg: "", zone: zone) if true?(@params["_ansible_check_mode"]?)
+
+      if want_present
+        write_zone_xml(zone, "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<zone>\n</zone>\n")
+      else
+        etc_path = File.join(ETC_ZONE_DIR, "#{zone}.xml")
+        if File.exists?(etc_path)
+          File.delete(etc_path)
+        else
+          return PluginResult.new(changed: false, failed: true, msg: "BUILTIN_ZONE: '#{zone}' is built-in zone", zone: zone)
+        end
+      end
+      PluginResult.new(changed: true, failed: false, msg: "", zone: zone)
     end
 
     # Matches real Ansible's own `ForwardPortTransaction` construction
