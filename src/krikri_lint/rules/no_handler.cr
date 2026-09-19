@@ -39,7 +39,7 @@ module Krikri
       end
 
       private def changed_in_when?(value : String) : Bool
-        return false if value.split(/\s+/).any? { |t| {"and", "or", "not"}.includes?(t) }
+        return false if value.split(/\s+/).any? { |token| {"and", "or", "not"}.includes?(token) }
         CHANGED_MARKERS.any? { |marker| value.includes?(marker) }
       end
     end

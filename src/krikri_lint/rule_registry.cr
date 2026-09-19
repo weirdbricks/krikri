@@ -20,6 +20,8 @@ module Krikri
           YamlLineLengthRule.new,
           VarNamingRule.new,
           NoHandlerRule.new,
+          NoJinjaWhenRule.new,
+          JinjaRule.new,
         ])
       end
 
