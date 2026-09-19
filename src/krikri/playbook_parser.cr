@@ -974,6 +974,25 @@ module Krikri
   class StaticImportMissingFileError < Exception
   end
 
+  # Raised at PARSE time when a task's `register:` value is not a legal
+  # variable-name identifier. Real ansible-playbook validates the RAW
+  # string (it never templates the value - `register: '{{ x }}'` is
+  # rejected as-is, whatever x resolves to) at task-load time and
+  # refuses the whole run: "Invalid 'register' specified: Invalid
+  # variable name '<value>'." plus "Variable names must be strings
+  # starting with a letter or underscore character, and contain only
+  # letters, numbers and underscores." (rc=4, no PLAY RECAP - verified
+  # against ansible-core 2.19.11 with a minimal repro for
+  # '{{sources_register}}', '123bad', 'foo bar' and ''). webbylab.
+  # sources' own `register: '{{sources_register}}'` with the empty
+  # default (round 900914) previously sailed through parsing and
+  # failed later with a confusing runtime error. Bypasses parse_tasks's
+  # generic per-task rescue (same mechanism as StaticImportUndefinedError)
+  # so it propagates to the top-level parse-error handler like real
+  # Ansible's own hard stop.
+  class InvalidRegisterError < Exception
+  end
+
   # Raised at RUN time - from `TaskExecutor#notify_handlers`, at the
   # moment a task actually notifies - when the notified name matches no
   # handler's name and no handler's `listen:` topic. Real Ansible aborts
@@ -1712,6 +1731,35 @@ module Krikri
         "This often indicates a misspelling, missing collection, or incorrect module path.")
     end
 
+    # Real Ansible validates `register:`'s value as a variable-name
+    # identifier at task-load time and refuses the whole run for anything
+    # else - see InvalidRegisterError's own comment. The value is checked
+    # RAW: real Ansible never templates a register: value, so
+    # `register: '{{ var }}'` is rejected whatever var resolves to
+    # (webbylab.sources, round 900914).
+    def self.validate_register_name(value : String) : Nil
+      return if register_identifier?(value)
+
+      raise InvalidRegisterError.new(
+        "Invalid 'register' specified: Invalid variable name '#{value}'. " \
+        "Variable names must be strings starting with a letter or underscore character, " \
+        "and contain only letters, numbers and underscores.")
+    end
+
+    # Python's str.isidentifier semantics, which is what real Ansible's
+    # own check (validate_variable_names) ultimately rests on: first
+    # character a letter or underscore, the rest letters, digits or
+    # underscores.
+    private def self.register_identifier?(value : String) : Bool
+      return false if value.empty?
+
+      value.chars.each_with_index do |char, index|
+        return false unless char.letter? || char == '_' || (index > 0 && char.number?)
+      end
+
+      true
+    end
+
     # Deliberately no "krikri hasn't implemented this" sibling anymore:
     # 0.9.903 added one (an unconditional parse-time hard-stop for every
     # name resolving to nothing krikri ships) and 0.9.1050 reversed it -
@@ -1782,6 +1830,10 @@ module Krikri
             # Same bypass - a missing import target is fatal the way real
             # Ansible is, not a soft warning. See that class's own comment.
             raise ex
+          rescue ex : InvalidRegisterError
+            # Same bypass - real Ansible refuses the whole run for an
+            # invalid register: at load time. See that class's own comment.
+            raise ex
           rescue ex : RoleNotFoundError
             raise ex
           rescue ex
@@ -1821,6 +1873,10 @@ module Krikri
           raise ex
         rescue ex : StaticImportMissingFileError
           # Same bypass, same reason - see that class's own comment.
+          raise ex
+        rescue ex : InvalidRegisterError
+          # Same bypass - real Ansible refuses the whole run for an
+          # invalid register: at load time. See that class's own comment.
           raise ex
         rescue ex : RoleNotFoundError
           # Same bypass, same reason - see RoleNotFoundError's own
@@ -2168,6 +2224,10 @@ module Krikri
           raise ex
         rescue ex : StaticImportMissingFileError
           # Same bypass - see that class's own comment.
+          raise ex
+        rescue ex : InvalidRegisterError
+          # Same bypass - real Ansible refuses the whole run for an
+          # invalid register: at load time. See that class's own comment.
           raise ex
         rescue ex : RoleNotFoundError
           # Same bypass, same reason - see RoleNotFoundError's own
@@ -2867,7 +2927,11 @@ module Krikri
 
       # Parse task-level settings - FIXED to handle boolean values safely
       parse_common_task_attributes(task, task_hash)
-      task.register = task_hash["register"]?.try { |v| safe_yaml_to_string(v) }
+      task.register = task_hash["register"]?.try do |v|
+        register_value = safe_yaml_to_string(v)
+        validate_register_name(register_value)
+        register_value
+      end
       task.check_mode = parse_optional_bool_or_template(task_hash["check_mode"]?)
       task.check_mode_expr = template_expression(task_hash["check_mode"]?)
       task.diff_mode = parse_optional_bool_or_template(task_hash["diff"]?)
@@ -3281,7 +3345,11 @@ module Krikri
       # idiom) silently dropped the register entirely - task.register
       # stayed nil, so vars_result was never bound and any later
       # reference raised "'vars_result.results' is undefined".
-      task.register = task_hash["register"]?.try { |v| safe_yaml_to_string(v) }
+      task.register = task_hash["register"]?.try do |v|
+        register_value = safe_yaml_to_string(v)
+        validate_register_name(register_value)
+        register_value
+      end
 
       if tags_yaml = task_hash["tags"]?
         task.tags = tags_yaml.as_a?.try(&.map(&.as_s)) || [tags_yaml.as_s]

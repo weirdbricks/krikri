@@ -365,6 +365,49 @@ describe Krikri::PlaybookParser do
       end
     end
 
+    it "raises a fatal InvalidRegisterError (aborts the whole playbook) when register: is not a legal identifier" do
+      # webbylab.sources (round 900914), reduced to a minimal case and
+      # verified directly against real ansible-playbook (ansible-core
+      # 2.19.11): the role's `register: '{{sources_register}}'` (default
+      # sources_register: "") - real Ansible validates the RAW register:
+      # value as a variable-name identifier at task-load time (it never
+      # templates the value) and refuses the WHOLE RUN: "Invalid
+      # 'register' specified: Invalid variable name '{{sources_register}}'."
+      # (rc=4, no PLAY RECAP; '123bad', 'foo bar' and '' fail identically).
+      # This engine previously accepted it at parse time and failed later
+      # with a confusing runtime error instead.
+      ["{{sources_register}}", "123bad", "foo bar", ""].each do |bad|
+        expect_raises(Krikri::InvalidRegisterError,
+          "Invalid 'register' specified: Invalid variable name '#{bad}'. " \
+          "Variable names must be strings starting with a letter or underscore character, " \
+          "and contain only letters, numbers and underscores.") do
+          Krikri::PlaybookParser.parse_string(<<-YAML
+            - hosts: all
+              tasks:
+                - name: bad register
+                  ansible.builtin.debug:
+                    msg: hi
+                  register: '#{bad}'
+            YAML
+          )
+        end
+      end
+    end
+
+    it "still accepts a legal register: identifier, including underscores and digits after the first character" do
+      playbook = Krikri::PlaybookParser.parse_string(<<-YAML
+        - hosts: all
+          tasks:
+            - name: good register
+              ansible.builtin.debug:
+                msg: hi
+              register: result_2
+        YAML
+      )
+
+      playbook.plays[0].tasks[0].register.should eq("result_2")
+    end
+
     it "aborts the whole playbook parse for a removed ansible.builtin.include: task, not just skips it" do
       # Real bug found benchmarking robertdebock.awx (round 162): real
       # ansible-core removed the `include:` action entirely after
@@ -545,9 +588,9 @@ describe Krikri::PlaybookParser do
       # unavailable-module path and failed at RUN time with a misleading
       # "docker: No such file or directory" instead.
       removal_message = "The 'community.docker.docker_compose' module has been removed. " \
-                         "This module uses docker-compose v1, which is End of Life since July 2022. " \
-                         "Please migrate to community.docker.docker_compose_v2. " \
-                         "This feature was removed from collection 'community.docker' version 4.0.0."
+                        "This module uses docker-compose v1, which is End of Life since July 2022. " \
+                        "Please migrate to community.docker.docker_compose_v2. " \
+                        "This feature was removed from collection 'community.docker' version 4.0.0."
 
       ["docker_compose", "community.general.docker_compose", "community.docker.docker_compose"].each do |name|
         expect_raises(Krikri::UnresolvedModuleError, removal_message) do
