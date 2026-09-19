@@ -3982,7 +3982,10 @@ module Krikri
           params[key] = stringify_json_scalar(value)
         end
       elsif RAW_COMMAND_MODULES.includes?(module_name)
-        cmd, special = extract_command_special_params(raw_args)
+        # Ad-hoc `-a` strings go through the same mod_args → parse_kv →
+        # split_args path as playbook task free-form strings in real
+        # Ansible, so the line-continuation strip applies here too.
+        cmd, special = extract_command_special_params(strip_line_continuation_tokens(raw_args))
         params["cmd"] = cmd
         special.each { |key, value| params[key] = value }
       else
@@ -4206,7 +4209,11 @@ module Krikri
           # own unrelated "=" text (`VAR=1 somecommand`, the general
           # case this class's own free-form key=value parsing
           # deliberately avoids for command:/shell:) is left untouched.
-          cmd, special = extract_command_special_params(yaml.as_s)
+          # The line-continuation strip runs BEFORE the trailing-special
+          # extraction - real Ansible's split_args also runs before
+          # parse_kv's own key=value scan, so `foo \ creates=/x` extracts
+          # `creates` from the post-strip text, same as here.
+          cmd, special = extract_command_special_params(strip_line_continuation_tokens(yaml.as_s))
           params["cmd"] = cmd
           special.each { |key, value| params[key] = value }
         else
@@ -4279,7 +4286,12 @@ module Krikri
     private def self.parse_inline_kv_params(s : String) : {Hash(String, String), String?}
       params = Hash(String, String).new
       raw_tokens = [] of String
-      split_shell_like(s).each do |token, _end_offset|
+      # Real Ansible's parse_kv runs split_args on EVERY module's
+      # free-form string, not just command:/shell: - the standalone-`\`
+      # line-continuation drop (see strip_line_continuation_tokens) is
+      # part of that shared tokenization, so non-command modules get the
+      # same treatment on their k=v / _raw_params split.
+      split_shell_like(strip_line_continuation_tokens(s)).each do |token, _end_offset|
         key, sep, value = token.partition('=')
         if sep.empty? || key.empty?
           raw_tokens << token
@@ -4447,6 +4459,184 @@ module Krikri
               raw
             end
       {cmd, special}
+    end
+
+    # Strips standalone line-continuation backslashes from a free-form
+    # command:/shell: task string, exactly the way real Ansible's own
+    # controller does at task-parse time: the free-form string goes
+    # through parse_kv → split_args (ansible/parsing/splitter.py) BEFORE
+    # any Jinja templating, and split_args silently DROPS every
+    # whitespace-delimited token that is exactly `\` (outside quotes),
+    # also suppressing the newline it would otherwise rejoin at the end
+    # of such a line. This is why the common role idiom of a folded YAML
+    # scalar with trailing backslash continuations works at all under
+    # real Ansible:
+    #
+    #   shell: >
+    #     set -o errexit; \
+    #     set -o pipefail; \
+    #     cfssl gencert ...
+    #
+    # PyYAML folds that to "...errexit; \ set -o pipefail..." - backslash,
+    # folded space and all - which bash itself REJECTS: the `\ ` starts a
+    # command word " set" (escaped leading space) that is no builtin, so
+    # bash dies with exit 127 and "line 1:  set: command not found" (the
+    # doubled space in the message is the word's own leading space). Real
+    # Ansible never hands bash that string - split_args has already
+    # removed every standalone backslash, so bash receives
+    # "set -o errexit; set -o pipefail; cfssl gencert ..." and runs it.
+    # Found live via githubixx.kubernetes_ca's "Generate the etcd
+    # certificate authority (CA) and private key" task (round900207):
+    # this engine passed the folded text through verbatim and the task
+    # died with exactly that bash 127, while a minimal local repro
+    # (identical folded shape, `executable: /bin/bash`) succeeds under
+    # real ansible-playbook with the backslash-free command above.
+    #
+    # The transformation here is a faithful port of split_args' per-line
+    # token walk (dropped lone-`\` tokens, the quote state that suppresses
+    # the drop inside quotes, the {{ }}/{% %}/{# #} depth tracking, the
+    # empty-token run that preserves internal space runs, and the
+    # newline-restoration suppression for lines containing a lone `\`),
+    # followed by join_args' reassembly - for any string without a
+    # standalone `\` token that round-trip is byte-for-byte lossless
+    # (verified against real split_args on the round900207 repro shape,
+    # including its preserved double space and trailing newline), so the
+    # early `includes?('\\')` bail-out below keeps every existing
+    # command:/shell: string untouched. A backslash glued to other
+    # characters (`\;`, `path\to`) or inside quotes is NOT a standalone
+    # token and survives, same as real split_args. Only the free-form
+    # string form gets this treatment - a `cmd:`/`_raw_params` dict key
+    # or post-render variable content never goes through real Ansible's
+    # split_args, so callers apply this to parse-time raw text only.
+    def self.strip_line_continuation_tokens(raw : String) : String
+      return raw unless raw.includes?('\\')
+
+      params = [] of String
+      items = raw.split('\n')
+      quote_char : Char? = nil
+      inside_quotes = false
+      print_depth = 0
+      block_depth = 0
+      comment_depth = 0
+
+      items.each_with_index do |item, itemidx|
+        tokens = item.split(' ')
+        line_continuation = false
+
+        tokens.each_with_index do |token, idx|
+          if token.empty? && idx != 0
+            # Consecutive spaces become empty tokens; real split_args
+            # holds onto them so join_args can rebuild the original
+            # spacing instead of collapsing runs to single spaces.
+            params << "" if params.empty?
+            params[-1] += " "
+            next
+          end
+
+          if token == "\\" && !inside_quotes
+            line_continuation = true
+            next
+          end
+
+          was_inside_quotes = inside_quotes
+          quote_char = toggle_quote_state(token, quote_char)
+          inside_quotes = !quote_char.nil?
+          appended = false
+
+          if inside_quotes && !was_inside_quotes && print_depth == 0 && block_depth == 0 && comment_depth == 0
+            params << token
+            appended = true
+          elsif print_depth != 0 || block_depth != 0 || comment_depth != 0 || inside_quotes || was_inside_quotes
+            params << "" if params.empty?
+            if idx == 0 && was_inside_quotes
+              params[-1] = params[-1] + token
+            else
+              params[-1] = params[-1] + (idx > 0 ? " " : "") + token
+            end
+            appended = true
+          end
+
+          prev_print_depth = print_depth
+          print_depth = count_jinja2_blocks(token, print_depth, "{{", "}}")
+          if print_depth != prev_print_depth && !appended
+            params << token
+            appended = true
+          end
+
+          prev_block_depth = block_depth
+          block_depth = count_jinja2_blocks(token, block_depth, "{%", "%}")
+          if block_depth != prev_block_depth && !appended
+            params << token
+            appended = true
+          end
+
+          prev_comment_depth = comment_depth
+          comment_depth = count_jinja2_blocks(token, comment_depth, "{#", "#}")
+          if comment_depth != prev_comment_depth && !appended
+            params << token
+            appended = true
+          end
+
+          if print_depth == 0 && block_depth == 0 && comment_depth == 0 && !inside_quotes && !appended && !token.empty?
+            params << token
+          end
+        end
+
+        if items.size > 1 && itemidx != items.size - 1 && !line_continuation
+          params << "" if params.empty?
+          params[-1] += "\n"
+        end
+      end
+
+      # join_args: entries rejoin with single spaces, except after an
+      # entry that itself ends with a restored newline (real newlines
+      # between statements survive verbatim).
+      result = ""
+      params.each do |entry|
+        if result.empty? || result.ends_with?('\n')
+          result += entry
+        else
+          result += " " + entry
+        end
+      end
+      result
+    end
+
+    private def self.toggle_quote_state(token : String, quote_char : Char?) : Char?
+      prev_char : Char? = nil
+      state = quote_char
+      token.each_char_with_index do |cur_char, idx|
+        prev_char = idx > 0 ? token[idx - 1] : nil
+        if (cur_char == '"' || cur_char == '\'') && prev_char != '\\'
+          if state
+            state = nil if cur_char == state
+          else
+            state = cur_char
+          end
+        end
+      end
+      state
+    end
+
+    private def self.count_jinja2_blocks(token : String, cur_depth : Int32, open_token : String, close_token : String) : Int32
+      depth = cur_depth
+      num_open = count_non_overlapping(token, open_token)
+      num_close = count_non_overlapping(token, close_token)
+      if num_open != num_close
+        depth += num_open - num_close
+        depth = 0 if depth < 0
+      end
+      depth
+    end
+
+    private def self.count_non_overlapping(token : String, needle : String) : Int32
+      count = 0
+      idx = 0
+      while (pos = token.index(needle, idx))
+        count += 1
+        idx = pos + needle.size
+      end
+      count
     end
 
     # Helper: Safely convert any YAML value to string
