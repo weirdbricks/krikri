@@ -13,8 +13,14 @@ module Krikri::Lint
     targets = [] of String
     parseable = false
     nocolor = false
+    force_color = false
     list_rules = false
+    list_profiles = false
+    list_tags = false
     show_version = false
+    format = "brief"
+    quiet = false
+    verbose = 0
 
     OptionParser.parse(argv) do |parser|
       parser.banner = "Usage: krikri-lint [options] TARGET [TARGET ...]"
@@ -22,7 +28,23 @@ module Krikri::Lint
         parseable = true
       end
       parser.on("--nocolor", "Disable colored output") { nocolor = true }
-      parser.on("--list-rules", "List all rules and exit") { list_rules = true }
+      parser.on("-L", "--list-rules", "List all rules and exit") { list_rules = true }
+      parser.on("-P", "--list-profiles", "List profiles and exit") { list_profiles = true }
+      parser.on("-T", "--list-tags", "List tags and the rules they cover, and exit") do
+        list_tags = true
+      end
+      parser.on("-f", "--format FORMAT", "Output format: brief, pep8, quiet, json") do |value|
+        format = value
+      end
+      parser.on("--force-color", "Force colored output even when not a tty") do
+        force_color = true
+      end
+      parser.on("-q", "--quiet", "Only report violations, no summary lines") do
+        quiet = true
+      end
+      parser.on("-v", "--verbose", "Increase verbosity (repeatable)") do
+        verbose += 1
+      end
       parser.on("--version", "Show version and exit") do
         show_version = true
       end
@@ -55,6 +77,24 @@ module Krikri::Lint
       exit 0
     end
 
+    if list_profiles
+      Profile.list.each { |profile| puts profile }
+      exit 0
+    end
+
+    if list_tags
+      puts "# List of tags and rules they cover"
+      tag_rules = Hash(String, Array(String)).new { |h, k| h[k] = [] of String }
+      registry.rules.each do |rule|
+        rule.tags.each { |tag| tag_rules[tag] << rule.id }
+      end
+      tag_rules.each do |tag, ids|
+        puts "#{tag}:"
+        ids.each { |id| puts "  - #{id}" }
+      end
+      exit 0
+    end
+
     if targets.empty?
       STDERR.puts "krikri-lint: no targets given"
       STDERR.puts "Usage: krikri-lint [options] TARGET [TARGET ...]"
@@ -76,17 +116,25 @@ module Krikri::Lint
       exit 0
     end
 
-    use_color = !nocolor && STDOUT.tty?
-    violations.each do |v|
-      if parseable
-        puts "#{v.path}:#{v.line}:#{v.column} #{v.rule_id} #{v.severity.to_s.downcase} #{v.message}"
-      elsif use_color
-        puts "#{v.path}:#{v.line}: #{v.rule_id.colorize(:yellow)}: #{v.message}"
-      else
-        puts "#{v.path}:#{v.line}: #{v.rule_id}: #{v.message}"
+    use_color = !nocolor && (force_color || STDOUT.tty?)
+
+    case
+    when format == "json"
+      puts Violation.toJson(violations)
+    else
+      violations.each do |v|
+        if parseable
+          puts "#{v.path}:#{v.line}:#{v.column} #{v.rule_id} #{v.severity.to_s.downcase} #{v.message}"
+        elsif use_color
+          puts "#{v.path}:#{v.line}: #{v.rule_id.colorize(:yellow)}: #{v.message}"
+        else
+          puts "#{v.path}:#{v.line}: #{v.rule_id}: #{v.message}"
+        end
+      end
+      unless parseable || quiet
+        puts "Read documentation for instructions on how to ignore specific rule violations."
       end
     end
-    puts "Read documentation for instructions on how to ignore specific rule violations." unless parseable
     exit 2
   end
 end
