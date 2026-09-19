@@ -11,8 +11,27 @@ module Krikri
       getter module_name : String
       # The module's parameters node (mapping or scalar)
       getter action_node : YAML::Nodes::Node
+      # The module-name key node; upstream matchtask rules report
+      # violations at this key's line/column.
+      getter action_key_node : YAML::Nodes::Node
 
-      def initialize(@node, @file, @module_name, @action_node)
+      def initialize(@node, @file, @module_name, @action_node, @action_key_node)
+      end
+
+      def action_line : Int32
+        NodeUtil.line(@action_key_node)
+      end
+
+      def action_column : Int32
+        NodeUtil.column(@action_key_node)
+      end
+
+      # The `name:` value node, for rules that point at the name text
+      # (upstream's name[casing]/name[template] do).
+      def name_node : YAML::Nodes::Node?
+        if (entry = NodeUtil.entry(@node, "name"))
+          entry[1]
+        end
       end
 
       def path : String
@@ -205,11 +224,11 @@ module Krikri
           next unless action_entry.nil?
           if (key = k.as?(YAML::Nodes::Scalar)) && key.value &&
              !modifier?(key.value)
-            action_entry = {key.value, v}
+            action_entry = {key.value, v, k}
           end
         end
         return nil unless entry = action_entry
-        LintTask.new(node, file, entry[0], entry[1])
+        LintTask.new(node, file, entry[0], entry[1], entry[2])
       end
     end
   end

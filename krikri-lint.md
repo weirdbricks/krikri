@@ -17,6 +17,33 @@ parity), and `yaml[document-start]` is disabled in ansible-lint's
 bundled .yamllint, so it is deliberately not implemented. Phase 2+
 (meta/schema rules, noqa, config, profiles) is not implemented yet.
 
+### Parity harness (testing/lint/parity.py)
+
+Runs real ansible-lint and krikri-lint with `-p` output over the same
+targets and diffs (path, line, column, rule-id) triples, separating
+real divergences from unimplemented-rule gaps. Parity target is the
+installed `ansible-lint 25.6.1+really25.2.1`; rule logic pinned to
+what that version does (it differs from upstream main in at least one
+place: no-changed-when still fires on async+poll:0 tasks there).
+
+Current status on the `testing/` corpus: 2270 triples matched,
+0 upstream-only, and 6 krikri-only, all explained:
+- `htpasswd_edge_cases.yml` syntax-check: Crystal's YAML (libyaml)
+  rejects `command: awk -F: '...'` (`: ` inside a plain scalar) while
+  upstream's ruamel/YAML-1.2 accepts it - parser-strictness gap, not
+  a rule bug.
+- `py_module_edge_cases.yml` name[missing] x5: upstream aborts a
+  file's analysis after its `syntax-check[unknown-module]` failure
+  (the fixture intentionally uses nonexistent modules); we don't
+  implement that rule yet, so we keep analyzing.
+
+Position conventions learned from the harness (matchtask rules report
+at the task line with no column; only fqcn points at the module key;
+name[casing]/name[template] point at the name value; name[missing]
+has no column). Upstream also classifies files under roles/<name>/
+only in tasks/handlers/defaults/vars/meta, and resolves deprecated
+redirects like yum → ansible.builtin.dnf, both mirrored here.
+
 ## What this is
 
 `krikri-lint` would be a from-scratch reimplementation of `ansible-lint`

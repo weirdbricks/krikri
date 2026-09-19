@@ -57,7 +57,7 @@ module Krikri::Lint
           listen: restart nginx
         YAML
       v.size.should eq(1)
-      v.first.line.should eq(2)
+      v.first.line.should eq(3)
     end
   end
 end

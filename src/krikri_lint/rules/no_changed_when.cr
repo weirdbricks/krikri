@@ -27,11 +27,9 @@ module Krikri
           next unless COMMAND_MODULES.includes?(task.bare_module)
           next if task.has_task_key?("changed_when")
           next if task.has_param?("creates") || task.has_param?("removes")
-          if task.has_task_key?("async") && task.task_value("poll") == "0"
-            next
-          end
+          # Upstream reports this rule at the task line with no column.
           violations << Violation.new(
-            file.path, task.line, NodeUtil.column(task.node), id, severity,
+            file.path, task.line, 0, id, severity,
             "Commands should not change things if nothing needs doing."
           )
         end

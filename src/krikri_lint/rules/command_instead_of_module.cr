@@ -67,7 +67,7 @@ module Krikri
           end
           next unless replacement = MODULES[executable]?
           violations << Violation.new(
-            file.path, task.line, NodeUtil.column(task.node), id, severity,
+            file.path, task.line, 0, id, severity,
             "#{executable} used in place of #{replacement} module"
           )
         end

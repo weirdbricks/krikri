@@ -47,24 +47,15 @@ module Krikri::Lint
       v.should be_empty
     end
 
-    it "allows async fire-and-forget (poll 0)" do
+    # The installed parity target (ansible-lint 25.2.1) flags these even
+    # with async+poll:0; upstream main added an exemption later.
+    it "flags async fire-and-forget too (installed-version parity)" do
       v = lint_yaml(rule, <<-YAML)
         ---
         - name: Background thing
           command: /usr/bin/long-thing
           async: 300
           poll: 0
-        YAML
-      v.should be_empty
-    end
-
-    it "flags async with polling still on" do
-      v = lint_yaml(rule, <<-YAML)
-        ---
-        - name: Background thing polled
-          command: /usr/bin/long-thing
-          async: 300
-          poll: 10
         YAML
       v.size.should eq(1)
     end

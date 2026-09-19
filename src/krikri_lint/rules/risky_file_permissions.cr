@@ -91,7 +91,7 @@ module Krikri
 
       private def violation_for(task : LintTask, file : PositionedFile) : Violation
         Violation.new(
-          file.path, task.line, NodeUtil.column(task.node), id, severity,
+          file.path, task.line, 0, id, severity,
           "Missing or unsupported mode parameter can cause unexpected file permissions based on version of Ansible being used. Be explicit, like `mode: 0644` to avoid hitting this rule. Special `preserve` value is accepted only by `copy`, `template` modules."
         )
       end

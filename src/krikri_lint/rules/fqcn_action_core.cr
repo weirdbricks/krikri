@@ -20,14 +20,22 @@ module Krikri
         FileType.values
       end
 
+      # Ansible's plugin loader redirects deprecated modules; upstream
+      # resolves via resolved_fqcn at runtime.
+      REDIRECTS = {
+        "yum"                 => "ansible.builtin.dnf",
+        "ansible.builtin.yum" => "ansible.builtin.dnf",
+      }
+
       def check(file : PositionedFile, violations : Array(Violation)) : Nil
         TaskWalker.each_task(file) do |task|
           module_name = task.module_name
-          next if module_name.starts_with?("ansible.builtin.") ||
-                  module_name.starts_with?("ansible.legacy.")
-          next if MODERNIZATION.builtin_alias(module_name).nil?
+          resolved = REDIRECTS[module_name]? ||
+                     MODERNIZATION.builtin_alias(module_name) || next
+          legacy_module = resolved.sub("ansible.builtin.", "ansible.legacy.")
+          next if module_name == resolved || module_name == legacy_module
           violations << Violation.new(
-            file.path, task.line, NodeUtil.column(task.node), id, severity,
+            file.path, task.action_line, task.action_column, id, severity,
             "Use FQCN for builtin module actions (#{module_name})."
           )
         end

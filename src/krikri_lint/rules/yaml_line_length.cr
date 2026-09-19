@@ -30,7 +30,7 @@ module Krikri
           line = line.chomp
           if line.size > MAX_LENGTH
             violations << Violation.new(
-              file.path, line_number, 1, id, severity,
+              file.path, line_number, 0, id, severity,
               "Line too long (#{line.size} > #{MAX_LENGTH} characters)"
             )
           end

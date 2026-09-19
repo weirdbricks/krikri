@@ -34,7 +34,7 @@ module Krikri
           mode = parse_mode(mode_node) || next
           next unless invalid_permission?(mode)
           violations << Violation.new(
-            file.path, task.line, NodeUtil.column(task.node), id, severity,
+            file.path, task.line, 0, id, severity,
             "`mode: #{mode}` should have a string value with leading zero `mode: \"0#{mode.to_s(8)}\"` or use symbolic mode."
           )
         end
