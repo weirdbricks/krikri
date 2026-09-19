@@ -152,9 +152,9 @@ describe "cronvar plugin" do
     File.delete(path) if File.exists?(path)
 
     result = PluginSpecHelper.run("cronvar", {
-      "name"       => "MAILTO",
-      "value"      => "root",
-      "cron_file"  => path,
+      "name"                => "MAILTO",
+      "value"               => "root",
+      "cron_file"           => path,
       "_ansible_check_mode" => "true",
     })
 
