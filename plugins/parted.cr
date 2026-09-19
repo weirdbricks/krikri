@@ -188,39 +188,15 @@ module Krikri
       existing = number ? current.find { |part| part["number"] == number.to_s } : nil
 
       if existing.nil?
-        return PluginResult.new(changed: true, failed: false,
-          msg: "Partition would be created on #{device}") if check_mode
-
-        mkpart_args = ["unit", unit, "mkpart"]
-        # msdos/dvh/amiga take a primary/extended/logical part type;
-        # GPT-family labels take no part type and the 3rd arg is the
-        # partition NAME (real passes fs_type there). msdos uses
-        # fs_type as the filesystem-type argument after the part type.
-        if ["msdos", "dvh", "amiga"].includes?(label)
-          mkpart_args << "primary" << fs_type
-        else
-          mkpart_args << fs_type
-        end
-        mkpart_args << part_start << part_end
-
-        result = remote_exec("parted -s #{Shell.single_quote(device)} #{mkpart_args.map { |a| Shell.single_quote(a) }.join(' ')}")
-        unless result[:exit_code] == 0
-          return PluginResult.new(changed: false, failed: true,
-            msg: "Error: parted mkpart failed: #{result[:stderr].strip}")
+        if failure = create_partition(device, unit, label, fs_type, part_start, part_end, check_mode, msgs)
+          return failure
         end
         changed = true
-        msgs << "partition created"
       elsif resize_enabled? && (existing["end"] != part_end)
-        return PluginResult.new(changed: true, failed: false,
-          msg: "Partition #{number} on #{device} would be resized") if check_mode
-
-        result = remote_exec("parted -s #{Shell.single_quote(device)} unit #{Shell.single_quote(unit)} resizepart #{number} #{Shell.single_quote(part_end)}")
-        unless result[:exit_code] == 0
-          return PluginResult.new(changed: false, failed: true,
-            msg: "Error: parted resizepart failed: #{result[:stderr].strip}")
+        if failure = resize_partition(device, unit, number, part_end, check_mode, msgs)
+          return failure
         end
         changed = true
-        msgs << "partition resized"
       end
 
       if flags
@@ -235,6 +211,44 @@ module Krikri
 
       PluginResult.new(changed: changed, failed: false,
         msg: msgs.empty? ? "" : "Partitions on #{device}: #{msgs.join(", ")}")
+    end
+
+    private def create_partition(device : String, unit : String, label : String, fs_type : String, part_start : String, part_end : String, check_mode : Bool, msgs : Array(String)) : PluginResult?
+      return PluginResult.new(changed: true, failed: false,
+        msg: "Partition would be created on #{device}") if check_mode
+
+      mkpart_args = ["unit", unit, "mkpart"]
+      # msdos/dvh/amiga take a primary/extended/logical part type;
+      # GPT-family labels take no part type and the 3rd arg is the
+      # partition NAME (real passes fs_type there). msdos uses
+      # fs_type as the filesystem-type argument after the part type.
+      if ["msdos", "dvh", "amiga"].includes?(label)
+        mkpart_args << "primary" << fs_type
+      else
+        mkpart_args << fs_type
+      end
+      mkpart_args << part_start << part_end
+
+      result = remote_exec("parted -s #{Shell.single_quote(device)} #{mkpart_args.map { |a| Shell.single_quote(a) }.join(' ')}")
+      unless result[:exit_code] == 0
+        return PluginResult.new(changed: false, failed: true,
+          msg: "Error: parted mkpart failed: #{result[:stderr].strip}")
+      end
+      msgs << "partition created"
+      nil
+    end
+
+    private def resize_partition(device : String, unit : String, number : Int32?, part_end : String, check_mode : Bool, msgs : Array(String)) : PluginResult?
+      return PluginResult.new(changed: true, failed: false,
+        msg: "Partition #{number} on #{device} would be resized") if check_mode
+
+      result = remote_exec("parted -s #{Shell.single_quote(device)} unit #{Shell.single_quote(unit)} resizepart #{number} #{Shell.single_quote(part_end)}")
+      unless result[:exit_code] == 0
+        return PluginResult.new(changed: false, failed: true,
+          msg: "Error: parted resizepart failed: #{result[:stderr].strip}")
+      end
+      msgs << "partition resized"
+      nil
     end
 
     private def resize_enabled? : Bool
