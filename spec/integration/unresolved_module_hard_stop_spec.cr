@@ -256,4 +256,52 @@ describe "unresolvable module names hard-stop the run (UnresolvedModuleError)" d
   ensure
     FileUtils.rm_rf(root) if root
   end
+
+  it "fails the task fatally when the unimplemented module's own when: raises (undefined var), instead of silently skipping" do
+    # Real Ansible evaluates a non-looped task's `when:` BEFORE it ever
+    # attempts module resolution - so a when: referencing a genuinely
+    # undefined variable is a fatal conditional error (rc=2, failed=1,
+    # "Error while evaluating conditional: '...' is undefined") even
+    # when that same task's module is ALSO unresolvable (verified live
+    # against ansible-core 2.19.11 with junipernetworks.junos.junos_netconf).
+    # Round 900000-900999 (lukapetrovic-git.azure_ad_app,
+    # CyVerse-Ansible.rabbitmq_vhost): the old code short-circuited an
+    # unavailable-module task straight to "skipping" without evaluating
+    # when: at all, turning that real fatal into a silent rc=0 skip.
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: unresolvable module, undefined var in when
+            junipernetworks.junos.junos_netconf:
+            when: some_genuinely_undefined_var == 'x'
+      YAML
+    status.success?.should be_false, output
+    status.exit_code.should eq(2), output
+    output.should contain("Error while evaluating conditional: 'some_genuinely_undefined_var' is undefined"), output
+    output.should contain("failed=1"), output
+    output.should_not contain("skipping: [localhost]"), output
+  end
+
+  it "still cleanly skips an unimplemented module behind a literal `when: false`" do
+    # The inverse guard on the same code path: real Ansible checks when:
+    # FIRST, and a false condition means module resolution is never even
+    # attempted - so unavailable-module + when:-false remains a plain
+    # rc=0 skip (verified live against ansible-core 2.19.11), never a
+    # newly-fatal task and never an unavailable-modules exit 4.
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: unresolvable module, when false
+            junipernetworks.junos.junos_netconf:
+            when: false
+      YAML
+    status.success?.should be_true, output
+    output.should contain("skipping: [localhost]"), output
+    output.should contain("PLAY RECAP"), output
+    output.should_not contain("unavailable modules"), output
+  end
 end
