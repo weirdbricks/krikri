@@ -550,6 +550,31 @@ module Krikri
         entry["ansible_host"] ||= JSON::Any.new(other_host.name)
         result[other_host.name] = JSON::Any.new(entry)
       end
+      # Real ansible-core's InventoryManager ALWAYS synthesizes an implicit
+      # "localhost" pseudo-host when no inventory defines one, and exposes it
+      # via hostvars['localhost'] from ANY play - even one targeting entirely
+      # different machines (verified live against ansible-core 2.19.11: the
+      # implicit entry carries inventory_hostname/inventory_hostname_short,
+      # group_names: [], ansible_host, ansible_connection: local, and no
+      # inventory_file). round900712 gzm55.require_implicity_localhost asserts
+      # exactly that absence from a play targeting a remote host and failed
+      # here with "object of type 'dict' has no attribute 'localhost'" - this
+      # is the hostvars-visibility slice of implicit localhost only, not the
+      # inventory-loader-level gap noted above apply_path_magic_vars (the
+      # loader still defaults to inventory.ini instead of implicit localhost
+      # when -i is omitted). An explicitly inventory-defined localhost keeps
+      # its real entry untouched, matching real Ansible's explicit-over-
+      # implicit precedence, and no facts are gathered for the implicit one -
+      # nothing runs against it unless a task explicitly targets localhost.
+      unless result.has_key?("localhost")
+        implicit = Hash(String, JSON::Any).new
+        implicit["inventory_hostname"] = JSON::Any.new("localhost")
+        implicit["inventory_hostname_short"] = JSON::Any.new("localhost")
+        implicit["group_names"] = JSON::Any.new(Array(JSON::Any).new)
+        implicit["ansible_host"] = JSON::Any.new("localhost")
+        implicit["ansible_connection"] = JSON::Any.new("local")
+        result["localhost"] = JSON::Any.new(implicit)
+      end
       @hostvars_cache = result
       @hostvars_cache_generation = @hv_generation
       result

@@ -1,0 +1,20 @@
+# Explicit-localhost-over-implicit precedence regression: same shape as
+# test-implicit-localhost-hostvars-quick.yml, but the inventory (passed
+# explicitly by the spec) DOES define a real localhost entry with its own
+# inventory var - real Ansible defers to it, so hostvars['localhost'] must
+# carry that real var, not the synthesized implicit entry (verified live
+# against ansible-core 2.19.11 with an identical inventory).
+- name: explicit localhost hostvars smoke test
+  hosts: h1
+  gather_facts: false
+
+  tasks:
+    - name: explicitly-defined localhost keeps its real inventory vars
+      ansible.builtin.assert:
+        that:
+          - "hostvars['localhost'].my_real_var == 'explicit_wins'"
+          - "hostvars['localhost'].ansible_connection == 'local'"
+
+    - name: SUCCESS
+      ansible.builtin.debug:
+        msg: "explicit localhost hostvars smoke test complete!"
