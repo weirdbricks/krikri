@@ -1,3 +1,4 @@
+require "file_utils"
 require "../spec_helper"
 
 # parted/lvg/snap/deploy_helper parameter-validation paths - exercised
@@ -116,5 +117,66 @@ describe "deploy_helper plugin" do
 
     result["failed"]?.should be_nil
     result["releases"].as_a.size.should eq(0)
+  end
+
+  # Real main() attaches result["ansible_facts"] = {"deploy_helper": facts}
+  # for state present/query (round900881
+  # mbaran0v.ansible_role_prometheus_rabbitmq_exporter: its follow-up
+  # "create release directory" task reads deploy_helper.new_release_path,
+  # which was undefined before this published anything).
+  describe "ansible_facts publishing" do
+    it "state=present carries the deploy_helper fact dict matching the created tree" do
+      root = "/tmp/krikri-deploy-facts-present-#{Random.new.hex(4)}"
+      begin
+        result = PluginSpecHelper.run("deploy_helper",
+          {"path" => root, "state" => "present", "release" => "20260919000001"})
+
+        result["failed"]?.should be_nil
+        facts = result["ansible_facts"]["deploy_helper"]
+        facts["project_path"].as_s.should eq(root)
+        facts["releases_path"].as_s.should eq("#{root}/releases")
+        facts["current_path"].as_s.should eq("#{root}/current")
+        facts["shared_path"].as_s.should eq("#{root}/shared")
+        facts["new_release"].as_s.should eq("20260919000001")
+        facts["new_release_path"].as_s.should eq("#{root}/releases/20260919000001")
+        facts["unfinished_filename"].as_s.should eq("DEPLOY_UNFINISHED")
+        facts["previous_release"].raw.should be_nil
+        facts["previous_release_path"].raw.should be_nil
+        Dir.exists?(facts["new_release_path"].as_s).should be_true
+      ensure
+        FileUtils.rm_rf(root)
+      end
+    end
+
+    it "state=query also carries the deploy_helper fact dict" do
+      result = PluginSpecHelper.run("deploy_helper",
+        {"path" => "/tmp/krikri-deploy-facts-query", "state" => "query",
+         "release" => "20260919000002"})
+
+      result["failed"]?.should be_nil
+      facts = result["ansible_facts"]["deploy_helper"]
+      facts["project_path"].as_s.should eq("/tmp/krikri-deploy-facts-query")
+      facts["new_release"].as_s.should eq("20260919000002")
+      facts["new_release_path"].as_s.should eq("/tmp/krikri-deploy-facts-query/releases/20260919000002")
+    end
+
+    it "state=absent destroys the facts as an empty list" do
+      result = PluginSpecHelper.run("deploy_helper",
+        {"path" => "/tmp/krikri-deploy-facts-absent", "state" => "absent"})
+
+      result["failed"]?.should be_nil
+      result["ansible_facts"]["deploy_helper"].as_a.size.should eq(0)
+    end
+
+    it "state=finalize and state=clean publish no ansible_facts" do
+      finalize = PluginSpecHelper.run("deploy_helper",
+        {"path" => "/tmp/krikri-deploy-facts-finalize", "state" => "finalize",
+         "release" => "20260919000003"})
+      clean = PluginSpecHelper.run("deploy_helper",
+        {"path" => "/tmp/krikri-deploy-facts-clean", "state" => "clean"})
+
+      finalize["ansible_facts"]?.should be_nil
+      clean["ansible_facts"]?.should be_nil
+    end
   end
 end
