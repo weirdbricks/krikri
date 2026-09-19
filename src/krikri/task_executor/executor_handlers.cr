@@ -570,7 +570,15 @@ module Krikri
       # fixed for regular tasks. Found while auditing that fix, not yet
       # hit by a real role in this round.
       substituted_params = resolve_role_relative_src(handler, substituted_params)
-      substituted_params = inline_copy_source_content(handler, substituted_params, host, vars_context)
+      copied = inline_copy_source_content(handler, substituted_params, host, vars_context)
+      if copied.is_a?(JSON::Any)
+        result = apply_changed_failed_when(handler, copied, vars_context, host)
+        if register_name = handler.register
+          register_result(host, register_name, result) unless register_name.empty?
+        end
+        return result
+      end
+      substituted_params = copied
       staged = stage_unarchive_remote_src(handler, substituted_params, host, vars_context)
       if staged.is_a?(JSON::Any)
         result = apply_changed_failed_when(handler, staged, vars_context, host)

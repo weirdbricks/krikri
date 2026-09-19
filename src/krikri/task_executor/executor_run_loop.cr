@@ -1378,7 +1378,11 @@ module Krikri
       end
 
       substituted_params = resolve_role_relative_src(task, substituted_params)
-      substituted_params = inline_copy_source_content(task, substituted_params, host, vars_context)
+      copied = inline_copy_source_content(task, substituted_params, host, vars_context)
+      if copied.is_a?(JSON::Any)
+        return apply_changed_failed_when(task, copied, vars_context, host)
+      end
+      substituted_params = copied
       staged = stage_unarchive_remote_src(task, substituted_params, host, vars_context)
       if staged.is_a?(JSON::Any)
         return apply_changed_failed_when(task, staged, vars_context, host)
@@ -1609,7 +1613,11 @@ module Krikri
       end
 
       substituted_params = resolve_role_relative_src(task, substituted_params)
-      substituted_params = inline_copy_source_content(task, substituted_params, exec_host, vars_context)
+      copied = inline_copy_source_content(task, substituted_params, exec_host, vars_context)
+      if copied.is_a?(JSON::Any)
+        return apply_changed_failed_when(task, copied, vars_context, host)
+      end
+      substituted_params = copied
       staged = stage_unarchive_remote_src(task, substituted_params, exec_host, vars_context)
       if staged.is_a?(JSON::Any)
         return apply_changed_failed_when(task, staged, vars_context, host)

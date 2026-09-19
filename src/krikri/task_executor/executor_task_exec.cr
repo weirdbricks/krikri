@@ -684,7 +684,7 @@ module Krikri
     end
 
     # Substitute variables in task parameters
-    private def inline_copy_source_content(task : Task, params : Hash(String, String), host : Host, vars_context : Hash(String, JSON::Any)) : Hash(String, String)
+    private def inline_copy_source_content(task : Task, params : Hash(String, String), host : Host, vars_context : Hash(String, JSON::Any)) : Hash(String, String) | JSON::Any
       return params unless task.module_name == "ansible.builtin.copy"
       return params if ["true", "yes", "1", "on"].includes?(params["remote_src"]?.try(&.downcase))
       return params if PluginManager.local_connection?(host, vars_context)
@@ -692,19 +692,20 @@ module Krikri
       src = params["src"]?
       return params unless src && src.starts_with?('/')
 
-      # `Dir.exists?` raises (not just returns false) when src exists but
-      # isn't readable by this process (a controller-local `copy: {src:
-      # /root/...}` run as a non-root user - found live while
-      # investigating an unrelated unarchive: bug). Real Ansible fails
-      # just that ONE task with a permission error; this crashed the
-      # entire binary. Falling through here lets the size check below
-      # (already rescued) and the module's own src-open attempt produce
-      # the normal per-task failure instead.
+      # Real Ansible's copy action plugin fails the task on the
+      # CONTROLLER before anything runs when src: names a file that
+      # doesn't exist there ("Could not find or access '<src>' on the
+      # Ansible Controller.") - including under --check, which reports
+      # failed=1 on every host. Previously a missing src silently fell
+      # through (the size check below returned params unchanged), the
+      # plugin ran in check mode with nothing to compare, and the task
+      # reported a green ok - a check-mode run that should have
+      # hard-failed came out fully green.
       is_directory = Dir.exists?(src) rescue false
       return stage_directory_copy_source(params, src, host, vars_context) if is_directory
 
       size = File.size(src) rescue nil
-      return params unless size
+      return controller_missing_copy_result(src) unless size
 
       # Real Ansible's `copy:` auto-decrypts a vault-armored src on the
       # CONTROLLER before transfer (decrypt: true is the default;
@@ -785,6 +786,18 @@ module Krikri
       # call site's own comment for the full "Is a directory" story.
       resolved["__original_src_basename"] = File.basename(src)
       resolved
+    end
+
+    # Real Ansible's own failure text for a controller-side src: miss
+    # (copy action plugin) - byte-identical to the unarchive variant
+    # below so divergence triage compares cleanly against a real
+    # ansible-playbook run of the same role.
+    private def controller_missing_copy_result(src : String) : JSON::Any
+      JSON.parse({
+        "changed" => false,
+        "failed"  => true,
+        "msg"     => "Task failed: Could not find or access '#{src}' on the Ansible Controller.\nIf you are using a module and expect the file to exist on the remote, see the remote_src option",
+      }.to_json)
     end
 
     # copy:'s decrypt: param (real Ansible default true): only an
