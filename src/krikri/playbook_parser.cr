@@ -3335,6 +3335,18 @@ module Krikri
 
       parse_common_task_attributes(task, task_hash)
 
+      # changed_when:/failed_when: live outside parse_common_task_
+      # attributes (only the generic #parse_task path sets them), so this
+      # dedicated include_vars: parser used to drop them entirely -
+      # `include_vars: {file: package.json, name: npm}, failed_when:
+      # false` (practical-ansible.nginx_docker/nginx_project, rounds
+      # 900991/900994 - the file belongs to the consumer project, not the
+      # role) kept halting the play where real ansible-playbook's own
+      # failed_when: override applies to include_vars:'s own
+      # file-not-found failure like any other task result.
+      task.changed_when = task_hash["changed_when"]?.try { |v| condition_to_string(v) }
+      task.failed_when = task_hash["failed_when"]?.try { |v| condition_to_string(v) }
+
       # `register:` was never parsed here at all - unlike the generic
       # #parse_task path (which sets task.register for every OTHER
       # module), this dedicated include_vars: parser only calls
