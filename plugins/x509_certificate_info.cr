@@ -93,6 +93,18 @@ module Krikri
         return failure("parameters are mutually exclusive: path|content")
       end
 
+      if error = validate_valid_at
+        return error
+      end
+
+      unsupported = unsupported_param_keys(@params, SPEC)
+      unless unsupported.empty?
+        return unsupported_params_error("community.crypto.x509_certificate_info", unsupported, SPEC)
+      end
+      nil
+    end
+
+    private def validate_valid_at : PluginResult?
       if raw = @params["valid_at"]?
         if parsed = (JSON.parse(raw).as_h? rescue nil)
           parsed.each do |key, entry|
@@ -107,11 +119,6 @@ module Krikri
             end
           end
         end
-      end
-
-      unsupported = unsupported_param_keys(@params, SPEC)
-      unless unsupported.empty?
-        return unsupported_params_error("community.crypto.x509_certificate_info", unsupported, SPEC)
       end
       nil
     end
