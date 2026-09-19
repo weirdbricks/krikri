@@ -65,7 +65,7 @@ module Krikri::Lint
           ansible.builtin.apt:
             name: "{{ package }}"
         YAML
-      v.map(&.rule_id).sort.should eq(["name[casing]", "name[template]"])
+      v.map(&.rule_id).sort!.should eq(["name[casing]", "name[template]"])
     end
 
     it "does not flag non-alpha leading characters" do
