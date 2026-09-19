@@ -835,16 +835,23 @@ module Krikri
     # at parse time only for a literal with_items: array, never for
     # loop:, which has no such behavior).
     private def when_passes?(task : Task, vars_context : Hash(String, JSON::Any), host : Host, item_label : String? = nil, shared : VarSubstitutor? = nil, defer_stats : Bool = false, defer_display : Bool = false) : Bool
-      # An unavailable-module task (see Task#unavailable_module) always
-      # takes the skip path below, regardless of its own when: (or lack
-      # of one) - it can never actually run, so it's treated the same as
-      # a when:-false task rather than reached via real conditional
-      # evaluation. It's still recorded into reachable_unavailable_modules
-      # (for the final exit-code decision, see that getter's own comment)
-      # if its own when: would have let it run - a raised
-      # WhenEvaluationError (an undefined var the when: itself
-      # references) is treated conservatively as "can't tell, don't
-      # count" rather than crashing the run over this bookkeeping.
+      # Real Ansible evaluates a non-looped task's `when:` BEFORE it ever
+      # attempts to resolve the task's module - so a `when:` that itself
+      # raises (an undefined variable, a bad attribute access) is a fatal
+      # conditional error even when that same task's module is ALSO
+      # unimplemented (round 900000-900999: lukapetrovic-git.azure_ad_app,
+      # CyVerse-Ansible.rabbitmq_vhost - real ansible-playbook rc=2
+      # "Error while evaluating conditional: '...' is undefined", krikri
+      # silently skipped). The old code short-circuited an
+      # unavailable-module task straight to the skip below without ever
+      # evaluating its when:, turning that real fatal into a silent skip.
+      # So evaluate strictly here, exactly like the available-module path:
+      # a raise propagates to the call site's existing WhenEvaluationError
+      # rescue and becomes a real failed task; a clean false takes the
+      # normal skip below WITHOUT registering the module (real Ansible
+      # never reaches module resolution for a when:-false task); only a
+      # truthy condition - or no when: at all - counts as genuinely
+      # reached for the end-of-run exit-4 accounting.
       #
       # EXCEPT: an unavailable module with a role-private `library/
       # <name>.py` source CAN run - the arbitrary-Python-module runner
@@ -854,8 +861,10 @@ module Krikri
       # these as ordinary Python; the previous unconditional skip
       # diverged on every role leaning on its own library/, seen
       # repeatedly benchmarking linux-system-roles).
-      if task.unavailable_module && python_module_source_for(task).nil?
-        register_reachable_unavailable_module(task, vars_context, host, shared)
+      if (module_name = task.unavailable_module) && python_module_source_for(task).nil?
+        if task.when_condition.nil? || evaluate_when_items(task, vars_context, host, shared)
+          reachable_unavailable_modules << module_name
+        end
       else
         return true unless task.when_condition
 
