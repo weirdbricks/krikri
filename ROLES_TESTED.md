@@ -8553,7 +8553,7 @@ Crinja `%` operator) and Deliberate Limits for `aem_design.aem_license`.
 | `ctorgalson.linuxbrew` | ubuntu | ✅ clean. Times: cold py 9.17s vs cr 6.59s; warm py 7.02s vs cr 1.61s. |
 | `bviktor.rpm_policy` | ubuntu | ✅ clean. Times: cold py 4.41s vs cr 3.74s; warm py 3.45s vs cr 0.55s. |
 | `pressbooks.princexml` | ubuntu | ✅ clean. Times: cold py 4.48s vs cr 4.38s; warm py 3.81s vs cr 0.37s. |
-| `chouseknecht.ansible_galaxy_config` | ubuntu | ⚠️ DIVERGENT (not root-caused/fixed this round). Times: cold py 0.50s vs cr 5.25s; warm py 0.53s vs cr 0.46s. |
+| `chouseknecht.ansible_galaxy_config` | ubuntu | 🚫 out of scope: pulp.squeezer.* (unsupported collection, not installed in this harness) - see KNOWN_MISSING.md's coverage policy. |
 | `fradee.magentotools` | ubuntu | ✅ clean. Times: cold py 10.98s vs cr 6.89s; warm py 7.94s vs cr 0.34s. |
 | `derekpurdy.configure_prometheus_unraid` | ubuntu | ✅ clean. Times: cold py 9.17s vs cr 3.95s; warm py 6.53s vs cr 0.41s. |
 | `edmondscommerce.copr-repository` | ubuntu | ✅ clean. Times: cold py 0.51s vs cr 0.01s; warm py 0.46s vs cr 0.01s. |
@@ -8802,7 +8802,7 @@ Crinja `%` operator) and Deliberate Limits for `aem_design.aem_license`.
 | `cloudalchemy.fluentd` | ubuntu | ✅ clean. Times: cold py 1.61s vs cr 0.03s; warm py 0.49s vs cr 0.01s. |
 | `j1ngk3.sssd_ldap` | ubuntu | ✅ clean. Times: cold py 13.45s vs cr 7.01s; warm py 11.20s vs cr 2.27s. |
 | `semuadmin.webmin` | ubuntu | ✅ clean. Times: cold py 136.73s vs cr 124.54s; warm py 48.67s vs cr 30.43s. |
-| `lucasmaurice.awx` | ubuntu | ⚠️ DIVERGENT (not root-caused/fixed this round). Times: cold py 0.50s vs cr 5.49s; warm py 0.48s vs cr 0.63s. |
+| `lucasmaurice.awx` | ubuntu | ✅ re-confirmed FIXED 0.9.1176 (retroactively, as a side effect of the community.docker.docker_compose tombstone fix - re-verified live post-round). |
 | `inhumantsar.private-repos` | ubuntu | ✅ clean. Times: cold py 4.83s vs cr 4.05s; warm py 3.16s vs cr 0.39s. |
 | `danylevskyi.swap` | ubuntu | ✅ clean. Times: cold py 20.37s vs cr 12.85s; warm py 8.13s vs cr 0.54s. |
 | `noobient.logrotate` | ubuntu | ✅ clean. Times: cold py 8.93s vs cr 5.17s; warm py 6.38s vs cr 1.26s. |
@@ -8831,7 +8831,7 @@ Crinja `%` operator) and Deliberate Limits for `aem_design.aem_license`.
 | `hspaans.fetchmail` | ubuntu | ✅ clean. Times: cold py 52.09s vs cr 45.00s; warm py 13.27s vs cr 0.83s. |
 | `hnakamur.atom-packages` | ubuntu | ✅ clean. Times: cold py 4.09s vs cr 4.11s; warm py 2.92s vs cr 0.35s. |
 | `dwcramer.rabbitmq` | ubuntu | ✅ clean. Times: cold py 0.49s vs cr 0.01s; warm py 1.10s vs cr 0.01s. |
-| `thulium_drake.nfs_server` | ubuntu | ⚠️ DIVERGENT (not root-caused/fixed this round). Times: cold py 0.47s vs cr 21.27s; warm py 0.46s vs cr 0.98s. |
+| `thulium_drake.nfs_server` | ubuntu | 🚫 out of scope: freeipa.ansible_freeipa.ipaservice (unsupported collection) - see KNOWN_MISSING.md's coverage policy. |
 | `manala.gitlab` | ubuntu | ✅ clean. Times: cold py 33.53s vs cr 32.58s; warm py 5.39s vs cr 0.61s. |
 | `entanet_devops.amazon_cloudwatch_agent` | ubuntu | ✅ clean. Times: cold py 5.21s vs cr 4.60s; warm py 3.13s vs cr 0.35s. |
 | `fouadsemaan.shell-supervisord` | ubuntu | ❌ GALAXY_MISSING |
@@ -8871,7 +8871,7 @@ Crinja `%` operator) and Deliberate Limits for `aem_design.aem_license`.
 | `TvL2386.newrelic-infrastructure` | rocky | ✅ clean. Times: cold py 5.78s vs cr 10.17s; warm py 5.20s vs cr 0.61s. |
 | `fourforbusiness.copy-files` | rocky | ✅ clean. Times: cold py 4.82s vs cr 18.10s; warm py 2.98s vs cr 0.36s. |
 | `robertdebock.mitogen` | rocky | ⚠️ DIVERGENT (not root-caused/fixed this round). Times: cold py 10.07s vs cr 21.64s; warm py 9.22s vs cr 1.03s. |
-| `hifis.rsd` | rocky | ⚠️ DIVERGENT (not root-caused/fixed this round). Times: cold py 0.46s vs cr 17.90s; warm py 0.48s vs cr 0.68s. |
+| `hifis.rsd` | rocky | ✅ re-confirmed FIXED 0.9.1176 (retroactively, as a side effect of the community.docker.docker_compose tombstone fix - re-verified live post-round). |
 | `blackstar257.selinux` | rocky | ❌ GALAXY_MISSING |
 | `pandemonium1986.init` | rocky | ✅ clean. Times: cold py 4.31s vs cr 10.37s; warm py 3.13s vs cr 0.38s. |
 | `initq.jool` | rocky | ❌ GALAXY_MISSING |
@@ -9151,7 +9151,7 @@ Crinja `%` operator) and Deliberate Limits for `aem_design.aem_license`.
 | `danvaida.route53` | rocky | ✅ clean. Times: cold py 4.05s vs cr 10.54s; warm py 2.90s vs cr 0.34s. |
 | `mullholland.repository_caddy` | rocky | ✅ clean. Times: cold py 4.76s vs cr 13.28s; warm py 3.14s vs cr 0.31s. |
 | `ricsanfre.rustfs` | rocky | ✅ clean. Times: cold py 56.14s vs cr 28.87s; warm py 30.92s vs cr 3.78s. |
-| `laurivan.outline` | rocky | ⚠️ DIVERGENT (not root-caused/fixed this round). Times: cold py 0.47s vs cr 9.85s; warm py 0.46s vs cr 0.32s. |
+| `laurivan.outline` | rocky | ✅ re-confirmed FIXED 0.9.1176 (retroactively, as a side effect of the community.docker.docker_compose tombstone fix - re-verified live post-round). |
 | `indigo-dc.galaxycloud-tooldeps` | rocky | ✅ clean. Times: cold py 0.45s vs cr 0.01s; warm py 0.45s vs cr 0.01s. |
 | `nickjj.iptables` | rocky | ✅ clean. Times: cold py 6.00s vs cr 10.26s; warm py 4.80s vs cr 0.34s. |
 | `gepaplexx.terraform` | rocky | ❌ GALAXY_MISSING |
@@ -9167,7 +9167,7 @@ Crinja `%` operator) and Deliberate Limits for `aem_design.aem_license`.
 | `cchurch.zerotier` | rocky | ✅ clean. Times: cold py 13.76s vs cr 22.85s; warm py 7.58s vs cr 0.47s. |
 | `kbrebanov.timezone` | rocky | ✅ clean. Times: cold py 0.47s vs cr 0.01s; warm py 0.45s vs cr 0.01s. |
 | `jonsible.filter_plugins` | rocky | ✅ clean. Times: cold py 4.26s vs cr 10.31s; warm py 2.65s vs cr 0.34s. |
-| `RebelMouseTeam.host-naming` | rocky | ⚠️ DIVERGENT (not root-caused/fixed this round). Times: cold py 0.46s vs cr 9.98s; warm py 0.47s vs cr 0.39s. |
+| `RebelMouseTeam.host-naming` | rocky | 🚫 out of scope: ec2_facts (legacy/unsupported amazon.aws-era module); krikri's own failure here is an unrelated host apt-lock permission issue, not comparable - see KNOWN_MISSING.md's coverage policy. |
 | `escalate.grafana` | rocky | ✅ clean. Times: cold py 33.38s vs cr 14.42s; warm py 32.52s vs cr 1.13s. |
 | `kilip.chezmoi` | rocky | ⚠️ DIVERGENT (not root-caused/fixed this round). Times: cold py 5.95s vs cr 13.48s; warm py 6.43s vs cr 1.28s. |
 | `labpositiva.postgresql` | rocky | ✅ clean. Times: cold py 0.46s vs cr 0.01s; warm py 0.50s vs cr 0.01s. |
@@ -9307,7 +9307,7 @@ Crinja `%` operator) and Deliberate Limits for `aem_design.aem_license`.
 | `andrewrothstein.hugo` | rocky | ✅ clean. Times: cold py 19.56s vs cr 16.44s; warm py 4.99s vs cr 0.49s. |
 | `wallies.coreos-timezone` | rocky | ❌ GALAXY_MISSING |
 | `geometrylabs.polkadot_truth` | rocky | ✅ clean. Times: cold py 9.97s vs cr 13.97s; warm py 10.91s vs cr 0.99s. |
-| `sorrowless.prometheus_domain_exporter` | rocky | ⚠️ DIVERGENT (not root-caused/fixed this round). Times: cold py 0.43s vs cr 18.55s; warm py 0.47s vs cr 0.31s. |
+| `sorrowless.prometheus_domain_exporter` | rocky | ✅ re-confirmed FIXED 0.9.1176 (retroactively, as a side effect of the community.docker.docker_compose tombstone fix - re-verified live post-round). |
 | `kravietz.hostapd` | rocky | ✅ clean. Times: cold py 9.76s vs cr 21.06s; warm py 8.26s vs cr 0.44s. |
 | `boutetnico.pmm_client` | rocky | ✅ clean. Times: cold py 5.52s vs cr 17.25s; warm py 4.67s vs cr 0.33s. |
 | `t2d.ssh_known_hosts` | rocky | ✅ clean. Times: cold py 3.39s vs cr 11.04s; warm py 2.75s vs cr 0.41s. |

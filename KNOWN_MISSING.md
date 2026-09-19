@@ -169,15 +169,35 @@ unsupported community/vendor modules (`f5networks.*`, `ansible.windows.*`,
 `community.rabbitmq.*`, `community.crypto.*`) - reclassified as
 out-of-scope in `ROLES_TESTED.md`, no longer counted as divergences at
 all. 6 are infra/role-side (broken upstream role, mixed-OS role tested
-on one host, or a host-side timeout), not krikri bugs. The remaining
-~40 split into genuine `CORE_BUG` candidates for a future fix round
-(including the still-open `practical-ansible.nginx_docker`/
-`nginx_project` half of the include_vars/`failed_when:` item this round
-never got back to) and a smaller set still `UNCLEAR` pending individual
-repro - among the unclear set, 7 roles share what looks like ONE
-systemic root cause worth its own investigation: real `ansible-playbook`
-crashes at parse time (rc=1 or rc=4) on a syntax real Ansible rejects,
-while krikri's parser is more lenient and runs the playbook anyway.
+on one host, or a host-side timeout), not krikri bugs.
+
+A follow-up hypothesis - that 7 of these shared ONE systemic root cause
+("real `ansible-playbook` crashes at parse time on a syntax krikri is too
+lenient about") - did NOT hold up under individual investigation and is
+recorded here so it isn't re-raised without new evidence: 4 of the 7
+(`lucasmaurice.awx`, `hifis.rsd`, `laurivan.outline`,
+`sorrowless.prometheus_domain_exporter`) all hit the exact
+`community.docker.docker_compose` removal case and are ALREADY FIXED as
+a side effect of this same round's parser fatal-error work (0.9.1176) -
+the round's own evidence was captured against the pre-fix 0.9.1174
+binary; re-verified live post-round against 0.9.1189, all 4 now fail at
+parse time with real Ansible's exact tombstone message, matching real
+Ansible. The other 3 (`chouseknecht.ansible_galaxy_config`,
+`thulium_drake.nfs_server`, `RebelMouseTeam.host-naming`) each trace to
+an unsupported/uninstalled collection module (`pulp.squeezer.*`,
+`freeipa.ansible_freeipa.ipaservice`, a legacy `ec2_facts` from the
+amazon.aws era) and are out of scope under the coverage policy - not a
+parser-leniency bug at all, and `RebelMouseTeam.host-naming`'s own
+krikri-side failure is an unrelated host apt-lock permission artifact,
+not even comparable to the real-Ansible failure it was originally paired
+with. There is no remaining evidence of a real parse-time-leniency gap
+from this round.
+
+The remaining ~40 unresolved roles split into genuine `CORE_BUG`
+candidates for a future fix round (including the still-open
+`practical-ansible.nginx_docker`/`nginx_project` half of the
+include_vars/`failed_when:` item this round never got back to) and a
+smaller set still genuinely `UNCLEAR` pending individual repro.
 
 ## Round 829000-829799: 800-role Galaxy batch (ubuntu+rocky), no new krikri bug (0.9.1154)
 
