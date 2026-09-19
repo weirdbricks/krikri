@@ -295,7 +295,7 @@ module Krikri
           # recognizes, and \g<name> is Python's spelling of the same idea.
           if peek.ascii_number? ||
              ((peek == 'k' || peek == 'g') &&
-              next_index + 1 < replacement.size && replacement[next_index + 1] == '<')
+             next_index + 1 < replacement.size && replacement[next_index + 1] == '<')
             buffer << char << peek
             index += 2
             next
