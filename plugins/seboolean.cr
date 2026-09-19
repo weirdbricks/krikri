@@ -75,7 +75,7 @@ module Krikri
       end
 
       result = PluginResult.new(changed: false, failed: false, msg: "")
-      result.extra["name"] = JSON.parse(name.not_nil!.to_json)
+      result.extra["name"] = JSON.parse(name.to_json)
       result.extra["persistent"] = JSON.parse(persistent.to_json)
       result.extra["state"] = JSON.parse(desired_on.to_json)
 
