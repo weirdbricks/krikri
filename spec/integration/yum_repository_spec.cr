@@ -205,6 +205,107 @@ describe "yum_repository plugin" do
     content.should_not contain("validate_certs")
   end
 
+  # Two yum_repository tasks sharing one `file:` with different `name:`
+  # sections is the normal main + source repo pattern (real role:
+  # round900982 jaredledvina.sensu_go_ansible). Real Ansible's own module
+  # merges via Python's configparser and converges to ok/ok on rerun;
+  # overwriting the whole file with one section made both tasks report
+  # changed: true on every rerun forever.
+  it "merges a second section into a shared file instead of clobbering the first, converging on rerun" do
+    params1 = {
+      "name"        => "sensu_go",
+      "description" => "Sensu Go main",
+      "baseurl"     => "https://example.com/stable",
+      "enabled"     => "true",
+      "file"        => "shared",
+      "reposdir"    => TMP_DIR,
+    }
+    params2 = {
+      "name"        => "sensu_go-source",
+      "description" => "Sensu Go source",
+      "baseurl"     => "https://example.com/source",
+      "enabled"     => "false",
+      "file"        => "shared",
+      "reposdir"    => TMP_DIR,
+    }
+
+    PluginSpecHelper.run("yum_repository", params1)
+    PluginSpecHelper.run("yum_repository", params2)
+
+    File.read(repo_path("shared")).should eq(
+      "[sensu_go]\n" \
+      "baseurl = https://example.com/stable\n" \
+      "enabled = 1\n" \
+      "name = Sensu Go main\n" \
+      "\n" \
+      "[sensu_go-source]\n" \
+      "baseurl = https://example.com/source\n" \
+      "enabled = 0\n" \
+      "name = Sensu Go source\n" \
+      "\n"
+    )
+
+    PluginSpecHelper.run("yum_repository", params1)["changed"].as_bool.should be_false
+    PluginSpecHelper.run("yum_repository", params2)["changed"].as_bool.should be_false
+  end
+
+  # A .repo file can also be hand-edited or managed by a role with other
+  # repos already in it - real Ansible's configparser-based rewrite
+  # leaves those sections byte-for-byte alone.
+  it "preserves an unrelated pre-existing section byte-for-byte when writing its own" do
+    File.write(repo_path("preexisting"), "[unrelated]\nfoo = bar\ncomment = hand-edited\n\n[mine]\nbaseurl = https://old\nname = old\n\n")
+
+    result = PluginSpecHelper.run("yum_repository", {
+      "name"        => "mine",
+      "description" => "Mine",
+      "baseurl"     => "https://new",
+      "file"        => "preexisting",
+      "reposdir"    => TMP_DIR,
+    })
+
+    result["changed"].as_bool.should be_true
+    content = File.read(repo_path("preexisting"))
+    content.should contain("[unrelated]\nfoo = bar\ncomment = hand-edited\n\n")
+    content.should contain("[mine]\nbaseurl = https://new\nname = Mine\n\n")
+    content.should_not contain("https://old")
+
+    PluginSpecHelper.run("yum_repository", {
+      "name"        => "mine",
+      "description" => "Mine",
+      "baseurl"     => "https://new",
+      "file"        => "preexisting",
+      "reposdir"    => TMP_DIR,
+    })["changed"].as_bool.should be_false
+  end
+
+  # A single task whose own section already matches exactly must stay
+  # idempotent now that the comparison is full-file vs full-file - the
+  # pre-fix comparison accidentally converged only because the file ever
+  # held just the one section.
+  it "still reports changed: false on rerun when its own section matches and the file holds other sections" do
+    File.write(repo_path("mixed"), "[other]\nbaseurl = https://example.com/other\nname = Other\n\n[exact]\nbaseurl = https://example.com/exact\nname = Exact\n\n")
+
+    result = PluginSpecHelper.run("yum_repository", {
+      "name"        => "exact",
+      "description" => "Exact",
+      "baseurl"     => "https://example.com/exact",
+      "file"        => "mixed",
+      "reposdir"    => TMP_DIR,
+    })
+
+    result["changed"].as_bool.should be_false
+    File.read(repo_path("mixed")).should eq(
+      "[other]\n" \
+      "baseurl = https://example.com/other\n" \
+      "name = Other\n" \
+      "\n" \
+      "[exact]\n" \
+      "baseurl = https://example.com/exact\n" \
+      "name = Exact\n" \
+      "\n"
+    )
+  end
+
   # A present alias beats the canonical name when both are given - real
   # ansible-core's _handle_aliases overwrite order (same convention stat.cr
   # verified against real Ansible).

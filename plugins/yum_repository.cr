@@ -77,6 +77,17 @@ module Krikri
   # aren't passed this time. Not a bug to "fix" - matching this exactly is
   # the point.
   #
+  # Within its own [name] section that regeneration is the whole story,
+  # but the FILE is merged, not overwritten: real Ansible's own module
+  # feeds the entire existing .repo file through Python's configparser
+  # and writes back every section it didn't touch untouched, so two
+  # yum_repository tasks sharing one `file:` (the normal main + source
+  # repo pattern - round900982 jaredledvina.sensu_go_ansible writes
+  # [sensu_go] and [sensu_go-source] into the same sensu_go.repo)
+  # coexist instead of whichever task runs last silently clobbering the
+  # other's section and both re-reporting changed: true on every rerun
+  # forever.
+  #
   # Not implemented: `async` (a legacy, Python-reserved-word-workaround
   # param, essentially unused in real playbooks - and removed from real
   # Ansible's own argument_spec entirely on devel), SELinux options,
@@ -204,16 +215,58 @@ module Krikri
     private def write_repo(name : String, description : String, path : String) : PluginResult
       desired = render_section(name, description)
       current = read_current(path)
-      changed = current != desired
+      merged = merge_section(current, name, desired)
+      # Compare whole file to whole file, not whole file to this task's
+      # own section alone - with multiple sections in one file the old
+      # whole-file-vs-single-section comparison could never converge.
+      changed = merged != current
 
       if changed
-        diff = generate_unified_diff(current, desired, path, path) if @diff_mode
+        diff = generate_unified_diff(current, merged, path, path) if @diff_mode
         Dir.mkdir_p(File.dirname(path))
-        write_file(path, desired)
+        write_file(path, merged)
         apply_owner_group_mode(path, @params["owner"]?, @params["group"]?, @params["mode"]?)
       end
 
       PluginResult.new(changed: changed, failed: false, msg: "", diff: diff, repo: name, state: "present")
+    end
+
+    # Real Ansible's own yum_repository runs Python's configparser over
+    # the whole existing .repo file and rewrites just the one [name]
+    # section the task is about, so every other section in the file
+    # survives untouched (round900982 jaredledvina.sensu_go_ansible: two
+    # tasks sharing one `file:` made the old write-the-whole-file path
+    # drop the first task's section on every run). Sections other than
+    # the task's own are preserved byte-for-byte; the rendered section
+    # replaces its exact [name] block or is appended at the end with
+    # configparser's own blank-line separation (real output verified
+    # live: each section followed by exactly one blank line, the file
+    # ending with one too).
+    private def merge_section(current : String, name : String, desired : String) : String
+      return desired if current.empty?
+
+      lines = current.split("\n")
+      header = "[#{name}]"
+      starts = (0...lines.size).select { |idx| section_header?(lines[idx]) }
+      target = starts.index { |idx| lines[idx].rstrip == header }
+
+      if target
+        block_start = starts[target]
+        # A section block runs to the next [header] (or EOF); a
+        # non-final block's trailing blank line is the separator
+        # configparser puts between sections, so the replacement keeps
+        # exactly one instead of accumulating an extra on every rewrite.
+        block_end = target + 1 == starts.size ? lines.size - 1 : starts[target + 1] - 1
+        replacement = block_end == lines.size - 1 ? desired.split("\n") : desired.split("\n")[0..-2]
+        (lines[0...block_start] + replacement + lines[(block_end + 1)..]).join("\n")
+      else
+        stripped = current.rstrip("\n")
+        stripped.empty? ? desired : stripped + "\n\n" + desired
+      end
+    end
+
+    private def section_header?(line : String) : Bool
+      line.starts_with?("[") && line.rstrip.ends_with?("]")
     end
 
     private def render_section(name : String, description : String) : String
