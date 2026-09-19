@@ -2938,6 +2938,90 @@ describe Krikri::PlaybookParser do
     end
   end
 
+  describe ".strip_line_continuation_tokens (standalone-backslash drop)" do
+    # Real bug found benchmarking githubixx.kubernetes_ca (round900207),
+    # "Generate the etcd certificate authority (CA) and private key":
+    # a folded-scalar `shell: >` with trailing `\` continuations. PyYAML
+    # folds that to "...errexit; \ set -o pipefail..." which bash itself
+    # rejects (exit 127, "line 1:  set: command not found" - the `\ `
+    # starts a command word " set" that is no builtin); real Ansible
+    # succeeds because its controller runs parse_kv → split_args on the
+    # free-form string at parse time and split_args drops every
+    # standalone `\` token BEFORE the string is ever templated or handed
+    # to bash. Byte-for-byte expectations below were captured live from
+    # real ansible-playbook 2.19 on a minimal repro of the exact folded
+    # shape (logged via a wrapping `executable:` and cross-checked
+    # against the module-visible `cmd`).
+    it "drops standalone backslashes from the exact round900207 folded-scalar shape, preserving internal spacing and the trailing newline" do
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.shell: >
+            set -o errexit; \\
+            set -o pipefail; \\
+            echo first \\
+              -second \\
+            | cat
+          args:
+            executable: "/bin/bash"
+        YAML
+
+      # Real ansible-playbook passes bash exactly this string (logged
+      # argv: the double space between "first" and "-second" is the
+      # more-indented line's leading spaces surviving the drop; the
+      # trailing newline is the folded scalar's own final break).
+      task.params["cmd"].should eq("set -o errexit; set -o pipefail; echo first  -second | cat\n")
+    end
+
+    it "keeps the transformation lossless for strings without a standalone backslash" do
+      Krikri::PlaybookParser.strip_line_continuation_tokens("set -euo pipefail\necho one | wc -l\n").should eq("set -euo pipefail\necho one | wc -l\n")
+      Krikri::PlaybookParser.strip_line_continuation_tokens("echo a  b   c").should eq("echo a  b   c")
+      Krikri::PlaybookParser.strip_line_continuation_tokens("").should eq("")
+    end
+
+    it "collapses a mid-line standalone backslash and its separator to a single space" do
+      # Real split_args: token `\` dropped, remaining tokens rejoined by
+      # join_args with single spaces (the buluma.influxdb2 round-155
+      # authoring convention, at the controller layer rather than the
+      # command plugin's argv layer this time).
+      Krikri::PlaybookParser.strip_line_continuation_tokens("influx ping \\ --host host.example").should eq("influx ping --host host.example")
+    end
+
+    it "keeps backslashes that are not standalone tokens or that live inside quotes" do
+      Krikri::PlaybookParser.strip_line_continuation_tokens(%(find /tmp -exec printf '%s' {} \\;)).should eq(%(find /tmp -exec printf '%s' {} \\;))
+      Krikri::PlaybookParser.strip_line_continuation_tokens(%q(echo "a \ b" end)).should eq(%q(echo "a \ b" end))
+      Krikri::PlaybookParser.strip_line_continuation_tokens("ls path\\to").should eq("ls path\\to")
+    end
+
+    it "suppresses the newline after a continuation line, keeping quoted newlines intact" do
+      # `\` at end of line: the drop AND the newline restoration are both
+      # real split_args behavior - bash then sees one joined line.
+      Krikri::PlaybookParser.strip_line_continuation_tokens("echo one \\\nls\n").should eq("echo one ls\n")
+      # No backslash: real split_args restores every newline verbatim
+      # (quote state persists across the split, so a newline INSIDE
+      # quotes survives inside the quotes too).
+      Krikri::PlaybookParser.strip_line_continuation_tokens("echo \"a\nb\"\n").should eq("echo \"a\nb\"\n")
+    end
+
+    it "does not touch a dict-form cmd: value or post-render text (real split_args only sees parse-time free-form strings)" do
+      # Dict-form `shell: {cmd: ...}` bypasses the free-form branch
+      # entirely - the backslash survives into cmd, as in real Ansible.
+      # Escaping is two layers deep here: the Crystal heredoc needs
+      # `\\` for one literal backslash in the YAML text, and the YAML
+      # must be SINGLE-quoted because in double-quoted YAML `\ ` is the
+      # YAML 1.1 escaped-space escape - PyYAML (real Ansible's own
+      # loader) drops it at load time too. Only the single-quoted form
+      # actually exercises "a literal backslash reached the parser and
+      # was not stripped".
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.shell:
+            cmd: 'set -o errexit; \\ set -o pipefail; echo done'
+        YAML
+
+      task.params["cmd"].should eq(%q(set -o errexit; \ set -o pipefail; echo done))
+    end
+  end
+
   describe "nameless task fallback name" do
     it "uses the as-written action name, not an index-based 'Task N', for a nameless module task" do
       root = File.tempname("nameless-task-spec")
