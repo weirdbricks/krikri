@@ -3,6 +3,7 @@
 
 require "option_parser"
 require "colorize"
+require "./src/krikri/version"
 require "./src/krikri_lint/lint"
 
 module Krikri::Lint
@@ -40,7 +41,8 @@ module Krikri::Lint
     end
 
     if show_version
-      puts "krikri-lint #{KRIKRI_LINT_VERSION}"
+      puts Krikri.version_info("krikri-lint", KRIKRI_LINT_VERSION,
+        "Static analysis for Ansible playbooks and roles (ansible-lint parity target)")
       exit 0
     end
 
