@@ -51,7 +51,7 @@ describe "nsupdate plugin" do
     # traffic, so the unreachable server never matters here.
     result = PluginSpecHelper.run("nsupdate", {
       "server" => "127.0.0.1", "record" => "host.example.com.",
-      "zone"   => "example.com.", "type" => "NOTATYPE",
+      "zone" => "example.com.", "type" => "NOTATYPE",
     })
 
     result["failed"].as_bool.should be_true
