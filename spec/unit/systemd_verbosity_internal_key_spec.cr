@@ -32,8 +32,16 @@ describe "systemd: _verbosity is an accepted engine-internal param" do
     # With only supported params + internal keys present, validation must
     # pass through to the (environment-dependent) systemctl backend - we
     # assert the failure message is NOT the argument-spec rejection.
+    # Deliberately no state: - a name-only task falls through to a
+    # read-only `systemctl show` for status, never a mutating start/stop/
+    # restart/enable call. state: started previously invoked a real
+    # `systemctl start` here, which prompts a real interactive PolicyKit
+    # "Authentication Required" dialog on a desktop session with a polkit
+    # agent registered - the assertion below only cares that _verbosity
+    # isn't rejected as an unsupported param, which the read-only path
+    # exercises identically without the side effect.
     config = {
-      "params" => {"name" => "krikri-no-such-unit-zzz.service", "state" => "started", "_verbosity" => "0"},
+      "params" => {"name" => "krikri-no-such-unit-zzz.service", "_verbosity" => "0"},
       "vars"   => Hash(String, JSON::Any).new,
       "host"   => {"name" => "localhost", "vars" => Hash(String, JSON::Any).new},
     }.to_json
