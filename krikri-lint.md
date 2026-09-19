@@ -1,11 +1,21 @@
 # krikri-lint — a plan for an ansible-lint clone
 
-Status: planning document. Phase 0 skeleton implemented (2026-09):
-`krikri-lint` binary with CLI (targets, `-p/--parseable`, `--nocolor`,
-`--list-rules`, `--version`, exit codes 0/2/3), file discovery,
-positioned `YAML::Nodes` loader, rule registry, `syntax-check` rule,
-and unit specs under `spec/lint/`. Rules from Phase 1 onward are not
-implemented yet.
+Status: planning document. Phase 0 skeleton and the Phase 1 v1 rule
+table implemented (2026-09): `krikri-lint` binary with CLI
+(targets, `-p/--parseable`, `--nocolor`, `--list-rules`, `--version`,
+exit codes 0/2/3), file discovery, positioned `YAML::Nodes` loader,
+task walker, and these rules: `syntax-check`,
+`command-instead-of-shell`, `command-instead-of-module`,
+`no-changed-when`, `risky-file-permissions`, `risky-octal`,
+`name[missing]`, `name[casing]`, `name[template]`,
+`fqcn[action-core]`, `yaml[line-length]`. Each rule mirrors the
+upstream rule logic fetched from the ansible-lint source at
+implementation time (message text, severity, tags, exemptions).
+Notes from that pass: upstream's risky-octal suggestion message is
+computed from the YAML-decimal mode value (quirky but kept for
+parity), and `yaml[document-start]` is disabled in ansible-lint's
+bundled .yamllint, so it is deliberately not implemented. Phase 2+
+(meta/schema rules, noqa, config, profiles) is not implemented yet.
 
 ## What this is
 
