@@ -186,9 +186,9 @@ module Krikri
     # are absent: they resolve to the min bundle itself, which real
     # Ansible always gathers first anyway.
     FAMILY_SUBSETS = {
-      "network"           => %w[network all_ipv4_addresses all_ipv6_addresses default_ipv4 default_ipv6 interfaces],
-      "hardware"          => %w[hardware devices dmi processor processor_cores processor_count nvme],
-      "mounts"            => %w[mounts],
+      "network"  => %w[network all_ipv4_addresses all_ipv6_addresses default_ipv4 default_ipv6 interfaces],
+      "hardware" => %w[hardware devices dmi processor processor_cores processor_count nvme],
+      "mounts"   => %w[mounts],
       # real Ansible gathers virtualization/dmi-adjacent singleton
       # collectors OUTSIDE the min bundle - `!all` (min only) on a real
       # host never reports ansible_virtualization_type/ansible_is_chroot/
@@ -1293,23 +1293,23 @@ module Krikri
       # rescue-block reference are the original consumers - see
       # gather_os_facts history).
       {
-        "sys_vendor"         => "system_vendor",
-        "product_name"       => "product_name",
-        "product_version"    => "product_version",
-        "product_serial"     => "product_serial",
-        "product_uuid"       => "product_uuid",
-        "board_vendor"       => "board_vendor",
-        "board_name"         => "board_name",
-        "board_version"      => "board_version",
-        "board_serial"       => "board_serial",
-        "board_asset_tag"    => "board_asset_tag",
-        "chassis_vendor"     => "chassis_vendor",
-        "chassis_version"    => "chassis_version",
-        "chassis_serial"     => "chassis_serial",
-        "chassis_asset_tag"  => "chassis_asset_tag",
-        "bios_vendor"        => "bios_vendor",
-        "bios_version"       => "bios_version",
-        "bios_date"          => "bios_date",
+        "sys_vendor"        => "system_vendor",
+        "product_name"      => "product_name",
+        "product_version"   => "product_version",
+        "product_serial"    => "product_serial",
+        "product_uuid"      => "product_uuid",
+        "board_vendor"      => "board_vendor",
+        "board_name"        => "board_name",
+        "board_version"     => "board_version",
+        "board_serial"      => "board_serial",
+        "board_asset_tag"   => "board_asset_tag",
+        "chassis_vendor"    => "chassis_vendor",
+        "chassis_version"   => "chassis_version",
+        "chassis_serial"    => "chassis_serial",
+        "chassis_asset_tag" => "chassis_asset_tag",
+        "bios_vendor"       => "bios_vendor",
+        "bios_version"      => "bios_version",
+        "bios_date"         => "bios_date",
       }.each do |file, fact|
         value = begin
           File.read("/sys/class/dmi/id/#{file}").strip
@@ -1375,7 +1375,7 @@ module Krikri
         next unless Dir.exists?(path)
         Dir.each_child(path) do |link|
           target = begin
-             File.realpath(File.join(path, link))
+            File.realpath(File.join(path, link))
           rescue
             next
           end
