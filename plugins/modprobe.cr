@@ -135,9 +135,9 @@ module Krikri
     private def os_error_text(e : File::Error, path : String) : String
       errno = e.os_error.try(&.value)
       case errno
-      when 2   then "[Errno 2] No such file or directory: '#{path}'"
-      when 13  then "[Errno 13] Permission denied: '#{path}'"
-      else          "[Errno #{errno}] #{e.message}"
+      when  2 then "[Errno 2] No such file or directory: '#{path}'"
+      when 13 then "[Errno 13] Permission denied: '#{path}'"
+      else         "[Errno #{errno}] #{e.message}"
       end
     end
 
