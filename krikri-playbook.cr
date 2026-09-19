@@ -63,9 +63,9 @@ if ARGV[0]? == "__async_run"
   # carry module output, and the path is predictable) - the chmod must
   # happen BEFORE the bytes land, not after, or the secret-bearing tmp
   # file is briefly (here: permanently, this process then exits) 0644.
-  File.open(tmp_path, "w") do |f|
-    f.chmod(0o600)
-    f.write(JSON::Any.new(result_hash).to_json.to_slice)
+  File.open(tmp_path, "w") do |io|
+    io.chmod(0o600)
+    io.write(JSON::Any.new(result_hash).to_json.to_slice)
   end
   File.rename(tmp_path, status_path)
   File.delete(config_path) rescue nil
