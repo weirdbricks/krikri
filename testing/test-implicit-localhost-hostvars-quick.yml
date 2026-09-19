@@ -1,0 +1,31 @@
+# Implicit-localhost hostvars regression (round900712
+# gzm55.require_implicity_localhost): the inventory here (passed explicitly
+# by the spec - inventory-hostvars-local.ini) defines NO localhost host at
+# all, yet real Ansible still exposes a synthesized implicit-localhost entry
+# via hostvars['localhost'] from a play targeting a completely different
+# machine. The assertions mirror the real role's own assert (no
+# inventory_file on the implicit entry) plus the minimal magic var set
+# verified live against ansible-core 2.19.11.
+- name: implicit localhost hostvars smoke test
+  hosts: h1
+  gather_facts: false
+
+  tasks:
+    - name: implicit localhost is a dict in hostvars even though the play targets h1
+      ansible.builtin.assert:
+        that:
+          - "hostvars['localhost'] is mapping"
+          - "hostvars['localhost'].inventory_hostname == 'localhost'"
+          - "hostvars['localhost'].inventory_hostname_short == 'localhost'"
+          - "hostvars['localhost'].ansible_connection == 'local'"
+          - "hostvars['localhost'].group_names == []"
+          - "'inventory_file' not in hostvars['localhost']"
+
+    - name: real inventory hosts in hostvars are untouched by the implicit entry
+      ansible.builtin.assert:
+        that:
+          - "hostvars['h2'].h2_only_var == 'from_h2'"
+
+    - name: SUCCESS
+      ansible.builtin.debug:
+        msg: "implicit localhost hostvars smoke test complete!"

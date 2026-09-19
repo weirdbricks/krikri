@@ -1456,6 +1456,43 @@ describe "krikri-playbook CLI (--check mode)" do
     output.should contain("hostvars smoke test complete!")
   end
 
+  it "exposes an implicit hostvars['localhost'] even when the play targets another host" do
+    # Regression for round900712 gzm55.require_implicity_localhost: real
+    # ansible-core's InventoryManager ALWAYS synthesizes an implicit
+    # localhost pseudo-host when no inventory defines one, and any play -
+    # even one targeting entirely different machines - can read
+    # hostvars['localhost'] (this engine failed with "object of type 'dict'
+    # has no attribute 'localhost'"). The inventory fixture here defines no
+    # localhost at all; the playbook mirrors the real role's own assert
+    # (no inventory_file on the implicit entry) plus the minimal magic var
+    # set verified live against ansible-core 2.19.11.
+    hostvars_inventory = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-hostvars-local.ini")
+    status, output = run_playbook(
+      "test-implicit-localhost-hostvars-quick.yml",
+      [] of String,
+      inventory: hostvars_inventory
+    )
+
+    status.success?.should be_true
+    output.should contain("implicit localhost hostvars smoke test complete!")
+  end
+
+  it "keeps an explicitly inventory-defined localhost's real vars over the implicit entry" do
+    # The other half of real Ansible's implicit-localhost contract: when the
+    # inventory DOES define localhost, its real entry wins and the
+    # synthesized one must not clobber it (verified live against
+    # ansible-core 2.19.11 with an identical inventory).
+    explicit_inventory = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost-plus-h1.ini")
+    status, output = run_playbook(
+      "test-explicit-localhost-hostvars-quick.yml",
+      [] of String,
+      inventory: explicit_inventory
+    )
+
+    status.success?.should be_true
+    output.should contain("explicit localhost hostvars smoke test complete!")
+  end
+
   it "reflects a register:/set_fact:/meta: clear_facts done by one host in another host's hostvars[...] on the very next task" do
     # Regression for SUGGESTED_PERFORMANCE_IMPROVEMENTS.md item #16:
     # build_hostvars/build_groups got memoized per-TaskExecutor (a
