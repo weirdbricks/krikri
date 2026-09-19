@@ -45,7 +45,7 @@ module Krikri
           msg: "value of state must be one of: #{SNAP_STATES.join(", ")}, got: #{state}")
       end
 
-      if channel = @params["channel"]?
+      if @params["channel"]?
         unless state == "present"
           return PluginResult.new(changed: false, failed: true,
             msg: "channel is supported only when state is present")
