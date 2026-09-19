@@ -47,7 +47,6 @@ module Krikri
   #   where the real runtime state can't be queried).
   class SebooleanPlugin < BasePlugin
     def execute : PluginResult
-
       missing = ["name", "state"].select { |arg| @params[arg]?.nil? }
       unless missing.empty?
         return PluginResult.new(changed: false, failed: true, msg: "missing required arguments: #{missing.join(", ")}")
