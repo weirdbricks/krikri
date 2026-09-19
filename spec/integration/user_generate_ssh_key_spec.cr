@@ -78,9 +78,9 @@ describe "user plugin generate_ssh_key" do
 
     begin
       result = PluginSpecHelper.run("user", {
-        "name"             => TEST_USER,
-        "generate_ssh_key" => "true",
-        "ssh_key_file"     => key_path,
+        "name"                => TEST_USER,
+        "generate_ssh_key"    => "true",
+        "ssh_key_file"        => key_path,
         "_ansible_check_mode" => "true",
       })
 
