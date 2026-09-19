@@ -326,7 +326,14 @@ module Krikri
 
       temp_file = File.join(File.dirname(path), ".krikri-playbook-replace-#{Random::Secure.hex(8)}.tmp")
       begin
-        File.write(temp_file, new_content, encoding: encoding)
+        # SECURITY: created EMPTY at 0600 and settled to its final mode
+        # (the task's numeric mode:, else the existing path's own mode -
+        # replace only ever rewrites an existing file) BEFORE the new
+        # content lands - see BasePlugin#create_staging_temp. The old
+        # write-first shape held the bytes at 0644 & ~umask until the
+        # mode preservation below ran after the write.
+        create_staging_temp(temp_file, staging_temp_mode(path, 0o644))
+        File.write(temp_file, new_content, encoding: encoding, perm: 0o600)
       rescue ex
         return PluginResult.new(changed: false, failed: true, msg: "Failed to write temporary file: #{ex.message}")
       end
@@ -339,12 +346,12 @@ module Krikri
         end
       end
 
-      # Preserve an existing dest's mode/ownership (a rename would
-      # otherwise reset them to the temp file's). Best-effort chown,
-      # same as lineinfile.cr.
+      # Preserve an existing dest's ownership (the mode is already
+      # settled on the empty temp above; a rename would otherwise reset
+      # ownership to the temp file's). Best-effort chown, same as
+      # lineinfile.cr.
       if (info = File.info?(path, follow_symlinks: false))
         begin
-          File.chmod(temp_file, info.permissions)
           File.chown(temp_file, uid: info.owner_id.to_i, gid: info.group_id.to_i)
         rescue File::Error
           nil

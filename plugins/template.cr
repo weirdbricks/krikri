@@ -327,9 +327,20 @@ module Krikri
       temp_file = File.join("/tmp", ".krikri-playbook-template-#{Random::Secure.hex(8)}.tmp")
 
       begin
+        # SECURITY: the temp is created EMPTY at 0600 and settled to its
+        # final mode (0644 & ~umask, narrowed by the task's numeric
+        # mode: - the rename carries this temp's mode onto dest, it does
+        # not inherit an existing dest's, matching the old default-perm
+        # File.write) BEFORE the rendered bytes land - see
+        # BasePlugin#create_staging_temp. The old write-first shape held
+        # a rendered secret (vault-decrypted values interpolated in) at
+        # 0644 & ~umask for the whole write + validate + move span.
+        create_staging_temp(temp_file, staging_temp_mode(dest, 0o644, preserve_dest_mode: false))
         # Write the OUTPUT-ENCODED bytes (see output_encoding above) -
-        # not the UTF-8 string.
-        File.write(temp_file, content_bytes)
+        # not the UTF-8 string. perm 0600 only matters if the temp
+        # vanished between creation and here: recreate narrow, never
+        # wide.
+        File.write(temp_file, content_bytes, perm: 0o600)
       rescue ex
         return PluginResult.new(
           changed: false,
@@ -404,7 +415,13 @@ module Krikri
             # unsafe_writes:). Preserves dest's inode, so hardlinks to
             # it see the new content.
             begin
-              File.write(dest, content_bytes)
+              # Same narrow-then-settle staging discipline as the temp
+              # above for a not-yet-existing dest; an existing dest's
+              # mode is untouched by opening it for writing.
+              unless File.exists?(dest)
+                create_staging_temp(dest, staging_temp_mode(dest, 0o644, preserve_dest_mode: false))
+              end
+              File.write(dest, content_bytes, perm: 0o600)
             rescue ex
               return PluginResult.new(
                 changed: false,

@@ -319,6 +319,70 @@ module Krikri
       Shell.single_quote(str)
     end
 
+    # SECURITY: a staging temp file that will hold copy/template/
+    # lineinfile-style content must never hold those bytes at a wider
+    # mode than the content's final one. Creating the temp with a
+    # default perm (0644 & ~umask) and chmod-ing only after the write
+    # leaves the bytes briefly readable at the wider mode - the
+    # create-then-chmod window the vault-decrypted staging
+    # (TaskExecutor#stage_vault_decrypted_source) and
+    # AsyncJobs.write_status already avoid by settling the mode BEFORE
+    # the payload lands. This creates *path* EMPTY at 0600 (narrow under
+    # any umask), then settles it to *mode* while still empty - widening
+    # an empty file is harmless; widening one that already holds the
+    # secret is exactly the bug. Callers pass the mode already narrowed
+    # by #staging_temp_mode, so this never creates wide-then-narrow.
+    private def create_staging_temp(path : String, mode : Int32) : Nil
+      File.write(path, "", perm: 0o600)
+      File.chmod(path, mode)
+    end
+
+    # The mode a staging temp should be settled at before content lands
+    # in it: the task's own numeric `mode:` (the authoritative final
+    # mode - re-applying it post-write is a no-op, so final-state
+    # behavior is unchanged), or when no numeric mode is given, the
+    # existing dest's own mode when one is being overwritten (the
+    # rename carries the temp's mode across, and real Ansible's
+    # atomic_move preserves an existing dest's mode), or *new_file_base*
+    # & ~umask for a not-yet-existing dest (copy's atomic_move gives a
+    # new dest 0666 & ~umask; the File.write-defaulted staging paths
+    # give 0644 & ~umask). A symbolic `mode:` can't be resolved to
+    # absolute bits here and is left to the post-write chmod - which is
+    # narrow-then-widen, never the reverse. *preserve_dest_mode* is
+    # false for staging paths where the temp never inherits the dest's
+    # mode today (the /tmp validate: staging that is mv'd in as a new
+    # inode, and temps that are deleted after use).
+    private def staging_temp_mode(dest : String, new_file_base : Int32, preserve_dest_mode : Bool = true) : Int32
+      if (raw_mode = @params["mode"]?.presence) && raw_mode =~ /\A0?[0-7]{3,4}\z/
+        return raw_mode.to_i(8)
+      end
+
+      dest_mode = begin
+        if preserve_dest_mode && !File.symlink?(dest) && (info = File.info?(dest, follow_symlinks: false))
+          info.permissions.value.to_i32
+        end
+      rescue File::Error
+        # Stat itself failed (broken dest?) - fall through to the
+        # not-yet-existing default, matching the old stat-preservation
+        # blocks' "proceed without preservation" on stat errors.
+        nil
+      end
+
+      dest_mode || (new_file_base & ~creation_umask)
+    end
+
+    # Reads the process umask. POSIX has no read-only umask call, so
+    # this does the classic set-read-restore dance around a maximally
+    # restrictive value - the same dance real Ansible's atomic_move does
+    # and this repo's own spec helpers use; the window where a
+    # concurrent creator would inherit the temporary mask is two
+    # adjacent syscalls, and plugin module code is single-threaded.
+    private def creation_umask : Int32
+      umask = LibC.umask(0o077)
+      LibC.umask(umask)
+      umask.to_i32
+    end
+
     protected def remote_upload(local_path : String, remote_path : String) : Nil
       if local_connection?
         # Just copy locally

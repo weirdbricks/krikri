@@ -260,7 +260,14 @@ module Krikri
 
       temp_file = File.join(File.dirname(path), ".krikri-playbook-lineinfile-#{Random::Secure.hex(8)}.tmp")
       begin
-        File.write(temp_file, content)
+        # SECURITY: created EMPTY at 0600 and settled to its final mode
+        # (the task's numeric mode:, else the dest's own mode as resolved
+        # by the preservation block below) BEFORE the content lands -
+        # see BasePlugin#create_staging_temp. The old write-first shape
+        # held the bytes at 0644 & ~umask until the mode preservation
+        # below ran after the write.
+        create_staging_temp(temp_file, staging_temp_mode(path, 0o644))
+        File.write(temp_file, content, perm: 0o600)
       rescue ex
         return PluginResult.new(changed: false, failed: true, msg: "Failed to write temporary file: #{ex.message}")
       end
@@ -276,13 +283,13 @@ module Krikri
         end
       end
 
-      # Preserve an existing dest's mode/ownership (a rename would
-      # otherwise reset them to the temp file's). Best-effort chown,
+      # Preserve an existing dest's ownership (the mode is already
+      # settled on the empty temp above; a rename would otherwise reset
+      # it to the temp file's). Best-effort chown,
       # same as copy.cr - non-root can't chown, and the rename still
       # yields a correct file.
       if !File.symlink?(path) && (info = File.info?(path, follow_symlinks: false))
         begin
-          File.chmod(temp_file, info.permissions)
           File.chown(temp_file, uid: info.owner_id.to_i, gid: info.group_id.to_i)
         rescue File::Error
           nil
@@ -302,7 +309,10 @@ module Krikri
         File.delete(temp_file) if File.exists?(temp_file)
         if true?(@params["unsafe_writes"]?)
           begin
-            File.write(dest, content)
+            unless File.exists?(dest)
+              create_staging_temp(dest, staging_temp_mode(dest, 0o644, preserve_dest_mode: false))
+            end
+            File.write(dest, content, perm: 0o600)
           rescue ex
             return PluginResult.new(changed: false, failed: true, msg: "Failed to write file (unsafe_writes fallback): #{ex.message}")
           end

@@ -118,7 +118,14 @@ module Krikri
 
       temp_file = File.join(File.dirname(dest), ".krikri-playbook-assemble-#{Random::Secure.hex(8)}.tmp")
       begin
-        File.write(temp_file, content)
+        # SECURITY: created EMPTY at 0600 and settled to 0644 & ~umask
+        # (narrowed by the task's numeric mode:) BEFORE the assembled
+        # content lands - see BasePlugin#create_staging_temp. This temp
+        # is deleted after validation, it never becomes dest, so it
+        # never inherits a dest mode. The old write-first shape held the
+        # bytes at 0644 & ~umask for the whole validate run.
+        create_staging_temp(temp_file, staging_temp_mode(dest, 0o644, preserve_dest_mode: false))
+        File.write(temp_file, content, perm: 0o600)
         cmd = validate_cmd.gsub("%s", temp_file)
         output = IO::Memory.new
         result = Process.run("/bin/sh", ["-c", cmd], output: output, error: output)
@@ -167,7 +174,16 @@ module Krikri
 
       dest_dir = File.dirname(dest)
       Dir.mkdir_p(dest_dir) unless Dir.exists?(dest_dir)
-      File.write(dest, content)
+      # SECURITY: a not-yet-existing dest is created EMPTY at 0600 and
+      # settled to its final mode (0644 & ~umask, narrowed by the task's
+      # numeric mode:) before the assembled content lands - see
+      # BasePlugin#create_staging_temp. An existing dest's mode is
+      # untouched by opening it for writing (and the task's mode:/owner:
+      # are applied to dest after this returns, as before).
+      unless File.exists?(dest)
+        create_staging_temp(dest, staging_temp_mode(dest, 0o644, preserve_dest_mode: false))
+      end
+      File.write(dest, content, perm: 0o600)
       backup_file
     end
   end

@@ -724,11 +724,16 @@ module Krikri
 
       temp_file = File.join("/tmp", ".krikri-playbook-copy-#{Random::Secure.hex(8)}.tmp")
       begin
-        # perm 0666 (not Crystal's 0644 default) so the file's final mode
-        # is 0666 & ~umask - real Ansible's atomic_move chmods a new dest
-        # to exactly that (live-verified: umask 002 -> 0664, umask 022 ->
-        # 0644). An existing dest's mode is preserved by the chmod below.
-        File.write(temp_file, content, perm: 0o666)
+        # SECURITY: created EMPTY 0600 and settled to its final mode
+        # (0666 & ~umask for a new dest, narrowed by the task's numeric
+        # mode: - this /tmp staging is mv'd in as a new inode, it does
+        # NOT inherit an existing dest's mode, matching the old perm:
+        # 0o666 creation semantics) BEFORE the content lands - see
+        # BasePlugin#create_staging_temp. The old write-then-chmod
+        # shape held the bytes at 0666 & ~umask for the whole write +
+        # validate + move span.
+        create_staging_temp(temp_file, staging_temp_mode(dest, 0o666, preserve_dest_mode: false))
+        File.write(temp_file, content, perm: 0o600)
       rescue ex
         return PluginResult.new(changed: false, failed: true, msg: "Failed to write temporary file: #{ex.message}")
       end
@@ -929,32 +934,37 @@ module Krikri
     private def atomic_write(content : String, dest : String) : PluginResult?
       temp_file = File.join(File.dirname(dest), ".krikri-playbook-copy-#{Random::Secure.hex(8)}.tmp")
       begin
-        # perm 0666 (not Crystal's 0644 default): when dest doesn't exist
-        # yet, this temp file IS the final file after the rename, and real
-        # Ansible's atomic_move gives a new dest exactly 0666 & ~umask
-        # (live-verified against ansible-core 2.19.4: umask 002 -> 0664,
-        # umask 022 -> 0644). The perm arg is ignored when overwriting an
-        # existing file, whose mode the stat-preservation below handles.
-        File.write(temp_file, content, perm: 0o666)
+        # SECURITY: the temp is created EMPTY at 0600 and settled to its
+        # final mode (the task's numeric mode:, else the dest's preserved
+        # mode, else 0666 & ~umask) BEFORE any content lands in it - see
+        # BasePlugin#create_staging_temp. Writing first and chmod-ing
+        # later (the old shape, with the temp at 0666 & ~umask while the
+        # bytes were already on disk) briefly left a copied private key
+        # readable at the default mode before the mode: was applied.
+        create_staging_temp(temp_file, staging_temp_mode(dest, 0o666))
+
+        # Ownership of an existing dest is still reconciled onto the temp
+        # before the rename (the mode is already settled above).
+        begin
+          if !File.symlink?(dest) && (info = File.info?(dest, follow_symlinks: false))
+            begin
+              File.chown(temp_file, uid: info.owner_id.to_i, gid: info.group_id.to_i)
+            rescue File::Error
+              # Best-effort: non-root can't chown; the rename still
+              # yields a correct file with this process's ownership.
+            end
+          end
+        rescue File::Error
+          # Stat itself failed (broken dest?) - proceed without
+          # ownership preservation.
+        end
+
+        # perm 0600 only matters if the temp vanished between creation
+        # and here (an external /tmp cleaner): recreate narrow, never
+        # wide.
+        File.write(temp_file, content, perm: 0o600)
       rescue ex
         return PluginResult.new(changed: false, failed: true, msg: "Failed to write temporary file: #{ex.message}")
-      end
-
-      begin
-        # A symlink dest being REPLACED (default follow: false) has no
-        # meaningful mode to preserve - real Ansible skips the
-        # mode-copy for links too.
-        if !File.symlink?(dest) && (info = File.info?(dest, follow_symlinks: false))
-          begin
-            File.chmod(temp_file, info.permissions)
-            File.chown(temp_file, uid: info.owner_id.to_i, gid: info.group_id.to_i)
-          rescue File::Error
-            # Best-effort: non-root can't chown; the rename still
-            # yields a correct file with this process's ownership.
-          end
-        end
-      rescue File::Error
-        # Stat itself failed (broken dest?) - proceed without preservation.
       end
 
       if given_checksum = @params["checksum"]?.presence
@@ -988,8 +998,15 @@ module Krikri
     # place. Returns nil on success, or a failed PluginResult.
     private def unsafe_write_fallback(content : String, dest : String) : PluginResult?
       # Same umask-default contract as #atomic_write's temp file: 0666 &
-      # ~umask for a new file, existing file's mode untouched.
-      File.write(dest, content, perm: 0o666)
+      # ~umask for a new file, existing file's mode untouched (opening an
+      # existing file for writing never changes its mode, so there is no
+      # window to close in that case). A new dest is created EMPTY 0600
+      # and settled to its final mode before the bytes land - see
+      # BasePlugin#create_staging_temp.
+      unless File.exists?(dest)
+        create_staging_temp(dest, staging_temp_mode(dest, 0o666, preserve_dest_mode: false))
+      end
+      File.write(dest, content, perm: 0o600)
       nil
     rescue ex
       PluginResult.new(changed: false, failed: true, msg: "Failed to write #{dest} (unsafe_writes fallback): #{ex.message}")
