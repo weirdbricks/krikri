@@ -343,11 +343,19 @@ module Krikri
     # krikri-playbook.cr constructs a fresh TaskExecutor per play).
     private def execute_reboot(params : Hash(String, String), exec_host : Host, vars_context : Hash(String, JSON::Any),
                                check_mode : Bool = @check_mode) : JSON::Any
-      return JSON.parse({"changed" => true, "failed" => false, "msg" => "Would have rebooted"}.to_json) if check_mode
+      # Real Ansible's reboot module always returns an "elapsed" field (integer
+      # seconds since the reboot command was issued) in its result, including in
+      # check mode where it returns {'changed': True, 'elapsed': 0,
+      # 'rebooted': True} - round900541 derjd.reboot: the role's reboot:
+      # handler registers its result as rv and a follow-up debug: task reads
+      # rv.elapsed, which crashed this engine with "object of type 'dict' has
+      # no attribute 'elapsed'" where real Ansible succeeded.
+      return JSON.parse({"changed" => true, "elapsed" => 0, "failed" => false, "msg" => "Would have rebooted"}.to_json) if check_mode
 
       if PluginManager.local_connection?(exec_host, vars_context)
         return JSON.parse({
           "changed" => false,
+          "elapsed" => 0,
           "failed"  => true,
           "msg"     => "ansible.builtin.reboot is not supported over a local connection (would reboot the controller itself)",
         }.to_json)
@@ -372,9 +380,15 @@ module Krikri
       # remote shell itself (the command was rejected outright, e.g.
       # permission denied) is worth surfacing.
       issue_result = SSHManager.exec(connection_host, user, "(sleep 1; #{reboot_command}) &", exec_host.port, timeout: 15, identity_file: identity_file) rescue nil
+      # Real Ansible stamps its elapsed clock the moment the shutdown command
+      # returns (result['start'] in the action plugin) and reports elapsed as
+      # integer seconds on EVERY path after that point - including when the
+      # wait itself times out - so a registered rv.elapsed is always readable.
+      reboot_started_at = Time.instant
       if issue_result && issue_result[:exit_code] != 0 && issue_result[:exit_code] != 255 && !issue_result[:stderr].empty?
         return JSON.parse({
           "changed" => false,
+          "elapsed" => 0,
           "failed"  => true,
           "msg"     => "Failed to issue reboot command: #{issue_result[:stderr]}",
         }.to_json)
@@ -399,6 +413,7 @@ module Krikri
       unless reconnected
         return JSON.parse({
           "changed" => false,
+          "elapsed" => (Time.instant - reboot_started_at).total_seconds.to_i,
           "failed"  => true,
           "msg"     => "Timed out waiting for #{connection_host} to come back after reboot (#{reboot_timeout}s)",
         }.to_json)
@@ -406,8 +421,13 @@ module Krikri
 
       sleep post_reboot_delay.seconds if post_reboot_delay > 0
 
+      # post_reboot_delay sits inside real Ansible's elapsed window too (its
+      # action plugin sleeps before validating the reboot, both after start).
+      elapsed_seconds = (Time.instant - reboot_started_at).total_seconds.to_i
+
       JSON.parse({
         "changed"  => true,
+        "elapsed"  => elapsed_seconds,
         "failed"   => false,
         "rebooted" => true,
         "msg"      => "Reboot complete",
