@@ -50,10 +50,9 @@ module Krikri
       "ssh-dss-cert-v01@openssh.com",
     ]
 
-    def execute : PluginResult
-      key = @params["key"]?
-      return missing_param("key") unless key
+    private record PreparedKey, key : String, path : String, key_lines : Array(String)
 
+    private def prepare_key(key : String) : PluginResult | PreparedKey
       if failure = empty_key_result(key)
         return failure
       end
@@ -65,18 +64,13 @@ module Krikri
       key = fetch_url_key(key)
       return PluginResult.new(changed: false, failed: true, msg: @fetch_error) if key.nil?
 
-      state = @params["state"]? || "present"
-      check_mode = true?(@params["_ansible_check_mode"]?)
-      manage_dir = @params["manage_dir"]?.nil? || true?(@params["manage_dir"]?)
-      exclusive = true?(@params["exclusive"]?)
-
       # Real Ansible's keyfile() does a real pwd.getpwnam(user) and
       # hard-fails the task when the user isn't in the passwd DB - it
       # never guesses a home directory for a user that doesn't exist
       # (round 811277, jtprogru.profile: krikri silently invented
       # /home/jtprogru/.ssh/authorized_keys and "succeeded" where real
       # ansible-playbook fails, live-verified).
-      if failure = missing_user_result(check_mode)
+      if failure = missing_user_result(true?(@params["_ansible_check_mode"]?))
         return failure
       end
 
@@ -92,9 +86,26 @@ module Krikri
         return failure
       end
 
+      PreparedKey.new(key, path, key_lines)
+    end
+
+    def execute : PluginResult
+      key = @params["key"]?
+      return missing_param("key") unless key
+
+      prepared = prepare_key(key)
+      return prepared if prepared.is_a?(PluginResult)
+
+      state = @params["state"]? || "present"
+      check_mode = true?(@params["_ansible_check_mode"]?)
+      manage_dir = @params["manage_dir"]?.nil? || true?(@params["manage_dir"]?)
+      exclusive = true?(@params["exclusive"]?)
+      path = prepared.path
+
       # key_options: replaces whatever options the key line itself
       # carries (the real module's parsed_options overwrite), so the line
       # is rewritten as "<key_options> <type> <blob> <comment>".
+      key_lines = prepared.key_lines
       if key_options = @params["key_options"]?
         key_lines = key_lines.map { |line| apply_key_options(line, key_options) }
       end
