@@ -41,8 +41,8 @@ describe "mysql_user plugin parameter validation" do
     # shape (its PyMySQL (errno, "...") detail tail is library-specific
     # and not replicated).
     result = PluginSpecHelper.run("mysql_user", {
-      "name"               => "alice",
-      "login_unix_socket"  => "/run/krikri-no-such-mysql.sock",
+      "name"              => "alice",
+      "login_unix_socket" => "/run/krikri-no-such-mysql.sock",
     })
 
     result["failed"].as_bool.should be_true
