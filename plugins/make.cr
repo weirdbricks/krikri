@@ -146,11 +146,11 @@ module Krikri
       return "''" if value.empty?
       return value if value.matches?(/\A[\w@%+=:,.\-\/]+\z/)
 
-      "'" + value.gsub("'", "'\\\\''") + "'"
+      Shell.single_quote(value)
     end
 
     private def shell_quote(value : String) : String
-      "'" + value.gsub("'", "'\\\\''") + "'"
+      Shell.single_quote(value)
     end
   end
 end
