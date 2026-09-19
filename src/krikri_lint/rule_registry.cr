@@ -15,6 +15,7 @@ module Krikri
           NoChangedWhenRule.new,
           RiskyFilePermissionsRule.new,
           RiskyOctalRule.new,
+          NameRule.new,
         ])
       end
 
