@@ -14,8 +14,10 @@ module Krikri
       # The module-name key node; upstream matchtask rules report
       # violations at this key's line/column.
       getter action_key_node : YAML::Nodes::Node
+      getter? handlers_section : Bool
 
-      def initialize(@node, @file, @module_name, @action_node, @action_key_node)
+      def initialize(@node, @file, @module_name, @action_node, @action_key_node,
+                     @handlers_section = false)
       end
 
       def action_line : Int32
@@ -185,7 +187,8 @@ module Krikri
             %w[pre_tasks tasks post_tasks handlers].each do |section|
               if (entry = NodeUtil.entry(play, section)) &&
                  (tasks_list = entry[1].as?(YAML::Nodes::Sequence))
-                walk_list(tasks_list, file, tasks)
+                walk_list(tasks_list, file, tasks,
+                  in_handlers: section == "handlers")
               end
             end
           end
@@ -199,20 +202,21 @@ module Krikri
         collect_tasks(file).each { |task| yield task }
       end
 
-      private def self.walk_list(list : YAML::Nodes::Sequence, file : PositionedFile, tasks : Array(LintTask)) : Nil
+      private def self.walk_list(list : YAML::Nodes::Sequence, file : PositionedFile, tasks : Array(LintTask), in_handlers : Bool = false) : Nil
         list.nodes.each do |item|
           node = item.as?(YAML::Nodes::Mapping) || next
           if !NodeUtil.entry(node, "block").nil?
             %w[block rescue always].each do |section|
               if (entry = NodeUtil.entry(node, section)) &&
                  (sub = entry[1].as?(YAML::Nodes::Sequence))
-                walk_list(sub, file, tasks)
+                walk_list(sub, file, tasks, in_handlers)
               end
             end
             next
           end
           if (task = from_mapping(node, file))
-            tasks << task
+            tasks << LintTask.new(task.node, task.file, task.module_name,
+              task.action_node, task.action_key_node, in_handlers)
           end
         end
       end

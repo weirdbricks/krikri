@@ -19,6 +19,7 @@ module Krikri
           FqcnActionCoreRule.new,
           YamlLineLengthRule.new,
           VarNamingRule.new,
+          NoHandlerRule.new,
         ])
       end
 
