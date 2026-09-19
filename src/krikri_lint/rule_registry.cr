@@ -12,6 +12,7 @@ module Krikri
           SyntaxCheckRule.new,
           CommandInsteadOfShellRule.new,
           CommandInsteadOfModuleRule.new,
+          NoChangedWhenRule.new,
         ])
       end
 
