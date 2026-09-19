@@ -275,33 +275,13 @@ module Krikri
           i += 1
         elsif c == '\''
           in_token = true
-          i += 1
-          while i < chars.size && chars[i] != '\''
-            current << chars[i]
-            i += 1
-          end
-          i += 1
+          i = consume_single_quoted(chars, i, current)
         elsif c == '"'
           in_token = true
-          i += 1
-          while i < chars.size && chars[i] != '"'
-            if chars[i] == '\\' && i + 1 < chars.size && "\\\"`$".includes?(chars[i + 1])
-              current << chars[i + 1]
-              i += 2
-            else
-              current << chars[i]
-              i += 1
-            end
-          end
-          i += 1
+          i = consume_double_quoted(chars, i, current)
         elsif c == '\\'
           in_token = true
-          if i + 1 < chars.size
-            current << chars[i + 1]
-            i += 2
-          else
-            i += 1
-          end
+          i = consume_escape(chars, i, current)
         else
           in_token = true
           current << c
@@ -311,6 +291,38 @@ module Krikri
 
       tokens << current.to_s if in_token
       tokens
+    end
+
+    private def consume_single_quoted(chars : Array(Char), start : Int, current : IO::Memory) : Int
+      i = start + 1
+      while i < chars.size && chars[i] != '\''
+        current << chars[i]
+        i += 1
+      end
+      i + 1
+    end
+
+    private def consume_double_quoted(chars : Array(Char), start : Int, current : IO::Memory) : Int
+      i = start + 1
+      while i < chars.size && chars[i] != '"'
+        if chars[i] == '\\' && i + 1 < chars.size && "\\\"`$".includes?(chars[i + 1])
+          current << chars[i + 1]
+          i += 2
+        else
+          current << chars[i]
+          i += 1
+        end
+      end
+      i + 1
+    end
+
+    private def consume_escape(chars : Array(Char), start : Int, current : IO::Memory) : Int
+      if start + 1 < chars.size
+        current << chars[start + 1]
+        start + 2
+      else
+        start + 1
+      end
     end
 
     # Returns (timed_out, exhausted-pattern-or-nil, output). An exhausted
