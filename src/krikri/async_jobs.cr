@@ -10,13 +10,30 @@ module Krikri
   # though only for local connections - see execute_async's own comment
   # for why remote async isn't implemented.
   module AsyncJobs
+    class InvalidJidError < Exception; end
+
+    # Jids are joined into file paths under DIR, so anything that isn't a
+    # bare, simple job-id-shaped token (generate_jid's "<unix_ts>.<hex>",
+    # real Ansible's own "12345.67890123" shape, or a lookup probe like
+    # "no-such-job-...") is rejected before it can carry "/" or ".." into
+    # the join - a traversal jid would otherwise let an async_status task
+    # read (status mode) or delete (mode: cleanup) an arbitrary
+    # controller-local file.
+    JID_PATTERN = /\A[A-Za-z0-9][A-Za-z0-9._-]*\z/
+
+    def self.valid_jid?(jid : String) : Bool
+      !jid.empty? && JID_PATTERN.matches?(jid)
+    end
+
     DIR = File.join(ENV["HOME"]? || "/tmp", ".ansible_async")
 
     def self.status_path(jid : String) : String
+      raise InvalidJidError.new("invalid jid: #{jid}") unless valid_jid?(jid)
       File.join(DIR, jid)
     end
 
     def self.config_path(jid : String) : String
+      raise InvalidJidError.new("invalid jid: #{jid}") unless valid_jid?(jid)
       File.join(DIR, "#{jid}.config.json")
     end
 

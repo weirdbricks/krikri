@@ -49,6 +49,52 @@ describe "async_status plugin result shapes" do
     end
   end
 
+  # Regression: a traversal jid must be rejected before AsyncJobs joins it
+  # into the async-dir path - status mode would otherwise read an arbitrary
+  # controller-local file and mode: cleanup would delete one.
+  it "rejects a path-traversal jid in status mode instead of probing the file" do
+    traversal_jid = "../../../../etc/passwd"
+
+    result = PluginSpecHelper.run("async_status", {"jid" => traversal_jid})
+
+    result["failed"].as_bool.should be_true
+    result["msg"].as_s.should eq("invalid jid: #{traversal_jid}")
+    result["ansible_job_id"].as_s.should eq(traversal_jid)
+  end
+
+  it "rejects a path-traversal jid in cleanup mode without deleting anything" do
+    # Home is pointed at a temp dir (same reason as the spec above) so the
+    # traversal jid "../<sentinel>" would, if the validation were missing,
+    # delete the sentinel - a real deletion proof that never risks a real
+    # system file even on a broken build.
+    original_home = ENV["HOME"]?
+    home = File.join(Dir.tempdir, "krikri-async-status-spec-#{Random::Secure.hex(4)}")
+    Dir.mkdir_p(File.join(home, ".ansible_async"))
+    ENV["HOME"] = home
+    sentinel = File.join(home, "sentinel-#{Random::Secure.hex(4)}")
+    File.write(sentinel, "still here")
+    begin
+      result = PluginSpecHelper.run("async_status", {"jid" => "../#{File.basename(sentinel)}", "mode" => "cleanup"})
+
+      result["failed"].as_bool.should be_true
+      result["msg"].as_s.should eq("invalid jid: ../#{File.basename(sentinel)}")
+      File.exists?(sentinel).should be_true
+    ensure
+      FileUtils.rm_r(home) if original_home != home
+      original_home ? (ENV["HOME"] = original_home) : ENV.delete("HOME")
+      File.delete?(sentinel)
+    end
+  end
+
+  it "rejects other jid shapes that are not simple job ids" do
+    ["", "/etc/passwd", "..", "a/b", "a\\b", ".hidden", "jid with spaces"].each do |bad|
+      result = PluginSpecHelper.run("async_status", {"jid" => bad})
+
+      result["failed"].as_bool.should be_true
+      result["msg"].as_s.starts_with?("invalid jid:").should be_true
+    end
+  end
+
   it "still reports a finished job's own result in status mode" do
     jid = "#{Time.utc.to_unix}.#{Random::Secure.hex(6)}"
     # Some specs leave ENV["HOME"] pointing somewhere unwritable; point it

@@ -7,6 +7,20 @@ describe Krikri::AsyncJobs do
     jids.uniq.size.should eq(20)
   end
 
+  it "accepts generated and probe-shaped jids as valid" do
+    Krikri::AsyncJobs.valid_jid?(Krikri::AsyncJobs.generate_jid).should be_true
+    Krikri::AsyncJobs.valid_jid?("no-such-job-#{Krikri::AsyncJobs.generate_jid}").should be_true
+    Krikri::AsyncJobs.valid_jid?("12345.67890123").should be_true
+  end
+
+  it "rejects jids that could carry path traversal into a file path" do
+    ["", "..", "../x", "a/b", "/etc/passwd", "../../../etc/passwd", ".", "..foo", "a\\b"].each do |bad|
+      Krikri::AsyncJobs.valid_jid?(bad).should be_false
+      expect_raises(Krikri::AsyncJobs::InvalidJidError) { Krikri::AsyncJobs.status_path(bad) }
+      expect_raises(Krikri::AsyncJobs::InvalidJidError) { Krikri::AsyncJobs.config_path(bad) }
+    end
+  end
+
   it "returns nil for a job that was never written" do
     Krikri::AsyncJobs.read_status("no-such-job-#{Krikri::AsyncJobs.generate_jid}").should be_nil
   end

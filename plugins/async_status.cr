@@ -35,6 +35,16 @@ module Krikri
         return PluginResult.new(changed: false, failed: true, msg: "missing required arguments: jid")
       end
 
+      # The jid is joined into the async dir path by AsyncJobs - reject
+      # anything path-shaped (traversal, separators) before that can
+      # happen, for every mode, rather than letting a malformed jid turn
+      # status mode into an arbitrary-file read or cleanup into an
+      # arbitrary-file delete.
+      unless AsyncJobs.valid_jid?(jid)
+        return PluginResult.new(changed: false, failed: true, msg: "invalid jid: #{jid}",
+          ansible_job_id: jid)
+      end
+
       status = AsyncJobs.read_status(jid)
       unless status
         # Real Ansible's own not-found shape (async_status.py's
