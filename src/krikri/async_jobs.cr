@@ -29,9 +29,9 @@ module Krikri
       tmp = "#{path}.tmp"
       # chmod BEFORE writing: a chmod-after-write leaves the tmp file
       # 0644 (umask-dependent) while it already holds the payload.
-      File.open(tmp, "w") do |f|
-        f.chmod(0o600)
-        f.write(data.to_json.to_slice)
+      File.open(tmp, "w") do |io|
+        io.chmod(0o600)
+        io.write(data.to_json.to_slice)
       end
       File.rename(tmp, path)
     end
