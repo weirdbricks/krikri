@@ -28,10 +28,10 @@ require "../spec_helper"
 describe "deb822_repository param coverage" do
   it "space-joins a JSON-array-shaped list param (a real YAML list after task-param substitution)" do
     result = PluginSpecHelper.run("deb822_repository", {
-      "name"       => "param-audit-list-shape",
-      "uris"       => "https://example.com/repo",
-      "suites"     => "stable",
-      "components" => "[\"main\", \"contrib\", \"non-free\"]",
+      "name"                => "param-audit-list-shape",
+      "uris"                => "https://example.com/repo",
+      "suites"              => "stable",
+      "components"          => "[\"main\", \"contrib\", \"non-free\"]",
       "_ansible_check_mode" => "true",
     })
 
@@ -41,10 +41,10 @@ describe "deb822_repository param coverage" do
 
   it "space-joins a JSON-array-shaped types: into one Types: field" do
     result = PluginSpecHelper.run("deb822_repository", {
-      "name"       => "param-audit-types-list",
-      "uris"       => "https://example.com/repo",
-      "suites"     => "stable",
-      "types"      => "[\"deb\", \"deb-src\"]",
+      "name"                => "param-audit-types-list",
+      "uris"                => "https://example.com/repo",
+      "suites"              => "stable",
+      "types"               => "[\"deb\", \"deb-src\"]",
       "_ansible_check_mode" => "true",
     })
 
@@ -53,10 +53,10 @@ describe "deb822_repository param coverage" do
 
   it "still accepts a comma-separated scalar for a list param (real Ansible's check_type_list backward compat)" do
     result = PluginSpecHelper.run("deb822_repository", {
-      "name"       => "param-audit-comma-scalar",
-      "uris"       => "https://example.com/repo",
-      "suites"     => "stable",
-      "components" => "main,contrib",
+      "name"                => "param-audit-comma-scalar",
+      "uris"                => "https://example.com/repo",
+      "suites"              => "stable",
+      "components"          => "main,contrib",
       "_ansible_check_mode" => "true",
     })
 
@@ -65,12 +65,12 @@ describe "deb822_repository param coverage" do
 
   it "space-joins architectures/languages/targets list shapes too" do
     result = PluginSpecHelper.run("deb822_repository", {
-      "name"          => "param-audit-arch-list",
-      "uris"          => "https://example.com/repo",
-      "suites"        => "stable",
-      "architectures" => "[\"amd64\", \"i386\"]",
-      "languages"     => "[\"en\", \"de\"]",
-      "targets"       => "[\"deb\"]",
+      "name"                => "param-audit-arch-list",
+      "uris"                => "https://example.com/repo",
+      "suites"              => "stable",
+      "architectures"       => "[\"amd64\", \"i386\"]",
+      "languages"           => "[\"en\", \"de\"]",
+      "targets"             => "[\"deb\"]",
       "_ansible_check_mode" => "true",
     })
 
@@ -81,12 +81,12 @@ describe "deb822_repository param coverage" do
 
   it "writes bool params as yes/no only when given" do
     result = PluginSpecHelper.run("deb822_repository", {
-      "name"       => "param-audit-bools",
-      "uris"       => "https://example.com/repo",
-      "suites"     => "stable",
-      "trusted"    => "true",
-      "enabled"    => "false",
-      "pdiffs"     => "yes",
+      "name"                => "param-audit-bools",
+      "uris"                => "https://example.com/repo",
+      "suites"              => "stable",
+      "trusted"             => "true",
+      "enabled"             => "false",
+      "pdiffs"              => "yes",
       "_ansible_check_mode" => "true",
     })
 
@@ -100,9 +100,9 @@ describe "deb822_repository param coverage" do
 
   it "defaults Types: to deb when types is omitted (real module's own argument_spec default)" do
     result = PluginSpecHelper.run("deb822_repository", {
-      "name"       => "param-audit-types-default",
-      "uris"       => "https://example.com/repo",
-      "suites"     => "stable",
+      "name"                => "param-audit-types-default",
+      "uris"                => "https://example.com/repo",
+      "suites"              => "stable",
       "_ansible_check_mode" => "true",
     })
 
@@ -111,10 +111,10 @@ describe "deb822_repository param coverage" do
 
   it "writes inrelease_path as Inrelease-Path: (real module never pops it from params)" do
     result = PluginSpecHelper.run("deb822_repository", {
-      "name"           => "param-audit-inrelease",
-      "uris"           => "https://example.com/repo",
-      "suites"         => "stable",
-      "inrelease_path" => "stable/InRelease",
+      "name"                => "param-audit-inrelease",
+      "uris"                => "https://example.com/repo",
+      "suites"              => "stable",
+      "inrelease_path"      => "stable/InRelease",
       "_ansible_check_mode" => "true",
     })
 
@@ -123,10 +123,10 @@ describe "deb822_repository param coverage" do
 
   it "writes the ansible-core 2.21 include: param (Exclude:/: Include: fields)" do
     result = PluginSpecHelper.run("deb822_repository", {
-      "name"       => "param-audit-include",
-      "uris"       => "https://example.com/repo",
-      "suites"     => "stable",
-      "include"    => "[\"goodpkg\"]",
+      "name"                => "param-audit-include",
+      "uris"                => "https://example.com/repo",
+      "suites"              => "stable",
+      "include"             => "[\"goodpkg\"]",
       "_ansible_check_mode" => "true",
     })
 
@@ -158,7 +158,7 @@ describe "deb822_repository param coverage" do
       "trusted"                     => "true",
       "types"                       => "[\"deb\", \"deb-src\"]",
       "uris"                        => "https://example.com/repo",
-      "_ansible_check_mode" => "true",
+      "_ansible_check_mode"         => "true",
     })
 
     result["repo"].as_s.should eq(
@@ -188,9 +188,9 @@ describe "deb822_repository param coverage" do
 
   it "normalizes a name with spaces into the real module's filename slug" do
     result = PluginSpecHelper.run("deb822_repository", {
-      "name"       => "Param Audit Slug",
-      "uris"       => "https://example.com/repo",
-      "suites"     => "stable",
+      "name"                => "Param Audit Slug",
+      "uris"                => "https://example.com/repo",
+      "suites"              => "stable",
       "_ansible_check_mode" => "true",
     })
 
