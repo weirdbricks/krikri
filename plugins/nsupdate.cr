@@ -326,14 +326,14 @@ module Krikri
         end
 
         response = @last_response.not_nil!
-        response.answer.each do |rr|
-          if rr.type_code == 6 && PluginHelpers::NsupdateMessage.names_equal?(rr.name, name)
-            return rr.name
+        response.answer.each do |item|
+          if item.type_code == 6 && PluginHelpers::NsupdateMessage.names_equal?(item.name, name)
+            return item.name
           end
         end
-        response.authority.each do |rr|
-          if rr.type_code == 6 && PluginHelpers::NsupdateMessage.subdomain_of?(name, rr.name)
-            return rr.name
+        response.authority.each do |item|
+          if item.type_code == 6 && PluginHelpers::NsupdateMessage.subdomain_of?(name, item.name)
+            return item.name
           end
         end
 
@@ -519,8 +519,8 @@ module Krikri
 
         lookup = @last_response.not_nil!
         existing = lookup.answer.empty? ? lookup.authority : lookup.answer
-        stale = existing.flat_map do |rr|
-          decode_rr_values(rr, type)
+        stale = existing.flat_map do |item|
+          decode_rr_values(item, type)
         end.reject { |entry| values.includes?(entry) }
 
         rrs = encode_values(record, type_code, ttl, values)
