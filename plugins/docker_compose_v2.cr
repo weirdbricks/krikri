@@ -219,7 +219,7 @@ module Krikri
       when Array
         type_error(param, type_name, "dict", "#{type_name} cannot be converted to a dict")
       when String
-        convert_dict_string(param, type_name, parsed.not_nil!.as_s)
+        convert_dict_string(param, type_name, raw)
       when Nil
         # Not valid JSON at all - a plain (unquoted-on-the-wire) string.
         convert_dict_string(param, type_name, raw)
