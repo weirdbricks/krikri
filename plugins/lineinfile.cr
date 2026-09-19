@@ -473,19 +473,19 @@ module Krikri
 
     private def apply_owner_attr(path : String, info : File::Info, check_mode : Bool) : Bool
       return false unless owner = @params["owner"]?
-      return false unless user = System::User.find_by?(name: owner)
-      return false if info.owner_id.to_s == user.id.to_s
+      uid = resolve_owner_uid(owner)
+      return false if info.owner_id.to_s == uid.to_s
 
-      (File.chown(path, uid: user.id.to_i, gid: -1) rescue nil) unless check_mode
+      (File.chown(path, uid: uid, gid: -1) rescue nil) unless check_mode
       true
     end
 
     private def apply_group_attr(path : String, info : File::Info, check_mode : Bool) : Bool
       return false unless group = @params["group"]?
-      return false unless grp = System::Group.find_by?(name: group)
-      return false if info.group_id.to_s == grp.id.to_s
+      gid = resolve_group_gid(group)
+      return false if info.group_id.to_s == gid.to_s
 
-      (File.chown(path, uid: -1, gid: grp.id.to_i) rescue nil) unless check_mode
+      (File.chown(path, uid: -1, gid: gid) rescue nil) unless check_mode
       true
     end
 

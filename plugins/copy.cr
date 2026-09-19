@@ -859,12 +859,17 @@ module Krikri
       uid = -1
       gid = -1
 
-      if (owner = @params["owner"]?) && (user = System::User.find_by?(name: owner))
-        uid = user.id.to_i
+      # A present owner:/group: value (explicit empty string included)
+      # is always resolved - and an unresolvable name fails the task
+      # like real Ansible's basic.py (round900811 kilip.chezmoi) -
+      # instead of the old `&&`-short-circuit that silently skipped the
+      # chown whenever the lookup came back empty.
+      if owner = @params["owner"]?
+        uid = resolve_owner_uid(owner)
       end
 
-      if (group = @params["group"]?) && (grp = System::Group.find_by?(name: group))
-        gid = grp.id.to_i
+      if group = @params["group"]?
+        gid = resolve_group_gid(group)
       end
 
       File.chown(path, uid: uid, gid: gid) if uid != -1 || gid != -1

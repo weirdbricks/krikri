@@ -323,4 +323,40 @@ describe "yum_repository plugin" do
     content.should contain("exclude = alias-pkg")
     content.should_not contain("canonical-pkg")
   end
+
+  # yum_repository goes through BasePlugin#apply_owner_group_mode - the
+  # SHARED owner/group helper - so it is the direct regression target for
+  # the helper itself, distinct from copy/get_url's inline attribute code.
+  # Found benchmarking kilip.chezmoi (round900811): a present-but-empty
+  # owner:/group: was silently treated as "no ownership change requested"
+  # instead of failing like real Ansible's basic.py, which only skips the
+  # chown/chgrp when the param is None and fails the empty-name lookup
+  # with "chown failed: failed to look up user " (basic.py:789,
+  # trailing space) / "chgrp failed: failed to look up group "
+  # (basic.py:830). Verified live against ansible-core 2.19.11.
+  it "fails with real Ansible's exact message when owner: is an explicit empty string (shared helper)" do
+    result = PluginSpecHelper.run("yum_repository", {
+      "name"        => "empty-owner",
+      "description" => "d",
+      "baseurl"     => "https://example.com",
+      "owner"       => "",
+      "reposdir"    => TMP_DIR,
+    })
+
+    result["failed"].as_bool.should be_true
+    result["msg"].as_s.should eq("chown failed: failed to look up user ")
+  end
+
+  it "fails with real Ansible's exact message when group: is an explicit empty string (shared helper)" do
+    result = PluginSpecHelper.run("yum_repository", {
+      "name"        => "empty-group",
+      "description" => "d",
+      "baseurl"     => "https://example.com",
+      "group"       => "",
+      "reposdir"    => TMP_DIR,
+    })
+
+    result["failed"].as_bool.should be_true
+    result["msg"].as_s.should eq("chgrp failed: failed to look up group ")
+  end
 end

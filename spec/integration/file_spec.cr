@@ -525,7 +525,13 @@ describe "file plugin" do
       result = PluginSpecHelper.run("file", {"path" => path, "state" => "directory", "group" => "nonexistent_group_xyz_abc"})
 
       result["failed"].as_bool.should be_true
-      result["msg"].as_s.should contain("chown failed: failed to look up group nonexistent_group_xyz_abc")
+      # "chgrp failed", not "chown failed" - real Ansible's basic.py
+      # set_group_if_different (basic.py:830) fails with exactly this
+      # string, verified live against ansible-core 2.19.11 (both a
+      # nonexistent name and an explicit group: "" produce "chgrp
+      # failed: failed to look up group <name>"; the owner: analogue is
+      # "chown failed: failed to look up user <name>", basic.py:789).
+      result["msg"].as_s.should contain("chgrp failed: failed to look up group nonexistent_group_xyz_abc")
     end
   end
 
