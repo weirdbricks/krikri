@@ -335,19 +335,23 @@ independently-provisioned hosts in that round, not an engine defect.
   `community.general.dconf`, `community.general.portage` - genuinely
   missing, one role each unless noted. See `ROLES_TESTED.md` for the
   exact affected role per module.
-- **Round 700000-701129: 23 real divergences, not yet root-caused**
+- **Round 700000-701129: real divergences, not yet root-caused**
   (400-role Galaxy top-download batch, ubuntu+rocky) - each needs its
   own confirmed repro before treating as a real krikri bug, per this
   file's workflow: `inverse_inc.gitlab_buildpkg_tools`,
   `alannix_lw.lacework_agent_ansible_role`,
   `redhat_sap.sap_hana_deployment`, `manala.environment`,
-  `grycap.clues`, `ChristopherDavenport.apache-portable-runtime`,
+  `ChristopherDavenport.apache-portable-runtime`,
   `manala.accounts`, `buluma.confluence`, `xanmanning.helm`,
-  `buluma.jira`, `HanXHX.debian_bootstrap`,
+  `buluma.jira`,
   `reimarstier.jetbrains_installer`, `darkwizard242.packer`,
   `openmicroscopy.upgrade-distpackages`, `buluma.gitlab_ee`,
-  `linux-system-roles.ssh`, `redhat_sap.sap_hana_hsr` - one-off recap
-  mismatches, no shared pattern found yet. (`ccdc.ntp_configuration`,
+  `redhat_sap.sap_hana_hsr` - one-off recap
+  mismatches, no shared pattern found yet. `grycap.clues` (a `pip:`
+  VCS-requirement idempotency bug), `HanXHX.debian_bootstrap`
+  (`lookup('flattened', ...)` unimplemented), and
+  `linux-system-roles.ssh` (`trim` filter crashing on a native bool)
+  are now FIXED - see git log. (`ccdc.ntp_configuration`,
   `so5.ssh_hostbased_auth`, `so5.pbspro` - the `with_first_found:`
   wrong-subdir-search cluster also once listed here - are now fixed,
   see git log.) The two "undefined-looking value leaking into rendered
