@@ -46,6 +46,12 @@ module Krikri
 
       cap_name, cap_op, cap_flags = parse_cap(capability, op_required: state == "present")
       current_caps = getcap(path)
+      sync_caps(path, state, current_caps, cap_name, cap_op, cap_flags, check_mode)
+    rescue ex : CapError
+      PluginResult.new(changed: false, failed: true, msg: ex.message || "capabilities module error")
+    end
+
+    private def sync_caps(path : String, state : String, current_caps : Array(Cap), cap_name : String, cap_op : String?, cap_flags : String?, check_mode : Bool) : PluginResult
       cap_names = current_caps.map { |itm| itm[0] }
 
       if state == "present" && !current_caps.includes?({cap_name, cap_op, cap_flags})
@@ -62,8 +68,6 @@ module Krikri
         # the changed path).
         PluginResult.new(changed: false, failed: false, msg: "", state: state)
       end
-    rescue ex : CapError
-      PluginResult.new(changed: false, failed: true, msg: ex.message || "capabilities module error")
     end
 
     # Commit the new capability set (or just report it, in check mode)
