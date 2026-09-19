@@ -83,8 +83,7 @@ module Krikri
       # the task host's inventory address, never its connection.
       if task_host = @task_host
         if task_host.name != @host.name && local_connection? && !localhost_addr?(task_host.connection_host)
-          user = SynchronizeRsync.bool(@params["set_remote_user"]?, default: true) ?
-            @vars["ansible_user"]?.try(&.as_s?) : nil
+          user = SynchronizeRsync.bool(@params["set_remote_user"]?, default: true) ? @vars["ansible_user"]?.try(&.as_s?) : nil
           if mode == "pull"
             src = SynchronizeRsync.format_rsh_target(task_host.connection_host, src, user)
           else
