@@ -34,6 +34,14 @@ module Krikri
   class DeployHelperPlugin < BasePlugin
     private DEPLOY_STATES = %w[finalize absent clean present query unfinished]
 
+    private def resolve_deploy_paths(path : String) : Tuple(String, String, String)
+      {
+        @params["releases_path"]? || "#{path}/releases",
+        @params["shared_path"]? || "#{path}/shared",
+        @params["current_path"]? || "#{path}/current",
+      }
+    end
+
     def execute : PluginResult
       path = @params["path"]?
       unless path
@@ -47,9 +55,7 @@ module Krikri
           msg: "value of state must be one of: #{DEPLOY_STATES.join(", ")}, got: #{state}")
       end
 
-      releases_path = @params["releases_path"]? || "#{path}/releases"
-      shared_path = @params["shared_path"]? || "#{path}/shared"
-      current_path = @params["current_path"]? || "#{path}/current"
+      releases_path, shared_path, current_path = resolve_deploy_paths(path)
       keep_releases = @params["keep_releases"]?.try(&.to_i?) || 5
       release = @params["release"]?
       check_mode = true?(@params["_ansible_check_mode"]?)
