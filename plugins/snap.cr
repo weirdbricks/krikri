@@ -77,12 +77,12 @@ module Krikri
         end
       end
 
-      PluginResult.new(changed: run.changed, failed: false,
+      PluginResult.new(changed: run.changed?, failed: false,
         msg: run.msgs.empty? ? "" : "snaps changed: #{run.msgs.join(", ")}")
     end
 
     private class SnapRun
-      property changed : Bool = false
+      property? changed : Bool = false
       property msgs : Array(String) = [] of String
     end
 
