@@ -33,9 +33,7 @@ describe "SynchronizeActionPlugin delegate_to localhost munging" do
       "dest" => "/tmp/sync-spec-dest/",
     })
 
-    final = result.final_result
-    final.should_not be_nil
-    json = final.not_nil!
+    json = result.final_result || raise "expected a final result"
     json.as_h["failed"].as_bool.should be_true
     json.as_h["changed"].as_bool.should be_false
     json.as_h["cmd"].as_s.should contain("unresolvable-sync-spec-host:/tmp/sync-spec-dest/")
@@ -49,7 +47,7 @@ describe "SynchronizeActionPlugin delegate_to localhost munging" do
       "mode" => "pull",
     })
 
-    json = result.final_result.not_nil!
+    json = result.final_result || raise "expected a final result"
     json.as_h["failed"].as_bool.should be_true
     json.as_h["cmd"].as_s.should contain("unresolvable-sync-spec-host:/tmp/sync-spec-src/")
     json.as_h["cmd"].as_s.should_not contain("unresolvable-sync-spec-host:/tmp/sync-spec-dest")
@@ -62,7 +60,7 @@ describe "SynchronizeActionPlugin delegate_to localhost munging" do
       "dest" => "/tmp/sync-spec-dest/",
     }, vars)
 
-    json = result.final_result.not_nil!
+    json = result.final_result || raise "expected a final result"
     json.as_h["cmd"].as_s.should contain("syncuser@unresolvable-sync-spec-host:/tmp/sync-spec-dest/")
   end
 
@@ -75,7 +73,7 @@ describe "SynchronizeActionPlugin delegate_to localhost munging" do
     }, Hash(String, JSON::Any).new, delegate, nil, delegate)
     result = plugin.execute
 
-    json = result.final_result.not_nil!
+    json = result.final_result || raise "expected a final result"
     json.as_h["failed"].as_bool.should be_true
     json.as_h["cmd"].as_s.should_not contain("@")
     json.as_h["cmd"].as_s.should_not contain("--rsh=")
@@ -98,7 +96,7 @@ describe "SynchronizeActionPlugin delegate_to localhost munging" do
       }, Hash(String, JSON::Any).new, delegate)
       result = plugin.execute
 
-      json = result.final_result.not_nil!
+      json = result.final_result || raise "expected a final result"
       json.as_h["failed"].as_bool.should be_falsey
       json.as_h["changed"].as_bool.should be_true
       json.as_h["cmd"].as_s.should contain("--dry-run")
