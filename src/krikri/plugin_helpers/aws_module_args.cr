@@ -229,7 +229,7 @@ module Krikri
         return nil if unsupported.empty?
 
         names = spec.args.keys.sort!
-        aliases = spec.args.values.flat_map(&.aliases).sort
+        aliases = spec.args.values.flat_map(&.aliases).sort!
         supported = aliases.empty? ? names.join(", ") : "#{names.join(", ")} (#{aliases.join(", ")})"
         PluginResult.new(changed: false, failed: true,
           msg: "Unsupported parameters for (#{spec.module_name}) module: #{unsupported.join(", ")}. " \
