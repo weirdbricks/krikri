@@ -103,9 +103,8 @@ module Krikri
         return PluginResult.new(
           changed: false,
           failed: true,
-          msg: requested.includes?("auto") \
-            ? "Could not auto detect a usable package manager, check warnings for details." \
-            : "Unsupported package managers requested: #{bad.join(", ")}"
+          msg: requested.includes?("auto") ? "Could not auto detect a usable package manager, check warnings for details." \
+                                              : "Unsupported package managers requested: #{bad.join(", ")}"
         )
       end
 
