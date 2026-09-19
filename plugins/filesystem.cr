@@ -105,7 +105,11 @@ module Krikri
 
       # state's choices leave only "present" here, and required_if
       # already guaranteed fstype for present.
-      present_result(dev, current_fs, state, fstype.not_nil!, force, opts, check_mode)
+      if fstype.nil?
+        return PluginResult.new(changed: false, failed: true,
+          msg: "state is present but all of the following are missing: fstype")
+      end
+      present_result(dev, current_fs, state, fstype, force, opts, check_mode)
     end
 
     private def missing_device_result(dev : String, state : String) : PluginResult
