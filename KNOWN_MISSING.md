@@ -161,6 +161,24 @@ not attempted this round). `aem_design.aem_license`'s `no_log`-vs-
 fail-hard divergence is a deliberate security judgment call left for a
 human (see Deliberate limits).
 
+**Post-round reclassification (2026-09-19):** the remaining 60
+"not root-caused" divergences from this round were individually
+triaged against the sharpened coverage policy above. 14 trace to
+unsupported community/vendor modules (`f5networks.*`, `ansible.windows.*`,
+`cisco.ios.*`, `community.docker.*`, `azure.azcollection.*`,
+`community.rabbitmq.*`, `community.crypto.*`) - reclassified as
+out-of-scope in `ROLES_TESTED.md`, no longer counted as divergences at
+all. 6 are infra/role-side (broken upstream role, mixed-OS role tested
+on one host, or a host-side timeout), not krikri bugs. The remaining
+~40 split into genuine `CORE_BUG` candidates for a future fix round
+(including the still-open `practical-ansible.nginx_docker`/
+`nginx_project` half of the include_vars/`failed_when:` item this round
+never got back to) and a smaller set still `UNCLEAR` pending individual
+repro - among the unclear set, 7 roles share what looks like ONE
+systemic root cause worth its own investigation: real `ansible-playbook`
+crashes at parse time (rc=1 or rc=4) on a syntax real Ansible rejects,
+while krikri's parser is more lenient and runs the playbook anyway.
+
 ## Round 829000-829799: 800-role Galaxy batch (ubuntu+rocky), no new krikri bug (0.9.1154)
 
 800-role Atlantic.net-only round, alternating ubuntu/rocky per role

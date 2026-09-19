@@ -8538,7 +8538,7 @@ Crinja `%` operator) and Deliberate Limits for `aem_design.aem_license`.
 | `telus.unattended-upgrades` | ubuntu | ❌ GALAXY_MISSING |
 | `ten7.tractorbeam` | ubuntu | ❌ GALAXY_MISSING |
 | `samyroad.ohmyzsh` | ubuntu | ✅ clean. Times: cold py 0.45s vs cr 0.01s; warm py 0.45s vs cr 0.01s. |
-| `maxrainer.f5_loadbalancer` | ubuntu | ⚠️ DIVERGENT (not root-caused/fixed this round). Times: cold py 7.00s vs cr 4.13s; warm py 4.31s vs cr 0.42s. |
+| `maxrainer.f5_loadbalancer` | ubuntu | 🚫 out of scope: unsupported community module (f5networks.f5_modules.bigip_device_license), not tracked - see KNOWN_MISSING.md's coverage policy. |
 | `gmoisio.ale_aos` | ubuntu | ✅ clean. Times: cold py 3.58s vs cr 4.08s; warm py 2.70s vs cr 0.35s. |
 | `stackhpc.beegfs` | ubuntu | ✅ clean. Times: cold py 0.46s vs cr 0.01s; warm py 0.47s vs cr 0.01s. |
 | `newswangerd.test_role_a` | ubuntu | ❌ GALAXY_MISSING |
@@ -8566,7 +8566,7 @@ Crinja `%` operator) and Deliberate Limits for `aem_design.aem_license`.
 | `HarryHarcourt.Ansible-RHEL7-CIS-Benchmarks` | ubuntu | ✅ clean. Times: cold py 0.50s vs cr 0.01s; warm py 0.47s vs cr 0.01s. |
 | `lirlia.ruby` | ubuntu | ✅ clean. Times: cold py 71.26s vs cr 62.98s; warm py 16.44s vs cr 2.51s. |
 | `githubixx.kubernetes_ca` | ubuntu | ⚠️ DIVERGENT (not root-caused/fixed this round). Times: cold py 4.55s vs cr 4.56s; warm py 2.87s vs cr 0.61s. |
-| `tvmalmeida.windows_update` | ubuntu | ⚠️ DIVERGENT (not root-caused/fixed this round). Times: cold py 4.66s vs cr 3.99s; warm py 3.78s vs cr 0.53s. |
+| `tvmalmeida.windows_update` | ubuntu | 🚫 out of scope: unsupported community module (ansible.windows.win_reboot), not tracked - see KNOWN_MISSING.md's coverage policy. |
 | `thorian93.unattended_upgrade` | ubuntu | ✅ clean. Times: cold py 5.12s vs cr 4.07s; warm py 4.47s vs cr 0.40s. |
 | `kibatic.docker-systemd` | ubuntu | ✅ clean. Times: cold py 0.45s vs cr 0.01s; warm py 0.45s vs cr 0.01s. |
 | `likg.apt-repo-sury-org` | ubuntu | ✅ clean. Times: cold py 67.21s vs cr 50.94s; warm py 16.02s vs cr 9.29s. |
@@ -8607,7 +8607,7 @@ Crinja `%` operator) and Deliberate Limits for `aem_design.aem_license`.
 | `lukapetrovic-git.cilium` | ubuntu | ✅ clean. Times: cold py 21.02s vs cr 12.71s; warm py 10.24s vs cr 1.59s. |
 | `hurricanehrndz.pyenv` | ubuntu | ✅ clean. Times: cold py 11.03s vs cr 11.46s; warm py 6.07s vs cr 1.42s. |
 | `ten7.flightdeck_cluster` | ubuntu | ✅ clean. Times: cold py 4.42s vs cr 5.97s; warm py 2.92s vs cr 0.39s. |
-| `maxrainer.routing_bgp` | ubuntu | ⚠️ DIVERGENT (not root-caused/fixed this round). Times: cold py 4.26s vs cr 4.24s; warm py 3.28s vs cr 0.36s. |
+| `maxrainer.routing_bgp` | ubuntu | 🚫 out of scope: unsupported community module (cisco.ios), not tracked - see KNOWN_MISSING.md's coverage policy. |
 | `openstack-ansible-galaxy.rabbitmq` | ubuntu | ✅ clean. Times: cold py 68.80s vs cr 61.09s; warm py 12.64s vs cr 5.84s. |
 | `f500.locale` | ubuntu | ✅ clean. Times: cold py 14.49s vs cr 7.25s; warm py 6.92s vs cr 0.71s. |
 | `bdellegrazie.node_exporter` | ubuntu | ✅ clean. Times: cold py 0.48s vs cr 0.01s; warm py 0.47s vs cr 0.01s. |
@@ -8628,14 +8628,14 @@ Crinja `%` operator) and Deliberate Limits for `aem_design.aem_license`.
 | `elan.monitoring_mysqld_exporter` | ubuntu | ⚠️ DIVERGENT (not root-caused/fixed this round). Times: cold py 22.65s vs cr 6.82s; warm py 11.33s vs cr 2.56s. |
 | `miglesiassarria.sftp` | ubuntu | ✅ clean. Times: cold py 8.25s vs cr 4.36s; warm py 6.33s vs cr 0.39s. |
 | `maxrainer.network_aci` | ubuntu | ✅ clean. Times: cold py 4.74s vs cr 4.02s; warm py 2.92s vs cr 0.36s. |
-| `maxrainer.network_reporting` | ubuntu | ⚠️ DIVERGENT (not root-caused/fixed this round). Times: cold py 4.04s vs cr 3.93s; warm py 3.66s vs cr 0.36s. |
+| `maxrainer.network_reporting` | ubuntu | 🚫 out of scope: unsupported community module (cisco.ios), not tracked - see KNOWN_MISSING.md's coverage policy. |
 | `joshbenner.certbot` | ubuntu | ✅ clean. Times: cold py 15.84s vs cr 14.64s; warm py 5.21s vs cr 1.35s. |
 | `lciolecki.virtualenvwrapper` | ubuntu | ✅ clean. Times: cold py 0.45s vs cr 0.01s; warm py 0.44s vs cr 0.01s. |
 | `tcharl.freeipa_server` | ubuntu | ✅ clean. Times: cold py 0.44s vs cr 0.01s; warm py 0.44s vs cr 0.01s. |
 | `davidalger.n98_magerun` | ubuntu | ✅ clean. Times: cold py 7.47s vs cr 4.82s; warm py 6.31s vs cr 0.39s. |
 | `darkraiden.ansible-codedeploy-agent` | ubuntu | ✅ clean. Times: cold py 0.45s vs cr 0.01s; warm py 0.47s vs cr 0.01s. |
 | `juwai.consul` | ubuntu | ✅ clean. Times: cold py 0.45s vs cr 0.01s; warm py 0.44s vs cr 0.01s. |
-| `justereseau.exporter` | ubuntu | ⚠️ DIVERGENT (not root-caused/fixed this round). Times: cold py 16.62s vs cr 4.79s; warm py 12.77s vs cr 0.52s. |
+| `justereseau.exporter` | ubuntu | 🚫 out of scope: unsupported community module (community.docker.docker_container/docker_image), not tracked - see KNOWN_MISSING.md's coverage policy. |
 | `xtrinch.kiosk` | ubuntu | ✅ clean. Times: cold py 9.15s vs cr 7.23s; warm py 5.80s vs cr 1.63s. |
 | `stone-payments.nohugepages` | ubuntu | ❌ GALAXY_MISSING |
 | `andrewrothstein.ipfs` | ubuntu | ✅ clean. Times: cold py 122.71s vs cr 61.69s; warm py 26.12s vs cr 1.68s. |
@@ -8643,13 +8643,13 @@ Crinja `%` operator) and Deliberate Limits for `aem_design.aem_license`.
 | `armov.redis_custom` | ubuntu | ✅ clean. Times: cold py 18.93s vs cr 11.17s; warm py 9.10s vs cr 0.63s. |
 | `npm.pg-failover-config` | ubuntu | ✅ clean. Times: cold py 0.46s vs cr 0.01s; warm py 1.00s vs cr 0.01s. |
 | `dgibbs64.qemu_guest_agent` | ubuntu | ✅ clean. Times: cold py 43.83s vs cr 42.79s; warm py 8.97s vs cr 0.51s. |
-| `maxrainer.network_basics` | ubuntu | ⚠️ DIVERGENT (not root-caused/fixed this round). Times: cold py 4.78s vs cr 3.98s; warm py 2.65s vs cr 0.34s. |
+| `maxrainer.network_basics` | ubuntu | 🚫 out of scope: unsupported community module (cisco.ios.ios_facts), not tracked - see KNOWN_MISSING.md's coverage policy. |
 | `salessandri.youtrack` | ubuntu | ✅ clean. Times: cold py 12.04s vs cr 4.24s; warm py 9.72s vs cr 0.45s. |
 | `ZeroDowntime.epel_repo` | ubuntu | ✅ clean. Times: cold py 4.15s vs cr 4.19s; warm py 2.63s vs cr 0.33s. |
 | `tcomerma.keepalived` | ubuntu | ✅ clean. Times: cold py 7.44s vs cr 5.36s; warm py 5.43s vs cr 1.38s. |
 | `fronczek.role_snmp` | ubuntu | ✅ clean. Times: cold py 51.47s vs cr 43.32s; warm py 10.77s vs cr 3.30s. |
 | `andrewrothstein.glab` | ubuntu | ✅ clean. Times: cold py 21.30s vs cr 10.58s; warm py 5.39s vs cr 0.64s. |
-| `lukapetrovic-git.azure_ad_app` | ubuntu | ⚠️ DIVERGENT (not root-caused/fixed this round). Times: cold py 3.76s vs cr 3.99s; warm py 2.67s vs cr 0.33s. |
+| `lukapetrovic-git.azure_ad_app` | ubuntu | 🚫 out of scope: unsupported community module (azure.azcollection.azure_rm_adapplication_info), not tracked - see KNOWN_MISSING.md's coverage policy. |
 | `mrlesmithjr.ansible-docker-swarm` | ubuntu | ✅ clean. Times: cold py 0.46s vs cr 0.01s; warm py 0.44s vs cr 0.01s. |
 | `colstrom.fast` | ubuntu | ✅ clean. Times: cold py 9.59s vs cr 4.01s; warm py 6.80s vs cr 0.33s. |
 | `reallyenglish.ntpd` | ubuntu | ❌ GALAXY_MISSING |
@@ -8739,7 +8739,7 @@ Crinja `%` operator) and Deliberate Limits for `aem_design.aem_license`.
 | `bodsch.registry` | ubuntu | ⚠️ DIVERGENT (not root-caused/fixed this round). Times: cold py 4.27s vs cr 6.30s; warm py 2.80s vs cr 0.55s. |
 | `grycap.glusterfs` | ubuntu | ✅ clean. Times: cold py 69.84s vs cr 60.30s; warm py 53.58s vs cr 33.66s. |
 | `marvel-nccr.editors` | ubuntu | ✅ clean. Times: cold py 9.79s vs cr 8.82s; warm py 6.00s vs cr 1.75s. |
-| `maxrainer.network_update` | ubuntu | ⚠️ DIVERGENT (not root-caused/fixed this round). Times: cold py 4.25s vs cr 4.15s; warm py 3.33s vs cr 0.38s. |
+| `maxrainer.network_update` | ubuntu | 🚫 out of scope: unsupported community module (cisco.ios), not tracked - see KNOWN_MISSING.md's coverage policy. |
 | `MoHD20.Radarr` | ubuntu | ✅ clean. Times: cold py 0.45s vs cr 0.01s; warm py 1.53s vs cr 0.01s. |
 | `juwai.filebeat` | ubuntu | ✅ clean. Times: cold py 0.44s vs cr 0.01s; warm py 0.43s vs cr 0.01s. |
 | `idiv_biodiversity.mmmodules` | ubuntu | ❌ GALAXY_MISSING |
@@ -8755,7 +8755,7 @@ Crinja `%` operator) and Deliberate Limits for `aem_design.aem_license`.
 | `zen.teleport` | ubuntu | ✅ clean. Times: cold py 81.58s vs cr 57.47s; warm py 15.95s vs cr 1.93s. |
 | `juwai.consul-alerts` | ubuntu | ✅ clean. Times: cold py 0.46s vs cr 0.01s; warm py 0.46s vs cr 0.01s. |
 | `indigo-dc.galaxycloud-tools` | ubuntu | ✅ clean. Times: cold py 0.46s vs cr 0.01s; warm py 0.47s vs cr 0.01s. |
-| `CyVerse-Ansible.rabbitmq_vhost` | ubuntu | ⚠️ DIVERGENT (not root-caused/fixed this round). Times: cold py 5.43s vs cr 4.23s; warm py 2.90s vs cr 0.44s. |
+| `CyVerse-Ansible.rabbitmq_vhost` | ubuntu | 🚫 out of scope: unsupported community module (community.rabbitmq.*), not tracked - see KNOWN_MISSING.md's coverage policy. |
 | `markosamuli.terraform` | ubuntu | ✅ clean. Times: cold py 10.30s vs cr 5.62s; warm py 7.87s vs cr 0.90s. |
 | `robertdebock.cis` | ubuntu | ✅ clean. Times: cold py 4.23s vs cr 4.09s; warm py 2.75s vs cr 0.35s. |
 | `snoopotic.ansible_role_ssh_keys` | ubuntu | ✅ clean. Times: cold py 4.81s vs cr 3.89s; warm py 3.14s vs cr 0.52s. |
@@ -8851,7 +8851,7 @@ Crinja `%` operator) and Deliberate Limits for `aem_design.aem_license`.
 | `DavidWittman.filebeat` | ubuntu | ✅ clean. Times: cold py 0.47s vs cr 0.01s; warm py 0.45s vs cr 0.01s. |
 | `zenoamaro.postgresql` | ubuntu | ✅ clean. Times: cold py 0.45s vs cr 0.01s; warm py 0.45s vs cr 0.01s. |
 | `clutterbox.apt-http-proxy` | ubuntu | ✅ clean. Times: cold py 4.66s vs cr 3.82s; warm py 3.27s vs cr 0.37s. |
-| `valerius257.windows-updates` | ubuntu | ⚠️ DIVERGENT (not root-caused/fixed this round). Times: cold py 5.43s vs cr 4.52s; warm py 3.01s vs cr 0.37s. |
+| `valerius257.windows-updates` | ubuntu | 🚫 out of scope: unsupported community module (ansible.windows.win_regedit), not tracked - see KNOWN_MISSING.md's coverage policy. |
 | `Oefenweb.logcheck` | ubuntu | ✅ clean. Times: cold py 63.20s vs cr 61.39s; warm py 8.63s vs cr 3.56s. |
 | `elan.opencast_opensearch` | ubuntu | ✅ clean. Times: cold py 51.96s vs cr 49.24s; warm py 10.07s vs cr 1.01s. |
 | `CSCfi.shibboleth-sp` | ubuntu | ✅ clean. Times: cold py 0.46s vs cr 0.01s; warm py 0.46s vs cr 0.01s. |
@@ -9035,7 +9035,7 @@ Crinja `%` operator) and Deliberate Limits for `aem_design.aem_license`.
 | `robertdebock.anaconda` | rocky | ✅ clean. Times: cold py 32.57s vs cr 33.47s; warm py 37.78s vs cr 3.27s. |
 | `reallyenglish.virtual-interface` | rocky | ❌ GALAXY_MISSING |
 | `finalgene.zigbee2mqtt` | rocky | ✅ clean. Times: cold py 8.57s vs cr 10.02s; warm py 7.09s vs cr 0.46s. |
-| `lukapetrovic-git.win_patch` | rocky | ⚠️ DIVERGENT (not root-caused/fixed this round). Times: cold py 4.13s vs cr 10.18s; warm py 3.45s vs cr 0.33s. |
+| `lukapetrovic-git.win_patch` | rocky | 🚫 out of scope: unsupported community module (ansible.windows.win_updates), not tracked - see KNOWN_MISSING.md's coverage policy. |
 | `ten7.drupal_backup` | rocky | ✅ clean. Times: cold py 0.45s vs cr 0.01s; warm py 0.46s vs cr 0.01s. |
 | `andrewrothstein.lftp` | rocky | ✅ clean. Times: cold py 9.15s vs cr 12.21s; warm py 6.02s vs cr 0.37s. |
 | `raven428.mini_vault` | rocky | ✅ clean. Times: cold py 3.80s vs cr 10.10s; warm py 2.97s vs cr 0.45s. |
@@ -9064,7 +9064,7 @@ Crinja `%` operator) and Deliberate Limits for `aem_design.aem_license`.
 | `RedHatOfficial.rhel9_cui` | rocky | ❌→✅ FIXED 0.9.1180: ini_file values: list unsupported. |
 | `buluma.packer_rhel` | rocky | ✅ clean. Times: cold py 7.66s vs cr 18.68s; warm py 7.46s vs cr 2.37s. |
 | `apolloclark.metricbeat` | rocky | ✅ clean. Times: cold py 6.00s vs cr 10.52s; warm py 4.99s vs cr 0.37s. |
-| `calvinbui.ansible_acme_certificates` | rocky | ⚠️ DIVERGENT (not root-caused/fixed this round). Times: cold py 16.50s vs cr 13.37s; warm py 17.95s vs cr 1.11s. |
+| `calvinbui.ansible_acme_certificates` | rocky | 🚫 out of scope: unsupported community module (community.crypto.acme_certificate), not tracked - see KNOWN_MISSING.md's coverage policy. |
 | `openwisp.wifi_login_pages` | rocky | ✅ clean. Times: cold py 63.07s vs cr 50.91s; warm py 61.81s vs cr 40.61s. |
 | `ryanlelek.sshd` | rocky | ✅ clean. Times: cold py 9.38s vs cr 11.18s; warm py 8.61s vs cr 0.42s. |
 | `ultral.ansible_docker_centos` | rocky | ✅ clean. Times: cold py 51.17s vs cr 59.26s; warm py 10.24s vs cr 1.04s. |
@@ -9099,7 +9099,7 @@ Crinja `%` operator) and Deliberate Limits for `aem_design.aem_license`.
 | `labpositiva.python` | rocky | ✅ clean. Times: cold py 0.45s vs cr 0.01s; warm py 0.45s vs cr 0.01s. |
 | `badsectorlabs.ludus_remnux` | rocky | ✅ clean. Times: cold py 8.00s vs cr 14.01s; warm py 6.45s vs cr 0.42s. |
 | `gzm55.require_disabe_become` | rocky | ✅ clean. Times: cold py 3.57s vs cr 19.70s; warm py 3.43s vs cr 0.40s. |
-| `badsectorlabs.ludus_mssql` | rocky | ⚠️ DIVERGENT (not root-caused/fixed this round). Times: cold py 4.18s vs cr 17.17s; warm py 3.69s vs cr 0.30s. |
+| `badsectorlabs.ludus_mssql` | rocky | 🚫 out of scope: unsupported community module (Windows WinRM/DPAPI collection), not tracked - see KNOWN_MISSING.md's coverage policy. |
 | `dudefellah.vim` | rocky | ❌ GALAXY_MISSING |
 | `suzuki-shunsuke.gvm` | rocky | ❌ GALAXY_MISSING |
 | `apolloclark.heartbeat` | rocky | ✅ clean. Times: cold py 5.89s vs cr 10.69s; warm py 4.13s vs cr 0.44s. |
@@ -9323,7 +9323,7 @@ Crinja `%` operator) and Deliberate Limits for `aem_design.aem_license`.
 | `escalate.traefik` | rocky | ✅ clean. Times: cold py 20.52s vs cr 10.55s; warm py 17.96s vs cr 0.53s. |
 | `Temelio.account_management` | rocky | ✅ clean. Times: cold py 4.55s vs cr 9.83s; warm py 3.41s vs cr 0.32s. |
 | `veselahouba.openldap` | rocky | ✅ clean. Times: cold py 6.17s vs cr 13.10s; warm py 5.08s vs cr 0.33s. |
-| `cchurch.win-iis` | rocky | ⚠️ DIVERGENT (not root-caused/fixed this round). Times: cold py 3.60s vs cr 13.21s; warm py 3.25s vs cr 0.45s. |
+| `cchurch.win-iis` | rocky | 🚫 out of scope: unsupported community module (ansible.windows.win_iis_*), not tracked - see KNOWN_MISSING.md's coverage policy. |
 | `anmolnagpal.ansible_role_mount_efs` | rocky | ✅ clean. Times: cold py 9.65s vs cr 12.34s; warm py 7.25s vs cr 0.38s. |
 | `vbotka.doctl` | rocky | ✅ clean. Times: cold py 13.65s vs cr 11.02s; warm py 14.24s vs cr 0.87s. |
 | `ElaoInfra.cron` | rocky | ✅ clean. Times: cold py 0.46s vs cr 0.01s; warm py 0.44s vs cr 0.01s. |
