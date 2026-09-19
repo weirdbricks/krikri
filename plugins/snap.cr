@@ -113,7 +113,7 @@ module Krikri
             return PluginResult.new(changed: false, failed: true,
               msg: "snap #{name} is not installed, cannot change its state to #{state}")
           end
-          is_disabled = listing.not_nil!.includes?("disabled")
+          is_disabled = listing.includes?("disabled")
           want_disabled = state == "disabled"
           if is_disabled != want_disabled
             return PluginResult.new(changed: true, failed: false,
