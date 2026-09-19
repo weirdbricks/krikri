@@ -118,7 +118,7 @@ module Krikri
 
       if fstype && !FSTYPE_COMMANDS.has_key?(fstype)
         return PluginResult.new(changed: false, failed: true,
-          msg: "value of fstype must be one of: #{FSTYPE_COMMANDS.keys.sort.join(", ")}, got: #{fstype}")
+          msg: "value of fstype must be one of: #{FSTYPE_COMMANDS.keys.sort!.join(", ")}, got: #{fstype}")
       end
 
       # required_if=[('state', 'present', ['fstype'])] - and real
