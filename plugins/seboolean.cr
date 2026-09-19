@@ -57,18 +57,11 @@ module Krikri
       desired_on = parse_bool(state_param)
       return bool_conversion_failure("state") unless desired_on.is_a?(Bool)
 
-      if value = @params["persistent"]?
-        persistent = parse_bool(value)
-        return bool_conversion_failure("persistent") unless persistent.is_a?(Bool)
-      else
-        persistent = false
-      end
+      persistent = parse_persistent
+      return persistent if persistent.is_a?(PluginResult)
 
-      ignore_selinux_state = false
-      if value = @params["ignore_selinux_state"]?
-        ignore_selinux_state = parse_bool(value)
-        return bool_conversion_failure("ignore_selinux_state") unless ignore_selinux_state.is_a?(Bool)
-      end
+      ignore_selinux_state = parse_ignore_selinux_state
+      return ignore_selinux_state if ignore_selinux_state.is_a?(PluginResult)
 
       unless ignore_selinux_state
         return PluginResult.new(changed: false, failed: true, msg: "SELinux is disabled on this host.") unless selinux_enabled?
@@ -117,6 +110,26 @@ module Krikri
     private def selinux_enabled? : Bool
       enforce = remote_exec("getenforce")
       enforce[:exit_code] == 0 && enforce[:stdout].strip.downcase != "disabled"
+    end
+
+    private def parse_persistent : Bool | PluginResult
+      if value = @params["persistent"]?
+        persistent = parse_bool(value)
+        return bool_conversion_failure("persistent") unless persistent.is_a?(Bool)
+        persistent
+      else
+        false
+      end
+    end
+
+    private def parse_ignore_selinux_state : Bool | PluginResult
+      if value = @params["ignore_selinux_state"]?
+        parsed = parse_bool(value)
+        return bool_conversion_failure("ignore_selinux_state") unless parsed.is_a?(Bool)
+        parsed
+      else
+        false
+      end
     end
 
     # Ansible's BOOLEANS set, case-insensitive; anything else is a
