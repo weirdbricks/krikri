@@ -61,6 +61,19 @@ module Krikri
       end
 
       state = @params["state"]?.try { |str| str.empty? ? nil : str } || "present"
+      # Real argument_spec gives state/fstype choices lists, so
+      # AnsibleModule's choice check (parameters.py's exact wording)
+      # fires before anything else param-wise - previously a bogus
+      # state silently behaved as present and a bogus fstype fell
+      # through to the device/blkid checks first. Real's choice list
+      # is set-ordered (nondeterministic wording across runs); the
+      # set of choices matches (minus FreeBSD-only ufs) and the
+      # podman-diff case only compares failed=/changed= here.
+      unless ["present", "absent"].includes?(state)
+        return PluginResult.new(changed: false, failed: true,
+          msg: "value of state must be one of: present, absent, got: #{state}")
+      end
+
       fstype = @params["fstype"]?
       if error = validate_state_fstype(state, fstype)
         return error
