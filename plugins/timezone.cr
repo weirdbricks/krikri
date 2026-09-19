@@ -234,16 +234,16 @@ module Krikri
       return value unless value == planned
 
       out = remote_exec(<<-SH)[:stdout].to_s.strip
-      if [ -L /etc/localtime ]; then
-        if [ -e /etc/localtime ]; then
-          readlink /etc/localtime
+        if [ -L /etc/localtime ]; then
+          if [ -e /etc/localtime ]; then
+            readlink /etc/localtime
+          else
+            echo __BROKEN__
+          fi
         else
-          echo __BROKEN__
+          echo __NOTLINK__
         fi
-      else
-        echo __NOTLINK__
-      fi
-      SH
+        SH
       return "n/a" if out == "__BROKEN__"
       if out == "__NOTLINK__"
         cmp = remote_exec("cmp -s /etc/localtime /usr/share/zoneinfo/#{planned} && echo same || echo diff")
@@ -369,19 +369,19 @@ module Krikri
 
     private def resolve_binaries : Nil
       script = <<-SH
-      for name in timedatectl cp hwclock dpkg-reconfigure ln tzdata-update; do
-        found=""
-        for d in $(printf '%s' "$PATH" | tr ':' ' ') #{EXTRA_BIN_DIRS.join(' ')}; do
-          if [ -z "$found" ] && [ -x "$d/$name" ]; then found="$d/$name"; fi
+        for name in timedatectl cp hwclock dpkg-reconfigure ln tzdata-update; do
+          found=""
+          for d in $(printf '%s' "$PATH" | tr ':' ' ') #{EXTRA_BIN_DIRS.join(' ')}; do
+            if [ -z "$found" ] && [ -x "$d/$name" ]; then found="$d/$name"; fi
+          done
+          printf 'bin:%s=%s\\n' "$name" "$found"
         done
-        printf 'bin:%s=%s\\n' "$name" "$found"
-      done
-      searched=""
-      for d in $(printf '%s' "$PATH" | tr ':' ' ') #{EXTRA_BIN_DIRS.join(' ')}; do
-        case ":$searched:" in *":$d:"*) ;; *) searched="${searched:+$searched:}$d" ;; esac
-      done
-      printf 'searched=%s\\n' "$searched"
-      SH
+        searched=""
+        for d in $(printf '%s' "$PATH" | tr ':' ' ') #{EXTRA_BIN_DIRS.join(' ')}; do
+          case ":$searched:" in *":$d:"*) ;; *) searched="${searched:+$searched:}$d" ;; esac
+        done
+        printf 'searched=%s\\n' "$searched"
+        SH
 
       remote_exec(script)[:stdout].to_s.each_line do |line|
         key, _, value = line.strip.partition('=')
