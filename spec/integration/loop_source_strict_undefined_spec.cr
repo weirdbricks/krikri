@@ -318,6 +318,99 @@ describe "undefined loop: source is strict" do
     output.should_not contain("ran drop")
   end
 
+  # Round 701114/821007 (redhat_sap.sap_hana_hsr), all three shapes below
+  # live-verified against ansible-playbook 2.19.11 in isolated minimal
+  # playbooks. Real Ansible consults the task's own when: BEFORE the loop
+  # source is ever templated, and what the when: itself references decides
+  # the verdict on an undefined loop source:
+  #
+  #   A) when: is a clean literal (false), the undefined reference lives
+  #      only inside the loop source -> the when: short-circuits the task
+  #      to skipped and the loop is never rendered;
+  #   B) when: references a genuinely SEPARATE undefined variable (nothing
+  #      to do with the loop) while the loop source is ALSO undefined ->
+  #      the task FAILS with the loop's own error, it does not skip;
+  #   C) when: references the yet-unbound loop variable itself (`item` /
+  #      item.* / item[..], e.g. `item.backup is defined`) -> reads as
+  #      false and the task skips (real Ansible's own documented
+  #      item-unbound-before-loop-known leniency).
+  #
+  # The distinguishing factor is whether the when:'s undefined reference
+  # is the loop variable or an independently-undefined one - not "is
+  # something undefined" (which is what the old swallow-all leniency got
+  # wrong for B).
+  it "skips a clean-false when: without ever touching an undefined embedded loop-source template (A)" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        gather_facts: false
+        tasks:
+          - name: t
+            ansible.builtin.debug:
+              msg: "ran {{ item }}"
+            loop:
+              - "/foo/{{ some_other_undefined }}/bar"
+            when: false
+          - name: sentinel
+            ansible.builtin.debug:
+              msg: "SENTINEL-A"
+      YAML
+
+    status.success?.should be_true
+    output.should contain("skipping:")
+    output.should contain("SENTINEL-A")
+    output.should_not contain("is undefined")
+    output.should contain("skipped=1")
+    output.should contain("failed=0")
+  end
+
+  it "fails with the LOOP's error when the when: references an unrelated undefined variable (B)" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        gather_facts: false
+        tasks:
+          - name: t
+            ansible.builtin.debug:
+              msg: "ran {{ item }}"
+            loop:
+              - "/foo/{{ some_other_undefined }}/bar"
+            when: some_undefined_var == 'primary'
+          - name: sentinel
+            ansible.builtin.debug:
+              msg: "SENTINEL-B"
+      YAML
+
+    status.exit_code.should eq(2)
+    output.should contain("'some_other_undefined' is undefined")
+    output.should_not contain("'some_undefined_var' is undefined")
+    output.should_not contain("skipping:")
+    output.should_not contain("SENTINEL-B")
+    output.should contain("failed=1")
+  end
+
+  it "skips (not fails) when the when: references the unbound loop variable itself (C)" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        gather_facts: false
+        tasks:
+          - name: t
+            ansible.builtin.debug:
+              msg: "ran {{ item }}"
+            loop:
+              - "/foo/{{ some_other_undefined }}/bar"
+            when: item.backup is defined
+          - name: sentinel
+            ansible.builtin.debug:
+              msg: "SENTINEL-C"
+      YAML
+
+    status.success?.should be_true
+    output.should contain("skipping:")
+    output.should contain("SENTINEL-C")
+    output.should_not contain("is undefined")
+    output.should contain("skipped=1")
+    output.should contain("failed=0")
+  end
+
   # Scenario 11b - a DEFINED empty list still skips, it is not an error.
   it "skips a defined empty list" do
     status, output = run_playbook(<<-YAML)

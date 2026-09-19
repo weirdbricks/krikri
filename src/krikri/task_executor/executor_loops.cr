@@ -602,14 +602,40 @@ module Krikri
       raise WhenEvaluationError.new(ex.message)
     rescue ex : UndefinedVariableError
       if when_condition = task.when_condition
-        # Lenient evaluation on purpose: `item.backup is defined` with
-        # `item` unbound must read as false (skip), not raise. A when:
-        # that is itself strictly-undefined still fails downstream via
-        # when_passes?'s own raise_undefined: path, which is where real
-        # Ansible reports it too.
+        # Real Ansible evaluates the task's own when: BEFORE the loop source
+        # is ever templated, and WHAT the when: itself references decides
+        # the verdict on an undefined loop source - round 701114/821007
+        # (redhat_sap.sap_hana_hsr), all three shapes live-verified against
+        # ansible-core 2.19.11:
+        #   A) when: is a clean literal (false), the undefined reference
+        #      lives only inside the loop source -> the when: short-
+        #      circuits the task to skipped, loop never rendered;
+        #   B) when: references a genuinely SEPARATE undefined variable
+        #      (unrelated to the loop) while the loop source is ALSO
+        #      undefined -> the task FAILS with the loop's own error, it
+        #      does not skip (the old swallow-all leniency here wrongly
+        #      treated any undefined-var failure inside the when: as
+        #      skippable);
+        #   C) when: references the yet-unbound loop variable itself
+        #      (`item` / item.* / item[..], e.g. `item.backup is defined`)
+        #      -> reads as false and the task skips (real Ansible's own
+        #      documented item-unbound-before-loop-known leniency).
+        # So the lenient path is scoped to exactly one thing: whether the
+        # when:'s OWN strictly-raised undefined reference is item-rooted
+        # (raise_undefined: true makes the evaluator name it instead of
+        # silently reading the unrelated variable as falsy). A clean False
+        # still skips (A); a non-item undefined name in the when: falls
+        # through to the loop error below (B). The name comes from the
+        # raised error's message ('x' is undefined - the strict_
+        # undefined_message/undefined_reference_message shape), never from
+        # a substring probe of the condition for "item" - a variable
+        # literally named `item_count` is a different variable, not the
+        # loop item.
         substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
         skippable = begin
-          !ConditionalEvaluator.evaluate(substitutor.substitute(when_condition), vars_context)
+          !ConditionalEvaluator.evaluate(substitutor.substitute(when_condition), vars_context, raise_undefined: true)
+        rescue err : ConditionalEvaluator::UndefinedVariableError | UndefinedVariableError
+          when_undefined_name_is_loop_var?(err.message)
         rescue
           false
         end
@@ -617,6 +643,26 @@ module Krikri
       end
 
       raise WhenEvaluationError.new(ex.message)
+    end
+
+    # Whether the undefined reference that killed a when: evaluation is the
+    # loop variable itself - the A/B/C scoping rule documented on
+    # resolve_loop_items_or_raise above (round 701114/821007,
+    # redhat_sap.sap_hana_hsr). Item-rooted (`item`, `item.attr`,
+    # `item[...]`) keeps real Ansible's own item-unbound-before-loop-known
+    # leniency (Case C, skip); anything else is an independently-undefined
+    # variable (Case B) and must not swallow the loop's own error. Parses
+    # the name out of the raised error's message ('x' is undefined - the
+    # strict_undefined_message/undefined_reference_message shape all these
+    # raise sites use); the dict-attribute wording ("object of type 'dict'
+    # has no attribute ...") names a DEFINED root, so it is never
+    # item-rooted here - `item` cannot be a defined dict before the loop is
+    # resolved, and a non-item shape must fail with the loop's error.
+    private def when_undefined_name_is_loop_var?(message : String?) : Bool
+      return false unless message && (match = message.match(/'([^']+)' is undefined/))
+
+      name = match[1]
+      name == "item" || name.starts_with?("item.") || name.starts_with?("item[")
     end
 
     # Real Ansible resolves a task's module/action plugin before it ever
@@ -652,10 +698,21 @@ module Krikri
       begin
         loop_items.map { |item| deep_render_item(item, vars_context, host_name) }
       rescue ex : UndefinedVariableError
+        # Same A/B/C leniency scoping as resolve_loop_items_or_raise above
+        # (round 701114/821007, redhat_sap.sap_hana_hsr): this is the rescue
+        # the user's exact case shape flows through - a LITERAL loop: list
+        # whose entries embed an undefined `{{ }}` template never fails at
+        # loop-source resolution (the literal list resolves fine), only
+        # here, when the items themselves are strictly rendered - so a
+        # when: referencing an unrelated undefined variable must fail with
+        # the item render's own error (Case B), while a clean False (A) and
+        # an item-rooted undefined reference (C) still skip.
         if when_condition = task.when_condition
           substitutor = VarSubstitutor.new(vars: vars_context, host_name: host_name)
           skippable = begin
-            !ConditionalEvaluator.evaluate(substitutor.substitute(when_condition), vars_context)
+            !ConditionalEvaluator.evaluate(substitutor.substitute(when_condition), vars_context, raise_undefined: true)
+          rescue err : ConditionalEvaluator::UndefinedVariableError | UndefinedVariableError
+            when_undefined_name_is_loop_var?(err.message)
           rescue
             false
           end
