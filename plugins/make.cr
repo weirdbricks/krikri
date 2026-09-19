@@ -41,7 +41,7 @@ module Krikri
       return PluginResult.new(changed: false, failed: true, msg: "missing required arguments: chdir") unless chdir
 
       target = @params["target"]?
-      targets = @params["targets"]?.try { |target| target.split(',').map(&.strip).reject(&.empty?) }
+      targets = @params["targets"]?.try { |value| value.split(',').map(&.strip).reject(&.empty?) }
 
       # Real AnsibleModule's mutually_exclusive check counts non-empty
       # values, in parameters.py's exact wording.
