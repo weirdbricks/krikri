@@ -81,4 +81,23 @@ describe Krikri::AsyncJobs do
       File.delete?("#{Krikri::AsyncJobs.status_path(jid)}.tmp")
     end
   end
+
+  # Regression: the async config carries the FULL module params (secrets
+  # included), so it must be 0600 from the moment of creation - a
+  # create-then-chmod leaves a window where the file sits umask-default
+  # (typically 0644) with the payload already on disk. Checked
+  # immediately after the write call returns; the chmod-before-write
+  # ordering inside the open block is what guarantees no wider mode ever
+  # held the payload (verified by code reading - the window between
+  # create and chmod holds an empty file, which a race can't leak).
+  it "writes the config file 0600 with the payload intact" do
+    jid = Krikri::AsyncJobs.generate_jid
+    begin
+      Krikri::AsyncJobs.write_config(jid, %({"login_password": "s3cret"}))
+      (File.info(Krikri::AsyncJobs.config_path(jid)).permissions.value & 0o777).should eq(0o600)
+      File.read(Krikri::AsyncJobs.config_path(jid)).should eq(%({"login_password": "s3cret"}))
+    ensure
+      File.delete?(Krikri::AsyncJobs.config_path(jid))
+    end
+  end
 end

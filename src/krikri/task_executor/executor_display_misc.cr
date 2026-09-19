@@ -78,11 +78,13 @@ module Krikri
         "finished"       => 0,
         "ansible_job_id" => jid,
       }.to_json))
-      File.write(AsyncJobs.config_path(jid), config_json)
       # The config carries full module params (potentially secrets) - the
-      # job files live under a predictable shared path, so 0600.
-      File.chmod(AsyncJobs.config_path(jid), 0o600)
-      File.chmod(AsyncJobs.status_path(jid), 0o600)
+      # job files live under a predictable shared path, so 0600 from the
+      # moment of creation (a create-then-chmod leaves the params sitting
+      # on disk world-readable in the window between; same pattern as
+      # AsyncJobs.write_status, which likewise writes the status file
+      # 0600 itself).
+      AsyncJobs.write_config(jid, config_json)
 
       executable = Process.executable_path || File.join(Dir.current, "krikri-playbook")
       Process.new(

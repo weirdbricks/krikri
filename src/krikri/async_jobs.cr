@@ -53,6 +53,20 @@ module Krikri
       File.rename(tmp, path)
     end
 
+    # Config counterpart to write_status: the full module params the
+    # background process will execute. Unlike the status file there's no
+    # concurrent reader, so no tmp+rename - but the same 0600-at-creation
+    # rule applies, and more so: this payload IS the params, secrets
+    # included. chmod BEFORE writing so the file never exists with the
+    # payload at umask-default perms.
+    def self.write_config(jid : String, data : String) : Nil
+      Dir.mkdir_p(DIR)
+      File.open(config_path(jid), "w") do |file|
+        file.chmod(0o600)
+        file.write(data.to_slice)
+      end
+    end
+
     def self.read_status(jid : String) : JSON::Any?
       path = status_path(jid)
       return nil unless File.exists?(path)
