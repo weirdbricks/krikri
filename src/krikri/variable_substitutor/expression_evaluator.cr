@@ -3316,16 +3316,28 @@ module Krikri
         formatted.to_json
       end
 
-      # lookup('file'|'template', path) both name a CONTROLLER-side path
-      # that - inside a role - is conventionally relative to the role's
-      # own files/ dir (real Ansible's own behavior; `role_path` is
-      # already available as a magic var, same mechanism
-      # #resolve_first_found_root above uses). An absolute path, or a
+      # lookup('file'|'template'|'password', path) all name a CONTROLLER-side
+      # path that - inside a role - real Ansible resolves through
+      # find_file_in_search_path's own two-probe search order: for each
+      # search-path directory it probes `<dir>/files/<term>` first, then
+      # `<dir>/<term>` directly. The `files/` prefix is a SEARCH HINT, not
+      # something forcibly prepended to every relative term - a caller's own
+      # relative path that already contains enough subdirectory components
+      # (e.g. ansible-lockdown.windows_11_cis's vars/main.yml doing
+      # `lookup('file', './templates/banner.txt')` against a file that lives
+      # at the role root's templates/, round 900733) resolves under the role
+      # root itself in real ansible-playbook. Probing files/-prefixed first
+      # keeps the conventional bare-filename case (`lookup('file', 'foo.txt')`
+      # -> `<role>/files/foo.txt`) identical to its previous behavior; the
+      # role-root fallback only kicks in where the files/-prefixed candidate
+      # doesn't exist, i.e. where the old code 404'd. An absolute path, or a
       # relative one outside any role context, passes through unchanged.
       private def resolve_lookup_path(path : String) : String
         return path if path.starts_with?('/')
         role_path = @vars["role_path"]?.try(&.as_s?)
-        role_path ? File.join(role_path, "files", path) : path
+        return path unless role_path
+        files_prefixed = File.join(role_path, "files", path)
+        File.exists?(files_prefixed) ? files_prefixed : File.join(role_path, path)
       end
 
       # real Ansible's password lookup default charset (ascii_letters +

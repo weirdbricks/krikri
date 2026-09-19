@@ -646,6 +646,38 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
     evaluator.evaluate(%(lookup('file', '#{path}'))).should eq("secret-content")
   end
 
+  # Real bug found benchmarking ansible-lockdown.windows_11_cis (round
+  # 900733): its vars/main.yml does `lookup('file', './templates/
+  # banner.txt')` against a file living at the role root's templates/,
+  # NOT under files/. Real Ansible's `file` lookup resolves terms through
+  # find_file_in_search_path's two-probe search order - `<dir>/files/<term>`
+  # first, then `<dir>/<term>` directly - so the caller's own subdirectory
+  # components reach the role root (live-verified against real
+  # ansible-playbook: the lookup succeeds; `files/` is a search HINT, not a
+  # forced prefix). This engine used to unconditionally prepend files/,
+  # failing with "File not found" on a path real Ansible resolves.
+  it "resolves a relative path with its own subdirectory component directly under the role root when no files/-prefixed match exists" do
+    role_dir = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "lookup_relpath_role")
+    Dir.mkdir_p(File.join(role_dir, "templates"))
+    File.write(File.join(role_dir, "templates", "banner.txt"), "lockdown-banner\n")
+
+    v = Hash(String, JSON::Any).new
+    v["role_path"] = JSON::Any.new(role_dir)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator.evaluate(%(lookup('file', './templates/banner.txt'))).should eq("lockdown-banner")
+  end
+
+  it "still resolves a bare filename under <role>/files/ when that is where the file is (files/ hint wins)" do
+    role_dir = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "lookup_relpath_role")
+    Dir.mkdir_p(File.join(role_dir, "files"))
+    File.write(File.join(role_dir, "files", "plain.txt"), "from-files-dir\n")
+
+    v = Hash(String, JSON::Any).new
+    v["role_path"] = JSON::Any.new(role_dir)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator.evaluate(%(lookup('file', 'plain.txt'))).should eq("from-files-dir")
+  end
+
   # Real bug found benchmarking andrewrothstein.ssh-user-keygen (0.9.616):
   # real Ansible's `file` lookup RAISES for a missing file ("Unable to
   # access the file '<path>': File not found"), failing the task's arg
