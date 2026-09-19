@@ -4063,6 +4063,19 @@ module Krikri
             # back into an Array(String) on the plugin side.
             statements = value.as_a.map { |item| stringify_value(item) }
             params[key.to_s] = statements.to_json
+          elsif (module_name == "community.general.ini_file" || module_name == "ini_file") && key.to_s == "values" && value.as_a?
+            # `values:` (community.general.ini_file's list form of
+            # `value:`, real module's do_ini) has the same comma-joining
+            # hazard assert.that/mysql_query already work around - and a
+            # worse one specific to this param: an EMPTY STRING element
+            # (RedHatOfficial.rhel9_cui round900703's `values: ['', ...]`,
+            # which must produce a bare `ExecStart=` line) comma-joins
+            # into an indistinguishable leading comma and silently
+            # vanishes. JSON-encoded here;
+            # IniFilePlugin#parse_values_list decodes it back into an
+            # Array(String) on the plugin side.
+            entries = value.as_a.map { |item| stringify_value(item) }
+            params[key.to_s] = entries.to_json
           elsif RAW_COMMAND_MODULES.includes?(module_name) && key.to_s == "argv" && value.as_a?
             # `argv:` (command:'s list form, real Ansible's own way to
             # avoid shell quoting entirely) has the identical comma-
