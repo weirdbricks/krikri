@@ -252,7 +252,7 @@ module Krikri
       # with_nested:/with_flattened: task immediately followed by a
       # non-looped task hits this.
       !!(task.loop_items || task.loop_fileglob || task.loop_template_kind ||
-        task.loop_nested_sources || task.loop_flattened ||
+        task.loop_nested_sources || task.loop_together_sources || task.loop_flattened ||
         task.loop_subelements_list || task.loop_first_found || task.loop_file ||
         task.until_condition || task.async_seconds)
     end

@@ -32,6 +32,34 @@ describe Krikri::LoopResolver do
     end
   end
 
+  describe ".with_together" do
+    it "zips lists elementwise with the first list's elements first" do
+      items = Krikri::LoopResolver.with_together([[s("a"), s("b")], [s("x"), s("y")]])
+
+      items.map(&.as_a.map(&.as_s)).should eq([
+        ["a", "x"], ["b", "y"],
+      ])
+    end
+
+    it "null-pads shorter lists (real Ansible's zip_longest semantics)" do
+      # Real Ansible's with_together: runs itertools.zip_longest over the
+      # sources, padding every shorter list with None - a with_together:
+      # over a 3-element and a 2-element list must still iterate 3 times,
+      # with item.1 null (not the empty/undefined sentinel) on the third.
+      items = Krikri::LoopResolver.with_together([[s("a"), s("b"), s("c")], [s("x")]])
+
+      items.size.should eq(3)
+      items[2].as_a.size.should eq(2)
+      items[2].as_a[0].as_s.should eq("c")
+      items[2].as_a[1].raw.nil?.should be_true
+    end
+
+    it "yields zero items when all lists are empty" do
+      items = Krikri::LoopResolver.with_together([[] of JSON::Any, [] of JSON::Any])
+      items.size.should eq(0)
+    end
+  end
+
   describe ".with_indexed_items" do
     it "pairs each item with its stringified index" do
       items = Krikri::LoopResolver.with_indexed_items([s("x"), s("y"), s("z")])

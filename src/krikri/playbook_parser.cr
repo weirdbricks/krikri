@@ -238,6 +238,15 @@ module Krikri
     # resolved + multiplied by TaskExecutor#resolve_loop_nested, mirroring
     # loop_flattened's own defer-until-runtime design.
     property loop_nested_sources : Array(String)?
+    # with_together: given as an array whose entries include `{{ ... }}`
+    # -templated scalars (the classic `with_together: ["{{ users }}",
+    # "{{ groups }}"]` shape, manala.accounts's own manala_accounts_users
+    # pairing). Same defer-until-runtime design as loop_nested_sources
+    # right above: the zip's row count is only knowable once the variable
+    # context exists (a source var's real length, including zero - the
+    # role defaults both to empty lists), so the raw source strings are
+    # kept here and resolved + zipped by TaskExecutor#resolve_loop_together.
+    property loop_together_sources : Array(String)?
     # with_subelements: the raw list template (usually a `{{ registered_var
     # .results }}` reference) and the subelement key. Both kept verbatim and
     # resolved at execution time once the variable context + registered vars
@@ -1021,7 +1030,7 @@ module Krikri
         "name", "when", "register", "ignore_errors", "check_mode",
         "diff", "become", "become_user", "become_method", "become_flags",
         "become_pass", "become_exe", "tags", "args", "listen", "with_items", "loop",
-        "with_dict", "with_fileglob", "with_file", "with_first_found", "with_nested", "with_sequence",
+        "with_dict", "with_fileglob", "with_file", "with_first_found", "with_nested", "with_together", "with_sequence",
         "with_flattened", "with_community.general.flattened", "with_subelements", "with_indexed_items", "until", "retries", "delay",
         "with_community.general.filetree",
         "loop_control", "notify", "changed_when", "failed_when", "delegate_to", "delegate_facts", "run_once", "connection",
@@ -2389,7 +2398,7 @@ module Krikri
     # parse time, in the same priority order used when picking a loop
     # source in parse_task. Checked here for a scalar "{{ ... }}" template
     # value once none of them matched literally.
-    LOOP_TEMPLATE_KEYS = %w[loop with_items with_dict with_nested with_indexed_items]
+    LOOP_TEMPLATE_KEYS = %w[loop with_items with_dict with_nested with_together with_indexed_items]
 
     # If task_hash has one of the loop-source keywords set to a scalar
     # string that looks like a Jinja variable reference (rather than a
@@ -2877,6 +2886,31 @@ module Krikri
             end
           end
           task.loop_items = LoopResolver.with_nested(lists)
+        end
+      elsif with_together = task_hash["with_together"]?.try(&.as_a?)
+        # Same templated-source test as with_nested above: a `{{ var }}`
+        # scalar entry is a whole-list SOURCE whose real size (including
+        # zero - manala.accounts defaults its lists to []) is only knowable
+        # once the variable context exists, so defer the whole elementwise
+        # zip to the executor (resolve_loop_together); a fully-literal
+        # array resolves at parse time.
+        if with_together.any? { |entry| (str = entry.as_s?) && str.includes?("{{") }
+          task.loop_together_sources = with_together.map do |entry|
+            if entry.as_a?
+              JSON.parse(entry.to_json).to_json
+            else
+              safe_yaml_to_string(entry)
+            end
+          end
+        else
+          lists = with_together.map do |entry|
+            if entry.as_a?
+              entry.as_a.map { |item| JSON.parse(item.to_json) }
+            else
+              [JSON.parse(entry.to_json)]
+            end
+          end
+          task.loop_items = LoopResolver.with_together(lists)
         end
       elsif with_sequence = task_hash["with_sequence"]?
         spec = safe_yaml_to_string(with_sequence)
@@ -3488,7 +3522,7 @@ module Krikri
       # and with_first_found are real patterns in roles that
       # predate loop: (round-166 wireguard, the round-190
       # marathon, etc.).
-      "with_first_found", "with_items", "with_dict", "with_nested",
+      "with_first_found", "with_items", "with_dict", "with_nested", "with_together",
       "with_sequence", "with_indexed_items", "with_fileglob", "with_file",
       # `with_subelements` was missing from this list entirely -
       # `include_tasks: with_subelements: [list, key]` is exactly as
