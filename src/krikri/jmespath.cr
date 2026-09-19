@@ -935,7 +935,7 @@ module Krikri
                     rescue JSON::ParseException
                       NULL
                     end
-                  else                     NULL
+                  else NULL
                   end
                 when "to_array"
                   JSON::Any.new([args[0]? || NULL])
