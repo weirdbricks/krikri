@@ -231,3 +231,99 @@ number but stays in the tens-of-microseconds range.
    hand-rolled side never exercised as UNVERIFIED until the bridged specs
    prove it (the `_rp` crash had been sitting in the Crinja-side combine
    since its registration, unreached by any spec that used it standalone).
+
+---
+
+# Filter #3: `json_query` (Phase 1 continues)
+
+Date: 2026-09-20. Scope: exactly one filter (`json_query`), on its own
+branch (`crinja-filter-consolidation-jsonquery`), same discipline as the
+prior two.
+
+## Whether "thin wrapper over shared jmespath.cr" held
+
+Held, cleanly - unlike `combine`'s "self-contained" assumption, this one
+was correct on inspection: both the hand-rolled `filter_engine.cr` dispatch
+and the native `Crinja.filter(:json_query)` registration already called
+the exact same `Krikri::JMESPath.evaluate` (`src/krikri/jmespath.cr`) -
+no JMESPath-layer duplication existed to find. The only duplication was
+the thin per-side wrapper: argument extraction plus "invalid JMESPath
+expression" error-message formatting, independently written on each side
+but producing the same text. Deleting the hand-rolled wrapper and routing
+through `delegate_to_crinja_filter` (unchanged from the `combine`
+migration's generalized form - varargs carry the expression) removed real
+but small duplication, and `require "../jmespath"` came out of
+`filter_engine.cr` since it no longer calls the module directly.
+
+## Behavior: identical
+
+All `json_query`-related specs pass unmodified (`jmespath_spec.cr`,
+`filter_engine_spec.cr`'s json_query examples, `crinja_direct_spec.cr`'s
+`{% %}`-path example), full suite shows no new failures beyond the known
+nondeterministic cluster. No divergence surfaced - both sides raised the
+identical wrapped error text for an invalid expression, and the missing-
+expression guard (kept in `filter_engine.cr`, since a Crinja vararg is a
+truthy value even when empty-string) matches the old contract exactly.
+
+## Performance: a real, larger regression than filters #1-2 - root cause found
+
+`crystal run --release` of `bench_json_query_pilot.cr`, N=100,000, a
+4-entry package-fact-shaped list, old tree (pre-filter-3 commit, built in
+a throwaway worktree) vs new tree, both release builds:
+
+| Path                                             | OLD hand-rolled | NEW delegated |
+|---|---|---|
+| `json_query('[*].name')` (list projection)       | ~824 ns  | ~27,766 ns |
+| `json_query('[?state=='present'].name')`         | ~1,474 ns | ~4,085 ns |
+| `items2dict` (hand-rolled reference filter)      | ~235 ns  | ~278 ns |
+
+The second query's ~2.8x is in line with filters #1-2's ~2-4x roundtrip
+tax. The FIRST query's ~33x is not, and does NOT come from delegation
+overhead in general - it comes from a delegation-specific mistake in
+THIS filter's registration body. `Crinja.filter(:json_query)`'s block
+receives `target` as a `Crinja::Value` (already converted once by
+`delegate_to_crinja_filter`'s inbound bridge), then immediately converts
+it BACK to `JSON::Any` via `crinja_value_to_json_any` to hand to
+`Krikri::JMESPath.evaluate` (a JSON::Any-based API), then converts the
+JSON::Any RESULT forward to `Crinja::Value` to return it - which
+`delegate_to_crinja_filter`'s outbound bridge then converts back to
+JSON::Any again for the FilterEngine caller. That is FOUR conversions
+per call (two of them wholly avoidable), not the two filters #1-2 pay,
+because `dict2items`/`combine`'s filter bodies operate on `Crinja::Value`
+natively end-to-end - `json_query`'s body round-trips through JSON::Any
+internally because the JMESPath engine only speaks JSON::Any. The
+`[*].name` query's cost is dominated by this quadruple conversion of a
+list-of-dicts value; the `state=='present'` query converts a smaller
+intermediate (filtered result), which is why its overhead looks close to
+filters #1-2's baseline instead.
+
+This was not fixed in this migration - the registration itself (not the
+new delegation code) is what pays the extra round-trip, and it existed
+before this migration too (the Crinja side's own `.j2`-template callers
+already paid this same double-conversion; it just had no companion
+hand-rolled implementation to compare against until now). Filed as a
+found-not-fixed item: `Krikri::JMESPath` could gain a `Crinja::Value`-
+native entry point to remove the internal round-trip, but that is scope
+creep for a Phase-1 consolidation pass and is real, separate work.
+
+## Recommendation for `selectattr` (last filter)
+
+1. **Check for this same "converts back internally" pattern before
+   migrating `selectattr`.** Its Crinja registration is more complex
+   (per-item test dispatch) - if it round-trips JSON::Any internally per
+   item the way `json_query` does per call, the per-call overhead could
+   compound over list size rather than being a flat filter-call tax like
+   the first three. Profile before merging, not just before-and-after at
+   the whole-filter level.
+2. The "thin wrapper, shared backend" pattern (true here) is cheaper to
+   verify AND cheaper at runtime (only the outer bridge pays roundtrip
+   cost) than the "genuinely independent implementations, now merged"
+   pattern (`combine`) - if `selectattr`'s hand-rolled `item_matches_test?`
+   machinery turns out to be its own thing rather than calling a shared
+   test-dispatch helper, expect a `combine`-shaped migration (bigger,
+   riskier) rather than a `json_query`-shaped one (small, clean).
+3. Absolute magnitude still doesn't matter for normal per-task usage
+   (27us against tens-of-ms task costs), but flag it explicitly in the
+   final Phase-1 wrap-up rather than let a 33x number pass silently -
+   caveat #1 in the pilot report ("benchmark before migrating a filter
+   reachable per-item") was written for exactly this kind of surprise.
