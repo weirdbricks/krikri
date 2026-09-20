@@ -80,16 +80,21 @@ module Krikri
         found
       end
 
-      # Depth-first walk of every node in the tree.
-      def walk(node : YAML::Nodes::Node, &)
-        yield node
-        case node
-        when YAML::Nodes::Document
-          node.nodes.each { |child| walk(child) { |descendant| yield descendant } }
-        when YAML::Nodes::Mapping
-          node.nodes.each { |child| walk(child) { |descendant| yield descendant } }
-        when YAML::Nodes::Sequence
-          node.nodes.each { |child| walk(child) { |descendant| yield descendant } }
+      # Depth-first walk of every node in the tree (iterative; a
+      # recursive yield-based implementation hits Crystal's recursive
+      # block-inlining limit).
+      def walk(node : YAML::Nodes::Node, &) : Nil
+        stack = [node]
+        while current = stack.pop?
+          yield current
+          case current
+          when YAML::Nodes::Document
+            current.nodes.each { |child| stack << child }
+          when YAML::Nodes::Mapping
+            current.nodes.each { |child| stack << child }
+          when YAML::Nodes::Sequence
+            current.nodes.each { |child| stack << child }
+          end
         end
       end
     end
