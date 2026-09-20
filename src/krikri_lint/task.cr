@@ -167,6 +167,20 @@ module Krikri
       #  - tasks/handlers files: the root list (or a block)
       #  - playbooks: plays' pre_tasks/tasks/post_tasks/handlers
       # Recurses into block/rescue/always sublists.
+      # A root list of mappings is a playbook only when its entries are
+      # plays (they carry hosts/tasks sections).
+      def self.playbook_root?(file : PositionedFile) : Bool
+        list = file.root.try(&.as?(YAML::Nodes::Sequence)) || return false
+        list.nodes.any? do |item|
+          next false unless item.is_a?(YAML::Nodes::Mapping)
+          !NodeUtil.entry(item, "hosts").nil? ||
+            !NodeUtil.entry(item, "tasks").nil? ||
+            !NodeUtil.entry(item, "pre_tasks").nil? ||
+            !NodeUtil.entry(item, "post_tasks").nil? ||
+            !NodeUtil.entry(item, "handlers").nil?
+        end
+      end
+
       def self.collect_tasks(file : PositionedFile) : Array(LintTask)
         tasks = [] of LintTask
         root = file.root || return tasks

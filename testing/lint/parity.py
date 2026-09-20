@@ -69,7 +69,15 @@ def run(cmd):
 
 def implemented_rules(binary: str):
     out = run([binary, "--list-rules"])
-    return {line.split()[0] for line in out.splitlines() if line.strip()}
+    ids = {line.split()[0] for line in out.splitlines() if line.strip()}
+    # rule families (name, jinja, fqcn) emit sub-rule ids
+    return ids | {f"{i.split('[')[0]}[" for i in ids if "[" in i}
+
+
+def is_implemented(known: set, rule_id: str) -> bool:
+    if rule_id in known:
+        return True
+    return "[" in rule_id and f"{rule_id.split('[')[0]}[" in known
 
 
 def main():
@@ -97,7 +105,7 @@ def main():
     matched = ours & theirs
     krikri_only = ours - theirs
     upstream_only = theirs - ours
-    gaps = {t for t in upstream_only if t[3] not in known}
+    gaps = {t for t in upstream_only if not is_implemented(known, t[3])}
     real_gaps = upstream_only - gaps
 
     print(f"matched: {len(matched)}  krikri-only: {len(krikri_only)}  "

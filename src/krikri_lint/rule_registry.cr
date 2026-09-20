@@ -23,6 +23,7 @@ module Krikri
           NoJinjaWhenRule.new,
           JinjaRule.new,
           SchemaMetaRule.new,
+          KeyOrderRule.new,
         ])
       end
 

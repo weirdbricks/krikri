@@ -81,7 +81,8 @@ module Krikri::Lint
     it "checks tasks inside blocks" do
       v = lint_yaml(rule, <<-YAML)
         ---
-        - hosts: all
+        - name: Play
+          hosts: all
           tasks:
             - name: Block parent
               block:
