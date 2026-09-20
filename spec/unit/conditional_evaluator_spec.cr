@@ -131,6 +131,42 @@ describe Krikri::ConditionalEvaluator do
       v = EMPTY_VARS
       Krikri::ConditionalEvaluator.evaluate("nope_var | default(None) | default('fallback') != None", v).should be_false
     end
+
+    # dev-sec.os-hardening (round 901512): `when: sysctl_overwrite |
+    # default()` with the role's bare-key `sysctl_overwrite:` null
+    # default. Under ansible-core 2.19's strict conditional type check,
+    # the defined None passed through default() reaches the check as
+    # NoneType - live-verified against real ansible-playbook - while
+    # this codebase's string-based filter-chain delegation previously
+    # stringified that same None to "" (a bare null renders empty text,
+    # which #format_value must keep doing for output rendering) and the
+    # strict check rejected it as type 'str' instead. A genuinely
+    # missing variable still substitutes to the empty string and fails
+    # as type 'str', exactly like real Ansible.
+    it "fails the strict check as NoneType, not str, for a defined-null variable through a bare default()" do
+      v = vars({"sysctl_overwrite" => nil} of String => JSON::Any::Type)
+      expect_raises(Krikri::ConditionalEvaluator::ConditionalBooleanError, /NoneType/) do
+        Krikri::ConditionalEvaluator.evaluate("sysctl_overwrite | default()", v, strict: true)
+      end
+    end
+
+    it "still fails the strict check as str for a genuinely missing variable through a bare default()" do
+      expect_raises(Krikri::ConditionalEvaluator::ConditionalBooleanError, /type 'str'/) do
+        Krikri::ConditionalEvaluator.evaluate("no_such_var | default()", EMPTY_VARS, strict: true)
+      end
+    end
+
+    it "is falsy under non-strict when: semantics for the same defined-null chain" do
+      v = vars({"sysctl_overwrite" => nil} of String => JSON::Any::Type)
+      Krikri::ConditionalEvaluator.evaluate("sysctl_overwrite | default()", v).should be_false
+    end
+
+    it "keeps the boolean-form default(x, true) substituting on a defined null (str, not NoneType)" do
+      v = vars({"sysctl_overwrite" => nil} of String => JSON::Any::Type)
+      expect_raises(Krikri::ConditionalEvaluator::ConditionalBooleanError, /type 'str'/) do
+        Krikri::ConditionalEvaluator.evaluate("sysctl_overwrite | default('x', true)", v, strict: true)
+      end
+    end
   end
 
   describe "boolean operators" do

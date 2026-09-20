@@ -2291,6 +2291,41 @@ module Krikri
         evaluator = VariableSubstitutor::ExpressionEvaluator.new(vars)
         rendered = evaluator.evaluate(expr)
 
+        # An empty render is ambiguous between two real-Ansible shapes
+        # this string-based delegation can no longer tell apart: a
+        # genuine empty-string result AND a DEFINED None passed straight
+        # through a filter chain. The second is dev-sec.os-hardening's
+        # own `when: sysctl_overwrite | default()` (tasks/sysctl.yml)
+        # with the role's bare-key `sysctl_overwrite:` null default:
+        # real Jinja2's `default()` only substitutes on an UNDEFINED
+        # value, so the defined None passes through and ansible-core
+        # 2.19's strict type check fails with NoneType - live-verified.
+        # This codebase's Crinja delegation also passes the None through
+        # correctly, but #format_value then stringifies JSON null as ""
+        # (a bare `{{ none_var }}` really does render empty text, so
+        # that method is right for output rendering), and the strict
+        # check below rejected the resulting "" as type 'str' instead.
+        # The "undefined"-sentinel route can't be used either - that
+        # string IS this delegation's legitimate empty-string result for
+        # an actually-substituted `default('')`. Re-resolves the chain
+        # STRUCTURALLY (Crinja's raw-value path, which returns JSON null
+        # for a defined None and raises/returns nil otherwise) only when
+        # the render came back empty, so a defined None returns Nil
+        # here - which #evaluate_truthiness's own strict check reports
+        # as the NoneType it stands for - while a genuinely substituted
+        # empty string keeps failing as type 'str', exactly like real
+        # Ansible.
+        if rendered.empty?
+          begin
+            structured = evaluator.evaluate_structured(expr)
+            return nil if structured && structured.raw.nil?
+          rescue
+            # Crinja couldn't evaluate this chain at all (unknown
+            # feature, etc.) - the string render above is the same
+            # answer the pre-fix code gave, keep it.
+          end
+        end
+
         # #evaluate's own output is Python/Jinja2-repr text ("True"/
         # "False", capitalized - matching what a real `{{ }}` span
         # renders), not JSON - so a filter chain that resolves to a
