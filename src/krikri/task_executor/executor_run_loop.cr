@@ -637,7 +637,7 @@ module Krikri
       return unless result
 
       fact_host = (task.delegate_facts? && task.delegate_to) ? exec_host : host
-      finish_single_task(task, host, result, fact_host, vars_context: vars_context)
+      finish_single_task(task, host, result, fact_host, vars_context: vars_context, exec_host: exec_host)
     end
 
     # Resolve delegate_to: to the Host whose connection the module should
@@ -896,7 +896,11 @@ module Krikri
       # print is deferred and emitted by execute_task when it consumes the
       # nil (skipped) result from the batch cache, in proper task order.
       unless defer_display
-        suffix = item_label ? " => (item=#{item_label})" : ""
+        # no_log censors the loop item on the skipping line too (real
+        # Ansible prints `(item=(censored due to no_log))` - the item
+        # can itself be the secret)
+        shown = resolve_task_no_log(task) ? "(censored due to no_log)" : item_label
+        suffix = shown ? " => (item=#{shown})" : ""
         puts "skipping: [#{host.connection_host}]#{suffix}".colorize(:cyan)
       end
       register_skip_result(task, host)
@@ -958,6 +962,7 @@ module Krikri
         # Ansible stamps _ansible_no_log onto these action failures and
         # shows the censored JSON - mirror that shape here.
         if resolve_task_no_log(task)
+          suffix = item_label ? " => (item=(censored due to no_log))" : ""
           puts %(fatal: [#{host.connection_host}]#{suffix}: FAILED! => {"censored": "the output has been hidden due to the fact that 'no_log: true' was specified for this result"}).colorize(:red)
         else
           puts "fatal: [#{host.connection_host}]#{suffix}: FAILED! => #{msg}".colorize(:red)
@@ -1378,7 +1383,11 @@ module Krikri
       end
 
       substituted_params = resolve_role_relative_src(task, substituted_params)
-      substituted_params = inline_copy_source_content(task, substituted_params, host, vars_context)
+      copied = inline_copy_source_content(task, substituted_params, host, vars_context)
+      if copied.is_a?(JSON::Any)
+        return apply_changed_failed_when(task, copied, vars_context, host)
+      end
+      substituted_params = copied
       staged = stage_unarchive_remote_src(task, substituted_params, host, vars_context)
       if staged.is_a?(JSON::Any)
         return apply_changed_failed_when(task, staged, vars_context, host)
@@ -1609,7 +1618,11 @@ module Krikri
       end
 
       substituted_params = resolve_role_relative_src(task, substituted_params)
-      substituted_params = inline_copy_source_content(task, substituted_params, exec_host, vars_context)
+      copied = inline_copy_source_content(task, substituted_params, exec_host, vars_context)
+      if copied.is_a?(JSON::Any)
+        return apply_changed_failed_when(task, copied, vars_context, host)
+      end
+      substituted_params = copied
       staged = stage_unarchive_remote_src(task, substituted_params, exec_host, vars_context)
       if staged.is_a?(JSON::Any)
         return apply_changed_failed_when(task, staged, vars_context, host)

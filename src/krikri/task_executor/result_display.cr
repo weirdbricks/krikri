@@ -24,13 +24,17 @@ module Krikri
     # Display task result with appropriate formatting.
     # item_label is set for looped tasks, rendering `ok: [host] => (item=x)`
     # to match how Ansible annotates per-iteration output.
-    def self.display_result(host : Host, result : JSON::Any, diff_mode : Bool, item_label : String? = nil, ignore_errors : Bool = false, no_log : Bool = false, module_name : String? = nil) : Nil
+    def self.display_result(host : Host, result : JSON::Any, diff_mode : Bool, item_label : String? = nil, ignore_errors : Bool = false, no_log : Bool = false, module_name : String? = nil, delegate_target : String? = nil) : Nil
       TimingProfile.measure("display.result", "display") do
-        display_result_measured(host, result, diff_mode, item_label, ignore_errors, no_log, module_name)
+        display_result_measured(host, result, diff_mode, item_label, ignore_errors, no_log, module_name, delegate_target)
       end
     end
 
-    private def self.display_result_measured(host : Host, result : JSON::Any, diff_mode : Bool, item_label : String? = nil, ignore_errors : Bool = false, no_log : Bool = false, module_name : String? = nil) : Nil
+    private def self.display_result_measured(host : Host, result : JSON::Any, diff_mode : Bool, item_label : String? = nil, ignore_errors : Bool = false, no_log : Bool = false, module_name : String? = nil, delegate_target : String? = nil) : Nil
+      # delegate_to: renders the host line as real Ansible does:
+      # `ok: [source -> target]` - the task ran against the delegate
+      # target even though it reports under the play host.
+      host_label = delegate_target ? "#{host.connection_host} -> #{delegate_target}" : host.connection_host
       changed = result["changed"]?.try(&.as_bool) || false
       failed = Krikri.result_failed_flag(result)
       msg = result["msg"]?.try(&.as_s) || ""
@@ -49,9 +53,13 @@ module Krikri
                       else
                         "ok".colorize(:green)
                       end
-        suffix_only = item_label ? " => (item=#{item_label})" : ""
-        puts "#{status_only}: [#{host.connection_host}]#{suffix_only}"
-        return
+        # Real Ansible censors the loop item too under no_log - the item
+      # value can itself be a secret (e.g. `loop: "{{ keepass_attrs }}"`
+      # on a credential-reading task), so `(item=<value>)` must never
+      # print verbatim.
+      suffix_only = item_label ? " => (item=(censored due to no_log))" : ""
+      puts "#{status_only}: [#{host_label}]#{suffix_only}"
+      return
       end
 
       # Status indicator
@@ -64,7 +72,7 @@ module Krikri
                end
 
       suffix = item_label ? " => (item=#{item_label})" : ""
-      puts "#{status}: [#{host.connection_host}]#{suffix}"
+      puts "#{status}: [#{host_label}]#{suffix}"
 
       # Show message for successful tasks if msg is present and meaningful
       # This allows debug plugin output to be visible

@@ -44,6 +44,31 @@ module Krikri
       return PluginResult.new(changed: false, failed: true, msg: "one of the following is required: _raw_params, cmd") if script_path.nil? || script_path.empty?
       args = parts[1]?
 
+      # Real Ansible's script module does not support check mode - under
+      # --check the action plugin never transfers or runs the script and
+      # the task reports `skipping:` (live-verified against
+      # ansible-core 2.19.11). The skip must fire BEFORE any remote
+      # chmod/exec side effect. Full result shape mirrors command.cr's
+      # check-mode skip (empty stdout, rc 0), so a register:/
+      # changed_when: consumer sees the same keys it would on a real run.
+      if true?(@params["_ansible_check_mode"]?)
+        return PluginResult.new(
+          changed: false,
+          failed: false,
+          msg: "Remote module does not support check mode",
+          skipped: true,
+          cmd: cmd,
+          rc: 0,
+          stdout: "",
+          stdout_lines: [] of String,
+          stderr: "",
+          stderr_lines: [] of String,
+          start: nil,
+          end: nil,
+          delta: nil
+        )
+      end
+
       if skip = skip_reason
         return skip
       end

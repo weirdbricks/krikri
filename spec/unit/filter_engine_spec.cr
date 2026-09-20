@@ -920,6 +920,29 @@ describe Krikri::VariableSubstitutor::FilterEngine do
     vars_engine.apply(JSON::Any.new(1_i64), "extract(container)").as_s.should eq("one")
   end
 
+  it "extract raises on a missing hash key, like real Ansible" do
+    # Found in dirless-infra: `groups['backend_nodes'] | map('extract',
+    # hostvars, 'ansible_host')` with no host carrying `ansible_host`
+    # must hard-fail (real: "object of type 'HostVarsVars' has no
+    # attribute 'ansible_host'"), not silently return nil and let the
+    # playbook run on with bad data.
+    v = Hash(String, JSON::Any).new
+    v["hostvars"] = JSON.parse(%({"host-a": {"node_ip": "10.0.0.1"}, "host-b": {"node_ip": "10.0.0.2"}}))
+    vars_engine = Krikri::VariableSubstitutor::FilterEngine.new(v)
+    expect_raises(Exception, "not found") do
+      vars_engine.apply(JSON::Any.new("host-a"), "extract(hostvars, 'ansible_host')")
+    end
+  end
+
+  it "extract raises on an out-of-range list index" do
+    v = Hash(String, JSON::Any).new
+    v["container"] = JSON.parse(%(["zero", "one"]))
+    vars_engine = Krikri::VariableSubstitutor::FilterEngine.new(v)
+    expect_raises(Exception, "out of range") do
+      vars_engine.apply(JSON::Any.new(5_i64), "extract(container)")
+    end
+  end
+
   it "from_yaml_all parses a multi-document YAML string" do
     result = engine.apply(s("a: 1\n---\nb: 2\n"), "from_yaml_all").as_a
     result[0].as_h["a"].as_i.should eq(1)

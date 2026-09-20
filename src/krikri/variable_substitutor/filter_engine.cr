@@ -1203,19 +1203,31 @@ module Krikri
           container = args[0]?.try { |arg| resolve_expression(arg) }
           return JSON::Any.new(nil) unless container
 
+          # real Ansible/Jinja raises when the key is absent from a
+          # hash container (e.g. `map('extract', hostvars,
+          # 'ansible_host')` with no host carrying `ansible_host`
+          # aborts the play with "has no attribute") - a silent nil
+          # here changes control flow by letting bad-inventory
+          # playbooks run on, so mirror the raise.
           extracted = case raw = container.raw
                       when Array
                         idx = value.as_i64?.try(&.to_i)
-                        idx ? raw[idx]? : nil
+                        raise "extract: list index #{idx} out of range" unless idx && idx >= 0 && idx < raw.size
+                        raw[idx]
                       when Hash
-                        raw[as_string(value)]?
+                        raise "extract: key '#{as_string(value)}' not found" unless raw.has_key?(as_string(value))
+                        raw[as_string(value)]
+                      else
+                        raise "extract: object of type #{container.class} has no attribute '#{as_string(value)}'"
                       end
-          return JSON::Any.new(nil) unless extracted
 
           if morekeys_arg = args[1]?
             morekeys = resolve_expression(morekeys_arg)
             keys = morekeys.as_a? ? morekeys.as_a.map { |k| as_string(k) } : [as_string(morekeys)]
-            keys.reduce(extracted) { |acc, key| acc.as_h?.try(&.[key]?) || JSON::Any.new(nil) }
+            keys.reduce(extracted) do |acc, key|
+              raise "extract: key '#{key}' not found" unless acc.as_h?.try(&.has_key?(key))
+              acc.as_h[key]
+            end
           else
             extracted
           end
