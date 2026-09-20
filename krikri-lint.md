@@ -1,6 +1,125 @@
 # krikri-lint — a plan for an ansible-lint clone
 
-Status: planning document. Nothing here is implemented yet.
+Status: planning document. Phase 0 skeleton and the Phase 1 v1 rule
+table implemented (2026-09): `krikri-lint` binary with CLI
+(targets, `-p/--parseable`, `--nocolor`, `--list-rules`, `--version`,
+exit codes 0/2/3), file discovery, positioned `YAML::Nodes` loader,
+task walker, and these rules: `syntax-check`,
+`command-instead-of-shell`, `command-instead-of-module`,
+`no-changed-when`, `risky-file-permissions`, `risky-octal`,
+`name[missing]`, `name[casing]`, `name[template]`,
+`fqcn[action-core]`, `yaml[line-length]`. Each rule mirrors the
+upstream rule logic fetched from the ansible-lint source at
+implementation time (message text, severity, tags, exemptions).
+Notes from that pass: upstream's risky-octal suggestion message is
+computed from the YAML-decimal mode value (quirky but kept for
+parity), and `yaml[document-start]` is disabled in ansible-lint's
+bundled .yamllint, so it is deliberately not implemented. Phase 2+
+(meta/schema rules, noqa, config, profiles) is not implemented yet.
+
+### Parity harness (testing/lint/parity.py)
+
+Runs real ansible-lint and krikri-lint with `-p` output over the same
+targets and diffs (path, line, column, rule-id) triples, separating
+real divergences from unimplemented-rule gaps. Parity target is the
+installed `ansible-lint 25.6.1+really25.2.1`; rule logic pinned to
+what that version does (it differs from upstream main in at least one
+place: no-changed-when still fires on async+poll:0 tasks there).
+
+Current status on the `testing/` corpus: 2270 triples matched,
+0 upstream-only, and 6 krikri-only, all explained:
+- `htpasswd_edge_cases.yml` syntax-check: Crystal's YAML (libyaml)
+  rejects `command: awk -F: '...'` (`: ` inside a plain scalar) while
+  upstream's ruamel/YAML-1.2 accepts it - parser-strictness gap, not
+  a rule bug.
+- `py_module_edge_cases.yml` name[missing] x5: upstream aborts a
+  file's analysis after its `syntax-check[unknown-module]` failure
+  (the fixture intentionally uses nonexistent modules); we don't
+  implement that rule yet, so we keep analyzing.
+
+Position conventions learned from the harness (matchtask rules report
+at the task line with no column; only fqcn points at the module key;
+name[casing]/name[template] point at the name value; name[missing]
+has no column). Upstream also classifies files under roles/<name>/
+only in tasks/handlers/defaults/vars/meta, and resolves deprecated
+redirects like yum → ansible.builtin.dnf, both mirrored here.
+
+### Phases 2-4 status (2026-09, v0.4.0)
+
+All phases implemented through profiles:
+- **CLI**: -p/-f brief|pep8|quiet|json, -L, -P, -T, -q, -v,
+  --force-color, --nocolor, --version/-h, exit 0/2/3.
+- **Phase 3 machinery**: `# noqa` / `# noqa: id,id` (violation line or
+  enclosing task), `.ansible-lint` config discovered cwd-upward
+  (exclude_paths, skip_list, warn_list, profile), CLI overrides
+  -x/--skip-list, -w/--warn-list, --enable-list, -t/--tags,
+  --profile; warn_list rules report but do not fail.
+- **Phase 2 rules**: var-naming[pattern]/[no-reserved] (vars-file
+  keys are pattern-only upstream; jinja-templated names skip all
+  checks; set_fact skips __private/cacheable), no-handler (fires on
+  simple changed-referencing whens, skipped for handlers/listen).
+- **Phase 3 rules**: no-jinja-when (only `when` triggers upstream),
+  jinja[spacing] (inner brace padding), jinja[invalid] (Crinja parse
+  errors only; render-time failures are ignored like upstream's
+  bypasses).
+- **Phase 4 profiles**: min/basic/moderate/safety/shared/official/
+  production gating per upstream profiles.yml; "basic" is not
+  user-selectable.
+
+Deliberate divergences/known gaps:
+- upstream's black-based jinja expression reformat (our jinja[spacing]
+  is the narrow inner-padding subset);
+- upstream aborts a file after syntax-check[unknown-module] (we keep
+  analyzing; that rule is unimplemented);
+- Crystal's YAML (libyaml) rejects some plain scalars with ": " that
+  ruamel (YAML 1.2) accepts - one fixture in the corpus hits this;
+- schema[meta] is not implemented: the installed ansible-lint accepts
+  even shape-broken standalone meta files, so adding checks would
+  CREATE divergence;
+- var-naming[no-role-prefix] and the remaining yamllint yaml[*] subset
+  are unimplemented (visible as "unimplemented-upstream" in harness
+  output, not counted as divergences).
+
+### args[module] and fqcn[canonical] (2026-09, v0.4.0)
+
+Two new rules plus a risky-shell-pipe bug fix, all verified live
+against the installed ansible-lint 25.6.1+really25.2.1:
+
+- **args[module]** (warning-class, VERY_LOW here) validates task params
+  against per-module argument specs, mirroring ansible-core's
+  AnsibleModule-init validation: unsupported parameters (with the
+  alias tail), missing required, required_one_of, required_together,
+  required_if ("state is present but any/all of the following are
+  missing"), required_by, choices, list choices, and bool conversion.
+  Only core (ansible.builtin) modules get specs (see arg_specs.cr);
+  community modules are outside krikri's coverage bar, so the ~270
+  args[module] hits upstream produces on them stay as expected
+  upstream-only gaps, not divergences. Data pinned to the installed
+  ansible-core 2.19.11 argspecs via `ansible-doc -j`, including its
+  quirks: yum_repository's required_one_of is really required_if on
+  state=present (default present applied at init), apt's `upgrade:
+  true` passes via ansible-core's bool->'True'->unique-boolean-choice
+  remap, package_facts' `manager` is never validated, and getent's
+  `split` is a string, not a bool. Templated values skip type/choices
+  checks like upstream.
+- **fqcn[canonical]** flags FQCNs that redirect to a different
+  canonical name (ansible.builtin.acl -> ansible.posix.acl,
+  community.mysql.* -> ansible.mysql.*, ansible.builtin.cronvar ->
+  community.general.cronvar), message and module-key position matching
+  upstream exactly.
+- **risky-shell-pipe ignore_errors fix**: the old check was inverted
+  (fired when ignore_errors was falsy and skipped when truthy).
+  Upstream exempts tasks whose ignore_errors converts to Python-truthy:
+  plain YAML true/yes/on/1 exempt, plain false/no/off/0/null/empty
+  fire, and quoted or templated values ("false", "{{ x }}") are
+  non-empty strings and therefore EXEMPT - implemented via the scalar's
+  plain-vs-quoted style.
+
+Parity after this pass: 2856 triples matched, 0 args/fqcn/risky
+krikri-only divergences; remaining krikri-only are the two pre-existing
+documented classes (syntax-check YAML strictness, py_module
+name-checks-after-abort); remaining upstream-only is args[module] on
+community modules only.
 
 ## What this is
 

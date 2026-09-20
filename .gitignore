@@ -56,3 +56,9 @@ scripts/crinja_corpus/divergence_report.md
 /testing/ipreuse/key.pub
 testing/podman-diff/results/
 plugin_manager
+
+# Ad-hoc probe/scratch files used while investigating upstream
+# ansible-lint behavior (parity probes for new lint rules). Local-only
+# scratch; anything that matters is captured in specs, krikri-lint.md,
+# or commit messages instead.
+/.probe/

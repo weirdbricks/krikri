@@ -40,3 +40,28 @@ module PluginSpecHelper
     JSON.parse(output.to_s)
   end
 end
+
+# Shared helper for krikri-lint task-rule specs: write YAML, load it,
+# run one rule, return violations.
+def lint_yaml(rule : Krikri::Lint::Rule, yaml : String, file_type : Krikri::Lint::FileType = Krikri::Lint::FileType::PLAYBOOK) : Array(Krikri::Lint::Violation)
+  path = File.tempname("lintrule", ".yml")
+  File.write(path, yaml)
+  file = Krikri::Lint::PositionedFile.new(path, file_type, YAML::Nodes.parse(yaml).nodes.first?, nil)
+  violations = [] of Krikri::Lint::Violation
+  rule.check(file, violations)
+  violations
+ensure
+  File.delete(path) if path
+end
+
+# Runner-level helper: runs only the fqcn rule through the full Runner
+# pipeline (config, noqa, profile gating).
+def run_fqcn_yaml(yaml : String, config : Krikri::Lint::LintConfig = Krikri::Lint::LintConfig.new) : Array(Krikri::Lint::Violation)
+  path = File.tempname("lintrunner", ".yml")
+  File.write(path, yaml)
+  file = Krikri::Lint::PositionedFile.new(path, Krikri::Lint::FileType::PLAYBOOK, YAML::Nodes.parse(yaml).nodes.first?, nil)
+  registry = Krikri::Lint::RuleRegistry.new([Krikri::Lint::FqcnActionCoreRule.new] of Krikri::Lint::Rule)
+  Krikri::Lint::Runner.new(registry, config).run([path])
+ensure
+  File.delete(path) if path
+end

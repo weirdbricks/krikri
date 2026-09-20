@@ -114,15 +114,23 @@ module Krikri
   end
 
   def self.version_info : String
+    version_info("krikri", VERSION,
+      "Fast, Ansible-compatible automation tool written in Crystal")
+  end
+
+  # Shared --version shape for every krikri binary (playbook, ad-hoc
+  # CLI, lint): tool name/version, tagline, then the exact Crystal and
+  # shard versions compiled in.
+  def self.version_info(name : String, version : String, tagline : String) : String
     lines = [
-      "krikri #{VERSION}",
-      "Fast, Ansible-compatible automation tool written in Crystal",
+      "#{name} #{version}",
+      tagline,
       "",
       "Crystal: #{Crystal::VERSION}",
       "Shards:",
     ]
-    RUNTIME_DEPENDENCY_VERSIONS.each do |(name, version)|
-      lines << "  #{name}: #{version}#{RUNTIME_DEPENDENCY_FORK_NOTES[name]? || ""}"
+    RUNTIME_DEPENDENCY_VERSIONS.each do |(dep, dep_version)|
+      lines << "  #{dep}: #{dep_version}#{RUNTIME_DEPENDENCY_FORK_NOTES[dep]? || ""}"
     end
     lines.join("\n")
   end

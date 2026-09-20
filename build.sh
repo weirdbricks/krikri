@@ -318,6 +318,43 @@ else
     echo -e "   ${BLUE}✓${NC} krikri (up to date)"
     echo -e "${GREEN}✅ krikri up to date${NC}"
 fi
+
+# Build krikri-lint (static analysis, see krikri-lint.md)
+echo -e "${YELLOW}🔨 Building krikri-lint...${NC}"
+
+LINT_BINARY="$OUTPUT_DIR/krikri-lint"
+LINT_SOURCE="krikri-lint.cr"
+
+NEEDS_BUILD=false
+
+if [ ! -f "$LINT_BINARY" ]; then
+    NEEDS_BUILD=true
+elif [ "$LINT_SOURCE" -nt "$LINT_BINARY" ]; then
+    NEEDS_BUILD=true
+elif find src/krikri_lint -name '*.cr' -newer "$LINT_BINARY" -print -quit 2>/dev/null | grep -q .; then
+    NEEDS_BUILD=true
+elif [ -d lib ] && find lib -name '*.cr' -newer "$LINT_BINARY" -print -quit | grep -q .; then
+    NEEDS_BUILD=true
+fi
+
+if [ "$NEEDS_BUILD" = true ]; then
+    echo -n "   Building krikri-lint... "
+    if ! OUTPUT=$(crystal build krikri-lint.cr -o "$LINT_BINARY" $BUILD_FLAGS 2>&1); then
+        echo -e "${RED}✗${NC}"
+        echo ""
+        echo -e "${RED}❌ Build failed for krikri-lint${NC}"
+        echo ""
+        echo "$OUTPUT"
+        echo ""
+        exit 1
+    fi
+    echo -e "${GREEN}✓${NC}"
+    strip_release_binary "$LINT_BINARY"
+    echo -e "${GREEN}✅ krikri-lint built: $OUTPUT_DIR/krikri-lint${NC}"
+else
+    echo -e "   ${BLUE}✓${NC} krikri-lint (up to date)"
+    echo -e "${GREEN}✅ krikri-lint up to date${NC}"
+fi
 echo ""
 
 # Build plugins
