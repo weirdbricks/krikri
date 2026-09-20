@@ -44,6 +44,42 @@ has no column). Upstream also classifies files under roles/<name>/
 only in tasks/handlers/defaults/vars/meta, and resolves deprecated
 redirects like yum → ansible.builtin.dnf, both mirrored here.
 
+### Phases 2-4 status (2026-09, v0.3.0)
+
+All phases implemented through profiles:
+- **CLI**: -p/-f brief|pep8|quiet|json, -L, -P, -T, -q, -v,
+  --force-color, --nocolor, --version/-h, exit 0/2/3.
+- **Phase 3 machinery**: `# noqa` / `# noqa: id,id` (violation line or
+  enclosing task), `.ansible-lint` config discovered cwd-upward
+  (exclude_paths, skip_list, warn_list, profile), CLI overrides
+  -x/--skip-list, -w/--warn-list, --enable-list, -t/--tags,
+  --profile; warn_list rules report but do not fail.
+- **Phase 2 rules**: var-naming[pattern]/[no-reserved] (vars-file
+  keys are pattern-only upstream; jinja-templated names skip all
+  checks; set_fact skips __private/cacheable), no-handler (fires on
+  simple changed-referencing whens, skipped for handlers/listen).
+- **Phase 3 rules**: no-jinja-when (only `when` triggers upstream),
+  jinja[spacing] (inner brace padding), jinja[invalid] (Crinja parse
+  errors only; render-time failures are ignored like upstream's
+  bypasses).
+- **Phase 4 profiles**: min/basic/moderate/safety/shared/official/
+  production gating per upstream profiles.yml; "basic" is not
+  user-selectable.
+
+Deliberate divergences/known gaps:
+- upstream's black-based jinja expression reformat (our jinja[spacing]
+  is the narrow inner-padding subset);
+- upstream aborts a file after syntax-check[unknown-module] (we keep
+  analyzing; that rule is unimplemented);
+- Crystal's YAML (libyaml) rejects some plain scalars with ": " that
+  ruamel (YAML 1.2) accepts - one fixture in the corpus hits this;
+- schema[meta] is not implemented: the installed ansible-lint accepts
+  even shape-broken standalone meta files, so adding checks would
+  CREATE divergence;
+- var-naming[no-role-prefix] and the remaining yamllint yaml[*] subset
+  are unimplemented (visible as "unimplemented-upstream" in harness
+  output, not counted as divergences).
+
 ## What this is
 
 `krikri-lint` would be a from-scratch reimplementation of `ansible-lint`
