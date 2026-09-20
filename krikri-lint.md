@@ -121,6 +121,46 @@ documented classes (syntax-check YAML strictness, py_module
 name-checks-after-abort); remaining upstream-only is args[module] on
 community modules only.
 
+Correction: `schema[meta]` above is NOT an unimplemented gap - it IS
+implemented (`src/krikri_lint/rules/schema_meta.cr`, listed by
+`krikri-lint --list-rules`). An earlier revision of this doc's "Deliberate
+divergences" list called it unimplemented; that line was stale by the
+time schema[meta] actually landed and is corrected here.
+
+### yaml[*] subset and var-naming[no-role-prefix] (2026-09, v0.5.0)
+
+Closes the two items the previous "Deliberate divergences" list called
+unimplemented, both live-verified against installed ansible-lint
+25.6.1+really25.2.1:
+
+- **yaml[comments]**, **yaml[empty-lines]**, **yaml[hyphens]**,
+  **yaml[indentation]**, **yaml[key-duplicates]**,
+  **yaml[new-line-at-end-of-file]**, **yaml[octal-values]** join the
+  already-shipped yaml[line-length]/[trailing-spaces]/[truthy], porting
+  the rest of the yamllint rule set ansible-lint's bundled config
+  enables by default. `yaml[document-start]` remains deliberately
+  unimplemented - confirmed still disabled in the installed
+  ansible-lint's bundled yamllint config, so implementing it would
+  itself be a divergence.
+- **var-naming[no-role-prefix]** mirrors upstream's
+  `VariableNamingRule._parse_prefix`/matchplay/matchtask logic exactly:
+  keys in a role's `defaults`/`vars` files, non-keyword keys (and their
+  `vars:` mapping) on a playbook's `roles:` entries, and
+  vars/set_fact/register on `include_role`/`import_role` tasks must be
+  prefixed with the role's own name (`nginx_*` for role `nginx`). FQCN
+  role names (containing a `.`) disable the prefix AND pattern checks
+  entirely, matching upstream's `is_fqcn_or_name` gate. `file_type.cr`
+  gained role-subdirectory detection independent of the `main.yml`
+  filename so every file under `roles/<name>/{tasks,vars,defaults,...}`
+  classifies correctly, not just `main.yml`.
+
+Parity after this pass: 2865 triples matched, 10 krikri-only (all
+pre-existing documented classes - the abort-after-unknown-module py_module
+fixtures now also surface yaml[empty-lines] there, same root cause as the
+existing name[missing] entries in that class, not a new gap), 267
+upstream-only (args[module] on community modules, unchanged), 10
+unimplemented-upstream.
+
 ## What this is
 
 `krikri-lint` would be a from-scratch reimplementation of `ansible-lint`
