@@ -1,15 +1,27 @@
----
-- name: Ensure dest dir exists (real Ansible's unarchive requires it)
-  ansible.builtin.file:
-    path: /tmp/krikri-unarchive-test
-    state: directory
+# The dest must be unique per run: a fixed path (/tmp/krikri-unarchive-test)
+# collides across runs and git worktrees, and stray content in it trips
+# unarchive's own checksum/idempotency logic nondeterministically. The dir
+# is created by mktemp at TEMPLATING time (lookup('pipe', ...) runs even in
+# --check mode) rather than by a task, because file:/tempfile: correctly
+# refuse to create anything in check mode while unarchive still requires
+# dest to already exist.
+- name: Create a unique per-run scratch dir
+  ansible.builtin.set_fact:
+    unarchive_test_dest: "{{ lookup('pipe', 'mktemp -d /tmp/krikri-unarchive-test-XXXXXX') }}"
 
 - name: Unpack bare relative src from role files/
   ansible.builtin.unarchive:
     src: "minio.tar.gz"
-    dest: /tmp/krikri-unarchive-test
+    dest: "{{ unarchive_test_dest }}"
   register: unpack_result
 
 - name: Show unpack result
   ansible.builtin.debug:
-    msg: "changed={{ unpack_result.changed }} failed={{ unpack_result.failed }}"
+    msg: "changed={{ unpack_result.changed }} failed={{ unpack_result.failed }} dest={{ unarchive_test_dest }}"
+
+# Same check-mode constraint as the setup above: file: state=absent would
+# be a no-op under --check and leak the scratch dir, so the cleanup also
+# runs at templating time. The path is this run's own fresh mktemp output.
+- name: Remove the scratch dir
+  ansible.builtin.debug:
+    msg: "{{ lookup('pipe', 'rm -rf ' ~ unarchive_test_dest) }}"
