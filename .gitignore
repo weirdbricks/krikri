@@ -62,3 +62,6 @@ plugin_manager
 # scratch; anything that matters is captured in specs, krikri-lint.md,
 # or commit messages instead.
 /.probe/
+
+__pycache__/
+*.pyc
