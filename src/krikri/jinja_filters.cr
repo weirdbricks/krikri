@@ -815,12 +815,15 @@ module Krikri
     # `json_query(expr)` - real Ansible's own filter (from
     # `community.general`, commonly reachable as a bare name), a full
     # JMESPath query over the value. Backed by this engine's own JMESPath
-    # module (src/krikri/jmespath.cr); the hand-rolled FilterEngine
-    # registers the same name separately since only `{%`/`{#`-escalated
-    # rendering reaches Crinja. Found unimplemented via itigoag.
+    # module (src/krikri/jmespath.cr). Found unimplemented via itigoag.
     # packages' own `packages_var_lower | json_query(packages_var_query)`
     # task. Entirely unregistered before this - "No filter named
-    # 'json_query'" failed the task outright.
+    # 'json_query'" failed the task outright. Since the Phase-1
+    # consolidation (filter #3) this is the SINGLE implementation of the
+    # name: the hand-rolled FilterEngine's own parallel dispatch now
+    # delegates here via #delegate_to_crinja_filter, so both the `{{ }}`
+    # and `{%`-template paths share this registration (and its wrapped
+    # "invalid JMESPath expression" error text).
     Crinja.filter(:json_query) do
       expr = arguments.varargs[0]?
       raise "json_query: missing JMESPath expression" unless expr
