@@ -726,24 +726,28 @@ module Krikri
           # `loop: "{{ my_dict | dict2items }}"` can iterate. dev-sec
           # os_hardening's own `os_hardening_set_os_variables.yml` uses
           # exactly this shape (`with_dict` semantics) to walk a flat
-          # `{mount_point: {mode: ..., owner: ...}}` config; before this
-          # was implemented, the passthrough meant `FilterEngine` returned
-          # the dict unchanged, `with_dict`'s loop binding produced a
-          # single `item` that's the whole dict, and every downstream
-          # `item.key`/`item.value` template was undefined - a regression
-          # spec for the related mode bug had to be rewritten with a
-          # `set_fact: my_mode: "1777"` shape to avoid the loop never
-          # actually setting the fact. Now resolves to a real list of
-          # `{key_name, value_name}` dicts in the same insertion order
-          # Ansible's CPython 3.7+ preserves (Crystal Hash insertion
-          # order is the same). The two kwarg names default to
-          # `key`/`value`; os_hardening uses defaults. Real Ansible's
-          # `dict2items` also accepts a `wantlist=True` form that returns
-          # a list of [k, v] pairs (no dict wrapping) - not seen in any
-          # role yet, deliberately not implemented.
+          # `{mount_point: {mode: ..., owner: ...}}` config.
+          #
+          # Phase-1 consolidation pilot (SUGGESTED_CRINJA_NEXT_STEPS.md):
+          # the parallel hand-rolled JSON::Any copy this dispatch used to
+          # carry is deleted - the name now routes through the ONE native
+          # `Crinja.filter` registration (jinja_filters.cr, live-
+          # differentialed against ansible-core 2.19.4 on its own side)
+          # via #delegate_to_crinja_filter, the same single-table
+          # direction the already-delegated names (extract, mandatory,
+          # bool, ipaddr, ...) resolved years ago. Behavior contract is
+          # unchanged and still enforced by spec/unit/filter_engine_spec.cr:
+          # insertion order, kwarg overrides, empty list for a non-dict
+          # input, and undefined-input rejection handled upstream by
+          # Krikri.undefined_filter_chain_source (the strict-undefined
+          # entry points fire before any filter - including this one -
+          # ever sees the value).
           key_name = parse_kwarg(filter_args, "key_name") || "key"
           value_name = parse_kwarg(filter_args, "value_name") || "value"
-          JSON::Any.new(dict_to_items(as_hash(value), key_name, value_name))
+          delegate_to_crinja_filter(
+            "dict2items", value,
+            {"key_name" => key_name, "value_name" => value_name},
+          )
         when "items2dict"
           # items2dict(key_name='key', value_name='value') - the inverse
           # of dict2items: takes a list of dicts (each having a `key_name`
@@ -1440,6 +1444,35 @@ module Krikri
         )
       rescue
         nil
+      end
+
+      # The Crinja consolidation seam (Phase 1 of
+      # SUGGESTED_CRINJA_NEXT_STEPS.md; pilot: dict2items): dispatches one
+      # filter name to its native `Crinja.filter` registration in
+      # jinja_filters.cr instead of a parallel hand-rolled JSON::Any copy,
+      # paying one JSON::Any -> Crinja::Value roundtrip per call.
+      # Conversion is the PURE `json_any_to_crinja_value`, not
+      # `convert_var`'s re-templating walk: *value* has already been fully
+      # resolved and recursively re-rendered by the time a filter sees it
+      # (see #rerender_if_templated and the strict-undefined entry
+      # points), so re-rendering here would be a second, redundant pass -
+      # a behavior change, not just an implementation swap. The kwargs
+      # are the pre-parsed string kwarg values (#parse_kwarg); the Crinja
+      # side receives them through `Crinja::Arguments` the same way
+      # Resolver#execute_call wires a `{% %}`-pipeline call, including
+      # the callable's own declared defaults.
+      private def delegate_to_crinja_filter(name : String, value : JSON::Any, kwargs : Hash(String, String)) : JSON::Any
+        env = CrinjaRenderer.shared_environment
+        callable = env.filters[name]
+        crinja_kwargs = Crinja::Variables.new
+        kwargs.each { |k, v| crinja_kwargs[k] = Crinja::Value.new(v) }
+        arguments = Crinja::Arguments.new(
+          env,
+          kwargs: crinja_kwargs,
+          target: CrinjaRenderer.json_any_to_crinja_value(value),
+        )
+        arguments.defaults = callable.defaults if callable.responds_to?(:defaults)
+        CrinjaRenderer.crinja_value_to_json_any(callable.call(arguments).as(Crinja::Value))
       end
 
       DATETIME_TAG  = "__crystal_datetime__"
@@ -2180,22 +2213,9 @@ module Krikri
         value.as_h? || {} of String => JSON::Any
       end
 
-      # dict2items' transformation core. Walks a Hash in its native
-      # insertion order (Crystal Hash is insertion-ordered since 0.34,
-      # matching CPython 3.7+ dict semantics) and emits a list of
-      # `{key_name => k, value_name => v}` Hashes. The key and value
-      # names default to "key"/"value" at the apply() call site.
-      private def dict_to_items(hash : Hash(String, JSON::Any), key_name : String, value_name : String) : Array(JSON::Any)
-        hash.map do |k, v|
-          JSON::Any.new({
-            key_name   => JSON::Any.new(k),
-            value_name => v,
-          })
-        end
-      end
-
-      # items2dict' transformation core. Inverse of dict_to_items:
-      # takes a list of `{key_name, value_name, ...}` dicts and produces
+      # items2dict' transformation core. Inverse of the (now Crinja-
+      # delegated) dict2items: takes a list of `{key_name, value_name,
+      # ...}` dicts and produces
       # a single dict mapping key_name -> value_name. Elements that
       # aren't dicts, or that don't carry the named key field, are
       # silently dropped (matches real Ansible's tolerance: malformed
