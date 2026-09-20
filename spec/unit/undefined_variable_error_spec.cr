@@ -117,17 +117,33 @@ describe Krikri::VarSubstitutor do
     end
 
     it "still extracts the captured group when the regex genuinely matches" do
-      # This leading-paren shape falls back to Crinja internally
-      # (`evaluate_leading_paren_crinja_first`), so the replacement
-      # arg needs a DOUBLED backslash in the template source (`'\\1'`)
-      # since crinja (crystal-play-0.9.52+) now fully decodes
-      # Python-style string-literal escapes in `{{ }}` - see
-      # crinja_renderer_spec.cr's "honors \1 backreferences" spec for
-      # the full live-verification narrative against real
-      # ansible-playbook's `.j2` template-file rendering.
+      # This leading-paren shape delegates to Crinja internally
+      # (`evaluate_leading_paren_crinja_first`), which re-encodes the
+      # expression's string literals so Crinja's lexer-level escape
+      # decoding (crystal-play-0.9.52+) round-trips back to the original
+      # text: real ansible-playbook 2.19.11 does NOT decode string
+      # escapes in inline YAML templating (live-verified - a single
+      # backslash `'\1'` works as the group backreference there and a
+      # doubled `'\\1'` FAILS with "NoneType' object has no attribute
+      # 'group'"; the decode is .j2 template-FILE behavior only, which
+      # never reaches this evaluator). A prior change asserted the
+      # doubled-backslash form here instead of fixing the delegation;
+      # that was the wrong behavior and this spec pins the real one.
       vars = {"cmd_out" => JSON.parse(%({"stdout": "Version: 2.11.9"}))}
       sub = Krikri::VarSubstitutor.new(vars: vars, host_name: "h1")
-      sub.substitute(%({{ (cmd_out.stdout | regex_search('Version:\\ ([\\d\\.]{2,})', '\\\\1', multiline=True))[0] }}), strict: true).should eq("2.11.9")
+      sub.substitute(%({{ (cmd_out.stdout | regex_search('Version:\\ ([\\d\\.]{2,})', '\\1', multiline=True))[0] }}), strict: true).should eq("2.11.9")
+    end
+
+    it "keeps backslash escapes undecoded across the leading-paren Crinja delegation" do
+      # Narrow for-else-of-the-bug guard, same live-verified real-Ansible
+      # wording: `{{ ('x\ny' | b64encode) }}` with parens (Crinja
+      # delegation) must render the backslash verbatim, exactly like
+      # real ansible-playbook 2.19.11 inline ("eFxueQ==" - the b64 of
+      # the 4 characters x\ny, NOT the b64 of a real newline, "eAp5").
+      # Before the delegation re-encoded string literals, Crinja decoded
+      # `\n` into a real newline here.
+      sub = Krikri::VarSubstitutor.new(vars: Hash(String, JSON::Any).new, host_name: "h1")
+      sub.substitute("{{ ('x\\ny' | b64encode) }}", strict: true).should eq("eFxueQ==")
     end
 
     it "keeps the default() guard lenient over a None-index miss" do

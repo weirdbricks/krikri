@@ -43,7 +43,48 @@ describe "a {% for %} loop over an undefined variable" do
     status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
 
     status.success?.should be_false
-    output.to_s.should contain("can't iterate over undefined")
+    # Real ansible-core 2.19.11's failure wording for the same render
+    # ("msg": "Task failed: 'resolv_nameservers' is undefined") - NOT
+    # Crinja's internal TypeError text "can't iterate over undefined"
+    # that used to leak through as the render error detail.
+    output.to_s.should contain("'resolv_nameservers' is undefined")
+    output.to_s.should_not contain("can't iterate over undefined")
+    File.exists?(dest).should be_false
+  ensure
+    File.delete(playbook) if playbook && File.exists?(playbook)
+    File.delete(src) if src && File.exists?(src)
+    File.delete(dest) if dest && File.exists?(dest)
+  end
+
+  it "reports the real-Ansible undefined wording for a {% for %}...{% else %} over an unset variable" do
+    # Same raise as the plain-for case above, exercised through the
+    # for-else form: real ansible-core 2.19.11 fails the template task
+    # with msg "Task failed: 'missing' is undefined" (the UndefinedError
+    # wording), while krikri used to surface Crinja's internal
+    # TypeError detail "Failed to render template: can't iterate over
+    # undefined" - functionally the same failure, cosmetically divergent.
+    src = File.tempname("for-else-undefined-src", ".j2")
+    dest = File.tempname("for-else-undefined-dest")
+    playbook = File.tempname("for-else-undefined", ".yml")
+    File.write(src, "{% for item in missing %}x{% else %}EMPTY{% endfor %}\n")
+
+    File.write(playbook, <<-YAML)
+      - name: repro
+        hosts: localhost
+        gather_facts: false
+        tasks:
+          - name: render
+            ansible.builtin.template:
+              src: #{src}
+              dest: #{dest}
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+
+    status.success?.should be_false
+    output.to_s.should contain("'missing' is undefined")
+    output.to_s.should_not contain("can't iterate over undefined")
     File.exists?(dest).should be_false
   ensure
     File.delete(playbook) if playbook && File.exists?(playbook)

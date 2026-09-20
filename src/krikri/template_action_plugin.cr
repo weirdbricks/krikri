@@ -317,6 +317,22 @@ module Krikri
       # Crinja's unquoted "x is undefined." phrasing.
       @render_error = "'#{ex.variable_name}' is undefined"
       nil
+    rescue ex : Crinja::TypeError
+      # Iterating an undefined value ({% for x in undefined_var %},
+      # with or without an {% else %} branch) raises Crinja's
+      # TypeError "can't iterate over undefined" - real Jinja2 raises
+      # the same UndefinedError "'x' is undefined" there as for any
+      # other undefined access (verified against ansible-core 2.19.11:
+      # a template module render with a for-else over an unset var
+      # fails with msg "Task failed: 'missing' is undefined"), so map
+      # it onto the same wording the UndefinedError rescue above
+      # produces.
+      if (raw = ex.value.try(&.raw)).is_a?(Crinja::Undefined)
+        @render_error = "'#{raw.name}' is undefined"
+      else
+        @render_error = ex.message
+      end
+      nil
     rescue ex
       @render_error = ex.message
       nil
