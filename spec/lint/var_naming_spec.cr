@@ -72,6 +72,11 @@ module Krikri::Lint
       v.should be_empty
     end
 
+    it "allows jinja-templated set_fact keys" do
+      v = lint_yaml(rule, "---\n- hosts: all\n  tasks:\n    - name: Set\n      set_fact:\n        \"loop_fact_{{ item }}\": 1\n", FileType::PLAYBOOK)
+      v.should be_empty
+    end
+
     it "checks vars-file top-level keys" do
       v = lint_yaml(rule, "---\nbadVar: 1\ngood_var: 2\n", FileType::VARS)
       v.size.should eq(1)

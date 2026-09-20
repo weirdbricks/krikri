@@ -46,17 +46,25 @@ module Krikri
 
       def check(file : PositionedFile, violations : Array(Violation)) : Nil
         root = file.root || return
+        if (mapping = root.as?(YAML::Nodes::Mapping)) && file.file_type.vars?
+          # Upstream's matchyaml checks vars-file keys for pattern
+          # violations only (reserved names are not flagged there).
+          NodeUtil.each_entry(mapping) do |k, _|
+            next unless key = k.as?(YAML::Nodes::Scalar).try(&.value)
+            next if key.includes?("{{")
+            unless key.matches?(PATTERN)
+              violations << Violation.new(file.path, NodeUtil.line(k),
+                NodeUtil.column(k), "var-naming[pattern]", severity,
+                "Variables names should match ^[a-z_][a-z0-9_]*$ regex. (#{key}) (vars: #{key})",
+                nil)
+            end
+          end
+          return
+        end
         if list = root.as?(YAML::Nodes::Sequence)
           list.nodes.each do |item|
             play = item.as?(YAML::Nodes::Mapping) || next
             check_vars_section(violations, file, play)
-          end
-        elsif mapping = root.as?(YAML::Nodes::Mapping)
-          # vars/defaults file: every top-level key is a variable
-          NodeUtil.each_entry(mapping) do |k, _|
-            next unless key = k.as?(YAML::Nodes::Scalar).try(&.value)
-            check_ident(violations, file, key, line: NodeUtil.line(k), column: NodeUtil.column(k),
-              source: "vars")
           end
         end
         TaskWalker.each_task(file) do |task|
@@ -93,6 +101,9 @@ module Krikri
       private def check_ident(violations : Array(Violation), file : PositionedFile, ident : String, line : Int32,
                               column : Int32, source : String, task_line : Int32? = nil) : Nil
         return if ALLOWED_SPECIAL.includes?(ident)
+        # Upstream allows jinja-templated var names (no-jinja is not
+        # emitted; templated names skip all other checks too).
+        return if ident.includes?("{{")
         if RESERVED.includes?(ident)
           violations << Violation.new(file.path, line, column,
             "var-naming[no-reserved]", severity,

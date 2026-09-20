@@ -19,9 +19,11 @@ module Krikri::Lint
       v.first.line.should eq(4)
     end
 
-    it "flags changed_when and failed_when too" do
+    # Upstream's matchtask only triggers on `when`; changed_when/
+    # failed_when are transform-only there.
+    it "does not flag changed_when (installed-version parity)" do
       v = lint_yaml(rule, "---\n- hosts: all\n  tasks:\n    - name: A\n      command: ls\n      changed_when: \"{{ x }}\"\n", FileType::PLAYBOOK)
-      v.size.should eq(1)
+      v.should be_empty
     end
 
     it "allows plain expressions" do

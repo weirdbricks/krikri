@@ -24,7 +24,9 @@ module Krikri
 
       def check(file : PositionedFile, violations : Array(Violation)) : Nil
         TaskWalker.each_task(file) do |task|
-          WHEN_KEYS.each do |key|
+          # Upstream's matchtask only triggers on `when` (the transform
+          # also fixes changed_when/failed_when, but does not report them).
+          %w[when].each do |key|
             next unless (entry = NodeUtil.entry(task.node, key))
             value_node = entry[1]
             when_value = NodeUtil.scalar_value(value_node)
