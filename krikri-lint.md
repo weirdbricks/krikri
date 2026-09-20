@@ -44,7 +44,7 @@ has no column). Upstream also classifies files under roles/<name>/
 only in tasks/handlers/defaults/vars/meta, and resolves deprecated
 redirects like yum → ansible.builtin.dnf, both mirrored here.
 
-### Phases 2-4 status (2026-09, v0.3.0)
+### Phases 2-4 status (2026-09, v0.4.0)
 
 All phases implemented through profiles:
 - **CLI**: -p/-f brief|pep8|quiet|json, -L, -P, -T, -q, -v,
@@ -79,6 +79,47 @@ Deliberate divergences/known gaps:
 - var-naming[no-role-prefix] and the remaining yamllint yaml[*] subset
   are unimplemented (visible as "unimplemented-upstream" in harness
   output, not counted as divergences).
+
+### args[module] and fqcn[canonical] (2026-09, v0.4.0)
+
+Two new rules plus a risky-shell-pipe bug fix, all verified live
+against the installed ansible-lint 25.6.1+really25.2.1:
+
+- **args[module]** (warning-class, VERY_LOW here) validates task params
+  against per-module argument specs, mirroring ansible-core's
+  AnsibleModule-init validation: unsupported parameters (with the
+  alias tail), missing required, required_one_of, required_together,
+  required_if ("state is present but any/all of the following are
+  missing"), required_by, choices, list choices, and bool conversion.
+  Only core (ansible.builtin) modules get specs (see arg_specs.cr);
+  community modules are outside krikri's coverage bar, so the ~270
+  args[module] hits upstream produces on them stay as expected
+  upstream-only gaps, not divergences. Data pinned to the installed
+  ansible-core 2.19.11 argspecs via `ansible-doc -j`, including its
+  quirks: yum_repository's required_one_of is really required_if on
+  state=present (default present applied at init), apt's `upgrade:
+  true` passes via ansible-core's bool->'True'->unique-boolean-choice
+  remap, package_facts' `manager` is never validated, and getent's
+  `split` is a string, not a bool. Templated values skip type/choices
+  checks like upstream.
+- **fqcn[canonical]** flags FQCNs that redirect to a different
+  canonical name (ansible.builtin.acl -> ansible.posix.acl,
+  community.mysql.* -> ansible.mysql.*, ansible.builtin.cronvar ->
+  community.general.cronvar), message and module-key position matching
+  upstream exactly.
+- **risky-shell-pipe ignore_errors fix**: the old check was inverted
+  (fired when ignore_errors was falsy and skipped when truthy).
+  Upstream exempts tasks whose ignore_errors converts to Python-truthy:
+  plain YAML true/yes/on/1 exempt, plain false/no/off/0/null/empty
+  fire, and quoted or templated values ("false", "{{ x }}") are
+  non-empty strings and therefore EXEMPT - implemented via the scalar's
+  plain-vs-quoted style.
+
+Parity after this pass: 2856 triples matched, 0 args/fqcn/risky
+krikri-only divergences; remaining krikri-only are the two pre-existing
+documented classes (syntax-check YAML strictness, py_module
+name-checks-after-abort); remaining upstream-only is args[module] on
+community modules only.
 
 ## What this is
 

@@ -23,7 +23,8 @@ module Krikri
       def check(file : PositionedFile, violations : Array(Violation)) : Nil
         TaskWalker.each_task(file) do |task|
           next unless task.bare_module == "shell"
-          next unless truthy_ignore_errors?(task)
+          # upstream exempts tasks whose ignore_errors converts to true
+          next if truthy_ignore_errors?(task)
           text = raw_command_text(task)
           next unless text
           text = text.gsub(/\{\{.*?\}\}/, "JINJA")
@@ -36,9 +37,13 @@ module Krikri
       end
 
       private def truthy_ignore_errors?(task : LintTask) : Bool
-        value = task.task_value("ignore_errors")
-        return true if value.nil?
-        !%w[false no off 0].includes?(value.downcase)
+        entry = NodeUtil.entry(task.node, "ignore_errors") || return false
+        scalar = entry[1].as?(YAML::Nodes::Scalar) || return true
+        # Python truthiness of the parsed value: only a plain YAML-native
+        # false/0/null is falsy; quoted or templated strings ("false",
+        # "{{ x }}") are non-empty strings and exempt upstream.
+        return true unless scalar.style == YAML::ScalarStyle::PLAIN
+        !%w[false no off 0 null ~].includes?(scalar.value.strip.downcase)
       end
 
       private def raw_command_text(task : LintTask) : String?

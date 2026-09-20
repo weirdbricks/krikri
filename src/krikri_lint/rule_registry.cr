@@ -31,6 +31,8 @@ module Krikri
           RunOnceRule.new,
           LatestRule.new,
           PackageLatestRule.new,
+          FqcnCanonicalRule.new,
+          ArgsModuleRule.new,
         ])
       end
 

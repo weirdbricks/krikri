@@ -20,6 +20,21 @@ module Krikri::Lint
       v = lint_yaml(rule, "---\n- name: Play\n  hosts: all\n  tasks:\n    - name: A\n      shell: cmd1 || cmd2\n    - name: B\n      shell: echo {{ \"x\" | upper }}\n", FileType::PLAYBOOK)
       v.should be_empty
     end
+
+    it "exempts tasks whose ignore_errors is truthy" do
+      v = lint_yaml(rule, "---\n- name: Play\n  hosts: all\n  tasks:\n    - name: A\n      shell: cat x | grep y\n      ignore_errors: true\n    - name: B\n      shell: cat x | grep y\n      ignore_errors: yes\n    - name: C\n      shell: cat x | grep y\n      ignore_errors: 1\n", FileType::PLAYBOOK)
+      v.should be_empty
+    end
+
+    it "still flags falsey ignore_errors" do
+      v = lint_yaml(rule, "---\n- name: Play\n  hosts: all\n  tasks:\n    - name: A\n      shell: cat x | grep y\n      ignore_errors: false\n    - name: B\n      shell: cat x | grep y\n      ignore_errors: no\n    - name: C\n      shell: cat x | grep y\n      ignore_errors: 0\n    - name: D\n      shell: cat x | grep y\n", FileType::PLAYBOOK)
+      v.size.should eq(4)
+    end
+
+    it "exempts quoted and templated ignore_errors like Python truthiness" do
+      v = lint_yaml(rule, "---\n- name: Play\n  hosts: all\n  tasks:\n    - name: A\n      shell: cat x | grep y\n      ignore_errors: \"false\"\n    - name: B\n      shell: cat x | grep y\n      ignore_errors: \"{{ ie }}\"\n", FileType::PLAYBOOK)
+      v.should be_empty
+    end
   end
 
   describe IgnoreErrorsRule do
