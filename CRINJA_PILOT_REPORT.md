@@ -327,3 +327,176 @@ creep for a Phase-1 consolidation pass and is real, separate work.
    final Phase-1 wrap-up rather than let a 33x number pass silently -
    caveat #1 in the pilot report ("benchmark before migrating a filter
    reachable per-item") was written for exactly this kind of surprise.
+
+---
+
+# Filter #4: `selectattr` - found: NOT worth migrating (Phase 1 concludes)
+
+Date: 2026-09-20. Scope: exactly one filter (`selectattr`, together with
+the `rejectattr`/`select`/`reject` names that share its machinery), same
+discipline as the prior three. This is the migration's first NO-GO
+outcome: the hand-rolled implementation stays in place, no runtime code
+changed, no VERSION bump. The benchmark and the divergence probe that
+justify this are committed
+(`scripts/crinja_corpus/bench_selectattr_pilot.cr`,
+`scripts/crinja_corpus/probe_selectattr_divergence.cr`).
+
+## The "most entangled with hand-rolled evaluator internals" claim, verified
+
+Not true in the sense everyone assumed - and the truth is worse for
+migration purposes. There is no shared test registry anywhere:
+
+- FilterEngine's `selectattr_matches?`
+  (`src/krikri/variable_substitutor/filter_engine.cr`) is its own small
+  case statement (`equalto`/`eq`/`==`, `ne`/`!=`, `undefined`, `truthy`,
+  `sameas`, else -> defined-presence check). It does NOT call into
+  ConditionalEvaluator/ComparisonEvaluator's test handling for `when:`
+  conditions, which dispatch their own independent `case test_name`
+  statements (falling back to a Crinja render only for tests it never
+  special-cased).
+- What selectattr DOES share is the sibling list-test filters:
+  `select`/`reject`'s `item_matches_test?` delegates to
+  `selectattr_matches?`, and `selectattr`/`rejectattr` share
+  `apply_selectattr` (one implementation, `invert` flag). So any
+  migration touches four filter names, not one.
+- The Crinja side needs no registration in `jinja_filters.cr` at all:
+  the fork's core library (`weirdbricks/crinja`,
+  `src/lib/filter/collections.cr`'s `select_reject_attr` macro) already
+  ships native `selectattr`/`rejectattr`/`select`/`reject`, dispatching
+  each item through `env.tests`. Three test-dispatch implementations
+  exist in total, none shared: FilterEngine's, ConditionalEvaluator's,
+  and the fork's env.tests registry.
+
+So the expected difficulty classification inverted: not a
+`json_query`-shaped thin-wrapper migration, and not even quite a
+`combine`-shaped merge of two in-tree copies - one of the two
+implementations lives in a shard dependency, which the `combine` round
+already ruled out touching.
+
+## Performance: the per-item profile filter #3 asked for, and it's bad
+
+`crystal run --release scripts/crinja_corpus/bench_selectattr_pilot.cr`,
+N=20,000, 8-field hostvar-shaped dict entries, warmup pass
+(`selectattr('state', 'equalto', 'present')`; the prototype delegates
+through the exact `#delegate_to_crinja_filter` bridge mechanics to the
+fork's native registration):
+
+| List size | OLD hand-rolled | NEW delegated -> fork |  delta |
+|---|---|---|---|
+| 4 entries   | ~1,240 ns | ~14,109 ns  | ~11x |
+| 50 entries  | ~1,508 ns | ~173,272 ns | ~115x |
+| 500 entries | ~3,770 ns | ~1,720,089 ns | ~456x |
+
+The overhead is NOT a flat per-call tax: subtracting the ~14 us base
+(the per-call bridge conversion, in line with filters #1-2), the
+delegated path pays ~3.4 us PER ITEM where the hand-rolled path pays
+~5 ns - a ~675x per-item cost, dominated by the fork's per-item
+`env.execute_call(test, args)` dispatch (a fresh `Crinja::Arguments`
+allocation and registry lookup for every list entry). This is exactly
+the compounding-over-list-size failure filter #3's report predicted,
+just with the root cause in the fork's registration body rather than a
+JSON::Any roundtrip (the list converts across the bridge exactly once).
+
+In real terms: a single `selectattr` over a 500-entry inventory-shaped
+list costs 1.7 ms where the hand-rolled path costs 4 us - and real
+roles do not use selectattr once. openstack.ansible-hardening chains
+`selectattr(...) | selectattr(...) | sum(attribute=..., start=[])` over
+package lists; inventory/hostvar-shaped pipelines chain
+`selectattr | map | first`. Each chain link multiplies the per-item
+tax, pushing a single expression into the several-ms range and a
+playbook's worth of them into visible latency. This fails the go/no-go
+bar outright.
+
+## Behavior: also not preservable through delegation (checked before deciding)
+
+Performance alone would be borderline-enough to warrant weighing, but
+behavior settles it. `probe_selectattr_divergence.cr` runs four
+spec-locked or documented behaviors through the delegated path; ALL
+FOUR diverge from the hand-rolled path:
+
+1. **`==` as a test-name spelling** (locked by
+   `filter_engine_spec.cr:446`, `selectattr('stat.exists', '==', True)`):
+   the fork's test registry deliberately does not register the symbol
+   spellings as bare names - the delegated path raises
+   `UnknownFeatureError: no test with name "==" registered`.
+2. **selectattr's no-test default**: the hand-rolled path falls back to
+   a `defined` presence check (keeps present-but-falsey entries); the
+   fork falls through to truthiness (drops them) - a silent,
+   data-dependent result difference.
+3. **Re-templating of `{{ }}`-bearing attribute values** (locked by
+   `filter_engine_spec.cr:409`, the openstack.ansible-hardening
+   `stig_packages_rhel7` fix): the delegated path compares the raw
+   `"{{ security_package_state }}"` text and matches 0 items where the
+   hand-rolled path matches 1. This one is NOT FIXABLE through any
+   registration: the re-templating needs the *calling FilterEngine
+   instance's own* `@vars` scope, which no Crinja filter can reach
+   (`#delegate_to_crinja_filter` builds standalone arguments against
+   `CrinjaRenderer.shared_environment`).
+4. **Unknown test name**: the hand-rolled path falls back to the
+   defined-presence check by design (documented at the dispatch site);
+   the fork raises.
+
+Fixing 1, 2 and 4 would mean editing the fork (a shard dependency,
+ruled out in the `combine` round) or shadowing its registration with a
+krikri-owned reimplementation - which is not consolidation at all, just
+relocating the hand-rolled code across a type boundary while paying the
+bridge tax and still losing behavior 3. There is no version of this
+migration that preserves exact behavior.
+
+## Verdict
+
+**No-go, on both prongs independently.** The hand-rolled
+`apply_selectattr`/`selectattr_matches?` machinery stays, and stays
+correct: it is the only implementation of its documented contract.
+What would need to change before this filter could migrate safely:
+
+- The fork's `selectattr` registration would need to stop dispatching
+  per-item through `env.execute_call` (resolve the test callable once,
+  or accept a pre-resolved predicate), removing the ~3.4 us/item tax;
+- The fork's test registry would need `==`/`!=` and the other operator
+  spellings registered as bare names (real Jinja2 3.1.6's own
+  `jinja2/tests.py` does register them);
+- A scope-aware bridge would need to exist so a Crinja filter can
+  re-template `{{ }}`-bearing attribute values against the calling
+  engine's vars (and selectattr's no-test `defined` default and
+  unknown-test fallback would need to be reproduced) - at which point
+  the "consolidation" would still be a rewrite, not a merge.
+
+Full suite after the decision: 5276 examples, 6 failures / 2 errors -
+the known nondeterministic cluster, unchanged; no runtime code was
+modified.
+
+---
+
+# Phase 1 complete: overall wrap-up
+
+Date: 2026-09-20. All four originally-duplicated filters assessed
+(3 migrated, 1 refused); per `SUGGESTED_CRINJA_NEXT_STEPS.md`, Phase 1
+asked exactly this question and the answer is now known per filter.
+
+| Filter | Outcome | Roundtrip tax | Behavior surprises |
+|---|---|---|---|
+| `dict2items` (#1) | MIGRATED | ~4x per call (+3.3 us) | none |
+| `combine` (#2) | MIGRATED | ~2x per call (+4-6 us) | latent `Value#to_json` crash in the shard's `_rp` dedupe, found + fixed around the registration |
+| `json_query` (#3) | MIGRATED | up to ~33x per call (quadruple conversion inside the registration; documented, not fixed - out of scope) | none |
+| `selectattr` (#4) | NOT MIGRATED (evidence-based refusal) | ~675x per item (~3.4 us/item) - scales with list size | all four spec-locked behaviors diverge through the only available (fork) registration |
+
+Net verdict: **Phase 1 was worth doing, and worth stopping where it
+stopped.** The three migrations deleted genuine duplication, kept the
+full suite green without behavior changes, and left one reusable,
+ battle-tested seam (`#delegate_to_crinja_filter`) plus a repeatable
+method (benchmark first, divergence-probe the registration, revertible
+commit each). Their costs are real but flat per call and lost against
+per-task costs. Selectattr's refusal is the other half of the same
+win: the identical discipline caught, before any runtime code changed,
+a case where "consolidation" would have meant shipping a 675x per-item
+regression AND breaking four locked behaviors - the original plan's
+"benchmark before migrating a filter reachable per-item" caveat doing
+precisely the job it was written for.
+
+Residual debts, for anyone picking Phase 2 up: json_query's 33x is
+still unfixed (a `Crinja::Value`-native JMESPath entry point would
+remove it), and selectattr's migration remains blocked on the fork
+(per-item execute_call, missing operator-spelling tests, and the
+scope-aware re-templating bridge) - none of it worth taking without a
+real-host round that demonstrates need.
