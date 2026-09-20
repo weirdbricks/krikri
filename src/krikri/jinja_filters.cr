@@ -55,15 +55,30 @@ module Krikri
 
     # list_merge= counterpart: existing/new lists concatenated per mode,
     # deduped by JSON text for the `_rp` (remove duplicates) modes.
+    #
+    # The JSON text for the `_rp` dedupe is produced by
+    # CrinjaRenderer.crinja_value_to_json_any(...).to_json, NOT by
+    # Crinja::Value#to_json: the shard's own Value#to_json(JSON::Builder)
+    # calls start_document on the builder it is handed, but Object#to_json
+    # has already opened that document, so ANY standalone Value#to_json
+    # crashes ("Starting document before ending previous one") - a latent
+    # bug in this shard, live on the Crinja side for
+    # combine(list_merge='append_rp'/'prepend_rp') in real .j2 templates
+    # and surfaced here the moment FilterEngine's combine routed through
+    # this registration. JSON::Any's serializer also gives the compact,
+    # insertion-ordered text the hand-rolled FilterEngine#combine_hash
+    # dedupe compares, keeping the two sides' equality semantics
+    # identical.
     def self.list_merge_values(existing : Crinja::Value, new : Crinja::Value, mode : String) : Crinja::Value
       base_list = existing.raw.as(Array(Crinja::Value))
       other_list = new.raw.as(Array(Crinja::Value))
+      json_key = ->(item : Crinja::Value) { VariableSubstitutor::CrinjaRenderer.crinja_value_to_json_any(item).to_json }
       case mode
       when "keep"       then existing
       when "append"     then Crinja::Value.new(base_list + other_list)
       when "prepend"    then Crinja::Value.new(other_list + base_list)
-      when "append_rp"  then Crinja::Value.new((base_list + other_list).uniq(&.to_json))
-      when "prepend_rp" then Crinja::Value.new((other_list + base_list).uniq(&.to_json))
+      when "append_rp"  then Crinja::Value.new((base_list + other_list).uniq(&json_key))
+      when "prepend_rp" then Crinja::Value.new((other_list + base_list).uniq(&json_key))
       else                   new
       end
     end
