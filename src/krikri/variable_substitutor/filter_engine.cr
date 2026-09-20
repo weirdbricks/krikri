@@ -609,8 +609,9 @@ module Krikri
           # contract unchanged and still enforced by
           # spec/unit/lazy_dict_templating_spec.cr (recursive deep-merge
           # plus every list_merge mode against real ansible-core 2.19).
-          # #combine_hash itself remains: lists_mergeby's core still
-          # merges with it.
+          # #combine_hash is deleted too now: lists_mergeby migrated
+          # onto its own Crinja registration (see the lists_mergeby
+          # case below), so nothing else called it.
           recursive_arg = false
           list_merge_arg = "replace"
           positional_args = [] of String
@@ -645,16 +646,32 @@ module Krikri
           # by merging their dicts together (later lists win on
           # collisions, exactly like `combine`'s later-positional-wins;
           # `recursive=` and `list_merge=` carry combine's same
-          # semantics via the shared combine_hash helper). Items whose
-          # key value appears in only one list pass through untouched;
-          # result order is first-seen key order (real CPython 3.7+ dict
-          # semantics, same ordering the Crinja-side dict2items relies
-          # on). Entirely unimplemented before - found via a real-host
+          # merge semantics). Items whose key value appears in only
+          # one list pass through untouched; result order is
+          # first-seen key order (real CPython 3.7+ dict semantics,
+          # same ordering the Crinja-side dict2items relies on).
+          # Entirely unimplemented before - found via a real-host
           # benchmark round where a role's own vars assembly (lists of
           # per-source dicts keyed by name) hit the unknown-filter
           # error and the task failed before it could reach the
           # (pre-existing, role-side) bug real Ansible dies on further
           # downstream.
+          #
+          # Phase-1 cleanup (after the combine migration): the
+          # hand-rolled merge (#lists_mergeby_lists + the shared
+          # #combine_hash) is retired - this dispatch routes through
+          # the ONE native `Crinja.filter(:lists_mergeby)` registration
+          # via #delegate_to_crinja_filter, same as combine/dict2items.
+          # The kwarg parsing stays here verbatim (same reason as
+          # combine's: `recursive` must arrive as a real Bool, not its
+          # truthy text form) and the merge key is resolved and passed
+          # as the LAST vararg, the position the registration's
+          # signature expects. The error contract (raise on a non-dict
+          # item or an item missing the merge key, rather than
+          # silently skipping - which would hide the role's own data
+          # bug) now lives in the registration, enforced by
+          # spec/unit/lists_mergeby_spec.cr through this delegated
+          # path.
           recursive_arg = false
           list_merge_arg = "replace"
           positional_args = [] of String
@@ -678,8 +695,13 @@ module Krikri
           # empty list, which would hide the role's own data bug.
           raise "lists_mergeby: missing merge key argument" if positional_args.empty?
           merge_key = as_string(resolve_expression(positional_args.pop))
-          lists = [as_array(value)] + positional_args.map { |arg_expr| as_array(resolve_expression(arg_expr)) }
-          JSON::Any.new(lists_mergeby_lists(lists, merge_key, recursive_arg, list_merge_arg))
+          crinja_kwargs = Crinja::Variables.new
+          crinja_kwargs["recursive"] = Crinja::Value.new(recursive_arg)
+          crinja_kwargs["list_merge"] = Crinja::Value.new(list_merge_arg)
+          delegate_to_crinja_filter(
+            "lists_mergeby", value, crinja_kwargs,
+            positional_args.map { |arg_expr| resolve_expression(arg_expr) } + [JSON::Any.new(merge_key)],
+          )
         when "random"
           # Real Jinja2's do_random: an int operand means "random int less
           # than this" (Python's randrange), a sequence operand means
@@ -1819,74 +1841,6 @@ module Krikri
         else
           JSON::Any.new(expr)
         end
-      end
-
-      # Dict merge for the `combine` filter: keys from *other* win over
-      # *base* on collision, keys present in only one side pass through
-      # unchanged. Non-Hash operands (a `combine` argument that didn't
-      # resolve to a dict) are ignored rather than raising, since a stray
-      # `default({})` fallback already guarantees an empty Hash in the
-      # common case.
-      #
-      # `recursive` deep-merges when BOTH sides hold a dict under the
-      # same key instead of letting *other* replace it wholesale (real
-      # Ansible's combine(recursive=True) - a recursive=true merge
-      # descends through every nesting level). `list_merge` governs the
-      # key-is-a-list-on-both-sides case: 'replace' (default) lets
-      # *other* win; 'keep' keeps *base*'s list and discards *other*'s;
-      # 'append'/'prepend' concatenate; 'append_rp'/'prepend_rp'
-      # concatenate and drop duplicates (the `_rp` = remove plaintext
-      # duplicates; comparison is by JSON text, which matches Ansible's
-      # own element-equality for these purposes). Verified shape-for-
-      # shape against real ansible-core 2.19 (`recursive` + every
-      # list_merge mode). Unknown modes fall back to 'replace'.
-      private def combine_hash(base : JSON::Any, other : JSON::Any, recursive : Bool = false, list_merge : String = "replace") : JSON::Any
-        base_h = base.raw.is_a?(Hash) ? base.as_h : nil
-        other_h = other.raw.is_a?(Hash) ? other.as_h : nil
-        return base unless base_h
-        return base unless other_h
-        merged = base_h.dup
-        other_h.each do |key, val|
-          existing = merged[key]?
-          if recursive && existing && existing.raw.is_a?(Hash) && val.raw.is_a?(Hash)
-            merged[key] = combine_hash(existing, val, true, list_merge)
-          elsif list_merge != "replace" && existing && existing.raw.is_a?(Array) && val.raw.is_a?(Array)
-            base_list = existing.as_a
-            other_list = val.as_a
-            merged[key] = case list_merge
-                          when "keep" then existing
-                          when "append"
-                            JSON::Any.new(base_list + other_list)
-                          when "prepend"
-                            JSON::Any.new(other_list + base_list)
-                          when "append_rp"
-                            JSON::Any.new((base_list + other_list).uniq(&.to_json))
-                          when "prepend_rp"
-                            JSON::Any.new((other_list + base_list).uniq(&.to_json))
-                          else
-                            val
-                          end
-          else
-            merged[key] = val
-          end
-        end
-        JSON::Any.new(merged)
-      end
-
-      # lists_mergeby's core: index every list's items by the merge
-      # key's value, merging (combine_hash semantics) on collision.
-      private def lists_mergeby_lists(lists : Array(Array(JSON::Any)), merge_key : String, recursive : Bool, list_merge : String) : Array(JSON::Any)
-        index = {} of JSON::Any => JSON::Any
-        lists.each do |list|
-          list.each do |item|
-            raise "lists_mergeby: list item is not a dict: #{item.to_json}" unless item.raw.is_a?(Hash)
-            item_h = item.as_h
-            item_key = item_h[merge_key]? || raise "lists_mergeby: merge key '#{merge_key}' not found in list item: #{item.to_json}"
-            existing = index[item_key]?
-            index[item_key] = existing ? combine_hash(existing, item, recursive, list_merge) : item
-          end
-        end
-        index.values
       end
 
       # General single-expression resolver: unlike #resolve_default_expression

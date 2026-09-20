@@ -1375,14 +1375,35 @@ module Krikri
     # 'replace')` - community.general's own filter (pre-3.x
     # `list_mergeby` alias kept): merges lists of dicts, resolving
     # items sharing the same merge-key value by merging their dicts
-    # (later lists win). The Crinja side is needed alongside the
-    # hand-rolled FilterEngine version (same split as dict2items/
-    # items2dict) so a `.j2` template's `{% for %}` over the merged
-    # result routes through Crinja's own filter pipeline. Collision
-    # merging mirrors FilterEngine#combine_hash exactly: recursive=True
-    # deep-merges nested hashes via combine_merge, non-recursive
-    # replaces, and a key that's a list on both sides follows the
-    # `list_merge=` mode via list_merge_values.
+    # (later lists win). Since FilterEngine's `{{ }}`-path dispatch
+    # migrated onto this registration via #delegate_to_crinja_filter,
+    # this is the SINGLE implementation of the name for both paths -
+    # so it must honor the contract FilterEngine's own specs lock
+    # (spec/unit/lists_mergeby_spec.cr). The previous copy of this
+    # registration quietly violated that contract on three counts,
+    # each fixed here to match the (now deleted) FilterEngine#
+    # combine_hash/lists_mergeby_lists behavior:
+    # - a list item that is not a dict RAISES - real Ansible raises
+    #   AnsibleFilterError ("Elements of list arguments for
+    #   lists_mergeby must be dictionaries"); the old copy silently
+    #   skipped it, hiding the role's own data bug;
+    # - a dict item missing the merge key RAISES (real Ansible's
+    #   CURRENT upstream main silently skips such items instead - the
+    #   stricter raise is the deliberate, spec-locked krikri contract,
+    #   same "don't hide data bugs" reasoning as above);
+    # - a collision merge preserves base-only keys (real Ansible's
+    #   merge_hash semantics, confirmed by upstream Example 1) - the
+    #   old copy replaced the whole dict with the new item in the
+    #   default list_merge='replace' mode, dropping keys the earlier
+    #   lists had set.
+    # Collision merging mirrors the deleted FilterEngine#combine_hash
+    # exactly: recursive=True deep-merges nested hashes via
+    # combine_merge, non-recursive replaces, and a key that's a list
+    # on both sides follows the `list_merge=` mode via
+    # list_merge_values. Item JSON in error messages goes through
+    # CrinjaRenderer.crinja_value_to_json_any(...).to_json - NOT
+    # Crinja::Value#to_json, which crashes standalone (see
+    # list_merge_values above).
     Crinja.filter({recursive: false, list_merge: "replace"}, :lists_mergeby) do
       recursive = arguments["recursive"].truthy?
       list_merge = arguments["list_merge"].to_s
@@ -1394,26 +1415,26 @@ module Krikri
       lists.each do |list_value|
         next unless list_value.raw.is_a?(Array)
         list_value.each do |item|
-          next unless item.raw.is_a?(Hash)
+          item_json = VariableSubstitutor::CrinjaRenderer.crinja_value_to_json_any(item).to_json
+          raise Crinja::TemplateError.new("lists_mergeby: list item is not a dict: #{item_json}") unless item.raw.is_a?(Hash)
           h = item.raw.as(Hash)
-          item_key = h[merge_key]?
-          next unless item_key
+          item_key = h[merge_key]? || raise Crinja::TemplateError.new("lists_mergeby: merge key '#{merge_key}' not found in list item: #{item_json}")
           existing = index[item_key]?
-          index[item_key] = if existing && recursive
-                              JinjaFilters.combine_merge(existing, item, list_merge)
-                            elsif existing && list_merge != "replace"
+          index[item_key] = if existing.nil?
+                              item
+                            else
                               merged_h = existing.raw.as(Hash).dup
                               h.each do |key, value|
                                 ex = merged_h[key]?
-                                if ex && ex.raw.is_a?(Array) && value.raw.is_a?(Array)
+                                if recursive && ex && ex.raw.is_a?(Hash) && value.raw.is_a?(Hash)
+                                  merged_h[key] = JinjaFilters.combine_merge(ex, value, list_merge)
+                                elsif list_merge != "replace" && ex && ex.raw.is_a?(Array) && value.raw.is_a?(Array)
                                   merged_h[key] = JinjaFilters.list_merge_values(ex, value, list_merge)
                                 else
                                   merged_h[key] = value
                                 end
                               end
                               Crinja::Value.new(merged_h)
-                            else
-                              item
                             end
         end
       end
