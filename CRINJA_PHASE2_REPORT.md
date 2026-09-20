@@ -270,3 +270,96 @@ was previously CLEAN came back divergent for a reason connected to `+`/
 `-`. `ROLES_TESTED.md`/`KNOWN_MISSING.md` intentionally not updated -
 every role's status and root cause here already matches its existing
 row; nothing changed.
+
+## Strict +/- operand classes (2026-09-20, post-confirmation follow-up)
+
+Implemented the four lenient-garbage classes from "Divergences found"
+as hard failures matching real Ansible - plus a fifth class this
+section CORRECTS the earlier report about.
+
+### Correction: missing/undefined operands DO raise on real Ansible
+
+The "Divergences found" section claimed `missing_var + 'x'` /
+`port + missing_var` "match" because "Crinja stringifies Undefined as
+''". That was wrong. Re-verified directly against the same local
+ansible-core 2.19.11 with a minimal playbook (`debug: msg: "{{
+missing_var + x }}"`, default strictness, no env overrides):
+
+    fatal: [localhost]: FAILED! => {"msg": "Task failed: Finalization of
+    task args for 'ansible.builtin.debug' failed: Error while resolving
+    value for 'msg': 'missing_var' is undefined"}
+
+Same for `-` (`missing_var - x` → `'missing_var' is undefined`). The
+prior session's suspicion was right; the report's claim was the red
+herring. Missing/undefined operands are now IN scope, and krikri
+raises for them too.
+
+### Real Ansible's verdict per class (2.19.11, exact texts)
+
+| Class | Real Ansible raises with |
+|---|---|
+| `missing_var + x` | `'missing_var' is undefined` |
+| `null_var + x` | `unsupported operand type(s) for +: 'NoneType' and '_AnsibleTaggedStr'` |
+| `x + null_var` | `can only concatenate str (not "NoneType") to str` |
+| `host + omit` | `unsupported operand type(s) for +: '_OmitType' and '_AnsibleTaggedStr'` |
+| `list1 + 3` | `can only concatenate list (not "int") to list` |
+| `d1 + d2` | `unsupported operand type(s) for +: '_AnsibleLazyTemplateDict' and ...` |
+| `x + list1` | `can only concatenate str (not "_AnsibleLazyTemplateList") to str` |
+| `null_var - x`, `list1 - 3` | same `unsupported operand type(s) for -:` shape |
+
+krikri's messages mirror the STRUCTURE exactly (the str-concat vs
+binary-op split included) but name operand types by their plain
+Python names - `str`, not `_AnsibleTaggedStr`; `omit`, not
+`_OmitType` - since ansible-core's tagged/lazy subclass names are
+version-specific internals not worth pinning.
+
+### What changed
+
+- `expression_evaluator.cr`: `combine_plus` no longer has a lenient
+  string-concat fallback - every non-concatenand pair raises
+  `PlusMinusOperandError`; `combine_minus`'s old JSON-null else branch
+  raises the same way. `resolve_plus_operand` gained a `strict:`
+  flag (only `+`/`-` pass it; `~` and mult/div's operand fallback
+  keep the lenient default) that (a) resolves bare `omit`/`none`
+  operands to their real values so the combine sees the class real
+  Ansible fails on, and (b) raises `'x' is undefined` for a
+  genuinely-missing BARE-reference operand (gated on the same
+  conservative `REGEX_BARE_VAR_REF` shape the `strict:` substitution
+  path uses - a shape the evaluator can't resolve stays lenient
+  rather than becoming a spurious failure). Also fixed while there:
+  `combine_plus` lacked the `{Int64, Float64}` numeric case its `-`
+  twin already had (int + float used to string-concat in the
+  fallback; Crinja-first covered it, the fallback now matches too).
+- NEW because of the Crinja probe result: the vendored Crinja is
+  LENIENT on every one of these classes (it renders Undefined as "",
+  None as its `"None"` repr, an omit operand as sentinel text, and
+  even APPENDS for list + int) - so the Crinja-first `+` dispatch
+  would succeed with garbage and never reach the now-strict fallback.
+  The `+` dispatch therefore runs a strict operand-class gate BEFORE
+  the Crinja attempt (`validate_plus_operands_strictly`): it re-runs
+  the exact fallback resolution/combination once for validation, and
+  only its own `PlusMinusOperandError` propagates - any other
+  internal raise means "cannot validate conservatively" and leaves
+  the Crinja-first attempt untouched, and `lookup(...)`/`query(...)`
+  operands are skipped entirely (the same second-execution guard
+  `Krikri.bracket_index_failure_message` applies). `-` needs no gate:
+  Crinja already raises on every non-numeric `-` shape, so the strict
+  fallback is always reached.
+- New error class `PlusMinusOperandError < UndefinedVariableError`
+  (variable_substitutor.cr) so every existing strict-undefined rescue
+  site treats it as a task failure unchanged.
+- 15 new specs in `expression_evaluator_spec.cr` (12 strict classes +
+  3 valid-shape guards, including a `~`-stays-lenient scope-boundary
+  lock). No existing spec asserted the old lenient behavior (the
+  phase-2 pilot's own "no spec locks any of them" grep held).
+- VERSION 0.9.1225 -> 0.9.1226 (+ README badge).
+
+### Full-suite result
+
+`crystal spec`: 5295 examples, 6 failures, 2 errors - exactly the
+known-flaky nondeterministic cluster (`is_test_aliases_spec`'s
+hardlink/tmp races, `x509_csr_info_spec`'s tmp-file race); both files
+pass in isolation. Zero new failures. End-to-end probe of all 11
+strict shapes against the rebuilt binary: every one now fails the
+task with the matching message; `8080 + 2.5`, `'a' + 'b'`,
+`list1 + list2`, `port + 10`, and `~` still render as before.

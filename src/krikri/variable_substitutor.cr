@@ -43,6 +43,23 @@ module Krikri
   class UndefinedVariableError < Exception
   end
 
+  # The strict +/- operand failure: raised by ExpressionEvaluator's `+`/
+  # `-` combining (combine_plus/combine_minus) and their operand resolver
+  # (resolve_plus_operand, strict mode) when an operand is genuinely
+  # undefined, a defined-null (None), the `omit` sentinel, or a container
+  # on the wrong side of a concatenation - every class real Ansible's
+  # own templating hard-fails the task on (live-verified against 2.19.11:
+  # `unsupported operand type(s) for +: 'NoneType' and 'str'`,
+  # `can only concatenate list (not "int") to list`, `'missing_var' is
+  # undefined`, `_OmitType` operand). Subclasses UndefinedVariableError so
+  # every existing rescue site that treats a strict-undefined as a task
+  # failure handles it unchanged - it IS a strict-templating failure, just
+  # the operand-type branch of it, and it lets the +/- strictness check
+  # re-raise its OWN verdict through the conservative validation gate
+  # (which swallows every OTHER internal raise as "cannot validate").
+  class PlusMinusOperandError < UndefinedVariableError
+  end
+
   # Raised by the first_found lookup (ExpressionEvaluator's
   # #evaluate_first_found) when no candidate file exists and the lookup's
   # own `skip:` param is not true - real Ansible's own failure for that
