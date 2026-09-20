@@ -6,9 +6,9 @@ module Krikri::Lint
   describe JsonSchema do
     it "validates type and required" do
       schema = JSON.parse(%({"type": "object", "required": ["a"], "properties": {"a": {"type": "string"}}}))
-      JsonSchema.validate(JSON.parse(%({"a": "x"})), schema).valid.should be_true
+      JsonSchema.validate(JSON.parse(%({"a": "x"})), schema).valid?.should be_true
       r = JsonSchema.validate(JSON.parse(%({"a": 1})), schema)
-      r.valid.should be_false
+      r.valid?.should be_false
       err = r.error || raise "expected error"
       err.keyword.should eq("type")
       r2 = JsonSchema.validate(JSON.parse(%({})), schema)
@@ -19,25 +19,25 @@ module Krikri::Lint
 
     it "skips required for non-objects (jsonschema semantics)" do
       schema = JSON.parse(%({"required": ["a"]}))
-      JsonSchema.validate(JSON.parse(%(5)), schema).valid.should be_true
-      JsonSchema.validate(JSON.parse(%({"a": 1})), schema).valid.should be_true
-      JsonSchema.validate(JSON.parse(%({"b": 1})), schema).valid.should be_false
+      JsonSchema.validate(JSON.parse(%(5)), schema).valid?.should be_true
+      JsonSchema.validate(JSON.parse(%({"a": 1})), schema).valid?.should be_true
+      JsonSchema.validate(JSON.parse(%({"b": 1})), schema).valid?.should be_false
     end
 
     it "resolves local $refs" do
       schema = JSON.parse(%({"$defs": {"X": {"type": "string"}}, "properties": {"a": {"$ref": "#/$defs/X"}}}))
-      JsonSchema.validate(JSON.parse(%({"a": "x"})), schema).valid.should be_true
-      JsonSchema.validate(JSON.parse(%({"a": 3})), schema).valid.should be_false
+      JsonSchema.validate(JSON.parse(%({"a": "x"})), schema).valid?.should be_true
+      JsonSchema.validate(JSON.parse(%({"a": 3})), schema).valid?.should be_false
     end
 
     it "handles if/then/else" do
       schema = JSON.parse(%({"if": {"properties": {"t": {"const": true}}}, "then": {"required": ["a"]}, "else": {"required": ["b"]}}))
-      JsonSchema.validate(JSON.parse(%({"t": true, "a": 1})), schema).valid.should be_true
-      JsonSchema.validate(JSON.parse(%({"t": true})), schema).valid.should be_false
-      JsonSchema.validate(JSON.parse(%({"t": false, "b": 1})), schema).valid.should be_true
+      JsonSchema.validate(JSON.parse(%({"t": true, "a": 1})), schema).valid?.should be_true
+      JsonSchema.validate(JSON.parse(%({"t": true})), schema).valid?.should be_false
+      JsonSchema.validate(JSON.parse(%({"t": false, "b": 1})), schema).valid?.should be_true
       # without "t", the if-schema matches vacuously and then: applies
-      JsonSchema.validate(JSON.parse(%({"b": 1})), schema).valid.should be_false
-      JsonSchema.validate(JSON.parse(%({"a": 1})), schema).valid.should be_true
+      JsonSchema.validate(JSON.parse(%({"b": 1})), schema).valid?.should be_false
+      JsonSchema.validate(JSON.parse(%({"a": 1})), schema).valid?.should be_true
     end
 
     it "formats clauses as python repr" do
@@ -46,11 +46,11 @@ module Krikri::Lint
     end
 
     it "supports enum/const/pattern/minLength" do
-      JsonSchema.validate(JSON.parse(%("x")), JSON.parse(%({"enum": ["x"]}))).valid.should be_true
-      JsonSchema.validate(JSON.parse(%("y")), JSON.parse(%({"enum": ["x"]}))).valid.should be_false
-      JsonSchema.validate(JSON.parse(%("ab")), JSON.parse(%({"pattern": "^a"}))).valid.should be_true
-      JsonSchema.validate(JSON.parse(%("")), JSON.parse(%({"minLength": 1}))).valid.should be_false
-      JsonSchema.validate(JSON.parse(%("x")), JSON.parse(%({"const": "x"}))).valid.should be_true
+      JsonSchema.validate(JSON.parse(%("x")), JSON.parse(%({"enum": ["x"]}))).valid?.should be_true
+      JsonSchema.validate(JSON.parse(%("y")), JSON.parse(%({"enum": ["x"]}))).valid?.should be_false
+      JsonSchema.validate(JSON.parse(%("ab")), JSON.parse(%({"pattern": "^a"}))).valid?.should be_true
+      JsonSchema.validate(JSON.parse(%("")), JSON.parse(%({"minLength": 1}))).valid?.should be_false
+      JsonSchema.validate(JSON.parse(%("x")), JSON.parse(%({"const": "x"}))).valid?.should be_true
     end
   end
 
