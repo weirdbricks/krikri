@@ -911,6 +911,21 @@ module Krikri
         # which would otherwise misparse the whole expression as
         # `var[key]` off a literal array operand's own brackets.
         if segments = split_top_level_plus(expr)
+          # Strict operand-class gate, BEFORE the Crinja-first attempt:
+          # the vendored Crinja is lenient on every strict class (probe:
+          # undefined operand stringifies "", null renders its "None"
+          # repr, an omit operand its sentinel text, list + int APPENDS)
+          # and succeeds where real Ansible hard-fails the task - so a
+          # raise from the fallback below would never even be reached.
+          # Runs the hand-rolled operand resolution + combination once
+          # for validation only; only its OWN strict verdict propagates,
+          # any other internal raise (a filter-chain operand this
+          # evaluator can't resolve, say) means "cannot validate
+          # conservatively" and leaves the Crinja-first attempt
+          # untouched. lookup(...)/query(...) operands are skipped
+          # entirely - same second-execution guard
+          # Krikri.bracket_index_failure_message applies.
+          validate_plus_operands_strictly(expr, segments)
           # Crinja-first delegation, arithmetic `+` construct: same
           # try-Crinja-first, fall-back-to-the-exact-previous-code
           # pattern as the `-` swap above. Probed across string
@@ -1635,17 +1650,35 @@ module Krikri
 
       # Resolves and concatenates/adds every operand of a top-level `+`
       # expression, left to right - array+array concatenates, string+string
-      # concatenates, number+number adds; anything else falls back to
-      # string concatenation of both sides' rendered form rather than
-      # erroring.
+      # concatenates, number+number adds; anything else is a strict
+      # operand-class failure (real Ansible fails the task, see
+      # #python_type_name / CRINJA_PHASE2_REPORT.md's strictness section).
       private def evaluate_plus(segments : Array(String)) : String
-        values = segments.map { |seg| resolve_plus_operand(seg) }
+        values = segments.map { |seg| resolve_plus_operand(seg, strict: true) }
         result = values.reduce { |acc, val| combine_plus(acc, val) }
         @lookup.format_value(result)
       end
 
-      private def resolve_plus_operand(expr : String) : JSON::Any
-        expr = expr.strip
+      # Strict `+` operand-class gate for the dispatch's Crinja-first
+      # branch - see the call site above for why it must run BEFORE
+      # Crinja. Re-runs the exact fallback resolution + combination
+      # (evaluate_plus's own code path, strict raise included); only
+      # PlusMinusOperandError propagates, everything else is "this
+      # shape can't be validated conservatively".
+      private def validate_plus_operands_strictly(expr : String, segments : Array(String)) : Nil
+        return if expr.includes?("lookup(") || expr.includes?("query(")
+
+        begin
+          values = segments.map { |seg| resolve_plus_operand(seg, strict: true) }
+          values.reduce { |acc, val| combine_plus(acc, val) }
+        rescue e : PlusMinusOperandError
+          raise e
+        rescue
+          nil
+        end
+      end
+
+      private def resolve_plus_operand(expr : String, strict : Bool = false) : JSON::Any
         expr = expr.strip
         value = resolve_plus_operand_literal(expr)
         return value if value
@@ -1653,6 +1686,19 @@ module Krikri
         return value if value
         value = resolve_plus_operand_recursive(expr)
         return value if value
+
+        # Strict +/- mode (only the `+`/`-` constructs pass strict: true;
+        # `~` and mult/div's operand fallback keep the lenient default):
+        # the `omit` keyword and a `none` literal resolve to their real
+        # values here so the combine-time strict check can see them as the
+        # operand classes real Ansible fails on (an omit operand reaches
+        # the combine as OMIT_SENTINEL; NoneType as JSON null), instead of
+        # a plain-name lookup that can't see either and would report them
+        # as undefined.
+        if strict
+          return JSON::Any.new(OMIT_SENTINEL) if expr == "omit"
+          return JSON::Any.new(nil) if expr == "none" || expr == "None"
+        end
 
         resolved = @lookup.resolve(expr)
 
@@ -1672,6 +1718,20 @@ module Krikri
         # real checksum-file line always came back false.
         if value = retemplated_lookup_value(resolved)
           return value
+        end
+
+        # Strict +/- mode, genuinely-missing operand: real Ansible hard-
+        # fails the task on `missing_var + 'x'` ("'missing_var' is
+        # undefined", live-verified against 2.19.11) - the old lenient
+        # null-collapse here made krikri silently produce the right-hand
+        # side instead. Deliberately gated on the same conservative
+        # bare-reference shape the strict: substitution path uses
+        # (REGEX_BARE_VAR_REF): an operand resolve can also come back nil
+        # for a shape this evaluator simply can't resolve (a lookup(...)
+        # call, a crinja-only filter chain) - failing THOSE would turn an
+        # evaluator gap into a spurious task failure.
+        if resolved.nil? && strict && REGEX_BARE_VAR_REF.matches?(expr)
+          raise PlusMinusOperandError.new(Krikri.strict_undefined_message(expr, @vars))
         end
 
         resolved || JSON::Any.new(nil)
@@ -3908,7 +3968,36 @@ module Krikri
         end
       end
 
+      # Real Ansible's Python type name for a +/- operand value, for the
+      # strict failure messages (`unsupported operand type(s) for +:
+      # 'NoneType' and 'str'`). The OMIT_SENTINEL string is this
+      # codebase's own encoding of real Ansible's omit - named "omit"
+      # here rather than ansible-core's internal `_OmitType` (whose
+      # tagged-str/lazy-container counterparts are likewise reported by
+      # their plain Python names: str, not `_AnsibleTaggedStr`).
+      private def python_type_name(value : JSON::Any) : String
+        return "omit" if value.raw == OMIT_SENTINEL
+        case value.raw
+        when Nil    then "NoneType"
+        when Bool   then "bool"
+        when Int64  then "int"
+        when Float64 then "float"
+        when String then "str"
+        when Array  then "list"
+        when Hash   then "dict"
+        else             "object"
+        end
+      end
+
       private def combine_plus(a : JSON::Any, b : JSON::Any) : JSON::Any
+        # The omit sentinel is itself a String, so it would otherwise hit
+        # the {String, String} branch below and silently concatenate -
+        # real Ansible fails the task on an omit operand (`_OmitType`).
+        if a.raw == OMIT_SENTINEL || b.raw == OMIT_SENTINEL
+          raise PlusMinusOperandError.new(
+            "unsupported operand type(s) for +: '#{python_type_name(a)}' and '#{python_type_name(b)}'")
+        end
+
         if coerced = combine_with_bool_coercion(a, b, '+')
           return coerced
         end
@@ -3922,8 +4011,24 @@ module Krikri
           JSON::Any.new(a.as_i64 + b.as_i64)
         when {Float64, Float64}
           JSON::Any.new(a.as_f + b.as_f)
+        when {Int64, Float64}
+          JSON::Any.new(a.as_i64.to_f64 + b.as_f)
+        when {Float64, Int64}
+          JSON::Any.new(a.as_f + b.as_i64.to_f64)
+        when {String, _}
+          # Real Python/Ansible: a str left operand can only concatenate
+          # another str (`can only concatenate str (not "NoneType") to
+          # str`) - previously this branch string-concatenated the
+          # rendered forms, silently absorbing null/omit/number/list
+          # operands real Ansible hard-fails on.
+          raise PlusMinusOperandError.new(
+            "can only concatenate str (not \"#{python_type_name(b)}\") to str")
+        when {Array, _}
+          raise PlusMinusOperandError.new(
+            "can only concatenate list (not \"#{python_type_name(b)}\") to list")
         else
-          JSON::Any.new(@lookup.format_value(a) + @lookup.format_value(b))
+          raise PlusMinusOperandError.new(
+            "unsupported operand type(s) for +: '#{python_type_name(a)}' and '#{python_type_name(b)}'")
         end
       end
 
@@ -4126,14 +4231,22 @@ module Krikri
       end
 
       private def evaluate_minus(left_expr : String, right_expr : String) : String
-        left = resolve_plus_operand(left_expr)
-        right = resolve_plus_operand(right_expr)
+        left = resolve_plus_operand(left_expr, strict: true)
+        right = resolve_plus_operand(right_expr, strict: true)
         @lookup.format_value(combine_minus(left, right))
       end
 
       private def combine_minus(a : JSON::Any, b : JSON::Any) : JSON::Any
         if (a_epoch = datetime_epoch(a)) && (b_epoch = datetime_epoch(b))
           return timedelta(a_epoch - b_epoch)
+        end
+
+        # Same omit-sentinel guard as #combine_plus - a sentinel String
+        # would otherwise fall to the strict else branch anyway, but with
+        # the operand named "omit" instead of its type.
+        if a.raw == OMIT_SENTINEL || b.raw == OMIT_SENTINEL
+          raise PlusMinusOperandError.new(
+            "unsupported operand type(s) for -: '#{python_type_name(a)}' and '#{python_type_name(b)}'")
         end
 
         if coerced = combine_with_bool_coercion(a, b, '-')
@@ -4150,7 +4263,14 @@ module Krikri
         when {Float64, Int64}
           JSON::Any.new(a.as_f - b.as_i64.to_f64)
         else
-          JSON::Any.new(nil)
+          # Real Python/Ansible: `-` only supports numeric (and the
+          # datetime/bool cases above) - every other operand class
+          # (strings, lists, null, omit) hard-fails the task
+          # (`unsupported operand type(s) for -: 'NoneType' and 'str'`).
+          # Previously this branch returned JSON null, which the caller
+          # rendered as the empty string.
+          raise PlusMinusOperandError.new(
+            "unsupported operand type(s) for -: '#{python_type_name(a)}' and '#{python_type_name(b)}'")
         end
       end
 

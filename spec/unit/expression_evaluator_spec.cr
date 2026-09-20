@@ -1834,4 +1834,129 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
       evaluator.evaluate("p10k_users_information[1]['name']").should eq("deploy")
     end
   end
+
+  # Strict +/- operand classes - real Ansible hard-fails the task on
+  # every one of these (live-verified against ansible-core 2.19.11 with
+  # a minimal `debug: msg: "{{ ... }}"` playbook; exact texts in
+  # CRINJA_PHASE2_REPORT.md's strictness section). Before this change
+  # both engines silently produced lenient text (the Crinja-first path
+  # rendered `Undefined` as "" and None as its "None" repr; the
+  # hand-rolled fallback string-concatenated or collapsed to "").
+  describe "strict +/- operand classes (raise like real Ansible)" do
+    v = Hash(String, JSON::Any).new
+    v["host"] = JSON::Any.new("web1")
+    v["port"] = JSON::Any.new(8080_i64)
+    v["null_var"] = JSON::Any.new(nil)
+    v["list1"] = JSON.parse(%([1, 2]))
+    v["d1"] = JSON.parse(%({"a": 1}))
+    v["omit_var"] = JSON::Any.new("{{ omit }}")
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
+
+    it "raises on a genuinely MISSING left operand of `+` (corrects the phase-2 report's match claim)" do
+      expect_raises(Krikri::PlusMinusOperandError, "'missing_var' is undefined") do
+        evaluator.evaluate("missing_var + host")
+      end
+    end
+
+    it "raises on a genuinely MISSING right operand of `-`" do
+      expect_raises(Krikri::PlusMinusOperandError, "'missing_var' is undefined") do
+        evaluator.evaluate("port - missing_var")
+      end
+    end
+
+    it "raises on a defined-null LEFT operand of `+`" do
+      expect_raises(Krikri::PlusMinusOperandError,
+        "unsupported operand type(s) for +: 'NoneType' and 'str'") do
+        evaluator.evaluate("null_var + host")
+      end
+    end
+
+    it "raises on a defined-null RIGHT operand of `+` (str-concat wording)" do
+      expect_raises(Krikri::PlusMinusOperandError,
+        %(can only concatenate str (not "NoneType") to str)) do
+        evaluator.evaluate("host + null_var")
+      end
+    end
+
+    it "raises on an `omit` operand of `+`" do
+      expect_raises(Krikri::PlusMinusOperandError,
+        "unsupported operand type(s) for +: 'str' and 'omit'") do
+        evaluator.evaluate("host + omit")
+      end
+    end
+
+    it "raises on a var whose own value renders to `omit` (nested sentinel)" do
+      expect_raises(Krikri::PlusMinusOperandError,
+        "unsupported operand type(s) for +: 'str' and 'omit'") do
+        evaluator.evaluate("host + omit_var")
+      end
+    end
+
+    it "raises on a defined-null operand of `-`" do
+      expect_raises(Krikri::PlusMinusOperandError,
+        "unsupported operand type(s) for -: 'NoneType' and 'str'") do
+        evaluator.evaluate("null_var - host")
+      end
+    end
+
+    it "raises on list + non-list" do
+      expect_raises(Krikri::PlusMinusOperandError,
+        %(can only concatenate list (not "int") to list)) do
+        evaluator.evaluate("list1 + 3")
+      end
+    end
+
+    it "raises on str + list" do
+      expect_raises(Krikri::PlusMinusOperandError,
+        %(can only concatenate str (not "list") to str)) do
+        evaluator.evaluate("host + list1")
+      end
+    end
+
+    it "raises on dict + dict" do
+      expect_raises(Krikri::PlusMinusOperandError,
+        "unsupported operand type(s) for +: 'dict' and 'dict'") do
+        evaluator.evaluate("d1 + d1")
+      end
+    end
+
+    it "raises on list - non-list" do
+      expect_raises(Krikri::PlusMinusOperandError,
+        "unsupported operand type(s) for -: 'list' and 'int'") do
+        evaluator.evaluate("list1 - 3")
+      end
+    end
+
+    it "raises through the Crinja-first path too (the strict gate runs before Crinja)" do
+      # Crinja itself is lenient on every class above (it stringifies
+      # Undefined as "", None as its repr, and APPENDS for list + int) -
+      # only the pre-Crinja strict gate makes these fail.
+      expect_raises(Krikri::PlusMinusOperandError) do
+        evaluator.evaluate("host + null_var")
+      end
+    end
+  end
+
+  describe "valid +/- shapes still succeed alongside the strict operand classes" do
+    v = Hash(String, JSON::Any).new
+    v["host"] = JSON::Any.new("web1")
+    v["port"] = JSON::Any.new(8080_i64)
+    v["list1"] = JSON.parse(%(["a"]))
+    v["list2"] = JSON.parse(%(["b"]))
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
+
+    it "adds int + float numerically through the fallback combine (real Jinja parity)" do
+      evaluator.evaluate("8080 + 2.5").should eq("8082.5")
+    end
+
+    it "keeps str + str, list + list, and int + int working" do
+      evaluator.evaluate("host + '.example.com'").should eq("web1.example.com")
+      evaluator.evaluate("list1 + list2").should eq(%(["a","b"]))
+      evaluator.evaluate("port + 10").should eq("8090")
+    end
+
+    it "keeps `~` LENIENT on a missing operand (deliberate scope boundary: strictness is +/- only)" do
+      evaluator.evaluate("missing_var ~ host").should eq("web1")
+    end
+  end
 end
