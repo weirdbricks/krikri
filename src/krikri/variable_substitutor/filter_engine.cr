@@ -9,7 +9,6 @@ require "openssl/digest"
 require "../vault"
 require "../py_random"
 require "../python_filter_runner"
-require "../jmespath"
 require "../ipaddr_core"
 require "./variable_lookup"
 require "./expression_evaluator"
@@ -966,21 +965,31 @@ module Krikri
         when "json_query"
           # json_query(expr) - real Ansible's own filter (from
           # `community.general`, commonly reachable as a bare name), a
-          # full JMESPath query over the value. Backed by this engine's
-          # own JMESPath module (src/krikri/jmespath.cr) - the Crinja
-          # side registers the same name (jinja_filters.cr) since a
-          # `.j2`-template filter chain routes through Crinja, not this
-          # evaluator. Found unimplemented via itigoag.packages' own
-          # `packages_var_lower | json_query(packages_var_query)` task.
+          # full JMESPath query over the value. Found unimplemented via
+          # itigoag.packages' own `packages_var_lower |
+          # json_query(packages_var_query)` task.
+          #
+          # Phase-1 consolidation (filter #3, after dict2items and
+          # combine): this dispatch's own
+          # Krikri::JMESPath.evaluate call is retired for this name - it
+          # routes through the ONE native `Crinja.filter(:json_query)`
+          # registration (jinja_filters.cr), which itself evaluates via
+          # the same shared src/krikri/jmespath.cr engine. So unlike
+          # combine, no JMESPath-layer duplication ever existed to
+          # delete - only this thin per-side wrapper (arg extraction +
+          # error formatting). The expression is passed as the raw
+          # parsed text (NOT #resolve_expression) to match the old
+          # hand-rolled behavior exactly: a quoted literal is unwrapped,
+          # but a bare variable name reaches the JMESPath engine
+          # verbatim. The missing-expression guard stays here because
+          # the Crinja side's own guard tests vararg presence, and an
+          # empty-string expression would arrive as a truthy Crinja
+          # value. Behavior contract unchanged and still enforced by
+          # spec/unit/jmespath_spec.cr (both engines' happy paths plus
+          # the invalid-expression task failure).
           expr = parse_filter_arg(filter_args)
           raise "json_query: missing JMESPath expression" if expr.empty?
-          begin
-            Krikri::JMESPath.evaluate(expr, value)
-          rescue ex : Krikri::JMESPath::Error
-            raise ex
-          rescue ex
-            raise "json_query: invalid JMESPath expression '#{expr}': #{ex.message}"
-          end
+          delegate_to_crinja_filter("json_query", value, Crinja::Variables.new, [JSON::Any.new(expr)])
         when "to_yaml"
           # to_yaml(**kwargs) - real Ansible's own filter, a YAML dump
           # (real PyYAML default: block style, keys sorted). Converts
