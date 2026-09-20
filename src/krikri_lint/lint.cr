@@ -9,6 +9,7 @@ require "./rule_registry"
 
 require "./config"
 require "./noqa"
+require "./json_schema"
 require "./profiles"
 require "./task"
 require "./rules/*"

@@ -22,6 +22,7 @@ module Krikri
           NoHandlerRule.new,
           NoJinjaWhenRule.new,
           JinjaRule.new,
+          SchemaMetaRule.new,
         ])
       end
 

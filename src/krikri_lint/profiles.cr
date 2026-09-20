@@ -25,6 +25,7 @@ module Krikri
         "risky-octal"               => "safety",
         "fqcn[action-core]"         => "production",
         "yaml[line-length]"         => "basic",
+        "schema[meta]"              => "basic",
       }
 
       def self.list : Array(String)
