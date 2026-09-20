@@ -117,9 +117,17 @@ describe Krikri::VarSubstitutor do
     end
 
     it "still extracts the captured group when the regex genuinely matches" do
+      # This leading-paren shape falls back to Crinja internally
+      # (`evaluate_leading_paren_crinja_first`), so the replacement
+      # arg needs a DOUBLED backslash in the template source (`'\\1'`)
+      # since crinja (crystal-play-0.9.52+) now fully decodes
+      # Python-style string-literal escapes in `{{ }}` - see
+      # crinja_renderer_spec.cr's "honors \1 backreferences" spec for
+      # the full live-verification narrative against real
+      # ansible-playbook's `.j2` template-file rendering.
       vars = {"cmd_out" => JSON.parse(%({"stdout": "Version: 2.11.9"}))}
       sub = Krikri::VarSubstitutor.new(vars: vars, host_name: "h1")
-      sub.substitute(%({{ (cmd_out.stdout | regex_search('Version:\\ ([\\d\\.]{2,})', '\\1', multiline=True))[0] }}), strict: true).should eq("2.11.9")
+      sub.substitute(%({{ (cmd_out.stdout | regex_search('Version:\\ ([\\d\\.]{2,})', '\\\\1', multiline=True))[0] }}), strict: true).should eq("2.11.9")
     end
 
     it "keeps the default() guard lenient over a None-index miss" do

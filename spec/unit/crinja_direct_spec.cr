@@ -104,8 +104,23 @@ describe "raw Crinja (rebase canary)" do
     # every real role using this shape actually writes): `| first` on
     # a bare string returns the string's own first CHARACTER, not the
     # whole captured group.
-    crinja_render("{{ 'aa12bb' | regex_search('(\\d+)', '\\1') }}").should eq("['12']")
-    crinja_render("{{ 'aa12bb' | regex_search('(\\d+)', '\\1') | first }}").should eq("12")
+    #
+    # The backreference argument needs a DOUBLED backslash in the
+    # template source (`'\\1'`, i.e. two literal backslash characters
+    # here in Crystal source) since crinja (crystal-play-0.9.52+) now
+    # fully decodes Python-style string-literal escapes in `{{ }}`,
+    # matching real Ansible's own verified template-FILE behavior: a
+    # bare `\1` decodes to a single control character (octal escape)
+    # before the filter ever sees it, breaking the backreference -
+    # live-verified against real ansible-playbook 2.19 rendering a
+    # real `.j2` file (`'\1'` renders `length=1`, i.e. it really is
+    # decoded; `'\\1'` is required for a working backreference). This
+    # is a genuine, if surprising, real-Ansible limitation of `.j2`
+    # template files, not a crinja bug - inline YAML task params go
+    # through krikri's separate hand-rolled evaluator, which never
+    # decodes backslashes, so `'\1'` still works fine there.
+    crinja_render("{{ 'aa12bb' | regex_search('(\\d+)', '\\\\1') }}").should eq("['12']")
+    crinja_render("{{ 'aa12bb' | regex_search('(\\d+)', '\\\\1') | first }}").should eq("12")
   end
 
   it "registers combine (shallow merge, later wins)" do

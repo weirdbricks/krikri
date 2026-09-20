@@ -361,17 +361,36 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
   it "honors \\1 backreferences in regex_replace's replacement string" do
     # Real bug found benchmarking devsec.hardening.ssh_hardening's own
     # `sshd_version_raw.stderr | regex_replace('.*_([0-9]*.[0-9]).*',
-    # '\1')` (parsing `ssh -V`'s stderr down to a bare version number).
-    # jinja_filters.cr used to rewrite `\1`/`\2` replacement
-    # backreferences to `$1`/`$2` on the mistaken assumption Crystal's
-    # String#gsub(Regex, String) used Ruby-style `$`-backreferences -
-    # it doesn't special-case `$1` at all, so the "translated"
-    # replacement was emitted completely literally ("$1" instead of
-    # the captured "8.9"), and every downstream `is version(...)` gate
-    # depending on the parsed value evaluated wrong as a result.
+    # '\1')` (parsing `ssh -V`'s stderr down to a bare version number,
+    # via an inline task param - the actual production code path for
+    # that role goes through krikri's hand-rolled evaluator, covered
+    # separately in filter_core_spec.cr/filter_engine_spec.cr; this
+    # spec exercises the same backreference behavior through
+    # CrinjaRenderer as a convenience, not because that's this specific
+    # historical bug's real code path). jinja_filters.cr used to
+    # rewrite `\1`/`\2` replacement backreferences to `$1`/`$2` on the
+    # mistaken assumption Crystal's String#gsub(Regex, String) used
+    # Ruby-style `$`-backreferences - it doesn't special-case `$1` at
+    # all, so the "translated" replacement was emitted completely
+    # literally ("$1" instead of the captured "8.9"), and every
+    # downstream `is version(...)` gate depending on the parsed value
+    # evaluated wrong as a result.
+    #
+    # The replacement argument needs a DOUBLED backslash in the
+    # template source here (`'\\1'`, two literal backslashes in this
+    # Crystal string) since crinja (crystal-play-0.9.52+) now fully
+    # decodes Python-style string-literal escapes in `{{ }}`, matching
+    # real Ansible's own verified template-FILE behavior: a bare `\1`
+    # decodes to a single control character (octal escape) before the
+    # filter ever sees it - live-verified against real ansible-playbook
+    # 2.19 rendering a real `.j2` file. This is a genuine, if
+    # surprising, real-Ansible limitation of `.j2` template files
+    # specifically; inline YAML task params (this bug's actual
+    # real-world path) go through krikri's separate hand-rolled
+    # evaluator, which never decodes backslashes.
     renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new({} of String => JSON::Any)
     renderer.render(
-      %({{ "OpenSSH_8.9p1 Ubuntu-3, OpenSSL 3.0.2 15 Mar 2022" | regex_replace('.*_([0-9]*.[0-9]).*', '\\1') }})
+      %({{ "OpenSSH_8.9p1 Ubuntu-3, OpenSSL 3.0.2 15 Mar 2022" | regex_replace('.*_([0-9]*.[0-9]).*', '\\\\1') }})
     ).should eq("8.9")
   end
 
