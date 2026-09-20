@@ -2087,12 +2087,10 @@ describe "an unarchive with a bare relative src" do
   # plugin got the bare name and failed "Source 'minio.tar.gz' failed
   # to transfer". Runs WITHOUT --check (unarchive can't run in check
   # mode) and needs local tar; the unpacked payload proves the transfer
-  # carried the right file.
+  # carried the right file. The role's own dest is a unique-per-run
+  # mktemp'd scratch dir (self-created and self-cleaning), so a fresh run
+  # always reports changed=True here.
   it "resolves a bare relative unarchive src against the role's files/ dir" do
-    # fresh dest per run: unarchive is idempotent, a second run would
-    # report changed=False
-    FileUtils.rm_rf("/tmp/krikri-unarchive-test")
-
     status, output = run_playbook("test-unarchive-role-files.yml", [] of String)
 
     status.success?.should be_true
