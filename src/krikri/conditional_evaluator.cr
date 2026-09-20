@@ -141,28 +141,52 @@ module Krikri
         condition = unwrapped
       end
 
-      # A condition that is ENTIRELY one quoted string literal is a
-      # Jinja CONSTANT (truthy iff its interior is non-empty), not an
-      # expression to parse - check this BEFORE any and/or/comparison
-      # splitting, which would otherwise slice on operators INSIDE the
-      # quotes and produce unbalanced-quote operands ("'mariadb_version
-      # _check.rc" from splitting `'mariadb_version_check.rc == 0'` on
-      # "==") that then fail variable resolution under raise_undefined.
-      # Real Ansible reads mrlesmithjr.mariadb_galera_cluster's own
-      # `changed_when: not 'mariadb_version_check.rc == 0'` as exactly
-      # this constant (non-empty string -> truthy -> `not` -> False ->
-      # changed=false, task ok) - verified live against ansible-core
-      # 2.19.4 (ok=1 changed=0); this engine failed the whole task with
+      # A condition that is ENTIRELY one quoted string literal is a Jinja
+      # CONSTANT (truthy iff its interior is non-empty), not an expression
+      # to parse - check this BEFORE any and/or/comparison splitting, which
+      # would otherwise slice on operators INSIDE the quotes and produce
+      # unbalanced-quote operands ("'mariadb_version_check.rc" from
+      # splitting `'mariadb_version_check.rc == 0'` on "==") that then fail
+      # variable resolution under raise_undefined. Real Ansible reads
+      # mrlesmithjr.mariadb_galera_cluster's own `changed_when: not
+      # 'mariadb_version_check.rc == 0'` as exactly this constant
+      # (non-empty string -> truthy -> `not` -> False -> changed=false,
+      # task ok) - verified live against ansible-core 2.19.4 (ok=1
+      # changed=0); this engine failed the whole task with
       # "'mariadb_version_check.rc' is undefined" (round 310053).
-      # Deliberately narrow: the interior must contain no quote
-      # character at all, so a compound condition that merely starts
-      # and ends with quotes (`'a' == 'a'`, `'x' in list`) still parses
-      # normally below.
+      #
+      # "Entirely one string literal" means the first unescaped occurrence
+      # of the opening quote character is the condition's LAST character -
+      # NOT merely "no quote of any kind in the interior". The older,
+      # narrower interior check rejected any interior quote, so a
+      # double-quoted literal whose content itself uses single quotes fell
+      # through and got parsed as an expression: konstruktoid.hardening's
+      # resolvedconf.yml gates its apt task via `failed_when: [apt_resolved
+      # is failed, not "'No package matching' in apt_resolved.msg"]`, and
+      # the clause `"'No package matching' in apt_resolved.msg"` - a REAL
+      # Jinja2 string literal (verified live against ansible-core 2.19.11:
+      # `not "<string>"` is `not <truthy>` -> False, so this failed_when
+      # never fires and the play continues; the UNQUOTED spelling `not
+      # ('No package matching' in apt_resolved.msg)` DOES fail the task on
+      # other messages, proving the quotes are semantic, not decoration) -
+      # was instead fed to the quote-aware ` in ` splitter, which
+      # (correctly) refuses to split inside quotes, found no top-level
+      # " in ", and made #evaluate_in return false; the enclosing `not`
+      # then flipped that to True and hard-failed a task real Ansible
+      # treats as ok (round 902000: krikri ok=14 failed=1 vs real
+      # ok=283 failed=0).
+      # The first-close-is-last-char rule still rejects genuine compound
+      # conditions that merely start and end with the same quote char
+      # (`'a' == 'a'`, `'x' in list`) - their first closing quote is
+      # mid-string - so those keep parsing normally below.
       if condition.size >= 2 &&
          ((condition[0] == '\'' && condition[-1] == '\'') ||
-          (condition[0] == '"' && condition[-1] == '"')) &&
-         !condition[1..-2].includes?("'") && !condition[1..-2].includes?('"')
-        return !condition[1..-2].empty?
+          (condition[0] == '"' && condition[-1] == '"'))
+        first_quote = condition[0]
+        close_idx = (1...condition.size - 1).find { |i| condition[i] == first_quote && condition[i - 1] != '\\' }
+        if close_idx.nil?
+          return !condition[1..-2].empty?
+        end
       end
 
       # Compile-time filter-name validation - real Jinja resolves every
