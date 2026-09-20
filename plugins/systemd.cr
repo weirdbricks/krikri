@@ -229,12 +229,27 @@ module Krikri
 
       name_for_active = name
 
-      # Enabled/disabled
+      # Top-level result fields real Ansible's module returns. Real
+      # systemd_service.py builds `result = dict(name=unit, changed=False,
+      # status=dict())` and then adds `enabled` (a bool: the unit's current
+      # is-enabled state, or the post-change one when enable/disable ran -
+      # set even in check mode) only when the `enabled:` param was given,
+      # and `state` (the requested state string, normalized to 'started'
+      # for restarted/reloaded) only when `state:` was given. Top-level -
+      # konstruktoid.hardening's timesyncd.yml registers the result and its
+      # own changed_when reads `timesyncd_start.enabled` /
+      # `timesyncd_start.state` directly; with only the nested `status`
+      # dict present those failed with "object of type 'dict' has no
+      # attribute 'enabled'" while real ansible-playbook ran the same
+      # task fine (round 903000).
+      result_enabled : Bool? = nil
       if enabled
         is_enabled = enabled?(name_for_active || raise "systemd: name is required")
         should_enable = true?(enabled)
+        result_enabled = is_enabled
 
         if should_enable && !is_enabled
+          result_enabled = should_enable
           if @check_mode
             messages << "Would enable #{name}"
             changed = true
@@ -271,9 +286,10 @@ module Krikri
         end
       end
 
-      # State
+      result_state : String? = nil
       if state && name_for_active
         is_running = active?(name_for_active)
+        result_state = state
 
         case state
         when "started"
@@ -315,6 +331,7 @@ module Krikri
             end
           end
         when "restarted"
+          result_state = "started"
           if @check_mode
             messages << "Would restart #{name}"
             changed = true
@@ -332,6 +349,7 @@ module Krikri
             end
           end
         when "reloaded"
+          result_state = "started"
           # real Ansible's systemd module: `state: reloaded` reloads a
           # RUNNING service but STARTS an inactive one (its own state
           # block: for restarted/reloaded, `if not is_running_service(
@@ -401,14 +419,18 @@ module Krikri
       # anything` always resolved to undefined - which then rendered as
       # the literal string "undefined" wherever it was used as a
       # path/value, not merely "empty".
-      status = name ? systemctl_show(name) : nil
+      status = name ? systemctl_show(name) : Hash(String, String).new
 
-      PluginResult.new(
+      result = PluginResult.new(
         changed: changed,
         failed: false,
         msg: msg,
-        status: status
+        status: status,
+        name: name,
       )
+      result.extra["enabled"] = JSON.parse(result_enabled.to_json) unless result_enabled.nil?
+      result.extra["state"] = JSON.parse(result_state.to_json) unless result_state.nil?
+      result
     end
 
     # Runs `systemctl show <name>` and parses its `KEY=VALUE` lines
