@@ -188,4 +188,69 @@ describe "systemd plugin" do
     result["msg"].to_s.should contain("start")
     result["msg"].to_s.should_not contain("reload")
   end
+
+  # Real bug found via round 903000 (konstruktoid.hardening's own
+  # tasks/timesyncd.yml): the role registers the systemd_service result and
+  # its changed_when reads the TOP-LEVEL `enabled`/`state` fields real
+  # Ansible's module returns (systemd_service.py: `result['enabled'] = ...`
+  # / `result['state'] = module.params['state']`, siblings of the nested
+  # `status` dict). This plugin only ever returned the nested `status`,
+  # so `not timesyncd_start.enabled == true` failed the task with
+  # "object of type 'dict' has no attribute 'enabled'" while real
+  # ansible-playbook ran the same task fine.
+  describe "top-level result fields (real Ansible's systemd_service shape)" do
+    it "exposes enabled as a top-level bool when the enabled param was given" do
+      result = PluginSpecHelper.run("systemd", {
+        "name"                => "nonexistent-krikri-playbook-unit.service",
+        "enabled"             => "true",
+        "_ansible_check_mode" => "true",
+      })
+      result["failed"]?.try(&.as_bool).should be_falsey
+      # check mode predicts the enable, so the reported enabled state is
+      # the post-change one (real Ansible sets result['enabled'] = not
+      # enabled outside its check_mode guard)
+      result["enabled"].as_bool.should be_true
+      result["name"].as_s.should eq("nonexistent-krikri-playbook-unit.service")
+      # status is always a dict on success (real: result = dict(status=dict()))
+      result["status"].as_h?.should_not be_nil
+    end
+
+    it "exposes the requested state as a top-level string when state was given" do
+      result = PluginSpecHelper.run("systemd", {
+        "name"                => "nonexistent-krikri-playbook-unit.service",
+        "state"               => "started",
+        "_ansible_check_mode" => "true",
+      })
+      result["failed"]?.try(&.as_bool).should be_falsey
+      result["state"].as_s.should eq("started")
+      # ...and omits enabled when the enabled param was not given
+      result["enabled"]?.should be_nil
+    end
+
+    it "normalizes restarted/reloaded to 'started' in the top-level state" do
+      # real: result['state'] = 'started' inside the ActiveState branch,
+      # for every requested state - the requested 'restarted'/'reloaded'
+      # never survives verbatim
+      {"restarted", "reloaded"}.each do |requested|
+        result = PluginSpecHelper.run("systemd", {
+          "name"                => "nonexistent-krikri-playbook-unit.service",
+          "state"               => requested,
+          "_ansible_check_mode" => "true",
+        })
+        result["failed"]?.try(&.as_bool).should be_falsey
+        result["state"].as_s.should eq("started")
+      end
+    end
+
+    it "omits both fields (and reports an empty status dict) for a daemon_reload-only task" do
+      result = PluginSpecHelper.run("systemd", {
+        "daemon_reload"       => "true",
+        "_ansible_check_mode" => "true",
+      })
+      result["failed"]?.try(&.as_bool).should be_falsey
+      result["enabled"]?.should be_nil
+      result["state"]?.should be_nil
+      result["status"].as_h.size.should eq(0)
+    end
+  end
 end
