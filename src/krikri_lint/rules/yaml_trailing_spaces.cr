@@ -13,11 +13,23 @@ module Krikri
       end
 
       def tags : Array(String)
-        ["formatting", "yaml"]
+        ["autofix", "formatting", "yaml"]
       end
 
       def applies_to : Array(FileType)
         FileType.values
+      end
+
+      def fixable? : Bool
+        true
+      end
+
+      def fix(buffer : FixBuffer, file : PositionedFile, violation : Violation) : Bool
+        line = buffer.line_text(violation.line) || return false
+        stripped = line.rstrip(" \t")
+        return false if stripped == line
+        buffer.replace_span(violation.line, stripped.size + 1,
+          line.size - stripped.size, "")
       end
 
       def check(file : PositionedFile, violations : Array(Violation)) : Nil

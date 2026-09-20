@@ -1,0 +1,66 @@
+# Weekly krikri-lint parity run: rebuild the linter, install the pinned
+# upstream ansible-lint, and run the parity harness over the testing/
+# corpus. This is the lint-side analogue of the playbook engine's
+# benchmark rounds (see krikri-lint.md): it does not gate on failures,
+# it produces the divergence report for triage. Also runnable manually
+# via workflow_dispatch.
+
+name: lint-parity
+
+on:
+  schedule:
+    - cron: "23 6 * * 1"
+  workflow_dispatch:
+
+jobs:
+  parity:
+    runs-on: ubuntu-latest
+    container:
+      image: crystallang/crystal:1.21.0
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system libs
+        # Same set as ci.yml - the Crystal image is missing the dev
+        # packages the stdlib links against.
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq \
+            liblzma-dev libbz2-dev libssl-dev libpcre2-dev \
+            libevent-dev libgmp-dev libyaml-dev libxml2-dev zlib1g-dev \
+            curl zip unzip python3 python3-pip sudo
+
+      - name: Cache shards
+        uses: actions/cache@v4
+        with:
+          path: lib
+          key: ${{ runner.os }}-shards-${{ hashFiles('shard.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-shards-
+
+      - name: Install dependencies
+        run: shards install
+
+      - name: Install pinned upstream ansible-lint
+        # The parity target is Debian's 25.6.1+really25.2.1, i.e. 25.2.1
+        # code; PyPI's 25.2.1 is the same rule logic.
+        run: pip3 install --break-system-packages ansible-lint==25.2.1
+
+      - name: Build
+        run: ./build.sh
+
+      - name: Parity run
+        # Known, documented divergence classes (syntax-check YAML
+        # strictness, abort-after-unknown-module, args[module] on
+        # community modules) keep the exit code at 1; the report is
+        # what matters, so don't fail the job on it.
+        run: |
+          python3 testing/lint/parity.py | tee parity-report.txt
+          echo "Parity report written (exit code ignored; triage the report)."
+
+      - name: Upload report
+        uses: actions/upload-artifact@v4
+        with:
+          name: parity-report
+          path: parity-report.txt

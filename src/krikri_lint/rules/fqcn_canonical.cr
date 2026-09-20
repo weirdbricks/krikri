@@ -7,13 +7,13 @@ module Krikri
     # here when the parity corpus finds them.
     class FqcnCanonicalRule < Rule
       REDIRECTS = {
-        "ansible.builtin.acl"           => "ansible.posix.acl",
-        "ansible.builtin.cronvar"       => "community.general.cronvar",
-        "community.mysql.mysql_query"   => "ansible.mysql.mysql_query",
+        "ansible.builtin.acl"             => "ansible.posix.acl",
+        "ansible.builtin.cronvar"         => "community.general.cronvar",
+        "community.mysql.mysql_query"     => "ansible.mysql.mysql_query",
         "community.mysql.mysql_variables" => "ansible.mysql.mysql_variables",
-        "community.mysql.mysql_user"    => "ansible.mysql.mysql_user",
-        "community.mysql.mysql_info"    => "ansible.mysql.mysql_info",
-        "community.mysql.mysql_db"      => "ansible.mysql.mysql_db",
+        "community.mysql.mysql_user"      => "ansible.mysql.mysql_user",
+        "community.mysql.mysql_info"      => "ansible.mysql.mysql_info",
+        "community.mysql.mysql_db"        => "ansible.mysql.mysql_db",
       }
 
       def id : String
@@ -25,11 +25,27 @@ module Krikri
       end
 
       def tags : Array(String)
-        ["formatting"]
+        ["autofix", "formatting"]
       end
 
       def applies_to : Array(FileType)
         FileType.values
+      end
+
+      def fixable? : Bool
+        true
+      end
+
+      def fix(buffer : FixBuffer, file : PositionedFile, violation : Violation) : Bool
+        TaskWalker.each_task(file) do |task|
+          next unless task.action_line == violation.line &&
+                      task.action_column == violation.column
+          canonical = REDIRECTS[task.module_name]? || return false
+          return false unless buffer.line_text(violation.line)
+          return buffer.replace_span(violation.line, violation.column,
+            task.module_name.size, canonical)
+        end
+        false
       end
 
       def check(file : PositionedFile, violations : Array(Violation)) : Nil
