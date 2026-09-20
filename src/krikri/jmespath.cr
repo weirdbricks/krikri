@@ -41,6 +41,21 @@ module Krikri
       Evaluator.new.eval(ast, data)
     end
 
+    # Applies a JMESPath expression to *data* with the `json_query`
+    # filter's task-failure semantics: any engine error (parse or
+    # evaluation) is re-raised wrapped in the filter-style message. This
+    # is the single shared wrapper both dispatch paths go through - the
+    # hand-rolled FilterEngine calls it directly on its own JSON::Any
+    # values (zero conversion), and the native `Crinja.filter(:json_query)`
+    # registration (src/krikri/jinja_filters.cr) calls it after bridging
+    # its Crinja::Value target in, so the wrapped error text has exactly
+    # one source.
+    def self.evaluate_json_query(expression : String, data : JSON::Any) : JSON::Any
+      evaluate(expression, data)
+    rescue ex
+      raise "json_query: invalid JMESPath expression '#{expression}': #{ex.message}"
+    end
+
     # ------------------------------------------------------------------
     # Tokenizer
     # ------------------------------------------------------------------

@@ -500,3 +500,94 @@ remove it), and selectattr's migration remains blocked on the fork
 (per-item execute_call, missing operator-spelling tests, and the
 scope-aware re-templating bridge) - none of it worth taking without a
 real-host round that demonstrates need.
+
+---
+
+# Post-Phase-1 fix: json_query's quadruple-conversion tax eliminated (branch `fix-jsonquery-double-conversion`)
+
+Date: 2026-09-20. This resolves the "found-not-fixed" item left by filter
+#3 and named again in the Phase-1 wrap-up's residual debts.
+
+## Option chosen: FilterEngine dispatches json_query directly to the shared JMESPath wrapper (option 3), not a Crinja::Value-native JMESPath (option 1)
+
+The three candidate fixes were investigated for real:
+
+1. **`Crinja::Value`-native JMESPath entry point** - rejected. The
+   evaluator is ~600 lines of JSON::Any-typed logic (projection
+   semantics, comparisons, 23 functions, truthiness rules) plus the
+   parser/tokenizer. Making it polymorphic over the value type means
+   retyping every line of that, against a 150-line behavior-locked
+   spec, to save conversions on a path whose absolute cost is
+   microseconds. It would also keep the JSON::Any engine in parallel
+   (every existing caller and spec - `jmespath_spec.cr`,
+   `filter_engine.cr`'s own contract - speaks JSON::Any), i.e. the
+   exact "two engines, same bug class twice" pattern this codebase
+   already fights. Rewrite-shaped, `selectattr`-grade risk, for a
+   perf win option 3 delivers with ~15 lines.
+
+2. **Cheaper conversion functions** - rejected as cost-shuffling, not
+   elimination. `crinja_value_to_json_any` /
+   `json_any_to_crinja_value` must materialize a full new
+   `Hash(String, JSON::Any)` / `Array(Crinja::Value)` tree because the
+   two worlds use different container types; there is no subset-read
+   shortcut for a target whose whole shape JMESPath may traverse.
+
+3. **Stop routing the `{{ }}` path through the Crinja registration at
+   all** - CHOSEN. The insight from filter #4's assessment applies
+   here too: the delegation bridge only makes sense when the filter
+   body genuinely needs `Crinja::Value` semantics. json_query's body
+   does not - it immediately converts back to JSON::Any for the
+   JMESPath engine. So:
+
+   - `Krikri::JMESPath` gains `evaluate_json_query(expression, data)`
+     (`src/krikri/jmespath.cr`), which wraps any engine error in the
+     filter-style "json_query: invalid JMESPath expression" message.
+     This keeps the error text single-sourced, which was the real
+     consolidation win of filter #3; the remaining per-side code is
+     the trivial arg extraction + missing-expression guard both sides
+     already had pre-consolidation.
+   - FilterEngine's `json_query` dispatch (filter_engine.cr) calls
+     that wrapper directly on its own JSON::Any value - **zero
+     conversions**, strictly cheaper than even the pre-consolidation
+     hand-rolled path (which paid the same direct call but had no
+     shared wrapper).
+   - The `Crinja.filter(:json_query)` registration
+     (jinja_filters.cr) remains for the real `.j2`-template path,
+     whose `Crinja::Value` target genuinely must be bridged; it now
+     pays exactly the two irreducible conversions (target in, result
+     out) instead of four, and evaluates through the same shared
+     wrapper.
+
+The delegation machinery itself (`#delegate_to_crinja_filter`) is
+untouched and still serves `dict2items`/`combine`.
+
+## Behavior: identical
+
+All json_query specs pass unmodified (`jmespath_spec.cr` covers both
+dispatch paths' happy shapes plus the invalid-expression task failure;
+the wrapped error text now comes from the one shared wrapper). Full
+suite: 5276 examples, 6 failures / 2 errors - the known
+nondeterministic cluster (`is_test_aliases_spec`, `x509_csr_info_spec`),
+no new failures. Ameba on the touched files: no new findings (the 3 in
+`jinja_filters.cr` are pre-existing on the base commit).
+
+## Performance: before/after (`scripts/crinja_corpus/bench_json_query_pilot.cr`, N=100,000, release, same tree)
+
+| Query | BEFORE (delegated) | AFTER (direct) | Delta |
+|---|---|---|---|
+| `json_query('[*].name')` (list projection)  | ~3,016 ns | ~1,050 ns | ~2.9x faster |
+| `json_query('[?state == 'present'].name')`  | ~3,602 ns | ~1,997 ns | ~1.8x faster |
+| `items2dict` (hand-rolled reference)        | ~251 ns   | ~271 ns   | unchanged (noise) |
+
+Note on the historical ~33x/~27,766 ns figure: that was measured on the
+tree as it stood at the filter-#3 migration; later unrelated changes to
+the conversion path had already shrunk it to the ~3 us measured here
+immediately before this fix. The structural problem (four conversions
+per call) was real and is what this fix removes; the remaining ~1 us on
+the projection query is the JMESPath engine itself, with zero
+conversion overhead.
+
+The `.j2`-template path keeps its two irreducible bridge conversions
+(measured only implicitly - the bench exercises the `{{ }}` path); a
+`Crinja::Value`-native JMESPath remains the only way to remove those,
+and stays not worth a rewrite per the option-1 analysis above.
