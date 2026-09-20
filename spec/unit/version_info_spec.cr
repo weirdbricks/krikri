@@ -147,7 +147,7 @@ describe "Krikri::RUNTIME_DEPENDENCY_FORK_NOTES" do
   it "annotates only weirdbricks-owned dependencies, with their pin" do
     notes = Krikri::RUNTIME_DEPENDENCY_FORK_NOTES
 
-    notes["crinja"].should eq(" (weirdbricks/crinja fork, tag crystal-play-0.9.45)")
+    notes["crinja"].should eq(" (weirdbricks/crinja fork, tag crystal-play-0.9.46)")
     notes["mysql"].should eq(" (weirdbricks/crystal-mysql fork, tag crystal-ansible-0.9.340)")
     notes["docr"].should eq(" (weirdbricks/docr fork, branch master)")
     notes["awscr-signer"].should eq(" (weirdbricks/awscr-signer fork, branch master)")
