@@ -123,3 +123,111 @@ Caveats to carry into the next three:
    this pilot ran no real-host round (out of scope). The confirm-phase
    expectation is that no role-visible behavior changes - the spec suite is
    the evidence for that here.
+
+---
+
+# Filter #2: `combine` (Phase 1 continues)
+
+Date: 2026-09-20. Scope: exactly one filter (`combine`), on its own branch
+(`crinja-filter-consolidation-combine`), same discipline as the pilot.
+
+## What the pilot's "already shares combine_merge semantics" actually meant
+
+Verified before touching anything: the two implementations did NOT share a
+helper. FilterEngine#combine_hash (JSON::Any) and jinja_filters.cr's Crinja
+registration (Crinja::Value, via JinjaFilters.combine_merge +
+list_merge_values) were two independent, hand-ported copies that
+mode-for-mode happened to agree - the Crinja side's own comment said
+"Ported from FilterEngine#combine_hash". So this migration deleted real
+duplication: the Crinja registration became the single implementation for
+the name.
+
+## What changed
+
+- `filter_engine.cr`'s `combine` case: the kwarg parsing (dedicated regex,
+  NOT #parse_kwarg - real roles write `recursive=True` unquoted) stays
+  verbatim, but the `positional_args.reduce { combine_hash(...) }` merge is
+  replaced by #delegate_to_crinja_filter, with the resolved positional dicts
+  passed as varargs and `recursive`/`list_merge` as pre-built Crinja values.
+  #combine_hash itself REMAINS in the file: lists_mergeby's core still
+  merges with it (the pilot report's "self-contained recursive merge"
+  assumption was slightly wrong - combine's helper has a second in-tree
+  caller).
+- `#delegate_to_crinja_filter` was generalized, not reinvented: the
+  original single-target/string-kwargs form became a thin overload; the
+  general form takes pre-built `Crinja::Variables` plus an optional
+  `Array(JSON::Any)` of positional varargs (Crinja::Arguments carries
+  varargs natively). The string overload's doc notes why bool kwargs must
+  go through the general form: the text "false" is truthy to Crinja's
+  `truthy?`, so `recursive` must arrive as a real Bool.
+- `jinja_filters.cr`'s `JinjaFilters.list_merge_values`: the `_rp` dedupe
+  no longer calls `Crinja::Value#to_json` (see divergence below) - it
+  converts each element through the pure
+  CrinjaRenderer.crinja_value_to_json_any and serializes THAT. Same
+  compact, insertion-ordered JSON text the hand-rolled dedupe compares.
+- New benchmark: `scripts/crinja_corpus/bench_combine_pilot.cr`.
+- VERSION 0.9.1220 -> 0.9.1221 (+ README badge).
+
+## Behavior: identical, plus one latent Crinja-side crash bug fixed
+
+All combine-related specs pass **unmodified** - including
+`lazy_dict_templating_spec`'s battery (recursive deep-merge, every
+list_merge mode against real ansible-core 2.19 expectations,
+unquoted `recursive=True`) and `crinja_direct_spec`'s Crinja-side example.
+Full suite: 5250 examples, 6 failures / 2 errors - exactly the known
+nondeterministic cluster (is_test_aliases_spec, x509 tmp-file race,
+hardlink race), no new failures.
+
+**One genuine bug surfaced, and was fixed rather than papered over** - not
+a divergence between the two krikri implementations but a latent defect in
+the vendored Crinja shard that the migration exposed: the shard's
+`Value#to_json(JSON::Builder)` calls `start_document` on the builder it is
+handed, but `Object#to_json` has already opened that document, so ANY
+standalone `Value#to_json` crashes ("Starting document before ending
+previous one"). The Crinja-side combine's `list_merge='append_rp'`/
+`prepend_rp` dedupe (`uniq(&.to_json)`) hit exactly that - meaning
+`{{ d | combine(o, list_merge='append_rp') }}` in a real .j2 template has
+been a live crash all along, on the Crinja side only. The hand-rolled side
+never hit it because JSON::Any#to_json is fine. Fixed in
+`list_merge_values` via the pure converter (see What changed); the shard
+itself is untouched (it's a shards dependency, not vendored source).
+
+## Performance: real numbers
+
+`crystal build --release` of
+`scripts/crinja_corpus/bench_combine_pilot.cr`, N=100,000, 5-key/2-nested
+dicts, warmup pass, both trees (old = pre-change commit via a throwaway
+worktree, same script, median-ish of repeated runs):
+
+| Path                                        | OLD hand-rolled | NEW delegated -> Crinja |
+|---|---|---|
+| `combine` 1 positional                      | ~4.3 us | ~8.6-9.2 us |
+| `combine` recursive=True                    | ~4.8 us | ~8.9-9.4 us |
+| `combine` recursive+list_merge='append_rp'  | ~6.5 us | ~11.3-12.3 us |
+| `items2dict` (hand-rolled reference filter) | ~0.3 us | ~0.45-0.53 us |
+
+So the roundtrip costs ~2x on the filter (~+4-6 us absolute), i.e. a
+smaller relative penalty than dict2items' ~4x - combine's own merge work
+is heavier, so the fixed conversion cost is proportionally smaller. Same
+verdict as the pilot: per-invocation microseconds against per-task costs
+measured in tens of milliseconds. `combine` is frequently chained 2-4
+times in one expression (os_hardening), which multiplies the absolute
+number but stays in the tens-of-microseconds range.
+
+## Recommendation: confirms the pilot, two revisions
+
+1. The bridge generalizes cleanly to multi-argument filters - varargs were
+   already supported by `Crinja::Arguments`; only the helper's signature
+   needed widening. No new machinery for `json_query`.
+2. Revision to the pilot's caveat list: "self-contained" is not a property
+   you can assume - `combine`'s helper had a second caller
+   (lists_mergeby), so check ALL callers of a helper before declaring its
+   death; `combine_hash` stays until `lists_mergeby` is migrated (and
+   migrating `lists_mergeby` onto the Crinja registration would then let
+   both go).
+3. New caveat: migrating a filter onto the Crinja registration imports
+   that registration's own latent bugs as FilterEngine bugs - the suite
+   caught this one immediately, but treat any Crinja-side code path the
+   hand-rolled side never exercised as UNVERIFIED until the bridged specs
+   prove it (the `_rp` crash had been sitting in the Crinja-side combine
+   since its registration, unreached by any spec that used it standalone).
