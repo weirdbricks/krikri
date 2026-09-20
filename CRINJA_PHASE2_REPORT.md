@@ -227,8 +227,46 @@ Rules the next slices must keep:
 What remains before Phase 2 could be called done (not this pilot's
 scope): the same treatment probed for any remaining non-delegated
 constructs (none of consequence were found beyond the bare-call
-forms), a real-host round confirming role-visible behavior is
-unchanged, and the deliberate decision on whether the lenient
+forms), and the deliberate decision on whether the lenient
 concat/omit divergences should become real-Ansible errors under a
-strictness flag. KNOWN_MISSING.md/ROLES_TESTED.md were deliberately
-not touched (no real-host round was run).
+strictness flag.
+
+## Real-host confirmation (2026-09-20, post-merge, round 901500-901514)
+
+Ran a 15-role confirmation round (`itigoag.packages`,
+`geerlingguy.{docker,nginx,apache,mysql,postgresql,certbot,repo-epel}`,
+`Stouts.{nginx,grafana,mongodb,rabbitmq}`,
+`dev-sec.{os-hardening,mysql-hardening}`, `konstruktoid.hardening`) on
+Atlantic.net against the merged `a03e3bff` build, deliberately weighted
+toward roles known to build URLs/version strings via `+` concatenation
+or do datetime arithmetic. Result: **4 CLEAN, 11 DIVERGENT - zero of
+the 11 attributable to this change.**
+
+Every divergence traced to one of three pre-existing, unrelated causes,
+confirmed by diffing task-for-task output between engines:
+
+- **A pre-existing cosmetic recap-counting artifact** (7 roles:
+  `itigoag.packages`, all 6 `geerlingguy.*`): `ok:`/`changed:`/`TASK`
+  lines are byte-identical in content and count between engines: the
+  `PLAY RECAP` `ok=` total differs by exactly 1, the same "usual
+  artifact" already noted against `geerlingguy.nginx` in
+  `ROLES_TESTED.md` before this change existed.
+- **Already-documented, unrelated krikri gaps**: `dev-sec.os-hardening`
+  (pre-existing `NoneType`-vs-`str` conditional type mismatch, task
+  content identical bar banner padding), `konstruktoid.hardening`
+  (pre-existing role-side UFW/conntrack lockout, both engines affected
+  identically - this run's python side hit the documented 15-minute
+  timeout from that same lockout).
+- **Pre-existing role/environment failures affecting real Ansible too**:
+  `geerlingguy.repo-epel` (RedHat-only role on an Ubuntu host, fails
+  identically on both engines - matches its existing `ROLES_TESTED.md`
+  row) and `itigoag.packages`'s own failing task (`ansible.builtin.package`
+  arg finalization erroring on a `state:` value shaped as a list -
+  identical error text and identical failure on both engines, a
+  role/package-fact-shape issue, not an engine bug).
+
+No arithmetic-shaped divergence, no new failure class, and no role that
+was previously CLEAN came back divergent for a reason connected to `+`/
+`-`. `ROLES_TESTED.md`/`KNOWN_MISSING.md` intentionally not updated -
+every role's status and root cause here already matches its existing
+row; nothing changed.
