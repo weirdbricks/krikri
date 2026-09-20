@@ -26,6 +26,11 @@ module Krikri
           KeyOrderRule.new,
           YamlTrailingSpacesRule.new,
           YamlTruthyRule.new,
+          RiskyShellPipeRule.new,
+          IgnoreErrorsRule.new,
+          RunOnceRule.new,
+          LatestRule.new,
+          PackageLatestRule.new,
         ])
       end
 
