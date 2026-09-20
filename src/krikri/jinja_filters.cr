@@ -818,22 +818,22 @@ module Krikri
     # module (src/krikri/jmespath.cr). Found unimplemented via itigoag.
     # packages' own `packages_var_lower | json_query(packages_var_query)`
     # task. Entirely unregistered before this - "No filter named
-    # 'json_query'" failed the task outright. Since the Phase-1
-    # consolidation (filter #3) this is the SINGLE implementation of the
-    # name: the hand-rolled FilterEngine's own parallel dispatch now
-    # delegates here via #delegate_to_crinja_filter, so both the `{{ }}`
-    # and `{%`-template paths share this registration (and its wrapped
-    # "invalid JMESPath expression" error text).
+    # 'json_query'" failed the task outright.
+    #
+    # This registration serves the real `.j2`-template path, where the
+    # target genuinely is a Crinja::Value and must be bridged to the
+    # JSON::Any-native JMESPath engine (and the result bridged back). The
+    # plain `{{ }}` evaluator does NOT route through here anymore - its
+    # JSON::Any values dispatch straight to the shared
+    # Krikri::JMESPath.evaluate_json_query wrapper (see filter_engine.cr),
+    # which also owns the wrapped "invalid JMESPath expression" error
+    # text, so the semantics below stay single-sourced.
     Crinja.filter(:json_query) do
       expr = arguments.varargs[0]?
       raise "json_query: missing JMESPath expression" unless expr
       data = Krikri::VariableSubstitutor::CrinjaRenderer.crinja_value_to_json_any(target)
-      begin
-        result = Krikri::JMESPath.evaluate(expr.to_s, data)
-        Krikri::VariableSubstitutor::CrinjaRenderer.json_any_to_crinja_value(result)
-      rescue ex
-        raise "json_query: invalid JMESPath expression '#{expr}': #{ex.message}"
-      end
+      result = Krikri::JMESPath.evaluate_json_query(expr.to_s, data)
+      Krikri::VariableSubstitutor::CrinjaRenderer.json_any_to_crinja_value(result)
     end
 
     # `checksum()` - real Ansible's own filter, always sha1 (distinct
