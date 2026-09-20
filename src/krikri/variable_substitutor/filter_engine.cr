@@ -595,18 +595,22 @@ module Krikri
           # entirely unimplemented (fell through to the `else` passthrough
           # below), silently discarding every merge-in argument.
           #
-          # `recursive=True` deep-merges nested dict VALUES instead of
-          # replacing them wholesale, and `list_merge=` controls what
-          # happens to a key that is a list on both sides ('replace'
-          # default, 'keep', 'append', 'prepend', 'append_rp',
-          # 'prepend_rp'). Both kwargs were previously silently ignored -
-          # found via the round-306 lazy-dict-templating battery (real
-          # ansible-core 2.19 deep-merges and appends where this returned
-          # the losing side's value intact, silently DROPPING data).
-          # Dedicated kwarg parse (not #parse_kwarg, which only matches
-          # quoted values): real roles write `recursive=True` unquoted,
-          # and silently dropping the kwarg would restore exactly the
-          # data-loss bug this branch fixes.
+          # Phase-1 consolidation (after the dict2items pilot): the
+          # hand-rolled merge this dispatch used to run (#combine_hash,
+          # mirrored but independent of jinja_filters.cr's Crinja-side
+          # registration) is retired for this name - it routes through the
+          # ONE native `Crinja.filter(:combine)` registration via
+          # #delegate_to_crinja_filter, now with positional varargs (the
+          # multi-dict shape dict2items never needed). The kwarg parsing
+          # stays here verbatim (see below for why it can't use
+          # #parse_kwarg) and feeds pre-built Crinja values, because
+          # `recursive` must arrive as a real Bool - the text "false"
+          # would be truthy to the Crinja filter's `truthy?`. Behavior
+          # contract unchanged and still enforced by
+          # spec/unit/lazy_dict_templating_spec.cr (recursive deep-merge
+          # plus every list_merge mode against real ansible-core 2.19).
+          # #combine_hash itself remains: lists_mergeby's core still
+          # merges with it.
           recursive_arg = false
           list_merge_arg = "replace"
           positional_args = [] of String
@@ -625,7 +629,13 @@ module Krikri
               end
             end
           end
-          positional_args.reduce(value) { |acc, arg_expr| combine_hash(acc, resolve_expression(arg_expr), recursive_arg, list_merge_arg) }
+          crinja_kwargs = Crinja::Variables.new
+          crinja_kwargs["recursive"] = Crinja::Value.new(recursive_arg)
+          crinja_kwargs["list_merge"] = Crinja::Value.new(list_merge_arg)
+          delegate_to_crinja_filter(
+            "combine", value, crinja_kwargs,
+            positional_args.map { |arg_expr| resolve_expression(arg_expr) },
+          )
         when "lists_mergeby", "list_mergeby"
           # lists_mergeby(list2, list3, ..., 'key', recursive=False,
           # list_merge='replace') - community.general's own filter (the
@@ -1461,14 +1471,31 @@ module Krikri
       # side receives them through `Crinja::Arguments` the same way
       # Resolver#execute_call wires a `{% %}`-pipeline call, including
       # the callable's own declared defaults.
+      # String-kwarg convenience overload (dict2items shape): wraps each
+      # value as a Crinja string value and defers to the general form
+      # below. Note this overload is only correct for STRING kwargs - a
+      # boolean kwarg passed as its text form would make the Crinja
+      # filter's `truthy?` see the non-empty string "false" as true, so
+      # bool kwargs must go through the general overload directly.
       private def delegate_to_crinja_filter(name : String, value : JSON::Any, kwargs : Hash(String, String)) : JSON::Any
-        env = CrinjaRenderer.shared_environment
-        callable = env.filters[name]
         crinja_kwargs = Crinja::Variables.new
         kwargs.each { |k, v| crinja_kwargs[k] = Crinja::Value.new(v) }
+        delegate_to_crinja_filter(name, value, crinja_kwargs)
+      end
+
+      # General form: pre-built Crinja kwarg values (so Bool kwargs
+      # survive as real bools) plus optional positional varargs resolved
+      # from JSON::Any - the multi-argument shape filters like
+      # `combine(other1, other2, ...)` need (Crinja::Arguments carries
+      # varargs natively; the dict2items pilot only exercised the
+      # single-target shape).
+      private def delegate_to_crinja_filter(name : String, value : JSON::Any, kwargs : Crinja::Variables, varargs : Array(JSON::Any) = [] of JSON::Any) : JSON::Any
+        env = CrinjaRenderer.shared_environment
+        callable = env.filters[name]
         arguments = Crinja::Arguments.new(
           env,
-          kwargs: crinja_kwargs,
+          varargs: varargs.map { |arg| CrinjaRenderer.json_any_to_crinja_value(arg) },
+          kwargs: kwargs,
           target: CrinjaRenderer.json_any_to_crinja_value(value),
         )
         arguments.defaults = callable.defaults if callable.responds_to?(:defaults)
