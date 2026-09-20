@@ -872,9 +872,30 @@ module Krikri
         # treated as the operator) and, like `+`, must come before the
         # filter check: `|` binds tighter than `-`, so each side may
         # still carry its own filter chain evaluated independently.
+        #
+        # Crinja-first delegation, arithmetic `-` construct: same
+        # try-Crinja-first, fall-back-to-the-exact-previous-code pattern
+        # as the other converged constructs (mult/div, `~`, filter
+        # chains). Probed across numeric int/float/bool mixes, every
+        # non-numeric operand class (strings, lists, null, undefined),
+        # and bare datetime subtraction - every non-numeric class raises
+        # in Crinja and falls back identically, and undefined operands
+        # match. The one divergence (bare `(a | to_datetime) - (b |
+        # to_datetime)` with no `.days` suffix) produces a real
+        # structured timedelta where the hand-rolled path silently
+        # produced "" - see CRINJA_PHASE2_REPORT.md. Uses the raw-value
+        # path, not #render_via_crinja: a datetime result converts back
+        # as a structured Hash, and #render_via_crinja's Crinja-side
+        # stringification would Python-repr it instead of going through
+        # this codebase's own `format_value`.
         if minus = split_top_level_minus(expr)
           left_expr, right_expr = minus
-          return evaluate_minus(left_expr, right_expr)
+          return begin
+            value = render_via_crinja_value(expr)
+            value ? @lookup.format_value(value) : "undefined"
+          rescue
+            evaluate_minus(left_expr, right_expr)
+          end
         end
 
         # Check for top-level `+` concatenation (list/string/number), e.g.
@@ -890,7 +911,27 @@ module Krikri
         # which would otherwise misparse the whole expression as
         # `var[key]` off a literal array operand's own brackets.
         if segments = split_top_level_plus(expr)
-          return evaluate_plus(segments)
+          # Crinja-first delegation, arithmetic `+` construct: same
+          # try-Crinja-first, fall-back-to-the-exact-previous-code
+          # pattern as the `-` swap above. Probed across string
+          # concatenation (the dominant real-role shape), numeric
+          # int/float/bool mixes, list concatenation, dict/array-literal
+          # operands, recursive re-templating of operand values, and
+          # every non-numeric operand class - all matched except the
+          # divergences documented in CRINJA_PHASE2_REPORT.md (notably
+          # int + float, which real Jinja adds numerically and the
+          # hand-rolled path below string-concatenates). Uses the
+          # raw-value path (like the filter-chain construct, NOT the
+          # scalar-only #render_via_crinja): a `+` chain can produce a
+          # container (`list1 + list2`), whose result must format
+          # through `format_value`'s JSON-compact form, not Crinja's
+          # Python-repr Finalizer.
+          return begin
+            value = render_via_crinja_value(expr)
+            value ? @lookup.format_value(value) : "undefined"
+          rescue
+            evaluate_plus(segments)
+          end
         end
 
         # Top-level `*`/`/`/`//` arithmetic - entirely unimplemented
