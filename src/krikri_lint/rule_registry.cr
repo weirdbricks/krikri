@@ -24,6 +24,8 @@ module Krikri
           JinjaRule.new,
           SchemaMetaRule.new,
           KeyOrderRule.new,
+          YamlTrailingSpacesRule.new,
+          YamlTruthyRule.new,
         ])
       end
 
