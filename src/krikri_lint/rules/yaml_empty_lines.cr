@@ -19,11 +19,52 @@ module Krikri
       end
 
       def tags : Array(String)
-        ["formatting", "yaml"]
+        ["autofix", "formatting", "yaml"]
       end
 
       def applies_to : Array(FileType)
         FileType.values
+      end
+
+      def fixable? : Bool
+        true
+      end
+
+      # The violation points at the last blank line of an over-long
+      # run; the run extends upward. Keep the first `max` blank lines
+      # of the run and delete the excess.
+      def fix(buffer : FixBuffer, file : PositionedFile, violation : Violation) : Bool
+        line_no = violation.line
+        max = max_for(buffer, line_no)
+        run_start = line_no
+        while run_start > 1 && blank?(buffer.line_text(run_start - 1))
+          run_start -= 1
+        end
+        excess_start = run_start + max
+        fixed = false
+        (excess_start..line_no).each do |line|
+          next unless blank?(buffer.line_text(line))
+          buffer.delete_line(line)
+          fixed = true
+        end
+        fixed
+      end
+
+      private def blank?(text : String?) : Bool
+        return false unless text
+        text.empty? || text == "\r"
+      end
+
+      private def max_for(buffer : FixBuffer, line_no : Int32) : Int32
+        run_start = line_no
+        while run_start > 1 && blank?(buffer.line_text(run_start - 1))
+          run_start -= 1
+        end
+        return MAX_START if run_start == 1
+        rest = ((line_no + 1)..buffer.lines.size).all? do |idx|
+          blank?(buffer.line_text(idx))
+        end
+        rest ? MAX_END : MAX
       end
 
       def check(file : PositionedFile, violations : Array(Violation)) : Nil

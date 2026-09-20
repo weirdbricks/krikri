@@ -16,11 +16,41 @@ module Krikri
       end
 
       def tags : Array(String)
-        ["command-shell", "idiom"]
+        ["autofix", "command-shell", "idiom"]
       end
 
       def applies_to : Array(FileType)
         FileType.values
+      end
+
+      def fixable? : Bool
+        true
+      end
+
+      # True when this rule's fix (renaming the key to
+      # ansible.builtin.command) supersedes an fqcn fix on the same
+      # key, so the fqcn rule's fix should stand down. Mirrors the
+      # composed effect of upstream applying both transforms.
+      def overrides?(task : LintTask) : Bool
+        return false unless ["shell", "ansible.builtin.shell"].includes?(task.module_name)
+        return false if task.has_param?("executable")
+        !shell_feature_in?(unjinja(cmd_text(task)))
+      end
+
+      # Upstream's transform renames the shell action key to
+      # ansible.builtin.command; the rule only fires on commands with
+      # no shell metacharacters, so the rename is safe.
+      def fix(buffer : FixBuffer, file : PositionedFile, violation : Violation) : Bool
+        TaskWalker.each_task(file) do |task|
+          next unless task.line == violation.line
+          next unless ["shell", "ansible.builtin.shell"].includes?(task.module_name)
+          line_no = NodeUtil.line(task.action_key_node)
+          return false unless buffer.line_text(line_no)
+          column = NodeUtil.column(task.action_key_node)
+          return buffer.replace_span(line_no, column, task.module_name.size,
+            "ansible.builtin.command")
+        end
+        false
       end
 
       def check(file : PositionedFile, violations : Array(Violation)) : Nil

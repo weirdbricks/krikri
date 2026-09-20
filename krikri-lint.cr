@@ -9,6 +9,13 @@ require "./src/krikri_lint/lint"
 module Krikri::Lint
   extend self
 
+  def unknown_fix_tags(registry : RuleRegistry, write_list : Array(String)) : String?
+    acceptable = Set.new(registry.rules.flat_map(&.tags) +
+                         registry.rules.map(&.id) + ["all", "none"])
+    unknown = write_list.reject { |tag| acceptable.includes?(tag) }
+    unknown.join(", ") unless unknown.empty?
+  end
+
   def main(argv)
     targets = [] of String
     parseable = false
@@ -27,6 +34,7 @@ module Krikri::Lint
     cli_warn = [] of String
     cli_enable = [] of String
     cli_tags = [] of String
+    cli_fix : Array(String)? = nil
 
     OptionParser.parse(argv) do |parser|
       parser.banner = "Usage: krikri-lint [options] TARGET [TARGET ...]"
@@ -66,6 +74,13 @@ module Krikri::Lint
       parser.on("-t", "--tags TAGS", "Only run rules matching these tags") do |value|
         cli_tags.concat(value.split(',').map(&.strip))
       end
+      parser.on("--fix [RULES]", "Auto-fix violations; optional comma-separated rule ids/tags to limit it ('all' is the default scope, 'none' disables)") do |value|
+        if value.nil? || value.empty?
+          cli_fix = ["all"]
+        else
+          cli_fix = value.split(',').map(&.strip).reject(&.empty?)
+        end
+      end
       parser.on("-c", "--config-file FILE", "Path to .ansible-lint config") do |value|
         cli_config_file = value
       end
@@ -89,6 +104,7 @@ module Krikri::Lint
     if show_version
       puts Krikri.version_info("krikri-lint", KRIKRI_LINT_VERSION,
         "Static analysis for Ansible playbooks and roles (ansible-lint parity target)")
+      puts "ansible-lint parity target: #{PARITY_TARGET_ANSIBLE_LINT}"
       exit 0
     end
 
@@ -142,13 +158,36 @@ module Krikri::Lint
       config.enable_list + cli_enable, config.tags + cli_tags,
       config.exclude_paths, config.profile, config.config_dir)
 
+    if (write_list = cli_fix) && (unknown = unknown_fix_tags(registry, write_list))
+      STDERR.puts "krikri-lint: Found invalid value(s) (#{unknown}) for --fix arguments, must be one of: all, none, #{(registry.rules.flat_map(&.tags) + registry.rules.map(&.id)).uniq.join(", ")}"
+      exit 3
+    end
+
     files = FileDiscovery.discover(targets)
 
+    runner = Runner.new(registry, config)
     violations = begin
-      Runner.new(registry, config).run(files)
+      runner.run(files)
     rescue ex
       STDERR.puts "krikri-lint: internal error: #{ex.message}"
       exit 3
+    end
+
+    if write_list = cli_fix
+      begin
+        changed = Fixer.new(registry, write_list).apply(violations)
+        if changed.present?
+          # Re-report from the fixed files so the output reflects the
+          # post-fix state (fixed matches disappear; anything resolved
+          # incidentally by another rule's fix disappears too).
+          changed_set = Set.new(changed)
+          unchanged = violations.reject { |v| changed_set.includes?(v.path) }
+          violations = unchanged + runner.run(changed)
+        end
+      rescue ex
+        STDERR.puts "krikri-lint: internal error: #{ex.message}"
+        exit 3
+      end
     end
 
     violations.sort_by! { |v| {v.path, v.line, v.column} }

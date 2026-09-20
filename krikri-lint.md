@@ -1,6 +1,9 @@
 # krikri-lint — a plan for an ansible-lint clone
 
-Status: planning document. Phase 0 skeleton and the Phase 1 v1 rule
+Status: substantially complete as of v0.6.0 (2026-09) - the rule set,
+parity harness, config/noqa/profiles, and `--fix` autofix below are all
+implemented and parity-verified; the dated sections are newest-first.
+Phase 0 skeleton and the Phase 1 v1 rule
 table implemented (2026-09): `krikri-lint` binary with CLI
 (targets, `-p/--parseable`, `--nocolor`, `--list-rules`, `--version`,
 exit codes 0/2/3), file discovery, positioned `YAML::Nodes` loader,
@@ -15,7 +18,8 @@ Notes from that pass: upstream's risky-octal suggestion message is
 computed from the YAML-decimal mode value (quirky but kept for
 parity), and `yaml[document-start]` is disabled in ansible-lint's
 bundled .yamllint, so it is deliberately not implemented. Phase 2+
-(meta/schema rules, noqa, config, profiles) is not implemented yet.
+(meta/schema rules, noqa, config, profiles) landed later - see the
+dated sections below.
 
 ### Parity harness (testing/lint/parity.py)
 
@@ -161,6 +165,102 @@ existing name[missing] entries in that class, not a new gap), 267
 upstream-only (args[module] on community modules, unchanged), 10
 unimplemented-upstream.
 
+### --fix autofix (2026-09, v0.6.0)
+
+`--fix` is implemented for the rules that are safely, mechanically
+fixable, calibrated live against the installed ansible-lint's own
+`--fix` (its fixable set = every rule carrying the `autofix` tag; of
+those, the ones krikri implements: fqcn, name, no-jinja-when,
+command-instead-of-shell, yaml):
+
+- **Fixable here**: `fqcn[action-core]` and `fqcn[canonical]` (module
+  key rewritten to the resolved/canonical FQCN),
+  `command-instead-of-shell` (`shell:` key -> `ansible.builtin.command:`,
+  mirroring upstream's transform; the rule only fires on
+  metacharacter-free commands so the rename is safe),
+  `name[casing]` (first character uppercased, `prefix | name` kept,
+  notify references to the old name updated like upstream's
+  transform), `no-jinja-when` (`{{ }}` stripped from
+  when/changed_when/failed_when string values, quoting preserved -
+  upstream's RE_JINJA is exactly `{{ (.*?) }}`),
+  `yaml[trailing-spaces]`, `yaml[new-line-at-end-of-file]`,
+  `yaml[empty-lines]`.
+- **Not fixable here (deliberate)**: `yaml[truthy]` (upstream's own
+  fixer leaves yes/off values in place - verified live),
+  `yaml[indentation]` and the rest of the yaml[*] set (upstream fixes
+  those via its ruamel full-file re-dump, which also rewrites comments
+  and inserts `---` document starts; a round-trip re-dumper is out of
+  scope - krikri's fixer is line-local and never touches anything
+  outside the violated span), `jinja[spacing]` (upstream's fix is the
+  black-based reformat, already a documented non-goal).
+- **CLI shape matches upstream**: `--fix` = all fixable rules,
+  `--fix=rule1,rule2` scopes it (rule ids, family names like `fqcn`/
+  `name`/`yaml`, or tags; `autofix` selects all fixable),
+  `--fix=none` disables, `--fix=all` is the explicit everything.
+  Unknown values exit 3 like upstream's INVALID_CONFIG. Fixable rules
+  carry the `autofix` tag, so `--list-rules` shows them (same
+  mechanism upstream uses).
+- **Mechanism**: `Rule#fixable?` + `Rule#fix(buffer, file, violation)`
+  (`src/krikri_lint/fixer.cr` holds `FixBuffer` - line-local edits on
+  original coordinates, whole-line deletion, final-newline flag -
+  plus `FixSpan` for locating a scalar's written text span including
+  quote characters). After fixing, the CLI re-runs the checks on the
+  changed files and reports the post-fix state; fixed violations drop
+  out and the exit code reflects what remains (0 when everything was
+  fixed). Upstream instead drops matches marked fixed and re-runs
+  only the yaml rule; the re-run is the honest superset (it also drops
+  violations resolved incidentally, e.g. an fqcn hit resolved by the
+  shell-key rename).
+- **Verified live**: on a mixed fixture (lowercase names, bare apt/
+  shell/command/debug keys, quoted jinja when, trailing spaces,
+  missing final newline), krikri-lint `--fix` output is byte-identical
+  to `ansible-lint --fix`. Divergences, all upstream-fixer quirks we
+  do not replicate: upstream's ruamel re-dump inserts `---` document
+  starts, rewrites comments (badly - one fixture had a comment line
+  mangled into `- name: true`), fixes yaml[indentation], and its
+  post-fix report drops all-but-the-first yaml match per file via a
+  re-run bookkeeping quirk.
+
+Parity after this pass (no rule logic changed): 2865 matched,
+10 krikri-only, 267 upstream-only, 10 unimplemented-upstream.
+
+### Weekly parity runs (2026-09, v0.6.0)
+
+`.github/workflows/lint-parity.yml` runs testing/lint/parity.py on a
+weekly cron (plus manual dispatch): installs the pinned upstream
+release (`ansible-lint==25.2.1` from PyPI - the local parity target is
+Debian's 25.6.1+really25.2.1, i.e. 25.2.1 code), builds, runs the
+harness over the testing/ corpus, and uploads the report as an
+artifact. The job does not fail on divergences (the documented
+pre-existing classes keep the harness exit code at 1); it exists to
+surface NEW divergence classes for triage, the lint-side analogue of
+the playbook engine's benchmark rounds. Locally the same thing is:
+
+    python3 testing/lint/parity.py [targets ...]
+
+### Version pinning (2026-09, v0.6.0)
+
+`krikri-lint --version` now reports the pinned parity target
+explicitly (`ansible-lint parity target: 25.6.1+really25.2.1 (upstream
+25.2.1)`), from the `PARITY_TARGET_ANSIBLE_LINT` constant in
+`src/krikri_lint/version.cr` next to `KRIKRI_LINT_VERSION`. Rule logic
+is pinned to what that release does wherever the two differ from
+upstream main (e.g. no-changed-when's async+poll:0 behavior).
+
+### Corpus licensing decision (2026-09, v0.6.0)
+
+The parity corpus is this repo's own `testing/` playbook/role
+fixtures, already committed in-repo (559 files under `testing/`,
+including every fixture the harness lint-checks). Decision: **lint
+fixtures stay committed in-repo** - the harness's default target is
+`testing/` itself, there is nothing fetched at test time to re-license
+(Galaxy role checkouts under `~/scratch` are never lint targets here),
+and the playbook side of the house already commits its testing
+playbooks the same way. No third-party content needs to enter the
+corpus for parity to be meaningful; if real Galaxy roles are ever
+linted as fixtures, they get committed as small hand-copied snippets,
+not vendored trees, keeping the corpus unambiguously ours.
+
 ## What this is
 
 `krikri-lint` would be a from-scratch reimplementation of `ansible-lint`
@@ -187,8 +287,9 @@ Upstream `ansible-lint` is ~150 rules in categories, driven by:
    argument schema checks.
 4. **Profiles** (`min` → `production` / `shared` / `official`) that gate
    which rules run; a rule below the active profile's severity bar is skipped.
-5. **Transform** (autofix) — deliberately out of scope for v1; upstream's
-   own autofix is partial.
+5. **Transform** (autofix) — implemented in v0.6.0 for the safely
+   mechanical subset; upstream's own autofix is partial too. See the
+   "--fix autofix" section.
 6. **Skip machinery** — inline `# noqa: rule-id`, per-project
    `.ansible-lint` / `ansible.cfg` config, `!unsafe`-aware parsing.
 7. **Exit codes**: 0 = clean, 2 = violations found (failure), 3 = crash,
@@ -336,9 +437,8 @@ v1 rule set (high value, all static, no execution):
 
 - Profile gating (`min`/`moderate`/`safety`/`shared`/`official`/
   `production`) — severity × tag table.
-- `--fix` transform: explicitly deferred; only after the rule set is
-  stable and only for a handful of safely-fixable rules
-  (`fqcn[action-core]`, `yaml[comments-indentation]`-style).
+- `--fix` transform: implemented (v0.6.0) for the safely mechanical
+  subset - see the "--fix autofix" section near the top.
 
 ## Testing strategy
 
@@ -369,22 +469,20 @@ machinery, but the real bar is parity runs against real content.
 
 ## Open questions
 
-1. **Corpus licensing**: which roles to keep as lint fixtures in-repo
-   vs. re-fetch at test time (same pattern as `ROLES_TESTED.md`).
-2. **yamllint subset scope**: upstream delegates all `yaml[*]` rules to
-   yamllint. How many of those to port before the parity bar is met —
-   suggest starting with `line-length`, `truthy`, `comments`,
-   `document-start`, `key-ordering`? (or explicitly declaring `yaml[*]`
-   a known gap in `KNOWN_MISSING.md`-style docs, since these are
-   style-only).
-3. **Rule id stability**: upstream rule ids have churned
-   (`risky-octal` merged into `risky-file-permissions` etc.). Pin the
-   target upstream version in this doc before Phase 1 and record it in
-   `krikri-lint --version` output, exactly like the playbook engine pins
-   its parity target.
-4. **Whether lint runs in CI here**: once `ROLES_TESTED.md` roles are a
-   corpus, a weekly parity run would keep the rule set honest the way
-   benchmark rounds keep the executor honest.
+All four original open questions are resolved:
+
+1. **Corpus licensing** - decided: lint fixtures stay committed
+   in-repo (see the "Corpus licensing decision" section above).
+2. **yamllint subset scope** - decided: the full `yaml[*]` set the
+   bundled .yamllint enables is ported (v0.5.0), except
+   `yaml[document-start]`, which that config disables (implementing
+   it would itself be a divergence).
+3. **Rule id stability** - decided: the target release is pinned as
+   `PARITY_TARGET_ANSIBLE_LINT` and reported by `krikri-lint
+   --version` (v0.6.0).
+4. **Whether lint runs in CI here** - decided: weekly
+   `lint-parity.yml` GitHub Actions workflow plus manual dispatch
+   (v0.6.0).
 
 ## Suggested first commit sequence
 

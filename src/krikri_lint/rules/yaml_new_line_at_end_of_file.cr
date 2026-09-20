@@ -14,11 +14,21 @@ module Krikri
       end
 
       def tags : Array(String)
-        ["formatting", "yaml"]
+        ["autofix", "formatting", "yaml"]
       end
 
       def applies_to : Array(FileType)
         FileType.values
+      end
+
+      def fixable? : Bool
+        true
+      end
+
+      def fix(buffer : FixBuffer, file : PositionedFile, violation : Violation) : Bool
+        return false if buffer.had_trailing_newline?
+        buffer.add_final_newline
+        true
       end
 
       def check(file : PositionedFile, violations : Array(Violation)) : Nil

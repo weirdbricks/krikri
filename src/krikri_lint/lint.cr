@@ -13,6 +13,7 @@ require "./json_schema"
 require "./arg_specs"
 require "./profiles"
 require "./task"
+require "./fixer"
 require "./rules/*"
 require "./runner"
 
