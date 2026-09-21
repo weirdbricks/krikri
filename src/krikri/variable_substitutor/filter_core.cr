@@ -611,6 +611,99 @@ module Krikri
           raw.to_s
         end
       end
+
+      # extract(container, morekeys=None) - real Ansible's own filter,
+      # arbitrated against ansible-core 2.19.11 (Phase-3 slice 4): the
+      # piped value plus the morekeys sequence is a path of getitem
+      # accesses into *container* - EVERY level uses the same step
+      # semantics (verified live: morekeys can keep indexing into
+      # lists and even strings, `0 | extract(clist, [0])` -> "z"), so
+      # one step function serves the first access and the walk alike.
+      # A miss at any level raises real Ansible's uniform wording,
+      # "object of type '<type>' has no attribute <key>", where <type>
+      # is the Python type name of the node missed on ('dict', 'list',
+      # 'str', 'int', 'float', 'bool', 'NoneType') and <key> is quoted
+      # iff it was a string (real: getattr's message quotes str attrs,
+      # leaves int attrs bare - verified both ways). Both Jinja
+      # evaluators call this core: FilterEngine's `extract` case (which
+      # also serves map()'s per-item path) directly, and the Crinja
+      # registration (jinja_filters.cr) after converting its container
+      # to JSON::Any. *hostvars_label*, hoisted to the caller per the
+      # Phase-3 survey, is the wrapper type name real Ansible reports
+      # for nodes under a hostvars container ("HostVarsVars" - verified
+      # via `map('extract', hostvars, 'ansible_host')` over a host
+      # lacking the attribute); when nil, labels come from the node's
+      # own JSON type. Real words a missing HOST (a first-level miss on
+      # the hostvars container itself) with the path-naming marker
+      # "hostvars['nosuchhost']" instead of a type message - that
+      # wording depends on Ansible's marker machinery, so krikri keeps
+      # the HostVarsVars label there (logged deviation).
+      def self.extract(container : JSON::Any, keys : Array(JSON::Any), hostvars_label : String? = nil) : JSON::Any
+        extract_walk(container, keys, hostvars_label)
+      end
+
+      # The walk continuation: same semantics, but starting from a node
+      # already resolved. The Crinja registration hands over here once
+      # its native dict-shaped walk leaves dict-land (see its comment
+      # for why the first dict levels stay native there).
+      def self.extract_walk(node : JSON::Any, keys : Array(JSON::Any), hostvars_label : String? = nil) : JSON::Any
+        keys.reduce(node) { |walked, key| extract_step(walked, key, hostvars_label) }
+      end
+
+      # One getitem access. Dicts look up by the key's string form (the
+      # JSON engine's keys are always strings; an int key coerces -
+      # real Ansible would miss, since Python dicts don't stringify
+      # keys, but krikri cannot represent int YAML keys at all, so the
+      # coercion is what keeps `range(n) | map('extract', mapping, ...)`
+      # idioms working - kept deviation). Lists and strings index by
+      # int, negative indices included (real: Python subscript
+      # semantics, `{{ -1 | extract(clist) }}` -> last element,
+      # verified); anything else - including an in-range-type key on
+      # the wrong container, a string key on a list, an out-of-range
+      # index - is a miss with the node's type label.
+      private def self.extract_step(node : JSON::Any, key : JSON::Any, hostvars_label : String?) : JSON::Any
+        label = hostvars_label || extract_type_label(node)
+        if hash = node.as_h?
+          key_str = key.as_s? || key.to_s
+          return hash[key_str] if hash.has_key?(key_str)
+        elsif str = node.as_s?
+          if (idx = key.as_i64?) && in_subscript_range?(idx, str.size)
+            return JSON::Any.new(str[idx].to_s)
+          end
+        elsif arr = node.as_a?
+          if (idx = key.as_i64?) && in_subscript_range?(idx, arr.size)
+            return arr[idx]
+          end
+        end
+        raise extract_miss_message(label, key)
+      end
+
+      private def self.in_subscript_range?(idx : Int64, size : Int) : Bool
+        idx >= 0 ? idx < size : idx >= -size
+      end
+
+      # Real Ansible's uniform miss wording (verified live against
+      # ansible-core 2.19.11 for dict/list/str/int/NoneType/bool nodes,
+      # string and int keys, first level and walk alike). The key is
+      # quoted iff it was a string - Python's own AttributeError message
+      # convention, which the marker surfaces verbatim.
+      def self.extract_miss_message(label : String, key : JSON::Any) : String
+        shown = key.as_s? ? "'#{key.as_s}'" : key.to_s
+        "object of type '#{label}' has no attribute #{shown}"
+      end
+
+      # Python type name of a JSON node, for the miss wording.
+      def self.extract_type_label(node : JSON::Any) : String
+        case node.raw
+        when Hash   then "dict"
+        when Array  then "list"
+        when String then "str"
+        when Int    then "int"
+        when Float  then "float"
+        when Bool   then "bool"
+        else             "NoneType"
+        end
+      end
     end
   end
 end

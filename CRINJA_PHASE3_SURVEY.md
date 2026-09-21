@@ -572,7 +572,23 @@ new `FilterCore.regex_search` / `FilterCore.regex_findall` in
 registrations (jinja_filters.cr) alike - the same Group-B shape
 `regex_replace` already had. VERSION 0.9.1237 -> 0.9.1238.
 
-## Method
+The survey's #4 candidate, the filter behind both of tonight's
+production bugs (21077616, e7e1102d), executed on the survey's
+prescribed seam: **shared-core unification, NOT
+`#delegate_to_crinja_filter`** - `map('extract', hostvars, attr)` per-item
+reachability makes per-call bridge conversion compound. Both engines now
+answer extract from ONE arbitrated contract: new
+`FilterCore.extract` / `FilterCore.extract_walk` /
+`FilterCore.extract_miss_message` / `FilterCore.extract_type_label` in
+`filter_core.cr`, called directly by FilterEngine's hand-rolled case
+(also serving map()'s inner per-item path) and - after a subtree-scoped
+conversion - by the Crinja registration (jinja_filters.cr). Hostvars
+detection stayed hoisted to each caller per the survey: the hand-rolled
+side keeps its object-identity check against `@vars["hostvars"]`, the
+Crinja side recognizes its HostVarsVarsDict wrappers. VERSION
+0.9.1238 -> 0.9.1239.
+
+## Method (Slice 3)
 
 1. **Probe before touching code**:
    `scripts/crinja_corpus/probe_regex_divergence.cr` - 31 cases
@@ -639,3 +655,113 @@ exactly the documented baseline (`is_test_aliases_spec` cluster,
 `x509_csr_info_spec` tmp-file race). No spec modified except the
 eleven additions. Ameba clean on all touched files (the two remaining
 jinja_filters.cr findings pre-date this slice).
+
+## Method (Slice 4)
+
+1. **Probe before touching code**:
+   `scripts/crinja_corpus/probe_extract_divergence.cr` - 26 cases
+   (hostvars: happy/missing-attr/missing-host/direct-no-morekeys; plain
+   dict: present/first-level-miss/morekeys-miss; morekeys: string, list,
+   miss-mid-walk, onto-scalar-acc, int-indexing-into-list, single-int,
+   null, empty; list: int/string/negative/out-of-range keys; containers:
+   str/int-indexed, null, bool; the int-key coercion shape), each run
+   through the hand-rolled dispatch and the exact Crinja registration
+   the chain path uses, with hostvars shaped like
+   CrinjaRenderer.convert_hostvars builds it (HostVarsVarsDict
+   wrappers).
+2. **Arbitration against real ansible-core 2.19.11** (local
+   `ansible-playbook`, one debug render per case in `/tmp`, one play per
+   failing probe since an all-host failure aborts subsequent plays) -
+   plus reading the installed `ansible/plugins/filter/core.py` extract
+   itself: it is a bare `keys.reduce(container) { getitem }` - ONE step
+   shape at EVERY level, which is why krikri's core is one
+   `extract_step` too. Wordings live-verified for dict/list/str/int/
+   bool/NoneType nodes, string AND int keys, first level and walk alike.
+3. Implement, full suite, ameba, and a real-tree-vs-old-tree bench via
+   a throwaway worktree at the pre-change commit (below - this slice
+   NEEDED it: the first cut regressed 6.5x and was restructured).
+
+## Divergences found (pre-change probe: 13 of 26, every one arbitrated)
+
+| Case | Real Ansible 2.19.11 | OLD hand-rolled | OLD Crinja | Verdict landed |
+|---|---|---|---|---|
+| plain dict first-level miss | `object of type 'dict' has no attribute 'zzz'` | `extract: key 'zzz' not found` | real wording | real wording both sides (21077616 only fixed the Crinja copy's wording; the hand-rolled `when Hash` branch kept the old text) |
+| non-dict container (str/null/bool) | `... 'str'/'NoneType'/'bool' has no attribute ...` | labeled EVERY non-dict node `'dict'` (identity check gave no label) | `extract: object of type Crinja::Value has no attribute` | Python type name from the node, both sides |
+| morekeys onto non-dict acc (`mapping | extract(['a','b'])`) | `object of type 'int' has no attribute 'b'` | labeled acc `'dict'` | acc's `#{acc.class}` | real wording both sides |
+| list index out of range (int key) | `object of type 'list' has no attribute 5` (int keys UNQUOTED) | `extract: list index 5 out of range` | same as old | real wording both sides |
+| list, string key | `object of type 'list' has no attribute 'abc'` | `extract: list index  out of range` (nil idx, double space) | `... index abc out of range` | real wording both sides |
+| negative index | `one` (Python `list[-1]`) | raised out-of-range | same | supported both sides |
+| morekeys int-indexes into lists/strings (`0 | extract(clist, [0])`) | `z` (clist[0] then `'zero'[0]` - the walk is getitem at every level) | walk only handled dicts -> raise | same | shared `extract_step` serves every level |
+| `morekeys = none` | `None` = absent -> `mapping[x]` | treated null as a key -> raise | same | null morekeys = absent both sides |
+| int key on dict (miss) | `object of type 'dict' has no attribute 5` | `extract: key '5' not found` | real wording but QUOTED `'5'` | real wording, quoting iff the key was a string |
+| `x | extract(hostvars)` (no morekeys) | the host's dict | worked (JSON hostvars) | returned the HostVarsVarsDict OBJECT, which stringified into a Crinja repr crossing to JSON | converted to the host's plain dict (plus a `HostVarsVarsDict` case in `crinja_value_to_json_any`, so the wrapper can never stringify again) |
+
+Two deviation classes were probed and deliberately NOT converged,
+both logged here rather than in KN_MISSING.md (filter-level, not
+module-level):
+
+- **Missing HOST** (first-level miss on the hostvars container): real
+  words it `hostvars['nosuchhost']` - a path-naming marker from
+  Ansible's marker machinery, not a type message; krikri keeps the
+  `HostVarsVars` label (both copies now agree on it; it matches the
+  second-level shape real DOES word as HostVarsVars).
+- **Int key coercing onto string-keyed dicts** (`5 | extract({"5": "v"})`
+  -> `v`; real raises): krikri's JSON engine cannot represent int YAML
+  keys at all, so the coercion is what keeps `range(n) |
+  map('extract', mapping, ...)` idioms alive. Kept, now on one code path.
+
+## The seam: shared core + native Crinja dict-walk (bench-driven)
+
+The first cut converted the Crinja side's whole container to JSON::Any
+per call (the survey's literal "FilterCore.extract speaking JSON::Any").
+The bench caught it: `hosts | map('extract', hostvars, 'node_ip')` over
+an 8-host x 41-var inventory went **16.1 us -> 103.8 us per render
+(6.5x)** - re-paying the whole inventory's conversion on every map
+item, exactly the per-item tax the survey's seam rule exists to
+prevent. Restructured: the Crinja registration walks DICT-shaped
+containers natively on Crinja's own representation (pure
+has_key?/[] glue, ~15 lines, delegating its misses to the SHARED
+`FilterCore.extract_miss_message` so wording stays one-table), and
+hands over to `FilterCore.extract_walk` with a subtree-scoped
+conversion the moment the walk leaves dict-land (a list/string
+subscript, a scalar). Post-restructure bench: **17.6 us vs the old
+tree's 16.1 us** - parity within noise. The hand-rolled side is
+conversion-free by construction (its containers already are JSON::Any).
+The probe reports **0 diverged of 26** by construction post-change;
+its pre-change output above is the divergence inventory.
+
+## Specs and suite
+
+7 new + 1 re-worded regression specs pin the arbitrated contracts:
+`filter_engine_spec.cr` (out-of-range wording, negative index,
+first-level dict-miss wording, str/NoneType labels, walk
+int-indexing + int-acc wording, null-morekeys-absent) and
+`crinja_renderer_spec.cr` (walk/negative/string indexing through the
+registration; the hostvars-dict-intact shape). The 21077616
+regression specs (HostVarsVars + plain-dict dict wording, both
+engines) pass unchanged; the e7e1102d integration repro
+(`spec/integration/debug_var_lazy_extract_raise_spec.cr`) passes both
+directions, and the exact commit-message playbook was re-run manually
+against the rebuilt binary: fail path aborts with exit 2 and the
+HostVarsVars message, happy path renders all three hosts' IPs.
+
+Full suite after the change: **5357 examples, 6 failures / 2 errors** -
+exactly the documented baseline (`is_test_aliases_spec` cluster,
+`x509_csr_info_spec` tmp-file race). No spec modified except the
+arbitrated additions. Ameba clean on every touched file (the
+`jinja_filters.cr` Lint/Formatting finding pre-dates this slice,
+same as slices 2 and 3).
+
+## Verdict and what's next
+
+Slice 4 lands the survey's highest-value candidate with its
+double-fix history discharged: the raise-on-miss contract,
+hostvars wrapper labeling, and every arbitrated wording now live in
+one core, so the next extract-class bug gets fixed ONCE. The
+bench-driven restructure is the slice's transferable lesson: for a
+map()-reachable filter whose Crinja-side container is big and
+dict-shaped, "shared core speaking JSON::Any" needs the
+native-first-level + subtree-scoped-handoff shape, not a whole-
+container conversion. Remaining Group-A tail (from_yaml_all, zip/
+product, combinations/permutations, rekey_on_member, relpath, log,
+pow, random) stays bridge-shaped per the survey.

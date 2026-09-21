@@ -1016,13 +1016,81 @@ describe Krikri::VariableSubstitutor::FilterEngine do
     end
   end
 
-  it "extract raises on an out-of-range list index" do
+  it "extract raises on an out-of-range list index, with real Ansible's wording" do
+    # Phase-3 slice 4: real ansible-core 2.19.11 words a list miss with
+    # the uniform getitem message (live-verified: `{{ 5 | extract(clist) }}`
+    # -> "object of type 'list' has no attribute 5", int keys unquoted),
+    # not the old hand-rolled "extract: list index 5 out of range".
     v = Hash(String, JSON::Any).new
     v["container"] = JSON.parse(%(["zero", "one"]))
     vars_engine = Krikri::VariableSubstitutor::FilterEngine.new(v)
-    expect_raises(Exception, "out of range") do
+    expect_raises(Exception, "object of type 'list' has no attribute 5") do
       vars_engine.apply(JSON::Any.new(5_i64), "extract(container)")
     end
+  end
+
+  it "extract indexes negatively like a Python subscript" do
+    # Live-verified against ansible-core 2.19.11: `{{ -1 | extract(clist) }}`
+    # -> the last element (real's getitem is a plain Python subscript);
+    # the old copies rejected any negative index as out of range.
+    v = Hash(String, JSON::Any).new
+    v["container"] = JSON.parse(%(["zero", "one"]))
+    vars_engine = Krikri::VariableSubstitutor::FilterEngine.new(v)
+    vars_engine.apply(JSON::Any.new(-1_i64), "extract(container)").as_s.should eq("one")
+  end
+
+  it "extract words a plain dict's first-level miss like real Ansible" do
+    # Live-verified: `{{ 'zzz' | extract(mapping) }}` -> "object of type
+    # 'dict' has no attribute 'zzz'". The old hand-rolled copy said
+    # "extract: key 'zzz' not found" while the Crinja copy already used
+    # the real wording - the divergence that motivated the shared core.
+    v = Hash(String, JSON::Any).new
+    v["mapping"] = JSON.parse(%({"x": {"a": 1}}))
+    vars_engine = Krikri::VariableSubstitutor::FilterEngine.new(v)
+    expect_raises(Exception, "object of type 'dict' has no attribute 'zzz'") do
+      vars_engine.apply(JSON::Any.new("zzz"), "extract(mapping)")
+    end
+  end
+
+  it "extract words non-dict nodes with their Python type names" do
+    # Live-verified shapes: string container -> 'str', defined-null
+    # container -> 'NoneType'; the old hand-rolled copy labeled every
+    # non-dict node 'dict'. Int keys are unquoted (real's getattr
+    # message convention), string keys quoted.
+    v = Hash(String, JSON::Any).new
+    v["scalar_str"] = JSON.parse(%("hello"))
+    v["nullvar"] = JSON.parse(%(null))
+    vars_engine = Krikri::VariableSubstitutor::FilterEngine.new(v)
+    expect_raises(Exception, "object of type 'str' has no attribute 'x'") do
+      vars_engine.apply(JSON::Any.new("x"), "extract(scalar_str)")
+    end
+    expect_raises(Exception, "object of type 'NoneType' has no attribute 'x'") do
+      vars_engine.apply(JSON::Any.new("x"), "extract(nullvar)")
+    end
+  end
+
+  it "extract int-indexes strings and lists at every walk level" do
+    # Live-verified against ansible-core 2.19.11: `{{ 0 | extract(clist,
+    # [0]) }}` -> "z" (clist[0] then 'zero'[0]) - the morekeys walk is
+    # the same getitem step at every level, and the old copies only
+    # walked dicts. Also covers the int-key miss wording (unquoted).
+    v = Hash(String, JSON::Any).new
+    v["clist"] = JSON.parse(%(["zero", "one"]))
+    v["mapping"] = JSON.parse(%({"x": {"a": 1}}))
+    vars_engine = Krikri::VariableSubstitutor::FilterEngine.new(v)
+    vars_engine.apply(JSON::Any.new(0_i64), "extract(clist, [0])").as_s.should eq("z")
+    expect_raises(Exception, "object of type 'int' has no attribute 'b'") do
+      vars_engine.apply(JSON::Any.new("x"), "extract(mapping, ['a', 'b'])")
+    end
+  end
+
+  it "extract treats a null morekeys as absent, like real Ansible's None" do
+    # Live-verified: `{{ 'x' | extract(mapping, none) }}` -> mapping[x];
+    # the old copies treated the null as a key and raised on the miss.
+    v = Hash(String, JSON::Any).new
+    v["mapping"] = JSON.parse(%({"x": {"a": 1}}))
+    vars_engine = Krikri::VariableSubstitutor::FilterEngine.new(v)
+    vars_engine.apply(JSON::Any.new("x"), "extract(mapping, none)").as_h.should eq(JSON.parse(%({"a": 1})).as_h)
   end
 
   it "from_yaml_all parses a multi-document YAML string" do

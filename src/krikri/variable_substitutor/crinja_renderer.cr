@@ -487,6 +487,15 @@ module Krikri
           JSON::Any.new(raw)
         when Nil
           JSON::Any.new(nil)
+        when HostVarsVarsDict
+          # Krikri's hostvars wrapper (a Crinja::Object, so the generic
+          # Object case below would stringify it): converts to the
+          # host's plain dict, so an extract result containing it (e.g.
+          # `x | extract(hostvars)` with no morekeys) crosses into
+          # JSON-shaped rendering as a real mapping, not a repr string.
+          hash = Hash(String, JSON::Any).new
+          raw.each { |k, v| hash[k] = crinja_value_to_json_any(v) }
+          JSON::Any.new(hash)
         when Crinja::Dictionary
           hash = Hash(String, JSON::Any).new
           raw.each { |k, v| hash[k.to_s] = crinja_value_to_json_any(v) }

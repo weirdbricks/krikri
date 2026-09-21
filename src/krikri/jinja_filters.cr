@@ -1087,73 +1087,93 @@ module Krikri
       Crinja::Value.new(result)
     end
 
-    # extract's per-host lookups must raise on a miss REGARDLESS of strict
-    # mode: real Ansible's extract filter calls getattr on the container
-    # directly, so a missing attribute fails the task at filter time with
-    # "object of type 'HostVarsVars' has no attribute '...'" - it never
-    # defers to force time the way a plain `{{ hostvars[h].attr }}` print
-    # does (HostVarsVarsDict#crinja_attribute only raises when strict
-    # templating is enabled for the fiber, and a map('extract', hostvars,
-    # 'ansible_host') chain over hosts without the attribute rendered
-    # silent empty values instead of aborting, found in dirless-infra's
-    # test-backend.yml).
-    def self.extract_hostvars_attribute(dict : HostVarsVarsDict, key : String) : Crinja::Value
-      raise "object of type 'HostVarsVars' has no attribute '#{key}'" unless dict.has_key?(key)
-      dict.crinja_attribute(Crinja::Value.new(key))
-    end
-
     # `extract(container, morekeys=None)` - real Ansible filter: target
     # is used as an index/key into *container*.
+    #
+    # Phase-3 slice 4: the extraction CONTRACT (raise-on-miss wording,
+    # the key-coercion rule, list/string subscript semantics, null
+    # morekeys = real's None) lives in the SHARED
+    # VariableSubstitutor::FilterCore.extract core that FilterEngine's
+    # hand-rolled case calls too - previously TWO independently-
+    # maintained copies that commit 21077616 had to fix in the same
+    # commit. Dict-shaped containers walk NATIVELY on Crinja's own
+    # representation: converting a dict container to JSON re-pays its
+    # whole size on every map() item (measured 6.5x on the canonical
+    # `hosts | map('extract', hostvars, 'node_ip')` shape before this
+    # native walk), so only the glue below is representation-specific;
+    # the moment the walk leaves dict-shape (a list/string subscript, a
+    # scalar), the subtree converts and the shared core takes over.
     Crinja.filter({container: Crinja::UNDEFINED, morekeys: Crinja::UNDEFINED}, :extract) do
-      container = arguments["container"]
-      # real Ansible/Jinja raises when the key is absent from a hash
-      # container (e.g. `map('extract', hostvars, 'ansible_host')` with
-      # no host carrying `ansible_host`) - a silent nil changes control
-      # flow, so mirror the raise. hostvars' per-host dicts arrive as
-      # Krikri::HostVarsVarsDict wrappers; extract raises on their misses
-      # directly (see extract_hostvars_attribute) rather than going
-      # through crinja_attribute's strict-mode-dependent deferral.
-      container_raw = container.raw
-      key = target.to_s
-
-      extracted =
-        if container_raw.is_a?(HostVarsVarsDict)
-          JinjaFilters.extract_hostvars_attribute(container_raw, key)
-        else
-          case raw = container_raw
-          when Array(Crinja::Value)
-            idx = key.to_i?
-            raise "extract: list index #{key} out of range" unless idx && idx >= 0 && idx < raw.size
-            raw[idx]
-          when Crinja::Dictionary
-            # Real Ansible words a plain dict's morekeys miss "object of
-            # type 'dict' has no attribute 'b'" (verified live against
-            # ansible-core 2.19.11), not "key not found".
-            raise "object of type 'dict' has no attribute '#{key}'" unless raw.has_key?(Crinja::Value.new(key))
-            raw[Crinja::Value.new(key)]
-          else
-            raise "extract: object of type #{container.class} has no attribute '#{key}'"
-          end
-        end
-
-      if !arguments["morekeys"].undefined?
+      keys = [VariableSubstitutor::CrinjaRenderer.crinja_value_to_json_any(target)]
+      unless arguments["morekeys"].undefined?
         morekeys = arguments["morekeys"]
-        # a String is a SINGLE key, never a character sequence (a naive
-        # sequence? test exploded "node_ip" into its characters)
-        keys = morekeys.sequence? && !morekeys.raw.is_a?(String) ? morekeys.to_a.map(&.to_s) : [morekeys.to_s]
-        keys.reduce(extracted) do |acc, key|
-          acc_raw = acc.raw
-          if acc_raw.is_a?(HostVarsVarsDict)
-            JinjaFilters.extract_hostvars_attribute(acc_raw, key)
-          elsif acc_raw.is_a?(Crinja::Dictionary)
-            raise "object of type 'dict' has no attribute '#{key}'" unless acc_raw.has_key?(Crinja::Value.new(key))
-            acc_raw[Crinja::Value.new(key)]
-          else
-            raise "extract: object of type #{acc.class} has no attribute '#{key}'"
+        # A String is a SINGLE key, never a character sequence (a naive
+        # sequence? test exploded "node_ip" into its characters); a null
+        # morekeys is real Ansible's None: absent, not a key
+        # (live-verified: `x | extract(mapping, none)` -> mapping[x]).
+        if morekeys.sequence? && !morekeys.raw.is_a?(String)
+          morekeys.to_a.each do |key|
+            json_key = VariableSubstitutor::CrinjaRenderer.crinja_value_to_json_any(key)
+            keys << json_key unless json_key.raw.nil?
           end
+        else
+          json_key = VariableSubstitutor::CrinjaRenderer.crinja_value_to_json_any(morekeys)
+          keys << json_key unless json_key.raw.nil?
         end
+      end
+
+      node = arguments["container"]
+      under_hostvars = false
+      i = 0
+      while i < keys.size
+        raw = node.raw
+        if raw.is_a?(HostVarsVarsDict)
+          # A per-host dict (a first-level hit into hostvars, or a
+          # hostvars-typed container): misses word "HostVarsVars", the
+          # wrapper label real Ansible's own per-host objects report
+          # (live-verified), and the label sticks to every deeper level.
+          under_hostvars = true
+          key_str = keys[i].as_s? || keys[i].to_s
+          raise VariableSubstitutor::FilterCore.extract_miss_message("HostVarsVars", keys[i]) unless raw.has_key?(key_str)
+          node = raw.crinja_attribute(Crinja::Value.new(key_str))
+          i += 1
+        elsif raw.is_a?(Crinja::Dictionary)
+          # Hostvars top-level detection (CrinjaRenderer.convert_hostvars's
+          # shape: a Crinja::Dictionary of per-host HostVarsVarsDict
+          # wrappers - first value's type is enough, every host is
+          # wrapped by construction). A missing HOST words "HostVarsVars"
+          # here; real words it with the path-naming marker
+          # "hostvars['nosuchhost']" instead (logged deviation - that
+          # wording needs Ansible's marker machinery).
+          if !under_hostvars && raw.values.first?.try(&.raw.is_a?(HostVarsVarsDict))
+            under_hostvars = true
+          end
+          key_str = keys[i].as_s? || keys[i].to_s
+          raise VariableSubstitutor::FilterCore.extract_miss_message(under_hostvars ? "HostVarsVars" : "dict", keys[i]) unless raw.has_key?(Crinja::Value.new(key_str))
+          node = raw[Crinja::Value.new(key_str)]
+          i += 1
+        else
+          break
+        end
+      end
+
+      if i == keys.size
+        # The whole path stayed in dict-land. A final HostVarsVars
+        # wrapper (e.g. `x | extract(hostvars)` with no morekeys)
+        # converts to the host's PLAIN dict - real returns the host's
+        # vars mapping, and letting the raw wrapper cross into
+        # JSON-shaped rendering stringified into a Crinja repr
+        # (crinja_value_to_json_any now handles it natively).
+        raw = node.raw
+        raw.is_a?(HostVarsVarsDict) ? VariableSubstitutor::CrinjaRenderer.json_any_to_crinja_value(VariableSubstitutor::CrinjaRenderer.crinja_value_to_json_any(node)) : node
       else
-        extracted
+        # Left dict-land (a list/string subscript, a scalar hit or
+        # miss): subtree-scoped conversion, then the shared core owns
+        # everything from here.
+        json_node = VariableSubstitutor::CrinjaRenderer.crinja_value_to_json_any(node)
+        VariableSubstitutor::CrinjaRenderer.json_any_to_crinja_value(
+          VariableSubstitutor::FilterCore.extract_walk(json_node, keys[i..], under_hostvars ? "HostVarsVars" : nil)
+        )
       end
     end
 
@@ -2284,21 +2304,21 @@ module Krikri
                  Crinja::Value.new(hash.map { |k, v| Crinja::Value.new({"key" => Crinja::Value.new(k.to_s), "value" => v}) })
                when "list"
                  Crinja::Value.new(variadic_terms)
-              when "items"
-              Crinja::Value.new(variadic_terms.flat_map { |tval| tval.sequence? ? tval.to_a : [tval] })
-              when "flattened"
-              # lookup('flattened', t1, t2, ...) - real Ansible's own
-              # flattened lookup: deep-flattens every term (nested lists
-              # flattened recursively, non-list scalars kept as whole
-              # items) and comma-joins the results via the scalar
-              # `lookup()` spelling (wantlist=True stays a real list).
-              # .j2 twin of ExpressionEvaluator's own flattened case
-              # (HanXHX.debian_bootstrap, round 821001) - the two
-              # evaluators share no implementation.
-              wantlist = arguments.kwargs["wantlist"]?.try(&.truthy?) || false
-              items = JinjaFilters.flatten_crinja_terms(variadic_terms)
-              wantlist ? Crinja::Value.new(items) : Crinja::Value.new(items.map(&.to_string).join(","))
-              when "together"
+               when "items"
+                 Crinja::Value.new(variadic_terms.flat_map { |tval| tval.sequence? ? tval.to_a : [tval] })
+               when "flattened"
+                 # lookup('flattened', t1, t2, ...) - real Ansible's own
+                 # flattened lookup: deep-flattens every term (nested lists
+                 # flattened recursively, non-list scalars kept as whole
+                 # items) and comma-joins the results via the scalar
+                 # `lookup()` spelling (wantlist=True stays a real list).
+                 # .j2 twin of ExpressionEvaluator's own flattened case
+                 # (HanXHX.debian_bootstrap, round 821001) - the two
+                 # evaluators share no implementation.
+                 wantlist = arguments.kwargs["wantlist"]?.try(&.truthy?) || false
+                 items = JinjaFilters.flatten_crinja_terms(variadic_terms)
+                 wantlist ? Crinja::Value.new(items) : Crinja::Value.new(items.map(&.to_string).join(","))
+               when "together"
                  arrays = variadic_terms.map { |tval| tval.sequence? ? tval.to_a : [] of Crinja::Value }
                  size = arrays.max_of?(&.size) || 0
                  Crinja::Value.new((0...size).map { |i| Crinja::Value.new(arrays.map { |arr| arr[i]? || Crinja::Value.new(nil) }) })

@@ -1266,54 +1266,51 @@ module Krikri
           # piped from `map('extract', container)` over a list of
           # indices/keys); `morekeys` (a further key, or list of keys)
           # drills down into the extracted element.
-          args = split_top_level_args(filter_args)
-          container = args[0]?.try { |arg| resolve_expression(arg) }
-          return JSON::Any.new(nil) unless container
-
+          #
           # real Ansible/Jinja raises when the key is absent from a
           # hash container (e.g. `map('extract', hostvars,
           # 'ansible_host')` with no host carrying `ansible_host`
           # aborts the play with "has no attribute") - a silent nil
           # here changes control flow by letting bad-inventory
-          # playbooks run on, so mirror the raise. When the container
-          # IS hostvars, real wraps each host's vars in its
-          # HostVarsVars wrapper and words the miss accordingly
-          # (verified live against ansible-core 2.19.11: a plain
-          # dict's morekeys miss says "object of type 'dict' has no
-          # attribute 'b'", hostvars' says "object of type
-          # 'HostVarsVars' has no attribute 'ansible_host'").
-          container_is_hostvars = false
+          # playbooks run on. Found in dirless-infra's test-backend.yml
+          # (commits 21077616/e7e1102d); the raise now lives in the
+          # SHARED FilterCore.extract core that the Crinja-side
+          # registration (jinja_filters.cr) calls too - previously TWO
+          # independently-maintained copies that 21077616 had to fix in
+          # the same commit, and whose miss wording had already
+          # diverged (this copy said "extract: key 'x' not found" for a
+          # plain dict's first-level miss and labeled every non-dict
+          # node 'dict'; real Ansible's uniform getitem wording, now
+          # shared, is arbitrated in FilterCore's comment).
+          #
+          # Hostvars detection stays hoisted HERE (this engine has no
+          # HostVarsVarsDict wrapper - its hostvars is the plain JSON
+          # hash @vars carries): container object identity with
+          # @vars["hostvars"] supplies the "HostVarsVars" miss label
+          # the core uses at every level under it, matching real
+          # Ansible's wrapper-typed per-host dicts.
+          args = split_top_level_args(filter_args)
+          container = args[0]?.try { |arg| resolve_expression(arg) }
+          return JSON::Any.new(nil) unless container
+
+          hostvars_label = nil
           if (vars = @vars) && (hostvars_var = vars["hostvars"]?) &&
              (hostvars_raw = hostvars_var.raw).is_a?(Hash) &&
-             (container_raw_check = container.raw).is_a?(Hash)
-            container_is_hostvars = container_raw_check.same?(hostvars_raw)
+             (container_raw_check = container.raw).is_a?(Hash) &&
+             container_raw_check.same?(hostvars_raw)
+            hostvars_label = "HostVarsVars"
           end
-          missing_attribute = ->(key : String) do
-            type = container_is_hostvars ? "HostVarsVars" : "dict"
-            "object of type '#{type}' has no attribute '#{key}'"
-          end
-          extracted = case raw = container.raw
-                      when Array
-                        idx = value.as_i64?.try(&.to_i)
-                        raise "extract: list index #{idx} out of range" unless idx && idx >= 0 && idx < raw.size
-                        raw[idx]
-                      when Hash
-                        raise "extract: key '#{as_string(value)}' not found" unless raw.has_key?(as_string(value))
-                        raw[as_string(value)]
-                      else
-                        raise missing_attribute.call(as_string(value))
-                      end
-
+          keys = [value]
           if morekeys_arg = args[1]?
             morekeys = resolve_expression(morekeys_arg)
-            keys = morekeys.as_a? ? morekeys.as_a.map { |k| as_string(k) } : [as_string(morekeys)]
-            keys.reduce(extracted) do |acc, key|
-              raise missing_attribute.call(key) unless acc.as_h?.try(&.has_key?(key))
-              acc.as_h[key]
+            # A null morekeys is real Ansible's None: absent, not a
+            # key (live-verified: `x | extract(mapping, none)` ->
+            # mapping[x]).
+            unless morekeys.raw.nil?
+              morekeys.as_a? ? keys.concat(morekeys.as_a) : keys << morekeys
             end
-          else
-            extracted
           end
+          FilterCore.extract(container, keys, hostvars_label)
         when "from_yaml_all"
           # from_yaml_all() - real Ansible filter: parses a multi-
           # document YAML string (`---`-separated) into a list of
