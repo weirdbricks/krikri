@@ -461,6 +461,29 @@ describe "krikri-playbook CLI (--check mode)" do
     output.should contain("delegate_to / run_once smoke test complete!")
   end
 
+  it "halts every host in the play when a run_once: task fails, while only the executing host's failure is counted" do
+    status, output = run_playbook(
+      "test-run-once-fail-quick.yml",
+      [] of String,
+      inventory: File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-three-local-hosts.ini")
+    )
+
+    # Real ansible-playbook 2.19.11 behavior: the failed run_once result
+    # marks every host in the play failed (no host proceeds into later
+    # tasks), but only the executing host's failures stat is incremented.
+    status.success?.should be_false
+    # The next task's banner/output never appears for ANY host.
+    output.should_not contain("should never run")
+    output.should_not contain("TASK [never reached by any host]")
+    # Only the executing host shows a failure line; the other two get
+    # nothing of their own for this task.
+    output.scan(/failed: \[node/).size.should eq(1)
+    # Recap: exactly one failure, spread over the three hosts.
+    output.should contain("failed=1")
+    output.should_not contain("failed=2")
+    output.should_not contain("failed=3")
+  end
+
   it "re-resolves a templated delegate_to: per loop iteration instead of once before the loop binds item" do
     status, output = run_playbook(
       "test-delegate-loop-item-quick.yml",
