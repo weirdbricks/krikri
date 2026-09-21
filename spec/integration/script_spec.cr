@@ -82,9 +82,83 @@ describe "script plugin" do
 
     result["changed"].as_bool.should be_false
     result["skipped"].as_bool.should be_true
+    result["msg"].as_s.should eq("Check mode is not supported for this task.")
     File.exists?(marker).should be_false
   ensure
     File.delete(marker) if marker && File.exists?(marker)
+    File.delete(path) if path && File.exists?(path)
+  end
+
+  # Real Ansible's script action plugin supports check mode PARTIALLY,
+  # via creates:/removes: gates (live-verified against ansible-core
+  # 2.19.4): a holding gate reports `skipping:` with the "matching
+  # creates/removes option" msg, a passing gate reports an ordinary
+  # changed: true would-have-run result - and in NEITHER gated case
+  # does the script itself execute under --check.
+  it "under check mode with a HOLDING creates: gate reports skipping" do
+    path = sc_path("script_cm_creates_hold.sh")
+    File.write(path, "#!/bin/sh\nexit 0\n")
+    File.chmod(path, 0o755)
+    gate = sc_path("script_cm_creates_gate")
+    File.write(gate, "exists")
+
+    result = PluginSpecHelper.run("script", {"cmd" => path, "creates" => gate, "_ansible_check_mode" => "true"})
+
+    result["changed"].as_bool.should be_false
+    result["skipped"].as_bool.should be_true
+    result["msg"].as_s.should eq("#{gate} exists, matching creates option")
+  ensure
+    File.delete(gate) if gate && File.exists?(gate)
+    File.delete(path) if path && File.exists?(path)
+  end
+
+  it "under check mode with a PASSING creates: gate reports changed:true without running" do
+    path = sc_path("script_cm_creates_pass.sh")
+    File.write(path, "#!/bin/sh\nexit 0\n")
+    File.chmod(path, 0o755)
+    gate = sc_path("script_cm_creates_absent_gate")
+    File.delete?(gate)
+
+    result = PluginSpecHelper.run("script", {"cmd" => path, "creates" => gate, "_ansible_check_mode" => "true"})
+
+    result["changed"].as_bool.should be_true
+    result["skipped"]?.try(&.as_bool).should be_falsey
+    File.exists?(gate).should be_false
+  ensure
+    File.delete(gate) if gate && File.exists?(gate)
+    File.delete(path) if path && File.exists?(path)
+  end
+
+  it "under check mode with a HOLDING removes: gate reports skipping" do
+    path = sc_path("script_cm_removes_hold.sh")
+    File.write(path, "#!/bin/sh\nexit 0\n")
+    File.chmod(path, 0o755)
+    gate = sc_path("script_cm_removes_absent_gate")
+    File.delete?(gate)
+
+    result = PluginSpecHelper.run("script", {"cmd" => path, "removes" => gate, "_ansible_check_mode" => "true"})
+
+    result["changed"].as_bool.should be_false
+    result["skipped"].as_bool.should be_true
+    result["msg"].as_s.should eq("#{gate} does not exist, matching removes option")
+  ensure
+    File.delete(gate) if gate && File.exists?(gate)
+    File.delete(path) if path && File.exists?(path)
+  end
+
+  it "under check mode with a PASSING removes: gate reports changed:true without running" do
+    path = sc_path("script_cm_removes_pass.sh")
+    File.write(path, "#!/bin/sh\nexit 0\n")
+    File.chmod(path, 0o755)
+    gate = sc_path("script_cm_removes_gate")
+    File.write(gate, "exists")
+
+    result = PluginSpecHelper.run("script", {"cmd" => path, "removes" => gate, "_ansible_check_mode" => "true"})
+
+    result["changed"].as_bool.should be_true
+    result["skipped"]?.try(&.as_bool).should be_falsey
+  ensure
+    File.delete(gate) if gate && File.exists?(gate)
     File.delete(path) if path && File.exists?(path)
   end
 

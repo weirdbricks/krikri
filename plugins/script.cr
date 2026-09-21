@@ -44,28 +44,29 @@ module Krikri
       return PluginResult.new(changed: false, failed: true, msg: "one of the following is required: _raw_params, cmd") if script_path.nil? || script_path.empty?
       args = parts[1]?
 
-      # Real Ansible's script module does not support check mode - under
-      # --check the action plugin never transfers or runs the script and
-      # the task reports `skipping:` (live-verified against
-      # ansible-core 2.19.11). The skip must fire BEFORE any remote
-      # chmod/exec side effect. Full result shape mirrors command.cr's
-      # check-mode skip (empty stdout, rc 0), so a register:/
-      # changed_when: consumer sees the same keys it would on a real run.
+      # Partial check-mode support, mirroring real Ansible's script action
+      # plugin (live-verified against ansible-core 2.19.11): with NO
+      # creates:/removes: gate the task reports `skipping:` and the
+      # script never runs ("Check mode is not supported for this
+      # task."); WITH a gate the module's own gate logic runs even in
+      # check mode - a holding gate reports `skipping:` with the
+      # "matching creates/removes option" msg (the SAME skip the module
+      # produces on an ordinary run, see skip_reason), while a passing
+      # gate reports an ordinary changed: true would-have-run result
+      # whose registered var carries ONLY {changed: true, failed: false}
+      # (no msg/rc/stdout keys at all). The skip must still fire BEFORE
+      # any remote chmod/exec side effect.
       if true?(@params["_ansible_check_mode"]?)
+        if skip = skip_reason
+          return skip
+        end
+
+        gated = @params.has_key?("creates") || @params.has_key?("removes")
         return PluginResult.new(
-          changed: false,
+          changed: gated,
           failed: false,
-          msg: "Remote module does not support check mode",
-          skipped: true,
-          cmd: cmd,
-          rc: 0,
-          stdout: "",
-          stdout_lines: [] of String,
-          stderr: "",
-          stderr_lines: [] of String,
-          start: nil,
-          end: nil,
-          delta: nil
+          msg: gated ? "" : "Check mode is not supported for this task.",
+          skipped: !gated
         )
       end
 
@@ -110,23 +111,24 @@ module Krikri
       remote_exec("rm -f #{shell_quote(script_path)}") if script_path
     end
 
-    # Same real-Ansible shape as command:/shell: - an ordinary "ok"
-    # result (changed: false), never a task-level "skipping:" (this
-    # codebase's own `skipped: true` used to divert it into the
-    # `skipped=` recap bucket instead of `ok=`, a real divergence in
-    # its own right - live-verified against ansible-core 2.19.4), and
-    # a real GLOB pattern, not a literal path (`path_or_glob_exists?`,
-    # see that helper's own comment).
+    # Real script.py's own gate (live-verified against ansible-core
+    # 2.19.11, normal runs AND check mode alike): a holding gate is a
+    # SKIPPED result with the "matching creates/removes option" msg -
+    # the recap books it in skipped=, unlike command:/shell:'s
+    # ordinary-ok gate verdict ("Did not run command since ...", NOT
+    # skipped - that command-style msg/shape was this plugin's own
+    # borrow and a real divergence). Same shape check mode's holding
+    # gate reports, so both paths share this one method.
     private def skip_reason : PluginResult?
       if creates = @params["creates"]?
         if path_or_glob_exists?(expand_tilde(creates))
-          return PluginResult.new(changed: false, failed: false, msg: "Did not run command since '#{creates}' exists", stdout: "skipped, since #{creates} exists")
+          return PluginResult.new(changed: false, failed: false, msg: "#{creates} exists, matching creates option", skipped: true)
         end
       end
 
       if removes = @params["removes"]?
         unless path_or_glob_exists?(expand_tilde(removes))
-          return PluginResult.new(changed: false, failed: false, msg: "Did not run command since '#{removes}' does not exist", stdout: "skipped, since #{removes} does not exist")
+          return PluginResult.new(changed: false, failed: false, msg: "#{removes} does not exist, matching removes option", skipped: true)
         end
       end
 

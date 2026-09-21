@@ -628,6 +628,14 @@ module Krikri
     # when a task failed on the host, exactly like the --force-handlers
     # CLI flag (real Ansible honors both).
     property? force_handlers : Bool = false
+    # `check_mode:` at play scope - simulates every task in the play
+    # (real Ansible's play-level check_mode, 2.7+). A task's or block's
+    # own check_mode: wins over it; nil means unset, inherit the --check
+    # CLI flag. check_mode_expr is the raw text when the play-level value
+    # is a templated expression, resolved per task at runtime (same
+    # shape as Task#check_mode_expr).
+    property? check_mode : Bool?
+    property check_mode_expr : String?
     # `serial:` - raw batch tokens, each either a count ("2") or a
     # percentage ("50%"). Empty means the play runs against every host at
     # once, which is what this engine always did.
@@ -2040,6 +2048,8 @@ module Krikri
       play.gather_facts = gather_facts_parsed.nil? ? true : gather_facts_parsed
       play.gather_facts_set = !gather_facts_yaml.nil?
       play.force_handlers = parse_become_value(yaml["force_handlers"]?) || false
+      play.check_mode = parse_optional_bool_or_template(yaml["check_mode"]?)
+      play.check_mode_expr = template_expression(yaml["check_mode"]?)
 
       play.order = yaml["order"]?.try { |value| safe_yaml_to_string(value).strip }
       play.remote_user = yaml["remote_user"]?.try { |entry| safe_yaml_to_string(entry).strip }
@@ -2932,8 +2942,25 @@ module Krikri
         validate_register_name(register_value)
         register_value
       end
-      task.check_mode = parse_optional_bool_or_template(task_hash["check_mode"]?)
-      task.check_mode_expr = template_expression(task_hash["check_mode"]?)
+      # Task's own check_mode: wins; unset falls back to the ambient
+      # play/block scope (play.check_mode is temporarily the enclosing
+      # block's value while its children parse - see parse_block_task).
+      # Real Ansible's own precedence is task > block > play, and
+      # `check_mode:` is a legal keyword at ALL three levels - it was
+      # only ever read at task level here, so a play- or block-level
+      # `check_mode: true` (simulate) let command/shell/raw/script tasks
+      # execute for real where real Ansible only simulated, and a play-
+      # or block-level `check_mode: false` (force real execution) was
+      # skipped under --check where real Ansible really ran them
+      # (live-verified against ansible-core 2.19.11).
+      if (own_check_mode = parse_optional_bool_or_template(task_hash["check_mode"]?)).nil? &&
+         (own_check_mode_expr = template_expression(task_hash["check_mode"]?)).nil?
+        task.check_mode = play.check_mode?
+        task.check_mode_expr = play.check_mode_expr
+      else
+        task.check_mode = own_check_mode
+        task.check_mode_expr = own_check_mode_expr
+      end
       task.diff_mode = parse_optional_bool_or_template(task_hash["diff"]?)
       task.become = resolve_become(task_hash, play)
       task.become_expr = become_expr(task_hash)
@@ -3547,6 +3574,22 @@ module Krikri
       play.become = resolve_become(task_hash, play)
       play.become_user = task_hash["become_user"]?.try { |v| safe_yaml_to_string(v) } || play.become_user
 
+      # Same ambient-inheritance pattern as become: above, for the
+      # block's own check_mode: (real Ansible's precedence task > block
+      # > play; a block-level `check_mode: true` simulates every task
+      # inside - including command:/shell:, which do not support check
+      # mode - and `check_mode: false` forces real execution under
+      # --check). Previously never read at all: a block-level
+      # `check_mode: false` was skipped under --check and a block-level
+      # `check_mode: true` executed for real on an ordinary run, both
+      # divergences live-verified against ansible-core 2.19.11. A
+      # templated block-level value inherits as the raw expression so
+      # resolve_task_check_mode renders it against live vars per task.
+      saved_check_mode = play.check_mode?
+      saved_check_mode_expr = play.check_mode_expr
+      play.check_mode = parse_optional_bool_or_template(task_hash["check_mode"]?)
+      play.check_mode_expr = template_expression(task_hash["check_mode"]?)
+
       # ensure-restore, not fall-through-restore: if a child parse raises
       # (a typed bypass like RemovedActionError rethrown through
       # parse_tasks, or any parse error), the play's become must still be
@@ -3565,6 +3608,8 @@ module Krikri
       ensure
         play.become = saved_become
         play.become_user = saved_become_user
+        play.check_mode = saved_check_mode
+        play.check_mode_expr = saved_check_mode_expr
       end
 
       # Stamp this block's own name onto every descendant's
