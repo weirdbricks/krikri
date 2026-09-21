@@ -924,12 +924,59 @@ module Krikri
         apply_vars_file([host], File.join(host_vars_dir, name), file_applied, override)
       end
 
-      inventory.groups.each do |group_name, group|
-        next if group_name == "all"
-        apply_vars_file(group.hosts.values, File.join(group_vars_dir, group_name), file_applied, override)
-      end
+      # group_vars/<group>.yml must reach every host the group holds
+      # TRANSITIVELY, not just the ones declared directly under it: real
+      # Ansible applies a group's vars file to the full :children tree, and
+      # the common real-inventory shape - a role-targeting parent group
+      # ([backend_nodes:children]) whose hosts all live in leaf groups -
+      # left that file applying to NOBODY, so every var it carried read
+      # "undefined" in any play targeting the parent group. (Found via a
+      # real two-play run whose group var failed exactly that way; the
+      # earlier delegate_facts: play beside it was coincidence, not cause -
+      # the trigger is purely the inventory shape.) Deeper (leaf) groups
+      # apply first - real Ansible ranks a child group's vars above its
+      # parents', and set-if-absent gives the first-applied file the win;
+      # sorting by child depth (ties in inventory declaration order)
+      # encodes that without re-opening the inline-vs-file precedence.
+      apply_group_vars_files_by_depth(inventory, group_vars_dir, file_applied, override)
 
       apply_vars_file(inventory.hosts.values, File.join(group_vars_dir, "all"), file_applied, override)
+    end
+
+    # One tree's group_vars/<group>.yml pass, leaf groups first. Real
+    # Ansible's own precedence here (ansible-core's VariableManager merges
+    # a host's groups deepest-first) makes the most-specific group's file
+    # win a same-key collision, which set-if-absent reproduces by applying
+    # in ascending child-depth order.
+    private def self.apply_group_vars_files_by_depth(inventory : Inventory, group_vars_dir : String, file_applied : Hash(String, Set(String))?, override : Hash(String, Set(String))?) : Nil
+      declaration_order = Hash(String, Int32).new
+      inventory.groups.keys.each_with_index { |group_name, index| declaration_order[group_name] = index }
+
+      ordered = inventory.groups.keys.reject { |name| name == "all" }
+      ordered = ordered.sort_by { |name| {group_depth(inventory, name), declaration_order[name]} }
+      ordered.each do |group_name|
+        apply_vars_file(inventory.hosts_in_group(group_name), File.join(group_vars_dir, group_name), file_applied, override)
+      end
+    end
+
+    # How many levels of :children sit below *group_name* (a leaf group is
+    # 0, its parent 1, ...). Cycles, which a malformed inventory can write,
+    # terminate via the visited set.
+    private def self.group_depth(inventory : Inventory, group_name : String) : Int32
+      depth = 0
+      frontier = [group_name]
+      seen = Set(String).new
+      until frontier.empty?
+        next_frontier = [] of String
+        frontier.each do |current|
+          next unless seen.add?(current)
+          group = inventory.groups[current]?
+          group.try { |grp| next_frontier.concat(grp.children) }
+        end
+        depth += 1
+        frontier = next_frontier
+      end
+      depth - 1
     end
 
     # Load base_path.yml (or .yaml) if it exists and apply its top-level
