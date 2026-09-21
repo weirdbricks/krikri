@@ -170,10 +170,14 @@ module Krikri
       if creates = @params["creates"]?
         if path_or_glob_exists?(resolve_against_chdir(creates, chdir))
           skipped_stdout = "skipped, since #{creates} exists"
+          # Real ansible-core 2.19.11 words the check-mode variant of this
+          # msg "Would not run command since ..." (the ordinary run says
+          # "Did not run command since ..." - live-verified both).
+          skip_msg = @check_mode ? "Would not run command since '#{creates}' exists" : "Did not run command since '#{creates}' exists"
           return with_executable_warning(PluginResult.new(
             changed: false,
             failed: false,
-            msg: "Did not run command since '#{creates}' exists",
+            msg: skip_msg,
             cmd: cmd,
             rc: 0,
             stdout: skipped_stdout,
@@ -193,10 +197,11 @@ module Krikri
       if removes = @params["removes"]?
         unless path_or_glob_exists?(resolve_against_chdir(removes, chdir))
           skipped_stdout = "skipped, since #{removes} does not exist"
+          skip_msg = @check_mode ? "Would not run command since '#{removes}' does not exist" : "Did not run command since '#{removes}' does not exist"
           return with_executable_warning(PluginResult.new(
             changed: false,
             failed: false,
-            msg: "Did not run command since '#{removes}' does not exist",
+            msg: skip_msg,
             cmd: cmd,
             rc: 0,
             stdout: skipped_stdout,
@@ -217,12 +222,24 @@ module Krikri
       # bare skip marker - see shell.cr's identical fix for why this
       # matters now that module-arg templating is strict (verified live
       # against ansible-core 2.19.4's own `--check` output).
+      #
+      # The `skipping:` verdict only applies when NO creates:/removes:
+      # gate is present. With a gate (live-verified against 2.19.11), the
+      # module runs its own gate logic even in check mode and returns an
+      # ordinary "ok" (changed: false) result - "Command would have run
+      # if not in check mode" when the gate would have let it through
+      # (recap ok=1, not skipped=1), or the "Would not run command
+      # since ..." shape from the branches above when the gate would
+      # have held it back. Reporting the would-run case as "skipping:"
+      # shifted both engines' recap counters (real ok=4/skipped=3, this
+      # engine ok=3/skipped=4 on the same playbook).
       if @check_mode
+        gated = @params.has_key?("creates") || @params.has_key?("removes")
         return with_executable_warning(PluginResult.new(
           changed: false,
           failed: false,
           msg: "Command would have run if not in check mode",
-          skipped: true,
+          skipped: !gated,
           cmd: cmd,
           rc: 0,
           stdout: "",

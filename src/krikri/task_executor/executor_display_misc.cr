@@ -482,7 +482,7 @@ module Krikri
         # CLI's own TaskExecutor never passes one, and a single synthetic
         # ad-hoc task has no later play to ever observe a refresh anyway.
         if (path = @inventory_path) && (inv = @inventory)
-          inv.reload_from!(InventoryParser.parse(path))
+          inv.reload_from!(InventoryParser.parse(path, @playbook_dir != "." ? @playbook_dir : nil))
           @hv_generation += 1
         end
       else
