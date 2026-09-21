@@ -413,14 +413,38 @@ module Krikri
       # unavailable-module tasks skip). Mirrors that guard's one
       # exception too: an unavailable module backed by a role-private
       # `library/<name>.py` source CAN run (PythonModuleRunner), so it
-      # falls through to normal dispatch. The handler is recorded into
-      # reachable_unavailable_modules (via
-      # register_reachable_unavailable_module, which re-evaluates the
-      # handler's own when: for the final exit-code decision) so a
-      # genuinely-reachable unported module still fails the run's exit
-      # code the way every other unavailable module does.
-      if handler.unavailable_module && python_module_source_for(handler).nil?
-        register_reachable_unavailable_module(handler, vars_context, host)
+      # falls through to normal dispatch. A genuinely-reached handler is
+      # recorded into reachable_unavailable_modules so an unported
+      # module still fails the run's exit code the way every other
+      # unavailable module does.
+      #
+      # Real Ansible also evaluates a non-looped task's `when:` BEFORE it
+      # ever attempts module resolution - so a `when:` that itself raises
+      # (an undefined variable, a bad attribute access) is a fatal
+      # conditional error even when that same handler's module is ALSO
+      # unimplemented. This used to go through
+      # register_reachable_unavailable_module, whose own `rescue false`
+      # swallowed that raise into "can't tell, don't count" and then
+      # returned the plain skip below - turning a real fatal into a
+      # silent skip (the handler-path twin of the 0.9.1175 task-path bug,
+      # fixed in #when_passes?). So the when: is evaluated strictly here,
+      # exactly like the available-module path below: a raise flows
+      # through WhenEvaluationError to when_error_result as a real
+      # failed handler; a clean false takes the skip WITHOUT registering
+      # the module (real Ansible never reaches module resolution for a
+      # when:-false handler); only a truthy condition - or no when: at
+      # all - counts as genuinely reached for the end-of-run exit-4
+      # accounting.
+      if (module_name = handler.unavailable_module) && python_module_source_for(handler).nil?
+        reached = true
+        if handler.when_condition
+          begin
+            reached = evaluate_when_items(handler, vars_context, host)
+          rescue ex : WhenEvaluationError
+            return when_error_result(ex)
+          end
+        end
+        reachable_unavailable_modules << module_name if reached
         connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
         suffix = (item = vars_context["item"]?) ? " => (item=#{resolve_task_no_log(handler, vars_context) ? "(censored due to no_log)" : item_display(item)})" : ""
         puts "skipping: [#{connection_host}]#{suffix}".colorize(:cyan)

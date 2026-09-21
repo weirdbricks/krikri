@@ -317,16 +317,5 @@ module Krikri
     # that exists on the *controller* - or none at all when nothing
     # matched. Candidates are templated, so they can only be resolved
     # here, not at parse time.
-    private def register_reachable_unavailable_module(task : Task, vars_context : Hash(String, JSON::Any), host : Host, shared : VarSubstitutor? = nil) : Nil
-      return unless module_name = task.unavailable_module
-
-      would_run = begin
-        when_condition = task.when_condition
-        when_condition.nil? || evaluate_when_items(task, vars_context, host, shared)
-      rescue
-        false
-      end
-      reachable_unavailable_modules << module_name if would_run
-    end
   end
 end
