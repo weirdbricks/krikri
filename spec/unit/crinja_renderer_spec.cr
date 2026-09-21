@@ -978,6 +978,31 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
     end
   end
 
+  it "extract walks into lists and strings and indexes negatively (shared core)" do
+    # Phase-3 slice 4 regression pins, live-verified against real
+    # ansible-core 2.19.11: the morekeys walk is the same getitem step
+    # at every level (lists and strings int-index, negative indices
+    # work) - the old Crinja copy only walked dicts.
+    v = Hash(String, JSON::Any).new
+    v["clist"] = JSON.parse(%(["zero", "one"]))
+    v["scalar_str"] = JSON.parse(%("hello"))
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer.render(%({{ 0 | extract(clist, [0]) }})).should eq("z")
+    renderer.render(%({{ -1 | extract(clist) }})).should eq("one")
+    renderer.render(%({{ 1 | extract(scalar_str) }})).should eq("e")
+  end
+
+  it "extract returns a hostvars host's dict intact when morekeys is absent" do
+    # The old Crinja copy handed back the HostVarsVarsDict OBJECT, which
+    # stringified into a Crinja value repr the moment the result crossed
+    # back into JSON-shaped rendering. The shared core converts
+    # host-scoped, so the dict stays a dict.
+    v = Hash(String, JSON::Any).new
+    v["hostvars"] = JSON.parse(%({"host-a": {"node_ip": "10.0.0.1"}}))
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer.render(%({{ "host-a" | extract(hostvars) | dict2items | map(attribute="key") | list }})).should eq("['node_ip']")
+  end
+
   it "from_yaml_all parses a multi-document YAML string" do
     v = Hash(String, JSON::Any).new
     renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
