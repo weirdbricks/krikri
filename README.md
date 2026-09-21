@@ -20,7 +20,7 @@ picture, on either the controller or the target - it's one compiled binary
 It is not a new automation DSL you have to learn, and not a "mostly
 compatible" reimplementation verified by eyeballing docs - every plugin's
 behavior is checked against real `ansible-playbook` output on real hosts,
-across **1,809 real Galaxy roles tested to date** (see
+across **6,680 real Galaxy roles tested to date** (see
 [ROLES_TESTED.md](ROLES_TESTED.md); **Differences** and **What's missing**
 below), and a Docker-based compatibility harness (`compat/`) runs the same
 playbooks through both engines side by side and diffs the resulting
@@ -59,7 +59,7 @@ this project doesn't ship or vendor a collections directory, so a
 ported into a compiled plugin binary (a role's OWN private `library/*.py`
 module is unaffected either way - that always runs fine, delegated to the
 target's real python3). But that porting isn't hypothetical or "not our
-problem": every one of the **1,809+ real Galaxy roles** this project is
+problem": every one of the **6,680+ real Galaxy roles** this project is
 benchmarked against (see **How this differs** above) surfaces whichever
 third-party modules that role's own tasks actually call, and the ones
 that show up often enough get natively ported the same way an
@@ -180,8 +180,10 @@ shards install
 ```
 krikri-playbook/
 ├── krikri-playbook.cr              # CLI entry point
+├── krikri-lint.cr                  # krikri-lint CLI entry point
 ├── src/krikri/            # Engine: parser, task executor, SSH,
 │                                 # inventory, roles, loops, vault, facts
+├── src/krikri_lint/       # Lint engine: rules, config, fixer, profiles
 ├── plugins/                     # One binary per Ansible module
 ├── spec/                        # crystal spec unit + integration tests
 ├── compat/                      # Docker-based real-ansible-playbook
@@ -287,6 +289,31 @@ Supports `-i`, `-m`, `-a`, `-u`, `-b`/`--become`, `--become-user`, `-C`/`--check
 `-f`/`--forks`, `-l`/`--limit`, `-v`. Output matches real ansible's own
 minimal callback (`host | SUCCESS => {...}` / `host | CHANGED | rc=0 >>`),
 not ansible-playbook's `ok: [host]` TASK-recap style.
+
+---
+
+## 🔍 Linting (`krikri-lint`)
+
+A sibling binary, `krikri-lint`, is a from-scratch reimplementation of
+`ansible-lint` - same rules, same output format, same exit codes,
+verified against the real tool the same way `krikri-playbook` is
+verified against real `ansible-playbook` (a parity harness diffing
+output on a shared fixture corpus, not eyeballed docs). It's static
+analysis only - no host connection, no execution, no SSH.
+
+```bash
+./bin/krikri-lint playbook.yml
+./bin/krikri-lint -p roles/                # parseable output
+./bin/krikri-lint --fix playbook.yml       # autofix the mechanically-fixable rules
+./bin/krikri-lint --list-rules
+```
+
+Covers the core `ansible-lint` rule set (syntax, command/shell idioms,
+risky permissions, naming, FQCN, the yamllint-derived `yaml[*]` subset,
+`args[module]` argument-spec validation, `var-naming`, profiles,
+`# noqa`, `.ansible-lint` config) plus `--fix` autofix for the safely
+mechanical rules. See [krikri-lint.md](krikri-lint.md) for full rule
+coverage, deliberate divergences, and parity status.
 
 ---
 
