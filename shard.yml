@@ -13,25 +13,30 @@ dependencies:
     tag: crystal-play-0.9.56
   docr:
     github: weirdbricks/docr
-    branch: master
+    commit: c90ea8d6a0c5eb9f842ac0da098a1718ecca66ca
   mysql:
     github: weirdbricks/crystal-mysql
     tag: crystal-ansible-0.9.340
   pg:
     github: will/crystal-pg
+    version: 0.30.0
   crystar:
     github: naqvis/crystar
+    version: 0.4.0
   xz:
     github: naqvis/xz.cr
+    version: 0.1.6
   bz2:
     github: weirdbricks/bz2.cr
+    version: 0.1.0
   awscr-signer:
     github: weirdbricks/awscr-signer
-    branch: master
+    commit: 2a8cc0980c9ba18ef22bf870e8be12783ee2b5ec
 
 development_dependencies:
   ameba:
     github: crystal-ameba/ameba
+    version: 1.7.0
 
 crystal: ">= 1.0.0"
 

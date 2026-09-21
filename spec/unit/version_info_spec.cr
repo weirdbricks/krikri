@@ -102,7 +102,7 @@ describe Krikri::RUNTIME_DEPENDENCY_VERSIONS do
 end
 
 describe "Krikri.parse_shard_yml_dependency_pins" do
-  it "extracts github/tag/branch per dependency, nil for unpinned fields" do
+  it "extracts github/tag/branch/commit per dependency, nil for unpinned fields" do
     yml = <<-YML
       name: krikri
       version: 0.9.90
@@ -113,6 +113,9 @@ describe "Krikri.parse_shard_yml_dependency_pins" do
           tag: crystal-play-0.9.32
         docr:
           github: weirdbricks/docr
+          commit: c90ea8d6a0c5eb9f842ac0da098a1718ecca66ca
+        legacy:
+          github: weirdbricks/legacy
           branch: master
         bz2:
           github: weirdbricks/bz2.cr
@@ -128,10 +131,11 @@ describe "Krikri.parse_shard_yml_dependency_pins" do
 
     pins = Krikri.parse_shard_yml_dependency_pins(yml, "dependencies")
     pins.should eq({
-      "crinja" => {github: "weirdbricks/crinja", tag: "crystal-play-0.9.32", branch: nil},
-      "docr"   => {github: "weirdbricks/docr", tag: nil, branch: "master"},
-      "bz2"    => {github: "weirdbricks/bz2.cr", tag: nil, branch: nil},
-      "pg"     => {github: "will/crystal-pg", tag: nil, branch: nil},
+      "crinja" => {github: "weirdbricks/crinja", tag: "crystal-play-0.9.32", branch: nil, commit: nil},
+      "docr"   => {github: "weirdbricks/docr", tag: nil, branch: nil, commit: "c90ea8d6a0c5eb9f842ac0da098a1718ecca66ca"},
+      "legacy" => {github: "weirdbricks/legacy", tag: nil, branch: "master", commit: nil},
+      "bz2"    => {github: "weirdbricks/bz2.cr", tag: nil, branch: nil, commit: nil},
+      "pg"     => {github: "will/crystal-pg", tag: nil, branch: nil, commit: nil},
     })
   end
 
@@ -149,8 +153,8 @@ describe "Krikri::RUNTIME_DEPENDENCY_FORK_NOTES" do
 
     notes["crinja"].should eq(" (weirdbricks/crinja fork, tag crystal-play-0.9.56)")
     notes["mysql"].should eq(" (weirdbricks/crystal-mysql fork, tag crystal-ansible-0.9.340)")
-    notes["docr"].should eq(" (weirdbricks/docr fork, branch master)")
-    notes["awscr-signer"].should eq(" (weirdbricks/awscr-signer fork, branch master)")
+    notes["docr"].should eq(" (weirdbricks/docr fork, commit c90ea8d)")
+    notes["awscr-signer"].should eq(" (weirdbricks/awscr-signer fork, commit 2a8cc09)")
     notes["bz2"].should eq(" (weirdbricks/bz2.cr fork)")
 
     notes.has_key?("pg").should be_false
