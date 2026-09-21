@@ -40,7 +40,7 @@ describe "command/shell check-mode gating (creates:/removes:)" do
     status, output = run_check_mode_playbook(<<-YAML, check: true)
           - name: plain
             ansible.builtin.shell: echo plain-check-probe
-    YAML
+      YAML
 
     status.success?.should be_true
     output.should contain("skipping:")
@@ -54,7 +54,7 @@ describe "command/shell check-mode gating (creates:/removes:)" do
             ansible.builtin.shell: echo gated-check-probe
             args:
               creates: #{__DIR__}/definitely-missing-#{Random::Secure.hex(4)}.txt
-    YAML
+      YAML
 
     status.success?.should be_true
     output.should contain("Command would have run if not in check mode")
@@ -72,7 +72,7 @@ describe "command/shell check-mode gating (creates:/removes:)" do
             ansible.builtin.shell: echo held-check-probe
             args:
               creates: #{marker}
-    YAML
+      YAML
 
     status.success?.should be_true
     output.should contain("Would not run command since '#{marker}' exists")
@@ -88,7 +88,7 @@ describe "command/shell check-mode gating (creates:/removes:)" do
             ansible.builtin.shell: echo removes-check-probe
             args:
               removes: #{__DIR__}/definitely-missing-#{Random::Secure.hex(4)}.txt
-    YAML
+      YAML
 
     status.success?.should be_true
     output.should_not contain("skipping:")
@@ -104,7 +104,7 @@ describe "command/shell check-mode gating (creates:/removes:)" do
             ansible.builtin.shell: echo normal-skip-probe
             args:
               creates: #{marker}
-    YAML
+      YAML
 
     status.success?.should be_true
     output.should contain("Did not run command since '#{marker}' exists")

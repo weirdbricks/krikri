@@ -952,7 +952,7 @@ module Krikri
 
       hosts.each do |host|
         host_override = override.try(&.[host.name]?)
-        host_applied = applied.try { |hash| hash[host.name] ||= Set(String).new }
+        host_applied = applied.try { |applied_hash| applied_hash[host.name] ||= Set(String).new }
         hash.each do |key, value|
           key_str = key.to_s
           if host.vars.has_key?(key_str)
