@@ -545,7 +545,11 @@ module Krikri
           "failed"  => true,
           "msg"     => finalize_args_failure_message(ex, handler),
         }.to_json)
-        result = apply_changed_failed_when(handler, result, vars_context, host)
+        # Not routed through apply_changed_failed_when - failed_when:/
+        # changed_when: only reinterpret a MODULE result, and arg
+        # finalization failed before any module ran (same reasoning as
+        # execute_task_once's identical rescue). Real Ansible reports
+        # `fatal:` here even with `failed_when: false` set.
         if register_name = handler.register
           register_result(host, register_name, result) unless register_name.empty?
         end

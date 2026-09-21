@@ -1379,7 +1379,10 @@ module Krikri
           "failed"  => true,
           "msg"     => finalize_args_failure_message(ex, task),
         }.to_json)
-        return apply_changed_failed_when(task, failed, vars_context, host)
+        # Not routed through apply_changed_failed_when - same reasoning as
+        # execute_task_once's identical rescue: failed_when:/changed_when:
+        # only reinterpret a MODULE result, and no module ran here.
+        return failed
       end
 
       substituted_params = resolve_role_relative_src(task, substituted_params)
@@ -1599,7 +1602,18 @@ module Krikri
           "failed" => true,
           "msg"    => finalize_args_failure_message(ex, task),
         }.to_json)
-        return apply_changed_failed_when(task, result, vars_context, host)
+        # Deliberately NOT routed through apply_changed_failed_when:
+        # failed_when:/changed_when: govern whether a MODULE RESULT counts
+        # as failed/changed, and arg finalization failed before any module
+        # ran - real Ansible (ansible-core 2.19) still reports
+        # `fatal: ... Finalization of task args ... failed` on this task
+        # even with `failed_when: false` set (previously the finalization
+        # failure was funneled through failed_when: like a runtime result,
+        # so `failed_when: false` swallowed it as `ok:` and the play
+        # continued to the next task). ignore_errors: still applies
+        # downstream (real Ansible honors it here: ignored=1, play
+        # continues), which this plain failed result preserves.
+        return result
       end
 
       if task.module_name == "ansible.builtin.reboot"
