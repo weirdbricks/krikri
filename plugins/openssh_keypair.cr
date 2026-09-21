@@ -221,8 +221,16 @@ module Krikri
         return PluginResult.new(changed: false, failed: true, msg: "ssh-keygen failed: #{err}")
       end
 
-      File.rename(tmp, path)
-      File.rename(tmp_pub, pub_path)
+      begin
+        atomic_move(tmp, path)
+        atomic_move(tmp_pub, pub_path)
+      ensure
+        # On success these are already gone (rename or the EXDEV
+        # copy-then-delete in BasePlugin#atomic_move consumed them);
+        # on failure, don't leak ssh-keygen material in /tmp.
+        File.delete(tmp) if File.exists?(tmp)
+        File.delete(tmp_pub) if File.exists?(tmp_pub)
+      end
       apply_attrs(path, pub_path)
       report(path, pub_path, type, size, true)
     end
