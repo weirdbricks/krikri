@@ -53,13 +53,20 @@ describe "role-private python module dispatch runs on the REMOTE target, not the
 
     # 203.0.113.x is TEST-NET-3 (RFC 5737) - guaranteed unroutable, so
     # any real SSH attempt fails fast and deterministically instead of
-    # hanging on a live-but-wrong address.
+    # hanging on a live-but-wrong address. -T 1 is test-only tuning:
+    # this engine takes its ssh ConnectTimeout from the -T CLI flag
+    # (default 10), not from the inventory's ansible_ssh_common_args,
+    # and the unreachable-host path makes three connection attempts
+    # (dispatch, upload, retry) - without it this spec spends ~30s
+    # waiting out 3x the production default for a failure its
+    # assertions only need to have happened. All three attempts still
+    # run; only their per-attempt connect budget shrinks.
     File.write(File.join(root, "inventory.ini"), <<-INI)
       target ansible_host=203.0.113.99 ansible_user=root ansible_ssh_private_key_file=/dev/null ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=2 -o BatchMode=yes'
       INI
 
     output = IO::Memory.new
-    status = Process.run(BINARY, ["-i", "inventory.ini", "pb.yml"], output: output, error: output, chdir: root)
+    status = Process.run(BINARY, ["-T", "1", "-i", "inventory.ini", "pb.yml"], output: output, error: output, chdir: root)
 
     status.success?.should be_false, output.to_s
     output.to_s.should_not contain("ran locally - THIS WOULD BE THE BUG"), output.to_s

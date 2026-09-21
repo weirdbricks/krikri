@@ -203,11 +203,26 @@ module Krikri
       client = HTTP::Client.new(uri)
       # 10s, matching real Ansible's own fetch_url default timeout (the
       # module passes no explicit timeout) - both connect and read.
-      client.connect_timeout = 10.seconds
-      client.read_timeout = 10.seconds
+      # KRIKRI_EC2_METADATA_TIMEOUT_SECONDS is a test-only override for
+      # the unreachable-service spec (off EC2 that spec would otherwise
+      # wait out the full 10s connect window to confirm what a 1s
+      # timeout proves just as well); production behavior is unchanged
+      # without it.
+      timeout = http_timeout
+      client.connect_timeout = timeout
+      client.read_timeout = timeout
       client.exec(method, uri.request_target, headers: headers)
     ensure
       client.try(&.close)
+    end
+
+    private def http_timeout : Time::Span
+      if raw = ENV["KRIKRI_EC2_METADATA_TIMEOUT_SECONDS"]?
+        if secs = raw.to_i?
+          return secs.seconds
+        end
+      end
+      10.seconds
     end
   end
 end
