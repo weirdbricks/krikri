@@ -728,6 +728,28 @@ describe Krikri::VariableSubstitutor::FilterEngine do
     result["b"].as_i.should eq(2)
   end
 
+  it "items2dict stringifies a non-string key_name field (Phase-3 oracle arbitration)" do
+    # Since the Phase-3 consolidation slice routed the {{ }} path onto
+    # the native Crinja registration via #delegate_to_crinja_filter,
+    # arbitrated against real ansible-core 2.19.11: `{'key': 1}` must
+    # stringify to the JSON key "1" (real Ansible renders {"1": "x"}),
+    # NOT be silently skipped as the deleted hand-rolled copy did.
+    input = JSON.parse(%([{"key": 1, "value": "x"}]))
+    result = engine.apply(input, "items2dict").as_h
+    result["1"].as_s.should eq("x")
+  end
+
+  it "items2dict raises on a null input (Phase-3 oracle arbitration)" do
+    # Same slice: real ansible-core 2.19.11 fails `null | items2dict`
+    # ("items2dict requires a list, got <class 'NoneType'> instead");
+    # the deleted hand-rolled copy silently returned {}. The delegated
+    # path raises instead of inventing an empty dict.
+    input = JSON.parse(%(null))
+    expect_raises(Exception) do
+      engine.apply(input, "items2dict")
+    end
+  end
+
   it "b64encode/b64decode round-trip" do
     encoded = engine.apply(s("hello world"), "b64encode").as_s
     encoded.should eq("aGVsbG8gd29ybGQ=")
