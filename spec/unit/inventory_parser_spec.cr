@@ -344,6 +344,72 @@ describe Krikri::InventoryParser do
       inventory.hosts["db1"].vars.has_key?("role").should be_false
     end
 
+    # Real infra repro (2026-09-20): a two-play playbook targeting a
+    # parent group failed with "'ops_probe_pubkey' is undefined" in krikri
+    # while real ansible-playbook resolved it - the inventory declared the
+    # target group purely as a [group:children] parent, so the parent's
+    # own group_vars file applied to nobody here. The delegate_to: +
+    # delegate_facts: loop in the earlier play was coincidence, not cause.
+    it "applies a parent group's group_vars file to hosts living in its :children" do
+      write(File.join(ROOT, "inventory.ini"), <<-INI)
+        [backend_nodes:children]
+        backend
+
+        [backend]
+        node1
+        node2
+        INI
+      write(File.join(ROOT, "group_vars", "backend_nodes.yml"), <<-YAML)
+        ops_probe_pubkey: "ssh-ed25519 AAAATESTKEY probe@ops"
+        YAML
+
+      inventory = Krikri::InventoryParser.parse(File.join(ROOT, "inventory.ini"))
+
+      inventory.hosts["node1"].vars["ops_probe_pubkey"].as_s.should eq("ssh-ed25519 AAAATESTKEY probe@ops")
+      inventory.hosts["node2"].vars["ops_probe_pubkey"].as_s.should eq("ssh-ed25519 AAAATESTKEY probe@ops")
+    end
+
+    it "lets a child group's group_vars file beat its parent's for the same key" do
+      write(File.join(ROOT, "inventory.ini"), <<-INI)
+        [prod:children]
+        web
+
+        [web]
+        web1
+        INI
+      write(File.join(ROOT, "group_vars", "prod.yml"), <<-YAML)
+        datacenter: parent-dc
+        YAML
+      write(File.join(ROOT, "group_vars", "web.yml"), <<-YAML)
+        datacenter: child-dc
+        YAML
+
+      inventory = Krikri::InventoryParser.parse(File.join(ROOT, "inventory.ini"))
+
+      inventory.hosts["web1"].vars["datacenter"].as_s.should eq("child-dc")
+    end
+
+    it "applies a parent group's file to BOTH its direct hosts and its :children hosts" do
+      write(File.join(ROOT, "inventory.ini"), <<-INI)
+        [prod:children]
+        web
+
+        [prod]
+        prod1
+
+        [web]
+        web1
+        INI
+      write(File.join(ROOT, "group_vars", "prod.yml"), <<-YAML)
+        tier: gold
+        YAML
+
+      inventory = Krikri::InventoryParser.parse(File.join(ROOT, "inventory.ini"))
+
+      inventory.hosts["prod1"].vars["tier"].as_s.should eq("gold")
+      inventory.hosts["web1"].vars["tier"].as_s.should eq("gold")
+    end
+
     it "applies host_vars/<hostname>.yml to just that host" do
       write(File.join(ROOT, "inventory.ini"), <<-INI)
         web1
