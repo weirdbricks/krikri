@@ -765,3 +765,93 @@ native-first-level + subtree-scoped-handoff shape, not a whole-
 container conversion. Remaining Group-A tail (from_yaml_all, zip/
 product, combinations/permutations, rekey_on_member, relpath, log,
 pow, random) stays bridge-shaped per the survey.
+
+---
+
+# Phase 3 complete: tail batch report (slice 5, 2026-09-21)
+
+The survey's last open candidate, item 5 "Group-A tail", done as ONE
+combined slice instead of per-filter rounds: every tail name's
+hand-rolled FilterEngine copy is retired onto its pre-existing native
+Crinja registration via `#delegate_to_crinja_filter` (bridge-shaped
+per the survey's own seam rule - all of them are LOW per-item
+reachability, so the flat per-call bridge tax is the right trade).
+`random`'s private `#random_choice`/`#py_random_for_seed` helpers,
+`combinations`'/`permutations`' private recursive helpers, and the
+now-unused `require "yaml"` all left filter_engine.cr with them.
+
+## Migrated (all 11 names; skips at the end)
+
+| Filter(s) | Outcome | What the bridge arbitrated (all live-verified against real ansible-core 2.19.11) |
+|---|---|---|
+| `zip`, `zip_longest`, `product` | MIGRATED | The shared registration was fixed FIRST, then both engines route through it: all-positional N-way varargs (the old declared-kwarg shape silently capped zip at 3-way; the old hand-rolled N-way dispatch is gone), and only the `fillvalue=` KWARG sets the pad - a positional third argument is another LIST. Also fixed the registration's own latent macro bug: `{{ name.stringify }}` emitted a runtime symbol-vs-string comparison that was always false, so template-side `zip_longest` silently behaved as zip (min-size rows, never padded). |
+| `combinations`, `permutations` | MIGRATED | `n` keeps its krikri default of 2 on BOTH engines (real itertools requires r - "missing required argument 'r' (pos 2)"); a deliberate, spec-locked divergence, now decided once instead of twice. |
+| `rekey_on_member` | MIGRATED | A non-string member value stringifies into the key (`{"id":5}` rekeys to `"5"`; the retired copy silently dropped such items); `duplicates=` is accepted as a real kwarg, not only positionally. `warn` still behaves as `overwrite` on both engines. |
+| `relpath` | MIGRATED | `start=` kwarg accepted - the old positional-only parse treated `relpath(start='/a')`'s whole text as the start path. |
+| `log` | MIGRATED | `base=` kwarg accepted - the old parse turned `8 \| log(base=2)` into a natural log. |
+| `pow` | MIGRATED | Positional-only fed through, matching real (`power(x, y)` has no kwarg form there - `pow(x=10)` fails in real too). |
+| `from_yaml_all` | MIGRATED | Failure on invalid YAML unchanged (raises either way); the message is now the underlying YAML parse error rather than a generic label. |
+| `random` | MIGRATED | Seeded path unchanged and bit-exact with real (PyRandom, both engines agree byte-for-byte for the same seed); the registration's UNSEEDED path was fixed alongside the migration - it used to fall into `PyRandom.new("")` and return the same value for every call in the process, now it is nondeterministic like real Jinja. |
+
+## Skipped, with reasons
+
+Nothing in the tail batch itself was skipped: every surveyed tail name
+already had a live native Crinja registration - that was the Group-A
+criterion, and the ones without one are not in Group A. The rest of
+the survey stays skipped for its standing reasons, all unchanged by
+this slice:
+
+- **Group B** (~35 names incl. the whole ipaddr family): consolidation
+  already exists one layer down (FilterCore/IpAddrCore/Vault); a bridge
+  would wrap a call that converts to JSON::Any anyway in two MORE
+  conversions - the measured json_query ~33x tax for zero dedup.
+- **Group C Jinja builtins** (`int`/`bool`/`string`/`join`/...): the
+  hottest, most per-item path; the survey's decision rule stands -
+  migrate one only when a real-role divergence shows the hand-rolled
+  copy is wrong, then via shared core (or benchmark first).
+- **`select`/`reject`/`selectattr`/`rejectattr`** and **`default`/`d`**:
+  fork-native (~675x per item) or bridge-hostile (variable-ref args,
+  strict-undefined semantics) - Phase-1 refusals stand.
+- **Bare `lookup()`/`query()`/`range()`/`dict()`** and the
+  register-result tests: no native Crinja registration exists
+  (Phase-2 rule 1 - no twin to consolidate onto).
+
+## Method
+
+One combined divergence probe
+(`scripts/crinja_corpus/probe_tail_divergence.cr`): the same ~48-case
+old-vs-new battery run through BOTH implementations of every migrated
+tail filter, with oracle keys arbitrated against real ansible-core
+2.19.11 (playbook + extracted facts under `/tmp/crinja-tail-oracle/`,
+not kept in the repo), plus a seeded/unseeded `random` shape contract
+(seeded must match real byte-for-byte AND the old path; unseeded must
+differ across calls). Every divergence the probe found was arbitrated
+against real and is either pinned in a spec or recorded in the table
+above.
+
+## Specs, suite, lint
+
+7 new + 2 extended regression specs pin the arbitrated contracts:
+`filter_engine_spec.cr` (N-way zip, positional-third-argument
+zip_longest, relpath/log kwarg forms, rekey_on_member stringified key +
+`duplicates=` kwarg, from_yaml_all empty/leading-marker edges, random
+seeded bit-exact + unseeded range) and `crinja_renderer_spec.cr`
+(template zip_longest now pads to the LONGEST list, N-way). The full
+suite after the change: **5374 examples, 6 failures / 2 errors** -
+exactly the documented baseline (`is_test_aliases_spec` cluster,
+`x509_csr_info_spec` tmp-file race). Ameba clean on every touched
+file. VERSION 0.9.1239 -> 0.9.1240.
+
+## Verdict
+
+Phase 3 is closed. Every Group-A duplicate the survey catalogued now
+has ONE implementation: extract and the regex pair via shared cores
+(the map()-reachable seam), items2dict/ternary and this whole tail via
+bridge delegation (the low-frequency seam), with the arbitrated
+behavior improvements (zip_longest template padding, rekey_on_member
+numeric keys, relpath/log kwargs, random unseeded nondeterminism)
+landing as side effects of unifying rather than as separate fixes.
+What remains hand-rolled in FilterEngine is either arg-parsing around
+a shared core (Group B), fork-native per-item machinery with a
+measured reason to stay (selectattr et al.), or has no Crinja twin to
+consolidate onto - each with its reason on record.

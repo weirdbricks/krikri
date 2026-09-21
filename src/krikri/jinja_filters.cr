@@ -921,32 +921,41 @@ module Krikri
       end
     end
 
-    # `zip(other1, other2=None)`/`zip_longest(other1, other2=None,
-    # fillvalue=None)` - real Ansible filters, Python's own zip()/
-    # itertools.zip_longest(). Declared-keyword-args form (not the plain
-    # block form - see the `version` test's own comment on why: multiple
-    # positional arguments don't reliably split via `arguments.varargs`)
-    # caps this at up to 2 extra list arguments (3-way zip total) -
-    # covers the overwhelming majority of real-world usage; a real 4+way
-    # zip would need a different registration approach entirely.
+    # `zip(*others)`/`zip_longest(*others, fillvalue=None)` - real Ansible
+    # filters, Python's own zip()/itertools.zip_longest(). Every
+    # positional argument is another list to zip with (N-way - real
+    # ansible-core 2.19.11 live-verified with four lists; the earlier
+    # declared-kwarg shape silently capped at three). Only the
+    # `fillvalue=` KWARG sets the pad: read off arguments.kwargs directly
+    # (never through defaults-index positional binding, so a third
+    # positional list can't land in fillvalue's slot - live-verified
+    # that real treats it as a list). This is also the registration the
+    # hand-rolled FilterEngine dispatch delegates to since Phase-3
+    # slice #5 - see the zip/zip_longest case there.
     {% for name in [:zip, :zip_longest] %}
-      Crinja.filter({other1: Crinja::UNDEFINED, other2: Crinja::UNDEFINED, fillvalue: Crinja::UNDEFINED}, {{ name }}) do
-        longest = {{ name.stringify }} == "zip_longest"
-        lists = [target] + [arguments["other1"], arguments["other2"]].reject(&.undefined?)
-        arrays = lists.map { |l| l.sequence? ? l.to_a : [] of Crinja::Value }
-        fillvalue = arguments["fillvalue"].undefined? ? Crinja::Value.new(nil) : arguments["fillvalue"]
+      Crinja.filter({fillvalue: Crinja::UNDEFINED}, {{ name }}) do
+        # The macro comparison must happen at MACRO time: `name.stringify`
+        # on the loop's SymbolLiteral emits the SYMBOL `:zip_longest`, so
+        # the runtime `:zip_longest == "zip_longest"` comparison this used
+        # to generate was always false and template-side zip_longest
+        # silently behaved as zip (min-size rows, never padded).
+        longest = {{ name == :zip_longest }}
+        arrays = ([target] + arguments.varargs).map { |l| l.sequence? ? l.to_a : [] of Crinja::Value }
+        fill_arg = arguments.kwargs["fillvalue"]?
+        fillvalue = fill_arg.nil? || fill_arg.undefined? ? Crinja::Value.new(nil) : fill_arg
         size = longest ? (arrays.map(&.size).max? || 0) : (arrays.map(&.size).min? || 0)
         rows = (0...size).map { |i| Crinja::Value.new(arrays.map { |arr| arr[i]? || fillvalue }) }
         Crinja::Value.new(rows)
       end
     {% end %}
 
-    # `product(other1, other2=None)` - real Ansible filter, Python's own
+    # `product(*others)` - real Ansible filter, Python's own
     # itertools.product(): Cartesian product of target and every other
-    # list argument. Same up-to-2-extra-lists cap as zip above.
-    Crinja.filter({other1: Crinja::UNDEFINED, other2: Crinja::UNDEFINED}, :product) do
-      lists = [target] + [arguments["other1"], arguments["other2"]].reject(&.undefined?)
-      arrays = lists.map { |lval| lval.sequence? ? lval.to_a : [] of Crinja::Value }
+    # list argument, each result row a list. Same all-positional N-way
+    # reading as zip above (and likewise the delegated registration for
+    # FilterEngine's dispatch since slice #5).
+    Crinja.filter(:product) do
+      arrays = ([target] + arguments.varargs).map { |lval| lval.sequence? ? lval.to_a : [] of Crinja::Value }
       result = arrays.reduce([[] of Crinja::Value]) do |acc, arr|
         acc.flat_map { |row| arr.map { |item| row + [item] } }
       end
@@ -1918,25 +1927,29 @@ module Krikri
     # `random(seed=none)` - real Jinja2's do_random filter: an int operand
     # means "random int less than this" (Python's randrange), a sequence
     # operand means "random element" (choice). Registered on the Crinja
-    # side for real `.j2` template files and `{% %}` blocks, mirroring the
-    # hand-rolled FilterEngine copy (see that one for the full
-    # lean_delivery.jenkins_slave rationale). Unlike :shuffle's deliberate
-    # not-Python-exact decision above, the seeded path here uses PyRandom
-    # - a bit-exact port of CPython's random.Random - so a `.j2` template
-    # and real Ansible produce the SAME value for the same seed, the
-    # property a register:'d idempotent password actually depends on.
+    # side for real `.j2` template files and `{% %}` blocks, and since
+    # Phase-3 slice #5 the delegated registration for FilterEngine's own
+    # dispatch (see that case for the full lean_delivery.jenkins_slave
+    # rationale). The seeded path uses PyRandom - a bit-exact port of
+    # CPython's random.Random - so a `.j2` template, the hand-rolled
+    # engine and real Ansible all produce the SAME value for the same
+    # seed, the property a register:'d idempotent password depends on.
+    # Unseeded runs stay NONdeterministic (fresh RNG per call), matching
+    # real Jinja - previously the unseeded path fell into PyRandom.new("")
+    # and every call returned the same value for the whole process.
     Crinja.filter({seed: nil}, :random) do
       seed_arg = arguments["seed"]
+      seeded = seed_arg.raw.nil? ? nil : JinjaFilters.py_random(seed_arg)
       raw = JinjaFilters.unwrap_crinja_raw(target.raw)
       result = case raw
                when Int32, Int64
                  limit = raw.to_i64
-                 limit <= 0 ? Crinja::Value.new(nil) : Crinja::Value.new(JinjaFilters.py_random(seed_arg).randrange(limit))
+                 limit <= 0 ? Crinja::Value.new(nil) : Crinja::Value.new(seeded ? seeded.randrange(limit) : Random.new.rand(limit))
                when Array(Crinja::Value)
-                 raw.empty? ? Crinja::Value.new(nil) : Crinja::Value.new(JinjaFilters.py_random(seed_arg).choice(raw))
+                 raw.empty? ? Crinja::Value.new(nil) : Crinja::Value.new(seeded ? seeded.choice(raw) : raw[Random.new.rand(raw.size)])
                when String
                  chars = raw.chars.map { |char| Crinja::Value.new(char.to_s) }
-                 chars.empty? ? Crinja::Value.new(nil) : Crinja::Value.new(JinjaFilters.py_random(seed_arg).choice(chars).to_s)
+                 chars.empty? ? Crinja::Value.new(nil) : Crinja::Value.new(seeded ? seeded.choice(chars).to_s : chars[Random.new.rand(chars.size)].to_s)
                else
                  target
                end

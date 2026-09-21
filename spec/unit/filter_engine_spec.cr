@@ -885,6 +885,19 @@ describe Krikri::VariableSubstitutor::FilterEngine do
     result.map { |row| row.as_a.map(&.to_s) }.should eq([["1", "x"], ["2", "-"]])
   end
 
+  it "zip is N-way (real ansible-core 2.19: every positional is another list)" do
+    result = engine.apply(JSON.parse(%([1])), "zip([2], [3], [4])").as_a
+    result.map { |row| row.as_a.map(&.as_i) }.should eq([[1, 2, 3, 4]])
+  end
+
+  it "zip_longest treats a positional third argument as a list, never the fill" do
+    # Live-verified against real ansible-core 2.19.11: only the
+    # fillvalue= KWARG sets the pad; a positional '-' is a third list
+    # and the padding stays null.
+    result = engine.apply(JSON.parse(%([1, 2])), "zip_longest([3], '-')").as_a
+    result.map { |row| row.as_a.map(&.to_s) }.should eq([["1", "3", "-"], ["2", "", ""]])
+  end
+
   it "product computes the Cartesian product with another list" do
     v = Hash(String, JSON::Any).new
     v["other"] = JSON.parse(%([1, 2]))
@@ -939,6 +952,7 @@ describe Krikri::VariableSubstitutor::FilterEngine do
 
   it "relpath computes a path relative to start=" do
     engine.apply(s("/a/b/c"), "relpath('/a')").as_s.should eq("b/c")
+    engine.apply(s("/a/b/c"), "relpath(start='/a')").as_s.should eq("b/c")
   end
 
   it "commonpath finds the longest common directory prefix" do
@@ -948,6 +962,7 @@ describe Krikri::VariableSubstitutor::FilterEngine do
   it "log computes natural log by default, arbitrary base otherwise" do
     engine.apply(JSON::Any.new(Math::E), "log").as_f.should be_close(1.0, 0.0001)
     engine.apply(JSON::Any.new(8.0), "log(2)").as_f.should be_close(3.0, 0.0001)
+    engine.apply(JSON::Any.new(8.0), "log(base=2)").as_f.should be_close(3.0, 0.0001)
   end
 
   it "pow raises value to a power" do
@@ -984,6 +999,21 @@ describe Krikri::VariableSubstitutor::FilterEngine do
     result = engine.apply(input, "rekey_on_member('name')").as_h
     result["a"].as_h["v"].as_i.should eq(1)
     result["b"].as_h["v"].as_i.should eq(2)
+  end
+
+  it "rekey_on_member stringifies a non-string member value into the key" do
+    # Live-verified against real ansible-core 2.19.11: a numeric member
+    # rekeys to the STRING key ("5"), it is not silently skipped (the
+    # retired hand-rolled copy dropped such items on the floor).
+    input = JSON.parse(%([{"id": 5, "v": 1}]))
+    result = engine.apply(input, "rekey_on_member('id')").as_h
+    result["5"].as_h["v"].as_i.should eq(1)
+  end
+
+  it "rekey_on_member accepts duplicates= as a kwarg" do
+    input = JSON.parse(%([{"name": "a", "v": 1}, {"name": "a", "v": 2}]))
+    result = engine.apply(input, "rekey_on_member('name', duplicates='overwrite')").as_h
+    result["a"].as_h["v"].as_i.should eq(2)
   end
 
   it "extract indexes into a container using the piped value" do
@@ -1097,6 +1127,25 @@ describe Krikri::VariableSubstitutor::FilterEngine do
     result = engine.apply(s("a: 1\n---\nb: 2\n"), "from_yaml_all").as_a
     result[0].as_h["a"].as_i.should eq(1)
     result[1].as_h["b"].as_i.should eq(2)
+  end
+
+  it "from_yaml_all handles an empty string and a leading document marker" do
+    # Both live-verified against real ansible-core 2.19.11.
+    engine.apply(s(""), "from_yaml_all").as_a.should eq([] of JSON::Any)
+    result = engine.apply(s("---\na: 1"), "from_yaml_all").as_a
+    result.size.should eq(1)
+    result[0].as_h["a"].as_i.should eq(1)
+  end
+
+  it "random with a seed is bit-exact with real ansible (PyRandom), unseeded stays nondeterministic" do
+    # Real ansible-core 2.19.11 renders both of these to the same values
+    # (65534|random(seed='host1') -> 31863; list form -> "b") - the
+    # PyRandom port makes krikri agree byte-for-byte.
+    engine.apply(JSON::Any.new(65534_i64), "random(seed='host1')").as_i.should eq(31863)
+    engine.apply(JSON.parse(%(["a", "b", "c"])), "random(seed='host1')").as_s.should eq("b")
+    picked = engine.apply(JSON::Any.new(100_i64), "random").as_i
+    picked.should be >= 0
+    picked.should be < 100
   end
 
   it "vault/unvault round-trip through real ansible-vault ciphertext" do
