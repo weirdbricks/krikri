@@ -344,3 +344,100 @@ Crinja-native-end-to-end filters (`dict2items`-shaped).
    in lookup-headed chains) in `KNOWN_MISSING.md` as a deliberate
    limit or open gap - the survey's finding, that decision belongs to
    a round with real-host evidence, not to this doc.
+
+---
+
+# Slice 1 report: `items2dict` migrated onto Crinja (2026-09-21)
+
+The survey's #1 candidate, executed as the survey itself prescribed.
+Scope: exactly the one dispatch branch - `FilterEngine`'s `items2dict`
+case stops calling the hand-rolled `#items_to_dict` helper (deleted)
+and routes through the native `Crinja.filter(:items2dict)` registration
+(`jinja_filters.cr:1373`) via `#delegate_to_crinja_filter`, the same
+pilot shape `dict2items` resolved with in Phase 1. The stale
+delegated-names comment at the old `filter_engine.cr:769` is fixed in
+the same commit (the survey's recommended step 1). VERSION
+0.9.1236 -> 0.9.1237.
+
+## Method (the Phase-1/2 discipline, per slice)
+
+1. **Probe before touching code**:
+   `scripts/crinja_corpus/probe_items2dict_divergence.cr` - 19 cases
+   (basic/empty, all four kwarg combos, collision order, malformed
+   elements, int/bool/null values, non-string keys, non-list inputs,
+   the real-role `vars_result.results` shape), each run through the
+   hand-rolled dispatch and through the exact
+   `#delegate_to_crinja_filter` mechanics the migration would use.
+2. **Arbitrate every divergence against real ansible-core 2.19.11**
+   (local `ansible-playbook`), same as every prior round.
+3. Implement, full suite, benchmark old-tree-vs-new-tree via a
+   throwaway worktree at the pre-change commit
+   (`scripts/crinja_corpus/bench_items2dict_pilot.cr`, N=100,000,
+   release build).
+
+## Divergences found (pre-change probe, arbitrated against real Ansible)
+
+17 of 19 cases matched. Both divergences were **in the hand-rolled
+copy's disfavor** - the migration is strictly a correctness win, not a
+trade:
+
+| Case | Real Ansible 2.19.11 | OLD hand-rolled | NEW via Crinja | Verdict |
+|---|---|---|---|---|
+| `{'key': 1, 'value': 'x'}` (non-string key) | `{"1": "x"}` - key stringified | silently skipped the element (the helper's `.as_s?` gate) | `{"1": "x"}` | **Strictly more correct** - fixes a silent data-drop toward real Ansible |
+| `null \| items2dict` | raises (`items2dict requires a list, got <class 'NoneType'> instead`) | silently returned `{}` | raises | **Strictly more correct** - a null no longer masquerades as an empty mapping |
+
+One class deliberately NOT converged: the silent skip of a non-dict or
+missing-`key_name`-field list element. Real Ansible 2.19 raises on a
+malformed element, but krikri's tolerance is a shared, spec-locked
+contract on BOTH sides (a single malformed element must not fail the
+whole filter; locked in `spec/unit/filter_engine_spec.cr`), so the
+delegated path preserves it unchanged via the Crinja registration's
+own skip. Same decision the dict2items pilot made. Undefined-input
+rejection still happens upstream in
+`Krikri.undefined_filter_chain_source`, before any filter runs.
+
+Post-change the probe reports **0 diverged of 19** by construction
+(both paths it compares ARE the same Crinja registration now); its
+pre-change output is the divergence inventory above. Two regression
+specs pin the arbitrated verdicts in `filter_engine_spec.cr` (int-key
+stringification, null-input raise).
+
+Full suite after the change: **5343 examples, 6 failures / 2 errors**
+- exactly the documented nondeterministic baseline (`is_test_aliases_
+spec` cluster, `x509_csr_info_spec` tmp-file race). No new failures,
+no spec modified except the two additions.
+
+## Performance: real numbers
+
+`crystal run --release` of `bench_items2dict_pilot.cr`, N=100,000
+(8-entry `vars_result`-shaped list per call), old tree = pre-change
+commit via throwaway worktree. Both sides are noisy (GC-driven
+spikes); per-call ns across repeated rounds:
+
+| Expression | OLD hand-rolled | NEW via bridge | Delta |
+|---|---|---|---|
+| `items2dict` (plain) | ~300-380 ns | ~5-10 us typical, spikes to ~35-50 us | ~15-25x slower |
+| `items2dict(key_name=..., value_name=...)` (kwargs) | ~1.0-1.5 us | ~8-10 us typical, spikes to ~50 us | ~7-10x slower |
+
+Exactly the cost class the survey predicted for a `dict2items`-shaped
+bridge delegation: one JSON::Any <-> Crinja::Value roundtrip PER CALL,
+~14 us/call base - and, critically, paid once per expression, never
+per item, because `items2dict` is a list->dict reducer that cannot
+appear inside a `map()` body. In absolute terms ~5-10 us against task
+costs measured in tens of milliseconds; it will not show up in any
+real round's timing. The spike variance (both sides, including the
+unchanged kwargs path) is allocator/GC noise at this call frequency
+and does not change the verdict.
+
+## Verdict and what's next
+
+Slice 1 stands as the survey's template: pilot-shaped, low-frequency,
+probe-first, both divergences resolved toward real Ansible, bridge tax
+proven acceptable for the seam. The remaining slices keep their
+survey-assigned seams unchanged:
+
+- Slice 2 (`ternary`): still `#delegate_to_crinja_filter`-shaped;
+  probe the omit-sentinel branch first.
+- Slices 3/4 (`regex_search`/`regex_findall`, `extract`): still
+  shared-core, NOT bridge - per-item reachability via `map(...)` makes
+  delegation compound per item.
