@@ -1,7 +1,7 @@
 require "yaml"
 
 module Krikri
-  VERSION = "0.9.1245"
+  VERSION = "0.9.1246"
 
   # Baked into the binary at compile time (never read from disk at
   # runtime - a deployed binary has no shard.lock beside it), the same
@@ -43,10 +43,10 @@ module Krikri
   end
 
   # Pin info per dependency under a top-level section header (e.g.
-  # "dependencies:") of a shard.yml: {name => {github, tag, branch}} with
-  # nil for whatever the entry doesn't pin. Line-based like the parsers
+  # "dependencies:") of a shard.yml: {name => {github, tag, branch, commit}}
+  # with nil for whatever the entry doesn't pin. Line-based like the parsers
   # above so it stays a pure, fixture-testable function.
-  alias ShardYmlPin = {github: String?, tag: String?, branch: String?}
+  alias ShardYmlPin = {github: String?, tag: String?, branch: String?, commit: String?}
 
   def self.parse_shard_yml_dependency_pins(content : String, section : String) : Hash(String, ShardYmlPin)
     pins = {} of String => ShardYmlPin
@@ -58,8 +58,8 @@ module Krikri
         current = nil
       elsif name_match = line.match(/^  ([^\s:]+):\s*$/)
         current = name_match[1]
-        pins[current] = {github: nil, tag: nil, branch: nil} if in_section
-      elsif field_match = line.match(/^    (github|tag|branch):\s*(\S.*?)\s*$/)
+        pins[current] = {github: nil, tag: nil, branch: nil, commit: nil} if in_section
+      elsif field_match = line.match(/^    (github|tag|branch|commit):\s*(\S.*?)\s*$/)
         if in_section && (cur = current) && (existing = pins[cur]?)
           pins[cur] = update_pin_field(existing, field_match[1], field_match[2])
         end
@@ -70,9 +70,10 @@ module Krikri
 
   private def self.update_pin_field(pin : ShardYmlPin, field : String, value : String) : ShardYmlPin
     case field
-    when "github" then {github: value, tag: pin[:tag], branch: pin[:branch]}
-    when "tag"    then {github: pin[:github], tag: value, branch: pin[:branch]}
-    else               {github: pin[:github], tag: pin[:tag], branch: value}
+    when "github" then {github: value, tag: pin[:tag], branch: pin[:branch], commit: pin[:commit]}
+    when "tag"    then {github: pin[:github], tag: value, branch: pin[:branch], commit: pin[:commit]}
+    when "commit" then {github: pin[:github], tag: pin[:tag], branch: pin[:branch], commit: value}
+    else               {github: pin[:github], tag: pin[:tag], branch: value, commit: pin[:commit]}
     end
   end
 
@@ -107,6 +108,8 @@ module Krikri
         suffix = ", tag #{tag}"
       elsif branch = pin[:branch]
         suffix = ", branch #{branch}"
+      elsif commit = pin[:commit]
+        suffix = ", commit #{commit[0, 7]}"
       end
       notes[name] = " (#{github} fork#{suffix})"
     end
