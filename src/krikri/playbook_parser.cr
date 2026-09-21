@@ -26,8 +26,9 @@ module Krikri
     # without one it takes the graceful per-task skip (task marked
     # skipped, "skipping" line, play continued) - exactly what real
     # Ansible does when evaluating `when:` before resolving the action -
-    # and register_reachable_unavailable_module records the name for the
-    # final exit-code decision if its own when: would have let it run.
+    # and the executor records the name into reachable_unavailable_
+    # modules (after its own when: evaluates) for the final exit-code
+    # decision.
     # Previously an unimplemented task raised "Plugin not available" at
     # PARSE time and was dropped entirely - before its own when: was ever
     # evaluated - so a task gated behind e.g.

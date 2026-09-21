@@ -50,6 +50,69 @@ ensure
 end
 
 describe "unresolvable module names hard-stop the run (UnresolvedModuleError)" do
+  it "fails a fired HANDLER fatally when its unimplemented module's own when: raises (undefined var), instead of silently skipping" do
+    # Handler-path twin of the task-path regression examples below
+    # (fixed in the same spirit as the 0.9.1175 task-path fix): real Ansible evaluates a
+    # fired handler's `when:` BEFORE it ever resolves the handler's
+    # module, so a when: referencing a genuinely undefined variable is
+    # a fatal conditional error (rc=2, failed=1, "Error while
+    # evaluating conditional: '...' is undefined") even when that
+    # handler's module is ALSO unresolvable (verified live against
+    # ansible-core 2.19.11 with kubernetes.core.helm_repository behind
+    # a raised notify). The old code short-circuited the
+    # unavailable-module handler straight to "skipping" via
+    # register_reachable_unavailable_module's `rescue false`, turning
+    # that real fatal into a silent rc=0 skip.
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: changed task that notifies the handler
+            ansible.builtin.command: "true"
+            notify: unported handler
+        handlers:
+          - name: unported handler
+            kubernetes.core.helm_repository:
+              repo_name: foo
+            when: some_genuinely_undefined_var == 'x'
+      YAML
+    status.success?.should be_false, output
+    status.exit_code.should eq(2), output
+    output.should contain("Error while evaluating conditional: 'some_genuinely_undefined_var' is undefined"), output
+    output.should contain("failed=1"), output
+    output.should_not contain("skipping: [localhost]"), output
+  end
+
+  it "still cleanly skips a fired unimplemented-module handler behind a literal `when: false`" do
+    # The inverse guard on the same handler code path (handler-path
+    # twin of the task-path `when: false` example below): real Ansible
+    # checks the handler's when: FIRST, and a false condition means
+    # module resolution is never even attempted - so an
+    # unavailable-module handler + when:-false remains a plain rc=0
+    # skip (verified live against ansible-core 2.19.11), never a
+    # newly-fatal handler and never an unavailable-modules exit 4.
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: changed task that notifies the handler
+            ansible.builtin.command: "true"
+            notify: unported handler
+        handlers:
+          - name: unported handler
+            kubernetes.core.helm_repository:
+              repo_name: foo
+            when: false
+      YAML
+    status.success?.should be_true, output
+    output.should contain("HANDLER [unported handler]"), output
+    output.should contain("skipping: [localhost]"), output
+    output.should contain("PLAY RECAP"), output
+    output.should_not contain("unavailable modules"), output
+  end
+
   it "aborts before any task runs for a bare module removed from ansible-core (ec2_remote_facts)" do
     status, output = run_playbook(<<-YAML)
       - hosts: localhost

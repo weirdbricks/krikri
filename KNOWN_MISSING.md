@@ -29,7 +29,7 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.1189`.**
+**Currently at `0.9.1244`.**
 
 ## Round 900000-900999: 1000-role Galaxy batch (500 ubuntu + 500 rocky), 12 real bugs fixed (0.9.1174 -> 0.9.1189)
 
@@ -526,14 +526,6 @@ independently-provisioned hosts in that round, not an engine defect.
 
 ## Open gaps
 
-- **Round 900000-900999: handler-path `when:`-before-unavailable-module
-  gap** - `executor_handlers.cr`'s own call to
-  `register_reachable_unavailable_module` (`executor_facts_register.cr`)
-  still has the same `rescue false` swallow-to-false bug the main
-  task-path `when_passes?` fix (0.9.1175) addressed for ordinary tasks -
-  a handler whose module isn't implemented can still skip without
-  evaluating its own `when:` correctly. Not yet fixed; same fix shape as
-  0.9.1175's, just needs porting to the handler path.
 - **Round 900000-900999: `juju4.adduser` dir-mode "changed" divergence,
   not reproduced deterministically** - round900902 showed an extra
   `changed: true` on `~/.ssh`'s `file: {mode: "0700", state: directory}`
