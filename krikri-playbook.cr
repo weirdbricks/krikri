@@ -913,7 +913,31 @@ playbook.plays.each_with_index do |play, _play_index|
   # serial: runs the WHOLE play against one batch of hosts at a time.
   # With no serial: this is a single batch of every host, exactly as
   # before.
+  # Real Ansible aborts the ENTIRE playbook run (all remaining plays, not
+  # just this one) once every host in a serial batch has newly failed or
+  # gone unreachable - PlaybookExecutor.run's per-batch check
+  # (failed_hosts_count == len(batch) -> break_play). A templating error
+  # while resolving a play var (e.g. a play-level `vars:` entry whose
+  # expression raises when read) fails every host that touches it; an
+  # author relying on "a bad template value stops the run" must not see
+  # krikri carry on into plays that don't depend on the broken var at all
+  # (found against real infra: krikri ran the second play where real
+  # ansible-playbook 2.19 aborted before its PLAY banner). The rule is
+  # cause-agnostic in real Ansible - an ordinary module failure across
+  # the whole batch aborts the run the same way - so it counts failures
+  # and unreachables, not templating errors specifically; per-host
+  # failures that leave part of the batch healthy (or none at all) keep
+  # the run going exactly as before. end_host/end_play and
+  # clear_host_errors hosts don't count as failures (see the concat
+  # above), matching real Ansible's TQM._failed_hosts bookkeeping.
+  abort_entire_run = false
   Krikri::SerialBatches.split(Krikri::SerialBatches.order(hosts, play.order), play.serial).each do |batch_hosts|
+    # Per-batch deltas, mirroring PlaybookExecutor's
+    # previously_failed/previously_unreachable counters: a host that was
+    # already unreachable before this batch must not count toward this
+    # batch's failure total.
+    previously_unreachable = unreachable_hosts.size
+
     # Create task executor with handlers and play vars
     executor = Krikri::TaskExecutor.new(
       hosts: batch_hosts,
@@ -981,9 +1005,9 @@ playbook.plays.each_with_index do |play, _play_index|
     # failures since cleared via meta: clear_host_errors
     # (cleared_error_hosts) - neither is a real failure, so both are
     # excluded here: real Ansible's own documented behavior for
-    # clear_host_errors is explicitly "available for targeting in
-    # subsequent plays", and end_host/end_play's own docs are explicit
-    # that they don't fail the host either.
+    #   clear_host_errors is explicitly "available for targeting in
+    #   subsequent plays", and end_host/end_play's own docs are explicit
+    #   that they don't fail the host either.
     permanently_failed_hosts.concat(executor.halted_hosts - executor.ended_hosts - executor.cleared_error_hosts)
 
     # Merge this play's per-host stats into the running total (a host can
@@ -996,10 +1020,29 @@ playbook.plays.each_with_index do |play, _play_index|
       end
     end
 
+    # Whole-run abort check. Unreachable hosts land in halted_hosts too
+    # (report_unreachable), so they are subtracted back out here - real
+    # Ansible's TQM keeps failed and unreachable in separate dicts and a
+    # host newly unreachable must count once, not twice.
+    batch_failures = (executor.halted_hosts - executor.ended_hosts - executor.cleared_error_hosts - unreachable_hosts).size +
+                     (unreachable_hosts.size - previously_unreachable)
+    if batch_hosts.size == batch_failures
+      abort_entire_run = true
+      break
+    end
+
     # any_errors_fatal:/max_fail_percentage: stop the whole play, so the
-    # remaining serial: batches must not start either.
+    # remaining serial: batches must not start either. (When those fire,
+    # every batch host is halted, so the batch check above has already
+    # aborted the whole run - real Ansible's RUN_FAILED_BREAK_PLAY does
+    # exactly that too - leaving this as the belt-and-braces path.)
     break if executor.play_aborted?
   end
+
+  # The whole-run abort unwinds the plays loop itself, not just the
+  # serial batches - the PLAY RECAP below still prints, which is what
+  # real ansible-playbook does on its way out with a non-zero rc.
+  break if abort_entire_run
 end
 
 # Summary
