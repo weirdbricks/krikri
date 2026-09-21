@@ -819,61 +819,59 @@ module Krikri
         when "regex_search"
           # regex_search(pattern, group_ref='') - real Ansible's own
           # filter (not standard Jinja2): searches *pattern* anywhere in
-          # value (Python re.search, not a full match), and with a
-          # backreference-style second argument (`'\\1'`) returns that
-          # captured group's text instead of the whole match. No match
-          # at all resolves to Python None/JSON null - matching real
-          # Ansible exactly (it returns None, NOT undefined), so a
-          # downstream `is not none` test sees the miss
-          # (buluma.cve_2024_3094's own list-form failed_when gates on
-          # exactly that, round 189: the old "undefined" sentinel string
-          # here made `is not none` TRUE and failed a succeeding task)
-          # and `| default(...)` without a truthy second arg does NOT
-          # fire, same as real Jinja. A caller chaining `| first` on a
-          # no-match now fails the way real Ansible's `None | first`
-          # does, instead of silently succeeding on bogus data.
-          # Found via konstruktoid-hardening's own `sshd_version.
-          # stderr_lines | regex_search('OpenSSH_(...)', '\\1') | first`
-          # (extracting the installed OpenSSH version) - previously
-          # unimplemented and falling through to the `else` passthrough
-          # below, returning `sshd_version.stderr_lines` *itself*
-          # unfiltered as "the version", which downstream `is
-          # version(...)` comparisons then read nonsense out of.
+          # value (Python re.search, not a full match). No match at all
+          # resolves to Python None/JSON null - matching real Ansible
+          # exactly (it returns None, NOT undefined), so a downstream
+          # `is not none` test sees the miss (buluma.cve_2024_3094's own
+          # list-form failed_when gates on exactly that, round 189) and
+          # `| default(...)` without a truthy second arg does NOT fire,
+          # same as real Jinja. A caller chaining `| first` on a no-match
+          # fails the way real Ansible's `None | first` does, instead of
+          # silently succeeding on bogus data. Found via konstruktoid-
+          # hardening's own `sshd_version.stderr_lines |
+          # regex_search('OpenSSH_(...)', '\\1') | first` (extracting the
+          # installed OpenSSH version) - previously unimplemented and
+          # falling through to the `else` passthrough below, returning
+          # `sshd_version.stderr_lines` *itself* unfiltered as "the
+          # version", which downstream `is version(...)` comparisons then
+          # read nonsense out of.
+          # Phase-3 slice 3: the semantics (group-ref grammar, the
+          # always-a-list group_ref return, no-match -> null, the
+          # multiline/ignorecase kwargs) now live in the SHARED
+          # FilterCore.regex_search core that the Crinja-side
+          # registration (jinja_filters.cr) calls too - previously TWO
+          # independently-maintained copies that had each found and
+          # fixed the group_ref bugs separately (see FilterCore's
+          # comment for the full arbitrated contract). Real Ansible
+          # takes multiline/ignorecase as kwargs, so kwarg-shaped args
+          # are excluded from the positional group-ref slot here.
           args = split_top_level_args(filter_args)
-          pattern = args[0]?.try { |arg| as_string(resolve_expression(arg)) } || ""
-          group_ref = args[1]?.try { |arg| as_string(resolve_expression(arg)) }
+          positional = args.reject { |arg| arg.strip.match(/^(multiline|ignorecase)\s*=/) }
+          pattern = positional[0]?.try { |arg| as_string(resolve_expression(arg)) } || ""
+          group_ref = positional[1]?.try { |arg| as_string(resolve_expression(arg)) }
+          options = Regex::Options::None
+          if kw = parse_kwarg_expr(filter_args, "multiline")
+            options |= Regex::Options::MULTILINE if truthy?(kw)
+          end
+          if kw = parse_kwarg_expr(filter_args, "ignorecase")
+            options |= Regex::Options::IGNORE_CASE if truthy?(kw)
+          end
 
-          if match = as_string(value).match(self.class.cached_regex(pattern))
-            if group_ref
-              # A backreference group_ref ALWAYS returns a LIST of the
-              # captured group(s), even for a single `\1` - live-
-              # verified against ansible-core 2.19.4 (regex_search with
-              # one group_ref returns `['<captured text>']`, never a
-              # bare string) - the comment above this whole `when
-              # "regex_search"` case previously asserted the opposite
-              # ("returns a plain string, matching real Ansible"),
-              # itself unverified. A bare string here made a chained `|
-              # first` (the idiom every real role using this shape
-              # actually writes) return the STRING'S OWN FIRST
-              # CHARACTER instead of the whole captured group - found
-              # via nginxinc.nginx's own Jinja2-version-check assert:
-              # `regex_search('...', '\1') | first` silently truncated
-              # "3.1.6" down to "3", failing the version check outright.
-              JSON::Any.new([JSON::Any.new(group_ref.gsub(/\\(\d)/) { match[$1.to_i]? || "" })])
-            else
-              JSON::Any.new(match[0])
-            end
+          case result = FilterCore.regex_search(as_string(value), pattern, group_ref, options)
+          when String
+            JSON::Any.new(result)
+          when Array
+            JSON::Any.new(result.map { |captured| JSON::Any.new(captured) })
           else
             JSON::Any.new(nil)
           end
         when "regex_findall"
           # regex_findall(pattern, multiline=False, ignorecase=False) -
           # real Ansible's own filter (Python re.findall): every non-
-          # overlapping match. No capture groups -> each match is the
-          # whole matched substring; with capture groups -> each match
-          # is a list of that match's group strings. Same shape as the
-          # Crinja-side `Crinja.filter(:regex_findall)` (jinja_filters.
-          # cr) - needed here too since a bare `{{ }}` filter-name
+          # overlapping match; with capture groups each match is a list of
+          # that match's group strings (exactly ONE group -> flat scalars,
+          # Python's own single-group return shape). Needed on the
+          # hand-rolled side since a bare `{{ }}` filter-name
           # `map('regex_findall', ...)` chain goes through THIS plain
           # evaluator, not Crinja (only `{%`/`{#` block-tag escalation
           # reaches Crinja's filters). Real bug found live-verifying
@@ -883,28 +881,28 @@ module Krikri
           # op'd (each line passed through unchanged instead of being
           # split into [checksum, filename]) - the whole checksum dict
           # ended up empty, failing every download's checksum check.
+          # Phase-3 slice 3: the match-shaping lives in the SHARED
+          # FilterCore.regex_findall core that the Crinja-side
+          # registration (jinja_filters.cr) calls too - the `mat.size`
+          # single-capture-group bug this fixes was historically fixed
+          # separately in each copy. Real Ansible accepts
+          # multiline/ignorecase both positionally (in that order) and
+          # as named kwargs; the named form previously only worked on
+          # the Crinja side.
           args = split_top_level_args(filter_args)
-          pattern = args[0]?.try { |arg| as_string(resolve_expression(arg)) } || ""
+          positional = args.reject { |arg| arg.strip.match(/^(multiline|ignorecase)\s*=/) }
+          pattern = positional[0]?.try { |arg| as_string(resolve_expression(arg)) } || ""
           options = Regex::Options::None
-          options |= Regex::Options::MULTILINE if args[1]?.try { |arg| truthy?(resolve_expression(arg)) }
-          options |= Regex::Options::IGNORE_CASE if args[2]?.try { |arg| truthy?(resolve_expression(arg)) }
-          regex = self.class.cached_regex(pattern, options)
-
-          # MatchData#size counts group 0 (the whole match) too, so a
-          # pattern with exactly ONE real capture group already has
-          # size == 2 - `mat.size > 1` wrongly took the "multiple
-          # groups" branch there, same bug as jinja_filters.cr's own
-          # copy of this filter (see its comment for the live repro:
-          # lean_delivery.java's java_major_version becoming the array
-          # `[26]` instead of the scalar `26`).
-          matches = as_string(value).scan(regex).map do |mat|
-            case mat.size
-            when 1 then JSON::Any.new(mat[0])
-            when 2 then JSON::Any.new(mat[1]? || "")
-            else        JSON::Any.new((1...mat.size).map { |i| JSON::Any.new(mat[i]? || "") })
-            end
+          if truthy_arg?(parse_kwarg_expr(filter_args, "multiline"), positional[1]?)
+            options |= Regex::Options::MULTILINE
           end
-          JSON::Any.new(matches)
+          if truthy_arg?(parse_kwarg_expr(filter_args, "ignorecase"), positional[2]?)
+            options |= Regex::Options::IGNORE_CASE
+          end
+
+          JSON::Any.new(FilterCore.regex_findall(as_string(value), pattern, options).map do |entry|
+            entry.is_a?(String) ? JSON::Any.new(entry) : JSON::Any.new(entry.map { |group| JSON::Any.new(group) })
+          end)
         when "regex_replace"
           # regex_replace(pattern, replacement='') - real Ansible's own
           # filter: replaces every match of *pattern* in value with
@@ -2554,6 +2552,14 @@ module Krikri
       end
 
       private KWARG_PATTERNS = Hash(String, Regex).new
+
+      # A filter option real Ansible accepts both positionally and as a
+      # named kwarg (regex_findall's multiline/ignorecase): the named
+      # form wins when both are present.
+      private def truthy_arg?(named : JSON::Any?, positional : String?) : Bool
+        return truthy?(named) if named
+        positional ? truthy?(resolve_expression(positional)) : false
+      end
 
       # Same as parse_kwarg, but for a kwarg whose value isn't necessarily
       # a quoted string - `start=[]` (sum()'s own list-accumulator kwarg)
