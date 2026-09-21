@@ -1,5 +1,6 @@
 require "json"
 require "../base_action_plugin"
+require "../variable_substitutor"
 require "../variable_substitutor/variable_lookup"
 
 module Krikri
@@ -58,16 +59,64 @@ module Krikri
       # "VARIABLE IS NOT DEFINED!" under that same key and the task
       # still SUCCEEDS. _ansible_verbose_always keeps the display dump
       # unconditional (see ResultDisplay's empty-msg branch).
-      if var_name
-        var_value = VariableSubstitutor::VariableLookup.new(@vars).resolve(var_name)
-        var_output = var_value ? format_value(var_value) : "VARIABLE IS NOT DEFINED!"
+      return debug_var(var_name) if var_name
+
+      ActionResult.final(result_json(false, false, msg.to_s, {"_ansible_verbose_always" => JSON::Any.new(true)}))
+    end
+
+    private def debug_var(var_name : String) : ActionResult
+      var_value = VariableSubstitutor::VariableLookup.new(@vars).resolve(var_name)
+      unless var_value
         return ActionResult.final(result_json(false, false, "", {
           "_ansible_verbose_always" => JSON::Any.new(true),
-          var_name                  => JSON::Any.new(var_output),
+          var_name                  => JSON::Any.new("VARIABLE IS NOT DEFINED!"),
         }))
       end
 
-      ActionResult.final(result_json(false, false, msg.to_s, {"_ansible_verbose_always" => JSON::Any.new(true)}))
+      # Real debug's var: templates the looked-up value through the
+      # Templar (action/debug.py: self._templar.template(...)), so a
+      # LAZY var - a play/role `vars:` entry whose own value is an
+      # unrendered `{{ ... }}` chain (folded-scalar `expected_ips: >-`
+      # wrapping `map('extract', hostvars, ...)` is the real-world
+      # shape) - is rendered at debug time, and a templating error
+      # inside it (extract on a missing hostvars attribute, a
+      # strict-mode undefined reference, ...) fails the task exactly
+      # like real Ansible aborting the play. This path used to stop at
+      # the raw lookup and print the unrendered template string as the
+      # "value", letting bad-inventory playbooks run on with an ok:.
+      begin
+        rendered = render_lazy_templates(var_value)
+      rescue ex
+        return ActionResult.failure(ex.message || "templating var '#{var_name}' failed")
+      end
+
+      var_output = format_value(rendered)
+      ActionResult.final(result_json(false, false, "", {
+        "_ansible_verbose_always" => JSON::Any.new(true),
+        var_name                  => JSON::Any.new(var_output),
+      }))
+    end
+
+    # Render lazy `{{ ... }}` template strings inside a looked-up var
+    # value (recursively - real Templar.template templates containers
+    # element-by-element too). Strings without any `{{` pass through
+    # untouched; the render deliberately lets exceptions propagate to
+    # the caller, which turns them into a failed task.
+    private def render_lazy_templates(value : JSON::Any) : JSON::Any
+      case value.raw
+      when String
+        raw = value.as_s
+        return value unless raw.includes?("{{")
+        JSON::Any.new(VarSubstitutor.new(vars: @vars, host_name: @host.name).substitute(raw))
+      when Array
+        JSON::Any.new(value.as_a.map { |item| render_lazy_templates(item) })
+      when Hash
+        rendered = Hash(String, JSON::Any).new
+        value.as_h.each { |key, item| rendered[key] = render_lazy_templates(item) }
+        JSON::Any.new(rendered)
+      else
+        value
+      end
     end
 
     private def format_array(value : JSON::Any) : String
