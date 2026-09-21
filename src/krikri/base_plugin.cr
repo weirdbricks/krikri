@@ -425,6 +425,38 @@ module Krikri
       umask.to_i32
     end
 
+    # Atomic move with the cross-device fallback real Ansible's
+    # AnsibleModule.atomic_move provides: try rename(2) first, and on
+    # EXDEV specifically (temp under /tmp or ~, dest on a different
+    # mount - found on konstruktoid.hardening's openssh_keypair task,
+    # where /tmp is a separate tmpfs from /etc), fall back to a
+    # copy-then-delete that carries the source's mode/owner/group onto
+    # the destination. Other OSError kinds still propagate. Non-atomic
+    # on the fallback path, exactly as in real Ansible.
+    protected def atomic_move(src : String, dest : String) : Nil
+      begin
+        File.rename(src, dest)
+        return
+      rescue ex : File::Error
+        raise ex unless ex.os_error.try(&.value) == Errno::EXDEV.value
+      end
+
+      src_info = File.info(src, follow_symlinks: false)
+      File.open(src, "r") do |in_file|
+        File.open(dest, "wb", perm: src_info.permissions) do |out_file|
+          IO.copy(in_file, out_file)
+        end
+      end
+      File.chmod(dest, src_info.permissions)
+      begin
+        File.chown(dest, uid: src_info.owner_id.to_i, gid: src_info.group_id.to_i)
+      rescue File::Error
+        # Best-effort, matching the copy plugin's own chown stance:
+        # non-root can't chown; the copy still lands correct-mode.
+      end
+      File.delete(src)
+    end
+
     protected def remote_upload(local_path : String, remote_path : String) : Nil
       if local_connection?
         # Just copy locally
