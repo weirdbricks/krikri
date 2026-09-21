@@ -1062,24 +1062,38 @@ module Krikri
       Crinja::Value.new(result)
     end
 
+    # extract's per-host lookups must raise on a miss REGARDLESS of strict
+    # mode: real Ansible's extract filter calls getattr on the container
+    # directly, so a missing attribute fails the task at filter time with
+    # "object of type 'HostVarsVars' has no attribute '...'" - it never
+    # defers to force time the way a plain `{{ hostvars[h].attr }}` print
+    # does (HostVarsVarsDict#crinja_attribute only raises when strict
+    # templating is enabled for the fiber, and a map('extract', hostvars,
+    # 'ansible_host') chain over hosts without the attribute rendered
+    # silent empty values instead of aborting, found in dirless-infra's
+    # test-backend.yml).
+    def self.extract_hostvars_attribute(dict : HostVarsVarsDict, key : String) : Crinja::Value
+      raise "object of type 'HostVarsVars' has no attribute '#{key}'" unless dict.has_key?(key)
+      dict.crinja_attribute(Crinja::Value.new(key))
+    end
+
     # `extract(container, morekeys=None)` - real Ansible filter: target
     # is used as an index/key into *container*.
     Crinja.filter({container: Crinja::UNDEFINED, morekeys: Crinja::UNDEFINED}, :extract) do
-      container = arguments["container"]
       container = arguments["container"]
       # real Ansible/Jinja raises when the key is absent from a hash
       # container (e.g. `map('extract', hostvars, 'ansible_host')` with
       # no host carrying `ansible_host`) - a silent nil changes control
       # flow, so mirror the raise. hostvars' per-host dicts arrive as
-      # Krikri::HostVarsVarsDict wrappers whose own crinja_attribute
-      # already implements the raise-on-force semantics, so they resolve
-      # through it; plain dicts raise directly on a miss.
+      # Krikri::HostVarsVarsDict wrappers; extract raises on their misses
+      # directly (see extract_hostvars_attribute) rather than going
+      # through crinja_attribute's strict-mode-dependent deferral.
       container_raw = container.raw
       key = target.to_s
 
       extracted =
         if container_raw.is_a?(HostVarsVarsDict)
-          container_raw.crinja_attribute(Crinja::Value.new(key))
+          JinjaFilters.extract_hostvars_attribute(container_raw, key)
         else
           case raw = container_raw
           when Array(Crinja::Value)
@@ -1087,7 +1101,10 @@ module Krikri
             raise "extract: list index #{key} out of range" unless idx && idx >= 0 && idx < raw.size
             raw[idx]
           when Crinja::Dictionary
-            raise "extract: key '#{key}' not found" unless raw.has_key?(Crinja::Value.new(key))
+            # Real Ansible words a plain dict's morekeys miss "object of
+            # type 'dict' has no attribute 'b'" (verified live against
+            # ansible-core 2.19.11), not "key not found".
+            raise "object of type 'dict' has no attribute '#{key}'" unless raw.has_key?(Crinja::Value.new(key))
             raw[Crinja::Value.new(key)]
           else
             raise "extract: object of type #{container.class} has no attribute '#{key}'"
@@ -1102,9 +1119,9 @@ module Krikri
         keys.reduce(extracted) do |acc, key|
           acc_raw = acc.raw
           if acc_raw.is_a?(HostVarsVarsDict)
-            acc_raw.crinja_attribute(Crinja::Value.new(key))
+            JinjaFilters.extract_hostvars_attribute(acc_raw, key)
           elsif acc_raw.is_a?(Crinja::Dictionary)
-            raise "extract: key '#{key}' not found" unless acc_raw.has_key?(Crinja::Value.new(key))
+            raise "object of type 'dict' has no attribute '#{key}'" unless acc_raw.has_key?(Crinja::Value.new(key))
             acc_raw[Crinja::Value.new(key)]
           else
             raise "extract: object of type #{acc.class} has no attribute '#{key}'"

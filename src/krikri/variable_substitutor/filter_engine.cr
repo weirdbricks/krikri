@@ -1260,7 +1260,23 @@ module Krikri
           # 'ansible_host')` with no host carrying `ansible_host`
           # aborts the play with "has no attribute") - a silent nil
           # here changes control flow by letting bad-inventory
-          # playbooks run on, so mirror the raise.
+          # playbooks run on, so mirror the raise. When the container
+          # IS hostvars, real wraps each host's vars in its
+          # HostVarsVars wrapper and words the miss accordingly
+          # (verified live against ansible-core 2.19.11: a plain
+          # dict's morekeys miss says "object of type 'dict' has no
+          # attribute 'b'", hostvars' says "object of type
+          # 'HostVarsVars' has no attribute 'ansible_host'").
+          container_is_hostvars = false
+          if (vars = @vars) && (hostvars_var = vars["hostvars"]?) &&
+             (hostvars_raw = hostvars_var.raw).is_a?(Hash) &&
+             (container_raw_check = container.raw).is_a?(Hash)
+            container_is_hostvars = container_raw_check.same?(hostvars_raw)
+          end
+          missing_attribute = ->(key : String) do
+            type = container_is_hostvars ? "HostVarsVars" : "dict"
+            "object of type '#{type}' has no attribute '#{key}'"
+          end
           extracted = case raw = container.raw
                       when Array
                         idx = value.as_i64?.try(&.to_i)
@@ -1270,14 +1286,14 @@ module Krikri
                         raise "extract: key '#{as_string(value)}' not found" unless raw.has_key?(as_string(value))
                         raw[as_string(value)]
                       else
-                        raise "extract: object of type #{container.class} has no attribute '#{as_string(value)}'"
+                        raise missing_attribute.call(as_string(value))
                       end
 
           if morekeys_arg = args[1]?
             morekeys = resolve_expression(morekeys_arg)
             keys = morekeys.as_a? ? morekeys.as_a.map { |k| as_string(k) } : [as_string(morekeys)]
             keys.reduce(extracted) do |acc, key|
-              raise "extract: key '#{key}' not found" unless acc.as_h?.try(&.has_key?(key))
+              raise missing_attribute.call(key) unless acc.as_h?.try(&.has_key?(key))
               acc.as_h[key]
             end
           else

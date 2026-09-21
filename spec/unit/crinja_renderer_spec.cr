@@ -942,6 +942,34 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
     renderer.render(%({{ "host-a" | extract(hostvars, "node_ip") }})).should eq("10.0.0.1")
   end
 
+  it "extract raises on a missing attribute even outside strict mode" do
+    # Found in dirless-infra: `map('extract', hostvars, 'ansible_host')`
+    # over hosts with no ansible_host silently rendered empty values
+    # instead of raising, because HostVarsVarsDict#crinja_attribute only
+    # raises under strict templating and a plain `{{ }}` render isn't
+    # strict. Real Ansible's extract calls getattr on the container at
+    # filter time and hard-fails the task with the HostVarsVars message
+    # (verified live against ansible-core 2.19.11).
+    v = Hash(String, JSON::Any).new
+    v["hostvars"] = JSON.parse(%({"host-a": {"node_ip": "10.0.0.1"}}))
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    expect_raises(Exception, "object of type 'HostVarsVars' has no attribute 'ansible_host'") do
+      # render! (not render) - #render's lenient give-back-the-text
+      # fallback would swallow the raise; render! is the raising entry
+      # point the strict/evaluate paths use.
+      renderer.render!(%({{ ["host-a"] | map("extract", hostvars, "ansible_host") | list }}))
+    end
+  end
+
+  it "extract words a plain dict's morekeys miss like real Ansible" do
+    v = Hash(String, JSON::Any).new
+    v["mapping"] = JSON.parse(%({"x": {"a": 1}}))
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    expect_raises(Exception, "object of type 'dict' has no attribute 'b'") do
+      renderer.render!(%({{ ["x"] | map("extract", mapping, "b") | list }}))
+    end
+  end
+
   it "from_yaml_all parses a multi-document YAML string" do
     v = Hash(String, JSON::Any).new
     renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)

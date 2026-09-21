@@ -588,7 +588,21 @@ module Krikri
         @facts[other_host.name]?.try(&.each { |key, value| entry[key] = value })
         @registered_vars[other_host.name]?.try(&.each { |key, value| entry[key] = value })
         entry["inventory_hostname"] = JSON::Any.new(other_host.name)
-        entry["ansible_host"] ||= JSON::Any.new(other_host.name)
+        # No synthesized ansible_host here: real Ansible's hostvars magic
+        # view carries ONLY actually-defined vars (inventory + facts +
+        # registered), and `{{ ansible_host }}` falls back to the
+        # inventory hostname through the CONNECTION-var path
+        # (vars_context["ansible_host"] ||= host.name further down), not
+        # through hostvars. Verified live against ansible-core 2.19.11:
+        # a host whose inventory defines no ansible_host has NO
+        # ansible_host key in hostvars[h] (and
+        # `map('extract', hostvars, 'ansible_host')` hard-fails with
+        # "object of type 'HostVarsVars' has no attribute 'ansible_host'"),
+        # while `{{ ansible_host }}` on the current host still renders the
+        # hostname. The synthesis used to feed exactly that extract shape
+        # a fabricated value, letting a bad-inventory playbook real
+        # Ansible aborts on task 1 run on with hostname garbage in place
+        # of the IP list.
         result[other_host.name] = JSON::Any.new(entry)
       end
       # Real ansible-core's InventoryManager ALWAYS synthesizes an implicit
