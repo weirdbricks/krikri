@@ -79,6 +79,7 @@ install: check-install-perms build-release
     $SUDO install bin/krikri-playbook {{PREFIX}}/bin/krikri-playbook
     $SUDO install bin/krikri {{PREFIX}}/bin/krikri
     $SUDO install bin/krikri-lint {{PREFIX}}/bin/krikri-lint
+    $SUDO rm -rf {{PREFIX}}/bin/plugins
     $SUDO cp -a bin/plugins {{PREFIX}}/bin/plugins
 
 uninstall:
