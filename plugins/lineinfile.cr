@@ -327,7 +327,7 @@ module Krikri
     # Runs the validate: command (with %s substituted by the staged
     # temp path) - identical to copy.cr's own helper.
     private def validate_file(path : String, validate_cmd : String) : NamedTuple(ok: Bool, rc: Int32, output: String)
-      cmd = validate_cmd.gsub("%s", path)
+      cmd = validate_cmd.gsub("%s", shell_single_quote(path))
       output = IO::Memory.new
 
       result = Process.run(

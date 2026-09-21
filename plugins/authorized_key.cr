@@ -180,6 +180,13 @@ module Krikri
         return nil
       end
 
+      # Kept working (real Ansible fetches http:// fine - parity), but a
+      # key pulled over cleartext HTTP can be swapped in transit and
+      # grant SSH access, so the fetch announces itself loudly.
+      if url.starts_with?("http://")
+        STDERR.puts "WARNING: fetching authorized key over cleartext HTTP (#{url}) - the key material is not integrity-protected in transit; use HTTPS"
+      end
+
       validate = @params["validate_certs"]?.nil? || true?(@params["validate_certs"]?)
       ctx = OpenSSL::SSL::Context::Client.new
       ctx.verify_mode = validate ? OpenSSL::SSL::VerifyMode::PEER : OpenSSL::SSL::VerifyMode::NONE

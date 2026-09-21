@@ -66,6 +66,33 @@ describe "copy: with validate:" do
     File.delete(dest) if dest && File.exists?(dest)
   end
 
+  it "handles a %s path containing shell metacharacters (spaces)" do
+    dir = File.join(Dir.tempdir, "krikri copy validate dir #{Random::Secure.hex(4)}")
+    FileUtils.mkdir_p(dir)
+    dest = File.join(dir, "dest file")
+    playbook = File.tempname("copy-validate-space", ".yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: copy
+            ansible.builtin.copy:
+              content: "hello world\\n"
+              dest: #{dest}
+              validate: "cat %s > /dev/null"
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+
+    status.success?.should be_true
+    File.read(dest).should eq("hello world\n")
+  ensure
+    FileUtils.rm_rf(dir) if dir && Dir.exists?(dir)
+    File.delete(playbook) if playbook && File.exists?(playbook)
+  end
+
   it "copies src: successfully when the validate: command passes" do
     src = File.tempname("copy-validate-src")
     dest = File.tempname("copy-validate-src-dest")

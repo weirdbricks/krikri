@@ -126,7 +126,7 @@ module Krikri
         # bytes at 0644 & ~umask for the whole validate run.
         create_staging_temp(temp_file, staging_temp_mode(dest, 0o644, preserve_dest_mode: false))
         File.write(temp_file, content, perm: 0o600)
-        cmd = validate_cmd.gsub("%s", temp_file)
+        cmd = validate_cmd.gsub("%s", shell_single_quote(temp_file))
         output = IO::Memory.new
         result = Process.run("/bin/sh", ["-c", cmd], output: output, error: output)
         unless result.exit_code == 0

@@ -262,7 +262,7 @@ module Krikri
     private def build_command_prefix : String
       prefix = ""
       if u = @params["umask"]?
-        prefix = "umask #{u.strip}; "
+        prefix = "umask #{sq(u.strip)}; "
       end
 
       ssh_opts = @params["ssh_opts"]?

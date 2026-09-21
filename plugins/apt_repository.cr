@@ -109,7 +109,10 @@ module Krikri
 
     SOURCES_LIST   = "/etc/apt/sources.list"
     SOURCES_LIST_D = "/etc/apt/sources.list.d"
-    KEYSERVER      = "hkp://keyserver.ubuntu.com:80"
+    KEYSERVER          = "hkps://keyserver.ubuntu.com:443"
+    KEYSERVER_FALLBACK = "hkp://keyserver.ubuntu.com:80"
+
+    @warnings = [] of String
 
     def execute : PluginResult
       # Real ansible's apt_repository runs `apt-get update` (and its own
@@ -268,7 +271,9 @@ module Krikri
         end
       end
 
-      PluginResult.new(changed: true, failed: false, msg: "", repo: normalized, state: "present", sources_added: target_had_sources ? [] of String : [target], sources_removed: [] of String)
+      result = PluginResult.new(changed: true, failed: false, msg: "", repo: normalized, state: "present", sources_added: target_had_sources ? [] of String : [target], sources_removed: [] of String)
+      result.extra["warnings"] = JSON.parse(@warnings.to_json) unless @warnings.empty?
+      result
     end
 
     private def remove(normalized : String, update_cache : Bool, check_mode : Bool) : PluginResult
@@ -443,7 +448,11 @@ module Krikri
       end
 
       if apt_key = Process.find_executable("apt-key")
-        remote_exec("#{apt_key} adv --recv-keys --no-tty --keyserver #{KEYSERVER} #{shell_single_quote(fingerprint)}")
+        result = remote_exec("#{apt_key} adv --recv-keys --no-tty --keyserver #{KEYSERVER} #{shell_single_quote(fingerprint)}")
+        if result[:exit_code] != 0
+          warn_cleartext_keyserver_fallback
+          remote_exec("#{apt_key} adv --recv-keys --no-tty --keyserver #{KEYSERVER_FALLBACK} #{shell_single_quote(fingerprint)}")
+        end
         return nil
       end
 
@@ -463,10 +472,24 @@ module Krikri
       remote_exec("gpg --no-tty --keyserver #{KEYSERVER} --export #{shell_single_quote(fingerprint)} > #{shell_single_quote(keyfile)}")
 
       unless File.exists?(keyfile) && File.size(keyfile) > 0
+        warn_cleartext_keyserver_fallback
+        remote_exec("gpg --no-tty --keyserver #{KEYSERVER_FALLBACK} --export #{shell_single_quote(fingerprint)} > #{shell_single_quote(keyfile)}")
+      end
+
+      unless File.exists?(keyfile) && File.size(keyfile) > 0
         return PluginResult.new(changed: false, failed: true, msg: "Unable to get required signing key")
       end
 
       nil
+    end
+
+    # HKPS (TLS) is tried first so the key material is protected in
+    # transit; the cleartext HKP fallback only runs when that fails, and
+    # always announces itself loudly (via the result's warnings list),
+    # since a MITM could then swap the key despite the TLS-fetched
+    # fingerprint being correct.
+    private def warn_cleartext_keyserver_fallback : Nil
+      @warnings << "TLS keyserver #{KEYSERVER} failed; fell back to cleartext #{KEYSERVER_FALLBACK} - the key material was not integrity-protected in transit"
     end
 
     private def fetch_ppa_signing_key(ppa : PluginHelpers::AptPpa::Info) : String
