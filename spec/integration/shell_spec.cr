@@ -156,4 +156,20 @@ describe "shell plugin" do
     result["msg"].as_s.should eq("Unsupported parameters for (ansible.legacy.command) module: expand_argument_vars. Supported parameters include: _raw_params, _uses_shell, argv, chdir, creates, executable, removes, stdin, stdin_add_newline, strip_empty_ends.")
     result["changed"].as_bool.should be_false
   end
+
+  # Real Ansible's shell module declares no check-mode support, so a
+  # --check run reports `skipping:` and the command never executes. The
+  # marker-file probe is the whole point: the old regression was the
+  # shell command running FOR REAL under --check.
+  it "skips without running under _ansible_check_mode (side-effect file NOT created)" do
+    marker = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "shell_check_mode_marker")
+
+    result = PluginSpecHelper.run("shell", {"cmd" => "touch #{marker}", "_ansible_check_mode" => "true"})
+
+    result["changed"].as_bool.should be_false
+    result["skipped"].as_bool.should be_true
+    File.exists?(marker).should be_false
+  ensure
+    File.delete(marker) if marker && File.exists?(marker)
+  end
 end

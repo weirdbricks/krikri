@@ -365,4 +365,20 @@ describe "command plugin" do
 
     result["stderr"].as_s.should eq("1\n2\n")
   end
+
+  # Real Ansible's command module declares no check-mode support, so a
+  # --check run reports `skipping:` and the command never executes. The
+  # marker-file probe is the whole point: the old regression was the
+  # command running FOR REAL under --check.
+  it "skips without running under _ansible_check_mode (side-effect file NOT created)" do
+    marker = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "command_check_mode_marker")
+
+    result = PluginSpecHelper.run("command", {"cmd" => "touch #{marker}", "_ansible_check_mode" => "true"})
+
+    result["changed"].as_bool.should be_false
+    result["skipped"].as_bool.should be_true
+    File.exists?(marker).should be_false
+  ensure
+    File.delete(marker) if marker && File.exists?(marker)
+  end
 end
