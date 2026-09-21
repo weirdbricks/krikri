@@ -1,0 +1,346 @@
+# Crinja consolidation Phase 3 survey (dispatch-surface catalog, no code changed)
+
+Date: 2026-09-21. Scope: survey/planning only - no migration, no runtime
+code touched, no VERSION bump, no spec run. This is the Phase-3
+counterpart to `SUGGESTED_CRINJA_NEXT_STEPS.md`'s Phase 2 survey:
+it walks the ENTIRE remaining hand-rolled-first surface (not just one
+slice) and produces a prioritized, risk-annotated candidate list, so
+the next implementation rounds can spend their effort where duplication
+is real instead of re-discovering the boundaries every time.
+
+Inputs read in full before writing: `CRINJA_PILOT_REPORT.md` (Phase 1,
+filters 1-4 including the selectattr NO-GO) and
+`CRINJA_PHASE2_REPORT.md` (slice 1, arithmetic `+`/`-` + the strict
+operand-class follow-up). Files walked: `expression_evaluator.cr`
+(4,532 lines - `evaluate_expr` and every dispatch sub-piece),
+`filter_engine.cr` (2,606 lines - the full `case filter_name` statement
+plus the test/attr dispatch at the bottom), `conditional_evaluator.cr`
+(2,641 lines), `comparison_evaluator.cr` (331 lines), `jinja_filters.cr`
+(all 85 `Crinja.filter` registrations), and the fork's own
+`src/lib/filter/collections.cr` (weirdbricks/crinja @
+crystal-play-0.9.56) for the Jinja-builtin and `map`/`select*`/`min`/
+`max`/`unique`/`sum`/`groupby` implementations. Caveat: this worktree
+has no `lib/` checkout, so fork-internals claims below cite the Phase-1
+report's verified findings and a direct fetch of `collections.cr` at
+the pinned tag, not a local grep.
+
+## Architecture recap: where the two engines actually meet today
+
+Three distinct hand-rolled surfaces remain, and they are NOT equally
+unfinished:
+
+1. **`ExpressionEvaluator`'s whole-`{{ }}` dispatch is effectively done.**
+   Per the Phase-2 report and re-verified by walking it: literals,
+   ternaries, boolean `or`/`and`/`is`, comparisons (minus the
+   `type_sensitive_comparison?` carve-out), `+`/`-` (with the strict
+   operand-class gate), `*`/`/`/`//`, `~`, slices, indexed/dotted
+   access, and - the load-bearing one - **whole `|` filter chains**
+   (`evaluate_with_filter`, expression_evaluator.cr:4330) are all
+   Crinja-first with the exact-previous-code fallback. The only
+   non-delegated constructs are the bare `lookup(...)`/`query(...)`/
+   `range(...)`/`dict(...)` calls (correctly: Crinja has no `lookup()`
+   equivalent; Phase-2 rule 1) and the fallback bodies themselves
+   (load-bearing by design).
+2. **`FilterEngine`'s `case filter_name` statement is the big remaining
+   duplication surface** - ~90 hand-rolled case branches. It is reached
+   only when the Crinja-first chain attempt raises (lookup-headed
+   chains, `to_datetime` heads, strict-undefined rescue paths, ...) or
+   directly from `map()`'s inner dispatch (see below) and
+   expression_evaluator.cr:4208's dotted-walk-with-filter-suffix path.
+   Exactly four names delegate to Crinja today (`dict2items`,
+   `combine`, `json_query`, `lists_mergeby`).
+3. **`ConditionalEvaluator` already delegates its unhandled tail** and
+   hand-rolls only special cases (details below). `ComparisonEvaluator`
+   is fallback-only with a tiny operator surface.
+
+One stale-comment hazard found while walking (fix whenever someone next
+touches filter_engine.cr): the dict2items branch's comment (line ~769)
+claims extract/mandatory/bool/ipaddr were "already-delegated names ...
+resolved years ago" through `#delegate_to_crinja_filter`. False for
+`extract` - it is a full hand-rolled case branch at line 1248. The
+comment apparently means those names have Crinja-side *registrations*,
+which is a different claim. Given how load-bearing the delegated-names
+list is for planning, that comment should not be trusted as inventory.
+
+## Q4 (flagged item): `map()`'s filter-application dispatch is DUAL-PATH, not shared
+
+This was the survey's most important question, and the answer explains
+tonight's bug shape directly. There are **two independent `map`
+implementations, and which one serves a given call depends on whether
+the enclosing chain's Crinja-first attempt succeeded**:
+
+- **Crinja-first path:** the fork's native `Crinja.filter(:map)`
+  (collections.cr) - for the filter-name form it resolves the callable
+  once, then per item builds `Arguments` and calls
+  `env.execute_call(filter, args)`, i.e. dispatch through the fork's
+  `env.filters` registry (with the fork's hoisted-defaults
+  optimization). Serves every chain whose whole-expression Crinja
+  evaluate succeeds - which, post-Phase-2, is the COMMON case for
+  plain `{{ x | map('extract', hostvars, 'k') | list }}` chains.
+- **Fallback path:** FilterEngine's hand-rolled `map` case
+  (filter_engine.cr:466) - for the filter-name form it re-parses the
+  inner expression and **recurses into the hand-rolled `#apply` case
+  statement per item** (line 503: `apply(item, inner_expr)`). Zero
+  Crinja awareness: even a delegated name only helps here because its
+  own case branch happens to call `#delegate_to_crinja_filter`.
+
+Consequences, all observed in the wild rather than hypothesized:
+
+- **Every behavioral fix to an `extract`-class filter must land twice.**
+  Proven, not predicted: commit 21077616 ("Fix extract not raising on
+  missing hostvars attribute via map()") touched BOTH
+  `src/krikri/jinja_filters.cr` (the Crinja registration) AND
+  `src/krikri/variable_substitutor/filter_engine.cr` (the hand-rolled
+  case) in the same commit. Commits e7e1102d and 19fdc3f2 (both about
+  `map('extract', ...)` errors surfacing from lazy vars / aborting the
+  run) then had to build control flow on top of that dual
+  implementation. This is the exact "same bug class fixed twice"
+  pattern CLAUDE.md warns about, located precisely.
+- **The two `extract` copies have ALREADY diverged semantically**, not
+  just syntactically: the Crinja copy (jinja_filters.cr:1082) handles
+  `HostVarsVarsDict` wrappers natively via
+  `extract_hostvars_attribute` and words a plain-dict miss "object of
+  type 'dict' has no attribute 'x'"; the hand-rolled copy
+  (filter_engine.cr:1248) detects hostvars by object identity
+  (`container.raw.same?(hostvars_raw)`) and words a plain-container
+  miss differently. Same-name filter, different error text and
+  different code path, selected by whether the enclosing chain happened
+  to Crinja-succeed. The same asymmetry exists for `regex_findall`
+  (whose `mat.size > 1` single-capture-group bug was fixed as two
+  separate copies - filter_engine.cr:876's comment references
+  "the same bug as jinja_filters.cr's own copy").
+- **Coverage asymmetry:** a filter registered only on the Crinja side
+  (`strftime`, `subelements`, `to_nice_yaml`, `shuffle`, `comment`,
+  `mandatory`, `quote`, `root`, `items`) works in a plain
+  Crinja-first chain but raises `UnknownFilterError` in a fallback
+  chain (e.g. `lookup('pipe', ...) | strftime`). Not a migration
+  candidate - a fallback-path coverage gap to log and decide on.
+
+## The catalog
+
+Classification per case branch: (a) does a Crinja-side equivalent
+exist, (b) what is the actual implementation relationship, (c) is it
+reachable per-item in a loop. The (b) column is what Phase 1 taught us
+to check - "thin wrapper over shared core" (`json_query`-shaped) vs
+"genuinely independent copy" (`combine`-shaped) vs "lives in the fork"
+(`selectattr`-shaped, unfixable without editing the shard).
+
+**Already delegated (Phase 1 complete):** `dict2items`, `combine`,
+`json_query`, `lists_mergeby`/`list_mergeby`.
+
+### Group A - genuinely independent duplicates (real duplication, the actual Phase-3 candidates)
+
+| Name(s) | Crinja twin | Divergence history | Per-item reachability |
+|---|---|---|---|
+| `extract` | jinja_filters.cr:1082 | **Already diverged + already double-fixed** (21077616); hostvars handling and error wording differ per copy | HIGH - `map('extract', hostvars, ...)` is the canonical use |
+| `regex_search`, `regex_findall` | jinja_filters.cr:1489/1529 | Double-bug history (`mat.size` bug fixed in both copies separately) | HIGH - `map('regex_findall', ...)` found live in prometheus roles |
+| `items2dict` | jinja_filters.cr:1373 | None known; dict2items's twin, both sides recently spec-locked | LOW |
+| `ternary` | jinja_filters.cr:284 | None known; hand-rolled side has explicit omit-sentinel handling to preserve | MEDIUM |
+| `zip`, `zip_longest`, `product` | jinja_filters.cr:908 (macro)/922 | None known; independent list-math on each side | LOW |
+| `combinations`, `permutations` | jinja_filters.cr:1035/1039 (own recursive helpers) | None known | LOW |
+| `rekey_on_member` | jinja_filters.cr:1048 | None known; `duplicates=` semantics hand-rolled per side | LOW |
+| `from_yaml_all` | jinja_filters.cr:1137 | None known; near-identical small bodies | LOW |
+| `random` | jinja_filters.cr:1908 (fork-extended) | Fork side was recently live-verified against Jinja 3.1.6 (string-target semantics); hand-rolled side not | LOW |
+| `relpath`, `log`, `pow` | jinja_filters.cr:981/990/995 | None known; note the kwarg-vs-positional arg-shape difference (`relpath(start='.')` vs positional) | LOW |
+
+### Group B - shared-core thin wrappers (consolidation ALREADY happened at the FilterCore/IpAddrCore/Vault layer; bridging would be pure added overhead)
+
+Both sides call the same core module; the hand-rolled case branch is
+only arg-parsing + one core call. Migrating these to
+`#delegate_to_crinja_filter` would wrap a call that internally
+converts to JSON::Any anyway inside two MORE conversions - the exact
+quadruple-conversion mistake the `json_query` round measured (~33x).
+Verified shared: `regex_replace` (FilterCore.regex_replace),
+`hash`/`password_hash`, `to_json`/`to_yaml`/`to_nice_json`,
+`from_json`/`from_yaml`, `b64encode`/`b64decode`, `checksum`,
+`urldecode`, `regex_escape`, `human_readable`/`human_to_bytes`,
+`netmask_to_cidr`, `md5`/`sha1`, `expanduser`/`expandvars`,
+`normpath`/`commonpath`, `to_uuid`, `union`/`difference`/
+`intersect`/`symmetric_difference`, `path_join`, `splitext`,
+`map_format`, `dirname`/`basename`, `type_debug`, the whole `ipaddr`
+family (13 names, IpAddrCore), `vault`/`unvault` (Krikri::Vault),
+`fileglob`/`realpath` (identical one-liners).
+
+### Group C - Jinja-builtin duplicates where the twin lives in the fork
+
+`upper`, `lower`, `capitalize`, `title`, `trim`/`strip`, `replace`,
+`split`, `sort`, `unique`, `reverse`, `join`, `list`, `first`, `last`,
+`min`, `max`, `length`/`count`, `sum`, `abs`, `int`, `float`, `string`,
+`bool`, `default`/`d`, plus `select`/`reject`/`selectattr`/
+`rejectattr` and `map` itself. The fork implements all of these
+(collections.cr + core library), several recently hardened against
+real Jinja 3.1.6 (`random`, `min`/`max` case-insensitivity, `groupby`,
+`unique` attribute support). The hand-rolled copies are smaller and in
+some cases LESS capable (`sort` without `attribute=`? `unique` without
+`attribute=`/`case_sensitive`? - the fork's versions are supersets).
+BUT: these are the hottest filters in real roles, frequently per-item
+via `map('first')`/`map('int')`/`map('bool')`, and their hand-rolled
+bodies carry krikri-specific semantics (FilterEngine's `default`
+resolves variable-reference fallback args and the `default(x, true)`
+falsy form; `int` has failure-default handling). See priorities.
+
+### Group D - no Crinja equivalent exists (permanently hand-rolled)
+
+Bare `lookup(...)`/`query(...)`/`range(...)`/`dict(...)` calls; the
+register-result tests (`succeeded`/`failed`/`changed`/`skipped` - a
+Crinja render has no access to krikri's register bookkeeping);
+`to_datetime`'s tagged-hash datetime machinery on the hand-rolled side
+(see below); the strict `+` operand-class gate and every fallback body.
+
+### Group E - deliberately-different twins (consolidation = behavior decision, not implementation swap)
+
+- **`to_datetime`**: hand-rolled side tags datetimes with a
+  `DATETIME_TAG` hash so `-` arithmetic (and `.days` access) work
+  through the fallback path; the Crinja registration produces a
+  structured timedelta Hash instead. Phase 2 documented the shapes
+  diverge; unifying means picking one contract for
+  `to_datetime | to_datetime - ...` chains first.
+- **`default`/`d`**: hottest filter in real roles; the hand-rolled
+  version's variable-reference default argument (`default(other_var)`)
+  and strict-undefined interplay have no clean expression through the
+  bridge (kwargs arrive as strings; the undefined-ness of the DEFAULT
+  ARGUMENT itself is part of the semantics). High risk, negative
+  expected value.
+- **ComparisonEvaluator's operator core** (`values_equal?`/
+  `compare_values`): its numeric-string leniency (`"7" == 7` is true)
+  is a deliberate pipeline artifact, and the
+  `type_sensitive_comparison?` carve-out exists precisely because
+  Crinja's typed answer is wrong for that shape. Reachable only as a
+  fallback. Leave.
+
+### ConditionalEvaluator (src/krikri/conditional_evaluator.cr)
+
+Better-shaped than assumed: unknown-test and bare-call conditions
+ALREADY delegate whole-condition to Crinja
+(`{{ (condition) }}` at :849, the boolean-ternary trick at :270/:879),
+with compile-time name validation consulting both engines
+(:1453). What remains hand-rolled-first: `defined`/`undefined`/`none`,
+`match`/`search` (own regex + anchoring), `version` (shares
+`compare_versions` in jinja_filters.cr with the Crinja-side
+registration - already one-table), `subset`/`superset`/`contains`,
+`succeeded`/`failed`/`changed`/`skipped` (Group D - no Crinja
+equivalent), the filesystem tests (`is_dir`/`is_file`/`is_link`/
+`exists`/`file`/`directory`/`link`), truthiness, the type tests
+(`mapping`/`sequence`/`boolean`/`number`/`string`/`iterable`/...), and
+test-form comparisons. All of these are per-CONDITION (once per task),
+never per-item, so the selectattr economics don't apply - but they are
+also exactly the tests whose strict-undefined and register-result
+semantics were hand-tuned against real rounds. Low value, non-trivial
+risk: leave, except opportunistically (e.g. if a fork test registration
+would let a special case be deleted wholesale).
+
+## Prioritized candidate list
+
+### Worth migrating (ordered safest/highest-value first)
+
+1. **`items2dict`** - same shape as the dict2items pilot: independent
+   twin registration, spec-locked contract, low-frequency (no per-item
+   economics), existing bridge machinery unchanged. Risk: near-zero;
+   check `items_to_dict`'s helper for other callers first (Phase-1
+   lesson: `combine_hash` had a surprise second caller).
+2. **`ternary`** - independent twin, tiny body, low-frequency. Risk:
+   the hand-rolled omit-sentinel branch (`ternary('x', omit)`) must
+   survive the swap; probe the Crinja registration's omit behavior
+   first.
+3. **`regex_search` + `regex_findall`** (one slice - they share the
+   arg-parsing and regex-cache seam) - real double-bug history.
+   Risk note: HIGH per-item reachability via `map('regex_findall',
+   ...)` means bridge delegation would compound; see the seam note
+   below - prefer unifying both sides onto ONE shared core over
+   `#delegate_to_crinja_filter` for this pair.
+4. **`extract`** - highest value (tonight's bugs, prior double-fix,
+   already-diverged copies) and also the trickiest: the Crinja copy's
+   `HostVarsVarsDict` path and the hand-rolled copy's identity-check +
+   wording need a single contract, and it is THE per-item filter.
+   Same seam recommendation as #3: a shared core (e.g.
+   `FilterCore.extract` speaking JSON::Any, with hostvars-detection
+   hoisted to the caller) rather than per-item bridge delegation.
+   Probe both copies' behavior batteries (`hostvars` vs plain dict,
+   list vs hash container, morekeys as string vs list, missing-key
+   error texts) before touching anything.
+5. **Group-A tail** (`from_yaml_all`, `zip`/`zip_longest`/`product`,
+   `combinations`/`permutations`, `rekey_on_member`, `relpath`, `log`,
+   `pow`, `random`) - each a small independent duplicate with a live
+   Crinja twin and low frequency; batchable as cheap follow-ups, low
+   individual payoff. Watch the arg-shape differences (`relpath`'s
+   `start=` kwarg vs positional).
+
+**Seam rule this survey adds to Phase 1/2's caveat list:** the right
+consolidation seam is per-item-reachability-dependent. For a filter
+reachable through `map(...)` (extract, regex_findall, ternary, the
+builtins), prefer **shared-core unification** (both case branch and
+Crinja registration call one FilterCore helper - zero bridge cost,
+the Group-B pattern) over `#delegate_to_crinja_filter` (one
+JSON::Any<->Crinja::Value roundtrip PER CALL, and per ITEM when
+reached via map - the Phase-1 selectattr bench already measured the
+bridge base at ~14 us/call and the fork's own per-item dispatch at
+~3.4 us/item, both far above the hand-rolled per-item ~5 ns). Bridge
+delegation stays the right tool only for low-frequency,
+Crinja-native-end-to-end filters (`dict2items`-shaped).
+
+### Worth benchmarking before deciding
+
+- **`map()`'s inner dispatch itself.** The survey's numbers already
+  argue AGAINST the two obvious rewrites: delegating per item through
+  the bridge costs ~14 us/item (worse than the fork's own 3.4
+  us/item); delegating the whole `map(...)` call wholesale to
+  `Crinja.filter(:map)` pays one bridge conversion but then the
+  fork's per-item `env.execute_call` internally - same 675x-per-item
+  class Phase 1 rejected. The recommended alternative (shared cores
+  per filter, above) needs no benchmark - it is strictly
+  zero-overhead. Only if someone insists on single-dispatch should a
+  bench be run, and it will confirm the no.
+- **Group-C Jinja builtins** (`int`/`bool`/`string`/`join`/`first`/...)
+  - migrating them onto the fork's (often MORE correct) registrations
+  would import real improvements (`min`/`max` case-insensitivity,
+  `unique(attribute=)`, `random` string semantics), but onto the
+  hottest, most per-item-heavy path, and the hand-rolled copies carry
+  krikri-specific arg semantics. Decision rule: migrate one ONLY when
+  a real-role divergence shows the hand-rolled copy is wrong, and
+  then via shared-core (or benchmark first if per-item).
+- **ConditionalEvaluator's type tests** (`mapping`/`sequence`/...)
+  - delegable to the fork's test library, per-condition so no per-item
+  concern, but the hand-rolled versions encode strict-undefined
+  behavior; only worth it if a divergence shows up. Low value.
+
+### Known not worth it
+
+- **Group B entirely** (shared-core wrappers, ~35 names incl. the
+  whole ipaddr family): consolidation already exists one layer down;
+  bridging adds the json_query quadruple-conversion tax for zero
+  dedup.
+- **`select`/`reject`/`selectattr`/`rejectattr`**: Phase-1 NO-GO stands
+  (fork-native via `env.tests`, ~675x per-item, unfixable without
+  editing the shard).
+- **`default`/`d`**: hottest filter, variable-ref default args and
+  strict-undefined semantics don't survive the bridge; negative
+  expected value.
+- **`to_datetime` + the tagged datetime/`-` machinery**: the twins'
+  output shapes are deliberately different (Group E); unification is
+  a strictness contract decision, not an implementation swap.
+- **Bare `lookup()`/`query()`/`range()`/`dict()` calls** and the
+  register-result tests: no Crinja equivalent (Phase-2 rule 1).
+- **ComparisonEvaluator's operator core and every fallback body**:
+  load-bearing by design (Phase-2 rule 2).
+- **The strict `+` operand-class gate**: exists because the vendored
+  Crinja is lenient where real Ansible raises; it must run BEFORE any
+  Crinja attempt and can never be delegated away.
+
+## Recommended next steps (for whoever implements Phase 3)
+
+1. Land the stale-comment fix (filter_engine.cr:769's delegated-names
+   claim) with the first real change.
+2. Slice 1 = `items2items`... `items2dict` (pilot-shaped, builds
+   confidence), Slice 2 = `ternary`, Slice 3 = the regex pair via
+   shared-core, Slice 4 = `extract` via shared-core (probe-first, the
+   divergence inventory already partially exists in 21077616's specs).
+3. Keep the Phase-1/2 discipline per slice: divergence probe script
+   committed alongside, every divergence arbitrated against local
+   ansible-core, one revertible commit, VERSION bump, full suite,
+   throwaway-worktree benchmark - replacing the benchmark step with a
+   parity check where the shared-core seam makes the bridge tax
+   moot.
+4. Log the fallback-path coverage gap (Crinja-only names unreachable
+   in lookup-headed chains) in `KNOWN_MISSING.md` as a deliberate
+   limit or open gap - the survey's finding, that decision belongs to
+   a round with real-host evidence, not to this doc.
