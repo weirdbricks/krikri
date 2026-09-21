@@ -36,8 +36,17 @@ describe "apt plugin argument validation" do
     # the old "Invalid state:" fall-through) - each then fails later on
     # this machine for its own reasons, which the apt_edge_cases real
     # side does too and which these specs don't need to re-pin.
+    #
+    # lock_timeout=1 is test-only tuning: as non-root here, apt-get
+    # build-dep/latest fails with "Could not open lock file ... Permission
+    # denied", which apt_with_lock_retry classifies as lock contention
+    # and would retry at the production default (60s) - ~2 minutes of
+    # sleeping for nothing this spec cares about. The short budget still
+    # runs the real binary through the full argspec validation (which
+    # happens before the lock-retry path) and the real local apt-get
+    # attempt; it only bounds the retry window.
     ["absent", "build-dep", "fixed", "latest", "present"].each do |state|
-      result = PluginSpecHelper.run("apt", {"name" => "krikri-arg-validation-probe", "state" => state})
+      result = PluginSpecHelper.run("apt", {"name" => "krikri-arg-validation-probe", "state" => state, "lock_timeout" => "1"})
       result["msg"].as_s.should_not contain("value of state must be one of")
     end
   end
