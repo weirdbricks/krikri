@@ -281,13 +281,38 @@ module Krikri
     # itself (lib/ is gitignored - a vendored-shard patch would silently
     # vanish on the next `shards install`), so every call site in *this*
     # file that needs real truthiness uses this helper instead.
+    #
+    # Mirrors real Ansible's own filter plugin (ansible-core's
+    # filters/core.py, probed live on 2.19.11): an optional third
+    # argument is `none_val`, returned only when the condition is None
+    # (null) AND was passed - a plain falsy null WITHOUT a third argument
+    # still picks `false_value`, exactly like real Ansible. The
+    # `string "0"`/`"false"` conditions are TRUTHY here (Python bool() on
+    # a non-empty string), matching real Ansible - the hand-rolled
+    # FilterEngine copy that used to treat them as falsy was arbitrated
+    # against live ansible-core in the Phase-3 slice #2 probe and fixed
+    # in its own disfavor (see CRINJA_PHASE3_SURVEY.md). Missing
+    # positional arguments raise like real Ansible's Python signature
+    # check ("ternary() missing N required positional argument(s)")
+    # instead of the silent fallback both earlier copies had.
     Crinja.filter(:ternary) do
       true_arg = arguments.varargs[0]?
       false_arg = arguments.varargs[1]?
-      picked = if JinjaFilters.real_truthy?(target)
-                 true_arg || Crinja::Value.new("")
+      none_arg = arguments.varargs[2]?
+      if true_arg.nil? || false_arg.nil?
+        missing = ["true_val", "false_val"][arguments.varargs.size..]
+        raise Crinja::TypeError.new(
+          "ternary() missing #{missing.size} required positional " \
+          "#{missing.size == 1 ? "argument" : "arguments"}: " +
+          missing.map { |name| "'#{name}'" }.join(" and ")
+        )
+      end
+      picked = if (target.raw.nil? || target.undefined?) && none_arg
+                 none_arg
+               elsif JinjaFilters.real_truthy?(target)
+                 true_arg
                else
-                 false_arg || Crinja::Value.new("")
+                 false_arg
                end
       Crinja::Value.new(picked)
     end

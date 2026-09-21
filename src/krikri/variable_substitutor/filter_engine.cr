@@ -1355,16 +1355,43 @@ module Krikri
           # 'ansible.posix.rhel_rpm_ostree', omit)` as a module param
           # value (not inside a template), which only ever reaches this
           # evaluator, never Crinja's.
-          args = split_top_level_args(filter_args)
-          chosen = (truthy?(value) ? args[0]? : args[1]?).try(&.strip) || ""
-
-          if chosen == "omit"
-            JSON::Any.new(OMIT_SENTINEL)
-          elsif quoted_literal?(chosen)
-            JSON::Any.new(unescape_string_literal(chosen[1..-2]))
-          else
-            resolve_expression(chosen)
+          #
+          # Phase-3 consolidation slice #2: the hand-rolled JSON::Any
+          # pick-a-branch copy this dispatch used to run is deleted -
+          # the name now routes through the ONE native
+          # `Crinja.filter(:ternary)` registration (jinja_filters.cr)
+          # via #delegate_to_crinja_filter. The bare-`omit` sentinel
+          # handling that was this branch's own load-bearing behavior
+          # (the survey's flagged risk for this slice) survives as the
+          # pre-resolution mapping below: a bare `omit` argument text
+          # becomes OMIT_SENTINEL *before* delegation (resolving it as a
+          # variable would yield null - #resolve_base_expression has no
+          # `omit` concept - and the registration passes its arguments
+          # through untouched, so the sentinel string then flows out
+          # exactly like real Ansible's omit object and is stripped by
+          # the same substitute_task_params contract as before).
+          # The probe battery
+          # (scripts/crinja_corpus/probe_ternary_divergence.cr) found
+          # the two copies identical on 19 of 24 cases and three
+          # divergences, all arbitrated against real ansible-core
+          # 2.19.11 and all fixed in the old copy's disfavor: the string
+          # conditions "0"/"false"/"False" are TRUTHY (Python bool() on
+          # a non-empty string - the old copy's truthy? treated them as
+          # falsy and picked the wrong branch), a missing true_val/
+          # false_val argument now raises like real Ansible's Python
+          # signature check (the old copy silently returned null), and
+          # the optional third (none_val) argument is honored for a null
+          # condition (both old copies silently ignored it). Both
+          # arguments are now resolved eagerly instead of only the
+          # chosen one - real Jinja evaluates call arguments eagerly
+          # too, and this engine's lenient resolution of an unchosen
+          # undefined variable (null) keeps the picked branch identical.
+          args = split_top_level_args(filter_args).reject { |arg| arg.strip.empty? }
+          varargs = args.map do |arg|
+            stripped = arg.strip
+            stripped == "omit" ? JSON::Any.new(OMIT_SENTINEL) : resolve_expression(stripped)
           end
+          delegate_to_crinja_filter("ternary", value, Crinja::Variables.new, varargs)
         when "intersect"
           # intersect(other) - real Ansible's own filter (ansible.builtin,
           # not standard Jinja2): elements of *value* that also appear in

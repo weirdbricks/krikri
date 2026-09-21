@@ -256,6 +256,14 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
     renderer.render("{{ false | ansible.builtin.ternary('YES', 'NO') }}").should eq("NO")
   end
 
+  it "ternary returns the third (none_val) argument for a null condition, like real Ansible" do
+    v = Hash(String, JSON::Any).new
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+
+    renderer.render("{{ none | ternary('YES', 'NO', 'N/A') }}").should eq("N/A")
+    renderer.render("{{ none | ternary('YES', 'NO') }}").should eq("NO")
+  end
+
   it "renders a comma directly after a no-parens filter inside a call's arguments" do
     # Real bug found benchmarking rolehippie.nullmailer (round 811337):
     # its `remotes.j2` contains an inline ternary whose true-branch is

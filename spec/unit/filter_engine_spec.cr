@@ -1,6 +1,7 @@
 require "../spec_helper"
 require "../../src/krikri/variable_substitutor/filter_engine"
 require "../../src/krikri/variable_substitutor/expression_evaluator"
+require "../../src/krikri/jinja_filters"
 
 private def s(value : String) : JSON::Any
   JSON::Any.new(value)
@@ -748,6 +749,56 @@ describe Krikri::VariableSubstitutor::FilterEngine do
     expect_raises(Exception) do
       engine.apply(input, "items2dict")
     end
+  end
+
+  it "ternary picks true_val for a truthy condition and false_val for a falsy one" do
+    engine.apply(JSON::Any.new(true), "ternary('yes', 'no')").as_s.should eq("yes")
+    engine.apply(JSON::Any.new(false), "ternary('yes', 'no')").as_s.should eq("no")
+    engine.apply(JSON.parse(%(0)), "ternary('yes', 'no')").as_s.should eq("no")
+    engine.apply(JSON.parse(%(1)), "ternary('yes', 'no')").as_s.should eq("yes")
+    engine.apply(s(""), "ternary('yes', 'no')").as_s.should eq("no")
+    engine.apply(JSON.parse(%([])), "ternary('yes', 'no')").as_s.should eq("no")
+    engine.apply(JSON.parse(%([1])), "ternary('yes', 'no')").as_s.should eq("yes")
+    engine.apply(JSON.parse(%({})), "ternary('yes', 'no')").as_s.should eq("no")
+    engine.apply(JSON.parse(%(null)), "ternary('yes', 'no')").as_s.should eq("no")
+  end
+
+  it "ternary treats the string conditions \"0\"/\"false\"/\"False\" as truthy, like real Ansible's Python bool()" do
+    engine.apply(s("0"), "ternary('yes', 'no')").as_s.should eq("yes")
+    engine.apply(s("false"), "ternary('yes', 'no')").as_s.should eq("yes")
+    engine.apply(s("False"), "ternary('yes', 'no')").as_s.should eq("yes")
+    engine.apply(s("no"), "ternary('yes', 'no')").as_s.should eq("yes")
+  end
+
+  it "ternary resolves a bare `omit` argument to the omit sentinel, which drops the param downstream" do
+    engine.apply(JSON::Any.new(false), "ternary('x', omit)").raw.should eq(Krikri::OMIT_SENTINEL)
+    engine.apply(JSON::Any.new(true), "ternary(omit, 'no')").raw.should eq(Krikri::OMIT_SENTINEL)
+    engine.apply(JSON::Any.new(false), "ternary('x', 'omit')").as_s.should eq("omit")
+  end
+
+  it "ternary returns the third (none_val) argument for a null condition, like real Ansible" do
+    engine.apply(JSON.parse(%(null)), "ternary('yes', 'no', 'n/a')").as_s.should eq("n/a")
+    engine.apply(JSON.parse(%(null)), "ternary('yes', 'no')").as_s.should eq("no")
+    engine.apply(JSON::Any.new(true), "ternary('yes', 'no', 'n/a')").as_s.should eq("yes")
+    engine.apply(JSON::Any.new(false), "ternary('yes', 'no', 'n/a')").as_s.should eq("no")
+  end
+
+  it "ternary raises on missing true_val/false_val arguments, like real Ansible's Python signature" do
+    expect_raises(Crinja::TypeError,
+      "ternary() missing 1 required positional argument: 'false_val'") do
+      engine.apply(JSON::Any.new(false), "ternary('yes')")
+    end
+    expect_raises(Crinja::TypeError,
+      "ternary() missing 2 required positional arguments: 'true_val' and 'false_val'") do
+      engine.apply(JSON::Any.new(true), "ternary()")
+    end
+  end
+
+  it "ternary resolves variable-reference arguments against the engine's vars" do
+    v = Hash(String, JSON::Any).new
+    v["picked"] = JSON.parse(%("the-var-value"))
+    vars_engine = Krikri::VariableSubstitutor::FilterEngine.new(v)
+    vars_engine.apply(JSON::Any.new(true), "ternary(picked, 'no')").as_s.should eq("the-var-value")
   end
 
   it "b64encode/b64decode round-trip" do

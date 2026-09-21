@@ -441,3 +441,118 @@ survey-assigned seams unchanged:
 - Slices 3/4 (`regex_search`/`regex_findall`, `extract`): still
   shared-core, NOT bridge - per-item reachability via `map(...)` makes
   delegation compound per item.
+
+---
+
+# Slice 2 report: `ternary` migrated onto Crinja (2026-09-21)
+
+The survey's #2 candidate, on the seam slice 1's verdict confirmed for
+it: `FilterEngine`'s `ternary` case stops running its hand-rolled
+pick-a-branch copy and routes through the native
+`Crinja.filter(:ternary)` registration (`jinja_filters.cr:284`) via
+`#delegate_to_crinja_filter`. The flagged risk - the hand-rolled
+omit-sentinel branch (`ternary('x', omit)`, found via linux-system-
+roles' journald `(is_ostree | d(false)) | ternary(
+'ansible.posix.rhel_rpm_ostree', omit)`) - was probed FIRST and
+survives: the bare-`omit` argument text is mapped to OMIT_SENTINEL
+*before* delegation (resolving it as a variable would yield null -
+`#resolve_base_expression` has no `omit` concept), and the
+registration passes its arguments through untouched, so the sentinel
+string flows out exactly like real Ansible's omit object and is
+dropped by the same `substitute_task_params` contract as before.
+VERSION 0.9.1237 -> 0.9.1238.
+
+## Method (the Phase-1/2 discipline, per slice)
+
+1. **Probe before touching code**:
+   `scripts/crinja_corpus/probe_ternary_divergence.cr` - 24 cases
+   (true/false/0/1/0.0 conditions, empty string, the `"0"`/`"false"`/
+   `"False"`/`"no"` string conditions, empty and non-empty lists and
+   dicts, null condition, null + third arg, omit in the true branch,
+   omit in the false branch, the quoted `'omit'` literal, the sentinel
+   string AS the condition, missing-arg forms, an unchosen undefined
+   variable, a variable-reference branch), each run through the
+   hand-rolled dispatch and through the exact bridge mechanics the
+   migration would use.
+2. **Arbitrate every divergence against real ansible-core 2.19.11**
+   (local `ansible-playbook`), reading the installed filter plugin's
+   own Python source for the tie-breakers.
+3. Implement, full suite, ameba on touched files.
+
+## Divergences found (pre-change probe, arbitrated against real Ansible)
+
+19 of 24 cases matched - including every omit-sentinel case, both
+directions, plus the quoted `'omit'` literal and the sentinel string
+as a condition value. Five diverged, all fixed in the old copy's
+disfavor:
+
+| Case | Real Ansible 2.19.11 | OLD hand-rolled | NEW via Crinja | Verdict |
+|---|---|---|---|---|
+| condition `"0"` / `"false"` / `"False"` | truthy - Python `bool()` on a non-empty string picks `true_val` (probed: `A3/A4/A5 -> yes`) | falsy - the old `truthy?` helper treats those spellings as false and picks the wrong branch | truthy | **Strictly more correct** - the old copy silently picked the wrong branch for string conditions |
+| `ternary('yes')` (missing `false_val`) | raises (`ternary() missing 1 required positional argument: 'false_val'`) | silently returned null | raises, same message shape | **Strictly more correct** - a malformed call no longer masquerades as an empty value |
+| `ternary()` (missing both) | raises (`... missing 2 required positional arguments: 'true_val' and 'false_val'`) | silently returned null | raises, same message shape | same |
+
+One shared gap NOT in the old-vs-new divergence set was also fixed,
+because the probe's third-arg battery exposed it against the oracle:
+real Ansible's signature is `ternary(value, true_val, false_val,
+none_val=None)` - a None condition returns `none_val` ONLY when a
+third argument was passed (`null | ternary('yes','no','n/a')` -> `n/a`,
+probed), while a plain null WITHOUT a third argument still falls to
+`false_val` (`null | ternary('yes','no')` -> `no`, probed - the None
+check is gated on `none_val is not None`). Both earlier copies
+silently ignored a third argument. The registration now honors
+`none_val` with exactly that gating, on both engines at once.
+
+Two deliberate non-convergences, both documented:
+- A null condition WITHOUT a third argument picks `false_val` on both
+  sides - which matches real Ansible's probed behavior too, so no
+  gap; the only deviation is that krikri's lenient engine resolves an
+  UNDEFINED condition variable to null (real Ansible raises
+  strict-undefined before the filter ever runs) - the standing
+  engine-wide leniency contract, unchanged.
+- Arguments are now resolved eagerly (both branches) instead of only
+  the chosen one. Real Jinja evaluates call arguments eagerly too, so
+  this is toward the oracle, and the lenient null resolution of an
+  unchosen undefined variable leaves the picked branch identical
+  (probed: `ternary('yes', undef_var)` on true -> `yes` on both).
+
+Post-change the probe reports **0 diverged of 24** by construction
+(both paths it compares share the registration now); its pre-change
+output is the divergence inventory above. Regression specs pin every
+arbitrated verdict in `filter_engine_spec.cr` (string-condition
+truthiness, both omit directions + the quoted literal, `none_val`
+form, missing-arg raises, variable-reference branches), and a
+Crinja-side `none_val` spec was added to `crinja_renderer_spec.cr`.
+As a side effect of the new specs, `filter_engine_spec.cr` now
+requires `jinja_filters.cr` directly - the delegated-name specs
+(dict2items/items2dict/ternary) no longer depend on require order to
+pass in an isolated `crystal spec spec/unit/filter_engine_spec.cr`
+run (that isolation gap had been silently masking 10 errors).
+
+Full suite after the change: **5348 examples, 6 failures / 2 errors**
+- exactly the documented baseline (`is_test_aliases_spec` cluster,
+`x509_csr_info_spec` tmp-file race). No new failures. Ameba clean on
+every touched file (the two findings in `jinja_filters.cr` - a
+pre-existing shadowing at :1144 and a pre-existing formatting quirk
+at :2312 - reproduce identically at the pre-change commit).
+
+## Cost note (no bench script this slice)
+
+No dedicated benchmark was committed: `ternary` is a per-condition
+scalar selector, not a list reducer - it runs once per expression,
+and the corpus shows it inside module params and `{% if %}` gates,
+never per item inside a `map()` body. Its cost class is therefore
+slice 1's measured one-shot bridge base (~5-10 us/call) at a far
+lower call frequency than `items2dict`, invisible against real task
+costs. If a future round finds `map('ternary', ...)` in a live role,
+the shared-core seam (both case branch and registration calling one
+helper) is the survey-prescribed upgrade path.
+
+## Verdict and what's next
+
+Slice 2 lands with the flagged risk discharged: the omit sentinel
+survives in both directions, arbitrated against real ansible-core
+and pinned by spec. Remaining slices keep their survey-assigned
+seams: slices 3/4 (`regex_search`/`regex_findall`, `extract`) are
+still shared-core, NOT bridge - per-item reachability via `map(...)`
+makes delegation compound per item.
