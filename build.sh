@@ -12,6 +12,7 @@ NC='\033[0m' # No Color
 # Configuration
 OUTPUT_DIR="bin"
 PLUGINS_DIR="$OUTPUT_DIR/plugins"
+CACHE_ROOT=".crystal-build-cache"
 BUILD_MODE="debug"
 STATIC=false
 
@@ -51,7 +52,7 @@ while [[ $# -gt 0 ]]; do
             ;;
         --clean)
             echo -e "${YELLOW}🧹 Cleaning build artifacts...${NC}"
-            rm -rf "$OUTPUT_DIR"
+            rm -rf "$OUTPUT_DIR" "$CACHE_ROOT"
             echo -e "${GREEN}✅ Clean complete!${NC}"
             exit 0
             ;;
@@ -76,6 +77,10 @@ while [[ $# -gt 0 ]]; do
             echo "             linking the same way. Produces a binary with no runtime libc"
             echo "             version dependency, for distributing across arbitrary Linux hosts."
             echo "  --clean    Remove build artifacts"
+            echo ""
+            echo "Environment:"
+            echo "  BUILD_PARALLELISM  Max concurrent crystal builds (default: min(nproc, 8))"
+            echo ""
             echo "  --help     Show this help message"
             echo ""
             echo "Examples:"
@@ -172,6 +177,48 @@ if [ "$STATIC" = true ]; then
 fi
 echo ""
 
+# Parallel build cap. The three main executables, the fat plugin
+# binary and the standalone plugins are mutually independent
+# `crystal build` invocations, so stale ones run concurrently - but
+# each release-mode compiler process peaks well over 1GB of RSS, so
+# the default is min(nproc, 8) rather than raw nproc: a big dev box
+# still saturates its cores on the handful of builds that exist here,
+# while a memory-tight CI runner must not be handed unbounded
+# parallelism. Override with BUILD_PARALLELISM=<N>.
+if [ -n "$BUILD_PARALLELISM" ]; then
+    PARALLEL_JOBS="$BUILD_PARALLELISM"
+else
+    PARALLEL_JOBS=$(nproc 2>/dev/null || echo 4)
+    [ "$PARALLEL_JOBS" -gt 8 ] && PARALLEL_JOBS=8
+fi
+
+# Persistent per-target compiler cache dirs, kept warm ACROSS runs.
+# This matters enormously for rebuild speed: a release build of the
+# main executable is ~107s with a cold CRYSTAL_CACHE_DIR vs ~8s with
+# a warm one (the old serial script quietly got that warmth for free
+# from the shared ~/.cache/crystal; the parallel plugins never did -
+# their mktemp-per-run cache dirs were wiped every single run). The
+# cache dir is keyed by build mode, static flag and crystal version so
+# toggling any of those can never mix cache entries compiled under a
+# different flag set / compiler, and per-TARGET so two concurrent
+# builds can never race inside one dir (that's the whole point of the
+# isolation - concurrent compilers sharing a cache dir corrupt it).
+# Two builds of the SAME target at the same time (two ./build.sh runs
+# in one worktree) is still a user error, same as it always was.
+# Wiped by --clean, and wiped per-target after any failed build so an
+# interrupted/corrupt cache self-heals instead of poisoning the next
+# run.
+CRYSTAL_VERSION_TAG=$(crystal --version 2>/dev/null | grep -oE '[0-9]+(\.[0-9]+)+' | head -1)
+CACHE_DIR_ROOT="$CACHE_ROOT/$BUILD_MODE${STATIC:+-static}${CRYSTAL_VERSION_TAG:+-crystal-$CRYSTAL_VERSION_TAG}"
+mkdir -p "$CACHE_DIR_ROOT"
+
+# Shared scratch dir for the whole run: per-build failure output is
+# recorded here (one file per build) for the parent to report once the
+# pool drains. The compiler caches themselves live in $CACHE_DIR_ROOT
+# above, NOT here - they must survive the run.
+STATUS_DIR=$(mktemp -d)
+trap 'rm -rf "$STATUS_DIR"' EXIT
+
 # strip_release_binary: in release mode, runs 'strip --strip-unneeded'
 # on the given path (a Crystal-built binary) to drop the static
 # .symtab / .strtab on top of any remaining debug symbols that
@@ -236,7 +283,46 @@ strip_release_binary() {
     fi
 }
 
+# launch_bg: run "$@" (a build function) in the background while
+# keeping at most $PARALLEL_JOBS builds in flight. Polls the running
+# job count instead of using `wait -n`, which macOS's bash 3.2 lacks.
+launch_bg() {
+    while [ "$(jobs -rp | wc -l)" -ge "$PARALLEL_JOBS" ]; do
+        sleep 0.1
+    done
+    "$@" &
+}
+
+# build_main_exec: compile one main executable. Runs in a background
+# subshell (via launch_bg), so it cannot exit the parent on failure -
+# it records the compiler output in $STATUS_DIR instead and the parent
+# reports it in the original per-binary format after the pool drains.
+# Its own CRYSTAL_CACHE_DIR keeps it from racing the other concurrent
+# builds (same isolation the parallel plugin builds already use).
+# The ✓/✗ line is printed as one whole line from here (not the old
+# echo -n prefix + result suffix) because the prefix lines of
+# concurrently-starting builds would otherwise overwrite each other.
+build_main_exec() {
+    local name="$1" source="$2" binary="$3"
+    if OUTPUT=$(CRYSTAL_CACHE_DIR="$CACHE_DIR_ROOT/cache-$name" crystal build "$source" -o "$binary" $BUILD_FLAGS 2>&1); then
+        strip_release_binary "$binary"
+        echo -e "   Building $name... ${GREEN}✓${NC}"
+    else
+        echo -e "   Building $name... ${RED}✗${NC}"
+        printf '%s\n' "$OUTPUT" > "$STATUS_DIR/main-$name.fail"
+        rm -rf "$CACHE_DIR_ROOT/cache-$name"
+    fi
+}
+
 # Build main executable
+# The three main executables are mutually independent (none of them
+# consumes another's output), so their builds run concurrently with
+# each other AND with the fat plugin binary further down. Staleness
+# stays serial here - the checks are cheap mtime/find scans; only the
+# `crystal build` work goes to the parallel pool (launched at the
+# build_fat_plugin call site, after that function is defined).
+MAIN_BUILDS=()
+
 echo -e "${YELLOW}🔨 Building main executable...${NC}"
 
 MAIN_BINARY="$OUTPUT_DIR/krikri-playbook"
@@ -264,19 +350,7 @@ elif [ -d lib ] && find lib -name '*.cr' -newer "$MAIN_BINARY" -print -quit | gr
 fi
 
 if [ "$NEEDS_BUILD" = true ]; then
-    echo -n "   Building krikri-playbook... "
-    if ! OUTPUT=$(crystal build krikri-playbook.cr -o "$MAIN_BINARY" $BUILD_FLAGS 2>&1); then
-        echo -e "${RED}✗${NC}"
-        echo ""
-        echo -e "${RED}❌ Build failed for main executable${NC}"
-        echo ""
-        echo "$OUTPUT"
-        echo ""
-        exit 1
-    fi
-    echo -e "${GREEN}✓${NC}"
-    strip_release_binary "$MAIN_BINARY"
-    echo -e "${GREEN}✅ Main executable built: $OUTPUT_DIR/krikri-playbook${NC}"
+    MAIN_BUILDS+=("krikri-playbook|$MAIN_SOURCE|$MAIN_BINARY")
 else
     echo -e "   ${BLUE}✓${NC} krikri-playbook (up to date)"
     echo -e "${GREEN}✅ Main executable up to date${NC}"
@@ -301,19 +375,7 @@ elif [ -d lib ] && find lib -name '*.cr' -newer "$ADHOC_BINARY" -print -quit | g
 fi
 
 if [ "$NEEDS_BUILD" = true ]; then
-    echo -n "   Building krikri... "
-    if ! OUTPUT=$(crystal build krikri.cr -o "$ADHOC_BINARY" $BUILD_FLAGS 2>&1); then
-        echo -e "${RED}✗${NC}"
-        echo ""
-        echo -e "${RED}❌ Build failed for krikri${NC}"
-        echo ""
-        echo "$OUTPUT"
-        echo ""
-        exit 1
-    fi
-    echo -e "${GREEN}✓${NC}"
-    strip_release_binary "$ADHOC_BINARY"
-    echo -e "${GREEN}✅ krikri built: $OUTPUT_DIR/krikri${NC}"
+    MAIN_BUILDS+=("krikri|$ADHOC_SOURCE|$ADHOC_BINARY")
 else
     echo -e "   ${BLUE}✓${NC} krikri (up to date)"
     echo -e "${GREEN}✅ krikri up to date${NC}"
@@ -338,19 +400,7 @@ elif [ -d lib ] && find lib -name '*.cr' -newer "$LINT_BINARY" -print -quit | gr
 fi
 
 if [ "$NEEDS_BUILD" = true ]; then
-    echo -n "   Building krikri-lint... "
-    if ! OUTPUT=$(crystal build krikri-lint.cr -o "$LINT_BINARY" $BUILD_FLAGS 2>&1); then
-        echo -e "${RED}✗${NC}"
-        echo ""
-        echo -e "${RED}❌ Build failed for krikri-lint${NC}"
-        echo ""
-        echo "$OUTPUT"
-        echo ""
-        exit 1
-    fi
-    echo -e "${GREEN}✓${NC}"
-    strip_release_binary "$LINT_BINARY"
-    echo -e "${GREEN}✅ krikri-lint built: $OUTPUT_DIR/krikri-lint${NC}"
+    MAIN_BUILDS+=("krikri-lint|$LINT_SOURCE|$LINT_BINARY")
 else
     echo -e "   ${BLUE}✓${NC} krikri-lint (up to date)"
     echo -e "${GREEN}✅ krikri-lint up to date${NC}"
@@ -586,14 +636,20 @@ build_fat_plugin() {
         if [ "$STATIC" != true ] && [ "$IS_DARWIN" != true ]; then
             fat_link_flags=("--link-flags=-Wl,-Bstatic -lbz2 -Wl,-Bdynamic")
         fi
-        if OUTPUT=$(crystal build "$generated" -o "$fat_binary" $BUILD_FLAGS "${fat_link_flags[@]}" 2>&1); then
+        if OUTPUT=$(CRYSTAL_CACHE_DIR="$CACHE_DIR_ROOT/cache-fat-plugin" crystal build "$generated" -o "$fat_binary" $BUILD_FLAGS "${fat_link_flags[@]}" 2>&1); then
             chmod +x "$fat_binary"
             strip_release_binary "$fat_binary"
             echo -e "   ${GREEN}✓${NC} fat plugin binary"
         else
             echo -e "   ${RED}✗${NC} fat plugin binary"
-            echo "$OUTPUT"
-            exit 1
+            # Can't exit from here: this builder now runs in a
+            # background subshell alongside the main executables, and
+            # a subshell exit wouldn't stop the parent. Record the
+            # compiler output for the parent to report and bail on,
+            # in the same format the serial build used.
+            printf '%s\n' "$OUTPUT" > "$STATUS_DIR/FAT_BUILD.fail"
+            rm -rf "$CACHE_DIR_ROOT/cache-fat-plugin"
+            return 1
         fi
     else
         echo -e "   ${BLUE}✓${NC} fat plugin binary (up to date)"
@@ -613,7 +669,53 @@ build_fat_plugin() {
     done
 }
 
-build_fat_plugin
+# Launch the parallel pool: every stale main executable plus the fat
+# plugin binary (its builder is the function just defined above). All
+# are independent `crystal build` invocations; the cap is enforced by
+# launch_bg, and every build has its own CRYSTAL_CACHE_DIR.
+echo ""
+for task in "${MAIN_BUILDS[@]}"; do
+    IFS='|' read -r name source binary <<< "$task"
+    launch_bg build_main_exec "$name" "$source" "$binary"
+done
+launch_bg build_fat_plugin
+wait
+
+# Report per-binary results in the original serial-build format:
+# mains first, in their original order, then the fat binary - exiting
+# on the first failure exactly as the serial build did (later failures
+# were simply never reached before; their compiler output is captured
+# in $STATUS_DIR if it becomes relevant).
+for task in "${MAIN_BUILDS[@]}"; do
+    IFS='|' read -r name source binary <<< "$task"
+    if [ -f "$STATUS_DIR/main-$name.fail" ]; then
+        echo ""
+        if [ "$name" = "krikri-playbook" ]; then
+            echo -e "${RED}❌ Build failed for main executable${NC}"
+        else
+            echo -e "${RED}❌ Build failed for $name${NC}"
+        fi
+        echo ""
+        cat "$STATUS_DIR/main-$name.fail"
+        echo ""
+        exit 1
+    fi
+    case "$name" in
+        krikri-playbook) echo -e "${GREEN}✅ Main executable built: $OUTPUT_DIR/krikri-playbook${NC}" ;;
+        krikri)          echo -e "${GREEN}✅ krikri built: $OUTPUT_DIR/krikri${NC}" ;;
+        krikri-lint)     echo -e "${GREEN}✅ krikri-lint built: $OUTPUT_DIR/krikri-lint${NC}" ;;
+    esac
+done
+
+if [ -f "$STATUS_DIR/FAT_BUILD.fail" ]; then
+    echo ""
+    echo -e "${RED}❌ Build failed for fat plugin binary${NC}"
+    echo ""
+    cat "$STATUS_DIR/FAT_BUILD.fail"
+    echo ""
+    exit 1
+fi
+echo ""
 
 PLUGIN_COUNT=0
 TO_BUILD=()
@@ -664,11 +766,12 @@ done
 REBUILT_COUNT=${#TO_BUILD[@]}
 
 if [ "$REBUILT_COUNT" -gt 0 ]; then
-    JOBS=$(nproc 2>/dev/null || echo 4)
+    JOBS=$PARALLEL_JOBS
     echo -e "   ${YELLOW}Building $REBUILT_COUNT plugin(s) (up to $JOBS in parallel)...${NC}"
 
-    STATUS_DIR=$(mktemp -d)
-    trap 'rm -rf "$STATUS_DIR"' EXIT
+    # STATUS_DIR is already set up (with its EXIT trap) at the top of
+    # the script - the per-plugin cache dirs and .fail files share it
+    # with the main-executable/fat-binary pool above.
 
     # archive/mysql_db/postgresql_db all use the bz2 shard's real
     # libbz2 C binding (Compress::BZ2::Writer/Reader), which links
@@ -704,13 +807,18 @@ if [ "$REBUILT_COUNT" -gt 0 ]; then
             link_flags=("--link-flags=-Wl,-Bstatic -lbz2 -Wl,-Bdynamic")
         fi
 
-        # Each parallel job gets its own CRYSTAL_CACHE_DIR - concurrent
-        # `crystal build` invocations sharing the default `~/.cache/crystal`
-        # can race on the compiler's own temp/object files (seen as a
-        # spurious "you've found a bug in the Crystal compiler" /
+        # Each parallel job gets its own persistent CRYSTAL_CACHE_DIR
+        # (under $CACHE_DIR_ROOT, keyed per target) - concurrent
+        # `crystal build` invocations sharing one cache dir can race on
+        # the compiler's own temp/object files (seen as a spurious "you've
+        # found a bug in the Crystal compiler" /
         # errno.cr "No such file or directory" mid-codegen under real
         # parallel load - not an actual bug in any of these plugins).
-        if OUTPUT=$(CRYSTAL_CACHE_DIR="$STATUS_DIR/cache-$plugin" crystal build "$source" -o "$binary" $BUILD_FLAGS "${link_flags[@]}" 2>&1); then
+        # Persistent (not mktemp-per-run) because cache warmth is worth
+        # ~100s per big release rebuild - see the CACHE_DIR_ROOT comment
+        # up top. A failed build wipes its own dir so a corrupt cache
+        # can't poison the next run.
+        if OUTPUT=$(CRYSTAL_CACHE_DIR="$CACHE_DIR_ROOT/cache-$plugin" crystal build "$source" -o "$binary" $BUILD_FLAGS "${link_flags[@]}" 2>&1); then
             chmod +x "$binary"
             # Release-mode strip: see the main strip_release_binary
             # definition above for the rationale. Inlined here (and not
@@ -727,10 +835,11 @@ if [ "$REBUILT_COUNT" -gt 0 ]; then
         else
             echo -e "   ${RED}✗${NC} $plugin"
             printf '%s\n' "$OUTPUT" > "$STATUS_DIR/$plugin.fail"
+            rm -rf "$CACHE_DIR_ROOT/cache-$plugin"
         fi
     }
     export -f build_one_plugin
-    export PLUGINS_DIR BUILD_FLAGS STATUS_DIR RED GREEN YELLOW NC BZ2_STATIC_PLUGINS BUILD_MODE STRIP_AVAILABLE STATIC STRIP_FLAGS IS_DARWIN
+    export PLUGINS_DIR BUILD_FLAGS STATUS_DIR RED GREEN YELLOW NC BZ2_STATIC_PLUGINS BUILD_MODE STRIP_AVAILABLE STATIC STRIP_FLAGS IS_DARWIN CACHE_DIR_ROOT
 
     printf '%s\n' "${TO_BUILD[@]}" | xargs -P "$JOBS" -I{} bash -c 'build_one_plugin "$@"' _ {}
 

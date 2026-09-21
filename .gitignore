@@ -65,3 +65,6 @@ plugin_manager
 
 __pycache__/
 *.pyc
+
+# build.sh's persistent per-target crystal compiler caches (see build.sh)
+/.crystal-build-cache/
