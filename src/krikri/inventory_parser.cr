@@ -320,14 +320,22 @@ module Krikri
 
     # Parse inventory from a file, a directory of inventory sources, or a
     # comma-separated host list (auto-detect).
-    def self.parse(path : String) : Inventory
+    #
+    # *playbook_dir* is the playbook's directory when known (nil for the
+    # ad-hoc CLI). Real Ansible loads group_vars/host_vars from BOTH the
+    # inventory's directory and the playbook's, with the playbook side
+    # winning a same-key conflict between the two file trees - the
+    # dirless-infra shape (ansible/inventory/backend_hosts.yml next to
+    # ansible/group_vars/) silently lost every playbook-adjacent
+    # group_vars var before this parameter existed.
+    def self.parse(path : String, playbook_dir : String? = nil) : Inventory
       # `-i "web1,web2,"` - real Ansible's host_list source. The trailing
       # comma is what disambiguates a single-host list from a filename
       # (`-i localhost` is a file; `-i localhost,` is a host list), which
       # is why the rule is "contains a comma", not "isn't a file".
-      return parse_host_list(path) if path.includes?(',')
+      return parse_host_list(path, playbook_dir) if path.includes?(',')
 
-      return parse_directory(path) if File.directory?(path)
+      return parse_directory(path, playbook_dir) if File.directory?(path)
 
       unless File.exists?(path)
         raise "Inventory file not found: #{path}"
@@ -337,15 +345,15 @@ module Krikri
       # detection rule real Ansible uses (the executable bit, not the
       # extension) - see parse_dynamic.
       if File::Info.executable?(path)
-        return parse_dynamic(path)
+        return parse_dynamic(path, playbook_dir)
       end
 
       # Detect format by extension or content
       if path.ends_with?(".yml") || path.ends_with?(".yaml")
-        parse_yaml(path)
+        parse_yaml(path, playbook_dir: playbook_dir)
       else
         # Default to INI format
-        parse_ini(path)
+        parse_ini(path, playbook_dir)
       end
     end
 
@@ -360,7 +368,7 @@ module Krikri
     # `[all:vars]` block in one file has to reach hosts defined in
     # another (verified against real Ansible), and each file's own
     # parse only ever saw its own hosts.
-    def self.parse_directory(path : String) : Inventory
+    def self.parse_directory(path : String, playbook_dir : String? = nil) : Inventory
       merged = Inventory.new
 
       # `constructed` sources transform hosts contributed by the OTHER
@@ -389,7 +397,7 @@ module Krikri
           next
         end
 
-        merge_inventory(merged, doc ? parse_yaml(source, doc) : parse(source))
+        merge_inventory(merged, doc ? parse_yaml(source, doc, playbook_dir) : parse(source, playbook_dir))
       end
 
       deferred_constructed.each do |(source, doc)|
@@ -433,7 +441,7 @@ module Krikri
     # Range syntax works here exactly as it does in an INI file
     # (`-i "web[01:03],"`), since real Ansible runs the same expansion
     # over host_list entries.
-    def self.parse_host_list(path : String) : Inventory
+    def self.parse_host_list(path : String, playbook_dir : String? = nil) : Inventory
       inventory = Inventory.new
 
       path.split(',').each do |entry|
@@ -447,6 +455,12 @@ module Krikri
           inventory.get_or_create_group("all").add_host(host)
         end
       end
+
+      # Real Ansible's host_list source has no inventory directory, but
+      # playbook-adjacent group_vars/host_vars still apply (the common
+      # `ansible-playbook -i localhost, play.yml` shape).
+      load_group_and_host_vars(inventory, nil, playbook_dir)
+      apply_group_vars(inventory)
 
       inventory
     end
@@ -467,7 +481,7 @@ module Krikri
     # inventory mechanism - any executable, any language) are implemented;
     # Ansible's newer YAML-defined inventory *plugins* (aws_ec2.yml and
     # friends, each with its own config schema and API calls) are not.
-    def self.parse_dynamic(path : String) : Inventory
+    def self.parse_dynamic(path : String, playbook_dir : String? = nil) : Inventory
       inventory = Inventory.new
 
       output = IO::Memory.new
@@ -502,7 +516,7 @@ module Krikri
         end
       end
 
-      load_group_and_host_vars(inventory, File.dirname(path))
+      load_group_and_host_vars(inventory, File.dirname(path), playbook_dir)
       apply_group_vars(inventory)
 
       inventory
@@ -584,7 +598,7 @@ module Krikri
     end
 
     # Parse INI format inventory
-    def self.parse_ini(path : String) : Inventory
+    def self.parse_ini(path : String, playbook_dir : String? = nil) : Inventory
       inventory = Inventory.new
       content = File.read(path)
 
@@ -637,15 +651,15 @@ module Krikri
       # group_vars/host_vars directory files, then the inventory's own
       # inline [group:vars] sections - see load_group_and_host_vars for why
       # that order matters.
-      load_group_and_host_vars(inventory, File.dirname(path))
+      load_group_and_host_vars(inventory, File.dirname(path), playbook_dir)
       apply_group_vars(inventory)
 
       inventory
     end
 
     # Parse YAML format inventory
-    def self.parse_yaml(path : String) : Inventory
-      parse_yaml(path, YAML.parse(File.read(path)))
+    def self.parse_yaml(path : String, playbook_dir : String? = nil) : Inventory
+      parse_yaml(path, YAML.parse(File.read(path)), playbook_dir)
     rescue ex : YAML::ParseException
       raise "Invalid YAML in inventory file: #{ex.message}"
     end
@@ -653,7 +667,7 @@ module Krikri
     # Overload taking an already-parsed document - parse_directory hands
     # over the doc it already read for its constructed-source sniff, so
     # each directory source is read + parsed once, not twice.
-    def self.parse_yaml(path : String, yaml : YAML::Any) : Inventory
+    def self.parse_yaml(path : String, yaml : YAML::Any, playbook_dir : String? = nil) : Inventory
       inventory = Inventory.new
 
       # YAML-defined inventory plugin source (`plugin: <name>` at the top
@@ -680,7 +694,7 @@ module Krikri
       # group_vars/host_vars directory files, then the inventory's own
       # inline vars: blocks - see load_group_and_host_vars for why that
       # order matters.
-      load_group_and_host_vars(inventory, File.dirname(path))
+      load_group_and_host_vars(inventory, File.dirname(path), playbook_dir)
       apply_group_vars(inventory)
 
       inventory
@@ -851,48 +865,81 @@ module Krikri
       end
     end
 
-    # Load group_vars/*.yml and host_vars/*.yml from directories adjacent
-    # to the inventory file (its own directory, not the playbook's - a
-    # simplification versus real Ansible, which checks both) and apply
-    # them to matching hosts. Only a single group_vars/<name>.yml /
-    # host_vars/<name>.yml file per name is supported, not the
-    # directory-of-multiple-files style Ansible also allows
-    # (group_vars/<name>/*.yml) - the common case, not full parity.
+    # Load group_vars/*.yml and host_vars/*.yml from the directories
+    # adjacent to the inventory file AND, when known, the playbook's
+    # directory (real Ansible checks both; the playbook side wins a
+    # same-key conflict between the two file trees - live-verified
+    # against ansible-core 2.19.11), and apply them to matching hosts.
+    # Only a single group_vars/<name>.yml / host_vars/<name>.yml file per
+    # name is supported, not the directory-of-multiple-files style
+    # Ansible also allows (group_vars/<name>/*.yml) - the common case,
+    # not full parity.
     #
     # Applied host_vars/<host> -> group_vars/<group> -> group_vars/all
     # order using set-if-absent (a host's vars already present - from an
     # inline inventory host line, or a higher-precedence file already
     # applied - are never overwritten), so the net precedence is: inline
-    # host vars > host_vars file > group_vars file > (afterward, in
-    # apply_group_vars) inline group vars. Real Ansible's actual
+    # host vars > playbook host_vars file > playbook group_vars file >
+    # inventory host_vars file > inventory group_vars file > (afterward,
+    # in apply_group_vars) inline group vars. Real Ansible's actual
     # precedence has host_vars files outrank inline host vars too, but
     # group_vars/host_vars files and inline vars on the
     # very same key is a rare enough combination that this simpler,
     # documented approximation is a reasonable trade rather than
     # threading a second "was this explicitly inline" flag through Host.
-    private def self.load_group_and_host_vars(inventory : Inventory, inventory_dir : String) : Nil
-      group_vars_dir = File.join(inventory_dir, "group_vars")
-      host_vars_dir = File.join(inventory_dir, "host_vars")
+    #
+    # The playbook side may only override keys that an INVENTORY-side
+    # vars file already applied - never inline host vars, and never a
+    # higher-precedence PLAYBOOK-side file (within the playbook tree the
+    # same set-if-absent host_vars > group > all order applies). Tracking
+    # which keys each tree's files applied is what lets the playbook pass
+    # punch through the inventory pass without re-opening the
+    # inline-vs-file ambiguity the comment above deliberately avoids.
+    private def self.load_group_and_host_vars(inventory : Inventory, inventory_dir : String?, playbook_dir : String? = nil) : Nil
+      # host name -> keys set by that tree's vars files (nil for the
+      # playbook tree - its pass runs last and nothing needs to override it).
+      inventory_applied = Hash(String, Set(String)).new
+
+      if dir = inventory_dir
+        apply_adjacent_vars(inventory, dir, inventory_applied, override: nil)
+      end
+
+      if dir = playbook_dir
+        apply_adjacent_vars(inventory, dir, nil, override: inventory_applied)
+      end
+    end
+
+    # One tree's group_vars/host_vars pass. *file_applied* collects (or,
+    # for the playbook tree, is nil) the keys this tree's files set per
+    # host; *override* names the keys the previous tree's files set,
+    # which this pass may replace (see load_group_and_host_vars).
+    private def self.apply_adjacent_vars(inventory : Inventory, dir : String, file_applied : Hash(String, Set(String))?, override : Hash(String, Set(String))?) : Nil
+      group_vars_dir = File.join(dir, "group_vars")
+      host_vars_dir = File.join(dir, "host_vars")
 
       # Set-if-absent (apply_vars_file) means whichever of these runs
       # *first* wins a given key, so highest-precedence goes first:
       # host_vars/<hostname> > group_vars/<group> > group_vars/all.
       inventory.hosts.each do |name, host|
-        apply_vars_file([host], File.join(host_vars_dir, name))
+        apply_vars_file([host], File.join(host_vars_dir, name), file_applied, override)
       end
 
       inventory.groups.each do |group_name, group|
         next if group_name == "all"
-        apply_vars_file(group.hosts.values, File.join(group_vars_dir, group_name))
+        apply_vars_file(group.hosts.values, File.join(group_vars_dir, group_name), file_applied, override)
       end
 
-      apply_vars_file(inventory.hosts.values, File.join(group_vars_dir, "all"))
+      apply_vars_file(inventory.hosts.values, File.join(group_vars_dir, "all"), file_applied, override)
     end
 
     # Load base_path.yml (or .yaml) if it exists and apply its top-level
     # keys to every given host, skipping any key the host already has -
     # see load_group_and_host_vars for the precedence this establishes.
-    private def self.apply_vars_file(hosts : Array(Host), base_path : String) : Nil
+    # A key this host's entry in *override* (the previous tree's
+    # file-applied set) contains is replaced despite being present;
+    # *applied* (when non-nil) records the keys this file sets per host
+    # so a later tree can do the same.
+    private def self.apply_vars_file(hosts : Array(Host), base_path : String, applied : Hash(String, Set(String))? = nil, override : Hash(String, Set(String))? = nil) : Nil
       path = {"#{base_path}.yml", "#{base_path}.yaml"}.find { |pth| File.exists?(pth) }
       return unless path
 
@@ -904,12 +951,17 @@ module Krikri
       return unless hash = yaml.as_h?
 
       hosts.each do |host|
+        host_override = override.try(&.[host.name]?)
+        host_applied = applied.try { |hash| hash[host.name] ||= Set(String).new }
         hash.each do |key, value|
           key_str = key.to_s
-          next if host.vars.has_key?(key_str)
+          if host.vars.has_key?(key_str)
+            next unless host_override.try(&.includes?(key_str))
+          end
 
           json_value = Vault.maybe_decrypt_json(Vault.yaml_value_to_json(value))
           host.vars[key_str] = json_value
+          host_applied.try(&.add(key_str))
 
           case key_str
           when "ansible_user"

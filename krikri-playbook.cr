@@ -616,7 +616,7 @@ end
 # reference is to a real Inventory either way.
 inventory = Krikri::Inventory.new
 begin
-  inventory = Krikri::TimingProfile.measure("parse.inventory") { Krikri::InventoryParser.parse(inventory_file) }
+  inventory = Krikri::TimingProfile.measure("parse.inventory") { Krikri::InventoryParser.parse(inventory_file, File.dirname(File.expand_path(playbook_file))) }
 
   if verbose
     stats = Krikri::InventoryParser.stats(inventory)
