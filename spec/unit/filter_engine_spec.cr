@@ -925,12 +925,21 @@ describe Krikri::VariableSubstitutor::FilterEngine do
     # hostvars, 'ansible_host')` with no host carrying `ansible_host`
     # must hard-fail (real: "object of type 'HostVarsVars' has no
     # attribute 'ansible_host'"), not silently return nil and let the
-    # playbook run on with bad data.
+    # playbook run on with bad data. The wording matches real
+    # ansible-core 2.19.11's own two shapes, live-verified: a hostvars
+    # container says HostVarsVars, any other dict says dict.
     v = Hash(String, JSON::Any).new
     v["hostvars"] = JSON.parse(%({"host-a": {"node_ip": "10.0.0.1"}, "host-b": {"node_ip": "10.0.0.2"}}))
     vars_engine = Krikri::VariableSubstitutor::FilterEngine.new(v)
-    expect_raises(Exception, "not found") do
+    expect_raises(Exception, "object of type 'HostVarsVars' has no attribute 'ansible_host'") do
       vars_engine.apply(JSON::Any.new("host-a"), "extract(hostvars, 'ansible_host')")
+    end
+
+    plain = Hash(String, JSON::Any).new
+    plain["mapping"] = JSON.parse(%({"x": {"a": 1}}))
+    plain_engine = Krikri::VariableSubstitutor::FilterEngine.new(plain)
+    expect_raises(Exception, "object of type 'dict' has no attribute 'b'") do
+      plain_engine.apply(JSON::Any.new("x"), "extract(mapping, 'b')")
     end
   end
 
