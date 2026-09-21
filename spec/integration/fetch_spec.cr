@@ -87,4 +87,24 @@ describe "fetch plugin" do
   ensure
     FileUtils.rm_rf(src_dir) if src_dir
   end
+
+  it "rejects a hostname containing path separators instead of escaping dest (flat: false)" do
+    src = File.tempname("fetch-spec-src")
+    File.write(src, "x")
+    dest_root = File.tempname("fetch-spec-escape")
+    Dir.mkdir_p(dest_root)
+
+    result = PluginSpecHelper.run(
+      "fetch",
+      {"src" => src, "dest" => "#{dest_root}/"},
+      LOCAL_VARS,
+      host_name: "localhost/../../etc",
+    )
+    result["failed"].as_bool.should be_true
+    result["msg"].as_s.should contain("cannot be used as a fetch destination directory")
+    Dir.exists?(File.join(dest_root, "localhost")).should be_false
+  ensure
+    File.delete(src) if src && File.exists?(src)
+    FileUtils.rm_rf(dest_root) if dest_root
+  end
 end

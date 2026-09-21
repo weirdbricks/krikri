@@ -762,7 +762,7 @@ module Krikri
     # helper (captures stdout+stderr so a validation failure explains
     # what's actually wrong, not just that it happened).
     private def validate_file(path : String, validate_cmd : String) : NamedTuple(ok: Bool, output: String)
-      cmd = validate_cmd.gsub("%s", path)
+      cmd = validate_cmd.gsub("%s", shell_single_quote(path))
       output = IO::Memory.new
 
       result = Process.run(

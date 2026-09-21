@@ -602,9 +602,12 @@ module Krikri
     # as the one-shot path's own target string - it is expected to have
     # already passed `PluginManager.valid_become_user?` at the call
     # site, which is where that allow-list is enforced for both paths.
+    # Quoting here is defense in depth: if the allow-list is ever
+    # relaxed or bypassed, the shell still sees one argument, not
+    # injected command text.
     private def self.daemon_remote_command(remote_binary_path : String, become_user : String?) : String
-      return "#{remote_binary_path} --daemon" unless become_user
-      "sudo -n -u #{become_user} -- #{remote_binary_path} --daemon"
+      return "#{shell_quote(remote_binary_path)} --daemon" unless become_user
+      "sudo -n -u #{shell_quote(become_user)} -- #{shell_quote(remote_binary_path)} --daemon"
     end
 
     private def self.write_daemon_frame(io : IO, payload : String) : Nil
@@ -1068,7 +1071,7 @@ module Krikri
     # nil-port omission (no -p; ssh's own config resolution applies)
     # stays identical in both.
     private def self.rsync_ssh_command(control_path : String, identity_file : String?, port : Int32?) : String
-      base = "ssh -o ControlMaster=auto -o ControlPath=#{control_path} -o ControlPersist=600" \
+      base = "ssh -o ControlMaster=auto -o ControlPath=#{shell_quote(control_path)} -o ControlPersist=600" \
              " -o ConnectTimeout=#{CliOptions.timeout} -o StrictHostKeyChecking=#{strict_host_key_checking}" \
              "#{identity_ssh_opt(identity_file)}"
       port ? "#{base} -p #{port}" : base

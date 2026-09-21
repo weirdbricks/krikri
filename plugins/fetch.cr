@@ -23,6 +23,14 @@ module Krikri
       return PluginResult.new(changed: false, failed: true, msg: "missing required argument: dest") unless dest
       dest = expand_tilde(dest)
 
+      if !true?(@params["flat"]?) && unsafe_host_dir_name?(@host.name)
+        return PluginResult.new(
+          changed: false, failed: true,
+          msg: "inventory hostname '#{@host.name}' cannot be used as a fetch destination directory (path separators or '..' would escape dest)",
+          file: src,
+        )
+      end
+
       if true?(@params["_ansible_check_mode"]?)
         return PluginResult.new(changed: false, failed: false, msg: "check mode not (yet) supported for this module", skipped: true)
       end
@@ -93,6 +101,15 @@ module Krikri
       else
         File.join(dest, @host.name, src)
       end
+    end
+
+    # `File.join` is plain string concatenation - it neither normalizes
+    # nor rejects '..' - so a hostname containing '/' or '..' would write
+    # outside the dest directory. Hostname comes from the playbook
+    # author's own inventory, but an escaping destination is never
+    # intended, so it's rejected outright.
+    private def unsafe_host_dir_name?(name : String) : Bool
+      name.empty? || name.includes?('/') || name.includes?('\\') || name.includes?('\0') || name == "." || name == ".."
     end
 
     # For a local connection, the source is directly readable from this

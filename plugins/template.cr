@@ -509,7 +509,7 @@ module Krikri
     # %s`-style syntax checkers whose whole purpose is to explain exactly
     # what's wrong - reports *what* failed, not just that it did.
     private def validate_file(path : String, validate_cmd : String) : NamedTuple(ok: Bool, output: String)
-      cmd = validate_cmd.gsub("%s", path)
+      cmd = validate_cmd.gsub("%s", shell_single_quote(path))
       output = IO::Memory.new
 
       result = Process.run(
