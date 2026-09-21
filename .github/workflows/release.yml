@@ -81,7 +81,8 @@ jobs:
               xz-dev xz-libs \
               zlib-dev zlib-static \
               gc-dev gc-static \
-              libunwind-dev libunwind-static
+              libunwind-dev libunwind-static \
+              gmp-dev gmp-static
             # --without-development: skips ameba (a dev-only lint
             # dependency, unused by the release binaries themselves) -
             # without this its own `shards build` postinstall hook drops
