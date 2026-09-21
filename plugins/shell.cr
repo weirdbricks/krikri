@@ -165,10 +165,14 @@ module Krikri
       if creates = @params["creates"]?
         if path_or_glob_exists?(resolve_against_chdir(creates, chdir))
           skipped_stdout = "skipped, since #{creates} exists"
+          # Real ansible-core 2.19.11 words the check-mode variant of this
+          # msg "Would not run command since ..." (the ordinary run says
+          # "Did not run command since ..." - live-verified both).
+          skip_msg = @check_mode ? "Would not run command since '#{creates}' exists" : "Did not run command since '#{creates}' exists"
           return PluginResult.new(
             changed: false,
             failed: false,
-            msg: "Did not run command since '#{creates}' exists",
+            msg: skip_msg,
             cmd: cmd,
             rc: 0,
             stdout: skipped_stdout,
@@ -188,10 +192,11 @@ module Krikri
       if removes = @params["removes"]?
         unless path_or_glob_exists?(resolve_against_chdir(removes, chdir))
           skipped_stdout = "skipped, since #{removes} does not exist"
+          skip_msg = @check_mode ? "Would not run command since '#{removes}' does not exist" : "Did not run command since '#{removes}' does not exist"
           return PluginResult.new(
             changed: false,
             failed: false,
-            msg: "Did not run command since '#{removes}' does not exist",
+            msg: skip_msg,
             cmd: cmd,
             rc: 0,
             stdout: skipped_stdout,
@@ -217,12 +222,16 @@ module Krikri
       # referencing task exactly like real Ansible would if the KEY were
       # actually missing - it just isn't, here. Verified live against
       # ansible-core 2.19.4's own `--check` output for this exact case.
+      # The `skipping:` verdict only applies when NO creates:/removes:
+      # gate is present - see command.cr's identical fix (live-verified
+      # against 2.19.11) for the full gate-vs-skip breakdown.
       if @check_mode
+        gated = @params.has_key?("creates") || @params.has_key?("removes")
         return PluginResult.new(
           changed: false,
           failed: false,
           msg: "Command would have run if not in check mode",
-          skipped: true,
+          skipped: !gated,
           cmd: cmd,
           rc: 0,
           stdout: "",
