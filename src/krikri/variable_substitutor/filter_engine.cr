@@ -1,7 +1,6 @@
 require "json"
 require "./filter_core"
 require "time"
-require "yaml"
 require "base64"
 require "uri"
 require "uuid"
@@ -711,32 +710,19 @@ module Krikri
           # `65534 | random(seed=inventory_hostname)` - a register:'d
           # password must come out IDENTICAL on every idempotent rerun on
           # the same host, which is exactly what the seed pins down.
-          # Seeded runs use PyRandom, a bit-exact port of CPython's
-          # random.Random (Mersenne Twister + Lib/random.py's sha512 str
-          # seeding), so krikri and real ansible-playbook produce the
-          # SAME value for the same seed - not merely a krikri-internally
-          # deterministic one (see the shuffle filter's deliberate
-          # divergence note on the Crinja side for the weaker precedent
-          # this deliberately improves on). An empty/undefined operand
-          # yields nil, matching do_random's IndexError -> undefined.
-          seed_value = parse_kwarg_expr(filter_args, "seed")
-          case raw = value.raw
-          when Int64, Int32
-            limit = raw.to_i64
-            if limit <= 0
-              JSON::Any.new(nil)
-            elsif seed_value && !seed_value.raw.nil?
-              JSON::Any.new(py_random_for_seed(seed_value).randrange(limit))
-            else
-              JSON::Any.new(Random::DEFAULT.rand(limit))
-            end
-          when Array
-            random_choice(raw, seed_value)
-          when String
-            JSON::Any.new(random_choice(raw.chars.map { |char| JSON::Any.new(char.to_s) }, seed_value).as_s)
-          else
-            JSON::Any.new(nil)
-          end
+          #
+          # Phase-3 consolidation slice #5: the hand-rolled copy (and its
+          # #random_choice/#py_random_for_seed helpers) is retired for the
+          # ONE native Crinja.filter(:random) registration (jinja_filters.cr)
+          # via #delegate_to_crinja_filter, same seed= kwarg shape. Seeded
+          # runs use PyRandom on both engines, so krikri and real
+          # ansible-playbook produce the SAME value for the same seed;
+          # unseeded runs stay NONdeterministic on both (the registration's
+          # unseeded path previously fell into a constant-seeded PyRandom,
+          # so every unseeded call returned the same value - fixed toward
+          # real Jinja's nondeterminism alongside this migration).
+          positional, kwargs = split_positional_and_kwargs(filter_args, ["seed"])
+          delegate_to_crinja_filter("random", value, kwargs, positional)
         when "map_format"
           # The nephelaiio.plugins collection's custom filter (NOT
           # community.general - no such filter exists there), found
@@ -1117,23 +1103,30 @@ module Krikri
         when "zip", "zip_longest"
           # zip(*others)/zip_longest(*others, fillvalue=None) - real
           # Ansible filters, Python's own zip()/itertools.zip_longest().
-          longest = filter_name == "zip_longest"
-          lists = [as_array(value)] + split_top_level_args(filter_args).reject(&.strip.starts_with?("fillvalue")).map { |arg| as_array(resolve_expression(arg)) }
-          fillvalue = parse_kwarg_expr(filter_args, "fillvalue") || JSON::Any.new(nil)
-          size = longest ? (lists.max_of?(&.size) || 0) : (lists.min_of?(&.size) || 0)
-          rows = (0...size).map do |i|
-            JSON::Any.new(lists.map { |list| list[i]? || fillvalue })
-          end
-          JSON::Any.new(rows)
+          #
+          # Phase-3 consolidation slice #5: the hand-rolled N-way zip this
+          # dispatch used to run is retired - the name routes through the
+          # ONE native Crinja.filter registration (jinja_filters.cr) via
+          # #delegate_to_crinja_filter. The lists go through as varargs and
+          # fillvalue= as a real kwarg, matching real ansible-core 2.19
+          # (live-verified: every positional argument is another LIST -
+          # `zip_longest([3], '-')` zips three lists with null padding, it
+          # never sets the fill). The delegated registration also un-caps
+          # this at 3-way zip, which the Crinja template side's old
+          # declared-kwarg shape silently was.
+          positional, kwargs = split_positional_and_kwargs(filter_args, ["fillvalue"])
+          delegate_to_crinja_filter(filter_name, value, kwargs, positional)
         when "product"
           # product(*others) - real Ansible filter, Python's own
           # itertools.product(): Cartesian product of value and every
           # other list argument, each result row a list.
-          lists = [as_array(value)] + split_top_level_args(filter_args).map { |arg| as_array(resolve_expression(arg)) }
-          result = lists.reduce([[] of JSON::Any]) do |acc, list|
-            acc.flat_map { |row| list.map { |item| row + [item] } }
-          end
-          JSON::Any.new(result.map { |row| JSON::Any.new(row) })
+          #
+          # Phase-3 consolidation slice #5: hand-rolled copy retired for
+          # the ONE native Crinja.filter(:product) registration via
+          # #delegate_to_crinja_filter, same all-positional N-way shape
+          # as zip above.
+          positional, kwargs = split_positional_and_kwargs(filter_args)
+          delegate_to_crinja_filter("product", value, kwargs, positional)
         when "regex_escape"
           # regex_escape(re_type='python') - real Ansible filter, escapes
           # regex special characters so the value can be embedded
@@ -1189,9 +1182,16 @@ module Krikri
         when "relpath"
           # relpath(start='.') - real Ansible filter, mirrors Python's
           # os.path.relpath: value expressed relative to *start*.
-          args = split_top_level_args(filter_args)
-          start = args[0]?.try { |arg| as_string(resolve_expression(arg)) } || "."
-          JSON::Any.new(Path[as_string(value)].relative_to(Path[start]).to_s)
+          #
+          # Phase-3 consolidation slice #5: hand-rolled copy retired for
+          # the ONE native Crinja.filter(:relpath) registration via
+          # #delegate_to_crinja_filter. start= is passed as a real kwarg
+          # (live-verified against real ansible-core 2.19: the kwarg form
+          # is accepted there) - the old positional-only parse silently
+          # treated `relpath(start='/a')`'s whole `start='/a'` text as
+          # the start path.
+          positional, kwargs = split_positional_and_kwargs(filter_args, ["start"])
+          delegate_to_crinja_filter("relpath", value, kwargs, positional)
         when "commonpath"
           # commonpath() - real Ansible filter, mirrors Python's
           # os.path.commonpath: the longest common directory prefix of
@@ -1201,17 +1201,26 @@ module Krikri
         when "log"
           # log(base=math.e) - real Ansible filter: natural log with no
           # argument, log base *base* otherwise.
-          args = split_top_level_args(filter_args)
-          base = args[0]?.try { |arg| as_string(resolve_expression(arg)).to_f? }
-          num = value.as_f? || value.as_i64?.try(&.to_f) || 0.0
-          result = base ? Math.log(num, base) : Math.log(num)
-          JSON::Any.new(result)
+          #
+          # Phase-3 consolidation slice #5: hand-rolled copy retired for
+          # the ONE native Crinja.filter(:log) registration via
+          # #delegate_to_crinja_filter. base= is a real kwarg in real
+          # ansible (live-verified `8 | log(base=2)` -> 3.0); the old
+          # positional-only parse turned that exact form into a natural
+          # log by failing to resolve `base=2` as a number.
+          positional, kwargs = split_positional_and_kwargs(filter_args, ["base"])
+          delegate_to_crinja_filter("log", value, kwargs, positional)
         when "pow"
           # pow(x) - real Ansible filter: value raised to the power x.
-          args = split_top_level_args(filter_args)
-          exponent = args[0]?.try { |arg| as_string(resolve_expression(arg)).to_f? } || 0.0
-          num = value.as_f? || value.as_i64?.try(&.to_f) || 0.0
-          JSON::Any.new(num ** exponent)
+          #
+          # Phase-3 consolidation slice #5: hand-rolled copy retired for
+          # the ONE native Crinja.filter(:pow) registration via
+          # #delegate_to_crinja_filter. Real's own parameter is
+          # positional-only (`power(x, y)` - live-verified that
+          # `pow(x=10)`/`pow(exponent=10)` both fail there), so only the
+          # positional shape is fed through as a vararg.
+          positional, kwargs = split_positional_and_kwargs(filter_args)
+          delegate_to_crinja_filter("pow", value, kwargs, positional)
         when "to_uuid"
           # to_uuid(namespace=ANSIBLE_NAMESPACE) - real Ansible filter, a
           # deterministic UUID5 (SHA1-based) - same input always
@@ -1228,38 +1237,44 @@ module Krikri
           # combinations(n) - real Ansible filter, Python's own
           # itertools.combinations(value, n): every n-length combination
           # (order-independent, no repeats) of value's own elements.
-          args = split_top_level_args(filter_args)
-          n = args[0]?.try { |arg| as_string(resolve_expression(arg)).to_i? } || 2
-          JSON::Any.new(combinations(as_array(value), n).map { |itm| JSON::Any.new(itm) })
+          #
+          # Phase-3 consolidation slice #5: the hand-rolled copy (and its
+          # private #combinations helper) is retired for the ONE native
+          # Crinja.filter(:combinations) registration via
+          # #delegate_to_crinja_filter. n keeps its krikri default of 2
+          # on both engines (real itertools.combinations REQUIRES r -
+          # live-verified "missing required argument 'r' (pos 2)"; the
+          # shared default is a deliberate, spec-locked divergence).
+          positional, kwargs = split_positional_and_kwargs(filter_args, ["n"])
+          delegate_to_crinja_filter("combinations", value, kwargs, positional)
         when "permutations"
           # permutations(n=None) - real Ansible filter, Python's own
           # itertools.permutations(value, n): every n-length ordered
           # arrangement (defaults to the full length of value).
-          args = split_top_level_args(filter_args)
-          arr = as_array(value)
-          n = args[0]?.try { |arg| as_string(resolve_expression(arg)).to_i? } || arr.size
-          JSON::Any.new(permutations(arr, n).map { |pth| JSON::Any.new(pth) })
+          #
+          # Phase-3 consolidation slice #5: hand-rolled copy (and its
+          # private #permutations helper) retired for the ONE native
+          # Crinja.filter(:permutations) registration via
+          # #delegate_to_crinja_filter, same shape as combinations above.
+          positional, kwargs = split_positional_and_kwargs(filter_args, ["n"])
+          delegate_to_crinja_filter("permutations", value, kwargs, positional)
         when "rekey_on_member"
           # rekey_on_member(member, duplicates='error') - real Ansible
           # filter: converts a list of dicts into a dict keyed by each
-          # element's own `member` field value. `duplicates:` real
-          # options are error/overwrite/warn - `warn` isn't meaningfully
-          # different from `overwrite` in a non-interactive engine with
-          # no separate warning channel here, so both just overwrite;
-          # only the default `error` genuinely raises.
-          args = split_top_level_args(filter_args)
-          member = args[0]?.try { |arg| as_string(resolve_expression(arg)) } || ""
-          duplicates = args[1]?.try { |arg| as_string(resolve_expression(arg)) } || "error"
-          result = Hash(String, JSON::Any).new
-          as_array(value).each do |item|
-            key = item.as_h?.try(&.[member]?).try(&.as_s?)
-            next unless key
-            if duplicates == "error" && result.has_key?(key)
-              raise "rekey_on_member: duplicate key '#{key}'"
-            end
-            result[key] = item
-          end
-          JSON::Any.new(result)
+          # element's own `member` field value.
+          #
+          # Phase-3 consolidation slice #5: the hand-rolled copy is
+          # retired for the ONE native Crinja.filter(:rekey_on_member)
+          # registration via #delegate_to_crinja_filter. Two arbitrated
+          # fixes come with the bridge, both live-verified against real
+          # ansible-core 2.19.11: a NON-STRING member value (e.g. a
+          # numeric id) is stringified into the key (`{"id":5}` rekeys
+          # to `"5"` there; the old copy silently skipped the item), and
+          # `duplicates=` is a real kwarg there (the old copy only read
+          # it positionally). `warn` still behaves as `overwrite` (no
+          # separate warning channel), on both engines.
+          positional, kwargs = split_positional_and_kwargs(filter_args, ["member", "duplicates"])
+          delegate_to_crinja_filter("rekey_on_member", value, kwargs, positional)
         when "extract"
           # extract(container, morekeys=None) - real Ansible filter:
           # value is used as an index/key into *container* (commonly
@@ -1313,14 +1328,17 @@ module Krikri
           FilterCore.extract(container, keys, hostvars_label)
         when "from_yaml_all"
           # from_yaml_all() - real Ansible filter: parses a multi-
-          # document YAML string (`---`-separated) into a list of
-          # parsed documents.
-          begin
-            docs = as_string(value).split(/^---\s*$/m).map(&.strip).reject(&.empty?)
-            JSON::Any.new(docs.map { |doc| JSON.parse(YAML.parse(doc).to_json) })
-          rescue
-            raise "from_yaml_all: invalid YAML input"
-          end
+          # document YAML string (`---`-separated) into a list of parsed
+          # documents.
+          #
+          # Phase-3 consolidation slice #5: the hand-rolled copy is
+          # retired for the ONE native Crinja.filter(:from_yaml_all)
+          # registration via #delegate_to_crinja_filter. Invalid YAML
+          # fails the task on both engines either way (live-verified
+          # against real ansible-core 2.19.11); the raised message is
+          # now the underlying YAML parse error rather than this
+          # dispatch's own generic label - same outcome, truer text.
+          delegate_to_crinja_filter("from_yaml_all", value, Crinja::Variables.new)
         when "vault"
           # vault(secret, vault_id=None, salt=None) - real Ansible
           # filter: encrypts value into ansible-vault ciphertext text
@@ -2283,31 +2301,27 @@ module Krikri
         result
       end
 
-      # A seeded `random` filter's RNG (see #py_random_for_seed). The
-      # seeded path is the one whose cross-run/cross-engine stability
-      # matters; an unseeded call never reaches here.
-      private def py_random_for_seed(seed_value : JSON::Any) : PyRandom
-        case raw = seed_value.raw
-        when String
-          PyRandom.new(raw)
-        when Int64, Int32
-          PyRandom.new(raw.to_i64)
-        else
-          PyRandom.new(as_string(seed_value))
+      # Splits a filter's argument text the way every delegated Group-A
+      # tail filter needs: resolved positional varargs plus `name=`-
+      # prefixed kwargs, split on top-level commas (quote/bracket aware
+      # via #split_top_level_args). Kwarg values go through the full
+      # literal/expression resolver (like #parse_kwarg_expr's), so
+      # `start=[]`-style non-string literals survive; a bareword that
+      # misses every variable resolves to null, exactly like
+      # #resolve_expression's own miss.
+      private def split_positional_and_kwargs(filter_args : String, kwarg_names : Array(String) = [] of String)
+        positional = [] of JSON::Any
+        kwargs = Crinja::Variables.new
+        split_top_level_args(filter_args).each do |arg|
+          part = arg.strip
+          name = kwarg_names.find { |candidate| part.starts_with?("#{candidate}=") }
+          if name
+            kwargs[name] = CrinjaRenderer.json_any_to_crinja_value(resolve_default_expression(part[(name.size + 1)..]))
+          else
+            positional << resolve_expression(part)
+          end
         end
-      end
-
-      # The list form of the `random` filter (do_random -> random.choice).
-      # An empty sequence yields nil (real Jinja2's IndexError ->
-      # undefined); a seeded pick goes through PyRandom#choice, matching
-      # Python 3.11+'s `seq[randbelow(len(seq))]` byte-for-byte.
-      private def random_choice(items : Array(JSON::Any), seed_value : JSON::Any?) : JSON::Any
-        return JSON::Any.new(nil) if items.empty?
-        if seed_value && !seed_value.raw.nil?
-          py_random_for_seed(seed_value).choice(items)
-        else
-          items[Random::DEFAULT.rand(items.size)]
-        end
+        {positional, kwargs}
       end
 
       # Stringifies a JSON::Any the way Ansible/Jinja2 would when a filter
@@ -2506,33 +2520,6 @@ module Krikri
       # Crinja copy, needed here for to_nice_json's sort_keys= default.
       # Mirrors Python's os.path.normpath: collapses `.`/`..`/redundant
       # `/` segments without ever making a relative path absolute.
-      # itertools.combinations(array, n) - every n-length combination,
-      # order-independent, no element reused within one combination.
-      private def combinations(array : Array(JSON::Any), n : Int32) : Array(Array(JSON::Any))
-        return [[] of JSON::Any] if n == 0
-        return [] of Array(JSON::Any) if n > array.size || array.empty?
-
-        head = array.first
-        tail = array[1..]
-        with_head = combinations(tail, n - 1).map { |itm| [head] + itm }
-        without_head = combinations(tail, n)
-        with_head + without_head
-      end
-
-      # itertools.permutations(array, n) - every n-length ORDERED
-      # arrangement, no element reused within one arrangement.
-      private def permutations(array : Array(JSON::Any), n : Int32) : Array(Array(JSON::Any))
-        return [[] of JSON::Any] if n == 0
-        return [] of Array(JSON::Any) if n > array.size || array.empty?
-
-        result = [] of Array(JSON::Any)
-        array.each_with_index do |item, i|
-          rest = array[0...i] + array[(i + 1)..]
-          permutations(rest, n - 1).each { |pth| result << ([item] + pth) }
-        end
-        result
-      end
-
       # Interpolated regex literals are recompiled on every call (Crystal
       # does not cache them) - this sits on the map/sum/flatten/dict2items
       # hot path, so build the pattern once per name in a cache keyed by

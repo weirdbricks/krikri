@@ -831,8 +831,20 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
     v["other"] = JSON.parse(%(["x", "y"]))
     renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
     renderer.render(%({{ [1, 2] | zip(other) }})).should eq(%([[1, 'x'], [2, 'y']]))
-    renderer.render(%({{ [1] | zip_longest(other, fillvalue="-") }})).should eq(%([[1, 'x']]))
+    renderer.render(%({{ [1] | zip_longest(other, fillvalue="-") }})).should eq(%([[1, 'x'], ['-', 'y']]))
     renderer.render(%({{ [1, 2] | product(other) }})).should eq(%([[1, 'x'], [1, 'y'], [2, 'x'], [2, 'y']]))
+  end
+
+  it "zip_longest pads to the LONGEST list, N-way (pre-fix: always behaved as zip)" do
+    # The old macro generated a runtime `:zip_longest == "zip_longest"`
+    # comparison (a symbol against a string), which was always false -
+    # template-side zip_longest silently behaved as zip. All shapes
+    # live-verified against real ansible-core 2.19.11.
+    v = Hash(String, JSON::Any).new
+    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer.render(%({{ [1, 2] | zip_longest([3], fillvalue="-") }})).should eq(%([[1, 3], [2, '-']]))
+    renderer.render(%({{ [1, 2] | zip_longest([3], '-') }})).should eq(%([[1, 3, '-'], [2, None, None]]))
+    renderer.render(%({{ [1] | zip([2], [3], [4]) }})).should eq(%([[1, 2, 3, 4]]))
   end
 
   it "regex_escape escapes regex special characters" do
