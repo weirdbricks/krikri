@@ -1501,39 +1501,31 @@ module Krikri
     # registered directly in the fork (weirdbricks/crinja,
     # src/lib/filter/collections.cr), not here.
 
-    # `regex_search(pattern, group_ref='')` - real Ansible's own filter
-    # (not standard Jinja2): searches *pattern* anywhere in the target
-    # (Python `re.search`, not a full match), and with a backreference-
-    # style second argument (`'\\1'`) returns that captured group's text
-    # instead of the whole match. No match resolves to Python None/JSON
-    # null - real Ansible's own return value (NOT undefined), so a
-    # downstream `is not none` sees the miss and `| default(...)` without
-    # a truthy second arg does not fire, same as real Jinja. Found
-    # missing there via konstruktoid-hardening's own `sshd_version.
-    # stderr_lines | regex_search('OpenSSH_(...)', '\\1') | first`.
-    Crinja.filter({pattern: Crinja::UNDEFINED, group_ref: ""}, :regex_search) do
-      pattern = arguments["pattern"].to_s
+    # `regex_search(pattern, group_ref='', multiline=False, ignorecase=False)`
+    # - real Ansible's own filter (not standard Jinja2): searches *pattern*
+    # anywhere in the target (Python `re.search`, not a full match), and
+    # with a backreference-style second argument (`'\\1'`) returns that
+    # captured group's text instead of the whole match. No match resolves
+    # to Python None/JSON null - real Ansible's own return value (NOT
+    # undefined), so a downstream `is not none` sees the miss and
+    # `| default(...)` without a truthy second arg does not fire, same as
+    # real Jinja. Found missing there via konstruktoid-hardening's own
+    # `sshd_version.stderr_lines | regex_search('OpenSSH_(...)', '\\1') |
+    # first`. Phase-3 slice 3: all semantics (group-ref grammar,
+    # no-match -> null, the multiline/ignorecase kwargs real Ansible
+    # accepts) live in the SHARED FilterCore.regex_search core that the
+    # hand-rolled FilterEngine case branch calls too - this used to be a
+    # second, independently-maintained copy whose group_ref handling had
+    # already drifted from the FilterEngine one.
+    Crinja.filter({pattern: Crinja::UNDEFINED, group_ref: "", multiline: false, ignorecase: false}, :regex_search) do
+      options = Regex::Options::None
+      options |= Regex::Options::MULTILINE if arguments["multiline"].truthy?
+      options |= Regex::Options::IGNORE_CASE if arguments["ignorecase"].truthy?
       group_ref = arguments["group_ref"].to_s
-      match = target.to_s.match(VariableSubstitutor::FilterEngine.cached_regex(pattern))
-      if match
-        if group_ref.empty?
-          match[0]
-        else
-          # A backreference group_ref ALWAYS returns a LIST of the
-          # captured group(s), even for a single `\1` - real Ansible's
-          # own regex_search wraps every group reference this way,
-          # never returning a bare string. Found via nginxinc.nginx's
-          # own Jinja2-version-check assert: `regex_search('...',
-          # '\\1') | first` expects a real list to index into with
-          # `first` - a bare string instead made `| first` return the
-          # STRING'S OWN FIRST CHARACTER ("3" out of "3.1.6"), not the
-          # whole captured group, silently truncating the extracted
-          # version and failing the check outright.
-          index = group_ref.gsub(/\D/, "").to_i?
-          captured = index ? match[index]? : nil
-          captured ? Crinja::Value.new([captured]) : nil
-        end
-      end || nil
+      VariableSubstitutor::FilterCore.regex_search(
+        target.to_s, arguments["pattern"].to_s,
+        group_ref.empty? ? nil : group_ref, options,
+      )
     end
 
     # `regex_findall(pattern, multiline=False, ignorecase=False)` - real
@@ -1550,32 +1542,15 @@ module Krikri
     # F0-9]+)\\s+(.+)$') | ...` - silently a no-op (each line passed
     # through unchanged instead of being split into [checksum,
     # filename]), so the whole checksum dict ended up empty and every
-    # download failed its checksum verification.
+    # download failed its checksum verification. Phase-3 slice 3: the
+    # match-shaping (including the single-capture-group flat-scalar
+    # shape) lives in the SHARED FilterCore.regex_findall core that
+    # the hand-rolled FilterEngine case branch calls too.
     Crinja.filter({pattern: Crinja::UNDEFINED, multiline: false, ignorecase: false}, :regex_findall) do
-      pattern = arguments["pattern"].to_s
       options = Regex::Options::None
       options |= Regex::Options::MULTILINE if arguments["multiline"].truthy?
       options |= Regex::Options::IGNORE_CASE if arguments["ignorecase"].truthy?
-      regex = VariableSubstitutor::FilterEngine.cached_regex(pattern, options)
-
-      target.to_s.scan(regex).map do |match|
-        # Crystal's MatchData#size counts group 0 (the whole match) too,
-        # so a pattern with exactly ONE real capture group already has
-        # size == 2 - the old `match.size > 1` check wrongly took the
-        # "multiple groups" branch there, wrapping the single group in
-        # a one-element array (`[match[1]]`) instead of returning it as
-        # the bare scalar real Python re.findall gives for exactly one
-        # group. Found via lean_delivery.java's own `regex_findall(
-        # 'Ready for use:.*>JDK ([\d]+)<') | first`: java_major_version
-        # became the array `[26]` instead of the scalar `26`/`"26"`,
-        # rendering into a URL as `[26]` and 404ing every subsequent
-        # fetch.
-        case match.size
-        when 1 then match[0]
-        when 2 then match[1]? || ""
-        else        (1...match.size).map { |i| match[i]? || "" }
-        end
-      end
+      VariableSubstitutor::FilterCore.regex_findall(target.to_s, arguments["pattern"].to_s, options)
     end
 
     # `match`/`search` Jinja tests - real Ansible tests

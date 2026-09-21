@@ -62,6 +62,93 @@ module Krikri
         Regex.escape(s)
       end
 
+      # regex_search(value, pattern, group_ref=nil) - Python re.search
+      # semantics: the first match of *pattern* anywhere in *value*, or nil
+      # (Python None / JSON null - real Ansible's own no-match return) when
+      # nothing matches. With a group_ref the match's captured group text is
+      # returned wrapped in a one-element LIST (real Ansible wraps every
+      # group reference; see the nginxinc.nginx `| first` repro in the
+      # jinja_filters.cr comment history). The group_ref grammar is real
+      # Ansible's own: `\1`-style capture-group INDICES (only the first
+      # `\d+` run counts, so `'\1\2'` resolves group 1 - live-verified
+      # against ansible-core 2.19.11) and `\g<name>`-style named references;
+      # anything else raises ("Unknown argument", as real Ansible does), and
+      # a reference to a group the pattern doesn't have raises too ("no such
+      # group"). A group that exists but didn't participate yields nil in
+      # the returned list (Python's match.group() -> None), NOT an empty
+      # string. Empty/nil group_ref means "no group reference" -> the whole
+      # match. *options* carries the multiline/ignorecase kwargs real
+      # Ansible's regex_search accepts.
+      def self.regex_search(s : String, pattern : String, group_ref : String? = nil, options : Regex::Options = Regex::Options::None) : String | Array(String?) | Nil
+        match = s.match(cached_regex(pattern, options))
+        return nil unless match
+        ref = group_ref || ""
+        return match[0] if ref.empty?
+        if named = ref.match(/^\\g<(\S+)>/).try(&.[1])
+          [group_capture(match, named, ref)]
+        elsif index_match = ref.match(/^\\(\d+)/)
+          [group_capture(match, index_match[1].to_i, ref)]
+        else
+          raise "regex_search: Unknown argument '#{ref}' (only \\1-style group indices and \\g<name> named references are accepted, as in real Ansible)"
+        end
+      end
+
+      # One captured group's text for regex_search's group_ref path: nil
+      # when the group exists but didn't participate (Python's
+      # match.group() -> None; Crystal's strict access raises "was not
+      # matched" for exactly that case, which is swallowed here), a raised
+      # error when the pattern has no such group at all (real Ansible's
+      # match.group() raising IndexError surfaces as "no such group"). The
+      # strict `match[...]` access inside the rescue is what distinguishes
+      # the two cases - the `?`-form returns nil for both.
+      private def self.group_capture(match : Regex::MatchData, index : Int32, ref : String) : String?
+        capture = match[index]?
+        unless capture
+          begin
+            match[index]
+          rescue e : IndexError
+            raise "regex_search: no such group: #{ref}" unless e.message.to_s.includes?("was not matched")
+          end
+        end
+        capture
+      end
+
+      private def self.group_capture(match : Regex::MatchData, name : String, ref : String) : String?
+        capture = match[name]?
+        unless capture
+          begin
+            match[name]
+          rescue e : KeyError
+            raise "regex_search: no such group: #{ref}" unless e.message.to_s.includes?("was not matched")
+          end
+        end
+        capture
+      end
+
+      # regex_findall(value, pattern) - Python re.findall semantics: every
+      # non-overlapping match. No capture groups -> each match is the whole
+      # matched substring; exactly ONE capture group -> each match is that
+      # group's text as a bare scalar (Python returns the group, not a
+      # one-tuple); two or more -> each match is the list of that match's
+      # group strings (Python's tuple, rendered as a list like everywhere
+      # else in this codebase). A group that didn't participate renders as
+      # "" inside its match, Python's own findall behavior. *options*
+      # carries the multiline/ignorecase kwargs.
+      def self.regex_findall(s : String, pattern : String, options : Regex::Options = Regex::Options::None) : Array(String | Array(String))
+        s.scan(cached_regex(pattern, options)).map do |mat|
+          # MatchData#size counts group 0 (the whole match) too, so a
+          # pattern with exactly ONE real capture group already has
+          # size == 2 - a `mat.size > 1` check here wrongly took the
+          # "multiple groups" branch (the double-bug this shared core
+          # exists to keep fixed once).
+          case mat.size
+          when 1 then mat[0]
+          when 2 then mat[1]? || ""
+          else        (1...mat.size).map { |i| mat[i]? || "" }
+          end
+        end
+      end
+
       # urldecode() - percent-decodes a URL-encoded string.
       def self.urldecode(s : String) : String
         URI.decode(s)

@@ -556,3 +556,86 @@ and pinned by spec. Remaining slices keep their survey-assigned
 seams: slices 3/4 (`regex_search`/`regex_findall`, `extract`) are
 still shared-core, NOT bridge - per-item reachability via `map(...)`
 makes delegation compound per item.
+
+---
+
+# Slice 3 report: `regex_search` + `regex_findall` unified onto a shared FilterCore core (2026-09-21)
+
+The survey's #3 candidate, executed with the seam the survey itself
+prescribed for this pair: **shared-core unification, NOT
+`#delegate_to_crinja_filter`** - `map('regex_findall', ...)` per-item
+reachability (prometheus roles) makes per-call bridge conversion
+compound. Both engines now call ONE implementation each for the pair:
+new `FilterCore.regex_search` / `FilterCore.regex_findall` in
+`filter_core.cr`, invoked by FilterEngine's hand-rolled case branches
+(also serving map()'s inner per-item dispatch) and by the Crinja
+registrations (jinja_filters.cr) alike - the same Group-B shape
+`regex_replace` already had. VERSION 0.9.1237 -> 0.9.1238.
+
+## Method
+
+1. **Probe before touching code**:
+   `scripts/crinja_corpus/probe_regex_divergence.cr` - 31 cases
+   (search: basic/group/no-match/backref forms/non-participating/named/
+   nonexistent/junk refs/kwargs/unicode/anchored/invalid-regex;
+   findall: group-count shapes incl. the flat-scalar one-group contract,
+   positional AND named multiline/ignorecase, empty/unicode/no-match/
+   invalid-regex/prometheus-checksum shape), each run through the
+   hand-rolled dispatch and the exact Crinja registration the chain path
+   uses.
+2. **Arbitration against real ansible-core 2.19.11** (local
+   `ansible-playbook`, ad-hoc `debug` renders), same as every prior
+   slice - including reading core.py's own group-ref parsing
+   (`re.match(r'\\(\\d+)', arg)`, start-anchored).
+
+## Divergences found (pre-change probe: 9 of 31, all arbitrated)
+
+| Case | Real Ansible 2.19.11 | OLD hand-rolled | OLD Crinja | Verdict landed |
+|---|---|---|---|---|
+| group_ref `'\1\2'` (one arg) | `["a"]` (parses first `\d+` run only) | `["ab"]` (backref substitution) | `null` | `["a"]` both sides |
+| non-participating group (`'(a)|(b)'`, `'\2'` on `"a"`) | `[null]` (`match.group(2)` -> None) | `[""]` | `null` (no list) | `[null]` both sides |
+| named group ref `'\g<foo>'` | `["a"]` | literal `"\g<foo>"` text | `null` | `["a"]` both sides |
+| nonexistent group (`'\5'`, `'\g<bar>'`) | raises `no such group` | `[""]` | `null` | raises both sides |
+| junk group_ref (`'xyz'`) | raises `Unknown argument` | `["xyz"]` (literal passthrough) | `null` | raises both sides |
+| explicit empty group_ref `''` | raises (unknown arg) | `[""]` | whole match | whole match (the Crinja registration's `""` default IS its absent sentinel; documented leniency) |
+| `regex_search(..., ignorecase=True)` / `multiline=True` | supported ("HELLO" / `["42"]`) | unsupported (kwarg text leaked into the group_ref slot) | unsupported (no such defaults) | **added** to the shared core + both dispatch sites |
+| `regex_findall(..., ignorecase=True)` (named kwarg) | supported | positional-only: misparsed the kwarg as the multiline slot -> `[]` | supported | named-kwarg parsing **added** to the hand-rolled side (named wins over positional, matching Python) |
+
+Every verdict resolved toward real Ansible; post-change the probe
+reports **0 diverged of 31** by construction (both sides it compares
+ARE the same core now). 8 new FilterEngine-side regression specs
+(filter_engine_spec.cr) and 3 Crinja-side (crinja_direct_spec.cr) pin
+the arbitrated contracts.
+
+## Performance: no benchmark run, deliberately
+
+The survey's own rule for this seam: shared-core unification is
+strictly zero-overhead - each dispatch site swapped inline code for a
+direct call into a same-shaped core (same cached-regex cache, same
+scan/match, no value-conversion layer anywhere), and the
+`map('regex_findall', ...)` per-item path keeps its previous cost class
+by construction. Per the survey, the probe's 0-divergence parity check
+replaces the throwaway-worktree benchmark for shared-core slices.
+
+## Found but deliberately NOT fixed here (logged for future slices)
+
+- **`(?P<name>...)` pattern syntax is rejected by Crystal's regex
+  engine** ("unknown extension") - real Ansible/Python accepts it, and
+  it showed up during arbitration. Any regex filter's PATTERN using
+  Python named-group syntax fails to compile in krikri. Pre-existing,
+  affects both engines' every regex filter equally (it lives in the
+  shared regex-cache seam, `FilterCore.cached_regex` - a
+  `(?P<` -> `(?<` normalization there would fix all of them at once).
+  Out of this pair's slice scope.
+- **Multiple group refs**: real `regex_search(p, '\1', '\2')` returns
+  `['a', 'b']`; krikri's single-group_ref contract (both copies'
+  existing shape) is preserved - extra positional refs are ignored.
+- Real `regex_findall`'s flags are positional-only in its signature
+  (`multiline`, `ignorecase` in that order) but accept named kwargs;
+  krikri now matches both forms, named winning, as Python does.
+
+Full suite after the change: **5353 examples, 6 failures / 2 errors** -
+exactly the documented baseline (`is_test_aliases_spec` cluster,
+`x509_csr_info_spec` tmp-file race). No spec modified except the
+eleven additions. Ameba clean on all touched files (the two remaining
+jinja_filters.cr findings pre-date this slice).

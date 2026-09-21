@@ -123,6 +123,27 @@ describe "raw Crinja (rebase canary)" do
     crinja_render("{{ 'aa12bb' | regex_search('(\\d+)', '\\\\1') | first }}").should eq("12")
   end
 
+  it "regex_search resolves \\g<name> named group refs and [null] for a non-participating group (shared core with FilterEngine)" do
+    # Phase-3 slice 3: the Crinja registration now delegates to the SAME
+    # FilterCore.regex_search core as the hand-rolled FilterEngine case
+    # branch, so both sides answer identically on the group-ref grammar
+    # arbitrated against real ansible-core 2.19.11 (see
+    # filter_engine_spec.cr for the full battery and the pre-change
+    # divergence inventory).
+    crinja_render("{{ 'a' | regex_search('(?<foo>a)', '\\\\g<foo>') }}").should eq("['a']")
+    crinja_render("{{ 'a' | regex_search('(a)|(b)', '\\\\2') }}").should eq("[None]")
+  end
+
+  it "regex_search honors the ignorecase/multiline kwargs on the Crinja path" do
+    crinja_render("{{ 'HELLO' | regex_search('hello', ignorecase=True) }}").should eq("HELLO")
+    crinja_render("{{ 'x\\nend: 42' | regex_search('^end: (\\\\d+)', '\\\\1', multiline=True) }}").should eq("['42']")
+  end
+
+  it "regex_findall honors named multiline/ignorecase kwargs on the Crinja path" do
+    crinja_render("{{ 'A1B2' | regex_findall('[a-z][0-9]', ignorecase=True) }}").should eq("['A1', 'B2']")
+    crinja_render("{{ 'A1\\nb2' | regex_findall('^b(\\d)', multiline=True) }}").should eq("['2']")
+  end
+
   it "registers combine (shallow merge, later wins)" do
     crinja_render("{{ {'a': 1, 'b': 2} | combine({'b': 3, 'c': 4}) }}").should eq("{'a': 1, 'b': 3, 'c': 4}")
   end

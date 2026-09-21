@@ -1050,4 +1050,73 @@ describe Krikri::VariableSubstitutor::FilterEngine do
     result.as_a.map(&.as_s).should eq(["3.1.6"])
     engine.apply(result, "first").as_s.should eq("3.1.6")
   end
+
+  it "regex_search parses a group_ref like real Ansible: only the first \\d+ run counts, so '\\1\\2' resolves group 1" do
+    # Phase-3 slice 3 arbitration (live-verified against ansible-core
+    # 2.19.11): real Ansible's regex_search parses each group_ref arg
+    # with `re.match(r'\\(\\d+)', arg)` - anchored at the START - so a
+    # single '\\1\\2' argument resolves group 1, NOT a backref
+    # substitution of both groups (the old hand-rolled copy returned
+    # ["ab"] here while the Crinja copy returned null; real Ansible
+    # returns ["a"]).
+    result = engine.apply(s("ab"), %(regex_search('(a)(b)', '\\1\\2')))
+    result.as_a.map(&.as_s).should eq(["a"])
+  end
+
+  it "regex_search returns [null] for a group_ref to a group that did not participate" do
+    # Real Ansible: match.group(2) is Python None for a non-participating
+    # group, so the wrapped list is [None] - the old hand-rolled copy
+    # returned [""] and the old Crinja copy returned plain null (no list).
+    result = engine.apply(s("a"), %(regex_search('(a)|(b)', '\\2')))
+    result.as_a.size.should eq(1)
+    result.as_a[0].raw.should be_nil
+  end
+
+  it "regex_search resolves \\g<name> named group references" do
+    # Real Ansible supports named group refs; both old copies mangled
+    # them (the hand-rolled one returned the literal "\g<foo>" text).
+    result = engine.apply(s("a"), %(regex_search('(?<foo>a)', '\\g<foo>')))
+    result.as_a.map(&.as_s).should eq(["a"])
+  end
+
+  it "regex_search raises on a group_ref the pattern has no such group for" do
+    # Real Ansible: match.group(5) raises IndexError, surfacing as "no
+    # such group" - the old copies silently returned [""] (hand-rolled)
+    # or null (Crinja).
+    expect_raises(Exception, "no such group") do
+      engine.apply(s("aa12bb"), %(regex_search('(\\d+)', '\\5')))
+    end
+    expect_raises(Exception, "no such group") do
+      engine.apply(s("aa12bb"), %(regex_search('(\\d+)', '\\g<bar>')))
+    end
+  end
+
+  it "regex_search raises 'Unknown argument' for a non-backreference group_ref" do
+    # Real Ansible raises AnsibleFilterError('Unknown argument') for any
+    # group_ref arg not of \\1 / \\g<name> form; the old hand-rolled copy
+    # silently returned the literal text as a one-element list.
+    expect_raises(Exception, "Unknown argument") do
+      engine.apply(s("aa12bb"), %(regex_search('(\\d+)', 'xyz')))
+    end
+  end
+
+  it "regex_search honors the ignorecase/multiline kwargs real Ansible accepts" do
+    # Real Ansible (2.19.11): regex_search takes ignorecase=/multiline=
+    # kwargs; neither old copy supported them (the kwarg text leaked
+    # into the group_ref slot on the hand-rolled side).
+    engine.apply(s("HELLO"), %(regex_search('hello', ignorecase=True))).as_s.should eq("HELLO")
+    result = engine.apply(s("x\nend: 42"), %(regex_search('^end: (\\d+)', '\\1', multiline=True)))
+    result.as_a.map(&.as_s).should eq(["42"])
+  end
+
+  it "regex_findall honors named multiline/ignorecase kwargs, not just positional" do
+    # Real Ansible's regex_findall(value, regex, multiline, ignorecase)
+    # accepts named kwargs too. The old hand-rolled copy only read
+    # positional args, so `regex_findall('[a-z][0-9]', ignorecase=True)`
+    # misparsed "ignorecase=True" as the multiline slot and returned [].
+    result = engine.apply(s("A1B2"), %(regex_findall('[a-z][0-9]', ignorecase=True)))
+    result.as_a.map(&.as_s).should eq(["A1", "B2"])
+    result = engine.apply(s("A1\nb2"), %(regex_findall('^b(\\d)', multiline=True)))
+    result.as_a.map(&.as_s).should eq(["2"])
+  end
 end
