@@ -1,0 +1,26 @@
+# run_once: failure propagation. Targets the "threelocal" group, which
+# only exists in spec/fixtures/inventory-three-local-hosts.ini (three
+# hosts, all ansible_connection=local so this is safe to run for real
+# without machines to SSH into) - under the generic empty inventory used
+# by every other testing/*.yml fixture, "threelocal" resolves to zero
+# hosts and this play is skipped, same convention as the "testservers"
+# fixtures.
+#
+# Real ansible-playbook behavior (verified against core 2.19.11): the
+# failing run_once task recaps failed=1 (only hostone actually executed
+# it), and NO host - including hostone - reaches the second task's
+# banner or its debug output.
+
+- name: run_once failure halts the whole play
+  hosts: threelocal
+  gather_facts: false
+
+  tasks:
+    - name: run_once task that fails
+      ansible.builtin.fail:
+        msg: "run_once blew up"
+      run_once: true
+
+    - name: never reached by any host
+      ansible.builtin.debug:
+        msg: "should never run"

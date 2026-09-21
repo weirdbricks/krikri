@@ -1964,8 +1964,31 @@ module Krikri
     # stay attributed to `host` regardless.
     # Whether *task* on *host* should drop into the debugger, and the
     # loop that does. Returns the (possibly re-run) result.
+    # Marks `host` as halted (no further tasks in this play run for it)
+    # when `failed` and the task didn't opt out via ignore_errors:.
+    #
+    # A failed `run_once:` task halts every OTHER host in the play too
+    # (real ansible-core's _process_pending_results: a failed run_once
+    # result calls iterator.mark_host_failed(h) for every host in the
+    # play except unreachable ones, so no host proceeds into later
+    # tasks). Only the host that actually executed the task flows through
+    # the normal display/stats path above - the others get no failed=
+    # counter and no fatal line of their own, they simply stop (verified
+    # against real ansible-playbook 2.19.11: a run_once ansible.builtin.
+    # fail in a 3-host play recaps failed=1 and no host reaches the next
+    # task's banner).
     private def halt_if_failed(task : Task, host : Host, failed : Bool) : Nil
-      @halted_hosts.add(host.name) if failed && !resolve_task_ignore_errors(task)
+      return unless failed && !resolve_task_ignore_errors(task)
+
+      @halted_hosts.add(host.name)
+      return unless task.run_once?
+
+      @hosts.each do |other|
+        next if other.name == host.name
+        next if @halted_hosts.includes?(other.name)
+        next if @unreachable_hosts.includes?(other.name)
+        @halted_hosts.add(other.name)
+      end
     end
 
     # Execute a task once per loop item, aggregating the per-item results
