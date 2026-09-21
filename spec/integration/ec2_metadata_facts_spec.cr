@@ -8,7 +8,15 @@ require "../spec_helper"
 
 describe "ec2_metadata_facts plugin" do
   it "fails cleanly when the metadata service is unreachable" do
+    # KRIKRI_EC2_METADATA_TIMEOUT_SECONDS=1 is test-only tuning: off EC2
+    # the token PUT waits out the plugin's full 10s fetch_url-default
+    # connect timeout before failing, and this spec only pins the
+    # clean-failure shape (IO::TimeoutError -> "Could not reach the EC2
+    # metadata service" msg), which a 1s timeout exercises identically.
+    # The plugin's production default is untouched.
+    ENV["KRIKRI_EC2_METADATA_TIMEOUT_SECONDS"] = "1"
     result = PluginSpecHelper.run("ec2_metadata_facts", {} of String => String)
+    ENV.delete("KRIKRI_EC2_METADATA_TIMEOUT_SECONDS")
 
     result["failed"].as_bool.should be_true
     # Off EC2 the token request times out or refuses ("Could not reach
