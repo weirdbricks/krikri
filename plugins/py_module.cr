@@ -57,11 +57,23 @@ module Krikri
         return PluginResult.new(changed: false, failed: true, msg: "py_module: bad module_source: #{ex.message}")
       end
 
+      # Which interpreter runs the module: real Ansible executes a custom
+      # module THROUGH ITS OWN SHEBANG LINE (rewritten to the resolved
+      # interpreter path), not always python3 - a shell module like
+      # linux-system-roles.timesync's library/timesync_provider.sh
+      # (#!/bin/bash) previously ran as `python3 <module>.py` and died on
+      # its first bash syntax (round 970350). A shebang line naming a
+      # python interpreter (or no shebang at all - the controller's
+      # missing-interpreter guard has already failed shebangless
+      # old-style modules by then) keeps the python path unchanged.
+      first_line = source.lines.first?
+      python_module = first_line.nil? || !first_line.starts_with?("#!") ||
+                      first_line.includes?("python")
+
       python = %w[python3 python].find { |bin| !`command -v #{bin} 2>/dev/null`.strip.empty? }
-      unless python
+      if python_module && !python
         return PluginResult.new(changed: false, failed: true, msg: "py_module: no python3/python on the target - cannot run custom module #{module_name}")
       end
-
       # 0700 + Random::Secure: the dir (and anything we write into it,
       # including the shim bundle below) must not be readable by other
       # local users, and the name must not be predictable enough to
@@ -92,19 +104,34 @@ module Krikri
       # unchanged from pre-shim behavior.
       probe_out = IO::Memory.new
       probe_err = IO::Memory.new
-      probe = Process.new(
-        python, ["-c", "from ansible.module_utils.basic import AnsibleModule"],
-        output: probe_out, error: probe_err
-      )
-      unless probe.wait.success?
-        PythonModuleRunner.write_module_utils_bundle(work_dir)
+      if python_module && (py = python)
+        probe = Process.new(
+          py, ["-c", "from ansible.module_utils.basic import AnsibleModule"],
+          output: probe_out, error: probe_err
+        )
+        unless probe.wait.success?
+          PythonModuleRunner.write_module_utils_bundle(work_dir)
+        end
       end
 
       env = ENV.to_h
       env["ANSIBLE_MODULE_NAME"] = module_name
       env["ANSIBLE_CHECK_MODE"] = check_mode ? "1" : "0"
 
-      argv = new_style ? [python, module_path] : ([python, module_path] + parse_kv_argv(kv_argv))
+      argv = if python_module && (py = python)
+               new_style ? [py, module_path] : ([py, module_path] + parse_kv_argv(kv_argv))
+             else
+               # Real Ansible's non-python module protocols (module dev docs):
+               # a module whose source contains WANT_JSON receives its whole
+               # argument dict as ONE serialized-JSON argv element; everything
+               # else gets old-style key=value. Executed directly (the file is
+               # chmod +x) so the kernel honors the module's own shebang.
+               if source.includes?("WANT_JSON")
+                 [module_path, args_json]
+               else
+                 [module_path] + parse_kv_argv(kv_argv)
+               end
+             end
 
       # A new-style module reads its args via ansible-core's own
       # `_debugging.load_params()` - the debug-invocation path every

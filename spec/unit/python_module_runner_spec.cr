@@ -71,6 +71,25 @@ describe Krikri::PythonModuleRunner do
     FileUtils.rm_r(pb)
   end
 
+  it "finds a library module with a non-.py extension and never its .yml doc stub" do
+    # Real Ansible's legacy module finder indexes every file in the
+    # search dir by basename-minus-extension, excluding only its
+    # MODULE_IGNORE_EXTS (.pyc/.pyo/... plus .yaml/.yml/.ini) - so
+    # linux-system-roles.timesync's library/timesync_provider.sh IS its
+    # timesync_provider module, with the timesync_provider.yml
+    # DOCUMENTATION stub sitting beside it never shadowing the script.
+    # Round 970350: real ansible-playbook ran the .sh fine while this
+    # engine - matching only .py or extensionless - found no source and
+    # SKIPPED the "Determine current NTP provider" task.
+    role = File.join(Dir.tempdir, "krikri-pymod-spec-#{Random.rand(1_000_000)}")
+    Dir.mkdir_p(role)
+    script = write_module(role, "timesync_provider.sh", "#!/bin/bash\n# WANT_JSON\n")
+    write_module(role, "timesync_provider.yml", "DOCUMENTATION: stub\n")
+    found = Krikri::PythonModuleRunner.find_source("timesync_provider", role, nil)
+    found.should eq(script)
+    FileUtils.rm_r(role)
+  end
+
   # ---- invocation-shape detection ----
 
   it "detects new-style modules by their ansible.module_utils import" do
@@ -162,6 +181,30 @@ describe Krikri::PythonModuleRunner do
     })
     result["msg"].as_s.should eq("hello")
     result["changed"].as_bool.should be_false
+  end
+
+  it "runs a non-python (shell) module through its own shebang, with WANT_JSON args as one JSON argv" do
+    pending("bash not available") unless File.exists?("/bin/bash")
+    # linux-system-roles.timesync's library/timesync_provider.sh shape:
+    # a #!/bin/bash WANT_JSON module used to be executed as
+    # `python3 <module>.py` (dying on bash syntax) because the runner
+    # hardcoded python3. Real Ansible runs the module through its own
+    # shebang and hands a WANT_JSON module its whole argument dict as a
+    # single serialized-JSON argv element.
+    source = "#!/bin/bash\n" \
+             "# WANT_JSON\n" \
+             "name=$(echo \"$1\" | sed -n 's/.*\"name\": *\"\\([^\"]*\\)\".*/\\1/p')\n" \
+             "printf '{\"changed\": false, \"msg\": \"%s\"}' \"$name\"\n"
+    result = PluginSpecHelper.run("py_module", {
+      "module_name"         => "testmod_sh",
+      "module_source"       => Base64.strict_encode(source),
+      "new_style"           => "false",
+      "module_args"         => %q({"name": "hello"}),
+      "kv_argv"             => "[]",
+      "_ansible_check_mode" => "false",
+    })
+    result["failed"]?.should be_falsey
+    result["msg"].as_s.should eq("hello")
   end
 
   it "fails with the MODULE FAILURE shape when no result JSON is printed" do

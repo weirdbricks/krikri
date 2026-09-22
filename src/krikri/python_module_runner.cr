@@ -49,6 +49,13 @@ module Krikri
     # to "unavailable modules" - the exact scope cut 0.9.819 was
     # supposed to have already closed for role-private modules. Found
     # re-testing linux-system-roles.storage/logging/timesync.
+    # Extensions real Ansible's legacy module finder never matches a
+    # module name against (ansible-core's MODULE_IGNORE_EXTS). A role
+    # shipping a DOCUMENTATION stub next to its script -
+    # linux-system-roles.timesync's library/timesync_provider.yml beside
+    # timesync_provider.sh - must resolve to the script, never the stub.
+    MODULE_IGNORE_EXTS = %w[.pyc .pyo .swp .bak ~ .rpm .md .txt .rst .yaml .yml .ini]
+
     def find_source(module_name : String, role_path : String?, playbook_dir : String?) : String?
       short = short_name(module_name)
       return nil if short.empty?
@@ -67,6 +74,19 @@ module Krikri
         # .py extension and real ansible-playbook ran it fine).
         extensionless = File.join(root, short)
         return extensionless if File.file?(extensionless)
+        # Any OTHER extension: real Ansible's legacy module finder indexes
+        # every file in the search dir by its basename-minus-extension,
+        # excluding only MODULE_IGNORE_EXTS (ansible-core loader.py
+        # _find_plugin) - so library/timesync_provider.sh IS the
+        # timesync_provider module. Round 970350: real ansible-playbook
+        # ran linux-system-roles.timesync's shell module fine while this
+        # engine - matching only .py or extensionless - found no source
+        # and skipped the task ("Determine current NTP provider": ok on
+        # the real side, skipped here, cold and warm).
+        Dir.glob(File.join(root, "#{short}.*")).sort.each do |other|
+          next if MODULE_IGNORE_EXTS.any? { |ext| other.ends_with?(ext) }
+          return other
+        end
       end
       nil
     end
