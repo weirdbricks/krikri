@@ -92,15 +92,16 @@ describe "ignore_errors: on a controller-side failure counts as ok+ignored, not 
 end
 
 # Recap tallying for the implicit Gathering Facts task + ignore_errors:
-# interactions, verified live against real ansible-core 2.19.11 (both by
-# running ansible-playbook and by instrumenting its own
-# AggregateStats.increment). Found via round900836 NINEJKH.git: facts +
-# one ignore_errors:-swallowed command failure recapped ok=2 changed=1
-# here vs real ok=1 - the phantom ok came from counting the implicit
-# facts task, which real Ansible's recap never credits (an ignored
-# failure's own ok/ignored/changed counting was already correct).
+# interactions, verified live against real ansible-core 2.19.11 (run
+# cache-free: this box's ambient ANSIBLE_GATHERING=smart + a warm
+# /tmp/ansible_facts_cache makes real Ansible silently SKIP Gathering
+# Facts on a rerun - no banner, no recap contribution - which once got
+# misread as "facts never count in the recap"). A successful implicit
+# facts task counts ok=1 like any task; an ignore_errors:-swallowed
+# failure counts ok + ignored (never failed), and its changed= still
+# counts.
 describe "PLAY RECAP tallying for implicit facts and ignored failures" do
-  it "a successful implicit Gathering Facts task adds no ok to the recap" do
+  it "a successful implicit Gathering Facts task adds ok=1 to the recap" do
     status, output = run_playbook(<<-YAML)
       - hosts: localhost
         connection: local
@@ -112,10 +113,10 @@ describe "PLAY RECAP tallying for implicit facts and ignored failures" do
       YAML
 
     status.success?.should be_true
-    output.should match(/ok=1\b/)
+    output.should match(/ok=2\b/)
   end
 
-  it "a failed-and-ignored command task counts ok+ignored, never failed, and facts add no ok" do
+  it "a failed-and-ignored command task counts ok+ignored, never failed, and facts add ok=1" do
     status, output = run_playbook(<<-YAML)
       - hosts: localhost
         connection: local
@@ -127,11 +128,11 @@ describe "PLAY RECAP tallying for implicit facts and ignored failures" do
       YAML
 
     status.success?.should be_true
-    # Real 2.19.11 recaps exactly ok=1 changed=1 ignored=1 here: the
-    # ignored failure itself is the one ok (the implicit facts task adds
-    # nothing), and the command module reports changed=true on a
-    # non-zero rc, which the ignored tally carries into `changed=`.
-    output.should match(/ok=1\b/)
+    # Real 2.19.11 recaps exactly ok=2 changed=1 ignored=1 here
+    # (verified live, cache-free): the ignored failure counts as one ok
+    # + one ignored, the command module reports changed=true on a
+    # non-zero rc, and the implicit facts task adds its own ok=1.
+    output.should match(/ok=2\b/)
     output.should match(/changed=1\b/)
     output.should match(/failed=0\b/)
     output.should match(/ignored=1\b/)
@@ -151,11 +152,11 @@ describe "PLAY RECAP tallying for implicit facts and ignored failures" do
 
     status.success?.should be_true
     # Real 2.19.11 recaps ok=1 changed=1 ignored=1 for exactly this
-    # shape (verified live): the task DID change, so `changed=` counts
-    # even though the task failed, and the ignored failure counts as ok
-    # + ignored, never failed - update_stats' overlapping-counter
-    # semantics must hold for the changed-and-then-ignored combination,
-    # not just the plain-failure one.
+    # shape (verified live, cache-free): the task DID change, so
+    # `changed=` counts even though the task failed, and the ignored
+    # failure counts as ok + ignored, never failed - update_stats'
+    # overlapping-counter semantics must hold for the changed-and-then-
+    # ignored combination, not just the plain-failure one.
     output.should match(/ok=1\b/)
     output.should match(/changed=1\b/)
     output.should match(/failed=0\b/)
