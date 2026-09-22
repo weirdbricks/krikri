@@ -265,4 +265,98 @@ describe "role-local filter_plugins/*.py custom filters" do
   ensure
     FileUtils.rm_rf(root) if root
   end
+
+  it "passes a context stub as the first argument to a @pass_context-decorated filter (round 952562, stackhpc.luks)" do
+    # Real Jinja2's @pass_context makes Jinja auto-inject a Context as
+    # the FIRST positional argument, ahead of the piped value - so
+    # `{{ item | luks_key }}` calls `luks_key(context, item)`. krikri
+    # used to call the function with just the piped value, putting the
+    # value in the `context` slot and failing with "missing 1 required
+    # positional argument: 'device'" (stackhpc.luks's whole
+    # filter_plugins/general.py is decorated this way). The filter here
+    # mirrors that role's shape: one filter ignoring the context, one
+    # reading a play variable through it (its `_get_hostvar` pattern:
+    # `context.get(...)`), plus a direct Python-to-Python call passing
+    # the context on (its `luks_keypath` calling `luks_key(context, ..)`).
+    root = File.tempname("filter-plugins-pass-context")
+    Dir.mkdir_p(File.join(root, "roles", "myrole", "filter_plugins"))
+    Dir.mkdir_p(File.join(root, "roles", "myrole", "tasks"))
+    File.write(File.join(root, "roles", "myrole", "filter_plugins", "general.py"), <<-PYTHON)
+      from jinja2 import pass_context
+
+      @pass_context
+      def luks_key(context, device):
+          return device["device"].replace('/', '-')[1:]
+
+      @pass_context
+      def luks_keypath(context, device):
+          directory = context.get("luks_keys_path")
+          return "%s/%s" % (directory, luks_key(context, device))
+
+      class FilterModule(object):
+          def filters(self):
+              return {"luks_key": luks_key, "luks_keypath": luks_keypath}
+      PYTHON
+    File.write(File.join(root, "roles", "myrole", "tasks", "main.yml"), <<-YAML)
+      - name: use pass_context filters
+        ansible.builtin.set_fact:
+          key: "{{ {'device': '/dev/sdb1'} | luks_key }}"
+          path: "{{ {'device': '/dev/sdb1'} | luks_keypath }}"
+        vars:
+          luks_keys_path: /etc/luks/keys
+      - name: surface results
+        ansible.builtin.debug:
+          msg: "{{ key }} / {{ path }}"
+      YAML
+
+    status, output = run_playbook(root, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        roles:
+          - myrole
+      YAML
+
+    status.success?.should be_true, output
+    output.should contain("dev-sdb1 / /etc/luks/keys/dev-sdb1"), output
+    output.should_not contain("No filter named"), output
+    output.should_not contain("missing 1 required positional argument"), output
+  ensure
+    FileUtils.rm_rf(root) if root
+  end
+
+  it "passes the context stub to a plain (non-context) filter's sibling unchanged (no cross-contamination)" do
+    # Plain filters must keep receiving ONLY the piped value - the
+    # context injection is per-function, keyed on the decoration, never
+    # a global behavior change.
+    root = File.tempname("filter-plugins-pass-context-plain")
+    Dir.mkdir_p(File.join(root, "roles", "myrole", "filter_plugins"))
+    Dir.mkdir_p(File.join(root, "roles", "myrole", "tasks"))
+    File.write(File.join(root, "roles", "myrole", "filter_plugins", "myfilters.py"), <<-PYTHON)
+      def double(x):
+          return x * 2
+
+      class FilterModule(object):
+          def filters(self):
+              return {"double": double}
+      PYTHON
+    File.write(File.join(root, "roles", "myrole", "tasks", "main.yml"), <<-YAML)
+      - name: plain filter next to pass_context support
+        ansible.builtin.debug:
+          msg: "{{ 21 | double }}"
+      YAML
+
+    status, output = run_playbook(root, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        roles:
+          - myrole
+      YAML
+
+    status.success?.should be_true, output
+    output.should contain("42"), output
+  ensure
+    FileUtils.rm_rf(root) if root
+  end
 end

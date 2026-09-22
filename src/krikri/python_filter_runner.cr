@@ -33,6 +33,23 @@ require "json"
 # third-party COLLECTION filter plugins (bodsch.*, community.*) are
 # still the unchanged scope cut - those live inside installed
 # collections, not in the playbook tree this runner can see.
+#
+# `@pass_context`-decorated filters (stackhpc.luks's whole
+# `filter_plugins/general.py` - `luks_key` etc., round 952562) follow
+# real Jinja2's calling convention: Jinja auto-injects a Context as the
+# FIRST positional argument, ahead of the piped value, so `{{ item |
+# luks_key }}` calls `luks_key(context, item)`. Calling the function
+# with just the piped value put `item` in the `context` slot and failed
+# with "missing 1 required positional argument". The wrapper detects
+# the decoration (`jinja_pass_arg` for jinja2 >= 3.0, the older
+# `contextfilter` marker for < 3.0) and prepends a minimal stub
+# Context built from the play vars the Crystal caller passes along.
+# The stub is NOT a real jinja2 Context: it supports the common
+# access patterns (`context.get(name)`/`context.resolve(name)`/
+# `context['name']`/`context.vars`/`context.get_all()`) over the
+# play's variable snapshot only - no hostvars resolution, no template
+# caching, no lazy evaluation - which covers filters that read play
+# variables but not ones relying on deeper Context machinery.
 module Krikri
   module PythonFilterRunner
     extend self
@@ -120,7 +137,8 @@ module Krikri
     # invocation fails (callers degrade to the plain unknown-filter
     # error).
     def call_filter(name : String, sources : Array(String), value : JSON::Any,
-                    args : Array(JSON::Any), kwargs : Hash(String, JSON::Any)) : JSON::Any
+                    args : Array(JSON::Any), kwargs : Hash(String, JSON::Any),
+                    vars : Hash(String, JSON::Any)? = nil) : JSON::Any
       result = run_wrapper({
         "action" => "call",
         "paths"  => sources,
@@ -128,6 +146,7 @@ module Krikri
         "value"  => value,
         "args"   => args,
         "kwargs" => kwargs,
+        "vars"   => vars,
       })
       raise FilterError.new("filter plugin wrapper produced no result (is python3 available?)") unless result
       unless result["ok"]?.try(&.as_bool?)
@@ -189,6 +208,51 @@ module Krikri
           return module
 
 
+      def _is_pass_context(func):
+          # jinja2 >= 3.0's @pass_context sets `jinja_pass_arg` to a
+          # _PassArg enum member; its `.name` is "context" only for
+          # pass_context (pass_environment/pass_eval_context share the
+          # attribute but need different first args, so they are NOT
+          # matched here). jinja2 < 3.0's @contextfilter set the plain
+          # boolean `contextfilter` marker instead. No jinja2 import is
+          # needed for either check, so the wrapper works regardless of
+          # which jinja2 (if any) the controller has - only the plugin
+          # file itself needs jinja2 for its decorator.
+          arg = getattr(func, "jinja_pass_arg", None)
+          if arg is not None and getattr(arg, "name", None) == "context":
+              return True
+          return bool(getattr(func, "contextfilter", False))
+
+
+      class _StubContext(object):
+          # Minimal stand-in for jinja2.runtime.Context: covers the
+          # variable-lookup patterns custom filters actually use
+          # (context.get / context.resolve / context['name'] /
+          # context.vars / context.get_all) over the play vars snapshot
+          # krikri passes in. Filters reaching for environment machinery
+          # beyond this (context.environment, caching, live hostvars)
+          # are outside what a JSON-marshaled subprocess can offer.
+          def __init__(self, variables):
+              self.vars = variables
+              self.parent = variables
+              self.environment = None
+
+          def resolve(self, name, default=None):
+              return self.vars.get(name, default)
+
+          def get(self, key, default=None):
+              return self.vars.get(key, default)
+
+          def get_all(self):
+              return self.vars
+
+          def __getitem__(self, key):
+              return self.vars[key]
+
+          def __contains__(self, key):
+              return key in self.vars
+
+
       def _plugin_filters(path):
           module = _load_plugin(path)
           plugin_dir = os.path.dirname(os.path.abspath(path))
@@ -231,8 +295,13 @@ module Krikri
                   {"ok": False, "kind": "not_found",
                    "error": "no filter named %s in the given plugin files" % name}))
               return
-          result = func(payload.get("value"), *(payload.get("args") or []),
-                        **(payload.get("kwargs") or {}))
+          if _is_pass_context(func):
+              call_args = [_StubContext(payload.get("vars") or {})]
+          else:
+              call_args = []
+          call_args.append(payload.get("value"))
+          call_args.extend(payload.get("args") or [])
+          result = func(*call_args, **(payload.get("kwargs") or {}))
           sys.stdout.write(json.dumps({"ok": True, "result": result}, default=_serialize))
 
 
