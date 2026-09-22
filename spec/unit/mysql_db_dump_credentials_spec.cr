@@ -21,9 +21,9 @@ private def with_shims(&)
   capture_dir = File.join(dir, "capture")
   Dir.mkdir(capture_dir)
 
-  shim_body = <<-SH
+  shim_body = <<-'SH'
     #!/bin/bash
-    printf '%s\\n' "$@" > "$CAPTURE_DIR/argv"
+    printf '%s\n' "$@" > "$CAPTURE_DIR/argv"
     for arg in "$@"; do
       case "$arg" in
         --defaults-extra-file=*) cp "${arg#--defaults-extra-file=}" "$CAPTURE_DIR/defaults_file" 2>/dev/null ;;
@@ -31,7 +31,7 @@ private def with_shims(&)
     done
     echo "SHIM-OK"
     exit 0
-  SH
+    SH
   %w[mysqldump mysql].each do |name|
     path = File.join(shim_dir, name)
     File.write(path, shim_body)

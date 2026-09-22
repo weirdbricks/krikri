@@ -1,6 +1,7 @@
 require "../spec_helper"
 require "file_utils"
 require "socket"
+require "../../src/krikri/plugin_manager"
 
 # These specs drive the compiled `bin/krikri-playbook` binary against the
 # example playbooks in testing/*.yml, in --check mode, using an inventory
@@ -1419,8 +1420,14 @@ describe "krikri-playbook CLI (--check mode)" do
     # as solr`, really a plain EACCES on /root's own 0700 mode, not an
     # actual sudoers policy denial. A become: task must stage a
     # world-traversable copy of the plugin binary at the staging dir
-    # before sudo-ing to it, which the forced run above exercises.
-    staged_command_plugin = "/var/tmp/.krikri-playbook/plugins/command"
+    # before sudo-ing to it, which the forced run above exercises. The
+    # staging dir is the per-user /var/tmp/.krikri-playbook-<user>-<hash>
+    # one (PluginManager.remote_plugin_dir) - the old fixed
+    # /var/tmp/.krikri-playbook path this used to assert only existed as
+    # a stale leftover from a pre-hardening engine on dev machines, so
+    # this passed locally and failed on any fresh CI container.
+    current_user = (match || raise "unexpected nil")[1]
+    staged_command_plugin = File.join(Krikri::PluginManager.remote_plugin_dir(current_user), "command")
     File.exists?(staged_command_plugin).should be_true
     (File.info(staged_command_plugin).permissions.value & 0o777).should eq(0o755)
   end

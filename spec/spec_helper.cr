@@ -59,7 +59,6 @@ end
 def run_fqcn_yaml(yaml : String, config : Krikri::Lint::LintConfig = Krikri::Lint::LintConfig.new) : Array(Krikri::Lint::Violation)
   path = File.tempname("lintrunner", ".yml")
   File.write(path, yaml)
-  file = Krikri::Lint::PositionedFile.new(path, Krikri::Lint::FileType::PLAYBOOK, YAML::Nodes.parse(yaml).nodes.first?, nil)
   registry = Krikri::Lint::RuleRegistry.new([Krikri::Lint::FqcnActionCoreRule.new] of Krikri::Lint::Rule)
   Krikri::Lint::Runner.new(registry, config).run([path])
 ensure

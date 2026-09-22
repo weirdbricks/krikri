@@ -1185,7 +1185,9 @@ module Krikri
           any_failed ||= failed
           any_unreachable ||= unreachable_task_result?(result)
 
-          ResultDisplay.display_result(host, result, @diff_mode, item_label: item_label, ignore_errors: resolve_task_ignore_errors(task, base_vars_context), no_log: resolve_task_no_log(task, base_vars_context), delegate_target: (dh = delegate_hosts.try(&.[idx])) && dh != host ? dh.connection_host : nil)
+          item_delegate = delegate_hosts.try(&.[idx])
+          delegate_target = item_delegate && item_delegate != host ? item_delegate.connection_host : nil
+          ResultDisplay.display_result(host, result, @diff_mode, item_label: item_label, ignore_errors: resolve_task_ignore_errors(task, base_vars_context), no_log: resolve_task_no_log(task, base_vars_context), delegate_target: delegate_target)
         end
 
         result_hash = result.as_h.dup

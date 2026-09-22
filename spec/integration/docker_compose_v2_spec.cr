@@ -14,9 +14,15 @@ private def compose_available? : Bool
   # `docker compose version` alone doesn't touch the daemon - probe with
   # a command that does, so environments whose compose provider can't
   # reach the daemon (e.g. the docker-compose shim over an unreachable
-  # podman socket) skip the live block instead of failing it.
+  # podman socket) skip the live block instead of failing it. Process.run
+  # itself raises when the docker binary doesn't exist at all (bare CI
+  # container), so that case also skips.
   io = IO::Memory.new
-  status = Process.run("docker", ["compose", "ls"], output: io, error: io)
+  begin
+    status = Process.run("docker", ["compose", "ls"], output: io, error: io)
+  rescue File::NotFoundError
+    return false
+  end
   status.success? && !io.to_s.includes?("Cannot connect to the Docker daemon")
 end
 
