@@ -73,6 +73,26 @@ jobs:
       - name: Build main executable and plugins
         run: ./build.sh
 
+      - name: Provide the docker smoke-test image
+        # cli_spec.cr's end-to-end docker smoke test runs
+        # testing/test-docker-quick.yml, which treats
+        # localhost/krikri-playbook-compat:latest as an ambient precondition:
+        # on dev boxes the compat harness (compat/Dockerfile) has already
+        # built it, and the fixture's first task (docker_image source: pull)
+        # expects changed=false precisely because the image is already
+        # present - a pull of that ref fails on any daemon where it isn't
+        # ("connection refused": there is no localhost registry), which is
+        # what CI's first run after the docker.io install hit. Building the
+        # real compat image here would add a full from-source
+        # krikri-playbook build inside the image for no smoke-test value;
+        # the fixture only needs the ref to resolve locally plus something
+        # that can `sleep 300`, so a busybox tag satisfies it. The spec
+        # pendings gracefully when the image is absent, so dev boxes without
+        # the compat harness still pass the suite.
+        run: |
+          docker pull busybox:latest
+          docker tag busybox:latest localhost/krikri-playbook-compat:latest
+
       - name: Run specs
         run: crystal spec
 
