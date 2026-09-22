@@ -1219,6 +1219,7 @@ module Krikri
             loop_items.map { |item| deep_render_item(item, loop_vars_context, host.name, strict: false) }
           )
         end
+        looped_when_failed = false
         loop_items.each_with_index do |item, idx|
           vars_context = base_vars_context.dup
           # Render any string field of the item that is itself a template
@@ -1245,7 +1246,21 @@ module Krikri
           # ultimately skipped still got counted as `ok` AND `skipped`
           # for the same task. See the non-looped branch's comment below
           # for how this was found.
-          run_include_tasks_once(task, host, vars_context, item_display(item))
+          unless run_include_tasks_once(task, host, vars_context, item_display(item), defer_when_stats: true)
+            looped_when_failed = true
+          end
+        end
+        if looped_when_failed
+          # One aggregate failure for the whole looped include task, not
+          # one per raising item (see run_include_tasks_once's own rescue
+          # for why). Same ignore_errors: booking swallow_when_error
+          # itself makes when it books directly.
+          if resolve_task_ignore_errors(task)
+            @results[host.name]["ok"] += 1
+            @results[host.name]["ignored"] += 1
+          else
+            @results[host.name]["failed"] += 1
+          end
         end
       else
         # Non-looped include_tasks: itself counts as one `ok` in the
@@ -1274,13 +1289,22 @@ module Krikri
       end
     end
 
-    private def run_include_tasks_once(task : Task, host : Host, vars_context : Hash(String, JSON::Any), item_label : String?) : Nil
+    private def run_include_tasks_once(task : Task, host : Host, vars_context : Hash(String, JSON::Any), item_label : String?, defer_when_stats : Bool = false) : Bool
       if task.when_condition
         begin
           when_result = evaluate_when_items(task, vars_context, host)
         rescue ex : WhenEvaluationError
-          swallow_when_error(task, host, ex, item_label: item_label)
-          return
+          # A LOOPED include's per-item when: failure must not book stats
+          # here: real Ansible recaps the whole looped task ONCE no matter
+          # how many items' conditionals raised (round 970558,
+          # arillso.repositories' looped "include subtasks repository": 3
+          # item-failure lines on screen, failed=1 in the recap - krikri
+          # booked failed=3). The looped caller books that single
+          # aggregate from this method's false return; the non-looped
+          # call site has no aggregation around it and keeps
+          # swallow_when_error's own direct booking.
+          swallow_when_error(task, host, ex, item_label: item_label, defer_stats: defer_when_stats)
+          return false
         end
 
         unless when_result
@@ -1288,7 +1312,7 @@ module Krikri
           suffix = item_label ? " => (item=#{item_label})" : ""
           puts "skipping: [#{connection_host}]#{suffix}".colorize(:cyan)
           @results[host.name]["skipped"] += 1
-          return
+          return true
         end
       end
 
@@ -1309,7 +1333,7 @@ module Krikri
       # after the host had already failed, recapping failed=2 where real
       # Ansible - whose own module resolution never errors there - recaps
       # failed=1 with only the original task's error.
-      return if @halted_hosts.includes?(host.name)
+      return true if @halted_hosts.includes?(host.name)
 
       substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
       file_rel = substitutor.substitute(task.include_file.as(String))
@@ -1317,17 +1341,17 @@ module Krikri
 
       unless File.exists?(resolved_path)
         fail_include(task, host, "Included tasks file not found: #{resolved_path}")
-        return
+        return true
       end
 
       yaml = YAML.parse(Vault.maybe_decrypt(File.read(resolved_path)))
       # A comment-only (or entirely blank) tasks file - see the batched
       # #execute_include_tasks_multi path's identical check for why this
       # can't be folded into the `unless yaml.as_a?` check below.
-      return if yaml.raw.nil?
+      return true if yaml.raw.nil?
       unless yaml.as_a?
         fail_include(task, host, "Included tasks file must be a YAML list: #{resolved_path}")
-        return
+        return true
       end
 
       inherited = Play.new("", "")
@@ -1411,11 +1435,13 @@ module Krikri
       propagate_role_context(task, included_tasks)
 
       run_task_list(included_tasks, host)
+      true
     rescue ex : HandlerNotFoundError
       # Same as the batched include path above - see there.
       raise ex
     rescue ex
       fail_include(task, host, "Failed to load included tasks: #{ex.message}")
+      true
     end
 
     private def fail_include(task : Task, host : Host, message : String) : Nil
