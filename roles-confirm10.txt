@@ -1,0 +1,10 @@
+geerlingguy.haproxy
+dev-sec.ssh-hardening
+robertdebock.zabbix_repository
+stackhpc.libvirt-vm
+stackhpc.luks
+buluma.fish
+buluma.security
+christiangda.amazon_cloudwatch_agent
+linux-system-roles.selinux
+linux-system-roles.kdump
