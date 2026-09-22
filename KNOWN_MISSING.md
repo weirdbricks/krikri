@@ -29,7 +29,122 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.1244`.**
+**Currently at `0.9.1247`.**
+
+## Open gaps
+
+- **`buluma.forensics`: `delegate_to: localhost` + `copy` scp's to
+  `localhost:22` instead of running locally** (round 188, 0.9.623,
+  Rocky 9.6) - the role's `command_collector | Save output` task uses
+  `delegate_to: localhost` for an `ansible.builtin.copy` module, and
+  krikri-playbook tries to scp the plugin binary to `localhost:22`
+  (Connection refused on a cloud VPS whose controller has no sshd
+  running); real ansible-core runs the task via a local connection and
+  never ssh's to itself. Deterministic: crystal rc=2 vs real rc=0, same
+  failure cold and warm. Minimal repro and suggested fix shape in
+  `round188-delegate-to-localhost-ssh-reupload`; not yet fixed.
+- **Round 900000-900999: `juju4.adduser` dir-mode "changed" divergence,
+  not reproduced deterministically** - round900902 showed an extra
+  `changed: true` on `~/.ssh`'s `file: {mode: "0700", state: directory}`
+  task that a direct local repro (same params, no privilege escalation)
+  could NOT reproduce - matched real Ansible's `changed: false` exactly.
+  Only a related, confirmed cosmetic bug (an unchanged directory always
+  carrying `msg: "Directory attributes updated"`) was fixed (0.9.1186).
+  Possibly SELinux-context-specific to the original Rocky host; worth
+  re-checking if it recurs with SELinux enabled locally.
+- **Vendored Crinja fork's `%` operator only does numeric modulo, not
+  Python's string-left-operand `%`-formatting** (round900235
+  rolehippie.coredns) - Python's `"%s" % value`-style string formatting
+  (a real, if increasingly rare, Jinja2/Ansible idiom) fails or
+  misbehaves here since `%` is only implemented as arithmetic modulo.
+  Deferred rather than attempted this round: a correct fix needs real
+  Python `%`-format-spec parsing (width/precision/type conversion) in
+  the vendored fork, more scope than this round's other fixes for one
+  role's single divergence.
+- **Round 811000-812999: `k8s` missing module** (`dymurray.
+  memcached_operator_role`; real ansible-playbook doesn't complete
+  cleanly on the one role that hits it either, low value).
+- **Round 700000-701129 + 702000-702046 requeue: 26 single-role missing
+  modules** (400-role Galaxy top-download batch, ubuntu+rocky, plus the
+  47-role kata-recovery requeue): `os_nova_flavor`, `os_keypair`,
+  `os_image_info`, `os_security_group`, `os_keystone_domain`,
+  `cloudflare_dns`, `cloudformation`, `mongodb_user`,
+  `elasticsearch_plugin`, `acme_certificate`, `postgresql_ext`,
+  `flatpak_remote`, `jenkins_script`, `kubevirt.core.kubevirt_vm`,
+  `win_shell`, `win_file`, `ansible.windows.win_command`,
+  `community.general.apk` (2 roles), `community.general.zypper`,
+  `community.general.zypper_repository`,
+  `community.general.dnf_config_manager`,
+  `community.general.homebrew_cask`, `community.general.launchd`,
+  `community.general.dconf`, `community.general.portage` - genuinely
+  missing, one role each unless noted. See `ROLES_TESTED.md` for the
+  exact affected role per module.
+- **Round 700000-701129: `xanmanning.helm` - cosmetic message-only gap,
+  not a behavioral divergence.** Re-confirmed live (round 820008): both
+  engines fail the SAME task (`Ensure helm_projects_dir exists`) with the
+  SAME error class (a strict-conditional-type error - a bare `when:
+  helm_projects_dir` truthy-string check under ansible-core's strict
+  conditional typing). krikri's message just omits the `at
+  '<file>:line:col>'` source-location suffix real Ansible appends when the
+  offending value originated from a role default rather than the task
+  itself - cosmetic text-diff only, not a different outcome (recap counts
+  identical). Left as-is; not worth the source-location-tracking
+  architecture for one cosmetic suffix.
+- **47-role kata-recovery requeue (round 702000-702046): 47 BOOT_FAILED
+  roles from the original ubuntu batch (round 700113-700197), all pure
+  Kata infra flakiness** - re-run via Atlantic.net and now reflected in
+  `ROLES_TESTED.md` under their final (mostly CLEAN) status. Not a
+  krikri gap; noted here only because it's what triggered the Kata
+  backend's retirement from `krikri-role-tester` (see `CLAUDE.md`).
+
+- **Low-priority single-role missing modules** (round 601000-601999,
+  2026-09-11 batch, one role each unless noted): `docker_volume`,
+  `docker_stack`, `community.docker.docker_volume` (2 roles),
+  `community.mysql.mysql_replication` (3 roles combined bare+FQCN),
+  `community.postgresql.postgresql_membership`,
+  `community.rabbitmq.rabbitmq_vhost`, `community.zabbix.zabbix_group`,
+  `community.vmware.vsphere_file` (2 roles) - genuinely missing, niche,
+  not implemented. `pacman`, `apk`, `community.general.zypper`, `snap` -
+  same "is this in scope" alt-package-manager question already open for
+  portage/pkgng above. See `ROLES_TESTED.md` for the exact affected role
+  per module.
+- **`xanmanning.k3s`** (`round_new_authors`, re-checked 2026-09-12 via
+  Atlantic.net on 0.9.976): a `uri` task downloading k3s's hashsum from
+  GitHub got a 403 on the krikri-run host but not the ansible-run host
+  (different real IPs). krikri already sends the same `User-Agent`
+  (`ansible-httpget`) real Ansible defaults to, so this looks like
+  transient GitHub anti-abuse/rate-limiting hitting one IP and not the
+  other rather than a deterministic krikri bug - needs a second
+  re-confirmation run before treating as a real gap.
+- **Scope question, not yet decided** (2026-09-10/11 batches): `bigip_wait`
+  (F5 BIG-IP network-appliance family - `f5devcentral.backup_config`,
+  `.bigip_gslb`, `.bigip_onboard`, `.f5app_services_package`),
+  `cloudformation` (AWS orchestration - 4 `sansible.aws_*` roles),
+  `os_client_config` (`oasis_roles.molecule_openstack_ci`),
+  `openstack.cloud.volume_snapshot` (`ome.openstack_volume_storage`) - all
+  unimplemented; whether cloud-provider/vendor-appliance orchestration
+  modules are in scope for a host-management engine hasn't been decided
+  either way.
+- **Low-priority single-role missing modules** (2026-09-10/11 batches, one
+  role each unless noted): `slack`, `postgresql_ext`, `portage` (Gentoo -
+  likely the same package-manager scope question as zypper/pacman),
+  `pkgng` (FreeBSD - same question), `ovirt_host_info`, `nuage_vspk` (2
+  roles), `manala_files_attributes` (role-private custom module),
+  `lxc_container`, `logentries` (deprecated vendor service),
+  `k8s` (real ansible-playbook doesn't complete cleanly on the one role
+  that hits it either, low value), `django_manage`,
+  `community.grafana.grafana_datasource`, `community.general.nmcli`,
+  `community.general.cpanm`, `community.docker.docker_container_info`,
+  `ansible.windows.win_command` (`riemers.gitlab-runner`, Windows-only).
+  See `ROLES_TESTED.md` for the exact affected role per module.
+
+The abandoned 120-role shortlist (`testing/kata/round_new_authors/`,
+only 35 roles run before the round was left mid-triage) still has 85
+roles never run. The shortlist is at
+`testing/kata/round_new_authors/shortlist120.txt` if resuming it -
+against Atlantic.net now, Kata having been retired as a backend.
+
+---
 
 ## Round 900000-900999: 1000-role Galaxy batch (500 ubuntu + 500 rocky), 12 real bugs fixed (0.9.1174 -> 0.9.1189)
 
@@ -523,172 +638,6 @@ independently-provisioned hosts in that round, not an engine defect.
   postinst `chmod 640`. Fixed at the root: `set_fact:` now keeps an
   octal-mode-shaped string a string, so the reformat can go back to
   being unconditional.
-
-## Open gaps
-
-- **Round 900000-900999: `juju4.adduser` dir-mode "changed" divergence,
-  not reproduced deterministically** - round900902 showed an extra
-  `changed: true` on `~/.ssh`'s `file: {mode: "0700", state: directory}`
-  task that a direct local repro (same params, no privilege escalation)
-  could NOT reproduce - matched real Ansible's `changed: false` exactly.
-  Only a related, confirmed cosmetic bug (an unchanged directory always
-  carrying `msg: "Directory attributes updated"`) was fixed (0.9.1186).
-  Possibly SELinux-context-specific to the original Rocky host; worth
-  re-checking if it recurs with SELinux enabled locally.
-- **Vendored Crinja fork's `%` operator only does numeric modulo, not
-  Python's string-left-operand `%`-formatting** (round900235
-  rolehippie.coredns) - Python's `"%s" % value`-style string formatting
-  (a real, if increasingly rare, Jinja2/Ansible idiom) fails or
-  misbehaves here since `%` is only implemented as arithmetic modulo.
-  Deferred rather than attempted this round: a correct fix needs real
-  Python `%`-format-spec parsing (width/precision/type conversion) in
-  the vendored fork, more scope than this round's other fixes for one
-  role's single divergence.
-- **Round 811000-812999: 3 single-role missing modules** (400-role
-  Galaxy top-download batch, ubuntu+rocky): `k8s`
-  (`dymurray.memcached_operator_role`; real ansible-playbook doesn't
-  complete cleanly on the one role that hits it either, low value),
-  `community.general.deploy_helper` REMOVED - implemented 0.9.1151,
-  and `community.general.cronvar` - also removed, it had already been
-  implemented (`plugins/cronvar.cr`) and the bullet was stale.
-  `community.general.snap` (`mircomasa.microk8s`,
-  `racqspace.microk8s`) and `parted`+`lvg` (`liksi.mount_data_disk`)
-  REMOVED - all implemented 0.9.1151.
-- **Round 700000-701129 + 702000-702046 requeue: 26 single-role missing
-  modules** (400-role Galaxy top-download batch, ubuntu+rocky, plus the
-  47-role kata-recovery requeue): `os_nova_flavor`, `os_keypair`,
-  `os_image_info`, `os_security_group`, `os_keystone_domain`,
-  `cloudflare_dns`, `cloudformation`, `mongodb_user`,
-  `elasticsearch_plugin`, `acme_certificate`, `postgresql_ext`,
-  `flatpak_remote`, `jenkins_script`, `kubevirt.core.kubevirt_vm`,
-  `win_shell`, `win_file`, `ansible.windows.win_command`,
-  `community.general.apk` (2 roles), `community.general.zypper`,
-  `community.general.zypper_repository`,
-  `community.general.dnf_config_manager`,
-  `community.general.homebrew_cask`, `community.general.launchd`,
-  `community.general.dconf`, `community.general.portage` - genuinely
-  missing, one role each unless noted. See `ROLES_TESTED.md` for the
-  exact affected role per module.
-- **Round 700000-701129: `xanmanning.helm` - cosmetic message-only gap,
-  not a behavioral divergence.** Re-confirmed live (round 820008): both
-  engines fail the SAME task (`Ensure helm_projects_dir exists`) with the
-  SAME error class (a strict-conditional-type error - a bare `when:
-  helm_projects_dir` truthy-string check under ansible-core's strict
-  conditional typing). krikri's message just omits the `at
-  '<file>:line:col>'` source-location suffix real Ansible appends when the
-  offending value originated from a role default rather than the task
-  itself - cosmetic text-diff only, not a different outcome (recap counts
-  identical). Left as-is; not worth the source-location-tracking
-  architecture for one cosmetic suffix. The rest of this round's original
-  "not yet root-caused" list is now fully closed: `grycap.clues` (a `pip:`
-  VCS-requirement idempotency bug), `HanXHX.debian_bootstrap`
-  (`lookup('flattened', ...)` unimplemented), and
-  `linux-system-roles.ssh` (`trim` filter crashing on a native bool) are
-  FIXED (0.9.1160-0.9.1161); `manala.accounts` (`with_together:` loop
-  keyword entirely unimplemented) and `redhat_sap.sap_hana_hsr` (a task's
-  `when:` was evaluated too leniently against an undefined loop-source
-  variable unrelated to `item`, wrongly skipping instead of failing) are
-  FIXED (0.9.1172-0.9.1173) - see git log for both. `inverse_inc.
-  gitlab_buildpkg_tools`, `alannix_lw.lacework_agent_ansible_role`,
-  `redhat_sap.sap_hana_deployment`, `manala.environment`,
-  `ChristopherDavenport.apache-portable-runtime`, `buluma.confluence`,
-  `buluma.jira`, `reimarstier.jetbrains_installer`,
-  `darkwizard242.packer`, `openmicroscopy.upgrade-distpackages`, and
-  `buluma.gitlab_ee` are RE-CONFIRMED CLEAN (round 820000-821005 -
-  identical py/crystal recaps, cold and warm; the remaining recap
-  failures on some of these are role/environment-side, e.g. a required
-  env var never set in this harness, not krikri bugs). (`ccdc.ntp_configuration`,
-  `so5.ssh_hostbased_auth`, `so5.pbspro` - the `with_first_found:`
-  wrong-subdir-search cluster also once listed here - are now fixed,
-  see git log.) The two "undefined-looking value leaking into rendered
-  output" cases (`diodonfrost.vagrant`, `buluma.fish`) are RESOLVED
-  from this list: the vagrant one was role-local filter_plugins
-  (`sort_versions.py`) already supported since 0.9.819 (regression
-  spec: spec/integration/role_local_filter_plugins_spec.cr), and
-  buluma.fish's real ansible-playbook side fails identically on its
-  Rocky host (its own `_fish_repo_strings` dict has no Rocky key), a
-  role-side gap.
-- **47-role kata-recovery requeue (round 702000-702046): 47 BOOT_FAILED
-  roles from the original ubuntu batch (round 700113-700197), all pure
-  Kata infra flakiness** - re-run via Atlantic.net and now reflected in
-  `ROLES_TESTED.md` under their final (mostly CLEAN) status. Not a
-  krikri gap; noted here only because it's what triggered the Kata
-  backend's retirement from `krikri-role-tester` (see `CLAUDE.md`).
-
-- **Low-priority single-role missing modules** (round 601000-601999,
-  2026-09-11 batch, one role each unless noted): `docker_volume`,
-  `docker_stack`, `community.docker.docker_volume` (2 roles),
-  `community.mysql.mysql_replication` (3 roles combined bare+FQCN),
-  `community.postgresql.postgresql_membership`,
-  `community.rabbitmq.rabbitmq_vhost`, `community.zabbix.zabbix_group`,
-  `community.vmware.vsphere_file` (2 roles) - genuinely missing, niche,
-  not implemented. `pacman`, `apk`, `community.general.zypper`, `snap` -
-  same "is this in scope" alt-package-manager question already open for
-  portage/pkgng above. See `ROLES_TESTED.md` for the exact affected role
-  per module.
-- **`xanmanning.k3s`** (`round_new_authors`, re-checked 2026-09-12 via
-  Atlantic.net on 0.9.976): a `uri` task downloading k3s's hashsum from
-  GitHub got a 403 on the krikri-run host but not the ansible-run host
-  (different real IPs). krikri already sends the same `User-Agent`
-  (`ansible-httpget`) real Ansible defaults to, so this looks like
-  transient GitHub anti-abuse/rate-limiting hitting one IP and not the
-  other rather than a deterministic krikri bug - needs a second
-  re-confirmation run before treating as a real gap.
-
-The other 9 items previously listed here (`artis3n.tailscale`,
-`evrardjp.keepalived`, `igor_nikiforov.journald`, `kyl191.openvpn`,
-`lablabs.rke2`, `nickjj.docker`, `riemers.gitlab-runner`, `rvm.ruby`,
-`willshersystems.sshd`) were all re-checked 2026-09-12 against current
-krikri (0.9.976) via Atlantic.net, since Kata (the backend these were
-originally tested on in 2026-09-05, v0.9.742) is now retired: 7 came
-back CLEAN (3 of them - `artis3n.tailscale`, `nickjj.docker`,
-`willshersystems.sshd` - had shown `unreachable=1` in their original
-logs, confirmed via the raw SSH-timeout messages in those old logs to
-be Kata network flakiness, not a krikri bug; `lablabs.rke2` and
-`rvm.ruby` had, it turns out, already been fixed/re-verified in earlier
-sessions per the narrative further down this file but this list was
-never updated to drop them; `evrardjp.keepalived` and
-`igor_nikiforov.journald` are fixed too, root cause not re-investigated
-since they're already clean). `riemers.gitlab-runner` is a missing
-module (`ansible.windows.win_command`, Windows-only), not a bug -
-folded into the missing-modules list below. `kyl191.openvpn`'s real bug
-(`command`'s `creates:`/`removes:` not resolving relative to `chdir:`) is
-now FIXED and confirmed on a real host - see the round narrative below;
-removed from this list.
-- **Scope question, not yet decided** (2026-09-10/11 batches): `bigip_wait`
-  (F5 BIG-IP network-appliance family - `f5devcentral.backup_config`,
-  `.bigip_gslb`, `.bigip_onboard`, `.f5app_services_package`),
-  `cloudformation` (AWS orchestration - 4 `sansible.aws_*` roles),
-  `os_client_config` (`oasis_roles.molecule_openstack_ci`),
-  `openstack.cloud.volume_snapshot` (`ome.openstack_volume_storage`) - all
-  unimplemented; whether cloud-provider/vendor-appliance orchestration
-  modules are in scope for a host-management engine hasn't been decided
-  either way.
-- **Low-priority single-role missing modules** (2026-09-10/11 batches, one
-  role each unless noted): `slack`, `postgresql_ext`, `portage` (Gentoo -
-  likely the same package-manager scope question as zypper/pacman),
-  `pkgng` (FreeBSD - same question), `ovirt_host_info`, `nuage_vspk` (2
-  roles), `manala_files_attributes` (role-private custom module),
-  `lxc_container`, `logentries` (deprecated vendor service),
-  `k8s` (real ansible-playbook doesn't complete cleanly on the one role
-  that hits it either, low value), `django_manage`,
-  `community.grafana.grafana_datasource`, `community.general.nmcli`,
-  `community.general.cpanm`, `community.docker.docker_container_info`,
-  `ansible.windows.win_command` (`riemers.gitlab-runner`, Windows-only).
-  See `ROLES_TESTED.md` for the exact affected role per module.
-
-The abandoned 120-role shortlist (`testing/kata/round_new_authors/`,
-only 35 roles run before the round was left mid-triage) still has 85
-roles never run - see `findings.md` there for four more divergences
-from that same batch that turned out to already be fixed by the time
-anyone got back to them (`0x0i.systemd`, `igor_nikiforov.etcd`,
-`wezhai.minio`, `nginxinc.nginx` - see `ROLES_TESTED.md` for the fix
-commits), on top of the 7 immediately above re-verified clean the same
-way. The shortlist is at
-`testing/kata/round_new_authors/shortlist120.txt` if resuming it -
-against Atlantic.net now, Kata having been retired as a backend.
-
----
 
 ## Crystal 1.21.0 upgrade + ameba crash workaround (0.9.1035)
 
