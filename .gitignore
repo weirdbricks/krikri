@@ -68,3 +68,6 @@ __pycache__/
 
 # build.sh's persistent per-target crystal compiler caches (see build.sh)
 /.crystal-build-cache/
+.spec-parallel-logs/
+/.spec-cache/
+/.spec-logs/

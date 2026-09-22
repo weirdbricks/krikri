@@ -18,6 +18,13 @@ build-release:
 test:
     crystal spec
 
+# Runs the spec buckets (unit/integration/lint) as parallel crystal spec
+# processes - wall time drops to roughly the integration bucket's own.
+# Each bucket gets its own compiler cache dir, so concurrent runs never
+# contend on a compiler lock.
+test-parallel:
+    scripts/spec-parallel.sh
+
 lint:
     lib/ameba/bin/ameba
 

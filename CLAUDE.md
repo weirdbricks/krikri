@@ -33,6 +33,10 @@ sequential tasks into one SSH round trip where safe.
 ./build.sh                          # builds bin/krikri-playbook + all bin/plugins/* (mtime-skip, safe to always run)
 ./build.sh --release                # only near the end of a work session - slow, not needed for correctness iteration
 crystal spec                        # full suite
+scripts/spec-parallel.sh            # same suite as parallel unit/integration/lint buckets
+                                     #   (each bucket gets its own CRYSTAL_CACHE_DIR - never run
+                                     #   concurrent `crystal spec` invocations sharing one cache
+                                     #   dir; they contend on the compiler lock and can hang)
 crystal spec spec/unit/foo_spec.cr  # one file - NOTE: some files fail in isolation (a pre-existing
                                      #   require-ordering artifact, not a real regression) - always
                                      #   confirm any single-file failure against the full `crystal spec` run
