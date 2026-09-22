@@ -201,14 +201,42 @@ describe "get_url plugin" do
     File.delete(dest) if dest && File.exists?(dest)
   end
 
-  it "skips an existing dest without force and without checksum" do
+  it "re-fetches an existing dest without force and without checksum, reporting changed when the URL content differs" do
+    # Real bug found benchmarking buluma.fish (round952314): its "Add
+    # fish repository key" task (get_url, no checksum:, no force:) hits
+    # the live keyserver.ubuntu.com lookup, whose response can differ
+    # between runs. Real ansible-core's get_url always performs the HTTP
+    # request when dest exists (a conditional GET keyed on dest's mtime,
+    # or a HEAD in check mode), then decides changed by comparing the
+    # freshly fetched content's SHA1 against the existing dest file's
+    # SHA1 - even with no checksum: param at all. krikri used to
+    # short-circuit to ok purely on dest existence, never making a
+    # request, so a warm rerun could never report changed: true where
+    # real Ansible sometimes did.
     dest = File.tempname("get-url-spec")
     File.write(dest, "pre-existing, untouched")
 
     result = PluginSpecHelper.run("get_url", {"url" => "#{get_url_base}/file.txt", "dest" => dest})
 
+    result["changed"].as_bool.should be_true
+    result["failed"]?.try(&.as_bool).should be_falsey
+    File.read(dest).should eq(FILE_CONTENT)
+  ensure
+    File.delete(dest) if dest && File.exists?(dest)
+  end
+
+  it "is idempotent on an existing dest without force and without checksum when the URL content already matches" do
+    # Same root cause as the spec above, other half of the behavior:
+    # the fetch must happen (real Ansible always requests), but matching
+    # content still converges to changed: false, not a forced rewrite.
+    dest = File.tempname("get-url-spec")
+    File.write(dest, FILE_CONTENT)
+
+    result = PluginSpecHelper.run("get_url", {"url" => "#{get_url_base}/file.txt", "dest" => dest})
+
     result["changed"].as_bool.should be_false
-    File.read(dest).should eq("pre-existing, untouched")
+    result["failed"]?.try(&.as_bool).should be_falsey
+    File.read(dest).should eq(FILE_CONTENT)
   ensure
     File.delete(dest) if dest && File.exists?(dest)
   end
