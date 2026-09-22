@@ -68,6 +68,27 @@ module Krikri
         env = Crinja.new
         env.config.trim_blocks = true
         env.config.lstrip_blocks = false
+        # Everything this class renders is INLINE task-param templating -
+        # `{{ }}` in YAML task args (bare expression or embedded in a
+        # longer string) - never a `.j2` template file (that path owns its
+        # own per-render environment in TemplateActionPlugin). Real
+        # ansible-core 2.19 does NOT decode string-literal escapes inline:
+        # its own AnsibleLexer doubles every backslash before Jinja's
+        # `unicode-escape` decode, netting exact passthrough, while `{% %}`
+        # statement literals (and template files) still decode fully -
+        # live-verified against 2.19.11: `{{ 'V\1-\2' }}` renders the
+        # literal six characters (not the octal-escape corruption
+        # V<0x01>-<0x02>), a `regex_replace` replacement keeps a working
+        # `\1` backreference, `'a\nb' | length` is 4, and the same probes
+        # inside `{% %}` DO decode (`{% set z = 'a\nb' %}` holds a real
+        # newline). crystal-play-0.9.58's verbatim_expression_strings
+        # implements exactly that split in the fork's lexer; without it,
+        # digit escapes read as octal and decoded real newlines/tabs where
+        # real Ansible passed the backslash through. (Replaces the old
+        # preserve_inline_string_escapes re-encoding workaround, which
+        # papered over this at a single call site - and which would now
+        # corrupt output by leaving `\x5C` text in place.)
+        env.config.verbatim_expression_strings = true
         # Real Jinja2's `default` filter only ever triggers on an
         # UNDEFINED value - a DEFINED None passes straight through
         # (live-verified against ansible-core 2.19.11:
