@@ -379,6 +379,23 @@ module Krikri
         end
       end
 
+      # Real Ansible's apt module (which `package:` delegates to on apt
+      # hosts) gates this same refresh on `cache_valid_time:` staleness
+      # (apt.py's Cache.update(cache_valid_time=...)): a positive window
+      # that the update-success-stamp/lists-dir mtime is still inside
+      # skips `apt-get update` entirely and exits changed=false. This
+      # path never read `cache_valid_time:` at all and always ran the
+      # refresh, so a warm rerun inside the window still touched the apt
+      # lists and reported changed: true where real Ansible reported ok
+      # (buluma.security, round 952553). Same shared helper apt.cr's own
+      # update-cache path uses, so the two can't drift again.
+      if package_manager == "apt"
+        cache_valid_time = @params["cache_valid_time"]?.try(&.to_i) || 0
+        unless apt_cache_stale?(cache_valid_time, ->remote_exec(String))
+          return PluginResult.new(changed: false, failed: false, msg: "Cache up to date")
+        end
+      end
+
       pre_update_mtime = package_manager == "apt" ? apt_cache_mtime(->remote_exec(String)) : 0
       result = package_manager == "apt" ? apt_get_update_with_retry(command, AptLockRetry::DEFAULT_UPDATE_CACHE_RETRIES, AptLockRetry::DEFAULT_UPDATE_CACHE_RETRY_MAX_DELAY, ->remote_exec(String)) : remote_exec(command)
       return PluginResult.new(changed: false, failed: true, msg: "Failed to update package cache: #{result[:stderr]}") unless result[:exit_code] == 0
