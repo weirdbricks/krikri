@@ -742,26 +742,28 @@ module Krikri
       # branch on every host.
       facts["ansible_fips"] = capture("cat", ["/proc/sys/crypto/fips_enabled"]).strip == "1"
 
-      # ansible_selinux.status - real Ansible's SelinuxFactCollector (module_
-      # utils/facts/system/selinux.py) reports 'Missing selinux Python
-      # library' when the target has no selinux Python bindings at all
-      # (stock Debian/Ubuntu), or 'disabled'/'enabled' (+ mode/config_mode/
-      # type/policyvers when enabled) otherwise. Entirely missing before -
-      # `ansible_selinux.status is defined` (robertdebock.selinux's own gate
-      # on its "Manage selinux"/"Manage selinux booleans" tasks, and a common
-      # real-role idiom generally) always evaluated false regardless of the
-      # host's real SELinux state, silently skipping SELinux management even
-      # on a real RHEL-family SELinux host - found live on a Rocky 9.6
-      # target. Uses `getenforce`/reads /etc/selinux/config directly (this
-      # plugin already shells out via #capture rather than binding libselinux
-      # itself, matching the rest of this file's own approach) instead of a
-      # Python-library check, since presence of the `getenforce` binary
-      # itself is the same practical signal on any real target.
+      # ansible_selinux.status - real Ansible's SelinuxFactCollector
+      # (module_utils/facts/system/selinux.py) decides this by loading
+      # libselinux.so.1 via ctypes and calling is_selinux_enabled():
+      # library absent -> 'Missing selinux Python library'; library
+      # present but not active in the kernel -> 'disabled'; present and
+      # active -> 'enabled' (+ mode/config_mode/type/policyvers). The gate
+      # here used to be the `getenforce` BINARY instead - that ships in
+      # policycoreutils, which stock Ubuntu does NOT install, while
+      # Ubuntu's libselinux1 (the shared library real Ansible actually
+      # loads) IS a base dependency even on hosts that never use SELinux -
+      # so on any stock Ubuntu target krikri reported 'Missing selinux
+      # Python library' where real Ansible correctly reports 'disabled',
+      # breaking linux-system-roles.selinux's own `when:
+      # ansible_facts['selinux']['status'] == "disabled"` warn task
+      # (main.yml ~105, round 952352). Kernel-side enablement is probed
+      # via the selinuxfs mount (what is_selinux_enabled() itself
+      # effectively checks); getenforce for the runtime mode and the
+      # /etc/selinux/config parsing stay as before, still shelled out via
+      # #capture matching the rest of this file's own approach.
       selinux_facts = {} of String => String
-      getenforce_bin = capture("which", ["getenforce"])
-      if getenforce_bin.empty?
-        selinux_facts["status"] = "Missing selinux Python library"
-      else
+      lib_present = selinux_lib_present?
+      if lib_present && Dir.exists?("/sys/fs/selinux")
         runtime_mode = capture("getenforce").downcase
         if runtime_mode == "disabled"
           selinux_facts["status"] = "disabled"
@@ -785,9 +787,13 @@ module Krikri
           selinux_facts["config_mode"] = config_mode
           selinux_facts["type"] = config_type
         end
+      elsif lib_present
+        selinux_facts["status"] = "disabled"
+      else
+        selinux_facts["status"] = "Missing selinux Python library"
       end
       facts["ansible_selinux"] = selinux_facts
-      facts["ansible_selinux_python_present"] = getenforce_bin.empty? ? "False" : "True"
+      facts["ansible_selinux_python_present"] = lib_present ? "True" : "False"
 
       utsname = uninitialized LibC::Utsname
       uname_ok = LibC.uname(pointerof(utsname)) == 0
@@ -817,6 +823,21 @@ module Krikri
       long_bits = "64" if long_bits.empty? && arch =~ /64/
       long_bits = "32" if long_bits.empty? && !arch.empty?
       facts["ansible_userspace_bits"] = long_bits unless long_bits.empty?
+    end
+
+    # Whether libselinux.so.1 - the shared library real Ansible's
+    # SelinuxFactCollector loads via ctypes - is present on this host.
+    # ldconfig's cache is the same lookup the dynamic loader performs for
+    # CDLL; the multiarch globs cover minimal targets where the ldconfig
+    # binary itself is missing (capture returns "" for a missing command).
+    private def selinux_lib_present? : Bool
+      return true if capture("ldconfig", ["-p"]).includes?("libselinux.so.1")
+      Dir.glob([
+        "/usr/lib/*/libselinux.so.1",
+        "/lib/*/libselinux.so.1",
+        "/usr/lib64/libselinux.so.1",
+        "/lib64/libselinux.so.1",
+      ]).any?
     end
 
     # Detect whether we're running inside a container/VM, following the same
@@ -1054,6 +1075,22 @@ module Krikri
         addresses = all_ipv4.split("\n").map(&.strip).reject(&.empty?)
         facts["ansible_all_ipv4_addresses"] = addresses
       end
+
+      # ansible_all_ipv6_addresses - real Ansible's LinuxNetwork collector
+      # ALWAYS emits this fact (an empty list on a host with no IPv6
+      # addresses, never simply absent) and appends every inet6 address it
+      # parses EXCEPT ::1 (network/linux.py's own `if not address == '::1'`
+      # - the loopback interface's one address must not make a no-IPv6 host
+      # look like it has one). Entirely missing before - found benchmarking
+      # linux-system-roles.kdump (round 952548): its set_vars.yml gates a
+      # redundant setup include on `__kdump_required_facts |
+      # difference(ansible_facts.keys()|list) | length > 0` with
+      # all_ipv6_addresses among the required facts, so the key's permanent
+      # absence made that difference non-empty on every run and re-ran a
+      # setup task real Ansible skips.
+      addresses6 = `ip -6 addr show 2>/dev/null | grep 'inet6 ' | awk '{print $2}' | cut -d/ -f1`.split("\n").map(&.strip).reject(&.empty?)
+      addresses6.reject! { |address| address == "::1" }
+      facts["ansible_all_ipv6_addresses"] = addresses6
 
       # ansible_interfaces - a flat list of every network interface NAME
       # (not addresses) real Ansible's own LinuxNetwork fact module
