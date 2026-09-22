@@ -38,9 +38,10 @@ module Krikri
         if skip_result = check_existing_dest(dest, checksum)
           return skip_result
         end
-        # Checksum given but doesn't match: fall through and re-download,
-        # regardless of force - the checksum is its own freshness check,
-        # matching real Ansible's get_url behavior.
+        # Checksum given but doesn't match (or no checksum at all - see
+        # check_existing_dest): fall through and re-download, regardless
+        # of force - the checksum is its own freshness check, matching
+        # real Ansible's get_url behavior.
       end
 
       if true?(@params["_ansible_check_mode"]?)
@@ -88,39 +89,48 @@ module Krikri
     end
 
     # Returns a PluginResult if the download can be skipped (dest already
-    # present and, when a checksum was given, matching), nil to signal
-    # "proceed with download".
+    # present and a given checksum matches), nil to signal "proceed with
+    # download".
     #
-    # File-common attribute reconciliation on this path mirrors real
-    # Ansible's get_url exactly (live-read against ansible-core 2.19.4's
-    # module source): set_fs_attributes_if_different runs even when the
-    # download is skipped, and a stale attribute flips the result to
-    # changed: true with msg "file already exists but file attributes
-    # changed".
+    # With NO checksum given there is never a requestless skip: real
+    # ansible-core's get_url always performs the HTTP request when dest
+    # exists (a conditional GET keyed on dest's mtime, or a HEAD in check
+    # mode), then decides changed by comparing the freshly fetched
+    # content's SHA1 against the existing dest file's SHA1 - even with no
+    # checksum: param at all. Found as round952314's buluma.fish
+    # divergence: its "Add fish repository key" get_url task (no
+    # checksum:, no force:, fetching the live keyserver.ubuntu.com
+    # lookup) always short-circuited to ok on a warm rerun purely because
+    # the dest file existed, without making any request, where real
+    # Ansible re-requested and - since a dynamic endpoint's response can
+    # differ run to run - sometimes reported changed: true. Falling
+    # through to download_to_dest's fetch + SHA1 compare reproduces the
+    # same changed flag; the only divergence left is bandwidth (real
+    # Ansible's conditional GET can get an HTTP 304 short body, krikri
+    # always downloads the full content and compares), never the task
+    # result.
+    #
+    # File-common attribute reconciliation on the checksum-match skip
+    # path mirrors real Ansible's get_url exactly (live-read against
+    # ansible-core 2.19.4's module source): set_fs_attributes_if_different
+    # runs even when the download is skipped, and a stale attribute flips
+    # the result to changed: true with msg "file already exists but file
+    # attributes changed".
     private def check_existing_dest(dest : String, checksum : {String, String}?) : PluginResult?
-      check_mode = true?(@params["_ansible_check_mode"]?)
+      return nil unless checksum
 
-      if checksum
-        algorithm, expected = checksum
-        actual = native_checksum(dest, algorithm)
-        return nil unless actual == expected
-      end
+      algorithm, expected = checksum
+      return nil unless native_checksum(dest, algorithm) == expected
 
       attrs_changed = false
-      unless check_mode
+      unless true?(@params["_ansible_check_mode"]?)
         attrs_changed, failure = apply_extended_attributes(dest)
         return failure if failure
       end
 
-      if checksum
-        result = PluginResult.new(changed: attrs_changed || false, failed: false, msg: attrs_changed ? "file already exists but file attributes changed" : "file already exists", dest: dest, checksum_src: nil, checksum_dest: nil)
-        add_path_info(result, dest)
-        result
-      else
-        result = PluginResult.new(changed: attrs_changed || false, failed: false, msg: attrs_changed ? "file already exists but file attributes changed" : "file already exists (use force=yes to overwrite)", dest: dest)
-        add_path_info(result, dest)
-        result
-      end
+      result = PluginResult.new(changed: attrs_changed || false, failed: false, msg: attrs_changed ? "file already exists but file attributes changed" : "file already exists", dest: dest, checksum_src: nil, checksum_dest: nil)
+      add_path_info(result, dest)
+      result
     end
 
     private def download_to_dest(url : String, dest : String, checksum : {String, String}?) : PluginResult
@@ -154,7 +164,10 @@ module Krikri
       # force: true get_url task (a common idiom for "always fetch the
       # latest, but converge if identical" URLs like signing keys)
       # reported changed forever, with no way to ever settle.
-      unchanged = File.exists?(dest) && native_checksum(dest, "sha256") == native_checksum(tmp_path, "sha256")
+      # SHA1 is real get_url's own digest for exactly this comparison
+      # (checksum_src = module.sha1(tmpsrc) vs checksum_dest =
+      # module.sha1(dest)), regardless of force: or any checksum: param.
+      unchanged = File.exists?(dest) && native_checksum(dest, "sha1") == native_checksum(tmp_path, "sha1")
 
       if unchanged
         File.delete(tmp_path)
