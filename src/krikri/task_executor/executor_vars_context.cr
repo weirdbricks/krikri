@@ -346,9 +346,21 @@ module Krikri
     # is returned as-is. An EXPLICITLY-set legacy spelling (inventory/
     # play vars/task vars) survives the rebuild - it's a real variable,
     # visible in loop sources exactly as real Ansible treats it.
+    #
+    # The rebuild must stay loop-lenient (round962000, the confirm-phase
+    # re-run of stackhpc.luks after the original loop_lenient_vars fix):
+    # this context exists to resolve the loop SOURCE itself, so it is
+    # built even earlier than the caller's pre-loop render - `item` is
+    # doubly unbound here. Without the flag, a looped task's vars:
+    # expression hitting a raising filter re-raised as an UNHANDLED
+    # FilterFailureError (render_task_vars' UnknownFilterError branch
+    # re-raises when not lenient) and crashed the whole process instead
+    # of degrading to var-absent. Only this rebuild needs the flag here -
+    # the early-return path hands back a context the caller already built
+    # leniently.
     private def loop_source_vars_context(task : Task, host : Host, vars_context : Hash(String, JSON::Any)) : Hash(String, JSON::Any)
       return vars_context unless {"ansible_ssh_user", "ansible_ssh_host", "ansible_ssh_port"}.any? { |key| vars_context.has_key?(key) }
-      build_vars_context(task, host, include_legacy_ssh_aliases: false)
+      build_vars_context(task, host, include_legacy_ssh_aliases: false, loop_lenient_vars: task_has_loop?(task))
     end
 
     # First of the 2 #build_vars_context base caches - see the
