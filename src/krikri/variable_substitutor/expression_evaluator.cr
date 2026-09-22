@@ -1828,7 +1828,22 @@ module Krikri
         # maintained copy.
         raw = resolved.raw
         if raw.is_a?(Array) || raw.is_a?(Hash)
-          return CrinjaRenderer.rerender_nested_templates(resolved, VarSubstitutor.new(vars: @vars))
+          # defer_unresolved: real Jinja2/Ansible templates a container's
+          # values lazily, on access - a filter chain over a list of dicts
+          # (`mylist | selectattr('state', ...)`) that only ever reads ONE
+          # field must not fail on a SIBLING field whose own template
+          # references an intentionally-undefined caller variable
+          # (stackhpc.libvirt-vm's default libvirt_vms list, round 952484:
+          # `name: "{{ libvirt_vm_name }}"` next to a `when:` that only
+          # filters on `state`). The eager whole-structure render below is
+          # kept (it feeds every full-structure consumer: sort/join/combine/
+          # to_json...), but a leaf that bottoms out at an undefined name is
+          # left raw so the chain behaves like real Jinja's lazy containers;
+          # access points that DO read the leaf render it strictly
+          # (FilterEngine's map/selectattr attribute extraction and the
+          # to_json-family serializers), so nothing that today hard-fails
+          # silently succeeds with different values.
+          return CrinjaRenderer.rerender_nested_templates(resolved, VarSubstitutor.new(vars: @vars), defer_unresolved: true)
         end
 
         return nil unless raw.is_a?(String)
