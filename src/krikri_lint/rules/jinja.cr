@@ -7,7 +7,8 @@ module Krikri
     #  - jinja[invalid]: Jinja templates that fail to parse (via Crinja)
     #  - jinja[spacing]: missing inner padding, `{{ x }}` not `{{x}}`
     # Upstream additionally reformats expressions with black; that full
-    # reformat is a known gap (see krikri-lint.md).
+    # reformat is a deliberate non-goal (black-based, not a parity gap
+    # this ruleset attempts to close).
     class JinjaRule < Rule
       def id : String
         "jinja"

@@ -1,5 +1,5 @@
 # krikri-lint - static analysis for Ansible playbooks and roles
-# Main CLI entry point. See krikri-lint.md for the plan.
+# Main CLI entry point.
 
 require "option_parser"
 require "colorize"

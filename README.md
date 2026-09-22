@@ -312,8 +312,9 @@ Covers the core `ansible-lint` rule set (syntax, command/shell idioms,
 risky permissions, naming, FQCN, the yamllint-derived `yaml[*]` subset,
 `args[module]` argument-spec validation, `var-naming`, profiles,
 `# noqa`, `.ansible-lint` config) plus `--fix` autofix for the safely
-mechanical rules. See [krikri-lint.md](krikri-lint.md) for full rule
-coverage, deliberate divergences, and parity status.
+mechanical rules. Run `./bin/krikri-lint --list-rules` for full rule
+coverage; see [KNOWN_MISSING.md](KNOWN_MISSING.md) for deliberate
+divergences and `.github/workflows/lint-parity.yml` for parity status.
 
 ---
 
