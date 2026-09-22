@@ -213,8 +213,12 @@ module Krikri
 
     source = parts[0].strip
     # Same carve-out as raise_if_strict_undefined: `omit` is a magic
-    # bareword, not a variable anyone ever sets.
+    # bareword, not a variable anyone ever set.
     return nil if source == "omit"
+    # Same for the Jinja2 boolean/null literals - `true | bool` is a
+    # no-op passthrough of the literal in real Ansible, never a variable
+    # lookup (round 952063, see JINJA_LITERAL_BAREWORDS).
+    return nil if JINJA_LITERAL_BAREWORDS.includes?(source)
     return nil unless source.matches?(REGEX_BARE_VAR_REF)
 
     first_filter = parts[1].strip.lchop("ansible.builtin.")
@@ -296,6 +300,24 @@ module Krikri
   # vars) are deliberately NOT listed - those ARE real lookups in every
   # vars context a strict finalization runs against, so a genuinely
   # missing one SHOULD raise, like any other undefined root.
+  #
+  # Bare Jinja2/Python boolean/null literal spellings, in both
+  # capitalizations real Jinja2 accepts (the vendored Crinja lexer's own
+  # SPECIAL_CONSTANTS maps the camelcase forms too). The strict-undefined
+  # probes below match these against REGEX_BARE_VAR_REF as if they were
+  # variable NAMES - `{{ true }}` and, one shape over, `{{ true | bool }}`
+  # both failed the task with "'true' is undefined" where real
+  # ansible-playbook renders the literal (christiangda.amazon_
+  # cloudwatch_agent's `cwa_need_credentials: "{{ true | bool if
+  # cwa_agent_mode == 'onPremise' else cwa_use_credentials }}"` behind a
+  # bare `when:`, round 952063). A filter chain or a `when:` can't be
+  # strict about a name that is a literal, never a lookup. `omit` keeps
+  # its own separate carve-outs (its "drop this parameter" semantics
+  # differ from a plain value literal).
+  JINJA_LITERAL_BAREWORDS = Set{
+    "true", "True", "false", "False", "none", "None",
+  }
+
   NON_VAR_ROOT_NAMES = Set{
     "true", "false", "none", "omit",
     "lookup", "query", "q", "url", "range", "dict", "list", "tuple",
@@ -1828,6 +1850,11 @@ module Krikri
       # dropped parameter when it is the whole value). Verified against
       # ansible-core 2.19.4: `msg: "[{{ omit }}]"` prints "[]".
       return if inner == "omit"
+      # Same carve-out class for the Jinja2 boolean/null literals: a
+      # bare `{{ none }}` is a real value (Python None), not an
+      # undefined variable name - see JINJA_LITERAL_BAREWORDS
+      # (round 952063).
+      return if JINJA_LITERAL_BAREWORDS.includes?(inner)
       resolved = VariableSubstitutor::VariableLookup.new(@vars).resolve(inner)
       unless resolved
         # Round 812045 (pluggero.bibata_cursor): a bracket index that
