@@ -123,6 +123,10 @@ describe "apt plugin deb: URL download-then-install" do
       install_line.should_not contain(url)
       temp_path = install_line.split(" ").last
       temp_path.starts_with?(File.join(Dir.tempdir, ".krikri-playbook-deb-")).should be_true
+      # Command-line apt-get/dpkg refuse non-.deb files with "Unsupported
+      # file ... given on commandline" (python-apt, which real Ansible
+      # uses, never sees the filename, so only our own path was broken).
+      temp_path.ends_with?(".deb").should be_true
       # Real Ansible's add_cleanup_file semantics: the temp is removed
       # at module exit, not before the install.
       File.exists?(temp_path).should be_false

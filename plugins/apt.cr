@@ -874,7 +874,11 @@ module Krikri
           # URL's own basename: /tmp/<basename> was fully predictable,
           # and curl -o follows a symlink planted there, clobbering an
           # arbitrary file as root.
-          tmp = File.tempfile(".krikri-playbook-deb-", nil)
+          # The suffix is not cosmetic: command-line apt-get/dpkg refuse
+          # non-.deb files with "E: Unsupported file ... given on
+          # commandline" (real Ansible's apt module uses python-apt, which
+          # never sees the filename, so this only bit us).
+          tmp = File.tempfile(".krikri-playbook-deb-", ".deb")
           path = tmp.path
           downloaded_tmp = tmp.path
           tmp.close
