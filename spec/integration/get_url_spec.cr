@@ -541,7 +541,11 @@ describe "get_url plugin" do
   it "accepts '-'-prefixed attributes: (chattr flags) and reports changed like real Ansible's set_attributes_if_different" do
     # Mirrors lineinfile_spec.cr's own attributes: spec (real Ansible
     # reports changed unconditionally for '-'-prefixed requests,
-    # ansible/ansible#33745).
+    # ansible/ansible#33745). The dest lands on the default tempdir,
+    # which rootless fuse-overlayfs containers back with a filesystem
+    # that rejects every chattr flag op (real Ansible fails the task
+    # there identically) - skip the success-path pin on such a fs.
+    next unless PluginSpecHelper.chattr_clear_supported?
     dest = File.tempname("get-url-spec")
     File.write(dest, FILE_CONTENT)
 

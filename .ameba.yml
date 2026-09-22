@@ -82,6 +82,8 @@ Metrics/CyclomaticComplexity:
   - plugins/apt.cr
   - plugins/apt_key.cr
   - plugins/assemble.cr
+  - src/krikri/task_executor/executor_facts_register.cr
+  - src/krikri_lint/rules/args_module.cr
   - plugins/blockinfile.cr
   - plugins/command.cr
   - plugins/copy.cr

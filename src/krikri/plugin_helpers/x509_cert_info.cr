@@ -218,12 +218,17 @@ module Krikri
 
     # `openssl req -verify` exits 0 and prints "verify OK" exactly when
     # the request's self-signature is valid - the CLI equivalent of
-    # cryptography's is_signature_valid.
+    # cryptography's is_signature_valid. WHICH stream carries the
+    # message is openssl-version-dependent (3.0.x prints it on stderr,
+    # 3.5.x on stdout), so both are checked - a stdout-only check
+    # reported every valid request as signature_valid=false on the
+    # openssl 3.0 hosts (this is what broke CI's x509 spec on the
+    # Ubuntu 24.04 CI container while dev machines with 3.5 passed).
     private def self.signature_valid?(pem_file : String) : Bool
       stdout_io = IO::Memory.new
       err = IO::Memory.new
       status = Process.run("openssl", ["req", "-in", pem_file, "-noout", "-verify"], output: stdout_io, error: err)
-      status.success? && stdout_io.to_s.includes?("verify OK")
+      status.success? && (stdout_io.to_s.includes?("verify OK") || err.to_s.includes?("verify OK"))
     end
 
     def self.run_openssl(args : Array(String)) : String?

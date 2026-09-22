@@ -56,21 +56,21 @@ module Krikri
           end
 
           unless unknown.empty?
-            aliases = spec.aliases.values.flatten.uniq.reject { |a| spec.params.includes?(a) }
+            aliases = spec.aliases.values.flatten.uniq!.reject { |alias_name| spec.params.includes?(alias_name) }
             tail = aliases.empty? ? "." : " (#{aliases.join(", ")})."
             violations << msg(file, task, "Unsupported parameters for (basic.py) module: #{unknown.join(", ")}. Supported parameters include: #{spec.params.join(", ")}#{tail}")
             next
           end
 
           spec.required_together.each do |group|
-            next if group.all? { |r| canonical.has_key?(r) } ||
-                    group.none? { |r| canonical.has_key?(r) }
+            next if group.all? { |required_name| canonical.has_key?(required_name) } ||
+                    group.none? { |required_name| canonical.has_key?(required_name) }
             violations << msg(file, task, "parameters are required together: #{group.join(", ")}")
           end
 
-          missing = spec.required.reject { |r| canonical.has_key?(r) }
+          missing = spec.required.reject { |required_name| canonical.has_key?(required_name) }
           spec.required_one_of.each do |group|
-            next if group.any? { |r| canonical.has_key?(r) }
+            next if group.any? { |required_name| canonical.has_key?(required_name) }
             missing << "one-of:#{group.join(", ")}"
           end
           missing.each do |entry|
@@ -84,8 +84,8 @@ module Krikri
                      spec.defaults[cond.param]?
                    end
             next unless text == cond.value
-            still_missing = cond.needed.reject { |r| canonical.has_key?(r) }
-            next if still_missing.empty? || (cond.any && cond.needed.any? { |r| canonical.has_key?(r) })
+            still_missing = cond.needed.reject { |needed_name| canonical.has_key?(needed_name) }
+            next if still_missing.empty? || (cond.any && cond.needed.any? { |needed_name| canonical.has_key?(needed_name) })
             violations << msg(file, task, "#{cond.param} is #{cond.value} but #{cond.any ? "any" : "all"} of the following are missing: #{still_missing.join(", ")}")
           end
 
@@ -112,7 +112,7 @@ module Krikri
           spec.list_choices.each do |param, values|
             value = canonical[param]?
             next unless value
-            items = value.as?(YAML::Nodes::Sequence) ? value.as(YAML::Nodes::Sequence).nodes.compact_map { |n| NodeUtil.scalar_value(n) } : [NodeUtil.scalar_value(value)].compact
+            items = value.as?(YAML::Nodes::Sequence) ? value.as(YAML::Nodes::Sequence).nodes.compact_map { |entry_node| NodeUtil.scalar_value(entry_node) } : [NodeUtil.scalar_value(value)].compact
             items = items.reject { |i| i.includes?("{{") }
             bad = items.reject { |i| values.includes?(i) }
             next if bad.empty?
@@ -149,7 +149,7 @@ module Krikri
         bool_words = %w[true false yes no on off]
         return false unless bool_words.includes?(word)
         boolset = (word == "true" || word == "yes" || word == "on") ? %w[y yes on 1 true t] : %w[n no off 0 false f]
-        overlap = values.select { |c| boolset.includes?(c) }
+        overlap = values.select { |choice| boolset.includes?(choice) }
         overlap.size == 1
       end
     end

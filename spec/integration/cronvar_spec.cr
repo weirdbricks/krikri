@@ -39,9 +39,11 @@ describe "cronvar plugin" do
 
     resolved = "/etc/cron.d/krikri-playbook-spec-relative"
     if File.writable?("/etc/cron.d")
-      # failed is a JSON::Any - normalize via as_bool (a JSON::Any(false)
-      # is not == false for the be_falsey matcher)
-      result["failed"]?.try(&.as_bool).should be_false
+      # failed is a JSON::Any - normalize via as_bool, and use be_falsey:
+      # a JSON::Any(false) is not == false for the matcher, and a SUCCESS
+      # result omits the failed key entirely (nil) - the path that runs
+      # on a root CI container where /etc/cron.d is writable.
+      result["failed"]?.try(&.as_bool).should be_falsey
       File.read(resolved).should contain("MAILTO=root")
       File.delete(resolved)
     else

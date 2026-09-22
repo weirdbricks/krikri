@@ -107,8 +107,8 @@ module Krikri
   class AptRepositoryPlugin < BasePlugin
     include AptRepositoryCacheRetry
 
-    SOURCES_LIST   = "/etc/apt/sources.list"
-    SOURCES_LIST_D = "/etc/apt/sources.list.d"
+    SOURCES_LIST       = "/etc/apt/sources.list"
+    SOURCES_LIST_D     = "/etc/apt/sources.list.d"
     KEYSERVER          = "hkps://keyserver.ubuntu.com:443"
     KEYSERVER_FALLBACK = "hkp://keyserver.ubuntu.com:80"
 

@@ -26,6 +26,7 @@ test-parallel:
     scripts/spec-parallel.sh
 
 lint:
+    crystal build lib/ameba/bin/ameba.cr -o lib/ameba/bin/ameba
     lib/ameba/bin/ameba
 
 format:

@@ -73,7 +73,10 @@ describe "stat plugin" do
     target = tmp_path("stat-link-target.txt")
     link = tmp_path("stat-link.txt")
     File.write(target, "target")
-    File.delete(link) if File.exists?(link)
+    # delete? not exists?: exists? follows the link, so a leftover DANGLING
+    # symlink (its target gone) survives the cleanup and the symlink below
+    # fails with AlreadyExistsError on any non-fresh checkout.
+    File.delete?(link)
     File.symlink(target, link)
 
     result = PluginSpecHelper.run("stat", {"path" => link})
@@ -89,7 +92,7 @@ describe "stat plugin" do
     target = tmp_path("stat-follow-target.txt")
     link = tmp_path("stat-follow-link.txt")
     File.write(target, "followed")
-    File.delete(link) if File.exists?(link)
+    File.delete?(link)
     File.symlink(target, link)
 
     result = PluginSpecHelper.run("stat", {"path" => link, "follow" => "true"})
@@ -264,7 +267,7 @@ describe "stat plugin" do
     result["stat"].as_h.has_key?("mimetype").should be_false
 
     link = tmp_path("stat-yn-link.txt")
-    File.delete(link) if File.exists?(link)
+    File.delete?(link)
     File.symlink(path, link)
     result = PluginSpecHelper.run("stat", {"path" => link, "follow" => "y"})
     result["stat"]["islnk"].as_bool.should be_false

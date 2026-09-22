@@ -94,11 +94,11 @@ describe "unresolvable connection type fails the task like real Ansible" do
     # being the SSH one, never the "was not found" one. Skipped when the
     # collection isn't installed on this controller.
     unless File.exists?(File.join(ENV["HOME"], ".ansible", "collections",
-      "ansible_collections", "containers", "podman", "plugins", "connection", "podman.py"))
+             "ansible_collections", "containers", "podman", "plugins", "connection", "podman.py"))
       puts "skipping: containers.podman not installed on this controller"
       next
     end
-    status, output = run_playbook(<<-YAML, ["-c", "containers.podman.podman"])
+    _status, output = run_playbook(<<-YAML, ["-c", "containers.podman.podman"])
       - hosts: localhost
         gather_facts: false
         tasks:

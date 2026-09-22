@@ -39,6 +39,24 @@ module PluginSpecHelper
 
     JSON.parse(output.to_s)
   end
+
+  # Whether the filesystem holding `dir` (default: the spec tempdir)
+  # accepts `chattr -i` at all. Rootless fuse-overlayfs containers (and
+  # other fuse-backed overlay filesystems) reject every chattr flag
+  # operation, even clearing a flag that isn't set - and on such a
+  # filesystem real Ansible fails the task with "chattr failed"
+  # identically, so the '-'-prefixed attributes specs (which pin the
+  # success path only real chattr-capable filesystems can take) probe
+  # this first and skip rather than assert success the target fs can
+  # never produce.
+  def self.chattr_clear_supported?(dir : String? = nil) : Bool
+    probe = dir ? File.join(dir, "chattr-probe-#{rand(10_000_000)}") : File.tempname("chattr-probe")
+    File.write(probe, "")
+    Process.run("/bin/sh", args: ["-c", "command -v chattr >/dev/null && chattr -i #{probe}"],
+      output: Process::Redirect::Close, error: Process::Redirect::Close).success?
+  ensure
+    File.delete(probe) if probe && (File.exists?(probe) || File.symlink?(probe))
+  end
 end
 
 # Shared helper for krikri-lint task-rule specs: write YAML, load it,
@@ -59,7 +77,6 @@ end
 def run_fqcn_yaml(yaml : String, config : Krikri::Lint::LintConfig = Krikri::Lint::LintConfig.new) : Array(Krikri::Lint::Violation)
   path = File.tempname("lintrunner", ".yml")
   File.write(path, yaml)
-  file = Krikri::Lint::PositionedFile.new(path, Krikri::Lint::FileType::PLAYBOOK, YAML::Nodes.parse(yaml).nodes.first?, nil)
   registry = Krikri::Lint::RuleRegistry.new([Krikri::Lint::FqcnActionCoreRule.new] of Krikri::Lint::Rule)
   Krikri::Lint::Runner.new(registry, config).run([path])
 ensure

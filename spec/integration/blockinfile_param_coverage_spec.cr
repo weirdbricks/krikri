@@ -276,6 +276,10 @@ describe "blockinfile plugin - parameter coverage (destfile/insertafter/validate
     # unconditionally for '-'-prefixed requests
     # (ansible/ansible#33745).
     it "reports changed on every run for '-'-prefixed attributes, flag set or not" do
+      # Skip on filesystems that reject chattr flag ops entirely
+      # (rootless fuse-overlayfs containers) - real Ansible fails the
+      # task there identically, so this success-path pin can't hold.
+      next unless PluginSpecHelper.chattr_clear_supported?(File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp"))
       path = param_path("blockinfile-attr-clear.txt")
       File.write(path, "x\n")
 

@@ -69,7 +69,10 @@ describe Krikri::FactsGatherer do
         facts["ansible_interfaces"]?.should be_nil
         facts["ansible_default_ipv4"]?.should be_nil
         facts["ansible_all_ipv4_addresses"]?.should be_nil
-        facts.keys.any?(&.starts_with?("ansible_lo")).should be_false
+        # NOT a starts_with?("ansible_lo") sweep: that also matches
+        # ansible_local, a real fact key real setup always emits,
+        # regardless of the ip gate this test exercises.
+        facts["ansible_lo"]?.should be_nil
       end
     end
   end

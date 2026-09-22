@@ -591,6 +591,10 @@ describe "file plugin" do
     # the attr: param entirely, so the warm rerun under-reported
     # changed=0 where real Ansible reports changed=1.
     it "reports changed on every run for '-'-prefixed attr, flag set or not (real Ansible's quirk)" do
+      # Skip on filesystems that reject chattr flag ops entirely
+      # (rootless fuse-overlayfs containers) - real Ansible fails the
+      # task there identically, so this success-path pin can't hold.
+      next unless PluginSpecHelper.chattr_clear_supported?(TMP_DIR)
       path = tmp_path("attr_clear_i.txt")
       File.write(path, "x")
 

@@ -55,8 +55,13 @@ module Krikri::Lint
   end
 
   def self.meta_violations(yaml : String) : Array(Violation)
-    path = File.tempname("metaspec", ".yml")
-    dir = File.dirname(path)
+    # A fresh unique DIRECTORY, not File.tempname's dirname: with the
+    # default tempdir that dirname is /tmp itself, and the rm_rf in the
+    # ensure would delete the whole /tmp mid-suite (every later spec that
+    # touches /tmp then fails with ENOENT - this is what broke CI across
+    # 17 unrelated commits).
+    dir = File.tempname("metaspec")
+    Dir.mkdir(dir)
     meta_dir = File.join(dir, "meta")
     Dir.mkdir(meta_dir)
     meta_path = File.join(meta_dir, "main.yml")

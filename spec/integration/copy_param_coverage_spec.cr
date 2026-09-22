@@ -84,6 +84,11 @@ describe "copy plugin - parameter coverage (checksum/attributes/SELinux/follow/l
     # different semantics: '-'-prefixed requests report changed
     # unconditionally (ansible/ansible#33745).
     it "reports changed on every run for '-'-prefixed attributes, flag set or not (real Ansible's quirk)" do
+      # File.tempname lands on the default tempdir, which rootless
+      # fuse-overlayfs containers back with a filesystem that rejects
+      # every chattr flag op (real Ansible fails the task there
+      # identically) - skip the success-path pin on such a filesystem.
+      next unless PluginSpecHelper.chattr_clear_supported?
       dest = File.tempname("copy-attr-clear-dest")
       File.write(dest, "x")
 
