@@ -193,6 +193,15 @@ module Krikri
       # hard-failed ("'ansible_check_mode' is undefined") under 0.9.517's
       # strict module-arg templating.
       vars_context["ansible_check_mode"] = JSON::Any.new(@check_mode)
+      # ansible_diff_mode - real Ansible magic var (true under --diff),
+      # the same gap class as ansible_check_mode right above (bound
+      # there but not here, so an idiom pairing the two in one
+      # conditional half-worked). Found benchmarking
+      # linux-system-roles.firewall round 970345: its "Show diffs" task
+      # guards with `when: ansible_check_mode or ansible_diff_mode or
+      # ...`, which hard-failed ("'ansible_diff_mode' is undefined")
+      # where real ansible-playbook just skips.
+      vars_context["ansible_diff_mode"] = JSON::Any.new(@diff_mode)
       vars_context["ansible_verbosity"] = JSON::Any.new(@verbosity.to_i64)
       apply_path_magic_vars(vars_context)
 
