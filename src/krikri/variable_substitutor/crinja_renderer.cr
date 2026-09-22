@@ -769,7 +769,21 @@ module Krikri
       # that doesn't match this exact shape.
       UPDATE_THEN_REREAD_RE = /\A\{\{\s*([A-Za-z_]\w*)\.update\(\s*([A-Za-z_]\w*)\s*\)\s*\}\}\{\{\s*\1\s*\}\}\z/
 
-      private def self.rerender_string_value(raw : String, value : JSON::Any, substitutor : VarSubstitutor) : JSON::Any
+      # defer_unresolved: when set, a nested leaf whose template bottoms out
+      # at a name set nowhere is left in its raw, unrendered form instead of
+      # raising - real Jinja2/Ansible templates a container's values LAZILY,
+      # on actual access, so a filter chain that never reads a leaf
+      # (`mylist | selectattr('state', ...)` never touching a sibling `name:`
+      # whose template references an intentionally-undefined caller var,
+      # round 952484 / stackhpc.libvirt-vm) must not fail the whole chain on
+      # it. The default (false) keeps the pre-existing strict behavior for
+      # every caller that renders a structure as a WHOLE (Crinja context
+      # conversion, the to_json-family guards in FilterEngine) - those
+      # access every leaf by definition, where real Ansible fails just as
+      # this strict path does. A deferred leaf that IS later accessed is
+      # rendered strictly at its access point (FilterEngine's map/selectattr
+      # attribute extraction), restoring fail-on-access semantics there.
+      private def self.rerender_string_value(raw : String, value : JSON::Any, substitutor : VarSubstitutor, defer_unresolved : Bool = false) : JSON::Any
         if merged = update_then_reread_merge(raw, substitutor)
           return merged
         end
@@ -808,7 +822,17 @@ module Krikri
         # leaves, `omit`, literals, operators (raise_if_strict_undefined's
         # own bare-ref rule), so deliberately-lenient nested values keep
         # rendering.
-        rendered = substitutor.substitute(raw, strict: true)
+        begin
+          rendered = substitutor.substitute(raw, strict: true)
+        rescue e : Krikri::UndefinedVariableError
+          # The defer_unresolved carve-out: see rerender_nested_templates.
+          # Returns the leaf in its raw, still-templated form so a chain
+          # that never touches it (real Jinja2's laziness) succeeds; any
+          # access point that actually reads the leaf renders it strictly
+          # and fails exactly like the pre-laziness behavior did.
+          return value if defer_unresolved
+          raise e
+        end
         stripped = raw.strip
         if stripped.starts_with?("{{") && stripped.ends_with?("}}")
           render_pure_mustache_value(rendered, stripped, substitutor)
@@ -994,14 +1018,14 @@ module Krikri
         end
       end
 
-      def self.rerender_nested_templates(value : JSON::Any, substitutor : VarSubstitutor) : JSON::Any
+      def self.rerender_nested_templates(value : JSON::Any, substitutor : VarSubstitutor, defer_unresolved : Bool = false) : JSON::Any
         case raw = value.raw
         when String
-          rerender_string_value(raw, value, substitutor)
+          rerender_string_value(raw, value, substitutor, defer_unresolved)
         when Array
-          JSON::Any.new(raw.map { |item| rerender_nested_templates(item, substitutor) })
+          JSON::Any.new(raw.map { |item| rerender_nested_templates(item, substitutor, defer_unresolved) })
         when Hash
-          JSON::Any.new(raw.transform_values { |item| rerender_nested_templates(item, substitutor) })
+          JSON::Any.new(raw.transform_values { |item| rerender_nested_templates(item, substitutor, defer_unresolved) })
         else
           value
         end

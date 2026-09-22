@@ -71,13 +71,15 @@ module Krikri
       # applies every name here to a nil value and fails if any of them
       # raises UnknownFilterError (i.e. the dispatch stopped knowing a
       # name the list still advertises). Deliberately EXCLUDES names the
-      # dispatch doesn't actually implement (to_nice_yaml,
-      # the select()-style test names like equalto/match/truthy that
-      # #item_matches_test? handles for select/reject arguments but that
-      # are not themselves top-level filters) - advertising one of those
-      # here would make the pre-pass silently pass a `when:` that still
-      # hard-fails the moment its clause is actually evaluated, the
-      # exact inconsistency the pre-pass exists to eliminate.
+      # dispatch doesn't actually implement (the select()-style test names
+      # like equalto/match/truthy that #item_matches_test? handles for
+      # select/reject arguments but that are not themselves top-level
+      # filters) - advertising one of those here would make the pre-pass
+      # silently pass a `when:` that still hard-fails the moment its clause
+      # is actually evaluated, the exact inconsistency the pre-pass exists
+      # to eliminate. (to_nice_yaml used to sit in that exclusion list too,
+      # but joined the dispatch itself once lazy-leaf deferral needed its
+      # fail-on-access guard - see the to_nice_yaml case below.)
       KNOWN_FILTER_NAMES = Set.new(%w[
         fileglob realpath default d upper lower capitalize title trim
         strip dirname basename length count replace split sort unique
@@ -87,7 +89,7 @@ module Krikri
         hash password_hash type_debug to_json b64encode b64decode
         from_json from_yaml json_query to_yaml checksum union path_join
         splitext urldecode urlsplit zip zip_longest product regex_escape
-        to_nice_json human_readable human_to_bytes netmask_to_cidr md5
+        to_nice_json to_nice_yaml human_readable human_to_bytes netmask_to_cidr md5
         sha1 expanduser expandvars normpath relpath commonpath log pow
         to_uuid symmetric_difference combinations permutations
         rekey_on_member extract from_yaml_all vault unvault ternary
@@ -131,6 +133,25 @@ module Krikri
       # once for every caller.
       private def rerender_if_templated(value : JSON::Any) : JSON::Any
         Rerender.if_templated(@vars, value) || value
+      end
+
+      # Fail-on-access guard for full-structure consumers of a filter-chain
+      # head value. The chain head (ExpressionEvaluator's
+      # retemplated_nested_templates with defer_unresolved) leaves a leaf
+      # whose template bottoms out at an undefined name in its raw,
+      # unrendered form - real Jinja2/Ansible's laziness, so a chain that
+      # never reads that leaf (selectattr on a sibling field,
+      # stackhpc.libvirt-vm round 952484) succeeds. A serializer like
+      # to_json reads EVERY leaf by definition, though, and real Ansible
+      # fails the task there ("'x' is undefined") - which is exactly what
+      # this engine did before laziness landed, spec'd in
+      # spec/unit/nested_container_undefined_filter_spec.cr. Re-running the
+      # strict whole-structure render here restores that failure; it is a
+      # no-op for every already-rendered container (leaves without any
+      # Jinja markers pass through untouched).
+      private def strict_render_deferred_leaves(value : JSON::Any) : JSON::Any
+        return value unless value.raw.is_a?(Array) || value.raw.is_a?(Hash)
+        CrinjaRenderer.rerender_nested_templates(value, VarSubstitutor.new(vars: @vars || Hash(String, JSON::Any).new))
       end
 
       # Splits a `|`-joined filter chain into its individual filter
@@ -495,7 +516,22 @@ module Krikri
           # empty string at every position instead of the real
           # checksum/filename pairs.
           if attr = parse_kwarg(filter_args, "attribute")
-            JSON::Any.new(as_array(value).map { |item| item.raw.is_a?(Hash) ? (item[attr]? || JSON::Any.new(nil)) : JSON::Any.new(nil) })
+            # A deferred leaf (see #strict_render_deferred_leaves) extracted
+            # by map(attribute=...) is genuinely ACCESSED here - real
+            # Ansible renders it (and fails on an undefined-bottoming
+            # template), and so did this engine before the chain head
+            # stopped eagerly raising on the whole structure. Strict
+            # re-render keeps that failure; already-rendered values pass
+            # through the marker check untouched.
+            JSON::Any.new(as_array(value).map do |item|
+              extracted = item.raw.is_a?(Hash) ? (item[attr]? || JSON::Any.new(nil)) : JSON::Any.new(nil)
+              if (vars = @vars) && (raw_s = extracted.try(&.raw.as?(String))) &&
+                 (raw_s.includes?("{{") || raw_s.includes?("{%") || raw_s.includes?("{#"))
+                JSON::Any.new(VarSubstitutor.new(vars: vars).strict_render(raw_s))
+              else
+                extracted
+              end
+            end)
           elsif inner_name = parse_filter_args(filter_args)[0]?
             inner_args = split_top_level_args(filter_args)[1..].join(", ")
             inner_expr = inner_args.empty? ? inner_name : "#{inner_name}(#{inner_args})"
@@ -959,7 +995,7 @@ module Krikri
           # side copy added for the same gap found via geerlingguy.
           # logstash's own 30-elasticsearch-output.conf.j2 (a `.j2`
           # template file, reaching Crinja not this evaluator).
-          JSON::Any.new(FilterCore.to_json(value))
+          JSON::Any.new(FilterCore.to_json(strict_render_deferred_leaves(value)))
         when "b64encode"
           # b64encode(encoding='utf-8') - real Ansible's own filter,
           # standard base64 (not urlsafe). Entirely unimplemented before
@@ -1032,7 +1068,7 @@ module Krikri
           # to_yaml (unlike to_nice_yaml) takes no such kwargs of its
           # own beyond the underlying yaml.dump()'s already-implied
           # defaults.
-          JSON::Any.new(FilterCore.to_yaml(value))
+          JSON::Any.new(FilterCore.to_yaml(strict_render_deferred_leaves(value)))
         when "checksum"
           # checksum() - real Ansible's own filter (ansible.plugins.
           # filter.core), a plain sha1 hex digest - distinct from the
@@ -1141,7 +1177,32 @@ module Krikri
           # correct, same scope limit to_nice_yaml's own indent= already
           # documents.
           sort_keys = (kw = parse_kwarg_expr(filter_args, "sort_keys")) ? truthy?(kw) : true
-          JSON::Any.new(FilterCore.to_nice_json(value, sort_keys))
+          JSON::Any.new(FilterCore.to_nice_json(strict_render_deferred_leaves(value), sort_keys))
+        when "to_nice_yaml"
+          # to_nice_yaml(indent=N, sort_keys=True) - real Ansible filter.
+          # NOT implemented natively here: the serializer itself is the
+          # Crinja-side registration (jinja_filters.cr's own
+          # `Crinja.filter(:to_nice_yaml)`), delegated to below so the one
+          # YAML emitter keeps one owner - indent= is ignored either way
+          # (Crystal's YAML::Builder has no configurable indent width,
+          # see that registration's own comment).
+          #
+          # This case had to appear here once the chain head grew lazy-leaf
+          # deferral (see #strict_render_deferred_leaves): before, a
+          # poisoned container (`my_config: {foo: {bar: "{{ undef_var }}"}}`
+          # fed through `{{ my_config | to_nice_yaml }}`) died in the head
+          # render - either Crinja's context conversion or this engine's -
+          # with "'x' is undefined", and the dispatch never being reached
+          # didn't matter. With the head deferring, the chain falls through
+          # to this dispatch, where an unknown-filter error would have
+          # replaced the real undefined-name message (caught by
+          # spec/unit/nested_container_undefined_filter_spec.cr). The
+          # strict re-render below restores fail-on-access, matching real
+          # Ansible for a serializer that reads every leaf.
+          sort_keys = (kw = parse_kwarg_expr(filter_args, "sort_keys")) ? truthy?(kw) : true
+          kwargs = Crinja::Variables.new
+          kwargs["sort_keys"] = Crinja::Value.new(sort_keys)
+          delegate_to_crinja_filter("to_nice_yaml", strict_render_deferred_leaves(value), kwargs)
         when "human_readable"
           # human_readable(isbits=False, unit=None) - real Ansible
           # filter, formats a byte count as e.g. "1.00 KB" (1024-based).
@@ -1763,7 +1824,6 @@ module Krikri
         test = parts[1]?.try { |part| resolve_default_expression(part) }.try(&.as_s?) ||
                (invert ? "truthy" : "defined")
         compare_value = parts[2]?.try { |part| resolve_default_expression(part) }
-
         filtered = as_array(value).select { |item| selectattr_matches?(item, attr, test, compare_value) != invert }
         JSON::Any.new(filtered)
       end
@@ -1810,9 +1870,27 @@ module Krikri
         # templating pass over the *whole rendered expression string* -
         # not available to a mid-filter-chain JSON::Any comparison like
         # this one, which needs the same rendering done explicitly here.
+        # With the chain head's lazy-leaf deferral (see
+        # #strict_render_deferred_leaves), an attribute can now reach this
+        # point still in its raw, unresolved-template form. Tests that need
+        # the VALUE (equalto/ne/...) must render it strictly - real Ansible
+        # renders on access and fails on an undefined-bottoming template,
+        # and so did this engine before laziness - while the defined/undef
+        # presence tests only ask whether the attribute EXISTS, and real
+        # Jinja answers that on the lazily-evaluated value: a template that
+        # bottoms out at an undefined name IS undefined there (verified
+        # against ansible-core 2.19.11: `selectattr('name', 'defined')` over
+        # an entry with `name: "{{ undefined_var }}"` yields an EMPTY
+        # result, so the gating task skips), while a resolvable template is
+        # its rendered value - defined.
         if (vars = @vars) && (raw_string = attr_value.try(&.raw.as?(String))) &&
            (raw_string.includes?("{{") || raw_string.includes?("{%") || raw_string.includes?("{#"))
-          attr_value = JSON::Any.new(VarSubstitutor.new(vars: vars).substitute(raw_string))
+          if test.in?("defined", "undefined")
+            substitutor = VarSubstitutor.new(vars: vars)
+            attr_value = nil if substitutor.unresolvable_template?(raw_string)
+          else
+            attr_value = JSON::Any.new(VarSubstitutor.new(vars: vars).strict_render(raw_string))
+          end
         end
 
         case test
