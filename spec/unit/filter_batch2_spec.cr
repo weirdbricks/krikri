@@ -22,7 +22,7 @@ require "../../src/krikri/variable_substitutor/crinja_renderer"
 # render AND krikri-playbook's own CrinjaRenderer (the path the
 # template: action plugin uses); a divergence between the two is a
 # failing test.
-private def crinja_render(tpl : String, vars = nil) : String
+private def filter_batch2_crinja_render(tpl : String, vars = nil) : String
   env = Crinja.new
   env.from_string(tpl).render(vars)
 rescue e
@@ -38,29 +38,29 @@ end
 describe "filter batch 2 (P2.8-P2.14, P2.15 verification)" do
   describe "P2.15 verification: pre-existing registrations reach pure Crinja env" do
     it "flatten with and without levels= resolves" do
-      crinja_render("{{ [1, [2, [3]]] | flatten }}").should eq("[1, 2, 3]")
-      crinja_render("{{ [1, [2, [3]]] | flatten(levels=1) }}").should eq("[1, 2, [3]]")
+      filter_batch2_crinja_render("{{ [1, [2, [3]]] | flatten }}").should eq("[1, 2, 3]")
+      filter_batch2_crinja_render("{{ [1, [2, [3]]] | flatten(levels=1) }}").should eq("[1, 2, [3]]")
     end
 
     it "urlsplit with and without a component argument resolves" do
-      crinja_render("{{ 'http://h:8080/p?a=1#f' | urlsplit('query') }}").should eq("a=1")
-      parts = crinja_render("{{ 'http://h:8080/p' | urlsplit }}")
+      filter_batch2_crinja_render("{{ 'http://h:8080/p?a=1#f' | urlsplit('query') }}").should eq("a=1")
+      parts = filter_batch2_crinja_render("{{ 'http://h:8080/p' | urlsplit }}")
       parts.should contain("scheme")
       parts.should contain("http")
     end
 
     it "log with and without a base argument resolves" do
-      crinja_render("{{ 8 | log(2) }}").should eq("3.0")
-      crinja_render("{{ 8 | log }}").should_not contain("ERR")
+      filter_batch2_crinja_render("{{ 8 | log(2) }}").should eq("3.0")
+      filter_batch2_crinja_render("{{ 8 | log }}").should_not contain("ERR")
     end
 
     it "pow resolves" do
-      crinja_render("{{ 2 | pow(10) }}").should eq("1024.0")
+      filter_batch2_crinja_render("{{ 2 | pow(10) }}").should eq("1024.0")
     end
 
     it "regex_search with group and regex_findall resolve" do
-      crinja_render("{{ 'hello world' | regex_search('w(or)ld') }}").should eq("world")
-      crinja_render("{{ 'a1b2' | regex_findall('[0-9]') }}").should eq("['1', '2']")
+      filter_batch2_crinja_render("{{ 'hello world' | regex_search('w(or)ld') }}").should eq("world")
+      filter_batch2_crinja_render("{{ 'a1b2' | regex_findall('[0-9]') }}").should eq("['1', '2']")
     end
 
     it "regex_findall with exactly ONE capture group returns a flat list of scalars, not one-element arrays" do
@@ -69,30 +69,30 @@ describe "filter batch 2 (P2.8-P2.14, P2.15 verification)" do
       # repro) - this pins the Crinja-side `Crinja.filter(:regex_findall)`
       # in jinja_filters.cr, the SEPARATE implementation a real `{{ }}`
       # filter chain actually goes through.
-      crinja_render("{{ ('Ready for use: >JDK 26<' | regex_findall('Ready for use:.*>JDK ([\\d]+)<') | first) }}").should eq("26")
+      filter_batch2_crinja_render("{{ ('Ready for use: >JDK 26<' | regex_findall('Ready for use:.*>JDK ([\\d]+)<') | first) }}").should eq("26")
     end
   end
 
   describe "strftime (P2.10)" do
     it "formats a to_datetime result" do
-      crinja_render("{{ ts | to_datetime('%Y-%m-%d %H:%M:%S') | strftime('%Y/%m/%d %H:%M') }}", {"ts" => "2024-03-05 07:08:09"}).should eq("2024/03/05 07:08")
+      filter_batch2_crinja_render("{{ ts | to_datetime('%Y-%m-%d %H:%M:%S') | strftime('%Y/%m/%d %H:%M') }}", {"ts" => "2024-03-05 07:08:09"}).should eq("2024/03/05 07:08")
     end
 
     it "formats a raw epoch integer and epoch string" do
-      crinja_render("{{ 1700000000 | strftime('%Y-%m-%d') }}").should eq("2023-11-14")
-      crinja_render("{{ '1700000000' | strftime('%Y-%m-%d') }}").should eq("2023-11-14")
+      filter_batch2_crinja_render("{{ 1700000000 | strftime('%Y-%m-%d') }}").should eq("2023-11-14")
+      filter_batch2_crinja_render("{{ '1700000000' | strftime('%Y-%m-%d') }}").should eq("2023-11-14")
     end
 
     it "honors the default format (Python %Y-%m-%d %H:%M:%S subset)" do
-      crinja_render("{{ '2024-01-02 03:04:05' | to_datetime | strftime }}").should eq("2024-01-02 03:04:05")
+      filter_batch2_crinja_render("{{ '2024-01-02 03:04:05' | to_datetime | strftime }}").should eq("2024-01-02 03:04:05")
     end
 
     it "uses the documented %B/%e/%H directive subset" do
-      crinja_render("{{ '2024-03-05 07:08:09' | to_datetime | strftime('%B %e, %H hours') }}").should eq("March  5, 07 hours")
+      filter_batch2_crinja_render("{{ '2024-03-05 07:08:09' | to_datetime | strftime('%B %e, %H hours') }}").should eq("March  5, 07 hours")
     end
 
     it "rejects non-datetime targets" do
-      crinja_render("{{ 'not-a-date' | strftime('%Y') }}").should contain("ERR")
+      filter_batch2_crinja_render("{{ 'not-a-date' | strftime('%Y') }}").should contain("ERR")
     end
   end
 
@@ -103,7 +103,7 @@ describe "filter batch 2 (P2.8-P2.14, P2.15 verification)" do
     ]))}
 
     it "produces [element, subelement] pairs for loop usage (pure Crinja)" do
-      crinja_render("{{ users | subelements('keys') }}", users).should eq(
+      filter_batch2_crinja_render("{{ users | subelements('keys') }}", users).should eq(
         "[[{'name': 'root', 'keys': ['k1', 'k2']}, 'k1'], [{'name': 'root', 'keys': ['k1', 'k2']}, 'k2'], [{'name': 'bob', 'keys': ['k3']}, 'k3']]"
       )
     end
@@ -112,7 +112,7 @@ describe "filter batch 2 (P2.8-P2.14, P2.15 verification)" do
       nested = {"roles" => JSON.parse(%([
         {"name": "web", "users": [{"who": "alice", "shells": ["bash", "zsh"]}, {"who": "bob", "shells": ["sh"]}]}
       ]))}
-      result = crinja_render("{{ roles | subelements(['users', 'shells']) }}", nested)
+      result = filter_batch2_crinja_render("{{ roles | subelements(['users', 'shells']) }}", nested)
       result.should contain("'bash'")
       result.should contain("'zsh'")
       result.should contain("'alice'")
@@ -123,42 +123,42 @@ describe "filter batch 2 (P2.8-P2.14, P2.15 verification)" do
         {"name": "root", "keys": ["k1"]},
         {"name": "keyless"}
       ]))}
-      crinja_render("{{ users | subelements('keys', skip_missing=true) }}", partial).should eq(
+      filter_batch2_crinja_render("{{ users | subelements('keys', skip_missing=true) }}", partial).should eq(
         "[[{'name': 'root', 'keys': ['k1']}, 'k1']]"
       )
     end
 
     it "raises for a missing key without skip_missing" do
       partial = {"users" => JSON.parse(%([{"name": "keyless"}]))}
-      crinja_render("{{ users | subelements('keys') }}", partial).should contain("ERR")
+      filter_batch2_crinja_render("{{ users | subelements('keys') }}", partial).should contain("ERR")
     end
   end
 
   describe "trivial aliases (P2.13)" do
     it "count behaves as length" do
-      crinja_render("{{ 'abc' | count }}").should eq("3")
-      crinja_render("{{ [1, 2, 3, 4] | count }}").should eq("4")
+      filter_batch2_crinja_render("{{ 'abc' | count }}").should eq("3")
+      filter_batch2_crinja_render("{{ [1, 2, 3, 4] | count }}").should eq("4")
     end
 
     it "d behaves as default (real Jinja2 semantics, not dict)" do
-      crinja_render("{{ missing | d(5) }}").should eq("5")
-      crinja_render("{{ x | d(5) }}", {"x" => nil}).should eq("5")
-      crinja_render("{{ x | d(5) }}", {"x" => 7}).should eq("7")
+      filter_batch2_crinja_render("{{ missing | d(5) }}").should eq("5")
+      filter_batch2_crinja_render("{{ x | d(5) }}", {"x" => nil}).should eq("5")
+      filter_batch2_crinja_render("{{ x | d(5) }}", {"x" => 7}).should eq("7")
     end
 
     it "e behaves as escape" do
-      crinja_render("{{ '<b>' | e }}").should eq("&lt;b&gt;")
+      filter_batch2_crinja_render("{{ '<b>' | e }}").should eq("&lt;b&gt;")
     end
 
     it "items behaves dict2items-style" do
-      result = crinja_render("{{ {'a': 1} | items }}")
+      result = filter_batch2_crinja_render("{{ {'a': 1} | items }}")
       result.should contain("'key': 'a'")
       result.should contain("'value': 1")
     end
 
     it "root returns the filesystem-root prefix of a path" do
-      crinja_render("{{ '/etc/hosts' | root }}").should eq("/")
-      crinja_render("{{ 'x/y' | root }}").should eq("")
+      filter_batch2_crinja_render("{{ '/etc/hosts' | root }}").should eq("/")
+      filter_batch2_crinja_render("{{ 'x/y' | root }}").should eq("")
     end
   end
 
@@ -167,7 +167,7 @@ describe "filter batch 2 (P2.8-P2.14, P2.15 verification)" do
     it "strftime agrees between engines" do
       v = Hash(String, JSON::Any).new
       v["ts"] = JSON::Any.new("2024-03-05 07:08:09")
-      crinja_render("{{ ts | to_datetime('%Y-%m-%d %H:%M:%S') | strftime('%Y/%m/%d %H:%M') }}", v)
+      filter_batch2_crinja_render("{{ ts | to_datetime('%Y-%m-%d %H:%M:%S') | strftime('%Y/%m/%d %H:%M') }}", v)
         .should eq(renderer_render("{{ ts | to_datetime('%Y-%m-%d %H:%M:%S') | strftime('%Y/%m/%d %H:%M') }}", v))
     end
 
@@ -177,7 +177,7 @@ describe "filter batch 2 (P2.8-P2.14, P2.15 verification)" do
         {"name": "root", "keys": ["k1", "k2"]},
         {"name": "bob", "keys": ["k3"]}
       ]))
-      crinja_render("{{ users | subelements('keys') | length }}", v)
+      filter_batch2_crinja_render("{{ users | subelements('keys') | length }}", v)
         .should eq(renderer_render("{{ users | subelements('keys') | length }}", v))
     end
 
@@ -185,8 +185,8 @@ describe "filter batch 2 (P2.8-P2.14, P2.15 verification)" do
       v = Hash(String, JSON::Any).new
       v["l"] = JSON.parse(%([1, 2, 3]))
       v["p"] = JSON::Any.new("/etc/hosts")
-      crinja_render("{{ l | count }}", v).should eq(renderer_render("{{ l | count }}", v))
-      crinja_render("{{ p | root }}", v).should eq(renderer_render("{{ p | root }}", v))
+      filter_batch2_crinja_render("{{ l | count }}", v).should eq(renderer_render("{{ l | count }}", v))
+      filter_batch2_crinja_render("{{ p | root }}", v).should eq(renderer_render("{{ p | root }}", v))
     end
   end
 
