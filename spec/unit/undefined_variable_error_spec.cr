@@ -167,4 +167,60 @@ describe Krikri::VarSubstitutor do
       sub.substitute("{{ lst[-1] }}", strict: true).should eq("b")
     end
   end
+
+  # Round 952063 (christiangda.amazon_cloudwatch_agent): the strict
+  # undefined probes matched Jinja2's bare boolean/null literal spellings
+  # against REGEX_BARE_VAR_REF as if they were variable NAMES, so both a
+  # bare `{{ true }}` and a filter-chain `{{ true | bool }}` failed the
+  # task with "'true' is undefined" where real ansible-playbook
+  # (live-verified, 2.19.11) renders the literal. The role-level symptom
+  # was `cwa_need_credentials: "{{ true | bool if cwa_agent_mode ==
+  # 'onPremise' else cwa_use_credentials }}"` behind a bare `when:` - the
+  # strict re-render of that ternary split it at the `|` and probed its
+  # unselected branch's source as a variable lookup.
+  describe "strict undefined probes vs Jinja literal barewords (round 952063)" do
+    sub = Krikri::VarSubstitutor.new(vars: Hash(String, JSON::Any).new, host_name: "h1")
+
+    it "renders a bare boolean literal in both spellings instead of raising" do
+      sub.substitute("{{ true }}", strict: true).should eq("True")
+      sub.substitute("{{ True }}", strict: true).should eq("True")
+      sub.substitute("{{ false }}", strict: true).should eq("False")
+      sub.substitute("{{ False }}", strict: true).should eq("False")
+    end
+
+    it "renders a bare null literal in both spellings instead of raising" do
+      sub.substitute("{{ none }}", strict: true).should eq("")
+      sub.substitute("{{ None }}", strict: true).should eq("")
+    end
+
+    it "renders a literal as a filter-chain target instead of raising" do
+      sub.substitute("{{ true | bool }}", strict: true).should eq("True")
+      sub.substitute("{{ false | bool }}", strict: true).should eq("False")
+      sub.substitute("{{ none | bool }}", strict: true).should eq("False")
+      sub.substitute("{{ True | bool }}", strict: true).should eq("True")
+    end
+
+    it "keeps a ternary with a literal-filter branch strict-renderable behind a bare when: var" do
+      vars = {
+        "cwa_agent_mode"       => JSON::Any.new("ec2"),
+        "cwa_use_credentials"  => JSON::Any.new(false),
+        "cwa_need_credentials" => JSON::Any.new(
+          "{{ true | bool if cwa_agent_mode == 'onPremise' else cwa_use_credentials }}"),
+      }
+      sub = Krikri::VarSubstitutor.new(vars: vars, host_name: "h1")
+      sub.substitute("{{ cwa_need_credentials }}", strict: true).should eq("False")
+    end
+
+    it "still raises for a genuinely undefined bare variable" do
+      expect_raises(Krikri::UndefinedVariableError, /'nope_literal' is undefined/) do
+        sub.substitute("{{ nope_literal }}", strict: true)
+      end
+    end
+
+    it "still raises for an undefined source piped into a non-tolerant filter" do
+      expect_raises(Krikri::UndefinedVariableError, /'nope_literal' is undefined/) do
+        sub.substitute("{{ nope_literal | bool }}", strict: true)
+      end
+    end
+  end
 end
