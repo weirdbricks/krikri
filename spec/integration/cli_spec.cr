@@ -75,6 +75,20 @@ rescue
   false
 end
 
+# testing/test-docker-quick.yml treats localhost/krikri-playbook-compat:latest
+# as an ambient precondition (the compat harness's compat/Dockerfile builds it
+# on dev boxes) - a pull of that ref fails on any daemon where it isn't
+# already present, since there is no localhost registry. So a reachable
+# daemon alone isn't enough to run the fixture; the image must be there.
+private def docker_smoke_image_ready? : Bool
+  return false unless docker_daemon_ready?
+  status = Process.run("docker", ["image", "inspect", "localhost/krikri-playbook-compat:latest"],
+    output: Process::Redirect::Close, error: Process::Redirect::Close)
+  status.success?
+rescue
+  false
+end
+
 describe "krikri-playbook CLI (--check mode)" do
   fixtures = Dir.glob(File.join(FIXTURES_DIR, "*.yml")).map { |path| File.basename(path) }
   fixtures.sort!
@@ -1272,7 +1286,12 @@ describe "krikri-playbook CLI (--check mode)" do
   # so it pendings instead of failing (matches the "requires a real ..."
   # in the titles).
   it "manages a Docker image/network/container end to end with correct idempotency (requires a real Docker/Podman daemon)" do
+    # Two preconditions: a reachable daemon (docker_daemon_ready?) AND the
+    # fixture's ambient local image (docker_smoke_image_ready?) - see its
+    # comment. Pend rather than fail when either is absent, same convention
+    # as the mysql specs' server probe below.
     pending! "no Docker/Podman daemon reachable" unless docker_daemon_ready?
+    pending! "Docker/Podman daemon reachable but localhost/krikri-playbook-compat:latest is absent (compat/Dockerfile builds it; CI provides a stand-in)" unless docker_smoke_image_ready?
     status, output = run_playbook(
       "test-docker-quick.yml",
       [] of String,
