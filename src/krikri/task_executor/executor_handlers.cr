@@ -339,6 +339,7 @@ module Krikri
       index_var = handler.index_var
       any_changed = false
       any_failed = false
+      executed_count = 0
 
       # An empty loop: source (e.g. cloudalchemy.cortex's "reload cortex
       # services" handler looping over `cortex_services | dict2items`
@@ -372,9 +373,33 @@ module Krikri
         result = execute_handler_plugin_once(handler, host, vars_context)
         next if result["skipped"]?.try(&.as_bool)
 
+        executed_count += 1
         any_changed ||= result["changed"]?.try(&.as_bool) || false
         any_failed ||= Krikri.result_failed_flag(result)
         ResultDisplay.display_result(host, result, @diff_mode, item_label: item_display(item), ignore_errors: resolve_task_ignore_errors(handler, base_vars_context), no_log: resolve_task_no_log(handler, base_vars_context))
+      end
+
+      # A looped handler whose every item was skipped (per-item when:,
+      # or a plugin-voluntary skip) aggregates to a SKIPPED result, not
+      # an ok one - without this, the aggregate below carried no
+      # "skipped" flag, so #record_handler_result's already_displayed
+      # branch booked ok=1 and the recap over-counted ok by one.
+      # Verified live against ansible-playbook (2.19.11): it prints a
+      # bare trailing "skipping: [host]" line after the per-item skips
+      # and books skipped=1 - found via robertdebock.dovecot
+      # round970454 ("Copy sample configuration", when:-gated on
+      # Archlinux, so all 27 items skip on Ubuntu): krikri finished
+      # ok=9/skipped=1 where real Ansible finished ok=8/skipped=2. Same
+      # rule as the regular-task loop path in execute_looped_task's own
+      # executed_count == 0 branch.
+      if executed_count == 0
+        connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
+        puts "skipping: [#{connection_host}]".colorize(:cyan)
+        return JSON.parse({
+          "changed" => false,
+          "failed"  => false,
+          "skipped" => true,
+        }.to_json)
       end
 
       JSON.parse({
