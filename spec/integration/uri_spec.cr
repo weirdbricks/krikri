@@ -130,6 +130,27 @@ describe "uri plugin" do
     result["msg"].as_s.should eq("Status code was 404 and not [200]: HTTP Error 404: Not Found")
   end
 
+  it "carries an empty content on a connection failure, matching real Ansible" do
+    # Live-verified against ansible-core 2.19: a uri request that dies
+    # before any HTTP response (connection refused) still fails with
+    # {"status": -1, "content": "", "msg": "Status code was -1 and not
+    # [200]: Request failed: ..."} - fetch_url's body ('' when there was
+    # no response) is merged into resp before fail_json. Previously this
+    # result had no content key, so a role's failed_when reading the
+    # registered result's .content (geerlingguy.node_exporter's
+    # "'Metrics' not in metrics_output.content", round 970310) blew up
+    # with "object of type 'dict' has no attribute 'content'" instead of
+    # reporting the request failure the way real Ansible does.
+    closed_server = TCPServer.new("127.0.0.1", 0)
+    closed_port = closed_server.local_address.port
+    closed_server.close
+    result = PluginSpecHelper.run("uri", {"url" => "http://127.0.0.1:#{closed_port}/", "return_content" => "true"})
+    result["failed"].as_bool.should be_true
+    result["status"].as_i.should eq(-1)
+    result["content"].as_s.should eq("")
+    result["msg"].as_s.should match(%r{\AStatus code was -1 and not \[200\]: Request failed: })
+  end
+
   it "accepts a custom status_code list" do
     result = PluginSpecHelper.run("uri", {"url" => "#{uri_base}/notfound", "status_code" => "404,410"})
     result["failed"]?.try(&.as_bool).should be_falsey

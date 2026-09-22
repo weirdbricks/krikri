@@ -115,7 +115,19 @@ module Krikri
         # `when: r.status == 200` into a hard "object has no attribute
         # 'status'" evaluation error instead of a normal skip
         # (levonet.ci_registry_rm_container divergence).
-        return PluginResult.new(changed: false, failed: true, msg: "Request failed: #{ex.message}", url: url, status: -1, elapsed: 0, redirected: false)
+        # The same failed result also carries content: "" - real uri.py
+        # merges fetch_url's body ('' when there was no response) into
+        # resp before fail_json, live-verified against ansible-core 2.19:
+        # a connection-refused result is {"status": -1, "content": "",
+        # "msg": "Status code was -1 and not [200]: Request failed: ..."}.
+        # Omitting it turned a role's failed_when reading the registered
+        # result's .content (geerlingguy.node_exporter's
+        # "'Metrics' not in metrics_output.content", round 970310) into
+        # "object of type 'dict' has no attribute 'content'" - masking the
+        # real request failure, where real Ansible reports the request
+        # error through the same "Status code was %s and not %s: %s"
+        # formatting the non-exception path above uses.
+        return PluginResult.new(changed: false, failed: true, msg: "Status code was -1 and not #{status_codes}: Request failed: #{ex.message}", url: url, status: -1, elapsed: 0, redirected: false, content: "")
       end
       elapsed = (Time.monotonic - start).total_seconds.to_i
 
