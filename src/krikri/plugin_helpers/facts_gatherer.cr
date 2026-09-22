@@ -837,7 +837,7 @@ module Krikri
         "/lib/*/libselinux.so.1",
         "/usr/lib64/libselinux.so.1",
         "/lib64/libselinux.so.1",
-      ]).any?
+      ]).present?
     end
 
     # Detect whether we're running inside a container/VM, following the same

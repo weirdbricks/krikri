@@ -40,19 +40,19 @@ end
 
 private def playbook_for(condition : String) : String
   <<-YAML
-  - hosts: localhost
-    connection: local
-    gather_facts: false
-    vars:
-      mylist:
-        - state: present
-          name: "{{ undefined_var }}"
-    tasks:
-      - name: gated
-        ansible.builtin.debug:
-          msg: "TASK-RAN"
-        when: #{condition}
-  YAML
+    - hosts: localhost
+      connection: local
+      gather_facts: false
+      vars:
+        mylist:
+          - state: present
+            name: "{{ undefined_var }}"
+      tasks:
+        - name: gated
+          ansible.builtin.debug:
+            msg: "TASK-RAN"
+          when: #{condition}
+    YAML
 end
 
 describe "a when: filter chain over a list of dicts with an untouched undefined-template sibling field" do
@@ -108,18 +108,18 @@ describe "a when: filter chain over a list of dicts with an untouched undefined-
 
   it "still fails a to_json task arg over a nested undefined leaf (the pre-laziness strictness)" do
     yaml = <<-YAML
-    - hosts: localhost
-      connection: local
-      gather_facts: false
-      vars:
-        myconfig:
-          foo:
-            bar: "{{ some_undefined_var }}"
-      tasks:
-        - name: serializer
-          ansible.builtin.debug:
-            msg: "{{ myconfig | to_json }}"
-    YAML
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          myconfig:
+            foo:
+              bar: "{{ some_undefined_var }}"
+        tasks:
+          - name: serializer
+            ansible.builtin.debug:
+              msg: "{{ myconfig | to_json }}"
+      YAML
 
     status, output = run_playbook(yaml)
 

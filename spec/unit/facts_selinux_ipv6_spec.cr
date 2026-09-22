@@ -86,7 +86,7 @@ describe Krikri::FactsGatherer do
 
       all_ipv6 = facts["ansible_all_ipv6_addresses"]?
       all_ipv6.should_not be_nil
-      addresses = all_ipv6.not_nil!.as_a.map(&.as_s)
+      addresses = all_ipv6.as(JSON::Any).as_a.map(&.as_s)
 
       # Real Ansible's own exclusion (network/linux.py's
       # `if not address == '::1'`): lo's one address must not make a
@@ -94,8 +94,8 @@ describe Krikri::FactsGatherer do
       addresses.should_not contain("::1")
 
       listed = `ip -6 addr show 2>/dev/null | grep 'inet6 ' | awk '{print $2}' | cut -d/ -f1`.split
-      expect = listed.reject("::1").uniq.sort
-      addresses.uniq.sort.should eq(expect)
+      expect = listed.reject("::1").uniq!.sort!
+      addresses.uniq.sort!.should eq(expect)
     end
   end
 end
