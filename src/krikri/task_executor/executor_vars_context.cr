@@ -2,7 +2,7 @@ require "./executor"
 
 module Krikri
   class TaskExecutor
-    private def build_vars_context(task : Task, host : Host, include_legacy_ssh_aliases : Bool = true) : Hash(String, JSON::Any)
+    private def build_vars_context(task : Task, host : Host, include_legacy_ssh_aliases : Bool = true, loop_lenient_vars : Bool = false) : Hash(String, JSON::Any)
       # See the @base_context_a_cache/@base_context_b_cache ivar comments
       # above for why this is 2 caches, not 1, and exactly what real
       # precedence order each preserves. role_defaults < baseA
@@ -215,7 +215,24 @@ module Krikri
         PluginManager.local_connection?(host, vars_context) ? "local" : "ssh"
       )
 
-      render_task_vars(task, vars_context, host.name)
+      # loop_lenient_vars: a LOOPED task's vars: must not hard-fail on the
+      # pre-loop render. Real Ansible only ever evaluates a looped task's
+      # vars: per actual loop iteration (item bound) - a zero-iteration
+      # loop (stackhpc.luks round 960004: `with_items: "{{ luks_devices }}"`
+      # over the role's empty `luks_devices: []` default, vars: calling the
+      # role-local `item | luks_key` filter) never evaluates them AT ALL,
+      # and a non-empty loop re-renders them per item in both loop paths
+      # (executor_loops.cr restores the raw task.vars and re-renders with
+      # `item` bound). The eager render here runs with `item` unbound, so
+      # a filter that raises on None turned a should-be-skipped (or should-
+      # be-fine) looped task into a bogus failure before the loop's real
+      # iteration count was ever consulted. Lenient mode degrades the
+      # filter failure to the same raise-to-absent delete a non-filter
+      # error already gets: the var stays out of the pre-loop context
+      # (loop-source resolution sees undefined, the honest verdict), and
+      # the per-iteration re-render - or the zero-iteration skip - gives
+      # the authoritative one.
+      render_task_vars(task, vars_context, host.name, loop_lenient: loop_lenient_vars)
 
       # connection: local (or any other connection: override) on this
       # ONE task - independent of delegate_to:, which changes which
@@ -661,7 +678,7 @@ module Krikri
     # empty (and thus skipped) loop into one bogus iteration whose `item`
     # was the whole unparsed template string, sent straight into `copy:
     # src: "{{ item }}"` and failing there instead.
-    private def render_task_vars(task : Task, vars_context : Hash(String, JSON::Any), host_name : String) : Nil
+    private def render_task_vars(task : Task, vars_context : Hash(String, JSON::Any), host_name : String, loop_lenient : Bool = false) : Nil
       task.vars.each_key do |key|
         raw = vars_context[key]?
         next unless raw
@@ -678,16 +695,22 @@ module Krikri
         begin
           vars_context[key] = render_task_var_value(raw, vars_context, host_name)
         rescue e : VariableSubstitutor::FilterEngine::UnknownFilterError
-          # An unknown filter name is NOT a legitimate raise-to-absent
-          # case: real Ansible hard-fails the task that uses the var with
-          # "No filter named 'X'." (a real Jinja2 TemplateAssertionError -
-          # Jinja validates filter names against its registered filter set
-          # before ever calling). Silently dropping the var here fed the
-          # downstream `default(...)` chain the literal text "undefined"
-          # instead (nephelaiio.pip / nephelaiio.gitlab's own
-          # `nephelaiio.plugins.sorted_get` set_fact: - `apt install
-          # undefined`), a different, silently-wrong later failure.
-          raise e
+          unless loop_lenient
+            # An unknown filter name is NOT a legitimate raise-to-absent
+            # case: real Ansible hard-fails the task that uses the var with
+            # "No filter named 'X'." (a real Jinja2 TemplateAssertionError -
+            # Jinja validates filter names against its registered filter set
+            # before ever calling). Silently dropping the var here fed the
+            # downstream `default(...)` chain the literal text "undefined"
+            # instead (nephelaiio.pip / nephelaiio.gitlab's own
+            # `nephelaiio.plugins.sorted_get` set_fact: - `apt install
+            # undefined`), a different, silently-wrong later failure.
+            raise e
+          end
+          # Lenient (looped-task pre-loop) mode: see build_vars_context's
+          # loop_lenient_vars comment - the per-iteration re-render (with
+          # `item` bound) or the zero-iteration skip owns the real verdict.
+          vars_context.delete(key)
         rescue
           # Same raise-to-absent convention as before: a vars: expression
           # that legitimately raises is dropped rather than crashing the

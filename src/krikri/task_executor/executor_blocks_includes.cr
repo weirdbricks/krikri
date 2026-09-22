@@ -1137,7 +1137,18 @@ module Krikri
     # early once the host halts (a task failed without ignore_errors).
     private def execute_include_tasks(task : Task, host : Host) : Nil
       begin
-        base_vars_context = build_vars_context(task, host)
+        # loop_lenient_vars: a looped include_tasks:'s own vars: render
+        # with `item` unbound here, but real Ansible only ever evaluates
+        # them per actual iteration - a zero-iteration loop (stackhpc.luks
+        # round 960004: `with_items: "{{ luks_devices }}"` over the role's
+        # empty `luks_devices: []` default, vars: calling the role-local
+        # `item | luks_key` filter) never evaluates them at all and the
+        # whole include is a plain skip. The included tasks see the raw
+        # include vars: re-rendered with THIS iteration's item bound
+        # (threaded into each included task's own vars below), so the
+        # pre-loop render failing here is never the authoritative verdict.
+        # See build_vars_context's loop_lenient_vars comment.
+        base_vars_context = build_vars_context(task, host, loop_lenient_vars: task_has_loop?(task))
       rescue ex : VariableSubstitutor::FilterEngine::UnknownFilterError
         # Same degrade-to-one-clean-failed-task shape as the multi-host
         # execute_include_tasks_multi path's own build_vars_context
@@ -1445,7 +1456,13 @@ module Krikri
     # the play recap's ok= total.
     private def execute_include_role(task : Task, host : Host) : Nil
       begin
-        base_vars_context = build_vars_context(task, host)
+        # loop_lenient_vars: same zero-iteration-loop reasoning as
+        # execute_include_tasks's own build above (stackhpc.luks round
+        # 960004) - a looped include_role:'s vars: render here with `item`
+        # unbound, and real Ansible never evaluates them at all when the
+        # loop has zero iterations. See build_vars_context's
+        # loop_lenient_vars comment.
+        base_vars_context = build_vars_context(task, host, loop_lenient_vars: task_has_loop?(task))
       rescue ex : VariableSubstitutor::FilterEngine::UnknownFilterError
         # Same degrade-to-one-clean-failed-task shape as the include_
         # tasks paths' own build_vars_context rescues: the include_role:

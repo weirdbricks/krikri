@@ -906,7 +906,19 @@ module Krikri
                            next if key == "item" || key == loop_var || key == index_var
                            vars_context[key] = raw_value
                          end
-                         render_task_vars(task, vars_context, host.name)
+                         # A filter failure with `item` now BOUND is the real
+                         # verdict (the pre-loop render was made lenient for
+                         # looped tasks - see build_vars_context's
+                         # loop_lenient_vars comment), including a genuinely
+                         # unknown filter: channel it as WhenEvaluationError
+                         # so the execute_looped_task call site's existing
+                         # degrade-to-one-clean-failed-task rescue reports it
+                         # instead of crashing the process out of the map.
+                         begin
+                           render_task_vars(task, vars_context, host.name)
+                         rescue ex : VariableSubstitutor::FilterEngine::UnknownFilterError
+                           raise WhenEvaluationError.new(ex.message)
+                         end
 
                          # delegate_to: templated against the loop variable
                          # itself (geerlingguy.kubernetes' own "Set the
@@ -1039,7 +1051,13 @@ module Krikri
           next if key == "item" || key == loop_var || key == index_var
           vars_context[key] = raw_value
         end
-        render_task_vars(task, vars_context, host.name)
+        # Same item-bound-filter-failure channeling as the one-at-a-time
+        # path above - see that site's comment.
+        begin
+          render_task_vars(task, vars_context, host.name)
+        rescue ex : VariableSubstitutor::FilterEngine::UnknownFilterError
+          raise WhenEvaluationError.new(ex.message)
+        end
         item_contexts[idx] = vars_context
 
         # Per item, not per call: each iteration builds its own context
@@ -1150,7 +1168,18 @@ module Krikri
                          next if key == "item" || key == task.loop_var || key == task.index_var
                          label_context[key] = raw_value
                        end
-                       render_task_vars(task, label_context, host.name)
+                       # A filter failure here (item bound, filter still
+                       # raised) is swallowed: a loop_control.label is
+                       # display-only, and raising out of finish_looped_
+                       # task after the items already executed would lose
+                       # their results - the label falls back to the raw
+                       # text instead. The vars: themselves already got
+                       # their real per-item verdict during execution.
+                       begin
+                         render_task_vars(task, label_context, host.name)
+                       rescue VariableSubstitutor::FilterEngine::UnknownFilterError | WhenEvaluationError
+                         nil
+                       end
                        item_label_for(task, item, label_context, host)
                      else
                        item_display(item)

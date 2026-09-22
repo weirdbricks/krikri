@@ -468,7 +468,13 @@ module Krikri
       vars_context = @batch_cache[host.name]?.try(&.[task]?).try(&.[1])
       unless vars_context
         begin
-          vars_context = build_vars_context(task, host)
+          # loop_lenient_vars: a looped task's vars: render with `item`
+          # unbound here, but real Ansible only ever evaluates a looped
+          # task's vars: per actual iteration - a zero-iteration loop
+          # (stackhpc.luks round 960004) never evaluates them at all, and
+          # a non-empty loop re-renders them per item inside the loop
+          # paths. See build_vars_context's loop_lenient_vars comment.
+          vars_context = build_vars_context(task, host, loop_lenient_vars: task_has_loop?(task))
         rescue ex : VariableSubstitutor::FilterEngine::UnknownFilterError
           # build_vars_context renders the task's own `vars:` block
           # (render_task_vars) - and while a vars: expression that
