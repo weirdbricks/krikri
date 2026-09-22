@@ -194,8 +194,18 @@ module Krikri
           if sources.empty? || !Krikri::PythonFilterRunner.defines_filter?(name, sources)
             raise Crinja::RuntimeError.new("No filter named '#{name}'.")
           end
+          # The rendering environment's own context vars ride along so a
+          # @pass_context-decorated filter gets a Context stub that can
+          # resolve them (see PythonFilterRunner's header). Undefined
+          # entries are skipped - they carry no look-up-able value.
+          context_vars = Hash(String, JSON::Any).new
+          render_env.context.keys.each do |key|
+            context_value = render_env.context[key]
+            next if context_value.undefined?
+            context_vars[key] = crinja_value_to_json_any(context_value)
+          end
           json_any_to_crinja_value(
-            Krikri::PythonFilterRunner.call_filter(name, sources, value, pos_args, kwargs)
+            Krikri::PythonFilterRunner.call_filter(name, sources, value, pos_args, kwargs, context_vars)
           )
         end
         env.filters[name.downcase] = instance

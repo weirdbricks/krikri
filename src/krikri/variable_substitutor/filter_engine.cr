@@ -1544,7 +1544,11 @@ module Krikri
           end
         end
 
-        PythonFilterRunner.call_filter(filter_name, sources, value, pos_args, kwargs)
+        # @vars rides along so a @pass_context-decorated filter (e.g.
+        # stackhpc.luks's luks_key family, round 952562) gets a Context
+        # stub that can actually resolve play variables - see
+        # PythonFilterRunner's header.
+        PythonFilterRunner.call_filter(filter_name, sources, value, pos_args, kwargs, vars)
       rescue ex : PythonFilterRunner::FilterError
         # The filter was FOUND and dispatched - a failure past this point
         # is the filter's own error (an exception it raised), never an
