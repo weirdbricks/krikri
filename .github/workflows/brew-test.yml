@@ -27,7 +27,7 @@ jobs:
       # live, "brew: command not found".
       - name: Install Homebrew (Linux only)
         if: runner.os == 'Linux'
-        uses: Homebrew/actions/setup-homebrew@master
+        uses: Homebrew/actions/setup-homebrew@main
 
       # Modern Homebrew rejects a bare untapped formula file outright
       # ("Homebrew requires formulae to be in a tap", confirmed live) -
