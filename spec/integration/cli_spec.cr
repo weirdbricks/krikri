@@ -901,14 +901,12 @@ describe "krikri-playbook CLI (--check mode)" do
 
       status.success?.should be_true
       # ansible-core prints the TASK banner for a meta task but no `ok:`
-      # beneath it, and excludes it from the recap total. The two
-      # implicit Gathering Facts tasks used to be counted here too
-      # (ok=4), but a successful implicit setup task contributes
-      # NOTHING to real ansible-core 2.19's recap (instrumented live
-      # against 2.19.11 - AggregateStats.increment never fires for it),
-      # so only the 2 debug tasks count.
+      # beneath it, and excludes it from the recap total - the 2
+      # implicit Gathering Facts tasks (plays 1 and 3 under smart, see
+      # the re-gather case above) each count as ok=1 like any
+      # successful task, so 2 gathers + 2 debug tasks is 4, not 2.
       output.should contain("TASK [clear the gathered facts]")
-      output.should match(/ok=2\b/)
+      output.should match(/ok=4\b/)
     end
 
     it "meta: flush_handlers runs pending handlers immediately, not just at end-of-play" do
