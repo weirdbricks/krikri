@@ -4082,7 +4082,7 @@ module Krikri
       # fallback and silently collapse to "undefined" again).
       private def evaluate_leading_paren_crinja_first(expr : String, paren : {String, String}) : String
         begin
-          value = render_via_crinja_value(preserve_inline_string_escapes(expr))
+          value = render_via_crinja_value(expr)
         rescue
           return evaluate_leading_paren(paren)
         end
@@ -4098,64 +4098,6 @@ module Krikri
         end
         return "undefined" unless value
         @lookup.format_value(value)
-      end
-
-      # Re-encodes the backslash escapes inside *expr*'s string literals
-      # so Crinja's own lexer-level escape decoding (crystal-play-0.9.52+)
-      # round-trips back to the ORIGINAL text. Real ansible-playbook does
-      # NOT decode string-literal escapes in inline YAML templating
-      # (live-verified against 2.19.11: a direct `{{ 'x\ny' | b64encode
-      # }}` task arg renders the backslash verbatim, and so does a var
-      # whose own value is such a template; only real `.j2` template
-      # FILES decode, and that path never reaches this evaluator). The
-      # hand-rolled evaluator honors that on the shapes it resolves
-      # itself, but this Crinja-first delegation used to let Crinja
-      # decode: `(cmd.stdout | regex_search('...', '\1', ...))[0]`
-      # handed the filter a control character where real Ansible's regex
-      # got the literal `\1` backreference. Every `\` inside a literal
-      # becomes `\x5C` (decoding back to a single backslash), and a
-      # quote the original escapes becomes `\x27`/`\x22` so the
-      # literal's own delimiter structure survives: `\1` -> `\x5C1` ->
-      # decoded back to the two characters `\1`. The `\x5C` sequence is
-      # self-terminating in Crinja's `\xHH` grammar ('5' and 'C' are
-      # fixed), so whatever original character follows is never eaten.
-      private def preserve_inline_string_escapes(expr : String) : String
-        return expr unless expr.includes?('\\')
-
-        chars = expr.chars
-        String.build do |io|
-          i = 0
-          quote : Char? = nil
-          while i < chars.size
-            char = chars[i]
-            if quote.nil?
-              quote = char if char == '\'' || char == '"'
-              io << char
-              i += 1
-            elsif char == '\\'
-              io << "\\x5C"
-              if i + 1 < chars.size
-                nxt = chars[i + 1]
-                case nxt
-                when '\'' then io << "\\x27"
-                when '"'  then io << "\\x22"
-                when '\\' then io << "\\x5C"
-                else           io << nxt
-                end
-                i += 2
-              else
-                i += 1
-              end
-            elsif char == quote
-              quote = nil
-              io << char
-              i += 1
-            else
-              io << char
-              i += 1
-            end
-          end
-        end
       end
 
       # Krikri.bracket_index_failure_message for this expression, with any

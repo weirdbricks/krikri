@@ -384,21 +384,25 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
     # downstream `is version(...)` gate depending on the parsed value
     # evaluated wrong as a result.
     #
-    # The replacement argument needs a DOUBLED backslash in the
-    # template source here (`'\\1'`, two literal backslashes in this
-    # Crystal string) since crinja (crystal-play-0.9.52+) now fully
-    # decodes Python-style string-literal escapes in `{{ }}`, matching
-    # real Ansible's own verified template-FILE behavior: a bare `\1`
-    # decodes to a single control character (octal escape) before the
-    # filter ever sees it - live-verified against real ansible-playbook
-    # 2.19 rendering a real `.j2` file. This is a genuine, if
-    # surprising, real-Ansible limitation of `.j2` template files
-    # specifically; inline YAML task params (this bug's actual
-    # real-world path) go through krikri's separate hand-rolled
-    # evaluator, which never decodes backslashes.
+    # The replacement argument carries a SINGLE backslash in the template
+    # source (`'\1'`, exactly what the devsec role writes): this shared
+    # environment renders inline task params, where real ansible-core
+    # 2.19 passes string-literal escapes through verbatim (its own
+    # AnsibleLexer doubles every backslash before Jinja's decode step),
+    # so the filter receives the literal characters `\1` - a working
+    # backreference. (crystal-play-0.9.52 briefly required doubling the
+    # backslash here because the lexer then decoded every inline literal
+    # with full unicode-escape semantics, turning a bare `\1` into an
+    # octal control character; crystal-play-0.9.58's
+    # verbatim_expression_strings restored the real-Ansible inline
+    # behavior and made the doubled form produce the literal text `\1`
+    # instead of the captured group.) The full-decode semantics remain
+    # correct for real `.j2` template FILES, which render through
+    # TemplateActionPlugin's own per-render environment instead of this
+    # one.
     renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new({} of String => JSON::Any)
     renderer.render(
-      %({{ "OpenSSH_8.9p1 Ubuntu-3, OpenSSL 3.0.2 15 Mar 2022" | regex_replace('.*_([0-9]*.[0-9]).*', '\\\\1') }})
+      %({{ "OpenSSH_8.9p1 Ubuntu-3, OpenSSL 3.0.2 15 Mar 2022" | regex_replace('.*_([0-9]*.[0-9]).*', '\\1') }})
     ).should eq("8.9")
   end
 
@@ -1398,5 +1402,48 @@ describe "CrinjaRenderer.rerender_nested_templates (round 170 - scalar-vs-contai
     v["ansible_os_family"] = JSON::Any.new("Suse")
     renderer3 = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
     renderer3.render("{{ __postfix_packages }}").should eq("")
+  end
+end
+
+describe "CrinjaRenderer inline string-literal escapes (round 951xxx digit-escape)" do
+  # Real ansible-playbook 2.19.11 does NOT decode string-literal escapes
+  # in inline `{{ }}` task-arg templating: its own AnsibleLexer doubles
+  # every backslash before Jinja's `unicode-escape` decode, netting exact
+  # passthrough. The vendored Crinja fork (crystal-play-0.9.58) implements
+  # that via `Config#verbatim_expression_strings` - set on this shared
+  # environment - replacing the old preserve_inline_string_escapes
+  # re-encoding workaround at ExpressionEvaluator's leading-paren call
+  # site. All expectations below match live real-ansible-playbook runs.
+  renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(Hash(String, JSON::Any).new)
+
+  it "renders a digit escape as a literal backslash, not an octal control character" do
+    # Used to render V<0x01>-<0x02>: `\1` was read as an octal escape.
+    renderer.render(%q({{ 'V\1-\2' }})).should eq(%q(V\1-\2))
+    renderer.render(%q({{ 'V\1-\2' | length }})).should eq("6")
+  end
+
+  it "keeps a regex_replace backreference argument working" do
+    # The replacement arg arrives as the literal characters `\1`, which is
+    # what makes it a backreference for real Ansible's regex engine
+    # (real ansible renders fooX-123-Xbar; the octal corruption used to
+    # produce fooX-<0x01>-Xbar and no substitution).
+    renderer.render(%q({{ 'foo123bar' | regex_replace('(\d+)', 'X-\1-X') }})).should eq("fooX-123-Xbar")
+  end
+
+  it "keeps the common escapes verbatim too (\\n \\t \\\\ \\' \\\" stay backslash text)" do
+    renderer.render(%q({{ 'a\nb' | length }})).should eq("4")
+    renderer.render(%q({{ 'a\tb' }})).should eq(%q(a\tb))
+    renderer.render(%q({{ 'a\\b' | length }})).should eq("4")
+    renderer.render(%q({{ "a\'b" }})).should eq(%q(a\'b))
+    renderer.render(%q({{ 'a\"b' }})).should eq(%q(a\"b))
+    # b64 of the literal 8 characters `3.12.1\n`, not of a real newline.
+    renderer.render(%q({{ '3.12.1\n' | b64encode }})).should eq("My4xMi4xXG4=")
+  end
+
+  it "still DECODES escapes inside {% %} statement literals (inline and .j2 files decode; only {{ }} passes through)" do
+    # Real ansible renders exactly `3-4` for this: the statement decoded,
+    # the expression did not.
+    renderer.render(%q({% set z = 'a\nb' %}{{ z | length }}-{{ 'a\nb' | length }})).should eq("3-4")
+    renderer.render(%q({% if 'a\tb' | length == 3 %}LEN3{% endif %})).should eq("LEN3")
   end
 end
