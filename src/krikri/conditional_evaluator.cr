@@ -1183,7 +1183,7 @@ module Krikri
                   JSON::Any.new(int_val)
                 elsif arg_text.size >= 2 && (arg_text.starts_with?('"') && arg_text.ends_with?('"')) ||
                       (arg_text.starts_with?('\'') && arg_text.ends_with?('\''))
-                  JSON::Any.new(arg_text[1..-2])
+                  JSON::Any.new(decode_jinja_escapes(arg_text[1..-2]))
                 end
               end
         return nil unless arg
@@ -1209,6 +1209,9 @@ module Krikri
       none_result = default_chain_vs_none(left_expr, right_expr, operator, vars)
       return none_result unless none_result.nil?
 
+      dict_result = evaluate_dict_comparison(left_expr, right_expr, operator, vars, raise_undefined)
+      return dict_result unless dict_result.nil?
+
       left = evaluate_value(left_expr, vars, raise_undefined)
       right = evaluate_value(right_expr, vars, raise_undefined)
 
@@ -1228,6 +1231,190 @@ module Krikri
       else
         false
       end
+    end
+
+    # Dict-literal comparisons in `when:`/`assert:`/`failed_when:` clauses.
+    # Real Jinja treats `{'a': 1} == {'a': 1}` as a full dict-literal
+    # expression on each side; this evaluator's value model has no dict
+    # type, so a bare dict literal fell through evaluate_value's quoted/
+    # number/bool cases into the variable lookup, which tried to find a
+    # variable literally named `{'a': 1, 'b': 2}` and raised
+    # "'{'a': 1, 'b': 2}' is undefined" - found live via the
+    # modules_data.yml benchmark's shapers assert
+    # (`({"a": 1} | combine({"b": 2})) == {"a": 1, "b": 2}`), which real
+    # ansible-core 2.19 passes.
+    #
+    # The comparison is done over canonical JSON: a side that IS a dict
+    # literal is parsed by #jinja_dict_to_json; the OTHER side (usually
+    # a parenthesized filter chain producing a dict, e.g.
+    # `x | combine({...})`) is resolved through the normal machinery -
+    # which renders dict values as compact JSON strings (verified:
+    # `{{ probe | combine({...}) }}` debug output) - and re-parsed. Both
+    # sides parse to JSON::Any, whose #== is a deep structural compare.
+    # Returns nil when either side isn't dict-shaped, leaving the
+    # comparison to the generic path.
+    private def self.evaluate_dict_comparison(left_expr : String, right_expr : String, operator : String, vars : Hash(String, JSON::Any), raise_undefined : Bool) : Bool?
+      return nil unless operator == "==" || operator == "!="
+      return nil unless dict_shaped?(left_expr) || dict_shaped?(right_expr)
+
+      left_json = dict_operand_json(left_expr, vars, raise_undefined)
+      right_json = dict_operand_json(right_expr, vars, raise_undefined)
+      return nil if left_json.nil? || right_json.nil?
+
+      begin
+        equal = JSON.parse(left_json) == JSON.parse(right_json)
+      rescue JSON::ParseException
+        return nil
+      end
+      operator == "==" ? equal : !equal
+    end
+
+    # Whether an operand expression is syntactically a dict literal
+    # (`{...}` after unwrapping any enclosing parens) - cheap shape
+    # check; #jinja_dict_to_json does the real parsing and returns nil
+    # on anything it can't handle.
+    private def self.dict_shaped?(expr : String) : Bool
+      e = expr.strip
+      loop do
+        unwrapped = unwrap_outer_parens(e)
+        break if unwrapped == e
+        e = unwrapped
+      end
+      e.size >= 2 && e.starts_with?('{') && e.ends_with?('}')
+    end
+
+    # Resolves one comparison operand to canonical JSON text when it is
+    # dict-shaped: a dict literal goes through #jinja_dict_to_json, any
+    # other expression through #evaluate_value (whose filter-chain path
+    # renders dict values as compact JSON strings). Returns nil when the
+    # operand isn't dict-shaped or its rendering doesn't parse as JSON.
+    private def self.dict_operand_json(expr : String, vars : Hash(String, JSON::Any), raise_undefined : Bool) : String?
+      e = expr.strip
+      loop do
+        unwrapped = unwrap_outer_parens(e)
+        break if unwrapped == e
+        e = unwrapped
+      end
+      if e.starts_with?('{') && e.ends_with?('}')
+        return jinja_dict_to_json(e)
+      end
+
+      value = evaluate_value(expr, vars, raise_undefined)
+      return nil unless value.is_a?(String)
+      text = value.strip
+      return nil unless text.starts_with?('{') && text.ends_with?('}')
+      text
+    end
+
+    # Parses a Jinja dict literal (`{'a': 1, 'b': [1, 2], 'c': {'d': null}}`)
+    # into canonical JSON text. Handles single- or double-quoted keys and
+    # string values (with Jinja escape decoding), bare identifiers as
+    # keys (real Python/Jinja allows `{a: 1}` when `a` is... actually
+    # real Jinja requires the key to be a valid NAME - handled as a bare
+    # string), numbers, true/false/none/null, and nested dicts/lists.
+    # Returns nil for anything unparseable (the caller then falls back to
+    # the generic comparison path rather than inventing a result).
+    private def self.jinja_dict_to_json(expr : String) : String?
+      text = expr.strip
+      return nil unless text.size >= 2 && text.starts_with?('{') && text.ends_with?('}')
+
+      items = split_top_level(text[1..-2], ',')
+      return nil if items.nil?
+
+      pairs = [] of String
+      items.each do |item|
+        pair = split_top_level(item, ':')
+        return nil if pair.nil? || pair.size != 2
+
+        key = pair[0].strip
+        key = key[1..-2] if key.size >= 2 && ((key.starts_with?('"') && key.ends_with?('"')) || (key.starts_with?('\'') && key.ends_with?('\'')))
+        return nil if key.empty?
+        return nil if key.includes?('"')
+
+        value_json = jinja_value_to_json(pair[1].strip)
+        return nil if value_json.nil?
+        pairs << %("#{key}": #{value_json})
+      end
+      "{#{pairs.join(",")}}"
+    end
+
+    # Renders one Jinja dict VALUE as JSON text: nested dicts and lists
+    # recurse, quoted strings decode escapes and re-emit JSON-safe,
+    # numbers/bools/none pass through, anything else fails (nil).
+    private def self.jinja_value_to_json(expr : String) : String?
+      e = expr.strip
+      if e.starts_with?('{')
+        return jinja_dict_to_json(e)
+      end
+      if e.starts_with?('[') && e.ends_with?(']')
+        inner_items = split_top_level(e[1..-2], ',')
+        return nil if inner_items.nil?
+        rendered = [] of String
+        inner_items.each do |item|
+          rendered_item = jinja_value_to_json(item)
+          return nil if rendered_item.nil?
+          rendered << rendered_item
+        end
+        return "[#{rendered.join(",")}]"
+      end
+      if (e.starts_with?('"') && e.ends_with?('"')) || (e.starts_with?('\'') && e.ends_with?('\''))
+        interior = decode_jinja_escapes(e[1..-2])
+        escaped = interior.gsub('\\', "\\\\").gsub('"', "\\\"")
+        return "\"#{escaped}\""
+      end
+      return e if e == "true" || e == "True"
+      return e if e == "false" || e == "False"
+      return "null" if e == "none" || e == "None" || e == "null"
+      return e if e.to_i64?
+      return e if e.to_f64?
+      nil
+    end
+
+    # Splits *text* on *separator* at top nesting level only - quote-,
+    # brace-, and bracket-aware. Returns nil for unbalanced input.
+    private def self.split_top_level(text : String, separator : Char) : Array(String)?
+      parts = [] of String
+      current = String::Builder.new
+      depth = 0
+      quote = nil
+      escaped = false
+      text.each_char do |char|
+        if quote
+          current << char
+          if escaped
+            escaped = false
+          elsif char == '\\'
+            escaped = true
+          elsif char == quote
+            quote = nil
+          end
+          next
+        end
+        case char
+        when '"', '\''
+          quote = char
+          current << char
+        when '{', '['
+          depth += 1
+          current << char
+        when '}', ']'
+          return nil if depth == 0
+          depth -= 1
+          current << char
+        when separator
+          if depth == 0
+            parts << current.to_s
+            current = String::Builder.new
+          else
+            current << char
+          end
+        else
+          current << char
+        end
+      end
+      return nil unless quote.nil? && depth == 0
+      parts << current.to_s
+      parts
     end
 
     # Evaluate 'in' operator
@@ -1352,7 +1539,7 @@ module Krikri
     private def self.resolve_test_operand(expr : String, vars : Hash(String, JSON::Any)) : JSON::Any?
       expr = expr.strip
       if (expr.starts_with?('"') && expr.ends_with?('"')) || (expr.starts_with?('\'') && expr.ends_with?('\''))
-        return JSON::Any.new(expr[1..-2])
+        return JSON::Any.new(decode_jinja_escapes(expr[1..-2]))
       end
 
       if expr.includes?("|")
@@ -1890,9 +2077,75 @@ module Krikri
 
     private def self.unquote_literal(expr : String) : String
       if (expr.starts_with?('\'') && expr.ends_with?('\'')) || (expr.starts_with?('"') && expr.ends_with?('"'))
-        expr[1..-2]
+        decode_jinja_escapes(expr[1..-2])
       else
         expr
+      end
+    end
+
+    # Decodes Jinja2/Python string-literal escape sequences inside a
+    # quoted literal's interior - real Jinja's lexer decodes \n, \t,
+    # \\, \', \", \x##, \u#### (and friends) when it tokenizes a string
+    # literal in an EXPRESSION context, so a when:/assert:/failed_when:
+    # clause like
+    #   out.stdout == 'line-one\nline-two'
+    # (the \n arriving as literal two characters - a plain YAML scalar
+    # keeps backslash-n verbatim) compares against a real newline and
+    # passes. Previously the interior was returned verbatim, so the
+    # right-hand side held literal backslash-n and every such
+    # comparison evaluated false while real ansible-core 2.19 passed
+    # (found live via the modules_systems.yml benchmark's payload
+    # byte-diff assert). Only escape sequences Jinja's own STRING
+    # lexer honors are decoded; unknown backslash sequences are kept
+    # literally (lenient, same posture as LineEditor's backref-template
+    # expander - real Python raises "bad escape" there).
+    private def self.decode_jinja_escapes(text : String) : String
+      return text unless text.includes?('\\')
+
+      String.build do |buf|
+        i = 0
+        while i < text.size
+          char = text[i]
+          if char != '\\' || i + 1 >= text.size
+            buf << char
+            i += 1
+            next
+          end
+
+          case text[i + 1]
+          when '\\'     then buf << '\\'
+          when '\''     then buf << '\''
+          when '"'      then buf << '"'
+          when 'n'      then buf << '\n'
+          when 't'      then buf << '\t'
+          when 'r'      then buf << '\r'
+          when 'a'      then buf << '\a'
+          when 'b'      then buf << '\b'
+          when 'f'      then buf << '\f'
+          when 'v'      then buf << '\v'
+          when 'x'
+            if i + 3 < text.size && text[i + 2].hex? && text[i + 3].hex?
+              buf << (text[i + 2].to_i(16) * 16 + text[i + 3].to_i(16)).chr
+              i += 4
+              next
+            end
+            buf << '\\'
+            buf << 'x'
+          when 'u'
+            hex = text[(i + 2)..].chars.first(4)
+            if hex.size == 4 && hex.all?(&.hex?)
+              buf << (hex.join.to_i(16)).chr
+              i += 6
+              next
+            end
+            buf << '\\'
+            buf << 'u'
+          else
+            buf << '\\'
+            buf << text[i + 1]
+          end
+          i += 2
+        end
       end
     end
 
@@ -2190,7 +2443,7 @@ module Krikri
       # Handle quoted strings
       if (expr.starts_with?('"') && expr.ends_with?('"')) ||
          (expr.starts_with?('\'') && expr.ends_with?('\''))
-        return expr[1..-2]
+        return decode_jinja_escapes(expr[1..-2])
       end
 
       # Handle booleans
