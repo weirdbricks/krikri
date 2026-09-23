@@ -242,7 +242,16 @@ describe Krikri::TaskBatcher do
     groups.map { |group| group.map(&.name) }.should eq([["a"], ["b"], ["c"]])
   end
 
-  it "ends the run at a changed_when: task" do
+  it "keeps a changed_when:-only task batched with its neighbors" do
+    # changed_when: only ever rewrites a member's `changed` field,
+    # controller-side, after the batch's results come back
+    # (execute_batch_group runs apply_changed_failed_when per member,
+    # exactly like the solo path). The batch script/daemon fail-fast
+    # reads only the raw `failed` field, which changed_when: never
+    # touches, so there is nothing for the group to get wrong - forcing
+    # it solo bought a whole extra SSH round trip for every
+    # `changed_when: false` on a read-only command:/shell: step, one of
+    # the most common idioms in real roles.
     a = task("a")
     b = task("b")
     b.changed_when = "false"
@@ -251,13 +260,51 @@ describe Krikri::TaskBatcher do
 
     groups = Krikri::TaskBatcher.plan(tasks)
 
-    groups.map { |group| group.map(&.name) }.should eq([["a"], ["b"], ["c"]])
+    groups.map { |group| group.map(&.name) }.should eq([["a", "b", "c"]])
+  end
+
+  it "splits a run right before a changed_when: task that references an earlier register:" do
+    # The one remaining hazard batching a changed_when: task still has:
+    # execute_batch_group evaluates each member's changed_when: AFTER
+    # the batch returns, against that member's batch-prep-time
+    # vars_context - a register: an earlier group member produces only
+    # reaches the controller's vars after the whole group has already
+    # run, so the reference has to split the run the same way a when:
+    # reference does (which then puts the registering task in its own
+    # group and the changed_when: task in a fresh one whose prep-time
+    # context already has the register).
+    a = task("a", register: "result_a")
+    b = task("b")
+    b.changed_when = "result_a.stdout != ''"
+    tasks = [a, b]
+
+    groups = Krikri::TaskBatcher.plan(tasks)
+
+    groups.map { |group| group.map(&.name) }.should eq([["a"], ["b"]])
   end
 
   it "ends the run at a failed_when: task" do
     a = task("a")
     b = task("b")
     b.failed_when = "result.rc != 0"
+    c = task("c")
+    tasks = [a, b, c]
+
+    groups = Krikri::TaskBatcher.plan(tasks)
+
+    groups.map { |group| group.map(&.name) }.should eq([["a"], ["b"], ["c"]])
+  end
+
+  it "ends the run at a failed_when: task even when it also carries changed_when:" do
+    # failed_when: is the hazard, not changed_when: - it can flip a raw
+    # `failed: true` to a pass (or the reverse) before the batch
+    # script's own fail-fast would have halted the group, letting later
+    # members execute real side effects real Ansible never applies.
+    # changed_when: riding along on the same task doesn't soften that.
+    a = task("a")
+    b = task("b")
+    b.failed_when = "false"
+    b.changed_when = "false"
     c = task("c")
     tasks = [a, b, c]
 

@@ -97,17 +97,29 @@ module Krikri
     #   first* task would still trigger the whole group's remote script -
     #   including the run_once: step it should never have run for that
     #   host.
-    # - changed_when:/failed_when:: these can retroactively override a
-    #   task's `failed:` verdict using data (the module's own result)
-    #   that's only available after evaluating a Jinja expression
-    #   controller-side. The batch script's own script-side fail-fast
-    #   (task 2/design's protocol) can only see a step's raw exit code
-    #   and its own JSON `"failed":true`/`false` - it has no way to know
-    #   changed_when:/failed_when: would flip that verdict, so a task
-    #   that should have halted the host (per failed_when:) could let
-    #   later batch steps run anyway, executing real side effects on the
-    #   target that should never have happened. Excluding these tasks
-    #   from batches entirely avoids the whole class of bug.
+    # - failed_when:: this can retroactively override a task's `failed:`
+    #   verdict using data (the module's own result) that's only
+    #   available after evaluating a Jinja expression controller-side.
+    #   The batch script's own script-side fail-fast (task 2/design's
+    #   protocol) can only see a step's raw exit code and its own JSON
+    #   `"failed":true`/`false` - it has no way to know failed_when:
+    #   would flip that verdict, so a task that should have halted the
+    #   host (per failed_when:) could let later batch steps run anyway,
+    #   executing real side effects on the target that should never have
+    #   happened. Excluding these tasks from batches entirely avoids the
+    #   whole class of bug.
+    #   changed_when: is deliberately NOT here: it only ever rewrites the
+    #   `changed` field, which the script/daemon fail-fast never reads
+    #   (it halts on raw `failed` alone), and execute_batch_group already
+    #   applies apply_changed_failed_when per member after the batch's
+    #   results come back - the same per-member rewrite the solo path
+    #   does. Forcing every changed_when:-bearing task solo cost whole
+    #   round trips for nothing (changed_when: false on read-only
+    #   command:/shell: steps is one of the most common idioms in real
+    #   roles). Its one remaining hazard - a changed_when: referencing
+    #   an earlier group member's register: - is a data dependency, owned
+    #   by references_register? below, which now scans the changed_when:
+    #   text itself.
     # - unavailable_module: a role-private `library/*.py` module (see
     #   PythonModuleRunner) dispatches through the py_module plugin with
     #   its OWN uploaded source, not a compiled plugin binary named
@@ -257,8 +269,10 @@ module Krikri
         task.until_condition || task.async_seconds)
     end
 
+    # failed_when: alone (with or without changed_when:) - see
+    # breaks_run?'s reasoning for why changed_when: alone batches fine.
     private def self.retroactive_verdict?(task : Task) : Bool
-      !!(task.changed_when || task.failed_when)
+      !!task.failed_when
     end
 
     # Conservative (over-inclusive, never under-inclusive) whole-word
@@ -269,14 +283,21 @@ module Krikri
     # early (still correct, just slightly less batching); a false
     # negative would be a real data-dependency bug, so every place a
     # task's own text could plausibly reference a variable is scanned:
-    # when_condition and every params: value (changed_when:/failed_when:
-    # don't need scanning here since tasks that have either already end
-    # the run via breaks_run? above).
+    # when_condition, every params: value, and the changed_when: text
+    # (execute_batch_group evaluates a member's changed_when: AFTER the
+    # batch returns, against that member's batch-prep-time vars_context
+    # - so a changed_when: referencing an earlier group member's
+    # register: would hit an undefined name there and strictly fail the
+    # task where real Ansible resolves it. failed_when: keeps no such
+    # scan: a failed_when:-bearing task never shares a group - see
+    # retroactive_verdict? - so its expression can only ever reference
+    # registers from before the run started).
     private def self.references_register?(task : Task, seen : Hash(String, Regex)) : Bool
       return false if seen.empty?
 
       haystacks = [] of String
       haystacks << task.when_condition.to_s if task.when_condition
+      haystacks << task.changed_when.to_s if task.changed_when
       task.params.each_value { |v| haystacks << v }
       # A templated action:/local_action: carries its whole free-form
       # string here instead of in params - a `{{ r.stdout }}` reference
