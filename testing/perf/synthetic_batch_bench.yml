@@ -272,6 +272,15 @@
         dest: /tmp/krikri-bench-report.txt
         mode: "0644"
 
+    - name: Byte-diff read bench report render
+      ansible.builtin.command: cat /tmp/krikri-bench-report.txt
+      register: bytediff_report
+      changed_when: false
+
+    - name: Byte-diff print bench report render
+      ansible.builtin.debug:
+        msg: "{{ bytediff_report.stdout }}"
+
     - name: Probe interleave A11
       ansible.builtin.command: echo interleave-A11
       changed_when: false
@@ -308,6 +317,15 @@
         src: bench-status.j2
         dest: /tmp/krikri-bench-status.txt
         mode: "0644"
+
+    - name: Byte-diff read bench status render
+      ansible.builtin.command: cat /tmp/krikri-bench-status.txt
+      register: bytediff_status
+      changed_when: false
+
+    - name: Byte-diff print bench status render
+      ansible.builtin.debug:
+        msg: "{{ bytediff_status.stdout }}"
 
     - name: Probe interleave A21
       ansible.builtin.command: echo interleave-A21
@@ -357,6 +375,15 @@
         dest: /tmp/krikri-bench-users.txt
         mode: "0644"
 
+    - name: Byte-diff read users report render
+      ansible.builtin.command: cat /tmp/krikri-bench-users.txt
+      register: bytediff_users
+      changed_when: false
+
+    - name: Byte-diff print users report render
+      ansible.builtin.debug:
+        msg: "{{ bytediff_users.stdout }}"
+
     - name: Probe with second register
       ansible.builtin.command: echo register-source-two
       register: negctl_reg_two
@@ -367,6 +394,15 @@
         src: bench-report.j2
         dest: /tmp/krikri-bench-report-again.txt
         mode: "0644"
+
+    - name: Byte-diff read bench report-again render
+      ansible.builtin.command: cat /tmp/krikri-bench-report-again.txt
+      register: bytediff_report_again
+      changed_when: false
+
+    - name: Byte-diff print bench report-again render
+      ansible.builtin.debug:
+        msg: "{{ bytediff_report_again.stdout }}"
 
     # ---------------------------------------------------------------
     # Realism section: file/copy/lineinfile/stat on a throwaway dir.
@@ -742,6 +778,15 @@
         dest: /tmp/krikri-bench-users-again.txt
         mode: "0644"
 
+    - name: Byte-diff read users report-again render
+      ansible.builtin.command: cat /tmp/krikri-bench-users-again.txt
+      register: bytediff_users_again
+      changed_when: false
+
+    - name: Byte-diff print users report-again render
+      ansible.builtin.debug:
+        msg: "{{ bytediff_users_again.stdout }}"
+
     - name: Probe interleave B11
       ansible.builtin.command: echo interleave-B11
       changed_when: false
@@ -778,6 +823,15 @@
         src: bench-status.j2
         dest: /tmp/krikri-bench-status-again.txt
         mode: "0644"
+
+    - name: Byte-diff read bench status-again render
+      ansible.builtin.command: cat /tmp/krikri-bench-status-again.txt
+      register: bytediff_status_again
+      changed_when: false
+
+    - name: Byte-diff print bench status-again render
+      ansible.builtin.debug:
+        msg: "{{ bytediff_status_again.stdout }}"
 
     - name: Probe interleave B21
       ansible.builtin.command: echo interleave-B21
