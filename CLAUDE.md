@@ -32,6 +32,10 @@ sequential tasks into one SSH round trip where safe.
 ```bash
 ./build.sh                          # builds bin/krikri-playbook + all bin/plugins/* (mtime-skip, safe to always run)
 ./build.sh --release                # only near the end of a work session - slow, not needed for correctness iteration
+                                     #   also rebuild --release before any krikri-role-tester round whose
+                                     #   *timing* matters: `--version`'s `Build:` line reports debug/release,
+                                     #   and a debug binary runs ~1.8x slower wall-clock on identical work -
+                                     #   `krikri-role-tester run` warns (not refuses) when it detects one
 crystal spec                        # full suite
 scripts/spec-parallel.sh            # same suite as parallel unit/integration/lint buckets
                                      #   (each bucket gets its own CRYSTAL_CACHE_DIR - never run

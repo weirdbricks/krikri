@@ -1,7 +1,15 @@
 require "yaml"
 
 module Krikri
-  VERSION = "0.9.1263"
+  VERSION = "0.9.1264"
+
+  # Baked in at compile time via the same `--release` flag `build.sh`
+  # passes through to `crystal build`. A timing-sensitive round run
+  # against a debug binary is ~1.8x slower wall-clock than release on
+  # identical work (measured on dev-sec os_hardening) - this lets
+  # krikri-role-tester warn when a round launches on one, instead of
+  # silently publishing inflated per-role timings.
+  BUILD_FLAVOR = {{ flag?(:release) ? "release" : "debug" }}
 
   # Baked into the binary at compile time (never read from disk at
   # runtime - a deployed binary has no shard.lock beside it), the same
@@ -129,6 +137,7 @@ module Krikri
       "#{name} #{version}",
       tagline,
       "",
+      "Build: #{BUILD_FLAVOR}",
       "Crystal: #{Crystal::VERSION}",
       "Shards:",
     ]
