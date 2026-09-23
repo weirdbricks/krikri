@@ -1091,57 +1091,8 @@ module Krikri
       end
     end
 
-    # One pass of the bounded re-templating loop below. Returns nil to
-    # signal "break" (escalation-depth limit reached), mirroring the
-    # original `break if` in the loop body.
-    private def rerender_pass(result : String, strict : Bool, output : Bool, native : Bool, evaluator, renderer) : String?
-      if result.includes?("{%") || result.includes?("{#")
-        # strict: same scan as the top-level
-        # substitute_impl branch - this re-templating
-        # loop also has a {% %} path that bypasses
-        # raise_if_strict_undefined, and the
-        # round-194 andrewrothstein.openjdk case
-        # hits it specifically: openjdk_install_
-        # subdir is itself a {% if openjdk_app %}
-        # -templated string, the first pass looks it
-        # up and returns the still-`{{ }}`-bearing
-        # raw value, the re-templating pass then
-        # routes through this {% %} branch to
-        # Crinja. Without the strict scan here,
-        # Crinja's lenient default would silently
-        # treat the undefined-in-`{% if %}` as
-        # false and render the path anyway.
-        scan_strict_block_tags_for_undefined(result) if strict
-        return nil if @@block_tag_escalation_depth >= MAX_BLOCK_TAG_ESCALATION_DEPTH
-        @@block_tag_escalation_depth += 1
-        begin
-          renderer.render(result)
-        ensure
-          @@block_tag_escalation_depth -= 1
-        end
-      else
-        expand_mustache_spans(result) do |inner|
-          stripped = inner.strip
-          evaluate_stripped_span(stripped, strict, output, native, evaluator)
-        end
-      end
-    end
-
     private def strip_span_if_needed(inner : String) : String
       inner.empty? || (!inner[0].whitespace? && !inner[-1].whitespace?) ? inner : inner.strip
-    end
-
-    # Bounded re-templating loop over the first-pass render result.
-    private def rerender_until_stable(result : String, pending_re_template : Bool, strict : Bool, output : Bool, native : Bool, evaluator, renderer) : String
-      depth = 0
-      while pending_re_template && (result.includes?("{{") || result.includes?("{%") || result.includes?("{#")) && depth < 5
-        next_result = rerender_pass(result, strict, output, native, evaluator, renderer)
-        break unless next_result
-        break if next_result == result
-        result = next_result
-        depth += 1
-      end
-      result
     end
 
     private def substitute_impl(text : String, strict : Bool = false, output : Bool = false, native : Bool = false) : String
@@ -1187,55 +1138,46 @@ module Krikri
       # through here is safe. Real Ansible evaluates `{{ var }}` and
       # `{{var}}` identically, so this is behavior-preserving by
       # construction.
-      result = expand_mustache_spans(text) do |inner|
-        stripped = strip_span_if_needed(inner)
-        evaluate_stripped_span(stripped, strict, output, native, evaluator)
-      end
-
       # Ansible re-templates a rendered result that still contains "{{" -
       # this happens whenever a variable's own value is itself a template
       # string, e.g. dev-sec os_hardening's include_tasks loop items whose
       # fields are defaults like `mode: "{{ os_mnt_dev_dir_mode }}"`:
       # `{{ mount.mode }}` renders to that literal string on the first
-      # pass, and needs a second pass to become the real "0755". Bounded
-      # (and stops as soon as a pass makes no further progress) so a value
-      # that can never fully resolve, or one that legitimately contains a
-      # literal "{{", doesn't loop forever.
+      # pass, and needs a second pass to become the real "0755".
       #
-      # A leftover "{%"/"{#" (not just "{{") needs the same re-pass, but
-      # routed through the FULL Crinja renderer, not another mustache-
-      # span-only pass - expand_mustache_spans has no concept of block
-      # tags at all. Real bug found benchmarking githubixx.ansible_role_
-      # wireguard: `wireguard_remote_directory`'s own default value is a
-      # multi-line `{%- if ... -%}...{%- elif ... -%}...{%- endif -%}`
-      # block (no `{{ }}` inside at all) - a task param like `dest: "{{
-      # wireguard_remote_directory }}/{{ wireguard_conf_filename }}"`
-      # fetched that raw block-tag text as a plain string (format_value
-      # doesn't template it) and, since the outer loop only ever checked
-      # for leftover "{{", never got a second pass to actually evaluate
-      # it - the literal, unparsed "{%- if ... %}" text became the real
-      # `dest:` path, so the config was never actually written anywhere
-      # real, and the wg-quick service failed to start ("config file
-      # does not exist") with no obvious tie back to this.
-      # Round 191 (gantsign.helm) - recursive re-templating must only
-      # apply to leftover templates that ORIGINATED IN A VARIABLE'S OWN
-      # VALUE. Real Ansible renders a task argument in a single Jinja2
-      # pass and never re-scans the rendered OUTPUT; its documented
-      # recursion happens when a *variable lookup* resolves to a string
-      # that is itself a template (the variable's value gets templated
-      # as part of resolving it). A task arg whose own expression is a
-      # QUOTED LITERAL containing brace text - helm's
-      # `--template {{ "'{{ if .Version }}{{ .Version }}{{ else }}...
-      # {{ end }}'" }}` - evaluates to Go-template text that MUST pass
-      # through verbatim; re-scanning it here parsed `{{ else }}` as a
-      # Jinja tag and failed with "'else' is undefined" while real
-      # ansible ran the command fine. So: only enter the re-pass loop
-      # below when at least one span of the ORIGINAL text resolves, via
-      # a variable lookup, to a raw value that is itself a template
-      # (the os_hardening include_tasks case this loop was built for).
-      # Literal-origin leftovers stay verbatim, exactly like Jinja2.
-      pending_re_template = re_template_from_variable?(text)
-      rerender_until_stable(result, pending_re_template, strict, output, native, evaluator, renderer)
+      # That second pass is PER-SPAN, decided here at each span's own
+      # expansion - never a second whole-text scan of the finished output.
+      # Real Ansible renders a task argument in a single Jinja2 pass and
+      # never re-scans its rendered OUTPUT; its documented recursion
+      # happens only when a *variable lookup* resolves to a string that
+      # is itself a template (the variable's value gets templated as part
+      # of resolving it). The pre-0.9.1269 loop kept that rule only as a
+      # BOOL gate on the whole text and then re-ran span expansion over
+      # the ENTIRE rendered string - so one qualifying span (a
+      # YAML-defined template var) dragged every other span's already-
+      # final output back through the scanner with no memory of where it
+      # came from: a resolved set_fact/register value whose stored text
+      # looks like a template (`{{ inner_undefined }}`, the 0.9.1267/
+      # 0.9.1268 crash) was re-scanned as another template level the
+      # moment it shared a task arg with a qualifying span, and a quoted
+      # literal's Go-template text (the original round-191 shape) breaks
+      # the same way in that mixed position. Re-expanding only the
+      # qualifying span's own render gives real Jinja2's provenance
+      # exactly: recursion re-enters #substitute_impl (bounded by the
+      # shared Rerender depth guard) so a chain `a: "{{ b }}"` / `b:
+      # "{{ c }}"` resolves to full depth; a `{%`/`{#`-bearing value
+      # (githubixx.ansible_role_wireguard's block-tag defaults) reaches
+      # the full Crinja renderer through the same top-level entry it
+      # would have taken as a plain param; and a resolved value's brace
+      # text - the carve-out inside #re_template_from_variable? - never
+      # re-enters at all. Literal-origin leftovers (round 191) stay
+      # verbatim, exactly like Jinja2.
+      result = expand_mustache_spans(text) do |inner|
+        stripped = strip_span_if_needed(inner)
+        rendered = evaluate_stripped_span(stripped, strict, output, native, evaluator)
+        re_template_from_variable?(stripped) ? substitute_impl(rendered, strict, output, native) : rendered
+      end
+      result
     end
 
     # strict: helper for the `{% %}` block-tag path - the round-194
@@ -1983,49 +1925,48 @@ module Krikri
     # at all, so an expression containing an inner `}` (from a dict
     # literal) could never find a valid close and was left completely
     # unrendered.
-    # Round 191 (gantsign.helm) - does *text* contain a mustache span
-    # that resolves, via a variable lookup, to a raw value that is
-    # itself a template (contains `{{`/`{%`/`{#`)? Only such spans make
-    # real Ansible's recursive re-templating apply to a task argument's
-    # rendered output; brace text produced by an evaluated LITERAL (a
-    # quoted string in the task itself, e.g. helm's Go-template arg)
-    # stays verbatim. Narrow on purpose: bare/dotted/bracketed refs
-    # (`{{ x }}`, `{{ a.b[0] }}`) and simple `x | filter` chains whose
-    # head is such a ref - the shapes every variable-origin recursion
-    # bug so far (os_hardening include_tasks, wireguard block-tag
-    # defaults) has taken.
-    private def re_template_from_variable?(text : String) : Bool
-      found = false
-      expand_mustache_spans(text) do |inner|
-        unless found
-          expr = inner.strip
-          expr = expr.split("|").first.strip if expr.includes?("|")
-          if expr.matches?(/\A[A-Za-z_][A-Za-z0-9_.\[\]"']*\z/)
-            # Resolved-value carve-out (0.9.1267 gap): a name published by
-            # build_vars_context as execution-resolved (register:/set_fact:)
-            # never counts as "raw value is itself a template" no matter
-            # what its stored text looks like - real ansible-core tags
-            # such values resolved and passes them through verbatim,
-            # while the content check below re-scanned the stored brace
-            # text as another template level and died on the inner
-            # never-defined name.
-            next inner if VarSubstitutor.resolved_var_name?(@host_name, expr.split(/[\.\[]/, 2)[0])
-            if v = VariableSubstitutor::VariableLookup.new(@vars).resolve(expr)
-              # Oefenweb.apt (round 195): `name: "{{ apt_dependencies }}"`
-              # where the var is a LIST of template strings (each element
-              # like `{{ cond | ternary('python-apt', 'python3-apt') }}`).
-              # Real Ansible templates the list elements when the
-              # variable itself resolves; the old String-only check
-              # never entered the re-pass, the list rendered with its
-              # inner templates still literal, and apt tried to install
-              # a package literally named "[{{ (ansible_facts['distribution'] =".
-              found = contains_template?(v.raw)
-            end
-          end
-        end
-        inner
+    # Round 191 (gantsign.helm) - does THIS mustache span (already
+    # stripped of its `{{ }}`) resolve, via a variable lookup, to a raw
+    # value that is itself a template (contains `{{`/`{%`/`{#`)? Only
+    # such spans make real Ansible's recursive re-templating apply to a
+    # task argument's rendered output; brace text produced by an
+    # evaluated LITERAL (a quoted string in the task itself, e.g. helm's
+    # Go-template arg) stays verbatim. Narrow on purpose: bare/dotted/
+    # bracketed refs (`{{ x }}`, `{{ a.b[0] }}`) and simple `x | filter`
+    # chains whose head is such a ref - the shapes every variable-origin
+    # recursion bug so far (os_hardening include_tasks, wireguard
+    # block-tag defaults) has taken.
+    # Called per span DURING the first pass (see the expansion block in
+    # #substitute_impl_guarded), not as a whole-text gate afterwards - a
+    # whole-text answer can only ever be all-or-nothing, and the
+    # all-pass re-scan it drove is exactly what re-opened the
+    # 0.9.1267 resolved-value crash for mixed strings (0.9.1268
+    # residual).
+    private def re_template_from_variable?(span : String) : Bool
+      expr = span.strip
+      expr = expr.split("|").first.strip if expr.includes?("|")
+      return false unless expr.matches?(/\A[A-Za-z_][A-Za-z0-9_.\[\]"']*\z/)
+      # Resolved-value carve-out (0.9.1267 gap): a name published by
+      # build_vars_context as execution-resolved (register:/set_fact:)
+      # never counts as "raw value is itself a template" no matter
+      # what its stored text looks like - real ansible-core tags
+      # such values resolved and passes them through verbatim,
+      # while the content check below re-scanned the stored brace
+      # text as another template level and died on the inner
+      # never-defined name.
+      return false if VarSubstitutor.resolved_var_name?(@host_name, expr.split(/[\.\[]/, 2)[0])
+      if v = VariableSubstitutor::VariableLookup.new(@vars).resolve(expr)
+        # Oefenweb.apt (round 195): `name: "{{ apt_dependencies }}"`
+        # where the var is a LIST of template strings (each element
+        # like `{{ cond | ternary('python-apt', 'python3-apt') }}`).
+        # Real Ansible templates the list elements when the
+        # variable itself resolves; the old String-only check
+        # never entered the re-pass, the list rendered with its
+        # inner templates still literal, and apt tried to install
+        # a package literally named "[{{ (ansible_facts['distribution'] =".
+        return contains_template?(v.raw)
       end
-      found
+      false
     end
 
     # Recursively scans a resolved raw value (JSON::Any::Type) for any

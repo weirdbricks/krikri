@@ -43,6 +43,33 @@ describe Krikri::VarSubstitutor do
       arg = "{{ 'pre {{literal}} post' }}-{{ v }}"
       sub.substitute(arg, strict: true, output: true).should eq "pre {{literal}} post-x"
     end
+
+    # The 0.9.1268 residual: the re-pass was ALL-OR-NOTHING on the whole
+    # rendered text - one qualifying (variable-origin, raw-value-is-
+    # template) span re-passed the ENTIRE output through span expansion
+    # again, with no memory of which spans were already resolved-and-
+    # final. A resolved set_fact value whose stored text is itself brace
+    # text shares a string with a YAML-template span -> the re-pass
+    # re-scanned the resolved value's `{{ inner_undefined }}` output as
+    # another template level and died (strict) on the never-defined
+    # inner name - exactly the 0.9.1267 crash the registry carve-out was
+    # built to prevent, reopened by the mixed string. Real Ansible
+    # renders the whole arg in ONE Jinja2 pass: the YAML-template var
+    # re-templates recursively (its own value is rendered as part of
+    # resolving it), the resolved fact passes through verbatim.
+    it "re-templates only the variable-origin span in a mixed string, leaving a resolved span's brace text verbatim" do
+      Krikri::VarSubstitutor.set_resolved_var_names("mixed-span-host", ["resolved_brace_var"])
+      sub = Krikri::VarSubstitutor.new(
+        vars: jvars({
+          "resolved_brace_var" => "{{ inner_undefined }}",
+          "yaml_template_var"  => "{{ another_var }}",
+          "another_var"        => "final",
+        }),
+        host_name: "mixed-span-host",
+      )
+      sub.substitute("{{ resolved_brace_var }} and {{ yaml_template_var }}", strict: true, output: true)
+        .should eq "{{ inner_undefined }} and final"
+    end
   end
 
   # 0.9.1267 gap (perf benchmark's Jinja edge-case section, live-verified
