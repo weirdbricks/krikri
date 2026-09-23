@@ -58,13 +58,18 @@ describe "authorized_key plugin" do
     result["changed"].as_bool.should be_false
   end
 
-  it "treats a key with a different trailing comment as the same key" do
+  it "rewrites the line when only the trailing comment differs (real Ansible compares the comment as part of the key tuple)" do
     path = tmp_path("authorized-key-comment")
     File.write(path, "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC different-comment\n")
 
     result = PluginSpecHelper.run("authorized_key", {"path" => path, "key" => RSA_KEY})
 
-    result["changed"].as_bool.should be_false
+    # Real module: parsed_new_key[:4] != existing_keys[blob][:4] - the
+    # parsed comment is in that tuple, so a comment-only difference is a
+    # real change (the old line is replaced by the new comment).
+    result["changed"].as_bool.should be_true
+    File.read(path).should contain("test@example.com")
+    File.read(path).should_not contain("different-comment")
   end
 
   it "removes the key when state=absent" do
@@ -181,7 +186,11 @@ describe "authorized_key plugin" do
       "key_options" => "no-port-forwarding", "comment" => "krikri test",
     })
 
-    result["changed"].as_bool.should be_false
+    # Real module: key_options are part of the parsed-key comparison, so
+    # adding them to an existing bare key is a real change - the line is
+    # rewritten with the options prefix (plus the comment param).
+    result["changed"].as_bool.should be_true
+    File.read(path).should contain("no-port-forwarding ssh-rsa #{RSA_KEY.split(" ")[1]} krikri test\n")
     result["user"].raw.should be_nil
     result["key"].as_s.should eq(RSA_KEY)
     result["path"].as_s.should eq(path)
@@ -199,7 +208,7 @@ describe "authorized_key plugin" do
     result["group"].as_s.should_not be_empty
     result["mode"].as_s.should match(/\A0[0-7]{3,4}\z/)
     result["state"].as_s.should eq("file")
-    result["size"].as_i64.should eq(RSA_KEY.bytesize + 1)
+    result["size"].as_i64.should eq("no-port-forwarding ssh-rsa #{RSA_KEY.split(" ")[1]} krikri test".bytesize + 1)
   end
 
   # podman-diff authorized_key_edge_cases (2026-09-15): real

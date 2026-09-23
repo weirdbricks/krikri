@@ -104,10 +104,16 @@ module Krikri
 
       # key_options: replaces whatever options the key line itself
       # carries (the real module's parsed_options overwrite), so the line
-      # is rewritten as "<key_options> <type> <blob> <comment>".
+      # is rewritten as "<key_options> <type> <blob> <comment>". Both it
+      # and the comment param replace fields of the parsed key BEFORE
+      # the idempotency comparison, so a difference in either is a real
+      # change (real module: parsed_new_key[:4] != existing_keys[blob][:4]).
       key_lines = prepared.key_lines
       if key_options = @params["key_options"]?
         key_lines = key_lines.map { |line| apply_key_options(line, key_options) }
+      end
+      if comment = @params["comment"]?
+        key_lines = key_lines.map { |line| apply_comment(line, comment) }
       end
 
       original_content = File.exists?(path) ? File.read(path) : ""
@@ -237,6 +243,16 @@ module Krikri
       return "#{key_options} #{line}" unless type_index
 
       "#{key_options} #{tokens[type_index..].join(" ")}"
+    end
+
+    # Real module's comment-param overwrite: everything after the blob is
+    # the comment, and a given comment: replaces it wholesale.
+    private def apply_comment(line : String, comment : String) : String
+      tokens = line.split
+      type_index = tokens.index { |token| VALID_SSH2_KEY_TYPES.includes?(token) }
+      return "#{line} #{comment}" unless type_index && type_index + 1 < tokens.size
+
+      "#{tokens[0..(type_index + 1)].join(" ")} #{comment}"
     end
 
     private def empty_key_result(key : String) : PluginResult?

@@ -97,6 +97,41 @@ describe LineEditor do
       changed.should be_true
     end
 
+    it "expands escape sequences in the backrefs template the way Python match.expand does" do
+      # Real bug found by testing/perf/modules_files.yml's divergence
+      # probe: `line: 'MaxAuthTriesProbe \1\nMaxAuthTriesProbeBench \1'`
+      # with backrefs must expand BOTH the \1 groups AND the \n escape -
+      # real Ansible writes two physical lines; the old expansion only
+      # handled \N group refs and left `\n` as two literal characters.
+      lines, changed = LineEditor.ensure_present(
+        ["MaxAuthTriesProbe 6"],
+        "MaxAuthTriesProbe \\1\\nMaxAuthTriesProbeBench \\1",
+        "^MaxAuthTriesProbe (\\d+)$", true, nil, nil
+      )
+      lines.should eq(["MaxAuthTriesProbe 6\nMaxAuthTriesProbeBench 6"])
+      changed.should be_true
+    end
+
+    it "expands standard control escapes (tab, carriage return) in the backrefs template" do
+      lines, _ = LineEditor.ensure_present(["key=6"], "key=\\1\\tvalue", "^key=(\\d+)$", true, nil, nil)
+      lines.should eq(["key=6\tvalue"])
+    end
+
+    it "expands \\g<name> group references in the backrefs template" do
+      lines, _ = LineEditor.ensure_present(["host=example"], "\\g<1>extra", "^(host=)", true, nil, nil)
+      lines.should eq(["host=extra"])
+    end
+
+    it "expands an unmatched capture group to the empty string (Python semantics)" do
+      lines, _ = LineEditor.ensure_present(["beta"], "<\\1><\\2>", "^(a)?(b)", true, nil, nil)
+      lines.should eq(["<><b>"])
+    end
+
+    it "leaves unknown escape sequences literal instead of dropping them" do
+      lines, _ = LineEditor.ensure_present(["path=6"], "path=\\1\\d", "^path=(\\d+)$", true, nil, nil)
+      lines.should eq(["path=6\\d"])
+    end
+
     it "inserts after a matching insertafter pattern" do
       lines, changed = LineEditor.ensure_present(["[section]", "a=1"], "b=2", nil, false, "^a=", nil)
       lines.should eq(["[section]", "a=1", "b=2"])

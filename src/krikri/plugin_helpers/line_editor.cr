@@ -110,11 +110,7 @@ module Krikri
             # every later run: "expected a top-level item to end with
             # a newline, comment, or EOF, but got '1' instead").
             match = Regex.new(pattern).match(new_lines[found_index])
-            expanded = if match
-                         line.gsub(/\\(\d)/) { match[$~[1].to_i]? || "" }
-                       else
-                         line
-                       end
+            expanded = match ? expand_backref_template(line, match) : line
             changed = expanded != new_lines[found_index]
             new_lines[found_index] = expanded
             return {new_lines, changed}
@@ -153,6 +149,119 @@ module Krikri
         insert_index = insertion_index(new_lines, insertafter, insertbefore, firstmatch)
         new_lines.insert(insert_index, line)
         {new_lines, true}
+      end
+
+      # Expands a backrefs replacement template the way Python's
+      # re.Match.expand does - the exact function real Ansible's own
+      # lineinfile hands `line:` to (its `match.expand(line)`), so the
+      # semantics have to match it, not just the numeric group refs:
+      # Python templates also interpret standard backslash escapes, so
+      # `line: 'MaxAuthTriesProbe \1\nMaxAuthTriesProbeBench \1'` (real
+      # sshd-hardening-style playbooks do this to write two lines in one
+      # task) expands to TWO physical lines - a literal backslash-n
+      # written into the file diverges from real Ansible byte-for-byte.
+      # Covered: \1-\99 positional refs (up to two digits; a group that
+      # didn't participate expands to the empty string, like Python),
+      # \g<n>/\g<name> refs, and Python's ESCAPES table
+      # (\a \b \f \n \r \t \v); any other backslash escape is kept
+      # literally (real Python raises "bad escape" there - krikri stays
+      # lenient rather than failing the task on escape spellings Python
+      # accepts nowhere but errors on).
+      def self.expand_backref_template(template : String, match : Regex::MatchData) : String
+        String.build do |io|
+          i = 0
+          while i < template.size
+            ch = template[i]
+            if ch != '\\' || i + 1 >= template.size
+              io << ch
+              i += 1
+            else
+              i = expand_template_escape(io, template, i, match)
+            end
+          end
+        end
+      end
+
+      # Python's ESCAPES table for replacement templates: \a \b \f \n
+      # \r \t \v expand to their control characters (\1-\99 and \g<...>
+      # are group references, handled separately).
+      private CONTROL_ESCAPES = {
+        'a' => '\a', 'b' => '\b', 'f' => '\f',
+        'n' => '\n', 'r' => '\r', 't' => '\t', 'v' => '\v',
+      }
+
+      # Consumes one escape (or a literal backslash) starting at index
+      # *i* of *template* into *io*; returns the next scan index.
+      private def self.expand_template_escape(io : IO, template : String, i : Int32, match : Regex::MatchData) : Int32
+        nxt = template[i + 1]
+        if control = CONTROL_ESCAPES[nxt]?
+          io << control
+          return i + 2
+        end
+
+        case nxt
+        when '\\'     then io << '\\'
+        when 'g'      then return expand_group_template_ref(io, template, i, match)
+        when '0'..'9' then return expand_numeric_template_ref(io, template, i, match)
+        else
+          # Unknown escape: kept literally (real Python raises "bad
+          # escape" there - krikri stays lenient rather than failing the
+          # task on escape spellings Python accepts nowhere but errors on).
+          io << '\\'
+          io << nxt
+        end
+        i + 2
+      end
+
+      # \g<name> / \g<number> - Python's unambiguous group syntax.
+      private def self.expand_group_template_ref(io : IO, template : String, i : Int32, match : Regex::MatchData) : Int32
+        close = template.index('>', i + 2)
+        expanded = close && close > i + 3 ? group_expansion(match, template[(i + 3)...close]) : nil
+        if expanded
+          io << expanded
+          close ? close + 1 : i + 2
+        else
+          io << '\\'
+          io << 'g'
+          i + 1
+        end
+      end
+
+      # Positional \1-\99 refs: Python parses up to two digits as the
+      # group number (it errors when that group doesn't exist; krikri
+      # falls back to the single-digit group, what such templates almost
+      # always mean when the group count is smaller).
+      private def self.expand_numeric_template_ref(io : IO, template : String, i : Int32, match : Regex::MatchData) : Int32
+        j = i + 1
+        j += 1 if j + 1 < template.size && template[j + 1].ascii_number?
+        expanded = nil
+        loop do
+          expanded = group_expansion(match, template[(i + 1)..j])
+          break if expanded || j <= i + 1
+          j -= 1
+        end
+        if expanded
+          io << expanded
+          j + 1
+        else
+          io << '\\'
+          i + 1
+        end
+      end
+
+      # Group ref by number or name: nil when the numeric group doesn't
+      # exist (Python errors; the caller keeps the escape literal), ""
+      # when the group exists but didn't participate in the match (Python
+      # expands unmatched groups to the empty string; for named groups an
+      # unknown name is also treated as empty, leniently).
+      private def self.group_expansion(match : Regex::MatchData, name : String) : String?
+        if name.matches?(/^\d+$/)
+          index = name.to_i
+          return nil if index >= match.size
+          match[index]? || ""
+        else
+          match[name]? || ""
+        end
       end
 
       # Position of the line matching `pattern`: the LAST match by default
