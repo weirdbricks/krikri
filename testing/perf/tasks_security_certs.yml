@@ -1,0 +1,722 @@
+---
+# Crypto leg of the modules-security benchmark, pulled in via
+# include_tasks: from modules_security.yml (so the include machinery is
+# exercised with a real, fact-dependent section instead of a dummy
+# file). Expects the parent play's sec_dir/sec_crypto_dir facts and a
+# pre-created directory tree; all mutations stay under
+# /tmp/krikri-sec-bench*.
+#
+# Determinism notes for the byte-diff pattern: the checked-in fixed
+# keys (parent vars) make everything derived from them byte-stable
+# across engines - public-key PEM (no timestamps), CSR DER (PKCS#10
+# carries no timestamps or salt), and the `openssl ... -text` dumps of
+# both. Freshly generated keys, certificates (not_before/not_after and
+# serial), and PKCS#12 blobs (random salt) are inherently per-run
+# random, so those are compared by recap and by the shape of the
+# info-module debug output instead - a property of the domain, not a
+# workaround.
+
+- name: Probe openssl tooling
+  ansible.builtin.command: which openssl
+  register: sec_openssl_probe
+  failed_when: false
+  changed_when: false
+
+- name: Set openssl availability fact
+  ansible.builtin.set_fact:
+    sec_openssl_available: "{{ sec_openssl_probe.rc == 0 }}"
+
+- name: Report openssl unavailable
+  ansible.builtin.debug:
+    msg: "skipping crypto section: openssl absent (no openssl package)"
+  when: not sec_openssl_available
+
+# ---------------------------------------------------------------
+# openssl_privatekey: stage the checked-in fixed keys, parse them
+# back, then generate fresh keys of each supported shape (RSA,
+# Ed25519, ECC curve, passphrase-protected). Fixed-key files are
+# byte-diffed; generated keys are stat'd for mode and parsed via
+# the _info modules.
+# ---------------------------------------------------------------
+- name: Write the fixed RSA key
+  ansible.builtin.copy:
+    content: "{{ sec_fixed_rsa_key }}"
+    dest: "{{ sec_crypto_dir }}/fixed-rsa.key"
+    mode: "0600"
+
+- name: Write the fixed Ed25519 key
+  ansible.builtin.copy:
+    content: "{{ sec_fixed_ed25519_key }}"
+    dest: "{{ sec_crypto_dir }}/fixed-ed25519.key"
+    mode: "0600"
+
+- name: Byte-diff read the fixed RSA key
+  ansible.builtin.command: cat {{ sec_crypto_dir }}/fixed-rsa.key
+  register: sec_bytediff_fixed_rsa
+  changed_when: false
+
+- name: Byte-diff print the fixed RSA key
+  ansible.builtin.debug:
+    msg: "{{ sec_bytediff_fixed_rsa.stdout }}"
+
+- name: Assert the fixed RSA key round-tripped byte-identical
+  ansible.builtin.assert:
+    that:
+      - sec_bytediff_fixed_rsa.stdout is search('MIIEogIBAAKCAQEAp8ZtWvKewymDzYgrymwk')
+
+- name: Parse the fixed RSA key
+  community.crypto.openssl_privatekey_info:
+    path: "{{ sec_crypto_dir }}/fixed-rsa.key"
+  register: sec_fixed_rsa_info
+
+- name: Print the fixed RSA key facts
+  ansible.builtin.debug:
+    msg: >-
+      type={{ sec_fixed_rsa_info.type }} size={{ sec_fixed_rsa_info.public_data.key_size }}
+      curve={{ sec_fixed_rsa_info.public_data.curve | default('n/a') }}
+
+- name: Assert the fixed RSA key parsed as RSA 2048
+  ansible.builtin.assert:
+    that:
+      - sec_fixed_rsa_info.can_load_key
+      - sec_fixed_rsa_info.can_parse_key
+      - sec_fixed_rsa_info.type == 'RSA'
+      - sec_fixed_rsa_info.public_data.key_size == 2048
+
+- name: Generate an RSA server key
+  community.crypto.openssl_privatekey:
+    path: "{{ sec_crypto_dir }}/server.key"
+    type: RSA
+    size: 2048
+    mode: "0600"
+  register: sec_server_key_gen
+
+- name: Re-run the server key generation (idempotency check)
+  community.crypto.openssl_privatekey:
+    path: "{{ sec_crypto_dir }}/server.key"
+    type: RSA
+    size: 2048
+    mode: "0600"
+
+- name: Generate an Ed25519 key
+  community.crypto.openssl_privatekey:
+    path: "{{ sec_crypto_dir }}/ed25519.key"
+    type: Ed25519
+    mode: "0600"
+
+- name: Generate an ECC key on an explicit curve
+  community.crypto.openssl_privatekey:
+    path: "{{ sec_crypto_dir }}/ecc.key"
+    type: ECC
+    curve: secp256r1
+    mode: "0600"
+
+- name: Generate a passphrase-protected key
+  community.crypto.openssl_privatekey:
+    path: "{{ sec_crypto_dir }}/protected.key"
+    type: RSA
+    size: 2048
+    passphrase: "krikri-bench-passphrase"
+    mode: "0600"
+
+- name: Parse the passphrase-protected key with the passphrase
+  community.crypto.openssl_privatekey_info:
+    path: "{{ sec_crypto_dir }}/protected.key"
+    passphrase: "krikri-bench-passphrase"
+  register: sec_protected_info
+
+- name: Assert the passphrase-protected key parsed
+  ansible.builtin.assert:
+    that:
+      - sec_protected_info.can_load_key
+      - sec_protected_info.can_parse_key
+
+- name: Parse the ECC key
+  community.crypto.openssl_privatekey_info:
+    path: "{{ sec_crypto_dir }}/ecc.key"
+  register: sec_ecc_info
+
+- name: Print the ECC key facts
+  ansible.builtin.debug:
+    msg: "type={{ sec_ecc_info.type }} curve={{ sec_ecc_info.public_data.curve | default('n/a') }}"
+
+- name: Assert the ECC key parsed with its curve
+  ansible.builtin.assert:
+    that:
+      - sec_ecc_info.type == 'ECC'
+      - sec_ecc_info.public_data.curve is search('prime256|secp256')
+
+# ---------------------------------------------------------------
+# openssl_publickey: derive public keys from the fixed keys and from
+# a fresh key, in PEM and OpenSSH formats, then parse them back.
+# ---------------------------------------------------------------
+- name: Derive a PEM public key from the fixed RSA key
+  community.crypto.openssl_publickey:
+    path: "{{ sec_crypto_dir }}/fixed-rsa.pub"
+    privatekey_path: "{{ sec_crypto_dir }}/fixed-rsa.key"
+    format: PEM
+    mode: "0644"
+
+- name: Derive an OpenSSH-format public key from the fixed RSA key
+  community.crypto.openssl_publickey:
+    path: "{{ sec_crypto_dir }}/fixed-rsa-ssh.pub"
+    privatekey_path: "{{ sec_crypto_dir }}/fixed-rsa.key"
+    format: OpenSSH
+    mode: "0644"
+
+- name: Byte-diff read the derived public key
+  ansible.builtin.command: cat {{ sec_crypto_dir }}/fixed-rsa.pub
+  register: sec_bytediff_pubkey
+  changed_when: false
+
+- name: Byte-diff print the derived public key
+  ansible.builtin.debug:
+    msg: "{{ sec_bytediff_pubkey.stdout }}"
+
+- name: Byte-diff read the OpenSSH-format public key
+  ansible.builtin.command: cat {{ sec_crypto_dir }}/fixed-rsa-ssh.pub
+  register: sec_bytediff_pubkey_ssh
+  changed_when: false
+
+- name: Byte-diff print the OpenSSH-format public key
+  ansible.builtin.debug:
+    msg: "{{ sec_bytediff_pubkey_ssh.stdout }}"
+
+- name: Assert the derived public key is a valid RSA PEM
+  ansible.builtin.assert:
+    that:
+      - sec_bytediff_pubkey.stdout is match('-----BEGIN PUBLIC KEY-----')
+      - sec_bytediff_pubkey_ssh.stdout is match('ssh-rsa ')
+
+- name: Parse the derived public key
+  community.crypto.openssl_publickey_info:
+    path: "{{ sec_crypto_dir }}/fixed-rsa.pub"
+  register: sec_pubkey_info
+
+- name: Print the derived public key facts
+  ansible.builtin.debug:
+    msg: "type={{ sec_pubkey_info.type }} fingerprints={{ sec_pubkey_info.fingerprints.keys() | list }}"
+
+- name: Assert the derived public key parsed
+  ansible.builtin.assert:
+    that:
+      - sec_pubkey_info.type == 'RSA'
+
+- name: Derive a public key from the fresh server key
+  community.crypto.openssl_publickey:
+    path: "{{ sec_crypto_dir }}/server.pub"
+    privatekey_path: "{{ sec_crypto_dir }}/server.key"
+    mode: "0644"
+
+# ---------------------------------------------------------------
+# openssl_csr: two CSRs from the fixed keys (deterministic DER), one
+# from the fresh server key. Subject fields, SANs, key usages,
+# basic constraints, name constraints. The -text dump of the
+# fixed-key CSR is the byte-diff anchor for the whole family.
+# ---------------------------------------------------------------
+- name: Create the server CSR from the fixed RSA key
+  community.crypto.openssl_csr:
+    path: "{{ sec_crypto_dir }}/server.csr"
+    privatekey_path: "{{ sec_crypto_dir }}/fixed-rsa.key"
+    country_name: "NL"
+    state_or_province_name: "Noord-Holland"
+    locality_name: "Amsterdam"
+    organization_name: "Krikri Bench"
+    organizational_unit_name: "security"
+    common_name: "bench.krikri.invalid"
+    email_address: "bench@krikri.invalid"
+    subject_alt_name:
+      - "DNS:bench.krikri.invalid"
+      - "DNS:alt.krikri.invalid"
+      - "IP:192.0.2.10"
+    key_usage:
+      - digitalSignature
+      - keyEncipherment
+    extended_key_usage:
+      - serverAuth
+    basic_constraints:
+      - "CA:FALSE"
+    mode: "0644"
+
+- name: Re-run the server CSR (idempotency check)
+  community.crypto.openssl_csr:
+    path: "{{ sec_crypto_dir }}/server.csr"
+    privatekey_path: "{{ sec_crypto_dir }}/fixed-rsa.key"
+    country_name: "NL"
+    state_or_province_name: "Noord-Holland"
+    locality_name: "Amsterdam"
+    organization_name: "Krikri Bench"
+    organizational_unit_name: "security"
+    common_name: "bench.krikri.invalid"
+    email_address: "bench@krikri.invalid"
+    subject_alt_name:
+      - "DNS:bench.krikri.invalid"
+      - "DNS:alt.krikri.invalid"
+      - "IP:192.0.2.10"
+    key_usage:
+      - digitalSignature
+      - keyEncipherment
+    extended_key_usage:
+      - serverAuth
+    basic_constraints:
+      - "CA:FALSE"
+    mode: "0644"
+
+- name: Dump the server CSR in text form
+  ansible.builtin.command: openssl req -in {{ sec_crypto_dir }}/server.csr -noout -text
+  register: sec_bytediff_csr_text
+  changed_when: false
+
+- name: Byte-diff print the server CSR text dump
+  ansible.builtin.debug:
+    msg: "{{ sec_bytediff_csr_text.stdout }}"
+
+- name: Assert the CSR text dump carries the subject and SANs
+  ansible.builtin.assert:
+    that:
+      - "'bench.krikri.invalid' in sec_bytediff_csr_text.stdout"
+      - "'alt.krikri.invalid' in sec_bytediff_csr_text.stdout"
+      - "'IP Address:192.0.2.10' in sec_bytediff_csr_text.stdout"
+      - "'Krikri Bench' in sec_bytediff_csr_text.stdout"
+
+- name: Parse the server CSR
+  community.crypto.openssl_csr_info:
+    path: "{{ sec_crypto_dir }}/server.csr"
+  register: sec_csr_info
+
+- name: Print the server CSR facts
+  ansible.builtin.debug:
+    msg: "cn={{ sec_csr_info.subject.common_name }} san={{ sec_csr_info.subject_alt_name }} key_usage={{ sec_csr_info.key_usage }}"
+
+- name: Assert the parsed CSR fields match the request
+  ansible.builtin.assert:
+    that:
+      - sec_csr_info.subject.common_name == 'bench.krikri.invalid'
+      - sec_csr_info.subject_alt_name | length == 3
+      - "'serverAuth' in sec_csr_info.extended_key_usage"
+
+- name: Create the CA CSR from the fixed Ed25519 key
+  community.crypto.openssl_csr:
+    path: "{{ sec_crypto_dir }}/ca.csr"
+    privatekey_path: "{{ sec_crypto_dir }}/fixed-ed25519.key"
+    common_name: "Krikri Bench CA"
+    basic_constraints:
+      - "CA:TRUE"
+    mode: "0644"
+
+- name: Create a CSR with name constraints
+  community.crypto.openssl_csr:
+    path: "{{ sec_crypto_dir }}/constrained.csr"
+    privatekey_path: "{{ sec_crypto_dir }}/ed25519.key"
+    common_name: "constrained.krikri.invalid"
+    name_constraints_permitted:
+      - "DNS:.krikri.invalid"
+    name_constraints_excluded:
+      - "IP:192.0.2.0/24"
+    mode: "0644"
+
+- name: Parse the name-constrained CSR
+  community.crypto.openssl_csr_info:
+    path: "{{ sec_crypto_dir }}/constrained.csr"
+  register: sec_constrained_info
+
+- name: Print the name-constrained CSR facts
+  ansible.builtin.debug:
+    msg: >-
+      permitted={{ sec_constrained_info.name_constraints_permitted | default('n/a') }}
+      excluded={{ sec_constrained_info.name_constraints_excluded | default('n/a') }}
+
+# ---------------------------------------------------------------
+# x509_certificate: selfsigned CA from the fixed Ed25519 key, a
+# selfsigned server cert, and an ownca-signed server cert from the
+# same CSR - exercising both implemented providers, then parse the
+# results back with x509_certificate_info (including valid_at).
+# Certificates carry per-run timestamps, so byte-diffs here assert
+# shape, not bytes.
+# ---------------------------------------------------------------
+- name: Create the selfsigned CA certificate
+  community.crypto.x509_certificate:
+    path: "{{ sec_crypto_dir }}/ca.crt"
+    provider: selfsigned
+    csr_path: "{{ sec_crypto_dir }}/ca.csr"
+    privatekey_path: "{{ sec_crypto_dir }}/fixed-ed25519.key"
+    selfsigned_not_after: "+3650d"
+    mode: "0644"
+  register: sec_ca_cert
+
+- name: Re-run the CA certificate (idempotency check)
+  community.crypto.x509_certificate:
+    path: "{{ sec_crypto_dir }}/ca.crt"
+    provider: selfsigned
+    csr_path: "{{ sec_crypto_dir }}/ca.csr"
+    privatekey_path: "{{ sec_crypto_dir }}/fixed-ed25519.key"
+    selfsigned_not_after: "+3650d"
+    mode: "0644"
+
+- name: Create the selfsigned server certificate
+  community.crypto.x509_certificate:
+    path: "{{ sec_crypto_dir }}/selfsigned.crt"
+    provider: selfsigned
+    csr_path: "{{ sec_crypto_dir }}/server.csr"
+    privatekey_path: "{{ sec_crypto_dir }}/fixed-rsa.key"
+    selfsigned_digest: "sha256"
+    mode: "0644"
+
+- name: Create the ownca-signed server certificate
+  community.crypto.x509_certificate:
+    path: "{{ sec_crypto_dir }}/server.crt"
+    provider: ownca
+    csr_path: "{{ sec_crypto_dir }}/server.csr"
+    ownca_path: "{{ sec_crypto_dir }}/ca.crt"
+    ownca_privatekey_path: "{{ sec_crypto_dir }}/fixed-ed25519.key"
+    ownca_digest: "sha256"
+    ownca_not_after: "+825d"
+    mode: "0644"
+  register: sec_server_cert
+
+- name: Re-run the ownca signing (idempotency check)
+  community.crypto.x509_certificate:
+    path: "{{ sec_crypto_dir }}/server.crt"
+    provider: ownca
+    csr_path: "{{ sec_crypto_dir }}/server.csr"
+    ownca_path: "{{ sec_crypto_dir }}/ca.crt"
+    ownca_privatekey_path: "{{ sec_crypto_dir }}/fixed-ed25519.key"
+    ownca_digest: "sha256"
+    ownca_not_after: "+825d"
+    mode: "0644"
+
+- name: Parse the ownca-signed server certificate
+  community.crypto.x509_certificate_info:
+    path: "{{ sec_crypto_dir }}/server.crt"
+  register: sec_server_cert_info
+
+- name: Print the server certificate facts
+  ansible.builtin.debug:
+    msg: "subject={{ sec_server_cert_info.subject }} issuer_cn={{ sec_server_cert_info.issuer.common_name }} san={{ sec_server_cert_info.subject_alt_name }}"
+
+- name: Assert the server cert was signed by the bench CA
+  ansible.builtin.assert:
+    that:
+      - sec_server_cert_info.subject.common_name == 'bench.krikri.invalid'
+      - sec_server_cert_info.issuer.common_name == 'Krikri Bench CA'
+      - sec_server_cert_info.subject_alt_name | length == 3
+
+- name: Parse the CA certificate with a validity window
+  community.crypto.x509_certificate_info:
+    path: "{{ sec_crypto_dir }}/ca.crt"
+    valid_at:
+      now: "now"
+      in_one_year: "+365d"
+  register: sec_ca_cert_info
+
+- name: Print the CA certificate facts
+  ansible.builtin.debug:
+    msg: "subject={{ sec_ca_cert_info.subject }} valid_at={{ sec_ca_cert_info.valid_at | default('n/a') }}"
+
+- name: Assert the CA cert is a CA and still valid
+  ansible.builtin.assert:
+    that:
+      - sec_ca_cert_info.subject.common_name == 'Krikri Bench CA'
+      - sec_ca_cert_info.valid_at.now
+      - sec_ca_cert_info.valid_at.in_one_year
+
+# ---------------------------------------------------------------
+# openssl_dhparam: small size on purpose - a 4096-bit generation
+# dominates the playbook's wall clock, while 512 bits exercises the
+# exact same parse/generate/write path.
+# ---------------------------------------------------------------
+- name: Generate the bench dhparam file
+  community.crypto.openssl_dhparam:
+    path: "{{ sec_crypto_dir }}/dhparam.pem"
+    size: 512
+    mode: "0644"
+  register: sec_dhparam
+
+- name: Re-run the dhparam generation (idempotency check)
+  community.crypto.openssl_dhparam:
+    path: "{{ sec_crypto_dir }}/dhparam.pem"
+    size: 512
+    mode: "0644"
+
+- name: Stat the dhparam file
+  ansible.builtin.stat:
+    path: "{{ sec_crypto_dir }}/dhparam.pem"
+  register: sec_dhparam_stat
+
+- name: Assert the dhparam file exists and parses
+  ansible.builtin.assert:
+    that:
+      - sec_dhparam_stat.stat.exists
+      - sec_dhparam_stat.stat.mode == '0644'
+
+- name: Dump the dhparam header
+  ansible.builtin.command: head -1 {{ sec_crypto_dir }}/dhparam.pem
+  register: sec_bytediff_dhparam
+  changed_when: false
+
+- name: Byte-diff print the dhparam header
+  ansible.builtin.debug:
+    msg: "{{ sec_bytediff_dhparam.stdout }}"
+
+# ---------------------------------------------------------------
+# openssl_pkcs12: export the fixed key + ownca-signed server cert
+# with a friendly name and passphrase, re-run (digest-compare
+# idempotency), then parse the blob back out to PEM. The blob is
+# salted, so bytes differ per run by design - the parse output is
+# what gets eyeballed.
+# ---------------------------------------------------------------
+- name: Export a pkcs12 bundle
+  community.crypto.openssl_pkcs12:
+    path: "{{ sec_crypto_dir }}/bench.p12"
+    friendly_name: "krikri-bench"
+    privatekey_path: "{{ sec_crypto_dir }}/fixed-rsa.key"
+    certificate_path: "{{ sec_crypto_dir }}/server.crt"
+    passphrase: "krikri-bench-p12"
+    mode: "0600"
+  register: sec_pkcs12
+
+- name: Re-run the pkcs12 export (idempotency check)
+  community.crypto.openssl_pkcs12:
+    path: "{{ sec_crypto_dir }}/bench.p12"
+    friendly_name: "krikri-bench"
+    privatekey_path: "{{ sec_crypto_dir }}/fixed-rsa.key"
+    certificate_path: "{{ sec_crypto_dir }}/server.crt"
+    passphrase: "krikri-bench-p12"
+    mode: "0600"
+
+- name: Parse the pkcs12 bundle back to PEM
+  community.crypto.openssl_pkcs12:
+    path: "{{ sec_crypto_dir }}/bench-parsed.pem"
+    action: parse
+    src: "{{ sec_crypto_dir }}/bench.p12"
+    passphrase: "krikri-bench-p12"
+    mode: "0600"
+  register: sec_pkcs12_parse
+
+- name: Byte-diff read the parsed pkcs12 contents
+  ansible.builtin.command: cat {{ sec_crypto_dir }}/bench-parsed.pem
+  register: sec_bytediff_pkcs12
+  changed_when: false
+
+- name: Byte-diff print the parsed pkcs12 contents
+  ansible.builtin.debug:
+    msg: "{{ sec_bytediff_pkcs12.stdout }}"
+
+- name: Assert the parsed bundle carries the key and cert
+  ansible.builtin.assert:
+    that:
+      - sec_bytediff_pkcs12.stdout is search('PRIVATE KEY')
+      - sec_bytediff_pkcs12.stdout is search('CERTIFICATE')
+
+# ---------------------------------------------------------------
+# openssh_keypair: real ssh-keygen-backed pairs of each type, a
+# comment update, a pkcs8 private-key format conversion, and a
+# force regeneration. Public keys are per-run random; the debug
+# prints their shape for cross-engine eyeballing.
+# ---------------------------------------------------------------
+- name: Generate an RSA ssh keypair
+  community.crypto.openssh_keypair:
+    path: "{{ sec_crypto_dir }}/ssh_rsa"
+    type: rsa
+    size: 2048
+    comment: "krikri-sec-bench rsa"
+    mode: "0600"
+  register: sec_ssh_rsa
+
+- name: Re-run the RSA keypair (idempotency check)
+  community.crypto.openssh_keypair:
+    path: "{{ sec_crypto_dir }}/ssh_rsa"
+    type: rsa
+    size: 2048
+    comment: "krikri-sec-bench rsa"
+    mode: "0600"
+
+- name: Generate an Ed25519 ssh keypair
+  community.crypto.openssh_keypair:
+    path: "{{ sec_crypto_dir }}/ssh_ed25519"
+    type: ed25519
+    comment: "krikri-sec-bench ed25519"
+    mode: "0600"
+
+- name: Update the RSA keypair comment
+  community.crypto.openssh_keypair:
+    path: "{{ sec_crypto_dir }}/ssh_rsa"
+    type: rsa
+    size: 2048
+    comment: "krikri-sec-bench rsa updated"
+    mode: "0600"
+  register: sec_ssh_rsa_comment
+
+- name: Generate an ECDSA ssh keypair
+  community.crypto.openssh_keypair:
+    path: "{{ sec_crypto_dir }}/ssh_ecdsa"
+    type: ecdsa
+    size: 256
+    mode: "0600"
+
+- name: Generate an RSA keypair in pkcs8 format
+  community.crypto.openssh_keypair:
+    path: "{{ sec_crypto_dir }}/ssh_pkcs8"
+    type: rsa
+    size: 2048
+    private_key_format: pkcs8
+    mode: "0600"
+
+- name: Stat the RSA keypair public key
+  ansible.builtin.stat:
+    path: "{{ sec_crypto_dir }}/ssh_rsa.pub"
+  register: sec_ssh_rsa_pub_stat
+
+- name: Read back the RSA public key
+  ansible.builtin.command: cat {{ sec_crypto_dir }}/ssh_rsa.pub
+  register: sec_bytediff_ssh_rsa
+  changed_when: false
+
+- name: Byte-diff print the RSA public key
+  ansible.builtin.debug:
+    msg: "{{ sec_bytediff_ssh_rsa.stdout }}"
+
+- name: Assert the ssh keypair files landed
+  ansible.builtin.assert:
+    that:
+      - sec_ssh_rsa_pub_stat.stat.exists
+      - sec_ssh_rsa_pub_stat.stat.mode == '0644'
+      - sec_bytediff_ssh_rsa.stdout is match('ssh-rsa ')
+
+- name: Read the pkcs8 private key header
+  ansible.builtin.command: head -1 {{ sec_crypto_dir }}/ssh_pkcs8
+  register: sec_pkcs8_header
+  changed_when: false
+
+- name: Assert the pkcs8 conversion landed
+  ansible.builtin.assert:
+    that:
+      - sec_pkcs8_header.stdout is search('PRIVATE KEY')
+
+# ---------------------------------------------------------------
+# get_certificate: fetch a real cert over TLS from an openssl
+# s_server started on localhost against the fixed key + ownca-signed
+# cert, then tear the server down. Nothing leaves the container's
+# loopback.
+# ---------------------------------------------------------------
+- name: Start a local TLS server for the cert fetch
+  ansible.builtin.shell: >-
+    nohup openssl s_server -accept 8443 -cert {{ sec_crypto_dir }}/server.crt
+    -key {{ sec_crypto_dir }}/fixed-rsa.key -www > /dev/null 2>&1 < /dev/null
+    & echo $! > {{ sec_dir }}/s_server.pid
+  args:
+    executable: /bin/bash
+  changed_when: true
+  when: sec_openssl_available
+
+- name: Wait for the local TLS server
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: 8443
+    timeout: 15
+  when: sec_openssl_available
+
+- name: Fetch the cert from the local TLS server
+  community.crypto.get_certificate:
+    host: 127.0.0.1
+    port: 8443
+    server_name: "bench.krikri.invalid"
+    ca_cert: "{{ sec_crypto_dir }}/ca.crt"
+  register: sec_get_cert
+  when: sec_openssl_available
+
+- name: Print the fetched cert facts
+  ansible.builtin.debug:
+    msg: "subject={{ sec_get_cert.subject | default('n/a') }} issuer_cn={{ sec_get_cert.issuer.common_name | default('n/a') }}"
+  when: sec_openssl_available
+
+- name: Assert the fetched cert matches the bench CA chain
+  ansible.builtin.assert:
+    that:
+      - sec_get_cert.subject.common_name | default('') == 'bench.krikri.invalid'
+      - sec_get_cert.issuer.common_name | default('') == 'Krikri Bench CA'
+  when: sec_openssl_available
+
+- name: Fetch the cert again with the chain
+  community.crypto.get_certificate:
+    host: 127.0.0.1
+    port: 8443
+    server_name: "bench.krikri.invalid"
+    ca_cert: "{{ sec_crypto_dir }}/ca.crt"
+    get_certificate_chain: true
+  register: sec_get_cert_chain
+  when: sec_openssl_available
+
+- name: Stop the local TLS server
+  ansible.builtin.shell: "kill -9 $(cat {{ sec_dir }}/s_server.pid) 2>/dev/null; true"
+  args:
+    executable: /bin/bash
+  failed_when: false
+  changed_when: false
+  when: sec_openssl_available
+
+# ---------------------------------------------------------------
+# java_cert: needs a real JDK (keytool), which stock benchmark
+# targets usually lack - every task is gated on the keytool probe
+# so it SKIPS cleanly rather than faking success. The keystore is a
+# throwaway file under the bench dir.
+# ---------------------------------------------------------------
+- name: Java_cert import the server cert into a fresh keystore
+  community.general.java_cert:
+    cert_path: "{{ sec_crypto_dir }}/server.crt"
+    keystore_path: "{{ sec_crypto_dir }}/bench.jks"
+    keystore_pass: "krikri-bench-jks"
+    keystore_create: true
+    cert_alias: "benchserver"
+    state: present
+  when: sec_keytool_probe.rc == 0
+
+- name: Java_cert re-import the same cert (idempotency check)
+  community.general.java_cert:
+    cert_path: "{{ sec_crypto_dir }}/server.crt"
+    keystore_path: "{{ sec_crypto_dir }}/bench.jks"
+    keystore_pass: "krikri-bench-jks"
+    keystore_create: true
+    cert_alias: "benchserver"
+    state: present
+  when: sec_keytool_probe.rc == 0
+
+- name: Java_cert import the CA cert as a trusted CA entry
+  community.general.java_cert:
+    cert_path: "{{ sec_crypto_dir }}/ca.crt"
+    keystore_path: "{{ sec_crypto_dir }}/bench.jks"
+    keystore_pass: "krikri-bench-jks"
+    keystore_create: true
+    cert_alias: "benchca"
+    trust_cacert: true
+    state: present
+  when: sec_keytool_probe.rc == 0
+
+- name: Java_cert remove the CA entry again
+  community.general.java_cert:
+    cert_path: "{{ sec_crypto_dir }}/ca.crt"
+    keystore_path: "{{ sec_crypto_dir }}/bench.jks"
+    keystore_pass: "krikri-bench-jks"
+    cert_alias: "benchca"
+    state: absent
+  when: sec_keytool_probe.rc == 0
+
+- name: Java_cert remove the server entry again
+  community.general.java_cert:
+    cert_path: "{{ sec_crypto_dir }}/server.crt"
+    keystore_path: "{{ sec_crypto_dir }}/bench.jks"
+    keystore_pass: "krikri-bench-jks"
+    cert_alias: "benchserver"
+    state: absent
+  when: sec_keytool_probe.rc == 0
+
+- name: Java_cert remove from an absent keystore without create
+  community.general.java_cert:
+    cert_path: "{{ sec_crypto_dir }}/server.crt"
+    keystore_path: "{{ sec_crypto_dir }}/bench-absent.jks"
+    keystore_pass: "krikri-bench-jks"
+    cert_alias: "benchserver"
+    state: absent
+  register: sec_java_cert_absent
+  failed_when: false
+  when: sec_keytool_probe.rc == 0

@@ -1,0 +1,1187 @@
+---
+# Module-coverage benchmark/regression playbook 3 of 5: users, security
+# and crypto. Companion to modules_files.yml (files), modules_packages.yml
+# (packages/services) and synthetic_batch_bench.yml (batching stress).
+# Theme: user/group accounts, PAM, SELinux/firewall surfaces, file
+# capabilities, and the whole openssl/x509/openssh crypto family:
+#   user, group, getent, pamd, pam_limits, seboolean, sefcontext,
+#   selinux, seport, capabilities, firewalld, ufw, iptables,
+#   openssl_csr, openssl_csr_info, openssl_dhparam, openssl_pkcs12,
+#   openssl_privatekey, openssl_privatekey_info, openssl_publickey,
+#   openssl_publickey_info, x509_certificate, x509_certificate_info,
+#   openssh_keypair, get_certificate, java_cert
+# (the crypto family lives in tasks_security_certs.yml, pulled in via
+# include_tasks so this playbook also exercises the include machinery).
+#
+# Safety rules, same conventions as the sibling playbooks:
+# - All file mutations land under the run's own namespaced dir
+#   (/tmp/krikri-sec-bench-<epoch>): throwaway users, throwaway PAM
+#   config under <dir>/pam.d (pamd's `path:` and pam_limits' `dest:`
+#   point there - real /etc/pam.d and /etc/security/limits.conf are
+#   never touched, because a bad PAM edit can lock out login).
+# - capabilities sets a cap on a throwaway COPY of /bin/cat under the
+#   bench dir, never on a real system binary.
+# - Firewall exercises (ufw/iptables) are narrow, namespaced, and
+#   reversible: single unlikely port, dedicated iptables chain, no
+#   `state: enabled`/policy changes anywhere - an over-broad rule on
+#   the probe host could cut the run's own SSH access mid-playbook.
+#   Every rule is deleted again in its section's cleanup tasks.
+# - Modules with no reachable backend on the target are gated with
+#   capability probes so they SKIP the way real Ansible does
+#   (skipped: in the recap), never faked: the SELinux family (no
+#   SELinux on Debian-family hosts), firewalld (RHEL-family), and
+#   java_cert unless a JDK (keytool) happens to be installed.
+# - Package installs are a deliberate exception (like zfsutils-linux
+#   in synthetic_batch_bench.yml): libcap2-bin/iptables/ufw are the
+#   minimum tooling for this theme and every rule they enable is
+#   removed again in the same run.
+# - Byte-diff pattern after anything that renders or writes content:
+#   cat/register/debug, so output can be eyeballed across engines.
+#   Crypto material is per-run random, so the byte-diff here targets
+#   the deterministic derivations: the checked-in fixed keys (vars
+#   below), the public key and CSR derived from them (PKCS#10 and
+#   public-key PEM carry no timestamps or salt), and the openssl
+#   -text dumps of those. Freshly generated keys, certificates
+#   (not_before/not_after), and PKCS#12 blobs (random salt) are
+#   compared by recap and by the shape of their info-module output,
+#   not by bytes - that is a property of the domain, not a shortcut.
+
+- name: Users, security and crypto module-coverage benchmark
+  hosts: all
+  gather_facts: true
+
+  vars:
+    sec_bench_mode: security
+    # Var chain: each level derives from the previous one - the chained
+    # re-templating behavior this engine's evaluators got wrong before.
+    sec_bench_epoch: "{{ ansible_date_time.epoch }}"
+    sec_run_id: "run-{{ sec_bench_epoch }}"
+    sec_dir: "/tmp/krikri-sec-bench-{{ sec_bench_epoch }}"
+    sec_home_dir: "{{ sec_dir }}/home"
+    sec_pam_dir: "{{ sec_dir }}/pam.d"
+    sec_crypto_dir: "{{ sec_dir }}/crypto"
+    sec_fw_port: "47532"
+    sec_users:
+      - { name: secweb, shell: /usr/sbin/nologin, comment: "krikri sec bench web" }
+      - { name: secdb, shell: /bin/sh, comment: "krikri sec bench db" }
+      - { name: seccron, shell: /bin/sh, comment: "krikri sec bench cron" }
+    # Fixed well-formed throwaway keys (generated once, checked in as
+    # literals) so CSR/public-key derivation is deterministic and
+    # byte-diffable across engines. Same pattern as modules_files.yml's
+    # checked-in public keys.
+    sec_fixed_rsa_key: |
+      -----BEGIN RSA PRIVATE KEY-----
+      MIIEogIBAAKCAQEAp8ZtWvKewymDzYgrymwkHOUzsmlBbavm05nZfl2KPo4GDxKT
+      hjdzTHfHD17QQMR4E69mTKxsy0bJ8vImb1IGOJ9Vizu9B+hjWQvKx1JzcApsTpky
+      fVD6c6AQ3F8g7kCWxmzsR0PAED6Sx6p9Oet+2oAN1YxsgSlUyHrwOkICkX1hqJzb
+      9zQrQRrWYW4HZ0ABIzsBbQMqczJQ6Jfy+1FWiaaQi9suSwQ87XlPLGKVTFAi3Qt5
+      ymrNol2HONR24dWAJeJcAt/uxhzNSh19s/SO9yirHdM2iUm2GiHTyaoyv8dkOkTb
+      bNcBxgKn37aO+ag+u/Khgou8xe5FSXUa5mHb9wIDAQABAoIBACpoEDn9uz1PH/5y
+      XcczYElhcZi13BDRc22mpH+5OvkmwsdKhblWCLGaUNlEuNS2FDe9jNjyeClFQkRD
+      Co32qJXlSCUCO3xlM79NKLsKzxzRtaCEPmvIbRWOrtRUwykVcEbFP0+gA0rX1hfb
+      sv1R1eV6moSQkthuzvxBfrjq+GU3Z8PhuRs+1OuR79b8nk/pMlFSTRMae5+kZolw
+      rHCUTj/HTzZp4rJSLqscWzfjhkMGtJ3NFjM1cIsmeoUqadig8breQ6TZnnitP/1B
+      rBttLcueZI45R6a/jWjjAqZ25sjefGgwyJFn9JkMRCDP4mneM5EVpGzWSHQwY2jq
+      Q2kzrfkCgYEA3/AJh1Yo8xHJlp4/SA+MTBhBpy+v2ukmCYHOWCRRgZ8q39O+E16Q
+      TLJzicZVlHZ55Nl9FxEF7o4Rg9pN03olvL7wux4OI+FXDL5IlYSIROHnrYKWdT7q
+      aw6R0hf8BqDaCjQkRZSk90Ik4g/hxPgtff52nhdA0sFY3kbi9Yu/de0CgYEAv8ve
+      zzZ80j4EP+MijKT3KVvx4chf1Td9qgSGqKbsz2XA1TYEo6zgOgUp/aX9NOhd95it
+      1cbUUOQQVXfDhydqXjnVOygWf01fDFdyaUnoPqJw8UuWq3/jIY8iOgR9xAY+FJu8
+      tUaL3HoOEIgzUcKKSw0typoP0ABGOIzAqIHbHPMCgYAl2YdyxYBUXSxKdeLSRjZ7
+      YhourOO3R3LzZmo/AZx5ITL48+wLkA8pt3vJzKkIV+IQaSY4cNsk0ARr2ckPtnSM
+      a2V66wCO1faFo9/WzbjOk7Q54nmVxZWPlL3W2dDyOdvAn8GFtTMQy7A6OV76kMv3
+      oLvhyqJdPOrNXwPbZsxsnQKBgDJ8VKsQuayR3IaAoGCLL/A4HqSDHQ6/65ksVdHh
+      FqbFLwwwiuoWoHNFVrdI0SzzGYEKNH/4NX0Re2cz/kj+TBZ/fKx0se9Si3lxL1Gd
+      vb92/OnXLtL39+6mgajp87z8s6yzDepdpoUjr74UTAXygnqc/ne9M/pZiCJskm4I
+      uIeXAoGAZg/V1Cp2Ifya3oJuvA4ix60XDPdU6iNuwFfXdkujsSVURGYHT95LfUMr
+      zmFz4Ow7+N4IEheyO4EOChCOknyOf2XbgIUp/D01qITBr7U8cBW3RyVRWgoqJ3vq
+      iKzuyviVIH5ZIV70wzOa+/HN4h5O1IfZVSHjDQ0yxXuyrjeXmbM=
+      -----END RSA PRIVATE KEY-----
+    sec_fixed_ed25519_key: |
+      -----BEGIN PRIVATE KEY-----
+      MC4CAQAwBQYDK2VwBCIEIBqlCN055B99mPFveM8lVMtWKLEBNgAyq3vPBxmg4CSl
+      -----END PRIVATE KEY-----
+
+  tasks:
+    # ---------------------------------------------------------------
+    # Setup: chained set_fact (each derives from the previous) so the
+    # whole play references its own namespaced dir through a three-
+    # level var chain, plus an assert that the chain resolved fully.
+    # ---------------------------------------------------------------
+    - name: Announce security benchmark start
+      ansible.builtin.debug:
+        msg: "security benchmark {{ sec_run_id }} on {{ ansible_hostname }} ({{ sec_bench_mode }})"
+
+    - name: Set bench run fact
+      ansible.builtin.set_fact:
+        sec_bench_run: "{{ sec_run_id }}"
+
+    - name: Set bench dir fact
+      ansible.builtin.set_fact:
+        sec_bench_dir: "{{ sec_dir }}"
+
+    - name: Assert chained vars resolved end to end
+      ansible.builtin.assert:
+        that:
+          - sec_bench_dir == '/tmp/krikri-sec-bench-' ~ ansible_date_time.epoch
+          - sec_pam_dir == sec_bench_dir ~ '/pam.d'
+          - sec_crypto_dir == sec_bench_dir ~ '/crypto'
+
+    - name: Create benchmark root directory
+      ansible.builtin.file:
+        path: "{{ sec_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Create benchmark subdirectories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0755"
+      loop:
+        - "{{ sec_home_dir }}"
+        - "{{ sec_pam_dir }}"
+        - "{{ sec_crypto_dir }}"
+        - "{{ sec_dir }}/bin"
+
+    # ---------------------------------------------------------------
+    # Capability probes: every gated module family gets one probe, a
+    # skip notice when it fails, and `when:` guards on its whole
+    # section. Skips must look like real Ansible skips (skipped: in
+    # the recap), never faked successes.
+    # ---------------------------------------------------------------
+    - name: Probe SELinux getenforce
+      ansible.builtin.command: which getenforce
+      register: sec_selinux_probe
+      failed_when: false
+      changed_when: false
+
+    - name: Probe SELinux filesystem
+      ansible.builtin.stat:
+        path: /sys/fs/selinux
+      register: sec_selinux_fs_probe
+
+    - name: Probe firewalld tooling
+      ansible.builtin.command: which firewall-cmd
+      register: sec_firewalld_probe
+      failed_when: false
+      changed_when: false
+
+    - name: Probe ufw tooling
+      ansible.builtin.command: which ufw
+      register: sec_ufw_probe
+      failed_when: false
+      changed_when: false
+
+    - name: Probe iptables tooling
+      ansible.builtin.command: which iptables
+      register: sec_iptables_probe
+      failed_when: false
+      changed_when: false
+
+    - name: Probe file capabilities tooling
+      ansible.builtin.command: which setcap
+      register: sec_setcap_probe
+      failed_when: false
+      changed_when: false
+
+    - name: Probe java keytool
+      ansible.builtin.command: which keytool
+      register: sec_keytool_probe
+      failed_when: false
+      changed_when: false
+
+    # DELIBERATE EXCEPTION to this playbook's "no packages" rule:
+    # libcap2-bin (setcap/getcap), iptables and ufw are the minimum
+    # tooling this theme needs and are absent from stripped-down
+    # benchmark containers. The rules they enable are all removed
+    # again within their own sections.
+    - name: Install security tooling for the benchmark
+      ansible.builtin.apt:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - libcap2-bin
+        - iptables
+        - ufw
+
+    - name: Re-probe iptables now tooling is present
+      ansible.builtin.command: iptables -L -n
+      register: sec_iptables_usable
+      failed_when: false
+      changed_when: false
+
+    - name: Re-probe ufw binary now tooling is present
+      ansible.builtin.command: which ufw
+      register: sec_ufw_usable
+      failed_when: false
+      changed_when: false
+
+    - name: Report SELinux unavailable
+      ansible.builtin.debug:
+        msg: "skipping SELinux section: no getenforce and no /sys/fs/selinux (not an SELinux host)"
+      when: sec_selinux_probe.rc != 0 and not sec_selinux_fs_probe.stat.exists
+
+    - name: Report firewalld unavailable
+      ansible.builtin.debug:
+        msg: "skipping firewalld section: firewall-cmd absent (firewalld not installed)"
+      when: sec_firewalld_probe.rc != 0
+
+    - name: Report ufw unavailable
+      ansible.builtin.debug:
+        msg: "skipping ufw section: ufw absent even after the tooling install"
+      when: sec_ufw_usable.rc != 0
+
+    - name: Report iptables unavailable
+      ansible.builtin.debug:
+        msg: "skipping iptables section: iptables unusable (absent or no netfilter privileges in this container)"
+      when: sec_iptables_usable.rc != 0
+
+    - name: Report file capabilities unavailable
+      ansible.builtin.debug:
+        msg: "skipping capabilities section: setcap absent (no libcap2-bin)"
+      when: sec_setcap_probe.rc != 0
+
+    - name: Report java keytool unavailable
+      ansible.builtin.debug:
+        msg: "skipping java_cert section: keytool absent (no JDK installed)"
+      when: sec_keytool_probe.rc != 0
+
+    # ---------------------------------------------------------------
+    # user: create throwaway accounts with real homes under the bench
+    # dir, then modify them (shell, groups, lock, expiry, ssh key).
+    # All accounts are removed again in the cleanup section.
+    # ---------------------------------------------------------------
+    - name: Create benchmark group
+      ansible.builtin.group:
+        name: secgrp
+        state: present
+
+    - name: Create benchmark second group with explicit gid
+      ansible.builtin.group:
+        name: secgrp2
+        gid: 3500
+        state: present
+
+    - name: Create benchmark users
+      ansible.builtin.user:
+        name: "{{ item.name }}"
+        comment: "{{ item.comment }}"
+        group: secgrp
+        shell: "{{ item.shell }}"
+        home: "{{ sec_home_dir }}/{{ item.name }}"
+        create_home: true
+        state: present
+      loop: "{{ sec_users }}"
+
+    - name: Create a system user without home
+      ansible.builtin.user:
+        name: secsys
+        system: true
+        shell: /usr/sbin/nologin
+        create_home: false
+        state: present
+
+    - name: Create a user with explicit uid
+      ansible.builtin.user:
+        name: secuid
+        uid: 3501
+        group: secgrp
+        create_home: false
+        state: present
+
+    - name: Modify a bench user's shell and comment
+      ansible.builtin.user:
+        name: secweb
+        shell: /bin/sh
+        comment: "krikri sec bench web modified"
+
+    - name: Set supplementary groups on a bench user
+      ansible.builtin.user:
+        name: secdb
+        groups: secgrp2
+        state: present
+
+    - name: Lock a bench user's password
+      ansible.builtin.user:
+        name: seccron
+        password_lock: true
+
+    - name: Set a far-future expiry on a bench user
+      ansible.builtin.user:
+        name: secuid
+        expires: 4102444800
+
+    - name: Generate an ssh key for a bench user
+      ansible.builtin.user:
+        name: secweb
+        generate_ssh_key: true
+        ssh_key_type: ed25519
+        ssh_key_file: "{{ sec_dir }}/keys/secweb_ed25519"
+        ssh_key_comment: "krikri-sec-bench"
+
+    - name: Stat the generated ssh key
+      ansible.builtin.stat:
+        path: "{{ sec_dir }}/keys/secweb_ed25519"
+      register: sec_userkey_stat
+
+    - name: Assert generated ssh key exists with tight mode
+      ansible.builtin.assert:
+        that:
+          - sec_userkey_stat.stat.exists
+          - sec_userkey_stat.stat.mode == '0600'
+
+    - name: Read back a bench user via getent
+      ansible.builtin.getent:
+        database: passwd
+        key: secweb
+      register: sec_getent_user
+
+    - name: Assert the bench user's recorded shell
+      ansible.builtin.assert:
+        that:
+          - sec_getent_user.ansible_facts.getent_passwd.secweb[5] == '/bin/sh'
+
+    - name: Remove the explicit-uid user
+      ansible.builtin.user:
+        name: secuid
+        state: absent
+        remove: true
+
+    # ---------------------------------------------------------------
+    # group: create/system/gid/remove lifecycle, verified through
+    # getent group facts.
+    # ---------------------------------------------------------------
+    - name: Create a system group
+      ansible.builtin.group:
+        name: secsysgrp
+        system: true
+        state: present
+
+    - name: Create a group with explicit gid
+      ansible.builtin.group:
+        name: secgidgrp
+        gid: 3502
+        state: present
+
+    - name: Modify a group's gid
+      ansible.builtin.group:
+        name: secgidgrp
+        gid: 3503
+        state: present
+
+    - name: Look up the modified group
+      ansible.builtin.getent:
+        database: group
+        key: secgidgrp
+      register: sec_getent_gidgrp
+
+    - name: Assert the group gid landed
+      ansible.builtin.assert:
+        that:
+          - sec_getent_gidgrp.ansible_facts.getent_group.secgidgrp[1] | int == 3503
+
+    - name: Remove the gid group
+      ansible.builtin.group:
+        name: secgidgrp
+        state: absent
+
+    - name: Look up the surviving system group
+      ansible.builtin.getent:
+        database: group
+        key: secsysgrp
+      register: sec_getent_sysgrp
+
+    - name: Assert the system group exists
+      ansible.builtin.assert:
+        that:
+          - sec_getent_sysgrp.ansible_facts.getent_group.secsysgrp | length > 0
+
+    # ---------------------------------------------------------------
+    # getent: real NSS lookups through the forked getent binary -
+    # passwd/group/shadow as root, hosts by name, a lookup of a key
+    # that does not exist with fail_key: false (must return success
+    # with a null fact, not fail the play).
+    # ---------------------------------------------------------------
+    - name: Getent passwd for root
+      ansible.builtin.getent:
+        database: passwd
+        key: root
+      register: sec_getent_root
+
+    - name: Getent passwd for each bench user
+      ansible.builtin.getent:
+        database: passwd
+        key: "{{ item.name }}"
+      loop: "{{ sec_users }}"
+
+    - name: Getent group for the bench group
+      ansible.builtin.getent:
+        database: group
+        key: secgrp
+
+    - name: Getent shadow for root
+      ansible.builtin.getent:
+        database: shadow
+        key: root
+
+    - name: Getent hosts for localhost
+      ansible.builtin.getent:
+        database: hosts
+        key: localhost
+
+    - name: Getent passwd for a missing key with fail_key disabled
+      ansible.builtin.getent:
+        database: passwd
+        key: sec-no-such-user
+        fail_key: false
+      register: sec_getent_missing
+
+    - name: Getent passwd for a missing key that must fail
+      ansible.builtin.getent:
+        database: passwd
+        key: sec-no-such-user-fail
+      register: sec_getent_missing_fail
+      failed_when: false
+
+    - name: Assert missing-key lookups behaved as documented
+      ansible.builtin.assert:
+        that:
+          - sec_getent_missing.ansible_facts.getent_passwd['sec-no-such-user'] is none
+          - sec_getent_missing_fail is failed
+
+    - name: Set a summary fact from the root passwd lookup
+      ansible.builtin.set_fact:
+        sec_root_uid: "{{ sec_getent_root.ansible_facts.getent_passwd.root[1] }}"
+
+    - name: Assert the summary chain holds
+      ansible.builtin.assert:
+        that:
+          - sec_root_uid | int == 0
+
+    # ---------------------------------------------------------------
+    # pamd: edits a THROWAWAY service file under the bench pam.d dir
+    # (pamd's `path:` param), never /etc/pam.d - a bad PAM edit can
+    # lock out login. The file mimics a real pam stack so every state
+    # (updated/before/after/args_present/args_absent/absent) exercises
+    # the same parsing real role runs hit.
+    # ---------------------------------------------------------------
+    - name: Seed a throwaway PAM service file
+      ansible.builtin.copy:
+        content: |
+          #%PAM-1.0
+          auth       required     pam_unix.so
+          account    required     pam_unix.so
+          password   required     pam_unix.so
+          session    optional     pam_systemd.so
+        dest: "{{ sec_pam_dir }}/benchsvc"
+        mode: "0644"
+
+    - name: Pamd change a rule's control
+      community.general.pamd:
+        name: benchsvc
+        type: session
+        control: optional
+        module_path: pam_systemd.so
+        new_control: required
+        state: updated
+        path: "{{ sec_pam_dir }}"
+      register: sec_pamd_updated
+
+    - name: Pamd insert a rule before an existing one
+      community.general.pamd:
+        name: benchsvc
+        type: auth
+        control: required
+        module_path: pam_unix.so
+        new_type: auth
+        new_control: requisite
+        new_module_path: pam_faillock.so
+        state: before
+        path: "{{ sec_pam_dir }}"
+
+    - name: Pamd insert a rule after an existing one
+      community.general.pamd:
+        name: benchsvc
+        type: password
+        control: required
+        module_path: pam_unix.so
+        new_type: password
+        new_control: required
+        new_module_path: pam_pwquality.so
+        state: after
+        path: "{{ sec_pam_dir }}"
+
+    - name: Pamd add module arguments
+      community.general.pamd:
+        name: benchsvc
+        type: auth
+        control: requisite
+        module_path: pam_faillock.so
+        module_arguments: "deny=5 unlock_time=900"
+        state: args_present
+        path: "{{ sec_pam_dir }}"
+
+    - name: Pamd remove one module argument
+      community.general.pamd:
+        name: benchsvc
+        type: auth
+        control: requisite
+        module_path: pam_faillock.so
+        module_arguments: "unlock_time=900"
+        state: args_absent
+        path: "{{ sec_pam_dir }}"
+
+    - name: Pamd change a rule's module path
+      community.general.pamd:
+        name: benchsvc
+        type: account
+        control: required
+        module_path: pam_unix.so
+        new_module_path: pam_localuser.so
+        state: updated
+        path: "{{ sec_pam_dir }}"
+
+    - name: Pamd remove a whole rule
+      community.general.pamd:
+        name: benchsvc
+        type: session
+        control: required
+        module_path: pam_systemd.so
+        state: absent
+        path: "{{ sec_pam_dir }}"
+
+    - name: Seed a second PAM file for the backup case
+      ansible.builtin.copy:
+        content: |
+          #%PAM-1.0
+          auth       required     pam_unix.so
+        dest: "{{ sec_pam_dir }}/benchbackup"
+        mode: "0644"
+
+    - name: Pamd edit with backup enabled
+      community.general.pamd:
+        name: benchbackup
+        type: auth
+        control: required
+        module_path: pam_unix.so
+        new_control: sufficient
+        state: updated
+        path: "{{ sec_pam_dir }}"
+        backup: true
+
+    - name: Byte-diff read the edited PAM service file
+      ansible.builtin.command: cat {{ sec_pam_dir }}/benchsvc
+      register: sec_bytediff_pamd
+      changed_when: false
+
+    - name: Byte-diff print the edited PAM service file
+      ansible.builtin.debug:
+        msg: "{{ sec_bytediff_pamd.stdout }}"
+
+    - name: Assert the pamd edits landed in the right order
+      ansible.builtin.assert:
+        that:
+          - "'pam_faillock.so' in sec_bytediff_pamd.stdout"
+          - "'pam_pwquality.so' in sec_bytediff_pamd.stdout"
+          - "'pam_localuser.so' in sec_bytediff_pamd.stdout"
+          - "'pam_systemd.so' not in sec_bytediff_pamd.stdout"
+          - "'deny=5' in sec_bytediff_pamd.stdout"
+          - "'unlock_time=900' not in sec_bytediff_pamd.stdout"
+
+    # ---------------------------------------------------------------
+    # pam_limits: entries written to a throwaway limits file (the
+    # `dest:` param), domains covering user and @group forms, both
+    # limit types, use_max, trailing comment, backup.
+    # ---------------------------------------------------------------
+    - name: Seed the throwaway limits file
+      ansible.builtin.copy:
+        content: "# krikri sec bench limits\n"
+        dest: "{{ sec_dir }}/limits.conf"
+        mode: "0644"
+
+    - name: Pam_limits soft nofile for a bench user
+      community.general.pam_limits:
+        domain: secweb
+        limit_type: soft
+        limit_item: nofile
+        value: 10240
+        dest: "{{ sec_dir }}/limits.conf"
+
+    - name: Pam_limits hard nofile for a bench user
+      community.general.pam_limits:
+        domain: secweb
+        limit_type: hard
+        limit_item: nofile
+        value: 20480
+        dest: "{{ sec_dir }}/limits.conf"
+
+    - name: Pam_limits nproc cap for the bench group
+      community.general.pam_limits:
+        domain: "@secgrp"
+        limit_type: "-"
+        limit_item: nproc
+        value: 512
+        dest: "{{ sec_dir }}/limits.conf"
+
+    - name: Pam_limits with use_max
+      community.general.pam_limits:
+        domain: secdb
+        limit_type: soft
+        limit_item: memlock
+        use_max: true
+        dest: "{{ sec_dir }}/limits.conf"
+
+    - name: Pam_limits with use_min
+      community.general.pam_limits:
+        domain: secdb
+        limit_type: soft
+        limit_item: priority
+        use_min: true
+        dest: "{{ sec_dir }}/limits.conf"
+
+    - name: Pam_limits with a trailing comment
+      community.general.pam_limits:
+        domain: "*"
+        limit_type: hard
+        limit_item: maxlogins
+        value: 100
+        comment: "krikri sec bench maxlogins"
+        dest: "{{ sec_dir }}/limits.conf"
+
+    - name: Pam_limits overwrite an existing entry
+      community.general.pam_limits:
+        domain: secweb
+        limit_type: soft
+        limit_item: nofile
+        value: 16384
+        dest: "{{ sec_dir }}/limits.conf"
+
+    - name: Pam_limits with backup enabled
+      community.general.pam_limits:
+        domain: secweb
+        limit_type: hard
+        limit_item: nofile
+        value: 30720
+        dest: "{{ sec_dir }}/limits.conf"
+        backup: true
+
+    - name: Byte-diff read the limits file
+      ansible.builtin.command: cat {{ sec_dir }}/limits.conf
+      register: sec_bytediff_limits
+      changed_when: false
+
+    - name: Byte-diff print the limits file
+      ansible.builtin.debug:
+        msg: "{{ sec_bytediff_limits.stdout }}"
+
+    - name: Assert the limits entries landed
+      ansible.builtin.assert:
+        that:
+          - "'secweb soft nofile 16384' in sec_bytediff_limits.stdout"
+          - "'secweb hard nofile 30720' in sec_bytediff_limits.stdout"
+          - "'@secgrp - nproc 512' in sec_bytediff_limits.stdout"
+          - "'krikri sec bench maxlogins' in sec_bytediff_limits.stdout"
+
+    # ---------------------------------------------------------------
+    # SELinux family (selinux/seboolean/sefcontext/seport): no real
+    # backend on a Debian-family host - every task is gated on the
+    # probe so it SKIPS cleanly here, while still running for real on
+    # an SELinux-enabled target. Args are otherwise realistic.
+    # ---------------------------------------------------------------
+    - name: Selinux set permissive with targeted policy
+      ansible.posix.selinux:
+        state: permissive
+        policy: targeted
+      when: sec_selinux_probe.rc == 0
+
+    - name: Seboolean enable httpd_can_network_connect persistently
+      ansible.posix.seboolean:
+        name: httpd_can_network_connect
+        state: true
+        persistent: true
+      when: sec_selinux_probe.rc == 0
+
+    - name: Seboolean toggle a boolean without persistence
+      ansible.posix.seboolean:
+        name: secure_mode
+        state: false
+      when: sec_selinux_probe.rc == 0
+
+    - name: Seboolean with ignore_selinux_state for odd hosts
+      ansible.posix.seboolean:
+        name: nis_enabled
+        state: false
+        ignore_selinux_state: true
+      when: sec_selinux_probe.rc == 0
+
+    - name: Sefcontext label the bench tree
+      community.general.sefcontext:
+        target: "/tmp/krikri-sec-bench-{{ sec_bench_epoch }}(/.*)?"
+        setype: bin_t
+        ftype: a
+      when: sec_selinux_probe.rc == 0
+
+    - name: Sefcontext for regular files only
+      community.general.sefcontext:
+        target: "/tmp/krikri-sec-bench-{{ sec_bench_epoch }}/data(/.*)?"
+        setype: var_t
+        ftype: f
+        seuser: system_u
+        selevel: s0
+      when: sec_selinux_probe.rc == 0
+
+    - name: Sefcontext remove the file-only rule again
+      community.general.sefcontext:
+        target: "/tmp/krikri-sec-bench-{{ sec_bench_epoch }}/data(/.*)?"
+        setype: var_t
+        ftype: f
+        state: absent
+      when: sec_selinux_probe.rc == 0
+
+    - name: Seport assign a bench port to a type
+      community.general.seport:
+        ports: "{{ sec_fw_port }}"
+        proto: tcp
+        setype: http_port_t
+        state: present
+      when: sec_selinux_probe.rc == 0
+
+    - name: Seport assign a port range
+      community.general.seport:
+        ports: "48080-48081"
+        proto: udp
+        setype: http_port_t
+        state: present
+      when: sec_selinux_probe.rc == 0
+
+    - name: Seport remove the port range again
+      community.general.seport:
+        ports: "48080-48081"
+        proto: udp
+        setype: http_port_t
+        state: absent
+      when: sec_selinux_probe.rc == 0
+
+    - name: Seport remove the single bench port again
+      community.general.seport:
+        ports: "{{ sec_fw_port }}"
+        proto: tcp
+        setype: http_port_t
+        state: absent
+      when: sec_selinux_probe.rc == 0
+
+    - name: Seport with ignore_selinux_state for odd hosts
+      community.general.seport:
+        ports: "48100"
+        proto: tcp
+        setype: http_port_t
+        state: present
+        ignore_selinux_state: true
+      when: sec_selinux_probe.rc == 0
+
+    # ---------------------------------------------------------------
+    # firewalld: RHEL-family service, absent on this target - every
+    # task is gated on the firewall-cmd probe so it SKIPS cleanly.
+    # All operations are permanent-only (no immediate), so even on a
+    # real firewalld host nothing here touches the live ruleset.
+    # ---------------------------------------------------------------
+    - name: Firewalld enable a service permanently
+      ansible.posix.firewalld:
+        service: https
+        permanent: true
+        state: enabled
+      when: sec_firewalld_probe.rc == 0
+
+    - name: Firewalld enable a single bench port permanently
+      ansible.posix.firewalld:
+        port: "{{ sec_fw_port }}/tcp"
+        permanent: true
+        state: enabled
+      when: sec_firewalld_probe.rc == 0
+
+    - name: Firewalld enable masquerading in the default zone
+      ansible.posix.firewalld:
+        masquerade: true
+        permanent: true
+        state: enabled
+      when: sec_firewalld_probe.rc == 0
+
+    - name: Firewalld add a rich rule permanently
+      ansible.posix.firewalld:
+        rich_rule: "rule family=ipv4 source address=192.0.2.0/24 port port={{ sec_fw_port }} protocol=tcp accept"
+        permanent: true
+        state: enabled
+      when: sec_firewalld_probe.rc == 0
+
+    - name: Firewalld set the default zone target
+      ansible.posix.firewalld:
+        target: DROP
+        permanent: true
+        state: enabled
+      when: sec_firewalld_probe.rc == 0
+
+    - name: Firewalld disable the rich rule again
+      ansible.posix.firewalld:
+        rich_rule: "rule family=ipv4 source address=192.0.2.0/24 port port={{ sec_fw_port }} protocol=tcp accept"
+        permanent: true
+        state: disabled
+      when: sec_firewalld_probe.rc == 0
+
+    - name: Firewalld disable the bench port again
+      ansible.posix.firewalld:
+        port: "{{ sec_fw_port }}/tcp"
+        permanent: true
+        state: disabled
+      when: sec_firewalld_probe.rc == 0
+
+    - name: Firewalld disable the service again
+      ansible.posix.firewalld:
+        service: https
+        permanent: true
+        state: disabled
+      when: sec_firewalld_probe.rc == 0
+
+    # ---------------------------------------------------------------
+    # ufw: rule-level exercise only - NO `state: enabled` anywhere,
+    # because enabling the firewall on the probe host could cut this
+    # run's own SSH access. Rules use the single unlikely bench port
+    # and every one is deleted again below. Gated on the ufw probe.
+    # ---------------------------------------------------------------
+    - name: Ufw allow the bench port
+      community.general.ufw:
+        rule: allow
+        port: "{{ sec_fw_port }}"
+        proto: tcp
+      register: sec_ufw_allow
+      when: sec_ufw_usable.rc == 0
+
+    - name: Ufw re-run the same allow (idempotency check)
+      community.general.ufw:
+        rule: allow
+        port: "{{ sec_fw_port }}"
+        proto: tcp
+      when: sec_ufw_usable.rc == 0
+
+    - name: Ufw deny from a documentation range
+      community.general.ufw:
+        rule: deny
+        from_ip: 192.0.2.0/24
+        to_port: "{{ sec_fw_port }}"
+        proto: tcp
+      when: sec_ufw_usable.rc == 0
+
+    - name: Ufw limit a second bench port
+      community.general.ufw:
+        rule: limit
+        port: "47533"
+        proto: tcp
+        comment: "krikri sec bench limit rule"
+      when: sec_ufw_usable.rc == 0
+
+    - name: Ufw set logging level
+      community.general.ufw:
+        logging: low
+      when: sec_ufw_usable.rc == 0
+
+    - name: Ufw delete the deny rule again
+      community.general.ufw:
+        rule: deny
+        from_ip: 192.0.2.0/24
+        to_port: "{{ sec_fw_port }}"
+        proto: tcp
+        delete: true
+      when: sec_ufw_usable.rc == 0
+
+    - name: Ufw delete the limit rule again
+      community.general.ufw:
+        rule: limit
+        port: "47533"
+        proto: tcp
+        delete: true
+      when: sec_ufw_usable.rc == 0
+
+    - name: Ufw delete the allow rule again
+      community.general.ufw:
+        rule: allow
+        port: "{{ sec_fw_port }}"
+        proto: tcp
+        delete: true
+      when: sec_ufw_usable.rc == 0
+
+    - name: Ufw reset logging to off
+      community.general.ufw:
+        logging: "off"
+      when: sec_ufw_usable.rc == 0
+
+    - name: Ufw show the rules engine output
+      community.general.ufw:
+        state: reloaded
+      when: sec_ufw_usable.rc == 0
+
+    # ---------------------------------------------------------------
+    # iptables: everything happens inside a dedicated KRIKRI-SEC-BENCH
+    # chain (no policy changes, no built-in-chain rules), so the
+    # worst case is an empty extra chain that is destroyed again
+    # below. Gated on the iptables-usability probe - an unprivileged
+    # container skips cleanly alongside a host without the binary.
+    # ---------------------------------------------------------------
+    - name: Iptables create the bench chain
+      ansible.builtin.iptables:
+        chain: KRIKRI-SEC-BENCH
+        chain_management: true
+        state: present
+      register: sec_ipt_chain
+      when: sec_iptables_usable.rc == 0
+
+    - name: Iptables append an accept rule for the bench port
+      ansible.builtin.iptables:
+        chain: KRIKRI-SEC-BENCH
+        source: 192.0.2.0/24
+        destination_port: "{{ sec_fw_port }}"
+        protocol: tcp
+        jump: ACCEPT
+        state: present
+      when: sec_iptables_usable.rc == 0
+
+    - name: Iptables re-run the same rule (idempotency check)
+      ansible.builtin.iptables:
+        chain: KRIKRI-SEC-BENCH
+        source: 192.0.2.0/24
+        destination_port: "{{ sec_fw_port }}"
+        protocol: tcp
+        jump: ACCEPT
+        state: present
+      when: sec_iptables_usable.rc == 0
+
+    - name: Iptables insert a deny rule at the top
+      ansible.builtin.iptables:
+        chain: KRIKRI-SEC-BENCH
+        source: 198.51.100.0/24
+        jump: DROP
+        action: insert
+        state: present
+      when: sec_iptables_usable.rc == 0
+
+    - name: Iptables add a logging rule
+      ansible.builtin.iptables:
+        chain: KRIKRI-SEC-BENCH
+        protocol: udp
+        destination_port: "47534"
+        jump: LOG
+        log_prefix: "krikri-sec-bench "
+        log_level: 4
+        state: present
+      when: sec_iptables_usable.rc == 0
+
+    - name: Iptables add a tcp-reset rule
+      ansible.builtin.iptables:
+        chain: KRIKRI-SEC-BENCH
+        protocol: tcp
+        destination_port: "47535"
+        jump: REJECT
+        reject_with: tcp-reset
+        state: present
+      when: sec_iptables_usable.rc == 0
+
+    - name: Iptables list the bench chain
+      ansible.builtin.command: iptables -S KRIKRI-SEC-BENCH
+      register: sec_bytediff_iptables
+      changed_when: false
+      when: sec_iptables_usable.rc == 0
+
+    - name: Byte-diff print the bench chain ruleset
+      ansible.builtin.debug:
+        msg: "{{ sec_bytediff_iptables.stdout | default('chain unavailable') }}"
+      when: sec_iptables_usable.rc == 0
+
+    - name: Iptables remove the logging rule again
+      ansible.builtin.iptables:
+        chain: KRIKRI-SEC-BENCH
+        protocol: udp
+        destination_port: "47534"
+        jump: LOG
+        log_prefix: "krikri-sec-bench "
+        log_level: 4
+        state: absent
+      when: sec_iptables_usable.rc == 0
+
+    - name: Iptables remove the tcp-reset rule again
+      ansible.builtin.iptables:
+        chain: KRIKRI-SEC-BENCH
+        protocol: tcp
+        destination_port: "47535"
+        jump: REJECT
+        reject_with: tcp-reset
+        state: absent
+      when: sec_iptables_usable.rc == 0
+
+    - name: Iptables flush the bench chain
+      ansible.builtin.iptables:
+        chain: KRIKRI-SEC-BENCH
+        flush: true
+      when: sec_iptables_usable.rc == 0
+
+    - name: Iptables destroy the bench chain
+      ansible.builtin.iptables:
+        chain: KRIKRI-SEC-BENCH
+        chain_management: true
+        state: absent
+      when: sec_iptables_usable.rc == 0
+
+    # ---------------------------------------------------------------
+    # capabilities: file capabilities on a throwaway COPY of /bin/cat
+    # under the bench dir - never on a real system binary. Gated on
+    # the setcap probe.
+    # ---------------------------------------------------------------
+    - name: Copy a harmless binary for the capabilities exercise
+      ansible.builtin.copy:
+        src: /bin/cat
+        dest: "{{ sec_dir }}/bin/cat-capbench"
+        mode: "0755"
+        remote_src: true
+
+    - name: Capabilities set cap_net_raw on the throwaway copy
+      community.general.capabilities:
+        path: "{{ sec_dir }}/bin/cat-capbench"
+        capability: cap_net_raw+ep
+        state: present
+      register: sec_cap_set
+      when: sec_setcap_probe.rc == 0
+
+    - name: Capabilities re-run the same set (idempotency check)
+      community.general.capabilities:
+        path: "{{ sec_dir }}/bin/cat-capbench"
+        capability: cap_net_raw+ep
+        state: present
+      when: sec_setcap_probe.rc == 0
+
+    - name: Capabilities add a second capability
+      community.general.capabilities:
+        path: "{{ sec_dir }}/bin/cat-capbench"
+        capability: cap_dac_override+ep
+        state: present
+      when: sec_setcap_probe.rc == 0
+
+    - name: Read back the capabilities via getcap
+      ansible.builtin.command: getcap -r {{ sec_dir }}/bin/cat-capbench
+      register: sec_bytediff_getcap
+      changed_when: false
+      when: sec_setcap_probe.rc == 0
+
+    - name: Byte-diff print the getcap output
+      ansible.builtin.debug:
+        msg: "{{ sec_bytediff_getcap.stdout | default('') }}"
+      when: sec_setcap_probe.rc == 0
+
+    - name: Assert both capabilities landed
+      ansible.builtin.assert:
+        that:
+          - "'cap_net_raw' in sec_bytediff_getcap.stdout"
+          - "'cap_dac_override' in sec_bytediff_getcap.stdout"
+      when: sec_setcap_probe.rc == 0
+
+    - name: Capabilities remove cap_dac_override again
+      community.general.capabilities:
+        path: "{{ sec_dir }}/bin/cat-capbench"
+        capability: cap_dac_override+ep
+        state: absent
+      when: sec_setcap_probe.rc == 0
+
+    - name: Capabilities remove cap_net_raw again
+      community.general.capabilities:
+        path: "{{ sec_dir }}/bin/cat-capbench"
+        capability: cap_net_raw+ep
+        state: absent
+      when: sec_setcap_probe.rc == 0
+
+    - name: Assert getcap is now empty
+      ansible.builtin.command: getcap -r {{ sec_dir }}/bin/cat-capbench
+      register: sec_getcap_after
+      changed_when: false
+      failed_when: sec_getcap_after.stdout | length > 0
+      when: sec_setcap_probe.rc == 0
+
+    # ---------------------------------------------------------------
+    # Crypto family (openssl_*/x509_*/openssh_keypair/get_certificate/
+    # java_cert): lives in the included file so this playbook also
+    # exercises include_tasks with a real, fact-dependent section.
+    # ---------------------------------------------------------------
+    - name: Include crypto module coverage tasks
+      ansible.builtin.include_tasks: tasks_security_certs.yml
+
+    # ---------------------------------------------------------------
+    # Cleanup: forgiving everywhere (failed_when:false on anything
+    # that shells) so a partially-probed run still leaves nothing
+    # behind. Users/groups last, dir tree last of all.
+    # ---------------------------------------------------------------
+    - name: Remove any leftover iptables bench chain
+      ansible.builtin.shell: "iptables -F KRIKRI-SEC-BENCH 2>/dev/null; iptables -X KRIKRI-SEC-BENCH 2>/dev/null; true"
+      args:
+        executable: /bin/bash
+      failed_when: false
+      changed_when: false
+      when: sec_iptables_usable.rc == 0
+
+    - name: Remove leftover s_server process by pidfile
+      ansible.builtin.shell: "kill -9 $(cat {{ sec_dir }}/s_server.pid) 2>/dev/null; true"
+      args:
+        executable: /bin/bash
+      failed_when: false
+      changed_when: false
+
+    - name: Remove the throwaway ssh key dir
+      ansible.builtin.file:
+        path: "{{ sec_dir }}/keys"
+        state: absent
+
+    - name: Remove the bench users
+      ansible.builtin.user:
+        name: "{{ item }}"
+        state: absent
+        remove: true
+      failed_when: false
+      loop:
+        - secweb
+        - secdb
+        - seccron
+
+    - name: Remove the remaining bench users
+      ansible.builtin.user:
+        name: "{{ item }}"
+        state: absent
+        remove: true
+      failed_when: false
+      loop:
+        - secsys
+        - secuid
+
+    - name: Remove the bench groups
+      ansible.builtin.group:
+        name: "{{ item }}"
+        state: absent
+      failed_when: false
+      loop:
+        - secgrp
+        - secgrp2
+        - secsysgrp
+        - secgidgrp
+
+    - name: Remove the benchmark root directory
+      ansible.builtin.file:
+        path: "{{ sec_dir }}"
+        state: absent
+
+    - name: Confirm cleanup landed
+      ansible.builtin.stat:
+        path: "{{ sec_dir }}"
+      register: sec_cleanup_stat
+
+    - name: Assert benchmark root removed
+      ansible.builtin.assert:
+        that:
+          - not sec_cleanup_stat.stat.exists
+
+    - name: Announce security benchmark end
+      ansible.builtin.debug:
+        msg: "security benchmark {{ sec_bench_run }} complete"
