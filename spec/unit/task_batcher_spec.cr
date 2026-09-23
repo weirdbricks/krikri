@@ -1,4 +1,5 @@
 require "../spec_helper"
+require "../../src/krikri/inventory_parser"
 require "../../src/krikri/task_batcher"
 
 private def task(name : String, register : String? = nil) : Krikri::Task
@@ -321,6 +322,73 @@ describe Krikri::TaskBatcher do
     groups = Krikri::TaskBatcher.plan(tasks)
 
     groups.flat_map(&.map(&.name)).should eq(["a", "b", "c"])
+  end
+
+  describe "template: action-plugin batching" do
+    # runs_as_action_plugin? used to force every action-plugin task into
+    # its own solo group unconditionally, because a .j2 file's content
+    # is never scanned for register-name references at batch-planning
+    # time. But that hazard only points backwards: the file can only
+    # reference a register some EARLIER member of the group being built
+    # produced. With no registers in the group yet, a template: is safe
+    # to let join - this is the common real-role shape (template: tasks
+    # far outnumber register:-then-template: pairs), so the solo rule
+    # cost a whole extra SSH round trip per template: task for nothing.
+    it "lets a template: task join the group while no earlier member has registered anything" do
+      tpl = Krikri::Task.new("render", "ansible.builtin.template")
+      b = task("b")
+      c = task("c")
+      tasks = [tpl, b, c]
+
+      groups = Krikri::TaskBatcher.plan(tasks)
+
+      groups.map { |group| group.map(&.name) }.should eq([["render", "b", "c"]])
+    end
+
+    it "still splits a template: task off after an earlier member registered something" do
+      # The konstruktoid-hardening shape: an earlier task's register:
+      # could be referenced from inside the .j2 file's own content
+      # (invisible to references_register?, which only scans the task's
+      # own YAML fields) - the old all-solo rule must survive here.
+      a = task("a", register: "result_a")
+      tpl = Krikri::Task.new("render", "ansible.builtin.template")
+      c = task("c")
+      tasks = [a, tpl, c]
+
+      groups = Krikri::TaskBatcher.plan(tasks)
+
+      groups.map { |group| group.map(&.name) }.should eq([["a"], ["render"], ["c"]])
+    end
+
+    it "re-splits on a second template: after the first one registered its result" do
+      # The joining template:'s own register: is tracked like any other
+      # task's for the members that follow it - so a later template:
+      # (whose file could reference it) must split again.
+      first = Krikri::Task.new("render1", "ansible.builtin.template")
+      first.register = "rendered"
+      second = Krikri::Task.new("render2", "ansible.builtin.template")
+      tasks = [first, second]
+
+      groups = Krikri::TaskBatcher.plan(tasks)
+
+      groups.map { |group| group.map(&.name) }.should eq([["render1"], ["render2"]])
+    end
+
+    it "keeps other action plugins solo even with no registers in the group" do
+      # The join exception is deliberately narrowed to template: - the
+      # one action plugin whose controller-side input is an external
+      # file. Everything else (debug:, assert:, ...) takes its input
+      # from task params, which references_register? already scans, so
+      # they keep the unconditional solo rule.
+      a = task("a")
+      dbg = Krikri::Task.new("dbg", "ansible.builtin.debug")
+      c = task("c")
+      tasks = [a, dbg, c]
+
+      groups = Krikri::TaskBatcher.plan(tasks)
+
+      groups.map { |group| group.map(&.name) }.should eq([["a"], ["dbg"], ["c"]])
+    end
   end
 
   # Real bug found benchmarking gantsign.sdkman (round 74, 0.9.868): a
