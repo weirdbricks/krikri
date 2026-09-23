@@ -49,7 +49,7 @@ module Krikri
       }
 
       tasks.each do |task|
-        if breaks_run?(task)
+        if breaks_run?(task, group_has_registers: !seen_registers.empty?)
           flush.call
           groups << [task]
           next
@@ -74,7 +74,9 @@ module Krikri
     end
 
     # A task in any of these categories can never extend (or be extended
-    # by) a batch run - it's always its own length-1 group:
+    # by) a batch run - it's always its own length-1 group (the one
+    # exception: a template: joining a register-free group, see
+    # runs_as_action_plugin? below):
     #
     # - block?/include_tasks?/include_role?: structural/dynamic, handled
     #   by TaskExecutor's own recursive block/include machinery, not by
@@ -131,10 +133,14 @@ module Krikri
     #   re-testing linux-system-roles.storage after fixing that
     #   resolution's own role_files_dir bug - the module was finally
     #   found, but batching got in the way before dispatch ever saw it.
-    private def self.breaks_run?(task : Task) : Bool
+    # *group_has_registers* reports whether the group being built has
+    # already registered anything (see runs_as_action_plugin? below -
+    # the only condition that depends on group state, not just the task
+    # alone).
+    private def self.breaks_run?(task : Task, group_has_registers : Bool) : Bool
       structural_or_dynamic?(task) || needs_controller_control_flow?(task) ||
         runs_off_the_target?(task) || task.run_once? || retroactive_verdict?(task) ||
-        produces_ansible_facts?(task) || runs_as_action_plugin?(task) ||
+        produces_ansible_facts?(task) || runs_as_action_plugin?(task, group_has_registers) ||
         reconfigures_firewall?(task) || resolves_module_at_runtime?(task) ||
         !!task.unavailable_module ||
         # group_by:/set_stats: - same category as reboot: above: no
@@ -200,9 +206,22 @@ module Krikri
     # the reference lives inside the *template file's own content*
     # (a separate file, never scanned for register-name references at
     # batch-planning time), not in any of the task's own YAML fields.
-    # Always its own group sidesteps the whole class of bug, the same
-    # way produces_ansible_facts? does for getent:/set_fact:.
-    private def self.runs_as_action_plugin?(task : Task) : Bool
+    #
+    # That hazard only points backwards, though: the file can only
+    # reference a register some EARLIER member of the group being built
+    # produced. When that group has registered nothing yet, there is
+    # nothing from THIS group for the file to reference, so a template:
+    # is safe to let JOIN the current run - and its own register:, if
+    # any, is tracked like any other task's for the members that follow
+    # it (a later template: then sees a non-empty register set and
+    # splits again). Every other action plugin keeps the unconditional
+    # solo rule: their controller-side inputs (copy: content:, assert:'s
+    # that:, pause:'s prompt handling, ...) all live in the task's own
+    # YAML fields, which `references_register?` already scans, so
+    # narrowing the exception to the one plugin whose input is an
+    # unscannable external file keeps the rest of the class conservative.
+    private def self.runs_as_action_plugin?(task : Task, group_has_registers : Bool) : Bool
+      return false if !group_has_registers && task.module_name.ends_with?("template")
       ActionPluginManager.has_action_plugin?(task.module_name)
     end
 
