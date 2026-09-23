@@ -72,6 +72,16 @@ module Krikri
       # role var and lose the command's output entirely.
       registered = @registered_vars[host.name]
 
+      # Publish this host's execution-resolved variable names (every
+      # register:/set_fact: write, which always outrank role/task vars in
+      # the ladder above, so a tagged name's context value IS the resolved
+      # one) for the recursive re-templating gate - see VarSubstitutor's
+      # @@resolved_var_names comment for why the content-based check alone
+      # cannot tell a resolved result from a YAML-defined template.
+      resolved_names = Set(String).new(registered.keys)
+      @set_facts[host.name]?.try(&.each_key { |key| resolved_names.add(key) })
+      VarSubstitutor.set_resolved_var_names(host.name, resolved_names)
+
       unless @all_role_vars.empty?
         @all_role_vars.each do |key, value|
           next if registered.has_key?(key)
