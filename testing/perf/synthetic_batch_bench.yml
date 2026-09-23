@@ -11,8 +11,9 @@
 #
 # Safe to run as root against a fresh throwaway VM: all mutations are
 # confined to /tmp/krikri-bench* paths and to benchusrNN users/benchgrp
-# group this playbook creates and then removes. No packages, no sshd,
-# no network, no firewall.
+# group this playbook creates and then removes. No packages (one
+# deliberate exception: zfsutils-linux in the exotic-modules section),
+# no sshd, no network, no firewall.
 
 - name: Synthetic batch-shape benchmark
   hosts: all
@@ -41,6 +42,12 @@
       alpha: 1
       beta: 2
       gamma: 3
+    # systemd-escape --path /tmp/krikri-bench-mnt1 of the ext4
+    # section's mountpoint (backslash-x-2-d is systemd's escaped
+    # form of '-'). Static so gated systemd tasks can reference it
+    # even where the escape task itself is skipped; the section
+    # still runs systemd-escape and shows its output for comparison.
+    bench_mnt1_unit: 'tmp-krikri\x2dbench\x2dmnt1.mount'
 
   handlers:
     - name: Write bench marker
@@ -1047,6 +1054,299 @@
         that:
           - "'item 1: one tag tag-one first' in edge_loop_cat.stdout"
           - "'item 3: skip tag tag-skip last' in edge_loop_cat.stdout"
+
+    # ---------------------------------------------------------------
+    # Exotic modules section: loopback filesystems driven through
+    # systemd. Two subsections - ext4 via a real losetup device +
+    # a systemd .mount unit, then ZFS via zpool on the image file
+    # directly (ZFS self-mounts, no .mount unit needed).
+    #
+    # Renders no templates and produces no brace-containing output,
+    # so it is safe to place before the final literal-braces pair
+    # below (that pair must stay last - see its own comment).
+    #
+    # Guardrails: everything is confined to /tmp/krikri-bench* image
+    # paths, the /tmp/krikri-bench-mnt1 mountpoint, the
+    # krikribenchpool pool, and a unit file named from
+    # systemd-escape of that mountpoint (krikri-bench namespaced).
+    # No real system mounts, networking, sshd, or firewall touched.
+    # ---------------------------------------------------------------
+
+    # --- Section 1: ext4 loopback + systemd .mount unit ---
+
+    # Capability probes: this section is fully active on a real VM
+    # (loop devices + systemd as PID 1). On a host without either -
+    # e.g. a rootless podman container, where losetup gets EPERM
+    # from the user namespace and systemctl reports "offline" -
+    # everything beyond the userspace-safe subset skips cleanly
+    # instead of failing. The userspace-safe subset (image creation,
+    # mkfs.ext4 on the image file, which needs no privileges) still
+    # runs everywhere.
+
+    - name: Probe loop device support
+      ansible.builtin.command: losetup -f
+      register: bench_loop_probe
+      failed_when: false
+      changed_when: false
+
+    - name: Probe systemd availability
+      ansible.builtin.stat:
+        path: /run/systemd/system
+      register: bench_systemd_probe
+      changed_when: false
+
+    - name: Create ext4 loopback image
+      ansible.builtin.command: dd if=/dev/zero of=/tmp/krikri-bench-loop1.img bs=1M count=128
+      args:
+        creates: /tmp/krikri-bench-loop1.img
+
+    - name: Check for existing loop device on ext4 image
+      ansible.builtin.command: losetup -j /tmp/krikri-bench-loop1.img
+      register: bench_loop_attached
+      changed_when: false
+      when: bench_loop_probe.rc == 0
+
+    - name: Attach loop device to ext4 image
+      ansible.builtin.command: losetup --find --show /tmp/krikri-bench-loop1.img
+      register: bench_loop_new
+      changed_when: true
+      when: bench_loop_probe.rc == 0 and bench_loop_attached.stdout == ''
+
+    - name: Resolve loop device path
+      ansible.builtin.shell: "set -o pipefail && losetup -j /tmp/krikri-bench-loop1.img | cut -d: -f1"
+      args:
+        executable: /bin/bash
+      register: bench_loop_dev
+      changed_when: false
+      when: bench_loop_probe.rc == 0
+
+    - name: Format loop device as ext4
+      community.general.filesystem:
+        fstype: ext4
+        dev: "{{ bench_loop_dev.stdout }}"
+      when: bench_loop_probe.rc == 0
+
+    - name: Format ext4 image file directly (no-loop fallback)
+      community.general.filesystem:
+        fstype: ext4
+        dev: /tmp/krikri-bench-loop1.img
+      when: bench_loop_probe.rc != 0
+
+    - name: Create ext4 mountpoint directory
+      ansible.builtin.file:
+        path: /tmp/krikri-bench-mnt1
+        state: directory
+        mode: "0755"
+
+    # Real Ansible convention: a .mount unit's name is the
+    # systemd-escaped (path-escaped) mountpoint, i.e. the static
+    # bench_mnt1_unit var. Exercise systemd-escape itself and show
+    # its output rather than hand-verifying the escaping.
+    - name: Escape mountpoint for systemd unit name
+      ansible.builtin.command: systemd-escape --path /tmp/krikri-bench-mnt1
+      register: bench_mnt1_escape
+      changed_when: false
+      when: bench_systemd_probe.stat.exists
+
+    - name: Show escaped mountpoint unit name
+      ansible.builtin.debug:
+        msg: "unit name: {{ bench_mnt1_escape.stdout }}.mount"
+      when: bench_systemd_probe.stat.exists
+
+    - name: Install ext4 systemd mount unit
+      ansible.builtin.copy:
+        content: |
+          [Unit]
+          Description=krikri bench ext4 loopback mount
+
+          [Mount]
+          What={{ bench_loop_dev.stdout }}
+          Where=/tmp/krikri-bench-mnt1
+          Type=ext4
+
+          [Install]
+          WantedBy=multi-user.target
+        dest: "/etc/systemd/system/{{ bench_mnt1_unit }}"
+        mode: "0644"
+      when: bench_loop_probe.rc == 0 and bench_systemd_probe.stat.exists
+
+    - name: Reload systemd for ext4 mount unit
+      ansible.builtin.systemd:
+        daemon_reload: true
+      when: bench_loop_probe.rc == 0 and bench_systemd_probe.stat.exists
+
+    - name: Start ext4 mount unit
+      ansible.builtin.systemd:
+        name: "{{ bench_mnt1_unit }}"
+        state: started
+      when: bench_loop_probe.rc == 0 and bench_systemd_probe.stat.exists
+
+    - name: Check ext4 mount is active
+      ansible.builtin.command: findmnt /tmp/krikri-bench-mnt1
+      register: bench_mnt1_findmnt
+      changed_when: false
+      when: bench_loop_probe.rc == 0 and bench_systemd_probe.stat.exists
+
+    - name: Assert ext4 mount is active
+      ansible.builtin.assert:
+        that:
+          - bench_mnt1_findmnt.rc == 0
+      when: bench_loop_probe.rc == 0 and bench_systemd_probe.stat.exists
+
+    - name: Write file into mounted ext4 filesystem
+      ansible.builtin.copy:
+        content: "written through the ext4 loopback mount\n"
+        dest: /tmp/krikri-bench-mnt1/payload.txt
+        mode: "0644"
+      when: bench_loop_probe.rc == 0 and bench_systemd_probe.stat.exists
+
+    - name: Read back file from mounted ext4 filesystem
+      ansible.builtin.command: cat /tmp/krikri-bench-mnt1/payload.txt
+      register: bench_mnt1_cat
+      changed_when: false
+      when: bench_loop_probe.rc == 0 and bench_systemd_probe.stat.exists
+
+    - name: Assert ext4 round-trip content
+      ansible.builtin.assert:
+        that:
+          - "'written through the ext4 loopback mount' in bench_mnt1_cat.stdout"
+      when: bench_loop_probe.rc == 0 and bench_systemd_probe.stat.exists
+
+    # --- Section 2: ZFS pool on a loopback image file ---
+    # Unlike ext4 above, zpool operates directly on the image file -
+    # no losetup pre-step needed - and ZFS self-mounts the pool at
+    # /krikribenchpool, so no systemd .mount unit here either.
+    # Gated on /dev/zfs: ZFS filesystem support lives in a host
+    # kernel module, so on a host whose kernel has no zfs module
+    # (e.g. Debian kernels, which ship none) the whole section
+    # skips with an explicit notice instead of failing.
+
+    - name: Probe ZFS kernel support
+      ansible.builtin.command: test -c /dev/zfs
+      register: bench_zfs_probe
+      failed_when: false
+      changed_when: false
+
+    - name: Report ZFS unsupported on this kernel
+      ansible.builtin.debug:
+        msg: "skipping ZFS section: /dev/zfs absent (host kernel has no zfs module)"
+      when: bench_zfs_probe.rc != 0
+
+    # DELIBERATE EXCEPTION to this playbook's "no packages" rule:
+    # zfsutils-linux is the one install, explicitly requested for
+    # the exotic-filesystem coverage.
+    - name: Install zfsutils-linux
+      ansible.builtin.apt:
+        name: zfsutils-linux
+        state: present
+        update_cache: true
+      when: bench_zfs_probe.rc == 0
+
+    - name: Create ZFS loopback image
+      ansible.builtin.command: dd if=/dev/zero of=/tmp/krikri-bench-loop2.img bs=1M count=128
+      args:
+        creates: /tmp/krikri-bench-loop2.img
+      when: bench_zfs_probe.rc == 0
+
+    - name: Check whether krikribenchpool already exists
+      ansible.builtin.command: zpool list krikribenchpool
+      register: bench_pool_check
+      failed_when: false
+      changed_when: false
+      when: bench_zfs_probe.rc == 0
+
+    # zpool create is not idempotent by default - only run it when
+    # the pool is genuinely absent.
+    - name: Create ZFS pool on loopback image
+      ansible.builtin.command: zpool create -f krikribenchpool /tmp/krikri-bench-loop2.img
+      register: bench_pool_create
+      changed_when: true
+      when: bench_zfs_probe.rc == 0 and bench_pool_check.rc != 0
+
+    - name: List krikribenchpool
+      ansible.builtin.command: zfs list krikribenchpool
+      register: bench_pool_list
+      changed_when: false
+      when: bench_zfs_probe.rc == 0
+
+    - name: Check ZFS pool auto-mount
+      ansible.builtin.command: findmnt /krikribenchpool
+      register: bench_pool_findmnt
+      changed_when: false
+      when: bench_zfs_probe.rc == 0
+
+    - name: Assert ZFS pool is mounted
+      ansible.builtin.assert:
+        that:
+          - bench_pool_list.rc == 0
+          - bench_pool_findmnt.rc == 0
+      when: bench_zfs_probe.rc == 0
+
+    - name: Write file into ZFS pool
+      ansible.builtin.copy:
+        content: "written through the krikribenchpool ZFS mount\n"
+        dest: /krikribenchpool/payload.txt
+        mode: "0644"
+      when: bench_zfs_probe.rc == 0
+
+    - name: Read back file from ZFS pool
+      ansible.builtin.command: cat /krikribenchpool/payload.txt
+      register: bench_pool_cat
+      changed_when: false
+      when: bench_zfs_probe.rc == 0
+
+    - name: Assert ZFS round-trip content
+      ansible.builtin.assert:
+        that:
+          - "'written through the krikribenchpool ZFS mount' in bench_pool_cat.stdout"
+      when: bench_zfs_probe.rc == 0
+
+    # --- Cleanup for both exotic sections ---
+    # Idempotent-ish on purpose: cleanup must not fail the play if a
+    # step was already gone (or never ran).
+    - name: Stop ext4 mount unit
+      ansible.builtin.systemd:
+        name: "{{ bench_mnt1_unit }}"
+        state: stopped
+      failed_when: false
+      when: bench_loop_probe.rc == 0 and bench_systemd_probe.stat.exists
+
+    - name: Detach ext4 loop device
+      ansible.builtin.command: "losetup -d {{ bench_loop_dev.stdout }}"
+      failed_when: false
+      changed_when: false
+      when: bench_loop_probe.rc == 0
+
+    - name: Remove ext4 systemd mount unit file
+      ansible.builtin.file:
+        path: "/etc/systemd/system/{{ bench_mnt1_unit }}"
+        state: absent
+
+    - name: Reload systemd after unit removal
+      ansible.builtin.systemd:
+        daemon_reload: true
+      when: bench_systemd_probe.stat.exists
+
+    - name: Remove ext4 mountpoint directory
+      ansible.builtin.file:
+        path: /tmp/krikri-bench-mnt1
+        state: absent
+
+    - name: Destroy ZFS pool
+      ansible.builtin.command: zpool destroy krikribenchpool
+      failed_when: false
+      changed_when: false
+      when: bench_zfs_probe.rc == 0
+
+    - name: Remove ext4 loopback image
+      ansible.builtin.file:
+        path: /tmp/krikri-bench-loop1.img
+        state: absent
+
+    - name: Remove ZFS loopback image
+      ansible.builtin.file:
+        path: /tmp/krikri-bench-loop2.img
+        state: absent
 
     # A task argument that renders to literal {{ ... }} text must pass
     # through verbatim, never re-scanned as a second template pass
