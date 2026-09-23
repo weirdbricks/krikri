@@ -53,9 +53,34 @@ describe AuthorizedKeysFile do
       changed.should be_false
     end
 
-    it "treats a differing comment as the same key" do
+    it "rewrites the line when only the comment differs (real Ansible compares the comment too)" do
       existing = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC someone-else@elsewhere\n"
-      _, changed = AuthorizedKeysFile.ensure(existing, RSA_KEY, true)
+      text, changed = AuthorizedKeysFile.ensure(existing, RSA_KEY, true)
+
+      changed.should be_true
+      text.should eq("#{RSA_KEY}\n")
+    end
+
+    it "treats a reordered key_options list as the same key (real Ansible compares the parsed option dict)" do
+      existing = "no-agent-forwarding,command=\"/bin/true\" #{RSA_KEY}\n"
+      text, changed = AuthorizedKeysFile.ensure(existing, "command=\"/bin/true\",no-agent-forwarding #{RSA_KEY}", true)
+
+      changed.should be_false
+      text.should eq(existing)
+    end
+
+    it "rewrites the line when key_options are added to an existing bare key" do
+      bare = "ssh-ed25519 AAAAC3 m2@example"
+      options = "command=\"/usr/bin/echo bench\",no-agent-forwarding ssh-ed25519 AAAAC3 m2@example"
+      text, changed = AuthorizedKeysFile.ensure("#{bare}\n", options, true)
+
+      changed.should be_true
+      text.should eq("#{options}\n")
+    end
+
+    it "is idempotent when the options-prefixed line is already in the file" do
+      options = "command=\"/usr/bin/echo bench\",no-agent-forwarding ssh-ed25519 AAAAC3 m2@example"
+      _, changed = AuthorizedKeysFile.ensure("#{options}\n", options, true)
 
       changed.should be_false
     end

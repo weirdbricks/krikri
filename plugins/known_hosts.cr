@@ -7,7 +7,10 @@
 # implementation leans on ssh-keygen throughout, including for the
 # present-with-matching-key idempotency check, since it already
 # understands hashed (`hash_host: true`) entries without needing to
-# replicate that hashing here).
+# replicate that hashing here). The hash_host itself is done the way
+# the real module does: hashing happens at write time on the entry
+# being written ONLY (its hash_host_key replaces the hostname field
+# with |1|<salt>|<HMAC-SHA1>), never on the rest of the file.
 #
 # Parameters:
 #   name (required, alias host): hostname/IP the entry is for
@@ -20,6 +23,7 @@
 require "json"
 require "base64"
 require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/known_hosts_key"
 
 module Krikri
   class KnownHostsPlugin < BasePlugin
@@ -71,13 +75,14 @@ module Krikri
         return PluginResult.new(changed: false, failed: true, msg: "failed to replace existing entry for #{name}: #{removal[:stderr].strip}") unless removal[:exit_code] == 0
       end
 
+      key_data = if true?(@params["hash_host"]?)
+                   PluginHelpers::KnownHostsKey.hash_host_line(name, key_data.strip)
+                 else
+                   key_data.strip
+                 end
+
       append_result = append_key(path, key_data)
       return PluginResult.new(changed: false, failed: true, msg: "failed to write #{path}: #{append_result[:stderr].strip}") unless append_result[:exit_code] == 0
-
-      if true?(@params["hash_host"]?)
-        remote_exec("ssh-keygen -H -f #{shell_quote(path)}")
-        remote_exec("rm -f #{shell_quote(path)}.old")
-      end
 
       PluginResult.new(changed: true, failed: false)
     end
