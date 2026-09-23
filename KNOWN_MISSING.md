@@ -33,6 +33,31 @@ narrative, newest first.
 
 ## Open gaps
 
+- **Resolved values whose text contains `{{` get recursively
+  re-templated; real ansible-core 2.19 tags them resolved and never
+  re-scans them** (found while building `testing/perf/synthetic_batch_
+  bench.yml`'s Jinja edge-case section, 0.9.1267) - a `set_fact:` whose
+  single-pass render OUTPUT contains brace text
+  (`x: "{{ '{{ inner_undefined_name }}' }}"` stores the literal text
+  `{{ inner_undefined_name }}`), or a registered `command:` stdout
+  holding the same, is later treated by `substitute_impl`'s re-pass
+  (`re_template_from_variable?`) as ANOTHER template level: the inner
+  name is looked up and the task dies with "'inner_undefined_name' is
+  undefined" - in krikri's case as an UNHANDLED exception that kills
+  the whole controller process, not even a task failure. Real
+  ansible-core 2.19 (live-verified on 2.19.11 with a probe playbook):
+  set_fact results and module results are resolved/tagged and pass
+  through verbatim (`msg: value=[{{ inner_undefined_name }}]`, rc=0).
+  krikri has no resolved/unresolved tagging on its vars hash, so the
+  re-pass's content-based "raw value is itself a template" heuristic
+  cannot distinguish a YAML-defined template (which real Ansible DOES
+  render recursively, round 82024) from a resolved result that merely
+  looks like one. Fix shape: tag set_fact/module-result values as
+  resolved when they enter the vars context and have
+  `re_template_from_variable?`/`Rerender.if_templated` skip tagged
+  values. Not yet fixed; the benchmark playbook confines itself to
+  asserting only the braces-echo task's rc.
+
 - **`buluma.forensics`: `delegate_to: localhost` + `copy` scp's to
   `localhost:22` instead of running locally** (round 188, 0.9.623,
   Rocky 9.6) - the role's `command_collector | Save output` task uses

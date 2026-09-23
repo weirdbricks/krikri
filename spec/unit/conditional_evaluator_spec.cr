@@ -1795,6 +1795,32 @@ describe Krikri::ConditionalEvaluator do
     end
   end
 
+  # 0.9.1267: the type tests' operand resolver (`is string` and friends)
+  # had no parenthesized-expression path at all - `(("'x' in mylist" or
+  # false) is string` looked up a variable literally named
+  # "(...or false)", found none, and answered false, where real
+  # ansible-core 2.19.11 short-circuits the parenthesized or to the
+  # truthy string literal itself and `is string` sees that STRING
+  # (live-verified). Found while building synthetic_batch_bench.yml's
+  # Jinja edge-case section.
+  describe "parenthesized or-operand under a type test (0.9.1267)" do
+    it "sees the short-circuited string literal as a string" do
+      v = Hash(String, JSON::Any).new
+      v["bench_users"] = JSON.parse(%(["webhead", "dbatch"]))
+      Krikri::ConditionalEvaluator.evaluate(
+        %((("'absentword' in bench_users" or false) is string)), v, strict: true
+      ).should be_true
+    end
+
+    it "sees the falsy-or side as a boolean, not a string" do
+      v = Hash(String, JSON::Any).new
+      v["bench_users"] = JSON.parse(%(["webhead", "dbatch"]))
+      Krikri::ConditionalEvaluator.evaluate(
+        %((("'absentword' in bench_users" or false) is boolean)), v, strict: true
+      ).should be_false
+    end
+  end
+
   # Round 82024 regression cover (inmotionhosting.php_fpm): a var whose
   # OWN VALUE is still unrendered Jinja bottoming out at a name set
   # nowhere (`site_errorlog: "/home/{{ system_user }}/logs/x.log"` with

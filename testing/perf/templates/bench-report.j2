@@ -1,0 +1,13 @@
+# krikri synthetic batch benchmark report
+host: {{ ansible_hostname }}
+os: {{ ansible_distribution }} {{ ansible_distribution_version }}
+kernel: {{ ansible_kernel }}
+mode: {{ bench_mode }}
+{% for entry in bench_items %}
+[{{ loop.index }}] {{ entry.name }} = {{ entry.value }}
+{% endfor %}
+{% if bench_mode == 'stress' %}
+stress: rendered at full batch depth
+{% else %}
+standard run
+{% endif %}

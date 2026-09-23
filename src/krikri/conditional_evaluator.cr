@@ -181,7 +181,7 @@ module Krikri
       # mid-string - so those keep parsing normally below.
       if condition.size >= 2 &&
          ((condition[0] == '\'' && condition[-1] == '\'') ||
-          (condition[0] == '"' && condition[-1] == '"'))
+         (condition[0] == '"' && condition[-1] == '"'))
         first_quote = condition[0]
         close_idx = (1...condition.size - 1).find { |i| condition[i] == first_quote && condition[i - 1] != '\\' }
         if close_idx.nil?
@@ -476,12 +476,26 @@ module Krikri
       # 2.19.4, which skips/runs exactly as the operator form does.
       condition = condition.gsub(" is not in ", " not in ").gsub(" is in ", " in ")
 
-      if condition.includes?(" not in ")
+      # Both `in` routers below must confirm the operator actually EXISTS
+      # at paren depth 0 outside quotes before routing: `includes?` sees
+      # an " in " anywhere - including one inside a quoted string
+      # literal, e.g. `("'x' in mylist" or false) is string` - and
+      # evaluate_in's own quote-aware split then finds no depth-0
+      # operator at all, returns false for "too few parts", and the
+      # condition silently evaluated false (the task skipped) where real
+      # ansible-core 2.19.11 evaluates the `is string` test on the
+      # parenthesized or-result and RUNS the task (live-verified,
+      # synthetic_batch_bench.yml's edge-case section, 0.9.1267). When
+      # no real operator exists, fall through to the is-test/defined
+      # handlers below instead.
+      if condition.includes?(" not in ") &&
+         split_progressed?(split_by_operator(condition, " not in "), condition)
         return !evaluate_in(condition.gsub(" not in ", " in "), vars, raise_undefined)
       end
 
       # Handle 'in' operator
-      if condition.includes?(" in ")
+      if condition.includes?(" in ") &&
+         split_progressed?(split_by_operator(condition, " in "), condition)
         return evaluate_in(condition, vars, raise_undefined)
       end
 
@@ -1691,7 +1705,15 @@ module Krikri
       # ExpressionEvaluator instead, the same "evaluate then
       # JSON.parse the result" pattern rerender_if_templated already
       # uses just above for re-rendering an already-resolved value.
-      if var_name.includes?("|") || var_name.match(REGEX_BARE_CALL)
+      # A PARENTHESIZED sub-expression needs the same treatment -
+      # `("'x' in mylist" or false) is string` (the 0.9.859 legacy
+      # string-literal-in-or shape): the parenthesized or short-
+      # circuits to the truthy string literal itself, and `is string`
+      # must see that STRING - the bare lookup below found no variable
+      # named "(\"...\" or false)" and answered false, skipping a task
+      # real ansible-core 2.19.11 runs (live-verified).
+      if var_name.includes?("|") || var_name.match(REGEX_BARE_CALL) ||
+         (var_name.starts_with?('(') && var_name.ends_with?(')'))
         # var_name may also be a bare function-CALL expression, not a
         # filter chain - `lookup('vars', item) is not string`
         # (inmotionhosting.apache's own required-variable-type assert)
@@ -2309,8 +2331,8 @@ module Krikri
         # this narrow newly-routed shape, leaving every
         # previously-routed shape's lenient behavior untouched.
         raise_if_plus_operand_undefined(expr, vars) if raise_undefined &&
-          !expr.includes?("|") && !expr.includes?("(") && !expr.includes?("~") &&
-          !expr.includes?("*") && !expr.includes?("/") && !expr.includes?(" - ")
+                                                       !expr.includes?("|") && !expr.includes?("(") && !expr.includes?("~") &&
+                                                       !expr.includes?("*") && !expr.includes?("/") && !expr.includes?(" - ")
 
         evaluator = VariableSubstitutor::ExpressionEvaluator.new(vars)
         rendered = evaluator.evaluate(expr)

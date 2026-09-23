@@ -1,0 +1,9 @@
+# krikri synthetic batch benchmark status
+hostname: {{ ansible_hostname }}
+vcpus: {{ ansible_processor_vcpus | default('unknown') }}
+memory_mb: {{ ansible_memtotal_mb | default('unknown') }}
+{% if ansible_processor_vcpus is defined and ansible_processor_vcpus > 4 %}
+notes: roomy host, batch depth can go high
+{% else %}
+notes: small host
+{% endif %}

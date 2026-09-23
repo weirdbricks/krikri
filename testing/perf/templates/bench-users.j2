@@ -1,0 +1,5 @@
+# krikri synthetic batch benchmark users
+{% for user in bench_users %}
+user: {{ user }} on {{ ansible_hostname }}{% if loop.first %} (first){% endif %}
+{% endfor %}
+total: {{ bench_users | length }}

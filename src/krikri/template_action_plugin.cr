@@ -55,9 +55,11 @@ module Krikri
       # "Could not find or access '<path>' on the Ansible Controller.\n"
       # "If you are using a module and expect the file to exist on the
       # remote, see the remote_src option").
-      unless File.exists?(src)
+      resolved_src = resolve_controller_src(src)
+      unless resolved_src
         return ActionResult.failure("Could not find or access '#{src}' on the Ansible Controller.\nIf you are using a module and expect the file to exist on the remote, see the remote_src option")
       end
+      src = resolved_src
 
       # Read template content
       begin
@@ -472,6 +474,28 @@ module Krikri
     private def delimiter_param(name : String, default : String) : String
       raw = @params[name]?
       (raw.nil? || raw.empty?) ? default : raw
+    end
+
+    # Real Ansible's _find_needle search for a bare relative template src
+    # on the controller: a standalone playbook task's `src: foo.j2` also
+    # resolves against the PLAYBOOK's own directory and its templates/
+    # subdir (which is how `template: src: bench-report.j2` finds
+    # <playbook_dir>/templates/bench-report.j2 when the process CWD is
+    # somewhere else entirely). Returns the resolved path, or nil when
+    # every candidate is exhausted - the caller then fails the task with
+    # real Ansible's exact "Could not find or access" wording.
+    private def resolve_controller_src(src : String) : String?
+      return src if File.exists?(src)
+      return nil if src.starts_with?('/')
+
+      playbook_dir = @vars["playbook_dir"]?.try(&.as_s?)
+      return nil unless playbook_dir && !playbook_dir.empty?
+
+      candidates = [
+        File.join(playbook_dir, src),
+        File.join(playbook_dir, "templates", src),
+      ]
+      candidates.find { |candidate| File.exists?(candidate) }
     end
 
     # True when any of the six Jinja delimiter-string task params (real

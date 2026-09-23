@@ -1,0 +1,5 @@
+# krikri synthetic batch benchmark loop rendering
+{% for entry in edge_nested_items %}
+item {{ loop.index }}: {{ entry.name }} tag {{ entry.meta.inner.tag }}{% if loop.first %} first{% endif %}{% if loop.last %} last{% endif %}
+{% endfor %}
+counted {{ edge_nested_items | length }} entries

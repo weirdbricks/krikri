@@ -1,0 +1,1016 @@
+---
+# Synthetic perf benchmark for krikri-playbook's task batcher.
+#
+# Shaped to stress the two batching optimizations landed in 0.9.1265/0.9.1266:
+#   1. changed_when:-only command:/shell: probes joining a batch group
+#      (previously each was forced into its own SSH round trip)
+#   2. register-free template: tasks joining a batch group
+#      (previously every action-plugin task was forced solo)
+# Plus deliberate negative controls: a template: immediately after a
+# register:-producing task must still split into its own group.
+#
+# Safe to run as root against a fresh throwaway VM: all mutations are
+# confined to /tmp/krikri-bench* paths and to benchusrNN users/benchgrp
+# group this playbook creates and then removes. No packages, no sshd,
+# no network, no firewall.
+
+- name: Synthetic batch-shape benchmark
+  hosts: all
+  gather_facts: true
+
+  vars:
+    bench_mode: stress
+    bench_items:
+      - { name: alpha, value: 1 }
+      - { name: beta, value: 2 }
+      - { name: gamma, value: 3 }
+      - { name: delta, value: 4 }
+      - { name: epsilon, value: 5 }
+    bench_users:
+      - webhead
+      - dbatch
+      - cronrun
+    edge_retemplate_l1: "{{ bench_mode }}-l1"
+    edge_retemplate_l2: "{{ edge_retemplate_l1 }}-l2"
+    edge_retemplate_l3: "{{ edge_retemplate_l2 }}-l3"
+    edge_nested_items:
+      - { name: one, meta: { inner: { tag: tag-one } } }
+      - { name: two, meta: { inner: { tag: tag-two } } }
+      - { name: skip, meta: { inner: { tag: tag-skip } } }
+    edge_dict:
+      alpha: 1
+      beta: 2
+      gamma: 3
+
+  handlers:
+    - name: Write bench marker
+      ansible.builtin.copy:
+        content: "notified\n"
+        dest: /tmp/krikri-bench/marker.txt
+        mode: "0644"
+    - name: Write bench stamp
+      ansible.builtin.copy:
+        content: "{{ bench_mode }}\n"
+        dest: /tmp/krikri-bench/stamp.txt
+        mode: "0644"
+
+  tasks:
+    # ---------------------------------------------------------------
+    # Setup: small set_fact chain (each set_fact is solo by design)
+    # ---------------------------------------------------------------
+    - name: Set benchmark mode fact
+      ansible.builtin.set_fact:
+        bench_run_id: "{{ ansible_date_time.epoch }}"
+
+    - name: Set benchmark target dir fact
+      ansible.builtin.set_fact:
+        bench_dir: "/tmp/krikri-bench-{{ bench_run_id }}"
+
+    - name: Announce benchmark start
+      ansible.builtin.debug:
+        msg: "synthetic batch benchmark {{ bench_run_id }} on {{ ansible_hostname }}"
+
+    # ---------------------------------------------------------------
+    # Probe wall A: 50 read-only changed_when:false probes back to
+    # back. Before 0.9.1265 each of these cost one SSH round trip;
+    # after, they should coalesce into a handful of batch groups.
+    # ---------------------------------------------------------------
+    - name: Probe whoami
+      ansible.builtin.command: whoami
+      changed_when: false
+    - name: Probe id
+      ansible.builtin.command: id
+      changed_when: false
+    - name: Probe hostname
+      ansible.builtin.command: hostname
+      changed_when: false
+    - name: Probe uname
+      ansible.builtin.command: uname -a
+      changed_when: false
+    - name: Probe uptime
+      ansible.builtin.command: uptime
+      changed_when: false
+    - name: Probe date
+      ansible.builtin.command: date +%s
+      changed_when: false
+    - name: Probe os-release
+      ansible.builtin.command: cat /etc/os-release
+      changed_when: false
+    - name: Probe df
+      ansible.builtin.command: df -h
+      changed_when: false
+    - name: Probe free
+      ansible.builtin.command: free -m
+      changed_when: false
+    - name: Probe ls tmp
+      ansible.builtin.command: ls /tmp
+      changed_when: false
+    - name: Probe proc version
+      ansible.builtin.command: cat /proc/version
+      changed_when: false
+    - name: Probe cpuinfo head
+      ansible.builtin.command: head -5 /proc/cpuinfo
+      changed_when: false
+    - name: Probe meminfo head
+      ansible.builtin.command: head -3 /proc/meminfo
+      changed_when: false
+    - name: Probe passwd count
+      ansible.builtin.command: wc -l /etc/passwd
+      changed_when: false
+    - name: Probe group count
+      ansible.builtin.command: wc -l /etc/group
+      changed_when: false
+    - name: Probe facts echo
+      ansible.builtin.command: echo "host={{ ansible_hostname }} user={{ ansible_user_id }}"
+      changed_when: false
+    - name: Probe environment
+      ansible.builtin.command: printenv
+      changed_when: false
+    - name: Probe path
+      ansible.builtin.command: printenv PATH
+      changed_when: false
+    - name: Probe arithmetic
+      ansible.builtin.command: expr 2 + 2
+      changed_when: false
+    - name: Probe disk inodes
+      ansible.builtin.command: df -i
+      changed_when: false
+    - name: Probe mounts
+      ansible.builtin.command: cat /proc/mounts
+      changed_when: false
+    - name: Probe loadavg
+      ansible.builtin.command: cat /proc/loadavg
+      changed_when: false
+    - name: Probe uptime seconds
+      ansible.builtin.command: cat /proc/uptime
+      changed_when: false
+    - name: Probe kernel release
+      ansible.builtin.command: uname -r
+      changed_when: false
+    - name: Probe machine arch
+      ansible.builtin.command: uname -m
+      changed_when: false
+    - name: Probe python present check
+      ansible.builtin.command: which python3
+      changed_when: false
+    - name: Probe bash version
+      ansible.builtin.command: bash --version
+      changed_when: false
+    - name: Probe resolv head
+      ansible.builtin.command: head -4 /etc/resolv.conf
+      changed_when: false
+    - name: Probe hosts file
+      ansible.builtin.command: cat /etc/hosts
+      changed_when: false
+    - name: Probe timezone
+      ansible.builtin.command: date +%Z
+      changed_when: false
+    - name: Probe tmp perms
+      ansible.builtin.command: stat -c %a /tmp
+      changed_when: false
+    - name: Probe var log listing
+      ansible.builtin.command: ls /var/log
+      changed_when: false
+    - name: Probe etc listing
+      ansible.builtin.command: ls /etc
+      changed_when: false
+    - name: Probe usr bin sample
+      ansible.builtin.command: ls /usr/bin
+      changed_when: false
+    - name: Probe piped os-release
+      ansible.builtin.shell: set -o pipefail && cat /etc/os-release | head -2
+      args:
+        executable: /bin/bash
+      changed_when: false
+    - name: Probe pseudo terminal count
+      ansible.builtin.command: cat /proc/sys/kernel/pty/nr
+      changed_when: false
+    - name: Probe true
+      ansible.builtin.command: "true"
+      changed_when: false
+    - name: Probe multi echo
+      ansible.builtin.command: echo a b c
+      changed_when: false
+    - name: Probe tagged output
+      ansible.builtin.command: echo batch-shape-probe-A
+      changed_when: false
+    - name: Probe device listing
+      ansible.builtin.command: ls /dev
+      changed_when: false
+    - name: Probe sys block
+      ansible.builtin.command: ls /sys/block
+      changed_when: false
+    - name: Probe cmd line
+      ansible.builtin.command: cat /proc/cmdline
+      changed_when: false
+    - name: Probe self status
+      ansible.builtin.command: head -5 /proc/self/status
+      changed_when: false
+    - name: Probe nofile limit
+      ansible.builtin.shell: set -o pipefail && ulimit -n
+      args:
+        executable: /bin/bash
+      changed_when: false
+    - name: Probe sequence
+      ansible.builtin.command: seq 1 3
+      changed_when: false
+    - name: Probe numeric uid
+      ansible.builtin.command: id -u
+      changed_when: false
+    - name: Probe numeric gid
+      ansible.builtin.command: id -g
+      changed_when: false
+    - name: Probe nproc
+      ansible.builtin.command: nproc
+      changed_when: false
+    - name: Probe hostname short
+      ansible.builtin.command: hostname -s
+      changed_when: false
+    - name: Probe wall end A
+      ansible.builtin.command: echo wall-A-complete
+      changed_when: false
+
+    # ---------------------------------------------------------------
+    # Interleave A: register-free template: tasks dropped between
+    # probe runs. Each template should JOIN the surrounding batch
+    # group (the 0.9.1266 optimization).
+    # ---------------------------------------------------------------
+    - name: Probe interleave A1
+      ansible.builtin.command: echo interleave-A1
+      changed_when: false
+    - name: Probe interleave A2
+      ansible.builtin.command: head -2 /etc/os-release
+      changed_when: false
+    - name: Probe interleave A3
+      ansible.builtin.command: df -h /
+      changed_when: false
+    - name: Probe interleave A4
+      ansible.builtin.command: free -m
+      changed_when: false
+    - name: Probe interleave A5
+      ansible.builtin.command: echo "A5 {{ bench_mode }}"
+      changed_when: false
+    - name: Probe interleave A6
+      ansible.builtin.command: uptime
+      changed_when: false
+    - name: Probe interleave A7
+      ansible.builtin.command: wc -l /etc/passwd
+      changed_when: false
+    - name: Probe interleave A8
+      ansible.builtin.command: ls /tmp
+      changed_when: false
+    - name: Probe interleave A9
+      ansible.builtin.command: date +%s
+      changed_when: false
+    - name: Probe interleave A10
+      ansible.builtin.command: uname -a
+      changed_when: false
+
+    - name: Render bench report (register-free, should join batch)
+      ansible.builtin.template:
+        src: bench-report.j2
+        dest: /tmp/krikri-bench-report.txt
+        mode: "0644"
+
+    - name: Probe interleave A11
+      ansible.builtin.command: echo interleave-A11
+      changed_when: false
+    - name: Probe interleave A12
+      ansible.builtin.command: head -3 /proc/meminfo
+      changed_when: false
+    - name: Probe interleave A13
+      ansible.builtin.command: cat /proc/loadavg
+      changed_when: false
+    - name: Probe interleave A14
+      ansible.builtin.command: nproc
+      changed_when: false
+    - name: Probe interleave A15
+      ansible.builtin.command: printenv PATH
+      changed_when: false
+    - name: Probe interleave A16
+      ansible.builtin.command: uname -m
+      changed_when: false
+    - name: Probe interleave A17
+      ansible.builtin.command: stat -c %a /tmp
+      changed_when: false
+    - name: Probe interleave A18
+      ansible.builtin.command: id -u
+      changed_when: false
+    - name: Probe interleave A19
+      ansible.builtin.command: date +%Z
+      changed_when: false
+    - name: Probe interleave A20
+      ansible.builtin.command: ls /var/log
+      changed_when: false
+
+    - name: Render bench status (register-free, should join batch)
+      ansible.builtin.template:
+        src: bench-status.j2
+        dest: /tmp/krikri-bench-status.txt
+        mode: "0644"
+
+    - name: Probe interleave A21
+      ansible.builtin.command: echo interleave-A21
+      changed_when: false
+    - name: Probe interleave A22
+      ansible.builtin.command: cat /proc/version
+      changed_when: false
+    - name: Probe interleave A23
+      ansible.builtin.command: df -i
+      changed_when: false
+    - name: Probe interleave A24
+      ansible.builtin.command: bash --version
+      changed_when: false
+    - name: Probe interleave A25
+      ansible.builtin.command: ls /etc
+      changed_when: false
+    - name: Probe interleave A26
+      ansible.builtin.command: cat /proc/mounts
+      changed_when: false
+    - name: Probe interleave A27
+      ansible.builtin.command: cat /proc/cmdline
+      changed_when: false
+    - name: Probe interleave A28
+      ansible.builtin.command: seq 1 2
+      changed_when: false
+    - name: Probe interleave A29
+      ansible.builtin.command: hostname -s
+      changed_when: false
+    - name: Probe interleave A30
+      ansible.builtin.command: echo interleave-A-done
+      changed_when: false
+
+    # ---------------------------------------------------------------
+    # Negative control: a register:-producing probe immediately
+    # followed by a template:. The template must NOT join the group
+    # (group_has_registers is set, so it splits solo). This is on
+    # purpose - do not "fix" it.
+    # ---------------------------------------------------------------
+    - name: Probe with register (feeds negative control)
+      ansible.builtin.command: echo register-source-one
+      register: negctl_reg_one
+      changed_when: false
+
+    - name: Render users report (negative control, must stay solo)
+      ansible.builtin.template:
+        src: bench-users.j2
+        dest: /tmp/krikri-bench-users.txt
+        mode: "0644"
+
+    - name: Probe with second register
+      ansible.builtin.command: echo register-source-two
+      register: negctl_reg_two
+      changed_when: false
+
+    - name: Render bench report again (negative control, must stay solo)
+      ansible.builtin.template:
+        src: bench-report.j2
+        dest: /tmp/krikri-bench-report-again.txt
+        mode: "0644"
+
+    # ---------------------------------------------------------------
+    # Realism section: file/copy/lineinfile/stat on a throwaway dir.
+    # The fixed /tmp/krikri-bench/ dir exists so the handlers (which
+    # target it directly, not the per-run bench_dir) always succeed.
+    # ---------------------------------------------------------------
+    - name: Create fixed handler marker dir
+      ansible.builtin.file:
+        path: /tmp/krikri-bench
+        state: directory
+        mode: "0755"
+
+    - name: Create benchmark base dir
+      ansible.builtin.file:
+        path: "{{ bench_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Create benchmark conf dir
+      ansible.builtin.file:
+        path: "{{ bench_dir }}/conf.d"
+        state: directory
+        mode: "0755"
+
+    - name: Create benchmark data dir
+      ansible.builtin.file:
+        path: "{{ bench_dir }}/data"
+        state: directory
+        mode: "0755"
+
+    - name: Write benchmark config
+      ansible.builtin.copy:
+        content: "mode = {{ bench_mode }}\nrun = {{ bench_run_id }}\n"
+        dest: "{{ bench_dir }}/bench.conf"
+        mode: "0644"
+
+    - name: Write benchmark payload
+      ansible.builtin.copy:
+        content: "payload line one\npayload line two\n"
+        dest: "{{ bench_dir }}/data/payload.txt"
+        mode: "0644"
+
+    - name: Write empty marker
+      ansible.builtin.copy:
+        content: ""
+        dest: "{{ bench_dir }}/data/marker.empty"
+        mode: "0644"
+
+    - name: Add workers setting to config
+      ansible.builtin.lineinfile:
+        path: "{{ bench_dir }}/bench.conf"
+        line: "workers = {{ ansible_processor_vcpus | default(2) }}"
+        create: true
+        mode: "0644"
+
+    - name: Add verbose line to config
+      ansible.builtin.lineinfile:
+        path: "{{ bench_dir }}/bench.conf"
+        line: "verbose = true"
+        insertafter: "^mode ="
+        mode: "0644"
+
+    - name: Add tmpdir line to config
+      ansible.builtin.lineinfile:
+        path: "{{ bench_dir }}/bench.conf"
+        line: "tmpdir = {{ bench_dir }}/data"
+        mode: "0644"
+
+    - name: Stat the config
+      ansible.builtin.stat:
+        path: "{{ bench_dir }}/bench.conf"
+      register: bench_conf_stat
+
+    # ---------------------------------------------------------------
+    # Users: add a throwaway group and 25 throwaway users via loop,
+    # then remove them all. Loops are always solo groups (by design).
+    # ---------------------------------------------------------------
+    - name: Create benchmark group
+      ansible.builtin.group:
+        name: benchgrp
+        state: present
+
+    - name: Create benchmark users
+      ansible.builtin.user:
+        name: "benchusr{{ '%02d' | format(item) }}"
+        group: benchgrp
+        shell: /usr/sbin/nologin
+        create_home: false
+        state: present
+      loop: "{{ range(1, 26) | list }}"
+
+    - name: Touch a file per benchmark user
+      ansible.builtin.file:
+        path: "{{ bench_dir }}/data/user-{{ item }}.txt"
+        state: touch
+        mode: "0644"
+      loop: "{{ bench_users }}"
+
+    - name: Remove benchmark users
+      ansible.builtin.user:
+        name: "benchusr{{ '%02d' | format(item) }}"
+        state: absent
+        remove: true
+      loop: "{{ range(1, 26) | list }}"
+
+    - name: Remove benchmark group
+      ansible.builtin.group:
+        name: benchgrp
+        state: absent
+
+    # ---------------------------------------------------------------
+    # Block with rescue/always: one intentional (safe) failure gets
+    # rescued so the play completes.
+    # ---------------------------------------------------------------
+    - name: Rescue-wrapped probe block
+      block:
+        - name: Probe inside block
+          ansible.builtin.command: echo inside-block
+          changed_when: false
+        - name: Intentional failure for rescue
+          ansible.builtin.command: /bin/false
+          changed_when: false
+        - name: Never reached after failure
+          ansible.builtin.debug:
+            msg: unreachable
+      rescue:
+        - name: Report the rescued failure
+          ansible.builtin.debug:
+            msg: "rescued as expected ({{ negctl_reg_one.stdout | default('n/a') }})"
+      always:
+        - name: Always section runs
+          ansible.builtin.debug:
+            msg: always-section done
+
+    # ---------------------------------------------------------------
+    # Mid-run probe wall: 10 more probes to keep batch pressure up
+    # between the realism sections.
+    # ---------------------------------------------------------------
+    - name: Probe mid 1
+      ansible.builtin.command: whoami
+      changed_when: false
+    - name: Probe mid 2
+      ansible.builtin.command: hostname
+      changed_when: false
+    - name: Probe mid 3
+      ansible.builtin.command: echo "mid-3 {{ bench_run_id }}"
+      changed_when: false
+    - name: Probe mid 4
+      ansible.builtin.command: uname -r
+      changed_when: false
+    - name: Probe mid 5
+      ansible.builtin.command: head -3 /proc/meminfo
+      changed_when: false
+    - name: Probe mid 6
+      ansible.builtin.command: df -h
+      changed_when: false
+    - name: Probe mid 7
+      ansible.builtin.command: wc -l /etc/group
+      changed_when: false
+    - name: Probe mid 8
+      ansible.builtin.command: ls /tmp
+      changed_when: false
+    - name: Probe mid 9
+      ansible.builtin.command: date +%s
+      changed_when: false
+    - name: Probe mid 10
+      ansible.builtin.command: nproc
+      changed_when: false
+
+    # ---------------------------------------------------------------
+    # Handler triggers: each notify flushes the batch after the task.
+    # ---------------------------------------------------------------
+    - name: Trigger marker handler
+      ansible.builtin.command: echo notify-marker
+      changed_when: true
+      notify: Write bench marker
+
+    - name: Trigger stamp handler
+      ansible.builtin.command: echo notify-stamp
+      changed_when: true
+      notify: Write bench stamp
+
+    # ---------------------------------------------------------------
+    # Probe wall B: 50 more read-only probes.
+    # ---------------------------------------------------------------
+    - name: Probe B whoami
+      ansible.builtin.command: whoami
+      changed_when: false
+    - name: Probe B id
+      ansible.builtin.command: id
+      changed_when: false
+    - name: Probe B hostname
+      ansible.builtin.command: hostname
+      changed_when: false
+    - name: Probe B uname
+      ansible.builtin.command: uname -a
+      changed_when: false
+    - name: Probe B uptime
+      ansible.builtin.command: uptime
+      changed_when: false
+    - name: Probe B date
+      ansible.builtin.command: date +%s
+      changed_when: false
+    - name: Probe B os-release
+      ansible.builtin.command: cat /etc/os-release
+      changed_when: false
+    - name: Probe B df
+      ansible.builtin.command: df -h
+      changed_when: false
+    - name: Probe B free
+      ansible.builtin.command: free -m
+      changed_when: false
+    - name: Probe B ls tmp
+      ansible.builtin.command: ls /tmp
+      changed_when: false
+    - name: Probe B proc version
+      ansible.builtin.command: cat /proc/version
+      changed_when: false
+    - name: Probe B cpuinfo
+      ansible.builtin.command: head -5 /proc/cpuinfo
+      changed_when: false
+    - name: Probe B meminfo
+      ansible.builtin.command: head -3 /proc/meminfo
+      changed_when: false
+    - name: Probe B passwd
+      ansible.builtin.command: wc -l /etc/passwd
+      changed_when: false
+    - name: Probe B group
+      ansible.builtin.command: wc -l /etc/group
+      changed_when: false
+    - name: Probe B facts echo
+      ansible.builtin.command: echo "host={{ ansible_hostname }} run={{ bench_run_id }}"
+      changed_when: false
+    - name: Probe B environment
+      ansible.builtin.command: printenv
+      changed_when: false
+    - name: Probe B path
+      ansible.builtin.command: printenv PATH
+      changed_when: false
+    - name: Probe B arithmetic
+      ansible.builtin.command: expr 6 + 7
+      changed_when: false
+    - name: Probe B inodes
+      ansible.builtin.command: df -i
+      changed_when: false
+    - name: Probe B mounts
+      ansible.builtin.command: cat /proc/mounts
+      changed_when: false
+    - name: Probe B loadavg
+      ansible.builtin.command: cat /proc/loadavg
+      changed_when: false
+    - name: Probe B uptime file
+      ansible.builtin.command: cat /proc/uptime
+      changed_when: false
+    - name: Probe B kernel
+      ansible.builtin.command: uname -r
+      changed_when: false
+    - name: Probe B arch
+      ansible.builtin.command: uname -m
+      changed_when: false
+    - name: Probe B which python
+      ansible.builtin.command: which python3
+      changed_when: false
+    - name: Probe B bash
+      ansible.builtin.command: bash --version
+      changed_when: false
+    - name: Probe B resolv
+      ansible.builtin.command: head -4 /etc/resolv.conf
+      changed_when: false
+    - name: Probe B hosts
+      ansible.builtin.command: cat /etc/hosts
+      changed_when: false
+    - name: Probe B tz
+      ansible.builtin.command: date +%Z
+      changed_when: false
+    - name: Probe B tmp stat
+      ansible.builtin.command: stat -c %a /tmp
+      changed_when: false
+    - name: Probe B var log
+      ansible.builtin.command: ls /var/log
+      changed_when: false
+    - name: Probe B etc
+      ansible.builtin.command: ls /etc
+      changed_when: false
+    - name: Probe B usr bin
+      ansible.builtin.command: ls /usr/bin
+      changed_when: false
+    - name: Probe B pty count
+      ansible.builtin.command: cat /proc/sys/kernel/pty/nr
+      changed_when: false
+    - name: Probe B loop-ish
+      ansible.builtin.command: seq 1 3
+      changed_when: false
+    - name: Probe B true
+      ansible.builtin.command: "true"
+      changed_when: false
+    - name: Probe B multi echo
+      ansible.builtin.command: echo x y z
+      changed_when: false
+    - name: Probe B tagged output
+      ansible.builtin.command: echo batch-shape-probe-B
+      changed_when: false
+    - name: Probe B dev
+      ansible.builtin.command: ls /dev
+      changed_when: false
+    - name: Probe B sys block
+      ansible.builtin.command: ls /sys/block
+      changed_when: false
+    - name: Probe B cmdline
+      ansible.builtin.command: cat /proc/cmdline
+      changed_when: false
+    - name: Probe B self status
+      ansible.builtin.command: head -5 /proc/self/status
+      changed_when: false
+    - name: Probe B nofile
+      ansible.builtin.shell: set -o pipefail && ulimit -n
+      args:
+        executable: /bin/bash
+      changed_when: false
+    - name: Probe B umask check
+      ansible.builtin.command: stat -c %U /root
+      changed_when: false
+    - name: Probe B uid
+      ansible.builtin.command: id -u
+      changed_when: false
+    - name: Probe B gid
+      ansible.builtin.command: id -g
+      changed_when: false
+    - name: Probe B nproc
+      ansible.builtin.command: nproc
+      changed_when: false
+    - name: Probe B hostname short
+      ansible.builtin.command: hostname -s
+      changed_when: false
+
+    # ---------------------------------------------------------------
+    # Interleave B: register-free templates between probe runs again.
+    # ---------------------------------------------------------------
+    - name: Probe interleave B1
+      ansible.builtin.command: echo interleave-B1
+      changed_when: false
+    - name: Probe interleave B2
+      ansible.builtin.command: head -2 /etc/os-release
+      changed_when: false
+    - name: Probe interleave B3
+      ansible.builtin.command: df -h /
+      changed_when: false
+    - name: Probe interleave B4
+      ansible.builtin.command: free -m
+      changed_when: false
+    - name: Probe interleave B5
+      ansible.builtin.command: echo "B5 {{ bench_mode }}"
+      changed_when: false
+    - name: Probe interleave B6
+      ansible.builtin.command: uptime
+      changed_when: false
+    - name: Probe interleave B7
+      ansible.builtin.command: wc -l /etc/passwd
+      changed_when: false
+    - name: Probe interleave B8
+      ansible.builtin.command: ls /tmp
+      changed_when: false
+    - name: Probe interleave B9
+      ansible.builtin.command: date +%s
+      changed_when: false
+    - name: Probe interleave B10
+      ansible.builtin.command: uname -a
+      changed_when: false
+
+    - name: Render bench users report (register-free, should join batch)
+      ansible.builtin.template:
+        src: bench-users.j2
+        dest: /tmp/krikri-bench-users-again.txt
+        mode: "0644"
+
+    - name: Probe interleave B11
+      ansible.builtin.command: echo interleave-B11
+      changed_when: false
+    - name: Probe interleave B12
+      ansible.builtin.command: head -3 /proc/meminfo
+      changed_when: false
+    - name: Probe interleave B13
+      ansible.builtin.command: cat /proc/loadavg
+      changed_when: false
+    - name: Probe interleave B14
+      ansible.builtin.command: nproc
+      changed_when: false
+    - name: Probe interleave B15
+      ansible.builtin.command: printenv PATH
+      changed_when: false
+    - name: Probe interleave B16
+      ansible.builtin.command: uname -m
+      changed_when: false
+    - name: Probe interleave B17
+      ansible.builtin.command: stat -c %a /tmp
+      changed_when: false
+    - name: Probe interleave B18
+      ansible.builtin.command: id -u
+      changed_when: false
+    - name: Probe interleave B19
+      ansible.builtin.command: date +%Z
+      changed_when: false
+    - name: Probe interleave B20
+      ansible.builtin.command: ls /var/log
+      changed_when: false
+
+    - name: Render bench status again (register-free, should join batch)
+      ansible.builtin.template:
+        src: bench-status.j2
+        dest: /tmp/krikri-bench-status-again.txt
+        mode: "0644"
+
+    - name: Probe interleave B21
+      ansible.builtin.command: echo interleave-B21
+      changed_when: false
+    - name: Probe interleave B22
+      ansible.builtin.command: cat /proc/version
+      changed_when: false
+    - name: Probe interleave B23
+      ansible.builtin.command: df -i
+      changed_when: false
+    - name: Probe interleave B24
+      ansible.builtin.command: bash --version
+      changed_when: false
+    - name: Probe interleave B25
+      ansible.builtin.command: ls /etc
+      changed_when: false
+    - name: Probe interleave B26
+      ansible.builtin.command: cat /proc/mounts
+      changed_when: false
+    - name: Probe interleave B27
+      ansible.builtin.command: cat /proc/cmdline
+      changed_when: false
+    - name: Probe interleave B28
+      ansible.builtin.command: seq 1 2
+      changed_when: false
+    - name: Probe interleave B29
+      ansible.builtin.command: hostname -s
+      changed_when: false
+    - name: Probe interleave B30
+      ansible.builtin.command: echo interleave-B-done
+      changed_when: false
+
+    # ---------------------------------------------------------------
+    # Wrap-up: register from a probe, then a debug that reads it
+    # (exercises references_register? flush on the way out).
+    # ---------------------------------------------------------------
+    - name: Probe final with register
+      ansible.builtin.command: echo final-probe
+      register: final_reg
+      changed_when: false
+
+    - name: Set wrap-up fact from register
+      ansible.builtin.set_fact:
+        bench_final_echo: "{{ final_reg.stdout }}"
+
+    - name: Show the registered echo
+      ansible.builtin.debug:
+        msg: "final probe echoed: {{ bench_final_echo }}"
+
+    # ---------------------------------------------------------------
+    # Jinja/expression edge-case coverage: historically-buggy patterns
+    # in krikri's evaluators (see KNOWN_MISSING.md's round narrative).
+    # Safe by construction: debug/assert/set_fact, one template render
+    # to /tmp/krikri-bench*, and one echo-only command.
+    # ---------------------------------------------------------------
+
+    # not in / is not in against a list (in/not-in operator + is-test
+    # spelling both bit us before - 0.9.836, 0.9.633).
+    - name: Edge not-in against list (true branch runs)
+      ansible.builtin.debug:
+        msg: "absentword confirmed not in bench_users"
+      when: "'absentword' not in bench_users"
+
+    - name: Edge not-in against list (false branch skips)
+      ansible.builtin.debug:
+        msg: "should be skipped - webhead IS in bench_users"
+      when: "'webhead' not in bench_users"
+
+    - name: Edge is-not-in test spelling (true branch runs)
+      ansible.builtin.debug:
+        msg: "nobody is not in bench_users (jinja2.10 test spelling)"
+      when: "'nobody' is not in bench_users"
+
+    - name: Edge is-in test spelling (true branch runs)
+      ansible.builtin.debug:
+        msg: "dbatch is in bench_users (jinja2.10 test spelling)"
+      when: "'dbatch' is in bench_users"
+
+    # Constant string literal containing the other quote character
+    # (the failed_when:/when: mis-splitting bug class).
+    - name: Edge double-quoted literal containing apostrophe (skips)
+      ansible.builtin.debug:
+        msg: "should be skipped - bench_mode is not that phrase"
+      when: bench_mode == "it's not stress"
+
+    - name: Edge single-quoted YAML wrapping double-quoted literal (runs)
+      ansible.builtin.debug:
+        msg: "bench_mode compared against double-quoted literal"
+      when: 'bench_mode == "stress"'
+
+    - name: Edge failed_when with quoted literal containing apostrophe
+      ansible.builtin.command: echo failed-when-probe
+      register: edge_failed_reg
+      changed_when: false
+      failed_when: '"not an error" in edge_failed_reg.stdout'
+
+    # Legacy double-quoted string literal as an or-operand: real Ansible
+    # short-circuits to the literal's own truthiness (non-empty = truthy)
+    # and never re-parses its text - the 0.9.859 recursive-templating
+    # bug class. The or's result stays a string, so `is string` must be
+    # true; a re-parsed literal would come back as boolean and skip.
+    - name: Edge legacy quoted literal as or operand (runs, stays string)
+      ansible.builtin.debug:
+        msg: "or short-circuited to the string literal itself, not a boolean"
+      when: ("'absentword' in bench_users" or false) is string
+
+    # and/or short-circuit where the deciding operand is NOT first, and
+    # the never-reached operand would hard-error if strictly evaluated.
+    - name: Edge and-chain short-circuit past undefined attribute (skips)
+      ansible.builtin.debug:
+        msg: "should be skipped - left operand false, right never evaluated"
+      when: bench_mode == 'nostress' and edge_undefined_var.someattr == 'x'
+
+    - name: Edge or-chain short-circuit past undefined attribute (runs)
+      ansible.builtin.debug:
+        msg: "left operand true, right operand never evaluated"
+      when: bench_mode == 'stress' or edge_undefined_var.someattr == 'x'
+
+    # Recursive re-templating: vars whose own values are Jinja text
+    # referencing earlier vars must resolve fully (not one level short).
+    - name: Edge chained var templating resolves fully
+      ansible.builtin.debug:
+        msg: "three-level chain: {{ edge_retemplate_l3 }}"
+
+    - name: Edge assert chained var resolved to final value
+      ansible.builtin.assert:
+        that:
+          - edge_retemplate_l1 == 'stress-l1'
+          - edge_retemplate_l3 == 'stress-l1-l2-l3'
+
+    # A task argument that renders to literal {{ ... }} text must pass
+    # through verbatim, never re-scanned as a second template pass
+    # (gantsign.helm class, 0.9.629): the echo runs `echo {{ edge_not_a
+    # _var }}` verbatim on the host. Only the rc is asserted because any
+    # template reference to the braces-bearing stdout (or to a
+    # set_fact-stored braces value) hits the recursive re-templating
+    # divergence recorded in KNOWN_MISSING.md's open gaps. Deliberately
+    # the LAST tasks in the play: a registered stdout holding brace text
+    # in the vars context poisons every LATER template: render under
+    # that same open gap, so nothing that renders a template may follow
+    # it.
+
+    # dict2items / items2dict round trip through a filter chain.
+    - name: Edge dict2items items2dict round trip
+      ansible.builtin.set_fact:
+        edge_roundtrip: "{{ edge_dict | dict2items | rejectattr('key', 'equalto', 'beta') | list | items2dict }}"
+
+    - name: Edge assert dict round trip kept non-rejected entries
+      ansible.builtin.assert:
+        that:
+          - edge_roundtrip | length == 2
+          - edge_roundtrip.alpha == 1
+          - edge_roundtrip.gamma == 3
+
+    # | default(...) partway through a filter chain, not at the end.
+    - name: Edge default partway through filter chain
+      ansible.builtin.set_fact:
+        edge_defaulted_len: "{{ edge_undefined_missing_var | default(['a', 'b']) | length }}"
+        edge_defaulted_upper: "{{ edge_undefined_missing_str | default('mid-chain') | upper }}"
+
+    - name: Edge assert defaults applied mid-chain
+      ansible.builtin.assert:
+        that:
+          - edge_defaulted_len == 2
+          - edge_defaulted_upper == 'MID-CHAIN'
+
+    # Loop over a list of dicts with nested item.subkey.subsubkey access.
+    - name: Edge nested item access in loop
+      ansible.builtin.debug:
+        msg: "{{ item.name }} -> {{ item.meta.inner.tag }}"
+      loop: "{{ edge_nested_items }}"
+      register: edge_nested_reg
+
+    - name: Edge assert nested loop register shape
+      ansible.builtin.assert:
+        that:
+          - edge_nested_reg.results | length == 3
+          - edge_nested_reg.results[0].item.meta.inner.tag == 'tag-one'
+          - edge_nested_reg.results[2].item.meta.inner.tag == 'tag-skip'
+
+    # Chained set_fact: each references the previous task's fact.
+    - name: Edge chained set_fact step one
+      ansible.builtin.set_fact:
+        edge_chain_a: "chain-{{ bench_mode }}"
+
+    - name: Edge chained set_fact step two
+      ansible.builtin.set_fact:
+        edge_chain_b: "{{ edge_chain_a }}-b"
+
+    - name: Edge chained set_fact step three
+      ansible.builtin.set_fact:
+        edge_chain_c: "{{ edge_chain_b }}-c"
+
+    - name: Edge assert chained set_fact end to end
+      ansible.builtin.assert:
+        that:
+          - edge_chain_c == 'chain-stress-b-c'
+
+    # loop.index / loop.first / loop.last inside a template file.
+    - name: Render loop template (edge coverage)
+      ansible.builtin.template:
+        src: bench-loop.j2
+        dest: /tmp/krikri-bench-loop.txt
+        mode: "0644"
+
+    - name: Edge read back loop template
+      ansible.builtin.command: cat /tmp/krikri-bench-loop.txt
+      register: edge_loop_cat
+      changed_when: false
+
+    - name: Edge assert loop template content
+      ansible.builtin.assert:
+        that:
+          - "'item 1: one tag tag-one first' in edge_loop_cat.stdout"
+          - "'item 3: skip tag tag-skip last' in edge_loop_cat.stdout"
+
+    # A task argument that renders to literal {{ ... }} text must pass
+    # through verbatim, never re-scanned as a second template pass
+    # (gantsign.helm class, 0.9.629): the echo runs `echo {{ edge_not_a
+    # _var }}` verbatim on the host. Only the rc is asserted because any
+    # template reference to the braces-bearing stdout (or to a
+    # set_fact-stored braces value) hits the recursive re-templating
+    # divergence recorded in KNOWN_MISSING.md's open gaps. Deliberately
+    # the LAST tasks in the play: a registered stdout holding brace text
+    # in the vars context poisons every LATER template: render under
+    # that same open gap, so nothing that renders a template may follow
+    # it.
+    - name: Edge command arg rendering to literal braces text
+      ansible.builtin.command: echo "{{ '{{ edge_not_a_var }}' }}"
+      register: edge_braces_reg
+      changed_when: false
+
+    - name: Edge assert literal-braces command ran cleanly
+      ansible.builtin.assert:
+        that:
+          - edge_braces_reg.rc == 0
