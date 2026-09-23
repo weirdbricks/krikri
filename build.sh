@@ -323,6 +323,19 @@ build_main_exec() {
 # build_fat_plugin call site, after that function is defined).
 MAIN_BUILDS=()
 
+# The mtime staleness checks below only ever compare source vs binary
+# timestamps, so switching BUILD_MODE (debug <-> --release) with no
+# source edits looked "up to date" and silently kept serving the OLD
+# flavor's binary - `./build.sh --release` right after a debug build
+# was a no-op that still printed success. Each binary's own `--version`
+# (via Krikri.version_info's `Build: release|debug` line) is the one
+# ground truth for what it was actually compiled as, so check it
+# directly instead of trying to infer it from mtimes.
+binary_build_flavor() {
+    local binary="$1"
+    "$binary" --version 2>/dev/null | awk '/^Build: /{print $2; exit}'
+}
+
 echo -e "${YELLOW}🔨 Building main executable...${NC}"
 
 MAIN_BINARY="$OUTPUT_DIR/krikri-playbook"
@@ -346,6 +359,8 @@ elif [ -d lib ] && find lib -name '*.cr' -newer "$MAIN_BINARY" -print -quit | gr
     # binary. Found live: round 116's wordwrap fix appeared to not
     # apply at all across two separate `./build.sh` runs, each
     # reporting success, until this was added.
+    NEEDS_BUILD=true
+elif [ -n "$(binary_build_flavor "$MAIN_BINARY")" ] && [ "$(binary_build_flavor "$MAIN_BINARY")" != "$BUILD_MODE" ]; then
     NEEDS_BUILD=true
 fi
 
@@ -372,6 +387,8 @@ elif find src -name '*.cr' -newer "$ADHOC_BINARY" -print -quit | grep -q .; then
     NEEDS_BUILD=true
 elif [ -d lib ] && find lib -name '*.cr' -newer "$ADHOC_BINARY" -print -quit | grep -q .; then
     NEEDS_BUILD=true
+elif [ -n "$(binary_build_flavor "$ADHOC_BINARY")" ] && [ "$(binary_build_flavor "$ADHOC_BINARY")" != "$BUILD_MODE" ]; then
+    NEEDS_BUILD=true
 fi
 
 if [ "$NEEDS_BUILD" = true ]; then
@@ -396,6 +413,8 @@ elif [ "$LINT_SOURCE" -nt "$LINT_BINARY" ]; then
 elif find src/krikri_lint -name '*.cr' -newer "$LINT_BINARY" -print -quit 2>/dev/null | grep -q .; then
     NEEDS_BUILD=true
 elif [ -d lib ] && find lib -name '*.cr' -newer "$LINT_BINARY" -print -quit | grep -q .; then
+    NEEDS_BUILD=true
+elif [ -n "$(binary_build_flavor "$LINT_BINARY")" ] && [ "$(binary_build_flavor "$LINT_BINARY")" != "$BUILD_MODE" ]; then
     NEEDS_BUILD=true
 fi
 
