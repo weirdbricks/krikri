@@ -1,0 +1,1150 @@
+---
+# Module-coverage benchmark/regression playbook 2 of 5: packages and
+# system services. Companion to synthetic_batch_bench.yml (batching
+# stress) and modules_files.yml (file ops) - this one exercises every
+# krikri package/service module against real state on the target:
+#   apt, apt_key, apt_repository, deb822_repository, dpkg_divert,
+#   dpkg_selections, dnf, dnf_versionlock, yum, yum_repository,
+#   yum_versionlock, package, package_facts, gem, npm, pip,
+#   easy_install, snap, service, service_facts, systemd, cron, cronvar,
+#   sysctl, modprobe, timezone, hostname, locale_gen, alternatives
+#
+# Safety rules, same conventions as synthetic_batch_bench.yml:
+# - All file mutations land under the run's own namespaced dir
+#   (/tmp/krikri-pkg-bench*) or in an explicitly-namespaced filename
+#   under a shared system dir (/etc/cron.d/krikri-pkg-bench,
+#   /etc/apt/sources.list.d/krikri-pkg-bench.*) that the cleanup
+#   section removes again.
+# - Package installs are NOT avoided here (unlike the file-ops and
+#   batching playbooks): installing packages IS this playbook's theme,
+#   and every installed package is either removed again in the cleanup
+#   section or is a throwaway-container concern.
+# - Host-level identity mutations (timezone, hostname) save the
+#   original value first and restore it at the end.
+# - Byte-diff pattern after anything that writes/renders content:
+#   cat/register/debug, so the captured output can be eyeballed
+#   byte-for-byte across engines.
+# - Modules with no reachable backend on the target OS are gated with
+#   fact/capability probes so they SKIP the way real Ansible does
+#   (skipped: in the recap), never faked: the rpm-family managers
+#   (dnf/yum/...) on this Debian-family host, snapd in an
+#   unprivileged container, kernel module loading without
+#   privileges, systemd units without systemd as PID 1, and
+#   easy_install (see tasks_packages_lang.yml for that rationale).
+
+- name: Packages and system services module-coverage benchmark
+  hosts: all
+  gather_facts: true
+
+  vars:
+    pkg_bench_mode: packages
+    # Var chain: each level derives from the previous one - the chained
+    # re-templating behavior this engine's evaluators got wrong before.
+    pkg_bench_epoch: "{{ ansible_date_time.epoch }}"
+    pkg_run_id: "run-{{ pkg_bench_epoch }}"
+    pkg_dir: "/tmp/krikri-pkg-bench-{{ pkg_bench_epoch }}"
+    pkg_bin_dir: "{{ pkg_dir }}/bin"
+    pkg_keyring: /tmp/krikri-pkg-bench/keyrings/bench.gpg
+    # Toolchain installed by the apt loop below. Each entry exists to
+    # serve a later module's real exercise: gnupg (apt_key's key
+    # generation), cron (crontab + service exercise), locales
+    # (locale_gen's glibc backend), tzdata (timezone's nosystemd
+    # backend), ruby (gem), npm (npm), python3-pip + python3-
+    # virtualenv (pip), python3-setuptools (pip's dependency chain),
+    # and jq/tree/ed as throwaway dpkg-level packages for
+    # dpkg_selections/apt state:latest.
+    pkg_toolchain:
+      - gnupg
+      - cron
+      - locales
+      - tzdata
+      - ruby
+      - npm
+      - python3-pip
+      - python3-virtualenv
+      - python3-setuptools
+      - python3-debian
+      - jq
+      - tree
+      - ed
+    pkg_selection_probe: tree
+    pkg_cron_file: krikri-pkg-bench
+    pkg_cron_jobs:
+      - { name: "krikri bench daily job", job: "/bin/echo bench-daily", sched: { special_time: daily } }
+      - { name: "krikri bench interval job", job: "/bin/echo bench-interval", sched: { minute: "*/5" } }
+    pkg_sysctl_keys:
+      - { name: net.ipv4.tcp_syncookies, value: "1" }
+      - { name: net.ipv4.ip_forward, value: "0" }
+    pkg_probe_commands:
+      - whoami
+      - hostname
+      - uname -r
+      - cat /etc/os-release
+
+  tasks:
+    # ---------------------------------------------------------------
+    # Setup: chained set_fact (each derives from the previous) so the
+    # whole play references its own namespaced dir through a three-
+    # level var chain, plus an assert that the chain resolved fully.
+    # ---------------------------------------------------------------
+    - name: Set bench run id fact
+      ansible.builtin.set_fact:
+        pkg_bench_run: "{{ pkg_run_id }}"
+
+    - name: Set bench dir fact
+      ansible.builtin.set_fact:
+        pkg_bench_dir: "{{ pkg_dir }}"
+
+    - name: Announce packages benchmark start
+      ansible.builtin.debug:
+        msg: "packages benchmark {{ pkg_bench_run }} on {{ ansible_hostname }} ({{ ansible_pkg_mgr }})"
+
+    - name: Assert chained vars resolved end to end
+      ansible.builtin.assert:
+        that:
+          - pkg_bench_dir == '/tmp/krikri-pkg-bench-' ~ ansible_date_time.epoch
+          - pkg_bin_dir == pkg_bench_dir ~ '/bin'
+
+    - name: Create fixed bench base dir
+      ansible.builtin.file:
+        path: /tmp/krikri-pkg-bench
+        state: directory
+        mode: "0755"
+
+    - name: Create keyrings dir for apt_key
+      ansible.builtin.file:
+        path: /tmp/krikri-pkg-bench/keyrings
+        state: directory
+        mode: "0755"
+
+    - name: Create per-run bench bin dir
+      ansible.builtin.file:
+        path: "{{ pkg_bin_dir }}"
+        state: directory
+        mode: "0755"
+
+    # ---------------------------------------------------------------
+    # Probe wall A: cheap read-only probes to open with (same shape
+    # as the batching playbook's walls), plus one loop-carried probe
+    # so the loop form of command: is itself covered.
+    # ---------------------------------------------------------------
+    - name: Probe date
+      ansible.builtin.command: date +%s
+      changed_when: false
+    - name: Probe id
+      ansible.builtin.command: id
+      changed_when: false
+    - name: Probe uname
+      ansible.builtin.command: uname -a
+      changed_when: false
+    - name: Probe pkg mgr fact
+      ansible.builtin.command: echo "pkg_mgr={{ ansible_pkg_mgr }} release={{ ansible_distribution_release }}"
+      changed_when: false
+    - name: Probe uptime
+      ansible.builtin.command: uptime
+      changed_when: false
+    - name: Probe df
+      ansible.builtin.command: df -h
+      changed_when: false
+    - name: Probe looped commands
+      ansible.builtin.command: "{{ item }}"
+      changed_when: false
+      loop: "{{ pkg_probe_commands }}"
+    - name: Probe passwd count
+      ansible.builtin.command: wc -l /etc/passwd
+      changed_when: false
+    - name: Probe group count
+      ansible.builtin.command: wc -l /etc/group
+      changed_when: false
+    - name: Probe meminfo
+      ansible.builtin.command: head -3 /proc/meminfo
+      changed_when: false
+    - name: Probe loadavg
+      ansible.builtin.command: cat /proc/loadavg
+      changed_when: false
+    - name: Probe mounts
+      ansible.builtin.command: cat /proc/mounts
+      changed_when: false
+    - name: Probe python3
+      ansible.builtin.command: which python3
+      changed_when: false
+    - name: Probe bash version
+      ansible.builtin.command: bash --version
+      changed_when: false
+    - name: Probe resolv
+      ansible.builtin.command: head -4 /etc/resolv.conf
+      changed_when: false
+    - name: Probe hosts file
+      ansible.builtin.command: cat /etc/hosts
+      changed_when: false
+    - name: Probe date zone
+      ansible.builtin.command: date +%Z
+      changed_when: false
+    - name: Probe tmp stat
+      ansible.builtin.command: stat -c %a /tmp
+      changed_when: false
+    - name: Probe proc version
+      ansible.builtin.command: cat /proc/version
+      changed_when: false
+    - name: Probe nproc
+      ansible.builtin.command: nproc
+      changed_when: false
+
+    # ---------------------------------------------------------------
+    # apt: cache refresh, toolchain loop, state:latest, state:absent.
+    # The toolchain install is deliberate (this playbook's theme);
+    # every package serves a later module section.
+    # ---------------------------------------------------------------
+    - name: Refresh apt cache
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Install bench toolchain
+      ansible.builtin.apt:
+        name: "{{ item }}"
+        state: present
+      loop: "{{ pkg_toolchain }}"
+
+    - name: Read back installed ruby package version
+      ansible.builtin.command: dpkg-query -W -f '${Package} ${Version}\n' ruby
+      register: pkg_ruby_query
+      changed_when: false
+
+    - name: Byte-diff print ruby package query
+      ansible.builtin.debug:
+        msg: "{{ pkg_ruby_query.stdout }}"
+
+    # state: latest exercises apt's upgrade-if-present path (vs
+    # present's install-only): ed is already installed from the
+    # toolchain loop, so this re-resolves it. Not flake8-style
+    # sloppiness - the latest/present distinction is a real parity
+    # surface.
+    - name: Re-resolve ed at state latest  # noqa: package-latest
+      ansible.builtin.apt:
+        name: ed
+        state: latest
+
+    - name: Remove ed again
+      ansible.builtin.apt:
+        name: ed
+        state: absent
+
+    - name: Check ed is gone
+      ansible.builtin.command: dpkg-query -W ed
+      register: pkg_ed_gone
+      failed_when: false
+      changed_when: false
+
+    - name: Assert ed removal registered with dpkg
+      ansible.builtin.assert:
+        that:
+          - "'install ok installed' not in pkg_ed_gone.stdout"
+
+    # ---------------------------------------------------------------
+    # apt_key: full add/list/remove cycle against a THROWAWAY key we
+    # generate on the target itself (in the namespaced GNUPGHOME).
+    # No keyserver or upstream-key dependency, so the section is
+    # deterministic and works offline; keyring: keeps the key out of
+    # the shared /etc/apt/trusted.gpg entirely.
+    # ---------------------------------------------------------------
+    - name: Create GPG homedir for apt_key
+      ansible.builtin.file:
+        path: "{{ pkg_dir }}/gnupg"
+        state: directory
+        mode: "0700"
+
+    - name: Generate throwaway GPG key for apt_key
+      ansible.builtin.command: >-
+        gpg --homedir {{ pkg_dir }}/gnupg --batch --passphrase ''
+        --quick-generate-key "Krikri Pkg Bench <pkgbench@krikri.invalid>"
+        default default never
+      args:
+        creates: "{{ pkg_dir }}/gnupg/pubring.kbx"
+
+    - name: Capture generated key id
+      ansible.builtin.shell: >-
+        set -o pipefail && gpg --homedir {{ pkg_dir }}/gnupg --with-colons
+        --list-keys pkgbench@krikri.invalid | awk -F: '$1=="pub"{print $5}'
+      args:
+        executable: /bin/bash
+      register: pkg_keyid_capture
+      changed_when: false
+
+    - name: Set key id fact
+      ansible.builtin.set_fact:
+        pkg_bench_keyid: "{{ pkg_keyid_capture.stdout }}"
+
+    - name: Export armored public key
+      ansible.builtin.command: gpg --homedir {{ pkg_dir }}/gnupg --armor --export pkgbench@krikri.invalid
+      register: pkg_key_armor
+      changed_when: false
+
+    - name: Add throwaway key to bench keyring
+      ansible.builtin.apt_key:
+        data: "{{ pkg_key_armor.stdout }}"
+        id: "{{ pkg_bench_keyid }}"
+        keyring: "{{ pkg_keyring }}"
+        state: present
+
+    - name: Read back bench keyring contents
+      ansible.builtin.command: gpg --no-default-keyring --keyring {{ pkg_keyring }} --list-keys
+      register: pkg_keyring_list
+      changed_when: false
+
+    - name: Byte-diff print bench keyring contents
+      ansible.builtin.debug:
+        msg: "{{ pkg_keyring_list.stdout }}"
+
+    - name: Assert key landed in bench keyring
+      ansible.builtin.assert:
+        that:
+          - pkg_bench_keyid in pkg_keyring_list.stdout
+
+    - name: Remove throwaway key from bench keyring
+      ansible.builtin.apt_key:
+        id: "{{ pkg_bench_keyid }}"
+        keyring: "{{ pkg_keyring }}"
+        state: absent
+
+    - name: Confirm bench keyring is empty again
+      ansible.builtin.command: gpg --no-default-keyring --keyring {{ pkg_keyring }} --list-keys
+      register: pkg_keyring_empty
+      failed_when: false
+      changed_when: false
+
+    - name: Assert key removal emptied the keyring
+      ansible.builtin.assert:
+        that:
+          - pkg_bench_keyid not in pkg_keyring_empty.stdout
+
+    # ---------------------------------------------------------------
+    # apt_repository: a deb-src line (never fetched for binary installs,
+    # so harmless even if left over mid-run) in a namespaced
+    # sources.list.d file. update_cache: false keeps the section
+    # network-quiet; the module's default-on-change update is covered
+    # by the cache refresh task above.
+    # ---------------------------------------------------------------
+    - name: Add bench apt repository
+      ansible.builtin.apt_repository:
+        repo: "deb-src http://archive.ubuntu.com/ubuntu {{ ansible_distribution_release }} main"
+        filename: krikri-pkg-bench
+        update_cache: false
+        state: present
+
+    - name: Read back bench repo file
+      ansible.builtin.command: cat /etc/apt/sources.list.d/krikri-pkg-bench.list
+      register: pkg_repo_cat
+      changed_when: false
+
+    - name: Byte-diff print bench repo file
+      ansible.builtin.debug:
+        msg: "{{ pkg_repo_cat.stdout }}"
+
+    - name: Assert repo line written
+      ansible.builtin.assert:
+        that:
+          - "'deb-src http://archive.ubuntu.com/ubuntu' in pkg_repo_cat.stdout"
+
+    - name: Remove bench apt repository
+      ansible.builtin.apt_repository:
+        repo: "deb-src http://archive.ubuntu.com/ubuntu {{ ansible_distribution_release }} main"
+        filename: krikri-pkg-bench
+        update_cache: false
+        state: absent
+
+    # ---------------------------------------------------------------
+    # deb822_repository: the modern .sources format, same namespaced
+    # filename convention. suites comes from a fact (Jinja into the
+    # module params), and the round trip ends with state: absent.
+    # ---------------------------------------------------------------
+    - name: Add bench deb822 repository
+      ansible.builtin.deb822_repository:
+        name: krikri-pkg-bench
+        uris: http://archive.ubuntu.com/ubuntu
+        suites: "{{ ansible_distribution_release }}"
+        components: main
+        state: present
+
+    - name: Read back bench deb822 file
+      ansible.builtin.command: cat /etc/apt/sources.list.d/krikri-pkg-bench.sources
+      register: pkg_deb822_cat
+      changed_when: false
+
+    - name: Byte-diff print bench deb822 file
+      ansible.builtin.debug:
+        msg: "{{ pkg_deb822_cat.stdout }}"
+
+    - name: Assert deb822 file shape
+      ansible.builtin.assert:
+        that:
+          - "'Types: deb' in pkg_deb822_cat.stdout"
+          - "'Suites: {{ ansible_distribution_release }}' in pkg_deb822_cat.stdout"
+
+    - name: Remove bench deb822 repository
+      ansible.builtin.deb822_repository:
+        name: krikri-pkg-bench
+        state: absent
+
+    # ---------------------------------------------------------------
+    # dpkg_divert: divert a file the playbook itself created, so the
+    # diversion (and its rename dance) never touches a real system
+    # file. state: absent with rename: true restores it.
+    # ---------------------------------------------------------------
+    - name: Create diversion target file
+      ansible.builtin.copy:
+        content: "original diversion target\n"
+        dest: /tmp/krikri-pkg-bench/divert-target.conf
+        mode: "0644"
+
+    - name: Divert bench file
+      community.general.dpkg_divert:
+        path: /tmp/krikri-pkg-bench/divert-target.conf
+        state: present
+
+    - name: Read back diversion state
+      ansible.builtin.command: dpkg-divert --list /tmp/krikri-pkg-bench/divert-target.conf
+      register: pkg_divert_list
+      changed_when: false
+
+    - name: Byte-diff print diversion state
+      ansible.builtin.debug:
+        msg: "{{ pkg_divert_list.stdout }}"
+
+    - name: Assert diversion registered
+      ansible.builtin.assert:
+        that:
+          - "'diversion of /tmp/krikri-pkg-bench/divert-target.conf' in pkg_divert_list.stdout"
+
+    - name: Undivert bench file
+      community.general.dpkg_divert:
+        path: /tmp/krikri-pkg-bench/divert-target.conf
+        state: absent
+        rename: true
+
+    - name: Confirm diverted file restored
+      ansible.builtin.stat:
+        path: /tmp/krikri-pkg-bench/divert-target.conf
+      register: pkg_divert_stat
+
+    - name: Assert diversion cleanup restored file
+      ansible.builtin.assert:
+        that:
+          - pkg_divert_stat.stat.exists
+
+    # ---------------------------------------------------------------
+    # dpkg_selections: hold/unhold a real installed package (tree from
+    # the toolchain). Real Ansible errors on packages dpkg has never
+    # heard of, so the target must be a genuinely installed one.
+    # ---------------------------------------------------------------
+    - name: Hold probe package
+      ansible.builtin.dpkg_selections:
+        name: "{{ pkg_selection_probe }}"
+        selection: hold
+
+    - name: Read back package selection
+      ansible.builtin.command: dpkg --get-selections {{ pkg_selection_probe }}
+      register: pkg_selection_read
+      changed_when: false
+
+    - name: Byte-diff print package selection
+      ansible.builtin.debug:
+        msg: "{{ pkg_selection_read.stdout }}"
+
+    - name: Assert package is held
+      ansible.builtin.assert:
+        that:
+          - "'hold' in pkg_selection_read.stdout"
+
+    - name: Unhold probe package
+      ansible.builtin.dpkg_selections:
+        name: "{{ pkg_selection_probe }}"
+        selection: install
+
+    # ---------------------------------------------------------------
+    # package: OS-agnostic dispatch (resolves to apt here - the
+    # dispatch itself is the coverage) plus a two-package loop.
+    # ---------------------------------------------------------------
+    - name: Install sl via package dispatch
+      ansible.builtin.package:
+        name: sl
+        state: present
+
+    - name: Install extra packages via package loop
+      ansible.builtin.package:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - bc
+        - file
+
+    - name: Collect package facts
+      ansible.builtin.package_facts:
+
+    - name: Show installed package count
+      ansible.builtin.debug:
+        msg: "{{ ansible_facts.packages | length }} packages known to dpkg"
+
+    - name: Assert loop-installed packages are in facts
+      ansible.builtin.assert:
+        that:
+          - "'sl' in ansible_facts.packages"
+          - "'bc' in ansible_facts.packages"
+          - "ansible_facts.packages['sl'][0].name == 'sl'"
+
+    # ---------------------------------------------------------------
+    # rpm-family managers: NO real backend exists on this Debian-family
+    # host (no dnf/yum binary, no rpm db), so these tasks are gated on
+    # the ansible_pkg_mgr fact and must SKIP - the standard multi-OS
+    # role pattern (`when: ansible_pkg_mgr == 'yum'`), which also
+    # verifies krikri's conditional-skip accounting matches real
+    # Ansible's recap. A skip here is the correct outcome, not a gap.
+    # ---------------------------------------------------------------
+    - name: Install package via dnf
+      ansible.builtin.dnf:
+        name: bc
+        state: present
+      when: ansible_pkg_mgr == 'dnf'
+
+    - name: Report dnf unreachable on this OS
+      ansible.builtin.debug:
+        msg: "skipping dnf section: ansible_pkg_mgr is {{ ansible_pkg_mgr }}, not dnf"
+      when: ansible_pkg_mgr != 'dnf'
+
+    - name: Lock package version via dnf_versionlock
+      community.general.dnf_versionlock:
+        name: bc
+        state: present
+      when: ansible_pkg_mgr == 'dnf'
+
+    - name: Report dnf_versionlock unreachable on this OS
+      ansible.builtin.debug:
+        msg: "skipping dnf_versionlock section: ansible_pkg_mgr is {{ ansible_pkg_mgr }}, not dnf"
+      when: ansible_pkg_mgr != 'dnf'
+
+    - name: Install package via yum
+      # ansible.builtin.yum (not the dnf redirect krikri-lint's fqcn
+      # rule wants): exercising krikri's separate yum plugin is the
+      # point of this task, and it skips on this host regardless.
+      ansible.builtin.yum:  # noqa: fqcn[action-core]
+        name: sl
+        state: present
+      when: ansible_pkg_mgr == 'yum'
+
+    - name: Report yum unreachable on this OS
+      ansible.builtin.debug:
+        msg: "skipping yum section: ansible_pkg_mgr is {{ ansible_pkg_mgr }}, not yum"
+      when: ansible_pkg_mgr != 'yum'
+
+    - name: Add yum repository
+      ansible.builtin.yum_repository:
+        name: krikri-bench
+        description: krikri package bench repo
+        baseurl: http://example.invalid/krikri
+        state: present
+      when: ansible_pkg_mgr == 'yum'
+
+    - name: Report yum_repository unreachable on this OS
+      ansible.builtin.debug:
+        msg: "skipping yum_repository section: ansible_pkg_mgr is {{ ansible_pkg_mgr }}, not yum"
+      when: ansible_pkg_mgr != 'yum'
+
+    - name: Lock package version via yum_versionlock
+      community.general.yum_versionlock:
+        name: sl
+        state: present
+      when: ansible_pkg_mgr == 'yum'
+
+    - name: Report yum_versionlock unreachable on this OS
+      ansible.builtin.debug:
+        msg: "skipping yum_versionlock section: ansible_pkg_mgr is {{ ansible_pkg_mgr }}, not yum"
+      when: ansible_pkg_mgr != 'yum'
+
+    # ---------------------------------------------------------------
+    # Language-runtime package modules live in the included task file
+    # (this playbook's include_tasks exercise): gem, npm, pip,
+    # easy_install.
+    # ---------------------------------------------------------------
+    - name: Include language-runtime package tasks
+      ansible.builtin.include_tasks: tasks_packages_lang.yml
+
+    # ---------------------------------------------------------------
+    # snap: gated on the snap binary. snapd cannot run in an
+    # unprivileged container at all (needs systemd as PID 1 plus the
+    # squashfs kernel filesystem), so installing snapd via apt would
+    # only produce a broken daemon - the probe-gated skip is the
+    # honest outcome, same pattern as the batching playbook's ZFS
+    # section.
+    # ---------------------------------------------------------------
+    - name: Probe snap availability
+      ansible.builtin.command: which snap
+      register: pkg_snap_probe
+      failed_when: false
+      changed_when: false
+
+    - name: Report snap unavailable on this host
+      ansible.builtin.debug:
+        msg: "skipping snap section: no snapd (cannot run in an unprivileged container)"
+      when: pkg_snap_probe.rc != 0
+
+    - name: Install snap package
+      community.general.snap:
+        name: hello-world
+        state: present
+      when: pkg_snap_probe.rc == 0
+
+    - name: Remove snap package
+      community.general.snap:
+        name: hello-world
+        state: absent
+      when: pkg_snap_probe.rc == 0
+
+    # ---------------------------------------------------------------
+    # service: exercised through a throwaway SysV init script written
+    # under a namespaced name in /etc/init.d. use: sysvinit is pinned
+    # explicitly because the container has no systemd as PID 1 - the
+    # same determinism pattern a real role uses on mixed init systems.
+    # ---------------------------------------------------------------
+    - name: Install bench dummy init script
+      ansible.builtin.copy:
+        content: |
+          #!/bin/sh
+          # krikri package-bench throwaway service (safe to delete)
+          PIDFILE=/tmp/krikri-pkg-bench/dummy-service.pid
+          case "$1" in
+            start) touch "$PIDFILE"; echo started ;;
+            stop) rm -f "$PIDFILE"; echo stopped ;;
+            status) if [ -f "$PIDFILE" ]; then echo running; exit 0; else echo not running; exit 3; fi ;;
+          esac
+          exit 0
+        dest: /etc/init.d/krikri-pkg-bench-d
+        mode: "0755"
+
+    - name: Start bench dummy service
+      ansible.builtin.service:
+        name: krikri-pkg-bench-d
+        state: started
+        use: sysvinit
+
+    - name: Read back dummy service status  # noqa: command-instead-of-module
+      ansible.builtin.command: service krikri-pkg-bench-d status
+      register: pkg_service_status
+      changed_when: false
+
+    - name: Byte-diff print dummy service status
+      ansible.builtin.debug:
+        msg: "{{ pkg_service_status.stdout }}"
+
+    - name: Assert dummy service is running
+      ansible.builtin.assert:
+        that:
+          - pkg_service_status.rc == 0
+
+    - name: Stop bench dummy service
+      ansible.builtin.service:
+        name: krikri-pkg-bench-d
+        state: stopped
+        use: sysvinit
+
+    - name: Confirm dummy service stopped  # noqa: command-instead-of-module
+      ansible.builtin.command: service krikri-pkg-bench-d status
+      register: pkg_service_stopped
+      failed_when: false
+      changed_when: false
+
+    - name: Assert dummy service is stopped
+      ansible.builtin.assert:
+        that:
+          - pkg_service_stopped.rc != 0
+
+    # ---------------------------------------------------------------
+    # service_facts: fact SHAPE is the parity surface (dict keyed by
+    # unit name with name/source/state/status values), so gather and
+    # print rather than assert on internals that differ per host.
+    # ---------------------------------------------------------------
+    - name: Gather service facts
+      ansible.builtin.service_facts:
+
+    - name: Show discovered service count
+      ansible.builtin.debug:
+        msg: "{{ ansible_facts.services | length }} services discovered"
+
+    - name: Show bench service entry from facts
+      ansible.builtin.debug:
+        msg: "bench service in facts: {{ 'krikri-pkg-bench-d' in ansible_facts.services }}"
+
+    - name: Assert service facts are usable
+      ansible.builtin.assert:
+        that:
+          - "ansible_facts.services is defined"
+
+    # ---------------------------------------------------------------
+    # systemd: needs systemd actually running as PID 1 (systemctl in a
+    # container without it answers "offline" and every state change
+    # fails), so gated on the same /run/systemd/system canary the
+    # batching playbook uses. Skips on this container, runs on a VM.
+    # ---------------------------------------------------------------
+    - name: Probe systemd availability
+      ansible.builtin.stat:
+        path: /run/systemd/system
+      register: pkg_systemd_probe
+      changed_when: false
+
+    - name: Report systemd unavailable on this host
+      ansible.builtin.debug:
+        msg: "skipping systemd section: systemd is not PID 1 here"
+      when: not pkg_systemd_probe.stat.exists
+
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true
+      when: pkg_systemd_probe.stat.exists
+
+    - name: Ensure ssh service enabled via systemd
+      ansible.builtin.systemd:
+        name: ssh
+        enabled: true
+      when: pkg_systemd_probe.stat.exists
+
+    # ---------------------------------------------------------------
+    # cron / cronvar: all entries live in a namespaced cron.d file
+    # (never the live root crontab). cron's comment-anchored idempotency
+    # is exercised for real by the warm run: re-running this play must
+    # leave every entry unchanged. cronvar's BENCH_MAILTO lands next to
+    # the jobs; both modules clean up via state: absent.
+    # ---------------------------------------------------------------
+    - name: Add bench cron jobs
+      ansible.builtin.cron:
+        name: "{{ item.name }}"
+        job: "{{ item.job }}"
+        user: root
+        cron_file: "{{ pkg_cron_file }}"
+      loop: "{{ pkg_cron_jobs }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Add special-time cron job
+      ansible.builtin.cron:
+        name: "krikri bench weekly job"
+        job: "/bin/echo bench-weekly"
+        special_time: weekly
+        user: root
+        cron_file: "{{ pkg_cron_file }}"
+
+    - name: Add bench cron environment variable
+      ansible.builtin.cron:
+        name: BENCH_HOME
+        env: true
+        job: "{{ pkg_dir }}"
+        user: root
+        cron_file: "{{ pkg_cron_file }}"
+
+    - name: Read back bench crontab file
+      ansible.builtin.command: cat /etc/cron.d/{{ pkg_cron_file }}
+      register: pkg_crontab_cat
+      changed_when: false
+
+    - name: Byte-diff print bench crontab file
+      ansible.builtin.debug:
+        msg: "{{ pkg_crontab_cat.stdout }}"
+
+    - name: Assert cron jobs comment-anchored in file
+      ansible.builtin.assert:
+        that:
+          - "'#Ansible: krikri bench daily job' in pkg_crontab_cat.stdout"
+          - "'#Ansible: krikri bench weekly job' in pkg_crontab_cat.stdout"
+          - "'BENCH_HOME=' in pkg_crontab_cat.stdout"
+
+    # ansible.builtin.cronvar (not the community.general canonical
+    # spelling krikri-lint's fqcn[canonical] rule demands): core's own
+    # ansible_builtin_runtime.yml transparently redirects the builtin
+    # spelling for both engines, while krikri currently cannot resolve
+    # the community.general. FQCN for the cronvar plugin it actually
+    # ships (found live this round - see the bench report).
+    - name: Add bench cronvar  # noqa: fqcn[canonical]
+      ansible.builtin.cronvar:
+        name: BENCH_MAILTO
+        value: root@localhost
+        cron_file: "{{ pkg_cron_file }}"
+
+    - name: Read back bench crontab after cronvar
+      ansible.builtin.command: cat /etc/cron.d/{{ pkg_cron_file }}
+      register: pkg_crontab_cat2
+      changed_when: false
+
+    - name: Byte-diff print crontab after cronvar
+      ansible.builtin.debug:
+        msg: "{{ pkg_crontab_cat2.stdout }}"
+
+    - name: Assert cronvar written
+      ansible.builtin.assert:
+        that:
+          - "'BENCH_MAILTO=root@localhost' in pkg_crontab_cat2.stdout"
+
+    - name: Remove bench cron jobs
+      ansible.builtin.cron:
+        name: "{{ item }}"
+        user: root
+        cron_file: "{{ pkg_cron_file }}"
+        state: absent
+      loop:
+        - "krikri bench daily job"
+        - "krikri bench interval job"
+        - "krikri bench weekly job"
+
+    - name: Remove bench cron environment variable
+      ansible.builtin.cron:
+        name: BENCH_HOME
+        env: true
+        cron_file: "{{ pkg_cron_file }}"
+        state: absent
+
+    - name: Remove bench cronvar  # noqa: fqcn[canonical]
+      ansible.builtin.cronvar:
+        name: BENCH_MAILTO
+        cron_file: "{{ pkg_cron_file }}"
+        state: absent
+
+    - name: Remove bench crontab file
+      ansible.builtin.file:
+        path: /etc/cron.d/{{ pkg_cron_file }}
+        state: absent
+
+    # ---------------------------------------------------------------
+    # sysctl: file-only edits (sysctl_set: false, reload: false) in a
+    # namespaced sysctl_file - no kernel mutation, full module
+    # coverage of the file rewrite path including a loop of keys and
+    # an absent cleanup.
+    # ---------------------------------------------------------------
+    - name: Write sysctl keys via loop
+      ansible.posix.sysctl:
+        name: "{{ item.name }}"
+        value: "{{ item.value }}"
+        sysctl_file: /tmp/krikri-pkg-bench/sysctl.conf
+        sysctl_set: false
+        reload: false
+        state: present
+      loop: "{{ pkg_sysctl_keys }}"
+
+    - name: Read back sysctl file
+      ansible.builtin.command: cat /tmp/krikri-pkg-bench/sysctl.conf
+      register: pkg_sysctl_cat
+      changed_when: false
+
+    - name: Byte-diff print sysctl file
+      ansible.builtin.debug:
+        msg: "{{ pkg_sysctl_cat.stdout }}"
+
+    - name: Assert sysctl keys written
+      ansible.builtin.assert:
+        that:
+          - "'net.ipv4.tcp_syncookies=1' in pkg_sysctl_cat.stdout"
+          - "'net.ipv4.ip_forward=0' in pkg_sysctl_cat.stdout"
+
+    - name: Remove one sysctl key
+      ansible.posix.sysctl:
+        name: net.ipv4.ip_forward
+        sysctl_file: /tmp/krikri-pkg-bench/sysctl.conf
+        sysctl_set: false
+        reload: false
+        state: absent
+
+    # ---------------------------------------------------------------
+    # modprobe: capability-probe gated (modprobe dummy needs
+    # CAP_SYS_MODULE; an unprivileged container cannot load modules,
+    # so the probe fails and the section skips cleanly). On a real VM
+    # the dummy module load/unload is fully exercised and leaves no
+    # trace (dummy is not persisted in any module config).
+    # ---------------------------------------------------------------
+    - name: Probe kernel module loading
+      ansible.builtin.command: modprobe dummy
+      register: pkg_modprobe_probe
+      failed_when: false
+      changed_when: false
+
+    - name: Report module loading unavailable on this host
+      ansible.builtin.debug:
+        msg: "skipping modprobe section: kernel module loading not permitted here"
+      when: pkg_modprobe_probe.rc != 0
+
+    - name: Load dummy kernel module
+      community.general.modprobe:
+        name: dummy
+        state: present
+      when: pkg_modprobe_probe.rc == 0
+
+    - name: Check dummy module is loaded
+      ansible.builtin.stat:
+        path: /sys/module/dummy
+      register: pkg_modprobe_stat
+      when: pkg_modprobe_probe.rc == 0
+
+    - name: Assert dummy module loaded
+      ansible.builtin.assert:
+        that:
+          - pkg_modprobe_stat.stat.exists
+      when: pkg_modprobe_probe.rc == 0
+
+    - name: Unload dummy kernel module
+      community.general.modprobe:
+        name: dummy
+        state: absent
+      when: pkg_modprobe_probe.rc == 0
+
+    # ---------------------------------------------------------------
+    # timezone: the timedatectl probe inside the module falls back to
+    # the nosystemd backend in this container (timedatectl cannot
+    # reach a running systemd), which edits /etc/timezone +
+    # /etc/localtime - host-level state, so the original zone is
+    # captured first and restored at the end.
+    # ---------------------------------------------------------------
+    - name: Read original timezone
+      ansible.builtin.command: cat /etc/timezone
+      register: pkg_tz_read
+      changed_when: false
+
+    - name: Set original timezone fact
+      ansible.builtin.set_fact:
+        pkg_tz_orig: "{{ pkg_tz_read.stdout }}"
+
+    - name: Set bench timezone
+      community.general.timezone:
+        name: Europe/Athens
+
+    - name: Read back timezone
+      ansible.builtin.command: cat /etc/timezone
+      register: pkg_tz_now
+      changed_when: false
+
+    - name: Byte-diff print timezone file
+      ansible.builtin.debug:
+        msg: "{{ pkg_tz_now.stdout }}"
+
+    - name: Assert bench timezone set
+      ansible.builtin.assert:
+        that:
+          - "'Europe/Athens' in pkg_tz_now.stdout"
+
+    - name: Restore original timezone
+      community.general.timezone:
+        name: "{{ pkg_tz_orig }}"
+
+    # ---------------------------------------------------------------
+    # hostname: same save/mutate/restore pattern. On this host the
+    # auto-detected strategy is the Debian FileStrategy (/etc/hostname
+    # only, no live kernel rename) because systemd is not PID 1.
+    # ---------------------------------------------------------------
+    - name: Set original hostname fact
+      ansible.builtin.set_fact:
+        pkg_hostname_orig: "{{ ansible_hostname }}"
+
+    - name: Set bench hostname
+      ansible.builtin.hostname:
+        name: krikri-pkg-bench-target
+
+    - name: Read back hostname file
+      ansible.builtin.command: cat /etc/hostname
+      register: pkg_hostname_cat
+      changed_when: false
+
+    - name: Byte-diff print hostname file
+      ansible.builtin.debug:
+        msg: "{{ pkg_hostname_cat.stdout }}"
+
+    - name: Assert bench hostname written
+      ansible.builtin.assert:
+        that:
+          - pkg_hostname_cat.stdout == 'krikri-pkg-bench-target'
+
+    - name: Restore original hostname
+      ansible.builtin.hostname:
+        name: "{{ pkg_hostname_orig }}"
+
+    # ---------------------------------------------------------------
+    # locale_gen: the glibc backend (locales package provides
+    # /etc/locale.gen). Generating en_GB.UTF-8 for real exercises the
+    # uncomment + locale-gen path; removing it re-runs locale-gen.
+    # ---------------------------------------------------------------
+    - name: Generate en_GB locale
+      community.general.locale_gen:
+        name: en_GB.UTF-8
+        state: present
+
+    - name: List compiled locales
+      ansible.builtin.command: locale -a
+      register: pkg_locales
+      changed_when: false
+
+    - name: Byte-diff print compiled locales
+      ansible.builtin.debug:
+        msg: "{{ pkg_locales.stdout }}"
+
+    - name: Assert en_GB locale compiled
+      ansible.builtin.assert:
+        that:
+          - "'en_GB' in pkg_locales.stdout"
+
+    - name: Remove en_GB locale
+      community.general.locale_gen:
+        name: en_GB.UTF-8
+        state: absent
+
+    # ---------------------------------------------------------------
+    # alternatives: register two throwaway scripts (in the namespaced
+    # bin dir) as one alternative group, switch the selected path,
+    # verify the symlink follows, then remove - update-alternatives'
+    # own admin dir under /var is touched only with the namespaced
+    # group name.
+    # ---------------------------------------------------------------
+    - name: Create alternative candidate scripts
+      ansible.builtin.copy:
+        content: "#!/bin/sh\necho {{ item }}\n"
+        dest: "{{ pkg_bin_dir }}/tool-{{ item }}"
+        mode: "0755"
+      loop:
+        - v1
+        - v2
+
+    - name: Register bench alternative at v1
+      community.general.alternatives:
+        name: krikri-bench-tool
+        link: "{{ pkg_bin_dir }}/bench-tool"
+        path: "{{ pkg_bin_dir }}/tool-v1"
+        priority: 10
+
+    - name: Select bench alternative v2
+      community.general.alternatives:
+        name: krikri-bench-tool
+        link: "{{ pkg_bin_dir }}/bench-tool"
+        path: "{{ pkg_bin_dir }}/tool-v2"
+
+    - name: Read back selected alternative
+      ansible.builtin.command: readlink -f {{ pkg_bin_dir }}/bench-tool
+      register: pkg_alt_readlink
+      changed_when: false
+
+    - name: Byte-diff print selected alternative
+      ansible.builtin.debug:
+        msg: "{{ pkg_alt_readlink.stdout }}"
+
+    - name: Assert alternative selection followed
+      ansible.builtin.assert:
+        that:
+          - "'tool-v2' in pkg_alt_readlink.stdout"
+
+    - name: Remove bench alternative
+      community.general.alternatives:
+        name: krikri-bench-tool
+        path: "{{ pkg_bin_dir }}/tool-v2"
+        state: absent
+
+    # ---------------------------------------------------------------
+    # Probe wall B: mid-run read-only pressure, same as wall A.
+    # ---------------------------------------------------------------
+    - name: Probe B date
+      ansible.builtin.command: date +%s
+      changed_when: false
+    - name: Probe B id
+      ansible.builtin.command: id -u
+      changed_when: false
+    - name: Probe B uname
+      ansible.builtin.command: uname -m
+      changed_when: false
+    - name: Probe B pkg facts echo
+      ansible.builtin.command: echo "engine bench {{ pkg_bench_run }} mgr={{ ansible_pkg_mgr }}"
+      changed_when: false
+    - name: Probe B uptime
+      ansible.builtin.command: cat /proc/uptime
+      changed_when: false
+    - name: Probe B df
+      ansible.builtin.command: df -i
+      changed_when: false
+    - name: Probe B looped
+      ansible.builtin.command: "{{ item }}"
+      changed_when: false
+      loop:
+        - whoami
+        - hostname -s
+        - cat /proc/loadavg
+    - name: Probe B passwd count
+      ansible.builtin.command: wc -l /etc/passwd
+      changed_when: false
+    - name: Probe B meminfo
+      ansible.builtin.command: head -3 /proc/meminfo
+      changed_when: false
+    - name: Probe B mounts
+      ansible.builtin.command: cat /proc/mounts
+      changed_when: false
+    - name: Probe B python3
+      ansible.builtin.command: which python3
+      changed_when: false
+    - name: Probe B bash version
+      ansible.builtin.command: bash --version
+      changed_when: false
+    - name: Probe B resolv
+      ansible.builtin.command: head -4 /etc/resolv.conf
+      changed_when: false
+    - name: Probe B hosts file
+      ansible.builtin.command: cat /etc/hosts
+      changed_when: false
+    - name: Probe B tmp stat
+      ansible.builtin.command: stat -c %a /tmp
+      changed_when: false
+    - name: Probe B proc version
+      ansible.builtin.command: cat /proc/version
+      changed_when: false
+    - name: Probe B date zone
+      ansible.builtin.command: date +%Z
+      changed_when: false
+    - name: Probe B nproc
+      ansible.builtin.command: nproc
+      changed_when: false
+
+    # ---------------------------------------------------------------
+    # Cleanup: everything this play created, made idempotent-tolerant
+    # (failed_when: false / absent states) so a partial run can still
+    # clean up after itself. apt removals cover the throwaway packages
+    # that no later section depends on.
+    # ---------------------------------------------------------------
+    - name: Remove throwaway packages
+      ansible.builtin.apt:
+        name: "{{ item }}"
+        state: absent
+      loop:
+        - sl
+        - bc
+        - tree
+
+    - name: Remove bench dummy init script
+      ansible.builtin.file:
+        path: /etc/init.d/krikri-pkg-bench-d
+        state: absent
+
+    - name: Remove bench repo list file if left over
+      ansible.builtin.file:
+        path: /etc/apt/sources.list.d/krikri-pkg-bench.list
+        state: absent
+
+    - name: Remove bench deb822 file if left over
+      ansible.builtin.file:
+        path: /etc/apt/sources.list.d/krikri-pkg-bench.sources
+        state: absent
+
+    - name: Remove bench keyring if left over
+      ansible.builtin.file:
+        path: "{{ pkg_keyring }}"
+        state: absent
+
+    - name: Remove per-run bench dir
+      ansible.builtin.file:
+        path: "{{ pkg_dir }}"
+        state: absent
+
+    - name: Remove fixed bench base dir
+      ansible.builtin.file:
+        path: /tmp/krikri-pkg-bench
+        state: absent
+
+    - name: Announce packages benchmark end
+      ansible.builtin.debug:
+        msg: "packages benchmark {{ pkg_bench_run }} complete on {{ ansible_hostname }}"

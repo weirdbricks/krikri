@@ -1,0 +1,143 @@
+---
+# Language-runtime package modules (gem/npm/pip/easy_install), split out
+# of modules_packages.yml as this playbook's include_tasks exercise.
+#
+# Runs in the parent play's variable scope: pkg_dir (the run's namespaced
+# dir) is the parent's, and lang_dir below re-derives from it to prove
+# included tasks see and extend the parent's fact chain.
+#
+# Install choice rationale: this playbook's THEME is package management,
+# so installing the underlying runtimes (ruby, nodejs/npm, python3-pip)
+# via apt in the parent is itself coverage, not a safety exception.
+# easy_install is the one deliberate gate: upstream setuptools removed
+# the easy_install script in v58 and Ubuntu 22.04 ships setuptools 59+,
+# so the binary does not exist system-wide and no venv seeded by modern
+# virtualenv bundles it either - the capability probe below matches what
+# a real role would hit on this OS, and a real skip is the honest
+# outcome rather than faking success.
+
+- name: Derive language-section dir from parent fact
+  ansible.builtin.set_fact:
+    lang_dir: "{{ pkg_dir }}/lang"
+
+- name: Create language-section base dir
+  ansible.builtin.file:
+    path: "{{ lang_dir }}"
+    state: directory
+    mode: "0755"
+
+# --- gem (community.general.gem) ------------------------------------------
+# Ruby/gem come from the parent play's apt toolchain install; no probe
+# needed - if apt failed, the play already stopped.
+- name: Install gem colored
+  community.general.gem:
+    name: colored
+    state: present
+
+- name: Read back installed gem list
+  ansible.builtin.command: gem list colored
+  register: lang_gem_list
+  changed_when: false
+
+- name: Byte-diff print gem list
+  ansible.builtin.debug:
+    msg: "{{ lang_gem_list.stdout }}"
+
+- name: Assert gem colored is installed
+  ansible.builtin.assert:
+    that:
+      - "'colored' in lang_gem_list.stdout"
+
+- name: Remove gem colored
+  community.general.gem:
+    name: colored
+    state: absent
+
+# --- npm (community.general.npm) ------------------------------------------
+# Local (path-scoped) install, not global: a global install would mutate
+# the shared /usr/lib/node_modules; the namespaced project dir keeps the
+# mutation (and its cleanup) inside this playbook's own tree.
+- name: Create npm project dir
+  ansible.builtin.file:
+    path: "{{ lang_dir }}/npm"
+    state: directory
+    mode: "0755"
+
+- name: Install npm package left-pad locally
+  community.general.npm:
+    name: left-pad
+    path: "{{ lang_dir }}/npm"
+    state: present
+
+- name: Read back npm dependency tree
+  ansible.builtin.command: npm list --prefix {{ lang_dir }}/npm left-pad
+  register: lang_npm_list
+  changed_when: false
+
+- name: Byte-diff print npm list
+  ansible.builtin.debug:
+    msg: "{{ lang_npm_list.stdout }}"
+
+- name: Assert npm left-pad is installed
+  ansible.builtin.assert:
+    that:
+      - "'left-pad' in lang_npm_list.stdout"
+
+- name: Remove npm package left-pad
+  community.general.npm:
+    name: left-pad
+    path: "{{ lang_dir }}/npm"
+    state: absent
+
+# --- pip (ansible.builtin.pip) ---------------------------------------------
+# Into a namespaced venv (the module creates it), not system pip: system
+# pip on Ubuntu 22.04 also refuses un-venv'd installs without --break-
+# system-packages nowadays, and the venv exercises the module's
+# virtualenv-creation path instead of just shelling pip3.
+- name: Install pip package six into namespaced venv
+  ansible.builtin.pip:
+    name: six
+    virtualenv: "{{ lang_dir }}/venv"
+    state: present
+
+- name: Read back venv pip package list
+  ansible.builtin.command: "{{ lang_dir }}/venv/bin/pip show six"
+  register: lang_pip_show
+  changed_when: false
+
+- name: Byte-diff print pip show six
+  ansible.builtin.debug:
+    msg: "{{ lang_pip_show.stdout }}"
+
+- name: Assert pip six is installed in venv
+  ansible.builtin.assert:
+    that:
+      - "'Name: six' in lang_pip_show.stdout"
+
+- name: Remove pip package six from venv
+  ansible.builtin.pip:
+    name: six
+    virtualenv: "{{ lang_dir }}/venv"
+    state: absent
+
+# --- easy_install (community.general.easy_install) -------------------------
+# Capability-probe gated, same pattern as the parent's ZFS section: the
+# probe is cheap, honest, and matches what a real role's task would hit
+# on this OS. See the file-header rationale for why the binary is
+# structurally absent on 22.04 rather than merely not yet installed.
+- name: Probe easy_install availability
+  ansible.builtin.command: which easy_install
+  register: lang_easy_install_probe
+  failed_when: false
+  changed_when: false
+
+- name: Report easy_install unavailable on this host
+  ansible.builtin.debug:
+    msg: "skipping easy_install section: no easy_install binary (setuptools >= 58 removed it)"
+  when: lang_easy_install_probe.rc != 0
+
+- name: Install python package via easy_install
+  community.general.easy_install:
+    name: six
+    virtualenv: "{{ lang_dir }}/venv2"
+  when: lang_easy_install_probe.rc == 0

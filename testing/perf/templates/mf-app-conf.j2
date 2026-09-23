@@ -1,0 +1,16 @@
+# krikri modules-files benchmark app report
+# Rendered per service when driven from the per-service loop.
+app: modules-files
+host: {{ ansible_hostname }}
+mode: {{ mf_bench_mode }}
+run: {{ mf_run_id }}
+{% for svc in mf_services %}
+service.{{ svc.name }}.enabled = {{ svc.enabled | bool | lower }}
+service.{{ svc.name }}.weight = {{ '%02d' | format(svc.weight) }}
+{% endfor %}
+enabled_total = {{ mf_services | selectattr('enabled', 'equalto', true) | list | length }}
+{% if mf_bench_mode == 'files' %}
+tuning: file-heavy profile
+{% else %}
+tuning: default profile
+{% endif %}

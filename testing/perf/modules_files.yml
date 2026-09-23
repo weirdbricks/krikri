@@ -1,0 +1,1802 @@
+---
+# Modules/files benchmark: playbook 1 of 5 in the per-module coverage
+# series. Theme: files & filesystem. Exercises every implemented krikri
+# module in that theme with real exercise (write, edit, read back,
+# byte-diff), not just parsing - a divergence here is meant to be
+# directly comparable against real ansible-playbook via the cat+register
+# debug pattern after anything that renders or writes content.
+#
+# Same safety contract as synthetic_batch_bench.yml: all mutations are
+# confined to /tmp/krikri-modfiles* paths (plus controller-side
+# /tmp/krikri-modfiles-fetch* for fetch, which lands on the controller
+# by definition - both engines run on the same host in this benchmark,
+# and /tmp is throwaway). No packages, no real system state, no sshd,
+# no network. The block-device modules (filesystem/mount/parted/lvg/
+# lvol) never touch a real disk: everything is driven through a
+# throwaway image file, gated on capability probes (losetup for loop
+# devices, `which <binary>` for tools a stock container/VM may lack),
+# and skips cleanly with a debug notice where a probe fails.
+#
+# Real-role parity notes: the lineinfile/blockinfile/replace/ini_file
+# tasks are written the way a production role would anchor them
+# (insertafter regexps, backrefs, {mark} markers), not as crash probes.
+
+- name: Modules and files coverage benchmark
+  hosts: all
+  gather_facts: true
+
+  vars:
+    mf_bench_mode: files
+    mf_run_id: "{{ ansible_date_time.epoch }}"
+    # Every target-side path hangs off this run-scoped root, so two
+    # back-to-back engine runs never see each other's leftovers.
+    mf_dir: "/tmp/krikri-modfiles-{{ mf_run_id }}"
+    mf_conf_dir: "{{ mf_dir }}/conf.d"
+    mf_data_dir: "{{ mf_dir }}/data"
+    mf_services:
+      - { name: alpha, enabled: true, weight: 1 }
+      - { name: beta, enabled: false, weight: 2 }
+      - { name: gamma, enabled: true, weight: 3 }
+    mf_users: [webfiles, dbfiles, cronfiles]
+    mf_fragments:
+      - { name: 10-core, body: "core = enabled\n" }
+      - { name: 20-net, body: "net = tcp\n" }
+      - { name: 30-tls, body: "tls = strict\n" }
+    mf_ini_opts:
+      compression: "on"
+      keepalive: "yes"
+      retries: "3"
+    # Fixed well-formed public keys (generated once, checked in as
+    # literals) so known_hosts/authorized_key parsing is deterministic
+    # across engines.
+    mf_key_ed25519: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIK086kN3gJ/Zvi2zFpLRQkbIPdeYC8fMOjNTj9hexdca bench-generated"
+    mf_key_ed25519_two: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGUv5i6LyDtqn+/UR7Kw9hNb3u11xSsmb9pybEp1Oa4y bench-generated-two"
+    mf_known_host_line: "mfbenchhost ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIK086kN3gJ/Zvi2zFpLRQkbIPdeYC8fMOjNTj9hexdca bench-generated"
+    mf_sshd_stub: |
+      # krikri modules-files benchmark: sshd-style config stub
+      #Port 22
+      PermitRootLogin prohibit-password
+      PasswordAuthentication yes
+      X11Forwarding no
+      MaxAuthTries 6
+      ClientAliveInterval 0
+    mf_xml_document: |
+      <?xml version="1.0" encoding="utf-8"?>
+      <configuration>
+        <servers>
+          <server name="alpha" port="8080"/>
+          <server name="beta" port="8081"/>
+        </servers>
+        <logging level="info"/>
+      </configuration>
+
+  tasks:
+    # ---------------------------------------------------------------
+    # Setup: run-scoped facts and the base directory tree everything
+    # else hangs off.
+    # ---------------------------------------------------------------
+    - name: Announce modules-files benchmark start
+      ansible.builtin.debug:
+        msg: "modules-files benchmark {{ mf_run_id }} on {{ ansible_hostname }} ({{ mf_bench_mode }})"
+
+    - name: Set derived config path fact
+      ansible.builtin.set_fact:
+        mf_main_conf: "{{ mf_conf_dir }}/app.conf"
+
+    - name: Set derived settings path fact
+      ansible.builtin.set_fact:
+        mf_settings: "{{ mf_conf_dir }}/settings.conf"
+
+    - name: Create benchmark root directory
+      ansible.builtin.file:
+        path: "{{ mf_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Create benchmark subdirectories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0755"
+      loop:
+        - "{{ mf_conf_dir }}"
+        - "{{ mf_data_dir }}"
+        - "{{ mf_dir }}/fragments"
+        - "{{ mf_dir }}/archive"
+        - "{{ mf_dir }}/extracted"
+        - "{{ mf_dir }}/xml"
+
+    # ---------------------------------------------------------------
+    # file: directory/touch/link/hard/attrs/absent lifecycle on the
+    # throwaway tree.
+    # ---------------------------------------------------------------
+    - name: Touch a per-user marker file
+      ansible.builtin.file:
+        path: "{{ mf_data_dir }}/user-{{ item }}.txt"
+        state: touch
+        mode: "0644"
+      loop: "{{ mf_users }}"
+
+    - name: Touch a stale marker with explicit timestamps
+      ansible.builtin.file:
+        path: "{{ mf_data_dir }}/stamped.txt"
+        state: touch
+        mode: "0644"
+        modification_time: "202401011200.00"
+        access_time: "202401011200.00"
+
+    - name: Symlink a config into the conf dir
+      ansible.builtin.file:
+        src: "{{ mf_data_dir }}/user-webfiles.txt"
+        dest: "{{ mf_conf_dir }}/webfiles.link"
+        state: link
+
+    - name: Force-replace the symlink to point elsewhere
+      ansible.builtin.file:
+        src: "{{ mf_data_dir }}/user-dbfiles.txt"
+        dest: "{{ mf_conf_dir }}/webfiles.link"
+        state: link
+        force: true
+
+    - name: Hard-link a payload file
+      ansible.builtin.file:
+        src: "{{ mf_data_dir }}/user-cronfiles.txt"
+        dest: "{{ mf_data_dir }}/cronfiles.hard"
+        state: hard
+        mode: "0644"
+
+    - name: Recursively tighten data dir modes
+      ansible.builtin.file:
+        path: "{{ mf_data_dir }}"
+        state: directory
+        mode: "0750"
+        recurse: true
+
+    - name: Assert recursive mode landed on a nested file
+      ansible.builtin.stat:
+        path: "{{ mf_data_dir }}/user-cronfiles.txt"
+      register: mf_recurse_stat
+
+    - name: Check recursive mode result
+      ansible.builtin.assert:
+        that:
+          - mf_recurse_stat.stat.exists
+          - mf_recurse_stat.stat.mode == '0750'
+
+    - name: Tighten one marker file mode only
+      ansible.builtin.file:
+        path: "{{ mf_data_dir }}/user-webfiles.txt"
+        mode: "0600"
+
+    - name: Remove the stale stamped marker
+      ansible.builtin.file:
+        path: "{{ mf_data_dir }}/stamped.txt"
+        state: absent
+
+    # ---------------------------------------------------------------
+    # copy: content writes (the role-realistic shape), loops, backup,
+    # force:false skip, remote_src copies, validate.
+    # ---------------------------------------------------------------
+    - name: Write benchmark main config
+      ansible.builtin.copy:
+        content: "mode = {{ mf_bench_mode }}\nrun = {{ mf_run_id }}\n"
+        dest: "{{ mf_main_conf }}"
+        mode: "0644"
+
+    - name: Write one service drop-in per service
+      ansible.builtin.copy:
+        content: "service = {{ item.name }}\nweight = {{ item.weight }}\n"
+        dest: "{{ mf_conf_dir }}/{{ item.name }}.conf"
+        mode: "0644"
+      loop: "{{ mf_services }}"
+
+    - name: Write a private credential file
+      ansible.builtin.copy:
+        content: "secret = bench-only-not-real\n"
+        dest: "{{ mf_data_dir }}/credential.txt"
+        mode: "0600"
+        owner: root
+        group: root
+
+    - name: Pre-seed a file for the force-skip case
+      ansible.builtin.copy:
+        content: "original content\n"
+        dest: "{{ mf_data_dir }}/pinned.txt"
+        mode: "0644"
+
+    - name: Attempt overwrite with force disabled (must skip)
+      ansible.builtin.copy:
+        content: "would-be overwrite\n"
+        dest: "{{ mf_data_dir }}/pinned.txt"
+        mode: "0644"
+        force: false
+
+    - name: Overwrite config with backup enabled
+      ansible.builtin.copy:
+        content: "mode = {{ mf_bench_mode }}\nrun = {{ mf_run_id }}\nupdated = true\n"
+        dest: "{{ mf_main_conf }}"
+        mode: "0644"
+        backup: true
+
+    - name: Copy config beside itself (remote_src)
+      ansible.builtin.copy:
+        src: "{{ mf_main_conf }}"
+        dest: "{{ mf_conf_dir }}/app-copy.conf"
+        mode: "0644"
+        remote_src: true
+
+    - name: Copy the whole data dir (remote_src, directory)
+      ansible.builtin.copy:
+        src: "{{ mf_data_dir }}/"
+        dest: "{{ mf_dir }}/data-copy/"
+        mode: "0644"
+        remote_src: true
+
+    - name: Write a validated script stub
+      ansible.builtin.copy:
+        content: "#!/bin/sh\nexit 0\n"
+        dest: "{{ mf_data_dir }}/stub.sh"
+        mode: "0755"
+        validate: "/bin/true %s"
+
+    - name: Byte-diff read main config
+      ansible.builtin.command: cat {{ mf_main_conf }}
+      register: mf_bytediff_main_conf
+      changed_when: false
+
+    - name: Byte-diff print main config
+      ansible.builtin.debug:
+        msg: "{{ mf_bytediff_main_conf.stdout }}"
+
+    - name: Assert force-disabled copy kept original content
+      ansible.builtin.command: cat {{ mf_data_dir }}/pinned.txt
+      register: mf_pinned_cat
+      changed_when: false
+
+    - name: Check pinned content survived
+      ansible.builtin.assert:
+        that:
+          - "'original content' in mf_pinned_cat.stdout"
+
+    # ---------------------------------------------------------------
+    # template: real .j2 rendering with {% for %}/{% if %} and filters;
+    # byte-diff output is the parity artifact.
+    # ---------------------------------------------------------------
+    - name: Render app conf report
+      ansible.builtin.template:
+        src: mf-app-conf.j2
+        dest: "{{ mf_dir }}/app-report.txt"
+        mode: "0644"
+
+    - name: Byte-diff read app conf render
+      ansible.builtin.command: cat {{ mf_dir }}/app-report.txt
+      register: mf_bytediff_report
+      changed_when: false
+
+    - name: Byte-diff print app conf render
+      ansible.builtin.debug:
+        msg: "{{ mf_bytediff_report.stdout }}"
+
+    - name: Re-render app conf report idempotently
+      ansible.builtin.template:
+        src: mf-app-conf.j2
+        dest: "{{ mf_dir }}/app-report.txt"
+        mode: "0644"
+
+    - name: Render one report per service
+      ansible.builtin.template:
+        src: mf-app-conf.j2
+        dest: "{{ mf_dir }}/report-{{ item.name }}.txt"
+        mode: "0640"
+      loop: "{{ mf_services }}"
+      when: item.enabled | bool
+
+    - name: Render service report with validation
+      ansible.builtin.template:
+        src: mf-app-conf.j2
+        dest: "{{ mf_dir }}/report-validated.txt"
+        mode: "0644"
+        validate: "/bin/true %s"
+
+    # ---------------------------------------------------------------
+    # lineinfile: the anchoring/backref semantics real roles rely on.
+    # Anchoring correctness is only visible in the byte-diff.
+    # ---------------------------------------------------------------
+    - name: Seed settings file for lineinfile
+      ansible.builtin.copy:
+        content: "{{ mf_sshd_stub }}"
+        dest: "{{ mf_settings }}"
+        mode: "0644"
+
+    - name: Uncomment and set the port line
+      ansible.builtin.lineinfile:
+        path: "{{ mf_settings }}"
+        regexp: '^#?Port '
+        line: "Port 2222"
+        mode: "0644"
+
+    - name: Insert dispatch line after the root-login anchor
+      ansible.builtin.lineinfile:
+        path: "{{ mf_settings }}"
+        line: "MaxSessions 10"
+        insertafter: '^PermitRootLogin'
+        mode: "0644"
+
+    - name: Insert banner line before password auth
+      ansible.builtin.lineinfile:
+        path: "{{ mf_settings }}"
+        line: "Banner /etc/issue.net-bench"
+        insertbefore: '^PasswordAuthentication'
+        mode: "0644"
+
+    - name: Rewrite max auth tries with backref
+      ansible.builtin.lineinfile:
+        path: "{{ mf_settings }}"
+        regexp: '^MaxAuthTries (\d+)$'
+        line: 'MaxAuthTries \1 (bench \1)'
+        backrefs: true
+        mode: "0644"
+
+    - name: Replace literal search string
+      ansible.builtin.lineinfile:
+        path: "{{ mf_settings }}"
+        search_string: "X11Forwarding"
+        line: "X11Forwarding yes"
+        mode: "0644"
+
+    - name: Add first-match keepalive line
+      ansible.builtin.lineinfile:
+        path: "{{ mf_settings }}"
+        regexp: '^ClientAlive'
+        line: "ClientAliveInterval 60"
+        firstmatch: true
+        mode: "0644"
+
+    - name: Drop dead option line
+      ansible.builtin.lineinfile:
+        path: "{{ mf_settings }}"
+        regexp: '^ClientAliveCountMax'
+        state: absent
+
+    - name: Add per-user option lines in a loop
+      ansible.builtin.lineinfile:
+        path: "{{ mf_data_dir }}/{{ item }}.opts"
+        line: "allow = {{ item }}"
+        create: true
+        mode: "0644"
+      loop: "{{ mf_users }}"
+
+    - name: Absent line on a missing file is a clean no-op
+      ansible.builtin.lineinfile:
+        path: "{{ mf_dir }}/does-not-exist.conf"
+        line: "nothing"
+        state: absent
+
+    - name: Byte-diff read settings file
+      ansible.builtin.command: cat {{ mf_settings }}
+      register: mf_bytediff_settings
+      changed_when: false
+
+    - name: Byte-diff print settings file
+      ansible.builtin.debug:
+        msg: "{{ mf_bytediff_settings.stdout }}"
+
+    - name: Assert backref line landed with captured group
+      ansible.builtin.command: grep -c '^MaxAuthTries 6 (bench 6)$' {{ mf_settings }}
+      register: mf_backref_grep
+      changed_when: false
+
+    - name: Check backref capture count
+      ansible.builtin.assert:
+        that:
+          - mf_backref_grep.stdout == '1'
+
+    # ---------------------------------------------------------------
+    # blockinfile: {mark} markers, BEGIN/END anchors, removal.
+    # ---------------------------------------------------------------
+    - name: Manage a managed block at EOF
+      ansible.builtin.blockinfile:
+        path: "{{ mf_settings }}"
+        block: |
+          Match bench-users
+            PermitTTY no
+        marker: "# {mark} BENCH MANAGED BLOCK"
+        mode: "0644"
+
+    - name: Manage a block anchored after the port line
+      ansible.builtin.blockinfile:
+        path: "{{ mf_settings }}"
+        block: |
+          # tuned in the benchmark run
+          UseDNS no
+        marker: "# {mark} BENCH TUNING"
+        insertafter: '^Port '
+        mode: "0644"
+
+    - name: Manage a block anchored before password auth
+      ansible.builtin.blockinfile:
+        path: "{{ mf_settings }}"
+        block: "{{ mf_users | join(', ') }}"
+        marker: "# {mark} BENCH USERS"
+        insertbefore: '^PasswordAuthentication'
+        mode: "0644"
+
+    - name: Create a new file from a managed block
+      ansible.builtin.blockinfile:
+        path: "{{ mf_conf_dir }}/managed.conf"
+        block: |
+          key = value
+          enabled = yes
+        create: true
+        mode: "0644"
+
+    - name: Byte-diff read managed conf
+      ansible.builtin.command: cat {{ mf_conf_dir }}/managed.conf
+      register: mf_bytediff_managed
+      changed_when: false
+
+    - name: Byte-diff print managed conf
+      ansible.builtin.debug:
+        msg: "{{ mf_bytediff_managed.stdout }}"
+
+    - name: Remove the users block again
+      ansible.builtin.blockinfile:
+        path: "{{ mf_settings }}"
+        block: ""
+        marker: "# {mark} BENCH USERS"
+        state: absent
+
+    - name: Absent block on a missing file is a clean no-op
+      ansible.builtin.blockinfile:
+        path: "{{ mf_dir }}/never-created.conf"
+        block: "nothing"
+        marker: "# {mark} BENCH ABSENT"
+        state: absent
+        mode: "0644"
+        create: true
+
+    - name: Byte-diff read settings after block edits
+      ansible.builtin.command: cat {{ mf_settings }}
+      register: mf_bytediff_settings_blocks
+      changed_when: false
+
+    - name: Byte-diff print settings after block edits
+      ansible.builtin.debug:
+        msg: "{{ mf_bytediff_settings_blocks.stdout }}"
+
+    # ---------------------------------------------------------------
+    # ini_file: section/option edits the way config-managing roles do.
+    # ---------------------------------------------------------------
+    - name: Seed ini file
+      ansible.builtin.copy:
+        content: |
+          [main]
+          port = 8080
+          host = localhost
+
+          [workers]
+          count = 4
+        dest: "{{ mf_dir }}/app.ini"
+        mode: "0644"
+
+    - name: Update main port option
+      community.general.ini_file:
+        path: "{{ mf_dir }}/app.ini"
+        section: main
+        option: port
+        value: "9090"
+        mode: "0644"
+
+    - name: Add timeout option to main section
+      community.general.ini_file:
+        path: "{{ mf_dir }}/app.ini"
+        section: main
+        option: timeout
+        value: "30"
+        mode: "0644"
+
+    - name: Set tuning options in a loop
+      community.general.ini_file:
+        path: "{{ mf_dir }}/app.ini"
+        section: tuning
+        option: "{{ item.key }}"
+        value: "{{ item.value }}"
+        mode: "0644"
+      loop: "{{ mf_ini_opts | dict2items }}"
+
+    - name: Write a no-space ini variant
+      community.general.ini_file:
+        path: "{{ mf_dir }}/tight.ini"
+        section: net
+        option: mode
+        value: "{{ mf_bench_mode }}"
+        no_extra_spaces: true
+        create: true
+        mode: "0644"
+
+    - name: Write multi-value retry option
+      community.general.ini_file:
+        path: "{{ mf_dir }}/app.ini"
+        section: main
+        option: fallback
+        values:
+          - "primary"
+          - "secondary"
+        mode: "0644"
+
+    - name: Remove the host option
+      community.general.ini_file:
+        path: "{{ mf_dir }}/app.ini"
+        section: main
+        option: host
+        state: absent
+        mode: "0644"
+
+    - name: Remove the whole workers section
+      community.general.ini_file:
+        path: "{{ mf_dir }}/app.ini"
+        section: workers
+        state: absent
+        mode: "0644"
+
+    - name: Byte-diff read app ini
+      ansible.builtin.command: cat {{ mf_dir }}/app.ini
+      register: mf_bytediff_ini
+      changed_when: false
+
+    - name: Byte-diff print app ini
+      ansible.builtin.debug:
+        msg: "{{ mf_bytediff_ini.stdout }}"
+
+    - name: Byte-diff read tight ini
+      ansible.builtin.command: cat {{ mf_dir }}/tight.ini
+      register: mf_bytediff_tight_ini
+      changed_when: false
+
+    - name: Byte-diff print tight ini
+      ansible.builtin.debug:
+        msg: "{{ mf_bytediff_tight_ini.stdout }}"
+
+    # ---------------------------------------------------------------
+    # xml: xpath edits on a small config document. Real Ansible's own
+    # xml module hard-requires the python lxml library on the target
+    # (krikri's is pure Crystal), so the section gates on an lxml
+    # import probe and skips cleanly with a notice where it's absent -
+    # same probe-and-skip contract as the acl/sudoers sections.
+    # ---------------------------------------------------------------
+    - name: Probe lxml availability
+      ansible.builtin.command: python3 -c "import lxml"
+      register: mf_lxml_probe
+      failed_when: false
+      changed_when: false
+
+    - name: Set lxml availability fact
+      ansible.builtin.set_fact:
+        mf_lxml_available: "{{ mf_lxml_probe.rc == 0 }}"
+
+    - name: Report lxml unavailable
+      ansible.builtin.debug:
+        msg: "skipping xml section: python lxml absent on target (real xml module's own dependency)"
+      when: not mf_lxml_available
+
+    - name: Seed xml config
+      ansible.builtin.copy:
+        content: "{{ mf_xml_document }}"
+        dest: "{{ mf_dir }}/xml/config.xml"
+        mode: "0644"
+      when: mf_lxml_available
+
+    - name: Set logging level attribute
+      community.general.xml:
+        path: "{{ mf_dir }}/xml/config.xml"
+        xpath: /configuration/logging
+        attribute: level
+        value: debug
+        input_type: xml
+      when: mf_lxml_available
+
+    - name: Ensure an owner node exists under configuration
+      community.general.xml:
+        path: "{{ mf_dir }}/xml/config.xml"
+        xpath: /configuration/owner
+        value: bench
+        input_type: xml
+      when: mf_lxml_available
+
+    - name: Add a gamma server node
+      community.general.xml:
+        path: "{{ mf_dir }}/xml/config.xml"
+        xpath: /configuration/servers
+        add_children:
+          - "<server name='gamma' port='8082'/>"
+        input_type: xml
+      when: mf_lxml_available
+
+    - name: Count server nodes
+      community.general.xml:
+        path: "{{ mf_dir }}/xml/config.xml"
+        xpath: /configuration/servers/server
+        count: true
+      register: mf_xml_count
+      when: mf_lxml_available
+
+    - name: Print matched server nodes
+      community.general.xml:
+        path: "{{ mf_dir }}/xml/config.xml"
+        xpath: /configuration/servers/server
+        print_match: true
+      register: mf_xml_match
+      when: mf_lxml_available
+
+    - name: Read the owner node text
+      community.general.xml:
+        path: "{{ mf_dir }}/xml/config.xml"
+        xpath: /configuration/owner
+        content: text
+      register: mf_xml_owner
+      when: mf_lxml_available
+
+    - name: Remove the beta server node
+      community.general.xml:
+        path: "{{ mf_dir }}/xml/config.xml"
+        xpath: /configuration/servers/server[@name='beta']
+        state: absent
+      when: mf_lxml_available
+
+    - name: Byte-diff read final xml
+      ansible.builtin.command: cat {{ mf_dir }}/xml/config.xml
+      register: mf_bytediff_xml
+      changed_when: false
+      when: mf_lxml_available
+
+    - name: Byte-diff print final xml
+      ansible.builtin.debug:
+        msg: "{{ mf_bytediff_xml.stdout }}"
+      when: mf_lxml_available
+
+    - name: Assert xml count and owner text
+      ansible.builtin.assert:
+        that:
+          - mf_xml_count.count == 2
+          - mf_xml_owner.content == 'bench'
+      when: mf_lxml_available
+
+    # ---------------------------------------------------------------
+    # replace: regexp semantics (backrefs, after/before region).
+    # ---------------------------------------------------------------
+    - name: Seed replace target
+      ansible.builtin.copy:
+        content: |
+          upstream alpha { weight = 1; }
+          upstream beta { weight = 2; }
+          listen 8080;
+          # legacy endpoint marker
+          backend legacy /v1;
+          listen 8081;
+        dest: "{{ mf_dir }}/lb.conf"
+        mode: "0644"
+
+    - name: Bump the first listen port
+      ansible.builtin.replace:
+        path: "{{ mf_dir }}/lb.conf"
+        regexp: '^listen 8080;$'
+        replace: 'listen 9090;'
+        mode: "0644"
+
+    - name: Rewrite upstream weights with backrefs
+      ansible.builtin.replace:
+        path: "{{ mf_dir }}/lb.conf"
+        regexp: 'upstream (\w+) \{ weight = \d+; \}'
+        replace: 'upstream \1 { weight = 9; }'
+
+    - name: Replace only inside the legacy region
+      ansible.builtin.replace:
+        path: "{{ mf_dir }}/lb.conf"
+        regexp: 'v1'
+        replace: 'v2'
+        after: 'listen 9090;'
+        before: 'listen 8081;'
+
+    - name: Strip comment lines entirely
+      ansible.builtin.replace:
+        path: "{{ mf_dir }}/lb.conf"
+        regexp: '(?m)^#.*\n'
+        replace: ""
+
+    - name: Back up and rewrite the tight ini mode line
+      ansible.builtin.replace:
+        path: "{{ mf_dir }}/tight.ini"
+        regexp: '^mode=(.*)$'
+        replace: 'mode=files-rewritten'
+        backup: true
+
+    - name: Re-apply weight rewrite (idempotent second pass)
+      ansible.builtin.replace:
+        path: "{{ mf_dir }}/lb.conf"
+        regexp: 'upstream (\w+) \{ weight = 9; \}'
+        replace: 'upstream \1 { weight = 9; }'
+
+    - name: Byte-diff read rewritten lb conf
+      ansible.builtin.command: cat {{ mf_dir }}/lb.conf
+      register: mf_bytediff_lb
+      changed_when: false
+
+    - name: Byte-diff print rewritten lb conf
+      ansible.builtin.debug:
+        msg: "{{ mf_bytediff_lb.stdout }}"
+
+    - name: Assert legacy region swap landed only there
+      ansible.builtin.command: grep -c 'v2' {{ mf_dir }}/lb.conf
+      register: mf_v2_grep
+      changed_when: false
+
+    - name: Check legacy region swap count
+      ansible.builtin.assert:
+        that:
+          - mf_v2_grep.stdout == '1'
+
+    # ---------------------------------------------------------------
+    # stat: register + assert shape, symlink follow, checksums.
+    # ---------------------------------------------------------------
+    - name: Stat the main config
+      ansible.builtin.stat:
+        path: "{{ mf_main_conf }}"
+      register: mf_main_stat
+
+    - name: Assert main config stat shape
+      ansible.builtin.assert:
+        that:
+          - mf_main_stat.stat.exists
+          - mf_main_stat.stat.isreg
+          - mf_main_stat.stat.mode == '0644'
+          - mf_main_stat.stat.executable == false
+
+    - name: Stat a missing path
+      ansible.builtin.stat:
+        path: "{{ mf_dir }}/no-such-file.txt"
+      register: mf_missing_stat
+
+    - name: Assert missing path reports absent
+      ansible.builtin.assert:
+        that:
+          - not mf_missing_stat.stat.exists
+
+    - name: Stat through the symlink
+      ansible.builtin.stat:
+        path: "{{ mf_conf_dir }}/webfiles.link"
+        follow: true
+      register: mf_followed_stat
+
+    - name: Assert symlink stat resolved to its target
+      ansible.builtin.assert:
+        that:
+          - mf_followed_stat.stat.exists
+          - mf_followed_stat.stat.isreg
+          - mf_followed_stat.stat.mode == '0750'
+
+    - name: Stat the symlink itself
+      ansible.builtin.stat:
+        path: "{{ mf_conf_dir }}/webfiles.link"
+      register: mf_link_stat
+
+    - name: Assert link stat reports linkness and target
+      ansible.builtin.assert:
+        that:
+          - mf_link_stat.stat.islnk
+          - mf_link_stat.stat.lnk_target == mf_data_dir + '/user-dbfiles.txt'
+
+    - name: Stat with md5 checksum
+      ansible.builtin.stat:
+        path: "{{ mf_data_dir }}/credential.txt"
+        checksum_algorithm: md5
+      register: mf_md5_stat
+
+    - name: Assert md5 checksum was produced
+      ansible.builtin.assert:
+        that:
+          - mf_md5_stat.stat.checksum | length == 32
+
+    - name: Stat marker files in a loop
+      ansible.builtin.stat:
+        path: "{{ mf_data_dir }}/user-{{ item }}.txt"
+        get_checksum: false
+        get_mime: false
+      loop: "{{ mf_users }}"
+      register: mf_marker_stats
+
+    - name: Assert all marker stats returned
+      ansible.builtin.assert:
+        that:
+          - mf_marker_stats.results | length == 3
+          - mf_marker_stats.results | map(attribute='stat.exists') | select('equalto', false) | list | length == 0
+
+    # ---------------------------------------------------------------
+    # find: glob/regex/content filters over the throwaway tree.
+    # ---------------------------------------------------------------
+    - name: Find every marker file recursively
+      ansible.builtin.find:
+        paths: "{{ mf_data_dir }}"
+        patterns: "user-*.txt"
+        recurse: true
+      register: mf_find_markers
+
+    - name: Assert marker find matched all users
+      ansible.builtin.assert:
+        that:
+          - mf_find_markers.matched == 3
+
+    - name: Find the exact main config by name
+      ansible.builtin.find:
+        paths: "{{ mf_conf_dir }}"
+        patterns: "app.conf"
+        file_type: file
+      register: mf_find_conf
+
+    - name: Assert exact-name find matched once
+      ansible.builtin.assert:
+        that:
+          - mf_find_conf.matched == 1
+
+    - name: Find with regex pattern
+      ansible.builtin.find:
+        paths: "{{ mf_data_dir }}"
+        patterns: 'user-\w+\.txt$'
+        use_regex: true
+      register: mf_find_regex
+
+    - name: Assert regex find matched markers
+      ansible.builtin.assert:
+        that:
+          - mf_find_regex.matched == 3
+
+    - name: Find directories under the benchmark root
+      ansible.builtin.find:
+        paths: "{{ mf_dir }}"
+        file_type: directory
+        recurse: true
+      register: mf_find_dirs
+
+    - name: Assert directories were found
+      ansible.builtin.assert:
+        that:
+          - mf_find_dirs.matched >= 3
+
+    - name: Find files containing a marker string
+      ansible.builtin.find:
+        paths: "{{ mf_conf_dir }}"
+        patterns: "*.conf"
+        contains: 'service = alpha'
+        recurse: false
+      register: mf_find_contains
+
+    # The matched==1 + `is search` assert for this find is deferred to
+    # the end-of-play divergence probe section: krikri's assert
+    # evaluator rejects this exact expression while its own render
+    # path evaluates it true (see the probe's comment there).
+    - name: Show content-filter find result
+      ansible.builtin.debug:
+        msg: "matched={{ mf_find_contains.matched }} path={{ mf_find_contains.files[0].path | default('none') }}"
+
+    - name: Find with excludes and hidden suppression
+      ansible.builtin.find:
+        paths: "{{ mf_data_dir }}"
+        patterns: "*"
+        excludes: "*.hard"
+        hidden: false
+        file_type: file
+      register: mf_find_excluded
+
+    - name: Assert excluded hard link not matched
+      ansible.builtin.assert:
+        that:
+          - mf_find_excluded.files | map(attribute='path') | select('search', 'hard$') | list | length == 0
+
+    - name: Find small files by size
+      ansible.builtin.find:
+        paths: "{{ mf_conf_dir }}"
+        patterns: "*"
+        size: "-1k"
+        file_type: file
+      register: mf_find_small
+
+    - name: Assert small-size filter matched
+      ansible.builtin.assert:
+        that:
+          - mf_find_small.matched >= 1
+
+    - name: Find opt files with checksums
+      ansible.builtin.find:
+        paths: "{{ mf_data_dir }}"
+        patterns: "*.opts"
+        get_checksum: true
+        checksum_algorithm: sha256
+      register: mf_find_checksums
+
+    - name: Assert sha256 checksums present
+      ansible.builtin.assert:
+        that:
+          - mf_find_checksums.matched == 3
+          - mf_find_checksums.files[0].checksum | length == 64
+
+    # ---------------------------------------------------------------
+    # fetch + slurp: read-back machinery. fetch lands controller-side
+    # under /tmp/krikri-modfiles-fetch-<run id> (throwaway /tmp, both
+    # engines run on the same controller in this benchmark).
+    # ---------------------------------------------------------------
+    - name: Fetch main config with default path layout
+      ansible.builtin.fetch:
+        src: "{{ mf_main_conf }}"
+        dest: "/tmp/krikri-modfiles-fetch-{{ mf_run_id }}"
+        flat: false
+      register: mf_fetch_default
+
+    - name: Assert default-layout fetch recorded a checksum
+      ansible.builtin.assert:
+        that:
+          - mf_fetch_default.checksum | length == 40
+
+    - name: Fetch credential flat into a named file
+      ansible.builtin.fetch:
+        src: "{{ mf_data_dir }}/credential.txt"
+        dest: "/tmp/krikri-modfiles-fetch-{{ mf_run_id }}/credential.flat"
+        flat: true
+
+    - name: Fetch into a flat directory
+      ansible.builtin.fetch:
+        src: "{{ mf_main_conf }}"
+        dest: "/tmp/krikri-modfiles-fetch-{{ mf_run_id }}/flat.d/"
+        flat: true
+
+    - name: Fetch a missing source without failing
+      ansible.builtin.fetch:
+        src: "{{ mf_dir }}/never-written.txt"
+        dest: "/tmp/krikri-modfiles-fetch-{{ mf_run_id }}"
+        flat: true
+        fail_on_missing: false
+      register: mf_fetch_missing
+
+    - name: Assert missing-source fetch stayed ok
+      ansible.builtin.assert:
+        that:
+          - mf_fetch_missing.failed == false
+
+    - name: Slurp the settings file
+      ansible.builtin.slurp:
+        src: "{{ mf_settings }}"
+      register: mf_slurp_settings
+
+    - name: Decode slurped settings content
+      ansible.builtin.set_fact:
+        mf_settings_decoded: "{{ mf_slurp_settings.content | b64decode }}"
+
+    - name: Assert decoded slurp matches the last settings byte-diff
+      ansible.builtin.assert:
+        that:
+          - "'Port 2222' in mf_settings_decoded"
+          - mf_settings_decoded | trim == mf_bytediff_settings_blocks.stdout | trim
+
+    - name: Slurp the marker files in a loop
+      ansible.builtin.slurp:
+        src: "{{ mf_data_dir }}/user-{{ item }}.txt"
+      loop: "{{ mf_users }}"
+      register: mf_slurp_markers
+
+    - name: Assert slurped markers decode to empty content
+      ansible.builtin.assert:
+        that:
+          - mf_slurp_markers.results | map(attribute='content') | map('b64decode') | list | length == 3
+
+    # ---------------------------------------------------------------
+    # tempfile: fresh throwaway paths, used by a follow-up task.
+    # ---------------------------------------------------------------
+    - name: Create a scratch temp file
+      ansible.builtin.tempfile:
+        state: file
+        prefix: mfbench.
+        suffix: .tmp
+      register: mf_tmpfile
+
+    - name: Create a scratch temp directory
+      ansible.builtin.tempfile:
+        state: directory
+        prefix: mfbenchdir.
+      register: mf_tmpdir
+
+    - name: Write into the temp file
+      ansible.builtin.copy:
+        content: "written to {{ mf_tmpfile.path }}\n"
+        dest: "{{ mf_tmpfile.path }}"
+        mode: "0644"
+
+    - name: Create per-service temp files
+      ansible.builtin.tempfile:
+        state: file
+        prefix: "mfbench-{{ item.name }}."
+      loop: "{{ mf_services }}"
+      register: mf_tmpfiles
+      when: item.enabled | bool
+
+    - name: Show the scratch paths
+      ansible.builtin.debug:
+        msg: "tmpfile={{ mf_tmpfile.path }} tmpdir={{ mf_tmpdir.path }}"
+
+    - name: Remove the scratch temp file again
+      ansible.builtin.file:
+        path: "{{ mf_tmpfile.path }}"
+        state: absent
+
+    # ---------------------------------------------------------------
+    # Storage/bundling coverage (assemble + archive + unarchive) is
+    # split into its own include so this playbook also exercises the
+    # include_tasks machinery with real tasks.
+    # ---------------------------------------------------------------
+    - name: Probe unzip availability
+      ansible.builtin.command: which unzip
+      register: mf_unzip_probe
+      failed_when: false
+      changed_when: false
+
+    - name: Set unzip availability fact
+      ansible.builtin.set_fact:
+        mf_unzip_available: "{{ mf_unzip_probe.rc == 0 }}"
+
+    - name: Include storage module coverage tasks
+      ansible.builtin.include_tasks: modules_files_storage.yml
+
+    # ---------------------------------------------------------------
+    # acl: POSIX ACLs on the throwaway tree. Gated on getfacl/setfacl
+    # (the acl package is present on stock VMs but not stripped-down
+    # containers); skips cleanly with a notice where unavailable.
+    # ---------------------------------------------------------------
+    - name: Probe acl tooling
+      ansible.builtin.command: which getfacl
+      register: mf_acl_probe
+      failed_when: false
+      changed_when: false
+
+    - name: Report acl tooling unavailable
+      ansible.builtin.debug:
+        msg: "skipping acl section: getfacl/setfacl absent (no acl package)"
+      when: mf_acl_probe.rc != 0
+
+    - name: Query acl of the main config
+      ansible.posix.acl:
+        path: "{{ mf_main_conf }}"
+      register: mf_acl_query
+      when: mf_acl_probe.rc == 0
+
+    - name: Grant a group read on the main config
+      ansible.posix.acl:
+        path: "{{ mf_main_conf }}"
+        entity: benchgrp
+        etype: group
+        permissions: r
+        state: present
+      when: mf_acl_probe.rc == 0
+
+    - name: Grant via the shorthand entry form
+      ansible.posix.acl:
+        path: "{{ mf_data_dir }}/credential.txt"
+        entry: "u:root:rw"
+        state: present
+      when: mf_acl_probe.rc == 0
+
+    - name: Set a default acl on the data dir
+      ansible.posix.acl:
+        path: "{{ mf_data_dir }}"
+        entity: benchgrp
+        etype: group
+        permissions: rx
+        state: present
+        default: true
+      when: mf_acl_probe.rc == 0
+
+    - name: Revoke the group acl again
+      ansible.posix.acl:
+        path: "{{ mf_main_conf }}"
+        entity: benchgrp
+        etype: group
+        permissions: r
+        state: absent
+      when: mf_acl_probe.rc == 0
+
+    - name: Show the resulting acl
+      ansible.builtin.command: getfacl -p {{ mf_main_conf }}
+      register: mf_acl_show
+      changed_when: false
+      when: mf_acl_probe.rc == 0
+
+    - name: Byte-diff print resulting acl
+      ansible.builtin.debug:
+        msg: "{{ mf_acl_show.stdout }}"
+      when: mf_acl_probe.rc == 0
+
+    # ---------------------------------------------------------------
+    # synchronize: rsync between two dirs of the throwaway tree (the
+    # container target is the controller host in this benchmark, so
+    # both legs resolve to /tmp). Gated on rsync.
+    # ---------------------------------------------------------------
+    - name: Probe rsync availability
+      ansible.builtin.command: which rsync
+      register: mf_rsync_probe
+      failed_when: false
+      changed_when: false
+
+    - name: Report rsync unavailable
+      ansible.builtin.debug:
+        msg: "skipping synchronize section: rsync absent"
+      when: mf_rsync_probe.rc != 0
+
+    # synchronize's src resolves on the CONTROLLER (real rsync-push
+    # semantics), so syncing the run-scoped target dir only works when
+    # controller and target share a filesystem. The rescue keeps the
+    # leg green (on both engines, identically) when they don't - e.g.
+    # a container target - while still exercising the full rsync path
+    # wherever the source resolves.
+    - name: Synchronize leg
+      block:
+        - name: Synchronize data dir to rsync-dest
+          ansible.posix.synchronize:
+            src: "{{ mf_data_dir }}/"
+            dest: "{{ mf_dir }}/rsync-dest/"
+            delete: false
+          register: mf_ssync_first
+          when: mf_rsync_probe.rc == 0
+
+        - name: Synchronize again (idempotent second pass)
+          ansible.posix.synchronize:
+            src: "{{ mf_data_dir }}/"
+            dest: "{{ mf_dir }}/rsync-dest/"
+            delete: false
+          register: mf_ssync_second
+          when: mf_rsync_probe.rc == 0
+
+        - name: Show rsync itemized output
+          ansible.builtin.debug:
+            msg: "{{ mf_ssync_second.stdout_lines | default([]) }}"
+          when: mf_rsync_probe.rc == 0
+      rescue:
+        - name: Report synchronize leg unrunnable
+          ansible.builtin.debug:
+            msg: "synchronize src not reachable from this controller (target-only path); rsync path covered where controller resolves it"
+
+    # ---------------------------------------------------------------
+    # Block-device family: filesystem / mount / parted / lvg / lvol.
+    # Everything is driven through a throwaway image file; nothing
+    # here ever touches a real disk or the system fstab (mount edits a
+    # benchmark-local fstab). The privileged halves (actual loop
+    # attach + mount, parted, LVM) gate on capability probes and skip
+    # with a notice where unavailable (e.g. rootless containers).
+    # ---------------------------------------------------------------
+    - name: Probe mkfs.ext4 availability
+      ansible.builtin.command: which mkfs.ext4
+      register: mf_mkfs_probe
+      failed_when: false
+      changed_when: false
+
+    - name: Probe loop device support
+      ansible.builtin.command: losetup -f
+      register: mf_loop_probe
+      failed_when: false
+      changed_when: false
+
+    - name: Report mkfs tooling unavailable
+      ansible.builtin.debug:
+        msg: "skipping filesystem/mount section: mkfs.ext4 absent"
+      when: mf_mkfs_probe.rc != 0
+
+    - name: Report loop devices unavailable
+      ansible.builtin.debug:
+        msg: "skipping privileged mount half: no loop devices (rootless container)"
+      when: mf_loop_probe.rc != 0
+
+    - name: Create filesystem benchmark image
+      ansible.builtin.command: dd if=/dev/zero of={{ mf_dir }}/fs.img bs=1M count=32
+      args:
+        creates: "{{ mf_dir }}/fs.img"
+      when: mf_mkfs_probe.rc == 0
+
+    - name: Format the benchmark image as ext4
+      community.general.filesystem:
+        fstype: ext4
+        dev: "{{ mf_dir }}/fs.img"
+      when: mf_mkfs_probe.rc == 0
+
+    - name: Re-format the benchmark image idempotently
+      community.general.filesystem:
+        fstype: ext4
+        dev: "{{ mf_dir }}/fs.img"
+      when: mf_mkfs_probe.rc == 0
+
+    - name: Seed the benchmark-local fstab
+      ansible.builtin.copy:
+        content: |
+          # krikri modules-files benchmark fstab (never the system one)
+        dest: "{{ mf_dir }}/fstab"
+        mode: "0644"
+
+    - name: Add an fstab entry for the image mountpoint
+      ansible.posix.mount:
+        path: "{{ mf_dir }}/mnt"
+        src: "{{ mf_dir }}/fs.img"
+        fstype: ext4
+        opts: loop,ro
+        state: present
+        fstab: "{{ mf_dir }}/fstab"
+      when: mf_mkfs_probe.rc == 0
+
+    - name: Update the fstab entry options
+      ansible.posix.mount:
+        path: "{{ mf_dir }}/mnt"
+        src: "{{ mf_dir }}/fs.img"
+        fstype: ext4
+        opts: loop,rw
+        state: present
+        fstab: "{{ mf_dir }}/fstab"
+      when: mf_mkfs_probe.rc == 0
+
+    - name: Byte-diff read benchmark fstab
+      ansible.builtin.command: cat {{ mf_dir }}/fstab
+      register: mf_bytediff_fstab
+      changed_when: false
+      when: mf_mkfs_probe.rc == 0
+
+    - name: Byte-diff print benchmark fstab
+      ansible.builtin.debug:
+        msg: "{{ mf_bytediff_fstab.stdout }}"
+      when: mf_mkfs_probe.rc == 0
+
+    - name: Create the image mountpoint directory
+      ansible.builtin.file:
+        path: "{{ mf_dir }}/mnt"
+        state: directory
+        mode: "0755"
+      when: mf_mkfs_probe.rc == 0
+
+    - name: Mount the loopback image
+      ansible.posix.mount:
+        path: "{{ mf_dir }}/mnt"
+        src: "{{ mf_dir }}/fs.img"
+        fstype: ext4
+        opts: loop
+        state: mounted
+        fstab: "{{ mf_dir }}/fstab"
+      when: mf_mkfs_probe.rc == 0 and mf_loop_probe.rc == 0
+
+    - name: Write through the mounted image
+      ansible.builtin.copy:
+        content: "written through the benchmark loopback mount\n"
+        dest: "{{ mf_dir }}/mnt/payload.txt"
+        mode: "0644"
+      when: mf_mkfs_probe.rc == 0 and mf_loop_probe.rc == 0
+
+    - name: Unmount the loopback image
+      ansible.posix.mount:
+        path: "{{ mf_dir }}/mnt"
+        state: unmounted
+      when: mf_mkfs_probe.rc == 0 and mf_loop_probe.rc == 0
+
+    - name: Drop the fstab entry again
+      ansible.posix.mount:
+        path: "{{ mf_dir }}/mnt"
+        state: absent_from_fstab
+        fstab: "{{ mf_dir }}/fstab"
+      when: mf_mkfs_probe.rc == 0
+
+    - name: Wipe the image filesystem
+      community.general.filesystem:
+        fstype: ext4
+        dev: "{{ mf_dir }}/fs.img"
+        state: absent
+      when: mf_mkfs_probe.rc == 0
+
+    - name: Probe parted availability
+      ansible.builtin.command: which parted
+      register: mf_parted_probe
+      failed_when: false
+      changed_when: false
+
+    - name: Report parted unavailable
+      ansible.builtin.debug:
+        msg: "skipping parted section: parted binary absent"
+      when: mf_parted_probe.rc != 0
+
+    - name: Create partition benchmark image
+      ansible.builtin.command: dd if=/dev/zero of={{ mf_dir }}/part.img bs=1M count=32
+      args:
+        creates: "{{ mf_dir }}/part.img"
+      when: mf_parted_probe.rc == 0
+
+    - name: Create a partition table and one partition
+      community.general.parted:
+        device: "{{ mf_dir }}/part.img"
+        label: msdos
+        number: 1
+        part_start: "0%"
+        part_end: "50%"
+        state: present
+      when: mf_parted_probe.rc == 0
+
+    - name: Read partition table info
+      community.general.parted:
+        device: "{{ mf_dir }}/part.img"
+        unit: KiB
+        state: info
+      register: mf_parted_info
+      when: mf_parted_probe.rc == 0
+
+    - name: Set a flag on the partition
+      community.general.parted:
+        device: "{{ mf_dir }}/part.img"
+        number: 1
+        flags: [boot]
+        state: present
+      when: mf_parted_probe.rc == 0
+
+    - name: Remove the partition again
+      community.general.parted:
+        device: "{{ mf_dir }}/part.img"
+        number: 1
+        state: absent
+      when: mf_parted_probe.rc == 0
+
+    - name: Show partition info summary
+      ansible.builtin.debug:
+        msg: "partitions seen: {{ mf_parted_info.partitions | default([]) | length }}"
+      when: mf_parted_probe.rc == 0
+
+    - name: Probe lvm tooling
+      ansible.builtin.command: which pvcreate
+      register: mf_lvm_probe
+      failed_when: false
+      changed_when: false
+
+    - name: Report lvm tooling unavailable
+      ansible.builtin.debug:
+        msg: "skipping lvg/lvol section: lvm2 tools absent"
+      when: mf_lvm_probe.rc != 0
+
+    - name: Create lvm benchmark image
+      ansible.builtin.command: dd if=/dev/zero of={{ mf_dir }}/lvm.img bs=1M count=32
+      args:
+        creates: "{{ mf_dir }}/lvm.img"
+      when: mf_lvm_probe.rc == 0
+
+    - name: Create a volume group on the image
+      community.general.lvg:
+        vg: mfbenchvg
+        pvs: "{{ mf_dir }}/lvm.img"
+      when: mf_lvm_probe.rc == 0
+
+    - name: Create a linear logical volume
+      community.general.lvol:
+        vg: mfbenchvg
+        lv: benchlv
+        size: "8M"
+        state: present
+      when: mf_lvm_probe.rc == 0
+
+    - name: Grow the logical volume
+      community.general.lvol:
+        vg: mfbenchvg
+        lv: benchlv
+        size: "16M"
+        state: present
+      when: mf_lvm_probe.rc == 0
+
+    - name: Remove the logical volume
+      community.general.lvol:
+        vg: mfbenchvg
+        lv: benchlv
+        state: absent
+        force: true
+      when: mf_lvm_probe.rc == 0
+
+    - name: Remove the volume group
+      community.general.lvg:
+        vg: mfbenchvg
+        state: absent
+      when: mf_lvm_probe.rc == 0
+
+    # ---------------------------------------------------------------
+    # known_hosts: ssh-keygen-backed known_hosts file under /tmp.
+    # The hashed variant is intentionally not byte-diffed (ssh-keygen
+    # -H salts its hostnames randomly, so bytes legitimately differ
+    # between runs).
+    # ---------------------------------------------------------------
+    - name: Add the benchmark host to known_hosts
+      ansible.builtin.known_hosts:
+        name: mfbenchhost
+        key: "{{ mf_known_host_line }}"
+        path: "{{ mf_dir }}/known_hosts"
+
+    - name: Re-add the same host key (idempotent pass)
+      ansible.builtin.known_hosts:
+        name: mfbenchhost
+        key: "{{ mf_known_host_line }}"
+        path: "{{ mf_dir }}/known_hosts"
+
+    - name: Replace the host key with the second key
+      ansible.builtin.known_hosts:
+        name: mfbenchhost
+        key: "mfbenchhost {{ mf_key_ed25519_two }}"
+        path: "{{ mf_dir }}/known_hosts"
+
+    - name: Add a second, hashed host entry
+      ansible.builtin.known_hosts:
+        name: mfbenchhost2
+        key: "mfbenchhost2 {{ mf_key_ed25519 }}"
+        path: "{{ mf_dir }}/known_hosts"
+        hash_host: true
+
+    - name: Byte-diff read known_hosts
+      ansible.builtin.command: cat {{ mf_dir }}/known_hosts
+      register: mf_bytediff_known_hosts
+      changed_when: false
+
+    - name: Byte-diff print known_hosts
+      ansible.builtin.debug:
+        msg: "{{ mf_bytediff_known_hosts.stdout }}"
+
+    - name: Remove the second host entry
+      ansible.builtin.known_hosts:
+        name: mfbenchhost2
+        key: "mfbenchhost2 {{ mf_key_ed25519 }}"
+        path: "{{ mf_dir }}/known_hosts"
+        state: absent
+
+    # ---------------------------------------------------------------
+    # authorized_key: managed authorized_keys file under /tmp with a
+    # fixed key corpus (root exists everywhere, so user: root is the
+    # portable choice for a benchmark).
+    # ---------------------------------------------------------------
+    - name: Create authorized_keys directory
+      ansible.builtin.file:
+        path: "{{ mf_dir }}/auth"
+        state: directory
+        mode: "0700"
+
+    - name: Install the ed25519 key for root
+      ansible.posix.authorized_key:
+        user: root
+        key: "{{ mf_key_ed25519 }}"
+        path: "{{ mf_dir }}/auth/authorized_keys"
+        manage_dir: false
+
+    - name: Append the second key for root
+      ansible.posix.authorized_key:
+        user: root
+        key: "{{ mf_key_ed25519_two }}"
+        path: "{{ mf_dir }}/auth/authorized_keys"
+        manage_dir: false
+
+    - name: Add key options to the ed25519 entry
+      ansible.posix.authorized_key:
+        user: root
+        key: "{{ mf_key_ed25519 }}"
+        key_options: 'command="/usr/bin/echo bench",no-agent-forwarding'
+        path: "{{ mf_dir }}/auth/authorized_keys"
+        manage_dir: false
+
+    - name: Byte-diff read authorized_keys
+      ansible.builtin.command: cat {{ mf_dir }}/auth/authorized_keys
+      register: mf_bytediff_authkeys
+      changed_when: false
+
+    - name: Byte-diff print authorized_keys
+      ansible.builtin.debug:
+        msg: "{{ mf_bytediff_authkeys.stdout }}"
+
+    - name: Remove the second key exclusively
+      ansible.posix.authorized_key:
+        user: root
+        key: "{{ mf_key_ed25519_two }}"
+        exclusive: true
+        path: "{{ mf_dir }}/auth/authorized_keys"
+        manage_dir: false
+
+    - name: Stat the authorized_keys file
+      ansible.builtin.stat:
+        path: "{{ mf_dir }}/auth/authorized_keys"
+      register: mf_authkeys_stat
+
+    - name: Assert authorized_keys file exists
+      ansible.builtin.assert:
+        that:
+          - mf_authkeys_stat.stat.exists
+
+    # ---------------------------------------------------------------
+    # htpasswd: apr1 entries via openssl (present on every stock
+    # image). Salted hashes are random per run, so only the plaintext
+    # scheme file is byte-diffed; the apr1 file is verified by shape.
+    # Real Ansible's own htpasswd needs the python passlib library on
+    # the target, so gate on an import probe like the xml section.
+    # ---------------------------------------------------------------
+    - name: Probe passlib availability
+      ansible.builtin.command: python3 -c "import passlib"
+      register: mf_passlib_probe
+      failed_when: false
+      changed_when: false
+
+    - name: Set passlib availability fact
+      ansible.builtin.set_fact:
+        mf_passlib_available: "{{ mf_passlib_probe.rc == 0 }}"
+
+    - name: Report passlib unavailable
+      ansible.builtin.debug:
+        msg: "skipping htpasswd section: python passlib absent on target (real htpasswd module's own dependency)"
+      when: not mf_passlib_available
+    - name: Create the apr1 htpasswd file
+      community.general.htpasswd:
+        path: "{{ mf_dir }}/htpasswd"
+        name: benchuser
+        password: bench-secret-one
+        crypt_scheme: apr_md5_crypt
+        mode: "0600"
+      when: mf_passlib_available
+
+    - name: Add a second apr1 user
+      community.general.htpasswd:
+        path: "{{ mf_dir }}/htpasswd"
+        name: benchuser2
+        password: bench-secret-two
+        crypt_scheme: apr_md5_crypt
+        mode: "0600"
+      when: mf_passlib_available
+
+    - name: Update the first user's password
+      community.general.htpasswd:
+        path: "{{ mf_dir }}/htpasswd"
+        name: benchuser
+        password: bench-secret-rotated
+        crypt_scheme: apr_md5_crypt
+        mode: "0600"
+      when: mf_passlib_available
+
+    - name: Create a plaintext htpasswd file (deterministic bytes)
+      community.general.htpasswd:
+        path: "{{ mf_dir }}/htpasswd.plain"
+        name: plainuser
+        password: "plain-{{ mf_bench_mode }}"
+        crypt_scheme: plaintext
+        mode: "0600"
+      when: mf_passlib_available
+
+    - name: Byte-diff read plaintext htpasswd
+      ansible.builtin.command: cat {{ mf_dir }}/htpasswd.plain
+      register: mf_bytediff_htpasswd_plain
+      changed_when: false
+      when: mf_passlib_available
+
+    - name: Byte-diff print plaintext htpasswd
+      ansible.builtin.debug:
+        msg: "{{ mf_bytediff_htpasswd_plain.stdout }}"
+      when: mf_passlib_available
+
+    - name: Check apr1 file line count
+      ansible.builtin.command: wc -l {{ mf_dir }}/htpasswd
+      register: mf_htpasswd_wc
+      changed_when: false
+      when: mf_passlib_available
+
+    - name: Assert both apr1 users present
+      ansible.builtin.assert:
+        that:
+          - mf_htpasswd_wc.stdout.split()[0] == '2'
+      when: mf_passlib_available
+
+    - name: Remove the second apr1 user
+      community.general.htpasswd:
+        path: "{{ mf_dir }}/htpasswd"
+        name: benchuser2
+        state: absent
+        mode: "0600"
+      when: mf_passlib_available
+
+    # ---------------------------------------------------------------
+    # sudoers: rules written into a benchmark-local sudoers.d (never
+    # /etc). The module shells to visudo for validation, so the whole
+    # section gates on the visudo probe.
+    # ---------------------------------------------------------------
+    - name: Probe visudo availability
+      ansible.builtin.command: which visudo
+      register: mf_visudo_probe
+      failed_when: false
+      changed_when: false
+
+    - name: Report visudo unavailable
+      ansible.builtin.debug:
+        msg: "skipping sudoers section: visudo absent"
+      when: mf_visudo_probe.rc != 0
+
+    - name: Create benchmark sudoers.d directory
+      ansible.builtin.file:
+        path: "{{ mf_dir }}/sudoers.d"
+        state: directory
+        mode: "0755"
+      when: mf_visudo_probe.rc == 0
+
+    - name: Grant the bench user nopassword sudo
+      community.general.sudoers:
+        name: mfbench-user
+        user: benchuser
+        commands: ALL
+        nopassword: true
+        sudoers_path: "{{ mf_dir }}/sudoers.d"
+      when: mf_visudo_probe.rc == 0
+
+    - name: Grant the bench group command-scoped sudo
+      community.general.sudoers:
+        name: mfbench-group
+        group: benchgrp
+        commands:
+          - /usr/bin/systemctl status *
+          - /usr/bin/journalctl
+        sudoers_path: "{{ mf_dir }}/sudoers.d"
+      when: mf_visudo_probe.rc == 0
+
+    - name: Grant a user rule with defaults line
+      community.general.sudoers:
+        name: mfbench-defaults
+        user: benchuser
+        commands: /usr/bin/less /var/log/*
+        defaults: ["!requiretty"]
+        runas: "root:root"
+        sudoers_path: "{{ mf_dir }}/sudoers.d"
+      when: mf_visudo_probe.rc == 0
+
+    - name: Stat the sudoers rule file
+      ansible.builtin.stat:
+        path: "{{ mf_dir }}/sudoers.d/mfbench-user"
+      register: mf_sudoers_stat
+      when: mf_visudo_probe.rc == 0
+
+    - name: Assert sudoers rule has 0440 mode
+      ansible.builtin.assert:
+        that:
+          - mf_sudoers_stat.stat.exists
+          - mf_sudoers_stat.stat.mode == '0440'
+      when: mf_visudo_probe.rc == 0
+
+    - name: Remove the defaults rule
+      community.general.sudoers:
+        name: mfbench-defaults
+        state: absent
+        sudoers_path: "{{ mf_dir }}/sudoers.d"
+      when: mf_visudo_probe.rc == 0
+
+    # ---------------------------------------------------------------
+    # Wrap-up: a register -> set_fact -> assert chain, then cleanup.
+    # Cleanup is deliberately forgiving (failed_when:false everywhere
+    # it shells) so a partially-probed run still leaves nothing behind.
+    # ---------------------------------------------------------------
+    - name: Read back the final settings file
+      ansible.builtin.command: cat {{ mf_settings }}
+      register: mf_final_settings
+      changed_when: false
+
+    - name: Set final summary fact
+      ansible.builtin.set_fact:
+        mf_summary_line: "{{ mf_final_settings.stdout.split('\n') | first }}"
+
+    - name: Assert the summary chain holds end to end
+      ansible.builtin.assert:
+        that:
+          - mf_summary_line is match('#.*')
+          - mf_bench_mode == 'files'
+
+    - name: Detach any leftover loop device
+      ansible.builtin.shell: "set -o pipefail && losetup -j {{ mf_dir }}/fs.img | cut -d: -f1 | xargs -r losetup -d"
+      args:
+        executable: /bin/bash
+      failed_when: false
+      changed_when: false
+      when: mf_loop_probe.rc == 0
+
+    - name: Remove the benchmark root directory
+      ansible.builtin.file:
+        path: "{{ mf_dir }}"
+        state: absent
+
+    - name: Confirm cleanup landed
+      ansible.builtin.stat:
+        path: "{{ mf_dir }}"
+      register: mf_cleanup_stat
+
+    - name: Assert benchmark root removed
+      ansible.builtin.assert:
+        that:
+          - not mf_cleanup_stat.stat.exists
+
+    # ---------------------------------------------------------------
+    # KNOWN KRIKRI DIVERGENCE (documented, deliberately not worked
+    # around): lineinfile with backrefs: true must expand escape
+    # sequences in the replacement the way Python re.sub does - real
+    # ansible turns a literal \n in `line:` into a real newline and
+    # writes two lines. krikri (as of 0.9.1268) writes the two
+    # characters backslash-n verbatim, so the file ends up with a
+    # single line "MaxAuthTriesProbe 6\nMaxAuthTriesProbeBench 6" and
+    # the assert below fails under krikri only. Kept last so the
+    # divergence is visible in the recap without masking anything
+    # ahead of it; remove once the engine expands backref escapes.
+    # ---------------------------------------------------------------
+    - name: Divergence probe create scratch dir
+      ansible.builtin.file:
+        path: "{{ mf_dir }}/../krikri-modfiles-probe"
+        state: directory
+        mode: "0755"
+
+    - name: Divergence probe seed for backref escape expansion
+      ansible.builtin.copy:
+        content: "MaxAuthTriesProbe 6\n"
+        dest: "{{ mf_dir }}/../krikri-modfiles-probe/backref.txt"
+        mode: "0644"
+
+    - name: Divergence probe backref with escaped newline
+      ansible.builtin.lineinfile:
+        path: "{{ mf_dir }}/../krikri-modfiles-probe/backref.txt"
+        regexp: '^MaxAuthTriesProbe (\d+)$'
+        line: 'MaxAuthTriesProbe \1\nMaxAuthTriesProbeBench \1'
+        backrefs: true
+        mode: "0644"
+
+    - name: Divergence probe assert escaped newline expanded
+      ansible.builtin.command: grep -c '^MaxAuthTriesProbeBench 6$' "{{ mf_dir }}/../krikri-modfiles-probe/backref.txt"
+      register: mf_divergence_grep
+      changed_when: false
+
+    - name: Divergence probe check newline expansion
+      ansible.builtin.assert:
+        that:
+          - mf_divergence_grep.stdout == '1'
+
+    - name: Clean up divergence probe dir
+      ansible.builtin.file:
+        path: "{{ mf_dir }}/../krikri-modfiles-probe"
+        state: absent
+      failed_when: false
+
+    # ---------------------------------------------------------------
+    # KNOWN KRIKRI DIVERGENCE #2 (documented, deliberately not worked
+    # around): assert: with an `is search(...)` clause whose regex
+    # contains an escaped character (\\.) fails under krikri when the
+    # operand is a registered module result, even though the identical
+    # expression evaluates true when rendered by debug: in the same
+    # run (krikri 0.9.1268). Real ansible passes the assert. Kept at
+    # the end so it shows up in the recap without masking anything
+    # ahead of it; remove once the assert evaluator handles this.
+    # ---------------------------------------------------------------
+    - name: Divergence probe create find scratch dir
+      ansible.builtin.file:
+        path: "{{ mf_dir }}/../krikri-modfiles-probe"
+        state: directory
+        mode: "0755"
+
+    - name: Divergence probe seed find target
+      ansible.builtin.copy:
+        content: "service = alpha\n"
+        dest: "{{ mf_dir }}/../krikri-modfiles-probe/alpha.conf"
+        mode: "0644"
+
+    - name: Divergence probe find with content filter
+      ansible.builtin.find:
+        paths: "{{ mf_dir }}/../krikri-modfiles-probe"
+        patterns: "*.conf"
+        contains: 'service = alpha'
+      register: mf_div_find
+
+    - name: Divergence probe assert find matched with escaped-dot search
+      ansible.builtin.assert:
+        that:
+          - mf_div_find.matched == 1
+          - mf_div_find.files[0].path is search('alpha\\.conf$')
+
+    - name: Clean up divergence probe dir after find assert
+      ansible.builtin.file:
+        path: "{{ mf_dir }}/../krikri-modfiles-probe"
+        state: absent
+      failed_when: false
+
+    - name: Announce modules-files benchmark end
+      ansible.builtin.debug:
+        msg: "modules-files benchmark {{ mf_run_id }} complete"

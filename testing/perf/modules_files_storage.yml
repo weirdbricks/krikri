@@ -1,0 +1,180 @@
+---
+# Storage/bundling leg of the modules-files benchmark, pulled in via
+# include_tasks: from modules_files.yml (so the include machinery is
+# exercised with real tasks instead of a dummy file). Expects the
+# parent play's mf_dir/mf_data_dir facts and a pre-created directory
+# tree; all mutations stay under /tmp/krikri-modfiles*.
+
+- name: Write one config fragment per entry
+  ansible.builtin.copy:
+    content: "{{ item.body }}"
+    dest: "{{ mf_dir }}/fragments/{{ item.name }}.conf"
+    mode: "0644"
+  loop: "{{ mf_fragments }}"
+
+- name: Write a hidden fragment
+  ansible.builtin.copy:
+    content: "hidden = true\n"
+    dest: "{{ mf_dir }}/fragments/.50-hidden.conf"
+    mode: "0644"
+
+- name: Assemble fragments into the final config
+  ansible.builtin.assemble:
+    src: "{{ mf_dir }}/fragments"
+    dest: "{{ mf_dir }}/assembled.conf"
+    delimiter: "# --- fragment ---"
+    mode: "0644"
+
+- name: Byte-diff read assembled config
+  ansible.builtin.command: cat {{ mf_dir }}/assembled.conf
+  register: mf_bytediff_assembled
+  changed_when: false
+
+- name: Byte-diff print assembled config
+  ansible.builtin.debug:
+    msg: "{{ mf_bytediff_assembled.stdout }}"
+
+- name: Assemble only tls-named fragments
+  ansible.builtin.assemble:
+    src: "{{ mf_dir }}/fragments"
+    dest: "{{ mf_dir }}/assembled-tls.conf"
+    regexp: '^30-'
+    mode: "0644"
+
+- name: Assert regexp-filtered assemble kept one fragment
+  ansible.builtin.command: cat {{ mf_dir }}/assembled-tls.conf
+  register: mf_assembled_tls_cat
+  changed_when: false
+
+- name: Check regexp-filtered assemble content
+  ansible.builtin.assert:
+    that:
+      - "'tls = strict' in mf_assembled_tls_cat.stdout"
+      - "'core = enabled' not in mf_assembled_tls_cat.stdout"
+
+- name: Assemble ignoring hidden fragments
+  ansible.builtin.assemble:
+    src: "{{ mf_dir }}/fragments"
+    dest: "{{ mf_dir }}/assembled-visible.conf"
+    ignore_hidden: true
+    mode: "0644"
+
+- name: Count hidden fragment occurrences in assemble output
+  ansible.builtin.command: grep -c 'hidden = true' {{ mf_dir }}/assembled-visible.conf
+  register: mf_hidden_grep
+  changed_when: false
+  failed_when: false
+
+- name: Check hidden fragment absent from assemble output
+  ansible.builtin.assert:
+    that:
+      - mf_hidden_grep.rc == 1
+      - mf_hidden_grep.stdout == '0'
+
+- name: Archive the data dir as tar.gz
+  community.general.archive:
+    path: "{{ mf_data_dir }}"
+    dest: "{{ mf_dir }}/archive/data.tar.gz"
+    format: gz
+    mode: "0644"
+
+- name: Stat the tar.gz archive
+  ansible.builtin.stat:
+    path: "{{ mf_dir }}/archive/data.tar.gz"
+  register: mf_archive_stat
+
+- name: Assert tar.gz archive exists
+  ansible.builtin.assert:
+    that:
+      - mf_archive_stat.stat.exists
+      - mf_archive_stat.stat.size > 0
+
+- name: Compress the assembled config as single-file gz
+  community.general.archive:
+    path: "{{ mf_dir }}/assembled.conf"
+    dest: "{{ mf_dir }}/archive/assembled.conf.gz"
+    format: gz
+    mode: "0644"
+
+- name: Archive the conf dir as zip
+  community.general.archive:
+    path: "{{ mf_conf_dir }}"
+    dest: "{{ mf_dir }}/archive/conf.zip"
+    format: zip
+    mode: "0644"
+
+- name: Stat the zip archive
+  ansible.builtin.stat:
+    path: "{{ mf_dir }}/archive/conf.zip"
+  register: mf_zip_stat
+
+- name: Assert zip archive exists
+  ansible.builtin.assert:
+    that:
+      - mf_zip_stat.stat.exists
+
+- name: Archive the conf dir excluding symlinks
+  community.general.archive:
+    path: "{{ mf_conf_dir }}"
+    dest: "{{ mf_dir }}/archive/data-nofiles.tar"
+    format: tar
+    exclusion_patterns: ["*.link"]
+    mode: "0644"
+
+- name: Stat the no-exclusions tar archive
+  ansible.builtin.stat:
+    path: "{{ mf_dir }}/archive/data-nofiles.tar"
+  register: mf_tar_stat
+
+- name: Assert the no-exclusions tar archive exists
+  ansible.builtin.assert:
+    that:
+      - mf_tar_stat.stat.exists
+
+- name: Unarchive the tar.gz into the extraction dir
+  ansible.builtin.unarchive:
+    src: "{{ mf_dir }}/archive/data.tar.gz"
+    dest: "{{ mf_dir }}/extracted"
+    remote_src: true
+
+- name: Read back a file from the extraction dir
+  ansible.builtin.command: cat {{ mf_dir }}/extracted/{{ mf_data_dir | basename }}/credential.txt
+  register: mf_unarchive_cat
+  changed_when: false
+
+- name: Assert unarchive round-trip content
+  ansible.builtin.assert:
+    that:
+      - "'bench-only-not-real' in mf_unarchive_cat.stdout"
+
+- name: Unarchive the tar with list_files
+  ansible.builtin.unarchive:
+    src: "{{ mf_dir }}/archive/data-nofiles.tar"
+    dest: "{{ mf_dir }}/extracted"
+    remote_src: true
+    list_files: true
+  register: mf_unarchive_list
+
+- name: Show unarchived file list
+  ansible.builtin.debug:
+    msg: "{{ mf_unarchive_list.files | default([]) }}"
+
+- name: Unarchive the zip if unzip is available
+  ansible.builtin.unarchive:
+    src: "{{ mf_dir }}/archive/conf.zip"
+    dest: "{{ mf_dir }}/extracted"
+    remote_src: true
+  register: mf_unarchive_zip
+  when: mf_unzip_available | default(false)
+
+- name: Unarchive guarded by creates marker
+  ansible.builtin.unarchive:
+    src: "{{ mf_dir }}/archive/data.tar.gz"
+    dest: "{{ mf_dir }}/extracted"
+    remote_src: true
+    creates: "{{ mf_dir }}/extracted/{{ mf_data_dir | basename }}/credential.txt"
+
+- name: Clean the extraction dir before leaving
+  ansible.builtin.file:
+    path: "{{ mf_dir }}/extracted"
+    state: absent
