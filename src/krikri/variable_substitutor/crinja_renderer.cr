@@ -651,6 +651,19 @@ module Krikri
         # same re-render + depth guard as any other var.
         return convert_hostvars(raw_value, substitutor) if name == "hostvars"
 
+        # Resolved-value carve-out (0.9.1267 gap, same one
+        # re_template_from_variable?/raise_if_strict_undefined apply):
+        # a name published by build_vars_context as execution-resolved
+        # (register:/set_fact:) holds VERBATIM content, not a template
+        # level - the re-render below re-scanned brace text that real
+        # ansible-core never re-scans on a resolved fact/module result
+        # (a set_fact value containing literal `{{ ... }}` rendered to
+        # the "undefined" sentinel / Crinja::Undefined here instead of
+        # passing through as-is).
+        if VarSubstitutor.resolved_var_name?(substitutor.host_name, name.split(/[\.\[]/, 2)[0])
+          return json_any_to_crinja_value(raw_value)
+        end
+
         if @@prepare_crinja_vars_depth >= MAX_PREPARE_CRINJA_VARS_DEPTH
           return json_any_to_crinja_value(raw_value)
         end

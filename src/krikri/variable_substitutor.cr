@@ -760,9 +760,43 @@ module Krikri
   # VariableSubstitutor - Main class for variable substitution
   # Uses modular components from variable_substitutor/ directory
   class VarSubstitutor
+    # Per-host registry of RESOLVED variable names - names whose current
+    # value was produced by EXECUTION (a `register:`ed module result or a
+    # `set_fact:` write) rather than read out of a YAML defaults/vars file.
+    # The recursive re-templating decision (`re_template_from_variable?`)
+    # is content-based - "raw value contains `{{`" - and that alone cannot
+    # distinguish a YAML-defined template (real Ansible DOES render it
+    # recursively, round 82024) from a resolved result that merely LOOKS
+    # like one: real ansible-core 2.19 tags facts/module results resolved
+    # and never re-scans their text (live-verified 2.19.11 with
+    # `set_fact: x: "{{ '{{ inner_undefined_name }}' }}"` then
+    # `msg: value=[{{ x }}]` - literal brace text out, rc=0). The content
+    # check alone turned such a resolved value into a second template
+    # level, looked up the inner never-defined name, and crashed the whole
+    # controller with an unhandled "'inner_undefined_name' is undefined"
+    # (KNOWN_MISSING.md 0.9.1267 open gap, found via the perf benchmark's
+    # Jinja edge-case section). TaskExecutor#build_vars_context publishes
+    # the union of @registered_vars/@set_facts key names for the host here
+    # once per task; the re-pass consults it before trusting the content
+    # heuristic. Process-wide and keyed per host because substitution
+    # objects are constructed everywhere without ownership of the
+    # executor's stores (same cooperative-scheduling reasoning as the
+    # Rerender depth guard: nothing between the per-task recompute and the
+    # same-task read ever yields the fiber).
+    @@resolved_var_names = Hash(String, Set(String)).new
+
+    def self.set_resolved_var_names(host_name : String, names : Enumerable(String)) : Nil
+      @@resolved_var_names[host_name] = names.to_set
+    end
+
+    def self.resolved_var_name?(host_name : String?, name : String) : Bool
+      return false unless host_name
+      @@resolved_var_names[host_name]?.try(&.includes?(name)) || false
+    end
+
     @vars : Hash(String, JSON::Any)
     @host_name : String
-    getter vars
+    getter vars, host_name
     # SUGGESTED_PERFORMANCE_IMPROVEMENTS.md item #20 (the 74% slice):
     # the constructor's `vars.dup` was the single largest allocation in
     # the templating path (~74% of per-call bytes per the item-20
@@ -1869,6 +1903,13 @@ module Krikri
           Krikri.strict_undefined_message(inner, @vars)
         )
       end
+      # Resolved-value carve-out (same 0.9.1267 gap as the re-pass gate
+      # in #re_template_from_variable?): for a name published as
+      # execution-resolved, the stored text is verbatim content, not a
+      # template level - probing it for an innermost undefined name
+      # ("strictness following the chain") is exactly the re-scan real
+      # ansible-core never does on a resolved fact/module result.
+      return if VarSubstitutor.resolved_var_name?(@host_name, inner.split(/[\.\[]/, 2)[0])
       raise_if_nested_value_undefined(resolved)
     end
 
@@ -1960,6 +2001,15 @@ module Krikri
           expr = inner.strip
           expr = expr.split("|").first.strip if expr.includes?("|")
           if expr.matches?(/\A[A-Za-z_][A-Za-z0-9_.\[\]"']*\z/)
+            # Resolved-value carve-out (0.9.1267 gap): a name published by
+            # build_vars_context as execution-resolved (register:/set_fact:)
+            # never counts as "raw value is itself a template" no matter
+            # what its stored text looks like - real ansible-core tags
+            # such values resolved and passes them through verbatim,
+            # while the content check below re-scanned the stored brace
+            # text as another template level and died on the inner
+            # never-defined name.
+            next inner if VarSubstitutor.resolved_var_name?(@host_name, expr.split(/[\.\[]/, 2)[0])
             if v = VariableSubstitutor::VariableLookup.new(@vars).resolve(expr)
               # Oefenweb.apt (round 195): `name: "{{ apt_dependencies }}"`
               # where the var is a LIST of template strings (each element

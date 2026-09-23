@@ -29,34 +29,9 @@ anyone. An item that stops being a defect moves down or gets deleted,
 it does not linger at the top. Everything between the two is per-round
 narrative, newest first.
 
-**Currently at `0.9.1247`.**
+**Currently at `0.9.1268`.**
 
 ## Open gaps
-
-- **Resolved values whose text contains `{{` get recursively
-  re-templated; real ansible-core 2.19 tags them resolved and never
-  re-scans them** (found while building `testing/perf/synthetic_batch_
-  bench.yml`'s Jinja edge-case section, 0.9.1267) - a `set_fact:` whose
-  single-pass render OUTPUT contains brace text
-  (`x: "{{ '{{ inner_undefined_name }}' }}"` stores the literal text
-  `{{ inner_undefined_name }}`), or a registered `command:` stdout
-  holding the same, is later treated by `substitute_impl`'s re-pass
-  (`re_template_from_variable?`) as ANOTHER template level: the inner
-  name is looked up and the task dies with "'inner_undefined_name' is
-  undefined" - in krikri's case as an UNHANDLED exception that kills
-  the whole controller process, not even a task failure. Real
-  ansible-core 2.19 (live-verified on 2.19.11 with a probe playbook):
-  set_fact results and module results are resolved/tagged and pass
-  through verbatim (`msg: value=[{{ inner_undefined_name }}]`, rc=0).
-  krikri has no resolved/unresolved tagging on its vars hash, so the
-  re-pass's content-based "raw value is itself a template" heuristic
-  cannot distinguish a YAML-defined template (which real Ansible DOES
-  render recursively, round 82024) from a resolved result that merely
-  looks like one. Fix shape: tag set_fact/module-result values as
-  resolved when they enter the vars context and have
-  `re_template_from_variable?`/`Rerender.if_templated` skip tagged
-  values. Not yet fixed; the benchmark playbook confines itself to
-  asserting only the braces-echo task's rc.
 
 - **`buluma.forensics`: `delegate_to: localhost` + `copy` scp's to
   `localhost:22` instead of running locally** (round 188, 0.9.623,
@@ -168,6 +143,36 @@ only 35 roles run before the round was left mid-triage) still has 85
 roles never run. The shortlist is at
 `testing/kata/round_new_authors/shortlist120.txt` if resuming it -
 against Atlantic.net now, Kata having been retired as a backend.
+
+---
+
+## Recursive re-templating of resolved set_fact/register values fixed (0.9.1268)
+
+The 0.9.1267 open gap (removed from the list above): a `set_fact:` result or
+`register:`ed module output whose stored TEXT contains `{{ ... }}` was re-scanned
+by task-arg re-templating as another template level, looking up the inner
+never-defined name and crashing the whole controller with an unhandled
+"'inner_undefined_name' is undefined" - real ansible-core 2.19 tags facts/module
+results resolved and passes them through verbatim (live-verified 2.19.11:
+`msg: value=[{{ inner_undefined_name }}]`, rc=0). Fix: no value tagging - the
+executor already knows which names were execution-resolved (`@registered_vars`/
+`@set_facts`); `build_vars_context` now publishes their per-host key-name union
+to a process-wide registry (`VarSubstitutor.set_resolved_var_names`), and three
+re-render sites consult it before trusting the content-based "raw value is
+itself a template" heuristic: the task-arg re-pass gate
+(`re_template_from_variable?`), the strict bare-ref nested probe
+(`raise_if_strict_undefined` -> `raise_if_nested_value_undefined`), and the
+Crinja lazy-context conversion (`CrinjaRenderer.convert_var`). YAML-defined
+templates still re-template recursively (round 82024), quoted-literal brace
+text still stays verbatim (round 191), and list-valued YAML vars still get
+element-wise re-templating (round 195) - all unchanged, per the pre-existing
+specs. Residual, unmodeled: one task arg mixing a resolved-value span and a
+YAML-template span in the SAME string still re-passes the whole output (the
+re-pass has no per-span origin tracking); a resolved value's brace text then
+gets re-scanned again inside the mixed re-pass. Spec cover:
+`spec/unit/var_substitutor_recursive_retemplating_spec.cr` (both directions) and
+`spec/integration/set_fact_resolved_brace_text_verbatim_spec.cr` (end-to-end
+set_fact/register/vars shapes).
 
 ---
 
