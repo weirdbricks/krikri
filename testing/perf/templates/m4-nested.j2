@@ -1,0 +1,13 @@
+{# m4-nested.j2 - nested data + dict2items + to_nice_json render #}
+# service map (nice json):
+{{ dat_service_map | to_nice_json }}
+# itemized:
+{% for entry in dat_service_map | dict2items(key_name='service', value_name='spec') %}
+service {{ entry.service }} on {{ entry.spec.port }} ({{ entry.spec.proto | upper }})
+{% endfor %}
+# paired grid:
+{% for left in ['east', 'west'] %}
+{% for right in [1, 2] %}
+cell {{ left }}-{{ right }}
+{% endfor %}
+{% endfor %}

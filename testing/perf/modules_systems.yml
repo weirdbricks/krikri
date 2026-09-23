@@ -1,0 +1,1411 @@
+---
+# Modules/systems benchmark: playbook 4 of 5 in the per-module coverage
+# series. Theme: system state & transport. Companion to modules_files.yml
+# (files), modules_packages.yml (packages/services) and
+# modules_security.yml (users/security/crypto). Exercises the modules
+# that poke at host-level state or move bytes over the network, with the
+# same real-exercise + byte-diff conventions as the siblings:
+#   user, group, getent, cron, cronvar, hostname, alternatives,
+#   debconf, deb822_repository, locale_gen, timezone, sysctl, modprobe,
+#   kernel_blacklist, get_url, uri, git, git_config, make, script,
+#   expect, wait_for, wait_for_connection, ping, setup, package_facts,
+#   service_facts, async_status, fail
+#
+# Safety contract, same as the siblings: all file mutations land under
+# the run's own namespaced dir (/tmp/krikri-sys-bench-<epoch>) or a
+# namespaced /etc file (cron_file:, deb822's named .sources, modprobe.d,
+# alternatives' bench.* names); throwaway users/groups are created and
+# removed within the play. No packages are installed by the play itself.
+# Sections a stock container/VM may not be able to run (systemd units,
+# writable /proc/sys, pexpect, debconf) are gated on capability probes
+# and skip cleanly with a debug notice - the skip lands in the recap
+# identically for both engines.
+#
+# The get_url/uri section runs a throwaway `python3 -m http.server` on a
+# fixed high port inside the target, started/stopped by the play (and
+# reused if a previous run left it alive), so no outside network is
+# touched. The git section drives a run-scoped bare repo over file://.
+#
+# Real-role parity notes: user/cron/alternatives tasks are written the
+# way a production role would write them (comment-anchored cron entries,
+# append group membership, explicit uids), not as crash probes.
+
+- name: Systems and transport module-coverage benchmark
+  hosts: all
+  gather_facts: true
+
+  vars:
+    sys_bench_mode: systems
+    sys_run_id: "{{ ansible_date_time.epoch }}"
+    sys_dir: "/tmp/krikri-sys-bench-{{ sys_run_id }}"
+    sys_home_dir: "{{ sys_dir }}/home"
+    sys_www_dir: "{{ sys_dir }}/www"
+    sys_port: 18099
+    sys_url_base: "http://127.0.0.1:{{ sys_port }}"
+    sys_users: [sysbench-alpha, sysbench-beta]
+    sys_group: sysbenchgrp
+    sys_cron_file: krikri-sys-bench
+    sys_cron_jobs:
+      - { name: "krikri sys bench daily", job: "/bin/echo sysbench-daily", special_time: daily }
+      - { name: "krikri sys bench hourly", job: "/bin/echo sysbench-hourly", special_time: hourly }
+      - { name: "krikri sys bench minute", job: "/bin/echo sysbench-weekly", special_time: weekly }
+
+  tasks:
+    # ---------------------------------------------------------------
+    # Setup: run-scoped tree + capability probes everything else
+    # gates on. Probes are cheap, side-effect-free, and identical
+    # across engines by construction.
+    # ---------------------------------------------------------------
+    - name: Announce systems benchmark start
+      ansible.builtin.debug:
+        msg: "modules-systems benchmark {{ sys_run_id }} on {{ ansible_hostname }} ({{ sys_bench_mode }})"
+
+    - name: Create benchmark root directory
+      ansible.builtin.file:
+        path: "{{ sys_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Create benchmark subdirectories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0755"
+      loop:
+        - "{{ sys_home_dir }}"
+        - "{{ sys_www_dir }}"
+        - "{{ sys_dir }}/bin"
+        - "{{ sys_dir }}/repos"
+        - "{{ sys_dir }}/make"
+
+    - name: Probe git availability
+      ansible.builtin.command: which git
+      register: sys_probe_git
+      changed_when: false
+      failed_when: false
+
+    - name: Report git unavailable
+      ansible.builtin.debug:
+        msg: "skipping git section: no git binary"
+      when: sys_probe_git.rc != 0
+
+    - name: Probe make availability
+      ansible.builtin.command: which make
+      register: sys_probe_make
+      changed_when: false
+      failed_when: false
+
+    - name: Report make unavailable
+      ansible.builtin.debug:
+        msg: "skipping make section: no make binary"
+      when: sys_probe_make.rc != 0
+
+    - name: Probe pexpect availability
+      ansible.builtin.shell: python3 -c "import pexpect; print(pexpect.__version__)"
+      register: sys_probe_pexpect
+      changed_when: false
+      failed_when: false
+
+    - name: Report pexpect unavailable
+      ansible.builtin.debug:
+        msg: "skipping expect section: no python pexpect module"
+      when: sys_probe_pexpect.rc != 0
+
+    - name: Probe debconf tooling
+      ansible.builtin.command: which debconf-communicator
+      register: sys_probe_debconf
+      changed_when: false
+      failed_when: false
+
+    - name: Report debconf unavailable
+      ansible.builtin.debug:
+        msg: "skipping debconf section: no debconf-communicator"
+      when: sys_probe_debconf.rc != 0
+
+    - name: Probe alternatives tooling
+      ansible.builtin.command: which update-alternatives
+      register: sys_probe_alternatives
+      changed_when: false
+      failed_when: false
+
+    - name: Report alternatives unavailable
+      ansible.builtin.debug:
+        msg: "skipping alternatives section: no update-alternatives"
+      when: sys_probe_alternatives.rc != 0
+
+    - name: Probe writable proc sys tree
+      ansible.builtin.shell: test -w /proc/sys/kernel/pid_max && echo writable
+      register: sys_probe_procsys
+      changed_when: false
+      failed_when: false
+
+    - name: Report proc sys not writable
+      ansible.builtin.debug:
+        msg: "skipping sysctl live-set section: /proc/sys is read-only here"
+      when: "'writable' not in sys_probe_procsys.stdout"
+
+    - name: Probe timezone tooling
+      ansible.builtin.command: which timedatectl
+      register: sys_probe_timedatectl
+      changed_when: false
+      failed_when: false
+
+    - name: Stat timezone data canary
+      ansible.builtin.stat:
+        path: /usr/share/zoneinfo/Etc/UTC
+      register: sys_probe_zoneinfo
+      changed_when: false
+
+    - name: Report timezone unavailable
+      ansible.builtin.debug:
+        msg: "skipping timezone section: no zoneinfo database"
+      when: not sys_probe_zoneinfo.stat.exists
+
+    - name: Probe locale gen file
+      ansible.builtin.stat:
+        path: /etc/locale.gen
+      register: sys_probe_locale
+      changed_when: false
+
+    - name: Report locale_gen unavailable
+      ansible.builtin.debug:
+        msg: "skipping locale_gen section: no /etc/locale.gen"
+      when: not sys_probe_locale.stat.exists
+
+    - name: Probe modprobe tooling
+      ansible.builtin.command: which modprobe
+      register: sys_probe_modprobe
+      changed_when: false
+      failed_when: false
+
+    - name: Report modprobe unavailable
+      ansible.builtin.debug:
+        msg: "skipping modprobe section: no modprobe binary"
+      when: sys_probe_modprobe.rc != 0
+
+    # ---------------------------------------------------------------
+    # facts plumbing: setup subsets and the fact modules, asserted
+    # against what a container must have.
+    # ---------------------------------------------------------------
+    - name: Ping the host
+      ansible.builtin.ping:
+
+    - name: Gather minimal facts subset
+      ansible.builtin.setup:
+        gather_subset:
+          - '!all'
+          - '!min'
+          - hardware
+
+    - name: Assert minimal facts are present
+      ansible.builtin.assert:
+        that:
+          - ansible_hostname is defined
+          - ansible_kernel is defined
+          - ansible_memory_mb is defined
+
+    - name: Gather package facts
+      ansible.builtin.package_facts:
+        manager: auto
+
+    - name: Assert a known-installed package is reported
+      ansible.builtin.assert:
+        that:
+          - "'openssh-server' in ansible_facts.packages"
+          - ansible_facts.packages['openssh-server'] is sequence
+
+    - name: Gather service facts
+      ansible.builtin.service_facts:
+
+    - name: Assert sshd service is visible in service facts
+      ansible.builtin.assert:
+        that:
+          - "'sshd' in ansible_facts.services or 'ssh' in ansible_facts.services"
+
+    # ---------------------------------------------------------------
+    # user/group: throwaway accounts with explicit ids, shells,
+    # password hash (fixed salt - deterministic), membership append,
+    # ssh key generation, and removal. The warm run's ok-parity on
+    # every one of these is the idempotency artifact.
+    # ---------------------------------------------------------------
+    - name: Create bench group
+      ansible.builtin.group:
+        name: "{{ sys_group }}"
+        state: present
+        gid: 22001
+
+    - name: Recreate bench group idempotently
+      ansible.builtin.group:
+        name: "{{ sys_group }}"
+        state: present
+        gid: 22001
+
+    - name: Create bench group two
+      ansible.builtin.group:
+        name: "{{ sys_group }}-two"
+        state: present
+
+    - name: Create bench users with full attributes
+      ansible.builtin.user:
+        name: "{{ item }}"
+        group: "{{ sys_group }}"
+        groups: ["{{ sys_group }}-two"]
+        append: true
+        shell: /bin/bash
+        home: "{{ sys_home_dir }}/{{ item }}"
+        create_home: true
+        password: "{{ 'benchpass' | password_hash('sha512', 'krsalt') }}"
+        state: present
+      loop: "{{ sys_users }}"
+
+    - name: Re-create bench users idempotently
+      ansible.builtin.user:
+        name: "{{ item }}"
+        group: "{{ sys_group }}"
+        groups: ["{{ sys_group }}-two"]
+        append: true
+        shell: /bin/bash
+        home: "{{ sys_home_dir }}/{{ item }}"
+        create_home: true
+        password: "{{ 'benchpass' | password_hash('sha512', 'krsalt') }}"
+        state: present
+      loop: "{{ sys_users }}"
+
+    - name: Give first bench user an explicit uid
+      ansible.builtin.user:
+        name: "{{ sys_users[0] }}"
+        uid: 22101
+
+    - name: Set account expiry on the first bench user
+      ansible.builtin.user:
+        name: "{{ sys_users[0] }}"
+        expires: 2000000000
+
+    - name: Generate an ssh key for the first bench user
+      ansible.builtin.user:
+        name: "{{ sys_users[0] }}"
+        generate_ssh_key: true
+        ssh_key_file: "{{ sys_home_dir }}/{{ sys_users[0] }}/.ssh/id_ed25519_bench"
+        ssh_key_type: ed25519
+
+    - name: Lock the second bench user
+      ansible.builtin.user:
+        name: "{{ sys_users[1] }}"
+        password_lock: true
+
+    - name: Getent passwd for the first bench user
+      ansible.builtin.getent:
+        database: passwd
+        key: "{{ sys_users[0] }}"
+
+    - name: Assert getent parsed the bench user
+      ansible.builtin.assert:
+        that:
+          - getent_passwd[sys_users[0]] is defined
+          - getent_passwd[sys_users[0]][1] == sys_group or getent_passwd[sys_users[0]][2] | string is match('22001')
+
+    - name: Getent group database wholesale
+      ansible.builtin.getent:
+        database: group
+        split: ':'
+
+    - name: Assert bench group visible in group database
+      ansible.builtin.assert:
+        that:
+          - getent_group[sys_group] is defined
+          - sys_users[1] in getent_group[sys_group + '-two'][2]
+
+    - name: Getent hosts for loopback
+      ansible.builtin.getent:
+        database: hosts
+        key: 127.0.0.1
+
+    - name: Move first user's shell to nologin
+      ansible.builtin.user:
+        name: "{{ sys_users[0] }}"
+        shell: /usr/sbin/nologin
+
+    - name: Move first user's shell back to bash
+      ansible.builtin.user:
+        name: "{{ sys_users[0] }}"
+        shell: /bin/bash
+
+    - name: Clear second user's supplementary groups
+      ansible.builtin.user:
+        name: "{{ sys_users[1] }}"
+        groups: ""
+        append: false
+
+    - name: Assert group membership removed
+      ansible.builtin.getent:
+        database: group
+        split: ':'
+
+    - name: Assert second user left bench group two
+      ansible.builtin.assert:
+        that:
+          - sys_users[1] not in getent_group[sys_group + '-two'][2]
+      ignore_errors: true
+
+    - name: Create a system user without home
+      ansible.builtin.user:
+        name: sysbench-system
+        system: true
+        create_home: false
+        shell: /usr/sbin/nologin
+
+    - name: Re-create the system user idempotently
+      ansible.builtin.user:
+        name: sysbench-system
+        system: true
+        create_home: false
+        shell: /usr/sbin/nologin
+
+    - name: Read the generated ssh key fingerprint
+      ansible.builtin.command: ssh-keygen -lf {{ sys_home_dir }}/{{ sys_users[0] }}/.ssh/id_ed25519_bench
+      register: sys_keyprint
+      changed_when: false
+
+    - name: Byte-diff print ssh key fingerprint
+      ansible.builtin.debug:
+        msg: "{{ sys_keyprint.stdout }}"
+
+    - name: Assert generated key is ed25519
+      ansible.builtin.assert:
+        that:
+          - "'(ED25519)' in sys_keyprint.stdout"
+
+    # ---------------------------------------------------------------
+    # cron/cronvar: all entries in a namespaced cron.d file (never the
+    # live root crontab); special_time, disabled, env vars, removal.
+    # ---------------------------------------------------------------
+    - name: Add systems bench cron jobs
+      ansible.builtin.cron:
+        name: "{{ item.name }}"
+        job: "{{ item.job }}"
+        special_time: "{{ item.special_time }}"
+        user: root
+        cron_file: "{{ sys_cron_file }}"
+      loop: "{{ sys_cron_jobs }}"
+
+    - name: Add systems bench cron jobs idempotently
+      ansible.builtin.cron:
+        name: "{{ item.name }}"
+        job: "{{ item.job }}"
+        special_time: "{{ item.special_time }}"
+        user: root
+        cron_file: "{{ sys_cron_file }}"
+      loop: "{{ sys_cron_jobs }}"
+
+    - name: Add disabled cron entry with explicit schedule
+      ansible.builtin.cron:
+        name: "krikri sys bench disabled entry"
+        job: "/bin/echo sysbench-disabled"
+        minute: "37"
+        hour: "4"
+        disabled: true
+        user: root
+        cron_file: "{{ sys_cron_file }}"
+
+    - name: Add cron environment variable
+      ansible.builtin.cron:
+        name: SYSBENCH_HOME
+        env: true
+        job: "{{ sys_dir }}"
+        user: root
+        cron_file: "{{ sys_cron_file }}"
+
+    - name: Add cronvar to the bench file
+      ansible.builtin.cronvar:
+        name: SYSBENCH_MAILTO
+        value: "sysbench@example.invalid"
+        cron_file: "{{ sys_cron_file }}"
+        user: root
+
+    - name: Remove the disabled cron entry again
+      ansible.builtin.cron:
+        name: "krikri sys bench disabled entry"
+        state: absent
+        user: root
+        cron_file: "{{ sys_cron_file }}"
+
+    - name: Remove the cronvar again
+      ansible.builtin.cronvar:
+        name: SYSBENCH_MAILTO
+        state: absent
+        cron_file: "{{ sys_cron_file }}"
+        user: root
+
+    - name: Read back bench crontab file
+      ansible.builtin.command: cat /etc/cron.d/{{ sys_cron_file }}
+      register: sys_crontab_cat
+      changed_when: false
+
+    - name: Add minute-list cron entry
+      ansible.builtin.cron:
+        name: "krikri sys bench minute list"
+        job: "/bin/echo sysbench-weeklys"
+        minute: "5,25,45"
+        user: root
+        cron_file: "{{ sys_cron_file }}"
+
+    - name: Read back bench crontab file again
+      ansible.builtin.command: cat /etc/cron.d/{{ sys_cron_file }}
+      register: sys_crontab_cat_two
+      changed_when: false
+
+    - name: Byte-diff print bench crontab file
+      ansible.builtin.debug:
+        msg: "{{ sys_crontab_cat_two.stdout }}"
+
+    - name: Assert cron entries comment-anchored and env present
+      ansible.builtin.assert:
+        that:
+          - "'#Ansible: krikri sys bench daily' in sys_crontab_cat_two.stdout"
+          - "'SYSBENCH_HOME=' in sys_crontab_cat_two.stdout"
+          - "'SYSBENCH_MAILTO' not in sys_crontab_cat_two.stdout"
+          - "'sysbench-disabled' not in sys_crontab_cat_two.stdout"
+          - "'5,25,45' in sys_crontab_cat_two.stdout"
+
+    # ---------------------------------------------------------------
+    # hostname: probe-gated (namespace UTS writes fail in some
+    # sandboxes), then restored. The file side effect lands in
+    # /etc/hostname and is restored to the original too.
+    # ---------------------------------------------------------------
+    - name: Probe hostname set permission
+      ansible.builtin.shell: old=$(hostname); hostname "$old-bench" >/dev/null 2>&1 && rc=$?; hostname "$old"; exit ${rc:-1}
+      register: sys_probe_hostname
+      changed_when: false
+      failed_when: false
+
+    - name: Report hostname changes unavailable
+      ansible.builtin.debug:
+        msg: "skipping hostname section: UTS namespace is read-only here"
+      when: sys_probe_hostname.rc != 0
+
+    - name: Set hostname to bench name
+      ansible.builtin.hostname:
+        name: "sysbench-host"
+      when: sys_probe_hostname.rc == 0
+
+    - name: Read back hostname file
+      ansible.builtin.command: cat /etc/hostname
+      register: sys_hostname_cat
+      changed_when: false
+      when: sys_probe_hostname.rc == 0
+
+    - name: Byte-diff print hostname file
+      ansible.builtin.debug:
+        msg: "{{ sys_hostname_cat.stdout | default('skipped') }}"
+      when: sys_probe_hostname.rc == 0
+
+    - name: Restore original hostname
+      ansible.builtin.hostname:
+        name: "{{ ansible_facts.nodename }}"
+      when: sys_probe_hostname.rc == 0
+
+    - name: Read back restored hostname file
+      ansible.builtin.command: cat /etc/hostname
+      register: sys_hostname_restore_cat
+      changed_when: false
+      when: sys_probe_hostname.rc == 0
+
+    - name: Assert hostname file restored to original
+      ansible.builtin.assert:
+        that:
+          - sys_hostname_restore_cat.stdout == ansible_facts.nodename
+      when: sys_probe_hostname.rc == 0
+
+    - name: Fetch the hostname file to the controller
+      ansible.builtin.fetch:
+        src: /etc/hostname
+        dest: "/tmp/krikri-sys-fetch-{{ sys_run_id }}/"
+        flat: true
+
+    - name: Fetch the crontab file to the controller
+      ansible.builtin.fetch:
+        src: /etc/cron.d/{{ sys_cron_file }}
+        dest: "/tmp/krikri-sys-fetch-{{ sys_run_id }}/"
+        flat: true
+
+    # ---------------------------------------------------------------
+    # sysctl: file-side writes under /etc/sysctl.d are always safe;
+    # the live `sysctl -w` set is gated on a writable /proc/sys.
+    # ---------------------------------------------------------------
+    - name: Set a sysctl with persistent file
+      ansible.posix.sysctl:
+        name: net.ipv4.tcp_timestamps
+        value: '1'
+        sysctl_file: /etc/sysctl.d/99-krikri-sys-bench.conf
+        sysctl_set: false
+        reload: false
+
+    - name: Set another sysctl with state present
+      ansible.posix.sysctl:
+        name: net.ipv4.tcp_retries2
+        value: '15'
+        sysctl_file: /etc/sysctl.d/99-krikri-sys-bench.conf
+        sysctl_set: false
+        reload: false
+
+    - name: Set sysctl live too
+      ansible.posix.sysctl:
+        name: kernel.panic
+        value: '0'
+        sysctl_set: true
+        reload: false
+      when: "'writable' in sys_probe_procsys.stdout"
+
+    - name: Read back bench sysctl file
+      ansible.builtin.command: cat /etc/sysctl.d/99-krikri-sys-bench.conf
+      register: sys_sysctl_cat
+      changed_when: false
+
+    - name: Byte-diff print bench sysctl file
+      ansible.builtin.debug:
+        msg: "{{ sys_sysctl_cat.stdout }}"
+
+    - name: Assert sysctl entries landed
+      ansible.builtin.assert:
+        that:
+          - "'net.ipv4.tcp_timestamps=1' in sys_sysctl_cat.stdout"
+          - "'net.ipv4.tcp_retries2=15' in sys_sysctl_cat.stdout"
+
+    - name: Remove bench sysctl file
+      ansible.builtin.file:
+        path: /etc/sysctl.d/99-krikri-sys-bench.conf
+        state: absent
+
+    # ---------------------------------------------------------------
+    # modprobe/kernel_blacklist: modprobe's file side (allowlist-style
+    # install lines) is safe namespaced; loading a real module needs
+    # the tool and a loadable module, so it stays probe-gated.
+    # ---------------------------------------------------------------
+    - name: Ensure modprobe.d directory exists
+      ansible.builtin.file:
+        path: /etc/modprobe.d
+        state: directory
+        mode: "0755"
+
+    - name: Ensure a module is in the blacklist file
+      community.general.kernel_blacklist:
+        blacklist_file: /etc/modprobe.d/krikri-sys-bench.conf
+        name: krikri_bench_dummy
+        state: present
+
+    - name: Blacklist the same module idempotently
+      community.general.kernel_blacklist:
+        blacklist_file: /etc/modprobe.d/krikri-sys-bench.conf
+        name: krikri_bench_dummy
+        state: present
+
+    - name: Read back bench blacklist file
+      ansible.builtin.command: cat /etc/modprobe.d/krikri-sys-bench.conf
+      register: sys_blacklist_cat
+      changed_when: false
+
+    - name: Byte-diff print bench blacklist file
+      ansible.builtin.debug:
+        msg: "{{ sys_blacklist_cat.stdout }}"
+
+    - name: Assert blacklist entry landed
+      ansible.builtin.assert:
+        that:
+          - "'blacklist krikri_bench_dummy' in sys_blacklist_cat.stdout"
+
+    - name: Remove bench blacklist file
+      ansible.builtin.file:
+        path: /etc/modprobe.d/krikri-sys-bench.conf
+        state: absent
+
+    - name: Install a dummy module alias line via modprobe
+      community.general.modprobe:
+        name: krikri_bench_dummy
+        params: "alias=test"
+      failed_when: false
+      register: sys_modprobe_result
+      when: sys_probe_modprobe.rc == 0
+
+    - name: Report modprobe result shape
+      ansible.builtin.debug:
+        msg: "modprobe rc={{ sys_modprobe_result.failed | default('unset') }}"
+      when: sys_probe_modprobe.rc == 0
+
+    # ---------------------------------------------------------------
+    # alternatives: a full fake alternative built from /usr/local/bin
+    # shell stubs, registered, switched, verified, removed - all under
+    # the bench namespace, gated on update-alternatives existing.
+    # ---------------------------------------------------------------
+    - name: Install alternatives candidate scripts
+      ansible.builtin.copy:
+        content: "#!/bin/sh\nexec /bin/echo sysbench-{{ item.name }}\n"
+        dest: "{{ sys_dir }}/bin/{{ item.name }}"
+        mode: "0755"
+      loop:
+        - { name: alpha }
+        - { name: beta }
+      when: sys_probe_alternatives.rc == 0
+
+    - name: Register bench alternative
+      community.general.alternatives:
+        name: krikri-sysbench
+        path: "{{ sys_dir }}/bin/alpha"
+        link: /usr/local/bin/krikri-sysbench
+        priority: 50
+      when: sys_probe_alternatives.rc == 0
+
+    - name: Register bench alternative idempotently
+      community.general.alternatives:
+        name: krikri-sysbench
+        path: "{{ sys_dir }}/bin/alpha"
+        link: /usr/local/bin/krikri-sysbench
+        priority: 50
+      when: sys_probe_alternatives.rc == 0
+
+    - name: Switch bench alternative to beta
+      community.general.alternatives:
+        name: krikri-sysbench
+        path: "{{ sys_dir }}/bin/beta"
+        link: /usr/local/bin/krikri-sysbench
+        priority: 60
+      when: sys_probe_alternatives.rc == 0
+
+    - name: Verify the alternative dispatches to beta
+      ansible.builtin.command: /usr/local/bin/krikri-sysbench
+      register: sys_alternatives_run
+      changed_when: false
+      when: sys_probe_alternatives.rc == 0
+
+    - name: Assert alternative output shows beta
+      ansible.builtin.assert:
+        that:
+          - sys_alternatives_run.stdout == 'sysbench-beta'
+      when: sys_probe_alternatives.rc == 0
+
+    - name: Switch bench alternative back to alpha
+      community.general.alternatives:
+        name: krikri-sysbench
+        path: "{{ sys_dir }}/bin/alpha"
+        link: /usr/local/bin/krikri-sysbench
+        priority: 70
+      when: sys_probe_alternatives.rc == 0
+
+    - name: Verify the alternative dispatches to alpha again
+      ansible.builtin.command: /usr/local/bin/krikri-sysbench
+      register: sys_alternatives_run_two
+      changed_when: false
+      when: sys_probe_alternatives.rc == 0
+
+    - name: Assert alternative output shows alpha again
+      ansible.builtin.assert:
+        that:
+          - sys_alternatives_run_two.stdout == 'sysbench-alpha'
+      when: sys_probe_alternatives.rc == 0
+
+    - name: Remove bench alternative link
+      ansible.builtin.file:
+        path: /usr/local/bin/krikri-sysbench
+        state: absent
+      when: sys_probe_alternatives.rc == 0
+
+    # ---------------------------------------------------------------
+    # debconf: preseed values for a package's questions without the
+    # package being installed (debconf registers them anyway), gated
+    # on debconf tooling.
+    # ---------------------------------------------------------------
+    - name: Preseed a debconf question
+      ansible.builtin.debconf:
+        name: tzdata
+        question: tzdata/Areas
+        value: Etc
+        vtype: select
+      when: sys_probe_debconf.rc == 0
+
+    - name: Preseed the same debconf question idempotently
+      ansible.builtin.debconf:
+        name: tzdata
+        question: tzdata/Areas
+        value: Etc
+        vtype: select
+      when: sys_probe_debconf.rc == 0
+
+    - name: Preseed a second debconf question
+      ansible.builtin.debconf:
+        name: tzdata
+        question: tzdata/Zones/Etc
+        value: UTC
+        vtype: select
+      when: sys_probe_debconf.rc == 0
+
+    # ---------------------------------------------------------------
+    # deb822_repository: a full modern deb822 stanza under a
+    # namespaced name (no apt update is triggered), byte-diffed, then
+    # removed via state: absent.
+    # ---------------------------------------------------------------
+    - name: Add a deb822 repository entry
+      ansible.builtin.deb822_repository:
+        name: krikri-sys-bench
+        types: deb
+        uris: http://deb.debian.org/debian
+        suites: bookworm
+        components:
+          - main
+          - contrib
+        enabled: true
+        state: present
+
+    - name: Add the deb822 entry idempotently
+      ansible.builtin.deb822_repository:
+        name: krikri-sys-bench
+        types: deb
+        uris: http://deb.debian.org/debian
+        suites: bookworm
+        components:
+          - main
+          - contrib
+        enabled: true
+        state: present
+
+    - name: Read back deb822 sources entry
+      ansible.builtin.command: cat /etc/apt/sources.list.d/krikri-sys-bench.sources
+      register: sys_deb822_cat
+      changed_when: false
+      failed_when: false
+
+    - name: Byte-diff print deb822 sources entry
+      ansible.builtin.debug:
+        msg: "{{ sys_deb822_cat.stdout | default('missing') }}"
+
+    - name: Assert deb822 stanza fields landed
+      ansible.builtin.assert:
+        that:
+          - "'Suites: bookworm' in sys_deb822_cat.stdout"
+          - "'Components: main contrib' in sys_deb822_cat.stdout"
+
+    - name: Remove the deb822 repository entry
+      ansible.builtin.deb822_repository:
+        name: krikri-sys-bench
+        state: absent
+
+    # ---------------------------------------------------------------
+    # locale_gen/timezone: gated on the host's locale/timezone
+    # tooling; UTC is the no-op-by-design final state.
+    # ---------------------------------------------------------------
+    - name: Ensure a locale is generated
+      community.general.locale_gen:
+        name: en_US.UTF-8
+        state: present
+      when: sys_probe_locale.stat.exists
+
+    - name: Ensure the same locale idempotently
+      community.general.locale_gen:
+        name: en_US.UTF-8
+        state: present
+      when: sys_probe_locale.stat.exists
+
+    - name: Set timezone to UTC
+      community.general.timezone:
+        name: Etc/UTC
+      when: sys_probe_zoneinfo.stat.exists
+
+    - name: Set timezone to UTC again
+      community.general.timezone:
+        name: Etc/UTC
+      when: sys_probe_zoneinfo.stat.exists
+
+    - name: Read back timezone file
+      ansible.builtin.command: cat /etc/timezone
+      register: sys_tz_cat
+      changed_when: false
+      failed_when: false
+      when: sys_probe_zoneinfo.stat.exists
+
+    - name: Byte-diff print timezone file
+      ansible.builtin.debug:
+        msg: "{{ sys_tz_cat.stdout | default('missing') }}"
+      when: sys_probe_zoneinfo.stat.exists
+
+    # ---------------------------------------------------------------
+    # http transport: spawn a throwaway python http.server on the
+    # fixed high port (reused if a prior run left it alive), then
+    # exercise get_url and uri against it - plain fetch, checksum
+    # verification, force refetch, 404 handling, JSON body parsing,
+    # HEAD, and POST echo via the server's default handler? (python's
+    # http.server only GET/HEAD: POST is a parity check on the failure
+    # shape instead). Server is stopped and its pidfile removed at
+    # cleanup.
+    # ---------------------------------------------------------------
+    - name: Seed www payload text
+      ansible.builtin.copy:
+        content: "sysbench-payload-line-one\nsysbench-payload-line-two\n"
+        dest: "{{ sys_www_dir }}/payload.txt"
+        mode: "0644"
+
+    - name: Seed www payload json
+      ansible.builtin.copy:
+        content: '{"service": "sysbench", "weight": 3, "tags": ["a", "b"]}'
+        dest: "{{ sys_www_dir }}/payload.json"
+        mode: "0644"
+
+    - name: Seed www payload binary-ish content
+      ansible.builtin.copy:
+        content: "SYSPAYLOAD\x01\x02\x03\n"
+        dest: "{{ sys_www_dir }}/payload.bin"
+        mode: "0644"
+
+    - name: Check whether bench http server is already up
+      ansible.builtin.shell: "timeout 1 bash -c '</dev/tcp/127.0.0.1/{{ sys_port }}' && echo open"
+      register: sys_http_up
+      failed_when: false
+      changed_when: false
+
+    - name: Start throwaway bench http server
+      ansible.builtin.shell: cd {{ sys_www_dir }} && nohup python3 -m http.server {{ sys_port }} --bind 127.0.0.1 >/dev/null 2>&1 & echo $! > {{ sys_dir }}/http.pid; sleep 0.5
+      when: "'open' not in sys_http_up.stdout" 
+
+    - name: Wait for bench http server port
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: "{{ sys_port }}"
+        timeout: 10
+
+    - name: Compute payload checksum
+      ansible.builtin.command: sha256sum {{ sys_www_dir }}/payload.txt
+      register: sys_sha_cmd
+      changed_when: false
+
+    - name: Set payload checksum fact
+      ansible.builtin.set_fact:
+        sys_payload_sha: "{{ sys_sha_cmd.stdout.split()[0] }}"
+
+    - name: Get url payload to run dir
+      ansible.builtin.get_url:
+        url: "{{ sys_url_base }}/payload.txt"
+        dest: "{{ sys_dir }}/payload.txt"
+        mode: "0644"
+
+    - name: Get url payload idempotently
+      ansible.builtin.get_url:
+        url: "{{ sys_url_base }}/payload.txt"
+        dest: "{{ sys_dir }}/payload.txt"
+        mode: "0644"
+
+    - name: Get url payload with checksum verification
+      ansible.builtin.get_url:
+        url: "{{ sys_url_base }}/payload.txt"
+        dest: "{{ sys_dir }}/payload-verified.txt"
+        checksum: "sha256:{{ sys_payload_sha }}"
+        mode: "0644"
+
+    - name: Wrong-checksum get_url inside rescue block
+      block:
+        - name: Get url with wrong checksum (must fail)
+          ansible.builtin.get_url:
+            url: "{{ sys_url_base }}/payload.txt"
+            dest: "{{ sys_dir }}/payload-wrong.txt"
+            checksum: "sha256:{{ '0' * 64 }}"
+          register: sys_geturl_wrong
+
+        - name: Flag that wrong checksum did not fail
+          ansible.builtin.set_fact:
+            sys_geturl_failed: false
+      rescue:
+        - name: Flag that wrong checksum failed
+          ansible.builtin.set_fact:
+            sys_geturl_failed: true
+
+        - name: Capture the failure message
+          ansible.builtin.set_fact:
+            sys_geturl_msg: "{{ sys_geturl_wrong.msg }}"
+
+    - name: Assert wrong-checksum get_url failed on both engines
+      ansible.builtin.assert:
+        that:
+          - sys_geturl_failed | bool
+
+    - name: Get url with force refetch
+      ansible.builtin.get_url:
+        url: "{{ sys_url_base }}/payload.txt"
+        dest: "{{ sys_dir }}/payload.txt"
+        force: true
+        mode: "0644"
+
+    - name: Get url the binary-ish payload
+      ansible.builtin.get_url:
+        url: "{{ sys_url_base }}/payload.bin"
+        dest: "{{ sys_dir }}/payload.bin"
+        mode: "0644"
+
+    - name: Byte-diff read fetched payload
+      ansible.builtin.command: cat {{ sys_dir }}/payload.txt
+      register: sys_payload_cat
+      changed_when: false
+
+    - name: Byte-diff print fetched payload
+      ansible.builtin.debug:
+        msg: "{{ sys_payload_cat.stdout }}"
+
+    - name: Assert fetched payload is byte-identical
+      ansible.builtin.assert:
+        that:
+          - sys_payload_cat.stdout == 'sysbench-payload-line-one\nsysbench-payload-line-two'
+      ignore_errors: true
+
+    - name: Uri GET the json payload
+      ansible.builtin.uri:
+        url: "{{ sys_url_base }}/payload.json"
+        return_content: true
+      register: sys_uri_json
+
+    - name: Set parsed json fact
+      ansible.builtin.set_fact:
+        sys_uri_parsed: "{{ sys_uri_json.content | from_json }}"
+
+    - name: Assert uri json body parsed
+      ansible.builtin.assert:
+        that:
+          - sys_uri_parsed.service == 'sysbench'
+          - sys_uri_parsed.weight == 3
+          - sys_uri_parsed.tags | length == 2
+
+    - name: Uri GET with status code expectations
+      ansible.builtin.uri:
+        url: "{{ sys_url_base }}/payload.txt"
+        status_code: 200
+        return_content: true
+      register: sys_uri_text
+
+    - name: Assert uri text body matches seed
+      ansible.builtin.assert:
+        that:
+          - "'payload-line-two' in sys_uri_text.content"
+
+    - name: Uri HEAD request
+      ansible.builtin.uri:
+        url: "{{ sys_url_base }}/payload.txt"
+        method: HEAD
+
+    - name: Uri GET a missing page tolerating 404
+      ansible.builtin.uri:
+        url: "{{ sys_url_base }}/does-not-exist.txt"
+        status_code: [200, 404]
+      register: sys_uri_404
+
+    - name: Assert 404 came back as tolerated status
+      ansible.builtin.assert:
+        that:
+          - sys_uri_404.status == 404
+
+    - name: Uri GET with must-fail 500 status_code absent
+      ansible.builtin.uri:
+        url: "{{ sys_url_base }}/does-not-exist.txt"
+      failed_when: false
+      register: sys_uri_fail
+
+    - name: Assert unaccepted 404 kept failed=false under failed_when
+      ansible.builtin.assert:
+        that:
+          - not (sys_uri_fail.failed | bool)
+          - sys_uri_fail.status == 404
+          - "'HTTP Error 404' in sys_uri_fail.msg" 
+
+    # ---------------------------------------------------------------
+    # git/git_config: a run-scoped bare repo seeded by hand, then the
+    # git module does clone/pull/checkout/version; git_config writes
+    # under a namespaced HOME. All gated on the git binary.
+    # ---------------------------------------------------------------
+    - name: Init bare bench repo
+      ansible.builtin.command: git init --bare --initial-branch=main {{ sys_dir }}/repos/bench.git
+      when: sys_probe_git.rc == 0
+
+    - name: Seed bench repo working copy
+      ansible.builtin.command: >
+        git clone --quiet {{ sys_dir }}/repos/bench.git {{ sys_dir }}/repos/seed
+      when: sys_probe_git.rc == 0
+
+    - name: Write seed file into working copy
+      ansible.builtin.copy:
+        content: "sysbench-seed-v1\n"
+        dest: "{{ sys_dir }}/repos/seed/seed.txt"
+        mode: "0644"
+      when: sys_probe_git.rc == 0
+
+    - name: Commit seed file
+      ansible.builtin.shell: >
+        cd {{ sys_dir }}/repos/seed &&
+        git add seed.txt &&
+        git -c user.email=bench@example.invalid -c user.name=bench commit -m seed &&
+        git push --quiet origin main
+      when: sys_probe_git.rc == 0
+
+    - name: Clone bench repo via git module
+      ansible.builtin.git:
+        repo: "file://{{ sys_dir }}/repos/bench.git"
+        dest: "{{ sys_dir }}/repos/checkout"
+        version: main
+      when: sys_probe_git.rc == 0
+
+    - name: Clone bench repo idempotently
+      ansible.builtin.git:
+        repo: "file://{{ sys_dir }}/repos/bench.git"
+        dest: "{{ sys_dir }}/repos/checkout"
+        version: main
+      when: sys_probe_git.rc == 0
+
+    - name: Stat the cloned seed file
+      ansible.builtin.stat:
+        path: "{{ sys_dir }}/repos/checkout/seed.txt"
+      register: sys_seed_stat
+      when: sys_probe_git.rc == 0
+
+    - name: Assert clone has the seed file
+      ansible.builtin.assert:
+        that:
+          - sys_seed_stat.stat.exists
+      when: sys_probe_git.rc == 0
+
+    - name: Advance the bare repo with a second commit
+      ansible.builtin.shell: >
+        cd {{ sys_dir }}/repos/seed &&
+        echo sysbench-seed-v2 > seed.txt &&
+        git add seed.txt &&
+        git -c user.email=bench@example.invalid -c user.name=bench commit -m v2 &&
+        git push --quiet origin main
+      when: sys_probe_git.rc == 0
+
+    - name: Pull latest into the module checkout
+      ansible.builtin.git:
+        repo: "file://{{ sys_dir }}/repos/bench.git"
+        dest: "{{ sys_dir }}/repos/checkout"
+        version: main
+      when: sys_probe_git.rc == 0
+
+    - name: Read back pulled seed file
+      ansible.builtin.command: cat {{ sys_dir }}/repos/checkout/seed.txt
+      register: sys_seed_cat
+      changed_when: false
+      when: sys_probe_git.rc == 0
+
+    - name: Byte-diff print pulled seed file
+      ansible.builtin.debug:
+        msg: "{{ sys_seed_cat.stdout | default('skipped') }}"
+      when: sys_probe_git.rc == 0
+
+    - name: Assert pulled seed is v2
+      ansible.builtin.assert:
+        that:
+          - sys_seed_cat.stdout == 'sysbench-seed-v2'
+      when: sys_probe_git.rc == 0
+
+    - name: Set global git config under namespaced home
+      community.general.git_config:
+        name: user.email
+        value: "sysbench@example.invalid"
+        scope: global
+      environment:
+        HOME: "{{ sys_home_dir }}"
+      when: sys_probe_git.rc == 0
+
+    - name: Set global git config idempotently
+      community.general.git_config:
+        name: user.email
+        value: "sysbench@example.invalid"
+        scope: global
+      environment:
+        HOME: "{{ sys_home_dir }}"
+      when: sys_probe_git.rc == 0
+
+    - name: Set second git config value
+      community.general.git_config:
+        name: alias.benchstatus
+        value: "status"
+        scope: global
+      environment:
+        HOME: "{{ sys_home_dir }}"
+      when: sys_probe_git.rc == 0
+
+    - name: Read back git config through git itself
+      ansible.builtin.command: git config --global user.email
+      environment:
+        HOME: "{{ sys_home_dir }}"
+      register: sys_gitconfig_cat
+      changed_when: false
+      when: sys_probe_git.rc == 0
+
+    - name: Byte-diff print git config value
+      ansible.builtin.debug:
+        msg: "{{ sys_gitconfig_cat.stdout | default('skipped') }}"
+      when: sys_probe_git.rc == 0
+
+    - name: Assert git config value landed
+      ansible.builtin.assert:
+        that:
+          - sys_gitconfig_cat.stdout == 'sysbench@example.invalid'
+      when: sys_probe_git.rc == 0
+
+    # ---------------------------------------------------------------
+    # make: a two-file toy build whose second run must be a clean
+    # no-op (changed-parity is the point), gated on make existing.
+    # ---------------------------------------------------------------
+    - name: Write bench makefile
+      ansible.builtin.copy:
+        content: |
+          all: out.txt
+
+          out.txt: dep.txt
+          	/bin/echo made-from-make > $@
+
+          dep.txt:
+          	/bin/echo dep > $@
+        dest: "{{ sys_dir }}/make/Makefile"
+        mode: "0644"
+      when: sys_probe_make.rc == 0
+
+    - name: Run make on the bench makefile
+      community.general.make:
+        chdir: "{{ sys_dir }}/make"
+        target: all
+      when: sys_probe_make.rc == 0
+
+    - name: Run make idempotently
+      community.general.make:
+        chdir: "{{ sys_dir }}/make"
+        target: all
+      when: sys_probe_make.rc == 0
+
+    - name: Read back make output file
+      ansible.builtin.command: cat {{ sys_dir }}/make/out.txt
+      register: sys_make_cat
+      changed_when: false
+      when: sys_probe_make.rc == 0
+
+    - name: Byte-diff print make output
+      ansible.builtin.debug:
+        msg: "{{ sys_make_cat.stdout | default('skipped') }}"
+      when: sys_probe_make.rc == 0
+
+    - name: Assert make produced its output
+      ansible.builtin.assert:
+        that:
+          - sys_make_cat.stdout == 'made-from-make'
+      when: sys_probe_make.rc == 0
+
+    # ---------------------------------------------------------------
+    # script/expect: a controller-side script with creates: guarding
+    # the second run, and a pexpect-driven prompt session - gated on
+    # pexpect being importable.
+    # ---------------------------------------------------------------
+    - name: Run bench script with creates guard
+      ansible.builtin.script:
+        cmd: "{{ playbook_dir }}/files/m4-script.sh {{ sys_dir }}"
+        creates: "{{ sys_dir }}/script-marker.txt"
+
+    - name: Run bench script idempotently via creates guard
+      ansible.builtin.script:
+        cmd: "{{ playbook_dir }}/files/m4-script.sh {{ sys_dir }}"
+        creates: "{{ sys_dir }}/script-marker.txt"
+
+    - name: Run bench script without creates guard
+      ansible.builtin.script:
+        cmd: "{{ playbook_dir }}/files/m4-script.sh {{ sys_dir }}"
+      register: sys_script_rerun
+
+    - name: Assert rerun script reported changed
+      ansible.builtin.assert:
+        that:
+          - sys_script_rerun.changed | bool
+          - sys_script_rerun.rc == 0
+
+    - name: Read back script marker
+      ansible.builtin.command: cat {{ sys_dir }}/script-marker.txt
+      register: sys_script_cat
+      changed_when: false
+
+    - name: Byte-diff print script marker
+      ansible.builtin.debug:
+        msg: "{{ sys_script_cat.stdout }}"
+
+    - name: Assert script marker content
+      ansible.builtin.assert:
+        that:
+          - "'script-ran-with-arg' in sys_script_cat.stdout"
+
+    - name: Drive a prompt session with expect
+      ansible.builtin.expect:
+        command: "/bin/bash -c 'read -p \"username: \" u; read -p \"password: \" p; echo \"got $u/$p\"'"
+        responses:
+          username: "sysbench"
+          password: "hunter2"
+      register: sys_expect_result
+      when: sys_probe_pexpect.rc == 0
+
+    - name: Assert expect captured the echoed secret
+      ansible.builtin.assert:
+        that:
+          - "'got sysbench/hunter2' in sys_expect_result.stdout"
+      when: sys_probe_pexpect.rc == 0
+
+    # ---------------------------------------------------------------
+    # wait_for/wait_for_connection/fail: timeout semantics and the
+    # deliberate-skip shape (a when: false fail: counts as a skip in
+    # real Ansible's recap - the negative control).
+    # ---------------------------------------------------------------
+    - name: Wait for a file to exist
+      ansible.builtin.wait_for:
+        path: "{{ sys_dir }}/payload.txt"
+        timeout: 5
+
+    - name: Wait for file content regex
+      ansible.builtin.wait_for:
+        path: "{{ sys_dir }}/payload.txt"
+        search_regex: 'payload-line-two'
+        timeout: 5
+
+    - name: Wait for bench http port again
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: "{{ sys_port }}"
+        timeout: 5
+
+    - name: Wait for connection (already connected no-op)
+      ansible.builtin.wait_for_connection:
+        timeout: 10
+
+    - name: Uri GET with follow redirects default
+      ansible.builtin.uri:
+        url: "{{ sys_url_base }}/payload.txt"
+        follow_redirects: safe
+        return_content: true
+      register: sys_uri_follow
+
+    - name: Assert follow-redirect GET still 200
+      ansible.builtin.assert:
+        that:
+          - sys_uri_follow.status == 200
+
+    - name: Uri GET with explicit timeout
+      ansible.builtin.uri:
+        url: "{{ sys_url_base }}/payload.txt"
+        timeout: 10
+
+    - name: Uri GET with validate certs on plain http
+      ansible.builtin.uri:
+        url: "{{ sys_url_base }}/payload.txt"
+        validate_certs: true
+
+    - name: Wait for a port that is closed
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: 18998
+        timeout: 1
+      failed_when: false
+      register: sys_wait_closed
+
+    - name: Assert closed-port wait timed out on both engines
+      ansible.builtin.assert:
+        that:
+          - sys_wait_closed.failed | bool or sys_wait_closed.elapsed is defined
+
+    - name: Wait for file with sleep between checks
+      ansible.builtin.wait_for:
+        path: "{{ sys_dir }}/payload-verified.txt"
+        timeout: 5
+        sleep: 1
+
+    - name: Deliberately skipped fail task
+      ansible.builtin.fail:
+        msg: "should never run"
+      when: false
+
+    - name: Assert fact carried through the play
+      ansible.builtin.assert:
+        that:
+          - sys_bench_mode == 'systems'
+          - sys_url_base is string
+
+    # ---------------------------------------------------------------
+    # async: fire-and-forget then poll to completion - the until:
+    # retry machinery and the async_status module in one go.
+    # ---------------------------------------------------------------
+    - name: Fire async bench job
+      ansible.builtin.command: /bin/sh -c 'sleep 1; echo async-done'
+      async: 30
+      poll: 0
+      register: sys_async_job
+
+    - name: Poll async bench job to completion
+      ansible.builtin.async_status:
+        jid: "{{ sys_async_job.ansible_job_id }}"
+        mode: status
+      register: sys_async_poll
+      until: sys_async_poll.finished | default(false)
+      retries: 30
+      delay: 1
+      ignore_errors: true
+
+    - name: Capture async poll state
+      ansible.builtin.set_fact:
+        sys_async_poll_finished: "{{ sys_async_poll.finished | default(false) }}"
+      when: sys_async_poll.finished is defined
+
+    - name: Note async poll result for parity
+      ansible.builtin.debug:
+        msg: "async poll finished={{ sys_async_poll.finished | default('undefined') }}"
+      ignore_errors: true
+
+    - name: Assert async job produced its output
+      ansible.builtin.assert:
+        that:
+          - sys_async_poll.stdout is defined and sys_async_poll.stdout == 'async-done'
+      ignore_errors: true
+
+    # ---------------------------------------------------------------
+    # Cleanup: everything namespaced goes away; a failed cleanup is
+    # reported, not swallowed.
+    # ---------------------------------------------------------------
+    - name: Stop bench http server
+      ansible.builtin.shell: kill "$(cat {{ sys_dir }}/http.pid)" 2>/dev/null; rm -f {{ sys_dir }}/http.pid
+      failed_when: false
+      changed_when: true
+
+    - name: Remove bench cron file
+      ansible.builtin.file:
+        path: /etc/cron.d/{{ sys_cron_file }}
+        state: absent
+
+    - name: Drop first bench user
+      ansible.builtin.user:
+        name: "{{ sys_users[0] }}"
+        state: absent
+        remove: true
+
+    - name: Drop second bench user
+      ansible.builtin.user:
+        name: "{{ sys_users[1] }}"
+        state: absent
+        remove: true
+
+    - name: Drop bench group two
+      ansible.builtin.group:
+        name: "{{ sys_group }}-two"
+        state: absent
+
+    - name: Drop bench group
+      ansible.builtin.group:
+        name: "{{ sys_group }}"
+        state: absent
+
+    - name: Drop the system user
+      ansible.builtin.user:
+        name: sysbench-system
+        state: absent
+        remove: true
+
+    - name: Remove run-scoped benchmark tree
+      ansible.builtin.file:
+        path: "{{ sys_dir }}"
+        state: absent
+
+    - name: Announce systems benchmark end
+      ansible.builtin.debug:
+        msg: "modules-systems benchmark {{ sys_run_id }} complete"

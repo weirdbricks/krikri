@@ -1,0 +1,5 @@
+---
+# Directory-included vars file (include_vars: dir, files_matching
+# picks this one by '^m4-alpha').
+m4_alpha_v: alpha-value
+m4_alpha_list: [one, two]

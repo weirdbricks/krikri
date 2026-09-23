@@ -1,0 +1,12 @@
+---
+# modules_data.yml's checked-in deterministic data (include_vars: file).
+dat_quotas:
+  max_conn: 512
+  max_files: 4096
+  timeout: 30
+dat_colors: [red, green, blue]
+dat_nested:
+  outer:
+    inner:
+      key: value
+      numbers: [1, 2, 3]

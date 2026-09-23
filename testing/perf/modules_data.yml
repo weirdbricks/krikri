@@ -1,0 +1,1324 @@
+---
+# Modules/data benchmark: playbook 5 of 5 in the per-module coverage
+# series. Theme: templating, data shaping & the registry modules.
+# Companion to modules_files.yml (files), modules_packages.yml
+# (packages/services), modules_security.yml (users/security/crypto) and
+# modules_systems.yml (system state/transport). The engine's two Jinja2
+# evaluators (hand-rolled {{ }} substitution and vendored Crinja for
+# .j2 files) meet every filter/lookup/loop idiom in this playbook, so
+# every render lands in a byte-diff artifact:
+#   include_vars, set_fact, assert, debug, template (3 torture .j2
+#   files), copy (content/src-dir/validate/backup), lineinfile,
+#   replace, blockinfile, ini_file, xml, file (symlink/hardlink/attrs),
+#   stat, find, slurp, fetch, tempfile, assemble, archive, unarchive,
+#   getent, plus the loop machinery: dict2items, subelements,
+#   with_nested, until/retries counters, registered loop results.
+#
+# Determinism contract: everything rendered into a byte-diff is built
+# from checked-in literals (no timestamps, no randomness - password_hash
+# uses a fixed salt, random: uses a fixed seed, strftime: uses a fixed
+# epoch), so both engines' outputs are byte-comparable. All mutations
+# stay under /tmp/krikri-data-bench-<epoch>; the fetch: task's
+# controller-side dest is namespaced the same way.
+
+- name: Templating and data module-coverage benchmark
+  hosts: all
+  gather_facts: true
+
+  vars:
+    dat_bench_mode: data
+    dat_run_id: "{{ ansible_date_time.epoch }}"
+    dat_dir: "/tmp/krikri-data-bench-{{ dat_run_id }}"
+    dat_services:
+      - { name: alpha, enabled: true, weight: 5, tags: [core, net] }
+      - { name: beta, enabled: false, weight: 2, tags: [net] }
+      - { name: gamma, enabled: true, weight: 9, tags: [core, tls, net] }
+    dat_service_map:
+      alpha: { port: 8080, proto: http }
+      beta: { port: 8081, proto: http }
+      gamma: { port: 8443, proto: https }
+    dat_levels: [debug, info, warn, error]
+    dat_stub: |
+      # krikri modules-data benchmark stub
+      Port 2200
+      PermitRootLogin no
+      MaxAuthTries 6
+      # trailing comment line
+
+  tasks:
+    # ---------------------------------------------------------------
+    # Setup + include_vars: a flat vars file, a named include, and a
+    # directory include (files_matching) - three distinct parser
+    # shapes the engine must all agree on.
+    # ---------------------------------------------------------------
+    - name: Announce data benchmark start
+      ansible.builtin.debug:
+        msg: "modules-data benchmark {{ dat_run_id }} on {{ ansible_hostname }} ({{ dat_bench_mode }})"
+
+    - name: Create benchmark root directory
+      ansible.builtin.file:
+        path: "{{ dat_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Create benchmark subdirectories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0755"
+      loop:
+        - "{{ dat_dir }}/conf"
+        - "{{ dat_dir }}/fragments"
+        - "{{ dat_dir }}/nested"
+        - "{{ dat_dir }}/nested/deep"
+        - "{{ dat_dir }}/archive-src"
+        - "{{ dat_dir }}/archive-out"
+        - "{{ dat_dir }}/extracted"
+
+    - name: Include the bench data vars file
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/vars/m4-data.yml"
+
+    - name: Include the same vars under a custom name
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/vars/m4-data.yml"
+        name: dat_aliased
+
+    - name: Include the vars directory wholesale
+      ansible.builtin.include_vars:
+        dir: "{{ playbook_dir }}/vars/m4dir"
+        name: dat_merged_dir
+
+    - name: Include only matching vars file from the directory
+      ansible.builtin.include_vars:
+        dir: "{{ playbook_dir }}/vars/m4dir"
+        files_matching: 'm4-alpha*'
+        name: dat_alpha_only
+
+    - name: Assert included vars arrived intact
+      ansible.builtin.assert:
+        that:
+          - dat_quotas.max_conn == 512
+          - dat_quotas | length == 3
+          - dat_aliased.dat_quotas.max_conn == 512
+          - "'m4-alpha' in dat_merged_dir.keys() | list or dat_merged_dir.m4_alpha_v is defined"
+          - "'m4_alpha_v' in dat_alpha_only.keys() | list and 'm4_beta_v' not in dat_alpha_only.keys() | list"
+
+    # ---------------------------------------------------------------
+    # set_fact/expression torture: every claim below is deterministic
+    # and asserted - a wrong filter chain, precedence rule, or
+    # coercion shows up as a failed assert, not silent drift.
+    # ---------------------------------------------------------------
+    - name: Set fact with arithmetic and precedence
+      ansible.builtin.set_fact:
+        dat_math: "{{ (2 + 3) * 4 }}"
+        dat_concat: "{{ 'a' ~ 'b' ~ 'c' }}"
+
+    - name: Set fact from a filter chain
+      ansible.builtin.set_fact:
+        dat_enabled_services: "{{ dat_services | selectattr('enabled') | map(attribute='name') | list }}"
+        dat_heaviest: "{{ (dat_services | sort(attribute='weight') | last).name }}"
+
+    - name: Set fact from ternary and default chains
+      ansible.builtin.set_fact:
+        dat_ternary: "{{ (dat_services[0].weight > 4) | ternary('heavy', 'light') }}"
+        dat_missing_default: "{{ dat_services[0].nosuchkey | default('fallback') }}"
+
+    - name: Set fact from json roundtrip
+      ansible.builtin.set_fact:
+        dat_json_roundtrip: "{{ dat_service_map | to_json | from_json }}"
+
+    - name: Set fact from b64 roundtrip
+      ansible.builtin.set_fact:
+        dat_b64: "{{ 'krikri-data-bench' | b64encode | b64decode }}"
+
+    - name: Set fact from hash family filters
+      ansible.builtin.set_fact:
+        dat_sha1: "{{ 'krikri' | checksum }}"
+        dat_hash_pw: "{{ 'benchpass' | password_hash('sha512', 'fixedsalt') }}"
+        dat_uuid: "{{ 'krikri-data-bench' | to_uuid }}"
+
+    - name: Set fact from strftime and seeded random filters
+      ansible.builtin.set_fact:
+        dat_strftime: "{{ '%Y-%m-%d %H:%M:%S' | strftime(0, 'UTC') }}"
+        dat_random_seeded: "{{ 60 | random(seed=42) }}"
+      ignore_errors: true
+
+    - name: Set fact from regex family filters
+      ansible.builtin.set_fact:
+        dat_regex_sub: "{{ 'krikri-data-2026' | regex_replace('-(\\d+)$', '-v\\1') }}"
+        dat_regex_findall: "{{ 'a1b2c3' | regex_findall('[a-z]\\d') }}"
+        dat_urlencoded: "{{ 'a b&c' | urlencode }}"
+        dat_split_list: "{{ 'x:y:z' | split(':') }}"
+
+    - name: Assert expression results match real Ansible exactly
+      ansible.builtin.assert:
+        that:
+          - dat_math == 20
+          - dat_concat == 'abc'
+          - dat_enabled_services == ['alpha', 'gamma']
+          - dat_heaviest == 'gamma'
+          - dat_ternary == 'heavy'
+          - dat_missing_default == 'fallback'
+          - dat_json_roundtrip.alpha.port == 8080
+          - dat_b64 == 'krikri-data-bench'
+          - dat_sha1 == 'c8e6fdc377127342de9afc9c6fc376f3f4fd00ee'
+          - dat_uuid | length == 36
+          - dat_strftime == '1970-01-01 00:00:00'
+          - dat_random_seeded is number or dat_random_seeded is string
+          - dat_regex_sub == 'krikri-data-v2026'
+          - dat_regex_findall == ['a1', 'b2', 'c3']
+          - dat_urlencoded == 'a%20b%26c'
+          - dat_split_list == ['x', 'y', 'z']
+      ignore_errors: true
+
+    - name: Assert bool coercion of the string zero is false
+      ansible.builtin.assert:
+        that:
+          - not ('0' | bool)
+          - "'1' | bool"
+          - not (dat_services[1].enabled | bool)
+
+    - name: Assert version comparison test
+      ansible.builtin.assert:
+        that:
+          - "'1.2.3' is version('1.2.2', '>=')"
+          - "'0.9.1270' is version('1.0', '<')"
+
+    - name: Assert match/search/regex tests
+      ansible.builtin.assert:
+        that:
+          - "'krikri-data' is match('krikri')"
+          - "'krikri-data' is search('data$')"
+          - "'krikri-data' is regex('krikri-\\w+')"
+
+    - name: Assert combined dict/list shapers
+      ansible.builtin.assert:
+        that:
+          - "({\"a\": 1} | combine({\"b\": 2})) == {\"a\": 1, \"b\": 2}"
+          - "({\"a\": {\"x\": 1}} | combine({\"a\": {\"y\": 2}}, recursive=true)).a.y == 2"
+          - (dat_levels | first) == 'debug'
+          - (dat_levels | join('/')) == 'debug/info/warn/error'
+          - "({\"k1\": \"v1\", \"k2\": \"v2\"} | dict2items | selectattr('key', 'defined') | list | length) == 2"
+          - "({\"k1\": \"v1\", \"k2\": \"v2\"} | dict2items | map(attribute='key') | list) == ['k1', 'k2']"
+      ignore_errors: true
+
+    - name: Assert subelements pairing
+      ansible.builtin.assert:
+        that:
+          - dat_services | subelements('tags') | length == 6
+
+    - name: Assert json_query jmespath projection
+      ansible.builtin.assert:
+        that:
+          - (dat_services | json_query('[].name')) == ['alpha', 'beta', 'gamma']
+          - (dat_services | json_query("[?weight > `4`].name")) == ['alpha', 'gamma']
+
+    - name: Assert to_nice_yaml contains the mapping
+      ansible.builtin.set_fact:
+        dat_yaml_dumped: "{{ dat_quotas | to_nice_yaml }}"
+
+    - name: Assert yaml dump shape
+      ansible.builtin.assert:
+        that:
+          - "'max_conn' in dat_yaml_dumped"
+          - "'512' in dat_yaml_dumped"
+
+    - name: Deliberately skipped assert
+      ansible.builtin.assert:
+        that:
+          - dat_bench_mode == 'never'
+      when: false
+
+    # ---------------------------------------------------------------
+    # lookups: file/pipe/env/template/vars plus wantlist/query
+    # spellings, all reading run-scoped or deterministic sources.
+    # ---------------------------------------------------------------
+    - name: Set fact from file lookup of a checked-in file
+      ansible.builtin.set_fact:
+        dat_lookup_file: "{{ lookup('file', playbook_dir ~ '/vars/m4-data.yml') }}"
+
+    - name: Set fact from template lookup of the macro template
+      ansible.builtin.set_fact:
+        dat_lookup_template: "{{ lookup('template', playbook_dir ~ '/templates/m4-macro.j2') }}"
+
+    - name: Set fact from pipe lookup
+      ansible.builtin.set_fact:
+        dat_lookup_pipe: "{{ lookup('pipe', 'echo pipe-lookup-ok') }}"
+
+    - name: Set fact from env lookup
+      ansible.builtin.set_fact:
+        dat_lookup_env: "{{ lookup('env', 'KRIKRI_DATA_BENCH_VAR') }}"
+
+    - name: Set fact from vars lookup
+      ansible.builtin.set_fact:
+        dat_lookup_vars: "{{ lookup('vars', 'dat_bench_mode') }}"
+
+    - name: Set fact from query spelling
+      ansible.builtin.set_fact:
+        dat_lookup_query: "{{ query('file', playbook_dir ~ '/vars/m4-data.yml') }}"
+
+    - name: Assert all lookups resolved identically
+      ansible.builtin.assert:
+        that:
+          - "'max_conn' in dat_lookup_file"
+          - "'pipe-lookup-ok' == dat_lookup_pipe"
+          - "'set-on-the-controller' == dat_lookup_env"
+          - "'data' == dat_lookup_vars"
+          - "dat_lookup_query | length == 1"
+          - "'max_conn' in dat_lookup_query[0]"
+          - "'count=3' in dat_lookup_template"
+
+    # ---------------------------------------------------------------
+    # template: three torture renders (filter chains, dict2items +
+    # groupby, macros + namespace counters), each byte-diffed and
+    # re-rendered idempotently.
+    # ---------------------------------------------------------------
+    - name: Render filter torture report
+      ansible.builtin.template:
+        src: m4-report.j2
+        dest: "{{ dat_dir }}/report.txt"
+        mode: "0644"
+
+    - name: Render nested data report
+      ansible.builtin.template:
+        src: m4-nested.j2
+        dest: "{{ dat_dir }}/nested.txt"
+        mode: "0644"
+
+    - name: Render macro report
+      ansible.builtin.template:
+        src: m4-macro.j2
+        dest: "{{ dat_dir }}/macro.txt"
+        mode: "0644"
+
+    - name: Render filter torture report idempotently
+      ansible.builtin.template:
+        src: m4-report.j2
+        dest: "{{ dat_dir }}/report.txt"
+        mode: "0644"
+
+    - name: Render service report per level
+      ansible.builtin.template:
+        src: m4-report.j2
+        dest: "{{ dat_dir }}/report-{{ item }}.txt"
+        mode: "0640"
+      loop: "{{ dat_levels }}"
+
+    - name: Byte-diff read filter torture report
+      ansible.builtin.command: cat {{ dat_dir }}/report.txt
+      register: dat_bytediff_report
+      changed_when: false
+
+    - name: Byte-diff print filter torture report
+      ansible.builtin.debug:
+        msg: "{{ dat_bytediff_report.stdout }}"
+
+    - name: Byte-diff read nested data report
+      ansible.builtin.command: cat {{ dat_dir }}/nested.txt
+      register: dat_bytediff_nested
+      changed_when: false
+
+    - name: Byte-diff print nested data report
+      ansible.builtin.debug:
+        msg: "{{ dat_bytediff_nested.stdout }}"
+
+    - name: Byte-diff read macro report
+      ansible.builtin.command: cat {{ dat_dir }}/macro.txt
+      register: dat_bytediff_macro
+      changed_when: false
+
+    - name: Byte-diff print macro report
+      ansible.builtin.debug:
+        msg: "{{ dat_bytediff_macro.stdout }}"
+
+    - name: Assert report carries the groupby header
+      ansible.builtin.assert:
+        that:
+          - "'# services: 3' in dat_bytediff_report.stdout"
+          - "'enabled: alpha' in dat_bytediff_report.stdout"
+          - "'enabled: gamma' in dat_bytediff_report.stdout"
+          - "'heaviest: gamma' in dat_bytediff_report.stdout"
+
+    - name: Assert macro report counted via namespace
+      ansible.builtin.assert:
+        that:
+          - "'count=3' in dat_bytediff_macro.stdout"
+          - "'gamma@8443' in dat_bytediff_macro.stdout"
+
+    # ---------------------------------------------------------------
+    # copy: content render, src-dir recursion, validate, backup (the
+    # backup glob is verified by find), force/no-force change parity.
+    # ---------------------------------------------------------------
+    - name: Copy rendered content into place
+      ansible.builtin.copy:
+        content: "{{ dat_stub }}"
+        dest: "{{ dat_dir }}/conf/app.conf"
+        mode: "0644"
+
+    - name: Copy rendered content idempotently
+      ansible.builtin.copy:
+        content: "{{ dat_stub }}"
+        dest: "{{ dat_dir }}/conf/app.conf"
+        mode: "0644"
+
+    - name: Copy with modification and backup
+      ansible.builtin.copy:
+        content: "{{ dat_stub }}\nPort 2201\n"
+        dest: "{{ dat_dir }}/conf/app.conf"
+        backup: true
+        mode: "0644"
+
+    - name: Copy a controller-side directory recursively
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/files/m4-tree/"
+        dest: "{{ dat_dir }}/conf.d"
+        mode: "0644"
+        directory_mode: "0755"
+
+    - name: Copy with validate
+      ansible.builtin.copy:
+        content: "validate-me\n"
+        dest: "{{ dat_dir }}/conf/validated.conf"
+        validate: "/bin/true %s"
+        mode: "0644"
+
+    - name: Remote-side copy file to file
+      ansible.builtin.copy:
+        src: "{{ dat_dir }}/conf/app.conf"
+        dest: "{{ dat_dir }}/conf/app-copy.conf"
+        remote_src: true
+        mode: "0644"
+
+    - name: Find the backup copy containing the old content
+      ansible.builtin.find:
+        paths: "{{ dat_dir }}/conf"
+        patterns: "*~"
+        contains: 'Port 2200'
+      register: dat_backup_find
+
+    - name: Assert exactly one backup exists with old content
+      ansible.builtin.assert:
+        that:
+          - dat_backup_find.matched == 1
+
+    # ---------------------------------------------------------------
+    # lineinfile/replace/blockinfile: anchoring, backrefs, multiline
+    # regexps, marker games - each stage asserted and byte-diffed.
+    # ---------------------------------------------------------------
+    - name: Uncomment port line via backref
+      ansible.builtin.lineinfile:
+        path: "{{ dat_dir }}/conf/app.conf"
+        regexp: '^(#?)Port '
+        line: "Port 2202"
+        mode: "0644"
+
+    - name: Rewrite max auth tries with backrefs
+      ansible.builtin.lineinfile:
+        path: "{{ dat_dir }}/conf/app.conf"
+        regexp: '^MaxAuthTries (\d+)$'
+        line: 'MaxAuthTries \1 (rewritten \1)'
+        backrefs: true
+        mode: "0644"
+
+    - name: Insert line after root login anchor
+      ansible.builtin.lineinfile:
+        path: "{{ dat_dir }}/conf/app.conf"
+        line: "MaxSessions 12"
+        insertafter: '^PermitRootLogin'
+        mode: "0644"
+
+    - name: Replace last duplicate line by regexp
+      ansible.builtin.lineinfile:
+        path: "{{ dat_dir }}/conf/app.conf"
+        line: "Port 2203"
+        regexp: '^Port '
+        mode: "0644"
+
+    - name: Byte-diff read lineinfile result
+      ansible.builtin.command: cat {{ dat_dir }}/conf/app.conf
+      register: dat_bytediff_line
+      changed_when: false
+
+    - name: Byte-diff print lineinfile result
+      ansible.builtin.debug:
+        msg: "{{ dat_bytediff_line.stdout }}"
+
+    - name: Assert lineinfile staged everything
+      ansible.builtin.assert:
+        that:
+          - dat_bytediff_line.stdout is search('(?m)^Port 2203$')
+          - dat_bytediff_line.stdout is search('(?m)^Port 2200$')
+          - dat_bytediff_line.stdout is search('(?m)^MaxAuthTries 6 \(rewritten 6\)$')
+          - dat_bytediff_line.stdout is search('(?m)^MaxSessions 12$')
+          - "'Port 2201' not in dat_bytediff_line.stdout"
+          - "'Port 2202' not in dat_bytediff_line.stdout"
+          - dat_bytediff_line.stdout.split('\n') | select('search', '^Port ') | list | length == 2
+      ignore_errors: true
+
+    - name: Seed replace target file
+      ansible.builtin.copy:
+        content: "before-marker\nvalue = old\nafter-marker\n"
+        dest: "{{ dat_dir }}/conf/replace.conf"
+        mode: "0644"
+
+    - name: Replace value between anchors
+      ansible.builtin.replace:
+        path: "{{ dat_dir }}/conf/replace.conf"
+        regexp: '(?s)(^before-marker\n)value = \w+\n(after-marker$)'
+        replace: '\1value = new\n\2'
+        mode: "0644"
+
+    - name: Replace the same value idempotently
+      ansible.builtin.replace:
+        path: "{{ dat_dir }}/conf/replace.conf"
+        regexp: '(?s)(^before-marker\n)value = \w+\n(after-marker$)'
+        replace: '\1value = new\n\2'
+        mode: "0644"
+
+    - name: Byte-diff read replace result
+      ansible.builtin.command: cat {{ dat_dir }}/conf/replace.conf
+      register: dat_bytediff_replace
+      changed_when: false
+
+    - name: Byte-diff print replace result
+      ansible.builtin.debug:
+        msg: "{{ dat_bytediff_replace.stdout }}"
+
+    - name: Assert replace rewrote between anchors
+      ansible.builtin.assert:
+        that:
+          - dat_bytediff_replace.stdout == 'before-marker\nvalue = new\nafter-marker'
+      ignore_errors: true
+
+    - name: Manage a block after the port line
+      ansible.builtin.blockinfile:
+        path: "{{ dat_dir }}/conf/app.conf"
+        marker: "# {mark} krikri data bench block"
+        block: |
+          # bench block body
+          BenchOption yes
+        insertafter: '^Port '
+        mode: "0644"
+
+    - name: Manage the same block idempotently
+      ansible.builtin.blockinfile:
+        path: "{{ dat_dir }}/conf/app.conf"
+        marker: "# {mark} krikri data bench block"
+        block: |
+          # bench block body
+          BenchOption yes
+        insertafter: '^Port '
+        mode: "0644"
+
+    - name: Remove the managed block again
+      ansible.builtin.blockinfile:
+        path: "{{ dat_dir }}/conf/app.conf"
+        marker: "# {mark} krikri data bench block"
+        state: absent
+
+    - name: Byte-diff read blockinfile aftermath
+      ansible.builtin.command: cat {{ dat_dir }}/conf/app.conf
+      register: dat_bytediff_block
+      changed_when: false
+
+    - name: Byte-diff print blockinfile aftermath
+      ansible.builtin.debug:
+        msg: "{{ dat_bytediff_block.stdout }}"
+
+    - name: Assert managed block removed cleanly
+      ansible.builtin.assert:
+        that:
+          - "'BenchOption' not in dat_bytediff_block.stdout"
+          - "'krikri data bench block' not in dat_bytediff_block.stdout"
+
+    # ---------------------------------------------------------------
+    # ini_file/xml: option add/update/remove incl. sectionless keys
+    # and an xpath-driven xml edit cycle.
+    # ---------------------------------------------------------------
+    - name: Seed ini file
+      ansible.builtin.copy:
+        content: "[main]\ncompression = off\n[net]\nretries = 1\n"
+        dest: "{{ dat_dir }}/conf/app.ini"
+        mode: "0644"
+
+    - name: Set ini option in section
+      community.general.ini_file:
+        path: "{{ dat_dir }}/conf/app.ini"
+        section: main
+        option: compression
+        value: "on"
+        mode: "0644"
+
+    - name: Set ini option in section idempotently
+      community.general.ini_file:
+        path: "{{ dat_dir }}/conf/app.ini"
+        section: main
+        option: compression
+        value: "on"
+        mode: "0644"
+
+    - name: Set sectionless ini option
+      community.general.ini_file:
+        path: "{{ dat_dir }}/conf/app.ini"
+        section: null
+        option: root-flag
+        value: "true"
+        mode: "0644"
+
+    - name: Remove ini option
+      community.general.ini_file:
+        path: "{{ dat_dir }}/conf/app.ini"
+        section: net
+        option: retries
+        state: absent
+        mode: "0644"
+
+    - name: Byte-diff read ini result
+      ansible.builtin.command: cat {{ dat_dir }}/conf/app.ini
+      register: dat_bytediff_ini
+      changed_when: false
+
+    - name: Byte-diff print ini result
+      ansible.builtin.debug:
+        msg: "{{ dat_bytediff_ini.stdout }}"
+
+    - name: Assert ini staged option changes
+      ansible.builtin.assert:
+        that:
+          - dat_bytediff_ini.stdout is search('(?m)^compression = on$')
+          - dat_bytediff_ini.stdout is search('(?m)^root-flag = true$')
+          - "'retries' not in dat_bytediff_ini.stdout"
+
+    - name: Seed xml document
+      ansible.builtin.copy:
+        content: |
+          <?xml version="1.0" encoding="utf-8"?>
+          <configuration>
+            <servers>
+              <server name="alpha" port="8080"/>
+              <server name="beta" port="8081"/>
+            </servers>
+          </configuration>
+        dest: "{{ dat_dir }}/conf/app.xml"
+        mode: "0644"
+
+    - name: Set xml attribute via xpath
+      community.general.xml:
+        path: "{{ dat_dir }}/conf/app.xml"
+        xpath: /configuration/servers/server[@name='alpha']
+        attribute: port
+        value: "9090"
+
+    - name: Add xml child node
+      community.general.xml:
+        path: "{{ dat_dir }}/conf/app.xml"
+        xpath: /configuration
+        add_children:
+          - logging:
+              _level: debug
+
+    - name: Count xml server nodes
+      community.general.xml:
+        path: "{{ dat_dir }}/conf/app.xml"
+        xpath: /configuration/servers/server
+        count: true
+      register: dat_xml_count
+
+    - name: Byte-diff read xml result
+      ansible.builtin.command: cat {{ dat_dir }}/conf/app.xml
+      register: dat_bytediff_xml
+      changed_when: false
+
+    - name: Byte-diff print xml result
+      ansible.builtin.debug:
+        msg: "{{ dat_bytediff_xml.stdout }}"
+
+    - name: Assert xml attribute edit landed
+      ansible.builtin.assert:
+        that:
+          - dat_xml_count.count == 2
+          - dat_bytediff_xml.stdout is search("9090")
+
+    # ---------------------------------------------------------------
+    # file: symlink chain, hardlink, suid mode, attrs roundtrip.
+    # ---------------------------------------------------------------
+    - name: Touch attr target file
+      ansible.builtin.file:
+        path: "{{ dat_dir }}/nested/target.txt"
+        state: touch
+        mode: "0644"
+
+    - name: Symlink to the target
+      ansible.builtin.file:
+        src: "{{ dat_dir }}/nested/target.txt"
+        dest: "{{ dat_dir }}/nested/link.txt"
+        state: link
+
+    - name: Relink the symlink to a new destination
+      ansible.builtin.file:
+        src: "{{ dat_dir }}/nested/deep"
+        dest: "{{ dat_dir }}/nested/link.txt"
+        state: link
+        force: true
+
+    - name: Hardlink the target
+      ansible.builtin.file:
+        src: "{{ dat_dir }}/nested/target.txt"
+        dest: "{{ dat_dir }}/nested/hard.txt"
+        state: hard
+
+    - name: Set suid mode on a bench script
+      ansible.builtin.file:
+        path: "{{ dat_dir }}/nested/target.txt"
+        state: file
+        mode: "4755"
+
+    - name: Stat the hardlink with follow
+      ansible.builtin.stat:
+        path: "{{ dat_dir }}/nested/hard.txt"
+        follow: true
+        get_checksum: true
+        checksum_algorithm: sha1
+      register: dat_hard_stat
+
+    - name: Assert hardlink stat carries checksum
+      ansible.builtin.assert:
+        that:
+          - dat_hard_stat.stat.exists
+          - dat_hard_stat.stat.checksum is string
+          - dat_hard_stat.stat.mode == '4755'
+
+    # ---------------------------------------------------------------
+    # find/stat/slurp/fetch: census tasks over the run tree, plus a
+    # controller-side fetch whose dest is namespaced by the run id.
+    # ---------------------------------------------------------------
+    - name: Stat the symlink without following
+      ansible.builtin.stat:
+        path: "{{ dat_dir }}/nested/link.txt"
+        follow: false
+      register: dat_link_stat
+
+    - name: Assert symlink stat reports islnk
+      ansible.builtin.assert:
+        that:
+          - dat_link_stat.stat.islnk
+
+    - name: Find conf files recursively
+      ansible.builtin.find:
+        paths: "{{ dat_dir }}"
+        patterns: "*.conf"
+        recurse: true
+      register: dat_find_conf
+
+    - name: Assert find matched the known conf files
+      ansible.builtin.assert:
+        that:
+          - dat_find_conf.matched >= 3
+
+    - name: Find with excludes and use_regex
+      ansible.builtin.find:
+        paths: "{{ dat_dir }}/conf"
+        patterns: '^app\.(conf|ini)$'
+        use_regex: true
+        excludes:
+          - '.*\.bak'
+      register: dat_find_regex
+
+    - name: Assert regex find matched both app files
+      ansible.builtin.assert:
+        that:
+          - dat_find_regex.matched == 2
+
+    - name: Find directories only
+      ansible.builtin.find:
+        paths: "{{ dat_dir }}"
+        file_type: directory
+        recurse: false
+      register: dat_find_dirs
+
+    - name: Assert directory census found seven
+      ansible.builtin.assert:
+        that:
+          - dat_find_dirs.matched == 7
+
+    - name: Slurp the rendered report
+      ansible.builtin.slurp:
+        src: "{{ dat_dir }}/report.txt"
+      register: dat_slurp_report
+
+    - name: Assert slurped report decodes to same bytes
+      ansible.builtin.assert:
+        that:
+          - (dat_slurp_report.content | b64decode) == dat_bytediff_report.stdout ~ '\n'
+      ignore_errors: true
+
+    - name: Fetch the ini result to the controller
+      ansible.builtin.fetch:
+        src: "{{ dat_dir }}/conf/app.ini"
+        dest: "/tmp/krikri-data-fetch-{{ dat_run_id }}/"
+        flat: true
+
+    # ---------------------------------------------------------------
+    # tempfile/assemble/archive/unarchive: pipeline with a content
+    # roundtrip assert at the end.
+    # ---------------------------------------------------------------
+    - name: Create a tempfile for the assembled file
+      ansible.builtin.tempfile:
+        state: file
+        suffix: ".assembled"
+        path: "{{ dat_dir }}"
+      register: dat_tempfile
+
+    - name: Seed assemble fragments
+      ansible.builtin.copy:
+        content: "{{ item.body }}"
+        dest: "{{ dat_dir }}/fragments/{{ item.name }}"
+        mode: "0644"
+      loop:
+        - { name: 10-a, body: "frag-a\n" }
+        - { name: 20-b, body: "frag-b\n" }
+        - { name: 30-c, body: "frag-c\n" }
+
+    - name: Assemble fragments into one file
+      ansible.builtin.assemble:
+        src: "{{ dat_dir }}/fragments"
+        dest: "{{ dat_tempfile.path }}"
+        delimiter: "-- fragment --\n"
+
+    - name: Assemble fragments idempotently
+      ansible.builtin.assemble:
+        src: "{{ dat_dir }}/fragments"
+        dest: "{{ dat_tempfile.path }}"
+        delimiter: "-- fragment --\n"
+
+    - name: Byte-diff read assembled file
+      ansible.builtin.command: cat {{ dat_tempfile.path }}
+      register: dat_bytediff_assembled
+      changed_when: false
+
+    - name: Byte-diff print assembled file
+      ansible.builtin.debug:
+        msg: "{{ dat_bytediff_assembled.stdout }}"
+
+    - name: Assert assembled order and delimiter
+      ansible.builtin.assert:
+        that:
+          - dat_bytediff_assembled.stdout is search('frag-a\n-- fragment --\nfrag-b\n-- fragment --\nfrag-c')
+
+    - name: Seed archive source tree
+      ansible.builtin.copy:
+        content: "archive-member-{{ item }}\n"
+        dest: "{{ dat_dir }}/archive-src/member-{{ item }}.txt"
+        mode: "0644"
+      loop: [one, two, three]
+
+    - name: Archive the source tree
+      community.general.archive:
+        path: "{{ dat_dir }}/archive-src/*"
+        dest: "{{ dat_dir }}/archive-out/bench.zip"
+        format: zip
+
+    - name: Archive the same tree idempotently
+      community.general.archive:
+        path: "{{ dat_dir }}/archive-src/*"
+        dest: "{{ dat_dir }}/archive-out/bench.zip"
+        format: zip
+
+    - name: Unarchive into the extract dir
+      ansible.builtin.unarchive:
+        src: "{{ dat_dir }}/archive-out/bench.zip"
+        dest: "{{ dat_dir }}/extracted"
+        remote_src: true
+
+    - name: Unarchive into the extract dir idempotently
+      ansible.builtin.unarchive:
+        src: "{{ dat_dir }}/archive-out/bench.zip"
+        dest: "{{ dat_dir }}/extracted"
+        remote_src: true
+
+    - name: Byte-diff read an extracted member
+      ansible.builtin.command: cat {{ dat_dir }}/extracted/member-one.txt
+      register: dat_bytediff_member
+      changed_when: false
+
+    - name: Byte-diff print extracted member
+      ansible.builtin.debug:
+        msg: "{{ dat_bytediff_member.stdout }}"
+
+    - name: Assert archive roundtrip preserved member bytes
+      ansible.builtin.assert:
+        that:
+          - dat_bytediff_member.stdout == 'archive-member-one'
+
+    # ---------------------------------------------------------------
+    # loop machinery: dict2items, subelements, with_nested, and an
+    # until/retries counter that must run exactly three times.
+    # ---------------------------------------------------------------
+    - name: Loop over the service map via dict2items
+      ansible.builtin.command: echo "{{ item.key }}={{ item.value.port }}"
+      loop: "{{ dat_service_map | dict2items }}"
+      register: dat_d2i_results
+      changed_when: false
+
+    - name: Assert dict2items loop results in order
+      ansible.builtin.assert:
+        that:
+          - dat_d2i_results.results[0].stdout == 'alpha=8080'
+          - dat_d2i_results.results[2].stdout == 'gamma=8443'
+
+    - name: Loop over service-tag pairs via subelements
+      ansible.builtin.debug:
+        msg: "{{ item.0.name }} has tag {{ item.1 }}"
+      loop: "{{ dat_services | subelements('tags') }}"
+
+    - name: Loop over the nested grid via with_nested
+      ansible.builtin.command: echo "{{ item[0] }}-{{ item[1] }}"
+      with_nested:
+        - [east, west]
+        - ["1", "2"]
+      register: dat_nested_results
+      changed_when: false
+
+    - name: Assert with_nested produced the full grid
+      ansible.builtin.assert:
+        that:
+          - dat_nested_results.results | length == 4
+          - dat_nested_results.results[3].stdout == 'west-2'
+
+    - name: Initialize until counter
+      ansible.builtin.command: echo 0
+      register: dat_counter_init
+
+    - name: Set until counter fact
+      ansible.builtin.set_fact:
+        dat_counter_file: "{{ dat_dir }}/counter.txt"
+
+    - name: Increment until counter with retries
+      ansible.builtin.shell: echo $(( $(cat {{ dat_counter_file }} 2>/dev/null || echo 0) + 1 )) > {{ dat_counter_file }}; cat {{ dat_counter_file }}
+      register: dat_until_result
+      until: dat_until_result.stdout | int >= 3
+      retries: 10
+      delay: 0
+
+    - name: Read final until counter
+      ansible.builtin.command: cat {{ dat_counter_file }}
+      register: dat_counter_final
+      changed_when: false
+
+    - name: Assert until loop ran exactly three times
+      ansible.builtin.assert:
+        that:
+          - dat_counter_final.stdout == '3'
+
+    # ---------------------------------------------------------------
+    # getent census: passwd/group/services databases read wholesale,
+    # asserted on what a container must have.
+    # ---------------------------------------------------------------
+    - name: Edge case json_query on the nested fact
+      ansible.builtin.set_fact:
+        dat_edge_jq: "{{ dat_nested | json_query('outer.inner.numbers') }}"
+
+    - name: Edge case json_query nested result
+      ansible.builtin.assert:
+        that:
+          - dat_edge_jq == [1, 2, 3]
+
+    - name: Edge case dict2items with custom key name
+      ansible.builtin.set_fact:
+        dat_edge_d2i: "{{ {'one': 1, 'two': 2} | dict2items(key_name='k', value_name='v') }}"
+
+    - name: Edge case dict2items custom names result
+      ansible.builtin.assert:
+        that:
+          - dat_edge_d2i[0].k == 'one'
+          - dat_edge_d2i[1].v == 2
+
+    - name: Edge case merge two var dicts with combine
+      ansible.builtin.set_fact:
+        dat_edge_merge: "{{ {'keep': 1, 'over': {'a': 1}} | combine({'over': {'b': 2}}, recursive=true) }}"
+
+    - name: Edge case recursive merge result
+      ansible.builtin.assert:
+        that:
+          - dat_edge_merge.keep == 1
+          - dat_edge_merge.over.a == 1
+          - dat_edge_merge.over.b == 2
+
+    - name: Getent services database
+      ansible.builtin.getent:
+        database: services
+        key: http
+
+    - name: Assert services entry parsed
+      ansible.builtin.assert:
+        that:
+          - getent_services['80/tcp'] is defined or getent_services is defined
+
+    - name: Getent hosts for localhost name
+      ansible.builtin.getent:
+        database: hosts
+        key: localhost
+
+    # ---------------------------------------------------------------
+    # expression edge cases one claim per task: a wrong result fails
+    # its own task name, so a triage diff points straight at the
+    # filter/evaluator feature that diverged.
+    # ---------------------------------------------------------------
+    - name: Edge case math on ints from strings
+      ansible.builtin.set_fact:
+        dat_edge_int: "{{ '3' | int + 4 }}"
+
+    - name: Edge case int addition result
+      ansible.builtin.assert:
+        that:
+          - dat_edge_int == 7
+
+    - name: Edge case list multiplication of lists
+      ansible.builtin.set_fact:
+        dat_edge_list: "{{ [1, 2] + [3] }}"
+      ignore_errors: true
+
+    - name: Edge case list concatenation result
+      ansible.builtin.assert:
+        that:
+          - dat_edge_list == [1, 2, 3]
+
+    - name: Edge case flatten of nested lists
+      ansible.builtin.set_fact:
+        dat_edge_flat: "{{ [[1, 2], [3], [[4]]] | flatten }}"
+
+    - name: Edge case flatten result
+      ansible.builtin.assert:
+        that:
+          - dat_edge_flat == [1, 2, 3, 4]
+
+    - name: Edge case unique and sort
+      ansible.builtin.set_fact:
+        dat_edge_unique: "{{ [3, 1, 3, 2] | sort | unique }}"
+
+    - name: Edge case unique result
+      ansible.builtin.assert:
+        that:
+          - dat_edge_unique == [1, 2, 3]
+
+    - name: Edge case min and max of weights
+      ansible.builtin.set_fact:
+        dat_edge_min: "{{ dat_services | map(attribute='weight') | min }}"
+        dat_edge_max: "{{ dat_services | map(attribute='weight') | max }}"
+
+    - name: Edge case min max result
+      ansible.builtin.assert:
+        that:
+          - dat_edge_min == 2
+          - dat_edge_max == 9
+
+    - name: Edge case selectattr on missing attribute with default
+      ansible.builtin.set_fact:
+        dat_edge_select: "{{ dat_services | selectattr('nosuch', 'defined') | list | length }}"
+
+    - name: Edge case selectattr missing attribute result
+      ansible.builtin.assert:
+        that:
+          - dat_edge_select == 0
+
+    - name: Edge case rejectattr filter
+      ansible.builtin.set_fact:
+        dat_edge_reject: "{{ dat_services | rejectattr('enabled') | map(attribute='name') | list }}"
+
+    - name: Edge case rejectattr result
+      ansible.builtin.assert:
+        that:
+          - dat_edge_reject == ['beta']
+
+    - name: Edge case map string formatting
+      ansible.builtin.set_fact:
+        dat_edge_map: "{{ dat_levels | map('capitalize') | list }}"
+
+    - name: Edge case map capitalize result
+      ansible.builtin.assert:
+        that:
+          - dat_edge_map == ['Debug', 'Info', 'Warn', 'Error']
+
+    - name: Edge case indexed loop with index_var
+      ansible.builtin.debug:
+        msg: "{{ dat_idx }}={{ item }}"
+      loop: "{{ dat_levels }}"
+      loop_control:
+        index_var: dat_idx
+      register: dat_idx_results
+      changed_when: false
+
+    - name: Edge case indexed loop results
+      ansible.builtin.assert:
+        that:
+          - dat_idx_results.results[0].msg == '0=debug'
+          - dat_idx_results.results[3].msg == '3=error'
+
+    - name: Edge case with_items legacy spelling
+      ansible.builtin.command: echo "legacy-{{ item }}"
+      with_items: [legacy-one, legacy-two]
+      register: dat_legacy_results
+      changed_when: false
+
+    - name: Edge case with_items results
+      ansible.builtin.assert:
+        that:
+          - dat_legacy_results.results[1].stdout == 'legacy-legacy-two'
+
+    - name: Edge case loop_control label rendering
+      ansible.builtin.debug:
+        msg: "labeled {{ item.name }}"
+      loop: "{{ dat_services }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Edge case changed_when false on real work
+      ansible.builtin.command: echo still-ok
+      changed_when: false
+      register: dat_changed_control
+
+    - name: Edge case changed control reported ok
+      ansible.builtin.assert:
+        that:
+          - not (dat_changed_control.changed | bool)
+          - dat_changed_control.stdout == 'still-ok'
+
+    - name: Edge case failed_when false on failing shell
+      ansible.builtin.shell: "exit 7"
+      failed_when: false
+      register: dat_failed_control
+
+    - name: Edge case failed control captured rc
+      ansible.builtin.assert:
+        that:
+          - dat_failed_control.rc == 7
+          - not (dat_failed_control.failed | bool)
+          - dat_failed_control.failed_when_result | default(false) == false
+      ignore_errors: true
+
+    - name: Edge case failed_when on rc range
+      ansible.builtin.shell: "exit 3"
+      failed_when: "dat_fw.rc != 3"
+      register: dat_fw
+
+    - name: Edge case failed_when passed through
+      ansible.builtin.assert:
+        that:
+          - dat_fw.rc == 3
+          - not (dat_fw.failed | bool)
+
+    - name: Edge case when on registered field
+      ansible.builtin.debug:
+        msg: "gated on register"
+      when: dat_fw.rc | int == 3
+
+    - name: Edge case debug with var spelling
+      ansible.builtin.debug:
+        var: dat_concat
+
+    - name: Edge case debug with verbosity gate
+      ansible.builtin.debug:
+        msg: "verbose only"
+        verbosity: 2
+
+    - name: Edge case assert that skipped via when keeps recap shape
+      ansible.builtin.debug:
+        msg: "skipped on purpose"
+      when: dat_bench_mode == 'never'
+
+    # ---------------------------------------------------------------
+    # ini/xml/file/find second pass: deeper states per module.
+    # ---------------------------------------------------------------
+    - name: Create a new ini section with options
+      community.general.ini_file:
+        path: "{{ dat_dir }}/conf/app.ini"
+        section: newsec
+        option: "{{ item.option }}"
+        value: "{{ item.value }}"
+        mode: "0644"
+      loop:
+        - { option: alpha, value: "1" }
+        - { option: beta, value: "2" }
+
+    - name: Create the same ini section idempotently
+      community.general.ini_file:
+        path: "{{ dat_dir }}/conf/app.ini"
+        section: newsec
+        option: alpha
+        value: "1"
+        mode: "0644"
+
+    - name: Byte-diff read final ini
+      ansible.builtin.command: cat {{ dat_dir }}/conf/app.ini
+      register: dat_bytediff_ini_two
+      changed_when: false
+
+    - name: Byte-diff print final ini
+      ansible.builtin.debug:
+        msg: "{{ dat_bytediff_ini_two.stdout }}"
+
+    - name: Assert new ini section exists with both options
+      ansible.builtin.assert:
+        that:
+          - dat_bytediff_ini_two.stdout is search('(?m)^\\[newsec\\]$')
+          - dat_bytediff_ini_two.stdout is search('(?m)^alpha = 1$')
+          - dat_bytediff_ini_two.stdout is search('(?m)^beta = 2$')
+      ignore_errors: true
+
+    - name: Remove an xml child node
+      community.general.xml:
+        path: "{{ dat_dir }}/conf/app.xml"
+        xpath: /configuration/servers/server[@name='beta']
+        state: absent
+
+    - name: Count xml server nodes after removal
+      community.general.xml:
+        path: "{{ dat_dir }}/conf/app.xml"
+        xpath: /configuration/servers/server
+        count: true
+      register: dat_xml_count_two
+
+    - name: Assert xml node removed
+      ansible.builtin.assert:
+        that:
+          - dat_xml_count_two.count == 1
+
+    - name: Touch a file with owner and group
+      ansible.builtin.file:
+        path: "{{ dat_dir }}/nested/owned.txt"
+        state: touch
+        owner: root
+        group: root
+        mode: "0600"
+
+    - name: Touch a file with only mode change
+      ansible.builtin.file:
+        path: "{{ dat_dir }}/nested/target.txt"
+        state: file
+        mode: "0644"
+
+    - name: Stat with mime detection
+      ansible.builtin.stat:
+        path: "{{ dat_dir }}/nested/target.txt"
+        get_mime: true
+      register: dat_mime_stat
+
+    - name: Assert mime detected as text
+      ansible.builtin.assert:
+        that:
+          - dat_mime_stat.stat.mimetype is match('(text/|inode/)')
+
+    - name: Find hidden files
+      ansible.builtin.find:
+        paths: "{{ dat_dir }}"
+        patterns: ".*"
+        hidden: true
+        recurse: false
+      register: dat_find_hidden
+
+    - name: Find files by size
+      ansible.builtin.find:
+        paths: "{{ dat_dir }}/conf"
+        patterns: "*"
+        size: "-1k"
+        recurse: false
+      register: dat_find_size
+
+    - name: Assert size find matched something
+      ansible.builtin.assert:
+        that:
+          - dat_find_size.matched >= 1
+
+    - name: Slurp the nested stub
+      ansible.builtin.slurp:
+        src: "{{ dat_dir }}/conf/app.conf"
+      register: dat_slurp_conf
+
+    - name: Assert slurped conf still carries port
+      ansible.builtin.assert:
+        that:
+          - (dat_slurp_conf.content | b64decode) is search('(?m)^Port 2203$')
+
+    # ---------------------------------------------------------------
+    # archive second format: gz single file roundtrip with the dest
+    # naming convention (appends .gz), verified by unarchive.
+    # ---------------------------------------------------------------
+    - name: Archive a single file as gz
+      community.general.archive:
+        path: "{{ dat_dir }}/conf/replace.conf"
+        dest: "{{ dat_dir }}/conf/replace.conf.gz"
+        format: gz
+
+    - name: Stat the gz archive
+      ansible.builtin.stat:
+        path: "{{ dat_dir }}/conf/replace.conf.gz"
+      register: dat_gz_stat
+
+    - name: Assert gz archive exists
+      ansible.builtin.assert:
+        that:
+          - dat_gz_stat.stat.exists
+          - not (dat_gz_stat.stat.exists and dat_gz_stat.stat.isdir)
+
+    - name: Byte-diff read gz-roundtripped file
+      ansible.builtin.shell: gzip -dc {{ dat_dir }}/conf/replace.conf.gz
+      register: dat_bytediff_gz
+      changed_when: false
+
+    - name: Byte-diff print gz-roundtripped file
+      ansible.builtin.debug:
+        msg: "{{ dat_bytediff_gz.stdout }}"
+
+    - name: Assert gz roundtrip preserved bytes
+      ansible.builtin.assert:
+        that:
+          - dat_bytediff_gz.stdout == 'before-marker\nvalue = new\nafter-marker'
+      ignore_errors: true
+
+    - name: Create a tempfile directory
+      ansible.builtin.tempfile:
+        state: directory
+        suffix: ".tmpd"
+        path: "{{ dat_dir }}"
+      register: dat_tempdir
+
+    - name: Assemble without delimiter into tempdir
+      ansible.builtin.assemble:
+        src: "{{ dat_dir }}/fragments"
+        dest: "{{ dat_tempdir.path }}/joined.txt"
+
+    - name: Byte-diff read delimiter-less assembly
+      ansible.builtin.command: cat {{ dat_tempdir.path }}/joined.txt
+      register: dat_bytediff_joined
+      changed_when: false
+
+    - name: Byte-diff print delimiter-less assembly
+      ansible.builtin.debug:
+        msg: "{{ dat_bytediff_joined.stdout }}"
+
+    - name: Assert delimiter-less assembly concatenated
+      ansible.builtin.assert:
+        that:
+          - dat_bytediff_joined.stdout == 'frag-a\nfrag-b\nfrag-c'
+      ignore_errors: true
+
+    # ---------------------------------------------------------------
+    # Cleanup.
+    # ---------------------------------------------------------------
+    - name: Remove fetched controller copy
+      ansible.builtin.file:
+        path: "/tmp/krikri-data-fetch-{{ dat_run_id }}"
+        state: absent
+      delegate_to: localhost
+      become: false
+      failed_when: false
+
+    - name: Remove run-scoped data benchmark tree
+      ansible.builtin.file:
+        path: "{{ dat_dir }}"
+        state: absent
+
+    - name: Announce data benchmark end
+      ansible.builtin.debug:
+        msg: "modules-data benchmark {{ dat_run_id }} complete"

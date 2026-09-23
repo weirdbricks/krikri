@@ -1,0 +1,12 @@
+{# m4-report.j2 - filter-chain torture render, deterministic output #}
+# services: {{ dat_services | length }}
+{% for svc in dat_services | selectattr('enabled') | sort(attribute='weight') %}
+enabled: {{ svc.name }} (weight {{ '%02d' | format(svc.weight) }}, tags {{ svc.tags | join('+') }})
+{% endfor %}
+heaviest: {{ (dat_services | sort(attribute='weight') | last).name }}
+levels upper: {{ dat_levels | map('upper') | join(',') }}
+quotas: {% for key in dat_quotas | dict2items | sort(attribute='key') %}{{ key.key }}={{ key.value }} {% endfor %}
+ports: {{ dat_service_map | dict2items | map(attribute='value.port') | list | join(':') }}
+versioned: {{ 'krikri-data-2026' | regex_replace('-(\d+)$', '-v\\1') | upper }}
+seeded random: {{ 60 | random(seed=42) }}
+underscores: {{ 'krikri-data-bench' | replace('-', '_') }}

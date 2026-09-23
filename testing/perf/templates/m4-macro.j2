@@ -1,0 +1,12 @@
+{# m4-macro.j2 - macro + namespace counter render #}
+{% macro render_service(svc) -%}
+{{ svc.name }}@{{ svc.port }}
+{%- endmacro %}
+{% set ns = namespace(count=0) %}
+# macros render each service:
+{% for entry in dat_service_map | dict2items(key_name='service', value_name='spec') %}
+{% set spec = {'name': entry.service, 'port': entry.spec.port} %}
+{{ render_service(spec) }}
+{% set ns.count = ns.count + 1 %}
+{% endfor %}
+# count={{ ns.count }}

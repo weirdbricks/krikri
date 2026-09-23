@@ -1,0 +1,3 @@
+---
+# Directory-included vars file (excluded by the files_matching probe).
+m4_beta_v: beta-value
