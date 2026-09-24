@@ -491,8 +491,9 @@ describe "krikri-playbook CLI (--check mode)" do
     output.should_not contain("should never run")
     output.should_not contain("TASK [never reached by any host]")
     # Only the executing host shows a failure line; the other two get
-    # nothing of their own for this task.
-    output.scan(/failed: \[node/).size.should eq(1)
+    # nothing of their own for this task. A non-loop failed task displays
+    # as real ansible-core does: `fatal: [host]: FAILED! => {json}`.
+    output.scan(/fatal: \[node/).size.should eq(1)
     # Recap: exactly one failure, spread over the three hosts.
     output.should contain("failed=1")
     output.should_not contain("failed=2")

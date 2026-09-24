@@ -80,7 +80,22 @@ module Krikri
     end
 
     def self.finished?(status : JSON::Any) : Bool
-      status["finished"]?.try(&.as_i?) == 1
+      # The remote async launch runs the module binary directly and
+      # collects its stdout into the status file via tmp+mv - the file's
+      # APPEARANCE is the completion signal, so a status WITHOUT a
+      # "finished" key is the FINAL module result (real Ansible's own
+      # async_wrapper writes started/finished around the module result;
+      # the mv'd module output legitimately carries no such key). Only
+      # the explicit stub ({"started": 1, "finished": 0, ...} written
+      # synchronously at launch) means "still running". Before the stub
+      # existed, "file absent" meant running and this key check was the
+      # only signal; now: explicit 0 = running, absent or 1 = finished.
+      case finished = status["finished"]?.try(&.raw)
+      when Nil    then true
+      when Int64  then finished == 1
+      when Bool   then finished
+      else             true
+      end
     end
 
     # Deletes one job's status + config files (real Ansible's own

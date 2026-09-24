@@ -67,8 +67,18 @@ module Krikri
       msg = status["msg"]?.try(&.as_s) || (finished ? "job finished" : "job is still running")
 
       result = PluginResult.new(changed: finished && job_changed, failed: finished && job_failed, msg: msg)
+      # Normalize started/finished into the RESULT the way real
+      # async_status.py's own exit_json does (its output always carries
+      # both as 0/1 - the mv'd module result for a finished job carries
+      # neither). The until:/retries machinery keys off
+      # `poll_result.finished`, so a finished poll that omits the key
+      # would retry until retries exhausted (found live:
+      # modules_systems.yml's async probe polled a finished job 30
+      # times, then reported a result with no finished key at all).
+      result.extra["started"] = JSON::Any.new(1_i64)
+      result.extra["finished"] = JSON::Any.new(finished ? 1_i64 : 0_i64)
       status.as_h.each do |key, value|
-        next if ["changed", "failed", "msg"].includes?(key)
+        next if ["changed", "failed", "msg", "started", "finished"].includes?(key)
         result.extra[key] = value
       end
       result

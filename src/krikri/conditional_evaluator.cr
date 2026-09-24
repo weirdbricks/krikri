@@ -1259,14 +1259,31 @@ module Krikri
 
       left_json = dict_operand_json(left_expr, vars, raise_undefined)
       right_json = dict_operand_json(right_expr, vars, raise_undefined)
-      return nil if left_json.nil? || right_json.nil?
+      return crinja_dict_compare(left_expr, right_expr, operator, vars) if left_json.nil? || right_json.nil?
 
       begin
         equal = JSON.parse(left_json) == JSON.parse(right_json)
       rescue JSON::ParseException
-        return nil
+        return crinja_dict_compare(left_expr, right_expr, operator, vars)
       end
       operator == "==" ? equal : !equal
+    end
+
+    # Last resort for a dict-shaped comparison the canonical-JSON path
+    # couldn't settle - typically a filter-chain operand (`x | combine(
+    # {...})`) whose dict RESULT renders as a Python-style repr
+    # (`{'a': 1, 'b': 2}`, single quotes) rather than valid JSON, so the
+    # side can't be re-parsed here and the caller would otherwise fall
+    # through to the generic path, whose bare `{"a": 1, "b": 2}` literal
+    # lookup then wrongly raises "'{...}' is undefined" (real bug found
+    # live via modules_data.yml's shapers assert). Real Jinja evaluates
+    # `X == Y` in a single pass with full dict/filter semantics, so
+    # delegating the whole comparison to Crinja judges exactly the cases
+    # this evaluator's flat value model can't.
+    private def self.crinja_dict_compare(left_expr : String, right_expr : String, operator : String, vars : Hash(String, JSON::Any)) : Bool
+      rendered = VariableSubstitutor::CrinjaRenderer.new(vars)
+        .render("{{ 'True' if (#{left_expr} #{operator} #{right_expr}) else 'False' }}")
+      rendered.strip == "True"
     end
 
     # Whether an operand expression is syntactically a dict literal

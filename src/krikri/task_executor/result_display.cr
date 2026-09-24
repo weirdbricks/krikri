@@ -64,7 +64,7 @@ module Krikri
 
       # Status indicator
       status = if failed
-                 "fatal".colorize(:red).bold
+                 "failed".colorize(:red).bold
                elsif changed
                  "changed".colorize(:yellow)
                else
@@ -85,9 +85,19 @@ module Krikri
       # fatal-vs-failed on the one failing task in the whole play).
       # Loop-item failures keep the loop display below unchanged - real's
       # loop-failure line uses a different shape again
-      # (`failed: [host] (item=X) => {json}`).
-      if failed
-        puts "fatal: [#{host_label}]#{suffix}: FAILED! => #{ResultDisplay.python_json_dump(result)}"
+      # (`failed: [host] (item=X) => {json}`), and the engine's own
+      # loop display (`failed: [host] => (item=X)` plus detail lines) is
+      # a documented, deliberately-not-yet-matched cosmetic gap - so only
+      # the NON-loop (no item_label) case takes the single-line dump.
+      if failed && item_label.nil?
+        puts "fatal: [#{host_label}]: FAILED! => #{ResultDisplay.python_json_dump(result)}"
+        # Real ansible-playbook prints a bare "...ignoring" line right
+        # after a failed task's output when ignore_errors: caught it
+        # (live-verified against a real run) - the single-line dump above
+        # replaced the old multi-line failure display, which carried this
+        # suffix in its now-unreachable tail, so it has to be re-emitted
+        # here or ignored non-loop failures silently lose it.
+        puts "...ignoring".colorize(:red) if ignore_errors
         return
       end
 
