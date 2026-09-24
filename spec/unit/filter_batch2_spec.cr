@@ -73,26 +73,30 @@ describe "filter batch 2 (P2.8-P2.14, P2.15 verification)" do
     end
   end
 
-  describe "strftime (P2.10)" do
-    it "formats a to_datetime result" do
-      filter_batch2_crinja_render("{{ ts | to_datetime('%Y-%m-%d %H:%M:%S') | strftime('%Y/%m/%d %H:%M') }}", {"ts" => "2024-03-05 07:08:09"}).should eq("2024/03/05 07:08")
+  describe "strftime (P2.10, ansible-core 2.19 signature)" do
+    # ansible-core 2.19 changed strftime's argument order: the PIPED
+    # value is the FORMAT string and the epoch seconds are the first
+    # positional argument (ansible-core source:
+    # `def strftime(string_format, second=None, utc=False)`,
+    # live-verified against 2.19.11). The pre-2.19 idiom
+    # `ts | to_datetime | strftime('%H:%M')` - piped datetime, format as
+    # the argument - now FAILS upstream ("Invalid value for epoch
+    # value"); these specs pin the 2.19 shape, including that failure.
+    it "formats epoch 0 in UTC with the format piped" do
+      filter_batch2_crinja_render("{{ '%Y-%m-%d %H:%M:%S' | strftime(0, 'UTC') }}").should eq("1970-01-01 00:00:00")
     end
 
-    it "formats a raw epoch integer and epoch string" do
-      filter_batch2_crinja_render("{{ 1700000000 | strftime('%Y-%m-%d') }}").should eq("2023-11-14")
-      filter_batch2_crinja_render("{{ '1700000000' | strftime('%Y-%m-%d') }}").should eq("2023-11-14")
+    it "formats an epoch integer and an epoch string" do
+      filter_batch2_crinja_render("{{ '%Y-%m-%d' | strftime(1700000000) }}").should eq("2023-11-14")
+      filter_batch2_crinja_render("{{ '%Y-%m-%d' | strftime('1700000000') }}").should eq("2023-11-14")
     end
 
-    it "honors the default format (Python %Y-%m-%d %H:%M:%S subset)" do
-      filter_batch2_crinja_render("{{ '2024-01-02 03:04:05' | to_datetime | strftime }}").should eq("2024-01-02 03:04:05")
+    it "rejects a non-string piped value (the old to_datetime idiom)" do
+      filter_batch2_crinja_render("{{ '2024-03-05 07:08:09' | to_datetime | strftime('%H:%M') }}").should contain("ERR")
     end
 
-    it "uses the documented %B/%e/%H directive subset" do
-      filter_batch2_crinja_render("{{ '2024-03-05 07:08:09' | to_datetime | strftime('%B %e, %H hours') }}").should eq("March  5, 07 hours")
-    end
-
-    it "rejects non-datetime targets" do
-      filter_batch2_crinja_render("{{ 'not-a-date' | strftime('%Y') }}").should contain("ERR")
+    it "rejects a non-numeric epoch argument" do
+      filter_batch2_crinja_render("{{ '%Y' | strftime('not-an-epoch') }}").should contain("ERR")
     end
   end
 
@@ -165,10 +169,8 @@ describe "filter batch 2 (P2.8-P2.14, P2.15 verification)" do
   # ---- Cross-engine parity: pure Crinja vs krikri-playbook's CrinjaRenderer ----
   describe "parity: pure Crinja render vs CrinjaRenderer" do
     it "strftime agrees between engines" do
-      v = Hash(String, JSON::Any).new
-      v["ts"] = JSON::Any.new("2024-03-05 07:08:09")
-      filter_batch2_crinja_render("{{ ts | to_datetime('%Y-%m-%d %H:%M:%S') | strftime('%Y/%m/%d %H:%M') }}", v)
-        .should eq(renderer_render("{{ ts | to_datetime('%Y-%m-%d %H:%M:%S') | strftime('%Y/%m/%d %H:%M') }}", v))
+      filter_batch2_crinja_render("{{ '%Y-%m-%d %H:%M:%S' | strftime(0, 'UTC') }}")
+        .should eq(renderer_render("{{ '%Y-%m-%d %H:%M:%S' | strftime(0, 'UTC') }}", Hash(String, JSON::Any).new))
     end
 
     it "subelements agrees between engines" do

@@ -860,7 +860,8 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
   it "renders to_nice_json, sorted keys by default" do
     v = Hash(String, JSON::Any).new
     renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
-    renderer.render(%({{ {"b": 1, "a": 2} | to_nice_json }})).should eq(%({\n  "a": 2,\n  "b": 1\n}))
+    # Real to_nice_json is json.dumps(indent=4, sort_keys=True) - 4-space.
+    renderer.render(%({{ {"b": 1, "a": 2} | to_nice_json }})).should eq(%({\n    "a": 2,\n    "b": 1\n}))
   end
 
   it "human_readable/human_to_bytes round-trip a byte count" do

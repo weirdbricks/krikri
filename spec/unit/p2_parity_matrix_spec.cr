@@ -124,7 +124,15 @@ describe "P2.16 cross-engine parity matrix" do
     "filter meta-test (unknown name)"          => {"{{ text is filter('nosuchfilter') }}", "False"},
     "test meta-test (registered name)"         => {"{{ text is test('defined') }}", "True"},
     # ---- filters registered by the P2 batches (P2.8-P2.14) ----
-    "strftime after to_datetime" => {"{{ ts | to_datetime('%Y-%m-%d %H:%M:%S') | strftime('%Y/%m/%d') }}", "2024/03/05"},
+    # "strftime after to_datetime" left the matrix: ansible-core 2.19
+    # changed strftime's argument order (piped value = FORMAT, epoch =
+    # first argument), so the old `ts | to_datetime | strftime('%H:%M')`
+    # idiom now FAILS upstream ("Invalid value for epoch value",
+    # live-verified against 2.19.11). The two engines' error CHANNELS
+    # format that failure differently (pure Crinja appends its template
+    # excerpt), so a byte-equality matrix entry can't hold; the 2.19
+    # semantics are pinned in filter_batch2_spec's strftime block
+    # instead.
     "subelements result length"  => {"{{ users | subelements('keys') | length }}", "3"},
     "count alias of length"      => {"{{ list | count }}", "3"},
     "d alias of default"         => {"{{ missing_var | d('fallback') }}", "fallback"},

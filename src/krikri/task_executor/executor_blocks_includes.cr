@@ -342,6 +342,14 @@ module Krikri
       # here whatsoever - role_vars_dir stays nil, include_file_dir
       # stays nil, leaving only the process's own irrelevant Dir.current.
       task.role_path.try { |role_dir| roots << File.join(role_dir, "tasks") }
+      # The playbook dir itself - a play-level include_vars with a bare
+      # relative path (`file: vars/m4-data.yml` in a play that lives in
+      # testing/perf/) resolves against the playbook's own directory in
+      # real Ansible, but this engine's roots had no playbook-dir entry,
+      # so the include failed with "file not found: vars/m4-data.yml"
+      # whenever krikri-playbook ran from a different cwd (found live
+      # via modules_data.yml).
+      roots << @playbook_dir
       roots << Dir.current
 
       first_existing(roots, candidate)

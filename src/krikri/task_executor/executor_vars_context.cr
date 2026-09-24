@@ -1740,6 +1740,16 @@ module Krikri
         candidate = File.join(role_dir, local_path)
         return File.expand_path(candidate) if File.exists?(candidate)
       end
+      # Real Ansible's script action plugin resolves the src against the
+      # playbook's own basedir too (`files/` next to the playbook being
+      # the common layout) - not just a role's files/ dir and the
+      # controller's cwd. Running krikri-playbook from anywhere other
+      # than the playbook's own directory left a playbook-relative
+      # `files/...` src unresolvable ("the script files/m4-script.sh
+      # does not exist on the target (transfer failed?)") where real
+      # ansible-playbook found it (found live via modules_systems.yml).
+      candidate = File.join(@playbook_dir, local_path)
+      return File.expand_path(candidate) if File.exists?(candidate)
       return File.expand_path(local_path) if File.exists?(local_path)
       nil
     end

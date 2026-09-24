@@ -94,6 +94,7 @@ module Krikri
         to_uuid symmetric_difference combinations permutations
         rekey_on_member extract from_yaml_all vault unvault ternary
         intersect difference lists_mergeby list_mergeby random map_format
+        strftime
         ipaddr ipwrap ipv4 ipv6 ipsubnet ipmath next_nth_usable
         previous_nth_usable network_in_network network_in_usable
         ip4_hex
@@ -737,6 +738,71 @@ module Krikri
             "lists_mergeby", value, crinja_kwargs,
             positional_args.map { |arg_expr| resolve_expression(arg_expr) } + [JSON::Any.new(merge_key)],
           )
+        when "strftime"
+          # strftime(second=None, utc=False) - real ansible-core's
+          # strftime filter takes the PIPED value as the FORMAT string
+          # and the epoch seconds as the first positional argument
+          # (ansible-core source: `def strftime(string_format, second=None,
+          # utc=False)`). Live-verified against 2.19.11:
+          #   `'\%Y-\%m-\%d' | strftime(0, 'UTC')` -> "1970-01-01"
+          # and the pre-2.19 idiom `ts | to_datetime | strftime('%H:%M')`
+          # (piped datetime, format as the argument) now FAILS upstream
+          # with "Invalid value for epoch value" - so the same shape
+          # fails the task here too rather than rendering with the old
+          # piped-as-epoch convention. No argument means "now" on both
+          # engines (nondeterministic by design; benchmark plays that
+          # need byte-stable output always pass an epoch).
+          # Formatting uses Crystal's Time#to_s directive subset - the
+          # same documented subset jinja_filters.cr's registration spells
+          # out (Python-only %-d/%-m/%f render literally, they don't
+          # raise).
+          positional, kwargs = split_positional_and_kwargs(filter_args, ["utc"])
+          epoch_arg = positional[0]?
+          utc_arg = positional[1]? || kwargs["utc"]?
+          # Real order of operations: the epoch argument is validated
+          # FIRST (float(second) inside strftime()), so the old
+          # `ts | to_datetime | strftime('%H:%M')` idiom - piped datetime,
+          # format as the epoch argument - fails with "Invalid value for
+          # epoch value (%H:%M)" (live-verified against 2.19.11), NOT an
+          # error about the format. A non-string piped value with no
+          # epoch argument only fails later inside time.strftime().
+          second_str = nil
+          unless epoch_arg.nil? || epoch_arg.raw == nil
+            second_str = as_string(epoch_arg)
+            seconds = second_str.to_i64? || second_str.to_f64?.try(&.to_i64)
+            raise "strftime: Invalid value for epoch value (#{second_str})" if seconds.nil?
+          end
+          unless value.raw.is_a?(String)
+            raise "strftime: string_format must be a string (#{as_string(value).inspect})"
+          end
+          fmt = value.as_s
+          seconds = second_str ? (second_str.to_i64? || second_str.to_f64?.try(&.to_i64)) : nil
+          # Python truthiness for the utc flag: anything but nil/false/0
+          # /empty-string is truthy (real `if utc:` - so the literal
+          # string 'UTC' IS truthy, and so is the string 'false').
+          utc_truthy = case raw = utc_arg.try(&.raw)
+                       when Nil      then false
+                       when Bool     then raw
+                       when Int64    then raw != 0
+                       when Float64  then raw != 0.0
+                       when String   then !raw.empty?
+                       else               true
+                       end
+          time = nil
+          if epoch_arg.nil? || epoch_arg.raw == nil
+            time = utc_truthy ? Time.utc : Time.local
+          else
+            epoch_txt = as_string(epoch_arg)
+            seconds = epoch_txt.to_i64?
+            if seconds.nil?
+              if float_val = epoch_txt.to_f64?
+                seconds = float_val.to_i64
+              end
+            end
+            raise "strftime: Invalid value for epoch value (#{epoch_txt})" if seconds.nil?
+            time = utc_truthy ? Time.unix(seconds) : Time.unix(seconds).to_local
+          end
+          JSON::Any.new(time.to_s(fmt))
         when "random"
           # Real Jinja2's do_random: an int operand means "random int less
           # than this" (Python's randrange), a sequence operand means
@@ -1171,13 +1237,15 @@ module Krikri
         when "to_nice_json"
           # to_nice_json(indent=4, sort_keys=True) - real Ansible filter,
           # a pretty-printed JSON dump (the mirror of to_nice_yaml).
-          # Crystal's own JSON::Any#to_pretty_json (2-space indent) is
-          # used rather than hand-rolling a 4-space emitter - narrower
-          # than real Ansible's exact byte output but structurally
-          # correct, same scope limit to_nice_yaml's own indent= already
-          # documents.
+          # Real to_nice_json is json.dumps(indent=4, sort_keys=True) -
+          # 4-space indent. Crystal's own JSON::Any#to_pretty_json takes
+          # an indent parameter, so pass 4 spaces rather than hand-rolling
+          # an emitter (the old 2-space output diverged byte-for-byte from
+          # real Ansible, found live via modules_data.yml's nested-report
+          # byte-diff). Same scope limit to_nice_yaml's own indent=
+          # already documents.
           sort_keys = (kw = parse_kwarg_expr(filter_args, "sort_keys")) ? truthy?(kw) : true
-          JSON::Any.new(FilterCore.to_nice_json(strict_render_deferred_leaves(value), sort_keys))
+          JSON::Any.new(JSON.parse(FilterCore.to_nice_json(strict_render_deferred_leaves(value), sort_keys)).to_pretty_json(indent: "    "))
         when "to_nice_yaml"
           # to_nice_yaml(indent=N, sort_keys=True) - real Ansible filter.
           # NOT implemented natively here: the serializer itself is the

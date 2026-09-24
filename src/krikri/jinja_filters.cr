@@ -977,7 +977,7 @@ module Krikri
     Crinja.filter(:to_nice_json) do
       sort_keys = arguments.kwargs["sort_keys"]?.try { |v| JinjaFilters.real_truthy?(v) }
       sort_keys = true if sort_keys.nil?
-      Crinja::Value.new(JSON.parse(VariableSubstitutor::FilterCore.to_nice_json(Krikri::VariableSubstitutor::CrinjaRenderer.crinja_value_to_json_any(target), sort_keys)).to_pretty_json)
+      Crinja::Value.new(JSON.parse(VariableSubstitutor::FilterCore.to_nice_json(Krikri::VariableSubstitutor::CrinjaRenderer.crinja_value_to_json_any(target), sort_keys)).to_pretty_json(indent: "    "))
     end
 
     # `human_readable(isbits=False, unit=None)`/`human_to_bytes(
@@ -2024,21 +2024,44 @@ module Krikri
     # %f) are NOT supported - they render literally rather than raising,
     # so a role using one gets visibly-wrong-but-detectable output; add
     # them here (pre-formatting the Time) if a role ever needs one.
-    Crinja.filter({format: "%Y-%m-%d %H:%M:%S"}, :strftime) do
-      raw = JinjaFilters.unwrap_crinja_raw(target.raw)
-      time = case raw
-             when Time
-               raw
-             when Int32, Int64
-               Time.unix(raw)
-             when String
-               raw.to_i64? ? Time.unix(raw.to_i64) : nil
-             end
-      if time
-        Crinja::Value.new(time.to_s(arguments["format"].to_s))
-      else
-        raise Crinja::RuntimeError.new("strftime: target is not a datetime or epoch value (got #{raw.class})")
+    # strftime(second=None, utc=False) - real ansible-core's strftime
+    # takes the PIPED value as the FORMAT string and the epoch seconds as
+    # the first positional argument (ansible-core source:
+    # `def strftime(string_format, second=None, utc=False)`), live-verified
+    # against 2.19.11. The pre-2.19 idiom `ts | to_datetime |
+    # strftime('%H:%M')` (piped datetime, format as the argument) now
+    # FAILS upstream with "Invalid value for epoch value" - reproduced
+    # here rather than silently keeping the old piped-as-epoch
+    # convention. No argument means "now" (nondeterministic on both
+    # engines; byte-stable benchmark plays always pass an epoch).
+    # Formatting uses Crystal's Time#to_s directive subset - Python-only
+    # directives (%-d, %-m, %f) render literally rather than raising.
+    Crinja.filter({second: Crinja::UNDEFINED, utc: false}, :strftime) do
+      # Real order of operations: the epoch argument is validated FIRST
+      # (float(second) inside strftime()), so the old
+      # `ts | to_datetime | strftime('%H:%M')` idiom - piped datetime,
+      # format as the epoch argument - fails with "Invalid value for
+      # epoch value (%H:%M)" (live-verified against 2.19.11), NOT an
+      # error about the format string.
+      second_arg = arguments["second"]
+      seconds = nil
+      unless second_arg.undefined? || second_arg.raw.nil?
+        second_raw = JinjaFilters.unwrap_crinja_raw(second_arg.raw)
+        seconds =
+          case second_raw
+          when Int32, Int64 then second_raw.to_i64
+          when Float32, Float64 then second_raw.to_f64.to_i64
+          when String
+            second_raw.to_i64? || second_raw.to_f64?.try(&.to_i64)
+          end
+        raise Crinja::RuntimeError.new("strftime: Invalid value for epoch value (#{second_raw.inspect})") unless seconds
       end
+
+      fmt_raw = JinjaFilters.unwrap_crinja_raw(target.raw)
+      raise Crinja::RuntimeError.new("strftime: string_format must be a string (#{fmt_raw.inspect})") unless fmt_raw.is_a?(String)
+
+      time = seconds.nil? ? (arguments["utc"].truthy? ? Time.utc : Time.local) : (arguments["utc"].truthy? ? Time.unix(seconds) : Time.unix(seconds).to_local)
+      Crinja::Value.new(time.to_s(fmt_raw))
     end
 
     # `subelements(obj, 'key', skip_missing=false)` - real Ansible

@@ -16,6 +16,19 @@ module Krikri
       path = expand_tilde(path)
 
       section = @params["section"]?
+      # Real ini_file: `section=None` is SECTIONLESS - the option lines
+      # live above every `[section]` header (real do_ini treats a None
+      # section as "no section in play" and inserts at the top region of
+      # the file), while an EMPTY STRING section is a real (weird) section
+      # named "" and gets a `[]` header. The executor's explicit-null
+      # bookkeeping is what keeps the two apart on the params wire - a
+      # `section: null` task param demotes to "" here (see NONE_SENTINEL
+      # in param_sentinels.cr) and must be lifted back to nil, or the
+      # sectionless spelling sprouted a literal `[]` header after the
+      # last section (found live via modules_data.yml's ini sectionless
+      # probe: real wrote `root-flag = true` above [main], krikri wrote
+      # `[]` + the option after [net]).
+      section = nil if explicit_null_param?("section")
       option = @params["option"]?
       value = @params["value"]?
       values_param = @params["values"]?

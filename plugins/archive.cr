@@ -85,8 +85,8 @@ module Krikri
     def execute : PluginResult
       path_param = @params["path"]?
       dest = @params["dest"]?
-      unless path_param && dest
-        return PluginResult.new(changed: false, failed: true, msg: "missing required argument: path and dest are both required")
+      unless path_param
+        return PluginResult.new(changed: false, failed: true, msg: "missing required argument: path")
       end
 
       format = @params["format"]? || "gz"
@@ -97,8 +97,8 @@ module Krikri
       run(path_param, dest, format)
     end
 
-    private def run(path_param : String, dest : String, format : String) : PluginResult
-      dest = expand_tilde(dest)
+    private def run(path_param : String, dest_param : String?, format : String) : PluginResult
+      dest = dest_param ? expand_tilde(dest_param) : nil
       requested_paths = path_param.split(",").map(&.strip).reject(&.empty?).map { |pth| expand_tilde(pth) }
       requested_excludes = (@params["exclude_path"]? || "").split(",").map(&.strip).reject(&.empty?).map { |pth| expand_tilde(pth) }
       force_archive = true?(@params["force_archive"]?, default: false)
@@ -138,6 +138,29 @@ module Krikri
 
       single_compress = !force_archive && format != "tar" && format != "zip" &&
                         candidate_paths.size == 1 && found_paths.size == 1 && !Dir.exists?(found_paths[0])
+
+      # Real archive's dest-defaulting (ansible-core community.general
+      # source): dest is OPTIONAL. When omitted and the call is a
+      # must-archive shape (force_archive, a glob among the paths, a
+      # directory, or more than one path) the module FAILS with
+      # 'Error, must specify "dest" when archiving multiple files or
+      # trees'; otherwise the destination is derived as
+      # `<first path>.<format>` (real: `self.destination = b'%s.%s' %
+      # (self.paths[0], self.format)`). krikri previously demanded dest
+      # unconditionally ("missing required argument: path and dest are
+      # both required") - found live via modules_data.yml's gz
+      # single-file probe, which real runs fine with no dest.
+      unless dest
+        must_archive = force_archive ||
+                       requested_paths.any? { |pth| pth.includes?('*') || pth.includes?('?') } ||
+                       (candidate_paths.size > 0 && Dir.exists?(candidate_paths[0])) ||
+                       candidate_paths.size > 1
+        if must_archive
+          return PluginResult.new(changed: false, failed: true,
+            msg: "Error, must specify \"dest\" when archiving multiple files or trees")
+        end
+        dest = "#{candidate_paths[0]}.#{format}"
+      end
 
       root = PluginHelpers::ArchivePaths.common_path(candidate_paths)
       members = single_compress ? found_paths : collect_members(found_paths, root, exclusion_patterns)

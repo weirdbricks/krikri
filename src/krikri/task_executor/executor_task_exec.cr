@@ -690,7 +690,32 @@ module Krikri
       return params if PluginManager.local_connection?(host, vars_context)
 
       src = params["src"]?
-      return params unless src && src.starts_with?('/')
+      return params unless src && !src.empty?
+
+      # Real Ansible's copy action plugin resolves a relative src against
+      # the role's files/ dir, the playbook dir, and the task's dir
+      # before anything else. krikri only ever looked at absolute paths
+      # here, so a playbook-relative `src: files/m4-tree/` reached the
+      # plugin binary unresolved and failed on the target with "Source
+      # file not found" (found live via modules_data.yml). Resolve it
+      # against the same roots first_found uses, then rewrite src to the
+      # absolute controller path so every downstream check (existence,
+      # size, vault decrypt, directory staging) sees the real file.
+      if !src.starts_with?('/')
+        roots = [] of String
+        task.role_files_dir.try { |dir| roots << dir }
+        task.include_file_dir.try { |dir| roots << dir }
+        roots << @playbook_dir
+        roots << Dir.current
+        resolved = first_existing(roots, src)
+        if resolved
+          src = File.expand_path(resolved)
+          params = params.dup
+          params["src"] = src
+        else
+          return params
+        end
+      end
 
       # Real Ansible's copy action plugin fails the task on the
       # CONTROLLER before anything runs when src: names a file that

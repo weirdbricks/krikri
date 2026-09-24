@@ -911,8 +911,9 @@ describe Krikri::VariableSubstitutor::FilterEngine do
   end
 
   it "to_nice_json pretty-prints with sorted keys by default" do
+    # Real to_nice_json is json.dumps(indent=4, sort_keys=True) - 4-space.
     result = engine.apply(JSON.parse(%({"b": 1, "a": 2})), "to_nice_json").as_s
-    result.should eq(%({\n  "a": 2,\n  "b": 1\n}))
+    result.should eq(%({\n    "a": 2,\n    "b": 1\n}))
   end
 
   it "human_readable formats a byte count" do

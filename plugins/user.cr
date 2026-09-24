@@ -322,9 +322,13 @@ module Krikri
         if bits = @params["ssh_key_bits"]?.try(&.to_i64?)
           str << " -b " << bits if bits > 0
         end
-        if comment = @params["ssh_key_comment"]?.presence
-          str << " -C " << shell_single_quote(comment)
-        end
+        # Real user.py: `comment='ansible-generated on %s' %
+        # socket.gethostname()` - ssh_key_comment's documented default.
+        # krikri used to omit -C entirely when the param was absent, so
+        # ssh-keygen's own default (user@host, e.g. root@host) landed in
+        # the key instead (found live via modules_systems.yml's key
+        # fingerprint byte-diff).
+        str << " -C " << shell_single_quote(@params["ssh_key_comment"]?.presence || "ansible-generated on #{System.hostname}")
         str << " -f " << shell_single_quote(key_path)
         str << " -N " << shell_single_quote(@params["ssh_key_passphrase"]?.presence || "")
       end
@@ -592,9 +596,18 @@ module Krikri
     # own gid field) and wrongly count that as a "current supplementary
     # group" even when the user isn't listed as an explicit member.
     private def group_membership_flags(name : String) : Array(String)
-      groups_val = @params["groups"]?.presence
-      return [] of String unless groups_val && groups_val != "[]"
+      # `groups: ""` (or an explicit null, demoted to "" on the params
+      # wire) is real Ansible's "clear every supplementary group"
+      # spelling - user.py treats a PRESENT-but-empty groups as an empty
+      # target list, so with append: false the set-difference removes
+      # every current membership (live-verified: real reports changed
+      # and the user leaves the groups; getent group shows no members).
+      # A `.presence` guard here folded "" into "param absent" and made
+      # the whole modification a no-op ("User already up to date") -
+      # found live via modules_systems.yml's membership-clearing probe.
+      return [] of String unless @params["groups"]?
       return [] of String if local?
+      groups_val = @params["groups"]?.presence
 
       # A full-value `groups: "{{ list_var }}"` substitution renders a
       # real multi-item list as bracketed text (`['a', 'b']`) rather
@@ -603,7 +616,7 @@ module Krikri
       # bracket-aware normalization useradd_args's own create path uses
       # (PluginHelpers::UserState.normalize_groups_value) before
       # splitting.
-      requested = PluginHelpers::UserState.normalize_groups_value(groups_val).split(',').map(&.strip).reject(&.empty?)
+      requested = groups_val ? PluginHelpers::UserState.normalize_groups_value(groups_val).split(',').map(&.strip).reject(&.empty?) : [] of String
       current_groups = current_supplementary_groups(name)
       append = true?(@params["append"]?)
 
@@ -621,10 +634,12 @@ module Krikri
     # (real Ansible's own modify_user_usermod local branch, adds before
     # dels). Create path only ever needs the add half.
     private def local_group_commands(name : String) : Array(String)
+      # Same present-but-empty clearing semantics as
+      # #group_membership_flags above.
+      return [] of String unless @params["groups"]?
       groups_val = @params["groups"]?.presence
-      return [] of String unless groups_val && groups_val != "[]"
 
-      requested = PluginHelpers::UserState.normalize_groups_value(groups_val).split(',').map(&.strip).reject(&.empty?)
+      requested = groups_val && groups_val != "[]" ? PluginHelpers::UserState.normalize_groups_value(groups_val).split(',').map(&.strip).reject(&.empty?) : [] of String
       current_groups = current_supplementary_groups(name)
       adds = (requested - current_groups).map { |group| "lgroupmod -M #{shell_single_quote(name)} #{shell_single_quote(group)}" }
       return adds if true?(@params["append"]?)
