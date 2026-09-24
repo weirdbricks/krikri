@@ -100,7 +100,7 @@ module Krikri
 
       # DescribeInstancesResponse -> flat instance list across
       # reservationSet/item/instancesSet/item.
-      def self.parse_instances(root : XML::Node) : Array(Instance)
+      def self.parse_instances(root : KXML::Element) : Array(Instance)
         Ec2Api.items(root, "reservationSet").flat_map do |reservation|
           Ec2Api.items(reservation, "instancesSet").map do |item|
             state_name = Ec2Api.child(item, "instanceState").try do |state|

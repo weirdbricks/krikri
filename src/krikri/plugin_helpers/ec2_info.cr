@@ -1,5 +1,5 @@
 require "json"
-require "xml"
+require "krikri-xml"
 require "../base_plugin"
 
 module Krikri
@@ -86,8 +86,8 @@ module Krikri
       # elements become strings, `<item>`-repeated sets become arrays,
       # tagSet becomes the tags dict, everything else becomes an object
       # with camel_to_snake'd keys.
-      def self.jsonify(node : XML::Node) : JSON::Any
-        if node.name == "tagSet"
+      def self.jsonify(node : KXML::Element) : JSON::Any
+        if node.local_name == "tagSet"
           tags = Hash(String, JSON::Any).new
           Ec2Api.children(node, "item").each do |item|
             key = Ec2Api.text(item, "key")
@@ -97,7 +97,7 @@ module Krikri
           return JSON::Any.new(tags)
         end
 
-        elements = node.children.select(&.element?)
+        elements = node.elements
         # Leaf elements: EC2 serializes booleans as lowercase true/false
         # and boto3 parses them into real bools before Ansible's
         # camel_dict_to_snake_dict ever sees them, so the same leaf-text
@@ -105,13 +105,13 @@ module Krikri
         # empty LISTS in boto3, never empty strings - boto3's list
         # shape defaults to [].
         if elements.empty?
-          return JSON::Any.new([] of JSON::Any) if node.name.ends_with?("Set")
-          content = node.content.strip
+          return JSON::Any.new([] of JSON::Any) if node.local_name.ends_with?("Set")
+          content = node.text_content.strip
           return JSON::Any.new(true) if content == "true"
           return JSON::Any.new(false) if content == "false"
           return JSON::Any.new(content)
         end
-        if elements.all? { |child| child.name == "item" }
+        if elements.all? { |child| child.local_name == "item" }
           return JSON::Any.new(elements.map { |item| jsonify(item) })
         end
 

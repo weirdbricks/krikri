@@ -8,7 +8,7 @@ require "../../src/krikri/plugin_helpers/ec2_info"
 # DescribeSubnets XML in, assertions on the shaped `subnets` result and
 # the exact form bodies the module sends.
 private DESCRIBE_ONE = <<-XML
-  <?xml version="1.0" encoding="UTF-8"?>
+<?xml version="1.0" encoding="UTF-8"?>
   <DescribeSubnetsResponse xmlns="http://ec2.amazonaws.com/doc/2016-11-15/">
     <requestId>req-1</requestId>
     <subnetSet>
@@ -42,7 +42,7 @@ private DESCRIBE_ONE = <<-XML
 XML
 
 private DESCRIBE_NONE = <<-XML
-  <?xml version="1.0" encoding="UTF-8"?>
+<?xml version="1.0" encoding="UTF-8"?>
   <DescribeSubnetsResponse xmlns="http://ec2.amazonaws.com/doc/2016-11-15/">
     <requestId>req-2</requestId>
     <subnetSet/>
@@ -53,7 +53,7 @@ XML
 # tagSet entirely and carries ipv6CidrBlockAssociationSet as an empty
 # element, matching the real API's shape for a default subnet.
 private DESCRIBE_BARE = <<-XML
-  <?xml version="1.0" encoding="UTF-8"?>
+<?xml version="1.0" encoding="UTF-8"?>
   <DescribeSubnetsResponse xmlns="http://ec2.amazonaws.com/doc/2016-11-15/">
     <requestId>req-3</requestId>
     <subnetSet>

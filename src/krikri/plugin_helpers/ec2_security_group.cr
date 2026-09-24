@@ -156,9 +156,9 @@ module Krikri
         tags : Hash(String, String)
 
       # DescribeSecurityGroupsResponse -> list of groups.
-      def self.parse_security_groups(root : XML::Node) : Array(SecurityGroup)
+      def self.parse_security_groups(root : KXML::Element) : Array(SecurityGroup)
         info = Ec2Api.child(root, "securityGroupInfo") || return [] of SecurityGroup
-        info.children.select { |node| node.name == "item" }.map do |item|
+        info.elements.select { |node| node.local_name == "item" }.map do |item|
           SecurityGroup.new(
             group_id: Ec2Api.text(item, "groupId") || "",
             group_name: Ec2Api.text(item, "groupName") || "",
@@ -176,17 +176,17 @@ module Krikri
       # The real wire (verified live, 2026-09-13) names the permission sets
       # ipPermissions/ipPermissionsEgress; the *Set variants are accepted
       # for safety, since they appear in older API docs.
-      private def self.parse_permissions(group_item : XML::Node, *set_names : String) : Array(Rule)
+      private def self.parse_permissions(group_item : KXML::Element, *set_names : String) : Array(Rule)
         set_names.each do |set_name|
           set = Ec2Api.child(group_item, set_name) || next
-          perms = set.children.select { |node| node.name == "item" }
+          perms = set.elements.select { |node| node.local_name == "item" }
           next if perms.empty?
           return perms.map { |perm| parse_permission(perm) }
         end
         [] of Rule
       end
 
-      private def self.parse_permission(perm : XML::Node) : Rule
+      private def self.parse_permission(perm : KXML::Element) : Rule
         cidr_ips = Ec2Api.items(perm, "ipRanges").compact_map { |range| Ec2Api.text(range, "cidrIp") }
         cidr_ipv6s = Ec2Api.items(perm, "ipv6Ranges").compact_map { |range| Ec2Api.text(range, "cidrIpv6") }
         group_ids = Ec2Api.items(perm, "groups").compact_map { |grp| Ec2Api.text(grp, "groupId") }

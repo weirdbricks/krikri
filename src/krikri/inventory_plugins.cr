@@ -1,6 +1,6 @@
 require "yaml"
 require "json"
-require "xml"
+require "krikri-xml"
 require "http/client"
 require "uri"
 require "awscr-signer"
@@ -175,7 +175,7 @@ module Krikri
     # Build hosts from a DescribeInstances XML response. Split out from
     # parse_aws_ec2 so specs can exercise the mapping without network.
     def self.build_aws_ec2_hosts(inventory : Inventory, xml : String, options : YAML::Any, region : String) : Nil
-      root = XML.parse(xml).root
+      root = KXML.parse(xml).root
       return unless root
 
       hostnames = if raw = options["hostnames"]?
@@ -207,17 +207,17 @@ module Krikri
       end
     end
 
-    private def self.terminated?(instance : XML::Node) : Bool
-      state = child(instance, "instanceState").try { |state_node| child(state_node, "name").try(&.content) }
+    private def self.terminated?(instance : KXML::Element) : Bool
+      state = child(instance, "instanceState").try { |state_node| child(state_node, "name").try(&.text_content) }
       state == "terminated" || state == "shutting-down"
     end
 
-    private def self.each_instance(root : XML::Node, & : XML::Node, String -> Nil) : Nil
+    private def self.each_instance(root : KXML::Element, & : KXML::Element, String -> Nil) : Nil
       reservations = child(root, "reservationSet") || return
-      reservations.children.select { |node| node.name == "item" }.each do |reservation|
+      reservations.elements.select { |node| node.local_name == "item" }.each do |reservation|
         instances = child(reservation, "instancesSet") || next
-        instances.children.select { |node| node.name == "item" }.each do |instance|
-          zone = child(instance, "placement").try { |placement| child(placement, "availabilityZone").try(&.content) }
+        instances.elements.select { |node| node.local_name == "item" }.each do |instance|
+          zone = child(instance, "placement").try { |placement| child(placement, "availabilityZone").try(&.text_content) }
           instance_region = zone ? zone.rchop : ""
           yield instance, instance_region
         end
@@ -226,7 +226,7 @@ module Krikri
 
     # The flat host-var subset real aws_ec2 sets, derived from one
     # <item> instance element: scalar fields plus the instance's tags.
-    private def self.instance_fields(instance : XML::Node, region : String) : Tuple(Hash(String, String), Hash(String, String))
+    private def self.instance_fields(instance : KXML::Element, region : String) : Tuple(Hash(String, String), Hash(String, String))
       fields = Hash(String, String).new
 
       scalars = {
@@ -241,21 +241,21 @@ module Krikri
         "vpc_id"             => "vpcId",
       }
       scalars.each do |var_name, xml_name|
-        value = child(instance, xml_name).try(&.content)
+        value = child(instance, xml_name).try(&.text_content)
         next if value.nil? || value.empty?
         fields[var_name] = value
       end
 
-      state = child(instance, "instanceState").try { |state_node| child(state_node, "name").try(&.content) }
+      state = child(instance, "instanceState").try { |state_node| child(state_node, "name").try(&.text_content) }
       fields["state"] = state if state
 
       fields["region"] = region unless region.empty?
 
       tags = Hash(String, String).new
       if tag_set = child(instance, "tagSet")
-        tag_set.children.select { |node| node.name == "item" }.each do |item|
-          key = child(item, "key").try(&.content)
-          value = child(item, "value").try(&.content)
+        tag_set.elements.select { |node| node.local_name == "item" }.each do |item|
+          key = child(item, "key").try(&.text_content)
+          value = child(item, "value").try(&.text_content)
           next if key.nil? || key.empty?
           tags[key] = value || ""
         end
@@ -487,8 +487,8 @@ module Krikri
       name.gsub(/[^A-Za-z0-9_]/, "_")
     end
 
-    private def self.child(node : XML::Node, name : String) : XML::Node?
-      node.children.find { |candidate| candidate.name == name }
+    private def self.child(node : KXML::Element, name : String) : KXML::Element?
+      node.elements.find { |candidate| candidate.local_name == name }
     end
   end
 end

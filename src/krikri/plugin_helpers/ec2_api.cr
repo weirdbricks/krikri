@@ -1,7 +1,7 @@
 require "json"
 require "http/client"
 require "uri"
-require "xml"
+require "krikri-xml"
 require "awscr-signer"
 
 module Krikri
@@ -76,18 +76,18 @@ module Krikri
       # (Action/Version added here unless already present); returns the
       # parsed XML document root. Raises Error on HTTP failure - the EC2
       # API's own <Errors><Error><Message> text is surfaced when present.
-      def self.call(region : String, action : String, params : URI::Params, credentials : Credentials) : XML::Node
+      def self.call(region : String, action : String, params : URI::Params, credentials : Credentials) : KXML::Element
         params.add("Action", action) unless params.has_key?("Action")
         params.add("Version", EC2_API_VERSION) unless params.has_key?("Version")
 
         body = signed_post(region, params.to_s, credentials)
-        root = XML.parse(body).root
+        root = KXML.parse(body).root
         raise Error.new("EC2 #{action}: empty response") unless root
         root
       end
 
       # Convenience wrapper: resolve everything, one call, flat params.
-      def self.call(region : String?, action : String, params : Hash(String, String) | Array(Tuple(String, String))) : XML::Node
+      def self.call(region : String?, action : String, params : Hash(String, String) | Array(Tuple(String, String))) : KXML::Element
         credentials = resolve_credentials
         resolved_region = resolve_region(region)
         call(resolved_region, action, to_form_params(params), credentials)
@@ -117,36 +117,36 @@ module Krikri
       # -- XML navigation ------------------------------------------------
 
       # First direct child element with the given name (EC2 XML responses
-      # are namespace-qualified; XML::Node#name in Crystal strips the
-      # namespace prefix, so plain-name comparison is what the aws_ec2
-      # inventory plugin already relies on).
-      def self.child(node : XML::Node, name : String) : XML::Node?
-        node.children.find { |child| child.name == name }
+      # are namespace-qualified, so elements are matched by local name -
+      # the same plain-name comparison the aws_ec2 inventory plugin's
+      # Python relies on).
+      def self.child(node : KXML::Element, name : String) : KXML::Element?
+        node.elements.find { |child| child.local_name == name }
       end
 
       # All direct child elements with the given name - for the repeated
       # <item> elements of response sets (reservationSet, ipPermissionsSet,
       # tagSet, ...).
-      def self.children(node : XML::Node, name : String) : Array(XML::Node)
-        node.children.select { |child| child.name == name }
+      def self.children(node : KXML::Element, name : String) : Array(KXML::Element)
+        node.elements.select { |child| child.local_name == name }
       end
 
       # child(...).content, nil when the element is missing; empty string
       # normalized to nil (EC2 omits optional elements rather than sending
       # empty ones, but belt-and-suspenders costs nothing).
-      def self.text(node : XML::Node, name : String) : String?
-        child(node, name).try(&.content)
+      def self.text(node : KXML::Element, name : String) : String?
+        child(node, name).try(&.text_content)
       end
 
       # A response set's <item> children - e.g. reservationSet/item,
       # ipPermissionsSet/item, tagSet/item.
-      def self.items(node : XML::Node, set_name : String) : Array(XML::Node)
-        set = child(node, set_name) || return [] of XML::Node
+      def self.items(node : KXML::Element, set_name : String) : Array(KXML::Element)
+        set = child(node, set_name) || return [] of KXML::Element
         children(set, "item")
       end
 
       # tagSet items -> {"Name" => "web", ...}
-      def self.parse_tags(node : XML::Node) : Hash(String, String)
+      def self.parse_tags(node : KXML::Element) : Hash(String, String)
         tags = Hash(String, String).new
         items(node, "tagSet").each do |item|
           key = text(item, "key")
@@ -212,7 +212,7 @@ module Krikri
       # the API returns HTTP 4xx with an XML body like
       # <ErrorResponse><Errors><Error><Code>...</Code><Message>...</Message>.
       def self.response_message(body : String) : String?
-        root = XML.parse(body).root || return nil
+        root = KXML.parse(body).root || return nil
         error = child(root, "Errors")
         error = root unless error
         item = child(error, "Error") || return nil

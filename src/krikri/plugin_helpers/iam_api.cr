@@ -1,7 +1,7 @@
 require "json"
 require "http/client"
 require "uri"
-require "xml"
+require "krikri-xml"
 require "awscr-signer"
 require "./ec2_api"
 
@@ -38,7 +38,7 @@ module Krikri
         @@transport
       end
 
-      def self.call(action : String, params : Hash(String, String) | Array(Tuple(String, String)) = {} of String => String) : XML::Node
+      def self.call(action : String, params : Hash(String, String) | Array(Tuple(String, String)) = {} of String => String) : KXML::Element
         built = URI::Params.new
         built.add("Action", action)
         built.add("Version", IAM_API_VERSION)
@@ -52,13 +52,13 @@ module Krikri
           credentials = Ec2Api.resolve_credentials
           body = signed_post(built.to_s, credentials)
         end
-        root = XML.parse(body).root
+        root = KXML.parse(body).root
         raise Error.new("IAM #{action}: empty response") unless root
 
-        error = root.children.find { |child| child.name == "Error" }
+        error = root.elements.find { |child| child.local_name == "Error" }
         if error
-          code = error.children.find { |child| child.name == "Code" }.try(&.content) || ""
-          message = error.children.find { |child| child.name == "Message" }.try(&.content) || ""
+          code = error.elements.find { |child| child.local_name == "Code" }.try(&.text_content) || ""
+          message = error.elements.find { |child| child.local_name == "Message" }.try(&.text_content) || ""
           raise Error.new("IAM #{action}: #{code}: #{message}")
         end
         root
@@ -73,17 +73,17 @@ module Krikri
         loop do
           root = call(action, build_params.call(marker))
           yield root
-          truncated = descendant(root, "IsTruncated").try(&.content) == "true"
+          truncated = descendant(root, "IsTruncated").try(&.text_content) == "true"
           break unless truncated
-          marker = descendant(root, "Marker").try(&.content)
+          marker = descendant(root, "Marker").try(&.text_content)
           break unless marker
         end
       end
 
       # Depth-first search for the first element with the given name.
-      def self.descendant(node : XML::Node, name : String) : XML::Node?
-        node.children.each do |child|
-          return child if child.name == name
+      def self.descendant(node : KXML::Element, name : String) : KXML::Element?
+        node.elements.each do |child|
+          return child if child.local_name == name
           if found = descendant(child, name)
             return found
           end
@@ -91,16 +91,16 @@ module Krikri
         nil
       end
 
-      def self.child(node : XML::Node, name : String) : XML::Node?
-        node.children.find { |child| child.name == name }
+      def self.child(node : KXML::Element, name : String) : KXML::Element?
+        node.elements.find { |child| child.local_name == name }
       end
 
-      def self.children(node : XML::Node, name : String) : Array(XML::Node)
-        node.children.select { |child| child.name == name }
+      def self.children(node : KXML::Element, name : String) : Array(KXML::Element)
+        node.elements.select { |child| child.local_name == name }
       end
 
-      def self.text(node : XML::Node, name : String) : String?
-        child(node, name).try(&.content)
+      def self.text(node : KXML::Element, name : String) : String?
+        child(node, name).try(&.text_content)
       end
 
       private def self.signed_post(body : String, credentials : Ec2Api::Credentials) : String

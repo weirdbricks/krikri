@@ -1,7 +1,7 @@
 #!/usr/bin/env crystal
 
 require "json"
-require "xml"
+require "krikri-xml"
 require "../src/krikri/base_plugin"
 require "../src/krikri/plugin_helpers/firewalld_command"
 
@@ -222,9 +222,9 @@ module Krikri
     # the way an entry is, its ABSENCE is the "default" target (see the
     # class comment on state: disabled/absent resetting to "default").
     private def zone_target(content : String) : String
-      root = XML.parse(content).root
-      return "default" unless root && root.name == "zone"
-      root["target"]? || "default"
+      root = KXML.parse(content).root
+      return "default" unless root && root.local_name == "zone"
+      root.attribute("target").try(&.value) || "default"
     end
 
     # The bare `zone:` + `state: present/absent` operation - real

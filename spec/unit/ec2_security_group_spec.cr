@@ -8,7 +8,7 @@ require "../../src/krikri/plugin_helpers/ec2_security_group"
 # is canned XML fed straight to the parse/plan/diff helpers, and the
 # full-module examples route the signed POSTs through a recording fake.
 private DESCRIBE_ONE = <<-XML
-  <?xml version="1.0" encoding="UTF-8"?>
+<?xml version="1.0" encoding="UTF-8"?>
   <DescribeSecurityGroupsResponse xmlns="http://ec2.amazonaws.com/doc/2016-11-15/">
     <requestId>req-1</requestId>
     <securityGroupInfo>
@@ -52,7 +52,7 @@ private DESCRIBE_ONE = <<-XML
 XML
 
 private DESCRIBE_NONE = <<-XML
-  <?xml version="1.0" encoding="UTF-8"?>
+<?xml version="1.0" encoding="UTF-8"?>
   <DescribeSecurityGroupsResponse xmlns="http://ec2.amazonaws.com/doc/2016-11-15/">
     <requestId>req-2</requestId>
     <securityGroupInfo/>
@@ -60,7 +60,7 @@ private DESCRIBE_NONE = <<-XML
 XML
 
 private DESCRIBE_CREATED = <<-XML
-  <?xml version="1.0" encoding="UTF-8"?>
+<?xml version="1.0" encoding="UTF-8"?>
   <DescribeSecurityGroupsResponse xmlns="http://ec2.amazonaws.com/doc/2016-11-15/">
     <requestId>req-3</requestId>
     <securityGroupInfo>
@@ -104,7 +104,7 @@ private DESCRIBE_CREATED = <<-XML
 XML
 
 private def parse(xml : String)
-  Krikri::PluginHelpers::Ec2SecurityGroup.parse_security_groups(XML.parse(xml).root.not_nil!)
+  Krikri::PluginHelpers::Ec2SecurityGroup.parse_security_groups(KXML.parse(xml).root.not_nil!)
 end
 
 private def run_module(params : Hash(String, String), handler : Proc(String, String, String)) : JSON::Any

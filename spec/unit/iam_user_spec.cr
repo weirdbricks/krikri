@@ -12,7 +12,7 @@ require "../../src/krikri/plugin_helpers/iam_user"
 # access. A previous version read snake_case element names off this
 # XML and dropped every user field as a result.
 private GET_USER = <<-XML
-  <?xml version="1.0" encoding="UTF-8"?>
+<?xml version="1.0" encoding="UTF-8"?>
   <GetUserResponse xmlns="https://iam.amazonaws.com/doc/2010-05-08/">
     <GetUserResult>
       <User>
@@ -29,7 +29,7 @@ private GET_USER = <<-XML
 XML
 
 private USER_TAGS = <<-XML
-  <?xml version="1.0" encoding="UTF-8"?>
+<?xml version="1.0" encoding="UTF-8"?>
   <ListUserTagsResponse xmlns="https://iam.amazonaws.com/doc/2010-05-08/">
     <ListUserTagsResult>
       <IsTruncated>false</IsTruncated>
@@ -42,14 +42,14 @@ private USER_TAGS = <<-XML
 XML
 
 private NO_LOGIN_PROFILE = <<-XML
-  <?xml version="1.0" encoding="UTF-8"?>
+<?xml version="1.0" encoding="UTF-8"?>
   <ErrorResponse xmlns="https://iam.amazonaws.com/doc/2010-05-08/">
     <Error><Code>NoSuchEntity</Code><Message>Login Profile for user lchaidas cannot be found.</Message></Error>
   </ErrorResponse>
 XML
 
 private LOGIN_PROFILE = <<-XML
-  <?xml version="1.0" encoding="UTF-8"?>
+<?xml version="1.0" encoding="UTF-8"?>
   <GetLoginProfileResponse xmlns="https://iam.amazonaws.com/doc/2010-05-08/">
     <GetLoginProfileResult>
       <LoginProfile>
@@ -62,7 +62,7 @@ private LOGIN_PROFILE = <<-XML
 XML
 
 private LIST_USERS = <<-XML
-  <?xml version="1.0" encoding="UTF-8"?>
+<?xml version="1.0" encoding="UTF-8"?>
   <ListUsersResponse xmlns="https://iam.amazonaws.com/doc/2010-05-08/">
     <ListUsersResult>
       <IsTruncated>false</IsTruncated>

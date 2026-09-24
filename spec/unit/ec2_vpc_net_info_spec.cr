@@ -8,7 +8,7 @@ require "../../src/krikri/plugin_helpers/ec2_info"
 # DescribeVpcs + DescribeVpcAttribute XML in, assertions on the shaped
 # `vpcs` result and the exact form bodies the module sends.
 private DESCRIBE_ONE = <<-XML
-  <?xml version="1.0" encoding="UTF-8"?>
+<?xml version="1.0" encoding="UTF-8"?>
   <DescribeVpcsResponse xmlns="http://ec2.amazonaws.com/doc/2016-11-15/">
     <requestId>req-1</requestId>
     <vpcSet>
@@ -36,7 +36,7 @@ private DESCRIBE_ONE = <<-XML
 XML
 
 private DESCRIBE_NONE = <<-XML
-  <?xml version="1.0" encoding="UTF-8"?>
+<?xml version="1.0" encoding="UTF-8"?>
   <DescribeVpcsResponse xmlns="http://ec2.amazonaws.com/doc/2016-11-15/">
     <requestId>req-2</requestId>
     <vpcSet/>
@@ -46,7 +46,7 @@ XML
 # A VPC the wire response carries no tagSet for at all (the real API
 # omits it for untagged VPCs) - the real module still returns tags: {}.
 private DESCRIBE_NO_TAGS = <<-XML
-  <?xml version="1.0" encoding="UTF-8"?>
+<?xml version="1.0" encoding="UTF-8"?>
   <DescribeVpcsResponse xmlns="http://ec2.amazonaws.com/doc/2016-11-15/">
     <requestId>req-4</requestId>
     <vpcSet>

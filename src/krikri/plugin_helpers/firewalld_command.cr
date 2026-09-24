@@ -1,5 +1,5 @@
 require "json"
-require "xml"
+require "krikri-xml"
 require "../shell"
 
 module Krikri
@@ -183,9 +183,9 @@ module Krikri
       def self.zone_query(content : String, element : String, attrs : Hash(String, String)) : Bool
         root = zone_root(content)
         return false unless root
-        root.children.any? do |child|
-          child.element? && child.name == element &&
-            attrs.all? { |key, value| child[key]? == value }
+        root.elements.any? do |child|
+          child.local_name == element &&
+            attrs.all? { |key, value| child.attribute(key).try(&.value) == value }
         end
       end
 
@@ -196,7 +196,7 @@ module Krikri
         root = zone_root(content)
         return nil unless root
         return nil if zone_query(content, element, attrs)
-        rebuild(root, root.children.select(&.element?).map(&.to_s) + [build_element(element, attrs)])
+        rebuild(root, root.elements.map(&.to_xml) + [build_element(element, attrs)])
       end
 
       # Serialized zone XML with the element removed, or nil if it
@@ -204,13 +204,13 @@ module Krikri
       def self.zone_remove(content : String, element : String, attrs : Hash(String, String)) : String?
         root = zone_root(content)
         return nil unless root
-        matching = root.children.select do |child|
-          child.element? && child.name == element &&
-            attrs.all? { |key, value| child[key]? == value }
+        matching = root.elements.select do |child|
+          child.local_name == element &&
+            attrs.all? { |key, value| child.attribute(key).try(&.value) == value }
         end
         return nil if matching.empty?
-        kept = root.children.reject { |child| matching.includes?(child) }
-        rebuild(root, kept.select(&.element?).map(&.to_s))
+        kept = root.elements.reject { |child| matching.includes?(child) }
+        rebuild(root, kept.map(&.to_xml))
       end
 
       # Serialized zone XML with the zone root's target attribute set
@@ -219,18 +219,17 @@ module Krikri
       def self.zone_set_target(content : String, target : String) : String
         root = zone_root(content)
         return content unless root
-        root.attributes.delete("target") if root.attributes["target"]?
-        attr_line = root.attributes.map { |a| %(#{a.name}="#{a.content}") }.join(" ")
+        attr_line = root.attributes.reject { |a| a.name == "target" }.map { |a| %(#{a.name}="#{a.value}") }.join(" ")
         attr_line = " #{attr_line}" unless attr_line.empty?
         if target != "default"
           attr_line += %( target="#{target}")
         end
-        "<zone#{attr_line}>\n#{root.children.select(&.element?).map(&.to_s).join("\n")}\n</zone>\n"
+        "<zone#{attr_line}>\n#{root.elements.map(&.to_xml).join("\n")}\n</zone>\n"
       end
 
-      private def self.zone_root(content : String) : XML::Node?
-        root = XML.parse(content).root
-        return nil unless root && root.name == "zone"
+      private def self.zone_root(content : String) : KXML::Element?
+        root = KXML.parse(content).root
+        return nil unless root && root.local_name == "zone"
         root
       end
 
@@ -244,8 +243,8 @@ module Krikri
       # normalized one-element-per-line, which firewalld's own writer
       # also is). Callers pass the existing element children they want
       # kept plus any new ones.
-      private def self.rebuild(root : XML::Node, children : Array(String)) : String
-        attr_line = root.attributes.map { |a| %(#{a.name}="#{a.content}") }.join(" ")
+      private def self.rebuild(root : KXML::Element, children : Array(String)) : String
+        attr_line = root.attributes.map { |a| %(#{a.name}="#{a.value}") }.join(" ")
         attr_line = " #{attr_line}" unless attr_line.empty?
         "<zone#{attr_line}>\n#{children.join("\n")}\n</zone>\n"
       end

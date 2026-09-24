@@ -8,7 +8,7 @@ require "../../src/krikri/plugin_helpers/ec2_key"
 # canned XML fed straight to the parse/plan helpers, and the full-module
 # examples route the signed POSTs through a recording fake.
 private DESCRIBE_ONE = <<-XML
-  <?xml version="1.0" encoding="UTF-8"?>
+<?xml version="1.0" encoding="UTF-8"?>
   <DescribeKeyPairsResponse xmlns="http://ec2.amazonaws.com/doc/2016-11-15/">
     <requestId>req-1</requestId>
     <keyPairsSet>
@@ -26,7 +26,7 @@ private DESCRIBE_ONE = <<-XML
 XML
 
 private DESCRIBE_NONE = <<-XML
-  <?xml version="1.0" encoding="UTF-8"?>
+<?xml version="1.0" encoding="UTF-8"?>
   <DescribeKeyPairsResponse xmlns="http://ec2.amazonaws.com/doc/2016-11-15/">
     <requestId>req-2</requestId>
     <keyPairsSet/>
@@ -34,7 +34,7 @@ private DESCRIBE_NONE = <<-XML
 XML
 
 private def parse(xml : String)
-  Krikri::PluginHelpers::Ec2Key.parse_key_pairs(XML.parse(xml).root.not_nil!)
+  Krikri::PluginHelpers::Ec2Key.parse_key_pairs(KXML.parse(xml).root.not_nil!)
 end
 
 private def run_module(params : Hash(String, String), handler : Proc(String, String, String)) : JSON::Any

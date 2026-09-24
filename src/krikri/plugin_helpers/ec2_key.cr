@@ -25,7 +25,7 @@ module Krikri
         # Older DescribeKeyPairs deployments spell the response without
         # keyPairId/tagSet/keyType - tolerate them rather than crashing
         # the parse.
-        def self.from_xml(item : XML::Node) : KeyPair
+        def self.from_xml(item : KXML::Element) : KeyPair
           KeyPair.new(
             name: Ec2Api.text(item, "keyName") || "",
             fingerprint: Ec2Api.text(item, "keyFingerprint") || "",
@@ -45,11 +45,11 @@ module Krikri
       # DescribeKeyPairsResponse -> key list. The response wraps each key
       # in keyPairsSet/item (the older anon-2011 spelling was
       # keyPairs/item; both seen in the wild, so accept both).
-      def self.parse_key_pairs(root : XML::Node) : Array(KeyPair)
+      def self.parse_key_pairs(root : KXML::Element) : Array(KeyPair)
         set = Ec2Api.child(root, "keyPairsSet") || Ec2Api.child(root, "keyPairs")
         return [] of KeyPair unless set
 
-        set.children.select { |node| node.name == "item" }.map do |item|
+        set.elements.select { |node| node.local_name == "item" }.map do |item|
           KeyPair.from_xml(item)
         end
       end

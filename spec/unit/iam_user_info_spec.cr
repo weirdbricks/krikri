@@ -1,7 +1,7 @@
 require "../spec_helper"
 require "../../src/krikri/plugin_helpers/iam_api"
 require "../../src/krikri/plugin_helpers/ec2_api"
-require "xml"
+require "krikri-xml"
 
 # Unit-tests the IAM Query-API request/response handling against canned
 # XML responses (the same transport-seam pattern the ec2_*_info specs

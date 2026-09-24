@@ -32,6 +32,8 @@ dependencies:
   awscr-signer:
     github: weirdbricks/awscr-signer
     commit: 2a8cc0980c9ba18ef22bf870e8be12783ee2b5ec
+  krikri-xml:
+    path: ../krikri-xml
 
 development_dependencies:
   ameba:

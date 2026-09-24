@@ -9,7 +9,7 @@ require "../../src/krikri/plugin_helpers/ec2_instance"
 # Run/Stop/Start/Terminate XML in, assertions on the shaped `instances`
 # result, the changed flag, and the exact form bodies the module sends.
 private DESCRIBE_RUNNING = <<-XML
-  <?xml version="1.0" encoding="UTF-8"?>
+<?xml version="1.0" encoding="UTF-8"?>
   <DescribeInstancesResponse xmlns="http://ec2.amazonaws.com/doc/2016-11-15/">
     <requestId>req-1</requestId>
     <reservationSet>
@@ -39,7 +39,7 @@ private DESCRIBE_RUNNING = <<-XML
 XML
 
 private DESCRIBE_STOPPED = <<-XML
-  <?xml version="1.0" encoding="UTF-8"?>
+<?xml version="1.0" encoding="UTF-8"?>
   <DescribeInstancesResponse xmlns="http://ec2.amazonaws.com/doc/2016-11-15/">
     <requestId>req-2</requestId>
     <reservationSet>
@@ -65,7 +65,7 @@ private DESCRIBE_STOPPED = <<-XML
 XML
 
 private DESCRIBE_TERMINATED = <<-XML
-  <?xml version="1.0" encoding="UTF-8"?>
+<?xml version="1.0" encoding="UTF-8"?>
   <DescribeInstancesResponse xmlns="http://ec2.amazonaws.com/doc/2016-11-15/">
     <requestId>req-term</requestId>
     <reservationSet>
@@ -86,7 +86,7 @@ private DESCRIBE_TERMINATED = <<-XML
 XML
 
 private DESCRIBE_NONE = <<-XML
-  <?xml version="1.0" encoding="UTF-8"?>
+<?xml version="1.0" encoding="UTF-8"?>
   <DescribeInstancesResponse xmlns="http://ec2.amazonaws.com/doc/2016-11-15/">
     <requestId>req-3</requestId>
     <reservationSet/>
@@ -94,7 +94,7 @@ private DESCRIBE_NONE = <<-XML
 XML
 
 private RUN_PENDING = <<-XML
-  <?xml version="1.0" encoding="UTF-8"?>
+<?xml version="1.0" encoding="UTF-8"?>
   <RunInstancesResponse xmlns="http://ec2.amazonaws.com/doc/2016-11-15/">
     <requestId>req-4</requestId>
     <reservationId>r-3</reservationId>
@@ -108,7 +108,7 @@ private RUN_PENDING = <<-XML
 XML
 
 private DESCRIBE_NEW_RUNNING = <<-XML
-  <?xml version="1.0" encoding="UTF-8"?>
+<?xml version="1.0" encoding="UTF-8"?>
   <DescribeInstancesResponse xmlns="http://ec2.amazonaws.com/doc/2016-11-15/">
     <requestId>req-5</requestId>
     <reservationSet>
@@ -134,7 +134,7 @@ private DESCRIBE_NEW_RUNNING = <<-XML
 XML
 
 private TERMINATED = <<-XML
-  <?xml version="1.0" encoding="UTF-8"?>
+<?xml version="1.0" encoding="UTF-8"?>
   <TerminateInstancesResponse xmlns="http://ec2.amazonaws.com/doc/2016-11-15/">
     <requestId>req-6</requestId>
     <instancesSet>
@@ -147,7 +147,7 @@ private TERMINATED = <<-XML
 XML
 
 private STOPPING = <<-XML
-  <?xml version="1.0" encoding="UTF-8"?>
+<?xml version="1.0" encoding="UTF-8"?>
   <DescribeInstancesResponse xmlns="http://ec2.amazonaws.com/doc/2016-11-15/">
     <requestId>req-7</requestId>
     <reservationSet>
@@ -204,7 +204,7 @@ describe Krikri::PluginHelpers::Ec2Instance do
 
   describe ".parse_instances" do
     it "reads reservationSet/instancesSet items and shapes the boto3 field names" do
-      instances = Krikri::PluginHelpers::Ec2Instance.parse_instances(XML.parse(DESCRIBE_RUNNING).root.not_nil!)
+      instances = Krikri::PluginHelpers::Ec2Instance.parse_instances(KXML.parse(DESCRIBE_RUNNING).root.not_nil!)
       instances.size.should eq(1)
       inst = instances[0]
       inst.instance_id.should eq("i-abc")
@@ -226,7 +226,7 @@ describe Krikri::PluginHelpers::Ec2Instance do
     end
 
     it "returns an empty list for an empty reservationSet" do
-      instances = Krikri::PluginHelpers::Ec2Instance.parse_instances(XML.parse(DESCRIBE_NONE).root.not_nil!)
+      instances = Krikri::PluginHelpers::Ec2Instance.parse_instances(KXML.parse(DESCRIBE_NONE).root.not_nil!)
       instances.should eq([] of Krikri::PluginHelpers::Ec2Instance::Instance)
     end
   end

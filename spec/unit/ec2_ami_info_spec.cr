@@ -8,7 +8,7 @@ require "../../src/krikri/plugin_helpers/ec2_info"
 # DescribeImages/DescribeImageAttribute XML in, assertions on the shaped
 # `images` result and the exact form bodies the module sends.
 private DESCRIBE_TWO = <<-XML
-  <?xml version="1.0" encoding="UTF-8"?>
+<?xml version="1.0" encoding="UTF-8"?>
   <DescribeImagesResponse xmlns="http://ec2.amazonaws.com/doc/2016-11-15/">
     <requestId>req-1</requestId>
     <imagesSet>
@@ -64,7 +64,7 @@ private DESCRIBE_TWO = <<-XML
 XML
 
 private DESCRIBE_NONE = <<-XML
-  <?xml version="1.0" encoding="UTF-8"?>
+<?xml version="1.0" encoding="UTF-8"?>
   <DescribeImagesResponse xmlns="http://ec2.amazonaws.com/doc/2016-11-15/">
     <requestId>req-2</requestId>
     <imagesSet/>
@@ -72,7 +72,7 @@ private DESCRIBE_NONE = <<-XML
 XML
 
 private LAUNCH_PERMISSION = <<-XML
-  <?xml version="1.0" encoding="UTF-8"?>
+<?xml version="1.0" encoding="UTF-8"?>
   <DescribeImageAttributeResponse xmlns="http://ec2.amazonaws.com/doc/2016-11-15/">
     <requestId>req-3</requestId>
     <imageId>ami-newer</imageId>

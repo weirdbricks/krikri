@@ -1,5 +1,5 @@
 require "json"
-require "xml"
+require "krikri-xml"
 require "../base_plugin"
 require "./iam_api"
 
@@ -46,7 +46,7 @@ module Krikri
         end
       end
 
-      private def self.raw_users(name : String?, group : String?, path : String) : Array(XML::Node)
+      private def self.raw_users(name : String?, group : String?, path : String) : Array(KXML::Element)
         # name but not path/group: the real module goes straight to GetUser.
         return get_user(name) if name && path == "/" && group.nil?
         return group_members(group) if group
@@ -56,24 +56,24 @@ module Krikri
         # module, not a failure; anything else (auth, throttling, ...)
         # surfaces as a real failure.
         raise ex unless ex.message.to_s.includes?("NoSuchEntity")
-        [] of XML::Node
+        [] of KXML::Element
       end
 
-      private def self.get_user(name : String) : Array(XML::Node)
+      private def self.get_user(name : String) : Array(KXML::Element)
         user = PluginHelpers::IamApi.call("GetUser", {"UserName" => name})
         user_node = PluginHelpers::IamApi.child(user, "GetUserResult").try { |result| PluginHelpers::IamApi.child(result, "User") }
-        user_node ? [user_node] : [] of XML::Node
+        user_node ? [user_node] : [] of KXML::Element
       end
 
-      private def self.group_members(group : String) : Array(XML::Node)
+      private def self.group_members(group : String) : Array(KXML::Element)
         group_node = PluginHelpers::IamApi.call("GetGroup", {"GroupName" => group})
-        return [] of XML::Node unless result = PluginHelpers::IamApi.child(group_node, "GetGroupResult")
-        return [] of XML::Node unless wrapper = PluginHelpers::IamApi.child(result, "Users")
+        return [] of KXML::Element unless result = PluginHelpers::IamApi.child(group_node, "GetGroupResult")
+        return [] of KXML::Element unless wrapper = PluginHelpers::IamApi.child(result, "Users")
         PluginHelpers::IamApi.children(wrapper, "member")
       end
 
-      private def self.list_users_by_path(path : String) : Array(XML::Node)
-        users = [] of XML::Node
+      private def self.list_users_by_path(path : String) : Array(KXML::Element)
+        users = [] of KXML::Element
         PluginHelpers::IamApi.each_page("ListUsers", ->(marker : String?) do
           params = [{"PathPrefix", path}] of Tuple(String, String)
           params << {"Marker", marker} if marker
@@ -140,7 +140,7 @@ module Krikri
         text.matches?(/\A\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\z/) ? text.sub(/Z\z/, "+00:00") : text
       end
 
-      private def self.normalize_user(node : XML::Node) : Hash(String, JSON::Any)
+      private def self.normalize_user(node : KXML::Element) : Hash(String, JSON::Any)
         result = {} of String => JSON::Any
         {
           "Arn"              => "arn",

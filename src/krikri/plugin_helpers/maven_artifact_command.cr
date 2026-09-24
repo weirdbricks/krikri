@@ -1,4 +1,4 @@
-require "xml"
+require "krikri-xml"
 
 module Krikri
   module PluginHelpers
@@ -45,16 +45,16 @@ module Krikri
 
       # find_latest_version_available: the LAST <version> element under
       # /metadata/versioning/versions.
-      private def self.versions_node(doc : XML::Document) : XML::Node?
+      private def self.versions_node(doc : KXML::Document) : KXML::Element?
         root = doc.root || return nil
-        versioning = root.children.find { |child| child.name == "versioning" } || return nil
-        versioning.children.find { |child| child.name == "versions" }
+        versioning = root.elements.find { |child| child.local_name == "versioning" } || return nil
+        versioning.elements.find { |child| child.local_name == "versions" }
       end
 
       def self.latest_version(metadata_xml : String) : String?
-        doc = XML.parse(metadata_xml)
+        doc = KXML.parse(metadata_xml)
         versions_node = versions_node(doc) || return nil
-        versions_node.children.to_a.reverse_each.find { |child| child.name == "version" }.try(&.text)
+        versions_node.elements.reverse_each.find { |child| child.local_name == "version" }.try(&.text_content)
       end
 
       # Snapshot resolution for find_uri_for_artifact: prefer the
@@ -62,17 +62,17 @@ module Krikri
       # timestamp/buildNumber fallback
       # (version.replace("SNAPSHOT", "TIMESTAMP-BUILDNUM")).
       def self.snapshot_version(metadata_xml : String, classifier : String, extension : String) : String?
-        doc = XML.parse(metadata_xml)
+        doc = KXML.parse(metadata_xml)
         root = doc.root || return nil
-        versioning = root.children.find { |child| child.name == "versioning" } || return nil
-        snapshot_versions = versioning.children.find { |child| child.name == "snapshotVersions" } || return nil
+        versioning = root.elements.find { |child| child.local_name == "versioning" } || return nil
+        snapshot_versions = versioning.elements.find { |child| child.local_name == "snapshotVersions" } || return nil
         candidates = [] of {String, String}
-        snapshot_versions.children.select { |child| child.name == "snapshotVersion" }.each do |snapshot_version|
-          sv_classifier = snapshot_version.children.find { |child| child.name == "classifier" }.try(&.text) || ""
-          sv_extension = snapshot_version.children.find { |child| child.name == "extension" }.try(&.text) || ""
+        snapshot_versions.elements.select { |child| child.local_name == "snapshotVersion" }.each do |snapshot_version|
+          sv_classifier = snapshot_version.elements.find { |child| child.local_name == "classifier" }.try(&.text_content) || ""
+          sv_extension = snapshot_version.elements.find { |child| child.local_name == "extension" }.try(&.text_content) || ""
           next unless sv_classifier == classifier && sv_extension == extension
-          value = snapshot_version.children.find { |child| child.name == "value" }.try(&.text)
-          updated = snapshot_version.children.find { |child| child.name == "updated" }.try(&.text) || ""
+          value = snapshot_version.elements.find { |child| child.local_name == "value" }.try(&.text_content)
+          updated = snapshot_version.elements.find { |child| child.local_name == "updated" }.try(&.text_content) || ""
           candidates << {updated, value} if value
         end
         # updated is yyyymmddHHMMSS, so lexical max == newest
@@ -82,12 +82,12 @@ module Krikri
       # The timestamp/buildNumber fallback, given the base version
       # string ("1.2.3-SNAPSHOT") and the metadata contents.
       def self.snapshot_timestamp_version(metadata_xml : String, version : String) : String?
-        doc = XML.parse(metadata_xml)
+        doc = KXML.parse(metadata_xml)
         root = doc.root || return nil
-        versioning = root.children.find { |child| child.name == "versioning" } || return nil
-        snapshot_node = versioning.children.find { |child| child.name == "snapshot" } || return nil
-        timestamp = snapshot_node.children.find { |child| child.name == "timestamp" }.try(&.text)
-        build_number = snapshot_node.children.find { |child| child.name == "buildNumber" }.try(&.text)
+        versioning = root.elements.find { |child| child.local_name == "versioning" } || return nil
+        snapshot_node = versioning.elements.find { |child| child.local_name == "snapshot" } || return nil
+        timestamp = snapshot_node.elements.find { |child| child.local_name == "timestamp" }.try(&.text_content)
+        build_number = snapshot_node.elements.find { |child| child.local_name == "buildNumber" }.try(&.text_content)
         timestamp && build_number ? version.sub("SNAPSHOT", "#{timestamp}-#{build_number}") : nil
       end
 
