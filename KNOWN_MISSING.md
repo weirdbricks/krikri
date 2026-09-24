@@ -34,34 +34,6 @@ and fixed and when.
 
 ## Open gaps
 
-- **`buluma.forensics`: `delegate_to: localhost` + `copy` scp's to
-  `localhost:22` instead of running locally** (round 188, 0.9.623,
-  Rocky 9.6) - the role's `command_collector | Save output` task uses
-  `delegate_to: localhost` for an `ansible.builtin.copy` module, and
-  krikri-playbook tries to scp the plugin binary to `localhost:22`
-  (Connection refused on a cloud VPS whose controller has no sshd
-  running); real ansible-core runs the task via a local connection and
-  never ssh's to itself. Deterministic: crystal rc=2 vs real rc=0, same
-  failure cold and warm. Minimal repro and suggested fix shape in
-  `round188-delegate-to-localhost-ssh-reupload`; not yet fixed.
-- **Round 900000-900999: `juju4.adduser` dir-mode "changed" divergence,
-  not reproduced deterministically** - round900902 showed an extra
-  `changed: true` on `~/.ssh`'s `file: {mode: "0700", state: directory}`
-  task that a direct local repro (same params, no privilege escalation)
-  could NOT reproduce - matched real Ansible's `changed: false` exactly.
-  Only a related, confirmed cosmetic bug (an unchanged directory always
-  carrying `msg: "Directory attributes updated"`) was fixed (0.9.1186).
-  Possibly SELinux-context-specific to the original Rocky host; worth
-  re-checking if it recurs with SELinux enabled locally.
-- **Vendored Crinja fork's `%` operator only does numeric modulo, not
-  Python's string-left-operand `%`-formatting** (round900235
-  rolehippie.coredns) - Python's `"%s" % value`-style string formatting
-  (a real, if increasingly rare, Jinja2/Ansible idiom) fails or
-  misbehaves here since `%` is only implemented as arithmetic modulo.
-  Deferred rather than attempted this round: a correct fix needs real
-  Python `%`-format-spec parsing (width/precision/type conversion) in
-  the vendored fork, more scope than this round's other fixes for one
-  role's single divergence.
 - **Round 811000-812999: `k8s` missing module** (`dymurray.
   memcached_operator_role`; real ansible-playbook doesn't complete
   cleanly on the one role that hits it either, low value).
@@ -109,14 +81,6 @@ and fixed and when.
   same "is this in scope" alt-package-manager question already open for
   portage/pkgng above. See `ROLES_TESTED.md` for the exact affected role
   per module.
-- **`xanmanning.k3s`** (`round_new_authors`, re-checked 2026-09-12 via
-  Atlantic.net on 0.9.976): a `uri` task downloading k3s's hashsum from
-  GitHub got a 403 on the krikri-run host but not the ansible-run host
-  (different real IPs). krikri already sends the same `User-Agent`
-  (`ansible-httpget`) real Ansible defaults to, so this looks like
-  transient GitHub anti-abuse/rate-limiting hitting one IP and not the
-  other rather than a deterministic krikri bug - needs a second
-  re-confirmation run before treating as a real gap.
 - **Scope question, not yet decided** (2026-09-10/11 batches): `bigip_wait`
   (F5 BIG-IP network-appliance family - `f5devcentral.backup_config`,
   `.bigip_gslb`, `.bigip_onboard`, `.f5app_services_package`),
@@ -349,6 +313,23 @@ gaps" rather than arguing with the note in place.
   be functionally identical forks of the already-implemented
   community.mysql ones - aliased onto them as of 0.9.825, see the
   scope-cut re-examination narrative at the top.)
+
+### SELinux security-context relabeling is not implemented
+
+- The `file:`/`copy:`/`template:`/`getent:` family manage Unix mode,
+  owner/group and (where `libacl` is present) POSIX ACLs, but not SELinux
+  security contexts - krikri carries no `libselinux`/`matchpathcon`
+  equivalent and never relabels. On an SELinux-*enforcing* host, real
+  Ansible's `file:` can flip `changed` based on a context it would fix up
+  even when mode/owner already match, so a mode/owner-only task can
+  report a different verdict than krikri. This is the one candidate
+  source of the round900902 `juju4.adduser` `~/.ssh` extra-`changed`
+  report: every re-check on a non-SELinux host (perfbench container,
+  0.9.1277) reproduces real's verdict EXACTLY (`run1 changed=true`,
+  `run2 changed=false`), and it has never been reproduced locally with
+  SELinux enabled. Left as an accepted scope cut rather than an open
+  defect - closing it properly means vendoring a real SELinux policy
+  query for a single unreproduced, host-flavored report.
 
 ### Fact caching
 
