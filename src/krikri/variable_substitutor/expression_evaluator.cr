@@ -23,8 +23,13 @@ module Krikri
       @slicer : ArraySlicer
       @lookup : VariableLookup
       @crinja_renderer : VariableSubstitutor::CrinjaRenderer?
+      # When true this evaluator resolves its Crinja-delegated operands
+      # (method-call args like `.split('\n')`, `~` concat operands) against
+      # the decoding environment instead of the inline verbatim one - set
+      # only for the conditional/assert path by ConditionalEvaluator.
+      @decode : Bool
 
-      def initialize(@vars : Hash(String, JSON::Any))
+      def initialize(@vars : Hash(String, JSON::Any), @decode : Bool = false)
         @comparison = ComparisonEvaluator.new(@vars)
         @filter = FilterEngine.new(@vars)
         @slicer = ArraySlicer.new(@vars)
@@ -34,7 +39,7 @@ module Krikri
       # Built lazily - most `{{ }}` spans never reach the boolean_logic?
       # branch below, so most `ExpressionEvaluator`s never need this.
       private def crinja_renderer : VariableSubstitutor::CrinjaRenderer
-        @crinja_renderer ||= VariableSubstitutor::CrinjaRenderer.new(@vars)
+        @crinja_renderer ||= VariableSubstitutor::CrinjaRenderer.new(@vars, @decode)
       end
 
       # Guards the Crinja-first delegation branches below against
@@ -1852,7 +1857,7 @@ module Krikri
           # `{{ }}`-only evaluator - see variable_lookup.cr's identical
           # fix for the full rationale (found via prometheus.prometheus's
           # own _common role's `_common_dependencies` default).
-          rendered = CrinjaRenderer.new(@vars).render(raw)
+          rendered = CrinjaRenderer.new(@vars, @decode).render(raw)
           return (JSON.parse(rendered) rescue JSON::Any.new(rendered))
         end
 
@@ -2726,7 +2731,7 @@ module Krikri
             template_content = first_line_end ? template_content[(first_line_end + 1)..] : ""
           end
 
-          renderer = render_vars.same?(@vars) ? crinja_renderer : CrinjaRenderer.new(render_vars)
+          renderer = render_vars.same?(@vars) ? crinja_renderer : CrinjaRenderer.new(render_vars, @decode)
           renderer.render(template_content).chomp
         rescue
           "undefined"
