@@ -1,0 +1,345 @@
+---
+# Modules/xml benchmark: community.general.xml coverage across the
+# operations the plugin implements, written the way a real role would
+# use them (value/attribute set on existing and missing nodes,
+# namespaced xpath with clark-notation attribute names, node
+# auto-creation via the bare-xpath and @attr=/text()= paths, delete,
+# add/set_children, count, print_match, content=get, pretty_print,
+# insertbefore/after, backup, check-mode and the xmlstring mode).
+#
+# Same safety contract as the other modules_* benches: every mutation
+# is confined to /tmp/krikri-modxml-<runid> paths. No packages, no
+# system state, no network.
+- name: community.general.xml coverage benchmark
+  hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: freeze run id
+      set_fact:
+        mx_dir: "/tmp/krikri-modxml-{{ lookup('pipe', 'date +%s') }}"
+
+    - name: workspace
+      file:
+        path: "{{ mx_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: seed base document
+      copy:
+        dest: "{{ mx_dir }}/base.xml"
+        content: |
+          <?xml version='1.0' encoding='UTF-8'?>
+          <business>
+            <rating subjective="true">10</rating>
+            <count>4</count>
+          </business>
+
+    # -- value set on an existing element ------------------------------
+    - name: set rating text to 11
+      community.general.xml:
+        path: "{{ mx_dir }}/base.xml"
+        xpath: /business/rating
+        value: "11"
+      register: r_value_set
+
+    - name: rating after value set
+      command: cat {{ mx_dir }}/base.xml
+      register: r_value_set_content
+      changed_when: false
+
+    - name: show rating after value set
+      debug:
+        var: r_value_set_content.stdout
+
+    # idempotent re-run of the same set
+    - name: set rating text to 11 again (idempotent)
+      community.general.xml:
+        path: "{{ mx_dir }}/base.xml"
+        xpath: /business/rating
+        value: "11"
+      register: r_value_set_again
+
+    - name: show idempotency of value set
+      debug:
+        var: r_value_set_again.changed
+
+    # -- attribute set --------------------------------------------------
+    - name: set subjective attribute to false
+      community.general.xml:
+        path: "{{ mx_dir }}/base.xml"
+        xpath: /business/rating
+        attribute: subjective
+        value: "false"
+      register: r_attr_set
+
+    - name: show attribute set result
+      debug:
+        var: r_attr_set.changed
+
+    # -- namespaced document + clark attribute --------------------------
+    - name: seed namespaced document
+      copy:
+        dest: "{{ mx_dir }}/ns.xml"
+        content: |
+          <?xml version='1.0' encoding='UTF-8'?>
+          <config xmlns:d="urn:demo">
+            <d:setting d:key="alpha">1</d:setting>
+          </config>
+
+    - name: set namespaced element value via ns map
+      community.general.xml:
+        path: "{{ mx_dir }}/ns.xml"
+        xpath: /config/d:setting
+        namespaces:
+          d: urn:demo
+        value: "2"
+      register: r_ns_value
+
+    - name: set clark-notation attribute
+      community.general.xml:
+        path: "{{ mx_dir }}/ns.xml"
+        xpath: /config/d:setting
+        namespaces:
+          d: urn:demo
+        attribute: d:key
+        value: beta
+      register: r_ns_attr
+
+    - name: show ns doc after edits
+      command: cat {{ mx_dir }}/ns.xml
+      register: r_ns_content
+      changed_when: false
+
+    - name: show ns content
+      debug:
+        var: r_ns_content.stdout
+
+    # -- node auto-creation (bare xpath creates the target) -------------
+    - name: auto-create a nested element
+      community.general.xml:
+        path: "{{ mx_dir }}/base.xml"
+        xpath: /business/audit/level
+        value: verbose
+
+    - name: auto-create via text()= form
+      community.general.xml:
+        path: "{{ mx_dir }}/base.xml"
+        xpath: "/business/audit/mode/text()='warn'"
+
+    - name: auto-create an attribute via @attr= form
+      community.general.xml:
+        path: "{{ mx_dir }}/base.xml"
+        xpath: "/business/audit/level/@when='now'"
+
+    - name: show base doc after auto-creation
+      command: cat {{ mx_dir }}/base.xml
+      register: r_created_content
+      changed_when: false
+
+    - name: show created content
+      debug:
+        var: r_created_content.stdout
+
+    # -- count / print_match / content get (read-only) ------------------
+    - name: count rating nodes
+      community.general.xml:
+        path: "{{ mx_dir }}/base.xml"
+        xpath: /business/rating
+        count: true
+      register: r_count
+
+    - name: show count
+      debug:
+        var: r_count.count
+
+    - name: print_match paths
+      community.general.xml:
+        path: "{{ mx_dir }}/base.xml"
+        xpath: /business/*/level
+        print_match: true
+      register: r_print_match
+
+    - name: show print_match
+      debug:
+        var: r_print_match.matches
+
+    - name: content get attributes
+      community.general.xml:
+        path: "{{ mx_dir }}/base.xml"
+        xpath: /business/rating
+        content: attribute
+      register: r_content_attr
+
+    - name: show content attribute
+      debug:
+        var: r_content_attr.matches
+
+    - name: content get text
+      community.general.xml:
+        path: "{{ mx_dir }}/base.xml"
+        xpath: /business/count
+        content: text
+      register: r_content_text
+
+    - name: show content text
+      debug:
+        var: r_content_text.matches
+
+    # -- delete ----------------------------------------------------------
+    - name: delete an element
+      community.general.xml:
+        path: "{{ mx_dir }}/base.xml"
+        xpath: /business/count
+        state: absent
+      register: r_del_elem
+
+    - name: delete an attribute
+      community.general.xml:
+        path: "{{ mx_dir }}/base.xml"
+        xpath: /business/rating/@subjective
+        state: absent
+      register: r_del_attr
+
+    - name: show base doc after deletes
+      command: cat {{ mx_dir }}/base.xml
+      register: r_del_content
+      changed_when: false
+
+    - name: show post-delete content
+      debug:
+        var: r_del_content.stdout
+
+    # -- add_children / set_children -------------------------------------
+    - name: seed children document
+      copy:
+        dest: "{{ mx_dir }}/kids.xml"
+        content: |
+          <?xml version='1.0' encoding='UTF-8'?>
+          <inventory><item name="a">1</item></inventory>
+
+    - name: add_children with attributes and text
+      community.general.xml:
+        path: "{{ mx_dir }}/kids.xml"
+        xpath: /inventory
+        add_children:
+          - item:
+              name: b
+              "+value": "2"
+
+    - name: set_children replaces the element list
+      community.general.xml:
+        path: "{{ mx_dir }}/kids.xml"
+        xpath: /inventory
+        set_children:
+          - item:
+              name: only
+              "+value": final
+
+    - name: show kids after set_children
+      command: cat {{ mx_dir }}/kids.xml
+      register: r_kids_content
+      changed_when: false
+
+    - name: show kids content
+      debug:
+        var: r_kids_content.stdout
+
+    # -- insertbefore / insertafter --------------------------------------
+    - name: insertbefore an existing item
+      community.general.xml:
+        path: "{{ mx_dir }}/kids.xml"
+        xpath: /inventory/item
+        insertbefore: true
+        add_children:
+          - item: front
+
+    - name: show kids after insertbefore
+      command: cat {{ mx_dir }}/kids.xml
+      register: r_kids_before
+      changed_when: false
+
+    - name: show kids-before content
+      debug:
+        var: r_kids_before.stdout
+
+    # -- pretty_print -----------------------------------------------------
+    - name: pretty print the document
+      community.general.xml:
+        path: "{{ mx_dir }}/kids.xml"
+        pretty_print: true
+
+    - name: show pretty output
+      command: cat {{ mx_dir }}/kids.xml
+      register: r_pretty
+      changed_when: false
+
+    - name: show pretty content
+      debug:
+        var: r_pretty.stdout
+
+    # -- create_if_missing false fails ------------------------------------
+    - name: missing xpath without create_if_missing must fail
+      community.general.xml:
+        path: "{{ mx_dir }}/base.xml"
+        xpath: /business/nonexistent
+        value: x
+        create_if_missing: false
+      register: r_no_create
+      ignore_errors: true
+
+    - name: show no-create failure
+      debug:
+        var: r_no_create.failed
+
+    # -- check mode --------------------------------------------------------
+    - name: check-mode set does not write
+      community.general.xml:
+        path: "{{ mx_dir }}/base.xml"
+        xpath: /business/rating
+        value: "99"
+      check_mode: true
+      register: r_check_mode
+
+    - name: show check-mode changed flag
+      debug:
+        var: r_check_mode.changed
+
+    - name: read rating in check mode aftermath
+      command: cat {{ mx_dir }}/base.xml
+      register: r_check_content
+      changed_when: false
+
+    - name: show check-mode content
+      debug:
+        var: r_check_content.stdout
+
+    # -- xmlstring mode ----------------------------------------------------
+    - name: xmlstring value set
+      community.general.xml:
+        xmlstring: "<root><a>1</a></root>"
+        xpath: /root/a
+        value: "2"
+      register: r_xmlstring
+
+    - name: show xmlstring result
+      debug:
+        var: r_xmlstring.xmlstring
+
+    # -- backup -------------------------------------------------------------
+    - name: change with backup
+      community.general.xml:
+        path: "{{ mx_dir }}/base.xml"
+        xpath: /business/rating
+        value: "42"
+        backup: true
+      register: r_backup
+
+    - name: show backup file
+      debug:
+        var: r_backup.backup_file
+
+    - name: cleanup workspace
+      file:
+        path: "{{ mx_dir }}"
+        state: absent

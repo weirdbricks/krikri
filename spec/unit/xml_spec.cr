@@ -61,13 +61,23 @@ describe "community.general.xml plugin" do
       File.delete(path)
     end
 
-    it "respects create_if_missing: false as a no-op on no match" do
+    it "rejects create_if_missing like real AnsibleModule (live-verified 2026-09-24)" do
       path = File.tempname("xmlspec", ".xml")
       File.write(path, %(<business><name>co</name></business>))
       result = run_xml(xml_params({"path" => path, "xpath" => "/business/missing", "value" => "x", "create_if_missing" => "false"}))
-      result["changed"].should be_false
-      result["failed"]?.should be_falsey
+      result["failed"].should be_true
+      result["msg"].as_s.should contain("Unsupported parameters for (community.general.xml) module: create_if_missing")
       File.read(path).should_not contain("missing")
+      File.delete(path)
+    end
+
+    it "auto-creates a missing xpath target for a value set like real set_target_inner" do
+      path = File.tempname("xmlspec", ".xml")
+      File.write(path, %(<business><name>co</name></business>))
+      result = run_xml(xml_params({"path" => path, "xpath" => "/business/missing", "value" => "x"}))
+      result["failed"]?.should be_falsey
+      result["changed"].should be_true
+      File.read(path).should contain("<missing>x</missing>")
       File.delete(path)
     end
   end
@@ -307,8 +317,8 @@ describe "community.general.xml plugin" do
       result["changed"].should be_false
     end
 
-    it "creates a missing bare-xpath target even with create_if_missing false" do
-      result = run_xml(xml_params({"xmlstring" => "<a/>", "xpath" => "/a/b", "create_if_missing" => "false"}))
+    it "creates a missing bare-xpath target (no create_if_missing involved)" do
+      result = run_xml(xml_params({"xmlstring" => "<a/>", "xpath" => "/a/b"}))
       result["failed"]?.should be_falsey
       result["changed"].should be_true
       result["xmlstring"].as_s.should contain("<b/>")

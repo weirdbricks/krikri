@@ -9,7 +9,7 @@ module Krikri
   # xml plugin - manages bits and pieces of XML files via xpath. Port of
   # community.general.xml's core semantics (value/attribute set, node
   # auto-creation, delete, add/set_children, count, print_match, content
-  # get, pretty_print, insertbefore/after, create_if_missing, backup,
+  # get, pretty_print, insertbefore/after, backup,
   # check_mode, namespaced xpath + clark-notation attribute names).
   # Real module runs on lxml (also libxml2 underneath), so XPath and
   # serialization behavior match.
@@ -30,8 +30,6 @@ module Krikri
       backup = true?(@params["backup"]?)
       insertbefore = true?(@params["insertbefore"]?)
       insertafter = true?(@params["insertafter"]?)
-      create_if_missing = @params["create_if_missing"]? ? true?(@params["create_if_missing"]?) : true
-
       unless path || xmlstring
         return PluginResult.new(changed: false, failed: true,
           msg: "one of the following is required: path, xmlstring")
@@ -40,6 +38,16 @@ module Krikri
              @params["add_children"]? || @params["set_children"]? || @params["value"]?
         return PluginResult.new(changed: false, failed: true,
           msg: "one of the following is required: add_children, content, count, pretty_print, print_match, set_children, value")
+      end
+
+      # Real module argument validation (AnsibleModule init), which runs
+      # before any XML parsing. create_if_missing is NOT a real
+      # community.general.xml parameter (live-verified 2026-09-24 against
+      # ansible-core 2.19.11 + community.general: AnsibleModule rejects
+      # it before the module ever runs).
+      if raw.has_key?("create_if_missing")
+        return PluginResult.new(changed: false, failed: true,
+          msg: "Unsupported parameters for (community.general.xml) module: create_if_missing. Supported parameters include: add_children, attribute, backup, content, count, input_type, insertafter, insertbefore, namespaces, path, pretty_print, print_match, set_children, state, strip_cdata_tags, value, xmlstring (dest, ensure, file).")
       end
 
       # Real module argument validation (AnsibleModule init), which runs
@@ -116,7 +124,7 @@ module Krikri
       valid_bools = {"0" => false, "1" => true, "f" => false, "n" => false, "t" => true, "y" => true,
                      "false" => false, "no" => false, "off" => false, "on" => true,
                      "true" => true, "yes" => true}
-      {"count", "print_match", "pretty_print", "backup", "insertbefore", "insertafter", "create_if_missing"}.each do |bool_param|
+      {"count", "print_match", "pretty_print", "backup", "insertbefore", "insertafter"}.each do |bool_param|
         if (val = @params[bool_param]?) && !valid_bools.has_key?(val.downcase)
           return PluginResult.new(changed: false, failed: true,
             msg: "argument '#{bool_param}' is of type <class 'str'> and we were unable to convert to bool: The value '#{val}' is not a valid boolean.  Valid booleans include: 0, 1, 'f', 'on', 'n', 't', '1', 'false', 'y', 'true', 'off', 'yes', '0', 'no'")
@@ -172,7 +180,10 @@ module Krikri
             list << get_path(node)
           end
         end
-        matches_result = JSON.parse(list.to_json)
+        # Real do_print_match never passes the paths to finish(), so the
+        # result's "matches" stays the default empty tuple - the paths
+        # only appear in msg.
+        matches_result = JSON.parse("[]")
         msg = "selector '#{xpath}' match: #{list.to_json}"
       elsif count
         read_only = true
@@ -229,7 +240,7 @@ module Krikri
         add_target_children(doc, xpath, arr, input_type, insertbefore, insertafter)
       elsif value_provided
         op_ran = true
-        set_target_inner(doc, xpath, attribute, @params["value"].not_nil!, create_if_missing)
+        set_target_inner(doc, xpath, attribute, @params["value"].not_nil!)
         if @failed_result
           return @failed_result.not_nil!
         end
@@ -409,10 +420,23 @@ module Krikri
             end
           end
         else
-          result.as(KXML::Node).unlink
+          elem = result.as(KXML::Node)
+          tail = sibling_after(elem)
+          elem.unlink
+          # lxml's ElementTree.remove() also deletes the removed
+          # element's tail text (live-verified: deleting <count> between
+          # two whitespace text nodes leaves a single separator).
+          tail.unlink if tail.is_a?(KXML::Text)
         end
       end
       changed
+    end
+
+    private def sibling_after(node : KXML::Node) : KXML::Node?
+      parent = node.parent_node
+      return nil unless parent.is_a?(KXML::Element)
+      index = parent.children.index { |child| child.same?(node) } || return nil
+      parent.children[index + 1]?
     end
 
     private def add_target_children(doc : KXML::Document, xp : String?, children : Array(JSON::Any),
@@ -428,7 +452,12 @@ module Krikri
         if parent.nil?
           return false
         end
-        new_kids.each do |kid|
+        # Real insert_target_children inserts the children consecutively
+        # at one position (index_in_parent incremented per child), so the
+        # list keeps its order on both sides; inserting each kid directly
+        # after the target would reverse the list, hence the reverse walk.
+        kids = insertbefore ? new_kids : new_kids.reverse
+        kids.each do |kid|
           if insertbefore
             target.add_prev_sibling(kid)
           else
@@ -489,21 +518,19 @@ module Krikri
       nil
     end
 
-    private def set_target_inner(doc : KXML::Document, xp : String?, attribute : String?, value : String, create_if_missing : Bool) : Bool
+    private def set_target_inner(doc : KXML::Document, xp : String?, attribute : String?, value : String) : Bool
       return false unless xp
+      # Real set_target_inner auto-creates a missing target through
+      # check_or_make_target (there is no create_if_missing parameter -
+      # live-verified 2026-09-24 it is rejected by AnsibleModule) and
+      # fails only when the target still doesn't exist afterwards.
       if !node_matches?(doc, xp)
-        if !create_if_missing
-          return false
-        end
         check_or_make_target(doc, xp)
-        if @failed_result
-          return false
-        end
+        return false if @failed_result
       end
-
-      if !node_matches?(doc, xp)
+      unless node_matches?(doc, xp)
         @failed_result = PluginResult.new(changed: false, failed: true,
-          msg: "Xpath #{xp} does not reference a node!")
+          msg: "Xpath #{xp} does not reference a node! tree is b'#{doc.not_nil!.to_xml(pretty: true).sub(/\n\z/, "")}'")
         return false
       end
 
@@ -717,12 +744,12 @@ module Krikri
 
     private def serialize(doc : KXML::Document, pretty_print : Bool) : String
       # Real module writes with xml_declaration=True, encoding="UTF-8" via
-      # lxml; the declaration is always the normalized single-quote form,
-      # followed by a newline only in pretty-print mode (lxml
-      # pretty_print=True), and no trailing newline after the root.
+      # lxml: the normalized single-quote declaration is always followed
+      # by a newline (live-verified: both file and xmlstring outputs),
+      # and there is no trailing newline after the root.
       decl = "<?xml version='1.0' encoding='UTF-8'?>"
       body = doc.to_xml(pretty: pretty_print)
-      pretty_print ? "#{decl}\n#{body.sub(/\n\z/, "")}" : decl + body
+      "#{decl}\n#{body.sub(/\n\z/, "")}"
     end
 
     private def build_result(changed : Bool, xp : String?, state : String,
