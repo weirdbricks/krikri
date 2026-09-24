@@ -156,22 +156,6 @@ gaps" rather than arguing with the note in place.
   given `library/*.py` covers the overwhelmingly more common
   custom-module case already).
 
-### The controller binary still links libxml2.so.2 (via the crinja fork's striptags filter)
-
-- As of 0.9.1281 the remote story is fixed: every XML-consuming module
-  (community.general.xml included, rewritten onto the clean-room
-  krikri-xml shard with a DOM mutation API, XPath namespace maps and
-  libxml2-shaped serialization) no longer touches libxml2, so the fat
-  plugin binary uploaded to target hosts no longer links
-  `libxml2.so.2` - remote hosts no longer need it at all.
-- The remaining link is controller-side only: the vendored crinja
-  fork's `striptags` filter uses stdlib `XML.parse_html` (libxml2's
-  HTML parser). It lives in the crinja shard (weirdbricks/crinja), not
-  this repo, and fixing it means a pure-Crystal HTML-stripping
-  implementation plus a fork tag bump. The controller (where krikri
-  itself runs) always has Python-level tooling available anyway, so
-  this is a much weaker constraint than the old remote requirement.
-
 ### Unimplemented community.general filter long tail (usage-audited, watchlist not backlog)
 
 - The dict-key filters (`keep_keys`, `remove_keys`, `replace_keys`,
