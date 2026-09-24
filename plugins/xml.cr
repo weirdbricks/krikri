@@ -2,26 +2,8 @@
 
 require "json"
 require "file_utils"
-require "xml"
+require "krikri-xml"
 require "../src/krikri/base_plugin"
-
-# libxml2 tree-mutation and path functions Crystal's XML bindings do not
-# wrap. `require "xml"` is what links libxml2 itself (the same library
-# real community.general.xml uses through lxml on the python side), so
-# these declarations only bind functions that are already in the binary.
-lib LibXMLTree
-  fun xmlAddChild(parent : LibXML::Node*, cur : LibXML::Node*) : LibXML::Node*
-  fun xmlAddNextSibling(cur : LibXML::Node*, elem : LibXML::Node*) : LibXML::Node*
-  fun xmlAddPrevSibling(cur : LibXML::Node*, elem : LibXML::Node*) : LibXML::Node*
-  fun xmlNewDocNode(doc : LibXML::Doc*, ns : Void*, name : UInt8*, content : UInt8*) : LibXML::Node*
-  fun xmlNewDocText(doc : LibXML::Doc*, content : UInt8*) : LibXML::Node*
-  fun xmlDocCopyNode(node : LibXML::Node*, doc : LibXML::Doc*, extended : Int32) : LibXML::Node*
-  fun xmlSearchNsByHref(doc : LibXML::Doc*, node : LibXML::Node*, href : UInt8*) : LibXML::NS*
-  fun xmlNewNs(node : LibXML::Node*, href : UInt8*, prefix : UInt8*) : LibXML::NS*
-  fun xmlSetNsProp(node : LibXML::Node*, ns : LibXML::NS*, name : UInt8*, value : UInt8*) : LibXML::Node*
-  fun xmlUnsetNsProp(node : LibXML::Node*, ns : LibXML::NS*, name : UInt8*) : Int32
-  fun xmlGetNodePath(node : LibXML::Node*) : UInt8*
-end
 
 module Krikri
   # xml plugin - manages bits and pieces of XML files via xpath. Port of
@@ -202,14 +184,13 @@ module Krikri
         elements = [] of Hash(String, JSON::Any)
         if xpath
           match_nodes(doc, xpath).each do |node|
-            next unless node.element?
+            next unless node.is_a?(KXML::Element)
             attribs = Hash(String, JSON::Any).new
             node.attributes.each do |attr_node|
-              ns = attr_node.namespace
-              key = ns && ns.href ? "{#{ns.href}}#{attr_node.name}" : attr_node.name
-              attribs[key] = JSON::Any.new(attr_node.content)
+              key = attr_node.namespace_uri ? "{#{attr_node.namespace_uri}}#{attr_node.local_name}" : attr_node.name
+              attribs[key] = JSON::Any.new(attr_node.value)
             end
-            elements << {node.name => JSON::Any.new(attribs)}
+            elements << {node.local_name => JSON::Any.new(attribs)}
           end
         end
         matches_result = JSON.parse(elements.to_json)
@@ -219,8 +200,8 @@ module Krikri
         elements = [] of Hash(String, JSON::Any)
         if xpath
           match_nodes(doc, xpath).each do |node|
-            next unless node.element?
-            elements << {node.name => JSON::Any.new(node.text)}
+            next unless node.is_a?(KXML::Element)
+            elements << {node.local_name => JSON::Any.new(node.text_content)}
           end
         end
         matches_result = JSON.parse(elements.to_json)
@@ -324,23 +305,18 @@ module Krikri
     end
 
     @namespaces : Hash(String, String) = {} of String => String
-    @doc : XML::Document?
+    @doc : KXML::Document?
     @failed_result : PluginResult?
 
     private def parse_doc(content : String, source : String) : Nil
       begin
-        # Strict parse: Crystal's ParserOptions.default includes RECOVER,
-        # which silently auto-closes unclosed elements / drops junk -
-        # real lxml (this module's parser) raises XMLSyntaxError on all
-        # of it. Drop RECOVER, keep NOWARNING/NONET.
-        @doc = XML.parse(content, XML::ParserOptions.flags(NOWARNING, NONET))
-      rescue ex : XML::Error
+        # krikri-xml parses strictly and raises on every well-formedness
+        # violation, matching real lxml's XMLSyntaxError behavior.
+        @doc = KXML.parse(content)
+      rescue ex : KXML::Error
         @failed_result = PluginResult.new(changed: false, failed: true,
           msg: "Error while parsing document: #{source} (#{ex.message})")
       end
-      # Crystal's XML.parse silently drops junk around the root element
-      # (real lxml raises XMLSyntaxError); a parsed document with no root
-      # element is the tell.
       if @failed_result.nil? && @doc.try(&.root).nil?
         @failed_result = PluginResult.new(changed: false, failed: true,
           msg: "Error while parsing document: #{source}")
@@ -376,49 +352,70 @@ module Krikri
       ns
     end
 
-    private def match_nodes(doc : XML::Document, xp : String?) : Array(XML::Node)
-      return [] of XML::Node unless xp
+    private def match_nodes(doc : KXML::Document, xp : String?) : Array(KXML::Node | KXML::Attribute)
+      return [] of (KXML::Node | KXML::Attribute) unless xp
       begin
-        result = doc.xpath(xp, @namespaces)
-        case result
-        when XML::NodeSet then result.to_a
-        else                   [] of XML::Node
-        end
-      rescue XML::Error
-        [] of XML::Node
+        result = KXML::XPath.evaluate(xp, doc, ns_map: @namespaces)
+        result.is_a?(KXML::XPath::NodeSet) ? result : [] of (KXML::Node | KXML::Attribute)
+      rescue KXML::XPath::Error
+        [] of (KXML::Node | KXML::Attribute)
       end
     end
 
-    private def node_matches?(doc : XML::Document, xp : String?) : Bool
+    private def node_matches?(doc : KXML::Document, xp : String?) : Bool
       nodes = match_nodes(doc, xp)
-      nodes.size > 0 && nodes[0].element?
+      nodes.size > 0 && nodes[0].is_a?(KXML::Element)
     end
 
-    private def each_match(doc : XML::Document, xp : String?, &) : Nil
+    private def each_match(doc : KXML::Document, xp : String?, &) : Nil
       match_nodes(doc, xp).each { |node| yield node }
     end
 
-    private def get_path(node : XML::Node) : String
-      cstr = LibXMLTree.xmlGetNodePath(node.to_unsafe)
-      s = cstr.null? ? "" : String.new(cstr)
-      s
+    private def get_path(node : KXML::Node | KXML::Attribute) : String
+      if node.is_a?(KXML::Attribute)
+        owner = find_attribute_owner(@doc.not_nil!, node)
+        return "" unless owner
+        "#{owner.node_path}/@#{node.name}"
+      elsif node.is_a?(KXML::Element)
+        node.node_path
+      else
+        ""
+      end
     end
 
-    private def delete_xpath_target(doc : XML::Document, xp : String?) : Bool
+    private def find_attribute_owner(doc : KXML::Document, attr : KXML::Attribute) : KXML::Element?
+      stack = [doc.as(KXML::Node)]
+      until stack.empty?
+        n = stack.pop
+        if n.is_a?(KXML::Element)
+          return n if n.attributes.any? { |a| a.same?(attr) }
+        end
+        stack.concat(n.children) if n.is_a?(KXML::Element) || n.is_a?(KXML::Document)
+      end
+      nil
+    end
+
+    private def delete_xpath_target(doc : KXML::Document, xp : String?) : Bool
       changed = false
       match_nodes(doc, xp).each do |result|
         changed = true
-        if result.type == XML::Node::Type::ATTRIBUTE_NODE
-          parent = result.parent
-          unset_attr(parent.not_nil!, result.name) if parent
+        if result.is_a?(KXML::Attribute)
+          owner = find_attribute_owner(doc, result)
+          if owner
+            if href = result.namespace_uri
+              owner.delete_attribute("{#{href}}#{result.local_name}")
+            else
+              owner.delete_attribute(result.name)
+            end
+          end
         else
-          result.unlink
+          result.as(KXML::Node).unlink
         end
       end
       changed
     end
 
-    private def add_target_children(doc : XML::Document, xp : String?, children : Array(JSON::Any),
+    private def add_target_children(doc : KXML::Document, xp : String?, children : Array(JSON::Any),
                                     input_type : String, insertbefore : Bool, insertafter : Bool) : Bool
       new_kids = children_to_nodes(doc, children, input_type)
       if insertbefore || insertafter
@@ -426,39 +423,40 @@ module Krikri
         if matches.empty?
           return false
         end
-        target = insertbefore ? matches[0] : matches[-1]
-        parent = target.parent
+        target = (insertbefore ? matches[0] : matches[-1]).as(KXML::Node)
+        parent = target.parent_node
         if parent.nil?
           return false
         end
         new_kids.each do |kid|
           if insertbefore
-            LibXMLTree.xmlAddPrevSibling(target.to_unsafe, kid)
+            target.add_prev_sibling(kid)
           else
-            LibXMLTree.xmlAddNextSibling(target.to_unsafe, kid)
+            target.add_next_sibling(kid)
           end
         end
       else
         match_nodes(doc, xp).each do |node|
+          next unless node.is_a?(KXML::Element)
           new_kids.each do |kid|
-            LibXMLTree.xmlAddChild(node.to_unsafe, kid)
+            node.append_child(kid)
           end
         end
       end
       true
     end
 
-    private def set_target_children(doc : XML::Document, xp : String?, children : Array(JSON::Any), input_type : String) : Bool
+    private def set_target_children(doc : KXML::Document, xp : String?, children : Array(JSON::Any), input_type : String) : Bool
       return false unless xp
       arr = children
       new_kids = children_to_nodes(doc, arr, input_type)
       changed = false
       match_nodes(doc, xp).each do |match|
-        existing = [] of XML::Node
-        match.children.each { |child| existing << child if child.element? }
+        next unless match.is_a?(KXML::Element)
+        existing = match.elements
         if existing.size == new_kids.size
           same = existing.each_with_index.all? do |elem, index|
-            elem.to_xml(options: XML::SaveOptions::AS_XML) == wrap_node(doc, new_kids[index]).to_xml(options: XML::SaveOptions::AS_XML)
+            elem.to_xml == new_kids[index].as(KXML::Node).to_xml
           end
           if same
             next
@@ -466,7 +464,7 @@ module Krikri
         end
         existing.each(&.unlink)
         new_kids.each do |kid|
-          LibXMLTree.xmlAddChild(match.to_unsafe, kid)
+          match.append_child(kid)
         end
         changed = true
       end
@@ -491,11 +489,7 @@ module Krikri
       nil
     end
 
-    private def wrap_node(doc : XML::Document, ptr : LibXML::Node*) : XML::Node
-      XML::Node.new(ptr, doc)
-    end
-
-    private def set_target_inner(doc : XML::Document, xp : String?, attribute : String?, value : String, create_if_missing : Bool) : Bool
+    private def set_target_inner(doc : KXML::Document, xp : String?, attribute : String?, value : String, create_if_missing : Bool) : Bool
       return false unless xp
       if !node_matches?(doc, xp)
         if !create_if_missing
@@ -516,9 +510,9 @@ module Krikri
       changed = false
       attr_clark = attribute ? (attribute.includes?(":") ? to_clark(attribute) : attribute) : nil
       match_nodes(doc, xp).each do |node|
-        next unless node.element?
+        next unless node.is_a?(KXML::Element)
         if attr_clark.nil?
-          if node.text != value
+          if node.text_content != value
             node.text = value
             changed = true
           end
@@ -532,7 +526,7 @@ module Krikri
       changed
     end
 
-    private def check_or_make_target(doc : XML::Document, xp : String) : Bool
+    private def check_or_make_target(doc : KXML::Document, xp : String) : Bool
       inner_xpath, changes = split_xpath_last(xp)
       if inner_xpath == xp || changes.empty?
         @failed_result = PluginResult.new(changed: false, failed: true,
@@ -560,7 +554,8 @@ module Krikri
           elsif eoa.empty?
             next if eoa_value.nil?
             match_nodes(doc, inner_xpath).each do |node|
-              if node.text != eoa_value
+              next unless node.is_a?(KXML::Element)
+              if node.text_content != eoa_value
                 node.text = eoa_value
                 changed = true
               end
@@ -569,7 +564,7 @@ module Krikri
             attr = eoa[1..]
             attr_clark = attr.includes?(":") ? to_clark(attr) : attr
             match_nodes(doc, inner_xpath).each do |element|
-              next unless element.element?
+              next unless element.is_a?(KXML::Element)
               current = attr_value(element, attr_clark)
               if current.nil? || current != eoa_value
                 set_attr(element, attr_clark, eoa_value || "")
@@ -583,34 +578,26 @@ module Krikri
       changed
     end
 
-    private def create_and_attach(doc : XML::Document, inner_xpath : String, name : String, text : String?) : Bool
+    private def create_and_attach(doc : KXML::Document, inner_xpath : String, name : String, text : String?) : Bool
       changed = false
       match_nodes(doc, inner_xpath).each do |node|
-        ptr = new_element_ptr(name, text, node)
-        LibXMLTree.xmlAddChild(node.to_unsafe, ptr)
+        next unless node.is_a?(KXML::Element)
+        node.append_child(new_element(name, text, node))
         changed = true
       end
       changed
     end
 
-    private def new_element_ptr(name : String, text : String?, parent : XML::Node) : LibXML::Node*
-      doc_ptr = @doc.not_nil!.to_unsafe.as(LibXML::Doc*)
-      href, local = parse_clark(name)
-      if href
-        ptr = LibXMLTree.xmlNewDocNode(doc_ptr, nil, local, nil)
-        nsptr = LibXMLTree.xmlSearchNsByHref(doc_ptr, parent.to_unsafe, href)
-        if nsptr.null?
-          nsptr = LibXMLTree.xmlNewNs(ptr, href, clark_prefix_hint)
-        end
-        ptr.value.ns = nsptr
-      else
-        ptr = LibXMLTree.xmlNewDocNode(doc_ptr, nil, local, nil)
-      end
+    private def new_element(name : String, text : String?, parent : KXML::Element) : KXML::Element
+      doc = @doc.not_nil!
+      elem = doc.create_element(name, parent, clark_prefix_hint)
+      doc.allocate_order(elem)
       if text
-        tptr = LibXMLTree.xmlNewDocText(doc_ptr, text)
-        LibXMLTree.xmlAddChild(ptr, tptr)
+        t = doc.create_text(text)
+        doc.allocate_order(t)
+        elem.append_child(t)
       end
-      ptr
+      elem
     end
 
     @clark_ns_counter = 0
@@ -620,15 +607,15 @@ module Krikri
       "ns#{@clark_ns_counter}"
     end
 
-    private def children_to_nodes(doc : XML::Document, children : Array(JSON::Any), input_type : String) : Array(LibXML::Node*)
+    private def children_to_nodes(doc : KXML::Document, children : Array(JSON::Any), input_type : String) : Array(KXML::Node)
       children.map do |child|
         if child.as_s?
-          new_element_ptr(child.as_s.not_nil!, nil, doc.root.not_nil!)
+          new_element(child.as_s.not_nil!, nil, doc.root.not_nil!)
         elsif h = child.as_h?
           if h.size > 1
             @failed_result = PluginResult.new(changed: false, failed: true,
               msg: "Can only create children from hashes with one key")
-            next nil.as(LibXML::Node*)
+            next nil
           end
           key, value = h.first
           if value.as_h?
@@ -636,37 +623,37 @@ module Krikri
             attrs = sub.dup
             children_json = attrs.delete("_")
             child_value = attrs.delete("+value")
-            ptr = new_element_ptr(key, nil, doc.root.not_nil!)
+            elem = new_element(key, nil, doc.root.not_nil!)
             attrs.each do |attr_name, attr_json|
-              set_attr(wrap_node(doc, ptr), attr_name, attr_json.as_s? || attr_json.to_s)
+              set_attr(elem, attr_name, attr_json.as_s? || attr_json.to_s)
             end
             if child_value
-              tptr = LibXMLTree.xmlNewDocText(doc.to_unsafe.as(LibXML::Doc*), child_value.as_s? || child_value.to_s)
-              LibXMLTree.xmlAddChild(ptr, tptr)
+              t = doc.create_text(child_value.as_s? || child_value.to_s)
+              doc.allocate_order(t)
+              elem.append_child(t)
             end
             if children_json
               cj = children_json.as_a?
               cj.try &.each do |subchild|
-                sub_ptr = children_to_nodes(doc, [subchild], input_type)
-                sub_ptr.each do |sub_node|
-                  LibXMLTree.xmlAddChild(ptr, sub_node)
+                children_to_nodes(doc, [subchild], input_type).each do |sub_node|
+                  elem.append_child(sub_node)
                 end
               end
             end
-            ptr
+            elem
           elsif value.as_a?
             @failed_result = PluginResult.new(changed: false, failed: true,
               msg: "Invalid child type: #{value.class}. Children must be either strings or hashes.")
-            nil.as(LibXML::Node*)
+            nil
           else
-            new_element_ptr(key, value.as_s? || value.to_s, doc.root.not_nil!)
+            new_element(key, value.as_s? || value.to_s, doc.root.not_nil!)
           end
         else
           @failed_result = PluginResult.new(changed: false, failed: true,
             msg: "Invalid child type: #{child.class}. Children must be either strings or hashes.")
-          nil.as(LibXML::Node*)
+          KXML::Element.new("", nil, "", nil, [] of KXML::Attribute)
         end
-      end.reject Nil
+      end.compact_map { |node| node.as(KXML::Node) unless node.nil? }
     end
 
     private def to_clark(prefixed : String) : String
@@ -676,52 +663,12 @@ module Krikri
       "{#{href}}#{rawname}"
     end
 
-    private def parse_clark(name : String) : {String?, String}
-      if name.starts_with?('{') && (i = name.index('}'))
-        {name[1...i], name[(i + 1)..]}
-      else
-        {nil, name}
-      end
+    private def attr_value(element : KXML::Element, name : String) : String?
+      element.attribute_value(name)
     end
 
-    private def attr_value(element : XML::Node, name : String) : String?
-      href, local = parse_clark(name)
-      if href
-        element.attributes.each do |attr_node|
-          ns = attr_node.namespace
-          return attr_node.content if attr_node.name == local && ns && ns.href == href
-        end
-        nil
-      else
-        element[local]?
-      end
-    end
-
-    private def set_attr(element : XML::Node, name : String, value : String) : Nil
-      href, local = parse_clark(name)
-      if href
-        doc_ptr = @doc.not_nil!.to_unsafe.as(LibXML::Doc*)
-        nsptr = LibXMLTree.xmlSearchNsByHref(doc_ptr, element.to_unsafe, href)
-        if nsptr.null?
-          nsptr = LibXMLTree.xmlNewNs(element.to_unsafe, href, clark_prefix_hint)
-        end
-        LibXMLTree.xmlSetNsProp(element.to_unsafe, nsptr, local, value)
-      else
-        element[local] = value
-      end
-    end
-
-    private def unset_attr(element : XML::Node, name : String) : Nil
-      href, local = parse_clark(name)
-      if href
-        doc_ptr = @doc.not_nil!.to_unsafe.as(LibXML::Doc*)
-        nsptr = LibXMLTree.xmlSearchNsByHref(doc_ptr, element.to_unsafe, href)
-        unless nsptr.null?
-          LibXMLTree.xmlUnsetNsProp(element.to_unsafe, nsptr, local)
-        end
-      else
-        element.delete(local)
-      end
+    private def set_attr(element : KXML::Element, name : String, value : String) : Nil
+      element.set_attribute(name, value)
     end
 
     # split_xpath_last - the real module's regex cascade for turning an
@@ -768,20 +715,14 @@ module Krikri
       s[1..-2]
     end
 
-    private def serialize(doc : XML::Document, pretty_print : Bool) : String
-      options = pretty_print ? XML::SaveOptions::FORMAT | XML::SaveOptions::AS_XML : XML::SaveOptions::AS_XML
-      s = doc.to_xml(indent: 2, options: options)
+    private def serialize(doc : KXML::Document, pretty_print : Bool) : String
       # Real module writes with xml_declaration=True, encoding="UTF-8" via
-      # lxml; libxml2 only emits the encoding attribute when the source
-      # document declared one. Normalize the declaration to match.
-      s = s.sub("<?xml version=\"1.0\"?>", "<?xml version='1.0' encoding='UTF-8'?>")
-      s = s.sub("<?xml version=\"1.0\" encoding=\"UTF-8\"?>", "<?xml version='1.0' encoding='UTF-8'?>")
-      # lxml's tostring() leaves no trailing newline after the root; libxml2
-      # preserves a source trailing-whitespace text node (and FORMAT adds
-      # one), so krikri's file ended in `\n` where real's did not. Drop the
-      # single trailing newline to match byte-for-byte.
-      s = s.sub(/\n\z/, "")
-      s
+      # lxml; the declaration is always the normalized single-quote form,
+      # followed by a newline only in pretty-print mode (lxml
+      # pretty_print=True), and no trailing newline after the root.
+      decl = "<?xml version='1.0' encoding='UTF-8'?>"
+      body = doc.to_xml(pretty: pretty_print)
+      pretty_print ? "#{decl}\n#{body.sub(/\n\z/, "")}" : decl + body
     end
 
     private def build_result(changed : Bool, xp : String?, state : String,
