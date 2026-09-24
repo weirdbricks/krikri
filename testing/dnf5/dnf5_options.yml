@@ -1,0 +1,269 @@
+---
+# Comprehensive ansible.builtin.dnf5 option-coverage harness. Runs against a
+# Fedora 41 (dnf5) host with connection: local under BOTH real ansible-playbook
+# and krikri-playbook (see run_compare.sh); each writes a canonical per-task
+# status report so the two engines can be diffed exactly.
+#
+# Every dnf5 argument-spec option is exercised, in the realistic form a role
+# would use it. Mutating tasks are ordered so the package set stays coherent
+# and ignore_errors keeps a single divergence from aborting the rest.
+- name: dnf5 full option coverage
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    # ---- state + name basics ----
+    - name: T01_install_present
+      ansible.builtin.dnf5: { name: sl, state: present }
+      register: rT01
+      ignore_errors: true
+    - name: T02_install_present_idempotent
+      ansible.builtin.dnf5: { name: sl, state: present }
+      register: rT02
+      ignore_errors: true
+    - name: T03_state_installed_alias
+      ansible.builtin.dnf5: { name: sl, state: installed }
+      register: rT03
+      ignore_errors: true
+    - name: T04_state_latest
+      ansible.builtin.dnf5: { name: sl, state: latest }
+      register: rT04
+      ignore_errors: true
+    - name: T05_multiple_names_list
+      ansible.builtin.dnf5: { name: [sl, hello], state: present }
+      register: rT05
+      ignore_errors: true
+    - name: T06_remove_absent
+      ansible.builtin.dnf5: { name: hello, state: absent }
+      register: rT06
+      ignore_errors: true
+    - name: T07_remove_absent_idempotent
+      ansible.builtin.dnf5: { name: hello, state: absent }
+      register: rT07
+      ignore_errors: true
+    - name: T08_state_removed_alias
+      ansible.builtin.dnf5: { name: sl, state: removed }
+      register: rT08
+      ignore_errors: true
+
+    # ---- update_cache / expire-cache ----
+    - name: T09_update_cache_alone
+      ansible.builtin.dnf5: { update_cache: true }
+      register: rT09
+      ignore_errors: true
+    - name: T10_expire_cache_alias
+      ansible.builtin.dnf5: { "expire-cache": true }
+      register: rT10
+      ignore_errors: true
+    - name: T11_update_cache_with_install
+      ansible.builtin.dnf5: { name: sl, state: present, update_cache: true }
+      register: rT11
+      ignore_errors: true
+
+    # ---- repo / excludes / cache ----
+    - name: T12_enablerepo_valid
+      ansible.builtin.dnf5: { name: sl, state: present, enablerepo: fedora }
+      register: rT12
+      ignore_errors: true
+    - name: T13_disablerepo
+      ansible.builtin.dnf5: { name: sl, state: present, disablerepo: updates }
+      register: rT13
+      ignore_errors: true
+    - name: T14_enablerepo_nonexistent
+      ansible.builtin.dnf5: { name: sl, state: present, enablerepo: nosuchrepo123 }
+      register: rT14
+      ignore_errors: true
+    - name: T15_exclude
+      ansible.builtin.dnf5: { name: sl, state: present, exclude: [hello] }
+      register: rT15
+      ignore_errors: true
+    - name: T16_disable_excludes_all
+      ansible.builtin.dnf5: { name: sl, state: present, disable_excludes: all }
+      register: rT16
+      ignore_errors: true
+    - name: T17_cacheonly
+      ansible.builtin.dnf5: { name: sl, state: present, cacheonly: true }
+      register: rT17
+      ignore_errors: true
+
+    # ---- solver / deps flags ----
+    - name: T18_skip_broken
+      ansible.builtin.dnf5: { name: sl, state: present, skip_broken: true }
+      register: rT18
+      ignore_errors: true
+    - name: T19_allowerasing
+      ansible.builtin.dnf5: { name: sl, state: present, allowerasing: true }
+      register: rT19
+      ignore_errors: true
+    - name: T20_install_weak_deps_false
+      ansible.builtin.dnf5: { name: sl, state: present, install_weak_deps: false }
+      register: rT20
+      ignore_errors: true
+    - name: T21_best_true
+      ansible.builtin.dnf5: { name: sl, state: present, best: true }
+      register: rT21
+      ignore_errors: true
+    - name: T22_best_false
+      ansible.builtin.dnf5: { name: sl, state: present, best: false }
+      register: rT22
+      ignore_errors: true
+    - name: T23_nobest_true
+      ansible.builtin.dnf5: { name: sl, state: present, nobest: true }
+      register: rT23
+      ignore_errors: true
+    - name: T24_security_latest
+      ansible.builtin.dnf5: { name: sl, state: latest, security: true }
+      register: rT24
+      ignore_errors: true
+    - name: T25_bugfix_latest
+      ansible.builtin.dnf5: { name: sl, state: latest, bugfix: true }
+      register: rT25
+      ignore_errors: true
+    - name: T26_update_only_missing
+      ansible.builtin.dnf5: { name: sl, state: latest, update_only: true }
+      register: rT26
+      ignore_errors: true
+    - name: T27_allow_downgrade
+      ansible.builtin.dnf5: { name: sl, state: present, allow_downgrade: true }
+      register: rT27
+      ignore_errors: true
+
+    # ---- gpg / ssl / certs (mostly no-op on target) ----
+    - name: T28_disable_gpg_check
+      ansible.builtin.dnf5: { name: sl, state: present, disable_gpg_check: true }
+      register: rT28
+      ignore_errors: true
+    - name: T29_sslverify_false
+      ansible.builtin.dnf5: { name: sl, state: present, sslverify: false }
+      register: rT29
+      ignore_errors: true
+    - name: T30_validate_certs_false
+      ansible.builtin.dnf5: { name: sl, state: present, validate_certs: false }
+      register: rT30
+      ignore_errors: true
+
+    # ---- download_only ----
+    - name: T31_download_only
+      ansible.builtin.dnf5: { name: sl, state: present, download_only: true, download_dir: /var/tmp }
+      register: rT31
+      ignore_errors: true
+
+    # ---- misc scalars ----
+    - name: T32_releasever_current
+      ansible.builtin.dnf5: { name: sl, state: present, releasever: "41" }
+      register: rT32
+      ignore_errors: true
+    - name: T33_installroot_default
+      ansible.builtin.dnf5: { name: sl, state: present, installroot: "/" }
+      register: rT33
+      ignore_errors: true
+    - name: T34_lock_timeout
+      ansible.builtin.dnf5: { name: sl, state: present, lock_timeout: 60 }
+      register: rT34
+      ignore_errors: true
+    - name: T35_auto_install_module_deps
+      ansible.builtin.dnf5: { name: sl, state: present, auto_install_module_deps: true }
+      register: rT35
+      ignore_errors: true
+    - name: T36_enable_plugin
+      ansible.builtin.dnf5: { name: sl, state: present, enable_plugin: [leaves] }
+      register: rT36
+      ignore_errors: true
+
+    # ---- autoremove (documented no-name usage) ----
+    - name: T37_autoremove_noneed
+      ansible.builtin.dnf5: { state: absent, autoremove: true }
+      register: rT37
+      ignore_errors: true
+
+    # ---- list query mode ----
+    - name: T38_list_installed
+      ansible.builtin.dnf5: { list: installed }
+      register: rT38
+      ignore_errors: true
+    - name: T39_list_updates
+      ansible.builtin.dnf5: { list: updates }
+      register: rT39
+      ignore_errors: true
+    - name: T40_list_spec
+      ansible.builtin.dnf5: { list: sl }
+      register: rT40
+      ignore_errors: true
+
+    # ---- arg-spec rejections / mutual exclusion ----
+    - name: T41_bad_state
+      ansible.builtin.dnf5: { name: sl, state: bogus-state }
+      register: rT41
+      ignore_errors: true
+    - name: T42_use_backend_rejected
+      ansible.builtin.dnf5: { name: sl, use_backend: dnf5 }
+      register: rT42
+      ignore_errors: true
+    - name: T43_nonbool_best
+      ansible.builtin.dnf5: { name: sl, best: sometimes }
+      register: rT43
+      ignore_errors: true
+    - name: T44_null_name
+      ansible.builtin.dnf5: { state: present, name: }
+      register: rT44
+      ignore_errors: true
+    - name: T45_name_and_list_exclusive
+      ansible.builtin.dnf5: { name: sl, list: sl, state: present }
+      register: rT45
+      ignore_errors: true
+    - name: T46_best_and_nobest_exclusive
+      ansible.builtin.dnf5: { name: sl, best: true, nobest: true, state: present }
+      register: rT46
+      ignore_errors: true
+
+    - name: Collect results
+      ansible.builtin.set_fact:
+        pairs: >-
+          {{ [ ['T01_install_present', rT01], ['T02_install_present_idempotent', rT02],
+               ['T03_state_installed_alias', rT03], ['T04_state_latest', rT04],
+               ['T05_multiple_names_list', rT05], ['T06_remove_absent', rT06],
+               ['T07_remove_absent_idempotent', rT07], ['T08_state_removed_alias', rT08],
+               ['T09_update_cache_alone', rT09], ['T10_expire_cache_alias', rT10],
+               ['T11_update_cache_with_install', rT11], ['T12_enablerepo_valid', rT12],
+               ['T13_disablerepo', rT13], ['T14_enablerepo_nonexistent', rT14],
+               ['T15_exclude', rT15], ['T16_disable_excludes_all', rT16],
+               ['T17_cacheonly', rT17], ['T18_skip_broken', rT18],
+               ['T19_allowerasing', rT19], ['T20_install_weak_deps_false', rT20],
+               ['T21_best_true', rT21], ['T22_best_false', rT22],
+               ['T23_nobest_true', rT23], ['T24_security_latest', rT24],
+               ['T25_bugfix_latest', rT25], ['T26_update_only_missing', rT26],
+               ['T27_allow_downgrade', rT27], ['T28_disable_gpg_check', rT28],
+               ['T29_sslverify_false', rT29], ['T30_validate_certs_false', rT30],
+               ['T31_download_only', rT31], ['T32_releasever_current', rT32],
+               ['T33_installroot_default', rT33], ['T34_lock_timeout', rT34],
+               ['T35_auto_install_module_deps', rT35], ['T36_enable_plugin', rT36],
+               ['T37_autoremove_noneed', rT37], ['T38_list_installed', rT38],
+               ['T39_list_updates', rT39], ['T40_list_spec', rT40],
+               ['T41_bad_state', rT41], ['T42_use_backend_rejected', rT42],
+               ['T43_nonbool_best', rT43], ['T44_null_name', rT44],
+               ['T45_name_and_list_exclusive', rT45], ['T46_best_and_nobest_exclusive', rT46] ] }}
+
+    - name: Assemble report
+      ansible.builtin.copy:
+        dest: /repo/testing/dnf5/last_report.txt
+        mode: "0644"
+        content: |
+          {% for label, r in pairs %}
+          {{ label }}|{{ 'failed' if (r.failed | default(false)) else ('skipped' if (r.skipped | default(false)) else ('changed' if (r.changed | default(false)) else 'ok')) }}
+          {% endfor %}
+
+    - name: Assemble messages
+      ansible.builtin.copy:
+        dest: /repo/testing/dnf5/last_msgs.txt
+        mode: "0644"
+        content: |
+          {% for label, r in pairs %}
+          {% if r.failed | default(false) %}
+          {{ label }}::{{ (r.msg | default('')) | replace('\n', ' ') | truncate(200, true) }}
+          {% endif %}
+          {% endfor %}
+
+    - name: Assemble report
+      ansible.builtin.copy:
+        dest: /repo/testing/dnf5/last_report.txt
+        mode: "0644"
+        content: "{{ rep | join('\n') }}\n"
