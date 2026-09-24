@@ -108,7 +108,7 @@ describe "include_vars: with with_fileglob: (not with_first_found:/loop:)" do
     FileUtils.rm_rf(src_dir) if src_dir
   end
 
-  it "displays a skipped loop item's dict value as clean JSON, not Crystal's own JSON::Any inspect text" do
+  it "displays a skipped loop item's dict value as Python repr (matching real), not Crystal's JSON::Any inspect text" do
     # Real bug found via a live 100-role confirm round: ipr-cnrs.
     # nftables's own looped include_vars: task, gated by a false
     # when:, printed "skipping: ... => (item={\"changed\" =>
@@ -139,7 +139,11 @@ describe "include_vars: with with_fileglob: (not with_first_found:/loop:)" do
     status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output, chdir: src_dir)
 
     status.success?.should be_true
-    output.to_s.should contain(%({"name":"a.yml","groupname":"ungrouped"}))
+    # Real renders the loop item with Python repr (`'key'` single-quoted,
+    # `, ` separators) - verified against ansible-core 2.19.11 - so the
+    # item label is `{'name': 'a.yml', 'groupname': 'ungrouped'}`, not the
+    # compact JSON krikri used to emit.
+    output.to_s.should contain(%({'name': 'a.yml', 'groupname': 'ungrouped'}))
     output.to_s.should_not contain("JSON::Any(")
   ensure
     FileUtils.rm_rf(src_dir) if src_dir

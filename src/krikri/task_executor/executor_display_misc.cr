@@ -342,7 +342,12 @@ module Krikri
     end
 
     private def item_display(item : JSON::Any) : String
-      item.raw.is_a?(String) ? item.as_s : item.to_json
+      # Real Ansible's loop-item label is Python's repr of the item, not
+      # JSON: booleans render True/False, dicts/lists use single-quoted
+      # `{'k': 'v'}`/`['a']`, None for null. A bare string is shown without
+      # quotes. `.to_json` gave lowercase true/false and double quotes, so
+      # `(item=...)` diverged from real for any non-string item.
+      item.raw.is_a?(String) ? item.as_s : ResultDisplay.python_repr(item)
     end
 
     # Whether *host*'s `meta: end_role` already ended the role *task*

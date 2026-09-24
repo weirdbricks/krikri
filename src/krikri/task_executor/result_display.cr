@@ -101,6 +101,18 @@ module Krikri
         return
       end
 
+      # Loop-item failures: real's shape is a single line per failed item,
+      # `failed: [host] (item=X) => {json}` (item BEFORE the `=>`, the whole
+      # result dumped inline sorted), with `...ignoring` printed ONCE after
+      # the whole loop rather than per item (finish_looped_task owns that).
+      # The old path printed `failed: [host] => (item=X)` plus a `  Message:`
+      # /`  Exit code:` detail block and a per-item `...ignoring` - a
+      # different word-order, extra lines, and repeated suffix vs real.
+      if failed && !item_label.nil?
+        puts "failed: [#{host_label}] (item=#{item_label}) => #{ResultDisplay.python_json_dump(clean_for_display(result))}"
+        return
+      end
+
       puts "#{status}: [#{host_label}]#{suffix}"
 
       # Show message for successful tasks if msg is present and meaningful
@@ -656,6 +668,29 @@ module Krikri
   # json.dumps default separators (", " between items, ": " after keys).
   def self.python_json_dump(result : JSON::Any) : String
     python_json_value(result)
+  end
+
+  # Python's repr() of a value, matching how real Ansible renders a loop
+  # item in its `failed:`/`changed:` display (`True`/`False`/`None`,
+  # single-quoted strings/dict-keys, insertion-order dict `{k: v}`, `[..]`
+  # lists) - distinct from the JSON dump used for the result object, which
+  # stays lower-case true/false.
+  def self.python_repr(value : JSON::Any) : String
+    case raw = value.raw
+    when Hash(String, JSON::Any)
+      inner = raw.map { |k, v| "'#{k}': #{python_repr(v)}" }.join(", ")
+      "{#{inner}}"
+    when Array(JSON::Any)
+      "[" + raw.map { |v| python_repr(v) }.join(", ") + "]"
+    when Nil
+      "None"
+    when Bool
+      raw ? "True" : "False"
+    when Int64, Int32, Float64
+      raw.to_s
+    else
+      "'" + value.to_s.gsub("\\", "\\\\").gsub("'", "\\'") + "'"
+    end
   end
 
   private def self.python_json_value(value : JSON::Any) : String
