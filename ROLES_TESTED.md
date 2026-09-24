@@ -3897,7 +3897,7 @@ First batch since Atlantic.net's server-limit increase (10 → 25). 200 never-be
 | `alvarobacelar.ansible_role_kafka` | rocky | ✅ clean. Times: cold py 38.04s vs cr 47.61s; warm py 4.64s vs cr 0.61s. |
 | `alvarobacelar.ansible_role_zookeeper` | rocky | ✅ clean. Times: cold py 37.39s vs cr 51.04s; warm py 5.54s vs cr 0.59s. |
 | `alvarobacelar.install_docker` | rocky | ✅ clean. Times: cold py 0.48s vs cr 0.01s; warm py 0.51s vs cr 0.01s. |
-| `alvistack.bamboo` | rocky | ⚠️ divergent - 0.9.903 hard-stop correctly firing on unimplemented module 'community.general.xml'. Times: cold py 54.41s vs cr 0.01s; warm py 45.10s vs cr 0.01s. |
+| `alvistack.bamboo` | rocky | ⚠️ Same-fail on both engines (re-confirm round 974000, 0.9.1283; previously divergent at 0.9.903 on unimplemented community.general.xml - the module now runs clean on krikri). Both engines fail at `apt-key add` with the same upstream checksum mismatch (openSUSE Release.key content drifted upstream). Times: cold py 31.30s vs cr 17.46s; warm py 29.91s vs cr 11.88s. |
 | `alvistack.bitbucket` | rocky | ✅ clean. Times: cold py 61.44s vs cr 37.16s; warm py 53.21s vs cr 22.76s. |
 | `alvistack.bootstrap` | rocky | ✅ clean. Times: cold py 258.09s vs cr 216.38s; warm py 148.69s vs cr 97.58s. |
 | `alvistack.chrome` | rocky | ✅ clean. Times: cold py 24.63s vs cr 19.95s; warm py 23.25s vs cr 11.01s. |
@@ -3907,7 +3907,7 @@ First batch since Atlantic.net's server-limit increase (10 → 25). 200 never-be
 | `alvistack.containernetworking_plugins` | rocky | ✅ clean. Times: cold py 23.20s vs cr 25.23s; warm py 11.65s vs cr 3.29s. |
 | `alvistack.containers_common` | rocky | ✅ clean. Times: cold py 70.82s vs cr 73.45s; warm py 26.34s vs cr 6.61s. |
 | `alvistack.cri_o` | rocky | ✅ clean. Times: cold py 71.61s vs cr 43.92s; warm py 64.63s vs cr 26.68s. |
-| `alvistack.crowd` | rocky | ⚠️ divergent - 0.9.903 hard-stop correctly firing on unimplemented module 'community.general.xml'. Times: cold py 42.88s vs cr 0.01s; warm py 38.67s vs cr 0.01s. |
+| `alvistack.crowd` | rocky | ⚠️ Same-fail on both engines (re-confirm round 974001, 0.9.1283; previously divergent at 0.9.903 on unimplemented community.general.xml - the module now runs clean on krikri). Identical counters cold and warm (`ok=5 failed=1`, the role's own upstream apt-key failure). Times: cold py 30.83s vs cr 17.25s; warm py 31.81s vs cr 11.30s. |
 | `alvistack.crun` | rocky | ✅ clean. Times: cold py 13.72s vs cr 14.97s; warm py 8.74s vs cr 1.58s. |
 | `alvistack.flatpak` | rocky | ⚠️ divergent - 0.9.903 hard-stop correctly firing on unimplemented module 'community.general.flatpak_remote'. Times: cold py 40.20s vs cr 0.01s; warm py 7.00s vs cr 0.01s. |
 | `alvistack.git` | rocky | ✅ clean. Times: cold py 54.07s vs cr 47.23s; warm py 20.74s vs cr 3.02s. |
@@ -4192,7 +4192,7 @@ roles were re-run after the fix and show their real result below.
 | `alikins.tomcat6` | rocky | ❌ untestable - not on Ansible Galaxy (404). |
 | `alphanodes.backup` | rocky | ❌ untestable - not on Ansible Galaxy (404). |
 | `AlphaNodes.postgresql_client` | ubuntu | ❌ untestable - not on Ansible Galaxy (404). |
-| `alvistack.confluence` | rocky | ⚠️ divergent - missing module `community.general.xml`, already-documented deliberate limit (documented expected hard-stop (round 90000 sweep)), not a new gap. |
+| `alvistack.confluence` | rocky | ⚠️ Same-fail on both engines (re-confirm round 974002, 0.9.1283; previously divergent on unimplemented community.general.xml - the module now runs clean on krikri, `changed=2` cold identical on both). Both engines fail at the role's own `apt-get install` task. Times: cold py 81.50s vs cr 37.87s; warm py 52.02s vs cr 12.92s. |
 | `alvistack.jira` | ubuntu | ⚠️ divergent - missing module `community.general.xml`, already-documented deliberate limit (documented expected hard-stop (round 90000 sweep)), not a new gap. |
 | `alvistack.openjdk` | rocky | ✅ clean. Times: cold py 62.96s vs cr 62.51s; warm py 16.87s vs cr 5.53s. |
 | `amarao.flyway` | rocky | ✅ clean. Times: cold py 11.40s vs cr 9.09s; warm py 9.34s vs cr 0.42s. |
