@@ -71,3 +71,4 @@ __pycache__/
 .spec-parallel-logs/
 /.spec-cache/
 /.spec-logs/
+/krikri-playbook
