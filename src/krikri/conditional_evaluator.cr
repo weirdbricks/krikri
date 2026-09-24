@@ -267,7 +267,7 @@ module Krikri
         if if_parts.size == 2
           else_parts = split_by_operator(if_parts[1], " else ")
           if else_parts.size == 2
-            rendered = VariableSubstitutor::CrinjaRenderer.new(vars).render("{{ 'True' if (#{condition}) else 'False' }}")
+            rendered = VariableSubstitutor::CrinjaRenderer.new(vars, true).render("{{ 'True' if (#{condition}) else 'False' }}")
             return rendered.strip == "True"
           end
         end
@@ -860,7 +860,7 @@ module Krikri
       # produce the right True/False) rather than reimplementing every
       # possible built-in test's own semantics by hand.
       if condition.match(REGEX_GENERIC_IS_TEST)
-        rendered = VariableSubstitutor::CrinjaRenderer.new(vars).render("{{ (#{condition}) }}")
+        rendered = VariableSubstitutor::CrinjaRenderer.new(vars, true).render("{{ (#{condition}) }}")
         return rendered.strip == "True"
       end
 
@@ -890,7 +890,7 @@ module Krikri
       # non-empty-string-ness - rather than reimplementing every lookup
       # plugin's own return shape by hand.
       if condition =~ REGEX_BARE_CALL
-        rendered = VariableSubstitutor::CrinjaRenderer.new(vars).render("{{ 'True' if (#{condition}) else 'False' }}")
+        rendered = VariableSubstitutor::CrinjaRenderer.new(vars, true).render("{{ 'True' if (#{condition}) else 'False' }}")
         return rendered.strip == "True"
       end
 
@@ -1281,7 +1281,7 @@ module Krikri
     # delegating the whole comparison to Crinja judges exactly the cases
     # this evaluator's flat value model can't.
     private def self.crinja_dict_compare(left_expr : String, right_expr : String, operator : String, vars : Hash(String, JSON::Any)) : Bool
-      rendered = VariableSubstitutor::CrinjaRenderer.new(vars)
+      rendered = VariableSubstitutor::CrinjaRenderer.new(vars, true)
         .render("{{ 'True' if (#{left_expr} #{operator} #{right_expr}) else 'False' }}")
       rendered.strip == "True"
     end
@@ -1560,7 +1560,7 @@ module Krikri
       end
 
       if expr.includes?("|")
-        rendered = VariableSubstitutor::ExpressionEvaluator.new(vars).evaluate(expr)
+        rendered = VariableSubstitutor::ExpressionEvaluator.new(vars, true).evaluate(expr)
         return Krikri.parse_json_or_python_literal(rendered)
       end
 
@@ -1943,14 +1943,14 @@ module Krikri
         # UNDEFINED (a genuinely missing variable), which falls back to
         # the old render-then-parse path below for that case.
         structured = begin
-          VariableSubstitutor::CrinjaRenderer.new(vars).evaluate_value!(var_name)
+          VariableSubstitutor::CrinjaRenderer.new(vars, true).evaluate_value!(var_name)
         rescue
           nil
         end
         if structured
           value = structured
         else
-          rendered = VariableSubstitutor::ExpressionEvaluator.new(vars).evaluate(var_name)
+          rendered = VariableSubstitutor::ExpressionEvaluator.new(vars, true).evaluate(var_name)
           value = Krikri.parse_json_or_python_literal(rendered)
         end
       else
@@ -2604,7 +2604,7 @@ module Krikri
                                                        !expr.includes?("|") && !expr.includes?("(") && !expr.includes?("~") &&
                                                        !expr.includes?("*") && !expr.includes?("/") && !expr.includes?(" - ")
 
-        evaluator = VariableSubstitutor::ExpressionEvaluator.new(vars)
+        evaluator = VariableSubstitutor::ExpressionEvaluator.new(vars, true)
         rendered = evaluator.evaluate(expr)
 
         # An empty render is ambiguous between two real-Ansible shapes

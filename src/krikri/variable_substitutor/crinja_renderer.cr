@@ -25,8 +25,14 @@ module Krikri
     class CrinjaRenderer
       @vars : Hash(String, JSON::Any)
       @template_context : Crinja::Context?
+      # When true, string-literal escapes are decoded (vanilla Jinja
+      # semantics) instead of passed through verbatim. Only the
+      # conditional/assert path sets this; inline task-param `{{ }}`
+      # templating keeps it false. See #shared_env and the class comment
+      # on shared_environment for why the two contexts differ.
+      @decode : Bool
 
-      def initialize(@vars : Hash(String, JSON::Any))
+      def initialize(@vars : Hash(String, JSON::Any), @decode : Bool = false)
       end
 
       # One Crinja environment for the whole process, built on first use.
@@ -49,9 +55,10 @@ module Krikri
       # or function that performs I/O is ever added, this must become
       # per-fiber (see OutputRouting for that pattern) rather than global.
       @@env : Crinja?
+      @@decode_env : Crinja?
 
       private def shared_env : Crinja
-        self.class.shared_environment
+        @decode ? self.class.decoding_environment : self.class.shared_environment
       end
 
       # Class-level twin of #shared_env so callers without a renderer
@@ -61,10 +68,24 @@ module Krikri
       # (including aliases), since FilterEngine.apply is only ever the
       # fallback path behind Crinja-native filters.
       def self.shared_environment : Crinja
-        if existing = @@env
-          return existing
-        end
+        @@env ||= build_environment(verbatim: true)
+      end
 
+      # The conditional/assert twin of #shared_environment: identical in
+      # every respect except `verbatim_expression_strings`, which is off so
+      # string-literal escapes in a `when:`/`assert:` expression decode the
+      # way vanilla Jinja (and real ansible-core's condition compiler) does
+      # them - e.g. `x.split('\n')` splits on a real newline and `y ~ '\n'`
+      # concatenates one, matching real, where inline task-param templating
+      # keeps them literal. Separate template/expression caches (see
+      # #cached_template / #cached_expression) because the setting is
+      # consumed at PARSE time, so the same source must not be shared
+      # between the two.
+      def self.decoding_environment : Crinja
+        @@decode_env ||= build_environment(verbatim: false)
+      end
+
+      private def self.build_environment(verbatim : Bool) : Crinja
         env = Crinja.new
         env.config.trim_blocks = true
         env.config.lstrip_blocks = false
@@ -88,7 +109,7 @@ module Krikri
         # preserve_inline_string_escapes re-encoding workaround, which
         # papered over this at a single call site - and which would now
         # corrupt output by leaving `\x5C` text in place.)
-        env.config.verbatim_expression_strings = true
+        env.config.verbatim_expression_strings = verbatim
         # Real Jinja2's `default` filter only ever triggers on an
         # UNDEFINED value - a DEFINED None passes straight through
         # (live-verified against ansible-core 2.19.11:
@@ -116,7 +137,7 @@ module Krikri
         end
         env.filters["default"] = default_filter
         env.filters["d"] = default_filter
-        @@env = env
+        env
       end
 
       # True if *name* resolves in the shared environment's filter
@@ -246,9 +267,11 @@ module Krikri
       # scheduling no two `--forks` hosts can ever interleave a
       # read/write race on this Hash.
       @@template_cache = Hash(String, Crinja::Template).new
+      @@decode_template_cache = Hash(String, Crinja::Template).new
 
       private def cached_template(source : String) : Crinja::Template
-        @@template_cache[source] ||= shared_env.from_string(source)
+        cache = @decode ? @@decode_template_cache : @@template_cache
+        cache[source] ||= shared_env.from_string(source)
       end
 
       # Render a template containing Jinja2 control structures, raising
@@ -338,7 +361,7 @@ module Krikri
           # STILL reports the same unknown feature means registration
           # did not take; raise the plain error rather than looping.
           filter_name = feature[1]
-          if self.class.ensure_python_filter?(filter_name, @vars)
+          if self.class.ensure_python_filter?(filter_name, @vars, shared_env)
             begin
               return render!(text)
             rescue Crinja::FeatureLibrary::UnknownFeatureError
@@ -443,7 +466,7 @@ module Krikri
         # rescue already provided for the string-rendering path.
         feature = self.class.unknown_feature(e)
         raise e if feature.nil? || feature[0] != "filter"
-        raise e unless self.class.ensure_python_filter?(feature[1], @vars)
+        raise e unless self.class.ensure_python_filter?(feature[1], @vars, shared_env)
         evaluate_value_once!(expr)
       end
 
@@ -493,9 +516,11 @@ module Krikri
       end
 
       @@expression_cache = Hash(String, Crinja::AST::ExpressionNode).new
+      @@decode_expression_cache = Hash(String, Crinja::AST::ExpressionNode).new
 
       private def cached_expression(expr : String) : Crinja::AST::ExpressionNode
-        @@expression_cache[expr] ||= begin
+        cache = @decode ? @@decode_expression_cache : @@expression_cache
+        cache[expr] ||= begin
           lexer = Crinja::Parser::ExpressionLexer.new(shared_env.config, expr)
           parser = Crinja::Parser::ExpressionParser.new(lexer)
           parser.parse
