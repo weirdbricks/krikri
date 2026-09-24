@@ -1020,6 +1020,13 @@ module Krikri
       # NEIGHBORS' groups - it would still batch as its own size-1
       # group), so it always takes the solo path.
       return {false, nil} if task.templated_action
+      # fetch:/wait_for_connection: must run on the controller (see
+      # TaskBatcher.runs_on_the_controller? for the remote-step hazard).
+      # breaks_run? keeps them out of a remote group, but their own size-1
+      # group would still be emitted as a remote step here - so the runner
+      # sends them solo too, where execute_task_once dispatches them
+      # controller-side via PluginManager's own controller-only path.
+      return {false, nil} if PluginManager.controller_only?(task.module_name)
 
       group = @task_group[task]?
       return {false, nil} unless group

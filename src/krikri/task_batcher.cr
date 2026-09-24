@@ -1,5 +1,6 @@
 require "./playbook_parser"
 require "./action_plugin_manager"
+require "./plugin_manager"
 
 module Krikri
   # Pure planning logic for task batching (on by default; --no-batching
@@ -139,7 +140,8 @@ module Krikri
     # alone).
     private def self.breaks_run?(task : Task, group_has_registers : Bool) : Bool
       structural_or_dynamic?(task) || needs_controller_control_flow?(task) ||
-        runs_off_the_target?(task) || task.run_once? || retroactive_verdict?(task) ||
+        runs_off_the_target?(task) || runs_on_the_controller?(task) ||
+        task.run_once? || retroactive_verdict?(task) ||
         produces_ansible_facts?(task) || runs_as_action_plugin?(task, group_has_registers) ||
         reconfigures_firewall?(task) || resolves_module_at_runtime?(task) ||
         !!task.unavailable_module ||
@@ -164,6 +166,27 @@ module Krikri
     # way. Both always run solo.
     private def self.runs_off_the_target?(task : Task) : Bool
       !!task.delegate_to || !!task.connection
+    end
+
+    # fetch: and wait_for_connection: (PluginManager::CONTROLLER_ONLY_PLUGINS)
+    # must run on the CONTROLLER regardless of the target: fetch reverses
+    # the direction of every other plugin (it SSH-pulls a file FROM the
+    # target and writes it to the controller's own filesystem), and
+    # wait_for_connection: retries the connection attempt from the
+    # controller. A batch group is a single script executed over the
+    # target's SSH connection, so a controller-only member emitted as a
+    # remote step runs ON THE TARGET - fetch then writes the pulled file
+    # into the target's /tmp instead of the controller's, and any later
+    # `delegate_to: localhost` task looking for it on the controller finds
+    # nothing (found on the modules-data benchmark's "Remove fetched
+    # controller copy", where the pull landed in the container, not the
+    # controller, only under a long remote run that batched it - an
+    # isolation repro used a local connection, which the runner already
+    # sends solo). Breaks the run so it never joins a remote group; the
+    # runner's own controller-only guard sends its size-1 group back down
+    # the solo path where PluginManager dispatches it correctly.
+    private def self.runs_on_the_controller?(task : Task) : Bool
+      PluginManager.controller_only?(task.module_name)
     end
 
     # ufw: (community.general.ufw) applies live firewall rules - real

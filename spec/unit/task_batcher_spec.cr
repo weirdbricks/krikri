@@ -213,6 +213,43 @@ describe Krikri::TaskBatcher do
     groups.map { |group| group.map(&.name) }.should eq([["a"], ["b"], ["c"]])
   end
 
+  it "ends the run at a controller-only fetch: task" do
+    # Regression (modules-data benchmark's "Remove fetched controller
+    # copy"): fetch: reverses the direction of every other plugin - it
+    # SSH-pulls a file from the target and writes it to the CONTROLLER's
+    # filesystem. A batch group is one script run over the target's
+    # connection, so a batched fetch ran ON the target and wrote the
+    # pulled file into the target's /tmp instead. A later
+    # `delegate_to: localhost` task then looked for it on the controller
+    # and found nothing ("already absent") while real reported it removed
+    # - and only on a long remote run that grouped it with neighbors (an
+    # isolation repro used a local connection, which the runner already
+    # sends solo, hiding the bug). It must break the run like delegate_to:
+    # /reboot: do.
+    a = task("a")
+    fetch = Krikri::Task.new("pull", "ansible.builtin.fetch")
+    c = task("c")
+    tasks = [a, fetch, c]
+
+    groups = Krikri::TaskBatcher.plan(tasks)
+
+    groups.map { |group| group.map(&.name) }.should eq([["a"], ["pull"], ["c"]])
+  end
+
+  it "ends the run at a controller-only wait_for_connection: task" do
+    # Same category as fetch: above - wait_for_connection: retries the
+    # SSH connection FROM the controller, so it can never run inside the
+    # target-side batch script it would otherwise be grouped with.
+    a = task("a")
+    wait = Krikri::Task.new("wait", "ansible.builtin.wait_for_connection")
+    c = task("c")
+    tasks = [a, wait, c]
+
+    groups = Krikri::TaskBatcher.plan(tasks)
+
+    groups.map { |group| group.map(&.name) }.should eq([["a"], ["wait"], ["c"]])
+  end
+
   it "ends the run at an ansible.builtin.reboot task" do
     # Regression: reboot: has no plugin binary at all (TaskExecutor#
     # execute_reboot handles it entirely on the controller, over its own
