@@ -29,8 +29,8 @@ shards:
     version: 0.1.4+git.commit.c90ea8d6a0c5eb9f842ac0da098a1718ecca66ca
 
   krikri-xml:
-    path: ../krikri-xml
-    version: 0.1.0
+    git: https://github.com/weirdbricks/krikri-xml.git
+    version: 0.1.0+git.commit.0c18b3e8cc73e7c282ae03663041bc8d6be20659
 
   mysql:
     git: https://github.com/weirdbricks/crystal-mysql.git
