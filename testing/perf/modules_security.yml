@@ -442,7 +442,15 @@
         database: passwd
         key: sec-no-such-user-fail
       register: sec_getent_missing_fail
-      failed_when: false
+      # ignore_errors (not failed_when: false): keeps the registered result
+      # reporting failed=true so the assert below can prove the missing-key
+      # lookup really did fail, while still letting the play continue.
+      # failed_when: false overwrites the flag to false, which made the
+      # assert self-contradictory (it checked `is failed` on a result it had
+      # just forced to not-failed) - so it failed identically on both
+      # engines. Verified against real ansible-core 2.19.11: ignore_errors
+      # leaves `is failed` true and books the task as ignored.
+      ignore_errors: true
 
     - name: Assert missing-key lookups behaved as documented
       ansible.builtin.assert:
@@ -629,6 +637,7 @@
         domain: secdb
         limit_type: soft
         limit_item: memlock
+        value: 65535
         use_max: true
         dest: "{{ sec_dir }}/limits.conf"
 
@@ -637,6 +646,7 @@
         domain: secdb
         limit_type: soft
         limit_item: priority
+        value: -1
         use_min: true
         dest: "{{ sec_dir }}/limits.conf"
 
@@ -678,9 +688,12 @@
     - name: Assert the limits entries landed
       ansible.builtin.assert:
         that:
-          - "'secweb soft nofile 16384' in sec_bytediff_limits.stdout"
-          - "'secweb hard nofile 30720' in sec_bytediff_limits.stdout"
-          - "'@secgrp - nproc 512' in sec_bytediff_limits.stdout"
+          # pam_limits writes TAB-separated fields, so match on tabs (the
+          # original space-joined literals never matched the real file
+          # content and failed identically on both engines).
+          - "'secweb\tsoft\tnofile\t16384' in sec_bytediff_limits.stdout"
+          - "'secweb\thard\tnofile\t30720' in sec_bytediff_limits.stdout"
+          - "'@secgrp\t-\tnproc\t512' in sec_bytediff_limits.stdout"
           - "'krikri sec bench maxlogins' in sec_bytediff_limits.stdout"
 
     # ---------------------------------------------------------------
