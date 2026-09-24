@@ -148,7 +148,7 @@ module Krikri
         query = list_value.strip
         return nil if query.empty?
 
-        result = remote_exec("#{pkg_manager_binary} list #{shell_single_quote(query)}")
+        result = remote_exec("#{pkg_manager_binary} #{list_args(query)}")
 
         results = parse_dnf_list_output(result[:stdout])
 
@@ -543,7 +543,7 @@ module Krikri
 
       private def run_update_batch(to_update : Array(String), options : String) : BatchOutcome
         pkg_list = to_update.map { |pth| quote_package(pth) }.join(" ")
-        cmd = "#{pkg_manager_binary} update #{options} #{pkg_list}"
+        cmd = "#{pkg_manager_binary} #{update_verb} #{options} #{pkg_list}"
 
         result = remote_exec_tolerating_unknown_repo(cmd)
 
@@ -569,6 +569,25 @@ module Krikri
       # The package-manager command each includer shells out to ("yum"
       # / "dnf"). Defined by the including plugin class.
       abstract def pkg_manager_binary : String
+
+      # The verb used to upgrade already-installed packages to their
+      # latest version. yum/dnf accept "update"; dnf5 renamed it to
+      # "upgrade" and no longer ships an "update" alias, so the dnf5
+      # plugin overrides this. handle_upgrade_all always uses "upgrade"
+      # (valid on every backend).
+      private def update_verb : String
+        "update"
+      end
+
+      # The `list <query>` argument string (everything after the binary)
+      # for a scalar `list:` query. dnf/yum accept the query word as a
+      # positional subcommand (`dnf list installed`); included as a hook so
+      # dnf5 - whose `list` takes `--installed`/`--available`/`--upgrades`
+      # FLAGS instead - can override it. Default keeps the existing
+      # single-quoted-positional behavior byte-for-byte.
+      private def list_args(query : String) : String
+        "list #{shell_single_quote(query)}"
+      end
 
       private def remote_exec_tolerating_unknown_repo(cmd : String) : NamedTuple(exit_code: Int32, stdout: String, stderr: String)
         result = remote_exec(cmd)

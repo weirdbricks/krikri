@@ -1123,6 +1123,12 @@ module Krikri
       "ansible.builtin.shell",
       "ansible.builtin.apt",
       "ansible.builtin.dnf",
+      # dnf5 (0.9.1279): the libdnf5-backed successor to dnf, added as a
+      # distinct ansible.builtin module in ansible-core 2.19. Shares
+      # yumdnf_argument_spec with dnf but no backend-selection option, so
+      # it gets its own plugin rather than a use_backend branch (see
+      # plugins/dnf5.cr).
+      "ansible.builtin.dnf5",
       "ansible.builtin.yum",
       "ansible.builtin.package",
       "ansible.builtin.debug",
@@ -1136,6 +1142,11 @@ module Krikri
       # cross-check spec, not a live round.
       "ansible.builtin.facts",
       "ansible.builtin.package_facts",
+      # mount_facts (0.9.1279): the ansible-core 2.18 successor to setup's
+      # ansible_mounts, returning mount_points/aggregate_mounts from a
+      # configurable source list. A distinct callable module from setup,
+      # so it needs its own registration (see plugins/mount_facts.cr).
+      "ansible.builtin.mount_facts",
       "ansible.posix.selinux",
       # synchronize (0.9.916): rsync-wrapper module, real Ansible's most
       # common way to move files between hosts. Controller-side by nature
