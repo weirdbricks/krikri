@@ -78,7 +78,12 @@ module Krikri
       )
       if var_name
         var_value = lookup_variable(var_name)
-        result.extra[var_name] = JSON::Any.new(var_value ? format_value(var_value) : "VARIABLE IS NOT DEFINED!")
+        STDERR.puts("DEBUGWIRE " + var_value.to_s)
+        # Real debug renders the resolved value as native JSON (a bool
+        # stays `true`, an int `0`, an object nested) - live-verified
+        # 2026-09-24: `debug: var=r.changed` prints `"r.changed": true`,
+        # not a quoted string. Only the unresolvable case is a string.
+        result.extra[var_name] = var_value || JSON::Any.new("VARIABLE IS NOT DEFINED!")
       else
         result.msg = msg.to_s
       end

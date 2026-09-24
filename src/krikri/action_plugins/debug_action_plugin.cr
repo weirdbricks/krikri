@@ -90,10 +90,13 @@ module Krikri
         return ActionResult.failure(ex.message || "templating var '#{var_name}' failed")
       end
 
-      var_output = format_value(rendered)
+      # Real debug renders the resolved value as native JSON (a bool
+      # stays `true`, an int `0`, an object nested) - live-verified
+      # 2026-09-24: `debug: var=r.changed` prints `"r.changed": true`,
+      # not a quoted string. Only the unresolvable case is a string.
       ActionResult.final(result_json(false, false, "", {
         "_ansible_verbose_always" => JSON::Any.new(true),
-        var_name                  => JSON::Any.new(var_output),
+        var_name                  => rendered,
       }))
     end
 
