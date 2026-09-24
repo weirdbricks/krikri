@@ -179,8 +179,22 @@ module Krikri
       # base64 alphabet can't break shell quoting; the tmp+mv makes the
       # status file's appearance atomic for the poll loop below (a
       # partial stdout write would otherwise parse as garbage mid-read).
+      #
+      # The initial status stub is written SYNCHRONOUSLY in the launch
+      # script, before the worker detaches - real Ansible's own
+      # async_wrapper does the same (the job file exists with
+      # started: 1/finished: 0 the moment the module returns, so an
+      # async_status: poll can never race it). Without the stub, the
+      # poll's first read raced the SSH channel teardown: the nohup'd
+      # worker could be killed by the session closing before it ever
+      # exec'd, leaving NO status file at all and every poll answering
+      # "could not find job" (found live via modules_systems.yml's async
+      # probe - flaky, older runs won the race). The stub also means a
+      # worker killed mid-flight shows as started-but-not-finished
+      # instead of not-found, which is what real Ansible reports too.
       launch = <<-SCRIPT
         mkdir -p #{dir}
+        echo '{"started": 1, "finished": 0, "ansible_job_id": "#{jid}"}' > #{dir}/#{jid}
         echo '#{encoded}' | base64 -d > #{dir}/#{jid}.cfg
         nohup sh -c '#{target} < #{dir}/#{jid}.cfg > #{dir}/#{jid}.tmp 2>&1; mv #{dir}/#{jid}.tmp #{dir}/#{jid}' >/dev/null 2>&1 &
       SCRIPT

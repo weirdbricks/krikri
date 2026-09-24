@@ -64,7 +64,7 @@ module Krikri
 
       # Status indicator
       status = if failed
-                 "failed".colorize(:red).bold
+                 "fatal".colorize(:red).bold
                elsif changed
                  "changed".colorize(:yellow)
                else
@@ -72,6 +72,25 @@ module Krikri
                end
 
       suffix = item_label ? " => (item=#{item_label})" : ""
+
+      # A failed (non-loop) task's real ansible-core 2.19 display is ONE
+      # line: `fatal: [host]: FAILED! => {json}` with the whole result
+      # JSON dumped sorted (live-verified: a command: failure shows
+      # `fatal: [target]: FAILED! => {"changed": true, "cmd": [...],
+      # "msg": "non-zero return code", "rc": 1, ...}`). The engine's old
+      # display printed `failed: [host]` plus a separate `  Message:`
+      # line - a different word AND a different shape than anything real
+      # produces (found live via modules_systems.yml's wrong-checksum
+      # rescue probe, where the recap-parity task-status diff flagged
+      # fatal-vs-failed on the one failing task in the whole play).
+      # Loop-item failures keep the loop display below unchanged - real's
+      # loop-failure line uses a different shape again
+      # (`failed: [host] (item=X) => {json}`).
+      if failed
+        puts "fatal: [#{host_label}]#{suffix}: FAILED! => #{ResultDisplay.python_json_dump(result)}"
+        return
+      end
+
       puts "#{status}: [#{host_label}]#{suffix}"
 
       # Show message for successful tasks if msg is present and meaningful
@@ -621,5 +640,29 @@ module Krikri
         puts "#{host.name.ljust(20)} : #{status_parts.join("  ")}"
       end
     end
+
+  # Serializes *result* the way real Ansible dumps a failed task's JSON:
+  # keys sorted alphabetically at every level, single line, Python's
+  # json.dumps default separators (", " between items, ": " after keys).
+  def self.python_json_dump(result : JSON::Any) : String
+    python_json_value(result)
   end
+
+  private def self.python_json_value(value : JSON::Any) : String
+    case raw = value.raw
+    when Hash(String, JSON::Any)
+      "{#{raw.to_a.sort_by(&.[0]).map { |k, v| %("#{k}": #{python_json_value(v)}) }.join(", ")}}"
+    when Array(JSON::Any)
+      "[#{raw.map { |item| python_json_value(item) }.join(", ")}]"
+    when Nil
+      "null"
+    when Bool
+      raw ? "true" : "false"
+    when Int64, Float64
+      raw.to_s
+    else
+      value.to_s.to_json
+    end
+  end
+end
 end
