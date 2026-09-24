@@ -837,8 +837,16 @@ module Krikri
       # delegate_to: task).
       delegate_hosts = Array(Host).new(rendered_items.size, host)
 
+      # Per-item `when:`-skipped items in the batched path must print their
+      # "skipping:" line in iteration order alongside the executed items,
+      # not during the batch-prep loop (which runs before the shared SSH
+      # round trip, so its eager prints would lead the later-executed
+      # items - a display-order divergence from real). Keyed idx -> the
+      # already-computed item label; left empty by the one-at-a-time path,
+      # which prints its own skips in order inside execute_task_once.
+      skipped_labels = Hash(Int32, String).new
       item_results = if loop_batch_eligible?(task, host, exec_host, base_vars_context)
-                       execute_looped_task_batched(task, host, base_vars_context, rendered_items)
+                       execute_looped_task_batched(task, host, base_vars_context, rendered_items, skipped_labels)
                      else
                        # A running (not re-dup'd-from-base) vars_context
                        # carries each iteration's ansible_facts forward
@@ -961,7 +969,7 @@ module Krikri
                        end
                      end
 
-      finish_looped_task(task, host, rendered_items, item_results, fact_hosts, base_vars_context, delegate_hosts)
+      finish_looped_task(task, host, rendered_items, item_results, fact_hosts, base_vars_context, delegate_hosts, skipped_labels)
     end
 
     # Whether execute_looped_task can send every surviving item through
@@ -1019,6 +1027,7 @@ module Krikri
       host : Host,
       base_vars_context : Hash(String, JSON::Any),
       loop_items : Array(JSON::Any),
+      skipped_labels : Hash(Int32, String),
     ) : Array(JSON::Any?)
       item_results = Array(JSON::Any?).new(loop_items.size, nil)
       item_contexts = Hash(Int32, Hash(String, JSON::Any)).new
@@ -1066,7 +1075,15 @@ module Krikri
         item_substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
 
         begin
-          next unless when_passes?(task, vars_context, host, item_label: item_label_for(task, item, vars_context, host), shared: item_substitutor, defer_stats: true)
+          item_lbl = item_label_for(task, item, vars_context, host)
+          unless when_passes?(task, vars_context, host, item_label: item_lbl, shared: item_substitutor, defer_stats: true, defer_display: true)
+            # Defer the "skipping:" print to finish_looped_task so it lands
+            # in iteration order with the executed items (real's ordering);
+            # printing here (during batch-prep, before the shared round
+            # trip) would put skips ahead of the changed/ok lines.
+            skipped_labels[idx] = item_lbl
+            next
+          end
         rescue ex : WhenEvaluationError
           # Same rationale as execute_task_once's own identical rescue -
           # a real failed result here (not a silent skip) lets
@@ -1114,7 +1131,7 @@ module Krikri
     # both the batched and one-at-a-time paths) so register:/notify:/
     # stats/halt bookkeeping stays byte-identical regardless of which
     # transport produced the results.
-    private def finish_looped_task(task : Task, host : Host, loop_items : Array(JSON::Any), item_results : Array(JSON::Any?), fact_hosts : Array(Host)? = nil, base_vars_context : Hash(String, JSON::Any)? = nil, delegate_hosts : Array(Host)? = nil) : Nil
+    private def finish_looped_task(task : Task, host : Host, loop_items : Array(JSON::Any), item_results : Array(JSON::Any?), fact_hosts : Array(Host)? = nil, base_vars_context : Hash(String, JSON::Any)? = nil, delegate_hosts : Array(Host)? = nil, skipped_labels : Hash(Int32, String) = Hash(Int32, String).new) : Nil
       results = [] of JSON::Any
       any_changed = false
       any_failed = false
@@ -1141,6 +1158,20 @@ module Krikri
       # host" precedent for banner rendering.
       label_base_context = task.loop_label ? (base_vars_context || build_vars_context(task, host)) : nil
       loop_items.each_with_index do |item, idx|
+        # A per-item `when:`-false iteration (batched path only - the
+        # one-at-a-time path prints its own skips inline in execute_task_
+        # once): print it here, in iteration order, so the "skipping:" line
+        # interleaves with the executed items exactly as real does. It is
+        # display-only: a when:-skipped loop item is not a recap "skipped"
+        # task and never entered the registered `results`, so leaving it
+        # out of both below preserves every count and the register shape.
+        if (sk_lbl = skipped_labels[idx]?)
+          connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
+          shown = resolve_task_no_log(task, base_vars_context) ? "(censored due to no_log)" : sk_lbl
+          puts "skipping: [#{connection_host}] => (item=#{shown})".colorize(:cyan)
+          next
+        end
+
         result = item_results[idx]
         next unless result
 
