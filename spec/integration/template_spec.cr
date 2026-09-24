@@ -61,6 +61,22 @@ private def render_playbook(src : String, dest : String, extra_args : String = "
   end
 end
 
+# Renders *body* as a `.j2` at *name*, runs it through the compiled
+# template path, and returns the rendered file contents. Used by the
+# Python-%-formatting examples at the bottom of this file.
+private def render_pct(name : String, body : String) : String
+  src = tmp_path(name + ".j2")
+  dest = tmp_path(name + ".out")
+  File.write(src, body)
+  playbook = render_playbook(src, dest)
+  run_playbook(playbook)
+  File.read(dest)
+ensure
+  File.delete(src) if src && File.exists?(src)
+  File.delete(dest) if dest && File.exists?(dest)
+  File.delete(playbook) if playbook && File.exists?(playbook)
+end
+
 describe "template plugin param coverage" do
   describe "trim_blocks: (default True - Ansible's template module overrides Jinja2's own False)" do
     # Real behavior live-verified against ansible-core 2.19.4: the
@@ -755,5 +771,50 @@ describe "template plugin param coverage" do
       File.delete(dest) if dest && File.exists?(dest)
       File.delete(playbook) if playbook && File.exists?(playbook)
     end
+  end
+end
+
+describe "Python %-formatting in the Crinja engine (the `str % args` operator)" do
+  # Real Jinja2 overloads `%` by left-operand type: a str is printf-style
+  # formatting, a number is modulo. The vendored Crinja fork only did
+  # numeric modulo, so `' -dns.port=%d' % (coredns_listen_port)` - verbatim
+  # in rolehippie.coredns's `service.j2` (round900235) - raised "Both
+  # operators need to be numeric". All expected values below were
+  # live-verified against real ansible-core 2.19.4 on the same template.
+  it "renders the coredns service.j2 idiom (' -dns.port=%d' % port)" do
+    render_pct("pct_dnsport", %({{ " -dns.port=%d" % (53) }}\n)).should eq(" -dns.port=53\n")
+  end
+
+  it "renders the common conversions with the same output as real Jinja2" do
+    tpl = <<-TPL
+      %s: {{ "%s" % "hello" }}
+      %d: {{ "%d" % 42 }}
+      %x: {{ "%x" % 255 }}
+      %.2f: {{ "%.2f" % 3.14159 }}
+      %05d: {{ "%05d" % 42 }}
+      ljust: {{ "[%-10s]" % "ab" }}
+      combo: {{ "%8.3f" % 3.14159 }}
+      tuple: {{ "%s-%s" % ("a", "b") }}
+      plus: {{ "%+d" % 7 }}
+      modulo: {{ 17 % 5 }}
+      TPL
+    expected = <<-EXP
+      %s: hello
+      %d: 42
+      %x: ff
+      %.2f: 3.14
+      %05d: 00042
+      ljust: [ab        ]
+      combo:    3.142
+      tuple: a-b
+      plus: +7
+      modulo: 2
+      EXP
+    render_pct("pct_battery", tpl).rstrip.should eq(expected.rstrip)
+  end
+
+  it "collapses %% and leaves numeric modulo unchanged" do
+    render_pct("pct_lit", %(percent: {{ "100%% done" }}\nmod: {{ 10 % 3 }}\n))
+      .should eq("percent: 100%% done\nmod: 1\n")
   end
 end
