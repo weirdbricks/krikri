@@ -776,6 +776,11 @@ module Krikri
       # document declared one. Normalize the declaration to match.
       s = s.sub("<?xml version=\"1.0\"?>", "<?xml version='1.0' encoding='UTF-8'?>")
       s = s.sub("<?xml version=\"1.0\" encoding=\"UTF-8\"?>", "<?xml version='1.0' encoding='UTF-8'?>")
+      # lxml's tostring() leaves no trailing newline after the root; libxml2
+      # preserves a source trailing-whitespace text node (and FORMAT adds
+      # one), so krikri's file ended in `\n` where real's did not. Drop the
+      # single trailing newline to match byte-for-byte.
+      s = s.sub(/\n\z/, "")
       s
     end
 

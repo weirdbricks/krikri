@@ -110,8 +110,8 @@ describe "when: evaluation raising an exception" do
     status.success?.should be_false
     status.exit_code.should eq(2)
     output.to_s.should_not contain("Unhandled exception")
-    output.to_s.should contain("failed: [localhost] => (item=a)")
-    output.to_s.should contain("failed: [localhost] => (item=b)")
+    output.to_s.should contain("failed: [localhost] (item=a) =>")
+    output.to_s.should contain("failed: [localhost] (item=b) =>")
     output.to_s.should contain("failed=1")
     output.to_s.should_not contain("skipped=1")
   ensure

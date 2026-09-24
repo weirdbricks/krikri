@@ -1308,6 +1308,12 @@ module Krikri
             "failed"  => JSON::Any.new(any_failed),
           }.to_json)
           ResultDisplay.update_stats(@results[host.name], aggregate_result, resolve_task_ignore_errors(task, base_vars_context))
+          # A looped task with ignore_errors: that had at least one item
+          # fail prints a single bare `...ignoring` after the per-item
+          # lines (real prints it once for the whole task, not per item).
+          # The per-item display no longer emits it (the loop-failure branch
+          # in result_display returns before that suffix).
+          puts "...ignoring".colorize(:red) if any_failed && resolve_task_ignore_errors(task, base_vars_context)
         end
       end
 
