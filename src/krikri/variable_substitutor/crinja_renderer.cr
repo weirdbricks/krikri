@@ -7,6 +7,9 @@ require "../python_lookup_runner"
 require "../crinja_strict_undefined"
 require "../crinja_string_index"
 require "../crinja_bool_arithmetic"
+require "../jinja_host_context"
+require "./jinja_var_resolver"
+require "../krikri_jinja_filters"
 
 module Krikri
   module VariableSubstitutor
@@ -389,11 +392,8 @@ module Krikri
       end
 
       # Parses Crinja's own unknown-feature error wording ("no filter/
-      # test with name ... registered") into {kind, name} - shared by
-      # #render's rescue and #evaluate_value!'s rescue (the two Crinja
-      # entry points that can surface an unregistered filter/test at
-      # evaluation time), so both react to the same feature kinds the
-      # same way.
+      # test with name ... registered") into {kind, name}, for #render's
+      # rescue.
       def self.unknown_feature(e : Crinja::FeatureLibrary::UnknownFeatureError) : {String, String}?
         match = e.message.try(&.match(/no (filter|test) with name "([^"]+)" registered/))
         match ? {match[1], match[2]} : nil
@@ -405,82 +405,63 @@ module Krikri
       # convention `VariableLookup#resolve`/`#resolve_simple`/etc.
       # already use) instead of `#render!`'s always-a-String output.
       #
-      # `#render!` goes through `Template#render`, which always produces
-      # a String via `Crinja::Finalizer#stringify` - fine for a FINAL
-      # `{{ }}` substitution, but wrong for a caller (like
-      # `ExpressionEvaluator`'s Crinja-delegation branches) that needs to
-      # hand the result to something else expecting structured data
-      # (another filter, a `.get()` call, a nested nested expression) or
-      # that wants to format an Array/Hash result through THIS
+      # `#render!` always produces a String - fine for a FINAL `{{ }}`
+      # substitution, but wrong for a caller (like `ExpressionEvaluator`'s
+      # delegation branches) that hands the result to something expecting
+      # structured data, or that formats an Array/Hash result through this
       # codebase's own `VariableLookup#format_value` (its JSON-compact
-      # style, not Crinja's Python-repr `Finalizer` style) so the
-      # existing internal "render sub-expression to a String, `JSON.
-      # parse` it back into structured data" round trip used throughout
-      # `expression_evaluator.cr`/`filter_engine.cr`/`comparison_
-      # evaluator.cr`/`variable_lookup.cr` keeps working unchanged - the
-      # general filter-chain dispatch investigation found this was
-      # necessary (a naive
-      # `format_value` Python-repr rewrite broke that round trip outright
-      # since Python-repr text isn't valid JSON).
+      # style) so the internal "render sub-expression to a String,
+      # `JSON.parse` it back" round trip keeps working.
       #
-      # Parses via `Crinja::Parser::ExpressionLexer`/`ExpressionParser`
-      # directly (bypassing `Template`/`from_string` entirely - there is
-      # no template TAG here, just a bare expression) and
-      # `Crinja::Environment#evaluate(ast_node, bindings) : Value`
-      # (`lib/crinja/src/environment.cr:106-108`), the overload that
-      # returns the raw `Value` rather than a stringified result -
-      # mirrors the fork's own `spec_helper.cr#evaluate_expression_raw`
-      # test helper, which uses the identical parse-then-evaluate
-      # sequence for the same reason (getting at the raw value, not
-      # Crinja's own stringified rendering of it).
+      # Evaluated by krikri-jinja against the same lazy variable scope the
+      # Crinja context provides (JinjaVarResolver), with Ansible's
+      # chainable lenient undefined and the inline-literal escape handling
+      # #shared_env picks (verbatim for task params, decoded for
+      # `when:`/`assert:`).
+      #
+      # An unknown filter gets one chance to be a role-local (or
+      # playbook-adjacent) `filter_plugins/*.py` filter: it is registered
+      # on the shared engine and the evaluation retried once. Anything else
+      # is re-raised untouched so the caller's own fallback engages.
+      # Without this gate a delegated chain's unknown-filter error reached
+      # the hand-rolled fallback, whose suffix walk collapsed the whole
+      # expression to "undefined" - diodonfrost.vagrant's `{{
+      # (vagrant_index.content | from_json).versions | list |
+      # sort_versions | last }}` (role-local filter_plugins/
+      # sort_versions.py) rendered the literal string "undefined" into a
+      # download URL while real ansible-playbook resolved 2.4.3.
       def evaluate_value!(expr : String) : JSON::Any?
         evaluate_value_once!(expr)
-      rescue e : Crinja::FeatureLibrary::UnknownFeatureError
-        # Same gate #render's rescue implements (see it for the full
-        # real-Ansible semantics): an unknown FILTER gets one chance to
-        # be a role-local (or playbook-adjacent) `filter_plugins/*.py`
-        # filter - register it into the shared environment and retry the
-        # evaluation once; anything else (an unknown TEST, an error shape
-        # this gate can't parse, no plugin defining the name) is
-        # re-raised untouched so the caller's existing behavior (raise,
-        # or its own hand-rolled fallback, which may still implement the
-        # name in FilterEngine) engages exactly as before.
-        #
-        # Why this lives HERE and not only in #render: unlike #render!,
-        # this entry point evaluates the parsed AST directly, so the
-        # unknown-feature error surfaces at `shared_env.evaluate` time
-        # (Crinja's `Evaluator` resolves every `| name` through the
-        # filter library mid-evaluation) - the leading-paren delegation
-        # branch in ExpressionEvaluator#evaluate_expr_access and every
-        # other #render_via_crinja_value call site funnels through this
-        # method, and without this gate their blanket rescue routed the
-        # error into the hand-rolled fallback. That fallback re-derives
-        # the value itself and its suffix-walk step used to collapse the
-        # whole expression to "undefined" - diodonfrost.vagrant's
-        # `{{ (vagrant_index.content | from_json).versions | list |
-        # sort_versions | last }}` (role-local filter_plugins/
-        # sort_versions.py) rendered the literal string "undefined" into
-        # a download URL while real ansible-playbook resolved 2.4.3.
-        # Registering here also means every LATER evaluation - in either
-        # evaluator - finds the filter natively, same as #render's
-        # rescue already provided for the string-rendering path.
-        feature = self.class.unknown_feature(e)
-        raise e if feature.nil? || feature[0] != "filter"
-        raise e unless self.class.ensure_python_filter?(feature[1], @vars, shared_env)
+      rescue e : KrikriJinja::TemplateError
+        name = KrikriJinjaFilters.unknown_filter_name(e)
+        raise e unless name && KrikriJinjaFilters.ensure_shared_python_filter(name, @vars)
         evaluate_value_once!(expr)
       end
 
-      def evaluate_value_once!(expr : String) : JSON::Any?
-        # A bare expression (no surrounding template, no tags) can never
-        # contain a `{% set %}`, so - unlike #render! above - there is no
-        # leak risk in evaluating directly against the shared lazy parent
-        # context rather than a fresh per-call child.
-        parent_context = (@template_context ||= build_lazy_context)
-        ast = cached_expression(expr)
-        value = shared_env.evaluate(ast, parent_context)
-        return nil if value.undefined?
+      # Parsed once per distinct expression source (task-param template
+      # strings number in the dozens to hundreds per run, never per host or
+      # loop item) and reused: a parsed node is immutable, and every
+      # evaluation gets fresh variables. Separate caches for the decoding
+      # and verbatim literal modes, since that choice is made at parse time.
+      @@jinja_expression_cache = Hash(String, KrikriJinja::Nodes::ExprNode).new
+      @@jinja_decode_expression_cache = Hash(String, KrikriJinja::Nodes::ExprNode).new
+      @jinja_resolver : JinjaVarResolver?
+      @jinja_host_context : JinjaHostContext?
 
-        CrinjaRenderer.elide_omitted(CrinjaRenderer.crinja_value_to_json_any(value))
+      private def evaluate_value_once!(expr : String) : JSON::Any?
+        cache = @decode ? @@jinja_decode_expression_cache : @@jinja_expression_cache
+        node = cache[expr] ||= KrikriJinja.parse_expression(
+          expr, KrikriJinja::LexerOptions.new(verbatim_expression_strings: !@decode)
+        )
+        resolver = (@jinja_resolver ||= JinjaVarResolver.new(@vars, VarSubstitutor.new(vars: @vars)))
+        host_context = (@jinja_host_context ||= JinjaHostContext.new(@vars))
+        value = KrikriJinja.default_engine.evaluate_parsed(
+          node, resolver: resolver,
+          undefined: KrikriJinja::Undefined.new(nil, chainable: true), host_context: host_context
+        )
+        return nil if value.raw.is_a?(KrikriJinja::Undefined)
+
+        CrinjaRenderer.elide_omitted(KrikriJinja.to_json_any(value))
       end
 
       # Real Ansible's `omit` inside a CONTAINER removes that entry
@@ -512,18 +493,6 @@ module Krikri
           JSON::Any.new(kept)
         else
           value
-        end
-      end
-
-      @@expression_cache = Hash(String, Crinja::AST::ExpressionNode).new
-      @@decode_expression_cache = Hash(String, Crinja::AST::ExpressionNode).new
-
-      private def cached_expression(expr : String) : Crinja::AST::ExpressionNode
-        cache = @decode ? @@decode_expression_cache : @@expression_cache
-        cache[expr] ||= begin
-          lexer = Crinja::Parser::ExpressionLexer.new(shared_env.config, expr)
-          parser = Crinja::Parser::ExpressionParser.new(lexer)
-          parser.parse
         end
       end
 
@@ -676,6 +645,14 @@ module Krikri
         # same re-render + depth guard as any other var.
         return convert_hostvars(raw_value, substitutor) if name == "hostvars"
 
+        prepared = prepare_var(raw_value, substitutor, name)
+        prepared ? json_any_to_crinja_value(prepared) : Crinja::Value.new(Crinja::Undefined.new(name))
+      end
+
+      # The engine-neutral half of #convert_var: the variable's value after
+      # recursive re-templating, or nil when it is undefined. Shared by the
+      # Crinja context and the krikri-jinja resolver.
+      def self.prepare_var(raw_value : JSON::Any, substitutor : VarSubstitutor, name : String = "") : JSON::Any?
         # Resolved-value carve-out (0.9.1267 gap, same one
         # re_template_from_variable?/raise_if_strict_undefined apply):
         # a name published by build_vars_context as execution-resolved
@@ -686,11 +663,11 @@ module Krikri
         # the "undefined" sentinel / Crinja::Undefined here instead of
         # passing through as-is).
         if VarSubstitutor.resolved_var_name?(substitutor.host_name, name.split(/[\.\[]/, 2)[0])
-          return json_any_to_crinja_value(raw_value)
+          return raw_value
         end
 
         if @@prepare_crinja_vars_depth >= MAX_PREPARE_CRINJA_VARS_DEPTH
-          return json_any_to_crinja_value(raw_value)
+          return raw_value
         end
 
         # A variable whose own stored value is `{{ }}` text bottoming out
@@ -713,12 +690,12 @@ module Krikri
         # anything) is `VarSubstitutor#raise_if_nested_value_undefined`,
         # which fires before this conversion is ever reached.
         if (raw = raw_value.raw).is_a?(String) && substitutor.unresolvable_template?(raw)
-          return Crinja::Value.new(Crinja::Undefined.new(name))
+          return nil
         end
 
         @@prepare_crinja_vars_depth += 1
         begin
-          json_any_to_crinja_value(rerender_nested_templates(raw_value, substitutor))
+          rerender_nested_templates(raw_value, substitutor)
         ensure
           @@prepare_crinja_vars_depth -= 1
         end
@@ -744,6 +721,18 @@ module Krikri
             end
           end
           Crinja::Value.new(top)
+        ensure
+          @@prepare_crinja_vars_depth -= 1
+        end
+      end
+
+      # JSON counterpart of #convert_hostvars for the krikri-jinja resolver:
+      # every host's vars re-templated, under the same depth guard.
+      def self.prepare_hostvars(raw_value : JSON::Any, substitutor : VarSubstitutor) : JSON::Any
+        @@prepare_crinja_vars_depth += 1
+        begin
+          hosts = raw_value.as_h? || return raw_value
+          JSON::Any.new(hosts.transform_values { |entry| rerender_nested_templates(entry, substitutor) })
         ensure
           @@prepare_crinja_vars_depth -= 1
         end

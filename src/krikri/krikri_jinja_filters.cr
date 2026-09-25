@@ -94,6 +94,43 @@ module Krikri
       end
     end
 
+    # Shared-engine twin of #ensure_python_filter, for the `{{ }}` expression
+    # path: the filter is registered once on the process-wide default engine,
+    # so it must resolve the rendering scope's plugin sources and variables
+    # from each call's host context, never from the scope that happened to
+    # register it (a later role would otherwise dispatch to the wrong
+    # role's plugin file).
+    def self.ensure_shared_python_filter(name : String, vars : Hash(String, JSON::Any)) : Bool
+      role_path = vars["role_path"]?.try(&.as_s?)
+      playbook_dir = vars["playbook_dir"]?.try(&.as_s?)
+      return false unless role_path || playbook_dir
+      return false unless PythonFilterRunner.defines_filter?(name, PythonFilterRunner.find_sources(role_path, playbook_dir))
+
+      KrikriJinja.register_default_filter(name) do |value, args, kwargs, ctx|
+        host = ctx.host_context
+        scope = host.is_a?(Krikri::JinjaHostContext) ? host.vars : {} of String => JSON::Any
+        sources = PythonFilterRunner.find_sources(
+          scope["role_path"]?.try(&.as_s?), scope["playbook_dir"]?.try(&.as_s?)
+        )
+        if sources.empty? || !PythonFilterRunner.defines_filter?(name, sources)
+          raise KrikriJinja::TemplateError.new("No filter named '#{name}'.", 0)
+        end
+        KrikriJinja.from_json_any(PythonFilterRunner.call_filter(
+          name, sources, KrikriJinja.to_json_any(value),
+          args.map { |arg| KrikriJinja.to_json_any(arg) },
+          kwargs.transform_values { |arg| KrikriJinja.to_json_any(arg) }, scope
+        ))
+      end
+      true
+    end
+
+    # The filter name a krikri-jinja "unknown filter" error names, if any.
+    def self.unknown_filter_name(error : KrikriJinja::TemplateError) : String?
+      message = error.message || return nil
+      return nil unless message.includes?("unknown filter")
+      message.split('"')[1]?
+    end
+
     # Python's `str()` of a JSON value, for tests that read their operand as
     # text (path and pattern tests).
     def self.py_str(value : JSON::Any) : String
