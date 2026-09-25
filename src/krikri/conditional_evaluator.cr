@@ -248,7 +248,7 @@ module Krikri
       # `X` branch gets misparsed as a top-level comparison spanning the
       # whole ternary (`1 < 2 if true else true` previously hit the `<`
       # comparison check first, splitting into "1 " and " 2 if true else
-      # true" - nonsensical). Delegated whole to Crinja (matching the
+      # true" - nonsensical). Delegated whole to krikri-jinja (matching the
       # REGEX_BARE_CALL/REGEX_GENERIC_IS_TEST fallbacks just below, both
       # of which exist for the identical reason: don't reimplement a
       # sub-grammar this hand-rolled evaluator was never built to parse)
@@ -268,6 +268,11 @@ module Krikri
         if if_parts.size == 2
           else_parts = split_by_operator(if_parts[1], " else ")
           if else_parts.size == 2
+            if !condition.includes?("|") && !condition.match(/\bis\s+/)
+              converted_vars = vars.transform_values { |value| KrikriJinja.from_json_any(value) }
+              rendered = KrikriJinja.render("{{ 'True' if (#{condition}) else 'False' }}", converted_vars)
+              return rendered.strip == "True"
+            end
             rendered = VariableSubstitutor::CrinjaRenderer.new(vars, true).render("{{ 'True' if (#{condition}) else 'False' }}")
             return rendered.strip == "True"
           end

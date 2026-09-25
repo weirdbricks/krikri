@@ -1407,6 +1407,16 @@ describe Krikri::ConditionalEvaluator do
       Krikri::ConditionalEvaluator.evaluate("true if false else false", v).should be_false
     end
 
+    it "preserves structured variables when rendering ternary branches" do
+      v = Hash(String, JSON::Any).new
+      v["items"] = JSON.parse("[1, 2, 3]")
+      v["enabled"] = JSON::Any.new(true)
+      v["config"] = JSON.parse(%({"enabled": true}))
+
+      Krikri::ConditionalEvaluator.evaluate("items if enabled else []", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("config if config.enabled else {}", v).should be_true
+    end
+
     it "does not misparse a comparison inside the true-branch as a top-level comparison" do
       v = Hash(String, JSON::Any).new
       Krikri::ConditionalEvaluator.evaluate("1 < 2 if true else true", v).should be_true
