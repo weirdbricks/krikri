@@ -4,6 +4,7 @@ require "./variable_substitutor/filter_core"
 require "./ipaddr_core"
 require "./jmespath"
 require "./jinja_host_context"
+require "./variable_substitutor/filter_engine"
 
 module Krikri
   # Ansible's own filters, registered directly on the krikri-jinja engine
@@ -234,6 +235,59 @@ module Krikri
       # Fourth batch: the ansible.utils ipaddr family, jmespath, and the
       # YAML/JSON conversion filters, all of which already have JSON-level
       # implementations shared with the hand-rolled FilterEngine.
+
+
+      # The remaining Ansible filters keep Krikri's own JSON-level
+      # implementations (FilterEngine) as the single source of truth, reached
+      # through the host context's variable scope so a registered filter and
+      # a hand-rolled one can never drift apart.
+      %w(
+        fileglob flatten combine rekey_on_member extract
+        subelements regex_replace regex_search regex_findall log pow root
+        relpath vault unvault splitlines
+      ).each do |filter_name|
+        KrikriJinja.register_default_filter(filter_name) do |value, args, kwargs, ctx|
+          host = ctx.host_context
+          vars = host.is_a?(Krikri::JinjaHostContext) ? host.vars : {} of String => JSON::Any
+          json_value = KrikriJinja.to_json_any(value)
+          json_args = args.map { |arg| KrikriJinja.to_json_any(arg) }
+          json_kwargs = kwargs.transform_values { |arg| KrikriJinja.to_json_any(arg) }
+          parts = json_args.map(&.to_json)
+          json_kwargs.each { |key, arg| parts << "#{key}=#{arg.to_json}" }
+          result = VariableSubstitutor::FilterEngine.new(vars)
+            .apply(json_value, "#{filter_name}(#{parts.join(", ")})")
+          KrikriJinja.from_json_any(result)
+        end
+      end
+
+
+      # dict2items/items2dict are implemented here rather than delegated, so
+      # they do not route back through the engine that called them.
+      KrikriJinja.register_default_json_filter("dict2items") do |value, args, _kwargs|
+        hash = value.as_h?
+        next value unless hash
+        key_name = args[0]?.try(&.as_s) || "key"
+        value_name = args[1]?.try(&.as_s) || "value"
+        JSON::Any.new(hash.map { |key, item|
+          JSON::Any.new({key_name => JSON::Any.new(key), value_name => item})
+        })
+      end
+
+      KrikriJinja.register_default_json_filter("items2dict") do |value, args, _kwargs|
+        key_name = args[0]?.try(&.as_s) || "key"
+        value_name = args[1]?.try(&.as_s) || "value"
+        result = {} of String => JSON::Any
+        value.as_a.each do |entry|
+          if pair = entry.as_h?
+            # Ansible maps the VALUE to the KEY: items2dict('k') turns
+            # {'k': 1, 'v': 'x'} into {"x": 1}.
+            if (entry_key = pair[key_name]?) && (entry_value = pair[value_name]?)
+              result[entry_value.raw.as?(String) || entry_value.to_s] = entry_key
+            end
+          end
+        end
+        JSON::Any.new(result)
+      end
 
       # Ansible's register-result tests (`{{ result_var is failed }}`): the
       # registered value lives in Krikri's variable scope, which reaches the

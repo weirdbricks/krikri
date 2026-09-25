@@ -1,5 +1,6 @@
 require "../spec_helper"
 require "../../src/krikri/variable_substitutor/filter_engine"
+require "../../src/krikri/jinja_filters"
 require "../../src/krikri/krikri_jinja_filters"
 
 private def render(source : String, vars : Hash(String, JSON::Any) = {} of String => JSON::Any,
@@ -83,5 +84,18 @@ describe Krikri::KrikriJinjaFilters do
     render("{{ copy is succeeded }}", vars, host_context: context).should eq("False")
     render("{{ copy is changed }}", vars, host_context: context).should eq("False")
     render("{{ missing_result is failed }}", vars, host_context: context).should eq("False")
+  end
+
+  it "delegates the remaining Ansible filters to Krikri's own implementations" do
+    vars = Hash(String, JSON::Any).new
+    vars["nested"] = JSON.parse(%([["a", "b"], ["c"]]))
+    context = Krikri::JinjaHostContext.new(vars)
+
+    render("{{ nested | flatten | join(',') }}", vars, host_context: context).should eq("a,b,c")
+    render("{{ 'a-b' | regex_replace('-', '_') }}", vars, host_context: context).should eq("a_b")
+    render("{{ {'a': 1} | dict2items | first | tojson }}", vars, host_context: context)
+      .should eq(%({"key": "a", "value": 1}))
+    render("{{ [{'k': 1, 'v': 'x'}] | items2dict('k', 'v') | tojson }}", vars, host_context: context)
+      .should eq(%({"x": 1}))
   end
 end
