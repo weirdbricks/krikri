@@ -1,4 +1,5 @@
 require "json"
+require "krikri_jinja"
 require "./filter_core"
 require "time"
 require "base64"
@@ -823,8 +824,17 @@ module Krikri
           # unseeded path previously fell into a constant-seeded PyRandom,
           # so every unseeded call returned the same value - fixed toward
           # real Jinja's nondeterminism alongside this migration).
+          # krikri-jinja's native random filter now matches Ansible's
+          # PyRandom semantics for both integer and string seeds, so the
+          # deterministic register:'d password value is identical to real
+          # ansible-playbook's.
           positional, kwargs = split_positional_and_kwargs(filter_args, ["seed"])
-          delegate_to_crinja_filter("random", value, kwargs, positional)
+          args = positional.map(&.to_json)
+          if seed = kwargs["seed"]?
+            args << "seed=#{CrinjaRenderer.crinja_value_to_json_any(seed).to_json}"
+          end
+          result = KrikriJinja.evaluate_expression("__value__ | random(#{args.join(", ")})", {"__value__" => value})
+          return result || JSON::Any.new(nil)
         when "map_format"
           # The nephelaiio.plugins collection's custom filter (NOT
           # community.general - no such filter exists there), found
