@@ -3,6 +3,7 @@ require "krikri_jinja"
 require "./variable_substitutor/filter_core"
 require "./ipaddr_core"
 require "./jmespath"
+require "./python_lookup_runner"
 require "./jinja_host_context"
 require "./variable_substitutor/filter_engine"
 
@@ -287,6 +288,38 @@ module Krikri
           end
         end
         JSON::Any.new(result)
+      end
+
+
+      # `lookup()` / `query()` dispatch to the controller's own python3
+      # wrapper, resolving a role-local `lookup_plugins/*.py` the same way the
+      # hand-rolled evaluator does. wantlist/errors are Templar's generic
+      # options, popped before the plugin sees them.
+      ["lookup", "query"].each do |function_name|
+        KrikriJinja.register_default_function(function_name) do |args, kwargs, ctx|
+          host = ctx.host_context
+          raise KrikriJinja::TemplateError.new("#{function_name}() requires a name", 0) unless host.is_a?(Krikri::JinjaHostContext)
+          json_args = args.map { |arg| KrikriJinja.to_json_any(arg) }
+          raise KrikriJinja::TemplateError.new("#{function_name}() requires a name", 0) if json_args.empty?
+          name = json_args[0].as_s
+          terms = json_args[1..]
+
+          role_path = host.vars["role_path"]?.try(&.as_s?)
+          playbook_dir = host.vars["playbook_dir"]?.try(&.as_s?)
+          source = PythonLookupRunner.find_source(name, role_path, playbook_dir)
+          raise KrikriJinja::TemplateError.new("#{name} is not a valid lookup plugin", 0) unless source
+
+          options = {} of String => JSON::Any
+          kwargs.each do |key, value|
+            next if {"wantlist", "errors"}.includes?(key)
+            options[key] = KrikriJinja.to_json_any(value)
+          end
+
+          result = PythonLookupRunner.call_lookup(
+            name, source, terms, host.lookup_variables, options
+          )
+          KrikriJinja.from_json_any(result)
+        end
       end
 
       # Ansible's register-result tests (`{{ result_var is failed }}`): the

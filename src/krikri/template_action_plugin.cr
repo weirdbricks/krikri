@@ -1,6 +1,10 @@
 require "json"
 require "digest/md5"
 require "crinja"
+require "krikri_jinja"
+require "./krikri_jinja_filters"
+require "./jinja_host_context"
+require "./template_search_path_loader"
 require "./crinja_strict_undefined"
 require "./crinja_string_index"
 require "./jinja_filters"
@@ -104,8 +108,130 @@ module Krikri
       ActionResult.success?(modified_params, changed: false)
     end
 
-    # Render Jinja2 template with variables
+    # Render Jinja2 template with variables through krikri-jinja, falling
+    # back to the Crinja engine for role-local `filter_plugins/*.py` filters
+    # that krikri-jinja does not know yet.
     private def render_template(template_content : String, template_path : String) : String?
+      directive_overrides, content = extract_jinja2_directive(template_content)
+      content = rewrite_inline_ternaries(content, false) unless custom_delimiters?
+
+      options = KrikriJinja::LexerOptions.new(
+        block_start: delimiter_param("block_start_string", "{%"),
+        block_end: delimiter_param("block_end_string", "%}"),
+        var_start: delimiter_param("variable_start_string", "{{"),
+        var_end: delimiter_param("variable_end_string", "}}"),
+        comment_start: delimiter_param("comment_start_string", "{#"),
+        comment_end: delimiter_param("comment_end_string", "#}"),
+        trim_blocks: directive_overrides.fetch("trim_blocks", true?(@params["trim_blocks"]?, default: true)),
+        lstrip_blocks: directive_overrides.fetch("lstrip_blocks", true?(@params["lstrip_blocks"]?, default: false))
+      )
+
+      template_vars = prepare_template_vars_json(template_path)
+      engine = KrikriJinja.derive_engine(
+        build_template_loader(template_path), options,
+        KrikriJinja.ansible_strict_undefined, JinjaHostContext.new(template_vars)
+      )
+      rendered = engine.render_string(
+        content,
+        template_vars.transform_values { |value| KrikriJinja.from_json_any(value) }
+      )
+
+      rendered += "\n" unless rendered.ends_with?("\n")
+      rendered
+    rescue ex : KrikriJinja::TemplateError
+      # A role-local filter plugin is the one feature krikri-jinja cannot
+      # resolve yet; the Crinja engine still can (it loads the plugin into
+      # its own environment), so retry there before failing the task.
+      if message = ex.message
+        return render_template_with_crinja(template_content, template_path) if
+          message.includes?("unknown filter") || message.includes?("unknown function") ||
+          message.includes?("undefined function")
+      end
+      @render_error = jinja_error_message(ex)
+      nil
+    rescue ex
+      @render_error = ex.message
+      nil
+    end
+
+    # Loader rooted at the template's own directory plus its role's
+    # templates/ ancestors, matching real Ansible's role template search
+    # path (the engine's default loader searches only the CWD).
+    private def build_template_loader(template_path : String) : KrikriJinja::Loader?
+      tpl_dir = File.dirname(File.expand_path(template_path))
+      return nil unless tpl_dir.starts_with?("/")
+
+      searchpaths = [tpl_dir]
+      dir = tpl_dir
+      templates_root = File.basename(tpl_dir) == "templates" ? tpl_dir : nil
+      while templates_root.nil? && (dir = File.dirname(dir)) != "/" && dir.split("/").includes?("templates")
+        searchpaths << dir
+        if File.basename(dir) == "templates"
+          templates_root = dir
+          break
+        end
+      end
+      if templates_root
+        role_root = File.dirname(templates_root)
+        searchpaths << role_root unless searchpaths.includes?(role_root)
+      end
+      TemplateSearchPathLoader.new(searchpaths)
+    end
+
+    # Real Ansible's own wording for a strict-undefined failure is
+    # "'name' is undefined"; krikri-jinja already uses that phrasing.
+    private def jinja_error_message(ex : KrikriJinja::TemplateError) : String
+      ex.message || "template render failed"
+    end
+
+    # JSON-shaped counterpart of #prepare_template_vars, for the krikri-jinja
+    # render path: real Ansible templates a role default's own value
+    # recursively, so a default that is itself an unrendered expression
+    # resolves before the template sees it.
+    private def prepare_template_vars_json(template_path : String) : Hash(String, JSON::Any)
+      substitutor = VarSubstitutor.new(vars: @vars)
+      vars = {} of String => JSON::Any
+      @vars.each do |key, value|
+        begin
+          value = rerender_nested_json(value, substitutor)
+        rescue Krikri::UndefinedVariableError
+          # A role default that references an undefined variable stays raw;
+          # only a template that actually uses it fails, like real Ansible.
+        end
+        vars[key] = value
+      end
+
+      vars["inventory_hostname"] = JSON::Any.new(@host.name)
+      vars["ansible_host"] = JSON::Any.new(@host.name)
+      vars["ansible_managed"] = JSON::Any.new("Ansible managed")
+      vars["template_host"] = JSON::Any.new(@host.name)
+      vars["template_path"] = JSON::Any.new(template_path)
+      vars["template_fullpath"] = JSON::Any.new(File.expand_path(template_path))
+      vars["template_run_date"] = JSON::Any.new(Time.utc.to_s("%Y-%m-%d %H:%M:%S UTC"))
+      vars["environment"] = JSON::Any.new(ENV.to_h.transform_values { |value| JSON::Any.new(value) })
+      vars["template_destpath"] = JSON::Any.new(@params["dest"]) if @params["dest"]?
+      vars["vars"] = JSON::Any.new(vars.dup)
+      vars
+    end
+
+    private def rerender_nested_json(value : JSON::Any, substitutor : VarSubstitutor, depth : Int32 = 0) : JSON::Any
+      return value if depth > 10
+      case raw = value.raw
+      when String
+        return value unless raw.includes?("{{") || raw.includes?("{%")
+        JSON::Any.new(substitutor.substitute(raw))
+      when Array
+        JSON::Any.new(raw.map { |item| rerender_nested_json(item, substitutor, depth + 1) })
+      when Hash
+        JSON::Any.new(raw.to_h { |key, item| {key, rerender_nested_json(item, substitutor, depth + 1)} })
+      else
+        value
+      end
+    end
+
+    # Legacy Crinja render path, kept for role-local `filter_plugins/*.py`
+    # filters until krikri-jinja can run those plugins itself.
+    private def render_template_with_crinja(template_content : String, template_path : String) : String?
       # Jinja2's `{%+ ... %}`/`{% ... +%}` whitespace-control modifier
       # (explicitly KEEPING the whitespace that trim_blocks/lstrip_blocks
       # would otherwise strip around this one tag) is handled natively by
@@ -549,7 +675,11 @@ module Krikri
       {overrides, lines[1]? || ""}
     end
 
-    private def rewrite_inline_ternaries(template : String) : String
+    # `rewrite_in:` is false on the krikri-jinja path: that engine evaluates
+    # a real infix `in`/`not in` natively, including Python's "undefined on
+    # the left of a list membership is simply False", so rewriting it into
+    # the `is in([...])` test form would only lose that.
+    private def rewrite_inline_ternaries(template : String, rewrite_in : Bool = true) : String
       # Bounded defense-in-depth against a non-converging rewrite pass -
       # every individual rewrite below is believed idempotent once
       # applied, but this loop already hung the whole process for real
@@ -616,7 +746,8 @@ module Krikri
             # strictly more correct in every case, since real_truthy?
             # agrees with Crinja::Value#truthy? on everything except the
             # empty-collection cases it was already getting wrong.
-            "{%#{$1} #{$2} (#{rewrite_in_expr(condition)}) | pytruthy #{$4}%}"
+            condition = rewrite_in_expr(condition) if rewrite_in
+            "{%#{$1} #{$2} (#{condition}) | pytruthy #{$4}%}"
           end
         end
         # `{% for (k, v) in dict.items() %}` -> `{% for k, v in dict.items() %}`
