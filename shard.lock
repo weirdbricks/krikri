@@ -16,6 +16,10 @@ shards:
     git: https://github.com/weirdbricks/crinja.git
     version: 0.9.0+git.commit.3a1a99cb58ca889161a1ddac6febf179c4e09e97
 
+  krikri-jinja:
+    git: https://github.com/weirdbricks/krikri-jinja.git
+    version: 0.3.1+git.commit.80d614a2a8b93fc2856c80275116aeb16b18a63a
+
   crystar:
     git: https://github.com/naqvis/crystar.git
     version: 0.4.0
@@ -30,7 +34,7 @@ shards:
 
   krikri-xml:
     git: https://github.com/weirdbricks/krikri-xml.git
-    version: 0.1.0+git.commit.0c18b3e8cc73e7c282ae03663041bc8d6be20659
+    version: 0.3.0+git.commit.dd0bfa2966bca2326818011f7b24dbf19c4fe2a5
 
   mysql:
     git: https://github.com/weirdbricks/crystal-mysql.git

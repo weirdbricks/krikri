@@ -11,6 +11,9 @@ dependencies:
   crinja:
     github: weirdbricks/crinja
     tag: crystal-play-0.9.60
+  krikri-jinja:
+    github: weirdbricks/krikri-jinja
+    tag: v0.3.1
   docr:
     github: weirdbricks/docr
     commit: c90ea8d6a0c5eb9f842ac0da098a1718ecca66ca
@@ -34,6 +37,7 @@ dependencies:
     commit: 2a8cc0980c9ba18ef22bf870e8be12783ee2b5ec
   krikri-xml:
     github: weirdbricks/krikri-xml
+    tag: v0.3.0
 
 development_dependencies:
   ameba:
