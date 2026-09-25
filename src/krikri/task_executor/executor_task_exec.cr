@@ -1,4 +1,5 @@
 require "./executor"
+require "krikri_jinja"
 require "../plugin_helpers/ansible_splitlines"
 
 
@@ -224,6 +225,12 @@ module Krikri
       end
     end
 
+    # Resolve with_fileglob patterns (if any) against the control host's
+    # filesystem, after substituting any {{ vars }} in the pattern.
+    private def expression_evaluator_for(vars_context : Hash(String, JSON::Any)) : VariableSubstitutor::ExpressionEvaluator
+      VariableSubstitutor::ExpressionEvaluator.new(vars_context)
+    end
+
     private def json_type_name(value : JSON::Any) : String
       case value.raw
       when Hash         then "dict"
@@ -233,12 +240,6 @@ module Krikri
       when Float64      then "float"
       else                   "str"
       end
-    end
-
-    # Resolve with_fileglob patterns (if any) against the control host's
-    # filesystem, after substituting any {{ vars }} in the pattern.
-    private def expression_evaluator_for(vars_context : Hash(String, JSON::Any)) : VariableSubstitutor::ExpressionEvaluator
-      VariableSubstitutor::ExpressionEvaluator.new(vars_context)
     end
 
     # Python's own type name for a resolved loop-source value, matching
@@ -656,9 +657,8 @@ module Krikri
           # where real Ansible's actually-flattened, actually-scalar
           # `item` reported `ok`.
           begin
-            evaluated = expression_evaluator_for(vars_context).evaluate(stripped[2..-3].strip)
-            parsed = JSON.parse(evaluated)
-            return parsed if parsed.as_a? || parsed.as_h?
+            evaluated = KrikriJinja.evaluate_expression(stripped[2..-3].strip, vars_context, strict: strict)
+            return evaluated if evaluated && (evaluated.as_a? || evaluated.as_h?)
           rescue
             # Not a list/dict, or not even valid JSON (an ordinary
             # rendered string) - fall through to the generic path below,
