@@ -49,6 +49,29 @@ module Krikri
       end
     end
 
+    # Role-local `filter_plugins/*.py` define filters on the controller at
+    # run time, so they are resolved per render (the rendering scope decides
+    # which role's plugin directory applies) and registered on that render's
+    # own engine.
+    def self.ensure_python_filter(name : String, vars : Hash(String, JSON::Any),
+                                  engine : KrikriJinja::Engine) : Bool
+      role_path = vars["role_path"]?.try(&.as_s?)
+      playbook_dir = vars["playbook_dir"]?.try(&.as_s?)
+      return false unless role_path || playbook_dir
+      return false unless PythonFilterRunner.defines_filter?(name, PythonFilterRunner.find_sources(role_path, playbook_dir))
+
+      engine.register_json_filter(name) do |value, args, kwargs|
+        sources = PythonFilterRunner.find_sources(
+          vars["role_path"]?.try(&.as_s?), vars["playbook_dir"]?.try(&.as_s?)
+        )
+        if sources.empty? || !PythonFilterRunner.defines_filter?(name, sources)
+          raise KrikriJinja::TemplateError.new("No filter named '#{name}'.", 0)
+        end
+        PythonFilterRunner.call_filter(name, sources, value, args, kwargs, vars)
+      end
+      true
+    end
+
     def self.register : Nil
       KrikriJinja.register_default_json_filter("pytruthy") do |value, _args, _kwargs|
         JSON::Any.new(py_truthy(value))

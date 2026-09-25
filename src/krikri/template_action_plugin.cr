@@ -9,9 +9,6 @@ require "./crinja_strict_undefined"
 require "./crinja_string_index"
 require "./jinja_filters"
 require "./base_action_plugin"
-# For the shared JSON::Any -> Crinja::Value converter (this plugin keeps
-# its own Crinja environment - see that method's comment for why).
-require "./variable_substitutor/crinja_renderer"
 
 module Krikri
   # Template Action Plugin
@@ -108,9 +105,9 @@ module Krikri
       ActionResult.success?(modified_params, changed: false)
     end
 
-    # Render Jinja2 template with variables through krikri-jinja, falling
-    # back to the Crinja engine for role-local `filter_plugins/*.py` filters
-    # that krikri-jinja does not know yet.
+    # Render a Jinja2 template with krikri-jinja. A role-local
+    # `filter_plugins/*.py` filter is resolved on demand and registered on
+    # this render's own engine, then the render is retried once.
     private def render_template(template_content : String, template_path : String) : String?
       directive_overrides, content = extract_jinja2_directive(template_content)
       content = rewrite_inline_ternaries(content, false) unless custom_delimiters?
@@ -131,27 +128,40 @@ module Krikri
         build_template_loader(template_path), options,
         KrikriJinja.ansible_strict_undefined, JinjaHostContext.new(template_vars)
       )
-      rendered = engine.render_string(
-        content,
-        template_vars.transform_values { |value| KrikriJinja.from_json_any(value) }
-      )
-
-      rendered += "\n" unless rendered.ends_with?("\n")
-      rendered
-    rescue ex : KrikriJinja::TemplateError
-      # A role-local filter plugin is the one feature krikri-jinja cannot
-      # resolve yet; the Crinja engine still can (it loads the plugin into
-      # its own environment), so retry there before failing the task.
-      if message = ex.message
-        return render_template_with_crinja(template_content, template_path) if
-          message.includes?("unknown filter") || message.includes?("unknown function") ||
-          message.includes?("undefined function")
+      begin
+        render_once(engine, content, template_vars)
+      rescue ex : KrikriJinja::TemplateError
+        # A role-local `filter_plugins/*.py` filter is resolved on demand
+        # and registered on this render's own engine, then the render is
+        # retried once with that same engine.
+        message = ex.message
+        filter_name = if message.try(&.includes?("unknown filter"))
+                        message.not_nil!.split('"')[1]?
+                      end
+        if filter_name && KrikriJinjaFilters.ensure_python_filter(filter_name, template_vars, engine)
+          render_once(engine, content, template_vars)
+        else
+          raise ex
+        end
       end
+    rescue ex : KrikriJinja::TemplateError
       @render_error = jinja_error_message(ex)
       nil
     rescue ex
       @render_error = ex.message
       nil
+    end
+
+    # Renders through the engine once and applies Ansible's own
+    # trailing-newline convention to the result.
+    private def render_once(engine : KrikriJinja::Engine, content : String,
+                            template_vars : Hash(String, JSON::Any)) : String
+      rendered = engine.render_string(
+        content,
+        template_vars.transform_values { |value| KrikriJinja.from_json_any(value) }
+      )
+      rendered += "\n" unless rendered.ends_with?("\n")
+      rendered
     end
 
     # Loader rooted at the template's own directory plus its role's
@@ -227,243 +237,6 @@ module Krikri
       else
         value
       end
-    end
-
-    # Legacy Crinja render path, kept for role-local `filter_plugins/*.py`
-    # filters until krikri-jinja can run those plugins itself.
-    private def render_template_with_crinja(template_content : String, template_path : String) : String?
-      # Jinja2's `{%+ ... %}`/`{% ... +%}` whitespace-control modifier
-      # (explicitly KEEPING the whitespace that trim_blocks/lstrip_blocks
-      # would otherwise strip around this one tag) is handled natively by
-      # the vendored Crinja fork (`lib/crinja/src/parser/template_lexer.cr`'s
-      # Symbol::PLUS handling + `template_parser.cr`'s no_trim_left/
-      # no_lstrip_right wiring + `runtime/renderer.cr`'s no_trim_left
-      # trim_blocks suppression), so the tags pass through UNREWRITTEN.
-      #
-      # A previous version of this renderer stripped the `+` markers out
-      # (`{%+`/`+%}` -> `{%`/`%}`) because Crinja 0.9.0's parser couldn't
-      # recognize them at all. With trim_blocks on (Ansible's own default)
-      # that silently turned every `{% ... +%}` into a trim_blocks-eligible
-      # `{% ... %}`, EATING the newline the `+` was there to preserve -
-      # gzevd.docuum's docuum.service.j2 rendered as
-      # `ExecStart=... StandardOutput=syslog` on ONE line (the newline
-      # between them gone), systemd then fed `StandardOutput=syslog` to
-      # docuum as a CLI argument, the service exited instantly and
-      # crash-looped into the start-limit `failed` state, and the WARM
-      # rerun's `systemd: state=started` failed outright on it while
-      # real Ansible (correct `+%}` handling, service stays up) reported
-      # ok. Now that the fork parses `+` natively, the workaround is
-      # strictly a regression - remove it and let the real modifier
-      # semantics apply.
-      #
-      # TAG_IF_ELIF below recognizes the `+` markers too (see its own
-      # comment), so a `{%+ if X +%}` condition still gets the pytruthy
-      # rewrite without this pre-strip.
-
-      # Crinja 0.9.0 cannot parse Jinja2's inline conditional expression
-      # `{{ A if C else B }}`. Real Ansible supports it and real roles
-      # (dev-sec os_hardening's login.defs and ufw templates) use it, so
-      # rewrite the idiomatic form into the ternary filter we provide
-      # (`{{ C | ternary(A, B) }}`) before Crinja sees it. Only the
-      # literal `X if C else Y` shape is rewritten; `{% if %}` blocks are
-      # left untouched.
-      # The Jinja compat rewrites assume the classic delimiter shapes
-      # (their regexes hard-code `{%`/`{{`); with custom delimiters those
-      # byte sequences are literal template text, and rewriting them
-      # would corrupt the output - skip the whole pass for such templates.
-      template_content = rewrite_inline_ternaries(template_content) unless custom_delimiters?
-
-      # A `#jinja2: key:value, key2:value2` directive on the template's
-      # very first line (real Ansible's own per-template override for
-      # trim_blocks/lstrip_blocks/etc. - dev-sec ssh_hardening's
-      # opensshd.conf.j2 opens with exactly this) is metadata for the
-      # renderer, not template content - real Ansible strips it before
-      # rendering. Previously left in place, it rendered as a literal
-      # "#jinja2: ..." line in the *output* file - harmless in most
-      # templates (just an extra comment) but fatal here, since this
-      # particular output is `sshd_config`, whose `validate:` command
-      # (`sshd -T -f %s`) rejects any line it doesn't recognize and
-      # failed the whole task.
-      directive_overrides, template_content = extract_jinja2_directive(template_content)
-
-      # Create Crinja environment
-      env = Crinja.new
-      # Real Ansible resolves `{% include %}`/`{% import %}` inside a
-      # template relative to the TEMPLATE's own directory first (Jinja2
-      # FileSystemLoader behavior with the loader searchpath rooted at
-      # the role's templates dir). The default Crinja loader searches
-      # only the process CWD (the work dir), so Oefenweb.haproxy's
-      # haproxy.cfg.j2 - which is built entirely from
-      # `{% include 'global.cfg.j2' %}`-style includes of its sibling
-      # partials - failed with "template global.cfg.j2 could not be
-      # found by FileSystemLoader(<work dir>)" where real ansible
-      # rc=0'd (round 196). Search the template's own dir plus every
-      # ancestor up to and including the role's templates/ root.
-      if (tpl_dir = File.dirname(File.expand_path(template_path))) &&
-         tpl_dir.starts_with?("/")
-        searchpaths = [tpl_dir]
-        dir = tpl_dir
-        templates_root = File.basename(tpl_dir) == "templates" ? tpl_dir : nil
-        while templates_root.nil? && (dir = File.dirname(dir)) != "/" && dir.split("/").includes?("templates")
-          searchpaths << dir
-          if File.basename(dir) == "templates"
-            templates_root = dir
-            break
-          end
-        end
-        # Real Ansible's role template search path also includes the ROLE
-        # ROOT itself (the templates/ dir's own parent), not just
-        # directories inside templates/ - a role can `{% include
-        # 'templates/other.j2' %}` a sibling by a path relative to the
-        # role root instead of a bare filename. Found via
-        # smlloyd.authselect's own `{% include 'templates/base-user-
-        # nsswitch.conf.j2' %}` (RHEL-family round 60487): the including
-        # template lives directly in templates/, so without this the
-        # loader only ever searched templates/ itself and never found
-        # "templates/base-user-nsswitch.conf.j2" under it.
-        if templates_root
-          role_root = File.dirname(templates_root)
-          searchpaths << role_root unless searchpaths.includes?(role_root)
-        end
-        env.loader = Crinja::Loader::FileSystemLoader.new(searchpaths)
-      end
-
-      # Configure Crinja to match Ansible defaults. A directive value
-      # (explicit true OR false) always wins over the param default -
-      # `directive_overrides.fetch` (not `||`) so an explicit `false`
-      # in the directive isn't treated as "unset, fall through".
-      trim_blocks = directive_overrides.fetch("trim_blocks", true?(@params["trim_blocks"]?, default: true))
-
-      env.config.trim_blocks = trim_blocks
-
-      # lstrip_blocks: real Ansible's template module default False (the
-      # same default as Jinja2's own upstream - unlike trim_blocks, which
-      # Ansible's template module overrides to True). Honored from the
-      # task param or a #jinja2: directive override, same precedence
-      # trim_blocks: above gets. This used to be hard-wired OFF because
-      # the vendored Crinja fork's lstrip_blocks implementation was
-      # broken (it ate the PRECEDING line's newline even for a bare,
-      # unindented tag, and an indented tag swallowed every newline in
-      # the whole block); the fork now implements it correctly - the
-      # exact cases from that old comment ("A\n    {% if %}\nB\n    {%
-      # endif %}\nC\n" -> "A\nB\nC\n", bare unindented tags, {{ }} and
-      # {# #} lines left untouched) all render correctly against the
-      # shard.lock-pinned commit, and were live-verified against real
-      # ansible-core 2.19.4's output for the same inputs.
-      lstrip_blocks = directive_overrides.fetch("lstrip_blocks", true?(@params["lstrip_blocks"]?, default: false))
-
-      env.config.lstrip_blocks = lstrip_blocks
-
-      # The six Jinja delimiter-string params (real Ansible's documented
-      # block_start_string/block_end_string/variable_start_string/
-      # variable_end_string/comment_start_string/comment_end_string): a
-      # template whose own native syntax already uses `{{`/`}}` for
-      # something else (a Helm chart, another Jinja-like DSL) switches
-      # delimiters instead of fighting the defaults. Consumed HERE, on
-      # the controller - they configure the Crinja environment the same
-      # way trim_blocks:/lstrip_blocks: do. Missing or empty falls back
-      # to Jinja2's own defaults (same fallback shape as newline_sequence:
-      # above; a whitespace-only delimiter is honored as-is).
-      env.config.block_start_string = delimiter_param("block_start_string", "{%")
-      env.config.block_end_string = delimiter_param("block_end_string", "%}")
-      env.config.variable_start_string = delimiter_param("variable_start_string", "{{")
-      env.config.variable_end_string = delimiter_param("variable_end_string", "}}")
-      env.config.comment_start_string = delimiter_param("comment_start_string", "{#")
-      env.config.comment_end_string = delimiter_param("comment_end_string", "#}")
-
-      # Prepare template variables
-      template_vars = prepare_template_vars
-
-      # Add Ansible-specific variables
-      template_vars["ansible_managed"] = Crinja::Value.new("Ansible managed")
-      template_vars["template_host"] = Crinja::Value.new(@host.name)
-      template_vars["template_path"] = Crinja::Value.new(template_path)
-      template_vars["template_fullpath"] = Crinja::Value.new(File.expand_path(template_path))
-      template_vars["template_run_date"] = Crinja::Value.new(Time.utc.to_s("%Y-%m-%d %H:%M:%S UTC"))
-      # Real Ansible's template action plugin also exposes template_destpath
-      # (the task's own `dest:`, unrendered - real Ansible doesn't
-      # template it before injecting this var either) - a common
-      # convention for a template's own first line to record its
-      # destination as a comment for auditability. Found via
-      # inmotionhosting.monit's own templates/etc/systemd/restart.conf.j2
-      # (`# {{ template_destpath }}`).
-      if dest = @params["dest"]?
-        template_vars["template_destpath"] = Crinja::Value.new(dest)
-      end
-
-      # Real Ansible's Templar always exposes `environment` as a Jinja
-      # global mapped to the controller process's OS environment
-      # variables (`os.environ`) - CrinjaRenderer (the {{ }} task-param
-      # path) got this same fix, but a REAL .j2 template file renders
-      # through this entirely separate `template.render(template_vars)`
-      # call, which didn't inherit it. Found via GROG.debug-variable's
-      # own dumpall.j2, `{{ environment | to_nice_json }}` - a common
-      # "dump everything" debug template idiom.
-      template_vars["environment"] = Crinja::Value.new(ENV.to_h)
-
-      # Render template.
-      #
-      # Real Ansible's `template:` uses Jinja2's StrictUndefined: an
-      # undefined variable raises and fails the task rather than
-      # rendering as empty text and silently deploying a broken config
-      # (see Krikri::StrictTemplating). This is the ONE Crinja entry
-      # point that opts in - the bare `{{ }}` task-param substitution
-      # path has its own, separate strict-undefined enforcement in
-      # variable_substitutor.cr and stays untouched.
-      template = env.from_string(template_content)
-      rendered = begin
-        StrictTemplating.strict { template.render(template_vars) }
-      rescue ex : Crinja::FeatureLibrary::UnknownFeatureError
-        # One last chance before the hard failure: a role-local (or
-        # playbook-adjacent) `filter_plugins/*.py` may define the
-        # filter - real Ansible loads those on the controller the same
-        # way it loads role-private `library/*.py` modules. This
-        # environment is a fresh `Crinja.new` per render (unlike the
-        # `{{ }}` task-param path's shared one), so a filter already
-        # registered there via an earlier task never reaches here - it
-        # has to be (re-)registered directly into THIS env. See
-        # CrinjaRenderer#ensure_python_filter? for the mechanism; a
-        # retry that raises the SAME unknown-feature error again means
-        # registration genuinely did not find/define it, so re-raise
-        # rather than looping.
-        filter_name = ex.message.to_s.split('"')[1]?
-        if filter_name && VariableSubstitutor::CrinjaRenderer.ensure_python_filter?(filter_name, @vars, env)
-          StrictTemplating.strict { template.render(template_vars) }
-        else
-          raise ex
-        end
-      end
-
-      # Ensure rendered content ends with newline (matches Ansible behavior and file conventions)
-      # This prevents idempotency issues with heredoc writes that add trailing newlines
-      rendered += "\n" unless rendered.ends_with?("\n")
-
-      rendered
-    rescue ex : Crinja::UndefinedError
-      # Match real Ansible's own wording for a strict-undefined template
-      # variable ("'lacework_accessToken' is undefined") rather than
-      # Crinja's unquoted "x is undefined." phrasing.
-      @render_error = "'#{ex.variable_name}' is undefined"
-      nil
-    rescue ex : Crinja::TypeError
-      # Iterating an undefined value ({% for x in undefined_var %},
-      # with or without an {% else %} branch) raises Crinja's
-      # TypeError "can't iterate over undefined" - real Jinja2 raises
-      # the same UndefinedError "'x' is undefined" there as for any
-      # other undefined access (verified against ansible-core 2.19.11:
-      # a template module render with a for-else over an unset var
-      # fails with msg "Task failed: 'missing' is undefined"), so map
-      # it onto the same wording the UndefinedError rescue above
-      # produces.
-      if (raw = ex.value.try(&.raw)).is_a?(Crinja::Undefined)
-        @render_error = "'#{raw.name}' is undefined"
-      else
-        @render_error = ex.message
-      end
-      nil
-    rescue ex
-      @render_error = ex.message
-      nil
     end
 
     # Rewrites Jinja2 inline conditional expressions `{{ A if C else B }}`
