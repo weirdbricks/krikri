@@ -50,4 +50,16 @@ describe Krikri::KrikriJinjaFilters do
     render("{{ ['/a/b', '/a/c'] | commonpath }}").should eq("/a")
     render("{{ '1.00 KB' | human_to_bytes }}").should eq("1024")
   end
+
+  it "registers the collection filters and Ansible value helpers" do
+    render("{{ {'a': 1, 'b': 2} | omit('a') | tojson }}").should eq(%({"b": 2}))
+    render("{{ [] | mandatory }}").should eq("[]")
+    render("{{ 'x' | type_debug }}").should eq("str")
+    render("{{ [3, 1, 2] | sort | intersect([2, 1]) | join(',') }}").should eq("1,2")
+    render("{{ [1, 2, 3] | difference([2]) | join(',') }}").should eq("1,3")
+    render("{{ [1, 2] | union([2, 3]) | join(',') }}").should eq("1,2,3")
+    render("{{ [1, 2] | product(['a', 'b']) | map('join') | join(' ') }}").should eq("1a 1b 2a 2b")
+    render("{{ 'a/b' | path_join('c') }}").should eq("a/b/c")
+    render("{{ 'a,b' | split(',') | join('|') }}").should eq("a|b")
+  end
 end

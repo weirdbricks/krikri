@@ -25,6 +25,10 @@ module Krikri
       end
     end
 
+    def self.any_list(items : Array(String)) : Array(JSON::Any)
+      items.map { |item| JSON::Any.new(item) }
+    end
+
     def self.register : Nil
       KrikriJinja.register_default_json_filter("pytruthy") do |value, _args, _kwargs|
         JSON::Any.new(py_truthy(value))
@@ -126,6 +130,87 @@ module Krikri
       KrikriJinja.register_default_json_filter("splitext") do |value, _args, _kwargs|
         root, ext = VariableSubstitutor::FilterCore.splitext(value.to_s)
         JSON::Any.new([JSON::Any.new(root), JSON::Any.new(ext)])
+      end
+
+      # Third batch: collection filters plus Ansible's omit/mandatory/type_debug.
+      KrikriJinja.register_default_json_filter("omit") do |value, args, _kwargs|
+        drop = args.map(&.to_s)
+        case raw = value.raw
+        when Hash
+          JSON::Any.new(raw.reject { |key, _| drop.includes?(key) })
+        else
+          value
+        end
+      end
+
+      KrikriJinja.register_default_json_filter("mandatory") do |value, args, _kwargs|
+        if value.raw.nil?
+          message = args[0]?.try(&.as_s) || "Mandatory variable not defined."
+          raise KrikriJinja::TemplateError.new(message, 0)
+        end
+        value
+      end
+
+      KrikriJinja.register_default_json_filter("type_debug") do |value, _args, _kwargs|
+        JSON::Any.new(case value.raw
+                     when Nil        then "NoneType"
+                     when Bool       then "bool"
+                     when Int64      then "int"
+                     when Float64    then "float"
+                     when String     then "str"
+                     when Array      then "list"
+                     when Hash       then "dict"
+                     else                 value.raw.class.name
+                     end)
+      end
+
+      KrikriJinja.register_default_json_filter("union") do |value, args, _kwargs|
+        JSON::Any.new(any_list(([value] + args).flat_map { |item| item.as_a.map(&.to_s) }.uniq))
+      end
+
+      KrikriJinja.register_default_json_filter("intersect") do |value, args, _kwargs|
+        common = value.as_a.map(&.to_s)
+        args.each { |arg| common = common.select { |item| arg.as_a.map(&.to_s).includes?(item) } }
+        JSON::Any.new(any_list(common.sort))
+      end
+
+      KrikriJinja.register_default_json_filter("difference") do |value, args, _kwargs|
+        exclude = args.flat_map { |arg| arg.as_a.map(&.to_s) }
+        JSON::Any.new(any_list(value.as_a.map(&.to_s).reject { |item| exclude.includes?(item) }))
+      end
+
+      KrikriJinja.register_default_json_filter("symmetric_difference") do |value, args, _kwargs|
+        other = args.flat_map { |arg| arg.as_a.map(&.to_s) }
+        left = value.as_a.map(&.to_s)
+        JSON::Any.new(any_list((left.reject { |item| other.includes?(item) } +
+          other.reject { |item| left.includes?(item) }).sort))
+      end
+
+      KrikriJinja.register_default_json_filter("product") do |value, args, _kwargs|
+        lists = [value] + args
+        lists = lists.map { |list| list.as_a? || [list] }
+        combos = [[] of JSON::Any]
+        lists.each do |list|
+          combos = combos.flat_map { |combo| list.map { |item| combo + [item] } }
+        end
+        JSON::Any.new(combos.map { |combo| JSON::Any.new(combo) })
+      end
+
+      KrikriJinja.register_default_json_filter("path_join") do |value, args, _kwargs|
+        parts = [value] + args
+        rendered = parts.map { |part| part.as_s? || part.to_s }
+        JSON::Any.new(VariableSubstitutor::FilterCore.normpath(rendered.join("/")))
+      end
+
+      KrikriJinja.register_default_json_filter("split") do |value, args, _kwargs|
+        text = value.to_s
+        separator = args[0]?.try(&.as_s) || " "
+        parts = if separator == " "
+                  text.split(/[ \t\r\n]+/).reject(&.empty?)
+                else
+                  text.split(separator, remove_empty: false)
+                end
+        JSON::Any.new(any_list(parts))
       end
     end
   end
