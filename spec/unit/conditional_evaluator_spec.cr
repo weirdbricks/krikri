@@ -1051,7 +1051,7 @@ describe Krikri::ConditionalEvaluator do
       Krikri::ConditionalEvaluator.evaluate("conn_ok is reachable", v).should be_true
     end
 
-    it "falls back to Crinja for any real Jinja2 'is [not] <test>' this module hasn't hand-implemented (divisibleby, etc)" do
+    it "evaluates real Jinja2 'is [not] <test>' expressions with krikri-jinja" do
       # Real bug found benchmarking robertdebock.nomad's own assert:
       # `nomad_server_bootstrap_expect is not divisibleby 2` (verifying
       # an odd bootstrap_expect count). `divisibleby` (like most of

@@ -1,4 +1,5 @@
 require "json"
+require "krikri_jinja"
 require "./variable_substitutor/filter_engine"
 require "./variable_substitutor/variable_lookup"
 require "./variable_substitutor/expression_evaluator"
@@ -854,11 +855,15 @@ module Krikri
       # and an odd operand evaluated identically to false). Found via
       # robertdebock.nomad's own `nomad_server_bootstrap_expect is not
       # divisibleby 2` assert (verifying an odd bootstrap_expect count).
-      # Delegates the whole condition to Crinja (`CrinjaRenderer`, the
-      # separate evaluator that already implements every real Jinja2
-      # test correctly by construction, verified directly here to
-      # produce the right True/False) rather than reimplementing every
-      # possible built-in test's own semantics by hand.
+      # Delegates the whole condition to krikri-jinja for its built-in
+      # tests, while retaining the Crinja fallback for Ansible-specific
+      # tests that are not part of the new engine's built-in test library.
+      if (match = condition.match(/\bis\s+(?:not\s+)?(\w+)/)) &&
+         KrikriJinja::BUILTIN_TESTS.has_key?(match[1])
+        converted_vars = vars.transform_values { |value| KrikriJinja.from_json_any(value) }
+        rendered = KrikriJinja.render("{{ (#{condition}) }}", converted_vars)
+        return rendered.strip == "True"
+      end
       if condition.match(REGEX_GENERIC_IS_TEST)
         rendered = VariableSubstitutor::CrinjaRenderer.new(vars, true).render("{{ (#{condition}) }}")
         return rendered.strip == "True"
