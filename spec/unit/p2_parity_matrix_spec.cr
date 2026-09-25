@@ -7,6 +7,7 @@ require "../../src/krikri/conditional_evaluator"
 # error identically and any parity assertion would be vacuously true. Load
 # the registrations explicitly so the pure side sees the real feature set.
 require "../../src/krikri/jinja_filters"
+require "../../src/krikri/krikri_jinja_filters"
 
 # P2.16 (FINDINGS_CHECKLIST.md) - the cross-engine parity matrix.
 #
@@ -73,11 +74,10 @@ end
 # context uses (`CrinjaRenderer.json_any_to_crinja_value`) - that way both
 # engines see byte-identical data, which is the parity this file exists to
 # assert.
+# The template engine a real `.j2` render uses: the shared krikri-jinja
+# engine with krikri's Ansible registrations.
 private def pure_crinja(tpl : String) : String
-  bindings = parity_vars.each_with_object(Hash(String, Crinja::Value).new) do |(key, json), acc|
-    acc[key] = Krikri::VariableSubstitutor::CrinjaRenderer.json_any_to_crinja_value(json)
-  end
-  Crinja.new.from_string(tpl).render(bindings)
+  KrikriJinja.render(tpl, parity_vars.transform_values { |json| KrikriJinja.from_json_any(json) })
 rescue e
   "ERR: #{e.message}"
 end
@@ -113,16 +113,19 @@ describe "P2.16 cross-engine parity matrix" do
     "falsy on empty string"                    => {"{{ empty is falsy }}", "True"},
     "true is boolean IDENTITY, not truthiness" => {"{{ text is true }}", "False"},
     "bool-literal test name (is not false)"    => {"{{ flag is not false }}", "True"},
-    "abs-as-test on a number"                  => {"{{ int_val is abs }}", "True"},
-    "abs-as-test on a string"                  => {"{{ text is abs }}", "False"},
+    # `abs` is Ansible's absolute-path test (a number fails the task).
+    "abs-as-test on an absolute path"          => {"{{ real_dir is abs }}", "True"},
+    "abs-as-test on a relative path"           => {"{{ rel_path is abs }}", "False"},
     "isnan on a NaN float"                     => {"{{ float_nan is isnan }}", "True"},
     "nan on a real number"                     => {"{{ int_val is nan }}", "False"},
     "uri test positive"                        => {"{{ web_url is uri }}", "True"},
     "uri test negative"                        => {"{{ not_url is uri }}", "False"},
     "url test positive"                        => {"{{ web_url is url }}", "True"},
-    "filter meta-test (registered name)"       => {"{{ text is filter('upper') }}", "True"},
-    "filter meta-test (unknown name)"          => {"{{ text is filter('nosuchfilter') }}", "False"},
-    "test meta-test (registered name)"         => {"{{ text is test('defined') }}", "True"},
+    # The name is the tested VALUE (`'upper' is filter`); real ansible-core
+    # fails `text is filter('upper')` outright.
+    "filter meta-test (registered name)"       => {"{{ 'upper' is filter }}", "True"},
+    "filter meta-test (unknown name)"          => {"{{ 'nosuchfilter' is filter }}", "False"},
+    "test meta-test (registered name)"         => {"{{ 'defined' is test }}", "True"},
     # ---- filters registered by the P2 batches (P2.8-P2.14) ----
     # "strftime after to_datetime" left the matrix: ansible-core 2.19
     # changed strftime's argument order (piped value = FORMAT, epoch =

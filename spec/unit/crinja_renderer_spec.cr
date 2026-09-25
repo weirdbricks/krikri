@@ -284,7 +284,12 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
     renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
 
     renderer.render("{{ (true) | ternary(' --port=' + nullmailer_port | string, '') }}").should eq(" --port=25")
-    renderer.render("{{ (nullmailer_username is not none) | ternary(' --user=' + nullmailer_username, '') }}").should eq("")
+    # Real ansible-core evaluates both ternary branches eagerly, so a None
+    # operand in the unused branch still fails the render (live-verified:
+    # "can only concatenate str (not \"NoneType\") to str").
+    expect_raises(KrikriJinja::TemplateError) do
+      renderer.render!("{{ (nullmailer_username is not none) | ternary(' --user=' + nullmailer_username, '') }}")
+    end
     renderer.render("{{ ('a' | upper, 'z') }}").should eq("['A', 'z']")
   end
 

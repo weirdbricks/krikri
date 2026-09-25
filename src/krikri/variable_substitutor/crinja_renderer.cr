@@ -235,55 +235,33 @@ module Krikri
         env.filters[name.downcase] = instance
       end
 
-      # Crinja parses eagerly in `Template.new` (see `Crinja#from_string`
-      # -> `Template#initialize`'s `run_parser` default) - #render
-      # previously called `shared_env.from_string(...)` fresh on every
-      # single call, re-lexing and re-parsing the SAME task-param Jinja
-      # source every time that param got substituted (2-4x per task per
-      # host, per this class's own `@template_vars` caching comment
-      # above - the exact same "once per renderer, not once per render"
-      # motivation applies here). `Template` is documented as immutable
-      # once built and `#render(bindings)` takes fresh bindings each
-      # call, so a template parsed once is safe to reuse for every
-      # subsequent render with different `@vars` - including across
-      # different `VarSubstitutor`/`CrinjaRenderer` instances, hence
-      # process-wide like `@@env` above (same instances, same input, same
-      # renderer output - not re-templated dependent on host-specific
-      # data at this layer, so a template built for one host applies
-      # unchanged to any other). Bounded in practice by the number of
-      # DISTINCT task-param template strings in a playbook (this receives
-      # the raw, not-yet-substituted param text - typically dozens to a
-      # few hundred across a whole run), not per-host or per-loop-
-      # iteration, so no eviction needed.
-      #
-      # Measured via `scripts/crinja_corpus/bench_evaluators.cr`: even
-      # WITHOUT this cache, raw Crinja already renders faster than this
-      # codebase's hand-rolled `ExpressionEvaluator` for most tested
-      # expression shapes; with it, Crinja is 2-9x faster across the
-      # board (e.g. `flag and foo == 'bar'`: 727ns vs 5806ns/call) -
-      # this is why the hand-rolled evaluator converges toward trying
-      # Crinja first wherever possible.
-      #
-      # Same single-fiber-at-a-time safety argument as `@@env` above
-      # applies to this `||=` read-check-write: Crinja's render path
-      # never yields the fiber, so under Crystal's cooperative
-      # scheduling no two `--forks` hosts can ever interleave a
-      # read/write race on this Hash.
-      @@template_cache = Hash(String, Crinja::Template).new
-      @@decode_template_cache = Hash(String, Crinja::Template).new
+      # Parsed once per distinct template source and reused: the source is
+      # the raw, not-yet-substituted task-param text (dozens to a few
+      # hundred distinct strings per run, never per host or loop item), a
+      # parsed node is immutable, and every render gets fresh variables.
+      # Separate caches for the decoding and verbatim literal modes, since
+      # that choice is made at parse time.
+      @@jinja_template_cache = Hash(String, KrikriJinja::Nodes::TemplateNode).new
+      @@jinja_decode_template_cache = Hash(String, KrikriJinja::Nodes::TemplateNode).new
 
-      private def cached_template(source : String) : Crinja::Template
-        cache = @decode ? @@decode_template_cache : @@template_cache
-        cache[source] ||= shared_env.from_string(source)
+      private def cached_template(source : String) : KrikriJinja::Nodes::TemplateNode
+        cache = @decode ? @@jinja_decode_template_cache : @@jinja_template_cache
+        cache[source] ||= KrikriJinja::Parser.parse(source, jinja_options)
+      end
+
+      private def jinja_options : KrikriJinja::LexerOptions
+        KrikriJinja::LexerOptions.new(
+          trim_blocks: true, lstrip_blocks: false, verbatim_expression_strings: !@decode
+        )
       end
 
       # Render a template containing Jinja2 control structures, raising
       # on any failure instead of swallowing it - for a caller (like
-      # `ExpressionEvaluator`'s own Crinja-delegation branches) that
-      # wants to fall back to a DIFFERENT
-      # rendering strategy on failure, rather than `#render`'s own
-      # "give back the original unrendered text" behavior, which would
-      # be actively wrong for a caller expecting a real evaluated value.
+      # `ExpressionEvaluator`'s own delegation branches) that wants to
+      # fall back to a DIFFERENT rendering strategy on failure, rather
+      # than `#render`'s own "give back the original unrendered text"
+      # behavior, which would be actively wrong for a caller expecting a
+      # real evaluated value.
       def render!(text : String) : String
         TimingProfile.measure("controller.crinja", "controller.crinja") do
           render_measured!(text)
@@ -291,89 +269,57 @@ module Krikri
       end
 
       private def render_measured!(text : String) : String
-        # @vars is fixed for the lifetime of a renderer (VarSubstitutor
-        # #set_variable constructs a new renderer rather than mutating),
-        # so the lazy per-key JSON::Any -> Crinja::Value conversion (see
-        # #build_lazy_context) is set up once per renderer instead of
-        # once per render - a task with several templated params renders
-        # more than once. Each render gets its own fresh CHILD context
-        # (parented to the shared lazy one) so a template's own `{% set
-        # %}` bindings never leak into a later render off the same
-        # renderer - see #build_lazy_context's own comment for why a
-        # bare Context (not a Hash) is passed to #render here.
-        parent_context = (@template_context ||= build_lazy_context)
-        child_context = Crinja::Context.new(parent_context)
-
+        # The lazy variable scope is built once per renderer (@vars is
+        # fixed for a renderer's lifetime) and shared with #evaluate_value!;
+        # each render gets its own context, so a template's `{% set %}`
+        # never leaks into a later render off the same renderer.
+        #
         # Real Ansible's Templar always exposes `environment` as a Jinja
-        # global mapped to the controller process's OS environment
-        # variables (`os.environ`) - not the task/play `environment:`
-        # keyword, a genuinely separate thing. Entirely missing before -
-        # GROG.debug-variable's own `{{ environment | to_nice_json }}`
-        # (a common "dump everything" debug template idiom) raised
-        # "'environment' is undefined" and failed the whole task instead
-        # of rendering. Set fresh per render (not baked into the
-        # process-wide `shared_env`, which is built once and cached) so
-        # it reflects the actual live ENV at render time, not whatever
-        # ENV happened to hold the first time any template was ever
-        # rendered in this process.
-        child_context["environment"] = ENV.to_h
-
-        # Trim markers on OUTPUT tags (`{{- expr }}`/`{{ expr -}}`) used to
-        # be worked around by pre-normalizing the source here (the removed
-        # `normalize_expression_trim_markers`); the fork's lexer now
-        # tokenizes them correctly natively (crystal-play-0.9.5 and
-        # earlier), so the raw source is handed straight to Crinja.
-        template = cached_template(text)
-        template.render(child_context)
+        # global mapped to the controller's OS environment (`os.environ`),
+        # not the task/play `environment:` keyword. Set per render so it
+        # reflects the live ENV (GROG.debug-variable's `{{ environment |
+        # to_nice_json }}` debug idiom).
+        environment = ENV.to_h.transform_values { |value| KrikriJinja::AnyValue.new(value) }
+        KrikriJinja.default_engine.render_parsed(
+          cached_template(text), {"environment" => KrikriJinja::AnyValue.new(environment)},
+          resolver: jinja_resolver, undefined: KrikriJinja::Undefined.new(nil, chainable: true),
+          host_context: jinja_host_context
+        )
       end
 
       # Render a template containing Jinja2 control structures
       def render(text : String) : String
         render!(text)
-      rescue e : Crinja::FeatureLibrary::UnknownFeatureError
+      rescue e : KrikriJinja::TemplateError
         # An unknown FILTER or TEST name must never degrade to the
         # original unrendered text here: real Jinja2/Ansible hard-fails
         # the task at compile time ("No filter named 'X'." / "No test
-        # named 'X'.", TemplateAssertionErrors - both feature sets are
-        # validated before any call is attempted), while the
+        # named 'X'.", TemplateAssertionErrors), while the
         # swallow-to-original-text fallback below turned an unknown name
         # inside a `{% %}`-bearing value into silently-wrong downstream
-        # output. Every other failure keeps the lenient
-        # give-back-the-text behavior (a lenient-undefined `{% if %}` is
-        # deliberate here). The two kinds are told apart by Crinja's own
-        # error wording ("no filter/test with name ... registered") -
-        # previously only the filter wording was recognized, so an
-        # unknown TEST reached the generic "No filter named 'unknown'."
-        # mislabel (found via sunfoxcz.dkim's `dkim_domains is not list`,
-        # where real Ansible fails immediately with "No test named
-        # 'list'.").
-        if feature = self.class.unknown_feature(e)
-          if feature[0] == "test"
-            raise UnknownTestError.new("No test named '#{feature[1]}'.")
-          end
-          # An unknown FILTER gets one last chance before the hard
-          # failure: a role-local (or playbook-adjacent)
-          # `filter_plugins/*.py` may define it - real Ansible loads
-          # those on the controller at template-compile time. If one
-          # does, register a dynamic Crinja filter dispatching to the
-          # controller's python3 (see PythonFilterRunner) and re-render
-          # once - the registration is process-wide on the shared
-          # environment, so every later render (including the cached
-          # template object, whose filter lookups re-resolve from the
-          # library at each evaluation) finds it. A re-render that
-          # STILL reports the same unknown feature means registration
-          # did not take; raise the plain error rather than looping.
-          filter_name = feature[1]
-          if self.class.ensure_python_filter?(filter_name, @vars, shared_env)
+        # output (sunfoxcz.dkim's `dkim_domains is not list`, where real
+        # Ansible fails immediately with "No test named 'list'.").
+        # Every other failure keeps the lenient give-back-the-text
+        # behavior (a lenient-undefined `{% if %}` is deliberate here).
+        if test_name = self.class.unknown_feature_name(e, "test")
+          raise UnknownTestError.new("No test named '#{test_name}'.")
+        end
+        if filter_name = KrikriJinjaFilters.unknown_filter_name(e)
+          # One last chance before the hard failure: a role-local (or
+          # playbook-adjacent) `filter_plugins/*.py` may define it - real
+          # Ansible loads those on the controller at template-compile
+          # time. Registered on the shared engine, then rendered once
+          # more; still unknown means registration did not take.
+          if KrikriJinjaFilters.ensure_shared_python_filter(filter_name, @vars)
             begin
               return render!(text)
-            rescue Crinja::FeatureLibrary::UnknownFeatureError
-              raise FilterEngine::UnknownFilterError.new("No filter named '#{filter_name}'.")
+            rescue retry_error : KrikriJinja::TemplateError
+              raise retry_error unless KrikriJinjaFilters.unknown_filter_name(retry_error)
             end
           end
           raise FilterEngine::UnknownFilterError.new("No filter named '#{filter_name}'.")
         end
-        raise e
+        text
       rescue e : Krikri::FirstFoundLookupError | Krikri::PipeLookupError | Krikri::PythonLookupRunner::LookupError
         # Same reasoning as the unknown-filter case above: first_found's own
         # no-match failure is a hard task failure in real Ansible, never the
@@ -389,6 +335,13 @@ module Krikri
       rescue
         # Return original text on failure
         text
+      end
+
+      # The test (or filter) name a krikri-jinja "unknown test" error names.
+      def self.unknown_feature_name(error : KrikriJinja::TemplateError, kind : String) : String?
+        message = error.message || return nil
+        return nil unless message.includes?("unknown #{kind}")
+        message.split('"')[1]?
       end
 
       # Parses Crinja's own unknown-feature error wording ("no filter/
@@ -448,16 +401,22 @@ module Krikri
       @jinja_resolver : JinjaVarResolver?
       @jinja_host_context : JinjaHostContext?
 
+      private def jinja_resolver : JinjaVarResolver
+        @jinja_resolver ||= JinjaVarResolver.new(@vars, VarSubstitutor.new(vars: @vars))
+      end
+
+      private def jinja_host_context : JinjaHostContext
+        @jinja_host_context ||= JinjaHostContext.new(@vars)
+      end
+
       private def evaluate_value_once!(expr : String) : JSON::Any?
         cache = @decode ? @@jinja_decode_expression_cache : @@jinja_expression_cache
         node = cache[expr] ||= KrikriJinja.parse_expression(
           expr, KrikriJinja::LexerOptions.new(verbatim_expression_strings: !@decode)
         )
-        resolver = (@jinja_resolver ||= JinjaVarResolver.new(@vars, VarSubstitutor.new(vars: @vars)))
-        host_context = (@jinja_host_context ||= JinjaHostContext.new(@vars))
         value = KrikriJinja.default_engine.evaluate_parsed(
-          node, resolver: resolver,
-          undefined: KrikriJinja::Undefined.new(nil, chainable: true), host_context: host_context
+          node, resolver: jinja_resolver,
+          undefined: KrikriJinja::Undefined.new(nil, chainable: true), host_context: jinja_host_context
         )
         return nil if value.raw.is_a?(KrikriJinja::Undefined)
 

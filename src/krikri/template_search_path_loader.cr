@@ -1,4 +1,4 @@
-require "krikri_jinja"
+require "krikri-jinja/krikri_jinja"
 
 module Krikri
   # Real Ansible searches a role's template includes across the template's own

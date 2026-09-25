@@ -1,5 +1,5 @@
 require "./executor"
-require "krikri_jinja"
+require "krikri-jinja/krikri_jinja"
 require "../jinja_host_context"
 require "../plugin_helpers/ansible_splitlines"
 

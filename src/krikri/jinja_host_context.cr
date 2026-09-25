@@ -1,5 +1,5 @@
 require "json"
-require "krikri_jinja"
+require "krikri-jinja/krikri_jinja"
 require "./python_lookup_runner"
 
 module Krikri

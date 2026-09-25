@@ -96,10 +96,15 @@ describe "boolean-identity / URL / NaN / meta tests (P2.4-P2.7)" do
   end
 
   describe "abs / isnan / nan tests (P2.6)" do
-    it "abs passes for numbers only (hand-rolled evaluator)" do
-      Krikri::ConditionalEvaluator.evaluate("num_one is abs", vars).should be_true
-      Krikri::ConditionalEvaluator.evaluate("float_num is abs", vars).should be_true
+    it "abs is the absolute-path test and fails on a number (hand-rolled evaluator)" do
+      # Live-verified against ansible-core 2.19: `'/etc/x' is abs` is True,
+      # `5 is abs` fails ("expected str, bytes or os.PathLike object").
+      path_vars = vars.merge({"abs_path" => JSON::Any.new("/etc/hosts")})
+      Krikri::ConditionalEvaluator.evaluate("abs_path is abs", path_vars).should be_true
       Krikri::ConditionalEvaluator.evaluate("yes_str is abs", vars).should be_false
+      expect_raises(Exception, "expected str, bytes or os.PathLike object, not int") do
+        Krikri::ConditionalEvaluator.evaluate("num_one is abs", vars)
+      end
     end
 
     it "isnan/nan pass only for a real NaN float (hand-rolled evaluator)" do

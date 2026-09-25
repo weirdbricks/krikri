@@ -1,4 +1,4 @@
-require "krikri_jinja"
+require "krikri-jinja/krikri_jinja"
 
 module Krikri
   module Lint

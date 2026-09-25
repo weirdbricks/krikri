@@ -669,16 +669,17 @@ describe Krikri::VariableSubstitutor::FilterEngine do
     engine.apply(JSON.parse(%({})), "dict2items").as_a.should eq([] of JSON::Any)
   end
 
-  it "dict2items tolerates non-dict input (returns empty list, matching real Ansible's tolerance)" do
-    # Real Ansible's filter returns an empty list for undefined / nil
-    # / scalar input rather than raising - the same tolerance the
-    # as_array helper provides for list-input filters. This matters
-    # in practice for the os_hardening shape: a role that uses
-    # `{{ some_dict | default({}) | dict2items }}` always gets a dict
-    # in, but a more defensive `{{ some_dict | dict2items | ... }}`
-    # without the default() should also work on a missing var.
-    engine.apply(JSON::Any.new(nil), "dict2items").as_a.should eq([] of JSON::Any)
-    engine.apply(s("not a dict"), "dict2items").as_a.should eq([] of JSON::Any)
+  it "dict2items raises on non-dict input, like real Ansible" do
+    # Live-verified against ansible-core 2.19: `none | dict2items` fails
+    # with "dict2items requires a dictionary, got <class 'NoneType'>
+    # instead." (and likewise for a scalar); `| default({})` is the
+    # role-side guard.
+    expect_raises(Exception, "dict2items requires a dictionary, got <class 'NoneType'> instead.") do
+      engine.apply(JSON::Any.new(nil), "dict2items")
+    end
+    expect_raises(Exception, "dict2items requires a dictionary, got <class 'str'> instead.") do
+      engine.apply(s("not a dict"), "dict2items")
+    end
   end
 
   it "items2dict is the inverse of dict2items and produces the original dict for a clean round-trip" do
@@ -711,22 +712,14 @@ describe Krikri::VariableSubstitutor::FilterEngine do
     result["a"].as_i.should eq(2)
   end
 
-  it "items2dict silently skips list elements that are not dicts or missing the key_name field" do
-    # Real Ansible's filter doesn't crash on a malformed list element;
-    # it just contributes nothing. A list mixing dicts, scalars, and
-    # partial dicts is a real shape for an os_hardening-style role
-    # that composes data from multiple sources before the dict2items
-    # / items2dict round-trip.
-    input = JSON.parse(%([
-      {"key": "a", "value": 1},
-      "not a dict",
-      {"only_one_field": true},
-      {"key": "b", "value": 2}
-    ]))
-    result = engine.apply(input, "items2dict").as_h
-    result.keys.sort!.should eq(["a", "b"])
-    result["a"].as_i.should eq(1)
-    result["b"].as_i.should eq(2)
+  it "items2dict raises on list elements that are not dicts or miss a field, like real Ansible" do
+    # Live-verified against ansible-core 2.19: a malformed element fails
+    # the filter ("items2dict requires each dictionary in the list to
+    # contain the keys 'k' and 'v', got [...] instead.").
+    input = JSON.parse(%([{"key": "a", "value": 1}, "not a dict"]))
+    expect_raises(Exception, "items2dict requires each dictionary in the list to contain the keys 'key' and 'value'") do
+      engine.apply(input, "items2dict")
+    end
   end
 
   it "items2dict stringifies a non-string key_name field (Phase-3 oracle arbitration)" do
@@ -784,12 +777,12 @@ describe Krikri::VariableSubstitutor::FilterEngine do
   end
 
   it "ternary raises on missing true_val/false_val arguments, like real Ansible's Python signature" do
-    expect_raises(Crinja::TypeError,
-      "ternary() missing 1 required positional argument: 'false_val'") do
+    expect_raises(KrikriJinja::TemplateError,
+      "ternary() missing 1 required positional argument") do
       engine.apply(JSON::Any.new(false), "ternary('yes')")
     end
-    expect_raises(Crinja::TypeError,
-      "ternary() missing 2 required positional arguments: 'true_val' and 'false_val'") do
+    expect_raises(KrikriJinja::TemplateError,
+      "ternary() missing 2 required positional arguments") do
       engine.apply(JSON::Any.new(true), "ternary()")
     end
   end

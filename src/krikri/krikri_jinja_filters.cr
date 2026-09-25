@@ -1,5 +1,5 @@
 require "json"
-require "krikri_jinja"
+require "krikri-jinja/krikri_jinja"
 require "./variable_substitutor/filter_core"
 require "./ipaddr_core"
 require "./jmespath"
@@ -9,6 +9,7 @@ require "./variable_substitutor/filter_engine"
 require "./py_random"
 require "./vault"
 require "./task_executor/result_display"
+require "./krikri_jinja_lookups"
 
 module Krikri
   # Ansible's own filters, registered directly on the krikri-jinja engine
@@ -129,6 +130,20 @@ module Krikri
       message = error.message || return nil
       return nil unless message.includes?("unknown filter")
       message.split('"')[1]?
+    end
+
+    # Python's type name for a JSON value, as Ansible's error messages
+    # report it.
+    def self.py_type_name(value : JSON::Any) : String
+      case value.raw
+      when Nil     then "NoneType"
+      when Bool    then "bool"
+      when Int64   then "int"
+      when Float64 then "float"
+      when String  then "str"
+      when Array   then "list"
+      else              "dict"
+      end
     end
 
     # Python's `str()` of a JSON value, for tests that read their operand as
@@ -296,7 +311,33 @@ module Krikri
       end
     end
 
+    # Ansible's finalize for rendered output: None renders as an empty
+    # string and tuples as lists (live-verified: `a{{ none }}b` is "ab",
+    # `{{ d | dictsort }}` inside text is "[['a', 1]]").
+    def self.ansible_finalize(value : KrikriJinja::AnyValue) : KrikriJinja::AnyValue
+      case raw = value.raw
+      when Nil                    then KrikriJinja::AnyValue.new("")
+      when KrikriJinja::TupleValue then KrikriJinja::AnyValue.new(raw.items.map { |item| tuples_to_lists(item) })
+      when Array, Hash            then tuples_to_lists(value)
+      else                             value
+      end
+    end
+
+    private def self.tuples_to_lists(value : KrikriJinja::AnyValue) : KrikriJinja::AnyValue
+      case raw = value.raw
+      when KrikriJinja::TupleValue then KrikriJinja::AnyValue.new(raw.items.map { |item| tuples_to_lists(item) })
+      when Array                  then KrikriJinja::AnyValue.new(raw.map { |item| tuples_to_lists(item) })
+      when Hash                   then KrikriJinja::AnyValue.new(raw.transform_values { |item| tuples_to_lists(item) })
+      else                             value
+      end
+    end
+
     def self.register : Nil
+      KrikriJinja.default_engine.finalize = ->(value : KrikriJinja::AnyValue) { ansible_finalize(value) }
+      # Real ansible-core fails `{% for k, v in some_dict %}`, but roles that
+      # pass on it in practice (jtyr.motd, jtyr.nsswitch) reach this form
+      # with values real Ansible keeps as pairs; keep it working.
+      KrikriJinja.default_engine.dict_pair_unpacking = true
       KrikriJinja.register_default_json_filter("pytruthy") do |value, _args, _kwargs|
         JSON::Any.new(py_truthy(value))
       end
@@ -431,42 +472,28 @@ module Krikri
         end)
       end
 
+      # Set filters keep element types and first-seen order (Ansible's own
+      # unique-preserving implementations), shared with FilterEngine.
       KrikriJinja.register_default_json_filter("union") do |value, args, _kwargs|
-        JSON::Any.new(any_list(([value] + args).flat_map { |item| item.as_a.map(&.to_s) }.uniq))
+        JSON::Any.new(VariableSubstitutor::FilterCore.union(value.as_a? || [] of JSON::Any, args[0]?.try(&.as_a?) || [] of JSON::Any))
       end
 
       KrikriJinja.register_default_json_filter("intersect") do |value, args, _kwargs|
-        common = value.as_a.map(&.to_s)
-        args.each { |arg| common = common.select { |item| arg.as_a.map(&.to_s).includes?(item) } }
-        JSON::Any.new(any_list(common.sort))
+        JSON::Any.new(VariableSubstitutor::FilterCore.intersect(value.as_a? || [] of JSON::Any, args[0]?.try(&.as_a?) || [] of JSON::Any))
       end
 
       KrikriJinja.register_default_json_filter("difference") do |value, args, _kwargs|
-        exclude = args.flat_map { |arg| arg.as_a.map(&.to_s) }
-        JSON::Any.new(any_list(value.as_a.map(&.to_s).reject { |item| exclude.includes?(item) }))
+        JSON::Any.new(VariableSubstitutor::FilterCore.difference(value.as_a? || [] of JSON::Any, args[0]?.try(&.as_a?) || [] of JSON::Any))
       end
 
       KrikriJinja.register_default_json_filter("symmetric_difference") do |value, args, _kwargs|
-        other = args.flat_map { |arg| arg.as_a.map(&.to_s) }
-        left = value.as_a.map(&.to_s)
-        JSON::Any.new(any_list((left.reject { |item| other.includes?(item) } +
-                                other.reject { |item| left.includes?(item) }).sort))
+        JSON::Any.new(VariableSubstitutor::FilterCore.symmetric_difference(value.as_a? || [] of JSON::Any, args[0]?.try(&.as_a?) || [] of JSON::Any))
       end
 
-      KrikriJinja.register_default_json_filter("product") do |value, args, _kwargs|
-        lists = [value] + args
-        lists = lists.map { |list| list.as_a? || [list] }
-        combos = [[] of JSON::Any]
-        lists.each do |list|
-          combos = combos.flat_map { |combo| list.map { |item| combo + [item] } }
-        end
-        JSON::Any.new(combos.map { |combo| JSON::Any.new(combo) })
-      end
-
-      KrikriJinja.register_default_json_filter("path_join") do |value, args, _kwargs|
-        parts = [value] + args
-        rendered = parts.map { |part| part.as_s? || part.to_s }
-        JSON::Any.new(VariableSubstitutor::FilterCore.normpath(rendered.join("/")))
+      # path_join takes a list of components; an absolute one resets.
+      KrikriJinja.register_default_json_filter("path_join") do |value, _args, _kwargs|
+        parts = value.as_a?.try(&.map { |part| py_str(part) }) || [py_str(value)]
+        JSON::Any.new(VariableSubstitutor::FilterCore.path_join(parts))
       end
 
       KrikriJinja.register_default_json_filter("split") do |value, args, _kwargs|
@@ -489,12 +516,12 @@ module Krikri
       # through the host context's variable scope so a registered filter and
       # a hand-rolled one can never drift apart.
       %w(
-        fileglob flatten combine rekey_on_member extract
-        regex_replace regex_search regex_findall log pow
-        relpath vault unvault splitlines
-        combinations permutations expandvars from_yaml_all hash lists_mergeby
+        fileglob flatten
+        regex_replace regex_search regex_findall
+        vault unvault splitlines
+        expandvars hash
         map_format password_hash realpath strftime to_datetime to_json
-        to_nice_yaml urlsplit zip zip_longest
+        urlsplit
       ).each do |filter_name|
         KrikriJinja.register_default_filter(filter_name) do |value, args, kwargs, ctx|
           host = ctx.host_context
@@ -564,6 +591,95 @@ module Krikri
         end
       end
 
+      # Collection and dict filters with a single JSON-level implementation
+      # in FilterCore, shared with the hand-rolled FilterEngine.
+      KrikriJinja.register_default_json_filter("combine") do |value, args, kwargs|
+        # Ansible flattens list arguments one level: combine([d1, d2]).
+        others = args.flat_map { |arg| arg.as_a? || [arg] }
+        VariableSubstitutor::FilterCore.combine(
+          value, others, py_truthy(kwargs["recursive"]? || JSON::Any.new(false)),
+          py_str(kwargs["list_merge"]? || JSON::Any.new("replace"))
+        )
+      end
+
+      {"lists_mergeby", "list_mergeby"}.each do |filter_name|
+        KrikriJinja.register_default_json_filter(filter_name) do |value, args, kwargs|
+          raise KrikriJinja::TemplateError.new("lists_mergeby: missing merge key argument", 0) if args.empty?
+          VariableSubstitutor::FilterCore.lists_mergeby(
+            [value] + args[0..-2], py_str(args[-1]),
+            py_truthy(kwargs["recursive"]? || JSON::Any.new(false)),
+            py_str(kwargs["list_merge"]? || JSON::Any.new("replace"))
+          )
+        end
+      end
+
+      {"zip" => false, "zip_longest" => true}.each do |filter_name, longest|
+        KrikriJinja.register_default_json_filter(filter_name) do |value, args, kwargs|
+          VariableSubstitutor::FilterCore.zip([value] + args, longest, kwargs["fillvalue"]? || JSON::Any.new(nil))
+        end
+      end
+
+      KrikriJinja.register_default_json_filter("product") do |value, args, _kwargs|
+        VariableSubstitutor::FilterCore.product([value] + args)
+      end
+
+      KrikriJinja.register_default_json_filter("to_nice_yaml") do |value, _args, kwargs|
+        sort_keys = kwargs["sort_keys"]?.try { |flag| py_truthy(flag) }
+        JSON::Any.new(VariableSubstitutor::FilterCore.to_nice_yaml(value, sort_keys.nil? ? true : sort_keys))
+      end
+
+      KrikriJinja.register_default_json_filter("relpath") do |value, args, kwargs|
+        JSON::Any.new(VariableSubstitutor::FilterCore.relpath(py_str(value), py_str(args[0]? || kwargs["start"]? || JSON::Any.new("."))))
+      end
+
+      KrikriJinja.register_default_json_filter("log") do |value, args, kwargs|
+        JSON::Any.new(VariableSubstitutor::FilterCore.log(value, args[0]? || kwargs["base"]?))
+      end
+
+      KrikriJinja.register_default_json_filter("pow") do |value, args, kwargs|
+        JSON::Any.new(VariableSubstitutor::FilterCore.pow(value, args[0]? || kwargs["x"]? || JSON::Any.new(0_i64)))
+      end
+
+      KrikriJinja.register_default_json_filter("combinations") do |value, args, kwargs|
+        n = (args[0]? || kwargs["n"]?).try(&.as_i64?) || 2_i64
+        JSON::Any.new(VariableSubstitutor::FilterCore.combinations(value.as_a? || [] of JSON::Any, n.to_i32)
+          .map { |combo| JSON::Any.new(combo) })
+      end
+
+      KrikriJinja.register_default_json_filter("permutations") do |value, args, kwargs|
+        items = value.as_a? || [] of JSON::Any
+        n = (args[0]? || kwargs["n"]?).try(&.as_i64?) || items.size.to_i64
+        JSON::Any.new(VariableSubstitutor::FilterCore.permutations(items, n.to_i32).map { |perm| JSON::Any.new(perm) })
+      end
+
+      KrikriJinja.register_default_json_filter("rekey_on_member") do |value, args, kwargs|
+        VariableSubstitutor::FilterCore.rekey_on_member(
+          value, py_str(args[0]? || kwargs["member"]? || JSON::Any.new("")),
+          py_str(args[1]? || kwargs["duplicates"]? || JSON::Any.new("error"))
+        )
+      end
+
+      KrikriJinja.register_default_json_filter("from_yaml_all") do |value, _args, _kwargs|
+        VariableSubstitutor::FilterCore.from_yaml_all(py_str(value))
+      end
+
+      # `extract(container, morekeys=None)`. A miss inside `hostvars` reports
+      # Ansible's own HostVarsVars wrapper type rather than a plain dict.
+      KrikriJinja.register_default_filter("extract") do |value, args, kwargs, ctx|
+        container = args[0]? || kwargs["container"]?
+        raise KrikriJinja::TemplateError.new("extract() missing required argument 'container'", 0) unless container
+        hostvars = ctx["hostvars"].raw
+        label = (hostvars.is_a?(Hash) && container.raw.as?(Hash).try(&.same?(hostvars))) ? "HostVarsVars" : nil
+        keys = [KrikriJinja.to_json_any(value)]
+        if morekeys = (args[1]? || kwargs["morekeys"]?)
+          json_morekeys = KrikriJinja.to_json_any(morekeys)
+          unless json_morekeys.raw.nil?
+            json_morekeys.as_a? ? keys.concat(json_morekeys.as_a) : keys << json_morekeys
+          end
+        end
+        KrikriJinja.from_json_any(VariableSubstitutor::FilterCore.extract(KrikriJinja.to_json_any(container), keys, label))
+      end
+
       # `root`: the filesystem-root prefix of a path, "/" or "".
       KrikriJinja.register_default_json_filter("root") do |value, _args, _kwargs|
         JSON::Any.new((value.raw.as?(String) || value.to_s).starts_with?("/") ? "/" : "")
@@ -573,7 +689,9 @@ module Krikri
       # they do not route back through the engine that called them.
       KrikriJinja.register_default_json_filter("dict2items") do |value, args, kwargs|
         hash = value.as_h?
-        next value unless hash
+        unless hash
+          raise KrikriJinja::TemplateError.new("dict2items requires a dictionary, got <class '#{py_type_name(value)}'> instead.", 0)
+        end
         key_name = (args[0]? || kwargs["key_name"]?).try(&.as_s?) || "key"
         value_name = (args[1]? || kwargs["value_name"]?).try(&.as_s?) || "value"
         JSON::Any.new(hash.map { |key, item|
@@ -588,8 +706,11 @@ module Krikri
       KrikriJinja.register_default_json_filter("items2dict") do |value, args, kwargs|
         key_name = (args[0]? || kwargs["key_name"]?).try(&.as_s?) || "key"
         value_name = (args[1]? || kwargs["value_name"]?).try(&.as_s?) || "value"
+        unless items = value.as_a?
+          raise KrikriJinja::TemplateError.new("items2dict requires a list, got <class '#{py_type_name(value)}'> instead.", 0)
+        end
         result = {} of String => JSON::Any
-        (value.as_a? || [] of JSON::Any).each do |entry|
+        items.each do |entry|
           pair = entry.as_h?
           unless pair && (entry_key = pair[key_name]?) && (entry_value = pair[value_name]?)
             raise KrikriJinja::TemplateError.new(
@@ -600,37 +721,6 @@ module Krikri
           result[py_str(entry_key)] = entry_value
         end
         JSON::Any.new(result)
-      end
-
-      # `lookup()` / `query()` dispatch to the controller's own python3
-      # wrapper, resolving a role-local `lookup_plugins/*.py` the same way the
-      # hand-rolled evaluator does. wantlist/errors are Templar's generic
-      # options, popped before the plugin sees them.
-      ["lookup", "query"].each do |function_name|
-        KrikriJinja.register_default_function(function_name) do |args, kwargs, ctx|
-          host = ctx.host_context
-          raise KrikriJinja::TemplateError.new("#{function_name}() requires a name", 0) unless host.is_a?(Krikri::JinjaHostContext)
-          json_args = args.map { |arg| KrikriJinja.to_json_any(arg) }
-          raise KrikriJinja::TemplateError.new("#{function_name}() requires a name", 0) if json_args.empty?
-          name = json_args[0].as_s
-          terms = json_args[1..]
-
-          role_path = host.vars["role_path"]?.try(&.as_s?)
-          playbook_dir = host.vars["playbook_dir"]?.try(&.as_s?)
-          source = PythonLookupRunner.find_source(name, role_path, playbook_dir)
-          raise KrikriJinja::TemplateError.new("#{name} is not a valid lookup plugin", 0) unless source
-
-          options = {} of String => JSON::Any
-          kwargs.each do |key, value|
-            next if {"wantlist", "errors"}.includes?(key)
-            options[key] = KrikriJinja.to_json_any(value)
-          end
-
-          result = PythonLookupRunner.call_lookup(
-            name, source, terms, host.lookup_variables, options
-          )
-          KrikriJinja.from_json_any(result)
-        end
       end
 
       # Ansible's register-result tests (`{{ result_var is failed }}`): the
@@ -724,7 +814,9 @@ module Krikri
       end
 
       KrikriJinja.register_default_json_filter("from_yaml") do |value, _args, _kwargs|
-        yaml_to_json(YAML.parse(value.to_s))
+        # An already-structured value passes through unchanged.
+        next value unless text = value.as_s?
+        yaml_to_json(YAML.parse(text))
       end
     end
   end

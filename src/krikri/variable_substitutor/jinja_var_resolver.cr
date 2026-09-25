@@ -1,5 +1,5 @@
 require "json"
-require "krikri_jinja"
+require "krikri-jinja/krikri_jinja"
 require "./crinja_renderer"
 
 module Krikri

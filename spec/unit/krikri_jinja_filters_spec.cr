@@ -61,7 +61,7 @@ describe Krikri::KrikriJinjaFilters do
     render("{{ [1, 2, 3] | difference([2]) | join(',') }}").should eq("1,3")
     render("{{ [1, 2] | union([2, 3]) | join(',') }}").should eq("1,2,3")
     render("{{ [1, 2] | product(['a', 'b']) | map('join') | join(' ') }}").should eq("1a 1b 2a 2b")
-    render("{{ 'a/b' | path_join('c') }}").should eq("a/b/c")
+    render("{{ ['a/b', 'c'] | path_join }}").should eq("a/b/c")
     render("{{ 'a,b' | split(',') | join('|') }}").should eq("a|b")
   end
 

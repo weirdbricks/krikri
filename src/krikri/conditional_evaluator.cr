@@ -1,5 +1,5 @@
 require "json"
-require "krikri_jinja"
+require "krikri-jinja/krikri_jinja"
 require "./jinja_host_context"
 require "./variable_substitutor/filter_engine"
 require "./variable_substitutor/variable_lookup"
@@ -558,8 +558,8 @@ module Krikri
       # variable's real type.
       # 'true'/'false' are BOOLEAN IDENTITY tests (only real True/False
       # pass - not truthiness, P2.4); 'falsy' is !truthy (null, false,
-      # 0, "", empty list/dict). 'abs' is the abs-as-test spelling
-      # (value is a number); 'isnan'/'nan' the float-NaN test; 'uri'/
+      # 0, "", empty list/dict). 'abs' is the absolute-path test;
+      # 'isnan'/'nan' the float-NaN test; 'uri'/
       # 'url' the URL-shaped-string test (P2.5/P2.6).
       {"true", "false", "falsy", "abs", "isnan", "nan", "uri", "url", "mapping", "sequence", "boolean", "number", "string", "integer", "float", "iterable", "none"}.each do |test_name|
         if condition.includes?(" is not #{test_name}")
@@ -2002,8 +2002,11 @@ module Krikri
         else              false
         end
       when "abs"
-        # abs-as-test: the value is a number (P2.6)
-        value.raw.is_a?(Int64) || value.raw.is_a?(Float64)
+        # Ansible's path test (os.path.isabs), not a number check -
+        # live-verified: `'/etc/x' is abs` is True, `5 is abs` fails.
+        path = value.as_s?
+        raise "expected str, bytes or os.PathLike object, not #{value.raw.is_a?(Int64) ? "int" : value.raw.class.name.downcase}" unless path
+        path.starts_with?("/")
       when "isnan", "nan"
         value.raw.is_a?(Float64) && value.raw.as(Float64).nan?
       when "uri", "url"

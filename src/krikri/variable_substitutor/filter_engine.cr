@@ -1,5 +1,5 @@
 require "json"
-require "krikri_jinja"
+require "krikri-jinja/krikri_jinja"
 require "../krikri_jinja_filters"
 require "../jinja_host_context"
 require "./filter_core"
@@ -639,7 +639,7 @@ module Krikri
           # mirrored but independent of jinja_filters.cr's Crinja-side
           # registration) is retired for this name - it routes through the
           # ONE native `Crinja.filter(:combine)` registration via
-          # #delegate_to_crinja_filter, now with positional varargs (the
+          # #delegate_to_jinja_filter, now with positional varargs (the
           # multi-dict shape dict2items never needed). The kwarg parsing
           # stays here verbatim (see below for why it can't use
           # #parse_kwarg) and feeds pre-built Crinja values, because
@@ -669,10 +669,10 @@ module Krikri
               end
             end
           end
-          crinja_kwargs = Crinja::Variables.new
-          crinja_kwargs["recursive"] = Crinja::Value.new(recursive_arg)
-          crinja_kwargs["list_merge"] = Crinja::Value.new(list_merge_arg)
-          delegate_to_crinja_filter(
+          crinja_kwargs = Hash(String, JSON::Any).new
+          crinja_kwargs["recursive"] = JSON::Any.new(recursive_arg)
+          crinja_kwargs["list_merge"] = JSON::Any.new(list_merge_arg)
+          delegate_to_jinja_filter(
             "combine", value, crinja_kwargs,
             positional_args.map { |arg_expr| resolve_expression(arg_expr) },
           )
@@ -700,7 +700,7 @@ module Krikri
           # hand-rolled merge (#lists_mergeby_lists + the shared
           # #combine_hash) is retired - this dispatch routes through
           # the ONE native `Crinja.filter(:lists_mergeby)` registration
-          # via #delegate_to_crinja_filter, same as combine/dict2items.
+          # via #delegate_to_jinja_filter, same as combine/dict2items.
           # The kwarg parsing stays here verbatim (same reason as
           # combine's: `recursive` must arrive as a real Bool, not its
           # truthy text form) and the merge key is resolved and passed
@@ -734,10 +734,10 @@ module Krikri
           # empty list, which would hide the role's own data bug.
           raise "lists_mergeby: missing merge key argument" if positional_args.empty?
           merge_key = as_string(resolve_expression(positional_args.pop))
-          crinja_kwargs = Crinja::Variables.new
-          crinja_kwargs["recursive"] = Crinja::Value.new(recursive_arg)
-          crinja_kwargs["list_merge"] = Crinja::Value.new(list_merge_arg)
-          delegate_to_crinja_filter(
+          crinja_kwargs = Hash(String, JSON::Any).new
+          crinja_kwargs["recursive"] = JSON::Any.new(recursive_arg)
+          crinja_kwargs["list_merge"] = JSON::Any.new(list_merge_arg)
+          delegate_to_jinja_filter(
             "lists_mergeby", value, crinja_kwargs,
             positional_args.map { |arg_expr| resolve_expression(arg_expr) } + [JSON::Any.new(merge_key)],
           )
@@ -819,7 +819,7 @@ module Krikri
           # Phase-3 consolidation slice #5: the hand-rolled copy (and its
           # #random_choice/#py_random_for_seed helpers) is retired for the
           # ONE native Crinja.filter(:random) registration (jinja_filters.cr)
-          # via #delegate_to_crinja_filter, same seed= kwarg shape. Seeded
+          # via #delegate_to_jinja_filter, same seed= kwarg shape. Seeded
           # runs use PyRandom on both engines, so krikri and real
           # ansible-playbook produce the SAME value for the same seed;
           # unseeded runs stay NONdeterministic on both (the registration's
@@ -833,7 +833,7 @@ module Krikri
           positional, kwargs = split_positional_and_kwargs(filter_args, ["seed"])
           args = positional.map(&.to_json)
           if seed = kwargs["seed"]?
-            args << "seed=#{CrinjaRenderer.crinja_value_to_json_any(seed).to_json}"
+            args << "seed=#{seed.to_json}"
           end
           result = KrikriJinja.evaluate_expression(
             "__value__ | random(#{args.join(", ")})", {"__value__" => value},
@@ -868,7 +868,7 @@ module Krikri
           # carry is deleted - the name now routes through the ONE native
           # `Crinja.filter` registration (jinja_filters.cr, live-
           # differentialed against ansible-core 2.19.4 on its own side)
-          # via #delegate_to_crinja_filter, the same single-table
+          # via #delegate_to_jinja_filter, the same single-table
           # direction the already-delegated names (combine, lists_mergeby,
           # dict2items, and since the Phase-3 slice below, items2dict)
           # resolved. Behavior contract is
@@ -880,7 +880,7 @@ module Krikri
           # ever sees the value).
           key_name = parse_kwarg(filter_args, "key_name") || "key"
           value_name = parse_kwarg(filter_args, "value_name") || "value"
-          delegate_to_crinja_filter(
+          delegate_to_jinja_filter(
             "dict2items", value,
             {"key_name" => key_name, "value_name" => value_name},
           )
@@ -895,7 +895,7 @@ module Krikri
           # copy this dispatch used to run (#items_to_dict) is deleted -
           # the name now routes through the ONE native
           # `Crinja.filter(:items2dict)` registration (jinja_filters.cr)
-          # via #delegate_to_crinja_filter, the same pilot shape as
+          # via #delegate_to_jinja_filter, the same pilot shape as
           # dict2items. The probe battery
           # (scripts/crinja_corpus/probe_items2dict_divergence.cr)
           # found the two copies identical on 17 of 19 cases and found
@@ -915,7 +915,7 @@ module Krikri
           # Krikri.undefined_filter_chain_source, before any filter runs.
           key_name = parse_kwarg(filter_args, "key_name") || "key"
           value_name = parse_kwarg(filter_args, "value_name") || "value"
-          delegate_to_crinja_filter(
+          delegate_to_jinja_filter(
             "items2dict", value,
             {"key_name" => key_name, "value_name" => value_name},
           )
@@ -1111,7 +1111,7 @@ module Krikri
           # json_query(packages_var_query)` task.
           #
           # Phase-1 consolidation (filter #3) routed this through
-          # delegate_to_crinja_filter so both paths shared the ONE
+          # delegate_to_jinja_filter so both paths shared the ONE
           # `Crinja.filter(:json_query)` registration - but the
           # delegation's own inbound/outbound JSON::Any <-> Crinja::Value
           # bridge, plus the registration body's internal round-trip back
@@ -1224,7 +1224,7 @@ module Krikri
           # Phase-3 consolidation slice #5: the hand-rolled N-way zip this
           # dispatch used to run is retired - the name routes through the
           # ONE native Crinja.filter registration (jinja_filters.cr) via
-          # #delegate_to_crinja_filter. The lists go through as varargs and
+          # #delegate_to_jinja_filter. The lists go through as varargs and
           # fillvalue= as a real kwarg, matching real ansible-core 2.19
           # (live-verified: every positional argument is another LIST -
           # `zip_longest([3], '-')` zips three lists with null padding, it
@@ -1232,7 +1232,7 @@ module Krikri
           # this at 3-way zip, which the Crinja template side's old
           # declared-kwarg shape silently was.
           positional, kwargs = split_positional_and_kwargs(filter_args, ["fillvalue"])
-          delegate_to_crinja_filter(filter_name, value, kwargs, positional)
+          delegate_to_jinja_filter(filter_name, value, kwargs, positional)
         when "product"
           # product(*others) - real Ansible filter, Python's own
           # itertools.product(): Cartesian product of value and every
@@ -1240,10 +1240,10 @@ module Krikri
           #
           # Phase-3 consolidation slice #5: hand-rolled copy retired for
           # the ONE native Crinja.filter(:product) registration via
-          # #delegate_to_crinja_filter, same all-positional N-way shape
+          # #delegate_to_jinja_filter, same all-positional N-way shape
           # as zip above.
           positional, kwargs = split_positional_and_kwargs(filter_args)
-          delegate_to_crinja_filter("product", value, kwargs, positional)
+          delegate_to_jinja_filter("product", value, kwargs, positional)
         when "regex_escape"
           # regex_escape(re_type='python') - real Ansible filter, escapes
           # regex special characters so the value can be embedded
@@ -1283,9 +1283,9 @@ module Krikri
           # strict re-render below restores fail-on-access, matching real
           # Ansible for a serializer that reads every leaf.
           sort_keys = (kw = parse_kwarg_expr(filter_args, "sort_keys")) ? truthy?(kw) : true
-          kwargs = Crinja::Variables.new
-          kwargs["sort_keys"] = Crinja::Value.new(sort_keys)
-          delegate_to_crinja_filter("to_nice_yaml", strict_render_deferred_leaves(value), kwargs)
+          kwargs = Hash(String, JSON::Any).new
+          kwargs["sort_keys"] = JSON::Any.new(sort_keys)
+          delegate_to_jinja_filter("to_nice_yaml", strict_render_deferred_leaves(value), kwargs)
         when "human_readable"
           # human_readable(isbits=False, unit=None) - real Ansible
           # filter, formats a byte count as e.g. "1.00 KB" (1024-based).
@@ -1329,13 +1329,13 @@ module Krikri
           #
           # Phase-3 consolidation slice #5: hand-rolled copy retired for
           # the ONE native Crinja.filter(:relpath) registration via
-          # #delegate_to_crinja_filter. start= is passed as a real kwarg
+          # #delegate_to_jinja_filter. start= is passed as a real kwarg
           # (live-verified against real ansible-core 2.19: the kwarg form
           # is accepted there) - the old positional-only parse silently
           # treated `relpath(start='/a')`'s whole `start='/a'` text as
           # the start path.
           positional, kwargs = split_positional_and_kwargs(filter_args, ["start"])
-          delegate_to_crinja_filter("relpath", value, kwargs, positional)
+          delegate_to_jinja_filter("relpath", value, kwargs, positional)
         when "commonpath"
           # commonpath() - real Ansible filter, mirrors Python's
           # os.path.commonpath: the longest common directory prefix of
@@ -1348,23 +1348,23 @@ module Krikri
           #
           # Phase-3 consolidation slice #5: hand-rolled copy retired for
           # the ONE native Crinja.filter(:log) registration via
-          # #delegate_to_crinja_filter. base= is a real kwarg in real
+          # #delegate_to_jinja_filter. base= is a real kwarg in real
           # ansible (live-verified `8 | log(base=2)` -> 3.0); the old
           # positional-only parse turned that exact form into a natural
           # log by failing to resolve `base=2` as a number.
           positional, kwargs = split_positional_and_kwargs(filter_args, ["base"])
-          delegate_to_crinja_filter("log", value, kwargs, positional)
+          delegate_to_jinja_filter("log", value, kwargs, positional)
         when "pow"
           # pow(x) - real Ansible filter: value raised to the power x.
           #
           # Phase-3 consolidation slice #5: hand-rolled copy retired for
           # the ONE native Crinja.filter(:pow) registration via
-          # #delegate_to_crinja_filter. Real's own parameter is
+          # #delegate_to_jinja_filter. Real's own parameter is
           # positional-only (`power(x, y)` - live-verified that
           # `pow(x=10)`/`pow(exponent=10)` both fail there), so only the
           # positional shape is fed through as a vararg.
           positional, kwargs = split_positional_and_kwargs(filter_args)
-          delegate_to_crinja_filter("pow", value, kwargs, positional)
+          delegate_to_jinja_filter("pow", value, kwargs, positional)
         when "to_uuid"
           # to_uuid(namespace=ANSIBLE_NAMESPACE) - real Ansible filter, a
           # deterministic UUID5 (SHA1-based) - same input always
@@ -1385,12 +1385,12 @@ module Krikri
           # Phase-3 consolidation slice #5: the hand-rolled copy (and its
           # private #combinations helper) is retired for the ONE native
           # Crinja.filter(:combinations) registration via
-          # #delegate_to_crinja_filter. n keeps its krikri default of 2
+          # #delegate_to_jinja_filter. n keeps its krikri default of 2
           # on both engines (real itertools.combinations REQUIRES r -
           # live-verified "missing required argument 'r' (pos 2)"; the
           # shared default is a deliberate, spec-locked divergence).
           positional, kwargs = split_positional_and_kwargs(filter_args, ["n"])
-          delegate_to_crinja_filter("combinations", value, kwargs, positional)
+          delegate_to_jinja_filter("combinations", value, kwargs, positional)
         when "permutations"
           # permutations(n=None) - real Ansible filter, Python's own
           # itertools.permutations(value, n): every n-length ordered
@@ -1399,9 +1399,9 @@ module Krikri
           # Phase-3 consolidation slice #5: hand-rolled copy (and its
           # private #permutations helper) retired for the ONE native
           # Crinja.filter(:permutations) registration via
-          # #delegate_to_crinja_filter, same shape as combinations above.
+          # #delegate_to_jinja_filter, same shape as combinations above.
           positional, kwargs = split_positional_and_kwargs(filter_args, ["n"])
-          delegate_to_crinja_filter("permutations", value, kwargs, positional)
+          delegate_to_jinja_filter("permutations", value, kwargs, positional)
         when "rekey_on_member"
           # rekey_on_member(member, duplicates='error') - real Ansible
           # filter: converts a list of dicts into a dict keyed by each
@@ -1409,7 +1409,7 @@ module Krikri
           #
           # Phase-3 consolidation slice #5: the hand-rolled copy is
           # retired for the ONE native Crinja.filter(:rekey_on_member)
-          # registration via #delegate_to_crinja_filter. Two arbitrated
+          # registration via #delegate_to_jinja_filter. Two arbitrated
           # fixes come with the bridge, both live-verified against real
           # ansible-core 2.19.11: a NON-STRING member value (e.g. a
           # numeric id) is stringified into the key (`{"id":5}` rekeys
@@ -1418,7 +1418,7 @@ module Krikri
           # it positionally). `warn` still behaves as `overwrite` (no
           # separate warning channel), on both engines.
           positional, kwargs = split_positional_and_kwargs(filter_args, ["member", "duplicates"])
-          delegate_to_crinja_filter("rekey_on_member", value, kwargs, positional)
+          delegate_to_jinja_filter("rekey_on_member", value, kwargs, positional)
         when "extract"
           # extract(container, morekeys=None) - real Ansible filter:
           # value is used as an index/key into *container* (commonly
@@ -1477,12 +1477,12 @@ module Krikri
           #
           # Phase-3 consolidation slice #5: the hand-rolled copy is
           # retired for the ONE native Crinja.filter(:from_yaml_all)
-          # registration via #delegate_to_crinja_filter. Invalid YAML
+          # registration via #delegate_to_jinja_filter. Invalid YAML
           # fails the task on both engines either way (live-verified
           # against real ansible-core 2.19.11); the raised message is
           # now the underlying YAML parse error rather than this
           # dispatch's own generic label - same outcome, truer text.
-          delegate_to_crinja_filter("from_yaml_all", value, Crinja::Variables.new)
+          delegate_to_jinja_filter("from_yaml_all", value, Hash(String, JSON::Any).new)
         when "vault"
           # vault(secret, vault_id=None, salt=None) - real Ansible
           # filter: encrypts value into ansible-vault ciphertext text
@@ -1517,7 +1517,7 @@ module Krikri
           # pick-a-branch copy this dispatch used to run is deleted -
           # the name now routes through the ONE native
           # `Crinja.filter(:ternary)` registration (jinja_filters.cr)
-          # via #delegate_to_crinja_filter. The bare-`omit` sentinel
+          # via #delegate_to_jinja_filter. The bare-`omit` sentinel
           # handling that was this branch's own load-bearing behavior
           # (the survey's flagged risk for this slice) survives as the
           # pre-resolution mapping below: a bare `omit` argument text
@@ -1548,7 +1548,7 @@ module Krikri
             stripped = arg.strip
             stripped == "omit" ? JSON::Any.new(OMIT_SENTINEL) : resolve_expression(stripped)
           end
-          delegate_to_crinja_filter("ternary", value, Crinja::Variables.new, varargs)
+          delegate_to_jinja_filter("ternary", value, Hash(String, JSON::Any).new, varargs)
         when "intersect"
           # intersect(other) - real Ansible's own filter (ansible.builtin,
           # not standard Jinja2): elements of *value* that also appear in
@@ -1715,50 +1715,36 @@ module Krikri
         nil
       end
 
-      # The Crinja consolidation seam (Phase 1 of
-      # SUGGESTED_CRINJA_NEXT_STEPS.md; pilot: dict2items): dispatches one
-      # filter name to its native `Crinja.filter` registration in
-      # jinja_filters.cr instead of a parallel hand-rolled JSON::Any copy,
-      # paying one JSON::Any -> Crinja::Value roundtrip per call.
-      # Conversion is the PURE `json_any_to_crinja_value`, not
-      # `convert_var`'s re-templating walk: *value* has already been fully
-      # resolved and recursively re-rendered by the time a filter sees it
-      # (see #rerender_if_templated and the strict-undefined entry
-      # points), so re-rendering here would be a second, redundant pass -
-      # a behavior change, not just an implementation swap. The kwargs
-      # are the pre-parsed string kwarg values (#parse_kwarg); the Crinja
-      # side receives them through `Crinja::Arguments` the same way
-      # Resolver#execute_call wires a `{% %}`-pipeline call, including
-      # the callable's own declared defaults.
-      # String-kwarg convenience overload (dict2items shape): wraps each
-      # value as a Crinja string value and defers to the general form
-      # below. Note this overload is only correct for STRING kwargs - a
-      # boolean kwarg passed as its text form would make the Crinja
-      # filter's `truthy?` see the non-empty string "false" as true, so
-      # bool kwargs must go through the general overload directly.
-      private def delegate_to_crinja_filter(name : String, value : JSON::Any, kwargs : Hash(String, String)) : JSON::Any
-        crinja_kwargs = Crinja::Variables.new
-        kwargs.each { |k, v| crinja_kwargs[k] = Crinja::Value.new(v) }
-        delegate_to_crinja_filter(name, value, crinja_kwargs)
+      # The consolidation seam: dispatches one filter name to its single
+      # registration on the shared krikri-jinja engine
+      # (krikri_jinja_filters.cr) instead of a parallel hand-rolled
+      # JSON::Any copy. *value* has already been fully resolved and
+      # recursively re-rendered by the time a filter sees it, so it is
+      # handed over as-is. The kwargs are the pre-parsed kwarg values
+      # (#parse_kwarg / #split_positional_and_kwargs).
+      #
+      # String-kwarg convenience overload (dict2items shape). Only correct
+      # for STRING kwargs - a boolean kwarg passed as its text form would
+      # read "false" as truthy, so bool kwargs use the general overload.
+      private def delegate_to_jinja_filter(name : String, value : JSON::Any, kwargs : Hash(String, String)) : JSON::Any
+        delegate_to_jinja_filter(name, value, kwargs.transform_values { |text| JSON::Any.new(text) })
       end
 
-      # General form: pre-built Crinja kwarg values (so Bool kwargs
-      # survive as real bools) plus optional positional varargs resolved
-      # from JSON::Any - the multi-argument shape filters like
-      # `combine(other1, other2, ...)` need (Crinja::Arguments carries
-      # varargs natively; the dict2items pilot only exercised the
-      # single-target shape).
-      private def delegate_to_crinja_filter(name : String, value : JSON::Any, kwargs : Crinja::Variables, varargs : Array(JSON::Any) = [] of JSON::Any) : JSON::Any
-        env = CrinjaRenderer.shared_environment
-        callable = env.filters[name]
-        arguments = Crinja::Arguments.new(
-          env,
-          varargs: varargs.map { |arg| CrinjaRenderer.json_any_to_crinja_value(arg) },
-          kwargs: kwargs,
-          target: CrinjaRenderer.json_any_to_crinja_value(value),
-        )
-        arguments.defaults = callable.defaults if callable.responds_to?(:defaults)
-        CrinjaRenderer.crinja_value_to_json_any(callable.call(arguments).as(Crinja::Value))
+      # General form: JSON kwarg values (so Bool kwargs survive as real
+      # bools) plus optional positional varargs - the multi-argument shape
+      # filters like `combine(other1, other2, ...)` need.
+      private def delegate_to_jinja_filter(name : String, value : JSON::Any, kwargs : Hash(String, JSON::Any),
+                                           varargs : Array(JSON::Any) = [] of JSON::Any) : JSON::Any
+        engine = KrikriJinja.default_engine
+        filter = engine.filters[name]
+        context = KrikriJinja::Context.new(engine.globals, nil, false, KrikriJinja::Undefined.new, engine.filters, engine.tests)
+        context.host_context = JinjaHostContext.new(@vars || Hash(String, JSON::Any).new)
+        KrikriJinja.to_json_any(filter.call(
+          KrikriJinja.from_json_any(value),
+          varargs.map { |arg| KrikriJinja.from_json_any(arg) },
+          kwargs.transform_values { |arg| KrikriJinja.from_json_any(arg) },
+          context
+        ))
       end
 
       DATETIME_TAG  = "__crystal_datetime__"
@@ -2476,12 +2462,12 @@ module Krikri
       # #resolve_expression's own miss.
       private def split_positional_and_kwargs(filter_args : String, kwarg_names : Array(String) = [] of String)
         positional = [] of JSON::Any
-        kwargs = Crinja::Variables.new
+        kwargs = Hash(String, JSON::Any).new
         split_top_level_args(filter_args).each do |arg|
           part = arg.strip
           name = kwarg_names.find { |candidate| part.starts_with?("#{candidate}=") }
           if name
-            kwargs[name] = CrinjaRenderer.json_any_to_crinja_value(resolve_default_expression(part[(name.size + 1)..]))
+            kwargs[name] = resolve_default_expression(part[(name.size + 1)..])
           else
             positional << resolve_expression(part)
           end

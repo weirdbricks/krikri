@@ -1,7 +1,7 @@
 require "json"
 require "digest/md5"
 require "crinja"
-require "krikri_jinja"
+require "krikri-jinja/krikri_jinja"
 require "./krikri_jinja_filters"
 require "./jinja_host_context"
 require "./template_search_path_loader"
