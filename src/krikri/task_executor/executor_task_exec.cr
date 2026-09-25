@@ -1,5 +1,6 @@
 require "./executor"
 require "krikri_jinja"
+require "../jinja_host_context"
 require "../plugin_helpers/ansible_splitlines"
 
 
@@ -657,7 +658,10 @@ module Krikri
           # where real Ansible's actually-flattened, actually-scalar
           # `item` reported `ok`.
           begin
-            evaluated = KrikriJinja.evaluate_expression(stripped[2..-3].strip, vars_context, strict: strict)
+            evaluated = KrikriJinja.evaluate_expression(
+              stripped[2..-3].strip, vars_context, strict: strict,
+              host_context: JinjaHostContext.new(vars_context)
+            )
             return evaluated if evaluated && (evaluated.as_a? || evaluated.as_h?)
           rescue
             # Not a list/dict, or not even valid JSON (an ordinary

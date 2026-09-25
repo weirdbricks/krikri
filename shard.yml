@@ -13,7 +13,7 @@ dependencies:
     tag: crystal-play-0.9.60
   krikri-jinja:
     github: weirdbricks/krikri-jinja
-    tag: v0.4.3
+    tag: v0.4.4
   docr:
     github: weirdbricks/docr
     commit: c90ea8d6a0c5eb9f842ac0da098a1718ecca66ca

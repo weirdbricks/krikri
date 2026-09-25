@@ -2,8 +2,9 @@ require "../spec_helper"
 require "../../src/krikri/variable_substitutor/filter_engine"
 require "../../src/krikri/krikri_jinja_filters"
 
-private def render(source : String, vars : Hash(String, JSON::Any) = {} of String => JSON::Any) : String
-  KrikriJinja.render(source, vars)
+private def render(source : String, vars : Hash(String, JSON::Any) = {} of String => JSON::Any,
+                   host_context : KrikriJinja::HostContext? = nil) : String
+  KrikriJinja.render(source, vars, host_context: host_context)
 end
 
 describe Krikri::KrikriJinjaFilters do
@@ -71,5 +72,16 @@ describe Krikri::KrikriJinjaFilters do
     render("{{ '{\"a\": 1}' | from_json | tojson }}").should eq(%({"a": 1}))
     render("{{ 'a: 1' | from_yaml | tojson }}").should eq(%({"a": 1}))
     render("{{ {'a': 1} | to_yaml }}").should eq("a: 1")
+  end
+
+  it "resolves register-result tests against the host context scope" do
+    vars = Hash(String, JSON::Any).new
+    vars["copy"] = JSON.parse(%({"failed": true, "changed": false, "msg": "boom"}))
+    context = Krikri::JinjaHostContext.new(vars)
+
+    render("{{ copy is failed }}", vars, host_context: context).should eq("True")
+    render("{{ copy is succeeded }}", vars, host_context: context).should eq("False")
+    render("{{ copy is changed }}", vars, host_context: context).should eq("False")
+    render("{{ missing_result is failed }}", vars, host_context: context).should eq("False")
   end
 end

@@ -3,6 +3,7 @@ require "krikri_jinja"
 require "./variable_substitutor/filter_core"
 require "./ipaddr_core"
 require "./jmespath"
+require "./jinja_host_context"
 
 module Krikri
   # Ansible's own filters, registered directly on the krikri-jinja engine
@@ -233,6 +234,30 @@ module Krikri
       # Fourth batch: the ansible.utils ipaddr family, jmespath, and the
       # YAML/JSON conversion filters, all of which already have JSON-level
       # implementations shared with the hand-rolled FilterEngine.
+
+      # Ansible's register-result tests (`{{ result_var is failed }}`): the
+      # registered value lives in Krikri's variable scope, which reaches the
+      # engine through the host context.
+      {"failed", "succeeded", "changed", "skipped", "omitted", "finished"}.each do |test_name|
+        KrikriJinja.register_default_test(test_name) do |value, args, _kwargs, ctx|
+          host = ctx.host_context
+          # Ansible's own signature is `failed(result)`, so the bare
+          # `registered_var is failed` form passes the registered RESULT
+          # itself; `is failed('name')` instead names the variable, which
+          # resolves against Krikri's scope through the host context.
+          result = if name = args[0]?.try(&.raw.as?(String))
+                     host.is_a?(Krikri::JinjaHostContext) ? host.registered(name) : nil
+                   else
+                     value
+                   end
+          next false unless result
+          case raw = result.raw
+          when Hash then raw[test_name]?.try(&.raw) == true
+          else false
+          end
+        end
+      end
+
       KrikriJinja.register_default_json_filter("ipaddr") do |value, args, _kwargs|
         IpAddrCore.ipaddr(value, args[0]?.try(&.as_s) || "")
       end

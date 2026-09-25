@@ -1,5 +1,6 @@
 require "./executor"
 require "krikri_jinja"
+require "../jinja_host_context"
 
 module Krikri
   class TaskExecutor
@@ -803,7 +804,10 @@ module Krikri
       inner = stripped[2..-3]
       return nil if inner.includes?("{{") || inner.includes?("}}")
 
-      KrikriJinja.evaluate_expression(inner.strip, vars_context, strict: true)
+      KrikriJinja.evaluate_expression(
+        inner.strip, vars_context, strict: true,
+        host_context: JinjaHostContext.new(vars_context)
+      )
     rescue
       nil
     end

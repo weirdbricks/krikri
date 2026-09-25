@@ -1,5 +1,6 @@
 require "json"
 require "krikri_jinja"
+require "./jinja_host_context"
 require "./variable_substitutor/filter_engine"
 require "./variable_substitutor/variable_lookup"
 require "./variable_substitutor/expression_evaluator"
@@ -270,7 +271,8 @@ module Krikri
           if else_parts.size == 2
             if !condition.includes?("|") && !condition.match(/\bis\s+/)
               converted_vars = vars.transform_values { |value| KrikriJinja.from_json_any(value) }
-              rendered = KrikriJinja.render("{{ 'True' if (#{condition}) else 'False' }}", converted_vars)
+              rendered = KrikriJinja.render("{{ 'True' if (#{condition}) else 'False' }}", converted_vars,
+          host_context: JinjaHostContext.new(vars))
               return rendered.strip == "True"
             end
             rendered = VariableSubstitutor::CrinjaRenderer.new(vars, true).render("{{ 'True' if (#{condition}) else 'False' }}")
@@ -866,7 +868,8 @@ module Krikri
       if (match = condition.match(/\bis\s+(?:not\s+)?(\w+)/)) &&
          KrikriJinja::BUILTIN_TESTS.has_key?(match[1])
         converted_vars = vars.transform_values { |value| KrikriJinja.from_json_any(value) }
-        rendered = KrikriJinja.render("{{ (#{condition}) }}", converted_vars)
+        rendered = KrikriJinja.render("{{ (#{condition}) }}", converted_vars,
+          host_context: JinjaHostContext.new(vars))
         return rendered.strip == "True"
       end
       if condition.match(REGEX_GENERIC_IS_TEST)
@@ -1295,7 +1298,8 @@ module Krikri
       if !expression.includes?("|") && !expression.includes?("hostvars") &&
          !expression.includes?("lookup(") && !expression.includes?("query(") && !expression.match(/\bis\s+/)
         converted_vars = vars.transform_values { |value| KrikriJinja.from_json_any(value) }
-        rendered = KrikriJinja.render("{{ 'True' if (#{expression}) else 'False' }}", converted_vars)
+        rendered = KrikriJinja.render("{{ 'True' if (#{expression}) else 'False' }}", converted_vars,
+          host_context: JinjaHostContext.new(vars))
         return rendered.strip == "True"
       end
       rendered = VariableSubstitutor::CrinjaRenderer.new(vars, true)

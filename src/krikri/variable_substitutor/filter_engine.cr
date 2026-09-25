@@ -1,6 +1,7 @@
 require "json"
 require "krikri_jinja"
 require "../krikri_jinja_filters"
+require "../jinja_host_context"
 require "./filter_core"
 require "time"
 require "base64"
@@ -834,7 +835,10 @@ module Krikri
           if seed = kwargs["seed"]?
             args << "seed=#{CrinjaRenderer.crinja_value_to_json_any(seed).to_json}"
           end
-          result = KrikriJinja.evaluate_expression("__value__ | random(#{args.join(", ")})", {"__value__" => value})
+          result = KrikriJinja.evaluate_expression(
+            "__value__ | random(#{args.join(", ")})", {"__value__" => value},
+            host_context: JinjaHostContext.new(@vars || Hash(String, JSON::Any).new)
+          )
           return result || JSON::Any.new(nil)
         when "map_format"
           # The nephelaiio.plugins collection's custom filter (NOT
