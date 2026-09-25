@@ -1842,8 +1842,8 @@ module Krikri
         # cases resolve_expression already covers) fixes the complex case
         # without touching every other resolve_expression caller.
         if top_level_plus_or_minus?(first_arg)
-          rendered = ExpressionEvaluator.new(@vars || Hash(String, JSON::Any).new).evaluate(first_arg)
-          return (JSON.parse(rendered) rescue JSON::Any.new(rendered))
+          return KrikriJinja.evaluate_expression(first_arg, @vars || Hash(String, JSON::Any).new) ||
+                 JSON::Any.new(nil)
         end
 
         resolve_expression(first_arg)
@@ -2147,8 +2147,8 @@ module Krikri
         # FQCN was used verbatim as a systemd service name/template
         # filename, which don't exist under that name.
         if top_level_plus_or_minus?(expr)
-          rendered = ExpressionEvaluator.new(@vars || Hash(String, JSON::Any).new).evaluate(expr)
-          return (JSON.parse(rendered) rescue JSON::Any.new(rendered))
+          return KrikriJinja.evaluate_expression(expr, @vars || Hash(String, JSON::Any).new) ||
+                 JSON::Any.new(nil)
         end
 
         parts = self.class.split_chain(expr)
