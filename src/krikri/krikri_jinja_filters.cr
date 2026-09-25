@@ -1,6 +1,8 @@
 require "json"
 require "krikri_jinja"
 require "./variable_substitutor/filter_core"
+require "./ipaddr_core"
+require "./jmespath"
 
 module Krikri
   # Ansible's own filters, registered directly on the krikri-jinja engine
@@ -27,6 +29,21 @@ module Krikri
 
     def self.any_list(items : Array(String)) : Array(JSON::Any)
       items.map { |item| JSON::Any.new(item) }
+    end
+
+    # YAML documents carry no JSON typing, so convert structurally rather
+    # than round-tripping through JSON text.
+    def self.yaml_to_json(node : YAML::Any) : JSON::Any
+      case raw = node.raw
+      when Nil        then JSON::Any.new(nil)
+      when Bool       then JSON::Any.new(raw)
+      when Int64      then JSON::Any.new(raw)
+      when Float64    then JSON::Any.new(raw)
+      when String     then JSON::Any.new(raw)
+      when Array      then JSON::Any.new(raw.map { |item| yaml_to_json(item) })
+      when Hash       then JSON::Any.new(raw.to_h { |key, item| {key.to_s, yaml_to_json(item)} })
+      else                  JSON::Any.new(node.to_s)
+      end
     end
 
     def self.register : Nil
@@ -211,6 +228,78 @@ module Krikri
                   text.split(separator, remove_empty: false)
                 end
         JSON::Any.new(any_list(parts))
+      end
+
+      # Fourth batch: the ansible.utils ipaddr family, jmespath, and the
+      # YAML/JSON conversion filters, all of which already have JSON-level
+      # implementations shared with the hand-rolled FilterEngine.
+      KrikriJinja.register_default_json_filter("ipaddr") do |value, args, _kwargs|
+        IpAddrCore.ipaddr(value, args[0]?.try(&.as_s) || "")
+      end
+
+      KrikriJinja.register_default_json_filter("ipwrap") do |value, args, _kwargs|
+        IpAddrCore.ipwrap(value, args[0]?.try(&.as_s) || "")
+      end
+
+      KrikriJinja.register_default_json_filter("ipv4") do |value, args, _kwargs|
+        IpAddrCore.ipaddr(value, args[0]?.try(&.as_s) || "", 4, "ipv4")
+      end
+
+      KrikriJinja.register_default_json_filter("ipv6") do |value, args, _kwargs|
+        IpAddrCore.ipaddr(value, args[0]?.try(&.as_s) || "", 6, "ipv6")
+      end
+
+      KrikriJinja.register_default_json_filter("ipsubnet") do |value, args, _kwargs|
+        IpAddrCore.ipsubnet(value, args[0]?.try(&.as_s) || "", args[1]?.try(&.as_s))
+      end
+
+      KrikriJinja.register_default_json_filter("ipmath") do |value, args, _kwargs|
+        amount = args[0]?.try(&.as_i?)
+        raise KrikriJinja::TemplateError.new("You must pass an integer for arithmetic", 0) unless amount
+        IpAddrCore.ipmath(value, amount)
+      end
+
+      KrikriJinja.register_default_json_filter("next_nth_usable") do |value, args, _kwargs|
+        offset = args[0]?.try(&.as_i?)
+        raise KrikriJinja::TemplateError.new("Must pass in an integer", 0) unless offset
+        IpAddrCore.next_nth_usable(value, offset)
+      end
+
+      KrikriJinja.register_default_json_filter("previous_nth_usable") do |value, args, _kwargs|
+        offset = args[0]?.try(&.as_i?)
+        raise KrikriJinja::TemplateError.new("Must pass in an integer", 0) unless offset
+        IpAddrCore.previous_nth_usable(value, offset)
+      end
+
+      KrikriJinja.register_default_json_filter("network_in_network") do |value, args, _kwargs|
+        IpAddrCore.network_in_network(value, args[0]? || JSON::Any.new(nil))
+      end
+
+      KrikriJinja.register_default_json_filter("network_in_usable") do |value, args, _kwargs|
+        IpAddrCore.network_in_usable(value, args[0]? || JSON::Any.new(nil))
+      end
+
+      KrikriJinja.register_default_json_filter("ip4_hex") do |value, args, _kwargs|
+        IpAddrCore.ip4_hex(value, args[0]?.try(&.as_s) || "")
+      end
+
+      KrikriJinja.register_default_json_filter("json_query") do |value, args, _kwargs|
+        expression = args[0]?.try(&.as_s) || ""
+        Krikri::JMESPath.evaluate_json_query(expression, value)
+      end
+
+      KrikriJinja.register_default_json_filter("to_yaml") do |value, _args, _kwargs|
+        JSON::Any.new(VariableSubstitutor::FilterCore.to_yaml(value))
+      end
+
+      KrikriJinja.register_default_json_filter("from_json") do |value, _args, _kwargs|
+        JSON.parse(value.to_s)
+      rescue ex : JSON::ParseException
+        raise KrikriJinja::TemplateError.new(ex.message || "invalid JSON", 0)
+      end
+
+      KrikriJinja.register_default_json_filter("from_yaml") do |value, _args, _kwargs|
+        yaml_to_json(YAML.parse(value.to_s))
       end
     end
   end

@@ -62,4 +62,14 @@ describe Krikri::KrikriJinjaFilters do
     render("{{ 'a/b' | path_join('c') }}").should eq("a/b/c")
     render("{{ 'a,b' | split(',') | join('|') }}").should eq("a|b")
   end
+
+  it "registers the ipaddr family, jmespath, and conversion filters" do
+    render("{{ '192.168.1.0/24' | ipaddr('net') }}").should eq("192.168.1.0/24")
+    render("{{ '192.168.1.10' | ipaddr('address') }}").should eq("192.168.1.10")
+    render("{{ '10.0.0.0/8' | ipmath(1) }}").should eq("10.0.0.1")
+    render("{{ data | json_query('a.b') }}", {"data" => JSON.parse(%({"a": {"b": 7}}))}).should eq("7")
+    render("{{ '{\"a\": 1}' | from_json | tojson }}").should eq(%({"a": 1}))
+    render("{{ 'a: 1' | from_yaml | tojson }}").should eq(%({"a": 1}))
+    render("{{ {'a': 1} | to_yaml }}").should eq("a: 1")
+  end
 end
