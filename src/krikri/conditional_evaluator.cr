@@ -1287,12 +1287,19 @@ module Krikri
     # through to the generic path, whose bare `{"a": 1, "b": 2}` literal
     # lookup then wrongly raises "'{...}' is undefined" (real bug found
     # live via modules_data.yml's shapers assert). Real Jinja evaluates
-    # `X == Y` in a single pass with full dict/filter semantics, so
-    # delegating the whole comparison to Crinja judges exactly the cases
-    # this evaluator's flat value model can't.
+    # `X == Y` in a single pass with full dict/filter semantics. Use
+    # krikri-jinja directly for expressions it supports, while retaining
+    # Crinja for Ansible-specific features.
     private def self.crinja_dict_compare(left_expr : String, right_expr : String, operator : String, vars : Hash(String, JSON::Any)) : Bool
+      expression = "#{left_expr} #{operator} #{right_expr}"
+      if !expression.includes?("|") && !expression.includes?("hostvars") &&
+         !expression.includes?("lookup(") && !expression.includes?("query(") && !expression.match(/\bis\s+/)
+        converted_vars = vars.transform_values { |value| KrikriJinja.from_json_any(value) }
+        rendered = KrikriJinja.render("{{ 'True' if (#{expression}) else 'False' }}", converted_vars)
+        return rendered.strip == "True"
+      end
       rendered = VariableSubstitutor::CrinjaRenderer.new(vars, true)
-        .render("{{ 'True' if (#{left_expr} #{operator} #{right_expr}) else 'False' }}")
+        .render("{{ 'True' if (#{expression}) else 'False' }}")
       rendered.strip == "True"
     end
 
