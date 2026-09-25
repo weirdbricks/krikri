@@ -86,6 +86,47 @@ module Krikri
         sort_keys = kwargs["sort_keys"]? ? py_truthy(kwargs["sort_keys"]) : true
         JSON::Any.new(JSON.parse(VariableSubstitutor::FilterCore.to_nice_json(value, sort_keys)).to_pretty_json(indent: "    "))
       end
+
+      # Second batch: pure string/collection shaping filters whose JSON-level
+      # implementations already live in FilterCore.
+      {
+        "b64encode"    => ->(s : String) { VariableSubstitutor::FilterCore.b64encode(s) },
+        "b64decode"    => ->(s : String) { VariableSubstitutor::FilterCore.b64decode(s) },
+        "urldecode"    => ->(s : String) { VariableSubstitutor::FilterCore.urldecode(s) },
+        "regex_escape" => ->(s : String) { VariableSubstitutor::FilterCore.regex_escape(s) },
+        "normpath"     => ->(s : String) { VariableSubstitutor::FilterCore.normpath(s) },
+        "basename"     => ->(s : String) { VariableSubstitutor::FilterCore.basename(s) },
+        "dirname"      => ->(s : String) { VariableSubstitutor::FilterCore.dirname(s) },
+        "to_uuid"      => ->(s : String) { VariableSubstitutor::FilterCore.to_uuid(s) },
+        "checksum"     => ->(s : String) { VariableSubstitutor::FilterCore.checksum(s) },
+        "md5"          => ->(s : String) { VariableSubstitutor::FilterCore.md5(s) },
+        "sha1"         => ->(s : String) { VariableSubstitutor::FilterCore.sha1(s) },
+        "netmask_to_cidr" => ->(s : String) { VariableSubstitutor::FilterCore.netmask_to_cidr(s).to_s },
+        "human_to_bytes"  => ->(s : String) { VariableSubstitutor::FilterCore.parse_human_to_bytes(s).to_s },
+        "quote"        => ->(s : String) { Process.quote(s) },
+      }.each do |name, handler|
+        KrikriJinja.register_default_json_filter(name) do |value, _args, _kwargs|
+          JSON::Any.new(handler.call(value.to_s))
+        end
+      end
+
+      KrikriJinja.register_default_json_filter("expanduser") do |value, _args, _kwargs|
+        JSON::Any.new(VariableSubstitutor::FilterCore.expanduser(value.to_s))
+      end
+
+      KrikriJinja.register_default_json_filter("human_readable") do |value, _args, kwargs|
+        isbits = kwargs["isbits"]? ? py_truthy(kwargs["isbits"]) : false
+        JSON::Any.new(VariableSubstitutor::FilterCore.format_human_readable(value.to_s.to_i64? || 0_i64, isbits))
+      end
+
+      KrikriJinja.register_default_json_filter("commonpath") do |value, _args, _kwargs|
+        JSON::Any.new(VariableSubstitutor::FilterCore.commonpath(value.as_a.map(&.to_s)))
+      end
+
+      KrikriJinja.register_default_json_filter("splitext") do |value, _args, _kwargs|
+        root, ext = VariableSubstitutor::FilterCore.splitext(value.to_s)
+        JSON::Any.new([JSON::Any.new(root), JSON::Any.new(ext)])
+      end
     end
   end
 end
