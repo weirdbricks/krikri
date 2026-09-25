@@ -96,6 +96,55 @@ describe Krikri::KrikriJinjaFilters do
     render("{{ {'a': 1} | dict2items | first | tojson }}", vars, host_context: context)
       .should eq(%({"key": "a", "value": 1}))
     render("{{ [{'k': 1, 'v': 'x'}] | items2dict('k', 'v') | tojson }}", vars, host_context: context)
-      .should eq(%({"x": 1}))
+      .should eq(%({"1": "x"}))
+  end
+end
+
+# Expected values below were live-verified against ansible-core 2.19.
+describe "Krikri::KrikriJinjaFilters Ansible tests and remaining filters" do
+  it "registers the version, regex, and collection tests" do
+    render("{{ '8.9p1' is version('8.10', '<') }}").should eq("True")
+    render("{{ 'Port 22' is match('Port') }} {{ 'a Port' is match('Port') }} {{ 'a Port' is search('Port') }}")
+      .should eq("True False True")
+    render("{{ [1, 2] is subset([1, 2, 3]) }} {{ [1, 2, 3] is superset([3]) }} {{ [1, 2] is contains(2) }}")
+      .should eq("True True True")
+    render("{{ ['a', 'Port 1'] | select('search', '^Port ') | list }}").should eq("['Port 1']")
+  end
+
+  it "treats abs as the path test" do
+    render("{{ '/etc/x' is abs }} {{ 'x' is abs }}").should eq("True False")
+  end
+
+  it "resolves collection-qualified filter and test names" do
+    render("{{ 'a.b' | ansible.builtin.regex_search('b') }} {{ 'x' is ansible.builtin.search('x') }}")
+      .should eq("b True")
+  end
+
+  it "registers to_json, zip, subelements, and root" do
+    render("{{ {'a': 1} | to_json }}").should eq(%({"a": 1}))
+    render("{{ ['a', 'b'] | zip([1, 2]) | list }}").should eq("[['a', 1], ['b', 2]]")
+    render("{{ users | subelements('keys') | length }}",
+      {"users" => JSON.parse(%([{"name": "root", "keys": ["k1", "k2"]}, {"name": "bob", "keys": ["k3"]}]))})
+      .should eq("3")
+    render("{{ '/etc/hosts' | root }}").should eq("/")
+  end
+
+  it "shuffles with Python's seeded permutation" do
+    render("{{ [1, 2, 3, 4, 5] | shuffle(seed='host1') | join(',') }}").should eq("5,3,1,2,4")
+    render("{{ [1, 2, 3, 4, 5] | shuffle(seed=42) | join(',') }}").should eq("4,2,3,5,1")
+    render("{{ 'abcdef' | shuffle(seed='x') | join }}").should eq("ebadcf")
+  end
+
+  it "raises on first/last of an empty sequence" do
+    expect_raises(KrikriJinja::TemplateError, "No first item, sequence was empty.") do
+      render("{{ [] | first }}")
+    end
+  end
+
+  it "maps items2dict's key_name field to the key" do
+    render("{{ [{'k': 'a', 'v': 1}] | items2dict(key_name='k', value_name='v') }}").should eq("{'a': 1}")
+    expect_raises(KrikriJinja::TemplateError, "items2dict requires each dictionary in the list to contain the keys 'k' and 'v'") do
+      render("{{ [{'k': 1}] | items2dict(key_name='k', value_name='v') }}")
+    end
   end
 end

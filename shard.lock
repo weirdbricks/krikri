@@ -18,7 +18,7 @@ shards:
 
   krikri-jinja:
     git: https://github.com/weirdbricks/krikri-jinja.git
-    version: 0.4.10+git.commit.ab6548e33419f5e47022ac89b81f7abd7b217606
+    version: 0.4.11+git.commit.64662b2c8fc9f72a93124b6df12b23415170705a
 
   crystar:
     git: https://github.com/naqvis/crystar.git
