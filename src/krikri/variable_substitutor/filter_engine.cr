@@ -1,5 +1,6 @@
 require "json"
 require "krikri_jinja"
+require "../krikri_jinja_filters"
 require "./filter_core"
 require "time"
 require "base64"
