@@ -30,9 +30,31 @@ it does not linger at the top. This file carries no per-round
 narrative or fix history - `git log` is the record of what was found
 and fixed and when.
 
-**Currently at `0.9.1306`.**
+**Currently at `0.9.1307`.**
 
 ## Open gaps
+
+- **Role-dependency tasks sometimes lose their `TASK [role : name]`
+  prefix** (`buluma.roundcubemail`, `xanmanning.k3s`; round 979000,
+  2026-09-26): real `ansible-playbook` prints `TASK [buluma.httpd :
+  Modify selinux settings]` for a task pulled in via a role's own
+  `meta/main.yml` `dependencies:`; krikri sometimes prints just `TASK
+  [Modify selinux settings]`, dropping the dependency role's name.
+  Cosmetic only (recap counts match) but not yet root-caused: a minimal
+  repro reproducing the same `dependencies:` + `block:`/`when:` shape
+  (including running the actual cached `buluma.roundcubemail`/
+  `buluma.httpd` role checkout directly) rendered the prefix correctly
+  both times, so the actual trigger is still unknown.
+- **No role `argument_spec` (`meta/argument_specs.yml`) validation**
+  (`robertdebock.vault_agent`; round 979000, 2026-09-26): real Ansible's
+  synthetic "Validating arguments against arg spec 'main'" task fails
+  immediately with a clean `missing required arguments: ...` error when
+  a `required: true` var is absent. krikri doesn't enforce this at all,
+  so execution falls through into whatever the role does next (here,
+  several `assert |` tasks) before failing later via a generic assertion
+  instead. A real feature gap, not a one-line fix - needs its own scoped
+  implementation of argument-spec parsing/enforcement, not folded into
+  an unrelated fix.
 
 - **`systemd` module has no query-only mode** (`konstruktoid.hardening`,
   rounds 975062/978000, 2026-09-26): a task calling `systemd:` with just
@@ -170,12 +192,65 @@ unrelated `pip` idempotency quirk (not fixed) and for `konstruktoid.hardening`
 unconfirmed, but the rerun surfaced a real `systemd` query-only-mode gap
 along the way.
 
+### Round 979000-979195 (2026-09-26): jinja/xml-migration confirmation batch
+
+196 already-tested roles selected for known Jinja-template or `xml`
+module use (post `krikri-migration-to-krikri-jinja`/krikri-xml
+migration), run against real `ansible-playbook`: CLEAN=176,
+DIVERGENT=17, GALAXY_MISSING=3. Found and fixed 2 real regressions,
+both confirmed CLEAN against real hosts after fixing:
+
+- **Missing `play_hosts` magic variable** (`wezhai.minio`): real
+  Ansible's deprecated-but-still-supported alias for
+  `ansible_play_hosts` was never registered, so `minio_env.j2`'s
+  cluster-mode `{% for host in play_hosts %}` hard-failed with
+  `'play_hosts' is undefined` where real ansible-playbook renders the
+  host list. Fixed in 0.9.1306 (`executor_vars_context.cr`).
+- **Integer-keyed dict subscript lookup silently returned "undefined"**
+  (`robertdebock.tomcat`): `_tomcat_unarchive_urls[instance.version]`
+  indexes a YAML-integer-keyed hash (`7:`, `10:`) with a real integer,
+  but the vars pipeline's JSON round trip flattens keys to plain
+  strings, and krikri-jinja's type-preserving key encoding missed the
+  entry - the lookup returned the literal string `"undefined"` (which
+  then went out as a download URL) instead of raising or finding the
+  value. Fixed in krikri-jinja v0.4.16 (`dict_lookup`/`dict_key_plain`
+  in `value_helpers.cr`), landed in krikri 0.9.1307.
+
+Of the remaining 15 divergences: 2 (`geerlingguy.php` warm run, an SSH
+host-key mismatch from IP reuse; `buluma.gitlab_ce`/`robertdebock.gitlab`
+both hitting the round's 900s hard timeout) are infra flakiness, not
+krikri bugs. 2 are tracked above under "Open gaps"
+(`buluma.roundcubemail`/`xanmanning.k3s`'s task-prefix gap;
+`robertdebock.vault_agent`'s argument-spec gap). The rest are single-task
+±1 `ok`/`changed`/`failed` count deltas (`ajsalminen.hosts`,
+`buluma.moodle`, `buluma.vector`, `dev-sec.os-hardening`,
+`geerlingguy.node_exporter`, `mrlesmithjr.guacamole`,
+`weareinteractive.docker`, `weareinteractive.git`, `buluma.tomcat`) not
+yet reproduced against real `ansible-playbook` - likely handler/
+idempotency noise rather than krikri bugs, but unconfirmed.
+
 ## Deliberate limits (decided, not defects)
 
 Everything here is a decision someone already made, with the reasoning
 attached. Nothing here is waiting on anyone. Do not re-litigate without
 new evidence - and if new evidence turns up, move the entry to "Open
 gaps" rather than arguing with the note in place.
+
+### `ansible_version` is pinned to a fixed real ansible-core release, not this project's own version
+
+- `ANSIBLE_VERSION_MAGIC_VAR` reports `2.19.4` regardless of which real
+  `ansible-playbook` happens to be installed on the machine running
+  krikri (e.g. `2.19.11` was installed when round 979000 flagged
+  `xanmanning.k3s`'s version-check task printing a different string than
+  the live comparison run). Deliberate: this engine's whole design goal
+  is behavioral parity with real Ansible, and every version-gated role
+  feature in the wild expects a 2.x-shaped comparison target - reporting
+  this project's own sub-1.0 version number here would make every such
+  min-version check fail unconditionally, a worse outcome than pinning
+  one fixed real version. `2.19.4` matches the exact ansible-core release
+  this project's own benchmark rounds compare against (see
+  `executor.cr`'s own comment). Not going to drift to match whatever's
+  locally installed.
 
 ### `aem_design.aem_license`'s `no_log`-vs-fail-hard divergence (round 900000-900999) is a human security judgment call
 
