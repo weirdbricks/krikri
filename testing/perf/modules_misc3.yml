@@ -1,0 +1,910 @@
+---
+# Modules/misc3 benchmark: companion to the other per-module coverage
+# playbooks (modules_files.yml, modules_packages.yml, modules_security.yml,
+# modules_systems.yml, modules_data.yml, modules_xml.yml,
+# modules_files_storage.yml, modules_misc2.yml). Theme: the DB-account,
+# artifact and service-directory modules that had no synthetic coverage
+# yet, each exercised with REAL side effects (not just parsing) so a
+# divergence is directly comparable by running the same playbook
+# through real ansible-playbook and krikri-playbook side by side:
+#   mysql_user, mysql_variables, postgresql_user, postgresql_privs,
+#   maven_artifact, subversion, homebrew, rabbitmq_plugin,
+#   rabbitmq_user, virt_net
+#
+# Safety contract, same conventions as the sibling playbooks:
+# - Everything mutating is confined to run-scoped names/paths derived
+#   from the epoch run id: /tmp/krikri-modmisc3-<epoch>/ for files,
+#   krikri_mm3_<epoch> / krikri_modmisc3_<epoch> for the MySQL/Postgres
+#   user, database, table and libvirt network names - all removed again
+#   in the cleanup section.
+# - Every section is gated on capability probes (`which <tool>`, plus
+#   for the databases/rabbitmq/libvirt an actual service-reachability
+#   probe and for the Python-backed modules an import probe, all
+#   failed_when: false) and skips with a clean debug notice when the
+#   tool/service is absent: this playbook must run cleanly (no
+#   failures, no hard dependency on any of them) on a plain Ubuntu
+#   container and a plain Rocky container that have none of
+#   mysql/postgres/svn/homebrew/rabbitmq/libvirt installed and no
+#   outbound network for Maven Central. NO packages are installed and
+#   NO services are started as a side effect here (installing packages
+#   is modules_packages.yml's theme).
+# - The gated sections only ever perform IDEMPOTENT, self-reverting
+#   operations on throwaway fixtures: mysql_user/postgresql_user
+#   create a run-scoped throwaway account with limited privileges,
+#   re-assert it (idempotency), and drop it again at the end of the
+#   play; postgresql_privs grants/re-vokes CONNECT between the
+#   play's own throwaway database and user and revokes again;
+#   mysql_variables only ever READS global variables (the real
+#   module has no read "mode: get" at all - its mode: choices are
+#   global/persist/persist_only and only apply to writes, so the read
+#   path is just `variable:` with no `value:`; mode: set is deliberately
+#   NOT exercised - mutating server config is out of this file's
+#   safety contract); maven_artifact downloads one small pinned
+#   commons-io jar from Maven Central behind a connectivity probe and
+#   re-asserts it (checksum-idempotent); subversion works entirely on
+#   a run-scoped local svnadmin repo via file:// URLs;
+#   homebrew only re-asserts an ALREADY-installed formula (state=present
+#   on a formula found via `brew list --formula`, so both engines take
+#   the identical idempotent no-install path - nothing is installed or
+#   removed); rabbitmq_plugin enables the stock rabbitmq_management
+#   plugin idempotently when it is already enabled, and enables+disables
+#   it (restoring the found state) when it is not;
+#   rabbitmq_user creates and removes a run-scoped throwaway user;
+#   virt_net DEFINES a run-scoped throwaway network but never activates
+#   or autostarts it, then undefines it.
+# - mysql_user's `name:` is `type: str` in the real module's
+#   argument_spec (no list form exists, unlike several other
+#   community.mysql modules), so there is no list-form call to
+#   exercise here - a single run-scoped account is used instead.
+# - Byte-diff pattern after anything that renders or writes content:
+#   cat/register/debug or module-register/debug, so output can be
+#   eyeballed across engines.
+
+- name: Misc module-coverage benchmark (round 3)
+  hosts: all
+  gather_facts: true
+
+  vars:
+    mm3_bench_mode: misc3
+    mm3_run_id: "{{ ansible_date_time.epoch }}"
+    # Every target-side path hangs off this run-scoped root, so two
+    # back-to-back engine runs never see each other's leftovers.
+    mm3_dir: "/tmp/krikri-modmisc3-{{ mm3_run_id }}"
+    mm3_maven_dir: "{{ mm3_dir }}/maven"
+    mm3_svn_dir: "{{ mm3_dir }}/svn"
+    mm3_svn_repo: "{{ mm3_svn_dir }}/repo"
+    mm3_svn_dest: "{{ mm3_svn_dir }}/checkout"
+    # Valid SQL identifiers: run_id is the epoch, digits only.
+    mm3_mysql_db_name: "krikri_modmisc3_{{ mm3_run_id }}"
+    mm3_mysql_user_name: "krikri_mm3_{{ mm3_run_id }}"
+    mm3_pg_db_name: "krikri_modmisc3_pg_{{ mm3_run_id }}"
+    mm3_pg_user_name: "krikri_mm3_pg_{{ mm3_run_id }}"
+    mm3_pg_table_name: "krikri_mm3_t_{{ mm3_run_id }}"
+    mm3_db_password: "mm3pw_{{ mm3_run_id }}x"
+    mm3_rmq_user_name: "krikri_mm3_{{ mm3_run_id }}"
+    mm3_net_name: "krikri_mm3_{{ mm3_run_id }}"
+    # Throwaway libvirt network XML: TEST-NET-1 addresses, no DHCP
+    # (no dnsmasq involvement), never started - definition only.
+    mm3_net_xml: |-
+      <network>
+        <name>{{ mm3_net_name }}</name>
+        <bridge name="krk{{ mm3_run_id }}" stp="off"/>
+        <ip address="192.0.2.1" netmask="255.255.255.0"/>
+      </network>
+
+  tasks:
+    # ---------------------------------------------------------------
+    # Setup: the run-scoped root everything else hangs off.
+    # ---------------------------------------------------------------
+    - name: Announce modules-misc3 benchmark start
+      ansible.builtin.debug:
+        msg: "modules-misc3 benchmark {{ mm3_run_id }} on {{ ansible_hostname }} ({{ mm3_bench_mode }})"
+
+    - name: Create benchmark root directory
+      ansible.builtin.file:
+        path: "{{ mm3_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Create the maven download directory
+      ansible.builtin.file:
+        path: "{{ mm3_maven_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Create the svn working directory
+      ansible.builtin.file:
+        path: "{{ mm3_svn_dir }}"
+        state: directory
+        mode: "0755"
+
+    # ---------------------------------------------------------------
+    # Capability probes for the gated sections. Every probe is
+    # failed_when: false; a failing probe produces a clean debug skip
+    # notice and the section's tasks are when:-guarded away. The
+    # database connect probes mirror the modules' own localhost/TCP
+    # default connection (crystal-mysql/crystal-pg and the real
+    # modules' pymysql/psycopg2 both reach 127.0.0.1 when the
+    # login_host defaults apply), so a passing probe means the module
+    # itself can actually connect, not just that the client binary is
+    # present - the established pattern from modules_misc2.yml.
+    # ---------------------------------------------------------------
+    - name: Probe mysql client
+      ansible.builtin.command: which mysql
+      register: mm3_mysql_probe
+      failed_when: false
+      changed_when: false
+
+    - name: Probe psql client
+      ansible.builtin.command: which psql
+      register: mm3_psql_probe
+      failed_when: false
+      changed_when: false
+
+    - name: Probe mysql connectivity
+      ansible.builtin.command: mysql -h 127.0.0.1 -e "SELECT 1"
+      register: mm3_mysql_conn
+      failed_when: false
+      changed_when: false
+      when: mm3_mysql_probe.rc == 0
+
+    - name: Probe psql connectivity
+      ansible.builtin.command: psql -h 127.0.0.1 -U postgres -c "SELECT 1"
+      register: mm3_psql_conn
+      failed_when: false
+      changed_when: false
+      when: mm3_psql_probe.rc == 0
+
+    - name: Probe Maven Central connectivity
+      ansible.builtin.command: curl -sI --max-time 15 https://repo1.maven.org/maven2/
+      register: mm3_maven_conn
+      failed_when: false
+      changed_when: false
+
+    - name: Probe python lxml (maven_artifact needs it on the target)
+      ansible.builtin.command: python3 -c "import lxml"
+      register: mm3_lxml_probe
+      failed_when: false
+      changed_when: false
+
+    - name: Probe svn client
+      ansible.builtin.command: which svn
+      register: mm3_svn_probe
+      failed_when: false
+      changed_when: false
+
+    - name: Probe svnadmin
+      ansible.builtin.command: which svnadmin
+      register: mm3_svnadmin_probe
+      failed_when: false
+      changed_when: false
+
+    - name: Probe brew
+      ansible.builtin.command: which brew
+      register: mm3_brew_probe
+      failed_when: false
+      changed_when: false
+
+    - name: Probe rabbitmqctl
+      ansible.builtin.command: which rabbitmqctl
+      register: mm3_rmq_probe
+      failed_when: false
+      changed_when: false
+
+    - name: Probe rabbitmq-plugins
+      ansible.builtin.command: which rabbitmq-plugins
+      register: mm3_rmqplugins_probe
+      failed_when: false
+      changed_when: false
+
+    - name: Probe rabbitmq broker reachability
+      ansible.builtin.command: rabbitmqctl list_users
+      register: mm3_rmq_conn
+      failed_when: false
+      changed_when: false
+      when: mm3_rmq_probe.rc == 0
+
+    - name: Probe virsh
+      ansible.builtin.command: which virsh
+      register: mm3_virsh_probe
+      failed_when: false
+      changed_when: false
+
+    - name: Probe virsh daemon connection
+      ansible.builtin.command: virsh list --all
+      register: mm3_virsh_conn
+      failed_when: false
+      changed_when: false
+      when: mm3_virsh_probe.rc == 0
+
+    - name: Probe python libvirt module (virt_net needs it on the target)
+      ansible.builtin.command: python3 -c "import libvirt"
+      register: mm3_pylibvirt_probe
+      failed_when: false
+      changed_when: false
+
+    - name: Notice mysql_user/mysql_variables section skipped
+      ansible.builtin.debug:
+        msg: "skipping mysql_user/mysql_variables section: mysql client absent or server unreachable"
+      when: mm3_mysql_probe.rc != 0 or mm3_mysql_conn.rc | default(1) != 0
+
+    - name: Notice postgresql_user/postgresql_privs section skipped
+      ansible.builtin.debug:
+        msg: "skipping postgresql_user/postgresql_privs section: psql absent or server unreachable"
+      when: mm3_psql_probe.rc != 0 or mm3_psql_conn.rc | default(1) != 0
+
+    - name: Notice maven_artifact section skipped
+      ansible.builtin.debug:
+        msg: "skipping maven_artifact section: no Maven Central connectivity or python lxml absent"
+      when: mm3_maven_conn.rc != 0 or mm3_lxml_probe.rc != 0
+
+    - name: Notice subversion section skipped
+      ansible.builtin.debug:
+        msg: "skipping subversion section: svn/svnadmin absent"
+      when: mm3_svn_probe.rc != 0 or mm3_svnadmin_probe.rc != 0
+
+    - name: Notice homebrew section skipped
+      ansible.builtin.debug:
+        msg: "skipping homebrew section: brew absent (not a Homebrew system)"
+      when: mm3_brew_probe.rc != 0
+
+    - name: Notice rabbitmq_plugin/rabbitmq_user section skipped
+      ansible.builtin.debug:
+        msg: "skipping rabbitmq_plugin/rabbitmq_user section: rabbitmqctl/rabbitmq-plugins absent or broker unreachable"
+      when: mm3_rmq_probe.rc != 0 or mm3_rmqplugins_probe.rc != 0 or mm3_rmq_conn.rc | default(1) != 0
+
+    - name: Notice virt_net section skipped
+      ansible.builtin.debug:
+        msg: "skipping virt_net section: virsh absent, daemon unreachable or python libvirt absent"
+      when: mm3_virsh_probe.rc != 0 or mm3_virsh_conn.rc | default(1) != 0 or mm3_pylibvirt_probe.rc != 0
+
+    # ---------------------------------------------------------------
+    # mysql_db: the throwaway database the mysql_user privileges are
+    # scoped to. Same gated pattern as modules_misc2.yml's mysql_db
+    # block - create, idempotency re-check, drop again in cleanup.
+    # ---------------------------------------------------------------
+    - name: Create throwaway mysql database
+      community.mysql.mysql_db:
+        name: "{{ mm3_mysql_db_name }}"
+        state: present
+        encoding: utf8mb4
+      register: mm3_mysql_db_create
+      when: mm3_mysql_probe.rc == 0 and mm3_mysql_conn.rc | default(1) == 0
+
+    - name: Re-assert throwaway mysql database present
+      community.mysql.mysql_db:
+        name: "{{ mm3_mysql_db_name }}"
+        state: present
+        encoding: utf8mb4
+      register: mm3_mysql_db_create_again
+      when: mm3_mysql_probe.rc == 0 and mm3_mysql_conn.rc | default(1) == 0
+
+    - name: Check mysql database create idempotency
+      ansible.builtin.assert:
+        that:
+          - mm3_mysql_db_create.changed
+          - mm3_mysql_db_create_again.changed == false
+      when: mm3_mysql_probe.rc == 0 and mm3_mysql_conn.rc | default(1) == 0
+
+    # ---------------------------------------------------------------
+    # mysql_user: creates a run-scoped throwaway account with a real
+    # password and limited privileges on the throwaway database above,
+    # verifies idempotency, then removes it in the cleanup section.
+    # (No list-form call: the real module's name: is type: str.)
+    # ---------------------------------------------------------------
+    - name: Create throwaway mysql user with limited privileges
+      community.mysql.mysql_user:
+        name: "{{ mm3_mysql_user_name }}"
+        password: "{{ mm3_db_password }}"
+        host: localhost
+        priv: "{{ mm3_mysql_db_name }}.*:SELECT,INSERT,UPDATE,DELETE"
+        state: present
+      register: mm3_mysql_user_create
+      when: mm3_mysql_probe.rc == 0 and mm3_mysql_conn.rc | default(1) == 0
+
+    - name: Re-assert throwaway mysql user present
+      community.mysql.mysql_user:
+        name: "{{ mm3_mysql_user_name }}"
+        password: "{{ mm3_db_password }}"
+        host: localhost
+        priv: "{{ mm3_mysql_db_name }}.*:SELECT,INSERT,UPDATE,DELETE"
+        state: present
+      register: mm3_mysql_user_create_again
+      when: mm3_mysql_probe.rc == 0 and mm3_mysql_conn.rc | default(1) == 0
+
+    - name: Check mysql user create idempotency
+      ansible.builtin.assert:
+        that:
+          - mm3_mysql_user_create.changed
+          - mm3_mysql_user_create_again.changed == false
+      when: mm3_mysql_probe.rc == 0 and mm3_mysql_conn.rc | default(1) == 0
+
+    - name: Query mysql for the throwaway user
+      community.mysql.mysql_query:
+        query: "SELECT User, Host FROM mysql.user WHERE User = '{{ mm3_mysql_user_name }}'"
+      register: mm3_mysql_user_check
+      when: mm3_mysql_probe.rc == 0 and mm3_mysql_conn.rc | default(1) == 0
+
+    - name: Debug mysql user query result
+      ansible.builtin.debug:
+        msg: "mysql user query: {{ mm3_mysql_user_check.query_result }}"
+      when: mm3_mysql_probe.rc == 0 and mm3_mysql_conn.rc | default(1) == 0
+
+    - name: Check mysql user query found the throwaway user
+      ansible.builtin.assert:
+        that:
+          - mm3_mysql_user_check.query_result[0] | length == 1
+          - mm3_mysql_user_check.query_result[0][0].User == mm3_mysql_user_name
+      when: mm3_mysql_probe.rc == 0 and mm3_mysql_conn.rc | default(1) == 0
+
+    # ---------------------------------------------------------------
+    # mysql_variables: read-only global-variable queries (variable:
+    # with no value:). The real module has no read mode - mode: only
+    # applies to writes (global/persist/persist_only) - so mode: set
+    # is deliberately NOT exercised (mutating server config is outside
+    # this file's safety contract). version and max_connections are
+    # always present on both MySQL and MariaDB.
+    # ---------------------------------------------------------------
+    - name: Read mysql global variable version
+      community.mysql.mysql_variables:
+        variable: version
+      register: mm3_mysql_var_version
+      when: mm3_mysql_probe.rc == 0 and mm3_mysql_conn.rc | default(1) == 0
+
+    - name: Debug mysql version variable
+      ansible.builtin.debug:
+        msg: "mysql_variables version: {{ mm3_mysql_var_version.msg }}"
+      when: mm3_mysql_probe.rc == 0 and mm3_mysql_conn.rc | default(1) == 0
+
+    - name: Read mysql global variable max_connections
+      community.mysql.mysql_variables:
+        variable: max_connections
+      register: mm3_mysql_var_maxconn
+      when: mm3_mysql_probe.rc == 0 and mm3_mysql_conn.rc | default(1) == 0
+
+    - name: Debug mysql max_connections variable
+      ansible.builtin.debug:
+        msg: "mysql_variables max_connections: {{ mm3_mysql_var_maxconn.msg }}"
+      when: mm3_mysql_probe.rc == 0 and mm3_mysql_conn.rc | default(1) == 0
+
+    - name: Check mysql_variables read path
+      ansible.builtin.assert:
+        that:
+          - mm3_mysql_var_version.changed == false
+          - mm3_mysql_var_maxconn.changed == false
+          - mm3_mysql_var_version.msg is search('[0-9]')
+      when: mm3_mysql_probe.rc == 0 and mm3_mysql_conn.rc | default(1) == 0
+
+    # ---------------------------------------------------------------
+    # postgresql_db: the throwaway database for the postgresql_user /
+    # postgresql_privs fixtures. Same gated pattern as
+    # modules_misc2.yml's postgresql_db block.
+    # ---------------------------------------------------------------
+    - name: Create throwaway postgres database
+      community.postgresql.postgresql_db:
+        name: "{{ mm3_pg_db_name }}"
+        state: present
+        encoding: UTF8
+      register: mm3_pg_db_create
+      when: mm3_psql_probe.rc == 0 and mm3_psql_conn.rc | default(1) == 0
+
+    - name: Re-assert throwaway postgres database present
+      community.postgresql.postgresql_db:
+        name: "{{ mm3_pg_db_name }}"
+        state: present
+        encoding: UTF8
+      register: mm3_pg_db_create_again
+      when: mm3_psql_probe.rc == 0 and mm3_psql_conn.rc | default(1) == 0
+
+    - name: Check postgres database create idempotency
+      ansible.builtin.assert:
+        that:
+          - mm3_pg_db_create.changed
+          - mm3_pg_db_create_again.changed == false
+      when: mm3_psql_probe.rc == 0 and mm3_psql_conn.rc | default(1) == 0
+
+    # ---------------------------------------------------------------
+    # postgresql_user: creates a run-scoped throwaway role with a
+    # password, verifies idempotency, removes it in the cleanup
+    # section.
+    # ---------------------------------------------------------------
+    - name: Create throwaway postgres user
+      community.postgresql.postgresql_user:
+        name: "{{ mm3_pg_user_name }}"
+        password: "{{ mm3_db_password }}"
+        state: present
+      register: mm3_pg_user_create
+      when: mm3_psql_probe.rc == 0 and mm3_psql_conn.rc | default(1) == 0
+
+    - name: Re-assert throwaway postgres user present
+      community.postgresql.postgresql_user:
+        name: "{{ mm3_pg_user_name }}"
+        password: "{{ mm3_db_password }}"
+        state: present
+      register: mm3_pg_user_create_again
+      when: mm3_psql_probe.rc == 0 and mm3_psql_conn.rc | default(1) == 0
+
+    - name: Check postgres user create idempotency
+      ansible.builtin.assert:
+        that:
+          - mm3_pg_user_create.changed
+          - mm3_pg_user_create_again.changed == false
+      when: mm3_psql_probe.rc == 0 and mm3_psql_conn.rc | default(1) == 0
+
+    - name: Query postgres for the throwaway role
+      community.postgresql.postgresql_query:
+        login_db: postgres
+        query: "SELECT rolname FROM pg_roles WHERE rolname = '{{ mm3_pg_user_name }}'"
+      register: mm3_pg_user_check
+      when: mm3_psql_probe.rc == 0 and mm3_psql_conn.rc | default(1) == 0
+
+    - name: Debug postgres role query result
+      ansible.builtin.debug:
+        msg: "postgres role query: {{ mm3_pg_user_check.query_result }}"
+      when: mm3_psql_probe.rc == 0 and mm3_psql_conn.rc | default(1) == 0
+
+    - name: Check postgres role query found the throwaway role
+      ansible.builtin.assert:
+        that:
+          - mm3_pg_user_check.query_result | length == 1
+          - mm3_pg_user_check.query_result[0].rolname == mm3_pg_user_name
+      when: mm3_psql_probe.rc == 0 and mm3_psql_conn.rc | default(1) == 0
+
+    # ---------------------------------------------------------------
+    # postgresql_privs: grants CONNECT on the play's own throwaway
+    # database to the throwaway role, verifies idempotency, revokes
+    # again (state=absent) in the cleanup section. The throwaway table
+    # gives a second, table-level privilege round on module-created
+    # fixtures.
+    # ---------------------------------------------------------------
+    - name: Create throwaway table in the postgres database
+      community.postgresql.postgresql_query:
+        login_db: "{{ mm3_pg_db_name }}"
+        query: "CREATE TABLE {{ mm3_pg_table_name }} (id int)"
+      register: mm3_pg_table_create
+      when: mm3_psql_probe.rc == 0 and mm3_psql_conn.rc | default(1) == 0
+
+    - name: Grant CONNECT on the throwaway database to the throwaway role
+      community.postgresql.postgresql_privs:
+        database: "{{ mm3_pg_db_name }}"
+        type: database
+        privs: CONNECT
+        roles: "{{ mm3_pg_user_name }}"
+        state: present
+      register: mm3_pg_privs_grant
+      when: mm3_psql_probe.rc == 0 and mm3_psql_conn.rc | default(1) == 0
+
+    - name: Re-assert the CONNECT grant
+      community.postgresql.postgresql_privs:
+        database: "{{ mm3_pg_db_name }}"
+        type: database
+        privs: CONNECT
+        roles: "{{ mm3_pg_user_name }}"
+        state: present
+      register: mm3_pg_privs_grant_again
+      when: mm3_psql_probe.rc == 0 and mm3_psql_conn.rc | default(1) == 0
+
+    - name: Grant SELECT on the throwaway table to the throwaway role
+      community.postgresql.postgresql_privs:
+        database: "{{ mm3_pg_db_name }}"
+        type: table
+        objs: "{{ mm3_pg_table_name }}"
+        privs: SELECT
+        roles: "{{ mm3_pg_user_name }}"
+        state: present
+      register: mm3_pg_privs_table_grant
+      when: mm3_psql_probe.rc == 0 and mm3_psql_conn.rc | default(1) == 0
+
+    - name: Re-assert the table SELECT grant
+      community.postgresql.postgresql_privs:
+        database: "{{ mm3_pg_db_name }}"
+        type: table
+        objs: "{{ mm3_pg_table_name }}"
+        privs: SELECT
+        roles: "{{ mm3_pg_user_name }}"
+        state: present
+      register: mm3_pg_privs_table_grant_again
+      when: mm3_psql_probe.rc == 0 and mm3_psql_conn.rc | default(1) == 0
+
+    - name: Check postgres privs grant idempotency
+      ansible.builtin.assert:
+        that:
+          - mm3_pg_privs_grant.changed
+          - mm3_pg_privs_grant_again.changed == false
+          - mm3_pg_privs_table_grant.changed
+          - mm3_pg_privs_table_grant_again.changed == false
+      when: mm3_psql_probe.rc == 0 and mm3_psql_conn.rc | default(1) == 0
+
+    # ---------------------------------------------------------------
+    # maven_artifact: downloads one small, stable, pinned artifact
+    # (commons-io 2.11.0, ~330KB) from Maven Central into the
+    # run-scoped maven dir, verifies the file, re-asserts it
+    # (checksum-idempotent, changed=false), cleans up in the cleanup
+    # section. Gated on an actual connectivity probe plus the python
+    # lxml import the real module hard-requires.
+    # ---------------------------------------------------------------
+    - name: Download a small maven artifact
+      community.general.maven_artifact:
+        group_id: commons-io
+        artifact_id: commons-io
+        version: 2.11.0
+        extension: jar
+        repository_url: https://repo1.maven.org/maven2
+        dest: "{{ mm3_maven_dir }}"
+        keep_name: true
+      register: mm3_maven_download
+      when: mm3_maven_conn.rc == 0 and mm3_lxml_probe.rc == 0
+
+    - name: Re-download the maven artifact (idempotency check)
+      community.general.maven_artifact:
+        group_id: commons-io
+        artifact_id: commons-io
+        version: 2.11.0
+        extension: jar
+        repository_url: https://repo1.maven.org/maven2
+        dest: "{{ mm3_maven_dir }}"
+        keep_name: true
+      register: mm3_maven_download_again
+      when: mm3_maven_conn.rc == 0 and mm3_lxml_probe.rc == 0
+
+    - name: Stat the downloaded jar
+      ansible.builtin.stat:
+        path: "{{ mm3_maven_dir }}/commons-io-2.11.0.jar"
+      register: mm3_maven_stat
+      when: mm3_maven_conn.rc == 0 and mm3_lxml_probe.rc == 0
+
+    - name: Debug maven artifact result
+      ansible.builtin.debug:
+        msg: "maven_artifact: changed={{ mm3_maven_download.changed }} re-run={{ mm3_maven_download_again.changed }} size={{ mm3_maven_stat.stat.size }}"
+      when: mm3_maven_conn.rc == 0 and mm3_lxml_probe.rc == 0
+
+    - name: Check maven artifact download and idempotency
+      ansible.builtin.assert:
+        that:
+          - mm3_maven_download.changed
+          - mm3_maven_download_again.changed == false
+          - mm3_maven_stat.stat.exists
+          - mm3_maven_stat.stat.size | int > 100000
+      when: mm3_maven_conn.rc == 0 and mm3_lxml_probe.rc == 0
+
+    # ---------------------------------------------------------------
+    # subversion: works entirely on a run-scoped local svnadmin repo
+    # via file:// URLs. Gated on both svn and svnadmin. svn import
+    # seeds one file; the module then checks out, re-runs idempotently
+    # (update with no upstream changes -> changed=false), and the
+    # payload is read back for the byte-diff pattern.
+    # ---------------------------------------------------------------
+    - name: Create throwaway svn repository
+      ansible.builtin.command: svnadmin create "{{ mm3_svn_repo }}"
+      register: mm3_svnadmin_create
+      when: mm3_svn_probe.rc == 0 and mm3_svnadmin_probe.rc == 0
+
+    - name: Seed a file into the svn repository
+      ansible.builtin.copy:
+        content: "svn payload = {{ mm3_run_id }}\n"
+        dest: "{{ mm3_svn_dir }}/seed.txt"
+        mode: "0644"
+      when: mm3_svn_probe.rc == 0 and mm3_svnadmin_probe.rc == 0
+
+    - name: Import the seed file into the svn repository
+      ansible.builtin.command: >
+        svn import "{{ mm3_svn_dir }}/seed.txt"
+        "file://{{ mm3_svn_repo }}/seed.txt" -m "krikri mm3 seed {{ mm3_run_id }}"
+      register: mm3_svn_import
+      when: mm3_svn_probe.rc == 0 and mm3_svnadmin_probe.rc == 0
+
+    - name: Check out the svn repository working copy
+      ansible.builtin.subversion:
+        repo: "file://{{ mm3_svn_repo }}"
+        dest: "{{ mm3_svn_dest }}"
+      register: mm3_svn_checkout
+      when: mm3_svn_probe.rc == 0 and mm3_svnadmin_probe.rc == 0
+
+    - name: Re-check out the svn working copy (idempotency check)
+      ansible.builtin.subversion:
+        repo: "file://{{ mm3_svn_repo }}"
+        dest: "{{ mm3_svn_dest }}"
+      register: mm3_svn_checkout_again
+      when: mm3_svn_probe.rc == 0 and mm3_svnadmin_probe.rc == 0
+
+    - name: Read back the svn checkout payload
+      ansible.builtin.command: cat "{{ mm3_svn_dest }}/seed.txt"
+      register: mm3_svn_payload
+      changed_when: false
+      when: mm3_svn_probe.rc == 0 and mm3_svnadmin_probe.rc == 0
+
+    - name: Debug svn checkout result
+      ansible.builtin.debug:
+        msg: "subversion: checkout changed={{ mm3_svn_checkout.changed }} re-run={{ mm3_svn_checkout_again.changed }} payload='{{ mm3_svn_payload.stdout }}'"
+      when: mm3_svn_probe.rc == 0 and mm3_svnadmin_probe.rc == 0
+
+    - name: Check svn checkout and idempotency
+      ansible.builtin.assert:
+        that:
+          - mm3_svn_checkout.changed
+          - mm3_svn_checkout_again.changed == false
+          - mm3_svn_payload.stdout is search('svn payload = ' ~ mm3_run_id)
+      when: mm3_svn_probe.rc == 0 and mm3_svnadmin_probe.rc == 0
+
+    # ---------------------------------------------------------------
+    # homebrew: brew only (macOS/Linuxbrew). Will skip cleanly on both
+    # a plain Ubuntu and a plain Rocky container. When brew IS present,
+    # the exercise is zero-mutation: state=present re-assert on a
+    # formula already found via `brew list --formula`, which must be
+    # idempotent (changed=false) in both engines - nothing is
+    # installed or removed.
+    # ---------------------------------------------------------------
+    - name: List installed brew formulas
+      ansible.builtin.command: brew list --formula
+      register: mm3_brew_list
+      changed_when: false
+      failed_when: false
+      when: mm3_brew_probe.rc == 0
+
+    - name: Notice homebrew exercise skipped (no formulas installed)
+      ansible.builtin.debug:
+        msg: "skipping homebrew exercise: brew present but no formulas installed to re-assert"
+      when: mm3_brew_probe.rc == 0 and (mm3_brew_list.stdout_lines | default([]) | length == 0)
+
+    - name: Re-assert first installed brew formula present
+      community.general.homebrew:
+        name: "{{ mm3_brew_list.stdout_lines | first }}"
+        state: present
+      register: mm3_brew_present
+      when: mm3_brew_probe.rc == 0 and (mm3_brew_list.stdout_lines | default([]) | length > 0)
+
+    - name: Debug homebrew re-assert result
+      ansible.builtin.debug:
+        msg: "homebrew {{ mm3_brew_list.stdout_lines | first }} state=present: changed={{ mm3_brew_present.changed }} (false when already installed)"
+      when: mm3_brew_probe.rc == 0 and (mm3_brew_list.stdout_lines | default([]) | length > 0)
+
+    - name: Check homebrew re-assert was idempotent
+      ansible.builtin.assert:
+        that:
+          - mm3_brew_present.changed == false
+      when: mm3_brew_probe.rc == 0 and (mm3_brew_list.stdout_lines | default([]) | length > 0)
+
+    # ---------------------------------------------------------------
+    # rabbitmq_plugin: rabbitmqctl + rabbitmq-plugins + a working
+    # broker probe. Exercises the stock rabbitmq_management plugin
+    # idempotently and leaves the found state: if it was already
+    # enabled, the enable call is a changed=false no-op; if it was
+    # not, it gets enabled and then disabled again to restore.
+    # ---------------------------------------------------------------
+    - name: List enabled rabbitmq plugins
+      ansible.builtin.command: rabbitmq-plugins list -E -m
+      register: mm3_rmq_plugins_list
+      changed_when: false
+      failed_when: false
+      when: mm3_rmq_probe.rc == 0 and mm3_rmqplugins_probe.rc == 0 and mm3_rmq_conn.rc | default(1) == 0
+
+    - name: Enable rabbitmq_management plugin
+      community.rabbitmq.rabbitmq_plugin:
+        names: rabbitmq_management
+        state: enabled
+      register: mm3_rmq_plugin_enable
+      when: mm3_rmq_probe.rc == 0 and mm3_rmqplugins_probe.rc == 0 and mm3_rmq_conn.rc | default(1) == 0
+
+    - name: Debug rabbitmq_plugin enable result
+      ansible.builtin.debug:
+        msg: "rabbitmq_plugin rabbitmq_management state=enabled: changed={{ mm3_rmq_plugin_enable.changed }} (false when it was already enabled)"
+      when: mm3_rmq_probe.rc == 0 and mm3_rmqplugins_probe.rc == 0 and mm3_rmq_conn.rc | default(1) == 0
+
+    - name: Restore rabbitmq_management to disabled if it was not enabled before
+      community.rabbitmq.rabbitmq_plugin:
+        names: rabbitmq_management
+        state: disabled
+      register: mm3_rmq_plugin_restore
+      when: mm3_rmq_probe.rc == 0 and mm3_rmqplugins_probe.rc == 0 and mm3_rmq_conn.rc | default(1) == 0 and not ((mm3_rmq_plugins_list.stdout | default('')) is search('rabbitmq_management'))
+
+    - name: Debug rabbitmq_plugin restore result
+      ansible.builtin.debug:
+        msg: "rabbitmq_plugin rabbitmq_management state=disabled: changed={{ mm3_rmq_plugin_restore.changed }} (state restored)"
+      when: mm3_rmq_probe.rc == 0 and mm3_rmqplugins_probe.rc == 0 and mm3_rmq_conn.rc | default(1) == 0 and not ((mm3_rmq_plugins_list.stdout | default('')) is search('rabbitmq_management'))
+
+    # ---------------------------------------------------------------
+    # rabbitmq_user: same broker gate. Creates a run-scoped throwaway
+    # user with a password, verifies idempotency, removes it again in
+    # the cleanup section.
+    # ---------------------------------------------------------------
+    - name: Create throwaway rabbitmq user
+      community.rabbitmq.rabbitmq_user:
+        name: "{{ mm3_rmq_user_name }}"
+        password: "{{ mm3_db_password }}"
+        tags: monitoring
+        state: present
+      register: mm3_rmq_user_create
+      when: mm3_rmq_probe.rc == 0 and mm3_rmq_conn.rc | default(1) == 0
+
+    - name: Re-assert throwaway rabbitmq user present
+      community.rabbitmq.rabbitmq_user:
+        name: "{{ mm3_rmq_user_name }}"
+        password: "{{ mm3_db_password }}"
+        tags: monitoring
+        state: present
+      register: mm3_rmq_user_create_again
+      when: mm3_rmq_probe.rc == 0 and mm3_rmq_conn.rc | default(1) == 0
+
+    - name: Check rabbitmq user create idempotency
+      ansible.builtin.assert:
+        that:
+          - mm3_rmq_user_create.changed
+          - mm3_rmq_user_create_again.changed == false
+      when: mm3_rmq_probe.rc == 0 and mm3_rmq_conn.rc | default(1) == 0
+
+    - name: List rabbitmq users for the throwaway account
+      ansible.builtin.command: rabbitmqctl list_users
+      register: mm3_rmq_user_check
+      changed_when: false
+      when: mm3_rmq_probe.rc == 0 and mm3_rmq_conn.rc | default(1) == 0
+
+    - name: Check rabbitmq user listing shows the throwaway user
+      ansible.builtin.assert:
+        that:
+          - mm3_rmq_user_check.stdout is search(mm3_rmq_user_name)
+      when: mm3_rmq_probe.rc == 0 and mm3_rmq_conn.rc | default(1) == 0
+
+    # ---------------------------------------------------------------
+    # virt_net: libvirtd only. Gated on virsh, a working `virsh list`
+    # connection probe, and the python libvirt module the real module
+    # needs. DEFINES a run-scoped throwaway network (definition only -
+    # never activated, never autostarted), re-asserts the definition
+    # (idempotent no-op), verifies it via get_xml, and undefines it in
+    # the cleanup section.
+    # ---------------------------------------------------------------
+    - name: Define throwaway libvirt network
+      community.libvirt.virt_net:
+        name: "{{ mm3_net_name }}"
+        command: define
+        xml: "{{ mm3_net_xml }}"
+      register: mm3_virtnet_define
+      when: mm3_virsh_probe.rc == 0 and mm3_virsh_conn.rc | default(1) == 0 and mm3_pylibvirt_probe.rc == 0
+
+    - name: Re-define throwaway libvirt network (idempotency check)
+      community.libvirt.virt_net:
+        name: "{{ mm3_net_name }}"
+        command: define
+        xml: "{{ mm3_net_xml }}"
+      register: mm3_virtnet_define_again
+      when: mm3_virsh_probe.rc == 0 and mm3_virsh_conn.rc | default(1) == 0 and mm3_pylibvirt_probe.rc == 0
+
+    - name: Get the throwaway libvirt network XML
+      community.libvirt.virt_net:
+        name: "{{ mm3_net_name }}"
+        command: get_xml
+      register: mm3_virtnet_getxml
+      when: mm3_virsh_probe.rc == 0 and mm3_virsh_conn.rc | default(1) == 0 and mm3_pylibvirt_probe.rc == 0
+
+    - name: Debug virt_net result
+      ansible.builtin.debug:
+        msg: "virt_net define changed={{ mm3_virtnet_define.changed }} re-define={{ mm3_virtnet_define_again.changed }} xml-has-name={{ (mm3_virtnet_getxml.output | default('')) is search(mm3_net_name) }}"
+      when: mm3_virsh_probe.rc == 0 and mm3_virsh_conn.rc | default(1) == 0 and mm3_pylibvirt_probe.rc == 0
+
+    - name: Check virt_net define and idempotency
+      ansible.builtin.assert:
+        that:
+          - mm3_virtnet_define.changed
+          - mm3_virtnet_define_again.changed == false
+          - (mm3_virtnet_getxml.output | default('')) is search(mm3_net_name)
+      when: mm3_virsh_probe.rc == 0 and mm3_virsh_conn.rc | default(1) == 0 and mm3_pylibvirt_probe.rc == 0
+
+    # ---------------------------------------------------------------
+    # Cleanup: everything the gated sections created gets removed
+    # again, then the run-scoped root goes away entirely. Order
+    # matters for the DB fixtures: revoke -> drop table -> drop user
+    # -> drop database.
+    # ---------------------------------------------------------------
+    - name: Remove throwaway mysql user
+      community.mysql.mysql_user:
+        name: "{{ mm3_mysql_user_name }}"
+        host: localhost
+        state: absent
+      register: mm3_mysql_user_drop
+      when: mm3_mysql_probe.rc == 0 and mm3_mysql_conn.rc | default(1) == 0
+
+    - name: Check mysql user removal happened
+      ansible.builtin.assert:
+        that:
+          - mm3_mysql_user_drop.changed
+      when: mm3_mysql_probe.rc == 0 and mm3_mysql_conn.rc | default(1) == 0
+
+    - name: Drop throwaway mysql database
+      community.mysql.mysql_db:
+        name: "{{ mm3_mysql_db_name }}"
+        state: absent
+      register: mm3_mysql_db_drop
+      when: mm3_mysql_probe.rc == 0 and mm3_mysql_conn.rc | default(1) == 0
+
+    - name: Check mysql database drop happened
+      ansible.builtin.assert:
+        that:
+          - mm3_mysql_db_drop.changed
+      when: mm3_mysql_probe.rc == 0 and mm3_mysql_conn.rc | default(1) == 0
+
+    - name: Revoke the table SELECT grant
+      community.postgresql.postgresql_privs:
+        database: "{{ mm3_pg_db_name }}"
+        type: table
+        objs: "{{ mm3_pg_table_name }}"
+        privs: SELECT
+        roles: "{{ mm3_pg_user_name }}"
+        state: absent
+      register: mm3_pg_privs_table_revoke
+      when: mm3_psql_probe.rc == 0 and mm3_psql_conn.rc | default(1) == 0
+
+    - name: Revoke the database CONNECT grant
+      community.postgresql.postgresql_privs:
+        database: "{{ mm3_pg_db_name }}"
+        type: database
+        privs: CONNECT
+        roles: "{{ mm3_pg_user_name }}"
+        state: absent
+      register: mm3_pg_privs_revoke
+      when: mm3_psql_probe.rc == 0 and mm3_psql_conn.rc | default(1) == 0
+
+    - name: Check postgres revoke happened
+      ansible.builtin.assert:
+        that:
+          - mm3_pg_privs_revoke.changed
+      when: mm3_psql_probe.rc == 0 and mm3_psql_conn.rc | default(1) == 0
+
+    - name: Remove throwaway postgres user
+      community.postgresql.postgresql_user:
+        name: "{{ mm3_pg_user_name }}"
+        state: absent
+      register: mm3_pg_user_drop
+      when: mm3_psql_probe.rc == 0 and mm3_psql_conn.rc | default(1) == 0
+
+    - name: Check postgres user removal happened
+      ansible.builtin.assert:
+        that:
+          - mm3_pg_user_drop.changed
+      when: mm3_psql_probe.rc == 0 and mm3_psql_conn.rc | default(1) == 0
+
+    - name: Drop throwaway postgres database
+      community.postgresql.postgresql_db:
+        name: "{{ mm3_pg_db_name }}"
+        state: absent
+      register: mm3_pg_db_drop
+      when: mm3_psql_probe.rc == 0 and mm3_psql_conn.rc | default(1) == 0
+
+    - name: Check postgres database drop happened
+      ansible.builtin.assert:
+        that:
+          - mm3_pg_db_drop.changed
+      when: mm3_psql_probe.rc == 0 and mm3_psql_conn.rc | default(1) == 0
+
+    - name: Remove throwaway rabbitmq user
+      community.rabbitmq.rabbitmq_user:
+        name: "{{ mm3_rmq_user_name }}"
+        state: absent
+      register: mm3_rmq_user_drop
+      when: mm3_rmq_probe.rc == 0 and mm3_rmq_conn.rc | default(1) == 0
+
+    - name: Check rabbitmq user removal happened
+      ansible.builtin.assert:
+        that:
+          - mm3_rmq_user_drop.changed
+      when: mm3_rmq_probe.rc == 0 and mm3_rmq_conn.rc | default(1) == 0
+
+    - name: Undefine throwaway libvirt network
+      community.libvirt.virt_net:
+        name: "{{ mm3_net_name }}"
+        state: absent
+      register: mm3_virtnet_undefine
+      when: mm3_virsh_probe.rc == 0 and mm3_virsh_conn.rc | default(1) == 0 and mm3_pylibvirt_probe.rc == 0
+
+    - name: Check virt_net undefine happened
+      ansible.builtin.assert:
+        that:
+          - mm3_virtnet_undefine.changed
+      when: mm3_virsh_probe.rc == 0 and mm3_virsh_conn.rc | default(1) == 0 and mm3_pylibvirt_probe.rc == 0
+
+    - name: Remove benchmark root directory
+      ansible.builtin.file:
+        path: "{{ mm3_dir }}"
+        state: absent
+
+    - name: Announce modules-misc3 benchmark end
+      ansible.builtin.debug:
+        msg: "modules-misc3 benchmark {{ mm3_run_id }} complete"
