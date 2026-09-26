@@ -263,6 +263,28 @@ module Krikri
       end
     end
 
+    # Real Ansible's apt module runs EVERY package operation with its own
+    # default dpkg options (apt.py's DPKG_OPTIONS = "force-confdef,
+    # force-confold", overridable via the dpkg_options: param the package
+    # action plugin forwards verbatim). This module's own separate apt
+    # dispatch (not a shared one with apt.cr - see handle_latest's comment
+    # above) never threaded them in, so an install whose package ships a
+    # conffile that already exists on disk unowned made dpkg stop and
+    # prompt on stdin for the conflict - and with this engine's /dev/null
+    # stdin that prompt dies with "end of file on stdin at conffile
+    # prompt", failing the whole install. Real Ansible's flags resolve the
+    # exact same conflict silently to "keep current" and the task
+    # succeeds. Found via weareinteractive.docker (round 979177): the role
+    # templates /etc/default/docker BEFORE `package: docker-ce` ever runs,
+    # so docker-ce's unpack hit the unowned-conffile prompt and the
+    # "Installing packages" task failed here while real ansible-playbook
+    # installed the same packages fine on an identical fresh host.
+    private def expand_dpkg_options : String
+      (@params["dpkg_options"]? || "force-confdef,force-confold").split(",")
+        .map(&.strip).reject(&.empty?)
+        .map { |opt| "-o Dpkg::Options::=--#{opt}" }.join(" ")
+    end
+
     # `name:` may be several space-separated package names (this module's
     # own space-joining of a templated list var - see the JSON-array
     # handling in #execute above). True only if *every* one is installed,
@@ -724,6 +746,9 @@ module Krikri
       # package:/apt: module waited it out. Found via buluma.aide's
       # `package: {name: aide}` task, round170.
       lock_timeout = @params["lock_timeout"]?.try(&.to_i) || 60
+      # Real Ansible's own default dpkg options, expanded once for the
+      # install/remove/upgrade commands below (see expand_dpkg_options).
+      dpkg_opts = expand_dpkg_options
 
       case state
       when "present"
@@ -742,7 +767,7 @@ module Krikri
             )
           end
 
-          install_result = apt_install_with_implicit_cache_retry("DEBIAN_FRONTEND=noninteractive apt-get install -y #{shell_pkg}", lock_timeout, ->remote_exec(String))
+          install_result = apt_install_with_implicit_cache_retry("DEBIAN_FRONTEND=noninteractive apt-get install -y #{dpkg_opts} #{shell_pkg}".squeeze(' '), lock_timeout, ->remote_exec(String))
           if install_result[:exit_code] == 0
             # A requested name can be a virtual package already
             # satisfied by something else installed (`php-dom`/
@@ -794,7 +819,7 @@ module Krikri
             )
           end
 
-          remove_result = apt_with_lock_retry("DEBIAN_FRONTEND=noninteractive apt-get remove -y #{shell_pkg}", lock_timeout, ->remote_exec(String))
+          remove_result = apt_with_lock_retry("DEBIAN_FRONTEND=noninteractive apt-get remove -y #{dpkg_opts} #{shell_pkg}".squeeze(' '), lock_timeout, ->remote_exec(String))
           if remove_result[:exit_code] == 0
             PluginResult.new(
               changed: true,
@@ -847,7 +872,7 @@ module Krikri
         # /var/lib/apt/lists/, is NOT retried by real ansible-playbook
         # either - it fails outright with "No package matching 'w3m' is
         # available").
-        upgrade_result = apt_install_with_implicit_cache_retry("DEBIAN_FRONTEND=noninteractive apt-get install -y #{shell_pkg}", lock_timeout, ->remote_exec(String))
+        upgrade_result = apt_install_with_implicit_cache_retry("DEBIAN_FRONTEND=noninteractive apt-get install -y #{dpkg_opts} #{shell_pkg}".squeeze(' '), lock_timeout, ->remote_exec(String))
 
         # apt-get prints its "N upgraded, M newly installed" summary line
         # during dependency RESOLUTION, before any package is actually
