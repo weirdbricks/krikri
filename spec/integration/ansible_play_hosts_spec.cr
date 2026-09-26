@@ -50,4 +50,39 @@ describe "ansible_play_hosts / ansible_play_hosts_all magic vars" do
     File.delete(src) if src && File.exists?(src)
     File.delete(dest) if dest && File.exists?(dest)
   end
+
+  it "resolves the deprecated play_hosts alias to the same host list" do
+    # Real bug found benchmarking wezhai.minio: `play_hosts` is real
+    # Ansible's deprecated-but-still-supported alias for
+    # ansible_play_hosts (deprecation warning only, removal slated for
+    # ansible-core 2.23), and krikri-playbook never registered it, so
+    # the role's cluster-mode minio_env.j2 (`{% for host in play_hosts
+    # %}{{ hostvars[host].ansible_host }}...{% endfor %}`) hard-failed
+    # with "'play_hosts' is undefined" where real ansible-playbook
+    # renders the host list.
+    playbook = File.tempname("play-hosts-alias", ".yml")
+
+    File.write(playbook, <<-YAML)
+      - name: repro
+        hosts: all
+        gather_facts: false
+        tasks:
+          - name: render_alias
+            ansible.builtin.debug:
+              msg: "{% for h in play_hosts %}{{ h }}{% endfor %}"
+          - name: render_canonical
+            ansible.builtin.debug:
+              msg: "{{ ansible_play_hosts | join(',') }}"
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+
+    status.success?.should be_true
+    rendered = output.to_s
+    rendered.should contain("hostone")
+    rendered.should contain("hosttwo")
+  ensure
+    File.delete(playbook) if playbook && File.exists?(playbook)
+  end
 end
