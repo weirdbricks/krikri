@@ -1230,4 +1230,36 @@ describe Krikri::VariableSubstitutor::FilterEngine do
     result = engine.apply(s("A1\nb2"), %(regex_findall('^b(\\d)', multiline=True)))
     result.as_a.map(&.as_s).should eq(["2"])
   end
+
+  it "regex_* multiline=True maps to Python re.M only: ^/$ move, `.` must NOT cross newlines" do
+    # Real Ansible's regex filters build flags = re.I | re.M; Python's
+    # re.M only moves ^/$ to line boundaries, it is NOT re.DOTALL.
+    # Crystal's Regex::Options::MULTILINE maps to PCRE MULTILINE|DOTALL
+    # (Ruby semantics), so a `Version:\ .*:` pattern swallowed everything
+    # through the next line's colon and captured "1.1.4" from an
+    # unrelated later line instead of the version on the Version: line
+    # itself (pluggero.openssh, round 981024).
+    text = "Version: 1:8.9p1-3ubuntu0.10\n compat:1.1.4 notes"
+    result = engine.apply(s(text), %(regex_search('Version:\\ .*:([\\d\\.]{2,})', '\\1', multiline=True)))
+    result.as_a.map(&.as_s).should eq(["8.9"])
+
+    # The exact bug shape: a dot-span that only matches if `.` crosses
+    # the newline into the later " compat:" line must NOT match.
+    engine.apply(s(text), %(regex_search('Version:\\ .*compat', multiline=True))).as_s?.should be_nil
+    # ...and re.M's anchors still work.
+    result = engine.apply(s(text), %(regex_findall('^ compat:([\\d\\.]+)', multiline=True)))
+    result.as_a.map(&.as_s).should eq(["1.1.4"])
+    engine.apply(s(text), %(regex_findall('^compat', multiline=True))).as_a.should be_empty
+  end
+
+  it "regex_replace honors the ignorecase/multiline kwargs real Ansible accepts" do
+    # Real Ansible's regex_replace(value, pattern, replacement,
+    # ignorecase, multiline) - the flags were previously dropped entirely.
+    result = engine.apply(s("a1\nb2"), %(regex_replace('^b(\\d)', 'X\\1', multiline=True)))
+    result.as_s.should eq("a1\nX2")
+    # re.M is NOT dotall: a dot-span across the newline must not match.
+    result = engine.apply(s("1\nb2"), %(regex_replace('1.b', 'Z', multiline=True)))
+    result.as_s.should eq("1\nb2")
+    engine.apply(s("HELLO"), %(regex_replace('hello', 'X', ignorecase=True))).as_s.should eq("X")
+  end
 end
