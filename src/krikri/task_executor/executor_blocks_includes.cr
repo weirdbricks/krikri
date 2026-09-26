@@ -3,6 +3,18 @@ require "./executor"
 module Krikri
   class TaskExecutor
     private def execute_block_multi(task : Task, hosts : Array(Host)) : Nil
+      # Propagate role context BEFORE the when: partition - a host whose
+      # block when: is false prints each child's own "TASK [role : name]"
+      # banner via print_skipped_tasks below, which needs the child's
+      # role_name set already. Propagation used to sit below the
+      # `return if run_hosts.empty?` bail-out, so a fully-skipped block
+      # never reached it and its children's banners lost their "role : "
+      # prefix (buluma.httpd's "Modify selinux settings" under
+      # buluma.roundcubemail, xanmanning.k3s's "Set the control host").
+      # The single-host execute_block already propagates before its own
+      # skip printing, which is why single-host repros kept passing.
+      propagate_role_context(task, task.block_tasks || [] of Task)
+
       run_hosts, skip_hosts = partition_by_when(task, hosts, inherit_on_error: true)
 
       skip_hosts.each do |host|
@@ -22,7 +34,6 @@ module Krikri
       changed_before = Hash(String, Int32).new
       run_hosts.each { |host| changed_before[host.name] = @results[host.name]["changed"] }
 
-      propagate_role_context(task, task.block_tasks || [] of Task)
       run_task_batch(task.block_tasks || [] of Task, run_hosts)
 
       block_failed = Hash(String, Bool).new

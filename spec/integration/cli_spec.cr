@@ -2124,6 +2124,25 @@ describe "a halted host after a task failure" do
     # only the command task is counted; the skipped meta is not
     output.should match(/skipped=1/)
   end
+
+  # Regression (buluma.httpd under buluma.roundcubemail / xanmanning.k3s,
+  # atlantic round 979000): the multi-host block path printed a
+  # when:-false block's children skipping banners before role context
+  # reached those children, so banners printed as
+  # "TASK [Modify selinux settings]" where real ansible-playbook shows
+  # "TASK [buluma.httpd : Modify selinux settings]". The earlier
+  # block_skip_prefix fixture only covered the include_tasks: route
+  # (which propagates before its own skip printing), never the
+  # direct-from-role-tasks route the real roles hit.
+  it "keeps the role prefix on skipped block children reached straight from a role's tasks" do
+    status, output = run_playbook("test-block-skip-prefix-role.yml")
+
+    status.success?.should be_true
+    output.should contain("TASK [skip_block_role_prefix : skipped child]")
+    # a block that actually RAN keeps its prefix too (guard against a
+    # "fix" that just always adds the prefix on the skip path)
+    output.should contain("TASK [skip_block_role_prefix : running child]")
+  end
 end
 
 describe "an unarchive with a bare relative src" do

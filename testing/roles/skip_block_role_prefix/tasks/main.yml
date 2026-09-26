@@ -1,0 +1,17 @@
+---
+- name: plain task
+  ansible.builtin.debug:
+    msg: plain
+
+- name: skipped block
+  when: false
+  block:
+    - name: skipped child
+      ansible.builtin.debug:
+        msg: never
+
+- name: running block
+  block:
+    - name: running child
+      ansible.builtin.debug:
+        msg: always

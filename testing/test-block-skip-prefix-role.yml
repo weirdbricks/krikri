@@ -1,0 +1,15 @@
+---
+# Regression (buluma.httpd under buluma.roundcubemail / xanmanning.k3s,
+# atlantic round 979000): a when:-false BLOCK sitting directly in a
+# role's own tasks/main.yml - not reached through include_tasks:, the
+# shape test-block-skip-prefix.yml already covers - printed its
+# children's skipping banners without the "role : " prefix. The
+# multi-host block path printed the skip banners before propagating
+# role context into the block's children; real ansible-playbook keeps
+# the prefix ("TASK [buluma.httpd : Modify selinux settings]").
+- name: skipped block child keeps role prefix
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  roles:
+    - skip_block_role_prefix
