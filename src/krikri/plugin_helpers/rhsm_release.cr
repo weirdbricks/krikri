@@ -31,10 +31,10 @@ module Krikri
       # a non-anchored substring match ("7.2; touch /tmp/pwned" passes
       # it), so the value is shell-quoted for the shell string it is
       # embedded in - real Ansible passes it as one argv element, where
-      # the same value is inert. quote_if_needed keeps well-formed
+      # the same value is inert. quote_arg keeps well-formed
       # releases (7.2, 6Server) byte-identical.
       def self.release_arguments(release : String?) : String
-        release ? "release --set #{Shell.quote_if_needed(release)}" : "release --unset"
+        release ? "release --set #{Shell.quote_arg(release)}" : "release --unset"
       end
     end
   end

@@ -67,7 +67,7 @@ describe "plugin task params cannot inject shell operations" do
   end
 
   # The image reference / pull_extra_args quoting uses the same
-  # Shell.quote_if_needed / shlex_split primitives, but the executable
+  # Shell.quote_arg / shlex_split primitives, but the executable
   # probe (`command -v`) can never succeed on a local connection (the
   # argv fast path cannot run shell builtins), so the later command
   # strings are not reachable in a spec environment - covered by the

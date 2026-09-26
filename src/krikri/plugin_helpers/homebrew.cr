@@ -64,34 +64,34 @@ module Krikri
         names
       end
 
-      # Every element is shell-quoted individually (Shell.quote_if_needed
+      # Every element is shell-quoted individually (Shell.quote_arg
       # leaves well-formed brew paths, option flags and package names
       # byte-identical): real Ansible builds an argv list, where a hostile
       # token is inert, so the shell-string equivalent must not let a
       # task param terminate a token and inject a command.
       def self.info_command(brew_path : String, packages : Array(String)) : String
-        "#{Shell.quote_if_needed(brew_path)} info --json=v2 #{packages.map { |p| Shell.quote_if_needed(p) }.join(" ")}"
+        "#{Shell.quote_arg(brew_path)} info --json=v2 #{packages.map { |p| Shell.quote_arg(p) }.join(" ")}"
       end
 
       def self.install_command(brew_path : String, packages : Array(String), install_options : Array(String), head : Bool, force_formula : Bool) : String
-        cmd = [Shell.quote_if_needed(brew_path), "install"]
-        cmd += install_options.map { |opt| Shell.quote_if_needed(opt.starts_with?("--") ? opt : "--#{opt}") }
-        cmd += packages.map { |p| Shell.quote_if_needed(p) }
+        cmd = [Shell.quote_arg(brew_path), "install"]
+        cmd += install_options.map { |opt| Shell.quote_arg(opt.starts_with?("--") ? opt : "--#{opt}") }
+        cmd += packages.map { |p| Shell.quote_arg(p) }
         cmd << "--HEAD" if head
         cmd << "--formula" if force_formula
         cmd.join(" ")
       end
 
       def self.upgrade_command(brew_path : String, packages : Array(String), install_options : Array(String)) : String
-        ([Shell.quote_if_needed(brew_path), "upgrade"] + install_options.map { |opt| Shell.quote_if_needed(opt.starts_with?("--") ? opt : "--#{opt}") } + packages.map { |p| Shell.quote_if_needed(p) }).join(" ")
+        ([Shell.quote_arg(brew_path), "upgrade"] + install_options.map { |opt| Shell.quote_arg(opt.starts_with?("--") ? opt : "--#{opt}") } + packages.map { |p| Shell.quote_arg(p) }).join(" ")
       end
 
       def self.uninstall_command(brew_path : String, packages : Array(String), install_options : Array(String)) : String
-        ([Shell.quote_if_needed(brew_path), "uninstall", "--force"] + install_options.map { |opt| Shell.quote_if_needed(opt.starts_with?("--") ? opt : "--#{opt}") } + packages.map { |p| Shell.quote_if_needed(p) }).join(" ")
+        ([Shell.quote_arg(brew_path), "uninstall", "--force"] + install_options.map { |opt| Shell.quote_arg(opt.starts_with?("--") ? opt : "--#{opt}") } + packages.map { |p| Shell.quote_arg(p) }).join(" ")
       end
 
       def self.link_command(brew_path : String, packages : Array(String), install_options : Array(String), unlink : Bool) : String
-        ([Shell.quote_if_needed(brew_path), unlink ? "unlink" : "link"] + install_options.map { |opt| Shell.quote_if_needed(opt.starts_with?("--") ? opt : "--#{opt}") } + packages.map { |p| Shell.quote_if_needed(p) }).join(" ")
+        ([Shell.quote_arg(brew_path), unlink ? "unlink" : "link"] + install_options.map { |opt| Shell.quote_arg(opt.starts_with?("--") ? opt : "--#{opt}") } + packages.map { |p| Shell.quote_arg(p) }).join(" ")
       end
 
       def self.update_changed?(update_output : String) : Bool

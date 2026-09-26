@@ -109,7 +109,7 @@ describe Krikri::PluginHelpers::Homebrew do
   # Command-builder quoting: real Ansible builds an argv list where a
   # hostile token is inert, so the shell-string equivalent must keep a
   # metacharacter-bearing element one literal argument. Well-formed
-  # values stay byte-identical (quote_if_needed leaves safe tokens bare).
+  # values stay byte-identical (quote_arg leaves safe tokens bare).
   describe "command-builder quoting" do
     it "quotes a brew_path carrying shell metacharacters" do
       Krikri::PluginHelpers::Homebrew.info_command("/opt/bin; touch /tmp/pwned", ["git"])

@@ -307,9 +307,9 @@ module Krikri
       branch_added = false
       if dep = @depth
         if @version == "HEAD" || @refspec
-          cmd += " --depth #{Shell.quote_if_needed(dep)}"
+          cmd += " --depth #{Shell.quote_arg(dep)}"
         elsif is_branch_or_tag
-          cmd += " --depth #{Shell.quote_if_needed(dep)} --branch #{sq(@version)}"
+          cmd += " --depth #{Shell.quote_arg(dep)} --branch #{sq(@version)}"
           branch_added = true
         else
           # Real Ansible warns and ignores depth for refs that cannot be
@@ -364,7 +364,7 @@ module Krikri
         elsif remote_tag?(d, @repo, @version)
           refspecs << "+refs/tags/#{@version}:refs/tags/#{@version}"
         end
-        depth_flag = "--depth #{Shell.quote_if_needed(dep)} " unless refspecs.empty?
+        depth_flag = "--depth #{Shell.quote_arg(dep)} " unless refspecs.empty?
       end
 
       tags_flag = ""
@@ -406,7 +406,7 @@ module Krikri
             # git clone --depth implies --single-branch; fetch the requested
             # branch explicitly so the checkout below can succeed (real
             # Ansible's set_remote_branch).
-            r = run_git("fetch --depth=#{Shell.quote_if_needed(dep)} #{sq(@remote)} " \
+            r = run_git("fetch --depth=#{Shell.quote_arg(dep)} #{sq(@remote)} " \
                         "+refs/heads/#{sq(@version)}:refs/heads/#{sq(@version)} " \
                         "+refs/heads/#{sq(@version)}:refs/remotes/#{sq(@remote)}/#{sq(@version)}", d)
             return git_failure("fetch branch from remote: #{@version}", r) unless r[:exit_code] == 0

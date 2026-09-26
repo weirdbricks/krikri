@@ -40,6 +40,25 @@ describe Krikri::Shell do
     end
   end
 
+  describe ".quote_arg" do
+    it "leaves single well-formed argv tokens byte-identical" do
+      Krikri::Shell.quote_arg("docker.io/library/nginx:1.25").should eq("docker.io/library/nginx:1.25")
+      Krikri::Shell.quote_arg("/usr/bin/podman").should eq("/usr/bin/podman")
+      Krikri::Shell.quote_arg("7.2").should eq("7.2")
+    end
+
+    it "never lets a value word-split into extra arguments" do
+      Krikri::Shell.quote_arg("img --authfile=/x").should eq("'img --authfile=/x'")
+      Krikri::Shell.quote_arg("a\tb").should eq("'a\tb'")
+      Krikri::Shell.quote_arg("").should eq("''")
+    end
+
+    it "quotes shell metacharacters" do
+      Krikri::Shell.quote_arg("x; touch /tmp/pwned; #").should eq("'x; touch /tmp/pwned; #'")
+      Krikri::Shell.quote_arg("it's").should eq("'it'\\''s'")
+    end
+  end
+
   describe ".quote_if_needed" do
     it "leaves shell-safe tokens byte-identical (bare words, IPs/CIDRs, port lists, multi-word values)" do
       Krikri::Shell.quote_if_needed("any").should eq("any")

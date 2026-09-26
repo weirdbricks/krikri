@@ -171,7 +171,7 @@ module Krikri
               return staged_result if staged_result
             end
 
-            result = remote_exec("apt-key #{keyring_flag}add #{Shell.quote_if_needed(tmp_path)}")
+            result = remote_exec("apt-key #{keyring_flag}add #{Shell.quote_arg(tmp_path)}")
             unless result[:exit_code] == 0
               return PluginResult.new(changed: false, failed: true, msg: "apt-key add failed: #{result[:stderr]}")
             end
@@ -220,7 +220,7 @@ module Krikri
         # shells out to `apt-key adv` rather than reimplementing a
         # keyserver protocol client.
         insecure_flag = true?(@params["validate_certs"]?, default: true) ? "" : "--insecure "
-        result = remote_exec("curl --fail --silent --show-error --location #{insecure_flag}-o #{Shell.quote_if_needed(tmp_path)} #{shell_single_quote(url)}")
+        result = remote_exec("curl --fail --silent --show-error --location #{insecure_flag}-o #{Shell.quote_arg(tmp_path)} #{shell_single_quote(url)}")
         unless result[:exit_code] == 0
           return PluginResult.new(changed: false, failed: true, msg: "Failed to fetch key from #{url}: #{result[:stderr]}")
         end
@@ -233,7 +233,7 @@ module Krikri
         # same tmp the data:/url: branches use so the rest of the import
         # path is unchanged. remote_exec's cwd is the target's root, and
         # a plain cp keeps us from re-reading the file through Crystal.
-        result = remote_exec("cp #{shell_single_quote(file_path || raise "apt_key: file: path is required")} #{Shell.quote_if_needed(tmp_path)}")
+        result = remote_exec("cp #{shell_single_quote(file_path || raise "apt_key: file: path is required")} #{Shell.quote_arg(tmp_path)}")
         unless result[:exit_code] == 0
           return PluginResult.new(changed: false, failed: true, msg: "Failed to read key file #{file_path}: #{result[:stderr]}")
         end
@@ -270,7 +270,7 @@ module Krikri
       # followed a symlink planted at the guessable Random.rand path,
       # pointing gpg's root-side homedir writes anywhere.
       tmp_home = "/tmp/.krikri-playbook-apt-key-gnupghome-#{Random::Secure.hex(8)}"
-      quoted_home = Shell.quote_if_needed(tmp_home)
+      quoted_home = Shell.quote_arg(tmp_home)
       result = remote_exec("mkdir #{quoted_home} && chmod 700 #{quoted_home} && gpg --homedir #{quoted_home} --with-colons #{Shell.single_quote(path)} 2>/dev/null; gpg_rc=$?; rm -rf #{quoted_home}; exit $gpg_rc")
       keys = parse_output_for_keys(result[:stdout])
       {exit_code: result[:exit_code], key_id: keys.first?}

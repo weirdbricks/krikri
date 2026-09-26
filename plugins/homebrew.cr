@@ -39,7 +39,7 @@ module Krikri
       unchanged_pkgs = [] of String
 
       if true?(@params["update_homebrew"]?)
-        update = remote_exec("#{Shell.quote_if_needed(brew_path)} update")
+        update = remote_exec("#{Shell.quote_arg(brew_path)} update")
         return fail(update[:stderr]) if update[:exit_code] != 0
         if PluginHelpers::Homebrew.update_changed?(update[:stdout])
           changed = true
@@ -47,7 +47,7 @@ module Krikri
       end
 
       if true?(@params["upgrade_all"]?)
-        upgrade = remote_exec("#{Shell.quote_if_needed(brew_path)} upgrade#{upgrade_options}")
+        upgrade = remote_exec("#{Shell.quote_arg(brew_path)} upgrade#{upgrade_options}")
         return fail(upgrade[:stderr]) if upgrade[:exit_code] != 0
         unless upgrade[:stdout].strip.empty?
           changed = true
@@ -185,7 +185,7 @@ module Krikri
     end
 
     private def upgrade_options : String
-      opts = parse_list_param(@params["upgrade_options"]?).map { |opt| Shell.quote_if_needed(opt.starts_with?("--") ? opt : "--#{opt}") }
+      opts = parse_list_param(@params["upgrade_options"]?).map { |opt| Shell.quote_arg(opt.starts_with?("--") ? opt : "--#{opt}") }
       opts.empty? ? "" : " #{opts.join(" ")}"
     end
 

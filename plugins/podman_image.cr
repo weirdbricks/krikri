@@ -81,22 +81,22 @@ module Krikri
       # separate argv elements (executable resolved once via get_bin_path,
       # the image reference as one element), so metacharacters in a task
       # param are inert there. Krikri builds a shell string instead, so
-      # each param-derived token is shell-quoted (quote_if_needed keeps
+      # each param-derived token is shell-quoted (quote_arg keeps
       # well-formed values byte-identical); pull_extra_args is a
       # multi-argument string the real module shlex.splits into argv
       # elements, so it is tokenized the same way below and each token is
       # quoted on its own.
-      bin_ok = remote_exec("command -v #{Shell.quote_if_needed(executable)}")
+      bin_ok = remote_exec("command -v #{Shell.quote_arg(executable)}")
       return censor(PluginResult.new(changed: false, failed: true,
         msg: "Failed to find required executable #{executable} in paths: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")) if bin_ok[:exit_code] != 0
 
-      exists = remote_exec("#{Shell.quote_if_needed(executable)} image exists #{Shell.quote_if_needed(reference)}")
+      exists = remote_exec("#{Shell.quote_arg(executable)} image exists #{Shell.quote_arg(reference)}")
       image_exists = exists[:exit_code] == 0
 
       if state == "absent"
         return PluginResult.new(changed: false, failed: false,
           msg: "Image not found") unless image_exists
-        rmi = remote_exec("#{Shell.quote_if_needed(executable)} rmi -f #{Shell.quote_if_needed(reference)}")
+        rmi = remote_exec("#{Shell.quote_arg(executable)} rmi -f #{Shell.quote_arg(reference)}")
         return censor(PluginResult.new(changed: false, failed: true,
           msg: "Failed to remove image #{reference}: #{rmi[:stderr]}")) if rmi[:exit_code] != 0
         return PluginResult.new(changed: true, failed: false,
@@ -108,7 +108,7 @@ module Krikri
 
       image_id_before = image_id(executable, reference)
       creds = build_creds
-      pull = remote_exec("#{Shell.quote_if_needed(executable)} pull#{creds} #{Shell.quote_if_needed(reference)}#{extra_args}")
+      pull = remote_exec("#{Shell.quote_arg(executable)} pull#{creds} #{Shell.quote_arg(reference)}#{extra_args}")
       return censor(PluginResult.new(changed: false, failed: true,
         msg: "Failed to pull image #{reference}: #{pull[:stderr].presence || pull[:stdout]}")) if pull[:exit_code] != 0
 
@@ -307,11 +307,11 @@ module Krikri
       return "" unless args
       # Real module: args.extend(shlex.split(pull_extra_args)) - one argv
       # element per token, each of which is quoted on its own here.
-      " #{Shell.shlex_split(args).map { |token| Shell.quote_if_needed(token) }.join(" ")}"
+      " #{Shell.shlex_split(args).map { |token| Shell.quote_arg(token) }.join(" ")}"
     end
 
     private def image_id(executable : String, reference : String) : String?
-      inspect = remote_exec("#{Shell.quote_if_needed(executable)} image inspect --format '{{.Id}}' #{Shell.quote_if_needed(reference)}")
+      inspect = remote_exec("#{Shell.quote_arg(executable)} image inspect --format '{{.Id}}' #{Shell.quote_arg(reference)}")
       inspect[:exit_code] == 0 ? inspect[:stdout].strip.presence : nil
     end
   end

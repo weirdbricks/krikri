@@ -284,8 +284,8 @@ module Krikri
         .map(&.strip).reject(&.empty?)
         # Real apt passes each option as its own argv element
         # (-o Dpkg::Options::=--<opt>), where a hostile opt is inert;
-        # quote_if_needed keeps the well-formed comma list byte-identical.
-        .map { |opt| "-o Dpkg::Options::=--#{Shell.quote_if_needed(opt)}" }.join(" ")
+        # quote_arg keeps the well-formed comma list byte-identical.
+        .map { |opt| "-o Dpkg::Options::=--#{Shell.quote_arg(opt)}" }.join(" ")
     end
 
     # `name:` may be several space-separated package names (this module's
