@@ -74,16 +74,6 @@ module Krikri
       # role var and lose the command's output entirely.
       registered = @registered_vars[host.name]
 
-      # Publish this host's execution-resolved variable names (every
-      # register:/set_fact: write, which always outrank role/task vars in
-      # the ladder above, so a tagged name's context value IS the resolved
-      # one) for the recursive re-templating gate - see VarSubstitutor's
-      # @@resolved_var_names comment for why the content-based check alone
-      # cannot tell a resolved result from a YAML-defined template.
-      resolved_names = Set(String).new(registered.keys)
-      @set_facts[host.name]?.try(&.each_key { |key| resolved_names.add(key) })
-      VarSubstitutor.set_resolved_var_names(host.name, resolved_names)
-
       unless @all_role_vars.empty?
         @all_role_vars.each do |key, value|
           next if registered.has_key?(key)
@@ -295,6 +285,47 @@ module Krikri
       # extra-var" behavior).
       @extra_vars.each { |key, value| vars_context[key] = value }
 
+      # Publish this host's execution-resolved (unsafe) variable names for
+      # the re-templating gate - see VarSubstitutor's @@resolved_var_names
+      # comment. Published here, AFTER every var layer, so the
+      # fact-sourced entries below can tell a genuinely fact-sourced value
+      # from an author override: any name whose final context value differs
+      # from the fact store's was overwritten by a higher-precedence
+      # author-defined template and stays safely re-renderable (real
+      # Ansible only marks what the MODULE returned). Covers:
+      # - every `register:` write (@registered_vars keys)
+      # - every `set_fact:` write (@set_facts keys)
+      # - every gathered fact (@facts keys - ansible_os_family,
+      #   ansible_local, ansible_env, ... - the whole hostile-target
+      #   surface, local .fact files included)
+      # - the `ansible_facts` dict spelling of the same facts
+      # - loop-item aliases (`item`, a custom loop_control.loop_var,
+      #   loop_control.index_var, ansible_loop) whenever the task's own
+      #   loop source references any unsafe root - items taken from
+      #   resolved data are unsafe exactly like the data itself
+      resolved_names = Set(String).new(registered.keys)
+      @set_facts[host.name]?.try(&.each_key { |key| resolved_names.add(key) })
+      set_fact_keys = @set_facts[host.name]?
+      @facts[host.name].each do |key, value|
+        next if set_fact_keys.try(&.has_key?(key))
+        next if registered.has_key?(key)
+        next if (ctx_val = vars_context[key]?) && ctx_val != value
+        resolved_names.add(key)
+      end
+      resolved_names.add("ansible_facts") unless @facts[host.name].empty?
+      mark_loop_derived_unsafe_names(task, resolved_names)
+      VarSubstitutor.set_resolved_var_names(host.name, resolved_names)
+
+      # Value-level complement (see UnsafeValues' own comment): record the
+      # exact text of every brace-bearing string in this host's registered
+      # results / set_facts / facts, so the same hostile text is refused a
+      # re-render even after flowing through an author-defined template or
+      # a set_fact copy. Only brace-bearing strings are recorded, so the
+      # common case adds nothing.
+      @registered_vars[host.name].each_value { |value| UnsafeValues.mark_value(value) }
+      @set_facts[host.name]?.try(&.each_value { |value| UnsafeValues.mark_value(value) })
+      @facts[host.name].each_value { |value| UnsafeValues.mark_value(value) }
+
       # Real Ansible's `vars` magic variable: a dict of every variable in
       # scope, most often used for a membership test rather than to read
       # a value - `prometheus.prometheus`'s own preflight does
@@ -322,6 +353,55 @@ module Krikri
       vars_context["vars"] = JSON::Any.new(self_view)
 
       vars_context
+    end
+
+    # Loop-item alias taint (see build_vars_context's publication comment):
+    # when the task's own loop source references any execution-resolved
+    # (unsafe) root, every value the loop yields derives from unsafe data,
+    # so the `item` / loop_control.loop_var / loop_control.index_var /
+    # ansible_loop aliases those values are reached through are unsafe too
+    # - real Ansible's taint follows the data, and `debug: msg="{{ item }}"`
+    # over a hostile module result must print the text verbatim, never
+    # re-render it. Static identifier scan of the RAW loop-source strings
+    # (the same texts the loop resolvers template), intersected with the
+    # unsafe registry computed so far. Recomputed per build_vars_context
+    # call, so a later task looping over author-defined template strings
+    # is unaffected - no stale item taint.
+    private def mark_loop_derived_unsafe_names(task : Task, resolved_names : Set(String)) : Nil
+      sources = [] of String
+      if loop_template = task.loop_template
+        sources << loop_template
+      end
+      {% for field in %w[loop_fileglob loop_file loop_first_found loop_first_found_paths
+                        loop_flattened loop_nested_sources loop_together_sources loop_filetree] %}
+        task.{{ field.id }}.try(&.each { |source| sources << source })
+      {% end %}
+      if subelements_list = task.loop_subelements_list
+        sources << subelements_list
+      end
+      task.loop_items.try(&.each do |entry|
+        case raw = entry.raw
+        when String then sources << raw
+        when Array  then raw.each { |element| sources << element.as_s if element.as_s? }
+        when Hash   then raw.each_value { |element| sources << element.as_s if element.as_s? }
+        end
+      end)
+      return if sources.empty?
+
+      referenced = Set(String).new
+      sources.each do |source|
+        source.scan(/[A-Za-z_][A-Za-z0-9_]*/).each { |match| referenced.add(match[0]) }
+      end
+      return unless referenced.any? { |name| resolved_names.includes?(name) }
+
+      resolved_names.add("item")
+      resolved_names.add("ansible_loop")
+      if loop_var = task.loop_var
+        resolved_names.add(loop_var)
+      end
+      if index_var = task.index_var
+        resolved_names.add(index_var)
+      end
     end
 
     # Real Ansible's variable manager treats `ansible_ssh_user`/
@@ -1150,7 +1230,8 @@ module Krikri
       # main.yml) therefore always failed downstream with "The `loop`
       # value must resolve to a 'list', not 'str'" - real Ansible
       # resolves the ternary to the actual list and iterates it fine.
-      if current && (raw = current.raw).is_a?(String) && (raw.includes?("{{") || raw.includes?("{%") || raw.includes?("{#"))
+      if current && (raw = current.raw).is_a?(String) && (raw.includes?("{{") || raw.includes?("{%") || raw.includes?("{#")) &&
+         !VarSubstitutor.unsafe_root?(vars_context, template) && !UnsafeValues.unsafe_text?(raw)
         # A raw value that's a PURE block-tag expression (`{%- if ... -%}
         # ruby {%- else -%} ruby2.0 {%- endif -%}`, no `{{` at all) needs
         # the full Crinja renderer, same as every other "{{ OR {% OR {#"
@@ -1245,7 +1326,7 @@ module Krikri
     # before 40671ba).
     private def resolve_task_check_mode(task : Task, vars_context : Hash(String, JSON::Any)? = nil) : Bool
       if (expr = task.check_mode_expr) && (vars = vars_context)
-        substitutor = VarSubstitutor.new(vars: vars, host_name: "")
+        substitutor = VarSubstitutor.new(vars: vars)
         rendered = substitutor.substitute(expr)
         begin
           return ConditionalEvaluator.evaluate(rendered, {} of String => JSON::Any)
@@ -1291,7 +1372,7 @@ module Krikri
       return task.ignore_errors? unless expr
 
       vars = vars_context || {"ansible_check_mode" => JSON::Any.new(@check_mode)} of String => JSON::Any
-      substitutor = VarSubstitutor.new(vars: vars, host_name: "")
+      substitutor = VarSubstitutor.new(vars: vars)
       rendered = substitutor.substitute(expr)
       # A reference the given *vars* can't resolve (an expression
       # touching more than the minimal ansible_check_mode-only fallback
@@ -1330,7 +1411,7 @@ module Krikri
       return task.no_log? unless expr
 
       vars = vars_context || {"ansible_check_mode" => JSON::Any.new(@check_mode)} of String => JSON::Any
-      substitutor = VarSubstitutor.new(vars: vars, host_name: "")
+      substitutor = VarSubstitutor.new(vars: vars)
       rendered = substitutor.substitute(expr)
       return task.no_log? if rendered == "undefined"
       ConditionalEvaluator.evaluate(rendered, vars) rescue task.no_log?

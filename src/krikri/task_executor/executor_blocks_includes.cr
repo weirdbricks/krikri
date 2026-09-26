@@ -1,4 +1,5 @@
 require "./executor"
+require "../unsafe_values"
 
 module Krikri
   class TaskExecutor
@@ -123,7 +124,9 @@ module Krikri
 
       run_groups.each do |resolved_path, group_hosts|
         begin
-          yaml = YAML.parse(Vault.maybe_decrypt(File.read(resolved_path)))
+          text = Vault.maybe_decrypt(File.read(resolved_path))
+          UnsafeValues.mark_yaml_text(text)
+          yaml = YAML.parse(text)
           # A comment-only (or entirely blank) tasks file - real Ansible
           # treats this as zero tasks, not an error (ansistrano.deploy's
           # own tasks/empty.yml, deliberately shipped as a no-op include
@@ -463,7 +466,8 @@ module Krikri
         # item isn't appended, a narrower gap than the fully generic
         # looped-module path.
         item_results = [] of JSON::Any
-        rendered_items = loop_items.map { |item| deep_render_item(item, loop_vars_context, host.name, strict: false) }
+        unsafe_items = loop_items_unsafe?(task, host.name)
+        rendered_items = loop_items.map { |item| deep_render_item(item, loop_vars_context, host.name, strict: false, unsafe: unsafe_items) }
         rendered_items = flatten_with_items_one_level(rendered_items) if task.loop_items_needs_flatten?
         rendered_items.each_with_index do |item, loop_index|
           item_context = vars_context.dup
@@ -1238,6 +1242,7 @@ module Krikri
         # `mount` in dev-sec os_hardening's per-mountpoint include loop).
         loop_var = task.loop_var
         index_var = task.index_var
+        unsafe_items = loop_items_unsafe?(task, host.name)
         if task.loop_items_needs_flatten?
           # with_items:'s implicit flatten(levels=1) needs each raw item
           # RENDERED first (a raw item here is still an unrendered "{{
@@ -1245,7 +1250,7 @@ module Krikri
           # real array it resolves to) - flatten only makes sense against
           # the rendered values.
           loop_items = flatten_with_items_one_level(
-            loop_items.map { |item| deep_render_item(item, loop_vars_context, host.name, strict: false) }
+            loop_items.map { |item| deep_render_item(item, loop_vars_context, host.name, strict: false, unsafe: unsafe_items) }
           )
         end
         looped_when_failed = false
@@ -1261,7 +1266,7 @@ module Krikri
           # Item rendering is loop-source-grade templating, so it renders
           # against the alias-free snapshot, while the per-iteration
           # context the included tasks see keeps the full one.
-          rendered_item = deep_render_item(item, loop_vars_context, host.name, strict: false)
+          rendered_item = deep_render_item(item, loop_vars_context, host.name, strict: false, unsafe: unsafe_items)
           vars_context["item"] = rendered_item
           vars_context[loop_var] = rendered_item if loop_var
           vars_context[index_var] = JSON::Any.new(idx.to_i64) if index_var
@@ -1381,7 +1386,9 @@ module Krikri
         return true
       end
 
-      yaml = YAML.parse(Vault.maybe_decrypt(File.read(resolved_path)))
+      text = Vault.maybe_decrypt(File.read(resolved_path))
+      UnsafeValues.mark_yaml_text(text)
+      yaml = YAML.parse(text)
       # A comment-only (or entirely blank) tasks file - see the batched
       # #execute_include_tasks_multi path's identical check for why this
       # can't be folded into the `unless yaml.as_a?` check below. Zero
@@ -1576,9 +1583,10 @@ module Krikri
       if loop_items
         loop_var = task.loop_var
         index_var = task.index_var
+        unsafe_items = loop_items_unsafe?(task, host.name)
         if task.loop_items_needs_flatten?
           loop_items = flatten_with_items_one_level(
-            loop_items.map { |item| deep_render_item(item, loop_vars_context, host.name, strict: false) }
+            loop_items.map { |item| deep_render_item(item, loop_vars_context, host.name, strict: false, unsafe: unsafe_items) }
           )
         end
         loop_items.each_with_index do |item, idx|

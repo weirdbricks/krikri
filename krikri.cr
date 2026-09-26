@@ -27,6 +27,7 @@
 require "option_parser"
 require "colorize"
 require "./src/krikri/version"
+require "./src/krikri/unsafe_values"
 require "./src/krikri/playbook_parser"
 require "./src/krikri/inventory_parser"
 require "./src/krikri/cli_options"

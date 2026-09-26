@@ -1,4 +1,5 @@
 require "json"
+require "../unsafe_values"
 require "./filter_engine"
 require "./jinja_renderer"
 
@@ -22,12 +23,12 @@ module Krikri
       # shared implementation (VariableSubstitutor::Rerender) - the
       # multi-span and block-tag fixes this copy used to re-discover
       # independently land there once for every caller.
-      private def rerender_if_templated(value : JSON::Any) : JSON::Any
-        Rerender.if_templated(@vars, value) || value
+      private def rerender_if_templated(value : JSON::Any, source_expr : String? = nil) : JSON::Any
+        Rerender.if_templated(@vars, value, source_expr) || value
       end
 
-      private def render_raw_template_string(raw : String) : String
-        Rerender.render_raw(@vars, raw)
+      private def render_raw_template_string(raw : String, source_expr : String? = nil) : String
+        Rerender.render_raw(@vars, raw, source_expr)
       end
 
       # Evaluate a comparison expression
@@ -254,11 +255,14 @@ module Krikri
             # already handled it), but this plain-lookup fallback for a
             # bare comparison operand didn't.
             if raw.includes?("{%") || raw.includes?("{#")
-              rendered = JinjaRenderer.new(@vars).render(raw)
-              return rendered.to_i64? || rendered
+              unless VarSubstitutor.unsafe_root?(@vars, name) || UnsafeValues.unsafe_text?(raw)
+                rendered = JinjaRenderer.new(@vars).render(raw)
+                return rendered.to_i64? || rendered
+              end
+              return raw.strip
             end
             if raw.includes?("{{")
-              rendered = render_raw_template_string(raw)
+              rendered = render_raw_template_string(raw, name)
               return rendered.to_i64? || rendered
             end
             return raw.strip
@@ -287,7 +291,7 @@ module Krikri
         current = VariableSubstitutor.walk_dotted_path(base, parts[1..])
         return "undefined" unless current
 
-        rerender_if_templated(current).to_s
+        rerender_if_templated(current, expr).to_s
       end
 
       # Resolves a simple or dotted expression to its raw JSON::Any value
@@ -304,7 +308,7 @@ module Krikri
         current = VariableSubstitutor.walk_dotted_path(base, parts[1..])
         return nil unless current
 
-        rerender_if_templated(current)
+        rerender_if_templated(current, expr)
       end
 
       # Converts a resolved JSON::Any (a filter chain's result) into this

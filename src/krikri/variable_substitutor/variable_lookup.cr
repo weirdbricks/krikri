@@ -1,4 +1,5 @@
 require "json"
+require "../unsafe_values"
 require "./expression_evaluator"
 require "./jinja_renderer"
 
@@ -18,6 +19,16 @@ module Krikri
       @vars : Hash(String, JSON::Any)
 
       def initialize(@vars : Hash(String, JSON::Any))
+      end
+
+      # Unsafe gate (see VarSubstitutor.unsafe_root?): a value resolved
+      # through an execution-resolved root (registered result / set_fact /
+      # fact / loop item) is never re-rendered, no matter how much its text
+      # looks like a template - real ansible-core marks module results and
+      # facts AnsibleUnsafe. Every rerender_if_templated call site here
+      # consults this with the expression it resolved FROM.
+      private def unsafe_root?(expr : String?) : Bool
+        VarSubstitutor.unsafe_root?(@vars, expr)
       end
 
       # Simple variable lookup
@@ -222,6 +233,7 @@ module Krikri
 
       private def rerender_if_templated(value : JSON::Any) : JSON::Any
         return value unless (raw = value.raw).is_a?(String) && templated_value?(raw)
+        return value if UnsafeValues.unsafe_text?(raw)
 
         # Depth guard shared with Rerender.if_templated - a cycle can
         # re-enter through either entry point (this method and the
@@ -335,7 +347,7 @@ module Krikri
         # apt's own `name:` param.
         current = resolve_nested_base(parts[0])
         return nil unless current
-        current = rerender_if_templated(current)
+        current = rerender_if_templated(current) unless unsafe_root?(expr)
 
         apply_dotted_parts(current, parts[1..-1])
       end
@@ -597,7 +609,7 @@ module Krikri
           # fail2ban_dependencies has a templated 2nd element (a ternary
           # choosing a package name or ''), stored raw/unrendered in
           # @vars the same way every other lazily-evaluated default is.
-          rendered = items.map { |item| rerender_if_templated(item) }
+          rendered = render_join_items(items, arg)
           # Coerce non-string elements via format_value instead of a bare
           # .as_s (which raised TypeCastError for ints/dicts) - real
           # Jinja2's join str()s each element.
@@ -605,6 +617,15 @@ module Krikri
         end
 
         nil
+      end
+
+      # The join()'s per-element re-render, split out of string_method_
+      # call to keep that method's cyclomatic complexity in check - and
+      # to carry the unsafe gate (see unsafe_root?): elements resolved
+      # through an execution-resolved root are verbatim content, never
+      # re-rendered.
+      private def render_join_items(items : Array(JSON::Any), source_expr : String) : Array(JSON::Any)
+        items.map { |item| unsafe_root?(source_expr) ? item : rerender_if_templated(item) }
       end
 
       # Python's str.lstrip/rstrip/strip(chars) semantics: chars (nil ==
@@ -767,7 +788,7 @@ module Krikri
         # received the literal text "{{ docker_repo_ce_stable }}" as
         # *current* and tried to index a STRING with `['apt_gpg_key']`,
         # always nil/"undefined" instead of the real nested value.
-        current = rerender_if_templated(current)
+        current = rerender_if_templated(current) unless unsafe_root?(expr)
 
         walk(current, expr[base_end..])
       end
@@ -792,7 +813,7 @@ module Krikri
       private def resolve_bracket_index_key(index_expr : String) : String | Int32 | Nil
         return nil unless top_level_char_index(index_expr, '[')
 
-        resolved = resolve(index_expr).try { |value| rerender_if_templated(value) }
+        resolved = resolve(index_expr).try { |value| unsafe_root?(index_expr) ? value : rerender_if_templated(value) }
         return nil unless resolved
 
         case raw = resolved.raw
@@ -842,7 +863,7 @@ module Krikri
         # this guard already). Real bug found live-verifying
         # prometheus.prometheus.node_exporter: every download's
         # checksum verification failed this way.
-        resolved = (resolve_simple(index_expr) || resolve_nested(index_expr)).try { |value| rerender_if_templated(value) }
+        resolved = (resolve_simple(index_expr) || resolve_nested(index_expr)).try { |value| unsafe_root?(index_expr) ? value : rerender_if_templated(value) }
         case raw = resolved.try(&.raw)
         when String       then raw
         when Int64, Int32 then raw.to_i

@@ -1,4 +1,5 @@
 require "json"
+require "../unsafe_values"
 require "base64"
 require "http/client"
 require "uri"
@@ -1721,7 +1722,7 @@ module Krikri
         # plain-lookup fallback for a bare `+`/`~` operand returned the
         # raw, unrendered template text, so the "in" check against every
         # real checksum-file line always came back false.
-        if value = retemplated_lookup_value(resolved)
+        if value = retemplated_lookup_value(resolved, expr)
           return value
         end
 
@@ -1811,9 +1812,14 @@ module Krikri
       # Re-renders a plain-lookup result whose own raw value is still
       # unrendered Jinja template text (`{%`/`{#` block tags need the
       # full Crinja renderer; a `{{ }}`-span re-enters this evaluator) -
-      # nil when the value isn't template text at all.
-      private def retemplated_lookup_value(resolved : JSON::Any?) : JSON::Any?
+      # nil when the value isn't template text at all. *source_expr* is
+      # the expression the value was resolved FROM: a root published as
+      # execution-resolved (registered result / set_fact / fact / loop
+      # item) makes the value unsafe - returned verbatim, never
+      # re-rendered (real ansible-core's AnsibleUnsafe semantics).
+      private def retemplated_lookup_value(resolved : JSON::Any?, source_expr : String? = nil) : JSON::Any?
         return nil unless resolved
+        return nil if VarSubstitutor.unsafe_root?(@vars, source_expr)
 
         # An Array/Hash resolved value can hold nested String elements
         # that are STILL unrendered `{{ }}` text one level down - the
@@ -1852,6 +1858,7 @@ module Krikri
         end
 
         return nil unless raw.is_a?(String)
+        return nil if UnsafeValues.unsafe_text?(raw)
         if raw.includes?("{%") || raw.includes?("{#")
           # Block tags need the full Crinja renderer, not this plain
           # `{{ }}`-only evaluator - see variable_lookup.cr's identical
@@ -4324,7 +4331,8 @@ module Krikri
 
         value = filter_chain_head_value(var_expr)
 
-        result = segments[1..].reduce(value) { |acc, filter_expr| @filter.apply(acc, filter_expr) }
+        root = VarSubstitutor.expression_root(var_expr)
+        result = segments[1..].reduce(value) { |acc, filter_expr| @filter.apply(acc, filter_expr, root) }
         @lookup.format_value(result)
       end
 
@@ -4483,7 +4491,7 @@ module Krikri
         # counterpart, since `{{ vault_tls_gossip }}` alone (no
         # filter) already got a re-render pass elsewhere but a
         # filter chain's own head resolution here didn't.
-        if value = retemplated_lookup_value(resolved)
+        if value = retemplated_lookup_value(resolved, var_expr)
           return value
         end
 

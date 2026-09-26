@@ -1,4 +1,5 @@
 require "../timing_profile"
+require "../unsafe_values"
 require "json"
 require "../variable_substitutor"
 require "../python_filter_runner"
@@ -308,6 +309,9 @@ module Krikri
         if VarSubstitutor.resolved_var_name?(substitutor.host_name, name.split(/[\.\[]/, 2)[0])
           return raw_value
         end
+        if (raw_unsafe = raw_value.raw).is_a?(String) && UnsafeValues.unsafe_text?(raw_unsafe)
+          return raw_value
+        end
 
         if @@prepare_vars_depth >= MAX_PREPARE_VARS_DEPTH
           return raw_value
@@ -345,15 +349,36 @@ module Krikri
       end
 
       # The `hostvars` magic variable: every host's vars re-templated,
-      # under the same depth guard.
+      # under the same depth guard. Each entry is gated by THAT host's own
+      # unsafe-name registry - another host's registered results/set_facts/
+      # facts are unsafe exactly like the current host's (a hostile target
+      # reachable through `hostvars['other']` gets no re-render either),
+      # while the host's author-defined template vars still render.
       def self.prepare_hostvars(raw_value : JSON::Any, substitutor : VarSubstitutor) : JSON::Any
         @@prepare_vars_depth += 1
         begin
           hosts = raw_value.as_h? || return raw_value
-          JSON::Any.new(hosts.transform_values { |entry| rerender_nested_templates(entry, substitutor) })
+          prepared_hosts = Hash(String, JSON::Any).new(initial_capacity: hosts.size)
+          hosts.each do |host_name, entry|
+            prepared_hosts[host_name] = prepare_hostvars_entry(host_name, entry, substitutor)
+          end
+          JSON::Any.new(prepared_hosts)
         ensure
           @@prepare_vars_depth -= 1
         end
+      end
+
+      private def self.prepare_hostvars_entry(host_name : String, entry : JSON::Any, substitutor : VarSubstitutor) : JSON::Any
+        hash = entry.as_h? || return rerender_nested_templates(entry, substitutor)
+        prepared = Hash(String, JSON::Any).new(initial_capacity: hash.size)
+        hash.each do |key, value|
+          prepared[key] = if VarSubstitutor.resolved_var_name?(host_name, key)
+                            value
+                          else
+                            rerender_nested_templates(value, substitutor)
+                          end
+        end
+        JSON::Any.new(prepared)
       end
 
       # Real bug found benchmarking geerlingguy.postgresql: its own

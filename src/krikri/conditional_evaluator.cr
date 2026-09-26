@@ -1,4 +1,5 @@
 require "json"
+require "./unsafe_values"
 require "krikri-jinja/krikri_jinja"
 require "./jinja_host_context"
 require "./variable_substitutor/filter_engine"
@@ -1517,7 +1518,10 @@ module Krikri
       # password is defined` answered True here even after the Crinja
       # side started answering False, and any role gating a
       # set-the-real-default task on `is undefined` skipped it.
-      if (raw = resolved.raw).is_a?(String) && VarSubstitutor.new(vars: vars).unresolvable_template?(raw)
+      if (raw = resolved.raw).is_a?(String) &&
+         !VarSubstitutor.unsafe_root?(vars, var_name) &&
+         !UnsafeValues.unsafe_text?(raw) &&
+         VarSubstitutor.new(vars: vars).unresolvable_template?(raw)
         return false
       end
 
@@ -1532,12 +1536,12 @@ module Krikri
     # implementation (VariableSubstitutor::Rerender) - the multi-span
     # and block-tag fixes this copy used to re-discover independently
     # land there once for every caller.
-    private def self.rerender_if_templated(vars : Hash(String, JSON::Any), value : JSON::Any?) : JSON::Any?
-      VariableSubstitutor::Rerender.if_templated(vars, value)
+    private def self.rerender_if_templated(vars : Hash(String, JSON::Any), value : JSON::Any?, source_expr : String? = nil) : JSON::Any?
+      VariableSubstitutor::Rerender.if_templated(vars, value, source_expr)
     end
 
-    private def self.render_raw_template_string(vars : Hash(String, JSON::Any), raw : String) : String
-      VariableSubstitutor::Rerender.render_raw(vars, raw)
+    private def self.render_raw_template_string(vars : Hash(String, JSON::Any), raw : String, source_expr : String? = nil) : String
+      VariableSubstitutor::Rerender.render_raw(vars, raw, source_expr)
     end
 
     # When this evaluation traces back to a task-level `when:`/`assert:`
@@ -1548,10 +1552,12 @@ module Krikri
     # caller keeps the long-standing lenient render (see Rerender.if_
     # templated): `default()`/`is defined`/never-referenced leniency is
     # correct everywhere a strict task-condition caller isn't asking.
-    private def self.strict_probe_templated_value(vars : Hash(String, JSON::Any), value : JSON::Any?, raise_undefined : Bool) : Nil
+    private def self.strict_probe_templated_value(vars : Hash(String, JSON::Any), value : JSON::Any?, raise_undefined : Bool, source_expr : String? = nil) : Nil
       return unless raise_undefined
       return unless (raw = value.try(&.raw)).is_a?(String) &&
                     (raw.includes?("{{") || raw.includes?("{%") || raw.includes?("{#"))
+      return if VarSubstitutor.unsafe_root?(vars, source_expr)
+      return if UnsafeValues.unsafe_text?(raw)
       Krikri::VarSubstitutor.new(vars: vars).strict_render(raw)
       nil
     end
@@ -1590,7 +1596,7 @@ module Krikri
               else
                 vars[expr]?
               end
-      rerender_if_templated(vars, value)
+      rerender_if_templated(vars, value, expr)
     end
 
     # 'is exists'/'is file'/'is directory'/'is link'/'is link_exists' -
@@ -1980,7 +1986,7 @@ module Krikri
                 else
                   vars[var_name]?
                 end
-        value = rerender_if_templated(vars, value)
+        value = rerender_if_templated(vars, value, var_name)
       end
       return false unless value
 
@@ -2748,8 +2754,8 @@ module Krikri
           # raw form is itself still unrendered Jinja was returned
           # as-is, un-rendered.
           resolved = VariableSubstitutor::VariableLookup.new(vars).resolve(expr)
-          strict_probe_templated_value(vars, resolved, raise_undefined)
-          resolved = rerender_if_templated(vars, resolved)
+          strict_probe_templated_value(vars, resolved, raise_undefined, expr)
+          resolved = rerender_if_templated(vars, resolved, expr)
           return json_any_to_value(resolved) if resolved
           raise UndefinedVariableError.new(undefined_reference_message(expr, vars)) if raise_undefined
           return nil
@@ -2778,8 +2784,8 @@ module Krikri
           # check failing with the wrong message) instead of real
           # Ansible's "'system_user' is undefined" (inmotionhosting.
           # php_fpm, round 82024).
-          strict_probe_templated_value(vars, value, raise_undefined)
-          rendered = render_raw_template_string(vars, raw)
+          strict_probe_templated_value(vars, value, raise_undefined, expr)
+          rendered = render_raw_template_string(vars, raw, expr)
           json_any_to_value(Krikri.parse_json_or_python_literal(rendered))
         else
           json_any_to_value(value)
@@ -2866,7 +2872,7 @@ module Krikri
     private def self.resolve_json(expr : String, vars : Hash(String, JSON::Any)) : JSON::Any?
       # Same recursive-re-templating gap as #evaluate_value's own two
       # copies above - found in the audit pass, not a real-host round.
-      rerender_if_templated(vars, VariableSubstitutor::VariableLookup.new(vars).resolve(expr.strip))
+      rerender_if_templated(vars, VariableSubstitutor::VariableLookup.new(vars).resolve(expr.strip), expr)
     end
 
     # Converts a resolved JSON::Any into the same union evaluate_value

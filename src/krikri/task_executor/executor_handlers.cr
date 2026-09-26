@@ -1,4 +1,5 @@
 require "./executor"
+require "../unsafe_values"
 require "krikri-jinja/krikri_jinja"
 require "../jinja_host_context"
 
@@ -336,8 +337,9 @@ module Krikri
         # Item rendering is loop-source-grade templating - the alias-free
         # snapshot (see #synthesize_legacy_ssh_aliases), not the full
         # per-iteration context below.
+        unsafe_items = loop_items_unsafe?(handler, host.name)
         loop_items = flatten_with_items_one_level(
-          loop_items.map { |item| deep_render_item(item, loop_source_vars_context(handler, host, base_vars_context), host.name, strict: false) }
+          loop_items.map { |item| deep_render_item(item, loop_source_vars_context(handler, host, base_vars_context), host.name, strict: false, unsafe: unsafe_items) }
         )
       end
       loop_var = handler.loop_var
@@ -558,7 +560,9 @@ module Krikri
           }.to_json)
         end
 
-        yaml = YAML.parse(Vault.maybe_decrypt(File.read(resolved_path)))
+        text = Vault.maybe_decrypt(File.read(resolved_path))
+        UnsafeValues.mark_yaml_text(text)
+        yaml = YAML.parse(text)
         # A comment-only (or entirely blank) tasks file - see the
         # regular-task include_tasks: path's identical check for why.
         return JSON.parse({"changed" => false, "failed" => false}.to_json) if yaml.raw.nil?
