@@ -1181,6 +1181,36 @@ describe Krikri::PlaybookParser do
       task.retries.should eq(3)
       task.delay.should eq(5)
     end
+
+    # Real Ansible accepts a LIST of until: clauses (ANDed). Stringifying
+    # the list as its literal to_s ("[moodle_download is succeeded]") left
+    # the condition unresolvable, so the retry loop ran every attempt and
+    # the final idempotent attempt's changed: false replaced attempt 1's
+    # real changed: true (round 979035, buluma.moodle).
+    it "parses a single-clause until: list as the bare clause" do
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.command: /bin/true
+          register: result
+          until:
+            - result is succeeded
+        YAML
+
+      task.until_condition.should eq("result is succeeded")
+    end
+
+    it "parses a multi-clause until: list as an AND of the clauses" do
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.command: /bin/true
+          register: result
+          until:
+            - result is succeeded
+            - result.rc == 0
+        YAML
+
+      task.until_condition.should eq("(result is succeeded) and (result.rc == 0)")
+    end
   end
 
   describe "changed_when / failed_when parsing" do

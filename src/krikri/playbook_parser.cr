@@ -3186,7 +3186,17 @@ module Krikri
       end
 
       # Parse until / retries / delay
-      task.until_condition = task_hash["until"]?.try { |v| safe_yaml_to_string(v) }
+      # until: goes through condition_to_string, not safe_yaml_to_string:
+      # real Ansible accepts a LIST of until: clauses (ANDed together -
+      # buluma.moodle's "Download moodle archive" uses exactly that), and
+      # safe_yaml_to_string stringifies an Array as its literal Crystal
+      # to_s ("[moodle_download is succeeded]"), which the ConditionalEvaluator
+      # then parses as var name "[moodle_download]" - never resolvable, so
+      # the until: retry loop never saw its exit condition, ran every
+      # attempt, and the final (now-idempotent, changed: false) attempt's
+      # result silently replaced attempt 1's real changed: true (round
+      # 979035, buluma.moodle).
+      task.until_condition = task_hash["until"]?.try { |v| condition_to_string(v) }
       task.retries = task_hash["retries"]?.try { |v| safe_yaml_to_string(v).to_i? } || 3
       task.delay = task_hash["delay"]?.try { |v| safe_yaml_to_string(v).to_i? } || 5
 
