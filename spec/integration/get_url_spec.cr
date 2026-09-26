@@ -34,6 +34,21 @@ get_url_test_server = HTTP::Server.new do |context|
   when "/sha256sums-no-match.txt"
     context.response.status_code = 200
     context.response.print("0000000000000000000000000000000000000000000000000000000000000000  other.txt\n")
+  when "/dyn/closer.cgi"
+    # Stands in for apache.org/dyn/closer.cgi?action=download&...: a
+    # redirect whose OWN path (/dyn/closer.cgi) has an unrelated basename,
+    # pointing at the real package and naming it via Content-Disposition.
+    context.response.status_code = 302
+    context.response.headers["Location"] = "/pkg-1.0.tar.gz"
+    context.response.headers["Content-Disposition"] = "attachment; filename=\"pkg-1.0.tar.gz\""
+  when "/bare-cgi"
+    # Same shape but NO Content-Disposition: the filename must then come
+    # from the final (post-redirect) URL's basename.
+    context.response.status_code = 302
+    context.response.headers["Location"] = "/pkg-1.0.tar.gz"
+  when "/pkg-1.0.tar.gz"
+    context.response.status_code = 200
+    context.response.print(FILE_CONTENT)
   when "/file.txt.sha256-bare"
     context.response.status_code = 200
     context.response.print("#{FILE_CHECKSUM}\n")
@@ -303,6 +318,65 @@ describe "get_url plugin" do
     File.read(dest).should eq(FILE_CONTENT)
   ensure
     File.delete(dest) if dest && File.exists?(dest)
+  end
+
+  it "names a directory-dest download after the redirect target, not the original URL path (Content-Disposition)" do
+    # Real bug found benchmarking mrlesmithjr.guacamole (round 979121):
+    # its download URL is apache.org/dyn/closer.cgi?action=download&...,
+    # whose own path is just /dyn/closer.cgi. Real get_url derives a
+    # directory-dest filename AFTER the request (final response's
+    # Content-Disposition, else the FINAL post-redirect URL's basename);
+    # krikri derived it up front from the original URL, landing the file
+    # at <dir>/closer.cgi so the role's next unarchive task failed with
+    # "Source ... failed to transfer" while real Ansible had already put
+    # the tarball where unarchive expected it.
+    dest_dir = File.join(File.tempname("get-url-spec"), "dl")
+    Dir.mkdir_p(dest_dir)
+
+    result = PluginSpecHelper.run("get_url", {
+      "url" => "#{get_url_base}/dyn/closer.cgi?action=download&filename=guac/1.0/source/pkg-1.0.tar.gz",
+      "dest" => dest_dir,
+    })
+
+    result["changed"].as_bool.should be_true
+    result["failed"]?.try(&.as_bool).should be_falsey
+    result["dest"].as_s.should eq(File.join(dest_dir, "pkg-1.0.tar.gz"))
+    File.read(File.join(dest_dir, "pkg-1.0.tar.gz")).should eq(FILE_CONTENT)
+    File.exists?(File.join(dest_dir, "closer.cgi")).should be_false
+  ensure
+    FileUtils.rm_rf(dest_dir) if dest_dir && Dir.exists?(dest_dir)
+  end
+
+  it "falls back to the final URL's basename for a directory dest when no Content-Disposition is sent" do
+    dest_dir = File.join(File.tempname("get-url-spec"), "dl")
+    Dir.mkdir_p(dest_dir)
+
+    result = PluginSpecHelper.run("get_url", {"url" => "#{get_url_base}/bare-cgi", "dest" => dest_dir})
+
+    result["changed"].as_bool.should be_true
+    result["failed"]?.try(&.as_bool).should be_falsey
+    result["dest"].as_s.should eq(File.join(dest_dir, "pkg-1.0.tar.gz"))
+    File.read(File.join(dest_dir, "pkg-1.0.tar.gz")).should eq(FILE_CONTENT)
+  ensure
+    FileUtils.rm_rf(dest_dir) if dest_dir && Dir.exists?(dest_dir)
+  end
+
+  it "is idempotent on a directory-dest rerun (always re-requests, then content-compares the final dest)" do
+    # Real get_url never short-circuits on a directory dest (its
+    # dest-existence check is guarded by `not dest_is_dir` - the filename
+    # isn't knowable before the request); idempotency comes from the
+    # post-download SHA1 compare against the already-placed file.
+    dest_dir = File.join(File.tempname("get-url-spec"), "dl")
+    Dir.mkdir_p(dest_dir)
+    File.write(File.join(dest_dir, "pkg-1.0.tar.gz"), FILE_CONTENT)
+
+    result = PluginSpecHelper.run("get_url", {"url" => "#{get_url_base}/dyn/closer.cgi?filename=x", "dest" => dest_dir})
+
+    result["changed"].as_bool.should be_false
+    result["failed"]?.try(&.as_bool).should be_falsey
+    File.exists?(File.join(dest_dir, "closer.cgi")).should be_false
+  ensure
+    FileUtils.rm_rf(dest_dir) if dest_dir && Dir.exists?(dest_dir)
   end
 
   it "resolves a checksum URL by parsing the per-file hash from a sha256sums file" do

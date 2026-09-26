@@ -40,23 +40,41 @@ module Krikri
         ciphers : String? = nil,
         unredirected_headers : Array(String) = [] of String
 
+      # What the FINAL response of a redirect-following download looked
+      # like: real Ansible's get_url derives a directory-dest download's
+      # filename from the final response's Content-Disposition header
+      # (falling back to the FINAL post-redirect URL's basename), so
+      # callers need both pieces of the last hop, not the original URL.
+      record Result, final_url : String, headers : HTTP::Headers
+
       # Downloads `url` to `dest`, following up to `max_redirects`
       # redirects and streaming the raw body byte-for-byte. Returns nil on
       # success; raises on non-2xx response, too many redirects, or an
       # unsupported scheme.
+      def self.download(
+        url : String,
+        dest : String,
+        options : Options = Options.new,
+      ) : Nil
+        download_with_info(url, dest, options)
+        nil
+      end
+
+      # Same as #download but returns the final hop's URL and response
+      # headers (see Result).
       #
       # `auth_attempted` tracks the 401-challenge retry: with
       # force_basic_auth: false (the real-Ansible default) the first
       # request goes out WITHOUT Authorization and exactly one retry is
       # made WITH it when the server answers 401 - a second 401 then
       # surfaces as the failure it is instead of looping.
-      def self.download(
+      def self.download_with_info(
         url : String,
         dest : String,
         options : Options = Options.new,
         redirects_left : Int32 = options.max_redirects,
         auth_attempted : Bool = false,
-      ) : Nil
+      ) : Result
         raise "too many redirects" if redirects_left < 0
 
         uri = URI.parse(url)
@@ -68,12 +86,12 @@ module Krikri
           if challenge_relevant && response.status_code == 401 &&
              options.username && options.password
             client.close
-            return download(url, dest, options, redirects_left, auth_attempted: true)
+            return download_with_info(url, dest, options, redirects_left, auth_attempted: true)
           end
 
           if response.status.redirection? && (location = response.headers["Location"]?)
             client.close
-            return download(resolve_redirect(uri, location), dest, redirect_options(options), redirects_left - 1)
+            return download_with_info(resolve_redirect(uri, location), dest, redirect_options(options), redirects_left - 1)
           end
 
           unless response.status.success?
@@ -88,6 +106,7 @@ module Krikri
           File.open(dest, "w", 0o666) do |file|
             IO.copy(response.body_io, file)
           end
+          Result.new(final_url: url, headers: response.headers)
         end
       ensure
         client.try(&.close)
