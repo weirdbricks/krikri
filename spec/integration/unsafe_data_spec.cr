@@ -190,6 +190,172 @@ describe "loop items that are author template strings referencing facts still re
   end
 end
 
+describe "loop items from author template sources over set_fact/register data always render" do
+  # The 2026-09 with_items-taint regression (geerlingguy.php's
+  # "Ensure configuration directories exist."): each ELEMENT of a literal
+  # loop list that is a single-span direct reference to a resolved name
+  # (`"{{ paths | flatten }}"`, `"{{ r.stdout }}"`) was treated as a taint
+  # source, the `item` alias got tainted, and the taint then SKIPPED THE
+  # FIRST RENDER of the item - every element printed verbatim
+  # (`item={{ paths | flatten }}`), no directories were ever created, and
+  # buluma.phpmyadmin broke downstream. Taint must only ever prevent
+  # RE-rendering of values that came from unsafe data; the author-written
+  # template text is always rendered exactly once, and only the VALUES
+  # the render produces are marked (value-level, via the UnsafeValues
+  # registry) so they are never re-rendered.
+  it "renders with_items elements that are direct references to set_fact/register data (geerlingguy.php shape)" do
+    canary = File.tempname("unsafe-items-render-canary")
+    File.delete(canary) if File.exists?(canary)
+    status, output = hostile_run(<<-YAML, canary: canary)
+      - name: set paths
+        ansible.builtin.set_fact:
+          paths: ["/a/1", "/a/2"]
+      - name: consume
+        ansible.builtin.debug: msg="item={{ item }}"
+        with_items:
+          - "{{ paths | flatten }}"
+          - "{{ r.stdout }}"
+      YAML
+    status.success?.should be_true, output.to_s
+    # The set_fact-sourced elements render AND flatten one level.
+    output.to_s.should contain("item=/a/1")
+    output.to_s.should contain("item=/a/2")
+    # The register-sourced element renders to the (hostile) value.
+    output.to_s.should contain("item=#{canary_text(canary)}")
+    File.exists?(canary).should be_false,
+      "hostile lookup EXECUTED on the controller via a with_items element:\n#{output}"
+  ensure
+    File.delete(canary) if canary && File.exists?(canary)
+  end
+
+  it "renders loop: string-form and array-literal sources over set_fact data" do
+    canary = File.tempname("unsafe-strform-canary")
+    File.delete(canary) if File.exists?(canary)
+    status, output = hostile_run(<<-YAML, canary: canary)
+      - name: set facts
+        ansible.builtin.set_fact:
+          paths: ["/a/1", "/a/2"]
+          first: alpha
+          second: beta
+      - name: string form
+        ansible.builtin.debug: msg="item={{ item }}"
+        loop: "{{ paths }}"
+      - name: array literal
+        ansible.builtin.debug: msg="item={{ item }}"
+        loop: "{{ [first, second] }}"
+      YAML
+    status.success?.should be_true, output.to_s
+    output.to_s.should contain("item=/a/1")
+    output.to_s.should contain("item=/a/2")
+    output.to_s.should contain("item=alpha")
+    output.to_s.should contain("item=beta")
+    output.to_s.should_not contain("(item={{"), output.to_s
+  ensure
+    File.delete(canary) if canary && File.exists?(canary)
+  end
+
+  # Hostile variants of every shape above: the item VALUES derive from
+  # unsafe data, so they print verbatim and never execute - the value is
+  # marked in the UnsafeValues registry exactly where the retired `item`
+  # name taint used to protect it, but never at the cost of the first
+  # render.
+  it "prints hostile with_dict items verbatim without executing them" do
+    canary = File.tempname("unsafe-dict-item-canary")
+    File.delete(canary) if File.exists?(canary)
+    status, output = hostile_run(<<-YAML, canary: canary)
+      - name: set hostile dict
+        ansible.builtin.set_fact:
+          hd: {"k": "{{ r.stdout }}"}
+      - name: consume
+        ansible.builtin.debug: msg="item={{ item.value }}"
+        with_dict: "{{ hd }}"
+      YAML
+    status.success?.should be_true, output.to_s
+    File.exists?(canary).should be_false,
+      "hostile lookup EXECUTED on the controller via a with_dict item:\n#{output}"
+    output.to_s.should contain(canary_text(canary))
+  ensure
+    File.delete(canary) if canary && File.exists?(canary)
+  end
+
+  it "prints hostile items of a list-literal loop expression verbatim without executing them" do
+    canary = File.tempname("unsafe-arrlit-item-canary")
+    File.delete(canary) if File.exists?(canary)
+    status, output = hostile_run(<<-YAML, canary: canary)
+      - name: consume
+        ansible.builtin.debug: msg="item={{ item }}"
+        loop: "{{ [r.stdout] }}"
+      YAML
+    status.success?.should be_true, output.to_s
+    File.exists?(canary).should be_false,
+      "hostile lookup EXECUTED on the controller via a list-literal loop item:\n#{output}"
+    output.to_s.should contain("item=#{canary_text(canary)}")
+  ensure
+    File.delete(canary) if canary && File.exists?(canary)
+  end
+
+  it "prints a hostile scalar with_items source's single wrapped item verbatim without executing it" do
+    canary = File.tempname("unsafe-scalar-wrap-canary")
+    File.delete(canary) if File.exists?(canary)
+    status, output = hostile_run(<<-YAML, canary: canary)
+      - name: consume
+        ansible.builtin.debug: msg="item={{ item }}"
+        with_items: "{{ r.stdout }}"
+      YAML
+    status.success?.should be_true, output.to_s
+    File.exists?(canary).should be_false,
+      "hostile lookup EXECUTED on the controller via a scalar-wrapped with_items item:\n#{output}"
+    output.to_s.should contain("item=#{canary_text(canary)}")
+  ensure
+    File.delete(canary) if canary && File.exists?(canary)
+  end
+
+  it "prints hostile with_nested and with_subelements items verbatim without executing them" do
+    canary = File.tempname("unsafe-nested-subelem-canary")
+    File.delete(canary) if File.exists?(canary)
+    status, output = hostile_run(<<-YAML, canary: canary)
+      - name: set hostile subs
+        ansible.builtin.set_fact:
+          subs: [{"name": "s1", "kids": ["{{ r.stdout }}"]}]
+      - name: nested consume
+        ansible.builtin.debug: msg="item={{ item.0 }}-{{ item.1 }}"
+        with_nested:
+          - "{{ r.stdout_lines }}"
+          - [X]
+      - name: subelements consume
+        ansible.builtin.debug: msg="item={{ item.1 }}"
+        with_subelements:
+          - "{{ subs }}"
+          - kids
+      YAML
+    status.success?.should be_true, output.to_s
+    File.exists?(canary).should be_false,
+      "hostile lookup EXECUTED on the controller via a with_nested/with_subelements item:\n#{output}"
+    output.to_s.should contain("#{canary_text(canary)}-X")
+    output.to_s.should_not contain("(item={{"), output.to_s
+  ensure
+    File.delete(canary) if canary && File.exists?(canary)
+  end
+
+  it "prints a hostile custom loop_var's item verbatim without executing it" do
+    canary = File.tempname("unsafe-loopvar-canary")
+    File.delete(canary) if File.exists?(canary)
+    status, output = hostile_run(<<-YAML, canary: canary)
+      - name: consume
+        ansible.builtin.debug: msg="item={{ p }}"
+        loop: "{{ r.stdout_lines }}"
+        loop_control:
+          loop_var: p
+      YAML
+    status.success?.should be_true, output.to_s
+    File.exists?(canary).should be_false,
+      "hostile lookup EXECUTED on the controller via a custom loop_var item:\n#{output}"
+    output.to_s.should contain("item=#{canary_text(canary)}")
+  ensure
+    File.delete(canary) if canary && File.exists?(canary)
+  end
+end
+
 describe "unsafe module results are never re-templated" do
   assert_not_executed(<<-YAML, label: "when: r.stdout | length > 0")
     - name: consume

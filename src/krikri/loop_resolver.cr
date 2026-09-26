@@ -56,6 +56,12 @@ module Krikri
     # dict's subelement_key list. Access in a task via item[0] (the parent
     # dict) and item[1] (the subelement). dev-sec os_hardening uses it to
     # iterate the stdout_lines each of several shell/find results.
+    # The parent handed to the task is a COPY with the subelement_key
+    # REMOVED, matching real ansible-core's subelements lookup
+    # (live-verified against 2.19.11: `msg="{{ item.0 | to_json }}"` over
+    # {"name": "s1", "kids": [...]} prints {"name": "s1"} - keeping the
+    # key exposed the whole raw list through item.0 where real Ansible
+    # never shows it).
     def self.with_subelements(list : Array(JSON::Any), subelement : String) : Array(JSON::Any)
       result = [] of JSON::Any
       list.each do |entry|
@@ -63,9 +69,11 @@ module Krikri
           result << entry
           next
         end
+        parent = entry.as_h.dup
+        parent.delete(subelement)
         sub_list = entry.as_h[subelement]?.try(&.as_a?) || [] of JSON::Any
         sub_list.each do |sub|
-          result << JSON::Any.new([entry, sub])
+          result << JSON::Any.new([JSON::Any.new(parent), sub])
         end
       end
       result

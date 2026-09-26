@@ -337,10 +337,14 @@ module Krikri
         # Item rendering is loop-source-grade templating - the alias-free
         # snapshot (see #synthesize_legacy_ssh_aliases), not the full
         # per-iteration context below.
-        unsafe_items = loop_items_unsafe?(handler, host.name)
+        unsafe_items = loop_items_derive_from_unsafe_data?(handler, host.name)
+        # Unsafe-derived items are already rendered data - their render
+        # pass would be a second render, so it is skipped (see
+        # loop_items_derive_from_unsafe_data?).
         loop_items = flatten_with_items_one_level(
-          loop_items.map { |item| deep_render_item(item, loop_source_vars_context(handler, host, base_vars_context), host.name, strict: false, unsafe: unsafe_items) }
+          unsafe_items ? loop_items : loop_items.map { |item| deep_render_item(item, loop_source_vars_context(handler, host, base_vars_context), host.name, strict: false) }
         )
+        mark_unsafe_loop_items(loop_items) if unsafe_items
       end
       loop_var = handler.loop_var
       index_var = handler.index_var

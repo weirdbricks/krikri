@@ -100,3 +100,51 @@ describe "loop_control: extended" do
     output.should contain("have=False")
   end
 end
+
+# loop_control.loop_var REPLACES "item" - real ansible-core binds the item
+# ONLY under the custom name: `item | default(...)` reads unset alongside a
+# loop_var, and the registered per-item results carry the custom key (plus
+# ansible_loop_var), never "item". Live-verified against ansible-core
+# 2.19.11 (2026-09 with_items-taint round); krikri used to bind BOTH, so a
+# task referencing `item` alongside its own loop_var silently worked where
+# real Ansible fails with "'item' is undefined".
+describe "loop_control: loop_var replaces item" do
+  it "does not bind item alongside the custom name" do
+    code, output = run_play(<<-YAML)
+      - hosts: all
+        gather_facts: false
+        tasks:
+          - name: t
+            ansible.builtin.debug:
+              msg: "p={{ p }} item={{ item | default('NOITEM') }}"
+            loop: [1, 2]
+            loop_control:
+              loop_var: p
+      YAML
+
+    code.should eq(0)
+    output.should contain("p=1 item=NOITEM")
+    output.should contain("p=2 item=NOITEM")
+  end
+
+  it "registers the per-item result under the custom name only" do
+    code, output = run_play(<<-YAML)
+      - hosts: all
+        gather_facts: false
+        tasks:
+          - name: produce
+            ansible.builtin.debug: msg=x
+            loop: [1]
+            loop_control:
+              loop_var: p
+            register: out
+          - name: inspect
+            ansible.builtin.debug:
+              msg: "P={{ out.results[0].p | default('NOP') }} ITEM={{ out.results[0].item | default('NOITEM') }}"
+      YAML
+
+    code.should eq(0)
+    output.should contain("P=1")
+    output.should contain("ITEM=NOITEM")
+  end
+end
