@@ -78,6 +78,32 @@ module Krikri
       end
     end
 
+    # Records *text* when it is a DERIVED string - a render whose output
+    # embedded a registered hostile text (an author template like
+    # `loop: ["{{ r.stdout }}-suffix"]` pulls the hostile result value in
+    # as data; the concatenated output is itself unsafe exactly like real
+    # ansible-core's taint-follows-the-data model). The exact-text
+    # registry alone cannot see the derived string, so without this the
+    # hostile braces embedded in it would be re-rendered as template text
+    # the next time the value surfaces (e.g. `msg: "{{ item }}"` over the
+    # derived loop item). Substring match against the registry: any
+    # output containing a registered hostile text was necessarily fed by
+    # it (or coincides with it, which is the same verdict). Cheap: the
+    # scan only runs when the output still contains a Jinja marker, which
+    # after a normal render means hostile content survived in it.
+    def self.mark_derived(text : String) : Nil
+      return unless text.includes?("{{") || text.includes?("{%") || text.includes?("{#")
+      derived = false
+      @@texts.each do |hostile|
+        next if hostile == text
+        if text.includes?(hostile)
+          derived = true
+          break
+        end
+      end
+      @@texts.add(text) if derived
+    end
+
     private def self.walk(parser : YAML::PullParser) : Nil
       loop do
         case parser.kind

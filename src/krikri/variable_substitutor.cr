@@ -1228,7 +1228,9 @@ module Krikri
 
     private def substitute_impl_guarded(text : String, strict : Bool = false, output : Bool = false, native : Bool = false) : String
       if text.includes?("{%") || text.includes?("{#")
-        return render_block_tag_text(text, strict, renderer)
+        rendered_block = render_block_tag_text(text, strict, renderer)
+        UnsafeValues.mark_derived(rendered_block)
+        return rendered_block
       end
 
       # SUGGESTED_PERFORMANCE_IMPROVEMENTS.md item #20 (narrow sub-scope):
@@ -1303,6 +1305,7 @@ module Krikri
           rendered
         end
       end
+      UnsafeValues.mark_derived(result)
       result
     end
 
