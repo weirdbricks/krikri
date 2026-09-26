@@ -50,8 +50,13 @@ module Krikri
       # gsub(pattern, replacement) backref expansion, which differs in
       # corner cases (missing-group and multi-digit handling); one
       # implementation now, so both evaluators answer identically.
-      def self.regex_replace(s : String, pattern : String, replacement : String) : String
-        s.gsub(cached_regex(pattern)) do |_, mat|
+      # *options* carries the ignorecase/multiline kwargs real Ansible's
+      # regex_replace accepts (flags |= re.I / re.M). Python re.M only
+      # moves ^/$ to line boundaries - NOT dot-matches-newline - so
+      # callers must map it to Regex::Options::MULTILINE_ONLY, never
+      # MULTILINE (which implies DOTALL, Ruby semantics).
+      def self.regex_replace(s : String, pattern : String, replacement : String, options : Regex::Options = Regex::Options::None) : String
+        s.gsub(cached_regex(pattern, options)) do |_, mat|
           replacement.gsub(/\\(\d)/) { mat[$1.to_i]? || "" }
         end
       end

@@ -221,7 +221,12 @@ module Krikri
     private def check_port_regex(port : Int32, regex : String, deadline : Time::Span) : {Bool, Regex::MatchData?}
       host = @params["host"]? || "127.0.0.1"
       connect_timeout = (@params["connect_timeout"]? || "5").to_i.seconds
-      compiled = Regex.new(regex, Regex::CompileOptions::MULTILINE)
+      # Real Ansible compiles search_regex with re.MULTILINE (wait_for.py) -
+      # Python's re.M only moves ^/$ to line boundaries; `.` must NOT cross
+      # newlines. Crystal's MULTILINE constant implies DOTALL (regex.cr maps
+      # it to PCRE MULTILINE | DOTALL), so MULTILINE_ONLY is the
+      # Python-equivalent flag.
+      compiled = Regex.new(regex, Regex::CompileOptions::MULTILINE_ONLY)
 
       socket = TCPSocket.new(host, port, connect_timeout: connect_timeout)
       begin
@@ -266,7 +271,7 @@ module Krikri
         return {false, nil} unless up # search_regex only makes sense for present/started
         return {false, nil} unless exists
 
-        match = Regex.new(regex, Regex::CompileOptions::MULTILINE).match(File.read(path))
+        match = Regex.new(regex, Regex::CompileOptions::MULTILINE_ONLY).match(File.read(path))
         {!match.nil?, match}
       else
         {exists == up, nil}

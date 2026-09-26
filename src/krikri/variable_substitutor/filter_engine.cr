@@ -980,7 +980,15 @@ module Krikri
           group_ref = positional[1]?.try { |arg| as_string(resolve_expression(arg)) }
           options = Regex::Options::None
           if kw = parse_kwarg_expr(filter_args, "multiline")
-            options |= Regex::Options::MULTILINE if truthy?(kw)
+            # Python re.M only moves ^/$ to line boundaries - NOT
+            # dot-matches-newline. Crystal's MULTILINE implies DOTALL
+            # (Ruby semantics), so a pattern like 'Version:\\ .*:([\\d.]+)'
+            # swallowed everything through to the next line and matched
+            # an unrelated later line's capture (pluggero.openssh round
+            # 981024: Version: 1:8.9p1... vs the Description's
+            # "compat:1.1.4" line) - MULTILINE_ONLY is the
+            # Python-equivalent flag.
+            options |= Regex::Options::MULTILINE_ONLY if truthy?(kw)
           end
           if kw = parse_kwarg_expr(filter_args, "ignorecase")
             options |= Regex::Options::IGNORE_CASE if truthy?(kw)
@@ -1023,7 +1031,9 @@ module Krikri
           pattern = positional[0]?.try { |arg| as_string(resolve_expression(arg)) } || ""
           options = Regex::Options::None
           if truthy_arg?(parse_kwarg_expr(filter_args, "multiline"), positional[1]?)
-            options |= Regex::Options::MULTILINE
+            # Same Python-re.M-not-DOTALL rule as regex_search above:
+            # Crystal's MULTILINE wrongly implies DOTALL.
+            options |= Regex::Options::MULTILINE_ONLY
           end
           if truthy_arg?(parse_kwarg_expr(filter_args, "ignorecase"), positional[2]?)
             options |= Regex::Options::IGNORE_CASE
@@ -1048,10 +1058,27 @@ module Krikri
           # prefixed version then built a download URL with a doubled
           # "v" ("vv1.12.1"), which doesn't exist as a real release.
           args = split_top_level_args(filter_args)
-          pattern = args[0]?.try { |arg| as_string(resolve_expression(arg)) } || ""
-          replacement = args[1]?.try { |arg| as_string(resolve_expression(arg)) } || ""
+          # Real Ansible's regex_replace(value, pattern, replacement,
+          # ignorecase, multiline) accepts the flags both positionally (in
+          # that order) and as named kwargs (named wins) - same shape as
+          # regex_findall above. The flags were previously dropped
+          # entirely here.
+          positional = args.reject { |arg| arg.strip.match(/^(multiline|ignorecase)\s*=/) }
+          pattern = positional[0]?.try { |arg| as_string(resolve_expression(arg)) } || ""
+          replacement = positional[1]?.try { |arg| as_string(resolve_expression(arg)) } || ""
+          options = Regex::Options::None
+          if truthy_arg?(parse_kwarg_expr(filter_args, "ignorecase"), positional[2]?)
+            options |= Regex::Options::IGNORE_CASE
+          end
+          if truthy_arg?(parse_kwarg_expr(filter_args, "multiline"), positional[3]?)
+            # Python re.M only moves ^/$ to line boundaries - NOT
+            # dot-matches-newline; Crystal's MULTILINE implies DOTALL
+            # (Ruby semantics), so MULTILINE_ONLY is the
+            # Python-equivalent flag (same rule as regex_search above).
+            options |= Regex::Options::MULTILINE_ONLY
+          end
 
-          JSON::Any.new(FilterCore.regex_replace(as_string(value), pattern, replacement))
+          JSON::Any.new(FilterCore.regex_replace(as_string(value), pattern, replacement, options))
         when "hash"
           # hash(algorithm='sha1') - real Ansible's own filter
           # (ansible.plugins.filter.core), wrapping Python's

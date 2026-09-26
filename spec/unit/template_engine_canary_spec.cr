@@ -137,6 +137,19 @@ describe "template engine canary" do
     crinja_render("{{ 'A1\\nb2' | regex_findall('^b(\\d)', multiline=True) }}").should eq("['2']")
   end
 
+  it "multiline=True maps to Python re.M only: ^/$ move, `.` does NOT cross newlines" do
+    # Real Ansible's regex filters build flags = re.I | re.M; Python's
+    # re.M only moves ^/$ to line boundaries, it is NOT re.DOTALL.
+    # Crystal's Regex::Options::MULTILINE maps to PCRE MULTILINE|DOTALL
+    # (Ruby semantics), so `Version:\ .*:` swallowed across the newline
+    # and captured "1.1.4" from an unrelated later " compat:" line
+    # instead of the version on the Version: line itself
+    # (pluggero.openssh, round 981024).
+    crinja_render("{{ 'Version: 1:8.9p1-3ubuntu0.10\\n compat:1.1.4 notes' | regex_search('Version:\\\\ .*:([\\\\d\\\\.]{2,})', '\\\\1', multiline=True) | first }}").should eq("8.9")
+    crinja_render("{{ 'Version: 1:8.9p1-3ubuntu0.10\\n compat:1.1.4 notes' is search('Version:\\\\ .*compat', multiline=True) }}").should eq("False")
+    crinja_render("{{ 'Version: 1:8.9p1-3ubuntu0.10\\n compat:1.1.4 notes' is search('^ compat:1', multiline=True) }}").should eq("True")
+  end
+
   it "registers combine (shallow merge, later wins)" do
     crinja_render("{{ {'a': 1, 'b': 2} | combine({'b': 3, 'c': 4}) }}").should eq("{'a': 1, 'b': 3, 'c': 4}")
   end

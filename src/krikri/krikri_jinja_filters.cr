@@ -227,7 +227,11 @@ module Krikri
           pattern = py_str(args[0]? || kwargs["pattern"]? || JSON::Any.new(""))
           options = Regex::Options::None
           options |= Regex::Options::IGNORE_CASE if (args[1]? || kwargs["ignorecase"]?).try { |flag| py_truthy(flag) }
-          options |= Regex::Options::MULTILINE if (args[2]? || kwargs["multiline"]?).try { |flag| py_truthy(flag) }
+          # Python's re.M (what real Ansible's test kwargs build) only moves
+          # ^/$ to line boundaries; `.` must NOT cross newlines. Crystal's
+          # Regex::Options::MULTILINE maps to PCRE MULTILINE|DOTALL (Ruby
+          # semantics), so MULTILINE_ONLY is the Python-equivalent here.
+          options |= Regex::Options::MULTILINE_ONLY if (args[2]? || kwargs["multiline"]?).try { |flag| py_truthy(flag) }
           pattern = "^(?:#{pattern})" if test_name == "match"
           !!(py_str(value) =~ VariableSubstitutor::FilterEngine.cached_regex(pattern, options))
         end

@@ -19,6 +19,18 @@ describe Krikri::VariableSubstitutor::FilterCore do
       .should eq("abc")
   end
 
+  it "regex_replace honors ignorecase/multiline options (Python re.I/re.M, NOT dotall)" do
+    core = Krikri::VariableSubstitutor::FilterCore
+    core.regex_replace("a1\nb2", "^b(\\d)", "X\\1", Regex::Options::MULTILINE_ONLY)
+      .should eq("a1\nX2")
+    # Python's re.M only moves ^/$ to line boundaries; `.` must NOT cross
+    # newlines (Crystal's Regex::Options::MULTILINE would imply DOTALL).
+    core.regex_replace("1\nb2", "1.b", "Z", Regex::Options::MULTILINE_ONLY)
+      .should eq("1\nb2")
+    core.regex_replace("HELLO", "hello", "X", Regex::Options::IGNORE_CASE)
+      .should eq("X")
+  end
+
   it "regex_escape escapes special characters" do
     Krikri::VariableSubstitutor::FilterCore.regex_escape("a.b*c")
       .should eq(Regex.escape("a.b*c"))
