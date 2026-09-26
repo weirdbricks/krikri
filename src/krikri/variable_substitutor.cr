@@ -818,6 +818,47 @@ module Krikri
       @@resolved_var_names[host_name]?.try(&.includes?(name)) || false
     end
 
+    # Snapshot of every host's unsafe-name registry - the serialized form
+    # travels inside a `debug:`/`assert:` plugin config (see
+    # build_plugin_config) so the DETACHED plugin process an `async:` task
+    # spawns (`__async_run`, or the module binary uploaded to a remote
+    # target) can rebuild the same registry via
+    # #hydrate_unsafe_registry_from_config: the registry is process memory,
+    # and a fresh child process starts with it empty, which would leave
+    # that process's own re-render gates blind.
+    def self.resolved_names_snapshot : Hash(String, Array(String))
+      @@resolved_var_names.transform_values(&.to_a)
+    end
+
+    # The child-process counterpart of #resolved_names_snapshot: rebuilds
+    # the per-host unsafe-name registry from a plugin config's
+    # `unsafe_registry` field and records the exact text of every
+    # brace-bearing string under those names (the value-level registry,
+    # UnsafeValues) - the current host's values from the config's own
+    # `vars`, every other host's from its `hostvars` entry. No-op when the
+    # field is absent (configs built before this field existed, or plugin
+    # invocations that never carried a vars context).
+    def self.hydrate_unsafe_registry_from_config(config : JSON::Any) : Nil
+      registry = config["unsafe_registry"]?.try(&.as_h?) || return
+      hosts = registry["hosts"]?.try(&.as_h?) || return
+      vars = config["vars"]?.try(&.as_h?)
+      hostvars = vars.try(&.[]?("hostvars")).try(&.as_h?)
+      current_host = registry["host"]?.try(&.as_s?)
+      hosts.each do |host_name, names_json|
+        raw_names = names_json.as_a?
+        next unless raw_names
+        names = raw_names.compact_map(&.as_s?)
+        set_resolved_var_names(host_name, names)
+        source = host_name == current_host ? vars : hostvars.try(&.[]?(host_name)).try(&.as_h?)
+        next unless source
+        names.each do |name|
+          if value = source[name]?
+            UnsafeValues.mark_value(value)
+          end
+        end
+      end
+    end
+
     # The leading identifier of an expression - `r` for `r.stdout`,
     # `r.stdout | length > 0`, `r['stdout_lines']`, `ansible_local.evil.v`;
     # nil when the expression does not start with a plain identifier

@@ -14,6 +14,12 @@ private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-two-local-hosts.ini")
 
+# The hostile text a producer task's registered result carries - exactly
+# the string whose re-render would touch *canary*.
+private def canary_text(canary : String) : String
+  "{{ lookup('pipe', 'touch #{canary}') }}"
+end
+
 # Runs the binary on a register-then-consume playbook and reports whether
 # the hostile `lookup('pipe', ...)` inside the module result executed on
 # the controller (canary file created).
@@ -252,6 +258,213 @@ describe "author-defined template vars still render recursively (legitimate beha
     status.success?.should be_true, output.to_s
     output.to_s.should contain("item=world")
     output.to_s.should contain("item=plain")
+  ensure
+    File.delete(playbook) if playbook && File.exists?(playbook)
+  end
+
+  it "recursively renders author template chains inside a .j2 template file" do
+    # The template: action plugin pre-renders the whole vars scope before
+    # the engine renders the .j2 file (prepare_template_vars_json) - the
+    # fix that stopped it re-rendering hostile module results must not
+    # stop it rendering AUTHOR-defined chains: a role default whose value
+    # is `{{ other_var }}` must still resolve inside a .j2 template, and
+    # an extra-var must still reach it.
+    playbook = File.tempname("unsafe-safe-tmpl", ".yml")
+    template = File.tempname("unsafe-safe-chain", ".j2")
+    dest = File.tempname("unsafe-safe-out")
+    File.write(template, "{{ a }}|{{ motd }}")
+    File.write(playbook, <<-YAML)
+      - name: safe template file
+        hosts: all
+        gather_facts: false
+        vars:
+          a: "{{ b }}"
+          b: "hello-{{ c }}"
+          c: world
+        tasks:
+          - name: render the template file
+            ansible.builtin.template:
+              src: #{template}
+              dest: #{dest}
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, "-e", "motd=EXTRA", playbook], output: output, error: output)
+    status.success?.should be_true, output.to_s
+    File.read(dest).strip.should eq("hello-world|EXTRA")
+  ensure
+    File.delete(playbook) if playbook && File.exists?(playbook)
+    File.delete(template) if template && File.exists?(template)
+    File.delete(dest) if dest && File.exists?(dest)
+  end
+end
+
+# The template: module path - a producer task registers a hostile module
+# result, then a `template:` task renders a .j2 file against the full
+# scope. Runs *template_body* as the .j2 source and returns
+# {status, output, dest path, canary path}; caller deletes dest/canary.
+private def template_repro(template_body : String)
+  canary = File.tempname("unsafe-tmpl-canary")
+  File.delete(canary) if File.exists?(canary)
+  src = File.tempname("unsafe-tmpl-src", ".j2")
+  dest = File.tempname("unsafe-tmpl-dest")
+  File.write(src, template_body)
+  playbook = File.tempname("unsafe-tmpl", ".yml")
+  File.open(playbook, "w") do |file|
+    file.puts "- name: template unsafe repro"
+    file.puts "  hosts: all"
+    file.puts "  gather_facts: false"
+    file.puts "  tasks:"
+    file.puts "    - name: produce hostile output"
+    file.puts %(      ansible.builtin.command: echo "{{ '{{' }} lookup('pipe', 'touch #{canary}') {{ '}}' }}")
+    file.puts "      register: r"
+    file.puts "    - name: consume"
+    file.puts "      ansible.builtin.template:"
+    file.puts %(        src: #{src})
+    file.puts %(        dest: #{dest})
+  end
+
+  output = IO::Memory.new
+  status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+  {status, output.to_s, dest, canary}
+ensure
+  File.delete(playbook) if playbook && File.exists?(playbook)
+  File.delete(src) if src && File.exists?(src)
+end
+
+describe "template: module never re-renders hostile data" do
+  it "writes a direct {{ r.stdout }} reference verbatim" do
+    status, output, dest, canary = template_repro("{{ r.stdout }}")
+    status.success?.should be_true, output
+    File.exists?(canary).should be_false,
+      "hostile lookup EXECUTED on the controller via template: vars preparation:\n#{output}"
+    File.read(dest).should contain(canary_text(canary))
+  ensure
+    File.delete(dest) if dest && File.exists?(dest)
+    File.delete(canary) if canary && File.exists?(canary)
+  end
+
+  it "writes a {{ r.stdout | trim }} reference verbatim (transformed unsafe text)" do
+    status, output, dest, canary = template_repro("{{ r.stdout | trim }}")
+    status.success?.should be_true, output
+    File.exists?(canary).should be_false,
+      "hostile lookup EXECUTED on the controller via template: vars preparation:\n#{output}"
+    File.read(dest).should contain(canary_text(canary))
+  ensure
+    File.delete(dest) if dest && File.exists?(dest)
+    File.delete(canary) if canary && File.exists?(canary)
+  end
+
+  it "renders a {% include %} sub-template's hostile reference verbatim" do
+    sub = File.tempname("unsafe-inc-sub", ".j2")
+    File.write(sub, "{{ r.stdout }}")
+    status, output, dest, canary = template_repro(%({% include "#{sub}" %}))
+    status.success?.should be_true, output
+    File.exists?(canary).should be_false,
+      "hostile lookup EXECUTED on the controller via a template include:\n#{output}"
+    File.read(dest).should contain(canary_text(canary))
+  ensure
+    File.delete(sub) if sub && File.exists?(sub)
+    File.delete(dest) if dest && File.exists?(dest)
+    File.delete(canary) if canary && File.exists?(canary)
+  end
+
+  it "never re-renders hostile data through lookup('template', ...) in a debug msg" do
+    canary = File.tempname("unsafe-lk-canary")
+    File.delete(canary) if File.exists?(canary)
+    src = File.tempname("unsafe-lk-src", ".j2")
+    File.write(src, "{{ r.stdout }}")
+    status, output = hostile_run(<<-YAML, canary: canary)
+      - name: consume
+        ansible.builtin.debug:
+          msg: "{{ lookup('template', '#{src}') }}"
+      YAML
+    status.success?.should be_true, output
+    File.exists?(canary).should be_false,
+      "hostile lookup EXECUTED on the controller via the template lookup:\n#{output}"
+    output.to_s.should contain(canary_text(canary))
+  ensure
+    File.delete(canary) if canary && File.exists?(canary)
+    File.delete(src) if src && File.exists?(src)
+  end
+
+  it "never re-renders hostile items from a hostvars-rooted loop source" do
+    canary = File.tempname("unsafe-hv-canary")
+    File.delete(canary) if File.exists?(canary)
+    status, output = hostile_run(<<-YAML, canary: canary)
+      - name: consume
+        ansible.builtin.debug: msg="{{ item }}"
+        loop: "{{ hostvars[inventory_hostname].r.stdout_lines }}"
+      YAML
+    status.success?.should be_true, output
+    File.exists?(canary).should be_false,
+      "hostile lookup EXECUTED on the controller via a hostvars-rooted loop:\n#{output}"
+    output.to_s.should contain(canary_text(canary))
+  ensure
+    File.delete(canary) if canary && File.exists?(canary)
+  end
+end
+
+describe "async debug var= is gated in its detached plugin process" do
+  # An `async:` debug task runs plugins/debug.cr in a DETACHED process
+  # (`krikri-playbook __async_run`, or the uploaded binary on a remote
+  # target) whose own unsafe registries start empty - without the
+  # serialized registry snapshot in the plugin config, that process's
+  # re-render gates were blind. The var= path there also now renders
+  # lazy author templates exactly like the action plugin does.
+  it "prints a hostile var verbatim without executing it (via a lazy author template)" do
+    canary = File.tempname("unsafe-async-canary")
+    File.delete(canary) if File.exists?(canary)
+    playbook = File.tempname("unsafe-async", ".yml")
+    File.write(playbook, <<-YAML)
+      - name: async unsafe repro
+        hosts: all
+        gather_facts: false
+        vars:
+          x: "{{ r.stdout }}"
+        tasks:
+          - name: produce hostile output
+            ansible.builtin.command: echo "{{ '{{' }} lookup('pipe', 'touch #{canary}') {{ '}}' }}"
+            register: r
+          - name: consume
+            ansible.builtin.debug: var=x
+            async: 10
+            poll: 2
+            register: a
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+    status.success?.should be_true, output.to_s
+    File.exists?(canary).should be_false,
+      "hostile lookup EXECUTED in the detached async plugin process:\n#{output}"
+    output.to_s.should contain(canary_text(canary))
+  ensure
+    File.delete(canary) if canary && File.exists?(canary)
+    File.delete(playbook) if playbook && File.exists?(playbook)
+  end
+
+  it "still renders a lazy author template in the detached process" do
+    playbook = File.tempname("unsafe-async-safe", ".yml")
+    File.write(playbook, <<-YAML)
+      - name: async safe repro
+        hosts: all
+        gather_facts: false
+        vars:
+          x: "{{ greeting }}-suffix"
+          greeting: hello
+        tasks:
+          - name: consume
+            ansible.builtin.debug: var=x
+            async: 10
+            poll: 2
+            register: a
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+    status.success?.should be_true, output.to_s
+    output.to_s.should contain("hello-suffix")
   ensure
     File.delete(playbook) if playbook && File.exists?(playbook)
   end

@@ -77,17 +77,68 @@ module Krikri
         failed: false
       )
       if var_name
-        var_value = lookup_variable(var_name)
-        STDERR.puts("DEBUGWIRE " + var_value.to_s)
-        # Real debug renders the resolved value as native JSON (a bool
-        # stays `true`, an int `0`, an object nested) - live-verified
-        # 2026-09-24: `debug: var=r.changed` prints `"r.changed": true`,
-        # not a quoted string. Only the unresolvable case is a string.
-        result.extra[var_name] = var_value || JSON::Any.new("VARIABLE IS NOT DEFINED!")
+        debug_var(var_name, result)
       else
         result.msg = msg.to_s
       end
       result
+    end
+
+    # Real debug's var: result carries the value under the VARIABLE NAME
+    # key, not under msg (podman-diff debug_edge_cases D1/D4); an
+    # unresolvable var: name maps to the literal string "VARIABLE IS NOT
+    # DEFINED!" and the task still succeeds.
+    private def debug_var(var_name : String, result : PluginResult) : Nil
+      var_value = lookup_variable(var_name)
+      unless var_value
+        result.extra[var_name] = JSON::Any.new("VARIABLE IS NOT DEFINED!")
+        return
+      end
+
+      # Same shape the action plugin (the copy that runs for a normal
+      # debug: task) applies: real debug's var= templates the looked-up
+      # value through the Templar, so a LAZY var - an author `vars:`
+      # entry whose own value is an unrendered `{{ ... }}` chain - is
+      # rendered here too, and a templating error fails the task.
+      # Unsafe gates, shared with every other re-render site: a var
+      # resolved through an execution-resolved root
+      # (VarSubstitutor.unsafe_root?) or carrying the exact text of a
+      # module result / fact / set_fact (UnsafeValues.unsafe_text?) is
+      # AnsibleUnsafe - printed verbatim, never re-templated. The
+      # registries these consult are rebuilt from the config's
+      # serialized snapshot in the driver above.
+      unsafe = VarSubstitutor.unsafe_root?(@vars, var_name)
+      begin
+        rendered = unsafe ? var_value : render_lazy_templates(var_value)
+      rescue ex
+        result.failed = true
+        result.msg = ex.message || "templating var '#{var_name}' failed"
+        return
+      end
+      result.extra[var_name] = rendered
+    end
+
+    # Render lazy `{{ ... }}` template strings inside a looked-up var
+    # value (recursively - real Templar.template templates containers
+    # element-by-element too). Strings without any `{{` pass through
+    # untouched; the render deliberately lets exceptions propagate to
+    # the caller, which turns them into a failed task.
+    private def render_lazy_templates(value : JSON::Any) : JSON::Any
+      case value.raw
+      when String
+        raw = value.as_s
+        return value if UnsafeValues.unsafe_text?(raw)
+        return value unless raw.includes?("{{")
+        JSON::Any.new(VarSubstitutor.new(vars: @vars, host_name: @host.name).substitute(raw))
+      when Array
+        JSON::Any.new(value.as_a.map { |item| render_lazy_templates(item) })
+      when Hash
+        rendered = Hash(String, JSON::Any).new
+        value.as_h.each { |key, item| rendered[key] = render_lazy_templates(item) }
+        JSON::Any.new(rendered)
+      else
+        value
+      end
     end
 
     # Look up a variable (supports nested paths like "result.stdout")
@@ -142,6 +193,13 @@ end
 # Plugin entry point
 input = STDIN.gets_to_end
 config = JSON.parse(input)
+
+# Rebuild this process' unsafe-name/text registries from the config's
+# serialized snapshot (see build_plugin_config) BEFORE any evaluation: an
+# `async:` task runs this binary in a detached process whose registries
+# start empty, which would leave the hostile-data re-render gates below
+# blind. No-op when the config carries no snapshot (manual invocation).
+Krikri::VarSubstitutor.hydrate_unsafe_registry_from_config(config)
 
 plugin = Krikri::DebugPlugin.new(config)
 plugin.run

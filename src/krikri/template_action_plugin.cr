@@ -212,13 +212,28 @@ module Krikri
     # actually reads it fails, like real Ansible.
     private def prepare_template_vars_json(template_path : String) : Hash(String, JSON::Any)
       substitutor = VarSubstitutor.new(vars: @vars)
+      # Unsafe gate (VarSubstitutor.resolved_var_name?, the same per-host
+      # registry every other re-render site consults): a name published by
+      # build_vars_context as execution-resolved (register:/set_fact:/a
+      # gathered fact) holds VERBATIM content, not a template level. The
+      # re-render below re-scanned `r.stdout`'s hostile
+      # `{{ lookup('pipe', ...) }}` text as template source and executed
+      # the lookup on the CONTROLLER - a `template:` task (or a `{%
+      # include %}`/`{% import %}` sub-template reached through one) gave
+      # a hostile target code execution. The value-level text registry
+      # (UnsafeValues.unsafe_text?, checked inside
+      # JinjaRenderer.rerender_string_value itself) stops the same text
+      # when it surfaces under an author-defined key or nested deeper.
+      host_name = @vars["inventory_hostname"]?.try(&.as_s?) || @host.name
       vars = {} of String => JSON::Any
       @vars.each do |key, value|
-        begin
-          value = VariableSubstitutor::JinjaRenderer.rerender_nested_templates(value, substitutor, defer_unresolved: true)
-        rescue Krikri::UndefinedVariableError
-          # A role default that references an undefined variable stays raw;
-          # only a template that actually uses it fails, like real Ansible.
+        unless VarSubstitutor.resolved_var_name?(host_name, key)
+          begin
+            value = VariableSubstitutor::JinjaRenderer.rerender_nested_templates(value, substitutor, defer_unresolved: true)
+          rescue Krikri::UndefinedVariableError
+            # A role default that references an undefined variable stays raw;
+            # only a template that actually uses it fails, like real Ansible.
+          end
         end
         vars[key] = value
       end

@@ -1390,7 +1390,27 @@ module Krikri
         "become_user" => become_user,
       }
 
-      config.to_json
+      # The per-host unsafe-name registry, serialized only for the plugins
+      # whose binary actually reads the vars context (debug:/assert: - the
+      # same set that pays for full `vars` above): an `async:` task runs
+      # its module in a DETACHED process (`__async_run`, or the uploaded
+      # binary on a remote target) whose own VarSubstitutor/UnsafeValues
+      # registries start empty, so without this snapshot that process's
+      # re-render gates are blind and a hostile module result could be
+      # re-templated there. VarSubstitutor.hydrate_unsafe_registry_from_
+      # config rebuilds both registries from it before the plugin runs.
+      if PluginManager.needs_full_vars?(task.module_name)
+        config_hash = JSON.parse(config.to_json).as_h
+        config_hash["unsafe_registry"] = JSON::Any.new({
+          "host"  => JSON::Any.new(host.name),
+          "hosts" => JSON::Any.new(VarSubstitutor.resolved_names_snapshot.transform_values do |names|
+            JSON::Any.new(names.map { |name| JSON::Any.new(name) })
+          end),
+        })
+        config_hash.to_json
+      else
+        config.to_json
+      end
     end
 
     # Matches real Ansible's `stdout_lines`/`stderr_lines` (built from

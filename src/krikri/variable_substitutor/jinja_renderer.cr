@@ -438,6 +438,18 @@ module Krikri
       # rendered strictly at its access point (FilterEngine's map/selectattr
       # attribute extraction), restoring fail-on-access semantics there.
       private def self.rerender_string_value(raw : String, value : JSON::Any, substitutor : VarSubstitutor, defer_unresolved : Bool = false) : JSON::Any
+        # Unsafe gate (UnsafeValues.unsafe_text?, the shared value-level
+        # registry): a leaf whose exact text was recorded from an execution
+        # result (module result / fact / set_fact write) is verbatim
+        # content, never template source - no matter which author-defined
+        # container it now sits inside. This is the leaf-level half of the
+        # gate: prepare_var checks the TOP-level string only, so without
+        # this a hostile string nested inside an author var (or walked by
+        # the template action plugin's whole-scope preparation,
+        # prepare_template_vars_json) was still re-rendered into an
+        # executed lookup on the controller.
+        return value if UnsafeValues.unsafe_text?(raw)
+
         if merged = update_then_reread_merge(raw, substitutor)
           return merged
         end
