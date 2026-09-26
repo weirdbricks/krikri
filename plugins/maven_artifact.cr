@@ -129,10 +129,17 @@ module Krikri
 
       # dest is a directory -> generated filename under it; dest is a
       # file -> used as-is. A dest ending in the path separator is
-      # created up front (real main()'s os.makedirs branch).
+      # created up front (real main()'s os.makedirs branch), and an
+      # EXISTING directory counts as a directory too (real main()'s
+      # os.path.isdir(b_dest) branch fires on any existing directory,
+      # not just trailing-slash spellings - a pre-created dest
+      # directory without the trailing slash used to be treated as a
+      # file path, and since File.exists? is true for a directory the
+      # module then reported "artifact already present" without
+      # downloading anything).
       dest_str = dest.not_nil!
       Dir.mkdir_p(dest_str) if dest_str.ends_with?("/") && !Dir.exists?(dest_str)
-      final_dest = dest_str.ends_with?("/") ?
+      final_dest = (dest_str.ends_with?("/") || Dir.exists?(dest_str)) ?
         PluginHelpers::MavenArtifactCommand.dest_filename(dest_str, artifact_id.not_nil!, version_part, classifier, extension, keep_name) :
         dest_str
 

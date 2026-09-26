@@ -37,10 +37,14 @@ module Krikri
       end
 
       def self.dest_filename(dest : String, artifact_id : String, version_part : String?, classifier : String?, extension : String, keep_name : Bool) : String
-        return dest unless dest.ends_with?("/")
+        # posixpath.join(dest, filename) semantics: a directory dest
+        # without a trailing separator still joins under it (the caller
+        # now routes existing directories here too, not just
+        # trailing-slash spellings).
+        base = dest.ends_with?("/") ? dest : "#{dest}/"
         name = keep_name && version_part ? "#{artifact_id}-#{version_part}" : artifact_id
         name += "-#{classifier}" if classifier && !classifier.empty?
-        "#{dest}#{name}.#{extension}"
+        "#{base}#{name}.#{extension}"
       end
 
       # find_latest_version_available: the LAST <version> element under

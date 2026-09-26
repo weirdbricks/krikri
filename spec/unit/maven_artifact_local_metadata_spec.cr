@@ -67,4 +67,29 @@ describe "maven_artifact local repository" do
       result["msg"].as_s.should contain("can not find file")
     end
   end
+
+  # Real main() routes through os.path.isdir(b_dest), so an EXISTING
+  # directory counts as a directory even without a trailing slash - it
+  # used to be treated as a file path, and since File.exists? is true
+  # for a directory the module reported "artifact already present"
+  # without downloading anything (found by modules_misc3.yml's
+  # pre-created dest directory).
+  it "treats an existing dest directory without a trailing slash as a directory" do
+    with_local_repo do |repo, jar|
+      dest_dir = File.join(repo, "destdir")
+      Dir.mkdir_p(dest_dir)
+      result = PluginSpecHelper.run("maven_artifact", {
+        "group_id"       => "krikri",
+        "artifact_id"    => "test",
+        "dest"           => dest_dir,
+        "repository_url" => "file://#{repo}",
+      })
+      result["changed"].as_bool.should be_true
+      result["failed"]?.should be_nil
+
+      downloaded = File.join(dest_dir, "test.jar")
+      File.exists?(downloaded).should be_true
+      File.read(downloaded).should eq(File.read(jar))
+    end
+  end
 end

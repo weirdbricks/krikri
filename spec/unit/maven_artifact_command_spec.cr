@@ -41,9 +41,13 @@ describe Krikri::PluginHelpers::MavenArtifactCommand do
         .should eq("/opt/app/commons-lang3-3.14.0-sources.jar")
     end
 
-    it "uses a file dest verbatim" do
-      Krikri::PluginHelpers::MavenArtifactCommand.dest_filename("/opt/app/lib.jar", "commons-lang3", "3.14.0", nil, "jar", true)
-        .should eq("/opt/app/lib.jar")
+    # posixpath.join semantics: the caller routes an existing directory
+    # dest here too (real main()'s os.path.isdir branch), not just
+    # trailing-slash spellings, so a missing trailing separator still
+    # joins under the directory rather than treating it as a file name.
+    it "joins the generated name under a directory dest without a trailing slash" do
+      Krikri::PluginHelpers::MavenArtifactCommand.dest_filename("/opt/app", "commons-lang3", "3.14.0", nil, "jar", false)
+        .should eq("/opt/app/commons-lang3.jar")
     end
   end
 
