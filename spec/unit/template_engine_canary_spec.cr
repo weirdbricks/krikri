@@ -1,24 +1,17 @@
 require "../spec_helper"
-# Regression canary against raw Crinja (Crinja.new / env.from_string(...).
-# render) - deliberately bypassing this codebase's own CrinjaRenderer
-# wrapper. The point: after a fork rebase or `shards update`, these specs tell you at a
-# glance whether a maintained registration / behavior became (a) redundant
-# (fixed upstream - then the redundant krikri-playbook fix can be deleted)
-# or (b) newly broken (a regression to chase). They are NOT testing
-# CrinjaRenderer's own re-templating/var-context machinery - crinja_
-# renderer_spec.cr covers that.
-#
-# Requires the real Ansible-specific registrations (jinja_filters.cr), as
-# every real template-rendering binary pulls them in via
-# template_action_plugin.cr.
-require "../../src/krikri/jinja_filters"
+require "../support/jinja_render_helper"
+# Canary for the template engine a real `.j2` render uses (the shared
+# krikri-jinja engine plus krikri's Ansible registrations), bypassing
+# JinjaRenderer's variable preparation: after a krikri-jinja release,
+# these tell you whether an Ansible behavior krikri relies on still holds.
+# jinja_renderer_spec.cr covers the re-templating/var-context machinery.
+require "../../src/krikri/krikri_jinja_filters"
 
 private def crinja_render(tpl : String, vars = nil) : String
-  env = Crinja.new
-  env.from_string(tpl).render(vars)
+  krikri_jinja_render(tpl, vars)
 end
 
-describe "raw Crinja (rebase canary)" do
+describe "template engine canary" do
   # Bool finalization is Python-parity "True"/"False" (was lowercase
   # true/false in the fork before the intentional fix).
   it "finalizes bare booleans capitalized, Python-style" do

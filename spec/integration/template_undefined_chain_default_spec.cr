@@ -1,7 +1,7 @@
 require "../spec_helper"
 
 # Runs the compiled binary against a real playbook (real .j2 template
-# rendering via CrinjaRenderer/TemplateActionPlugin), since this bug is
+# rendering via JinjaRenderer/TemplateActionPlugin), since this bug is
 # specifically about the vendored Crinja fork's evaluator, not the
 # hand-rolled plain {{ }} evaluator.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)

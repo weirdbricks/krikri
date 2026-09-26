@@ -704,6 +704,184 @@ module Krikri
         else             "NoneType"
         end
       end
+
+      # --- Ansible collection/dict filters formerly implemented only on
+      # Crinja::Value (jinja_filters.cr), ported to JSON::Any so both
+      # evaluators share one implementation. ---
+
+      # `combine(*others, recursive=False, list_merge='replace')`.
+      def self.combine(base : JSON::Any, others : Array(JSON::Any), recursive : Bool, list_merge : String) : JSON::Any
+        base_hash = base.as_h? || return base
+        merged = base_hash.dup
+        others.each do |other|
+          other_hash = other.as_h? || next
+          merge_into(merged, other_hash, recursive, list_merge)
+        end
+        JSON::Any.new(merged)
+      end
+
+      private def self.merge_into(merged : Hash(String, JSON::Any), other : Hash(String, JSON::Any),
+                                  recursive : Bool, list_merge : String) : Nil
+        other.each do |key, value|
+          existing = merged[key]?
+          if recursive && existing && existing.as_h? && value.as_h?
+            merged[key] = combine_merge(existing, value, list_merge)
+          elsif list_merge != "replace" && existing && existing.as_a? && value.as_a?
+            merged[key] = list_merge_values(existing, value, list_merge)
+          else
+            merged[key] = value
+          end
+        end
+      end
+
+      # The recursive half of combine: nested dicts always merge.
+      def self.combine_merge(base : JSON::Any, other : JSON::Any, list_merge : String) : JSON::Any
+        base_hash = base.as_h?
+        other_hash = other.as_h?
+        return other unless base_hash && other_hash
+        merged = base_hash.dup
+        merge_into(merged, other_hash, true, list_merge)
+        JSON::Any.new(merged)
+      end
+
+      def self.list_merge_values(existing : JSON::Any, new : JSON::Any, mode : String) : JSON::Any
+        base_list = existing.as_a
+        other_list = new.as_a
+        case mode
+        when "keep"       then existing
+        when "append"     then JSON::Any.new(base_list + other_list)
+        when "prepend"    then JSON::Any.new(other_list + base_list)
+        when "append_rp"  then JSON::Any.new((base_list + other_list).uniq(&.to_json))
+        when "prepend_rp" then JSON::Any.new((other_list + base_list).uniq(&.to_json))
+        else                   new
+        end
+      end
+
+      # `lists_mergeby(*lists, merge_key, recursive=False, list_merge='replace')`:
+      # merges dict items sharing the same `merge_key` value, first-seen order.
+      def self.lists_mergeby(lists : Array(JSON::Any), merge_key : String, recursive : Bool, list_merge : String) : JSON::Any
+        index = {} of String => JSON::Any
+        lists.each do |list|
+          items = list.as_a? || next
+          items.each do |item|
+            hash = item.as_h? || raise "lists_mergeby: list item is not a dict: #{item.to_json}"
+            item_key = hash[merge_key]? || raise "lists_mergeby: merge key '#{merge_key}' not found in list item: #{item.to_json}"
+            key = item_key.to_json
+            if existing = index[key]?
+              merged = existing.as_h.dup
+              merge_into(merged, hash, recursive, list_merge)
+              index[key] = JSON::Any.new(merged)
+            else
+              index[key] = item
+            end
+          end
+        end
+        JSON::Any.new(index.values)
+      end
+
+      # `zip(*others)` / `zip_longest(*others, fillvalue=None)`.
+      def self.zip(lists : Array(JSON::Any), longest : Bool, fillvalue : JSON::Any = JSON::Any.new(nil)) : JSON::Any
+        arrays = lists.map { |list| iterable(list) }
+        sizes = arrays.map(&.size)
+        size = (longest ? sizes.max? : sizes.min?) || 0
+        JSON::Any.new((0...size).map { |i| JSON::Any.new(arrays.map { |array| array[i]? || fillvalue }) })
+      end
+
+      # Python iteration of a filter argument: a list's items, a string's
+      # characters, a dict's keys.
+      def self.iterable(value : JSON::Any) : Array(JSON::Any)
+        case raw = value.raw
+        when Array  then raw
+        when String then raw.chars.map { |char| JSON::Any.new(char.to_s) }
+        when Hash   then raw.keys.map { |key| JSON::Any.new(key) }
+        else             [] of JSON::Any
+        end
+      end
+
+      # `product(*others)`: itertools.product, each row a list.
+      def self.product(lists : Array(JSON::Any)) : JSON::Any
+        rows = lists.reduce([[] of JSON::Any]) do |acc, list|
+          items = iterable(list)
+          acc.flat_map { |row| items.map { |item| row + [item] } }
+        end
+        JSON::Any.new(rows.map { |row| JSON::Any.new(row) })
+      end
+
+      # `to_nice_yaml(sort_keys=True)`, without the document marker.
+      def self.to_nice_yaml(value : JSON::Any, sort_keys : Bool = true) : String
+        any = json_to_yaml_any(sort_keys ? sort_json_keys(value) : value)
+        any.to_yaml.sub(/\A---[ \t]*\n?/, "").rstrip
+      end
+
+      private def self.json_to_yaml_any(value : JSON::Any) : YAML::Any
+        case raw = value.raw
+        when Nil                          then YAML::Any.new(nil)
+        when Bool, String, Int64, Float64 then YAML::Any.new(raw)
+        when Array                        then YAML::Any.new(raw.map { |item| json_to_yaml_any(item) })
+        when Hash                         then YAML::Any.new(raw.to_h { |key, item| {YAML::Any.new(key), json_to_yaml_any(item)} })
+        else                                   YAML::Any.new(value.to_json)
+        end
+      end
+
+      def self.relpath(path : String, start : String = ".") : String
+        Path[path].relative_to(Path[start]).to_s
+      end
+
+      def self.log(value : JSON::Any, base : JSON::Any? = nil) : Float64
+        num = number_of(value)
+        base ? Math.log(num, number_of(base, Math::E)) : Math.log(num)
+      end
+
+      def self.pow(value : JSON::Any, exponent : JSON::Any) : Float64
+        number_of(value) ** number_of(exponent)
+      end
+
+      private def self.number_of(value : JSON::Any, default : Float64 = 0.0) : Float64
+        case raw = value.raw
+        when Int64, Float64 then raw.to_f
+        when String         then raw.to_f? || default
+        else                     default
+        end
+      end
+
+      # `combinations(n)` / `permutations(n=len)`: itertools order.
+      def self.combinations(items : Array(JSON::Any), n : Int32) : Array(Array(JSON::Any))
+        return [[] of JSON::Any] if n == 0
+        return [] of Array(JSON::Any) if n > items.size || items.empty?
+        head = items.first
+        tail = items[1..]
+        combinations(tail, n - 1).map { |combo| [head] + combo } + combinations(tail, n)
+      end
+
+      def self.permutations(items : Array(JSON::Any), n : Int32) : Array(Array(JSON::Any))
+        return [[] of JSON::Any] if n == 0
+        return [] of Array(JSON::Any) if n > items.size || items.empty?
+        result = [] of Array(JSON::Any)
+        items.each_with_index do |item, i|
+          rest = items[0...i] + items[(i + 1)..]
+          permutations(rest, n - 1).each { |perm| result << ([item] + perm) }
+        end
+        result
+      end
+
+      # `rekey_on_member(member, duplicates='error')`: list of dicts to a dict
+      # keyed by each item's `member` value.
+      def self.rekey_on_member(value : JSON::Any, member : String, duplicates : String = "error") : JSON::Any
+        result = {} of String => JSON::Any
+        (value.as_a? || [] of JSON::Any).each do |item|
+          key = item.as_h?.try(&.[member]?) || next
+          key_text = key.as_s? || key.to_json
+          raise "rekey_on_member: duplicate key '#{key_text}'" if duplicates == "error" && result.has_key?(key_text)
+          result[key_text] = item
+        end
+        JSON::Any.new(result)
+      end
+
+      # `from_yaml_all`: every document of a multi-document YAML string.
+      def self.from_yaml_all(text : String) : JSON::Any
+        docs = text.split(/^---\s*$/m).map(&.strip).reject(&.empty?)
+        JSON::Any.new(docs.map { |doc| JSON.parse(YAML.parse(doc).to_json) })
+      end
     end
   end
 end

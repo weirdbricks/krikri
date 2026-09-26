@@ -155,7 +155,7 @@ describe "role-local filter_plugins/*.py custom filters" do
     # list | sort_versions | last }}` with the role's own
     # filter_plugins/sort_versions.py. The leading-paren construct is
     # evaluated by ExpressionEvaluator's Crinja-first delegation
-    # (render_via_crinja_value -> CrinjaRenderer#evaluate_value!), which
+    # (render_via_jinja_value -> JinjaRenderer#evaluate_value!), which
     # raises Crinja's unknown-feature error for the custom filter mid-
     # evaluation - so the case needs the register-and-retry gate on the
     # raw-value entry point, not just #render's rescue. All three

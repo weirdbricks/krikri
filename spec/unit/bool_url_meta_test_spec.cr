@@ -1,7 +1,8 @@
 require "../spec_helper"
+require "../support/jinja_render_helper"
 require "../../src/krikri/conditional_evaluator"
-require "../../src/krikri/jinja_filters"
-require "../../src/krikri/variable_substitutor/crinja_renderer"
+require "../../src/krikri/krikri_jinja_filters"
+require "../../src/krikri/variable_substitutor/jinja_renderer"
 
 # P2.4-P2.7 (FINDINGS_CHECKLIST.md / PATTERN2_AUDIT.md): the remaining
 # core test spellings.
@@ -16,15 +17,13 @@ require "../../src/krikri/variable_substitutor/crinja_renderer"
 #
 # JSON::Any vars work with pure Crinja only after its JSON shim is
 # loaded (defines Crinja.value(JSON::Any) + Crinja::Object support).
-require "crinja/json"
 
 # Parity contract: every value-level test is exercised through BOTH the
 # hand-rolled ConditionalEvaluator AND a pure Crinja render.
 # Pure Crinja renders take native Crystal containers, not JSON::Any -
 # convert the fixture vars so the same data feeds both engines.
 private def crinja_render(tpl : String, vars : NamedTuple | Hash(String, JSON::Any) | Nil = nil) : String
-  env = Crinja.new
-  env.from_string(tpl).render(vars)
+  krikri_jinja_render(tpl, vars)
 end
 
 describe "boolean-identity / URL / NaN / meta tests (P2.4-P2.7)" do
@@ -96,10 +95,15 @@ describe "boolean-identity / URL / NaN / meta tests (P2.4-P2.7)" do
   end
 
   describe "abs / isnan / nan tests (P2.6)" do
-    it "abs passes for numbers only (hand-rolled evaluator)" do
-      Krikri::ConditionalEvaluator.evaluate("num_one is abs", vars).should be_true
-      Krikri::ConditionalEvaluator.evaluate("float_num is abs", vars).should be_true
+    it "abs is the absolute-path test and fails on a number (hand-rolled evaluator)" do
+      # Live-verified against ansible-core 2.19: `'/etc/x' is abs` is True,
+      # `5 is abs` fails ("expected str, bytes or os.PathLike object").
+      path_vars = vars.merge({"abs_path" => JSON::Any.new("/etc/hosts")})
+      Krikri::ConditionalEvaluator.evaluate("abs_path is abs", path_vars).should be_true
       Krikri::ConditionalEvaluator.evaluate("yes_str is abs", vars).should be_false
+      expect_raises(Exception, "expected str, bytes or os.PathLike object, not int") do
+        Krikri::ConditionalEvaluator.evaluate("num_one is abs", vars)
+      end
     end
 
     it "isnan/nan pass only for a real NaN float (hand-rolled evaluator)" do
@@ -130,29 +134,30 @@ describe "boolean-identity / URL / NaN / meta tests (P2.4-P2.7)" do
     end
 
     it "abs/isnan agree with the hand-rolled evaluator" do
-      crinja_render("{{ num_one is abs }}", vars).should eq("True")
+      crinja_render("{{ '/etc' is abs }}", vars).should eq("True")
       crinja_render("{{ float_nan is isnan }}", vars).should eq("True")
       crinja_render("{{ float_num is isnan }}", vars).should eq("False")
     end
 
     it "filter/test meta-tests resolve against the combined registry" do
-      # 'upper' is a Crinja built-in; 'ternary' is krikri-playbook's own
-      # registration - both must be visible.
-      crinja_render("{{ x is filter('upper') }}").should eq("True")
-      crinja_render("{{ x is filter('ternary') }}").should eq("True")
-      crinja_render("{{ x is filter('no_such_filter') }}").should eq("False")
-      crinja_render("{{ x is test('defined') }}").should eq("True")
-      crinja_render("{{ x is test('version') }}").should eq("True")
-      crinja_render("{{ x is test('no_such_test') }}").should eq("False")
+      # The name is the tested value (`'upper' is filter`, live-verified
+      # against ansible-core 2.19; `x is filter('upper')` fails there).
+      # 'upper' is a Jinja built-in; 'ternary'/'version' are Ansible's.
+      crinja_render("{{ 'upper' is filter }}").should eq("True")
+      crinja_render("{{ 'ternary' is filter }}").should eq("True")
+      crinja_render("{{ 'no_such_filter' is filter }}").should eq("False")
+      crinja_render("{{ 'defined' is test }}").should eq("True")
+      crinja_render("{{ 'version' is test }}").should eq("True")
+      crinja_render("{{ 'no_such_test' is test }}").should eq("False")
     end
   end
 
   # ---- Real-role regression ----
-  it "works inside a real {% if %} conditional through CrinjaRenderer" do
+  it "works inside a real {% if %} conditional through JinjaRenderer" do
     v = Hash(String, JSON::Any).new
     v["docker_enable"] = JSON::Any.new(true)
     v["registry_url"] = JSON::Any.new("https://registry.example.com")
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
     # Boolean-identity gate shape roles actually write.
     renderer.render(%({% if docker_enable is true %}enabled{% else %}disabled{% endif %})).should eq("enabled")
     # URL validation of a user-supplied endpoint var.

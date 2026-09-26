@@ -1,7 +1,8 @@
 require "../spec_helper"
+require "../support/jinja_render_helper"
 require "../../src/krikri/conditional_evaluator"
-require "../../src/krikri/jinja_filters"
-require "../../src/krikri/variable_substitutor/crinja_renderer"
+require "../../src/krikri/krikri_jinja_filters"
+require "../../src/krikri/variable_substitutor/jinja_renderer"
 
 # P2.1-P2.3 (FINDINGS_CHECKLIST.md / PATTERN2_AUDIT.md): the `is*` test
 # spelling alias pass - `issubset`/`issuperset`, `is_dir`/`is_file`/
@@ -16,8 +17,7 @@ require "../../src/krikri/variable_substitutor/crinja_renderer"
 # render (`Crinja.new.render`), since this project's history is
 # divergence between the two engines.
 private def crinja_render(tpl : String, vars) : String
-  env = Crinja.new
-  env.from_string(tpl).render(vars)
+  krikri_jinja_render(tpl, vars)
 end
 
 describe "is* test aliases (P2.1-P2.3)" do
@@ -150,12 +150,12 @@ describe "is* test aliases (P2.1-P2.3)" do
   end
 
   # ---- Real-role regression: the shape roles actually write ----
-  it "works inside a real {% if %} conditional through CrinjaRenderer" do
+  it "works inside a real {% if %} conditional through JinjaRenderer" do
     v = Hash(String, JSON::Any).new
     v["pkg_list"] = JSON.parse(%(["vim", "htop"]))
     v["wanted"] = JSON.parse(%(["htop"]))
     v["config"] = JSON::Any.new(real_file)
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
     renderer.render(%({% if wanted is issubset(pkg_list) %}present{% else %}absent{% endif %})).should eq("present")
     renderer.render(%({% if pkg_list is issuperset(wanted) %}present{% else %}absent{% endif %})).should eq("present")
     renderer.render(%({% if config is is_file %}yes{% else %}no{% endif %})).should eq("yes")

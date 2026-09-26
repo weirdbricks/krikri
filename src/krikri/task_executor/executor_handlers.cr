@@ -1,4 +1,6 @@
 require "./executor"
+require "krikri-jinja/krikri_jinja"
+require "../jinja_host_context"
 
 module Krikri
   class TaskExecutor
@@ -32,7 +34,10 @@ module Krikri
         stripped = handler_name.strip
         if stripped.starts_with?("{{") && stripped.ends_with?("}}")
           structural = begin
-            VariableSubstitutor::CrinjaRenderer.new(vars_context).evaluate_value!(stripped[2..-3].strip)
+            KrikriJinja.evaluate_expression(
+              stripped[2..-3].strip, vars_context, strict: true,
+              host_context: JinjaHostContext.new(vars_context)
+            )
           rescue
             nil
           end

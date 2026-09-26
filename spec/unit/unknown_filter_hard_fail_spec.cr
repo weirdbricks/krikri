@@ -48,7 +48,7 @@ describe "unknown filter names hard-fail at the point of the call" do
   end
 
   it "Crinja's own lenient render maps an unknown filter to the same hard failure instead of returning the raw template text" do
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(vars)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(vars)
     expect_raises(Krikri::VariableSubstitutor::FilterEngine::UnknownFilterError,
       "No filter named 'totally_bogus_filter_xyz'.") do
       renderer.render(%({{ 5 | totally_bogus_filter_xyz }}))
@@ -56,7 +56,7 @@ describe "unknown filter names hard-fail at the point of the call" do
   end
 
   it "Crinja's lenient render still returns the original text for other failures (lenient undefined is deliberate)" do
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(vars)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(vars)
     renderer.render(%({% if never_set_var == 'x' %}yes{% else %}no{% endif %})).should eq("no")
   end
 

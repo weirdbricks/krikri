@@ -10,16 +10,31 @@ repo is a standalone shard, not part of that platform).
 reimplementation of `ansible-playbook` in Crystal: parses real Ansible
 playbooks/roles/inventories and executes them, aiming for full
 behavioral parity with real `ansible-core` - not just "the common
-cases work." Two independent Jinja2/expression evaluators exist side
-by side: a hand-rolled `{{ }}` evaluator (`ExpressionEvaluator`/
+cases work." Two Jinja2/expression evaluators exist side by side: a
+hand-rolled `{{ }}` evaluator (`ExpressionEvaluator`/
 `ConditionalEvaluator`/`ComparisonEvaluator`/`FilterEngine`, under
-`src/krikri/variable_substitutor/`) for plain task-param
-substitution, and the vendored `Crinja` shard (`CrinjaRenderer`,
-`TemplateActionPlugin`) for real `.j2` template files and `{%`/`{#`
-block-tag rendering. They do **not** share implementation - the same
-bug class (most often "recursive re-templating": a variable whose own
-value is itself unrendered Jinja) gets found and fixed independently in
-each, repeatedly. When fixing a templating bug, check both.
+`src/krikri/variable_substitutor/`) for plain task-param substitution,
+and **krikri-jinja** (`weirdbricks/krikri-jinja`, our own clean-room
+Jinja2 engine shard) for real `.j2` template files, `{%`/`{#` block-tag
+rendering, and every structured value the hand-rolled evaluator
+delegates (`JinjaRenderer#render!`/`#evaluate_value!`,
+`TemplateActionPlugin`). The hand-rolled evaluator falls back to /
+delegates into krikri-jinja for anything it cannot answer itself, so the
+same bug class (most often "recursive re-templating": a variable whose
+own value is itself unrendered Jinja) can still surface in either -
+when fixing a templating bug, check both.
+
+Ansible's own filters, tests, lookups and `datetime` values are
+registered on krikri-jinja's shared default engine in
+`krikri_jinja_filters.cr`, `krikri_jinja_lookups.cr` and
+`jinja_datetime.cr`; pure JSON-level implementations shared with
+`FilterEngine` live in `variable_substitutor/filter_core.cr`. Variables
+reach the engine lazily through `JinjaVarResolver` (one name prepared
+per first read). An engine-level change (a new hook, a lexer/semantics
+fix) goes in the krikri-jinja repo (sibling checkout
+`../krikri-jinja-engine-registry`, branch `engine-registry`): add a spec,
+bump its version, tag `v0.4.N`, push, then bump the `tag:` in this
+repo's `shard.yml` and `shards update krikri-jinja`.
 
 Each Ansible module is its own tiny compiled binary under `plugins/`,
 uploaded to and executed on the target host (or run locally for

@@ -5,7 +5,7 @@ require "../../src/krikri/variable_substitutor"
 # require-time `Crinja.filter` registration, Crinja raises
 # UnknownFeatureError and the evaluator silently falls back to its
 # hand-rolled path (the same bare-env gap filter_batch2_spec.cr documents).
-require "../../src/krikri/jinja_filters"
+require "../../src/krikri/krikri_jinja_filters"
 
 # Real bug found benchmarking robertdebock.bios_update on Rocky 9.6 (round
 # 161): real Ansible's Jinja2 templating for module args is

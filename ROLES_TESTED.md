@@ -9358,3 +9358,118 @@ Crinja `%` operator) and Deliberate Limits for `aem_design.aem_license`.
 | `gikeymarcia.neovim` | rocky | ✅ clean. Times: cold py 16.09s vs cr 12.07s; warm py 22.68s vs cr 0.56s. |
 | `leifmadsen.kibana-4` | rocky | ✅ clean. Times: cold py 0.46s vs cr 0.01s; warm py 0.46s vs cr 0.01s. |
 | `tcosta84.yum` | rocky | ❌→✅ FIXED 0.9.1187: yum: @group install never idempotent. |
+
+## Round 975000-975099 + 976000-976002 + 977000-977001 + 978000 (2026-09-26): krikri-jinja migration pre-merge validation, 100 template-heavy roles
+
+Pre-merge validation of `krikri-migration-to-krikri-jinja` (Crinja -> krikri-jinja
+templating-engine migration). 100 roles selected for heavy Jinja/`.j2` template
+usage (config-generating web/monitoring/proxy/hardening roles), deliberately
+reusing roles already in this table since the point was re-validating templating
+behavior, not new-role coverage. `CLEAN=91 DIVERGENT=8 BLOCKED=1(dup)`. 3 real
+regressions found and fixed (recursive re-templating; krikri-jinja `{%-`
+left-strip past `trim_blocks`; `lineinfile` multi-line non-convergence), all
+confirmed CLEAN in follow-up rounds 976000-976002/977000-977001 - timings below
+reflect the confirm-round rerun for those 5 roles. See `KNOWN_MISSING.md`'s
+round narrative for the full root-cause writeups.
+
+| Role | OS | Status |
+|---|---|---|
+| `dev-sec.ansible_apache_hardening` | ubuntu | ✅ clean. Times: cold py 8.14s vs cr 12.91s; warm py 6.18s vs cr 0.45s. |
+| `dev-sec.mysql` | ubuntu | ✅ clean. Times: cold py 76.29s vs cr 64.49s; warm py 13.78s vs cr 0.94s. |
+| `dev-sec.mysql-hardening` | ubuntu | ✅ clean. Times: cold py 0.97s vs cr 0.03s; warm py 0.45s vs cr 0.01s. |
+| `dev-sec.nginx-hardening` | ubuntu | ✅ clean. Times: cold py 7.00s vs cr 5.34s; warm py 5.60s vs cr 0.39s. |
+| `dev-sec.os-hardening` | ubuntu | ⚠️ divergent (changed-count only, NOT a krikri bug): real ansible-playbook's own Python set() hash-randomization affects the difference filter's iteration order between process invocations - see KNOWN_MISSING.md round 975000-975099 narrative. Times: cold py 107.77s vs cr 55.89s; warm py 74.74s vs cr 8.75s. |
+| `dev-sec.ssh-hardening` | ubuntu | ✅ clean. Times: cold py 9.45s vs cr 13.64s; warm py 7.92s vs cr 0.45s. |
+| `geerlingguy.apache` | ubuntu | ✅ clean. Times: cold py 42.92s vs cr 30.15s; warm py 17.25s vs cr 1.40s. |
+| `geerlingguy.apache-php-fpm` | ubuntu | ✅ clean. Times: cold py 42.93s vs cr 38.21s; warm py 15.74s vs cr 0.99s. |
+| `geerlingguy.certbot` | ubuntu | ✅ clean. Times: cold py 29.54s vs cr 28.89s; warm py 7.20s vs cr 0.48s. |
+| `geerlingguy.clamav` | ubuntu | ✅ clean. Times: cold py 79.01s vs cr 83.63s; warm py 24.87s vs cr 0.93s. |
+| `geerlingguy.collectd-signalfx` | ubuntu | ✅ clean. Times: cold py 6.39s vs cr 5.41s; warm py 6.54s vs cr 0.64s. |
+| `geerlingguy.containerd` | ubuntu | ✅ clean. Times: cold py 47.25s vs cr 28.04s; warm py 19.58s vs cr 0.96s. |
+| `geerlingguy.docker` | ubuntu | ✅ clean. Times: cold py 71.25s vs cr 44.04s; warm py 20.44s vs cr 1.48s. |
+| `geerlingguy.docker_arm` | ubuntu | ✅ clean. Times: cold py 76.72s vs cr 71.40s; warm py 7.35s vs cr 1.34s. |
+| `geerlingguy.elasticsearch` | ubuntu | ✅ clean. Times: cold py 139.62s vs cr 110.49s; warm py 32.38s vs cr 5.38s. |
+| `geerlingguy.elasticsearch-curator` | ubuntu | ⚠️ divergent (changed-count only): krikri's pip module doesn't report changed on a repeat install of argparse - see KNOWN_MISSING.md open gaps. Times: cold py 25.72s vs cr 17.65s; warm py 17.15s vs cr 2.39s. |
+| `geerlingguy.filebeat` | ubuntu | ✅ clean. Times: cold py 46.80s vs cr 30.07s; warm py 19.43s vs cr 4.70s. |
+| `geerlingguy.firewall` | ubuntu | ✅ clean. Times: cold py 17.82s vs cr 5.79s; warm py 11.50s vs cr 0.70s. |
+| `geerlingguy.fluentd` | ubuntu | ✅ clean. Times: cold py 151.35s vs cr 53.86s; warm py 62.31s vs cr 34.24s. |
+| `geerlingguy.gitlab` | ubuntu | ✅ clean. Times: cold py 82.78s vs cr 113.40s; warm py 28.86s vs cr 7.96s. |
+| `geerlingguy.haproxy` | ubuntu | ✅ clean. Times: cold py 34.31s vs cr 21.80s; warm py 14.68s vs cr 0.93s. |
+| `geerlingguy.jenkins` | ubuntu | ✅ clean. Times: cold py 20.71s vs cr 17.07s; warm py 10.09s vs cr 0.80s. |
+| `geerlingguy.kibana` | ubuntu | ✅ clean. Times: cold py 117.38s vs cr 84.90s; warm py 26.56s vs cr 0.94s. |
+| `geerlingguy.kubernetes` | ubuntu | ✅ clean. Times: cold py 109.34s vs cr 79.34s; warm py 35.22s vs cr 2.48s. |
+| `geerlingguy.logstash` | ubuntu | ✅ clean. Times: cold py 321.46s vs cr 285.82s; warm py 130.61s vs cr 87.20s. |
+| `geerlingguy.logstash-forwarder` | ubuntu | ✅ clean. Times: cold py 0.46s vs cr 0.01s; warm py 0.45s vs cr 0.01s. |
+| `geerlingguy.memcached` | ubuntu | ✅ clean. Times: cold py 38.02s vs cr 19.44s; warm py 15.55s vs cr 0.73s. |
+| `geerlingguy.mysql` | ubuntu | ✅ clean. Times: cold py 94.50s vs cr 68.39s; warm py 21.73s vs cr 2.05s. |
+| `geerlingguy.nginx` | ubuntu | ✅ clean. Times: cold py 37.47s vs cr 22.58s; warm py 19.29s vs cr 1.19s. |
+| `geerlingguy.node_exporter` | ubuntu | ✅ clean. Times: cold py 25.77s vs cr 8.41s; warm py 14.56s vs cr 0.92s. |
+| `geerlingguy.ntp` | ubuntu | ✅ clean. Times: cold py 40.52s vs cr 26.32s; warm py 20.87s vs cr 4.08s. |
+| `geerlingguy.php` | ubuntu | ✅ clean. Times: cold py 108.90s vs cr 43.98s; warm py 42.44s vs cr 2.19s. |
+| `geerlingguy.php-memcached` | ubuntu | ✅ clean. Times: cold py 99.56s vs cr 50.80s; warm py 40.78s vs cr 1.94s. |
+| `geerlingguy.phpmyadmin` | ubuntu | ✅ clean. Times: cold py 96.03s vs cr 71.90s; warm py 21.54s vs cr 1.95s. |
+| `geerlingguy.php-mysql` | ubuntu | ✅ clean. Times: cold py 94.00s vs cr 46.33s; warm py 49.76s vs cr 1.06s. |
+| `geerlingguy.php-pear` | ubuntu | ✅ clean. Times: cold py 89.02s vs cr 46.91s; warm py 36.48s vs cr 1.73s. |
+| `geerlingguy.php-pecl` | ubuntu | ✅ clean. Times: cold py 93.67s vs cr 45.45s; warm py 36.08s vs cr 1.80s. |
+| `geerlingguy.php-pgsql` | ubuntu | ✅ clean. Times: cold py 89.84s vs cr 45.71s; warm py 37.62s vs cr 1.74s. |
+| `geerlingguy.php-redis` | ubuntu | ✅ clean. Times: cold py 90.52s vs cr 45.78s; warm py 40.17s vs cr 1.65s. |
+| `geerlingguy.php-tideways` | ubuntu | ✅ clean. Times: cold py 88.28s vs cr 45.55s; warm py 43.25s vs cr 1.08s. |
+| `geerlingguy.php-versions` | ubuntu | ✅ clean. Times: cold py 28.97s vs cr 22.59s; warm py 8.02s vs cr 0.86s. |
+| `geerlingguy.php-xdebug` | ubuntu | ✅ clean. Times: cold py 100.16s vs cr 45.82s; warm py 42.98s vs cr 1.82s. |
+| `geerlingguy.php-xhprof` | ubuntu | ✅ clean. Times: cold py 90.84s vs cr 45.09s; warm py 41.33s vs cr 1.00s. |
+| `geerlingguy.postfix` | ubuntu | ✅ clean. Times: cold py 42.78s vs cr 35.90s; warm py 9.34s vs cr 0.67s. |
+| `geerlingguy.postgresql` | ubuntu | ✅ clean. Times: cold py 71.45s vs cr 52.40s; warm py 26.33s vs cr 1.04s. |
+| `geerlingguy.rabbitmq` | ubuntu | ✅ clean. Times: cold py 138.05s vs cr 112.72s; warm py 21.79s vs cr 5.96s. |
+| `geerlingguy.redis` | ubuntu | ✅ clean. Times: cold py 30.26s vs cr 20.95s; warm py 11.82s vs cr 0.87s. |
+| `geerlingguy.repo-dotdeb` | ubuntu | ✅ clean. Times: cold py 4.40s vs cr 4.84s; warm py 3.00s vs cr 0.45s. |
+| `geerlingguy.repo-epel` | ubuntu | ✅ clean. Times: cold py 62.03s vs cr 46.63s; warm py 61.21s vs cr 41.62s. |
+| `geerlingguy.repo-remi` | ubuntu | ✅ clean. Times: cold py 5.65s vs cr 5.92s; warm py 4.32s vs cr 0.80s. |
+| `geerlingguy.ssh-chroot-jail` | ubuntu | ✅ clean. Times: cold py 119.73s vs cr 8.85s; warm py 79.03s vs cr 0.88s. |
+| `geerlingguy.supervisor` | ubuntu | ✅ clean. Times: cold py 23.11s vs cr 10.79s; warm py 17.09s vs cr 2.77s. |
+| `geerlingguy.tomcat6` | ubuntu | ✅ clean. Times: cold py 46.98s vs cr 44.90s; warm py 7.01s vs cr 0.59s. |
+| `geerlingguy.varnish` | ubuntu | ✅ clean. Times: cold py 67.66s vs cr 53.17s; warm py 57.40s vs cr 35.90s. |
+| `jtyr.ansible_docker_swarm` | ubuntu | ✅ clean. Times: cold py 5.49s vs cr 5.41s; warm py 3.92s vs cr 0.42s. |
+| `jtyr.grafana` | ubuntu | ✅ clean. Times: cold py 0.44s vs cr 0.01s; warm py 0.46s vs cr 0.01s. |
+| `jtyr.jenkins_slave` | ubuntu | ✅ clean. Times: cold py 4.39s vs cr 5.83s; warm py 3.89s vs cr 0.50s. |
+| `jtyr.motd` | ubuntu | ✅ FIXED 0.9.1304 (recursive re-templating). Times: cold py 6.41s vs cr 4.71s; warm py 4.56s vs cr 0.38s. |
+| `jtyr.sudo` | ubuntu | ✅ FIXED 0.9.1304 (recursive re-templating). Times: cold py 12.30s vs cr 6.40s; warm py 7.93s vs cr 0.43s. |
+| `jtyr.yumrepo` | ubuntu | ✅ clean. Times: cold py 3.91s vs cr 6.20s; warm py 3.04s vs cr 0.33s. |
+| `konstruktoid.docker_rootless` | ubuntu | ✅ FIXED 0.9.1306 (lineinfile multi-line convergence). Times: cold py 108.74s vs cr 33.60s; warm py 76.94s vs cr 5.28s. |
+| `Oefenweb.autossh_tunnel_client` | ubuntu | ✅ clean. Times: cold py 26.69s vs cr 16.52s; warm py 13.50s vs cr 2.71s. |
+| `Oefenweb.ca_certificates` | ubuntu | ✅ clean. Times: cold py 24.88s vs cr 22.56s; warm py 6.64s vs cr 2.30s. |
+| `Oefenweb.cron_apt` | ubuntu | ✅ clean. Times: cold py 38.31s vs cr 33.85s; warm py 8.14s vs cr 2.26s. |
+| `Oefenweb.dnsmasq` | ubuntu | ✅ clean. Times: cold py 29.37s vs cr 21.24s; warm py 11.24s vs cr 2.65s. |
+| `Oefenweb.docker` | ubuntu | ✅ clean. Times: cold py 147.32s vs cr 115.56s; warm py 23.90s vs cr 4.59s. |
+| `Oefenweb.docker_machine` | ubuntu | ✅ clean. Times: cold py 11.57s vs cr 6.64s; warm py 9.32s vs cr 2.01s. |
+| `Oefenweb.fail2ban` | ubuntu | ✅ clean. Times: cold py 37.10s vs cr 55.69s; warm py 13.92s vs cr 2.84s. |
+| `Oefenweb.haproxy` | ubuntu | ✅ clean. Times: cold py 86.84s vs cr 54.70s; warm py 26.58s vs cr 4.08s. |
+| `Oefenweb.logrotated` | ubuntu | ✅ clean. Times: cold py 7.62s vs cr 6.34s; warm py 5.59s vs cr 2.31s. |
+| `Oefenweb.network_interfaces` | ubuntu | ✅ clean. Times: cold py 12.44s vs cr 5.11s; warm py 9.69s vs cr 0.48s. |
+| `Oefenweb.ntp` | ubuntu | ✅ clean. Times: cold py 15.03s vs cr 7.15s; warm py 9.29s vs cr 2.06s. |
+| `Oefenweb.postfix` | ubuntu | ✅ clean. Times: cold py 53.18s vs cr 33.75s; warm py 18.96s vs cr 2.59s. |
+| `Oefenweb.redis` | ubuntu | ✅ clean. Times: cold py 77.66s vs cr 43.72s; warm py 22.70s vs cr 3.82s. |
+| `Oefenweb.rsyslog` | ubuntu | ✅ clean. Times: cold py 32.26s vs cr 18.81s; warm py 13.05s vs cr 2.34s. |
+| `Oefenweb.snmpd` | ubuntu | ✅ clean. Times: cold py 58.68s vs cr 41.86s; warm py 15.80s vs cr 3.47s. |
+| `Oefenweb.ssh_client` | ubuntu | ✅ clean. Times: cold py 64.67s vs cr 19.79s; warm py 9.95s vs cr 1.94s. |
+| `Oefenweb.ssh_keys` | ubuntu | ✅ clean. Times: cold py 9.19s vs cr 7.27s; warm py 7.68s vs cr 0.48s. |
+| `Oefenweb.ssh_server` | ubuntu | ✅ clean. Times: cold py 39.36s vs cr 20.19s; warm py 20.02s vs cr 2.41s. |
+| `Oefenweb.sudoers` | ubuntu | ✅ FIXED 0.9.1304 (recursive re-templating). Times: cold py 21.78s vs cr 17.42s; warm py 7.50s vs cr 2.00s. |
+| `Oefenweb.supervisor` | ubuntu | ✅ clean. Times: cold py 6.19s vs cr 6.99s; warm py 5.12s vs cr 1.57s. |
+| `Oefenweb.sysctl` | ubuntu | ✅ clean. Times: cold py 20.28s vs cr 19.93s; warm py 6.06s vs cr 1.79s. |
+| `robertdebock.apt_repository` | ubuntu | ✅ clean. Times: cold py 5.36s vs cr 7.39s; warm py 3.88s vs cr 0.49s. |
+| `robertdebock.auditd` | ubuntu | ✅ clean. Times: cold py 40.65s vs cr 23.72s; warm py 22.34s vs cr 0.93s. |
+| `robertdebock.bareos_repository` | ubuntu | ✅ clean. Times: cold py 28.68s vs cr 9.75s; warm py 14.92s vs cr 1.54s. |
+| `robertdebock.ca_certificates` | ubuntu | ✅ clean. Times: cold py 6.73s vs cr 4.68s; warm py 5.73s vs cr 0.41s. |
+| `robertdebock.certbot` | ubuntu | ✅ clean. Times: cold py 4.94s vs cr 5.30s; warm py 3.67s vs cr 0.38s. |
+| `robertdebock.clamav` | ubuntu | ✅ clean. Times: cold py 45.50s vs cr 34.52s; warm py 11.03s vs cr 0.80s. |
+| `robertdebock.collectd` | ubuntu | ✅ FIXED (krikri-jinja v0.4.15: {%- left-strip past trim_blocks). Times: cold py 44.39s vs cr 34.24s; warm py 18.21s vs cr 0.86s. |
+| `robertdebock.consul` | ubuntu | ✅ clean. Times: cold py 28.16s vs cr 20.31s; warm py 10.45s vs cr 0.45s. |
+| `robertdebock.cron` | ubuntu | ✅ clean. Times: cold py 17.30s vs cr 5.75s; warm py 10.55s vs cr 0.63s. |
+| `robertdebock.dnsmasq` | ubuntu | ✅ clean. Times: cold py 27.71s vs cr 20.23s; warm py 11.23s vs cr 0.91s. |
+| `robertdebock.docker` | ubuntu | ✅ clean. Times: cold py 31.16s vs cr 29.46s; warm py 8.35s vs cr 0.80s. |
+| `robertdebock.docker_ce` | ubuntu | ✅ clean. Times: cold py 63.86s vs cr 43.64s; warm py 14.88s vs cr 1.31s. |
+| `robertdebock.docker_compose` | ubuntu | ✅ clean. Times: cold py 29.22s vs cr 27.44s; warm py 5.74s vs cr 0.58s. |
+| `robertdebock.dovecot` | ubuntu | ✅ clean. Times: cold py 38.37s vs cr 29.16s; warm py 12.40s vs cr 0.52s. |
+| `robertdebock.elastic_repo` | ubuntu | ✅ clean. Times: cold py 22.94s vs cr 8.84s; warm py 6.72s vs cr 0.80s. |
+| `robertdebock.elasticsearch` | ubuntu | ✅ clean. Times: cold py 5.80s vs cr 5.87s; warm py 4.82s vs cr 1.44s. |
+| `konstruktoid.hardening` | ubuntu | ⚠️ inconclusive (rounds 975062 + 978000): real ansible-playbook doesn't complete within 30 min on this role (rc=124 both attempts) - too slow to establish parity either way. krikri's own cold run completed (ok=184 changed=87) except for a real bug found along the way: a query-only `systemd:` task (no state/enabled/masked/daemon_reload/daemon_reexec, just gathering unit facts) fails with "one of the following is required: ..." - real Ansible supports this query-only form, krikri does not. After krikri's cold run the host became SSH-unreachable for warm (cannot confirm whether this is a krikri regression or just this role's own hardening effect, since real ansible never completed cold to compare against). Times: cold py TIMEOUT(1800s) vs cr 510.79s; warm py 1363.90s vs cr UNREACHABLE. |

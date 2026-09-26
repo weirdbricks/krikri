@@ -1,8 +1,10 @@
 require "json"
+require "krikri-jinja/krikri_jinja"
+require "./jinja_host_context"
 require "./variable_substitutor/filter_engine"
 require "./variable_substitutor/variable_lookup"
 require "./variable_substitutor/expression_evaluator"
-require "./variable_substitutor/crinja_renderer"
+require "./variable_substitutor/jinja_renderer"
 require "./vault"
 require "./timing_profile"
 
@@ -247,7 +249,7 @@ module Krikri
       # `X` branch gets misparsed as a top-level comparison spanning the
       # whole ternary (`1 < 2 if true else true` previously hit the `<`
       # comparison check first, splitting into "1 " and " 2 if true else
-      # true" - nonsensical). Delegated whole to Crinja (matching the
+      # true" - nonsensical). Delegated whole to krikri-jinja (matching the
       # REGEX_BARE_CALL/REGEX_GENERIC_IS_TEST fallbacks just below, both
       # of which exist for the identical reason: don't reimplement a
       # sub-grammar this hand-rolled evaluator was never built to parse)
@@ -267,7 +269,13 @@ module Krikri
         if if_parts.size == 2
           else_parts = split_by_operator(if_parts[1], " else ")
           if else_parts.size == 2
-            rendered = VariableSubstitutor::CrinjaRenderer.new(vars, true).render("{{ 'True' if (#{condition}) else 'False' }}")
+            if !condition.includes?("|") && !condition.match(/\bis\s+/)
+              converted_vars = vars.transform_values { |value| KrikriJinja.from_json_any(value) }
+              rendered = KrikriJinja.render("{{ 'True' if (#{condition}) else 'False' }}", converted_vars,
+          host_context: JinjaHostContext.new(vars))
+              return rendered.strip == "True"
+            end
+            rendered = VariableSubstitutor::JinjaRenderer.new(vars, true).render("{{ 'True' if (#{condition}) else 'False' }}")
             return rendered.strip == "True"
           end
         end
@@ -550,8 +558,8 @@ module Krikri
       # variable's real type.
       # 'true'/'false' are BOOLEAN IDENTITY tests (only real True/False
       # pass - not truthiness, P2.4); 'falsy' is !truthy (null, false,
-      # 0, "", empty list/dict). 'abs' is the abs-as-test spelling
-      # (value is a number); 'isnan'/'nan' the float-NaN test; 'uri'/
+      # 0, "", empty list/dict). 'abs' is the absolute-path test;
+      # 'isnan'/'nan' the float-NaN test; 'uri'/
       # 'url' the URL-shaped-string test (P2.5/P2.6).
       {"true", "false", "falsy", "abs", "isnan", "nan", "uri", "url", "mapping", "sequence", "boolean", "number", "string", "integer", "float", "iterable", "none"}.each do |test_name|
         if condition.includes?(" is not #{test_name}")
@@ -854,13 +862,18 @@ module Krikri
       # and an odd operand evaluated identically to false). Found via
       # robertdebock.nomad's own `nomad_server_bootstrap_expect is not
       # divisibleby 2` assert (verifying an odd bootstrap_expect count).
-      # Delegates the whole condition to Crinja (`CrinjaRenderer`, the
-      # separate evaluator that already implements every real Jinja2
-      # test correctly by construction, verified directly here to
-      # produce the right True/False) rather than reimplementing every
-      # possible built-in test's own semantics by hand.
+      # Delegates the whole condition to krikri-jinja for its built-in
+      # tests, while retaining the Crinja fallback for Ansible-specific
+      # tests that are not part of the new engine's built-in test library.
+      if (match = condition.match(/\bis\s+(?:not\s+)?(\w+)/)) &&
+         KrikriJinja::BUILTIN_TESTS.has_key?(match[1])
+        converted_vars = vars.transform_values { |value| KrikriJinja.from_json_any(value) }
+        rendered = KrikriJinja.render("{{ (#{condition}) }}", converted_vars,
+          host_context: JinjaHostContext.new(vars))
+        return rendered.strip == "True"
+      end
       if condition.match(REGEX_GENERIC_IS_TEST)
-        rendered = VariableSubstitutor::CrinjaRenderer.new(vars, true).render("{{ (#{condition}) }}")
+        rendered = VariableSubstitutor::JinjaRenderer.new(vars, true).render("{{ (#{condition}) }}")
         return rendered.strip == "True"
       end
 
@@ -890,7 +903,7 @@ module Krikri
       # non-empty-string-ness - rather than reimplementing every lookup
       # plugin's own return shape by hand.
       if condition =~ REGEX_BARE_CALL
-        rendered = VariableSubstitutor::CrinjaRenderer.new(vars, true).render("{{ 'True' if (#{condition}) else 'False' }}")
+        rendered = VariableSubstitutor::JinjaRenderer.new(vars, true).render("{{ 'True' if (#{condition}) else 'False' }}")
         return rendered.strip == "True"
       end
 
@@ -1277,12 +1290,20 @@ module Krikri
     # through to the generic path, whose bare `{"a": 1, "b": 2}` literal
     # lookup then wrongly raises "'{...}' is undefined" (real bug found
     # live via modules_data.yml's shapers assert). Real Jinja evaluates
-    # `X == Y` in a single pass with full dict/filter semantics, so
-    # delegating the whole comparison to Crinja judges exactly the cases
-    # this evaluator's flat value model can't.
+    # `X == Y` in a single pass with full dict/filter semantics. Use
+    # krikri-jinja directly for expressions it supports, while retaining
+    # Crinja for Ansible-specific features.
     private def self.crinja_dict_compare(left_expr : String, right_expr : String, operator : String, vars : Hash(String, JSON::Any)) : Bool
-      rendered = VariableSubstitutor::CrinjaRenderer.new(vars, true)
-        .render("{{ 'True' if (#{left_expr} #{operator} #{right_expr}) else 'False' }}")
+      expression = "#{left_expr} #{operator} #{right_expr}"
+      if !expression.includes?("|") && !expression.includes?("hostvars") &&
+         !expression.includes?("lookup(") && !expression.includes?("query(") && !expression.match(/\bis\s+/)
+        converted_vars = vars.transform_values { |value| KrikriJinja.from_json_any(value) }
+        rendered = KrikriJinja.render("{{ 'True' if (#{expression}) else 'False' }}", converted_vars,
+          host_context: JinjaHostContext.new(vars))
+        return rendered.strip == "True"
+      end
+      rendered = VariableSubstitutor::JinjaRenderer.new(vars, true)
+        .render("{{ 'True' if (#{expression}) else 'False' }}")
       rendered.strip == "True"
     end
 
@@ -1488,7 +1509,7 @@ module Krikri
 
       # A variable whose own stored value is `{{ }}` text bottoming out
       # at a name set nowhere is undefined, not defined - the same
-      # distinction `CrinjaRenderer.convert_var` draws for the Crinja
+      # distinction `JinjaRenderer.convert_var` draws for the Crinja
       # side (see its comment for the full case). This evaluator is
       # independent of that one (see CLAUDE.md - the two Jinja
       # evaluators share no implementation, so this bug class has to be
@@ -1668,8 +1689,8 @@ module Krikri
           if matched = filter_name_at(bytes, i + 1)
             name, after = matched
             unless VariableSubstitutor::FilterEngine.known_filter_name?(name) ||
-                   VariableSubstitutor::CrinjaRenderer.known_filter?(name) ||
-                   VariableSubstitutor::CrinjaRenderer.ensure_python_filter?(name, vars)
+                   VariableSubstitutor::JinjaRenderer.known_filter?(name) ||
+                   KrikriJinjaFilters.ensure_shared_python_filter(name, vars)
               raise VariableSubstitutor::FilterEngine::UnknownFilterError.new("No filter named '#{name}'.")
             end
             i = after
@@ -1783,7 +1804,7 @@ module Krikri
           in_quote = byte
         elsif byte == 'i'.ord && (matched = test_name_at(bytes, i))
           name, after = matched
-          unless VariableSubstitutor::CrinjaRenderer.known_test?(name)
+          unless VariableSubstitutor::JinjaRenderer.known_test?(name)
             raise VariableSubstitutor::UnknownTestError.new("No test named '#{name}'.")
           end
           i = after
@@ -1929,9 +1950,9 @@ module Krikri
         # all, so `vars["lookup('vars', item)"]?` always missed:
         # undefined, so "is not string" was unconditionally true
         # regardless of what the lookup actually returned. Same
-        # CrinjaRenderer route the `|` filter-chain branch already uses.
+        # JinjaRenderer route the `|` filter-chain branch already uses.
         #
-        # Route through CrinjaRenderer#evaluate_value! (structured, not
+        # Route through JinjaRenderer#evaluate_value! (structured, not
         # render-then-parse): a filter chain whose final value is Python
         # None - regex_search with no match, as of the round-189 fix -
         # must reach the type test as JSON null, not as the empty STRING
@@ -1943,7 +1964,7 @@ module Krikri
         # UNDEFINED (a genuinely missing variable), which falls back to
         # the old render-then-parse path below for that case.
         structured = begin
-          VariableSubstitutor::CrinjaRenderer.new(vars, true).evaluate_value!(var_name)
+          VariableSubstitutor::JinjaRenderer.new(vars, true).evaluate_value!(var_name)
         rescue
           nil
         end
@@ -1981,8 +2002,11 @@ module Krikri
         else              false
         end
       when "abs"
-        # abs-as-test: the value is a number (P2.6)
-        value.raw.is_a?(Int64) || value.raw.is_a?(Float64)
+        # Ansible's path test (os.path.isabs), not a number check -
+        # live-verified: `'/etc/x' is abs` is True, `5 is abs` fails.
+        path = value.as_s?
+        raise "expected str, bytes or os.PathLike object, not #{value.raw.is_a?(Int64) ? "int" : value.raw.class.name.downcase}" unless path
+        path.starts_with?("/")
       when "isnan", "nan"
         value.raw.is_a?(Float64) && value.raw.as(Float64).nan?
       when "uri", "url"

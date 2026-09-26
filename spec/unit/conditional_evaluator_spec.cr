@@ -1,6 +1,6 @@
 require "../spec_helper"
 require "../../src/krikri/conditional_evaluator"
-require "../../src/krikri/jinja_filters"
+require "../../src/krikri/krikri_jinja_filters"
 
 private def vars(hash : Hash(String, JSON::Any::Type)) : Hash(String, JSON::Any)
   result = Hash(String, JSON::Any).new
@@ -1051,7 +1051,7 @@ describe Krikri::ConditionalEvaluator do
       Krikri::ConditionalEvaluator.evaluate("conn_ok is reachable", v).should be_true
     end
 
-    it "falls back to Crinja for any real Jinja2 'is [not] <test>' this module hasn't hand-implemented (divisibleby, etc)" do
+    it "evaluates real Jinja2 'is [not] <test>' expressions with krikri-jinja" do
       # Real bug found benchmarking robertdebock.nomad's own assert:
       # `nomad_server_bootstrap_expect is not divisibleby 2` (verifying
       # an odd bootstrap_expect count). `divisibleby` (like most of
@@ -1405,6 +1405,16 @@ describe Krikri::ConditionalEvaluator do
       Krikri::ConditionalEvaluator.evaluate("true if true else false", v).should be_true
       Krikri::ConditionalEvaluator.evaluate("false if true else true", v).should be_false
       Krikri::ConditionalEvaluator.evaluate("true if false else false", v).should be_false
+    end
+
+    it "preserves structured variables when rendering ternary branches" do
+      v = Hash(String, JSON::Any).new
+      v["items"] = JSON.parse("[1, 2, 3]")
+      v["enabled"] = JSON::Any.new(true)
+      v["config"] = JSON.parse(%({"enabled": true}))
+
+      Krikri::ConditionalEvaluator.evaluate("items if enabled else []", v).should be_true
+      Krikri::ConditionalEvaluator.evaluate("config if config.enabled else {}", v).should be_true
     end
 
     it "does not misparse a comparison inside the true-branch as a top-level comparison" do

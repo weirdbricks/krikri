@@ -1,7 +1,8 @@
 require "../spec_helper"
+require "../support/jinja_render_helper"
 require "../../src/krikri/jmespath"
 require "../../src/krikri/variable_substitutor/filter_engine"
-require "../../src/krikri/jinja_filters"
+require "../../src/krikri/krikri_jinja_filters"
 
 # Regression spec for the `json_query` filter's JMESPath engine
 # (src/krikri/jmespath.cr). Found unimplemented via itigoag.packages'
@@ -167,8 +168,8 @@ describe "json_query filter (FilterEngine / Crinja)" do
     result.as_a.map(&.as_s).should eq(["nginx", "vim"])
   end
 
-  it "is registered as a Crinja filter too (the itigoag.packages shape)" do
-    rendered = Crinja.render(%({{ packages | json_query(query) }}), {
+  it "is registered as a template filter too (the itigoag.packages shape)" do
+    rendered = krikri_jinja_render(%({{ packages | json_query(query) }}), {
       "packages" => [{"name" => "htop", "state" => "present"}, {"name" => "curl", "state" => "absent"}],
       "query"    => "[?state == 'present'].name",
     })
@@ -177,7 +178,7 @@ describe "json_query filter (FilterEngine / Crinja)" do
 
   it "fails the template on an invalid expression, like real Ansible" do
     expect_raises(Exception, /json_query/) do
-      Crinja.render(%({{ packages | json_query('..') }}), {"packages" => [1]})
+      krikri_jinja_render(%({{ packages | json_query('..') }}), {"packages" => [1]})
     end
   end
 end

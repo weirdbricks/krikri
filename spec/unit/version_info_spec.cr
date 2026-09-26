@@ -97,7 +97,7 @@ describe Krikri::RUNTIME_DEPENDENCY_VERSIONS do
   it "excludes ameba (the only dev dependency today)" do
     names = Krikri::RUNTIME_DEPENDENCY_VERSIONS.map { |entry| entry[0] }
     names.should_not contain("ameba")
-    names.should contain("crinja")
+    names.should contain("krikri-jinja")
   end
 end
 
@@ -151,7 +151,7 @@ describe "Krikri::RUNTIME_DEPENDENCY_FORK_NOTES" do
   it "annotates only weirdbricks-owned dependencies, with their pin" do
     notes = Krikri::RUNTIME_DEPENDENCY_FORK_NOTES
 
-    notes["crinja"].should eq(" (weirdbricks/crinja fork, tag crystal-play-0.9.60)")
+    notes["krikri-jinja"].should start_with(" (weirdbricks/krikri-jinja fork, tag v")
     notes["mysql"].should eq(" (weirdbricks/crystal-mysql fork, tag crystal-ansible-0.9.340)")
     notes["docr"].should eq(" (weirdbricks/docr fork, commit c90ea8d)")
     notes["awscr-signer"].should eq(" (weirdbricks/awscr-signer fork, commit 2a8cc09)")

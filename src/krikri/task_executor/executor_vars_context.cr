@@ -1,4 +1,6 @@
 require "./executor"
+require "krikri-jinja/krikri_jinja"
+require "../jinja_host_context"
 
 module Krikri
   class TaskExecutor
@@ -802,7 +804,10 @@ module Krikri
       inner = stripped[2..-3]
       return nil if inner.includes?("{{") || inner.includes?("}}")
 
-      VariableSubstitutor::CrinjaRenderer.new(vars_context).evaluate_value!(inner.strip)
+      KrikriJinja.evaluate_expression(
+        inner.strip, vars_context, strict: true,
+        host_context: JinjaHostContext.new(vars_context)
+      )
     rescue
       nil
     end
@@ -1154,7 +1159,7 @@ module Krikri
         # 'list', not 'str'" instead of the single-item list real
         # Ansible produces from with_items:'s own scalar-wrapping.
         if raw.includes?("{%") || raw.includes?("{#")
-          rendered = VariableSubstitutor::CrinjaRenderer.new(vars_context).render(raw)
+          rendered = VariableSubstitutor::JinjaRenderer.new(vars_context).render(raw)
           current = Krikri.parse_json_or_python_literal(rendered)
         else
           current = evaluate_bare_mustache_preserving_type(raw, vars_context) || begin

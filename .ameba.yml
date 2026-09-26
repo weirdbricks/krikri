@@ -135,7 +135,10 @@ Metrics/CyclomaticComplexity:
   - src/krikri/conditional_evaluator.cr
   - src/krikri/inventory_parser.cr
   - src/krikri/ipaddr_core.cr
-  - src/krikri/jinja_filters.cr
+  - src/krikri/jinja_datetime.cr
+  - src/krikri/krikri_jinja_filters.cr
+  - src/krikri/krikri_jinja_lookups.cr
+  - src/krikri/lookup_plugins.cr
   - src/krikri/jmespath.cr
   - src/krikri/playbook_parser.cr
   - src/krikri/plugin_helpers/acl_command.cr

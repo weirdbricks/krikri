@@ -1,7 +1,7 @@
 require "../spec_helper"
-require "crinja"
+require "../support/jinja_render_helper"
 require "../../src/krikri/py_random"
-require "../../src/krikri/jinja_filters"
+require "../../src/krikri/krikri_jinja_filters"
 require "../../src/krikri/variable_substitutor/filter_engine"
 require "../../src/krikri/variable_substitutor/expression_evaluator"
 
@@ -14,8 +14,7 @@ private def s(value : String) : JSON::Any
 end
 
 private def crinja_render(tpl : String, vars = nil) : String
-  env = Crinja.new
-  env.from_string(tpl).render(vars)
+  krikri_jinja_render(tpl, vars)
 rescue e
   "ERR: #{e.message}"
 end

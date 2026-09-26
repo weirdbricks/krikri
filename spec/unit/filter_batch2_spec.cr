@@ -1,8 +1,7 @@
 require "../spec_helper"
-require "crinja"
-require "crinja/json"
-require "../../src/krikri/jinja_filters"
-require "../../src/krikri/variable_substitutor/crinja_renderer"
+require "../support/jinja_render_helper"
+require "../../src/krikri/krikri_jinja_filters"
+require "../../src/krikri/variable_substitutor/jinja_renderer"
 
 # P2.8-P2.14 + P2.15 (FINDINGS_CHECKLIST.md / PATTERN2_AUDIT.md): the
 # remaining filter batch, plus the verify-then-fix check.
@@ -19,18 +18,17 @@ require "../../src/krikri/variable_substitutor/crinja_renderer"
 # comment at the registration site for the checklist's "dict" wording).
 #
 # Parity contract: every filter is exercised through BOTH a pure-Crinja
-# render AND krikri-playbook's own CrinjaRenderer (the path the
+# render AND krikri-playbook's own JinjaRenderer (the path the
 # template: action plugin uses); a divergence between the two is a
 # failing test.
 private def filter_batch2_crinja_render(tpl : String, vars = nil) : String
-  env = Crinja.new
-  env.from_string(tpl).render(vars)
+  krikri_jinja_render(tpl, vars)
 rescue e
   "ERR: #{e.message}"
 end
 
 private def renderer_render(tpl : String, vars : Hash(String, JSON::Any) = Hash(String, JSON::Any).new) : String
-  Krikri::VariableSubstitutor::CrinjaRenderer.new(vars).render(tpl)
+  Krikri::VariableSubstitutor::JinjaRenderer.new(vars).render(tpl)
 rescue e
   "ERR: #{e.message}"
 end
@@ -146,7 +144,9 @@ describe "filter batch 2 (P2.8-P2.14, P2.15 verification)" do
 
     it "d behaves as default (real Jinja2 semantics, not dict)" do
       filter_batch2_crinja_render("{{ missing | d(5) }}").should eq("5")
-      filter_batch2_crinja_render("{{ x | d(5) }}", {"x" => nil}).should eq("5")
+      # A defined None is not undefined: real ansible-core keeps it (and a
+      # None renders as empty text), live-verified `a{{ x | d(5) }}b` -> "ab".
+      filter_batch2_crinja_render("{{ x | d(5) }}", {"x" => nil}).should eq("")
       filter_batch2_crinja_render("{{ x | d(5) }}", {"x" => 7}).should eq("7")
     end
 
@@ -154,10 +154,10 @@ describe "filter batch 2 (P2.8-P2.14, P2.15 verification)" do
       filter_batch2_crinja_render("{{ '<b>' | e }}").should eq("&lt;b&gt;")
     end
 
-    it "items behaves dict2items-style" do
-      result = filter_batch2_crinja_render("{{ {'a': 1} | items }}")
-      result.should contain("'key': 'a'")
-      result.should contain("'value': 1")
+    it "items yields (key, value) pairs, like Jinja2's own items filter" do
+      # Live-verified against ansible-core 2.19: `{{ {'a': 1} | items | list }}`
+      # is [["a", 1]] (Crinja's dict2items-style alias was not real).
+      filter_batch2_crinja_render("{{ {'a': 1} | items | list }}").should eq("[['a', 1]]")
     end
 
     it "root returns the filesystem-root prefix of a path" do
@@ -166,8 +166,8 @@ describe "filter batch 2 (P2.8-P2.14, P2.15 verification)" do
     end
   end
 
-  # ---- Cross-engine parity: pure Crinja vs krikri-playbook's CrinjaRenderer ----
-  describe "parity: pure Crinja render vs CrinjaRenderer" do
+  # ---- Cross-engine parity: pure Crinja vs krikri-playbook's JinjaRenderer ----
+  describe "parity: pure Crinja render vs JinjaRenderer" do
     it "strftime agrees between engines" do
       filter_batch2_crinja_render("{{ '%Y-%m-%d %H:%M:%S' | strftime(0, 'UTC') }}")
         .should eq(renderer_render("{{ '%Y-%m-%d %H:%M:%S' | strftime(0, 'UTC') }}", Hash(String, JSON::Any).new))
@@ -193,13 +193,13 @@ describe "filter batch 2 (P2.8-P2.14, P2.15 verification)" do
   end
 
   # ---- Real-role regression ----
-  it "drives a real authorized_keys-style loop through CrinjaRenderer" do
+  it "drives a real authorized_keys-style loop through JinjaRenderer" do
     v = Hash(String, JSON::Any).new
     v["users"] = JSON.parse(%([
       {"name": "root", "keys": ["ssh-ed25519 AAAA1", "ssh-ed25519 AAAA2"]},
       {"name": "bob", "keys": ["ssh-ed25519 BBBB3"]}
     ]))
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
     # The classic subelements loop shape from real roles.
     renderer.render(
       %({% for user, key in users | subelements('keys') %}{{ user.name }}:{{ key }};{% endfor %})

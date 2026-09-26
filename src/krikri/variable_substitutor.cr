@@ -5,8 +5,7 @@ require "./variable_substitutor/comparison_evaluator"
 require "./variable_substitutor/filter_engine"
 require "./variable_substitutor/array_slicer"
 require "./variable_substitutor/variable_lookup"
-require "./variable_substitutor/crinja_renderer"
-require "./variable_substitutor/lazy_crinja_context"
+require "./variable_substitutor/jinja_renderer"
 require "./timing_profile"
 
 module Krikri
@@ -635,7 +634,7 @@ module Krikri
   #   through VarSubstitutor#substitute.
   #
   # VariableLookup keeps its own copy ON PURPOSE: it routes the mixed/
-  # multi-span case through CrinjaRenderer instead of VarSubstitutor,
+  # multi-span case through JinjaRenderer instead of VarSubstitutor,
   # a deliberate behavioral difference fixed after real-host bugs - see
   # its own comments before even thinking about unifying that one too.
   module VariableSubstitutor
@@ -736,7 +735,7 @@ module Krikri
             # later `loop: "{{ dbs_repo_old }}"` then correctly hard-
             # failed with "The `loop` value must resolve to a 'list',
             # not 'str'." instead of silently iterating the bogus list.
-            next JSON::Any.new(CrinjaRenderer.new(vars).render(raw))
+            next JSON::Any.new(JinjaRenderer.new(vars).render(raw))
           end
 
           Krikri.parse_json_or_python_literal(render_raw(vars, raw))
@@ -822,10 +821,10 @@ module Krikri
     # (they never copy it), so building one later observes exactly the
     # same variables it would have seen at construction time.
     @evaluator : VariableSubstitutor::ExpressionEvaluator?
-    @renderer : VariableSubstitutor::CrinjaRenderer?
+    @renderer : VariableSubstitutor::JinjaRenderer?
 
     # Guards the `{%`/`{#` escalation in #substitute against genuine
-    # infinite recursion: CrinjaRenderer#prepare_crinja_vars pre-renders
+    # infinite recursion: JinjaRenderer#prepare_crinja_vars pre-renders
     # any `{{`-containing variable value via a *fresh* VarSubstitutor
     # (see that method's own comment - "no risk of this recursing back
     # into this same render", which held only for a value containing
@@ -839,10 +838,10 @@ module Krikri
     # debian.yml - unconditional role vars, not a default), which
     # crashed the whole engine with a stack overflow instead of failing
     # one task. `@vars` is fixed for a renderer's lifetime and rendering
-    # never yields the fiber (CrinjaRenderer's own shared_env comment),
+    # never yields the fiber (JinjaRenderer's own shared_env comment),
     # so a single process-wide counter - not a per-instance one, since
     # each recursion level constructs a brand new VarSubstitutor/
-    # CrinjaRenderer pair - is the correct guard here.
+    # JinjaRenderer pair - is the correct guard here.
     @@block_tag_escalation_depth = 0
     MAX_BLOCK_TAG_ESCALATION_DEPTH = 50
 
@@ -894,7 +893,7 @@ module Krikri
 
       # A caller that already has the real per-host vars_context (every
       # normal task-dispatch call site does) but omits host_name: - as
-      # several internal re-render helpers do, e.g. CrinjaRenderer#
+      # several internal re-render helpers do, e.g. JinjaRenderer#
       # prepare_crinja_vars's own inner VarSubstitutor - used to silently
       # default to the LITERAL string "localhost" here, clobbering
       # `vars["inventory_hostname"]` (already correctly set to the real
@@ -930,7 +929,7 @@ module Krikri
       @vars_owned = true
     end
 
-    # Lazy: build the ExpressionEvaluator / CrinjaRenderer only after
+    # Lazy: build the ExpressionEvaluator / JinjaRenderer only after
     # magic variables have been added to @vars. The dup happens here if
     # and only if any of these private getters is reached, which is the
     # case for every templated substitute() call - but explicitly NOT
@@ -943,10 +942,10 @@ module Krikri
       end
     end
 
-    private def renderer : VariableSubstitutor::CrinjaRenderer
+    private def renderer : VariableSubstitutor::JinjaRenderer
       @renderer ||= begin
         ensure_magic_vars!
-        VariableSubstitutor::CrinjaRenderer.new(@vars)
+        VariableSubstitutor::JinjaRenderer.new(@vars)
       end
     end
 
@@ -1005,7 +1004,7 @@ module Krikri
     # `JSON.parse`es them back all over the place (loop sources,
     # with_fileglob, nested-template re-rendering, the `omit` sentinel
     # sweep) and Python-repr text is not valid JSON. See
-    # CrinjaRenderer#evaluate_value!'s comment for the same trap found
+    # JinjaRenderer#evaluate_value!'s comment for the same trap found
     # from the other side.
     def substitute(text : String, strict : Bool = false, output : Bool = false, native : Bool = false) : String
       TimingProfile.measure("controller.templating", "controller") do
@@ -1276,7 +1275,7 @@ module Krikri
     # (`@vars.has_key?("traefik_ver.major")`) never matches anything, so every
     # `{% if %}` condition using ordinary attribute access on a defined
     # dict/list was reported undefined under strict - which
-    # `CrinjaRenderer.convert_var`'s `unresolvable_template?` probe then
+    # `JinjaRenderer.convert_var`'s `unresolvable_template?` probe then
     # turned into a real `Crinja::Undefined` for the WHOLE variable, so a
     # bare `{{ var_with_block_tag_value }}` rendered the literal sentinel
     # text instead of its value (round 200, andrewrothstein.traefik:
@@ -1867,7 +1866,7 @@ module Krikri
     # strict outer one.
     #
     # Without this, the outer check above saw a perfectly real @vars
-    # entry, passed, and the inner re-render (CrinjaRenderer#rerender_
+    # entry, passed, and the inner re-render (JinjaRenderer#rerender_
     # nested_templates -> #substitute, LENIENT) collapsed the missing
     # innermost name to this codebase's literal "undefined" sentinel
     # text - baked in as if it were legitimate content, so the task
@@ -1890,7 +1889,7 @@ module Krikri
     end
 
     # Public form of the same probe, for the Crinja-context conversion
-    # side (`CrinjaRenderer.convert_var`) - see its call site for why
+    # side (`JinjaRenderer.convert_var`) - see its call site for why
     # that path needs to ASK rather than raise: it hands the answer to
     # Crinja as a real `Undefined`, whose own `default()`/`is defined`
     # semantics are what a lenient caller wants, instead of failing a
@@ -2185,7 +2184,7 @@ module Krikri
       # next `substitute` rebuilds only whichever component it actually
       # needs. Nulling the renderer is what drops its memoized
       # JSON::Any -> Crinja::Value conversion of the old variable set,
-      # so this must stay in step with CrinjaRenderer's @template_vars.
+      # so this must stay in step with JinjaRenderer's @template_vars.
       @evaluator = nil
       @renderer = nil
     end

@@ -30,10 +30,34 @@ it does not linger at the top. This file carries no per-round
 narrative or fix history - `git log` is the record of what was found
 and fixed and when.
 
-**Currently at `0.9.1269`.**
+**Currently at `0.9.1306`.**
 
 ## Open gaps
 
+- **`systemd` module has no query-only mode** (`konstruktoid.hardening`,
+  rounds 975062/978000, 2026-09-26): a task calling `systemd:` with just
+  `name:` (no `state`/`enabled`/`masked`/`daemon_reload`/`daemon_reexec`)
+  to gather a unit's current facts via `register:` fails with "one of the
+  following is required: state, enabled, masked, daemon_reload,
+  daemon_reexec". Real Ansible supports this query-only form. Found
+  incidentally - real `ansible-playbook` never completed on this role
+  within a 30-min timeout either time it was tried, so its own behavior
+  couldn't be confirmed as a baseline; this krikri failure is confirmed
+  independently by re-reading the module's own real-Ansible docs.
+- **`konstruktoid.hardening` real-host parity is unconfirmed** (rounds
+  975062/978000, 2026-09-26): real `ansible-playbook` doesn't complete
+  within 30 minutes on this role even on a fresh host (`rc=124` both
+  attempts) - too slow to establish parity either way, not a krikri
+  signal. After krikri's own cold run completed (modulo the `systemd`
+  bug above), the host became SSH-unreachable for the warm run; whether
+  that's a krikri-specific regression or simply this hardening role's own
+  SSH/firewall changes taking effect (which real Ansible never got far
+  enough to also demonstrate) is unresolved.
+- **`geerlingguy.elasticsearch-curator`'s `pip: name: argparse` idempotency
+  (round 975000-975099, 2026-09-26):** krikri's `pip` module reports the
+  second install of `argparse` as unchanged; real Ansible's own `pip`
+  module reports `changed` on a repeat install of this specific package.
+  Not yet root-caused - low priority, single role, single task.
 - **Round 811000-812999: `k8s` missing module** (`dymurray.
   memcached_operator_role`; real ansible-playbook doesn't complete
   cleanly on the one role that hits it either, low value).
@@ -109,6 +133,41 @@ roles never run. The shortlist is at
 `testing/kata/round_new_authors/shortlist120.txt` if resuming it -
 against Atlantic.net now, Kata having been retired as a backend.
 
+### Round 975000-975099 + 976000-976002 + 977000-977001 + 978000 (2026-09-26): krikri-jinja migration pre-merge validation
+
+100 template-heavy roles run on `krikri-migration-to-krikri-jinja`
+(Crinja -> krikri-jinja templating-engine migration, see `HANDOFF.md`)
+before merging to `main`. Found and fixed 3 real regressions, all
+confirmed CLEAN against real hosts after fixing:
+
+- **Recursive re-templating regression** (`jtyr.motd`, `jtyr.sudo`,
+  `Oefenweb.sudoers`): `TemplateActionPlugin`'s own template-variable
+  walker only ever returned a substituted String, so a role default
+  whose value is itself a Jinja-containing string evaluating to a
+  dict/list (e.g. `motd_info__default`'s conditional-expression entry)
+  never got structurally re-parsed back into a real container before a
+  `.j2` template's `{% for %}`/attribute access saw it.
+- **krikri-jinja `{%-` left-strip bug** (`robertdebock.collectd`):
+  `{%- endif %}` reached past whitespace already consumed by
+  `trim_blocks` and stripped the enclosing `{% for %}` loop's own
+  inter-iteration newline, concatenating `LoadPlugin` lines onto one
+  line and breaking `collectd.service`. Fixed in `krikri-jinja` v0.4.15.
+- **`lineinfile` non-convergence for multi-line `line:` values**
+  (`konstruktoid.docker_rootless`): a `line:` value with an embedded or
+  trailing newline (from a YAML folded/literal scalar) was compared
+  against a single separator-less array element instead of the full
+  physical-line span it occupies, so the file grew a duplicate copy of
+  the non-first lines on every run.
+
+Also found: `dev-sec.os-hardening`'s changed-count divergence is real
+`ansible-playbook`'s own Python `set()` hash-randomization affecting the
+`difference` filter's iteration order between process invocations - not
+a krikri bug. See "Open gaps" above for `geerlingguy.elasticsearch-curator`'s
+unrelated `pip` idempotency quirk (not fixed) and for `konstruktoid.hardening`
+(round 978000 rerun with `--release` + a 30-min timeout): real
+`ansible-playbook` never completes on it either way, so parity is
+unconfirmed, but the rerun surfaced a real `systemd` query-only-mode gap
+along the way.
 
 ## Deliberate limits (decided, not defects)
 
@@ -227,9 +286,8 @@ gaps" rather than arguing with the note in place.
   manala.environment and manala.accounts). Wired into BOTH templating
   engines separately (the repo's two-evaluator split): the hand-rolled
   `{{ }}` evaluator's lookup dispatch (`evaluate_custom_python_lookup`)
-  and the Crinja `.j2`-template side, which additionally had NO
-  `query()`/`q()` Jinja global at all before (a template calling
-  `query()` failed with "no function with name"). Every unhelpable case
+  and the krikri-jinja template side (`krikri_jinja_lookups.cr`, which
+  also serves `query()`/`q()`). Every unhelpable case
   (no python3, the `ansible` package not importable by the controller
   python3, no `LookupModule` class in the file) keeps that exact previous
   undefined/`[]` degradation; a plugin that RAN and raised fails the task
@@ -331,7 +389,7 @@ gaps" rather than arguing with the note in place.
   (round 306, 0.9.741). Real Ansible's native-types finalization
   converts a Python tuple to a list at every rendered-output position
   EXCEPT when `| string` applies Python's own `str()` first - krikri's
-  crinja fork now replicates that exception for the inline case
+  output finalization replicates that exception for the inline case
   (`{{ d1 | dictsort | string }}` correctly renders parens), but a
   tuple crossing INTO a var first (`t1: "{{ (1, 2) }}"`) loses its
   tuple-ness the moment it's stored, since krikri's vars world is JSON
@@ -342,20 +400,6 @@ gaps" rather than arguing with the note in place.
   deliberately avoided - for a shape nothing in the role corpus hits
   (`| string` on a tuple-bearing var read back out of storage). Revisit
   only if a real role is found relying on it.
-- **A dotted/bracketed attribute miss on a NON-hostvars object stays
-  lenient in `.j2` template renders** (`crinja_strict_undefined.cr`
-  only makes `Resolver#resolve`, the bare-name lookup, strict). The
-  hostvars case - the one live divergence against this cut
-  (`mrlesmithjr.ansible_consul_client`, RHEL-family round 60175:
-  real Ansible's `HostVarsVars` raises `object of type 'HostVarsVars'
-  has no attribute 'ansible_enp0s8'` where a lenient render produced an
-  empty value) - is closed as of 0.9.821 via the hostvars-specific
-  strict path the original note called for (see the scope-cut clearing
-  batch above). The blanket cut stays: `Resolver.resolve_with_hash_
-  accessor` is also the fallback for method-call dispatch and this
-  engine's own fact-coverage gaps, so a non-hostvars dict miss remains
-  lenient even under strict templating, deliberately.
-
 ### Cosmetic differences (both engines fail; only the wording differs)
 
 These change no outcome and no recap. Listed so they aren't re-reported
@@ -363,6 +407,12 @@ as bugs, not because anyone intends to fix them. (The section's two
 former entries - `RemovedActionError`'s message text and
 `include_vars:` with a failing templated path - were re-examined and
 closed in 0.9.824; see the round narrative at the top.)
+
+- **A `hostvars[host].<missing>` attribute names the wrong type.** Real
+  ansible-core fails with `object of type 'HostVarsVars' has no attribute
+  'x'`; krikri fails the same task (and `is defined`/`default()` behave
+  the same) but says `object of type 'dict'`, since each host's vars reach
+  the template engine as a plain dict.
 
 ### Everything else
 

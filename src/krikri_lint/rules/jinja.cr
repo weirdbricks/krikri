@@ -1,10 +1,10 @@
-require "crinja"
+require "krikri-jinja/krikri_jinja"
 
 module Krikri
   module Lint
     # Upstream parity: ansible-lint's jinja rule family (severity LOW,
     # tags formatting). We implement two sub-rules:
-    #  - jinja[invalid]: Jinja templates that fail to parse (via Crinja)
+    #  - jinja[invalid]: Jinja templates that fail to parse (via krikri-jinja)
     #  - jinja[spacing]: missing inner padding, `{{ x }}` not `{{x}}`
     # Upstream additionally reformats expressions with black; that full
     # reformat is a deliberate non-goal (black-based, not a parity gap
@@ -70,14 +70,10 @@ module Krikri
       end
 
       private def valid_jinja?(value : String) : Bool
-        Crinja.render(value, Crinja::Variables.new)
+        KrikriJinja::Parser.parse(value)
         true
-      rescue Crinja::TemplateSyntaxError
-        # Parse failures are jinja[invalid]; runtime-resolvable render
-        # failures (undefined vars, unknown filters) are not.
+      rescue KrikriJinja::TemplateError
         false
-      rescue
-        true
       end
 
       # Narrow spacing normalization: `{{x}}` -> `{{ x }}`. Only fires

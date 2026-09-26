@@ -39,6 +39,108 @@ describe "lineinfile plugin" do
     result["changed"].as_bool.should be_false
   end
 
+  it "is idempotent when the line value itself contains a trailing newline (regression: konstruktoid.docker_rootless's 'Add rootless Docker alias to .bash_aliases' task uses a YAML folded scalar, whose value always ends with \\n - the file used to grow one extra newline and report changed on every run)" do
+    path = tmp_path("lineinfile-multiline-line.txt")
+    File.delete(path) if File.exists?(path)
+    line = "alias docker='sudo XDG_RUNTIME_DIR=\"/run/user/1000\" DOCKER_HOST=\"unix:///run/user/1000/docker.sock\"'"
+
+    first = PluginSpecHelper.run("lineinfile", {
+      "path"   => path,
+      "line"   => line + "\n",
+      "regexp" => "^alias docker=",
+      "state"  => "present",
+      "create" => "yes",
+    })
+    first["changed"].as_bool.should be_true
+    after_cold = File.read(path)
+    # One trailing newline from the line value itself plus lineinfile's
+    # own line terminator - byte-identical to real ansible's result.
+    after_cold.should eq(line + "\n\n")
+
+    second = PluginSpecHelper.run("lineinfile", {
+      "path"   => path,
+      "line"   => line + "\n",
+      "regexp" => "^alias docker=",
+      "state"  => "present",
+      "create" => "yes",
+    })
+    second["changed"].as_bool.should be_false
+    File.read(path).should eq(after_cold)
+
+    third = PluginSpecHelper.run("lineinfile", {
+      "path"   => path,
+      "line"   => line + "\n",
+      "regexp" => "^alias docker=",
+      "state"  => "present",
+      "create" => "yes",
+    })
+    third["changed"].as_bool.should be_false
+    File.read(path).should eq(after_cold)
+  end
+
+  it "is idempotent when the line value spans several embedded physical lines (regression: a value with an internal newline, e.g. a YAML literal '|' block, only matched the FIRST physical line by regexp - comparing that one element against the whole multi-line value never matched, and splicing only ever inserted after it without removing the old trailing lines, so the file grew a fresh copy of the non-first lines on every single run)" do
+    path = tmp_path("lineinfile-multiline-embedded.txt")
+    File.delete(path) if File.exists?(path)
+    value = "foo\nbar\nbaz\n"
+
+    first = PluginSpecHelper.run("lineinfile", {
+      "path"   => path,
+      "line"   => value,
+      "regexp" => "^foo",
+      "state"  => "present",
+      "create" => "yes",
+    })
+    first["changed"].as_bool.should be_true
+    after_cold = File.read(path)
+    after_cold.should eq("foo\nbar\nbaz\n\n")
+
+    second = PluginSpecHelper.run("lineinfile", {
+      "path"   => path,
+      "line"   => value,
+      "regexp" => "^foo",
+      "state"  => "present",
+      "create" => "yes",
+    })
+    second["changed"].as_bool.should be_false
+    File.read(path).should eq(after_cold)
+
+    third = PluginSpecHelper.run("lineinfile", {
+      "path"   => path,
+      "line"   => value,
+      "regexp" => "^foo",
+      "state"  => "present",
+      "create" => "yes",
+    })
+    third["changed"].as_bool.should be_false
+    File.read(path).should eq(after_cold)
+  end
+
+  it "keeps a plain single-line line value byte-stable across repeated runs" do
+    path = tmp_path("lineinfile-single-line-repeat.txt")
+    File.delete(path) if File.exists?(path)
+
+    first = PluginSpecHelper.run("lineinfile", {
+      "path"   => path,
+      "line"   => "port=22",
+      "regexp" => "^port=",
+      "state"  => "present",
+      "create" => "yes",
+    })
+    first["changed"].as_bool.should be_true
+    after_cold = File.read(path)
+    after_cold.should eq("port=22\n")
+
+    second = PluginSpecHelper.run("lineinfile", {
+      "path"   => path,
+      "line"   => "port=22",
+      "regexp" => "^port=",
+      "state"  => "present",
+      "create" => "yes",
+    })
+    second["changed"].as_bool.should be_false
+    File.read(path).should eq(after_cold)
+  end
+
   it "reports changed when only mode: drifts, even if the line is already present (regression: robertdebock.grub round 143 - GRUB_TIMEOUT=5 already in /etc/default/grub, mode: \"0664\" silently never applied/checked)" do
     path = tmp_path("lineinfile-mode-only-drift.txt")
     File.write(path, "hello world\n")

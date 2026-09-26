@@ -72,6 +72,34 @@ describe LineEditor do
       changed.should be_false
     end
 
+    it "treats a line value with a trailing newline as already present (regression: konstruktoid.docker_rootless's folded-scalar docker alias - the trailing newline made the comparison fail, so every run rewrote the line and the file grew one newline per run)" do
+      lines, changed = LineEditor.ensure_present(
+        ["alias docker='sudo XDG_RUNTIME_DIR=\"/run/user/1000\"'"],
+        "alias docker='sudo XDG_RUNTIME_DIR=\"/run/user/1000\"'\n",
+        "^alias docker=", false, nil, nil
+      )
+      lines.should eq(["alias docker='sudo XDG_RUNTIME_DIR=\"/run/user/1000\"'"])
+      changed.should be_false
+    end
+
+    it "replaces one matched line with several physical lines when the line value embeds newlines" do
+      lines, changed = LineEditor.ensure_present(["old", "tail"], "new-a\nnew-b", "^old$", false, nil, nil)
+      lines.should eq(["new-a", "new-b", "tail"])
+      changed.should be_true
+    end
+
+    it "treats an already-inserted multi-line value as present (regression: comparing only the single regexp-matched element against the whole multi-line value never matched, so this reported changed forever and duplicated the non-first lines on every call)" do
+      lines, changed = LineEditor.ensure_present(["foo", "bar", "baz", ""], "foo\nbar\nbaz\n", "^foo", false, nil, nil)
+      lines.should eq(["foo", "bar", "baz", ""])
+      changed.should be_false
+    end
+
+    it "splits a multi-line line value into physical lines when inserting" do
+      lines, changed = LineEditor.ensure_present([] of String, "a\nb\n", nil, false, nil, nil)
+      lines.should eq(["a", "b", ""])
+      changed.should be_true
+    end
+
     it "substitutes backreferences instead of replacing the whole line" do
       lines, changed = LineEditor.ensure_present(["name=alice"], "name=\\1-updated", "name=(\\w+)", true, nil, nil)
       lines.should eq(["name=alice-updated"])
@@ -108,7 +136,7 @@ describe LineEditor do
         "MaxAuthTriesProbe \\1\\nMaxAuthTriesProbeBench \\1",
         "^MaxAuthTriesProbe (\\d+)$", true, nil, nil
       )
-      lines.should eq(["MaxAuthTriesProbe 6\nMaxAuthTriesProbeBench 6"])
+      lines.should eq(["MaxAuthTriesProbe 6", "MaxAuthTriesProbeBench 6"])
       changed.should be_true
     end
 
