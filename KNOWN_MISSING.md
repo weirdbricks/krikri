@@ -236,6 +236,19 @@ attached. Nothing here is waiting on anyone. Do not re-litigate without
 new evidence - and if new evidence turns up, move the entry to "Open
 gaps" rather than arguing with the note in place.
 
+### `fetch:` refuses a destination that escapes `dest`, stricter than real Ansible
+
+- A `src` whose `..` components carry the composed
+  `dest/<host>/<src>` path outside `dest` fails with "Detected directory
+  traversal, expected to be contained in ..." instead of writing there.
+  Real ansible-core 2.19.11 writes through: its CVE-2019-3828 guard
+  (`is_subpath(dest, original_dest)` in `action/fetch.py`) runs before
+  the path is composed, so it compares `dest` with itself and never
+  fires (verified live). Deliberate: `src` can come from data a managed
+  host controls (e.g. `find:` results), and a controller-side write
+  outside `dest` is the exact bug that CVE describes. Every non-escaping
+  path matches real Ansible byte-for-byte.
+
 ### `ansible_version` is pinned to a fixed real ansible-core release, not this project's own version
 
 - `ANSIBLE_VERSION_MAGIC_VAR` reports `2.19.4` regardless of which real
