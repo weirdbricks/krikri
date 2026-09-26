@@ -111,12 +111,14 @@ module Krikri
             # a newline, comment, or EOF, but got '1' instead").
             match = Regex.new(pattern).match(new_lines[found_index])
             expanded = match ? expand_backref_template(line, match) : line
-            changed = expanded != new_lines[found_index]
-            new_lines[found_index] = expanded
+            parts = multiline_replacement(expanded)
+            changed = !span_matches?(new_lines, found_index, parts)
+            splice(new_lines, found_index, parts) if changed
             return {new_lines, changed}
           else
-            changed = new_lines[found_index] != line
-            new_lines[found_index] = line
+            parts = multiline_replacement(line)
+            changed = !span_matches?(new_lines, found_index, parts)
+            splice(new_lines, found_index, parts) if changed
             return {new_lines, changed}
           end
         end
@@ -147,8 +149,56 @@ module Krikri
         return {new_lines, false} if new_lines.any? { |existing| lines_equal?(existing, line) }
 
         insert_index = insertion_index(new_lines, insertafter, insertbefore, firstmatch)
-        new_lines.insert(insert_index, line)
+        # Real Ansible inserts the raw `line` value plus one line
+        # separator, so an embedded/trailing newline inside `line`
+        # lands in the file verbatim (splitting it here keeps this
+        # module's separator-less line list byte-identical to that).
+        line.split("\n").each_with_index do |part, offset|
+          new_lines.insert(insert_index + offset, part)
+        end
         {new_lines, true}
+      end
+
+      # Maps a `line` value that may contain embedded newlines (typical
+      # of a YAML folded scalar, which always ends with one) onto real
+      # Ansible's replace semantics. Real Ansible compares and writes
+      # whole file lines WITH their separator, ensuring exactly one
+      # trailing separator on the replacement. In this module's
+      # separator-less line list that means: compare against the FULL
+      # value with one trailing newline removed, then split what
+      # remains on the embedded newlines - the join that renders the
+      # file re-adds each separator. Without this, a trailing-newline
+      # value never compared equal to the separator-less stored line,
+      # so every run rewrote it and the rendered file grew one extra
+      # newline per run. Returns the physical lines `line` occupies.
+      private def self.multiline_replacement(line : String) : Array(String)
+        body = line.ends_with?("\n") ? line : line + "\n"
+        body.chomp.split("\n")
+      end
+
+      # True when *parts* already occupies lines[index...index+parts.size]
+      # verbatim - i.e. a previous run's replace/insert already put this
+      # exact multi-line value there, so nothing needs to change. Without
+      # this span check, comparing only the single matched element against
+      # the full multi-line body can never be equal once a value spans more
+      # than one physical line, so every run "replaces" (and, worse, only
+      # ever inserted after that one element instead of removing the old
+      # trailing lines it had previously inserted) - the file grew a fresh
+      # copy of the non-first physical lines on every single run.
+      private def self.span_matches?(lines : Array(String), index : Int32, parts : Array(String)) : Bool
+        return false if index + parts.size > lines.size
+        parts.each_with_index.all? { |part, offset| lines[index + offset] == part }
+      end
+
+      # Replaces the single matched element at *index* with *parts* (one or
+      # more physical lines), shifting any following lines down - only
+      # called when `span_matches?` is false, so this is always a genuine
+      # content change, never a no-op rewrite of an already-stable span.
+      private def self.splice(lines : Array(String), index : Int32, parts : Array(String)) : Nil
+        lines[index] = parts[0]
+        parts[1..].each_with_index do |part, offset|
+          lines.insert(index + 1 + offset, part)
+        end
       end
 
       # Expands a backrefs replacement template the way Python's
