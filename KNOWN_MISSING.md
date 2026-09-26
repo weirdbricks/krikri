@@ -101,9 +101,10 @@ and fixed and when.
   `community.postgresql.postgresql_membership`,
   `community.rabbitmq.rabbitmq_vhost`, `community.zabbix.zabbix_group`,
   `community.vmware.vsphere_file` (2 roles) - genuinely missing, niche,
-  not implemented. `pacman`, `apk`, `community.general.zypper`, `snap` -
-  same "is this in scope" alt-package-manager question already open for
-  portage/pkgng above. See `ROLES_TESTED.md` for the exact affected role
+  not implemented. `pacman`, `apk`, `community.general.zypper`, `snap`,
+  `pkgng`, `portage` - out of scope: this engine targets Ubuntu and
+  RHEL-family hosts only, and these are other distros'/families' package
+  managers. See `ROLES_TESTED.md` for the exact affected role
   per module.
 - **Scope question, not yet decided** (2026-09-10/11 batches): `bigip_wait`
   (F5 BIG-IP network-appliance family - `f5devcentral.backup_config`,
@@ -116,8 +117,8 @@ and fixed and when.
   either way.
 - **Low-priority single-role missing modules** (2026-09-10/11 batches, one
   role each unless noted): `slack`, `postgresql_ext`, `portage` (Gentoo -
-  likely the same package-manager scope question as zypper/pacman),
-  `pkgng` (FreeBSD - same question), `ovirt_host_info`, `nuage_vspk` (2
+  out of scope, other distros),
+  `pkgng` (FreeBSD - out of scope), `ovirt_host_info`, `nuage_vspk` (2
   roles), `manala_files_attributes` (role-private custom module),
   `lxc_container`, `logentries` (deprecated vendor service),
   `k8s` (real ansible-playbook doesn't complete cleanly on the one role
@@ -266,7 +267,7 @@ gaps" rather than arguing with the note in place.
   and the fact a role gates on cannot disagree, but only apt/dnf/yum
   have backends. zypper/pacman/apk/pkgng fail by name ("package manager
   'pacman' is not supported by this engine"). Confirmed live on Arch.
-  Same scope question as the zypper entry below.
+  Out of scope: this engine targets Ubuntu and RHEL-family hosts only.
   - apk is doubly out of reach: Alpine is musl and this engine's plugin
     binaries are glibc-linked, so they cannot execute there at all - the
     upload fails before any module runs. A musl plugin build is the
@@ -298,8 +299,7 @@ gaps" rather than arguing with the note in place.
 - **Arbitrary-Python-module support is scoped to role-private
   `library/*.py` sources** (plus the playbook-adjacent `library/`): a
   module with a resolvable source now RUNS on the target with the
-  target's own python3 through the py_module plugin (0.9.819, see the
-  scope-cut clearing batch above) - previously skipped with a
+  target's own python3 through the py_module plugin (0.9.819) - previously skipped with a
   parse-time warning (seen live repeatedly via linux-system-roles'
   `sr_fingerprint`, `timesync_provider`, `kernel_settings_get_config`,
   `blivet`). What remains cut: a module reference with NO library
@@ -311,10 +311,10 @@ gaps" rather than arguing with the note in place.
   runner can see. The exit-status half stays divergent for source-less
   modules: WHICH TASKS RUN differs (real Ansible refuses at parse time
   and runs nothing; this engine runs the rest of the play), not the
-  exit status a caller sees. **0.9.829 update**: the feature's own
-  role-root resolution, argument-passing protocol, and task-batching
-  interaction were all independently broken since 0.9.819 introduced it
-  (see the round-narrative correction above) - fixed, and confirmed live
+  exit status a caller sees. The feature's own role-root resolution,
+  argument-passing protocol, and task-batching interaction were
+  independently broken after 0.9.819 introduced it - fixed, and
+  confirmed live
   for a self-contained module (`sr_fingerprint`, no unusual imports).
 - **A role-private module importing its OWN custom `ansible.module_
   utils.*` package is still out of reach** (found via linux-system-
@@ -352,8 +352,7 @@ gaps" rather than arguing with the note in place.
   updated (mrlesmithjr.rabbitmq and linux-system-roles.rhc have been
   re-verified clean since), and ansible.mariadb's modules turned out to
   be functionally identical forks of the already-implemented
-  community.mysql ones - aliased onto them as of 0.9.825, see the
-  scope-cut re-examination narrative at the top.)
+  community.mysql ones - aliased onto them as of 0.9.825.)
 
 ### SELinux security-context relabeling is not implemented
 
@@ -403,10 +402,7 @@ gaps" rather than arguing with the note in place.
 ### Cosmetic differences (both engines fail; only the wording differs)
 
 These change no outcome and no recap. Listed so they aren't re-reported
-as bugs, not because anyone intends to fix them. (The section's two
-former entries - `RemovedActionError`'s message text and
-`include_vars:` with a failing templated path - were re-examined and
-closed in 0.9.824; see the round narrative at the top.)
+as bugs, not because anyone intends to fix them.
 
 - **A `hostvars[host].<missing>` attribute names the wrong type.** Real
   ansible-core fails with `object of type 'HostVarsVars' has no attribute
@@ -580,7 +576,7 @@ closed in 0.9.824; see the round narrative at the top.)
   silently doing something else); `acme` means speaking ACME to a real
   CA, which stays out of scope. (The `*_info` read-only half -
   `openssl_publickey_info`, `openssl_csr_info` - is implemented as of
-  0.9.822, see the scope-cut clearing batch above.)
+  0.9.822.)
 - `community.general.vdo` - unimplemented; untestable so far, no real
   role sets a non-empty `vdo_devices`.
 - `gluster.gluster.gluster_volume` - unimplemented; causes a cosmetic
@@ -609,22 +605,6 @@ closed in 0.9.824; see the round narrative at the top.)
   and the still-unimplemented bare-defaults-against-no-daemon case
   correctly failing with real Ansible's own exact error message on
   both).
-
-### getent's `service:` only ever resolves through the local files backend
-
-- Real `ansible.builtin.getent`'s `service:` param passes `-s <service>`
-  to the getent binary, restricting the lookup to one NSS backend (e.g.
-  `service: files` to bypass LDAP/SSSD and read /etc/passwd directly).
-  krikri's getent plugin reads the local database files directly instead
-  of forking getent, so it IS the files backend: `service:` is accepted
-  and any value returns the files-backed data. For `service: files` -
-  the overwhelmingly common role usage - this is exactly right. A
-  request for a genuinely remote backend (`ldap`, `sss`, ...) returns
-  local files data where real Ansible on a non-LDAP host would return
-  not-found; emulating arbitrary NSS backends is out of scope (it would
-  mean running getent or an NSS resolver). Decided in the 0.9.990
-  param-coverage audit of getent, live-verified against real
-  ansible-playbook 2.19.4 (`service: files` byte-identical facts).
 
 ---
 
