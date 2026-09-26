@@ -27,14 +27,35 @@ module Krikri
       return PluginResult.new(changed: false, failed: true, msg: "missing required argument: dest") unless dest
 
       dest = expand_tilde(dest)
-      dest = File.directory?(dest) ? File.join(dest, File.basename(URI.parse(url).path)) : dest
+      # Real get_url only derives the final filename AFTER the request
+      # completes when dest: is a directory (get_url.py's dest_is_dir
+      # block): first the final response's Content-Disposition filename,
+      # else the basename of the FINAL post-redirect URL - the original
+      # URL's path is never used. Deriving it up front from the original
+      # URL misnamed every download behind a redirecting endpoint (round
+      # 979121, mrlesmithjr.guacamole: its apache.org/dyn/closer.cgi?...
+      # URL has path /dyn/closer.cgi, so the download landed at
+      # <dir>/closer.cgi and the next task's unarchive failed with
+      # "Source ... failed to transfer" while real Ansible had the file
+      # under the redirect target's own name).
+      dest_is_dir = File.directory?(dest)
+      # Pre-request filename guess, check-mode messaging only: in check
+      # mode no request is made, so there's no final response to derive
+      # from (real Ansible HEADs the URL for this; we keep the guess).
+      dest = File.join(dest, url_filename(url)) if dest_is_dir
 
       checksum = resolved_checksum(url)
       return checksum if checksum.is_a?(PluginResult)
 
       force = true?(@params["force"]?, default: false)
 
-      if File.exists?(dest) && !force
+      # Real get_url's pre-download dest-existence check (and its
+      # checksum-based skip) is guarded by `not dest_is_dir`: with a
+      # directory dest the filename isn't knowable before the request, so
+      # the request always happens and idempotency is decided afterward
+      # by comparing the fresh content's SHA1 against whatever already
+      # sits at the final dest path.
+      if File.exists?(dest) && !force && !dest_is_dir
         if skip_result = check_existing_dest(dest, checksum)
           return skip_result
         end
@@ -56,7 +77,7 @@ module Krikri
         return tmp_error
       end
 
-      download_to_dest(url, dest, checksum)
+      download_to_dest(url, dest, checksum, dest_is_dir)
     end
 
     # Parses the checksum: param (if any) into its {algorithm, hash}
@@ -133,10 +154,10 @@ module Krikri
       result
     end
 
-    private def download_to_dest(url : String, dest : String, checksum : {String, String}?) : PluginResult
+    private def download_to_dest(url : String, dest : String, checksum : {String, String}?, dest_is_dir = false) : PluginResult
       tmp_path = staging_path(dest)
       begin
-        download(url, tmp_path)
+        info = download(url, tmp_path)
       rescue ex
         File.delete(tmp_path) if File.exists?(tmp_path)
         # Same fetch_url contract as the checksum rescue above: real Ansible
@@ -147,6 +168,13 @@ module Krikri
         add_path_info(failure_result, dest)
         return failure_result
       end
+      info = info.as(PluginHelpers::HTTPDownload::Result)
+
+      # Directory dest: the real filename comes from the FINAL response -
+      # Content-Disposition first, else the final (post-redirect) URL's
+      # basename, real get_url's dest_is_dir ordering (get_url.py: "pluck
+      # the URL from the info, since a redirect could have changed it").
+      dest = File.join(File.dirname(dest), download_filename(info)) if dest_is_dir
 
       if checksum && (mismatch = checksum_mismatch_result(tmp_path, checksum))
         return mismatch
@@ -336,7 +364,7 @@ module Krikri
       end
     end
 
-    private def download(url : String, tmp_path : String) : Nil
+    private def download(url : String, tmp_path : String) : PluginHelpers::HTTPDownload::Result
       # file:// is a legitimate source for real Ansible's get_url too
       # (urllib's FileHandler): a local mirror, a previously-fetched
       # artifact, an offline install. Found via an ad-hoc CLI comparison
@@ -352,10 +380,10 @@ module Krikri
         # Match the HTTP path's staging perms (perm 0666 & ~umask on the
         # final rename) rather than inheriting the source file's mode.
         File.chmod(tmp_path, 0o666)
-        return
+        return PluginHelpers::HTTPDownload::Result.new(final_url: url, headers: HTTP::Headers.new)
       end
 
-      PluginHelpers::HTTPDownload.download(url, tmp_path, download_options)
+      PluginHelpers::HTTPDownload.download_with_info(url, tmp_path, download_options)
     end
 
     # file:// URL to a local path: nil when the URL isn't a file:// URL
@@ -616,6 +644,49 @@ module Krikri
       return {false, failure} if failure
 
       {changed, nil}
+    end
+
+    # Real get_url's url_filename: basename of the URL's path component,
+    # 'index.html' when the path has no basename (its own documented
+    # fallback).
+    private def url_filename(url : String) : String
+      fn = File.basename(URI.parse(url).path || "")
+      fn.empty? ? "index.html" : fn
+    end
+
+    # Directory-dest filename from a completed download: the final
+    # response's Content-Disposition filename param first (basename'd, as
+    # real extract_filename_from_headers does to block traversal), else
+    # the final post-redirect URL's basename.
+    private def download_filename(info : PluginHelpers::HTTPDownload::Result) : String
+      if (disposition = info.headers["Content-Disposition"]?) &&
+         (fn = content_disposition_filename(disposition)) && !fn.empty?
+        return File.basename(fn)
+      end
+      url_filename(info.final_url)
+    end
+
+    # Extracts the filename param from a Content-Disposition value:
+    # `attachment; filename="name.tar.gz"`, also tolerating an RFC 5987
+    # filename* form (charset'lang'percent-encoded). Not a full
+    # email.message.Message#get_param replacement, but covers what real
+    # servers actually send (apache.org's dyn/closer.cgi among them).
+    private def content_disposition_filename(value : String) : String?
+      value.split(';').each do |part|
+        name, _, param = part.strip.partition('=')
+        next if param.empty?
+        if name.downcase == "filename*"
+          raw = param.strip
+          raw = raw[1..-2] if raw.size >= 2 && raw.starts_with?('"') && raw.ends_with?('"')
+          encoded = raw.split("'")[-1]?
+          return URI.decode(encoded) if encoded && !encoded.empty?
+        elsif name.downcase == "filename"
+          param = param.strip
+          param = param[1..-2] if param.size >= 2 && param.starts_with?('"') && param.ends_with?('"')
+          return param
+        end
+      end
+      nil
     end
   end
 end
