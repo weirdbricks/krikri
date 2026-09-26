@@ -34,6 +34,16 @@ and fixed and when.
 
 ## Open gaps
 
+- **Unsafe-data taint is exact-text, not derived-string** (security
+  review, 2026-09-26): execution results and facts are never
+  re-rendered, via the per-host resolved-name registry plus the exact
+  text registry in `unsafe_values.cr`. Real ansible-core's taint
+  follows *derived* strings too; krikri's text registry only matches
+  a hostile string verbatim. No live exploit found - 20+ transform
+  shapes (`| trim`, `replace`, `regex_replace`, `from_json`, concat,
+  author vars, `template:`/`{% include %}`/`lookup('template')`) all
+  came out safe, because rendered output is no longer re-scanned - but
+  the guarantee is structural rather than a true taint type.
 - **Role-dependency tasks sometimes lose their `TASK [role : name]`
   prefix** (`buluma.roundcubemail`, `xanmanning.k3s`; round 979000,
   2026-09-26): real `ansible-playbook` prints `TASK [buluma.httpd :
