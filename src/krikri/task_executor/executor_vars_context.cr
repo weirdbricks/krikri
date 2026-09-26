@@ -192,6 +192,14 @@ module Krikri
       play_host_names = @hosts.map { |hval| JSON::Any.new(hval.name) }
       vars_context["ansible_play_hosts_all"] = JSON::Any.new(play_host_names)
       vars_context["ansible_play_hosts"] = JSON::Any.new(play_host_names)
+      # play_hosts - real Ansible's deprecated-but-still-supported alias
+      # for ansible_play_hosts, still resolved today (deprecation warning
+      # only, slated for removal in ansible-core 2.23). Same value, same
+      # refresh - roles written against the old name (wezhai.minio's
+      # minio_env.j2 does `{% for host in play_hosts %}` for cluster
+      # mode) hard-fail with "'play_hosts' is undefined" without it,
+      # while real ansible-playbook renders the host list.
+      vars_context["play_hosts"] = JSON::Any.new(play_host_names)
       vars_context["ansible_version"] = ANSIBLE_VERSION_MAGIC_VAR
       # ansible_check_mode - real Ansible magic var (true under --check,
       # false on a real run), entirely unimplemented before. Real
