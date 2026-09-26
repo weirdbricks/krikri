@@ -282,7 +282,10 @@ module Krikri
     private def expand_dpkg_options : String
       (@params["dpkg_options"]? || "force-confdef,force-confold").split(",")
         .map(&.strip).reject(&.empty?)
-        .map { |opt| "-o Dpkg::Options::=--#{opt}" }.join(" ")
+        # Real apt passes each option as its own argv element
+        # (-o Dpkg::Options::=--<opt>), where a hostile opt is inert;
+        # quote_if_needed keeps the well-formed comma list byte-identical.
+        .map { |opt| "-o Dpkg::Options::=--#{Shell.quote_if_needed(opt)}" }.join(" ")
     end
 
     # `name:` may be several space-separated package names (this module's

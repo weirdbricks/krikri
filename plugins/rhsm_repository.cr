@@ -53,7 +53,10 @@ module Krikri
           msg: "#{pattern} is not a valid repository ID")
       end
 
-      args = plan.enable.map { |id| "--enable #{id}" } + plan.disable.map { |id| "--disable #{id}" }
+      # Real module passes each repo id as its own argv element; a repo id
+      # is a task param (name:), so quote it for the shell string (the
+      # well-formed dotted ids stay byte-identical).
+      args = plan.enable.map { |id| "--enable #{Shell.quote_if_needed(id)}" } + plan.disable.map { |id| "--disable #{Shell.quote_if_needed(id)}" }
       if args.empty?
         return PluginResult.new(changed: false, failed: false,
           msg: "Repository states unchanged", repositories: repositories_json(plan.updated))

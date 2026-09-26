@@ -90,14 +90,14 @@ module Krikri
 
       # Real get_bin_path(a2mod_binary) - only checked once a change is
       # actually needed.
-      a2mod_path = remote_exec("command -v #{a2mod_binary} 2>/dev/null")
+      a2mod_path = remote_exec("command -v #{Shell.quote_if_needed(a2mod_binary)} 2>/dev/null")
       if a2mod_path[:exit_code] != 0 || a2mod_path[:stdout].strip.empty?
         return PluginResult.new(changed: false, failed: true, msg: "#{a2mod_binary} not found. Perhaps this system does not use #{a2mod_binary} to manage apache")
       end
 
       # force exists only for a2dismod on debian
       force_flag = !want_enabled && true?(@params["force"]?) ? "-f " : ""
-      run = remote_exec("export LANGUAGE=C LC_ALL=C; #{a2mod_path[:stdout].strip.split("\n").first} #{force_flag}#{shell_single_quote(name)}")
+      run = remote_exec("export LANGUAGE=C LC_ALL=C; #{Shell.quote_if_needed(a2mod_path[:stdout].strip.split("\n").first)} #{force_flag}#{shell_single_quote(name)}")
 
       return a2mod_failure(a2mod_binary, name, run) if run[:exit_code] != 0
 
@@ -173,11 +173,11 @@ module Krikri
     end
 
     private def ctl_m : NamedTuple(exit_code: Int32, stdout: String, stderr: String)
-      remote_exec("export LANGUAGE=C LC_ALL=C; #{ctl_binary} -M")
+      remote_exec("export LANGUAGE=C LC_ALL=C; #{Shell.quote_if_needed(ctl_binary)} -M")
     end
 
     private def run_threaded? : Bool
-      result = remote_exec("export LANGUAGE=C LC_ALL=C; #{ctl_binary} -V")
+      result = remote_exec("export LANGUAGE=C LC_ALL=C; #{Shell.quote_if_needed(ctl_binary)} -V")
       result[:stdout] =~ /threaded: *yes/ ? true : false
     end
 

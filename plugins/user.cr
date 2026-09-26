@@ -552,7 +552,7 @@ module Krikri
       return PluginResult.new(changed: true, failed: false, msg: "Would modify user (check mode)") if check_mode
 
       unless flags.empty?
-        result = remote_exec("#{local ? "lusermod" : "usermod"} #{flags.join(" ")} #{name}")
+        result = remote_exec("#{local ? "lusermod" : "usermod"} #{flags.join(" ")} #{shell_single_quote(name)}")
         return command_failure("modify user", result) unless result[:exit_code] == 0
         invalidate_shadow_cache
       end

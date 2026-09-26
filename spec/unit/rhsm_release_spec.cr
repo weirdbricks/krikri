@@ -47,5 +47,12 @@ describe Krikri::PluginHelpers::RhsmRelease do
     it "builds --unset when the release is nil" do
       Krikri::PluginHelpers::RhsmRelease.release_arguments(nil).should eq("release --unset")
     end
+
+    it "single-quotes a hostile release so it stays one literal argument" do
+      # valid_release?'s matcher is a non-anchored substring match, so a
+      # value like this PASSES validation and reaches the command string.
+      Krikri::PluginHelpers::RhsmRelease.release_arguments("7.2; touch /tmp/pwned")
+        .should eq("release --set '7.2; touch /tmp/pwned'")
+    end
   end
 end

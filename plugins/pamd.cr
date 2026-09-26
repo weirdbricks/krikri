@@ -530,7 +530,7 @@ module Krikri
     private def backup(path : String) : String
       return "" unless true?(@params["backup"]?)
       timestamp = Time.local.to_s("%Y-%m-%d@%H:%M:%S")
-      backup_path = "#{path}.#{remote_exec("stat -c %u #{path}")[:stdout].strip}.#{timestamp}~"
+      backup_path = "#{path}.#{remote_exec("stat -c %u #{Shell.quote_if_needed(path)}")[:stdout].strip}.#{timestamp}~"
       File.copy(path, backup_path)
       backup_path
     end

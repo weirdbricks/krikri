@@ -26,5 +26,80 @@ module Krikri
       return str if str.matches?(/\A[\w@%+=:,.\-\/ \t]*\z/)
       single_quote(str)
     end
+
+    # Python `shlex.split` in posix mode, the way real Ansible modules
+    # turn a multi-argument string param (e.g. podman_image's
+    # pull_extra_args) into argv elements: whitespace-separated tokens,
+    # single-quoted runs literal, double-quoted runs honoring backslash
+    # escapes for \ " ` $ and newline, backslash outside quotes escaping
+    # the next character. Each returned token is one argv element, ready
+    # to be shell-quoted individually for embedding in a command string.
+    def self.shlex_split(s : String) : Array(String)
+      tokens = [] of String
+      chars = s.chars
+      current = IO::Memory.new
+      in_token = false
+      i = 0
+
+      while i < chars.size
+        c = chars[i]
+        if c.whitespace?
+          if in_token
+            tokens << current.to_s
+            current.clear
+            in_token = false
+          end
+          i += 1
+        elsif c == '\''
+          in_token = true
+          i = consume_single_quoted(chars, i, current)
+        elsif c == '"'
+          in_token = true
+          i = consume_double_quoted(chars, i, current)
+        elsif c == '\\'
+          in_token = true
+          i = consume_escape(chars, i, current)
+        else
+          in_token = true
+          current << c
+          i += 1
+        end
+      end
+
+      tokens << current.to_s if in_token
+      tokens
+    end
+
+    private def self.consume_single_quoted(chars : Array(Char), start : Int, current : IO::Memory) : Int
+      i = start + 1
+      while i < chars.size && chars[i] != '\''
+        current << chars[i]
+        i += 1
+      end
+      i + 1
+    end
+
+    private def self.consume_double_quoted(chars : Array(Char), start : Int, current : IO::Memory) : Int
+      i = start + 1
+      while i < chars.size && chars[i] != '"'
+        if chars[i] == '\\' && i + 1 < chars.size && "\\\"`$".includes?(chars[i + 1])
+          current << chars[i + 1]
+          i += 2
+        else
+          current << chars[i]
+          i += 1
+        end
+      end
+      i + 1
+    end
+
+    private def self.consume_escape(chars : Array(Char), start : Int, current : IO::Memory) : Int
+      if start + 1 < chars.size
+        current << chars[start + 1]
+        start + 2
+      else
+        start + 1
+      end
+    end
   end
 end

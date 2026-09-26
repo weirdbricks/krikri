@@ -66,4 +66,36 @@ describe Krikri::Shell do
       File.exists?("/tmp/krikri-spec-quote-pwn").should be_false
     end
   end
+
+  # Python shlex.split posix mode: what real Ansible modules (e.g.
+  # podman_image's pull_extra_args) apply to multi-argument string params
+  # before handing tokens to run_command's argv.
+  describe ".shlex_split" do
+    it "splits on whitespace" do
+      Krikri::Shell.shlex_split("--quiet --tls-verify=false").should eq(["--quiet", "--tls-verify=false"])
+      Krikri::Shell.shlex_split("  a   b ").should eq(["a", "b"])
+      Krikri::Shell.shlex_split("").should eq([] of String)
+    end
+
+    it "treats single-quoted runs as literal (quotes removed)" do
+      Krikri::Shell.shlex_split("--creds 'my user'").should eq(["--creds", "my user"])
+    end
+
+    it "honors double-quote backslash escapes for backslash, quote, backtick, dollar" do
+      Krikri::Shell.shlex_split(%q(a "b\"c\$d`e")).should eq(["a", "b\"c$d`e"])
+    end
+
+    it "backslash outside quotes escapes the next character" do
+      Krikri::Shell.shlex_split(%q(a\ b c)).should eq(["a b", "c"])
+    end
+
+    it "every token survives a bash round-trip when quoted with single_quote" do
+      tokens = Krikri::Shell.shlex_split(%q{--x 'a;b' "c$(id)d" plain})
+      tokens.should eq(["--x", "a;b", "c$(id)d", "plain"])
+      quoted = tokens.map { |t| Krikri::Shell.single_quote(t) }.join(" ")
+      stdout = IO::Memory.new
+      Process.new("/bin/bash", ["-c", "printf '%s\\n' #{quoted}"], output: stdout).wait
+      stdout.to_s.split("\n").reject(&.empty?).should eq(tokens)
+    end
+  end
 end
