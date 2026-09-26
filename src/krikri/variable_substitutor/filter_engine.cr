@@ -353,9 +353,13 @@ module Krikri
           # line's single `[[checksum, filename]]` match-list down to
           # a flat `[checksum, filename]` pair before `reverse` swaps
           # it into `[filename, checksum]` for `dict()`.
-          levels = parse_kwarg(filter_args, "levels").try { |arg| resolve_expression(arg).as_i? }
-          skip_nulls = parse_kwarg(filter_args, "skip_nulls").try { |arg| truthy?(resolve_expression(arg)) }
-          skip_nulls = true if skip_nulls.nil?
+          # Positional or keyword (`flatten(1)` / `flatten(levels=1)`);
+          # #parse_kwarg only reads quoted values, so an unquoted
+          # `levels=1` used to be silently ignored.
+          positional, kwargs = split_positional_and_kwargs(filter_args, ["levels", "skip_nulls"])
+          levels = (kwargs["levels"]? || positional[0]?).try(&.as_i64?).try(&.to_i32)
+          skip_nulls_arg = kwargs["skip_nulls"]? || positional[1]?
+          skip_nulls = skip_nulls_arg ? truthy?(skip_nulls_arg) : true
           JSON::Any.new(flatten_array(as_array(value), levels, skip_nulls))
         when "reverse"
           case value.raw

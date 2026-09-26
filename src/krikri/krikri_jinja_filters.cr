@@ -10,6 +10,7 @@ require "./py_random"
 require "./vault"
 require "./task_executor/result_display"
 require "./krikri_jinja_lookups"
+require "./jinja_datetime"
 
 module Krikri
   # Ansible's own filters, registered directly on the krikri-jinja engine
@@ -520,7 +521,7 @@ module Krikri
         regex_replace regex_search regex_findall
         vault unvault splitlines
         expandvars hash
-        map_format password_hash realpath strftime to_datetime to_json
+        map_format password_hash realpath strftime to_json
         urlsplit
       ).each do |filter_name|
         KrikriJinja.register_default_filter(filter_name) do |value, args, kwargs, ctx|
@@ -738,12 +739,24 @@ module Krikri
           result = if name = args[0]?.try(&.raw.as?(String))
                      host.is_a?(Krikri::JinjaHostContext) ? host.registered(name) : nil
                    else
-                     value
+                     value.raw.is_a?(KrikriJinja::Undefined) ? nil : KrikriJinja.to_json_any(value)
                    end
           next false unless result
-          case raw = result.raw
-          when Hash then raw[test_name]?.try(&.raw) == true
-          else           false
+          hash = result.as_h?
+          next false unless hash
+          case test_name
+          when "succeeded"
+            # Ansible's success tests are `not failed(result)`; a result has
+            # no "succeeded" field of its own.
+            !py_truthy(hash["failed"]? || JSON::Any.new(false))
+          when "finished"
+            async_field_truthy?(result, "finished")
+          when "changed"
+            # A looped result is changed when any of its items is.
+            py_truthy(hash["changed"]? || JSON::Any.new(false)) ||
+              (hash["results"]?.try(&.as_a?) || [] of JSON::Any).any? { |item| py_truthy(item.as_h?.try(&.["changed"]?) || JSON::Any.new(false)) }
+          else
+            py_truthy(hash[test_name]? || JSON::Any.new(false))
           end
         end
       end

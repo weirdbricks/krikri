@@ -1,4 +1,5 @@
 require "../spec_helper"
+require "../support/jinja_render_helper"
 require "crinja"
 require "crinja/json"
 require "../../src/krikri/jinja_filters"
@@ -23,8 +24,7 @@ require "../../src/krikri/variable_substitutor/crinja_renderer"
 # template: action plugin uses); a divergence between the two is a
 # failing test.
 private def filter_batch2_crinja_render(tpl : String, vars = nil) : String
-  env = Crinja.new
-  env.from_string(tpl).render(vars)
+  krikri_jinja_render(tpl, vars)
 rescue e
   "ERR: #{e.message}"
 end
@@ -146,7 +146,9 @@ describe "filter batch 2 (P2.8-P2.14, P2.15 verification)" do
 
     it "d behaves as default (real Jinja2 semantics, not dict)" do
       filter_batch2_crinja_render("{{ missing | d(5) }}").should eq("5")
-      filter_batch2_crinja_render("{{ x | d(5) }}", {"x" => nil}).should eq("5")
+      # A defined None is not undefined: real ansible-core keeps it (and a
+      # None renders as empty text), live-verified `a{{ x | d(5) }}b` -> "ab".
+      filter_batch2_crinja_render("{{ x | d(5) }}", {"x" => nil}).should eq("")
       filter_batch2_crinja_render("{{ x | d(5) }}", {"x" => 7}).should eq("7")
     end
 
@@ -154,10 +156,10 @@ describe "filter batch 2 (P2.8-P2.14, P2.15 verification)" do
       filter_batch2_crinja_render("{{ '<b>' | e }}").should eq("&lt;b&gt;")
     end
 
-    it "items behaves dict2items-style" do
-      result = filter_batch2_crinja_render("{{ {'a': 1} | items }}")
-      result.should contain("'key': 'a'")
-      result.should contain("'value': 1")
+    it "items yields (key, value) pairs, like Jinja2's own items filter" do
+      # Live-verified against ansible-core 2.19: `{{ {'a': 1} | items | list }}`
+      # is [["a", 1]] (Crinja's dict2items-style alias was not real).
+      filter_batch2_crinja_render("{{ {'a': 1} | items | list }}").should eq("[['a', 1]]")
     end
 
     it "root returns the filesystem-root prefix of a path" do

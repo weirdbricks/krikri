@@ -1,4 +1,5 @@
 require "../spec_helper"
+require "../support/jinja_render_helper"
 require "../../src/krikri/conditional_evaluator"
 require "../../src/krikri/jinja_filters"
 require "../../src/krikri/variable_substitutor/crinja_renderer"
@@ -16,8 +17,7 @@ require "../../src/krikri/variable_substitutor/crinja_renderer"
 # render (`Crinja.new.render`), since this project's history is
 # divergence between the two engines.
 private def crinja_render(tpl : String, vars) : String
-  env = Crinja.new
-  env.from_string(tpl).render(vars)
+  krikri_jinja_render(tpl, vars)
 end
 
 describe "is* test aliases (P2.1-P2.3)" do
