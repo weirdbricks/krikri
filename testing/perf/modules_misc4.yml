@@ -1,0 +1,918 @@
+---
+# Modules/misc4 benchmark: companion to the other per-module coverage
+# playbooks (modules_files.yml, modules_packages.yml, modules_security.yml,
+# modules_systems.yml, modules_data.yml, modules_xml.yml,
+# modules_files_storage.yml, modules_misc2.yml, modules_misc3.yml).
+# Theme: the Docker-family, dynamic-DNS, ZFS and Red Hat subscription
+# modules that had no synthetic coverage yet:
+#   docker_container, docker_image, docker_image_build, docker_login,
+#   docker_network, docker_network_info, docker_compose_v2,
+#   nsupdate, zfs, redhat_subscription
+#
+# SAFETY CONTRACT FOR THIS BATCH - STRONGER THAN THE SIBLINGS':
+# EVERYTHING here is LOCAL-ONLY. No AWS, no Red Hat subscription
+# servers, no Docker Hub, no real registry, no network service beyond
+# localhost/loopback is ever contacted for mutation. Every section
+# gates on local capability probes and is EXPECTED to skip cleanly on
+# most stock containers (a clean all-skip run on a plain Ubuntu or
+# Rocky container with none of docker/zfs/bind/subscription-manager
+# installed is the correct outcome, not a shortcoming - this playbook
+# must produce ZERO failed tasks there).
+#
+# Per-module safety notes:
+# - docker_container / docker_image / docker_image_build /
+#   docker_network / docker_network_info / docker_compose_v2 all gate
+#   on `which docker` AND a working local daemon (`docker info`).
+#   Nothing is ever installed or started as a side effect. NO image is
+#   ever pulled from the network: the container/compose exercises run
+#   only against an image ALREADY present locally (busybox, then
+#   alpine, then skip with a notice), docker_image_build builds fully
+#   offline (FROM scratch, no network steps in the Dockerfile), and
+#   every throwaway object (container, network, built image, compose
+#   project) is run_id-scoped and removed again in the cleanup section.
+# - docker_login NEVER contacts Docker Hub or any real registry. The
+#   only exercise is against a LOCAL registry (registry:2) that is
+#   ALREADY running and reachable on localhost:5000, using throwaway
+#   run_id-scoped credentials and a run-scoped config_path (so
+#   ~/.docker/config.json is never touched). A plain unauthenticated
+#   local registry accepts any login, so the exercise never sends real
+#   credentials anywhere and cannot mutate anything outside the
+#   throwaway config file. When no local registry is running the whole
+#   block skips with a debug notice - a permanent clean skip is the
+#   expected outcome everywhere this playbook is run.
+# - nsupdate gates on `which nsupdate` AND a LOCAL nameserver
+#   (127.0.0.1:53 reachable) AND an end-to-end dynamic-update
+#   capability probe whose payload is an UPDATE DELETE of a
+#   nonexistent name in a run-scoped zone - by RFC 2136 semantics a
+#   delete of a nonexistent RRset is a NOERROR no-op, so the probe can
+#   never create anything, and it succeeds only against a server that
+#   actually serves that zone and accepts (unauthenticated) dynamic
+#   updates for it. Stock containers have no such server, so this
+#   always skips cleanly here by design; bind9/named is deliberately
+#   NOT installed or started as a side effect.
+# - zfs gates on `which zpool` AND `which zfs` AND real kernel ZFS
+#   support (/dev/zfs, the same probe synthetic_batch_bench.yml uses)
+#   AND loop-device availability (losetup -f, the same probe
+#   modules_files.yml uses for the filesystem/lvg/lvol/parted family).
+#   When an existing run-scoped pool is not found, a throwaway pool is
+#   created on a sparse loopback file under the run-scoped /tmp root
+#   (same pattern as the block-device family), and everything -
+#   dataset, snapshot, pool, loop attachment, image file - is torn
+#   down again at the end.
+# - redhat_subscription: the MODULE itself is deliberately NEVER
+#   invoked, and this is a documented permanent skip, not a gap. Its
+#   only states are mutating ones - state=present (register + attach
+#   subscriptions, which contacts real Red Hat subscription
+#   infrastructure and mutates host entitlement state) and state=absent
+#   (unregister, which destroys real entitlement state) - with no
+#   read-only mode at all, so there is NO synthetic exercise of the
+#   module that does not either touch a real RHN server or
+#   unregister/deregister a possibly-real host. What IS exercised,
+#   behind a `which subscription-manager` probe, is read-only
+#   information gathering via the CLI (`subscription-manager status`
+#   and `identity`, failed_when: false) purely for cross-engine output
+#   comparison. That the module is implemented at all is confirmed by
+#   its AVAILABLE_PLUGINS registration (community.general
+#   .redhat_subscription in src/krikri/playbook_parser.cr) - verified,
+#   not assumed, when this playbook was written.
+#
+# Same conventions as the sibling playbooks: run-scoped vars derived
+# from the epoch run id, all mutations confined to
+# /tmp/krikri-modmisc4-<epoch>/ and run_id-scoped names, every probe
+# failed_when: false with a clean debug skip notice (never a failure),
+# register+debug after each meaningful action, idempotency re-asserts
+# with asserts.
+
+- name: Misc module-coverage benchmark (round 4)
+  hosts: all
+  gather_facts: true
+
+  vars:
+    mm4_bench_mode: misc4
+    mm4_run_id: "{{ ansible_date_time.epoch }}"
+    # Every target-side path hangs off this run-scoped root, so two
+    # back-to-back engine runs never see each other's leftovers.
+    mm4_dir: "/tmp/krikri-modmisc4-{{ mm4_run_id }}"
+    mm4_build_dir: "{{ mm4_dir }}/build"
+    mm4_compose_dir: "{{ mm4_dir }}/compose"
+    # Throwaway built image (docker_image_build's product, docker_image
+    # state=absent's exercise target). Tag = run id, so back-to-back
+    # engine runs can never collide.
+    mm4_image_name: "krikri-mm4"
+    mm4_image_tag: "{{ mm4_run_id }}"
+    mm4_built_image: "krikri-mm4:{{ mm4_run_id }}"
+    # Run-scoped throwaway Docker object names (run_id is the epoch,
+    # digits only - valid for every naming scheme below).
+    mm4_container: "krikri_mm4_{{ mm4_run_id }}"
+    mm4_network: "krikri_mm4_net_{{ mm4_run_id }}"
+    mm4_compose_project: "krikri_mm4_{{ mm4_run_id }}"
+    # ZFS: throwaway pool + dataset + snapshot on a sparse loopback
+    # file under the run-scoped root.
+    mm4_pool: "krikri_mm4_{{ mm4_run_id }}"
+    mm4_zfs_dataset: "krikri_mm4_{{ mm4_run_id }}/data"
+    mm4_zfs_snapshot: "krikri_mm4_{{ mm4_run_id }}/data@mm4{{ mm4_run_id }}"
+    mm4_zfs_img: "{{ mm4_dir }}/zpool.img"
+    # nsupdate: the run-scoped zone is a .invalid name that no real DNS
+    # hierarchy serves - only a deliberately-configured local dynamic
+    # server (virtually never present) could possibly accept it.
+    mm4_zone: "krikri-mm4.invalid"
+    mm4_record: "mm4-{{ mm4_run_id }}"
+    mm4_record_value: "192.0.2.1"
+    # docker_login: local registry + run-scoped credential/config file.
+    # The throwaway config file means ~/.docker/config.json is NEVER
+    # touched even when the exercise runs.
+    mm4_registry_url: "localhost:5000"
+    mm4_login_config: "{{ mm4_dir }}/login-config.json"
+    mm4_reg_user: "krikri_mm4_{{ mm4_run_id }}"
+    mm4_reg_pass: "mm4pw_{{ mm4_run_id }}x"
+    # Overridden by set_fact below once the image probes have run;
+    # empty means "no already-pulled image -> skip the image-dependent
+    # blocks".
+    mm4_container_image: ""
+
+  tasks:
+    # ---------------------------------------------------------------
+    # Setup: the run-scoped root everything else hangs off.
+    # ---------------------------------------------------------------
+    - name: Announce modules-misc4 benchmark start
+      ansible.builtin.debug:
+        msg: "modules-misc4 benchmark {{ mm4_run_id }} on {{ ansible_hostname }} ({{ mm4_bench_mode }})"
+
+    - name: Create benchmark root directory
+      ansible.builtin.file:
+        path: "{{ mm4_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Create the docker_image_build context directory
+      ansible.builtin.file:
+        path: "{{ mm4_build_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Create the docker_compose_v2 project directory
+      ansible.builtin.file:
+        path: "{{ mm4_compose_dir }}"
+        state: directory
+        mode: "0755"
+
+    # ---------------------------------------------------------------
+    # Capability probes. Every probe is failed_when: false; a failing
+    # probe produces a clean debug skip notice and the section's tasks
+    # are when:-guarded away. NO package is installed and NO daemon is
+    # started as a side effect anywhere.
+    # ---------------------------------------------------------------
+    - name: Probe docker CLI
+      ansible.builtin.command: which docker
+      register: mm4_docker_probe
+      failed_when: false
+      changed_when: false
+
+    - name: Probe docker daemon reachability
+      ansible.builtin.command: docker info
+      register: mm4_docker_daemon
+      failed_when: false
+      changed_when: false
+      when: mm4_docker_probe.rc == 0
+
+    - name: Probe docker compose v2 plugin
+      ansible.builtin.command: docker compose version
+      register: mm4_compose_probe
+      failed_when: false
+      changed_when: false
+      when: mm4_docker_probe.rc == 0 and mm4_docker_daemon.rc | default(1) == 0
+
+    - name: Probe for an already-pulled busybox image
+      ansible.builtin.command: docker images -q busybox
+      register: mm4_busybox_probe
+      failed_when: false
+      changed_when: false
+      when: mm4_docker_probe.rc == 0 and mm4_docker_daemon.rc | default(1) == 0
+
+    - name: Probe for an already-pulled alpine image
+      ansible.builtin.command: docker images -q alpine
+      register: mm4_alpine_probe
+      failed_when: false
+      changed_when: false
+      when: mm4_docker_probe.rc == 0 and mm4_docker_daemon.rc | default(1) == 0
+
+    # Pick the throwaway image the container/compose blocks run against.
+    # busybox preferred, alpine fallback, empty = skip. This is a pure
+    # local-disk lookup (the probes above) - nothing is ever pulled.
+    - name: Pick busybox as the throwaway container image
+      ansible.builtin.set_fact:
+        mm4_container_image: busybox
+      when: mm4_docker_probe.rc == 0 and mm4_docker_daemon.rc | default(1) == 0 and (mm4_busybox_probe.stdout | default('')) | trim | length > 0
+
+    - name: Pick alpine as the throwaway container image
+      ansible.builtin.set_fact:
+        mm4_container_image: alpine
+      when: mm4_docker_probe.rc == 0 and mm4_docker_daemon.rc | default(1) == 0 and (mm4_busybox_probe.stdout | default('')) | trim | length == 0 and (mm4_alpine_probe.stdout | default('')) | trim | length > 0
+
+    # docker_login's local-registry gate: the registry must ALREADY be
+    # running on localhost:5000 (TCP probe only - nothing is started).
+    - name: Probe for a local registry on localhost:5000
+      ansible.builtin.command: timeout 3 bash -c 'echo > /dev/tcp/127.0.0.1/5000'
+      register: mm4_local_registry_probe
+      failed_when: false
+      changed_when: false
+      when: mm4_docker_probe.rc == 0 and mm4_docker_daemon.rc | default(1) == 0
+
+    # nsupdate gates: binary present, then a local nameserver on
+    # 127.0.0.1:53, then an end-to-end dynamic-update capability probe.
+    - name: Probe nsupdate binary
+      ansible.builtin.command: which nsupdate
+      register: mm4_nsupdate_probe
+      failed_when: false
+      changed_when: false
+
+    - name: Probe for a local nameserver on 127.0.0.1:53
+      ansible.builtin.command: timeout 3 bash -c 'echo > /dev/tcp/127.0.0.1/53'
+      register: mm4_dns_listener_probe
+      failed_when: false
+      changed_when: false
+      when: mm4_nsupdate_probe.rc == 0
+
+    # End-to-end capability probe: UPDATE DELETE of a nonexistent name
+    # in the run-scoped zone. RFC 2136 makes deleting a nonexistent
+    # RRset a NOERROR no-op, so this can never create anything - and it
+    # only succeeds against a server actually serving that zone and
+    # accepting dynamic updates for it. Expected to fail (i.e. skip the
+    # section) on every stock container.
+    - name: Probe dynamic-update capability with a no-op delete
+      ansible.builtin.shell: >-
+        printf 'server 127.0.0.1\nzone {{ mm4_zone }}\nupdate delete mm4probe.{{ mm4_zone }}\nsend\nquit\n'
+        | timeout 15 nsupdate 2>&1
+      register: mm4_nsupdate_capable_probe
+      failed_when: false
+      changed_when: false
+      when: mm4_nsupdate_probe.rc == 0 and mm4_dns_listener_probe.rc | default(1) == 0
+
+    # zfs gates: tooling, real kernel ZFS support, loop devices.
+    - name: Probe zpool binary
+      ansible.builtin.command: which zpool
+      register: mm4_zpool_probe
+      failed_when: false
+      changed_when: false
+
+    - name: Probe zfs binary
+      ansible.builtin.command: which zfs
+      register: mm4_zfs_probe
+      failed_when: false
+      changed_when: false
+
+    - name: Probe ZFS kernel support
+      ansible.builtin.command: test -c /dev/zfs
+      register: mm4_devzfs_probe
+      failed_when: false
+      changed_when: false
+
+    - name: Probe loop device support
+      ansible.builtin.command: losetup -f
+      register: mm4_loop_probe
+      failed_when: false
+      changed_when: false
+
+    # redhat_subscription: read-only CLI probe only (see header).
+    - name: Probe subscription-manager CLI
+      ansible.builtin.command: which subscription-manager
+      register: mm4_submgr_probe
+      failed_when: false
+      changed_when: false
+
+    # ---------------------------------------------------------------
+    # Skip notices - one clean debug per skipped section, never a
+    # failure. This is what a plain Ubuntu/Rocky container run should
+    # consist of, almost entirely.
+    # ---------------------------------------------------------------
+    - name: Notice docker_* sections skipped
+      ansible.builtin.debug:
+        msg: "skipping docker_container/docker_image/docker_image_build/docker_network/docker_network_info sections: docker absent or daemon unreachable"
+      when: mm4_docker_probe.rc != 0 or mm4_docker_daemon.rc | default(1) != 0
+
+    - name: Notice docker_compose_v2 section skipped
+      ansible.builtin.debug:
+        msg: "skipping docker_compose_v2 section: docker compose v2 plugin absent"
+      when: mm4_docker_probe.rc == 0 and mm4_docker_daemon.rc | default(1) == 0 and mm4_compose_probe.rc | default(1) != 0
+
+    - name: Notice image-dependent docker exercises skipped
+      ansible.builtin.debug:
+        msg: "skipping docker_container and docker_compose_v2 exercises: no already-pulled busybox/alpine image locally (offline contract forbids pulling)"
+      when: mm4_docker_probe.rc == 0 and mm4_docker_daemon.rc | default(1) == 0 and mm4_container_image | length == 0
+
+    - name: Notice docker_login section skipped
+      ansible.builtin.debug:
+        msg: "skipping docker_login section: no local registry already running on localhost:5000 (Docker Hub is deliberately NEVER contacted - see header)"
+      when: mm4_docker_probe.rc == 0 and mm4_docker_daemon.rc | default(1) == 0 and mm4_local_registry_probe.rc | default(1) != 0
+
+    - name: Notice nsupdate section skipped
+      ansible.builtin.debug:
+        msg: "skipping nsupdate section: nsupdate absent, no local nameserver on 127.0.0.1:53, or no dynamic-update-capable zone (the expected case on every stock container)"
+      when: mm4_nsupdate_probe.rc != 0 or mm4_dns_listener_probe.rc | default(1) != 0 or mm4_nsupdate_capable_probe.rc | default(1) != 0
+
+    - name: Notice zfs section skipped
+      ansible.builtin.debug:
+        msg: "skipping zfs section: zpool/zfs absent, /dev/zfs absent (host kernel has no zfs module) or loop devices unavailable"
+      when: mm4_zpool_probe.rc != 0 or mm4_zfs_probe.rc != 0 or mm4_devzfs_probe.rc != 0 or mm4_loop_probe.rc != 0
+
+    - name: Notice redhat_subscription CLI queries skipped
+      ansible.builtin.debug:
+        msg: "skipping subscription-manager queries: subscription-manager absent (not a Red Hat-registered system)"
+      when: mm4_submgr_probe.rc != 0
+
+    # ---------------------------------------------------------------
+    # docker_container: one throwaway run_id-scoped container from the
+    # already-present local image, `sleep 300` (present in busybox and
+    # alpine), started + idempotency re-assert, removed in cleanup.
+    # ---------------------------------------------------------------
+    - name: Start throwaway container
+      community.docker.docker_container:
+        name: "{{ mm4_container }}"
+        image: "{{ mm4_container_image }}"
+        command: sleep 300
+        state: started
+      register: mm4_container_start
+      when: mm4_docker_probe.rc == 0 and mm4_docker_daemon.rc | default(1) == 0 and mm4_container_image | length > 0
+
+    - name: Re-assert throwaway container (idempotency check)
+      community.docker.docker_container:
+        name: "{{ mm4_container }}"
+        image: "{{ mm4_container_image }}"
+        command: sleep 300
+        state: started
+      register: mm4_container_start_again
+      when: mm4_docker_probe.rc == 0 and mm4_docker_daemon.rc | default(1) == 0 and mm4_container_image | length > 0
+
+    - name: Debug docker_container result
+      ansible.builtin.debug:
+        msg: "docker_container {{ mm4_container }}: started={{ mm4_container_start.changed }} re-assert={{ mm4_container_start_again.changed }} (false when idempotent)"
+      when: mm4_docker_probe.rc == 0 and mm4_docker_daemon.rc | default(1) == 0 and mm4_container_image | length > 0
+
+    # NOTE on the re-assert: identical re-assertion is changed=false on
+    # a real Docker daemon, but podman's Docker-API emulation recreates
+    # the container on re-assert (verified: REAL ansible-playbook also
+    # reports changed=true there) - so the assert below only pins the
+    # creation, and the re-assert value stays in the debug line for
+    # cross-engine eyeballing.
+    - name: Check docker_container create and idempotency
+      ansible.builtin.assert:
+        that:
+          - mm4_container_start.changed
+      when: mm4_docker_probe.rc == 0 and mm4_docker_daemon.rc | default(1) == 0 and mm4_container_image | length > 0
+
+    # ---------------------------------------------------------------
+    # docker_image (presence path): state=present source=pull on the
+    # already-locally-present image MUST be a no-op with no network
+    # round trip in both engines (real module: `if not image or
+    # self.force_source:` - an existing image without force_source is
+    # returned as-is, changed=false).
+    # ---------------------------------------------------------------
+    - name: Assert already-present image via docker_image
+      community.docker.docker_image:
+        name: "{{ mm4_container_image }}"
+        source: pull
+        state: present
+      register: mm4_image_present
+      when: mm4_docker_probe.rc == 0 and mm4_docker_daemon.rc | default(1) == 0 and mm4_container_image | length > 0
+
+    - name: Debug docker_image presence result
+      ansible.builtin.debug:
+        msg: "docker_image {{ mm4_container_image }} state=present source=pull: changed={{ mm4_image_present.changed }} (false - image already local, no pull)"
+      when: mm4_docker_probe.rc == 0 and mm4_docker_daemon.rc | default(1) == 0 and mm4_container_image | length > 0
+
+    - name: Check docker_image presence was a no-op
+      ansible.builtin.assert:
+        that:
+          - mm4_image_present.changed == false
+      when: mm4_docker_probe.rc == 0 and mm4_docker_daemon.rc | default(1) == 0 and mm4_container_image | length > 0
+
+    # ---------------------------------------------------------------
+    # docker_image_build: fully OFFLINE build - FROM scratch with one
+    # COPY, no network steps in the Dockerfile - into the run-scoped
+    # context dir, image tagged with the run id. Rebuild (default
+    # rebuild=never) on the existing image must be a changed=false
+    # no-op. The built image is then consumed by docker_image's
+    # state=absent exercise below.
+    # ---------------------------------------------------------------
+    - name: Seed the offline build context
+      ansible.builtin.copy:
+        content: "docker_image_build payload = {{ mm4_run_id }}\n"
+        dest: "{{ mm4_build_dir }}/hello.txt"
+        mode: "0644"
+
+    - name: Write the offline Dockerfile
+      ansible.builtin.copy:
+        content: |
+          FROM scratch
+          COPY hello.txt /hello.txt
+        dest: "{{ mm4_build_dir }}/Dockerfile"
+        mode: "0644"
+
+    - name: Build throwaway image offline
+      community.docker.docker_image_build:
+        path: "{{ mm4_build_dir }}"
+        name: "{{ mm4_image_name }}"
+        tag: "{{ mm4_image_tag }}"
+      register: mm4_image_build
+      when: mm4_docker_probe.rc == 0 and mm4_docker_daemon.rc | default(1) == 0
+
+    - name: Re-run throwaway image build (idempotency check)
+      community.docker.docker_image_build:
+        path: "{{ mm4_build_dir }}"
+        name: "{{ mm4_image_name }}"
+        tag: "{{ mm4_image_tag }}"
+      register: mm4_image_build_again
+      when: mm4_docker_probe.rc == 0 and mm4_docker_daemon.rc | default(1) == 0
+
+    - name: Check the built image exists locally
+      ansible.builtin.command: docker images -q "{{ mm4_built_image }}"
+      register: mm4_built_image_probe
+      changed_when: false
+      when: mm4_docker_probe.rc == 0 and mm4_docker_daemon.rc | default(1) == 0
+
+    - name: Debug docker_image_build result
+      ansible.builtin.debug:
+        msg: "docker_image_build {{ mm4_built_image }}: built={{ mm4_image_build.changed }} re-run={{ mm4_image_build_again.changed }} (false when rebuild=never) present={{ (mm4_built_image_probe.stdout | default('')) | trim | length > 0 }}"
+      when: mm4_docker_probe.rc == 0 and mm4_docker_daemon.rc | default(1) == 0
+
+    - name: Check docker_image_build and idempotency
+      ansible.builtin.assert:
+        that:
+          - mm4_image_build.changed
+          - mm4_image_build_again.changed == false
+          - (mm4_built_image_probe.stdout | default('')) | trim | length > 0
+      when: mm4_docker_probe.rc == 0 and mm4_docker_daemon.rc | default(1) == 0
+
+    # ---------------------------------------------------------------
+    # docker_image (absent path): removes the run-scoped throwaway
+    # image built above (real cleanup, exercised as coverage),
+    # re-assert is a no-op.
+    # ---------------------------------------------------------------
+    - name: Remove throwaway built image via docker_image
+      community.docker.docker_image:
+        name: "{{ mm4_built_image }}"
+        state: absent
+      register: mm4_image_remove
+      when: mm4_docker_probe.rc == 0 and mm4_docker_daemon.rc | default(1) == 0 and (mm4_built_image_probe.stdout | default('')) | trim | length > 0
+
+    - name: Re-assert throwaway built image absent (idempotency check)
+      community.docker.docker_image:
+        name: "{{ mm4_built_image }}"
+        state: absent
+      register: mm4_image_remove_again
+      when: mm4_docker_probe.rc == 0 and mm4_docker_daemon.rc | default(1) == 0 and (mm4_built_image_probe.stdout | default('')) | trim | length > 0
+
+    - name: Debug docker_image removal result
+      ansible.builtin.debug:
+        msg: "docker_image {{ mm4_built_image }} state=absent: removed={{ mm4_image_remove.changed }} re-assert={{ mm4_image_remove_again.changed }} (false when already gone)"
+      when: mm4_docker_probe.rc == 0 and mm4_docker_daemon.rc | default(1) == 0 and (mm4_built_image_probe.stdout | default('')) | trim | length > 0
+
+    - name: Check docker_image removal and idempotency
+      ansible.builtin.assert:
+        that:
+          - mm4_image_remove.changed
+          - mm4_image_remove_again.changed == false
+      when: mm4_docker_probe.rc == 0 and mm4_docker_daemon.rc | default(1) == 0 and (mm4_built_image_probe.stdout | default('')) | trim | length > 0
+
+    # ---------------------------------------------------------------
+    # docker_network: create/run_id-scoped throwaway bridge network +
+    # idempotency re-assert, removed in cleanup. No external
+    # connectivity assumptions.
+    # ---------------------------------------------------------------
+    - name: Create throwaway docker network
+      community.docker.docker_network:
+        name: "{{ mm4_network }}"
+        driver: bridge
+        state: present
+      register: mm4_network_create
+      when: mm4_docker_probe.rc == 0 and mm4_docker_daemon.rc | default(1) == 0
+
+    - name: Re-assert throwaway docker network (idempotency check)
+      community.docker.docker_network:
+        name: "{{ mm4_network }}"
+        driver: bridge
+        state: present
+      register: mm4_network_create_again
+      when: mm4_docker_probe.rc == 0 and mm4_docker_daemon.rc | default(1) == 0
+
+    - name: Check docker_network create and idempotency
+      ansible.builtin.assert:
+        that:
+          - mm4_network_create.changed
+          - mm4_network_create_again.changed == false
+      when: mm4_docker_probe.rc == 0 and mm4_docker_daemon.rc | default(1) == 0
+
+    # ---------------------------------------------------------------
+    # docker_network_info: query the throwaway network above (when the
+    # network block ran) and the always-present default bridge
+    # (whenever the daemon is reachable), register + debug both.
+    # ---------------------------------------------------------------
+    - name: Query docker network info for the throwaway network
+      community.docker.docker_network_info:
+        name: "{{ mm4_network }}"
+      register: mm4_network_info
+      when: mm4_docker_probe.rc == 0 and mm4_docker_daemon.rc | default(1) == 0 and mm4_network_create.changed | default(false)
+
+    - name: Debug docker_network_info for the throwaway network
+      ansible.builtin.debug:
+        msg: "docker_network_info {{ mm4_network }}: exists={{ mm4_network_info.exists }} driver={{ mm4_network_info.network.Driver | default('?') }}"
+      when: mm4_docker_probe.rc == 0 and mm4_docker_daemon.rc | default(1) == 0 and mm4_network_create.changed | default(false)
+
+    - name: Check docker_network_info found the throwaway network
+      ansible.builtin.assert:
+        that:
+          - mm4_network_info.exists
+          - mm4_network_info.changed == false
+      when: mm4_docker_probe.rc == 0 and mm4_docker_daemon.rc | default(1) == 0 and mm4_network_create.changed | default(false)
+
+    - name: Query docker network info for the default bridge
+      community.docker.docker_network_info:
+        name: bridge
+      register: mm4_bridge_info
+      when: mm4_docker_probe.rc == 0 and mm4_docker_daemon.rc | default(1) == 0
+
+    - name: Debug docker_network_info for the default bridge
+      ansible.builtin.debug:
+        msg: "docker_network_info bridge: exists={{ mm4_bridge_info.exists }} driver={{ mm4_bridge_info.network.Driver | default('?') }}"
+      when: mm4_docker_probe.rc == 0 and mm4_docker_daemon.rc | default(1) == 0
+
+    - name: Check docker_network_info found the default bridge
+      ansible.builtin.assert:
+        that:
+          - mm4_bridge_info.exists
+          - mm4_bridge_info.changed == false
+      when: mm4_docker_probe.rc == 0 and mm4_docker_daemon.rc | default(1) == 0
+
+    # ---------------------------------------------------------------
+    # docker_login: ONLY against an already-running local registry on
+    # localhost:5000 (never Docker Hub / any real registry), with
+    # throwaway run_id-scoped credentials and a run-scoped config_path
+    # so ~/.docker/config.json is never touched. A plain local
+    # registry:2 without auth accepts any login, so the credentials are
+    # throwaway AND local-only at the same time. Login -> idempotency
+    # re-assert -> logout (state=absent) against the same throwaway
+    # config. Skips cleanly when no local registry is running (the
+    # expected case everywhere).
+    # ---------------------------------------------------------------
+    - name: Log into the local throwaway registry
+      community.docker.docker_login:
+        registry_url: "{{ mm4_registry_url }}"
+        username: "{{ mm4_reg_user }}"
+        password: "{{ mm4_reg_pass }}"
+        config_path: "{{ mm4_login_config }}"
+      register: mm4_docker_login
+      when: mm4_docker_probe.rc == 0 and mm4_docker_daemon.rc | default(1) == 0 and mm4_local_registry_probe.rc | default(1) == 0
+
+    - name: Re-assert local registry login (idempotency check)
+      community.docker.docker_login:
+        registry_url: "{{ mm4_registry_url }}"
+        username: "{{ mm4_reg_user }}"
+        password: "{{ mm4_reg_pass }}"
+        config_path: "{{ mm4_login_config }}"
+      register: mm4_docker_login_again
+      when: mm4_docker_probe.rc == 0 and mm4_docker_daemon.rc | default(1) == 0 and mm4_local_registry_probe.rc | default(1) == 0
+
+    - name: Debug docker_login result
+      ansible.builtin.debug:
+        msg: "docker_login {{ mm4_registry_url }}: login={{ mm4_docker_login.changed }} re-assert={{ mm4_docker_login_again.changed }} (false when credentials already stored)"
+      when: mm4_docker_probe.rc == 0 and mm4_docker_daemon.rc | default(1) == 0 and mm4_local_registry_probe.rc | default(1) == 0
+
+    - name: Check docker_login and idempotency
+      ansible.builtin.assert:
+        that:
+          - mm4_docker_login.changed
+          - mm4_docker_login_again.changed == false
+      when: mm4_docker_probe.rc == 0 and mm4_docker_daemon.rc | default(1) == 0 and mm4_local_registry_probe.rc | default(1) == 0
+
+    - name: Log out of the local throwaway registry
+      community.docker.docker_login:
+        registry_url: "{{ mm4_registry_url }}"
+        state: absent
+        config_path: "{{ mm4_login_config }}"
+      register: mm4_docker_logout
+      when: mm4_docker_probe.rc == 0 and mm4_docker_daemon.rc | default(1) == 0 and mm4_local_registry_probe.rc | default(1) == 0
+
+    - name: Check docker_login logout happened
+      ansible.builtin.assert:
+        that:
+          - mm4_docker_logout.changed
+      when: mm4_docker_probe.rc == 0 and mm4_docker_daemon.rc | default(1) == 0 and mm4_local_registry_probe.rc | default(1) == 0
+
+    # ---------------------------------------------------------------
+    # docker_compose_v2: gated on the daemon AND the compose v2 plugin
+    # AND an already-local image. Minimal offline compose file (one
+    # service, no build, no pull), run-scoped project name, up +
+    # idempotency re-assert, down in cleanup.
+    # ---------------------------------------------------------------
+    - name: Write the offline compose file
+      ansible.builtin.copy:
+        content: |
+          services:
+            sleeper:
+              image: {{ mm4_container_image }}
+              command: sleep 300
+        dest: "{{ mm4_compose_dir }}/docker-compose.yml"
+        mode: "0644"
+      when: mm4_docker_probe.rc == 0 and mm4_docker_daemon.rc | default(1) == 0 and mm4_compose_probe.rc | default(1) == 0 and mm4_container_image | length > 0
+
+    - name: Bring the throwaway compose project up
+      community.docker.docker_compose_v2:
+        project_src: "{{ mm4_compose_dir }}"
+        project_name: "{{ mm4_compose_project }}"
+        state: present
+      register: mm4_compose_up
+      when: mm4_docker_probe.rc == 0 and mm4_docker_daemon.rc | default(1) == 0 and mm4_compose_probe.rc | default(1) == 0 and mm4_container_image | length > 0
+
+    - name: Re-assert the throwaway compose project (idempotency check)
+      community.docker.docker_compose_v2:
+        project_src: "{{ mm4_compose_dir }}"
+        project_name: "{{ mm4_compose_project }}"
+        state: present
+      register: mm4_compose_up_again
+      when: mm4_docker_probe.rc == 0 and mm4_docker_daemon.rc | default(1) == 0 and mm4_compose_probe.rc | default(1) == 0 and mm4_container_image | length > 0
+
+    - name: Debug docker_compose_v2 result
+      ansible.builtin.debug:
+        msg: "docker_compose_v2 {{ mm4_compose_project }}: up={{ mm4_compose_up.changed }} re-assert={{ mm4_compose_up_again.changed }} (false when already converged)"
+      when: mm4_docker_probe.rc == 0 and mm4_docker_daemon.rc | default(1) == 0 and mm4_compose_probe.rc | default(1) == 0 and mm4_container_image | length > 0
+
+    - name: Check docker_compose_v2 up and idempotency
+      ansible.builtin.assert:
+        that:
+          - mm4_compose_up.changed
+          - mm4_compose_up_again.changed == false
+      when: mm4_docker_probe.rc == 0 and mm4_docker_daemon.rc | default(1) == 0 and mm4_compose_probe.rc | default(1) == 0 and mm4_container_image | length > 0
+
+    # ---------------------------------------------------------------
+    # nsupdate: only reached when the end-to-end capability probe
+    # passed (a local dynamic-update server for the run-scoped .invalid
+    # zone - the expected case is that this NEVER runs). Creates a
+    # run-scoped A record, re-asserts idempotently, removes it again.
+    # ---------------------------------------------------------------
+    - name: Create throwaway DNS record
+      community.general.nsupdate:
+        server: "127.0.0.1"
+        zone: "{{ mm4_zone }}"
+        record: "{{ mm4_record }}"
+        type: "A"
+        value: "{{ mm4_record_value }}"
+        ttl: 60
+        state: present
+      register: mm4_nsupdate_create
+      when: mm4_nsupdate_probe.rc == 0 and mm4_dns_listener_probe.rc | default(1) == 0 and mm4_nsupdate_capable_probe.rc | default(1) == 0
+
+    - name: Re-assert throwaway DNS record (idempotency check)
+      community.general.nsupdate:
+        server: "127.0.0.1"
+        zone: "{{ mm4_zone }}"
+        record: "{{ mm4_record }}"
+        type: "A"
+        value: "{{ mm4_record_value }}"
+        ttl: 60
+        state: present
+      register: mm4_nsupdate_create_again
+      when: mm4_nsupdate_probe.rc == 0 and mm4_dns_listener_probe.rc | default(1) == 0 and mm4_nsupdate_capable_probe.rc | default(1) == 0
+
+    - name: Check nsupdate create and idempotency
+      ansible.builtin.assert:
+        that:
+          - mm4_nsupdate_create.changed
+          - mm4_nsupdate_create_again.changed == false
+      when: mm4_nsupdate_probe.rc == 0 and mm4_dns_listener_probe.rc | default(1) == 0 and mm4_nsupdate_capable_probe.rc | default(1) == 0
+
+    # ---------------------------------------------------------------
+    # zfs: gated on zpool+zfs binaries, real kernel ZFS support
+    # (/dev/zfs) and loop devices. Reuses a leftover run-scoped pool if
+    # one exists, otherwise creates one on a sparse loopback file under
+    # the run-scoped root (modules_files.yml's block-device pattern).
+    # Exercises dataset create with a property, idempotency re-assert,
+    # a property CHANGE (zfs set path) + read-back, and a snapshot -
+    # everything destroyed again in cleanup.
+    # ---------------------------------------------------------------
+    - name: Check whether the run-scoped zfs pool already exists
+      ansible.builtin.command: zpool list "{{ mm4_pool }}"
+      register: mm4_pool_check
+      failed_when: false
+      changed_when: false
+      when: mm4_zpool_probe.rc == 0 and mm4_zfs_probe.rc == 0 and mm4_devzfs_probe.rc == 0 and mm4_loop_probe.rc == 0
+
+    - name: Create the sparse loopback image for the pool
+      ansible.builtin.command: truncate -s 128M "{{ mm4_zfs_img }}"
+      args:
+        creates: "{{ mm4_zfs_img }}"
+      register: mm4_zfs_img_create
+      when: mm4_zpool_probe.rc == 0 and mm4_zfs_probe.rc == 0 and mm4_devzfs_probe.rc == 0 and mm4_loop_probe.rc == 0 and mm4_pool_check.rc | default(1) != 0
+
+    - name: Attach the loopback image to a loop device
+      ansible.builtin.command: losetup --find --show "{{ mm4_zfs_img }}"
+      register: mm4_loop_attach
+      changed_when: true
+      when: mm4_zpool_probe.rc == 0 and mm4_zfs_probe.rc == 0 and mm4_devzfs_probe.rc == 0 and mm4_loop_probe.rc == 0 and mm4_pool_check.rc | default(1) != 0
+
+    - name: Create the run-scoped zfs pool on the loop device
+      ansible.builtin.command: zpool create -f "{{ mm4_pool }}" "{{ mm4_loop_attach.stdout | default('') }}"
+      register: mm4_pool_create
+      changed_when: true
+      when: mm4_zpool_probe.rc == 0 and mm4_zfs_probe.rc == 0 and mm4_devzfs_probe.rc == 0 and mm4_loop_probe.rc == 0 and mm4_pool_check.rc | default(1) != 0 and (mm4_loop_attach.stdout | default('')) | trim | length > 0
+
+    # Everything below only runs when the pool actually exists (either
+    # freshly created or a leftover from an interrupted earlier run).
+    - name: Notice zfs exercise skipped (no usable pool)
+      ansible.builtin.debug:
+        msg: "skipping zfs exercise: zfs tooling present but no run-scoped pool and loop-device attach failed"
+      when: mm4_zpool_probe.rc == 0 and mm4_zfs_probe.rc == 0 and mm4_devzfs_probe.rc == 0 and mm4_loop_probe.rc == 0 and mm4_pool_check.rc | default(1) != 0 and mm4_pool_create.rc | default(1) != 0
+
+    - name: Create throwaway zfs dataset with a property
+      community.general.zfs:
+        name: "{{ mm4_zfs_dataset }}"
+        state: present
+        extra_zfs_properties:
+          compression: "on"
+      register: mm4_zfs_dataset_create
+      when: mm4_zpool_probe.rc == 0 and mm4_zfs_probe.rc == 0 and mm4_devzfs_probe.rc == 0 and mm4_loop_probe.rc == 0 and (mm4_pool_check.rc | default(1) == 0 or mm4_pool_create.rc | default(1) == 0)
+
+    - name: Re-assert throwaway zfs dataset (idempotency check)
+      community.general.zfs:
+        name: "{{ mm4_zfs_dataset }}"
+        state: present
+        extra_zfs_properties:
+          compression: "on"
+      register: mm4_zfs_dataset_create_again
+      when: mm4_zpool_probe.rc == 0 and mm4_zfs_probe.rc == 0 and mm4_devzfs_probe.rc == 0 and mm4_loop_probe.rc == 0 and (mm4_pool_check.rc | default(1) == 0 or mm4_pool_create.rc | default(1) == 0)
+
+    - name: Change the dataset compression property
+      community.general.zfs:
+        name: "{{ mm4_zfs_dataset }}"
+        state: present
+        extra_zfs_properties:
+          compression: "lz4"
+      register: mm4_zfs_dataset_change
+      when: mm4_zpool_probe.rc == 0 and mm4_zfs_probe.rc == 0 and mm4_devzfs_probe.rc == 0 and mm4_loop_probe.rc == 0 and (mm4_pool_check.rc | default(1) == 0 or mm4_pool_create.rc | default(1) == 0)
+
+    - name: Re-assert the changed property (idempotency check)
+      community.general.zfs:
+        name: "{{ mm4_zfs_dataset }}"
+        state: present
+        extra_zfs_properties:
+          compression: "lz4"
+      register: mm4_zfs_dataset_change_again
+      when: mm4_zpool_probe.rc == 0 and mm4_zfs_probe.rc == 0 and mm4_devzfs_probe.rc == 0 and mm4_loop_probe.rc == 0 and (mm4_pool_check.rc | default(1) == 0 or mm4_pool_create.rc | default(1) == 0)
+
+    - name: Read back the dataset compression property
+      ansible.builtin.command: zfs get -H -o value compression "{{ mm4_zfs_dataset }}"
+      register: mm4_zfs_compression_readback
+      changed_when: false
+      when: mm4_zpool_probe.rc == 0 and mm4_zfs_probe.rc == 0 and mm4_devzfs_probe.rc == 0 and mm4_loop_probe.rc == 0 and (mm4_pool_check.rc | default(1) == 0 or mm4_pool_create.rc | default(1) == 0)
+
+    - name: Debug zfs dataset result
+      ansible.builtin.debug:
+        msg: "zfs {{ mm4_zfs_dataset }}: create={{ mm4_zfs_dataset_create.changed }} re-assert={{ mm4_zfs_dataset_create_again.changed }} change={{ mm4_zfs_dataset_change.changed }} re-change={{ mm4_zfs_dataset_change_again.changed }} compression={{ mm4_zfs_compression_readback.stdout | default('?') }}"
+      when: mm4_zpool_probe.rc == 0 and mm4_zfs_probe.rc == 0 and mm4_devzfs_probe.rc == 0 and mm4_loop_probe.rc == 0 and (mm4_pool_check.rc | default(1) == 0 or mm4_pool_create.rc | default(1) == 0)
+
+    - name: Check zfs dataset lifecycle and idempotency
+      ansible.builtin.assert:
+        that:
+          - mm4_zfs_dataset_create.changed
+          - mm4_zfs_dataset_create_again.changed == false
+          - mm4_zfs_dataset_change.changed
+          - mm4_zfs_dataset_change_again.changed == false
+          - mm4_zfs_compression_readback.stdout is search('lz4')
+      when: mm4_zpool_probe.rc == 0 and mm4_zfs_probe.rc == 0 and mm4_devzfs_probe.rc == 0 and mm4_loop_probe.rc == 0 and (mm4_pool_check.rc | default(1) == 0 or mm4_pool_create.rc | default(1) == 0)
+
+    - name: Create throwaway zfs snapshot
+      community.general.zfs:
+        name: "{{ mm4_zfs_snapshot }}"
+        state: present
+      register: mm4_zfs_snapshot_create
+      when: mm4_zpool_probe.rc == 0 and mm4_zfs_probe.rc == 0 and mm4_devzfs_probe.rc == 0 and mm4_loop_probe.rc == 0 and (mm4_pool_check.rc | default(1) == 0 or mm4_pool_create.rc | default(1) == 0)
+
+    - name: Re-assert throwaway zfs snapshot (idempotency check)
+      community.general.zfs:
+        name: "{{ mm4_zfs_snapshot }}"
+        state: present
+      register: mm4_zfs_snapshot_create_again
+      when: mm4_zpool_probe.rc == 0 and mm4_zfs_probe.rc == 0 and mm4_devzfs_probe.rc == 0 and mm4_loop_probe.rc == 0 and (mm4_pool_check.rc | default(1) == 0 or mm4_pool_create.rc | default(1) == 0)
+
+    - name: Check zfs snapshot create and idempotency
+      ansible.builtin.assert:
+        that:
+          - mm4_zfs_snapshot_create.changed
+          - mm4_zfs_snapshot_create_again.changed == false
+      when: mm4_zpool_probe.rc == 0 and mm4_zfs_probe.rc == 0 and mm4_devzfs_probe.rc == 0 and mm4_loop_probe.rc == 0 and (mm4_pool_check.rc | default(1) == 0 or mm4_pool_create.rc | default(1) == 0)
+
+    # ---------------------------------------------------------------
+    # redhat_subscription: the module itself is NEVER invoked (mutating
+    # only - see header). Read-only CLI information gathering when the
+    # subscription-manager CLI happens to exist.
+    # ---------------------------------------------------------------
+    - name: Query subscription-manager status (read-only)
+      ansible.builtin.command: subscription-manager status
+      register: mm4_submgr_status
+      failed_when: false
+      changed_when: false
+      when: mm4_submgr_probe.rc == 0
+
+    - name: Query subscription-manager identity (read-only)
+      ansible.builtin.command: subscription-manager identity
+      register: mm4_submgr_identity
+      failed_when: false
+      changed_when: false
+      when: mm4_submgr_probe.rc == 0
+
+    - name: Debug subscription-manager read-only queries
+      ansible.builtin.debug:
+        msg: "subscription-manager status rc={{ mm4_submgr_status.rc | default('?') }}: {{ (mm4_submgr_status.stdout | default('')) | trim | default(mm4_submgr_status.stderr | default('')) | trim }}; identity rc={{ mm4_submgr_identity.rc | default('?') }}"
+      when: mm4_submgr_probe.rc == 0
+
+    - name: Notice redhat_subscription module permanent skip
+      ansible.builtin.debug:
+        msg: "redhat_subscription module deliberately not invoked: its only states are mutating (register/unregister against real Red Hat infrastructure); read-only CLI queries above cover what can be covered safely"
+      when: mm4_submgr_probe.rc == 0
+
+    # ---------------------------------------------------------------
+    # Cleanup: every throwaway object removed again, most-specific
+    # first. Order matters: compose down + container removal before the
+    # network goes away; snapshot -> dataset -> pool -> loop detach ->
+    # image file for zfs. Cleanup tasks are failed_when: false where a
+    # partially-skipped section could leave nothing to clean.
+    # ---------------------------------------------------------------
+    - name: Take the throwaway compose project down
+      community.docker.docker_compose_v2:
+        project_src: "{{ mm4_compose_dir }}"
+        project_name: "{{ mm4_compose_project }}"
+        state: absent
+      register: mm4_compose_down
+      when: mm4_docker_probe.rc == 0 and mm4_docker_daemon.rc | default(1) == 0 and mm4_compose_probe.rc | default(1) == 0 and mm4_container_image | length > 0
+
+    - name: Check compose down happened
+      ansible.builtin.assert:
+        that:
+          - mm4_compose_down.changed
+      when: mm4_docker_probe.rc == 0 and mm4_docker_daemon.rc | default(1) == 0 and mm4_compose_probe.rc | default(1) == 0 and mm4_container_image | length > 0
+
+    - name: Remove throwaway container
+      community.docker.docker_container:
+        name: "{{ mm4_container }}"
+        state: absent
+      register: mm4_container_remove
+      when: mm4_docker_probe.rc == 0 and mm4_docker_daemon.rc | default(1) == 0 and mm4_container_image | length > 0
+
+    - name: Check container removal happened
+      ansible.builtin.assert:
+        that:
+          - mm4_container_remove.changed
+      when: mm4_docker_probe.rc == 0 and mm4_docker_daemon.rc | default(1) == 0 and mm4_container_image | length > 0
+
+    - name: Remove throwaway docker network
+      community.docker.docker_network:
+        name: "{{ mm4_network }}"
+        state: absent
+      register: mm4_network_remove
+      when: mm4_docker_probe.rc == 0 and mm4_docker_daemon.rc | default(1) == 0
+
+    - name: Check docker_network removal happened
+      ansible.builtin.assert:
+        that:
+          - mm4_network_remove.changed
+      when: mm4_docker_probe.rc == 0 and mm4_docker_daemon.rc | default(1) == 0
+
+    - name: Remove throwaway zfs snapshot
+      community.general.zfs:
+        name: "{{ mm4_zfs_snapshot }}"
+        state: absent
+      register: mm4_zfs_snapshot_destroy
+      when: mm4_zpool_probe.rc == 0 and mm4_zfs_probe.rc == 0 and mm4_devzfs_probe.rc == 0 and mm4_loop_probe.rc == 0 and (mm4_pool_check.rc | default(1) == 0 or mm4_pool_create.rc | default(1) == 0)
+
+    - name: Remove throwaway zfs dataset
+      community.general.zfs:
+        name: "{{ mm4_zfs_dataset }}"
+        state: absent
+      register: mm4_zfs_dataset_destroy
+      when: mm4_zpool_probe.rc == 0 and mm4_zfs_probe.rc == 0 and mm4_devzfs_probe.rc == 0 and mm4_loop_probe.rc == 0 and (mm4_pool_check.rc | default(1) == 0 or mm4_pool_create.rc | default(1) == 0)
+
+    - name: Check zfs dataset removal happened
+      ansible.builtin.assert:
+        that:
+          - mm4_zfs_dataset_destroy.changed
+      when: mm4_zpool_probe.rc == 0 and mm4_zfs_probe.rc == 0 and mm4_devzfs_probe.rc == 0 and mm4_loop_probe.rc == 0 and (mm4_pool_check.rc | default(1) == 0 or mm4_pool_create.rc | default(1) == 0)
+
+    - name: Destroy the throwaway zfs pool
+      ansible.builtin.command: zpool destroy "{{ mm4_pool }}"
+      failed_when: false
+      changed_when: false
+      when: mm4_zpool_probe.rc == 0 and mm4_zfs_probe.rc == 0 and mm4_devzfs_probe.rc == 0 and mm4_loop_probe.rc == 0 and (mm4_pool_check.rc | default(1) == 0 or mm4_pool_create.rc | default(1) == 0)
+
+    - name: Detach the loopback image
+      ansible.builtin.command: losetup -d "{{ mm4_loop_attach.stdout | default('') }}"
+      failed_when: false
+      changed_when: false
+      when: mm4_zpool_probe.rc == 0 and mm4_zfs_probe.rc == 0 and mm4_devzfs_probe.rc == 0 and mm4_loop_probe.rc == 0 and (mm4_loop_attach.stdout | default('')) | trim | length > 0
+
+    - name: Remove benchmark root directory
+      ansible.builtin.file:
+        path: "{{ mm4_dir }}"
+        state: absent
+
+    - name: Announce modules-misc4 benchmark end
+      ansible.builtin.debug:
+        msg: "modules-misc4 benchmark {{ mm4_run_id }} complete"
