@@ -1,7 +1,7 @@
 require "yaml"
 
 module Krikri
-  VERSION = "0.9.1302"
+  VERSION = "0.9.1303"
 
   # Baked in at compile time via the same `--release` flag `build.sh`
   # passes through to `crystal build`. A timing-sensitive round run

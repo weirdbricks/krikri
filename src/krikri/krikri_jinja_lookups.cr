@@ -32,9 +32,9 @@ module Krikri
 
     private def self.text(value : AnyValue) : String
       case raw = value.raw
-      when String then raw
+      when String                      then raw
       when Nil, KrikriJinja::Undefined then ""
-      else KrikriJinja.to_json_any(value).to_s
+      else                                  KrikriJinja.to_json_any(value).to_s
       end
     end
 

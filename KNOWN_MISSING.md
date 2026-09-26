@@ -30,7 +30,7 @@ it does not linger at the top. This file carries no per-round
 narrative or fix history - `git log` is the record of what was found
 and fixed and when.
 
-**Currently at `0.9.1269`.**
+**Currently at `0.9.1303`.**
 
 ## Open gaps
 
@@ -227,9 +227,8 @@ gaps" rather than arguing with the note in place.
   manala.environment and manala.accounts). Wired into BOTH templating
   engines separately (the repo's two-evaluator split): the hand-rolled
   `{{ }}` evaluator's lookup dispatch (`evaluate_custom_python_lookup`)
-  and the Crinja `.j2`-template side, which additionally had NO
-  `query()`/`q()` Jinja global at all before (a template calling
-  `query()` failed with "no function with name"). Every unhelpable case
+  and the krikri-jinja template side (`krikri_jinja_lookups.cr`, which
+  also serves `query()`/`q()`). Every unhelpable case
   (no python3, the `ansible` package not importable by the controller
   python3, no `LookupModule` class in the file) keeps that exact previous
   undefined/`[]` degradation; a plugin that RAN and raised fails the task
@@ -331,7 +330,7 @@ gaps" rather than arguing with the note in place.
   (round 306, 0.9.741). Real Ansible's native-types finalization
   converts a Python tuple to a list at every rendered-output position
   EXCEPT when `| string` applies Python's own `str()` first - krikri's
-  crinja fork now replicates that exception for the inline case
+  output finalization replicates that exception for the inline case
   (`{{ d1 | dictsort | string }}` correctly renders parens), but a
   tuple crossing INTO a var first (`t1: "{{ (1, 2) }}"`) loses its
   tuple-ness the moment it's stored, since krikri's vars world is JSON
@@ -342,20 +341,6 @@ gaps" rather than arguing with the note in place.
   deliberately avoided - for a shape nothing in the role corpus hits
   (`| string` on a tuple-bearing var read back out of storage). Revisit
   only if a real role is found relying on it.
-- **A dotted/bracketed attribute miss on a NON-hostvars object stays
-  lenient in `.j2` template renders** (`crinja_strict_undefined.cr`
-  only makes `Resolver#resolve`, the bare-name lookup, strict). The
-  hostvars case - the one live divergence against this cut
-  (`mrlesmithjr.ansible_consul_client`, RHEL-family round 60175:
-  real Ansible's `HostVarsVars` raises `object of type 'HostVarsVars'
-  has no attribute 'ansible_enp0s8'` where a lenient render produced an
-  empty value) - is closed as of 0.9.821 via the hostvars-specific
-  strict path the original note called for (see the scope-cut clearing
-  batch above). The blanket cut stays: `Resolver.resolve_with_hash_
-  accessor` is also the fallback for method-call dispatch and this
-  engine's own fact-coverage gaps, so a non-hostvars dict miss remains
-  lenient even under strict templating, deliberately.
-
 ### Cosmetic differences (both engines fail; only the wording differs)
 
 These change no outcome and no recap. Listed so they aren't re-reported
@@ -363,6 +348,12 @@ as bugs, not because anyone intends to fix them. (The section's two
 former entries - `RemovedActionError`'s message text and
 `include_vars:` with a failing templated path - were re-examined and
 closed in 0.9.824; see the round narrative at the top.)
+
+- **A `hostvars[host].<missing>` attribute names the wrong type.** Real
+  ansible-core fails with `object of type 'HostVarsVars' has no attribute
+  'x'`; krikri fails the same task (and `is defined`/`default()` behave
+  the same) but says `object of type 'dict'`, since each host's vars reach
+  the template engine as a plain dict.
 
 ### Everything else
 

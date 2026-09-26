@@ -131,8 +131,8 @@ module Krikri
           if KrikriJinjaFilters.ensure_shared_python_filter(filter_name, @vars)
             begin
               return render!(text)
-            rescue retry_error : KrikriJinja::TemplateError
-              raise retry_error unless KrikriJinjaFilters.unknown_filter_name(retry_error)
+            rescue ex : KrikriJinja::TemplateError
+              raise ex unless KrikriJinjaFilters.unknown_filter_name(ex)
             end
           end
           raise FilterEngine::UnknownFilterError.new("No filter named '#{filter_name}'.")

@@ -30,7 +30,7 @@ describe Krikri::VariableSubstitutor::JinjaVarResolver do
 
   it "exposes the scope as vars without nesting vars itself" do
     vars = resolver_for({"a" => JSON::Any.new(1_i64), "vars" => JSON::Any.new("x")}).resolve("vars")
-    hash = vars.not_nil!.raw.as(Hash(String, KrikriJinja::AnyValue))
+    hash = vars.should_not(be_nil).raw.as(Hash(String, KrikriJinja::AnyValue))
     hash.keys.should eq(["a"])
   end
 

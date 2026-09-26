@@ -41,7 +41,6 @@ module Krikri
       role_path ? File.join(role_path, "files", path) : path
     end
 
-
     # A relative first_found `paths:` entry can resolve against either
     # the role's own ROOT directory OR (buluma.confluence's own `paths:
     # ['../vars']` idiom, real Ansible resolves this relative to tasks/,

@@ -1,7 +1,6 @@
 require "../spec_helper"
 require "../../src/krikri/variable_substitutor/filter_engine"
 require "../../src/krikri/krikri_jinja_filters"
-require "../../src/krikri/krikri_jinja_filters"
 
 private def render(source : String, vars : Hash(String, JSON::Any) = {} of String => JSON::Any,
                    host_context : KrikriJinja::HostContext? = nil) : String

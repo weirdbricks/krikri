@@ -7,7 +7,6 @@ require "../../src/krikri/conditional_evaluator"
 # error identically and any parity assertion would be vacuously true. Load
 # the registrations explicitly so the pure side sees the real feature set.
 require "../../src/krikri/krikri_jinja_filters"
-require "../../src/krikri/krikri_jinja_filters"
 
 # P2.16 (FINDINGS_CHECKLIST.md) - the cross-engine parity matrix.
 #
@@ -114,18 +113,18 @@ describe "P2.16 cross-engine parity matrix" do
     "true is boolean IDENTITY, not truthiness" => {"{{ text is true }}", "False"},
     "bool-literal test name (is not false)"    => {"{{ flag is not false }}", "True"},
     # `abs` is Ansible's absolute-path test (a number fails the task).
-    "abs-as-test on an absolute path"          => {"{{ real_dir is abs }}", "True"},
-    "abs-as-test on a relative path"           => {"{{ rel_path is abs }}", "False"},
-    "isnan on a NaN float"                     => {"{{ float_nan is isnan }}", "True"},
-    "nan on a real number"                     => {"{{ int_val is nan }}", "False"},
-    "uri test positive"                        => {"{{ web_url is uri }}", "True"},
-    "uri test negative"                        => {"{{ not_url is uri }}", "False"},
-    "url test positive"                        => {"{{ web_url is url }}", "True"},
+    "abs-as-test on an absolute path" => {"{{ real_dir is abs }}", "True"},
+    "abs-as-test on a relative path"  => {"{{ rel_path is abs }}", "False"},
+    "isnan on a NaN float"            => {"{{ float_nan is isnan }}", "True"},
+    "nan on a real number"            => {"{{ int_val is nan }}", "False"},
+    "uri test positive"               => {"{{ web_url is uri }}", "True"},
+    "uri test negative"               => {"{{ not_url is uri }}", "False"},
+    "url test positive"               => {"{{ web_url is url }}", "True"},
     # The name is the tested VALUE (`'upper' is filter`); real ansible-core
     # fails `text is filter('upper')` outright.
-    "filter meta-test (registered name)"       => {"{{ 'upper' is filter }}", "True"},
-    "filter meta-test (unknown name)"          => {"{{ 'nosuchfilter' is filter }}", "False"},
-    "test meta-test (registered name)"         => {"{{ 'defined' is test }}", "True"},
+    "filter meta-test (registered name)" => {"{{ 'upper' is filter }}", "True"},
+    "filter meta-test (unknown name)"    => {"{{ 'nosuchfilter' is filter }}", "False"},
+    "test meta-test (registered name)"   => {"{{ 'defined' is test }}", "True"},
     # ---- filters registered by the P2 batches (P2.8-P2.14) ----
     # "strftime after to_datetime" left the matrix: ansible-core 2.19
     # changed strftime's argument order (piped value = FORMAT, epoch =
@@ -136,11 +135,11 @@ describe "P2.16 cross-engine parity matrix" do
     # excerpt), so a byte-equality matrix entry can't hold; the 2.19
     # semantics are pinned in filter_batch2_spec's strftime block
     # instead.
-    "subelements result length"  => {"{{ users | subelements('keys') | length }}", "3"},
-    "count alias of length"      => {"{{ list | count }}", "3"},
-    "d alias of default"         => {"{{ missing_var | d('fallback') }}", "fallback"},
-    "items alias of dict2items"  => {"{{ dict_var | items | length }}", "2"},
-    "root path prefix"           => {"{{ '/etc/hosts' | root }}", "/"},
+    "subelements result length" => {"{{ users | subelements('keys') | length }}", "3"},
+    "count alias of length"     => {"{{ list | count }}", "3"},
+    "d alias of default"        => {"{{ missing_var | d('fallback') }}", "fallback"},
+    "items alias of dict2items" => {"{{ dict_var | items | length }}", "2"},
+    "root path prefix"          => {"{{ '/etc/hosts' | root }}", "/"},
   }
 
   matrix.each do |label, (tpl, expected)|

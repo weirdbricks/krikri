@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.1283-blue)](https://github.com/weirdbricks/krikri)
+[![Version](https://img.shields.io/badge/version-0.9.1303-blue)](https://github.com/weirdbricks/krikri)
 [![Compatibility](https://img.shields.io/badge/ansible--compatibility-high-brightgreen)](https://github.com/weirdbricks/krikri)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 [![Homebrew](https://img.shields.io/badge/homebrew-tap-blue)](#install-via-homebrew-macoslinux-prebuilt-binaries)
@@ -385,8 +385,10 @@ and other AI models: MiniMax, DeepSeek Flash, GLM 5.3 Express.
 Thanks also to:
 
 - [Crystal](https://crystal-lang.org/), the language this is built with
-- [crinja](https://github.com/straight-shoota/crinja) for Jinja2
-  templating, among other Crystal shards - see `shard.yml`
+- [crinja](https://github.com/straight-shoota/crinja), which krikri used
+  for Jinja2 templating before its own
+  [krikri-jinja](https://github.com/weirdbricks/krikri-jinja) engine, and
+  the other Crystal shards in `shard.yml`
 
 **Ansible** and the Ansible logo are trademarks of Red Hat, Inc., registered
 in the United States and other countries. This project is not affiliated

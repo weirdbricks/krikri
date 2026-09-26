@@ -4,7 +4,6 @@ require "krikri-jinja/krikri_jinja"
 require "./krikri_jinja_filters"
 require "./jinja_host_context"
 require "./template_search_path_loader"
-require "./krikri_jinja_filters"
 require "./base_action_plugin"
 
 module Krikri
@@ -131,10 +130,7 @@ module Krikri
         # A role-local `filter_plugins/*.py` filter is resolved on demand
         # and registered on this render's own engine, then the render is
         # retried once with that same engine.
-        message = ex.message
-        filter_name = if message.try(&.includes?("unknown filter"))
-                        message.not_nil!.split('"')[1]?
-                      end
+        filter_name = KrikriJinjaFilters.unknown_filter_name(ex)
         if filter_name && KrikriJinjaFilters.ensure_python_filter(filter_name, template_vars, engine)
           render_once(engine, content, template_vars)
         else
@@ -186,9 +182,13 @@ module Krikri
     end
 
     # Real Ansible's own wording for a strict-undefined failure is
-    # "'name' is undefined"; krikri-jinja already uses that phrasing.
+    # "'name' is undefined"; krikri-jinja already uses that phrasing. An
+    # attribute miss is reworded from Jinja's "'dict object' has no
+    # attribute 'x'" to ansible-core's "object of type 'dict' has no
+    # attribute 'x'".
     private def jinja_error_message(ex : KrikriJinja::TemplateError) : String
-      ex.message || "template render failed"
+      (ex.message || "template render failed")
+        .gsub(/'(\w+) object' has no attribute/, "object of type '\\1' has no attribute")
     end
 
     # JSON-shaped counterpart of #prepare_template_vars, for the krikri-jinja

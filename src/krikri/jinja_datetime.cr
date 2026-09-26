@@ -56,8 +56,8 @@ module Krikri
         when "microsecond" then AnyValue.new(microsecond.to_i64)
         when "strftime"
           method(name) { |args| AnyValue.new(@time.to_s(JinjaDateTime.text(args[0]? || AnyValue.new("")))) }
-        when "isoformat" then method(name) { |_args| AnyValue.new(isoformat) }
-        when "weekday"   then method(name) { |_args| AnyValue.new((@time.day_of_week.value - 1).to_i64) }
+        when "isoformat"  then method(name) { |_args| AnyValue.new(isoformat) }
+        when "weekday"    then method(name) { |_args| AnyValue.new((@time.day_of_week.value - 1).to_i64) }
         when "isoweekday" then method(name) { |_args| AnyValue.new(@time.day_of_week.value.to_i64) }
         when "timestamp"
           # A naive datetime's timestamp() reads it in the controller's
@@ -139,9 +139,8 @@ module Krikri
         when "seconds"      then AnyValue.new(seconds)
         when "microseconds" then AnyValue.new(microseconds)
         when "total_seconds"
-          AnyValue.new(KrikriJinja::SimpleCallable.new(name) { |_args, _kwargs, _ctx|
-            AnyValue.new(@micros / MICROS_PER_SECOND)
-          })
+          total = @micros / MICROS_PER_SECOND
+          AnyValue.new(KrikriJinja::SimpleCallable.new(name) { |_args, _kwargs, _ctx| AnyValue.new(total) })
         end
       end
 

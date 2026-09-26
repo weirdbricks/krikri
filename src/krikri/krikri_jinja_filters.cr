@@ -317,19 +317,19 @@ module Krikri
     # `{{ d | dictsort }}` inside text is "[['a', 1]]").
     def self.ansible_finalize(value : KrikriJinja::AnyValue) : KrikriJinja::AnyValue
       case raw = value.raw
-      when Nil                    then KrikriJinja::AnyValue.new("")
+      when Nil                     then KrikriJinja::AnyValue.new("")
       when KrikriJinja::TupleValue then KrikriJinja::AnyValue.new(raw.items.map { |item| tuples_to_lists(item) })
-      when Array, Hash            then tuples_to_lists(value)
-      else                             value
+      when Array, Hash             then tuples_to_lists(value)
+      else                              value
       end
     end
 
     private def self.tuples_to_lists(value : KrikriJinja::AnyValue) : KrikriJinja::AnyValue
       case raw = value.raw
       when KrikriJinja::TupleValue then KrikriJinja::AnyValue.new(raw.items.map { |item| tuples_to_lists(item) })
-      when Array                  then KrikriJinja::AnyValue.new(raw.map { |item| tuples_to_lists(item) })
-      when Hash                   then KrikriJinja::AnyValue.new(raw.transform_values { |item| tuples_to_lists(item) })
-      else                             value
+      when Array                   then KrikriJinja::AnyValue.new(raw.map { |item| tuples_to_lists(item) })
+      when Hash                    then KrikriJinja::AnyValue.new(raw.transform_values { |item| tuples_to_lists(item) })
+      else                              value
       end
     end
 
@@ -344,7 +344,8 @@ module Krikri
       end
 
       KrikriJinja.register_default_json_filter("bool") do |value, _args, _kwargs|
-        JSON::Any.new(case raw = value.raw
+        raw = value.raw
+        JSON::Any.new(case raw
         when Bool   then raw
         when String then ["true", "yes", "1", "on"].includes?(raw.downcase)
         else             false
@@ -695,9 +696,10 @@ module Krikri
         end
         key_name = (args[0]? || kwargs["key_name"]?).try(&.as_s?) || "key"
         value_name = (args[1]? || kwargs["value_name"]?).try(&.as_s?) || "value"
-        JSON::Any.new(hash.map { |key, item|
+        items = hash.map do |key, item|
           JSON::Any.new({key_name => JSON::Any.new(key), value_name => item})
-        })
+        end
+        JSON::Any.new(items)
       end
 
       # items2dict: each entry's `key_name` field becomes the key and its
