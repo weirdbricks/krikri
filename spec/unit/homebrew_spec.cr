@@ -105,4 +105,24 @@ describe Krikri::PluginHelpers::Homebrew do
       Krikri::PluginHelpers::Homebrew.link_command("brew", ["foo"], [] of String, unlink: true).should eq("brew unlink foo")
     end
   end
+
+  # Command-builder quoting: real Ansible builds an argv list where a
+  # hostile token is inert, so the shell-string equivalent must keep a
+  # metacharacter-bearing element one literal argument. Well-formed
+  # values stay byte-identical (quote_arg leaves safe tokens bare).
+  describe "command-builder quoting" do
+    it "quotes a brew_path carrying shell metacharacters" do
+      Krikri::PluginHelpers::Homebrew.info_command("/opt/bin; touch /tmp/pwned", ["git"])
+        .should eq("'/opt/bin; touch /tmp/pwned' info --json=v2 git")
+      Krikri::PluginHelpers::Homebrew.upgrade_command("/opt/bin; touch /tmp/pwned", [] of String, [] of String)
+        .should eq("'/opt/bin; touch /tmp/pwned' upgrade")
+    end
+
+    it "quotes hostile option and package tokens while leaving well-formed ones bare" do
+      Krikri::PluginHelpers::Homebrew.install_command("brew", ["git; touch /tmp/pwned"], ["with-baz"], false, false)
+        .should eq("brew install --with-baz 'git; touch /tmp/pwned'")
+      Krikri::PluginHelpers::Homebrew.upgrade_command("brew", ["git"], ["ignore-pinned; touch /tmp/pwned"])
+        .should eq("brew upgrade '--ignore-pinned; touch /tmp/pwned' git")
+    end
+  end
 end

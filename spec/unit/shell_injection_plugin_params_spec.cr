@@ -53,6 +53,35 @@ describe "plugin task params cannot inject shell operations" do
 
     File.exists?(pwned).should be_false
   end
+
+  it "podman_image treats an injected executable as one literal binary name, not extra commands" do
+    pwned = "/tmp/krikri-pwn-podman-exec-#{Random::Secure.hex(8)}"
+    result = PluginSpecHelper.run("podman_image", {
+      "name"       => "krikri/spec-image",
+      "executable" => "podman; touch #{pwned}; #",
+    })
+
+    result["failed"].as_bool.should be_true
+    result["msg"].as_s.should contain("Failed to find required executable")
+    File.exists?(pwned).should be_false
+  end
+
+  # The image reference / pull_extra_args quoting uses the same
+  # Shell.quote_arg / shlex_split primitives, but the executable
+  # probe (`command -v`) can never succeed on a local connection (the
+  # argv fast path cannot run shell builtins), so the later command
+  # strings are not reachable in a spec environment - covered by the
+  # shell_spec round-trip tests instead.
+
+  it "usermod treats an injected username as one literal argument, not extra commands" do
+    pwned = "/tmp/krikri-pwn-usermod-#{Random::Secure.hex(8)}"
+    PluginSpecHelper.run("user", {
+      "name"  => "x; touch #{pwned}; #",
+      "state" => "present",
+    })
+
+    File.exists?(pwned).should be_false
+  end
 end
 
 # Pure command-builder quoting regression: injected values must end up

@@ -135,7 +135,7 @@ module Krikri
 
         PluginResult.new(changed: true, failed: false, msg: "Key imported")
       ensure
-        remote_exec("rm -f #{tmp_path}") if tmp_path
+        remote_exec("rm -f #{Shell.quote_arg(tmp_path)}") if tmp_path
       end
     end
 
@@ -148,7 +148,7 @@ module Krikri
 
     private def download_key(key : String, tmp_path : String) : String?
       insecure_flag = true?(@params["validate_certs"]?, default: true) ? "" : "--insecure "
-      result = remote_exec("curl --fail --silent --show-error --location #{insecure_flag}-o #{tmp_path} #{shell_single_quote(key)}")
+      result = remote_exec("curl --fail --silent --show-error --location #{insecure_flag}-o #{Shell.quote_arg(tmp_path)} #{shell_single_quote(key)}")
       result[:exit_code] == 0 ? nil : "failed to fetch key at #{key} , error was: #{result[:stderr]}"
     end
 
@@ -196,7 +196,7 @@ module Krikri
         return PluginResult.new(changed: false, failed: false, msg: "Key already absent")
       end
 
-      result = remote_exec("rpm --erase --allmatches gpg-pubkey-#{short_id}")
+      result = remote_exec("rpm --erase --allmatches gpg-pubkey-#{Shell.quote_arg(short_id)}")
       unless result[:exit_code] == 0
         return PluginResult.new(changed: false, failed: true, msg: result[:stderr])
       end

@@ -107,4 +107,42 @@ describe "fetch plugin" do
     File.delete(src) if src && File.exists?(src)
     FileUtils.rm_rf(dest_root) if dest_root
   end
+
+  it "rejects a src whose '..' components escape dest (flat: false) with real fetch's traversal message" do
+    dest_root = File.tempname("fetch-spec-dest")
+    Dir.mkdir_p(dest_root)
+
+    result = PluginSpecHelper.run(
+      "fetch",
+      {"src" => "/../../etc/passwd", "dest" => dest_root},
+      LOCAL_VARS,
+    )
+    result["failed"].as_bool.should be_true
+    result["changed"]?.try(&.as_bool).should be_falsey
+    result["msg"].as_s.should eq(
+      "Detected directory traversal, expected to be contained in '#{dest_root}' but got '#{dest_root}/localhost/../../etc/passwd'")
+    File.exists?(File.join(File.dirname(dest_root), "etc", "passwd")).should be_false
+  ensure
+    FileUtils.rm_rf(dest_root) if dest_root
+  end
+
+  it "allows a src with '..' components that stay inside dest and writes the normalized path (flat: false)" do
+    src_name = "fetch-spec-src-#{Random.new.hex(4)}"
+    dest_root = File.tempname("fetch-spec-dest")
+    Dir.mkdir_p(File.join(dest_root, "localhost"))
+    src = File.join(dest_root, "localhost", src_name)
+    File.write(src, "x")
+    src_param = "#{dest_root}/localhost/../localhost/#{src_name}"
+
+    result = PluginSpecHelper.run(
+      "fetch",
+      {"src" => src_param, "dest" => dest_root},
+      LOCAL_VARS,
+    )
+    result["changed"].as_bool.should be_true
+    result["dest"].as_s.should eq(File.expand_path(File.join(dest_root, "localhost", src_param)))
+    File.read(File.expand_path(File.join(dest_root, "localhost", src_param))).should eq("x")
+  ensure
+    FileUtils.rm_rf(dest_root) if dest_root
+  end
 end

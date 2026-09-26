@@ -43,7 +43,11 @@ module Krikri
         return PluginResult.new(changed: false, failed: true, msg: "remote path is a directory, not a file", file: src)
       end
 
-      dest_path = resolve_dest_path(dest, src)
+      dest_check = resolve_dest_path(dest, src)
+      if failure = dest_check[:error]
+        return PluginResult.new(changed: false, failed: true, msg: failure)
+      end
+      dest_path = dest_check[:path].not_nil!
       remote_checksum = source_checksum(src)
 
       if unchanged?(dest_path, remote_checksum)
@@ -95,12 +99,39 @@ module Krikri
     # and all>. `flat: true` writes straight to dest (or dest/<basename of
     # src> when dest ends with a path separator, same convention copy:
     # uses for a directory dest).
-    private def resolve_dest_path(dest : String, src : String) : String
-      if true?(@params["flat"]?)
+    #
+    # Real fetch composes the destination and then applies
+    # os.path.normpath before touching the filesystem, so the path is
+    # normalized either way. The composition itself is plain string
+    # concatenation that neither normalizes nor rejects '..', so a src
+    # like "/../../etc/passwd" would resolve outside dest when the path
+    # is opened. Upstream's own containment guard (is_subpath, added with
+    # the CVE-2019-3828 fix) compares dest against original_dest while
+    # the two are still the same string and can never fire (verified
+    # against ansible-core 2.19: it normalizes and writes through the
+    # escaped path), so this port enforces the containment upstream
+    # intended: a composed destination that escapes dest fails with the
+    # message from that guard instead of writing outside it.
+    private def resolve_dest_path(dest : String, src : String) : {path: String?, error: String?}
+      composed = if true?(@params["flat"]?)
         dest.ends_with?(File::SEPARATOR) ? File.join(dest, File.basename(src)) : dest
       else
         File.join(dest, @host.name, src)
       end
+      normalized = File.expand_path(composed)
+      return {path: normalized, error: nil} if contained_in_dest?(dest, normalized)
+      {path: nil, error: "Detected directory traversal, expected to be contained in '#{dest}' but got '#{composed}'"}
+    end
+
+    # Equivalent of ansible.utils.path.is_subpath on lexically normalized
+    # absolute paths: child is contained when it equals the parent or
+    # lives underneath it. dest has already been tilde-expanded by the
+    # caller; File.expand_path also folds any '..' the dest itself
+    # carries, so a dest that normalizes outside itself still bounds the
+    # check at its real location.
+    private def contained_in_dest?(dest : String, child : String) : Bool
+      parent = File.expand_path(dest)
+      child == parent || child.starts_with?(parent.chomp(File::SEPARATOR) + File::SEPARATOR)
     end
 
     # `File.join` is plain string concatenation - it neither normalizes
