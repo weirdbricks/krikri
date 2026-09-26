@@ -160,4 +160,28 @@ describe "set_fact keeps a Jinja string expression a string (2.19 native typing)
   ensure
     File.delete(path) if path && File.exists?(path)
   end
+
+  it "evaluates a whole-span expression exactly once (side-effecting lookups)" do
+    # The native-type recovery must REPLACE the string substitution, not
+    # run in addition to it: evaluating twice ran a pipe lookup twice and
+    # stored the second run's output ("2"). Real ansible-playbook 2.19.11
+    # runs it once and stores the string "1" (live-verified).
+    counter = File.tempname("set-fact-once", ".txt")
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - set_fact:
+              x: "{{ lookup('pipe', 'echo run >> #{counter}; wc -l < #{counter}') }}"
+          - debug:
+              msg: "X={{ x }} T={{ x | type_debug }}"
+      YAML
+
+    status.success?.should be_true
+    output.should contain("X=1 T=str")
+    File.read(counter).lines.size.should eq(1)
+  ensure
+    File.delete(counter) if counter && File.exists?(counter)
+  end
 end
