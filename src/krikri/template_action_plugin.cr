@@ -195,12 +195,27 @@ module Krikri
     # render path: real Ansible templates a role default's own value
     # recursively, so a default that is itself an unrendered expression
     # resolves before the template sees it.
+    #
+    # The re-render MUST be JinjaRenderer.rerender_nested_templates, not a
+    # local string-only walk: a nested leaf whose whole value is one `{{ }}`
+    # expression that evaluates to a container (jtyr.motd's third
+    # motd_info__default entry, Oefenweb.sudoers' `sudoers_sudoers:
+    # {privileges: "{{ ... }}"}`) has to come out as a REAL dict/list, not
+    # the substituted string form of one - substitute always returns a
+    # String, so a walk that stops at substitution left sudoers_sudoers
+    # .privileges as the text "[{...}]" and the template's `{% for item in
+    # ... %}{{ item.name }}` iterated its CHARACTERS ("object of type 'str'
+    # has no attribute 'name'" - rounds 975058/975059/975081, same root
+    # cause as the engine-scope conversion's render_pure_mustache_value).
+    # defer_unresolved keeps this path's existing laziness: a leaf that
+    # references an undefined variable stays raw until a template that
+    # actually reads it fails, like real Ansible.
     private def prepare_template_vars_json(template_path : String) : Hash(String, JSON::Any)
       substitutor = VarSubstitutor.new(vars: @vars)
       vars = {} of String => JSON::Any
       @vars.each do |key, value|
         begin
-          value = rerender_nested_json(value, substitutor)
+          value = VariableSubstitutor::JinjaRenderer.rerender_nested_templates(value, substitutor, defer_unresolved: true)
         rescue Krikri::UndefinedVariableError
           # A role default that references an undefined variable stays raw;
           # only a template that actually uses it fails, like real Ansible.
@@ -219,21 +234,6 @@ module Krikri
       vars["template_destpath"] = JSON::Any.new(@params["dest"]) if @params["dest"]?
       vars["vars"] = JSON::Any.new(vars.dup)
       vars
-    end
-
-    private def rerender_nested_json(value : JSON::Any, substitutor : VarSubstitutor, depth : Int32 = 0) : JSON::Any
-      return value if depth > 10
-      case raw = value.raw
-      when String
-        return value unless raw.includes?("{{") || raw.includes?("{%")
-        JSON::Any.new(substitutor.substitute(raw))
-      when Array
-        JSON::Any.new(raw.map { |item| rerender_nested_json(item, substitutor, depth + 1) })
-      when Hash
-        JSON::Any.new(raw.to_h { |key, item| {key, rerender_nested_json(item, substitutor, depth + 1)} })
-      else
-        value
-      end
     end
 
     # Rewrites Jinja2 inline conditional expressions `{{ A if C else B }}`
