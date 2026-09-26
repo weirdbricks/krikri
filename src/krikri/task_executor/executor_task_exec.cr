@@ -107,6 +107,8 @@ module Krikri
       substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
 
       errors = [] of String
+      missing_required = [] of String
+      type_errors = [] of String
       options.each do |option_name, spec|
         # Real Ansible templates the ENTIRE argument spec - `default:`
         # expressions included - when finalizing the
@@ -143,13 +145,30 @@ module Krikri
         value = vars_context[option_name]?
 
         if value.nil?
-          # A spec default stands in for a missing option during
-          # validation (real Ansible applies it before type-checking);
-          # only an option with NO default can be "missing required".
-          if resolved_default
+          # Real Ansible applies spec defaults with set_default=False
+          # before check_required_arguments (ansible-core's
+          # module_utils/common/parameters.py _set_defaults), so only a
+          # default whose value is not None stands in for a missing
+          # option - a spec declaring `default: null` alongside
+          # `required: true` does NOT satisfy the requirement
+          # (robertdebock.vault_agent's vault_agent_address, round 979000:
+          # real ansible-playbook fails the synthesized validation task
+          # with "missing required arguments: vault_agent_address" while
+          # this engine treated the null default as a provided value,
+          # passed validation, and only failed the role's own
+          # assert-fallback tasks later with a generic assertion error).
+          if resolved_default && !resolved_default.raw.nil?
             value = resolved_default
           else
-            errors << "missing required argument: #{option_name}" if spec["required"]?.try(&.as_bool?) == true
+            # A var provided as an explicit null (`vault_agent_address:`)
+            # counts as provided in real Ansible - the action plugin picks
+            # up any name present in task_vars and check_required_arguments
+            # only flags names ABSENT from the parameters dict - so only a
+            # var the play never defines can be "missing required" here
+            # (vars_context[option_name]? is nil only in that case; a
+            # provided-as-null value surfaces as a JSON::Any wrapping nil
+            # and falls through to the type check, which skips nulls).
+            missing_required << option_name if spec["required"]?.try(&.as_bool?) == true
             next
           end
         end
@@ -163,28 +182,55 @@ module Krikri
           # unable to convert to int" against a None.
           unless value.raw.nil?
             unless argument_type_matches?(value, declared_type)
-              errors << "argument '#{option_name}' is of type #{json_type_name(value)} and we were unable to convert to #{declared_type}"
+              # Kept separate from `errors` so the combined missing-
+              # required message (emitted after the loop) can precede
+              # every type error the way real Ansible's validator orders
+              # them (check_required_arguments before
+              # _validate_argument_types).
+              type_errors << "argument '#{option_name}' is of type #{json_type_name(value)} and we were unable to convert to #{declared_type}"
             end
           end
         end
       end
 
-      if errors.empty?
-        puts "ok: [#{host.name}]".colorize(:green)
-        @results[host.name]["ok"] += 1
-      else
-        puts "failed: [#{host.name}]".colorize(:red)
-        puts "  Message: Validation of arguments failed:\n    #{errors.join("\n    ")}".colorize(:red)
-        # Same ignore_errors: stats fix as finish_include_vars_failure -
-        # an ignored failure counts as ok+ignored, not failed.
-        if resolve_task_ignore_errors(task)
-          @results[host.name]["ok"] += 1
-          @results[host.name]["ignored"] += 1
-        else
-          @results[host.name]["failed"] += 1
-          @halted_hosts.add(host.name)
-        end
-      end
+      # Real check_required_arguments raises ONE combined message
+      # ("missing required arguments: %s" % ", ".join(sorted(missing)))
+      # listing every missing option sorted by name - not one error per
+      # option in declaration order (which this engine used to emit, in
+      # the singular form, one entry at a time).
+      errors << "missing required arguments: #{missing_required.sort.join(", ")}" unless missing_required.empty?
+      errors.concat(type_errors)
+
+      result = if errors.empty?
+                 # Real's passing action result carries
+                 # {"changed": false, "msg": "The arg spec validation
+                 # passed"} but its stdout callback prints a bare
+                 # `ok: [host]` - ResultDisplay would surface the msg as
+                 # an extra detail line under the ok status, so the
+                 # display-visible result omits it (nothing registers
+                 # this synthesized task, so nothing else could read it).
+                 JSON::Any.new({
+                   "changed" => JSON::Any.new(false),
+                 } of String => JSON::Any)
+               else
+                 JSON::Any.new({
+                   "changed"         => JSON::Any.new(false),
+                   "failed"          => JSON::Any.new(true),
+                   "msg"             => JSON::Any.new("Validation of arguments failed:\n#{errors.join("\n")}"),
+                   "argument_errors" => JSON::Any.new(errors.map { |e| JSON::Any.new(e) }),
+                 } of String => JSON::Any)
+               end
+
+      # Display/stats flow through the same pipeline as every other task
+      # result so a failed validation shows real Ansible's one-line
+      # `fatal: [host]: FAILED! => {json}` dump (argument_errors included)
+      # instead of the old multi-line `failed:`/`Message:` shape, and
+      # ignore_errors: stats semantics (ok+ignored, not failed) stay
+      # identical to the rest of the engine.
+      ignore_errors = resolve_task_ignore_errors(task)
+      ResultDisplay.display_result(host, result, @diff_mode, ignore_errors: ignore_errors)
+      ResultDisplay.update_stats(@results[host.name], result, ignore_errors)
+      @halted_hosts.add(host.name) if !errors.empty? && !ignore_errors
     end
 
     # Whether *value* is compatible with a declared argument_specs.yml
