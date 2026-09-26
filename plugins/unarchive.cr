@@ -46,6 +46,30 @@ module Krikri
   #   never touched: real Ansible requires it to already exist and
   #   leaves its attributes alone.
   #
+  # Archive contents are attacker-controlled whenever src: is (a
+  # remote_src archive, a downloaded URL, a release artifact from a
+  # compromised build), so every path derived from a member name is
+  # containment-checked against dest (see contained_member_path) and
+  # never dereferenced through a symlink member:
+  # - chown/chgrp run with -h (real Ansible's set_owner_if_different /
+  #   set_group_if_different always use os.lchown, never following a
+  #   link), so an archive can't redirect an owner:/group: change onto
+  #   an arbitrary file outside dest via a symlink member;
+  # - chmod never runs against a symlink member (real Ansible's
+  #   set_mode_if_different chmods through the link and then RESTORES
+  #   the underlying mode; net effect on the target is unchanged, so
+  #   never touching it at all reaches the same end state without the
+  #   transient write);
+  # - members whose normalized path lands outside dest (or on dest
+  #   itself with stripping active) are dropped from BOTH the
+  #   attribute pass and the zip idempotency comparison - GNU tar
+  #   refuses `..` members at extraction anyway and Info-ZIP unzip
+  #   strips them (with a warning, and exit code 1 that real Ansible
+  #   fails the task on - which is why extract_zip doesn't use -q:
+  #   `-q` suppresses that very warning and unzip then exits 0,
+  #   letting a hostile zip "succeed" into the attribute pass), but
+  #   the member LISTING still carries the raw names.
+  #
   # Archive type is auto-detected by attempting to read it (`tar tf`, then
   # `unzip -l`), not by file extension - matches real Ansible's own
   # handler-probing approach (`can_handle_archive`), and means GNU tar's
@@ -460,7 +484,19 @@ module Krikri
       wanted = wanted.reject { |member| exclude.includes?(member) }
 
       wanted.any? do |member|
-        dest_path = File.join(dest, member)
+        # A member escaping dest never exists on disk at any path we're
+        # allowed to look at: tar refuses it at extraction and unzip
+        # strips it to somewhere inside dest, so there is no meaningful
+        # on-disk counterpart - and the literal joined path would point
+        # OUTSIDE dest, making the idempotency comparison read/hash an
+        # arbitrary attacker-chosen file. Skip it (reporting "unchanged"
+        # for that member; real Ansible's own zipinfo comparison lstats
+        # the literal joined path instead, i.e. it reads the escaping
+        # file - a divergence documented in favor of containment).
+        dest_path = contained_member_path(dest, member)
+        if dest_path.nil?
+          next false
+        end
 
         # A symlink zip member (common for a shared LICENSE/README
         # linked into multiple sub-crate dirs, e.g. square/sudo_pair's
@@ -490,7 +526,15 @@ module Krikri
 
     private def extract_zip(src : String, dest : String, exclude : Array(String), include_files : Array(String), keep_newer : Bool) : Bool
       overwrite_flag = keep_newer ? "-n" : "-o"
-      cmd = "unzip -q #{overwrite_flag} -d #{shell_single_quote(dest)} #{shell_single_quote(src)}#{zip_flags(exclude, include_files)}"
+      # No -q: real Ansible invokes plain `unzip -o src -d dest`, and
+      # Info-ZIP unzip exits 1 (warning) when it has to sanitize a
+      # member - e.g. "skipped \"../\" path component(s)". -q suppresses
+      # the warning AND the nonzero exit, so a zip-slip-shaped archive
+      # extracted "successfully" here while real Ansible failed the task
+      # outright - and krikri's post-extraction attribute pass then ran
+      # over the raw (unsanitized) member names. Matching real Ansible's
+      # exact invocation means matching its exact failure.
+      cmd = "unzip #{overwrite_flag} -d #{shell_single_quote(dest)} #{shell_single_quote(src)}#{zip_flags(exclude, include_files)}"
       remote_exec(cmd)[:exit_code] == 0
     end
 
@@ -597,6 +641,37 @@ module Krikri
       stripped.reject(&.empty?).join("/")
     end
 
+    # The on-disk path an archive member maps to under dest, or nil when
+    # the member must NOT be touched on disk at all. Archive member names
+    # are attacker-controlled (remote_src archives, downloaded URLs,
+    # release artifacts), so:
+    # - a leading '/' is stripped exactly the way GNU tar (--no-absolute-
+    #   names), Info-ZIP unzip and real Ansible's own TgzArchive#
+    #   files_in_archive (`if filename.startswith('/'): filename =
+    #   filename[1:]`) all treat absolute member names;
+    # - a member whose normalized path is not dest or under dest is
+    #   dropped outright - real tar refuses such members at extraction
+    #   ("Member name contains '..'") and unzip strips them, but the
+    #   member LISTING still carries the raw name, and feeding that raw
+    #   name to find/chown/chmod used to let an archive direct attribute
+    #   changes (as root, under become:) at arbitrary paths outside
+    #   dest. The check is lexical (Path#normalize resolves '..' without
+    #   touching the filesystem), matching how the extraction tools
+    #   themselves sanitize; a dest reached THROUGH a symlinked parent
+    #   is out of scope the same way it is for the extraction tools.
+    # dest itself is a legitimate result (the self-referential "./"
+    # member of a `tar czf x.tar.gz .` archive normalizes onto dest and
+    # real Ansible applies requested attributes to it - see the "./"
+    # comment in apply_dest_attributes).
+    private def contained_member_path(dest : String, member : String) : String?
+      cleaned = member.lstrip('/')
+      return nil if cleaned.empty?
+      dest_norm = Path[dest].normalize.to_s
+      path = Path[dest, cleaned].normalize.to_s
+      return nil unless path == dest_norm || dest_norm == "/" || path.starts_with?("#{dest_norm}/")
+      path
+    end
+
     # Shell-quoted on-disk paths for every archive member, after
     # --strip-components stripping - split out of #apply_dest_attributes
     # purely to keep that method's own branching (owner:/group:/mode:
@@ -611,7 +686,11 @@ module Krikri
         end
         stripped = stripped_member(member, strip)
         next nil if stripped.nil?
-        path = Path[dest, stripped].normalize.to_s
+        # Containment FIRST: a member like `../../etc` (or an absolute
+        # one) normalizes outside dest and must never reach find/chown/
+        # chmod as a start argument - see contained_member_path.
+        path = contained_member_path(dest, stripped)
+        next nil if path.nil?
         # With stripping active, a member that collapses onto dest itself
         # (the "./" self-reference shape) is exactly what tar skips - it
         # extracts nothing there. Without stripping, the "./" member
@@ -655,21 +734,41 @@ module Krikri
       return nil if member_paths.empty?
 
       member_paths.each_slice(MEMBER_CHUNK_SIZE) do |chunk|
-        member_args = "#{chunk.join(" ")} -maxdepth 0 -exec"
+        # -P (GNU find's own default, made explicit here so a future
+        # edit can't silently switch to -L): a symlink member start
+        # argument must be examined AS a symlink, never followed -
+        # -maxdepth 0 means find never descends past the start points
+        # anyway, but -P also pins down the start-point lstat itself.
+        member_args = "-P #{chunk.join(" ")} -maxdepth 0"
         if owner = @params["owner"]?
-          result = remote_exec("find #{member_args} chown #{shell_single_quote(owner)} {} +")
+          # -h: chown defaults to dereferencing symlinks, which would
+          # let an archive's symlink member redirect the ownership
+          # change onto any file it points at (outside dest) - real
+          # Ansible's set_owner_if_different always uses os.lchown,
+          # never the dereferencing form.
+          result = remote_exec("find #{member_args} -exec chown -h #{shell_single_quote(owner)} {} +")
           if result[:exit_code] != 0
             return PluginResult.new(changed: true, failed: true, msg: "Failed to set owner under #{dest}: #{result[:stderr]}")
           end
         end
         if group = @params["group"]?
-          result = remote_exec("find #{member_args} chgrp #{shell_single_quote(group)} {} +")
+          # -h: same symlink-dereference hazard as chown above (real
+          # Ansible's set_group_if_different uses os.lchown too).
+          result = remote_exec("find #{member_args} -exec chgrp -h #{shell_single_quote(group)} {} +")
           if result[:exit_code] != 0
             return PluginResult.new(changed: true, failed: true, msg: "Failed to set group under #{dest}: #{result[:stderr]}")
           end
         end
         if mode = @params["mode"]?
-          result = remote_exec("find #{member_args} chmod #{shell_single_quote(mode)} {} +")
+          # ! -type l: chmod has no no-dereference form on Linux, so a
+          # symlink member must be SKIPPED entirely - chmodding through
+          # it would change the mode of whatever file the archive points
+          # the link at, anywhere on the filesystem. Real Ansible's
+          # set_mode_if_different on a symlink chmods through the link
+          # and then restores the underlying mode (net effect: the
+          # target's mode is unchanged); never touching it reaches the
+          # same end state without the transient write.
+          result = remote_exec("find #{member_args} ! -type l -exec chmod #{shell_single_quote(mode)} {} +")
           if result[:exit_code] != 0
             return PluginResult.new(changed: true, failed: true, msg: "Failed to set mode under #{dest}: #{result[:stderr]}")
           end
