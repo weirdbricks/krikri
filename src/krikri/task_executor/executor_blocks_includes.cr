@@ -116,14 +116,6 @@ module Krikri
           next
         end
 
-        # The include_tasks: task itself counts as one `ok` in the
-        # recap, matching real Ansible and the single-host
-        # execute_include_tasks path above - this multi-host batched
-        # path never credited it at all, undercounting the recap's
-        # `ok=` tally by one per host for every non-looped include_
-        # tasks: task. Found benchmarking robertdebock.openvpn's own
-        # "Setup openvpn server or client".
-        @results[host.name]["ok"] += 1
         run_groups[resolved_path] << host
       end
 
@@ -143,6 +135,11 @@ module Krikri
           # `unless yaml.as_a?` check below without also accepting a
           # genuinely malformed (e.g. a bare scalar/mapping) tasks file.
           if yaml.raw.nil?
+            # Zero tasks is a *successful* include: the include task
+            # itself still counts `ok` (see the credit after parse_tasks
+            # below for why the credit lives there and not up at group
+            # assembly time).
+            group_hosts.each { |host| @results[host.name]["ok"] += 1 }
             next
           end
           unless yaml.as_a?
@@ -170,6 +167,19 @@ module Krikri
           # Banners render lazily at print time instead, per host.
 
           propagate_role_context(task, included_tasks)
+
+          # The include_tasks: task itself counts as one `ok` per host in
+          # the recap, matching real Ansible and the single-host
+          # execute_include_tasks path - but only once the file has
+          # actually parsed. Crediting at group-assembly time (the old
+          # spot) double-counted a load-time failure: an included file
+          # referencing a role that isn't installed (buluma.tomcat's
+          # instance.yml import_role: buluma.service, round 979000) made
+          # fail_include below book failed= on top of the already-credited
+          # ok=, recapping ok=46 failed=1 where real Ansible - which
+          # counts the include task as failed only - recaps ok=45 failed=1
+          # (verified live against ansible-core 2.19.11).
+          group_hosts.each { |host| @results[host.name]["ok"] += 1 }
 
           connection_names = group_hosts.map { |host| host.vars["ansible_host"]?.try(&.as_s?) || host.name }
           puts "included: #{resolved_path} for #{connection_names.join(", ")}".colorize(:cyan)
@@ -1335,11 +1345,16 @@ module Krikri
         end
       end
 
-      # The include itself counts as one `ok` (see the two call sites'
-      # own comments) - only reached once the when: check above has
-      # actually passed.
-      @results[host.name]["ok"] += 1
-
+      # The include itself counts as one `ok` in the recap - but only
+      # once the included file actually loads. The credit used to sit
+      # right here, before any load attempt, so a load-time failure
+      # booked failed= (fail_include below) ON TOP of the already-credited
+      # ok=: buluma.tomcat (round 979000) has instance.yml pull in
+      # buluma.service via import_role:, and with that dependency role
+      # not installed real Ansible recaps the include task as failed
+      # only (ok=45 failed=1) while krikri recapped ok=46 failed=1.
+      # Verified live against ansible-core 2.19.11 with a minimal
+      # include_tasks: -> import_role: missing-role repro.
       # A host halted by an EARLIER loop iteration's included tasks (the
       # looped branch in #execute_include_tasks): real Ansible registers
       # every loop iteration's include before any included task executes
@@ -1352,7 +1367,10 @@ module Krikri
       # after the host had already failed, recapping failed=2 where real
       # Ansible - whose own module resolution never errors there - recaps
       # failed=1 with only the original task's error.
-      return true if @halted_hosts.includes?(host.name)
+      if @halted_hosts.includes?(host.name)
+        @results[host.name]["ok"] += 1
+        return true
+      end
 
       substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
       file_rel = substitutor.substitute(task.include_file.as(String))
@@ -1366,8 +1384,13 @@ module Krikri
       yaml = YAML.parse(Vault.maybe_decrypt(File.read(resolved_path)))
       # A comment-only (or entirely blank) tasks file - see the batched
       # #execute_include_tasks_multi path's identical check for why this
-      # can't be folded into the `unless yaml.as_a?` check below.
-      return true if yaml.raw.nil?
+      # can't be folded into the `unless yaml.as_a?` check below. Zero
+      # tasks is a *successful* include: the include task itself still
+      # counts `ok`.
+      if yaml.raw.nil?
+        @results[host.name]["ok"] += 1
+        return true
+      end
       unless yaml.as_a?
         fail_include(task, host, "Included tasks file must be a YAML list: #{resolved_path}")
         return true
@@ -1452,6 +1475,14 @@ module Krikri
       # vars:, which is handled above), matching real Ansible where an
       # included file shares the enclosing role's defaults/vars.
       propagate_role_context(task, included_tasks)
+
+      # The include itself counts as one `ok` in the recap, matching
+      # real Ansible and the non-looped branch's history (robertdebock.
+      # openvpn undercounted by exactly 1) - but only now that parsing
+      # has succeeded, so a load-time failure recaps as failed only
+      # (see the halted-host comment above for the round 979000
+      # buluma.tomcat case that moved this credit here).
+      @results[host.name]["ok"] += 1
 
       run_task_list(included_tasks, host)
       true
