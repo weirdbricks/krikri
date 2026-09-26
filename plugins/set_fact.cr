@@ -44,6 +44,20 @@ module Krikri
     # rather than staying a string - matching how a subsequent when:/{{ }}
     # comparison would expect it to behave.
     private def coerce(value : String) : JSON::Any
+      # Whole-single-span `{{ expr }}` facts arrive prefixed with the JSON
+      # encoding of the expression's natively-typed result (see
+      # substitute_task_params / NATIVE_TYPED_PREFIX): decode verbatim
+      # instead of re-coercing by string shape - real ansible-core 2.19
+      # keeps the expression's own type, so a Jinja string expression
+      # stays a str even when it looks numeric (pluggero.openssh round
+      # 981024). Literal/mixed/block-tag values keep the legacy coercion.
+      if value.starts_with?(Krikri::NATIVE_TYPED_PREFIX)
+        begin
+          return JSON.parse(value[Krikri::NATIVE_TYPED_PREFIX.size..])
+        rescue JSON::ParseException
+          # fall through to the legacy coercion
+        end
+      end
       case value
       when "true", "True", "yes"
         JSON::Any.new(true)

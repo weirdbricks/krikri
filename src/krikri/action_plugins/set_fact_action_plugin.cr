@@ -25,6 +25,23 @@ module Krikri
     end
 
     private def coerce(value : String) : JSON::Any
+      # A whole-single-span `{{ expr }}` fact arrives prefixed with the
+      # JSON encoding of the expression's natively-typed result (see
+      # substitute_task_params / NATIVE_TYPED_PREFIX): decode it verbatim
+      # instead of re-coercing by string shape. Real ansible-core 2.19
+      # keeps the expression's own type - a Jinja string expression stays
+      # a str even when it looks like a number (pluggero.openssh round
+      # 981024: the coerced float made an `!=` version comparison always
+      # true, reinstalling openssh every run). Everything else - literal
+      # YAML scalars, mixed/multi-span text, block-tag output - keeps the
+      # legacy string-shape coercion below.
+      if value.starts_with?(Krikri::NATIVE_TYPED_PREFIX)
+        begin
+          return JSON.parse(value[Krikri::NATIVE_TYPED_PREFIX.size..])
+        rescue JSON::ParseException
+          # fall through to the legacy coercion
+        end
+      end
       case value
       when "true", "True", "yes"
         JSON::Any.new(true)

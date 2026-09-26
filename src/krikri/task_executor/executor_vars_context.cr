@@ -1563,6 +1563,47 @@ module Krikri
           substituted_value = Krikri::NONE_SENTINEL if structured && structured.raw.nil?
         end
 
+        # Whole-single-span set_fact values carry their NATIVE type
+        # across the strings-only param wire: real ansible-core 2.19's
+        # templar keeps the expression's own type for a template whose
+        # whole AST is one output node (a Jinja string expression stays
+        # a str even when the text looks numeric - "{{ '8.9' }}" is the
+        # string "8.9", NOT the float 8.9; only an expression that
+        # actually evaluates to a number, e.g. "{{ 8.9 }}" or
+        # "{{ '8.9' | float }}", is one). The substituted string alone
+        # cannot express that ("8.9" from a string expression and from a
+        # float expression are identical text), and the set_fact plugin's
+        # legacy string-shape coercion - a leftover of pre-2.19
+        # ANSIBLE_JINJA2_NATIVE=off literal_eval behavior, introduced
+        # with the plugin itself in 0.9.24 - turned every numeric-looking
+        # string fact into a number. pluggero.openssh (round 981024):
+        # `openssh_installed_version != openssh_pkg_mgr_version` compared
+        # a coerced float against the real string and was always true,
+        # reinstalling openssh on every run. Structurally re-evaluating
+        # the same expression here (evaluate_structured = the engine's
+        # real typed evaluation) recovers the type at the one point it
+        # is still known; the prefix marks the value on the wire so the
+        # set_fact plugin decodes it instead of re-coercing (see
+        # NATIVE_TYPED_PREFIX). Guarded to exactly the shapes real
+        # Ansible native-types: a failed/unresolvable structured
+        # evaluation (including a None result, which keeps the
+        # NONE_SENTINEL flow above) and the omit sentinel fall back to
+        # the plain substituted string; multi-span/mixed text and
+        # block-tag values never enter this branch (whole_single_span),
+        # matching real Ansible's one-output-node rule.
+        if native_containers && whole_single_span && substituted_value != Krikri::NONE_SENTINEL && substituted_value != OMIT_SENTINEL
+          native_value = begin
+            VariableSubstitutor::ExpressionEvaluator.new(substitutor.vars)
+              .evaluate_structured(stripped_value[2..-3].strip)
+          rescue
+            nil
+          end
+          if native_value && !native_value.raw.nil? &&
+             !(native_value.raw.is_a?(String) && native_value.as_s == OMIT_SENTINEL)
+            substituted_value = Krikri::NATIVE_TYPED_PREFIX + native_value.to_json
+          end
+        end
+
         # `mode:` piped through a variable (`mode: "{{ redis_conf_mode
         # }}"`, geerlingguy.redis's own style) loses its octal-ness the
         # same way a *direct* unquoted `mode: 0770` literal does (see
