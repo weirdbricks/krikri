@@ -155,7 +155,7 @@ module Krikri
       # Jinja markers pass through untouched).
       private def strict_render_deferred_leaves(value : JSON::Any) : JSON::Any
         return value unless value.raw.is_a?(Array) || value.raw.is_a?(Hash)
-        CrinjaRenderer.rerender_nested_templates(value, VarSubstitutor.new(vars: @vars || Hash(String, JSON::Any).new))
+        JinjaRenderer.rerender_nested_templates(value, VarSubstitutor.new(vars: @vars || Hash(String, JSON::Any).new))
       end
 
       # Splits a `|`-joined filter chain into its individual filter
@@ -1641,7 +1641,7 @@ module Krikri
           #
           # Only reached for a name NEITHER this engine NOR Crinja
           # implements: ExpressionEvaluator tries Crinja first
-          # (#render_via_crinja_value) and only falls back here when
+          # (#render_via_jinja_value) and only falls back here when
           # that raises, so every Crinja-native filter name is resolved
           # before this branch can see it.
           #

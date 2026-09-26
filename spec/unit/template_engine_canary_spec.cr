@@ -2,10 +2,10 @@ require "../spec_helper"
 require "../support/jinja_render_helper"
 # Canary for the template engine a real `.j2` render uses (the shared
 # krikri-jinja engine plus krikri's Ansible registrations), bypassing
-# CrinjaRenderer's variable preparation: after a krikri-jinja release,
+# JinjaRenderer's variable preparation: after a krikri-jinja release,
 # these tell you whether an Ansible behavior krikri relies on still holds.
-# crinja_renderer_spec.cr covers the re-templating/var-context machinery.
-require "../../src/krikri/jinja_filters"
+# jinja_renderer_spec.cr covers the re-templating/var-context machinery.
+require "../../src/krikri/krikri_jinja_filters"
 
 private def crinja_render(tpl : String, vars = nil) : String
   krikri_jinja_render(tpl, vars)

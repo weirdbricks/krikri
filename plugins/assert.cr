@@ -19,7 +19,7 @@ require "../src/krikri/variable_substitutor"
 # assertion failed even for a condition that was actually true. Found
 # via robertdebock.hashicorp's own assert.yml: `item.name is
 # regex('^(consul|...|vault).*')`.
-require "../src/krikri/jinja_filters"
+require "../src/krikri/krikri_jinja_filters"
 
 module Krikri
   # assert plugin (ansible.builtin.assert) - fails (or passes) based on a

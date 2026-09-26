@@ -1,9 +1,7 @@
 require "../spec_helper"
 require "../support/jinja_render_helper"
-require "crinja"
-require "crinja/json"
-require "../../src/krikri/jinja_filters"
-require "../../src/krikri/variable_substitutor/crinja_renderer"
+require "../../src/krikri/krikri_jinja_filters"
+require "../../src/krikri/variable_substitutor/jinja_renderer"
 
 # P2.8-P2.14 + P2.15 (FINDINGS_CHECKLIST.md / PATTERN2_AUDIT.md): the
 # remaining filter batch, plus the verify-then-fix check.
@@ -20,7 +18,7 @@ require "../../src/krikri/variable_substitutor/crinja_renderer"
 # comment at the registration site for the checklist's "dict" wording).
 #
 # Parity contract: every filter is exercised through BOTH a pure-Crinja
-# render AND krikri-playbook's own CrinjaRenderer (the path the
+# render AND krikri-playbook's own JinjaRenderer (the path the
 # template: action plugin uses); a divergence between the two is a
 # failing test.
 private def filter_batch2_crinja_render(tpl : String, vars = nil) : String
@@ -30,7 +28,7 @@ rescue e
 end
 
 private def renderer_render(tpl : String, vars : Hash(String, JSON::Any) = Hash(String, JSON::Any).new) : String
-  Krikri::VariableSubstitutor::CrinjaRenderer.new(vars).render(tpl)
+  Krikri::VariableSubstitutor::JinjaRenderer.new(vars).render(tpl)
 rescue e
   "ERR: #{e.message}"
 end
@@ -168,8 +166,8 @@ describe "filter batch 2 (P2.8-P2.14, P2.15 verification)" do
     end
   end
 
-  # ---- Cross-engine parity: pure Crinja vs krikri-playbook's CrinjaRenderer ----
-  describe "parity: pure Crinja render vs CrinjaRenderer" do
+  # ---- Cross-engine parity: pure Crinja vs krikri-playbook's JinjaRenderer ----
+  describe "parity: pure Crinja render vs JinjaRenderer" do
     it "strftime agrees between engines" do
       filter_batch2_crinja_render("{{ '%Y-%m-%d %H:%M:%S' | strftime(0, 'UTC') }}")
         .should eq(renderer_render("{{ '%Y-%m-%d %H:%M:%S' | strftime(0, 'UTC') }}", Hash(String, JSON::Any).new))
@@ -195,13 +193,13 @@ describe "filter batch 2 (P2.8-P2.14, P2.15 verification)" do
   end
 
   # ---- Real-role regression ----
-  it "drives a real authorized_keys-style loop through CrinjaRenderer" do
+  it "drives a real authorized_keys-style loop through JinjaRenderer" do
     v = Hash(String, JSON::Any).new
     v["users"] = JSON.parse(%([
       {"name": "root", "keys": ["ssh-ed25519 AAAA1", "ssh-ed25519 AAAA2"]},
       {"name": "bob", "keys": ["ssh-ed25519 BBBB3"]}
     ]))
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
     # The classic subelements loop shape from real roles.
     renderer.render(
       %({% for user, key in users | subelements('keys') %}{{ user.name }}:{{ key }};{% endfor %})

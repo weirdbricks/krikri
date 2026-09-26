@@ -9,7 +9,7 @@ private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 # play-level `vars:` folded scalar (`>-`) whose lazy template value is
 # only rendered when a `debug: var:` displays it. The filter-level
 # raise (locked in by spec/unit/filter_engine_spec.cr and
-# spec/unit/crinja_renderer_spec.cr) fired correctly there, but the
+# spec/unit/jinja_renderer_spec.cr) fired correctly there, but the
 # debug action plugin stopped at the raw VariableLookup#resolve and
 # printed the unrendered `{{ ... }}` string as the var's value - the
 # templating error never surfaced, the task succeeded, and a

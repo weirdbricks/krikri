@@ -1,6 +1,6 @@
 require "json"
 require "./expression_evaluator"
-require "./crinja_renderer"
+require "./jinja_renderer"
 
 module Krikri
   module VariableSubstitutor
@@ -286,7 +286,7 @@ module Krikri
         # real "/etc/nginx/nginx.conf" (and everything derived from it,
         # here `.lstrip('/')` chained onto it) to an empty string.
         if !whole_span && (raw.includes?("{%") || raw.includes?("{#") || raw.includes?("{{"))
-          rendered = CrinjaRenderer.new(@vars).render(raw)
+          rendered = JinjaRenderer.new(@vars).render(raw)
           return parse_rendered_or_wrap(rendered)
         end
 
@@ -980,7 +980,7 @@ module Krikri
           # String, `JSON.parse` it back into structured data" round
           # trip used throughout expression_evaluator.cr /
           # filter_engine.cr / comparison_evaluator.cr / this file, and
-          # Python-repr text is not valid JSON (see CrinjaRenderer#
+          # Python-repr text is not valid JSON (see JinjaRenderer#
           # evaluate_value!'s own comment - a naive rewrite here breaks
           # that round trip outright, which is exactly what happened
           # when this was first attempted). User-facing rendering of a

@@ -1,13 +1,10 @@
 require "json"
 require "digest/md5"
-require "crinja"
 require "krikri-jinja/krikri_jinja"
 require "./krikri_jinja_filters"
 require "./jinja_host_context"
 require "./template_search_path_loader"
-require "./crinja_strict_undefined"
-require "./crinja_string_index"
-require "./jinja_filters"
+require "./krikri_jinja_filters"
 require "./base_action_plugin"
 
 module Krikri
@@ -731,7 +728,7 @@ module Krikri
     # Prepare variables for template rendering
     #
     # A String value that itself contains "{{" is re-templated first -
-    # see CrinjaRenderer#prepare_crinja_vars for the full rationale
+    # see JinjaRenderer#prepare_crinja_vars for the full rationale
     # (real Ansible re-templates every variable's value recursively
     # wherever it's used; real Jinja2 itself does not, so a role default
     # like geerlingguy.nginx's own `nginx_worker_processes: '"{{
@@ -739,7 +736,7 @@ module Krikri
     # would otherwise render as the literal, still-unparsed inner text).
     # This plugin has its own separate prepare_*_vars (see that
     # method's own comment for why its Crinja environment can't be
-    # shared with CrinjaRenderer's), so it needs the identical fix
+    # shared with JinjaRenderer's), so it needs the identical fix
     # applied here too, not just there.
     # Helper: Check if parameter is truthy
     private def true?(value : String?, default : Bool = false) : Bool

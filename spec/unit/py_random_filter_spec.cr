@@ -1,8 +1,7 @@
 require "../spec_helper"
 require "../support/jinja_render_helper"
-require "crinja"
 require "../../src/krikri/py_random"
-require "../../src/krikri/jinja_filters"
+require "../../src/krikri/krikri_jinja_filters"
 require "../../src/krikri/variable_substitutor/filter_engine"
 require "../../src/krikri/variable_substitutor/expression_evaluator"
 

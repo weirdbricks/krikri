@@ -4,7 +4,7 @@ require "../../src/krikri/variable_substitutor/expression_evaluator"
 # Pull in the real Ansible-specific Crinja filter registrations (to_datetime
 # etc.), as template_action_plugin.cr does for every real template-rendering
 # binary - without this the ExpressionEvaluator's Crinja env has none of them.
-require "../../src/krikri/jinja_filters"
+require "../../src/krikri/krikri_jinja_filters"
 
 describe Krikri::VariableSubstitutor::ExpressionEvaluator do
   it "dispatches simple lookups" do
@@ -1725,7 +1725,7 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
     # ansible-core 2.19 the indirected value stays a native int and the
     # comparison is True; this engine's `{{ }}` substitution preserves
     # the SOURCE type as a string through a bare indirection (see
-    # crinja_renderer.cr's own comment on why - protecting a DIFFERENT,
+    # jinja_renderer.cr's own comment on why - protecting a DIFFERENT,
     # already-fixed idiom, buluma.bind's own quoted-string case just
     # below), so `{{ java_version == 8 }}` used to render "False" -
     # wrong, and silently so (no error, no failed task).

@@ -7,7 +7,7 @@ require "./comparison_evaluator"
 require "./filter_engine"
 require "./array_slicer"
 require "./variable_lookup"
-require "./crinja_renderer"
+require "./jinja_renderer"
 require "../python_lookup_runner"
 require "./undefined"
 require "../variable_substitutor"
@@ -22,7 +22,7 @@ module Krikri
       @filter : FilterEngine
       @slicer : ArraySlicer
       @lookup : VariableLookup
-      @crinja_renderer : VariableSubstitutor::CrinjaRenderer?
+      @jinja_renderer : VariableSubstitutor::JinjaRenderer?
       # When true this evaluator resolves its Crinja-delegated operands
       # (method-call args like `.split('\n')`, `~` concat operands) against
       # the decoding environment instead of the inline verbatim one - set
@@ -38,17 +38,17 @@ module Krikri
 
       # Built lazily - most `{{ }}` spans never reach the boolean_logic?
       # branch below, so most `ExpressionEvaluator`s never need this.
-      private def crinja_renderer : VariableSubstitutor::CrinjaRenderer
-        @crinja_renderer ||= VariableSubstitutor::CrinjaRenderer.new(@vars, @decode)
+      private def jinja_renderer : VariableSubstitutor::JinjaRenderer
+        @jinja_renderer ||= VariableSubstitutor::JinjaRenderer.new(@vars, @decode)
       end
 
       # Guards the Crinja-first delegation branches below against
-      # genuine infinite recursion: `CrinjaRenderer#prepare_crinja_vars`
+      # genuine infinite recursion: `JinjaRenderer#prepare_crinja_vars`
       # re-templates any variable whose OWN value still contains `{{` by
       # building a fresh `VarSubstitutor`/`ExpressionEvaluator` and
       # calling back into `#evaluate` - if THAT evaluation also delegates
       # to Crinja (any of the branches below), it builds ANOTHER fresh
-      # `CrinjaRenderer`, which calls `prepare_crinja_vars` again on the
+      # `JinjaRenderer`, which calls `prepare_crinja_vars` again on the
       # same variables, which re-templates again, forever - each level
       # constructing entirely new objects, so no single instance's own
       # state could ever detect the cycle. Real crash found by this
@@ -64,35 +64,35 @@ module Krikri
       @@crinja_delegation_depth = 0
       MAX_CRINJA_DELEGATION_DEPTH = 20
 
-      private def render_via_crinja(expr : String) : String
+      private def render_via_jinja(expr : String) : String
         raise "crinja delegation depth exceeded" if @@crinja_delegation_depth >= MAX_CRINJA_DELEGATION_DEPTH
         @@crinja_delegation_depth += 1
         begin
-          crinja_renderer.render!("{{ #{expr} }}")
+          jinja_renderer.render!("{{ #{expr} }}")
         ensure
           @@crinja_delegation_depth -= 1
         end
       end
 
-      # Same delegation-depth guard as #render_via_crinja, but returns
+      # Same delegation-depth guard as #render_via_jinja, but returns
       # Crinja's RAW structured result (nil for undefined) instead of a
-      # pre-stringified String - see `CrinjaRenderer#evaluate_value!`'s
+      # pre-stringified String - see `JinjaRenderer#evaluate_value!`'s
       # own comment for the full "why" (this codebase's internal
       # render-then-`JSON.parse`-back round trip breaks if a container-
       # valued Crinja result is stringified via Crinja's own Python-repr
       # `Finalizer` instead of this codebase's JSON-compact
       # `VariableLookup#format_value`). Any construct whose result might
       # be an Array/Hash (not just a scalar) must go through this, not
-      # #render_via_crinja directly - constructs 1-6 (boolean/and/or/is,
+      # #render_via_jinja directly - constructs 1-6 (boolean/and/or/is,
       # ternary, comparisons, bare literals, `~`, `*`/`/`/`//`) don't
       # need it, since every one of them is provably scalar-only
       # (verified via extensive empirical probing during their own
       # convergence - none produce a container result).
-      private def render_via_crinja_value(expr : String) : JSON::Any?
+      private def render_via_jinja_value(expr : String) : JSON::Any?
         raise "crinja delegation depth exceeded" if @@crinja_delegation_depth >= MAX_CRINJA_DELEGATION_DEPTH
         @@crinja_delegation_depth += 1
         begin
-          crinja_renderer.evaluate_value!(expr)
+          jinja_renderer.evaluate_value!(expr)
         ensure
           @@crinja_delegation_depth -= 1
         end
@@ -106,24 +106,24 @@ module Krikri
       # it to. Deliberately does NOT rescue: the caller decides what a
       # Crinja failure means on its own path.
       def evaluate_structured(expr : String) : JSON::Any?
-        render_via_crinja_value(expr)
+        render_via_jinja_value(expr)
       end
 
-      # #render_via_crinja_value, formatted through this codebase's own
+      # #render_via_jinja_value, formatted through this codebase's own
       # `VariableLookup#format_value` (not Crinja's `Finalizer`) - the
       # convenience form for a call site that ultimately wants a String
-      # (matching #render_via_crinja's signature) without losing the
+      # (matching #render_via_jinja's signature) without losing the
       # format-consistency fix that method exists for.
-      private def render_via_crinja_string(expr : String) : String
-        value = render_via_crinja_value(expr)
+      private def render_via_jinja_string(expr : String) : String
+        value = render_via_jinja_value(expr)
         value ? @lookup.format_value(value) : "undefined"
       end
 
-      # #render_via_crinja, but re-routed through the JSON-compact
-      # `#render_via_crinja_string` path ONLY when the result is
+      # #render_via_jinja, but re-routed through the JSON-compact
+      # `#render_via_jinja_string` path ONLY when the result is
       # actually a container - every other case (scalar, or genuinely
-      # Undefined/missing) keeps #render_via_crinja's own stringification
-      # untouched, since #render_via_crinja_string's "undefined" sentinel
+      # Undefined/missing) keeps #render_via_jinja's own stringification
+      # untouched, since #render_via_jinja_string's "undefined" sentinel
       # for a nil value is wrong for e.g. an else-less ternary's missing
       # branch (real Jinja renders that as "", not the literal text
       # "undefined"). A ternary's chosen branch can be an arbitrary
@@ -131,8 +131,8 @@ module Krikri
       # regex_findall(...) if y else []`, RedHatOfficial.rhel8_pci_dss's
       # own "Set gpgcheck=1 for each yum repo" loop source) is a real
       # counter-example to this file's own "ternary is provably
-      # scalar-only" claim near #render_via_crinja_value. Plain
-      # #render_via_crinja alone stringifies a container result through
+      # scalar-only" claim near #render_via_jinja_value. Plain
+      # #render_via_jinja alone stringifies a container result through
       # Crinja's own Python-repr Finalizer (`[['a.repo', 'sec1'], ...]`,
       # single-quoted, not valid JSON) instead of this codebase's
       # JSON-compact `VariableLookup#format_value` - the internal
@@ -141,10 +141,10 @@ module Krikri
       # `parse_list_result`) then fails to parse it, falls through to
       # the array-wrapped scalar fallback, and the WHOLE unparsed repr
       # string became ONE loop item instead of the real list of tuples.
-      private def render_via_crinja_container_safe(expr : String) : String
-        value = render_via_crinja_value(expr)
+      private def render_via_jinja_container_safe(expr : String) : String
+        value = render_via_jinja_value(expr)
         raw = value.try(&.raw)
-        (raw.is_a?(Array) || raw.is_a?(Hash)) ? @lookup.format_value(value.not_nil!) : render_via_crinja(expr)
+        (raw.is_a?(Array) || raw.is_a?(Hash)) ? @lookup.format_value(value.not_nil!) : render_via_jinja(expr)
       end
 
       # #evaluate, but formatting a CONTAINER result the way real Ansible
@@ -158,7 +158,7 @@ module Krikri
       # actually shows up. A filter chain still renders through
       # #evaluate's JSON form - see KNOWN_MISSING.md; closing that needs
       # the evaluator to carry structured results out to the final
-      # boundary, which is the round trip CrinjaRenderer#evaluate_value!
+      # boundary, which is the round trip JinjaRenderer#evaluate_value!
       # warns about.
       #
       # Only VarSubstitutor's outermost `{{ }}` expansion may call this.
@@ -236,7 +236,7 @@ module Krikri
           elsif side_effecting_call?(expr)
             nil
           else
-            render_via_crinja_value(expr)
+            render_via_jinja_value(expr)
           end
 
         return nil unless value
@@ -276,18 +276,18 @@ module Krikri
           # register-result tests - the two things that had to be ported
           # to Crinja before the FIRST construct (boolean_logic? below)
           # could safely swap - are already available here for free,
-          # since they're bound in `CrinjaRenderer`'s own shared vars
+          # since they're bound in `JinjaRenderer`'s own shared vars
           # context, not specific to that branch. See
-          # #render_via_crinja_container_safe's own comment for why a
-          # ternary needs it instead of plain #render_via_crinja.
+          # #render_via_jinja_container_safe's own comment for why a
+          # ternary needs it instead of plain #render_via_jinja.
           begin
-            render_via_crinja_container_safe(expr)
+            render_via_jinja_container_safe(expr)
           rescue
             evaluate_ternary(ternary)
           end
         elsif ternary_no_else = split_ternary_no_else(expr)
           begin
-            render_via_crinja_container_safe(expr)
+            render_via_jinja_container_safe(expr)
           rescue
             evaluate_ternary_no_else(ternary_no_else)
           end
@@ -334,7 +334,7 @@ module Krikri
           # real recursive-descent parser gets precedence right BY
           # CONSTRUCTION, unlike the string-heuristic dispatch the rest
           # of this class is built from. Tries Crinja first (`render!`,
-          # which raises instead of Crinja::CrinjaRenderer#render's own
+          # which raises instead of Crinja::JinjaRenderer#render's own
           # "give back the original text" failure mode - actively wrong
           # here, since a caller of #evaluate always wants a real
           # value); falls back to the ORIGINAL hand-rolled path on ANY
@@ -344,10 +344,10 @@ module Krikri
           # Ansible register-result tests) and the `omit` magic variable
           # both needed porting to Crinja's own registry/context first
           # (see jinja_filters.cr's `result_field` tests and
-          # CrinjaRenderer#prepare_crinja_vars's own `omit` binding) -
+          # JinjaRenderer#prepare_crinja_vars's own `omit` binding) -
           # without those this swap would have silently regressed both.
           begin
-            render_via_crinja(expr)
+            render_via_jinja(expr)
           rescue
             evaluate_value_or_and(expr) || (ConditionalEvaluator.evaluate(expr, @vars) ? "True" : "False")
           end
@@ -376,7 +376,7 @@ module Krikri
       #
       # Deliberately narrower than the item's original "memoize which
       # dispatch path" framing, which a prior pass (0.9.485) investigated
-      # and did NOT implement: whether `render_via_crinja(expr)` itself
+      # and did NOT implement: whether `render_via_jinja(expr)` itself
       # raises depends on Crinja's runtime evaluation (a variable's
       # actual TYPE, not just the expression's static text - `{{ x |
       # first }}` can succeed or raise depending on whether `x` is
@@ -389,7 +389,7 @@ module Krikri
       # at all (verified by reading all 3 bodies directly - only
       # `#top_level_keyword_index`, itself pure) - which of the 4
       # dispatch SHAPES an expr's TEXT has is a genuine constant, and
-      # `render_via_crinja`/the hand-rolled fallback are still invoked
+      # `render_via_jinja`/the hand-rolled fallback are still invoked
       # completely fresh on every real call, exactly as before - only
       # the shape CLASSIFICATION is reused, never the outcome of trying
       # to render it.
@@ -527,7 +527,7 @@ module Krikri
         #
         # Crinja-first delegation, "bare literals" construct (first
         # #evaluate_expr sub-piece): tries Crinja first, same
-        # render_via_crinja/rescue pattern as constructs 1-3. Found a
+        # render_via_jinja/rescue pattern as constructs 1-3. Found a
         # latent inconsistency doing this: the old unconditional
         # `expr.downcase` returned lowercase "true"/"false" here, at odds
         # with every other boolean-producing path in this codebase
@@ -541,7 +541,7 @@ module Krikri
         # (unchanged) for the case Crinja itself is ever unavailable.
         if expr == "true" || expr == "false" || expr == "True" || expr == "False"
           return begin
-            render_via_crinja(expr)
+            render_via_jinja(expr)
           rescue
             expr.downcase
           end
@@ -569,7 +569,7 @@ module Krikri
           # a silent misrender, so those forms safely fall back to the
           # exact previous behavior via the rescue below.
           return begin
-            render_via_crinja(expr)
+            render_via_jinja(expr)
           rescue
             @lookup.format_value(literal)
           end
@@ -607,7 +607,7 @@ module Krikri
           # equivalent; the fallback (this method's own raw extraction)
           # only engages if Crinja itself fails on the literal.
           return begin
-            render_via_crinja(expr)
+            render_via_jinja(expr)
           rescue
             literal
           end
@@ -723,10 +723,10 @@ module Krikri
         # `range()`'s raw-value output matches
         # the hand-rolled path exactly (probed across positive/
         # negative step, variable arguments) - safe via the same
-        # #render_via_crinja_value pattern as the literal array/dict
+        # #render_via_jinja_value pattern as the literal array/dict
         # cases above.
         begin
-          value = render_via_crinja_value(expr)
+          value = render_via_jinja_value(expr)
           value ? @lookup.format_value(value) : "undefined"
         rescue
           @lookup.format_value(evaluate_range(expr[6..-2]))
@@ -758,11 +758,11 @@ module Krikri
         # `src/lib/function/dict.cr`): the single positional-iterable
         # form (mapping, or list/tuple of 2-element pairs) now builds a
         # real dict and raises a clean `Arguments::Error` for anything
-        # else - the same `render_via_crinja_value`/rescue pattern as
+        # else - the same `render_via_jinja_value`/rescue pattern as
         # `range()` above, `evaluate_dict_call` unchanged as the
         # fallback.
         begin
-          value = render_via_crinja_value(expr)
+          value = render_via_jinja_value(expr)
           value ? @lookup.format_value(value) : "undefined"
         rescue
           @lookup.format_value(evaluate_dict_call(expr[5..-2]))
@@ -777,7 +777,7 @@ module Krikri
       # `java_version == 8` gate). This engine's `{{ }}` substitution
       # deliberately preserves the SOURCE type as a string through such
       # an indirection rather than re-inferring a scalar type from
-      # rendered text (see crinja_renderer.cr's own `rerender_string_
+      # rendered text (see jinja_renderer.cr's own `rerender_string_
       # value` comment on why - protecting `buluma.bind`'s `(
       # bind_python_version == '3')` idiom, which needs the opposite
       # behavior) - correct for real Ansible's OWN pre-2.19 templating
@@ -861,7 +861,7 @@ module Krikri
             if type_sensitive_comparison?(expr)
               capitalize_bool_text(@comparison.evaluate(expr))
             else
-              render_via_crinja(expr)
+              render_via_jinja(expr)
             end
           rescue
             capitalize_bool_text(@comparison.evaluate(expr))
@@ -889,14 +889,14 @@ module Krikri
         # to_datetime)` with no `.days` suffix) produces a real
         # structured timedelta where the hand-rolled path silently
         # produced "" - see CRINJA_PHASE2_REPORT.md. Uses the raw-value
-        # path, not #render_via_crinja: a datetime result converts back
-        # as a structured Hash, and #render_via_crinja's Crinja-side
+        # path, not #render_via_jinja: a datetime result converts back
+        # as a structured Hash, and #render_via_jinja's Crinja-side
         # stringification would Python-repr it instead of going through
         # this codebase's own `format_value`.
         if minus = split_top_level_minus(expr)
           left_expr, right_expr = minus
           return begin
-            value = render_via_crinja_value(expr)
+            value = render_via_jinja_value(expr)
             value ? @lookup.format_value(value) : "undefined"
           rescue
             evaluate_minus(left_expr, right_expr)
@@ -942,12 +942,12 @@ module Krikri
           # int + float, which real Jinja adds numerically and the
           # hand-rolled path below string-concatenates). Uses the
           # raw-value path (like the filter-chain construct, NOT the
-          # scalar-only #render_via_crinja): a `+` chain can produce a
+          # scalar-only #render_via_jinja): a `+` chain can produce a
           # container (`list1 + list2`), whose result must format
           # through `format_value`'s JSON-compact form, not Crinja's
           # Python-repr Finalizer.
           return begin
-            value = render_via_crinja_value(expr)
+            value = render_via_jinja_value(expr)
             value ? @lookup.format_value(value) : "undefined"
           rescue
             evaluate_plus(segments)
@@ -1002,7 +1002,7 @@ module Krikri
           # Fixed in the fork (`crystal-play-0.9.3`) before converging
           # this construct, not worked around here.
           return begin
-            render_via_crinja(expr)
+            render_via_jinja(expr)
           rescue
             evaluate_tilde(segments)
           end
@@ -1106,7 +1106,7 @@ module Krikri
 
         # Simple variable lookup
         begin
-          value = render_via_crinja_value(expr)
+          value = render_via_jinja_value(expr)
           value ? @lookup.format_value(value) : "undefined"
         rescue
           @lookup.simple(expr)
@@ -1124,7 +1124,7 @@ module Krikri
         # (nested dict/array traversal, `.get(key, default)`, Python
         # string methods, `hostvars[...]`, a missing key/attribute) -
         # all matched `@lookup.nested`'s own output exactly.
-        value = render_via_crinja_value(expr)
+        value = render_via_jinja_value(expr)
         # A `nil` result here isn't necessarily a genuinely undefined
         # value - Crinja's own vars are prepared once and never
         # re-templated, so a dotted base whose STORED value is
@@ -1162,16 +1162,16 @@ module Krikri
         if literal_array_expr?(expr)
           # Crinja-first delegation, general filter-chain-dispatch
           # construct (literal array/dict expressions) - try
-          # Crinja first via the raw-value path (#render_via_crinja_
+          # Crinja first via the raw-value path (#render_via_jinja_
           # value), which preserves this codebase's own JSON-compact
           # `format_value` output instead of Crinja's Python-repr
           # `Finalizer` style - see that method's own comment for why
-          # the plain String-returning #render_via_crinja can't be used
+          # the plain String-returning #render_via_jinja can't be used
           # here (it would break the render-then-reparse round trip
           # other call sites depend on). Falls back to the original
           # hand-rolled `parse_literal_array` on any failure.
           return begin
-            value = render_via_crinja_value(expr)
+            value = render_via_jinja_value(expr)
             value ? @lookup.format_value(value) : "undefined"
           rescue
             @lookup.format_value(parse_literal_array(expr))
@@ -1196,7 +1196,7 @@ module Krikri
           # matching `ArraySlicer#slice`'s own output across both-bounds/
           # single-bound/negative-index slices via the raw-value path.
           return begin
-            value = render_via_crinja_value(expr)
+            value = render_via_jinja_value(expr)
             value ? @lookup.format_value(value) : "undefined"
           rescue
             @slicer.slice(expr)
@@ -1207,7 +1207,7 @@ module Krikri
         # construct (general indexed access: `var[key]`, `var[0]`, `var[-1]`) - same
         # pattern as the dotted-access/simple-lookup cases above.
         begin
-          value = render_via_crinja_value(expr)
+          value = render_via_jinja_value(expr)
         rescue
           return @lookup.indexed(expr)
         end
@@ -1235,7 +1235,7 @@ module Krikri
         if literal_dict_expr?(expr)
           # Same rationale and pattern as the literal-array case above.
           return begin
-            value = render_via_crinja_value(expr)
+            value = render_via_jinja_value(expr)
             value ? @lookup.format_value(value) : "undefined"
           rescue
             evaluate_dict_literal(expr)
@@ -1563,7 +1563,7 @@ module Krikri
         # `10 // 0` overflowed converting `Float64::INFINITY.floor` to
         # `Int64` - fixed directly in `#combine_mult_div` below.
 
-        render_via_crinja(expr)
+        render_via_jinja(expr)
       rescue
         values = parts.map { |pth| resolve_plus_operand(pth) }
         result = values[0]
@@ -1817,7 +1817,7 @@ module Krikri
 
         # An Array/Hash resolved value can hold nested String elements
         # that are STILL unrendered `{{ }}` text one level down - the
-        # same class of gap `CrinjaRenderer.rerender_nested_templates`
+        # same class of gap `JinjaRenderer.rerender_nested_templates`
         # exists for (already shared process-wide for the Crinja
         # context-conversion path), just never reached from THIS
         # plain-lookup fallback before. Found live via jtyr.motd's own
@@ -1848,7 +1848,7 @@ module Krikri
           # (FilterEngine's map/selectattr attribute extraction and the
           # to_json-family serializers), so nothing that today hard-fails
           # silently succeeds with different values.
-          return CrinjaRenderer.rerender_nested_templates(resolved, VarSubstitutor.new(vars: @vars), defer_unresolved: true)
+          return JinjaRenderer.rerender_nested_templates(resolved, VarSubstitutor.new(vars: @vars), defer_unresolved: true)
         end
 
         return nil unless raw.is_a?(String)
@@ -1857,7 +1857,7 @@ module Krikri
           # `{{ }}`-only evaluator - see variable_lookup.cr's identical
           # fix for the full rationale (found via prometheus.prometheus's
           # own _common role's `_common_dependencies` default).
-          rendered = CrinjaRenderer.new(@vars, @decode).render(raw)
+          rendered = JinjaRenderer.new(@vars, @decode).render(raw)
           return (JSON.parse(rendered) rescue JSON::Any.new(rendered))
         end
 
@@ -2054,7 +2054,7 @@ module Krikri
         return part unless literal.includes?("{{") && literal.includes?("}}")
 
         quote = stripped[0]
-        rendered = crinja_renderer.render!(literal)
+        rendered = jinja_renderer.render!(literal)
         "#{quote}#{rendered}#{quote}"
       rescue
         part
@@ -2705,7 +2705,7 @@ module Krikri
         render_vars = @vars
         if template_vars_part
           dict_expr = template_vars_part.strip.sub(/^template_vars=/, "")
-          extra = render_via_crinja_value(dict_expr).try(&.as_h?)
+          extra = render_via_jinja_value(dict_expr).try(&.as_h?)
           if extra && !extra.empty?
             render_vars = @vars.dup
             extra.each { |key, value| render_vars[key] = value }
@@ -2731,7 +2731,7 @@ module Krikri
             template_content = first_line_end ? template_content[(first_line_end + 1)..] : ""
           end
 
-          renderer = render_vars.same?(@vars) ? crinja_renderer : CrinjaRenderer.new(render_vars, @decode)
+          renderer = render_vars.same?(@vars) ? jinja_renderer : JinjaRenderer.new(render_vars, @decode)
           renderer.render(template_content).chomp
         rescue
           "undefined"
@@ -4102,7 +4102,7 @@ module Krikri
       # fallback and silently collapse to "undefined" again).
       private def evaluate_leading_paren_crinja_first(expr : String, paren : {String, String}) : String
         begin
-          value = render_via_crinja_value(expr)
+          value = render_via_jinja_value(expr)
         rescue
           return evaluate_leading_paren(paren)
         end
@@ -4151,7 +4151,7 @@ module Krikri
         # blank made it look up the dict key "versions " and return nil,
         # collapsing the whole expression to "undefined". Same
         # diodonfrost.vagrant shape as the Crinja-side unknown-filter
-        # gate in `CrinjaRenderer#evaluate_value!` - this is that
+        # gate in `JinjaRenderer#evaluate_value!` - this is that
         # branch's hand-rolled fallback path, which a non-Crinja filter
         # name (one only FilterEngine implements) still reaches.
         walk_part = walk_part.strip
@@ -4312,7 +4312,7 @@ module Krikri
         # convergence fixes for free on the Crinja-success path, and
         # leaves exactly as broken as before on the (should-be-rare)
         # fallback path.
-        value = render_via_crinja_value(expr)
+        value = render_via_jinja_value(expr)
         value ? @lookup.format_value(value) : "undefined"
       rescue
         evaluate_with_filter_fallback(expr)

@@ -1159,7 +1159,7 @@ module Krikri
         # 'list', not 'str'" instead of the single-item list real
         # Ansible produces from with_items:'s own scalar-wrapping.
         if raw.includes?("{%") || raw.includes?("{#")
-          rendered = VariableSubstitutor::CrinjaRenderer.new(vars_context).render(raw)
+          rendered = VariableSubstitutor::JinjaRenderer.new(vars_context).render(raw)
           current = Krikri.parse_json_or_python_literal(rendered)
         else
           current = evaluate_bare_mustache_preserving_type(raw, vars_context) || begin

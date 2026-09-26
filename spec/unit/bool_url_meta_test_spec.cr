@@ -1,8 +1,8 @@
 require "../spec_helper"
 require "../support/jinja_render_helper"
 require "../../src/krikri/conditional_evaluator"
-require "../../src/krikri/jinja_filters"
-require "../../src/krikri/variable_substitutor/crinja_renderer"
+require "../../src/krikri/krikri_jinja_filters"
+require "../../src/krikri/variable_substitutor/jinja_renderer"
 
 # P2.4-P2.7 (FINDINGS_CHECKLIST.md / PATTERN2_AUDIT.md): the remaining
 # core test spellings.
@@ -17,7 +17,6 @@ require "../../src/krikri/variable_substitutor/crinja_renderer"
 #
 # JSON::Any vars work with pure Crinja only after its JSON shim is
 # loaded (defines Crinja.value(JSON::Any) + Crinja::Object support).
-require "crinja/json"
 
 # Parity contract: every value-level test is exercised through BOTH the
 # hand-rolled ConditionalEvaluator AND a pure Crinja render.
@@ -154,11 +153,11 @@ describe "boolean-identity / URL / NaN / meta tests (P2.4-P2.7)" do
   end
 
   # ---- Real-role regression ----
-  it "works inside a real {% if %} conditional through CrinjaRenderer" do
+  it "works inside a real {% if %} conditional through JinjaRenderer" do
     v = Hash(String, JSON::Any).new
     v["docker_enable"] = JSON::Any.new(true)
     v["registry_url"] = JSON::Any.new("https://registry.example.com")
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
     # Boolean-identity gate shape roles actually write.
     renderer.render(%({% if docker_enable is true %}enabled{% else %}disabled{% endif %})).should eq("enabled")
     # URL validation of a user-supplied endpoint var.

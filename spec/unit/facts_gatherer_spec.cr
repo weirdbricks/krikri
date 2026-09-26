@@ -1,7 +1,7 @@
 require "../spec_helper"
 require "../../src/krikri/plugin_helpers/facts_gatherer"
-require "../../src/krikri/variable_substitutor/crinja_renderer"
-require "../../src/krikri/jinja_filters"
+require "../../src/krikri/variable_substitutor/jinja_renderer"
+require "../../src/krikri/krikri_jinja_filters"
 
 # Perf item 2 - `facts` under the daemon.
 #
@@ -315,10 +315,10 @@ describe Krikri::FactsGatherer do
     it "renders Tecnativa.hetzner_rescue_installimage's autosetup.j2 loop shape" do
       # The empty-dict case is the shape a minimal container presents; the
       # loop must be a zero-iteration no-op, not "can't iterate over
-      # undefined". Rendered through the real CrinjaRenderer wrapper, same
+      # undefined". Rendered through the real JinjaRenderer wrapper, same
       # pattern as ansible_mounts_numeric_stats_spec.cr.
       vars = {"ansible_devices" => JSON.parse(%({}))}
-      renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(vars)
+      renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(vars)
 
       template = <<-TPL
         {% for device in ansible_devices if device.startswith("sd") or device.startswith("nvme") -%}
@@ -331,7 +331,7 @@ describe Krikri::FactsGatherer do
 
     it "renders the autosetup.j2 loop shape over a populated device dict" do
       vars = {"ansible_devices" => JSON.parse(%({"sda": {"partitions": {}, "virtual": "0", "size": "111.79 GB", "sectors": 234441648}, "vdb": {"partitions": {}, "virtual": "0", "size": "10.00 GB", "sectors": 20971520}}))} of String => JSON::Any
-      renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(vars)
+      renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(vars)
 
       template = <<-TPL
         {% for device in ansible_devices if device.startswith("sd") or device.startswith("nvme") -%}

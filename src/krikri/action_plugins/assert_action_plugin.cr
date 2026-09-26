@@ -2,7 +2,7 @@ require "json"
 require "../base_action_plugin"
 require "../conditional_evaluator"
 require "../variable_substitutor"
-require "../jinja_filters"
+require "../krikri_jinja_filters"
 
 module Krikri
   # assert: (ansible.builtin.assert) as a controller-side action plugin -

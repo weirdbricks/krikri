@@ -1,6 +1,6 @@
 require "../spec_helper"
 require "../../src/krikri/conditional_evaluator"
-require "../../src/krikri/jinja_filters"
+require "../../src/krikri/krikri_jinja_filters"
 
 private def vars(hash : Hash(String, JSON::Any::Type)) : Hash(String, JSON::Any)
   result = Hash(String, JSON::Any).new

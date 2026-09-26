@@ -1,6 +1,6 @@
 require "json"
 require "krikri-jinja/krikri_jinja"
-require "./crinja_renderer"
+require "./jinja_renderer"
 
 module Krikri
   module VariableSubstitutor
@@ -38,9 +38,9 @@ module Krikri
       private def convert(name : String) : KrikriJinja::AnyValue
         raw = @raw_vars[name]
         prepared = if name == "hostvars"
-                     CrinjaRenderer.prepare_hostvars(raw, @substitutor)
+                     JinjaRenderer.prepare_hostvars(raw, @substitutor)
                    else
-                     CrinjaRenderer.prepare_var(raw, @substitutor, name)
+                     JinjaRenderer.prepare_var(raw, @substitutor, name)
                    end
         return KrikriJinja::AnyValue.new(KrikriJinja::Undefined.new(name)) unless prepared
         KrikriJinja.from_json_any(prepared)

@@ -1,7 +1,7 @@
 require "../spec_helper"
 require "../../src/krikri/plugin_helpers/facts_gatherer"
-require "../../src/krikri/variable_substitutor/crinja_renderer"
-require "../../src/krikri/jinja_filters"
+require "../../src/krikri/variable_substitutor/jinja_renderer"
+require "../../src/krikri/krikri_jinja_filters"
 
 # Real Ansible's ansible_mounts entries carry the space/inode stats
 # (size_total, size_available, block_*, inode_*) as INTEGERS. This
@@ -50,7 +50,7 @@ describe "ansible_mounts stat types" do
     ]))
 
     vars = {"ansible_mounts" => mounts_json}
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(vars)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(vars)
 
     template = <<-TPL
       {% for mnt in ansible_mounts | sort(attribute='device') %}

@@ -1,7 +1,7 @@
 require "../spec_helper"
-require "../../src/krikri/variable_substitutor/crinja_renderer"
+require "../../src/krikri/variable_substitutor/jinja_renderer"
 require "../../src/krikri/variable_substitutor/filter_engine"
-require "../../src/krikri/jinja_filters"
+require "../../src/krikri/krikri_jinja_filters"
 
 # Regression specs for the general lazy-dict-templating gap
 # (KNOWN_MISSING.md's last open entry, closed 0.9.741).
@@ -23,13 +23,13 @@ require "../../src/krikri/jinja_filters"
 #    jinja_filters.cr's Crinja-side combine).
 module LazyDictSpecHelpers
   def self.prep(v : Hash(String, JSON::Any), name : String, raw : String)
-    v[name] = Krikri::VariableSubstitutor::CrinjaRenderer.rerender_nested_templates(
+    v[name] = Krikri::VariableSubstitutor::JinjaRenderer.rerender_nested_templates(
       JSON::Any.new(raw), Krikri::VarSubstitutor.new(vars: v)
     )
   end
 
   def self.render(v : Hash(String, JSON::Any), tpl : String)
-    Krikri::VariableSubstitutor::CrinjaRenderer.new(v).render(tpl).strip
+    Krikri::VariableSubstitutor::JinjaRenderer.new(v).render(tpl).strip
   end
 end
 

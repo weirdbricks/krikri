@@ -4,7 +4,7 @@ require "./jinja_host_context"
 require "./variable_substitutor/filter_engine"
 require "./variable_substitutor/variable_lookup"
 require "./variable_substitutor/expression_evaluator"
-require "./variable_substitutor/crinja_renderer"
+require "./variable_substitutor/jinja_renderer"
 require "./vault"
 require "./timing_profile"
 
@@ -275,7 +275,7 @@ module Krikri
           host_context: JinjaHostContext.new(vars))
               return rendered.strip == "True"
             end
-            rendered = VariableSubstitutor::CrinjaRenderer.new(vars, true).render("{{ 'True' if (#{condition}) else 'False' }}")
+            rendered = VariableSubstitutor::JinjaRenderer.new(vars, true).render("{{ 'True' if (#{condition}) else 'False' }}")
             return rendered.strip == "True"
           end
         end
@@ -873,7 +873,7 @@ module Krikri
         return rendered.strip == "True"
       end
       if condition.match(REGEX_GENERIC_IS_TEST)
-        rendered = VariableSubstitutor::CrinjaRenderer.new(vars, true).render("{{ (#{condition}) }}")
+        rendered = VariableSubstitutor::JinjaRenderer.new(vars, true).render("{{ (#{condition}) }}")
         return rendered.strip == "True"
       end
 
@@ -903,7 +903,7 @@ module Krikri
       # non-empty-string-ness - rather than reimplementing every lookup
       # plugin's own return shape by hand.
       if condition =~ REGEX_BARE_CALL
-        rendered = VariableSubstitutor::CrinjaRenderer.new(vars, true).render("{{ 'True' if (#{condition}) else 'False' }}")
+        rendered = VariableSubstitutor::JinjaRenderer.new(vars, true).render("{{ 'True' if (#{condition}) else 'False' }}")
         return rendered.strip == "True"
       end
 
@@ -1302,7 +1302,7 @@ module Krikri
           host_context: JinjaHostContext.new(vars))
         return rendered.strip == "True"
       end
-      rendered = VariableSubstitutor::CrinjaRenderer.new(vars, true)
+      rendered = VariableSubstitutor::JinjaRenderer.new(vars, true)
         .render("{{ 'True' if (#{expression}) else 'False' }}")
       rendered.strip == "True"
     end
@@ -1509,7 +1509,7 @@ module Krikri
 
       # A variable whose own stored value is `{{ }}` text bottoming out
       # at a name set nowhere is undefined, not defined - the same
-      # distinction `CrinjaRenderer.convert_var` draws for the Crinja
+      # distinction `JinjaRenderer.convert_var` draws for the Crinja
       # side (see its comment for the full case). This evaluator is
       # independent of that one (see CLAUDE.md - the two Jinja
       # evaluators share no implementation, so this bug class has to be
@@ -1689,8 +1689,8 @@ module Krikri
           if matched = filter_name_at(bytes, i + 1)
             name, after = matched
             unless VariableSubstitutor::FilterEngine.known_filter_name?(name) ||
-                   VariableSubstitutor::CrinjaRenderer.known_filter?(name) ||
-                   VariableSubstitutor::CrinjaRenderer.ensure_python_filter?(name, vars)
+                   VariableSubstitutor::JinjaRenderer.known_filter?(name) ||
+                   KrikriJinjaFilters.ensure_shared_python_filter(name, vars)
               raise VariableSubstitutor::FilterEngine::UnknownFilterError.new("No filter named '#{name}'.")
             end
             i = after
@@ -1804,7 +1804,7 @@ module Krikri
           in_quote = byte
         elsif byte == 'i'.ord && (matched = test_name_at(bytes, i))
           name, after = matched
-          unless VariableSubstitutor::CrinjaRenderer.known_test?(name)
+          unless VariableSubstitutor::JinjaRenderer.known_test?(name)
             raise VariableSubstitutor::UnknownTestError.new("No test named '#{name}'.")
           end
           i = after
@@ -1950,9 +1950,9 @@ module Krikri
         # all, so `vars["lookup('vars', item)"]?` always missed:
         # undefined, so "is not string" was unconditionally true
         # regardless of what the lookup actually returned. Same
-        # CrinjaRenderer route the `|` filter-chain branch already uses.
+        # JinjaRenderer route the `|` filter-chain branch already uses.
         #
-        # Route through CrinjaRenderer#evaluate_value! (structured, not
+        # Route through JinjaRenderer#evaluate_value! (structured, not
         # render-then-parse): a filter chain whose final value is Python
         # None - regex_search with no match, as of the round-189 fix -
         # must reach the type test as JSON null, not as the empty STRING
@@ -1964,7 +1964,7 @@ module Krikri
         # UNDEFINED (a genuinely missing variable), which falls back to
         # the old render-then-parse path below for that case.
         structured = begin
-          VariableSubstitutor::CrinjaRenderer.new(vars, true).evaluate_value!(var_name)
+          VariableSubstitutor::JinjaRenderer.new(vars, true).evaluate_value!(var_name)
         rescue
           nil
         end

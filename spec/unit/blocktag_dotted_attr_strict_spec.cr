@@ -18,7 +18,7 @@ require "../../src/krikri/variable_substitutor"
 # and scan_block_tag_refs checked `@vars.has_key?("traefik_ver.major")` -
 # a flat key that can never exist - so EVERY {% if %} condition using
 # ordinary attribute access on a defined dict/list was reported undefined
-# under strict. CrinjaRenderer.convert_var asks exactly that probe
+# under strict. JinjaRenderer.convert_var asks exactly that probe
 # (`unresolvable_template?`) before handing Crinja a value, so the WHOLE
 # variable became Crinja::Undefined and a bare `{{ traefik_install_ver }}`
 # rendered the sentinel text.

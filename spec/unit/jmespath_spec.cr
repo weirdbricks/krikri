@@ -2,7 +2,7 @@ require "../spec_helper"
 require "../support/jinja_render_helper"
 require "../../src/krikri/jmespath"
 require "../../src/krikri/variable_substitutor/filter_engine"
-require "../../src/krikri/jinja_filters"
+require "../../src/krikri/krikri_jinja_filters"
 
 # Regression spec for the `json_query` filter's JMESPath engine
 # (src/krikri/jmespath.cr). Found unimplemented via itigoag.packages'

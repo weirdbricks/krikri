@@ -1,12 +1,8 @@
 require "../timing_profile"
 require "json"
-require "crinja"
 require "../variable_substitutor"
 require "../python_filter_runner"
 require "../python_lookup_runner"
-require "../crinja_strict_undefined"
-require "../crinja_string_index"
-require "../crinja_bool_arithmetic"
 require "../jinja_host_context"
 require "./jinja_var_resolver"
 require "../krikri_jinja_filters"
@@ -23,216 +19,38 @@ module Krikri
     class UnknownTestError < Exception
     end
 
-    # CrinjaRenderer - Handles full Jinja2 template rendering using Crinja
-    # This includes {% if %}, {% for %}, {% set %}, etc.
-    class CrinjaRenderer
+    # Renders and evaluates task-param Jinja (`{{ }}` and `{% %}`) on the
+    # shared krikri-jinja engine, against a lazily prepared variable scope
+    # (JinjaVarResolver).
+    class JinjaRenderer
       @vars : Hash(String, JSON::Any)
-      @template_context : Crinja::Context?
       # When true, string-literal escapes are decoded (vanilla Jinja
       # semantics) instead of passed through verbatim. Only the
       # conditional/assert path sets this; inline task-param `{{ }}`
-      # templating keeps it false. See #shared_env and the class comment
-      # on shared_environment for why the two contexts differ.
+      # templating keeps it false, matching real ansible-core (its inline
+      # lexer doubles backslashes; `when:` expressions decode normally).
       @decode : Bool
 
       def initialize(@vars : Hash(String, JSON::Any), @decode : Bool = false)
       end
 
-      # One Crinja environment for the whole process, built on first use.
-      # The configuration applied to it is two hardcoded literals that
-      # never vary, yet `Crinja.new` was previously paid on *every*
-      # `{% %}` render - roughly half the cost of the most expensive
-      # thing the substitutor does.
-      #
-      # Reusing one environment across renders is safe because
-      # `Template#render` calls `env.with_scope(bindings)`, which pushes a
-      # *child* Context, merges only that render's bindings into it, and
-      # restores the former context in an `ensure` - so no variable, and
-      # no top-level `{% set %}`, leaks from one render into the next.
-      #
-      # The invariant this does rely on: rendering never yields the
-      # fiber. Crinja's parse/render path is pure CPU with no I/O, and
-      # under Crystal's cooperative scheduling only one fiber runs at any
-      # instant, so concurrent hosts (--forks) can never interleave two
-      # renders and swap each other's context out mid-flight. If a filter
-      # or function that performs I/O is ever added, this must become
-      # per-fiber (see OutputRouting for that pattern) rather than global.
-      @@env : Crinja?
-      @@decode_env : Crinja?
-
-      private def shared_env : Crinja
-        @decode ? self.class.decoding_environment : self.class.shared_environment
-      end
-
-      # Class-level twin of #shared_env so callers without a renderer
-      # instance can consult this environment's own feature libraries -
-      # ConditionalEvaluator's compile-time filter-name pre-pass asks it
-      # whether a `| name` in a `when:` is one Crinja itself implements
-      # (including aliases), since FilterEngine.apply is only ever the
-      # fallback path behind Crinja-native filters.
-      def self.shared_environment : Crinja
-        @@env ||= build_environment(verbatim: true)
-      end
-
-      # The conditional/assert twin of #shared_environment: identical in
-      # every respect except `verbatim_expression_strings`, which is off so
-      # string-literal escapes in a `when:`/`assert:` expression decode the
-      # way vanilla Jinja (and real ansible-core's condition compiler) does
-      # them - e.g. `x.split('\n')` splits on a real newline and `y ~ '\n'`
-      # concatenates one, matching real, where inline task-param templating
-      # keeps them literal. Separate template/expression caches (see
-      # #cached_template / #cached_expression) because the setting is
-      # consumed at PARSE time, so the same source must not be shared
-      # between the two.
-      def self.decoding_environment : Crinja
-        @@decode_env ||= build_environment(verbatim: false)
-      end
-
-      private def self.build_environment(verbatim : Bool) : Crinja
-        env = Crinja.new
-        env.config.trim_blocks = true
-        env.config.lstrip_blocks = false
-        # Everything this class renders is INLINE task-param templating -
-        # `{{ }}` in YAML task args (bare expression or embedded in a
-        # longer string) - never a `.j2` template file (that path owns its
-        # own per-render environment in TemplateActionPlugin). Real
-        # ansible-core 2.19 does NOT decode string-literal escapes inline:
-        # its own AnsibleLexer doubles every backslash before Jinja's
-        # `unicode-escape` decode, netting exact passthrough, while `{% %}`
-        # statement literals (and template files) still decode fully -
-        # live-verified against 2.19.11: `{{ 'V\1-\2' }}` renders the
-        # literal six characters (not the octal-escape corruption
-        # V<0x01>-<0x02>), a `regex_replace` replacement keeps a working
-        # `\1` backreference, `'a\nb' | length` is 4, and the same probes
-        # inside `{% %}` DO decode (`{% set z = 'a\nb' %}` holds a real
-        # newline). crystal-play-0.9.58's verbatim_expression_strings
-        # implements exactly that split in the fork's lexer; without it,
-        # digit escapes read as octal and decoded real newlines/tabs where
-        # real Ansible passed the backslash through. (Replaces the old
-        # preserve_inline_string_escapes re-encoding workaround, which
-        # papered over this at a single call site - and which would now
-        # corrupt output by leaving `\x5C` text in place.)
-        env.config.verbatim_expression_strings = verbatim
-        # Real Jinja2's `default` filter only ever triggers on an
-        # UNDEFINED value - a DEFINED None passes straight through
-        # (live-verified against ansible-core 2.19.11:
-        # `{{ nv | default('') }}` with `nv: ~` set_fact's null, not
-        # ''). Crinja's builtin instead also triggers on nil, which
-        # made `enablerepo: "{{ item.enablerepo | default('') }}"` (the
-        # officel.httpd shape, round 900905) collapse a real Python
-        # None to an empty string both when rendering and in the
-        # whole-span null detection that feeds yum/dnf's argument-spec
-        # NoneType check - where real ansible-playbook fails the task.
-        # The boolean form keeps triggering on falsy values (None
-        # included), exactly like real Jinja2's `default(x, true)`.
-        # The hand-rolled FilterEngine keeps its own nil-as-undefined
-        # semantics (its nil is the engine's internal lookup-miss
-        # representation, indistinguishable from a real None by the
-        # time a filter sees it) - the two evaluators share no
-        # implementation, see CLAUDE.md.
-        default_filter = Crinja.filter({default_value: "", boolean: false}) do
-          default_value = arguments["default_value"]
-          if target.undefined? || (arguments["boolean"].truthy? && !target.truthy?)
-            default_value
-          else
-            target
-          end
-        end
-        env.filters["default"] = default_filter
-        env.filters["d"] = default_filter
-        env
-      end
-
-      # True if *name* resolves in the shared environment's filter
-      # library - a registered filter or a registered alias for one
-      # (FeatureLibrary#[] downcases lookups and resolves aliases the
-      # same way, so this mirrors exactly what a render would find).
+      # True if *name* resolves as a filter on the shared engine, including
+      # a collection-qualified name (`ansible.builtin.ternary`) by its
+      # trailing segment, as a render would resolve it.
       def self.known_filter?(name : String) : Bool
-        lookup = name.downcase
-        library = shared_environment.filters
-        library.keys.includes?(lookup) || library.aliases.has_key?(lookup)
+        KrikriJinja.default_known_filter?(name) || KrikriJinja.default_known_filter?(collection_member(name))
       end
 
-      # True if *name* resolves in the shared environment's TEST
-      # library - the test-side twin of #known_filter? above, for
-      # ConditionalEvaluator's compile-time test-name pre-pass (an
-      # unknown `is <name>` in a `when:` must hard-fail even when
-      # and/or short-circuiting never reaches that clause).
+      # The test-side twin of #known_filter?, for ConditionalEvaluator's
+      # compile-time test-name pre-pass (an unknown `is <name>` in a
+      # `when:` must hard-fail even when and/or short-circuiting never
+      # reaches that clause).
       def self.known_test?(name : String) : Bool
-        lookup = name.downcase
-        library = shared_environment.tests
-        library.keys.includes?(lookup) || library.aliases.has_key?(lookup)
+        KrikriJinja.default_known_test?(name) || KrikriJinja.default_known_test?(collection_member(name))
       end
 
-      # If *name* is exposed by a role-local (or playbook-adjacent)
-      # `filter_plugins/*.py` for the role context in *vars*, register
-      # a dynamic Crinja filter dispatching to the controller's python3
-      # (see PythonFilterRunner) into the shared environment's filter
-      # library and return true - so both this render path and
-      # #known_filter? (ConditionalEvaluator's compile-time pre-pass)
-      # resolve it from here on. False when no plugin source defines
-      # the name (or the mechanism is unavailable), leaving the caller
-      # to raise the plain unknown-filter error.
-      def self.ensure_python_filter?(name : String, vars : Hash(String, JSON::Any), env : Crinja = shared_environment) : Bool
-        role_path = vars["role_path"]?.try(&.as_s?)
-        playbook_dir = vars["playbook_dir"]?.try(&.as_s?)
-        return false unless role_path || playbook_dir
-
-        sources = PythonFilterRunner.find_sources(role_path, playbook_dir)
-        return false if sources.empty?
-        return false unless PythonFilterRunner.defines_filter?(name, sources)
-
-        register_python_filter_instance(name, env)
-        true
-      end
-
-      # Registers the dynamic dispatching filter under *name* into
-      # *env* (the shared `{{ }}`-path environment by default, or a
-      # real `.j2` template's own standalone `Crinja.new` - see
-      # TemplateActionPlugin#render_template, which builds a fresh
-      # environment per render and never shares this class's own, so
-      # the shared-environment registration alone never reaches it).
-      # The plugin sources are re-resolved from the RENDERING
-      # environment's own context at each call (`env.context`'s
-      # role_path/playbook_dir magic vars), not captured at
-      # registration time - a shared environment outlives any single
-      # role, so a stale capture could dispatch a later role's filter
-      # to the wrong (already-finished) role's plugin file.
-      def self.register_python_filter_instance(name : String, env : Crinja = shared_environment) : Nil
-        instance = Crinja.filter do
-          target = arguments.target!
-          render_env = arguments.env
-
-          role_value = render_env.context["role_path"]
-          playbook_value = render_env.context["playbook_dir"]
-          role_path = role_value.undefined? ? nil : role_value.to_s
-          playbook_dir = playbook_value.undefined? ? nil : playbook_value.to_s
-
-          sources = Krikri::PythonFilterRunner.find_sources(role_path, playbook_dir)
-          value = crinja_value_to_json_any(target)
-          pos_args = arguments.varargs.map { |arg| crinja_value_to_json_any(arg) }
-          kwargs = arguments.kwargs.each_with_object(Hash(String, JSON::Any).new) do |(key, val), hash|
-            hash[key] = crinja_value_to_json_any(val)
-          end
-
-          if sources.empty? || !Krikri::PythonFilterRunner.defines_filter?(name, sources)
-            raise Crinja::RuntimeError.new("No filter named '#{name}'.")
-          end
-          # The rendering environment's own context vars ride along so a
-          # @pass_context-decorated filter gets a Context stub that can
-          # resolve them (see PythonFilterRunner's header). Undefined
-          # entries are skipped - they carry no look-up-able value.
-          context_vars = Hash(String, JSON::Any).new
-          render_env.context.keys.each do |key|
-            context_value = render_env.context[key]
-            next if context_value.undefined?
-            context_vars[key] = crinja_value_to_json_any(context_value)
-          end
-          json_any_to_crinja_value(
-            Krikri::PythonFilterRunner.call_filter(name, sources, value, pos_args, kwargs, context_vars)
-          )
-        end
-        env.filters[name.downcase] = instance
+      private def self.collection_member(name : String) : String
+        name.count('.') >= 2 ? name.rpartition('.')[2] : name
       end
 
       # Parsed once per distinct template source and reused: the source is
@@ -263,7 +81,7 @@ module Krikri
       # behavior, which would be actively wrong for a caller expecting a
       # real evaluated value.
       def render!(text : String) : String
-        TimingProfile.measure("controller.crinja", "controller.crinja") do
+        TimingProfile.measure("controller.jinja", "controller.jinja") do
           render_measured!(text)
         end
       end
@@ -344,14 +162,6 @@ module Krikri
         message.split('"')[1]?
       end
 
-      # Parses Crinja's own unknown-feature error wording ("no filter/
-      # test with name ... registered") into {kind, name}, for #render's
-      # rescue.
-      def self.unknown_feature(e : Crinja::FeatureLibrary::UnknownFeatureError) : {String, String}?
-        match = e.message.try(&.match(/no (filter|test) with name "([^"]+)" registered/))
-        match ? {match[1], match[2]} : nil
-      end
-
       # Evaluates *expr* (bare Jinja expression text, no surrounding
       # `{{ }}`) and returns its RAW structured result as `JSON::Any`
       # (nil for a genuinely undefined result - the same nilable
@@ -367,7 +177,7 @@ module Krikri
       # `JSON.parse` it back" round trip keeps working.
       #
       # Evaluated by krikri-jinja against the same lazy variable scope the
-      # Crinja context provides (JinjaVarResolver), with Ansible's
+      # task-param path always had (JinjaVarResolver), with Ansible's
       # chainable lenient undefined and the inline-literal escape handling
       # #shared_env picks (verbatim for task params, decoded for
       # `when:`/`assert:`).
@@ -420,13 +230,13 @@ module Krikri
         )
         return nil if value.raw.is_a?(KrikriJinja::Undefined)
 
-        CrinjaRenderer.elide_omitted(KrikriJinja.to_json_any(value))
+        JinjaRenderer.elide_omitted(KrikriJinja.to_json_any(value))
       end
 
       # Real Ansible's `omit` inside a CONTAINER removes that entry
       # rather than leaving a placeholder in it - verified against
       # ansible-core 2.19.4: `{{ [1, v_omit, 3] }}` renders `[1, 3]` and
-      # `{{ {'a': 1, 'b': v_omit} }}` renders `{"a": 1}`. Crinja builds
+      # `{{ {'a': 1, 'b': v_omit} }}` renders `{"a": 1}`. The engine builds
       # such a literal itself (this is the raw-value path every bracket/
       # dict expression takes), so it sees `omit` as the ordinary string
       # this engine represents it with, and kept it - the literal
@@ -455,113 +265,10 @@ module Krikri
         end
       end
 
-      # Convert Crinja::Value to JSON::Any - the reverse direction of
-      # #json_any_to_crinja_value below. Exposed as a class method for
-      # the same reason that one is (shareable with any other Crinja
-      # environment this codebase spins up).
-      def self.crinja_value_to_json_any(value : Crinja::Value) : JSON::Any
-        case raw = value.raw
-        when Int32, Int64
-          JSON::Any.new(raw.to_i64)
-        when Float64
-          JSON::Any.new(raw)
-        when String, Crinja::SafeString
-          JSON::Any.new(raw.to_s)
-        when Bool
-          JSON::Any.new(raw)
-        when Nil
-          JSON::Any.new(nil)
-        when HostVarsVarsDict
-          # Krikri's hostvars wrapper (a Crinja::Object, so the generic
-          # Object case below would stringify it): converts to the
-          # host's plain dict, so an extract result containing it (e.g.
-          # `x | extract(hostvars)` with no morekeys) crosses into
-          # JSON-shaped rendering as a real mapping, not a repr string.
-          hash = Hash(String, JSON::Any).new
-          raw.each { |k, v| hash[k] = crinja_value_to_json_any(v) }
-          JSON::Any.new(hash)
-        when Crinja::Dictionary
-          hash = Hash(String, JSON::Any).new
-          raw.each { |k, v| hash[k.to_s] = crinja_value_to_json_any(v) }
-          JSON::Any.new(hash)
-        when Array(Crinja::Value)
-          JSON::Any.new(raw.map { |item| crinja_value_to_json_any(item) })
-        when Crinja::Tuple
-          # Real ansible-core's native-types finalization converts Python
-          # tuples to lists at every output position (verified 2.19.4:
-          # `{{ (1, 2) }}` -> `[1, 2]`, `zip`/`dictsort` results are
-          # bracketed lists) - so a tuple crossing from Crinja into this
-          # engine's JSON world becomes an array, never the paren-repr
-          # string the old `else` fallback produced (`["('a', 1)", ...]`
-          # for a `{{ d1 | dictsort }}` span; found via the round-306
-          # follow-up verification). The fork's own Finalizer got the
-          # matching fix for the raw-.j2-text path (crystal-play-0.9.26).
-          JSON::Any.new(raw.to_a.map { |item| crinja_value_to_json_any(item) })
-        when Crinja::TimeDelta
-          # A bare `to_datetime(...) - to_datetime(...)` timedelta
-          # result (not followed by `.days`/.total_seconds() in the same
-          # expression) - mirror the hand-rolled timedelta()'s structured
-          # shape so a downstream hand-rolled `.days`/`.seconds` Hash-key
-          # member access on it still works.
-          JSON::Any.new({
-            "days"          => JSON::Any.new(raw.days),
-            "seconds"       => JSON::Any.new(raw.seconds % 86_400),
-            "microseconds"  => JSON::Any.new(0_i64),
-            "total_seconds" => JSON::Any.new(raw.total_seconds),
-          })
-        else
-          # Time/Crinja::Object/Callable/Iterator - none of this
-          # codebase's own converged constructs produce these; falls
-          # back to Crinja's own stringification rather than crashing.
-          JSON::Any.new(Crinja::Finalizer.stringify(raw))
-        end
-      end
-
-      # Build the lazy Crinja context backing this renderer's variable
-      # scope. Real Ansible recursively re-templates every variable's
-      # value when it's actually used, no matter where - including
-      # inside a real .j2 template FILE, not just a plain task-param
-      # `{{ }}`. Role `defaults/main.yml` commonly relies on this:
-      # geerlingguy.nginx's own `nginx_worker_processes: '"{{
-      # ansible_processor_vcpus | default(ansible_processor_count)
-      # }}"'` is a YAML string whose *value* is itself more Jinja - real
-      # Jinja2 has no such recursive behavior on its own (a variable's
-      # string value is just a string to it), so without this, `{{
-      # nginx_worker_processes }}` inside nginx.conf.j2 rendered the
-      # literal, still-unparsed `{{ ansible_processor_vcpus | ... }}`
-      # text straight into the config file, and nginx's own config
-      # parser then choked on it. The plain `{{ }}` evaluator
-      # (VarSubstitutor#substitute) already implements exactly this
-      # re-templating for task params via its own bounded multi-pass
-      # loop - reused here (a plain, non-Crinja VarSubstitutor pass, so
-      # no risk of this recursing back into this same render) rather
-      # than duplicating that logic.
-      #
-      # Used to eagerly walk and convert the WHOLE of `@vars` up front
-      # (`prepare_crinja_vars`/`finish_crinja_vars`, see git history) -
-      # O(all vars) per renderer regardless of how many variables a
-      # given template actually reads. `LazyCrinjaContext` below instead
-      # converts one key at a time, on first access, memoizing into its
-      # own `scope` (a plain `Crinja::Context` IS a
-      # `Util::ScopeMap(String, Crinja::Value)` - see that class's own
-      # `#[]`/`#has_key?`, the only two methods anything in `lib/crinja`
-      # ever calls on a context; `keys`/`values`/`entries` are never
-      # used, checked directly via `grep -rn
-      # 'context\.keys\|context\.entries\|context\.values' lib/crinja/src`)
-      # - so a template reading a handful of variables out of a
-      # thousand-entry context now does O(handful) conversion work, not
-      # O(thousand). Parented off `shared_env.context` (the process-wide
-      # environment's own root context, normally empty) rather than
-      # `nil`, matching what `Environment#with_scope(bindings)` used to
-      # build for us before this change.
-      private def build_lazy_context : Crinja::Context
-        LazyCrinjaContext.new(@vars, VarSubstitutor.new(vars: @vars), shared_env.context)
-      end
-
       # Guards against a genuine infinite-recursion trap distinct from
       # `VarSubstitutor`'s own `@@block_tag_escalation_depth`: that guard
       # bounds the RECURSION DEPTH of `substitute`/`render` calls, but
-      # (back when this was `#prepare_crinja_vars`, walking the whole of
+      # (back when variable preparation walked the whole of
       # `@vars` eagerly) each recursion level re-walked ALL of `@vars`,
       # not just the one variable that triggered it - so total work was
       # exponential in (templated-var count) ^ (escalation depth), not
@@ -577,40 +284,17 @@ module Krikri
       # reaching the depth-50 exit.
       #
       # Now that conversion happens per-KEY on first access
-      # (`LazyCrinjaContext#convert` below) rather than per whole-hash
+      # (`JinjaVarResolver#resolve`) rather than per whole-hash
       # walk, this guard brackets one key's conversion instead of all of
       # them - strictly tighter than before (a recursion that used to
       # burn through N variables' worth of work per depth level now
       # burns through 1), so the existing cap of 3 stays just as safe,
       # not looser.
-      @@prepare_crinja_vars_depth = 0
-      MAX_PREPARE_CRINJA_VARS_DEPTH = 3
+      @@prepare_vars_depth = 0
+      MAX_PREPARE_VARS_DEPTH = 3
 
-      # Converts one `@vars` entry to its final `Crinja::Value`, applying
-      # the same recursive re-templating `#rerender_nested_templates`
-      # always did, bounded by the depth guard above. Called from
-      # `LazyCrinjaContext#convert` - kept here (not on that class)
-      # because it needs `@@prepare_crinja_vars_depth`, a CrinjaRenderer
-      # class variable shared across every renderer/context in the
-      # process, matching the guard's own "process-wide, not
-      # per-instance" reasoning (see `VarSubstitutor`'s identical
-      # `@@block_tag_escalation_depth` comment).
-      def self.convert_var(raw_value : JSON::Any, substitutor : VarSubstitutor, name : String = "") : Crinja::Value
-        # `hostvars` gets the HostVarsVars treatment: each host's vars
-        # dict converts into a Krikri::HostVarsVarsDict whose subscript
-        # miss raises under strict templating, matching real Ansible's
-        # own raising wrapper (see HostVarsVarsDict's comment for the
-        # found-live divergence this closes). Conversion reuses the
-        # same re-render + depth guard as any other var.
-        return convert_hostvars(raw_value, substitutor) if name == "hostvars"
-
-        prepared = prepare_var(raw_value, substitutor, name)
-        prepared ? json_any_to_crinja_value(prepared) : Crinja::Value.new(Crinja::Undefined.new(name))
-      end
-
-      # The engine-neutral half of #convert_var: the variable's value after
-      # recursive re-templating, or nil when it is undefined. Shared by the
-      # Crinja context and the krikri-jinja resolver.
+      # A variable's value after recursive re-templating, or nil when it is
+      # undefined - what JinjaVarResolver hands the engine for *name*.
       def self.prepare_var(raw_value : JSON::Any, substitutor : VarSubstitutor, name : String = "") : JSON::Any?
         # Resolved-value carve-out (0.9.1267 gap, same one
         # re_template_from_variable?/raise_if_strict_undefined apply):
@@ -619,13 +303,13 @@ module Krikri
         # level - the re-render below re-scanned brace text that real
         # ansible-core never re-scans on a resolved fact/module result
         # (a set_fact value containing literal `{{ ... }}` rendered to
-        # the "undefined" sentinel / Crinja::Undefined here instead of
+        # the "undefined" sentinel / an undefined value here instead of
         # passing through as-is).
         if VarSubstitutor.resolved_var_name?(substitutor.host_name, name.split(/[\.\[]/, 2)[0])
           return raw_value
         end
 
-        if @@prepare_crinja_vars_depth >= MAX_PREPARE_CRINJA_VARS_DEPTH
+        if @@prepare_vars_depth >= MAX_PREPARE_VARS_DEPTH
           return raw_value
         end
 
@@ -634,15 +318,15 @@ module Krikri
         # mysql_root_password }}"` with no `mysql_root_password`
         # anywhere) is UNDEFINED, not "defined, with the seven-character
         # value `undefined`" - which is what the lenient re-render below
-        # otherwise hands Crinja, since `VarSubstitutor#substitute`
+        # otherwise hands the engine, since `VarSubstitutor#substitute`
         # renders any unresolved lookup as that literal sentinel text.
-        # Crinja then saw an ordinary non-empty string: `| default('x')`
+        # The engine then saw an ordinary non-empty string: `| default('x')`
         # returned "undefined" instead of "x", `is defined` was True
         # where real Ansible says False, and `when: v | default('') !=
         # ''` ran a task real Ansible skips.
         #
-        # Handing back a real `Crinja::Undefined` instead lets Crinja's
-        # OWN undefined semantics answer all three, which is exactly
+        # Returning nil (an undefined value to the engine) instead lets
+        # Jinja's OWN undefined semantics answer all three, which is exactly
         # what they exist for - no sentinel string doing double duty.
         # The complementary half (a STRICT caller - module-arg
         # finalization - failing the task rather than rendering
@@ -652,61 +336,23 @@ module Krikri
           return nil
         end
 
-        @@prepare_crinja_vars_depth += 1
+        @@prepare_vars_depth += 1
         begin
           rerender_nested_templates(raw_value, substitutor)
         ensure
-          @@prepare_crinja_vars_depth -= 1
+          @@prepare_vars_depth -= 1
         end
       end
 
-      # Converts the `hostvars` magic variable with each host's vars
-      # dict wrapped in Krikri::HostVarsVarsDict (see that class's own
-      # comment). Shared by BOTH Crinja context builds that can carry
-      # hostvars - LazyCrinjaContext#convert (the `{% %}`/`{{ }}`
-      # evaluator's lazy context, via #convert_var) and the template
-      # module's eager env (template_action_plugin.cr) - so a raising
-      # attribute miss behaves identically in a `.j2` file and a
-      # module-arg render.
-      def self.convert_hostvars(raw_value : JSON::Any, substitutor : VarSubstitutor) : Crinja::Value
-        @@prepare_crinja_vars_depth += 1
-        begin
-          top = Hash(String, Crinja::Value).new
-          raw_value.as_h?.try do |hosts|
-            hosts.each do |host, entry|
-              top[host] = wrap_host_vars_entry(
-                json_any_to_crinja_value(rerender_nested_templates(entry, substitutor)),
-              )
-            end
-          end
-          Crinja::Value.new(top)
-        ensure
-          @@prepare_crinja_vars_depth -= 1
-        end
-      end
-
-      # JSON counterpart of #convert_hostvars for the krikri-jinja resolver:
-      # every host's vars re-templated, under the same depth guard.
+      # The `hostvars` magic variable: every host's vars re-templated,
+      # under the same depth guard.
       def self.prepare_hostvars(raw_value : JSON::Any, substitutor : VarSubstitutor) : JSON::Any
-        @@prepare_crinja_vars_depth += 1
+        @@prepare_vars_depth += 1
         begin
           hosts = raw_value.as_h? || return raw_value
           JSON::Any.new(hosts.transform_values { |entry| rerender_nested_templates(entry, substitutor) })
         ensure
-          @@prepare_crinja_vars_depth -= 1
-        end
-      end
-
-      # json_any_to_crinja_value hands back a plain Crinja::Dictionary
-      # (Crinja.value normalizes every Hash), so the dictionary shape is
-      # what gets matched here, not Hash(String, Value).
-      private def self.wrap_host_vars_entry(converted : Crinja::Value) : Crinja::Value
-        if hash = converted.raw.as?(Crinja::Dictionary)
-          entries = Hash(String, Crinja::Value).new
-          hash.each { |key, value| entries[key.to_string] = value }
-          Crinja::Value.new(HostVarsVarsDict.new(entries))
-        else
-          converted
+          @@prepare_vars_depth -= 1
         end
       end
 
@@ -729,11 +375,8 @@ module Krikri
       # walks Array/Hash values recursively, re-rendering every String
       # leaf that still contains "{{".
       #
-      # Exposed as a class method for the same reason
-      # #json_any_to_crinja_value is: TemplateActionPlugin has its own
-      # separate prepare_*_vars (a genuinely separate Crinja
-      # environment - see that method's own comment) that needs this
-      # identical recursive-re-render fix, not just this class's.
+      # Exposed as a class method so FilterEngine and ExpressionEvaluator
+      # apply the identical recursive re-render.
       # Narrow special case for one specific idiom (found round 755/753,
       # `jtyr.nsswitch`/`jtyr.motd`): `some_var: "{{ some_dict.update(
       # other_dict) }}{{ some_dict }}"` - call `.update()` purely for its
@@ -763,7 +406,7 @@ module Krikri
       # whose template references an intentionally-undefined caller var,
       # round 952484 / stackhpc.libvirt-vm) must not fail the whole chain on
       # it. The default (false) keeps the pre-existing strict behavior for
-      # every caller that renders a structure as a WHOLE (Crinja context
+      # every caller that renders a structure as a WHOLE (variable-scope
       # conversion, the to_json-family guards in FilterEngine) - those
       # access every leaf by definition, where real Ansible fails just as
       # this strict path does. A deferred leaf that IS later accessed is
@@ -778,14 +421,14 @@ module Krikri
         # value is a pure block-tag template (`traefik_install_ver: '{% if
         # traefik_ver.major | int >= 2 %}2{% else %}{{ traefik_ver.major
         # }}{% endif %}'`, round 200 andrewrothstein.traefik) used to reach
-        # Crinja's context still raw whenever the OUTER re-pass loop could
+        # the engine's scope still raw whenever the OUTER re-pass loop could
         # not save it - most notably as a FILTER-CHAIN head (`{{
         # traefik_install_ver | upper }}` applied `upper` to the literal
         # `{% IF FLAG %}...{% ENDIF %}` text, mangling the tag keywords so
         # no later pass could ever parse them) and as a `default()`
         # argument. The outer loop only sees the ALREADY-filtered result,
         # so the re-render has to happen here, at conversion time, for
-        # every construct that reads the variable through Crinja's own
+        # every construct that reads the variable through the engine's
         # context.
         unless raw.includes?("{{") || raw.includes?("{%") || raw.includes?("{#")
           return value
@@ -799,7 +442,7 @@ module Krikri
         # fails immediately (it templates every nested string value at every
         # level, strictly), while krikri quietly wrote
         # {"foo":{"bar":"undefined"}}. This one call site is shared by BOTH
-        # evaluators - Crinja's own context conversion (convert_var) AND the
+        # evaluators - the engine's variable preparation (prepare_var) AND the
         # hand-rolled FilterEngine path (ExpressionEvaluator's
         # retemplated_lookup_value -> rerender_nested_templates) - so a
         # filter like to_json on a dict with an undefined nested leaf fails
@@ -871,7 +514,7 @@ module Krikri
       # default(...) }}", robertdebock.docker's own vars/main.
       # yml) - substitutor.substitute always returns a formatted
       # STRING, so without re-parsing back to JSON here every
-      # such variable silently became a String-typed Crinja
+      # such variable silently became a String-typed template
       # value forever after (`docker_pip_packages | length`
       # measured the STRING's character count instead of the
       # list's element count, and the `| length > 0` when: guard
@@ -882,7 +525,7 @@ module Krikri
       # other rerender call site in this codebase
       # (VariableLookup#rerender_if_templated, ExpressionEvaluator's
       # own bare-lookup/filter-chain-head fallback) already does
-      # this JSON.parse-back step; this one (feeding Crinja's
+      # this JSON.parse-back step; this one (feeding the engine's
       # own vars context) was the one gap.
       #
       # Restricted to a PURE `{{ }}` value (nothing else around
@@ -926,7 +569,7 @@ module Krikri
       # galaxyproject.postfix's defaults/main.yml is a genuine False on a
       # RedHat host, round 812025), so a variable referenced FROM another
       # expression must come out as a real bool there. This converter
-      # (feeding Crinja's own vars context) was the one rerender site that
+      # (feeding the engine's vars scope) was the one rerender site that
       # never did: the string "False" is non-empty and therefore always
       # TRUTHY to Jinja, so a nested ternary conditioned on it
       # (`__postfix_packages: "{{ debian_pkgs if __postfix_debian else
@@ -947,60 +590,20 @@ module Krikri
           # `{% for key, value in item %}` over it crashed with
           # "cannot unpack multiple values" instead of seeing the
           # real dict (confirmed live against a real host running
-          # jtyr.motd). Falling back to a genuine STRUCTURAL Crinja
+          # jtyr.motd). Falling back to a genuine STRUCTURAL
           # evaluation (`evaluate_value!`, already used elsewhere for
-          # exactly this "get the real Crinja::Value, not a
+          # exactly this "get the real structured value, not a
           # stringify-then-reparse round trip" need) instead of
           # giving up to a plain string recovers the real
           # array/dict without the JSON-text detour at all.
           inner = stripped[2..-3].strip
           (JSON.parse(rendered) rescue nil) ||
-            (CrinjaRenderer.new(substitutor.vars).evaluate_value!(inner) rescue nil) ||
+            (JinjaRenderer.new(substitutor.vars).evaluate_value!(inner) rescue nil) ||
             JSON::Any.new(rendered)
         elsif stripped_rendered.in?("True", "False", "None")
           Krikri.parse_json_or_python_literal(stripped_rendered)
         else
           JSON::Any.new(rendered)
-        end
-      end
-
-      # Convert JSON::Any to Crinja::Value.
-      #
-      # Exposed as a class method because TemplateActionPlugin needs the
-      # exact same coercion and used to carry a verbatim copy of it.
-      # (Only the *converter* is shared: that plugin's Crinja environment
-      # genuinely must stay separate, since its trim_blocks/lstrip_blocks
-      # come from the task's own template: params and therefore vary per
-      # task - unlike this class's, whose config is invariant and so can
-      # be one process-wide instance.)
-      def self.json_any_to_crinja_value(json : JSON::Any) : Crinja::Value
-        case json.raw
-        when String
-          Crinja::Value.new(json.as_s)
-        when Int64
-          # as_i is Int32-only, raises "Arithmetic overflow" for a value
-          # like a large uid rendered via a real .j2 template - see
-          # playbook_parser.cr's own identical fix for the same root
-          # cause. Crinja::Value's own Raw type already includes Int64
-          # directly (Number), no further conversion needed.
-          Crinja::Value.new(json.as_i64)
-        when Float64
-          Crinja::Value.new(json.as_f)
-        when Bool
-          Crinja::Value.new(json.as_bool)
-        when Nil
-          Crinja::Value.new(nil)
-        when Hash
-          hash = Hash(String, Crinja::Value).new
-          json.as_h.each do |key, value|
-            hash[key] = json_any_to_crinja_value(value)
-          end
-          Crinja::Value.new(hash)
-        when Array
-          array = json.as_a.map { |item| json_any_to_crinja_value(item) }
-          Crinja::Value.new(array)
-        else
-          Crinja::Value.new(json.to_s)
         end
       end
 

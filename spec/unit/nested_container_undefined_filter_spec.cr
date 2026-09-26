@@ -1,6 +1,6 @@
 require "../spec_helper"
 require "../../src/krikri/variable_substitutor"
-require "../../src/krikri/jinja_filters"
+require "../../src/krikri/krikri_jinja_filters"
 
 # Real bug found in the mismatch-traefik round: a `vars:` entry whose
 # nested dict value is itself unrendered Jinja referencing a name set
@@ -14,7 +14,7 @@ require "../../src/krikri/jinja_filters"
 # Both of this codebase's independent evaluators were reachable (see
 # CLAUDE.md): the hand-rolled FilterEngine path via
 # ExpressionEvaluator's filter-chain head re-render, and the vendored
-# Crinja path via CrinjaRenderer's own context conversion - both
+# Crinja path via JinjaRenderer's own context conversion - both
 # converge on rerender_nested_templates/rerender_string_value, which
 # used to render nested leaves LENIENTLY. Every expectation below was
 # verified against real ansible-core running the equivalent playbook.
@@ -34,7 +34,7 @@ describe "an undefined variable nested inside a dict/list value fed through a fi
     # dispatch first tries Crinja (whose context conversion now raises),
     # falls back to the hand-rolled chain head (whose re-render raises
     # the same way), so the task fails like real Ansible instead of
-    # serializing the sentinel text. CrinjaRenderer#render's own direct
+    # serializing the sentinel text. JinjaRenderer#render's own direct
     # entry point deliberately swallows generic errors (lenient
     # give-back-the-text), so this goes through VarSubstitutor#substitute
     # - the task-arg path a copy: content: actually takes.
@@ -46,7 +46,7 @@ describe "an undefined variable nested inside a dict/list value fed through a fi
 
   it "raises from rerender_nested_templates itself, naming the innermost missing var" do
     expect_raises(Krikri::UndefinedVariableError, /'some_undefined_var' is undefined/) do
-      Krikri::VariableSubstitutor::CrinjaRenderer.rerender_nested_templates(
+      Krikri::VariableSubstitutor::JinjaRenderer.rerender_nested_templates(
         v_base["my_config"],
         Krikri::VarSubstitutor.new(vars: v_base),
       )
@@ -59,7 +59,7 @@ describe "an undefined variable nested inside a dict/list value fed through a fi
     # the strict fix, same carve-out raise_if_strict_undefined applies.
     v = Hash(String, JSON::Any).new
     v["cfg"] = JSON.parse(%({"bar": "{{ missing_name | default('GUARDED') }}"}))
-    result = Krikri::VariableSubstitutor::CrinjaRenderer.rerender_nested_templates(
+    result = Krikri::VariableSubstitutor::JinjaRenderer.rerender_nested_templates(
       v["cfg"],
       Krikri::VarSubstitutor.new(vars: v),
     )
@@ -70,7 +70,7 @@ describe "an undefined variable nested inside a dict/list value fed through a fi
     v = Hash(String, JSON::Any).new
     v["real_value"] = JSON::Any.new("present")
     v["cfg"] = JSON.parse(%({"foo": {"bar": "{{ real_value }}"}}))
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
     renderer.render(%({{ cfg | to_json }})).should eq(%({"foo": {"bar": "present"}}))
   end
 end

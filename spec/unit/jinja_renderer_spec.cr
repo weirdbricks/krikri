@@ -1,12 +1,12 @@
 require "../spec_helper"
 require "http/server"
-require "../../src/krikri/variable_substitutor/crinja_renderer"
+require "../../src/krikri/variable_substitutor/jinja_renderer"
 # The custom Crinja filters/tests (`comment`, `ternary`, `ansible.builtin.*`
 # aliases, ...) are registered by jinja_filters.cr's own require-time
 # `Crinja.filter`/`Crinja.test` calls - without it this spec compiles against
 # a bare Crinja environment and every filter-backed render falls back to the
 # raw template text.
-require "../../src/krikri/jinja_filters"
+require "../../src/krikri/krikri_jinja_filters"
 
 # Same tiny local HTTP server pattern as url_lookup_spec.cr, reused here
 # to test lookup('url', ...) reaching Crinja's own global function (real
@@ -31,7 +31,7 @@ Fiber.yield
 
 crinja_url_lookup_base = "http://#{crinja_url_lookup_test_address}"
 
-describe Krikri::VariableSubstitutor::CrinjaRenderer do
+describe Krikri::VariableSubstitutor::JinjaRenderer do
   it "re-templates a variable whose own value is itself a {{ }} expression" do
     # Real bug found benchmarking geerlingguy.nginx: role defaults/main.yml
     # commonly defines a var whose *value* is itself more Jinja -
@@ -49,7 +49,7 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
     v = Hash(String, JSON::Any).new
     v["ansible_processor_count"] = JSON::Any.new(1_i64)
     v["nginx_worker_processes"] = JSON::Any.new(%("{{ ansible_processor_vcpus | default(ansible_processor_count) }}"))
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
 
     renderer.render("worker_processes  {{ nginx_worker_processes }};").should eq(%(worker_processes  "1";))
   end
@@ -65,7 +65,7 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
     # the vendored crinja fork (crystal-play-0.9.20).
     v = Hash(String, JSON::Any).new
     v["n"] = JSON::Any.new("3")
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
 
     renderer.render(%({{ '-' * (n | int) }})).should eq("---")
   end
@@ -87,7 +87,7 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
     v = Hash(String, JSON::Any).new
     v["inventory_hostname"] = JSON::Any.new("web1.example.com")
     v["common_hostname"] = JSON::Any.new("{{ inventory_hostname }}")
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
 
     renderer.render("hostname is {{ common_hostname }}").should eq("hostname is web1.example.com")
   end
@@ -102,7 +102,7 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
     # width). Fixed upstream in the Crinja fork (crystal-play-0.9.11).
     v = Hash(String, JSON::Any).new
     v["s"] = JSON::Any.new("Extra spaces.")
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
 
     renderer.render("{{ s | wordwrap(5) }}").should eq("Extra\nspace\ns.")
   end
@@ -129,7 +129,7 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
     # with nothing else around it.
     v = Hash(String, JSON::Any).new
     v["inner_list"] = JSON::Any.new("{{ ['docker'] }}")
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
 
     renderer.render("{{ inner_list | length }}").should eq("1")
   end
@@ -149,7 +149,7 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
     v = Hash(String, JSON::Any).new
     v["postgresql_auth_method"] = JSON::Any.new("md5")
     v["postgresql_hba_entries"] = JSON.parse(%([{"type": "host", "auth_method": "{{ postgresql_auth_method }}"}]))
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
 
     result = renderer.render("{% for client in postgresql_hba_entries %}{{ client.type }} {{ client.auth_method }}{% endfor %}")
     result.should eq("host md5")
@@ -158,7 +158,7 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
   it "leaves an ordinary variable (no embedded template) unaffected" do
     v = Hash(String, JSON::Any).new
     v["greeting"] = JSON::Any.new("hello")
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
 
     renderer.render("{{ greeting }}, world").should eq("hello, world")
   end
@@ -168,7 +168,7 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
     # solr_default_core_path default is `{% if solr_version.split('.')
     # [0] < '9' %}...{% endif %}` - a plain Crystal String doesn't
     # implement crinja_call, so `.split(...)` resolved as "split is
-    # undefined" (Crinja::TypeError), and CrinjaRenderer#render's own
+    # undefined" (Crinja::TypeError), and JinjaRenderer#render's own
     # blanket `rescue` then returned the ENTIRE template - not just the
     # one broken expression - completely unrendered. The plain
     # hand-rolled {{ }} evaluator already supported `.split(...)`
@@ -177,7 +177,7 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
     # if %}` (which forces escalation to the full Crinja renderer).
     v = Hash(String, JSON::Any).new
     v["solr_version"] = JSON::Any.new("8.11.2")
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
 
     renderer.render("{% if solr_version.split('.')[0] < '9' %}old{% else %}new{% endif %}").should eq("old")
   end
@@ -199,14 +199,14 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
     # operand").
     v = Hash(String, JSON::Any).new
     v["x"] = JSON::Any.new(true)
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
 
     renderer.render("cp -r {% if x %}A{% else %}B{% endif %} /dest/").should eq("cp -r A /dest/")
   end
 
   it "defaults the comment filter to a bare '#' style" do
     v = Hash(String, JSON::Any).new
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
 
     renderer.render("{{ 'Ansible managed' | comment }}").should eq("#\n# Ansible managed\n#")
   end
@@ -221,7 +221,7 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
     # undefined" failed the whole template render outright).
     v = Hash(String, JSON::Any).new
     v["security_rhel7_audit_foo"] = JSON::Any.new(true)
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
 
     renderer.render("{{ vars['security_rhel7_audit_foo'] }}").should eq("True")
   end
@@ -235,7 +235,7 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
     # NULL for a ZEND_INI_PARSER_ENTRY"), even though the file looked
     # fine to a human reader.
     v = Hash(String, JSON::Any).new
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
 
     renderer.render("{{ 'Ansible managed' | comment(decoration='; ') }}").should eq(";\n; Ansible managed\n;")
   end
@@ -250,7 +250,7 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
     # name crashed the whole template render ("Unexpected POINT")
     # instead of resolving like a plain `| ternary(...)` call.
     v = Hash(String, JSON::Any).new
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
 
     renderer.render("{{ true | ansible.builtin.ternary('YES', 'NO') }}").should eq("YES")
     renderer.render("{{ false | ansible.builtin.ternary('YES', 'NO') }}").should eq("NO")
@@ -258,7 +258,7 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
 
   it "ternary returns the third (none_val) argument for a null condition, like real Ansible" do
     v = Hash(String, JSON::Any).new
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
 
     renderer.render("{{ none | ternary('YES', 'NO', 'N/A') }}").should eq("N/A")
     renderer.render("{{ none | ternary('YES', 'NO') }}").should eq("NO")
@@ -281,7 +281,7 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
     v["nullmailer_host"] = JSON::Any.new("mail.example.com")
     v["nullmailer_port"] = JSON::Any.new(25)
     v["nullmailer_username"] = JSON::Any.new(nil)
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
 
     renderer.render("{{ (true) | ternary(' --port=' + nullmailer_port | string, '') }}").should eq(" --port=25")
     # Real ansible-core evaluates both ternary branches eagerly, so a None
@@ -303,7 +303,7 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
     # 'cblock'/'xml', each with its own decoration and (for cblock/xml)
     # distinct begin/end border lines.
     v = Hash(String, JSON::Any).new
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
 
     renderer.render("{{ 'Ansible managed' | comment('c') }}").should eq("//\n// Ansible managed\n//")
     renderer.render("{{ 'Ansible managed' | comment('erlang') }}").should eq("%\n% Ansible managed\n%")
@@ -324,7 +324,7 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
     v = Hash(String, JSON::Any).new
     v["a"] = JSON::Any.new("")
     v["b"] = JSON::Any.new("")
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
 
     renderer.render(%({% if a and b %}T{% else %}F{% endif %})).should eq("F")
   end
@@ -338,7 +338,7 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
     # Crinja's own Finalizer had no Bool-specific stringify overload and
     # fell through to Crystal's native lowercase Bool#to_s.
     v = Hash(String, JSON::Any).new
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
 
     renderer.render("{{ true }}").should eq("True")
     renderer.render("{{ false }}").should eq("False")
@@ -353,7 +353,7 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
     # to ", "/": " separators, not Crystal stdlib's compact ","/":" -
     # verified directly against Python's own json.dumps.
     v = Hash(String, JSON::Any).new
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
 
     renderer.render(%({{ ["a", "b"] | to_json }})).should eq(%(["a", "b"]))
     renderer.render(%({{ {"a": 1, "b": "two"} | to_json }})).should eq(%({"a": 1, "b": "two"}))
@@ -365,7 +365,7 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
     # - Crinja raised "no filter with name \"hash\" registered", failing
     # the whole template render. Values verified against Python's own
     # hashlib.
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new({} of String => JSON::Any)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new({} of String => JSON::Any)
     renderer.render(%({{ "mysecret" | hash('sha1') }})).should eq("e9fe51f94eadabf54dbf2fbbd57188b9abee436e")
     renderer.render(%({{ "mysecret" | hash }})).should eq("e9fe51f94eadabf54dbf2fbbd57188b9abee436e")
     renderer.render(%({{ "mysecret" | hash('md5') }})).should eq("06c219e5bc8378f3a8a3f83b4b7e4649")
@@ -379,7 +379,7 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
     # that role goes through krikri's hand-rolled evaluator, covered
     # separately in filter_core_spec.cr/filter_engine_spec.cr; this
     # spec exercises the same backreference behavior through
-    # CrinjaRenderer as a convenience, not because that's this specific
+    # JinjaRenderer as a convenience, not because that's this specific
     # historical bug's real code path). jinja_filters.cr used to
     # rewrite `\1`/`\2` replacement backreferences to `$1`/`$2` on the
     # mistaken assumption Crystal's String#gsub(Regex, String) used
@@ -405,7 +405,7 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
     # correct for real `.j2` template FILES, which render through
     # TemplateActionPlugin's own per-render environment instead of this
     # one.
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new({} of String => JSON::Any)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new({} of String => JSON::Any)
     renderer.render(
       %({{ "OpenSSH_8.9p1 Ubuntu-3, OpenSSL 3.0.2 15 Mar 2022" | regex_replace('.*_([0-9]*.[0-9]).*', '\\1') }})
     ).should eq("8.9")
@@ -418,7 +418,7 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
     # Crinja raised "no filter with name \"to_nice_yaml\" registered",
     # failing the whole template render (all-or-nothing).
     v = Hash(String, JSON::Any).new
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
 
     renderer.render(%({{ [{"name": "x", "rules": ["a", "b"]}] | to_nice_yaml }})).should eq(
       "- name: x\n  rules:\n  - a\n  - b"
@@ -427,7 +427,7 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
 
   it "sorts to_nice_yaml's own mapping keys by default, honors sort_keys=False" do
     v = Hash(String, JSON::Any).new
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
 
     renderer.render(%({{ {"b": 1, "a": 2} | to_nice_yaml }})).should eq("a: 2\nb: 1")
     renderer.render(%({{ {"b": 1, "a": 2} | to_nice_yaml(sort_keys=False) }})).should eq("b: 1\na: 2")
@@ -442,7 +442,7 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
     # in the output. That stray "--- " broke Cortex's own YAML parser
     # ("cannot unmarshal !!str `--- {}`"), crash-looping the service.
     v = Hash(String, JSON::Any).new
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
 
     renderer.render(%({{ {} | to_nice_yaml }})).should eq("{}")
     renderer.render(%({{ {} | to_yaml }})).should eq("{}")
@@ -450,7 +450,7 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
 
   it "b64encode/b64decode round-trip in a .j2 template" do
     v = Hash(String, JSON::Any).new
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
 
     renderer.render(%({{ "hello world" | b64encode }})).should eq("aGVsbG8gd29ybGQ=")
     renderer.render(%({{ "aGVsbG8gd29ybGQ=" | b64decode }})).should eq("hello world")
@@ -458,14 +458,14 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
 
   it "from_json parses a JSON string into a real dict usable by dotted access" do
     v = Hash(String, JSON::Any).new
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
 
     renderer.render(%({{ ('{"a": 1}' | from_json).a }})).should eq("1")
   end
 
   it "from_yaml parses a YAML string into a real dict" do
     v = Hash(String, JSON::Any).new
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
 
     renderer.render(%({{ ("a: 1\nb: 2\n" | from_yaml).b }})).should eq("2")
   end
@@ -482,21 +482,21 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
     # incorrectly raised "invalid YAML input" instead.
     v = Hash(String, JSON::Any).new
     v["mylist"] = JSON.parse(%([{"a": 1}]))
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
 
     renderer.render(%({{ mylist | from_yaml }})).should eq("[{'a': 1}]")
   end
 
   it "renders to_yaml, real Ansible's own filter (sorted keys, block style)" do
     v = Hash(String, JSON::Any).new
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
 
     renderer.render(%({{ {"b": 1, "a": 2} | to_yaml }})).should eq("a: 2\nb: 1")
   end
 
   it "checksum computes a sha1 hex digest" do
     v = Hash(String, JSON::Any).new
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
 
     renderer.render(%({{ "hello" | checksum }})).should eq("aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d")
   end
@@ -504,7 +504,7 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
   it "union combines two lists preserving order and dedup" do
     v = Hash(String, JSON::Any).new
     v["other"] = JSON.parse(%([2, 3, 4]))
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
 
     renderer.render(%({{ [1, 2, 3] | union(other) }})).should eq("[1, 2, 3, 4]")
   end
@@ -513,7 +513,7 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
     v = Hash(String, JSON::Any).new
     v["small"] = JSON.parse(%(["a", "b"]))
     v["big"] = JSON.parse(%(["a", "b", "c"]))
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
 
     renderer.render(%({% if small is subset(big) %}yes{% else %}no{% endif %})).should eq("yes")
     renderer.render(%({% if big is subset(small) %}yes{% else %}no{% endif %})).should eq("no")
@@ -524,7 +524,7 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
 
   it "renders lookup('env', ...) in a real .j2 template" do
     v = Hash(String, JSON::Any).new
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
 
     ENV["CRYSTAL_ANSIBLE_SPEC_CRINJA_LOOKUP_ENV"] = "hello"
     renderer.render(%({{ lookup('env', 'CRYSTAL_ANSIBLE_SPEC_CRINJA_LOOKUP_ENV') }})).should eq("hello")
@@ -535,7 +535,7 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
     v = Hash(String, JSON::Any).new
     v["env_prod_port"] = JSON::Any.new(8080_i64)
     v["target_env"] = JSON::Any.new("prod")
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
 
     renderer.render(%({{ lookup('vars', 'env_' + target_env + '_port') }})).should eq("8080")
   end
@@ -546,13 +546,13 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
     File.write(path, "secret-content\n")
 
     v = Hash(String, JSON::Any).new
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
     renderer.render(%({{ lookup('file', '#{path}') }})).should eq("secret-content")
   end
 
   it "renders lookup('pipe', command) running a local shell command" do
     v = Hash(String, JSON::Any).new
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
     renderer.render(%({{ lookup('pipe', 'echo hello-from-pipe') }})).should eq("hello-from-pipe")
   end
 
@@ -563,7 +563,7 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
 
     v = Hash(String, JSON::Any).new
     v["my_var"] = JSON::Any.new("computed")
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
     renderer.render(%({{ lookup('template', '#{path}') }})).should eq("value is computed")
   end
 
@@ -581,7 +581,7 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
     File.write(path, "{{ app_name }}-{{ var_type }}\n")
 
     v = Hash(String, JSON::Any).new
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
     renderer.render(%({{ lookup('template', '#{path}', template_vars=dict(app_name='myapp', var_type='prod')) }})).should eq("myapp-prod")
   end
 
@@ -592,7 +592,7 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
 
     v = Hash(String, JSON::Any).new
     v["my_var"] = JSON::Any.new("computed")
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
     renderer.render(%({{ lookup('template', '#{path}') }})).should eq("value is computed")
   end
 
@@ -624,7 +624,7 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
     v = Hash(String, JSON::Any).new
     v["myapp_rule_one"] = JSON::Any.new("foo")
     v["myapp_rule_two"] = JSON::Any.new("bar")
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
     result = renderer.render(%({{ lookup('template', '#{path}', template_vars=dict(app_name='myapp')) }}))
     JSON.parse(result).as_a.map(&.as_s).sort!.should eq(["myapp_rule_one", "myapp_rule_two"])
   end
@@ -640,14 +640,14 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
     # instead, so a later `{% for key, val in some_var %}` (the
     # jtyr.motd/jtyr.nsswitch actual template shape, which iterates a
     # real dict with `.items()`) failed with "cannot unpack multiple
-    # values of type Crinja::Value". See CrinjaRenderer's own
+    # values of type Crinja::Value". See JinjaRenderer's own
     # UPDATE_THEN_REREAD_RE for the narrow, documented-shape-only fix
     # (not the full lazy-dict-templating architecture - see
     # KNOWN_MISSING.md).
     v = Hash(String, JSON::Any).new
     v["some_dict"] = JSON::Any.new({"a" => JSON::Any.new(1_i64), "b" => JSON::Any.new(2_i64)})
     v["other_dict"] = JSON::Any.new({"b" => JSON::Any.new(99_i64), "c" => JSON::Any.new(3_i64)})
-    v["some_var"] = Krikri::VariableSubstitutor::CrinjaRenderer.rerender_nested_templates(
+    v["some_var"] = Krikri::VariableSubstitutor::JinjaRenderer.rerender_nested_templates(
       JSON::Any.new("{{ some_dict.update(other_dict) }}{{ some_dict }}"),
       Krikri::VarSubstitutor.new(vars: v)
     )
@@ -656,7 +656,7 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
     # `{% for key, value in item.items() %}`). Asserts the rendered
     # value is a real Crinja Dictionary (not a stringified fallback)
     # by iterating its pairs and producing the expected output.
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
     result = renderer.render("{% for key, val in some_var.items() %}{{ key }}={{ val }} {% endfor %}")
     result.strip.should eq("a=1 b=99 c=3")
 
@@ -690,12 +690,12 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
       "group"  => JSON::Any.new("{{ nsswitch_group }}"),
     })
     v["nsswitch__custom"] = JSON::Any.new(Hash(String, JSON::Any).new)
-    v["nsswitch_config"] = Krikri::VariableSubstitutor::CrinjaRenderer.rerender_nested_templates(
+    v["nsswitch_config"] = Krikri::VariableSubstitutor::JinjaRenderer.rerender_nested_templates(
       JSON::Any.new("{{ nsswitch__default.update(nsswitch__custom) }}{{ nsswitch__default }}"),
       Krikri::VarSubstitutor.new(vars: v)
     )
 
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
     result = renderer.render("{% for key, val in nsswitch_config.items() | sort %}{{ key }}: {{ val | join(' ') }}\n{% endfor %}")
     result.should eq("group: files systemd\npasswd: files systemd\n")
   end
@@ -705,7 +705,7 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
     File.delete(path) if File.exists?(path)
 
     v = Hash(String, JSON::Any).new
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
     first = renderer.render(%({{ lookup('password', '#{path} length=8') }}))
     first.size.should eq(8)
 
@@ -719,7 +719,7 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
   # regression has to be pinned in both.
   it "renders lookup('password', '/dev/null') as a fresh unsaved password" do
     v = Hash(String, JSON::Any).new
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
 
     first = renderer.render(%({{ lookup('password', '/dev/null') }}))
     first.size.should eq(20)
@@ -733,7 +733,7 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
 
   it "renders lookup('url', ...) fetching lines from the controller, with and without wantlist" do
     v = Hash(String, JSON::Any).new
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
 
     renderer.render(%({{ lookup('url', '#{crinja_url_lookup_base}/lines.txt') }}))
       .should eq("line one,line two,line three")
@@ -744,7 +744,7 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
 
   it "renders lookup('url', ...) following a redirect, matching how GitHub serves release assets" do
     v = Hash(String, JSON::Any).new
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
 
     renderer.render(%({{ lookup('url', '#{crinja_url_lookup_base}/redirect.txt') }}))
       .should eq("line one,line two,line three")
@@ -758,7 +758,7 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
     v = Hash(String, JSON::Any).new
     v["role_path"] = JSON::Any.new(role_dir)
     v["distro"] = JSON::Any.new("Debian")
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
 
     result = renderer.render(%({{ lookup('first_found', {'files': ['{{ distro }}.yml', 'default.yml'], 'paths': ['vars']}) }}))
     result.should eq(File.join(role_dir, "vars", "Debian.yml"))
@@ -775,7 +775,7 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
 
     v = Hash(String, JSON::Any).new
     v["role_path"] = JSON::Any.new(role_dir)
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
 
     result = renderer.render(%({{ lookup('ansible.builtin.first_found', {'files': ['Debian.yml'], 'paths': ['vars']}) }}))
     result.should eq(File.join(role_dir, "vars", "Debian.yml"))
@@ -788,7 +788,7 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
 
     v = Hash(String, JSON::Any).new
     v["role_path"] = JSON::Any.new(role_dir)
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
 
     result = renderer.render(%({{ lookup('first_found', {'files': ['main.yml']}) }}))
     result.should eq(File.join(role_dir, "vars", "main.yml"))
@@ -797,7 +797,7 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
   it "raises a clean error rendering first/last on a genuinely empty sequence, rather than silently rendering the raw template text" do
     v = Hash(String, JSON::Any).new
     v["mylist"] = JSON::Any.new([] of JSON::Any)
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
 
     expect_raises(Exception, "No first item, sequence was empty.") { renderer.render!("{{ mylist | first }}") }
     expect_raises(Exception, "No last item, sequence was empty.") { renderer.render!("{{ mylist | last }}") }
@@ -805,32 +805,32 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
 
   it "leaves an undefined target's first filter lenient, matching the vendored library's own prior behavior" do
     v = Hash(String, JSON::Any).new
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
     renderer.render(%({{ nonexistent_var | first | default('fallback') }})).should eq("fallback")
   end
 
   it "path_join joins a list of path components, an absolute one resets" do
     v = Hash(String, JSON::Any).new
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
     renderer.render(%({{ ["a", "b", "c.txt"] | path_join }})).should eq("a/b/c.txt")
     renderer.render(%({{ ["a", "/b", "c.txt"] | path_join }})).should eq("/b/c.txt")
   end
 
   it "splitext splits a path into [root, ext]" do
     v = Hash(String, JSON::Any).new
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
     renderer.render(%({{ "/etc/foo.conf" | splitext }})).should eq(%(['/etc/foo', '.conf']))
   end
 
   it "urldecode percent-decodes a string" do
     v = Hash(String, JSON::Any).new
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
     renderer.render(%({{ "hello%20world" | urldecode }})).should eq("hello world")
   end
 
   it "urlsplit returns a component when given one, the full dict otherwise" do
     v = Hash(String, JSON::Any).new
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
     renderer.render(%({{ "https://example.com:8080/path" | urlsplit('hostname') }})).should eq("example.com")
     renderer.render(%({{ "https://example.com:8080/path" | urlsplit('port') }})).should eq("8080")
   end
@@ -838,7 +838,7 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
   it "zip/zip_longest/product combine lists" do
     v = Hash(String, JSON::Any).new
     v["other"] = JSON.parse(%(["x", "y"]))
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
     renderer.render(%({{ [1, 2] | zip(other) }})).should eq(%([[1, 'x'], [2, 'y']]))
     renderer.render(%({{ [1] | zip_longest(other, fillvalue="-") }})).should eq(%([[1, 'x'], ['-', 'y']]))
     renderer.render(%({{ [1, 2] | product(other) }})).should eq(%([[1, 'x'], [1, 'y'], [2, 'x'], [2, 'y']]))
@@ -850,7 +850,7 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
     # template-side zip_longest silently behaved as zip. All shapes
     # live-verified against real ansible-core 2.19.11.
     v = Hash(String, JSON::Any).new
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
     renderer.render(%({{ [1, 2] | zip_longest([3], fillvalue="-") }})).should eq(%([[1, 3], [2, '-']]))
     renderer.render(%({{ [1, 2] | zip_longest([3], '-') }})).should eq(%([[1, 3, '-'], [2, None, None]]))
     renderer.render(%({{ [1] | zip([2], [3], [4]) }})).should eq(%([[1, 2, 3, 4]]))
@@ -858,27 +858,27 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
 
   it "regex_escape escapes regex special characters" do
     v = Hash(String, JSON::Any).new
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
     renderer.render(%({{ "1.2.3" | regex_escape }})).should eq("1\\.2\\.3")
   end
 
   it "renders to_nice_json, sorted keys by default" do
     v = Hash(String, JSON::Any).new
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
     # Real to_nice_json is json.dumps(indent=4, sort_keys=True) - 4-space.
     renderer.render(%({{ {"b": 1, "a": 2} | to_nice_json }})).should eq(%({\n    "a": 2,\n    "b": 1\n}))
   end
 
   it "human_readable/human_to_bytes round-trip a byte count" do
     v = Hash(String, JSON::Any).new
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
     renderer.render(%({{ 1024 | human_readable }})).should eq("1.00 KB")
     renderer.render(%({{ "2GB" | human_to_bytes }})).should eq((2_i64 * 1024 * 1024 * 1024).to_s)
   end
 
   it "md5/sha1 compute standalone hex digests" do
     v = Hash(String, JSON::Any).new
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
     renderer.render(%({{ "hello" | md5 }})).should eq("5d41402abc4b2a76b9719d911017c592")
     renderer.render(%({{ "hello" | sha1 }})).should eq("aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d")
   end
@@ -896,7 +896,7 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
     v["f"] = JSON::Any.new(file_path)
     v["d"] = JSON::Any.new(dir_path)
     v["l"] = JSON::Any.new(link_path)
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
 
     renderer.render(%({% if f is exists %}yes{% else %}no{% endif %})).should eq("yes")
     renderer.render(%({% if f is file %}yes{% else %}no{% endif %})).should eq("yes")
@@ -912,7 +912,7 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
 
   it "expanduser/expandvars expand ~ and $VAR from the controller's environment" do
     v = Hash(String, JSON::Any).new
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
     ENV["HOME"] = "/home/testuser"
     renderer.render(%({{ "~/foo" | expanduser }})).should eq("/home/testuser/foo")
     ENV["CRYSTAL_ANSIBLE_SPEC_CRINJA_EXPANDVAR"] = "hello"
@@ -922,7 +922,7 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
 
   it "normpath/relpath/commonpath mirror Python's os.path helpers" do
     v = Hash(String, JSON::Any).new
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
     renderer.render(%({{ "a/./b/../c" | normpath }})).should eq("a/c")
     renderer.render(%({{ "/a/b/c" | relpath("/a") }})).should eq("b/c")
     renderer.render(%({{ ["/a/b/c", "/a/b/d"] | commonpath }})).should eq("/a/b")
@@ -930,14 +930,14 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
 
   it "log/pow compute logarithms and powers" do
     v = Hash(String, JSON::Any).new
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
     renderer.render(%({{ 8.0 | log(2) }})).should eq("3.0")
     renderer.render(%({{ 2.0 | pow(10) }})).should eq("1024.0")
   end
 
   it "to_uuid produces a deterministic UUID5" do
     v = Hash(String, JSON::Any).new
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
     a = renderer.render(%({{ "hello" | to_uuid }}))
     b = renderer.render(%({{ "hello" | to_uuid }}))
     a.should eq(b)
@@ -946,7 +946,7 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
   it "symmetric_difference/combinations/permutations" do
     v = Hash(String, JSON::Any).new
     v["other"] = JSON.parse(%([2, 3, 4]))
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
     renderer.render(%({{ [1, 2, 3] | symmetric_difference(other) }})).should eq("[1, 4]")
     renderer.render(%({{ [1, 2, 3] | combinations(2) }})).should eq("[[1, 2], [1, 3], [2, 3]]")
     renderer.render(%({{ [1, 2] | permutations }})).should eq("[[1, 2], [2, 1]]")
@@ -954,21 +954,21 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
 
   it "rekey_on_member converts a list of dicts into a dict keyed by a field" do
     v = Hash(String, JSON::Any).new
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
     renderer.render(%({{ ([{"name": "a", "v": 1}] | rekey_on_member("name")).a.v }})).should eq("1")
   end
 
   it "extract indexes into a container using the piped value" do
     v = Hash(String, JSON::Any).new
     v["container"] = JSON.parse(%(["zero", "one", "two"]))
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
     renderer.render(%({{ 1 | extract(container) }})).should eq("one")
   end
 
   it "extract reads a hash key from the piped value" do
     v = Hash(String, JSON::Any).new
     v["hostvars"] = JSON.parse(%({"host-a": {"node_ip": "10.0.0.1"}}))
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
     renderer.render(%({{ "host-a" | extract(hostvars, "node_ip") }})).should eq("10.0.0.1")
   end
 
@@ -982,7 +982,7 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
     # (verified live against ansible-core 2.19.11).
     v = Hash(String, JSON::Any).new
     v["hostvars"] = JSON.parse(%({"host-a": {"node_ip": "10.0.0.1"}}))
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
     expect_raises(Exception, "object of type 'HostVarsVars' has no attribute 'ansible_host'") do
       # render! (not render) - #render's lenient give-back-the-text
       # fallback would swallow the raise; render! is the raising entry
@@ -994,7 +994,7 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
   it "extract words a plain dict's morekeys miss like real Ansible" do
     v = Hash(String, JSON::Any).new
     v["mapping"] = JSON.parse(%({"x": {"a": 1}}))
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
     expect_raises(Exception, "object of type 'dict' has no attribute 'b'") do
       renderer.render!(%({{ ["x"] | map("extract", mapping, "b") | list }}))
     end
@@ -1008,7 +1008,7 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
     v = Hash(String, JSON::Any).new
     v["clist"] = JSON.parse(%(["zero", "one"]))
     v["scalar_str"] = JSON.parse(%("hello"))
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
     renderer.render(%({{ 0 | extract(clist, [0]) }})).should eq("z")
     renderer.render(%({{ -1 | extract(clist) }})).should eq("one")
     renderer.render(%({{ 1 | extract(scalar_str) }})).should eq("e")
@@ -1021,29 +1021,29 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
     # host-scoped, so the dict stays a dict.
     v = Hash(String, JSON::Any).new
     v["hostvars"] = JSON.parse(%({"host-a": {"node_ip": "10.0.0.1"}}))
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
     renderer.render(%({{ "host-a" | extract(hostvars) | dict2items | map(attribute="key") | list }})).should eq("['node_ip']")
   end
 
   it "from_yaml_all parses a multi-document YAML string" do
     v = Hash(String, JSON::Any).new
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
     renderer.render(%({{ ("a: 1\n---\nb: 2\n" | from_yaml_all)[1].b }})).should eq("2")
   end
 
   it "vault/unvault round-trip through real ansible-vault ciphertext" do
     v = Hash(String, JSON::Any).new
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
     encrypted = renderer.render(%({{ "plaintext" | vault("secret123") }}))
     encrypted.should start_with("$ANSIBLE_VAULT;")
     v["ciphertext"] = JSON::Any.new(encrypted)
-    renderer2 = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer2 = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
     renderer2.render(%({{ ciphertext | unvault("secret123") }})).should eq("plaintext")
   end
 
   it "renders is mount against the CONTROLLER's real mount table" do
     v = Hash(String, JSON::Any).new
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
     renderer.render(%({% if "/" is mount %}yes{% else %}no{% endif %})).should eq("yes")
   end
 
@@ -1051,7 +1051,7 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
     v = Hash(String, JSON::Any).new
     v["ciphertext"] = JSON::Any.new(Krikri::Vault.encrypt("secret", "password123"))
     v["urn"] = JSON::Any.new("urn:isbn:0451450523")
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
 
     renderer.render(%({% if ciphertext is vault_encrypted %}yes{% else %}no{% endif %})).should eq("yes")
     renderer.render(%({% if urn is urn %}yes{% else %}no{% endif %})).should eq("yes")
@@ -1061,7 +1061,7 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
     v = Hash(String, JSON::Any).new
     v["job"] = JSON.parse(%({"started": 1, "finished": 0}))
     v["conn"] = JSON.parse(%({"unreachable": true}))
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
 
     renderer.render(%({% if job is started %}yes{% else %}no{% endif %})).should eq("yes")
     renderer.render(%({% if job is finished %}yes{% else %}no{% endif %})).should eq("no")
@@ -1074,7 +1074,7 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
     v["mydict"] = JSON.parse(%({"a": 1}))
     v["l1"] = JSON.parse(%([1, 2]))
     v["l2"] = JSON.parse(%(["x", "y"]))
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
 
     renderer.render(%({{ (lookup('dict', mydict))[0].key }})).should eq("a")
     renderer.render(%({{ lookup('list', 1, 2) }})).should eq("[1, 2]")
@@ -1088,7 +1088,7 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
   it "renders lookup('lines'/'sequence'/'varnames', ...)" do
     v = Hash(String, JSON::Any).new
     v["nginx_port"] = JSON::Any.new(80_i64)
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
 
     renderer.render(%({{ lookup('lines', 'printf "a\\nb\\n"') }})).should eq("['a', 'b']")
     renderer.render(%({{ lookup('sequence', 'start=1 end=3') }})).should eq("['1', '2', '3']")
@@ -1098,7 +1098,7 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
   it "renders lookup('subelements'/'csvfile'/'ini'/'unvault', ...)" do
     v = Hash(String, JSON::Any).new
     v["users"] = JSON.parse(%([{"name": "alice", "groups": ["a"]}]))
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
     renderer.render(%({{ (lookup('subelements', users, 'groups'))[0][1] }})).should eq("a")
 
     csv_path = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "crinja_lookup_csvfile_test.csv")
@@ -1123,7 +1123,7 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
     # variable's actual (correct) type.
     v = Hash(String, JSON::Any).new
     v["mylist"] = JSON.parse(%(["a", "b"]))
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
 
     renderer.render("{{ mylist | type_debug }}").should eq("list")
     renderer.render(%({{ "x" | type_debug }})).should eq("str")
@@ -1132,7 +1132,7 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
 
   it "password_hash produces a real crypt(3) hash" do
     v = Hash(String, JSON::Any).new
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
 
     result = renderer.render(%({{ "secret" | password_hash('sha512') }}))
     result.should start_with("$6$")
@@ -1149,7 +1149,7 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
     # "x". The block-tag form (`{%- if x -%}`) already worked correctly;
     # only the expression-tag form was broken.
     v = Hash(String, JSON::Any).new
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
 
     renderer.render(%(a{{ 'x' -}}b)).should eq("axb")
     renderer.render(%(a{{- 'x' }}b)).should eq("axb")
@@ -1168,20 +1168,20 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
     # inline `if`/`else` expression fixed here.
     v = Hash(String, JSON::Any).new
     v["x"] = JSON::Any.new(true)
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
 
     renderer.render(%({{ 'a' if x else 'b' }})).should eq("a")
     renderer.render(%({{ ('a' if x else 'b') }})).should eq("a")
 
     v["x"] = JSON::Any.new(false)
-    renderer2 = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer2 = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
     renderer2.render(%({{ 'a' if x else 'b' }})).should eq("b")
   end
 
   it "renders the exact real-world block-tag + parenthesized-ternary + is-test combination" do
     v = Hash(String, JSON::Any).new
     v["pkg_mgr"] = JSON::Any.new("apt")
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
 
     result = renderer.render(%({% if pkg_mgr == 'apt' %}{{ ('python-apt' if (1 is number) else 'python3-apt') -}}{% else %}{% endif %}))
     result.should eq("python-apt")
@@ -1190,7 +1190,7 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
   it "still renders correctly when the trim-marker fix runs alongside real {% %} block tags" do
     v = Hash(String, JSON::Any).new
     v["pkg_mgr"] = JSON::Any.new("apt")
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
 
     result = renderer.render(%({% if pkg_mgr == 'apt' %}{{ 'python3-apt' -}}{% else %}{% endif %}))
     result.should eq("python3-apt")
@@ -1238,7 +1238,7 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
     v["__common_github_api_headers"] = JSON::Any.new(
       %({{ {'GITHUB_TOKEN': lookup('ansible.builtin.env', 'GITHUB_TOKEN')} if (lookup('ansible.builtin.env', 'GITHUB_TOKEN')) else {} }})
     )
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
 
     started = Time.instant
     result = renderer.render("{{ _common_dependencies }}")
@@ -1250,7 +1250,7 @@ describe Krikri::VariableSubstitutor::CrinjaRenderer do
 end
 
 # Round 170 (2026-08-23): found via buluma.bind's own vars/Debian.yml.
-# `CrinjaRenderer.rerender_nested_templates` used to JSON.parse-back
+# `JinjaRenderer.rerender_nested_templates` used to JSON.parse-back
 # EVERY re-rendered nested-template scalar, not just container-shaped
 # (array/dict) results - so a purely numeric-looking role default like
 # `bind_python_version: "{{ bind_default_python_version }}"` (where the
@@ -1262,12 +1262,12 @@ end
 # `| ternary(...)` and installing the removed python2-era
 # `python-netaddr`/`python-dnspython` package names on every real
 # Debian/Ubuntu target instead of `python3-*`.
-describe "CrinjaRenderer.rerender_nested_templates (round 170 - scalar-vs-container parse-back)" do
+describe "JinjaRenderer.rerender_nested_templates (round 170 - scalar-vs-container parse-back)" do
   it "keeps a purely-numeric-looking nested template as a string, not an int" do
     v = Hash(String, JSON::Any).new
     v["bind_default_python_version"] = JSON::Any.new("3")
     v["bind_python_version"] = JSON::Any.new("{{ bind_default_python_version }}")
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
 
     renderer.render("{{ bind_python_version }}").should eq("3")
     renderer.render("{{ 'True' if (bind_python_version == '3') else 'False' }}").should eq("True")
@@ -1278,7 +1278,7 @@ describe "CrinjaRenderer.rerender_nested_templates (round 170 - scalar-vs-contai
     v["_docker_pip_packages"] = JSON.parse(%({"Debian": ["docker"]}))
     v["ansible_facts"] = JSON.parse(%({"os_family": "Debian"}))
     v["docker_pip_packages"] = JSON::Any.new("{{ _docker_pip_packages[ansible_facts['os_family']] }}")
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
 
     renderer.render("{{ docker_pip_packages | length }}").should eq("1")
   end
@@ -1302,7 +1302,7 @@ describe "CrinjaRenderer.rerender_nested_templates (round 170 - scalar-vs-contai
     v["flag"] = JSON::Any.new(false)
     v["item"] = JSON::Any.new("{{ {'Virtual': 'NO'} if flag else {'Virtual': 'YES'} }}")
 
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
     renderer.render("{% for key, value in item %}{{ key }}={{ value }}{% endfor %}").should eq("Virtual=YES")
   end
 
@@ -1316,7 +1316,7 @@ describe "CrinjaRenderer.rerender_nested_templates (round 170 - scalar-vs-contai
     v = Hash(String, JSON::Any).new
     v["base_rules"] = JSON.parse(%({"a": 1, "b": 2}))
 
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
     renderer.render("{{ base_rules.copy() }}").should eq("{'a': 1, 'b': 2}")
   end
 
@@ -1330,7 +1330,7 @@ describe "CrinjaRenderer.rerender_nested_templates (round 170 - scalar-vs-contai
     v["base_rules"] = JSON.parse(%({"a": 1, "b": 2}))
     v["overrides"] = JSON.parse(%({"b": 99, "c": 3}))
 
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
     renderer.render(
       "{% set merged = base_rules.copy() %}{% set _ = merged.update(overrides) %}{{ merged }}"
     ).should eq("{'a': 1, 'b': 99, 'c': 3}")
@@ -1342,7 +1342,7 @@ describe "CrinjaRenderer.rerender_nested_templates (round 170 - scalar-vs-contai
     # Ansible's Templar always exposes this global; krikri had no
     # concept of it at all and raised "'environment' is undefined".
     v = Hash(String, JSON::Any).new
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
     ENV["KRIKRI_SPEC_ENV_PROBE"] = "probe-value"
     renderer.render("{{ environment.KRIKRI_SPEC_ENV_PROBE }}").should eq("probe-value")
   ensure
@@ -1362,7 +1362,7 @@ describe "CrinjaRenderer.rerender_nested_templates (round 170 - scalar-vs-contai
     # must survive (real Jinja2: `{%+ ... +%}` keeps the whitespace
     # trim_blocks/lstrip_blocks would otherwise strip on both sides).
     v = Hash(String, JSON::Any).new
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
     rendered = renderer.render(
       "ExecStart=/usr/bin/docuum {%+ if true +%}\n" \
       "StandardOutput=syslog\n" \
@@ -1397,21 +1397,21 @@ describe "CrinjaRenderer.rerender_nested_templates (round 170 - scalar-vs-contai
     v["__postfix_packages"] = JSON::Any.new(
       %({{ __postfix_debian_packages if __postfix_debian else (__postfix_redhat_packages if __postfix_redhat else None) }})
     )
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
 
     renderer.render("{{ __postfix_packages }}").should eq("['mailx', 'postfix']")
 
     v["ansible_os_family"] = JSON::Any.new("Debian")
-    renderer2 = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer2 = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
     renderer2.render("{{ __postfix_packages }}").should eq("['bsd-mailx', 'amavisd-new']")
 
     v["ansible_os_family"] = JSON::Any.new("Suse")
-    renderer3 = Krikri::VariableSubstitutor::CrinjaRenderer.new(v)
+    renderer3 = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
     renderer3.render("{{ __postfix_packages }}").should eq("")
   end
 end
 
-describe "CrinjaRenderer inline string-literal escapes (round 951xxx digit-escape)" do
+describe "JinjaRenderer inline string-literal escapes (round 951xxx digit-escape)" do
   # Real ansible-playbook 2.19.11 does NOT decode string-literal escapes
   # in inline `{{ }}` task-arg templating: its own AnsibleLexer doubles
   # every backslash before Jinja's `unicode-escape` decode, netting exact
@@ -1420,7 +1420,7 @@ describe "CrinjaRenderer inline string-literal escapes (round 951xxx digit-escap
   # environment - replacing the old preserve_inline_string_escapes
   # re-encoding workaround at ExpressionEvaluator's leading-paren call
   # site. All expectations below match live real-ansible-playbook runs.
-  renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(Hash(String, JSON::Any).new)
+  renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(Hash(String, JSON::Any).new)
 
   it "renders a digit escape as a literal backslash, not an octal control character" do
     # Used to render V<0x01>-<0x02>: `\1` was read as an octal escape.

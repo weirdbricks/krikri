@@ -51,7 +51,7 @@ describe "unknown test names hard-fail like real Jinja2/Ansible" do
     # Previously mislabeled "No filter named 'unknown'." - Crinja's
     # unknown-TEST error wording wasn't recognized, so it fell into the
     # generic unknown-filter mapping with a discarded name.
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(vars)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(vars)
     expect_raises(Krikri::VariableSubstitutor::UnknownTestError,
       "No test named 'list'.") do
       renderer.render(%({% if lst is list %}yes{% endif %}))

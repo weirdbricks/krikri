@@ -6,7 +6,7 @@ require "../../src/krikri/conditional_evaluator"
 # only variable_substitutor sees a BARE Crinja env, so both "engines" would
 # error identically and any parity assertion would be vacuously true. Load
 # the registrations explicitly so the pure side sees the real feature set.
-require "../../src/krikri/jinja_filters"
+require "../../src/krikri/krikri_jinja_filters"
 require "../../src/krikri/krikri_jinja_filters"
 
 # P2.16 (FINDINGS_CHECKLIST.md) - the cross-engine parity matrix.
@@ -71,7 +71,7 @@ end
 # The fork's `Template#render(bindings)` wraps each value in
 # `Crinja::Value.new` directly and JSON::Any is not a supported raw type, so
 # the pure side gets the vars through the SAME converter the engine's own
-# context uses (`CrinjaRenderer.json_any_to_crinja_value`) - that way both
+# context uses (`JinjaRenderer.json_any_to_crinja_value`) - that way both
 # engines see byte-identical data, which is the parity this file exists to
 # assert.
 # The template engine a real `.j2` render uses: the shared krikri-jinja

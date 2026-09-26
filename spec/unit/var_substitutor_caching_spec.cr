@@ -123,7 +123,7 @@ describe Krikri::VarSubstitutor do
       # `grafana_package: "grafana{% if ansible_architecture == 'armv6l'
       # %}-rpi{% endif %}{{ (grafana_version != 'latest') |
       # ternary('=' ~ grafana_version, '') }}"` (vars/debian.yml -
-      # unconditional role vars, not a default). CrinjaRenderer#
+      # unconditional role vars, not a default). JinjaRenderer#
       # prepare_crinja_vars pre-renders any `{{`-containing value via a
       # *fresh* VarSubstitutor (documented there as safe since it "can't
       # recurse back into this same render" - true only when the value

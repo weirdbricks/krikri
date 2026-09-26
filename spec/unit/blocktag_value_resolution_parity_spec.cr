@@ -13,7 +13,7 @@ require "../../src/krikri/variable_substitutor"
 #   1. `scan_block_tag_refs` checked a dotted/bracketed chain as a flat
 #      @vars key, so ANY `{% if %}` using ordinary attribute access on a
 #      defined dict was "undefined" under strict - and
-#      `CrinjaRenderer.convert_var`'s `unresolvable_template?` probe turned
+#      `JinjaRenderer.convert_var`'s `unresolvable_template?` probe turned
 #      that into a real Crinja::Undefined for the whole variable.
 #   2. `rerender_string_value` only re-rendered values containing `{{`, so
 #      a pure `{% %}`-block value reached Crinja's context raw - invisible

@@ -8,9 +8,6 @@ authors:
   - Krikri Contributors
 
 dependencies:
-  crinja:
-    github: weirdbricks/crinja
-    tag: crystal-play-0.9.60
   krikri-jinja:
     github: weirdbricks/krikri-jinja
     tag: v0.4.13

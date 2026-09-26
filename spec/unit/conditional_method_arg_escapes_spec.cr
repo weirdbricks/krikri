@@ -1,7 +1,7 @@
 require "../spec_helper"
 require "base64"
 require "../../src/krikri/conditional_evaluator"
-require "../../src/krikri/jinja_filters"
+require "../../src/krikri/krikri_jinja_filters"
 
 # String-literal escapes inside a `when:`/`assert:` expression must decode
 # (vanilla Jinja / real ansible-core condition-compiler semantics), whereas

@@ -1,7 +1,7 @@
 require "../spec_helper"
 require "http/server"
 require "../../src/krikri/variable_substitutor/expression_evaluator"
-require "../../src/krikri/jinja_filters"
+require "../../src/krikri/krikri_jinja_filters"
 
 # A tiny local HTTP server (same pattern as get_url_spec.cr) serving a
 # small multi-line checksums-style file plus a redirect, since real

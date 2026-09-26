@@ -40,12 +40,12 @@ describe Krikri::VariableSubstitutor::JinjaVarResolver do
       "name"   => JSON::Any.new("{{ 'x' ~ suffix }}"),
       "suffix" => JSON::Any.new("1"),
     }
-    renderer = Krikri::VariableSubstitutor::CrinjaRenderer.new(vars)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(vars)
     renderer.evaluate_value!("[1, omit, 3]").should eq(JSON.parse("[1, 3]"))
     renderer.evaluate_value!("name").should eq(JSON::Any.new("x1"))
     renderer.evaluate_value!("never_set").should be_nil
     renderer.evaluate_value!(%q('V\1')).should eq(JSON::Any.new(%q(V\1)))
-    Krikri::VariableSubstitutor::CrinjaRenderer.new(vars, true)
+    Krikri::VariableSubstitutor::JinjaRenderer.new(vars, true)
       .evaluate_value!(%q('a\nb')).should eq(JSON::Any.new("a\nb"))
   end
 end

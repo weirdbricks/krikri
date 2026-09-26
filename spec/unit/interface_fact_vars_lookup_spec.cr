@@ -4,7 +4,7 @@ require "../../src/krikri/variable_substitutor/expression_evaluator"
 # Pull in the real Ansible-specific Crinja filter registrations, as
 # expression_evaluator_spec.cr does - without this the ExpressionEvaluator's
 # Crinja env has none of them.
-require "../../src/krikri/jinja_filters"
+require "../../src/krikri/krikri_jinja_filters"
 
 # Round 214 - ricsanfre.dnsmasq on a real Ubuntu 24.04 Kata host failed its
 # first real task with "object of type 'dict' has no attribute 'ansible_eth0'"

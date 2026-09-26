@@ -1,6 +1,6 @@
 require "json"
 require "./filter_engine"
-require "./crinja_renderer"
+require "./jinja_renderer"
 
 module Krikri
   module VariableSubstitutor
@@ -254,7 +254,7 @@ module Krikri
             # already handled it), but this plain-lookup fallback for a
             # bare comparison operand didn't.
             if raw.includes?("{%") || raw.includes?("{#")
-              rendered = CrinjaRenderer.new(@vars).render(raw)
+              rendered = JinjaRenderer.new(@vars).render(raw)
               return rendered.to_i64? || rendered
             end
             if raw.includes?("{{")
