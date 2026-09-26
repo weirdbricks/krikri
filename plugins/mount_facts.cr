@@ -322,10 +322,12 @@ module Krikri
         "block_size"      => frsize,
         "block_total"     => blocks,
         "block_available" => bavail,
-        "block_used"      => blocks - bfree,
+        # Real get_mount_size() computes block_used from f_bavail (the
+        # non-root available count), not f_bfree, and publishes no
+        # size_used at all.
+        "block_used"      => blocks - bavail,
         "size_total"      => frsize * blocks,
         "size_available"  => frsize * bavail,
-        "size_used"       => frsize * (blocks - bfree),
         "inode_total"     => files,
         "inode_available" => favail,
         "inode_used"      => files - favail,
@@ -343,12 +345,18 @@ module Krikri
     # uses for ancient lsblk is omitted.)
     private def get_partition_uuid(device : String) : String?
       real_device = real_path(device)
-      Dir.children("/dev/disk/by-uuid").each do |uuid|
-        begin
-          return uuid if File.real_path(File.join("/dev/disk/by-uuid", uuid)) == real_device
-        rescue
-          next
+      begin
+        Dir.children("/dev/disk/by-uuid").each do |uuid|
+          begin
+            return uuid if File.real_path(File.join("/dev/disk/by-uuid", uuid)) == real_device
+          rescue
+            next
+          end
         end
+      rescue
+        # /dev/disk/by-uuid doesn't exist on this host (e.g. a container
+        # image without it) - fall through to the lsblk path, which is
+        # what real Ansible's mount_facts relies on anyway.
       end
 
       if executable?("lsblk")

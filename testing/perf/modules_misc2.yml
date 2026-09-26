@@ -1,0 +1,654 @@
+---
+# Modules/misc2 benchmark: companion to the other per-module coverage
+# playbooks (modules_files.yml, modules_packages.yml, modules_security.yml,
+# modules_systems.yml, modules_data.yml, modules_xml.yml,
+# modules_files_storage.yml). Theme: the modules that had no synthetic
+# coverage yet, each exercised with REAL side effects (not just parsing)
+# so a divergence is directly comparable by running the same playbook
+# through real ansible-playbook and krikri-playbook side by side:
+#   pause, mount_facts, current_container_facts, deploy_helper,
+#   py_module (via the playbook-dir library/ fixture krikri_py_probe.py
+#   next to this playbook), apache2_module, rpm_key, dnf5, mysql_db,
+#   postgresql_db
+#
+# Safety contract, same conventions as the sibling playbooks:
+# - deploy_helper's whole release tree is confined to
+#   /tmp/krikri-modmisc2-<epoch>/deploy; state=absent removes it again
+#   in the cleanup section.
+# - The apache2_module / rpm_key / dnf5 / mysql_db / postgresql_db
+#   sections are gated on capability probes (`which <tool>`, plus for
+#   the databases an actual connect probe, all failed_when: false) and
+#   skip with a clean debug notice when the tool/service is absent:
+#   this playbook must run cleanly (no failures, no hard dependency on
+#   any of them) on a plain Ubuntu container and a plain Rocky container
+#   that have none of apache2/mysql/postgres/rpm/dnf5 installed. NO
+#   packages are installed as a side effect here (installing packages
+#   is modules_packages.yml's theme).
+# - The gated sections only ever perform IDEMPOTENT, no-net-change
+#   operations: apache2_module drives one module through whichever
+#   state it is already in (pre-checked via `apache2ctl -M`, so both
+#   the present and absent code paths get exercised without ever
+#   changing apache's real config), dnf5 does state=present on an
+#   always-installed package (bash) plus a read-only `list: installed`
+#   query, rpm_key re-imports the distro's OWN release key from the
+#   target's local /etc/pki/rpm-gpg file (no network fetch), and
+#   mysql_db/postgresql_db create + idempotency re-check + a facts
+#   query on a run-scoped throwaway database name, dropped again
+#   (state=absent) at the end of the play. rpm_key deliberately gets
+#   no state=absent: removing a real distro trust key would be a real
+#   system mutation.
+# - pause exercises only the seconds: form, prompt-less. Real Ansible's
+#   pause with no duration blocks on interactive input (with closed
+#   stdin it warns and continues) - the interactive shape is never
+#   exercised here so neither engine can hang the run.
+# - Byte-diff pattern after anything that renders or writes content:
+#   cat/register/debug, so output can be eyeballed across engines.
+
+- name: Misc module-coverage benchmark (round 2)
+  hosts: all
+  gather_facts: true
+
+  vars:
+    mm2_bench_mode: misc2
+    mm2_run_id: "{{ ansible_date_time.epoch }}"
+    # Every target-side path hangs off this run-scoped root, so two
+    # back-to-back engine runs never see each other's leftovers.
+    mm2_dir: "/tmp/krikri-modmisc2-{{ mm2_run_id }}"
+    mm2_deploy_dir: "{{ mm2_dir }}/deploy"
+    # Valid SQL identifiers: run_id is the epoch, digits only.
+    mm2_mysql_db_name: "krikri_modmisc2_{{ mm2_run_id }}"
+    mm2_pg_db_name: "krikri_modmisc2_pg_{{ mm2_run_id }}"
+
+  tasks:
+    # ---------------------------------------------------------------
+    # Setup: the run-scoped root everything else hangs off.
+    # ---------------------------------------------------------------
+    - name: Announce modules-misc2 benchmark start
+      ansible.builtin.debug:
+        msg: "modules-misc2 benchmark {{ mm2_run_id }} on {{ ansible_hostname }} ({{ mm2_bench_mode }})"
+
+    - name: Create benchmark root directory
+      ansible.builtin.file:
+        path: "{{ mm2_dir }}"
+        state: directory
+        mode: "0755"
+
+    # ---------------------------------------------------------------
+    # pause: seconds: form only (prompt-less; never the interactive
+    # no-duration shape). The result's stdout is always "Paused for
+    # X seconds" computed from the real elapsed wall clock, never the
+    # requested amount - a classic cross-engine diff surface.
+    # ---------------------------------------------------------------
+    - name: Pause one second (prompt-less)
+      ansible.builtin.pause:
+        seconds: 1
+      register: mm2_pause_seconds
+
+    - name: Check pause seconds result
+      ansible.builtin.assert:
+        that:
+          - "'Paused for' in mm2_pause_seconds.stdout"
+          - mm2_pause_seconds.changed == false
+
+    - name: Pause one second with echo disabled
+      ansible.builtin.pause:
+        seconds: 1
+        echo: false
+      register: mm2_pause_echo
+
+    - name: Debug pause echo result
+      ansible.builtin.debug:
+        msg: "pause echo=false: stdout='{{ mm2_pause_echo.stdout }}' delta={{ mm2_pause_echo.delta }}"
+
+    # ---------------------------------------------------------------
+    # mount_facts: reads the real /proc/mounts (plus the fstab-family
+    # sources); pure read. Register + shape checks, so a divergent
+    # mount_points shape shows up immediately.
+    # ---------------------------------------------------------------
+    - name: Gather mount facts
+      ansible.builtin.mount_facts:
+      register: mm2_mounts
+
+    # mount_facts publishes the bare fact `mount_points` - a DICT keyed
+    # by mount point (first source wins per point), plus the full list
+    # as aggregate_mounts - so the follow-ups consume the dict shape a
+    # production role would. Register is kept for recap parity.
+    - name: Debug mount facts shape
+      ansible.builtin.debug:
+        msg: "mount_facts: {{ mount_points | length }} mount points: {{ mount_points | dict2items | map(attribute='key') | list }}"
+
+    - name: Debug the root mount entry
+      ansible.builtin.debug:
+        msg: "mount_facts root entry: {{ mount_points['/'] }}"
+
+    - name: Assert mount facts non-empty with root present
+      ansible.builtin.assert:
+        that:
+          - mount_points | length > 0
+          - mount_points['/'] is defined
+
+    # ---------------------------------------------------------------
+    # current_container_facts: reads /proc/self/cpuset and
+    # /proc/self/mountinfo; pure read. Register + debug the fact keys
+    # the module publishes.
+    # ---------------------------------------------------------------
+    - name: Detect current container
+      community.docker.current_container_facts:
+      register: mm2_ccf
+
+    - name: Debug container facts
+      ansible.builtin.debug:
+        msg: "current_container_facts: running_in_container={{ ansible_module_running_in_container }} type='{{ ansible_module_container_type }}' id='{{ ansible_module_container_id }}'"
+
+    # ---------------------------------------------------------------
+    # deploy_helper: capistrano-style release tree, entirely under the
+    # run-scoped deploy dir. query -> present -> write into the new
+    # release -> finalize -> query again; state=absent tears the whole
+    # tree down in the cleanup section. The published deploy_helper
+    # fact (real gather_facts() dict) is what production roles consume
+    # (deploy_helper.new_release_path).
+    # ---------------------------------------------------------------
+    - name: Query deploy layout before anything exists
+      community.general.deploy_helper:
+        path: "{{ mm2_deploy_dir }}"
+        state: query
+      register: mm2_dh_query_before
+
+    - name: Debug query-before result
+      ansible.builtin.debug:
+        msg: "deploy_helper query-before: prospective_release={{ deploy_helper.new_release }} previous_release={{ deploy_helper.previous_release }}"
+
+    - name: Create the deploy layout and a new release
+      community.general.deploy_helper:
+        path: "{{ mm2_deploy_dir }}"
+        state: present
+        release: "r{{ mm2_run_id }}"
+      register: mm2_dh_present
+
+    - name: Debug present result
+      ansible.builtin.debug:
+        msg: "deploy_helper present: release={{ deploy_helper.new_release }} new_release_path={{ deploy_helper.new_release_path }}"
+
+    - name: Assert present published the layout facts
+      ansible.builtin.assert:
+        that:
+          - mm2_dh_present.changed
+          - deploy_helper.new_release == 'r' ~ mm2_run_id
+          - deploy_helper.new_release_path == mm2_deploy_dir ~ '/releases/r' ~ mm2_run_id
+
+    - name: Create the new release directory (deploy_helper does not mkdir it)
+      ansible.builtin.file:
+        path: "{{ deploy_helper.new_release_path }}"
+        state: directory
+        mode: "0755"
+
+    - name: Write a payload file into the new release
+      ansible.builtin.copy:
+        content: "release = r{{ mm2_run_id }}\nrun = {{ mm2_run_id }}\n"
+        dest: "{{ deploy_helper.new_release_path }}/index.html"
+        mode: "0644"
+
+    - name: Read back the release payload
+      ansible.builtin.command: cat "{{ deploy_helper.new_release_path }}/index.html"
+      register: mm2_dh_payload
+      changed_when: false
+
+    - name: Check release payload byte-diff
+      ansible.builtin.assert:
+        that:
+          - mm2_dh_payload.stdout is search('release = r' ~ mm2_run_id)
+          - mm2_dh_payload.stdout is search('run = ' ~ mm2_run_id)
+
+    - name: Finalize the release (point current at it)
+      community.general.deploy_helper:
+        path: "{{ mm2_deploy_dir }}"
+        state: finalize
+        release: "r{{ mm2_run_id }}"
+      register: mm2_dh_finalize
+
+    - name: Stat the current symlink
+      ansible.builtin.stat:
+        path: "{{ mm2_deploy_dir }}/current"
+      register: mm2_dh_current
+
+    - name: Debug current symlink shape
+      ansible.builtin.debug:
+        msg: "deploy current: islnk={{ mm2_dh_current.stat.islnk }} lnk_target='{{ mm2_dh_current.stat.lnk_target | default('') }}'"
+
+    - name: Check finalized current symlink
+      ansible.builtin.assert:
+        that:
+          - mm2_dh_finalize.changed
+          - mm2_dh_current.stat.islnk
+          - mm2_dh_current.stat.lnk_target == mm2_deploy_dir ~ '/releases/r' ~ mm2_run_id
+
+    - name: Query deploy layout after finalize
+      community.general.deploy_helper:
+        path: "{{ mm2_deploy_dir }}"
+        state: query
+        release: "r{{ mm2_run_id }}"
+      register: mm2_dh_query_after
+
+    - name: Debug query-after result
+      ansible.builtin.debug:
+        msg: "deploy_helper query-after: previous_release={{ deploy_helper.previous_release }} new_release={{ deploy_helper.new_release }}"
+
+    # ---------------------------------------------------------------
+    # py_module: role-private library/<name>.py execution. The fixture
+    # (krikri_py_probe.py in this playbook's library/) probes
+    # importability of modules that are virtually always present (os,
+    # json) and one that is virtually never present, exercising the
+    # not-found path; the fixture always exits ok, so nothing here can
+    # fail the run on a host with any Python 3.
+    # ---------------------------------------------------------------
+    - name: Probe python module importability via library fixture
+      krikri_py_probe: {}
+      register: mm2_pymod
+
+    - name: Debug py_module probe result
+      ansible.builtin.debug:
+        msg: "py_module probe: found={{ mm2_pymod.found }} missing={{ mm2_pymod.missing }}"
+
+    - name: Assert py_module probe found and missing paths
+      ansible.builtin.assert:
+        that:
+          - "'os' in mm2_pymod.found"
+          - "'json' in mm2_pymod.found"
+          - mm2_pymod.missing | length == 1
+          - "'krikri_modmisc2_no_such_module_9x7' in mm2_pymod.missing"
+          - mm2_pymod.changed == false
+
+    # ---------------------------------------------------------------
+    # Capability probes for the gated sections. Every probe is
+    # failed_when: false; a failing probe produces a clean debug skip
+    # notice and the section's tasks are when:-guarded away. Sections
+    # gated directly on the probe rc's, the established pattern from
+    # modules_security.yml.
+    # ---------------------------------------------------------------
+    - name: Probe apache2ctl
+      ansible.builtin.command: which apache2ctl
+      register: mm2_apache_probe
+      failed_when: false
+      changed_when: false
+
+    - name: Probe a2enmod
+      ansible.builtin.command: which a2enmod
+      register: mm2_a2enmod_probe
+      failed_when: false
+      changed_when: false
+
+    - name: Probe rpm
+      ansible.builtin.command: which rpm
+      register: mm2_rpm_probe
+      failed_when: false
+      changed_when: false
+
+    - name: Probe dnf5
+      ansible.builtin.command: which dnf5
+      register: mm2_dnf5_probe
+      failed_when: false
+      changed_when: false
+
+    - name: Probe mysql client
+      ansible.builtin.command: which mysql
+      register: mm2_mysql_probe
+      failed_when: false
+      changed_when: false
+
+    - name: Probe psql client
+      ansible.builtin.command: which psql
+      register: mm2_psql_probe
+      failed_when: false
+      changed_when: false
+
+    # The database connect probes mirror the modules' own localhost/TCP
+    # default connection (crystal-mysql and crystal-pg both connect to
+    # 127.0.0.1 when the login_host defaults apply), so a passing probe
+    # means the module itself can actually connect, not just that the
+    # client binary is present.
+    - name: Probe mysql connectivity
+      ansible.builtin.command: mysql -h 127.0.0.1 -e "SELECT 1"
+      register: mm2_mysql_conn
+      failed_when: false
+      changed_when: false
+      when: mm2_mysql_probe.rc == 0
+
+    - name: Probe psql connectivity
+      ansible.builtin.command: psql -h 127.0.0.1 -U postgres -c "SELECT 1"
+      register: mm2_psql_conn
+      failed_when: false
+      changed_when: false
+      when: mm2_psql_probe.rc == 0
+
+    - name: Notice apache2_module section skipped
+      ansible.builtin.debug:
+        msg: "skipping apache2_module section: apache2ctl/a2enmod absent (apache2 not installed)"
+      when: mm2_apache_probe.rc != 0 or mm2_a2enmod_probe.rc != 0
+
+    - name: Notice rpm_key section skipped
+      ansible.builtin.debug:
+        msg: "skipping rpm_key section: rpm absent (not an RPM-based system)"
+      when: mm2_rpm_probe.rc != 0
+
+    - name: Notice dnf5 section skipped
+      ansible.builtin.debug:
+        msg: "skipping dnf5 section: dnf5 absent (pre-dnf5 Rocky/RHEL or a Debian-family host)"
+      when: mm2_dnf5_probe.rc != 0
+
+    - name: Notice mysql_db section skipped
+      ansible.builtin.debug:
+        msg: "skipping mysql_db section: mysql client absent or server unreachable"
+      when: mm2_mysql_probe.rc != 0 or mm2_mysql_conn.rc | default(1) != 0
+
+    - name: Notice postgresql_db section skipped
+      ansible.builtin.debug:
+        msg: "skipping postgresql_db section: psql absent or server unreachable"
+      when: mm2_psql_probe.rc != 0 or mm2_psql_conn.rc | default(1) != 0
+
+    # ---------------------------------------------------------------
+    # apache2_module: zero-mutation exercise - userdir is driven
+    # through whichever state it is ALREADY in (pre-checked via
+    # apache2ctl -M), so the present path runs on an already-enabled
+    # module and the absent path on an already-disabled one; both must
+    # report changed=false. Nothing about apache's real config changes.
+    # ---------------------------------------------------------------
+    - name: List enabled apache modules
+      ansible.builtin.command: apache2ctl -M
+      register: mm2_apache_modules
+      changed_when: false
+      failed_when: false
+      when: mm2_apache_probe.rc == 0 and mm2_a2enmod_probe.rc == 0
+
+    - name: Run apache2_module present path (already-enabled module)
+      community.general.apache2_module:
+        name: userdir
+        state: present
+      register: mm2_apache_present_path
+      when: mm2_apache_probe.rc == 0 and mm2_a2enmod_probe.rc == 0 and ((mm2_apache_modules.stdout | default('')) is search('userdir'))
+
+    - name: Run apache2_module absent path (already-disabled module)
+      community.general.apache2_module:
+        name: userdir
+        state: absent
+      register: mm2_apache_absent_path
+      when: mm2_apache_probe.rc == 0 and mm2_a2enmod_probe.rc == 0 and not ((mm2_apache_modules.stdout | default('')) is search('userdir'))
+
+    - name: Debug apache2_module present-path result
+      ansible.builtin.debug:
+        msg: "apache2_module userdir present-path: changed={{ mm2_apache_present_path.changed }} (false when already enabled)"
+      when: mm2_apache_probe.rc == 0 and mm2_a2enmod_probe.rc == 0 and ((mm2_apache_modules.stdout | default('')) is search('userdir'))
+
+    - name: Debug apache2_module absent-path result
+      ansible.builtin.debug:
+        msg: "apache2_module userdir absent-path: changed={{ mm2_apache_absent_path.changed }} (false when already disabled)"
+      when: mm2_apache_probe.rc == 0 and mm2_a2enmod_probe.rc == 0 and not ((mm2_apache_modules.stdout | default('')) is search('userdir'))
+
+    - name: Assert apache2_module present path was idempotent
+      ansible.builtin.assert:
+        that:
+          - mm2_apache_present_path.changed == false
+      when: mm2_apache_probe.rc == 0 and mm2_a2enmod_probe.rc == 0 and ((mm2_apache_modules.stdout | default('')) is search('userdir'))
+
+    - name: Assert apache2_module absent path was idempotent
+      ansible.builtin.assert:
+        that:
+          - mm2_apache_absent_path.changed == false
+      when: mm2_apache_probe.rc == 0 and mm2_a2enmod_probe.rc == 0 and not ((mm2_apache_modules.stdout | default('')) is search('userdir'))
+
+    # ---------------------------------------------------------------
+    # rpm_key: RPM-family only. Re-imports the distro's OWN release
+    # key from the target's local /etc/pki/rpm-gpg file - no network -
+    # which is safe to re-import idempotently (changed=false when the
+    # key is already trusted, changed=true on first import of a
+    # distro-trusted key; both benign). No state=absent here: removing
+    # a real distro trust key would be a real system mutation.
+    # ---------------------------------------------------------------
+    - name: List installed rpm gpg keys
+      ansible.builtin.command: "rpm -q gpg-pubkey --qf '%{version} %{summary}\\n'"
+      register: mm2_rpm_keys
+      changed_when: false
+      failed_when: false
+      when: mm2_rpm_probe.rc == 0
+
+    - name: Debug installed rpm gpg keys
+      ansible.builtin.debug:
+        msg: "installed gpg-pubkey entries: {{ mm2_rpm_keys.stdout_lines }}"
+      when: mm2_rpm_probe.rc == 0
+
+    - name: Find a local distro release key file
+      ansible.builtin.shell: ls -1 /etc/pki/rpm-gpg/RPM-GPG-KEY-* 2>/dev/null | head -1
+      register: mm2_rpm_keyfile
+      changed_when: false
+      failed_when: false
+      when: mm2_rpm_probe.rc == 0
+
+    - name: Notice rpm_key section skipped (no local key files)
+      ansible.builtin.debug:
+        msg: "skipping rpm_key section: rpm present but no /etc/pki/rpm-gpg release key files"
+      when: mm2_rpm_probe.rc == 0 and (mm2_rpm_keyfile.stdout | default('')) == ''
+
+    - name: Import the distro release key (idempotent re-import)
+      ansible.builtin.rpm_key:
+        key: "{{ mm2_rpm_keyfile.stdout }}"
+        state: present
+      register: mm2_rpm_key_import
+      when: mm2_rpm_probe.rc == 0 and (mm2_rpm_keyfile.stdout | default('')) != ''
+
+    - name: Debug rpm_key import result
+      ansible.builtin.debug:
+        msg: "rpm_key import of {{ mm2_rpm_keyfile.stdout }}: changed={{ mm2_rpm_key_import.changed }} (false when the key was already trusted)"
+      when: mm2_rpm_probe.rc == 0 and (mm2_rpm_keyfile.stdout | default('')) != ''
+
+    # ---------------------------------------------------------------
+    # dnf5: read-only/idempotent operations only - state=present on an
+    # always-installed package (bash; no install/remove anywhere) and
+    # a `list: installed` query. Gated on the dnf5 binary, skipped
+    # cleanly on older Rocky/RHEL and all Debian/Ubuntu.
+    # ---------------------------------------------------------------
+    - name: Check an always-installed package via dnf5
+      ansible.builtin.dnf5:
+        name: bash
+        state: present
+      register: mm2_dnf5_bash
+      when: mm2_dnf5_probe.rc == 0
+
+    - name: Debug dnf5 bash result
+      ansible.builtin.debug:
+        msg: "dnf5 bash state=present: changed={{ mm2_dnf5_bash.changed }} msg='{{ mm2_dnf5_bash.msg }}'"
+      when: mm2_dnf5_probe.rc == 0
+
+    - name: Assert dnf5 bash was idempotent
+      ansible.builtin.assert:
+        that:
+          - mm2_dnf5_bash.changed == false
+      when: mm2_dnf5_probe.rc == 0
+
+    - name: List installed packages via dnf5
+      ansible.builtin.dnf5:
+        list: installed
+      register: mm2_dnf5_list
+      when: mm2_dnf5_probe.rc == 0
+
+    - name: Debug dnf5 list result
+      ansible.builtin.debug:
+        msg: "dnf5 list installed: {{ mm2_dnf5_list.results | length }} entries, first='{{ (mm2_dnf5_list.results | first).nevra }}'"
+      when: (mm2_dnf5_probe.rc == 0) and mm2_dnf5_list.results | length > 0
+
+    - name: Assert dnf5 list returned entries
+      ansible.builtin.assert:
+        that:
+          - mm2_dnf5_list.results | length > 0
+      when: mm2_dnf5_probe.rc == 0
+
+    # ---------------------------------------------------------------
+    # mysql_db: gated on the mysql client AND an actual connect probe
+    # (`mysql -e "SELECT 1"`); skipped cleanly otherwise. Creates a
+    # run-scoped throwaway database, re-asserts it present
+    # (idempotency), verifies it via a query + mysql_info facts, and
+    # drops it again. No server install/start as a side effect.
+    # ---------------------------------------------------------------
+    - name: Create throwaway mysql database
+      community.mysql.mysql_db:
+        name: "{{ mm2_mysql_db_name }}"
+        state: present
+        encoding: utf8mb4
+      register: mm2_mysql_create
+      when: mm2_mysql_probe.rc == 0 and mm2_mysql_conn.rc | default(1) == 0
+
+    - name: Re-assert throwaway mysql database present
+      community.mysql.mysql_db:
+        name: "{{ mm2_mysql_db_name }}"
+        state: present
+        encoding: utf8mb4
+      register: mm2_mysql_create_again
+      when: mm2_mysql_probe.rc == 0 and mm2_mysql_conn.rc | default(1) == 0
+
+    - name: Check mysql create idempotency
+      ansible.builtin.assert:
+        that:
+          - mm2_mysql_create.changed
+          - mm2_mysql_create_again.changed == false
+      when: mm2_mysql_probe.rc == 0 and mm2_mysql_conn.rc | default(1) == 0
+
+    - name: Query mysql for the throwaway database
+      community.mysql.mysql_query:
+        query: "SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = '{{ mm2_mysql_db_name }}'"
+      register: mm2_mysql_check
+      when: mm2_mysql_probe.rc == 0 and mm2_mysql_conn.rc | default(1) == 0
+
+    - name: Debug mysql query result
+      ansible.builtin.debug:
+        msg: "mysql query: {{ mm2_mysql_check.query_result }}"
+      when: mm2_mysql_probe.rc == 0 and mm2_mysql_conn.rc | default(1) == 0
+
+    - name: Check mysql query found the throwaway database
+      ansible.builtin.assert:
+        that:
+          - mm2_mysql_check.query_result | length == 1
+          - mm2_mysql_check.query_result[0].SCHEMA_NAME == mm2_mysql_db_name
+      when: mm2_mysql_probe.rc == 0 and mm2_mysql_conn.rc | default(1) == 0
+
+    - name: Gather mysql server info
+      community.mysql.mysql_info:
+        filter: version
+      register: mm2_mysql_info
+      when: mm2_mysql_probe.rc == 0 and mm2_mysql_conn.rc | default(1) == 0
+
+    - name: Debug mysql info
+      ansible.builtin.debug:
+        msg: "mysql_info: {{ mm2_mysql_info.version }}"
+      when: mm2_mysql_probe.rc == 0 and mm2_mysql_conn.rc | default(1) == 0
+
+    - name: Drop throwaway mysql database
+      community.mysql.mysql_db:
+        name: "{{ mm2_mysql_db_name }}"
+        state: absent
+      register: mm2_mysql_drop
+      when: mm2_mysql_probe.rc == 0 and mm2_mysql_conn.rc | default(1) == 0
+
+    - name: Check mysql drop happened
+      ansible.builtin.assert:
+        that:
+          - mm2_mysql_drop.changed
+      when: mm2_mysql_probe.rc == 0 and mm2_mysql_conn.rc | default(1) == 0
+
+    # ---------------------------------------------------------------
+    # postgresql_db: same pattern as mysql_db - gated on the psql
+    # client AND an actual connect probe (`psql -U postgres -c "SELECT
+    # 1"`, the same socket/peer path the module's localhost defaults
+    # use), skipped cleanly otherwise. Create + idempotency re-check +
+    # a pg_database query on a run-scoped throwaway name, dropped again
+    # at the end of the play. No server install/start as a side effect.
+    # ---------------------------------------------------------------
+    - name: Create throwaway postgres database
+      community.postgresql.postgresql_db:
+        name: "{{ mm2_pg_db_name }}"
+        state: present
+        encoding: UTF8
+      register: mm2_pg_create
+      when: mm2_psql_probe.rc == 0 and mm2_psql_conn.rc | default(1) == 0
+
+    - name: Re-assert throwaway postgres database present
+      community.postgresql.postgresql_db:
+        name: "{{ mm2_pg_db_name }}"
+        state: present
+        encoding: UTF8
+      register: mm2_pg_create_again
+      when: mm2_psql_probe.rc == 0 and mm2_psql_conn.rc | default(1) == 0
+
+    - name: Check postgres create idempotency
+      ansible.builtin.assert:
+        that:
+          - mm2_pg_create.changed
+          - mm2_pg_create_again.changed == false
+      when: mm2_psql_probe.rc == 0 and mm2_psql_conn.rc | default(1) == 0
+
+    - name: Query postgres for the throwaway database
+      community.postgresql.postgresql_query:
+        query: "SELECT datname FROM pg_database WHERE datname = '{{ mm2_pg_db_name }}'"
+      register: mm2_pg_check
+      when: mm2_psql_probe.rc == 0 and mm2_psql_conn.rc | default(1) == 0
+
+    - name: Debug postgres query result
+      ansible.builtin.debug:
+        msg: "postgres query: {{ mm2_pg_check.query_result }}"
+      when: mm2_psql_probe.rc == 0 and mm2_psql_conn.rc | default(1) == 0
+
+    - name: Check postgres query found the throwaway database
+      ansible.builtin.assert:
+        that:
+          - mm2_pg_check.query_result | length == 1
+          - mm2_pg_check.query_result[0].datname == mm2_pg_db_name
+      when: mm2_psql_probe.rc == 0 and mm2_psql_conn.rc | default(1) == 0
+
+    - name: Drop throwaway postgres database
+      community.postgresql.postgresql_db:
+        name: "{{ mm2_pg_db_name }}"
+        state: absent
+      register: mm2_pg_drop
+      when: mm2_psql_probe.rc == 0 and mm2_psql_conn.rc | default(1) == 0
+
+    - name: Check postgres drop happened
+      ansible.builtin.assert:
+        that:
+          - mm2_pg_drop.changed
+      when: mm2_psql_probe.rc == 0 and mm2_psql_conn.rc | default(1) == 0
+
+    # ---------------------------------------------------------------
+    # KNOWN KRIKRI DIVERGENCE (documented, deliberately not worked
+    # around): real deploy_helper's state=present creates project_path,
+    # releases_path and shared_path but NEVER current_path (and its
+    # check_link fails outright when current exists as a non-symlink);
+    # ---------------------------------------------------------------
+    # Cleanup: deploy_helper state=absent removes the whole release
+    # tree (and publishes its empty-list facts sentinel), then the
+    # run-scoped root goes away entirely.
+    # ---------------------------------------------------------------
+    - name: Tear down the deploy tree
+      community.general.deploy_helper:
+        path: "{{ mm2_deploy_dir }}"
+        state: absent
+      register: mm2_dh_absent
+
+    - name: Debug deploy_helper absent result
+      ansible.builtin.debug:
+        msg: "deploy_helper absent: changed={{ mm2_dh_absent.changed }}"
+
+    - name: Check deploy tree gone
+      ansible.builtin.stat:
+        path: "{{ mm2_deploy_dir }}"
+      register: mm2_deploy_gone
+
+    - name: Assert deploy tree removed
+      ansible.builtin.assert:
+        that:
+          - not mm2_deploy_gone.stat.exists
+
+    - name: Remove benchmark root directory
+      ansible.builtin.file:
+        path: "{{ mm2_dir }}"
+        state: absent
+
+    - name: Announce modules-misc2 benchmark end
+      ansible.builtin.debug:
+        msg: "modules-misc2 benchmark {{ mm2_run_id }} complete"

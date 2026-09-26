@@ -111,12 +111,13 @@ describe "deploy_helper plugin" do
     result["msg"].as_s.should contain("state is unfinished but all of the following are missing: release")
   end
 
-  it "query returns an empty release list for a nonexistent tree" do
+  it "query publishes no top-level releases list for a nonexistent tree" do
     result = PluginSpecHelper.run("deploy_helper",
       {"path" => "/tmp/krikri-deploy-nosuch", "state" => "query"})
 
     result["failed"]?.should be_nil
-    result["releases"].as_a.size.should eq(0)
+    result["releases"]?.should be_nil
+    result["ansible_facts"]["deploy_helper"]["new_release"].raw.should_not be_nil
   end
 
   # Real main() attaches result["ansible_facts"] = {"deploy_helper": facts}
@@ -142,7 +143,42 @@ describe "deploy_helper plugin" do
         facts["unfinished_filename"].as_s.should eq("DEPLOY_UNFINISHED")
         facts["previous_release"].raw.should be_nil
         facts["previous_release_path"].raw.should be_nil
-        Dir.exists?(facts["new_release_path"].as_s).should be_true
+        # Real main() creates only the project/releases/shared dirs; the
+        # new release dir and `current` do not exist after state=present.
+        Dir.exists?(facts["new_release_path"].as_s).should be_false
+        Dir.exists?(facts["current_path"].as_s).should be_false
+        Dir.exists?(facts["releases_path"].as_s).should be_true
+        Dir.exists?(facts["shared_path"].as_s).should be_true
+      ensure
+        FileUtils.rm_rf(root)
+      end
+    end
+
+    it "state=present is idempotent (second call changed=false)" do
+      root = "/tmp/krikri-deploy-idem-#{Random.new.hex(4)}"
+      begin
+        first = PluginSpecHelper.run("deploy_helper",
+          {"path" => root, "state" => "present", "release" => "20260919000004"})
+        first["changed"].as_bool.should be_true
+
+        second = PluginSpecHelper.run("deploy_helper",
+          {"path" => root, "state" => "present", "release" => "20260919000005"})
+        second["failed"]?.should be_nil
+        second["changed"].as_bool.should be_false
+      ensure
+        FileUtils.rm_rf(root)
+      end
+    end
+
+    it "state=present fails when current exists as a real directory (real check_link)" do
+      root = "/tmp/krikri-deploy-notlink-#{Random.new.hex(4)}"
+      begin
+        Dir.mkdir_p(File.join(root, "current"))
+        result = PluginSpecHelper.run("deploy_helper",
+          {"path" => root, "state" => "present", "release" => "20260919000006"})
+
+        result["failed"].as_bool.should be_true
+        result["msg"].as_s.should contain("exists but is not a symbolic link")
       ensure
         FileUtils.rm_rf(root)
       end
