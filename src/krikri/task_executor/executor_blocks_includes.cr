@@ -652,6 +652,11 @@ module Krikri
           vars_context[lv] = items.first
         end
       end
+      # Real Ansible prints the loop item on every result line of a
+      # with_first_found: task (`ok: [host] => (item=...)`) - the found
+      # candidate is the loop item, so the ok line carries its label just
+      # like the looped include_vars: branch above.
+      first_found_item_label = (items && !items.empty?) ? item_display(items.first) : nil
 
       substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
       candidate = begin
@@ -709,7 +714,8 @@ module Krikri
         end
       end
 
-      puts "ok: [#{host.name}]".colorize(:green)
+      ok_suffix = first_found_item_label ? " => (item=#{first_found_item_label})" : ""
+      puts "ok: [#{host.name}]#{ok_suffix}".colorize(:green)
       @results[host.name]["ok"] += 1
     end
 

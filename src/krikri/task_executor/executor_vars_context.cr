@@ -356,17 +356,31 @@ module Krikri
     end
 
     # Loop-item alias taint (see build_vars_context's publication comment):
-    # when the task's own loop source references any execution-resolved
-    # (unsafe) root, every value the loop yields derives from unsafe data,
-    # so the `item` / loop_control.loop_var / loop_control.index_var /
-    # ansible_loop aliases those values are reached through are unsafe too
-    # - real Ansible's taint follows the data, and `debug: msg="{{ item }}"`
-    # over a hostile module result must print the text verbatim, never
-    # re-render it. Static identifier scan of the RAW loop-source strings
-    # (the same texts the loop resolvers template), intersected with the
-    # unsafe registry computed so far. Recomputed per build_vars_context
-    # call, so a later task looping over author-defined template strings
-    # is unaffected - no stale item taint.
+    # when the task's own loop source is a DIRECT reference to an
+    # execution-resolved (unsafe) root, every value the loop yields derives
+    # from unsafe data, so the `item` / loop_control.loop_var /
+    # loop_control.index_var / ansible_loop aliases those values are
+    # reached through are unsafe too - real Ansible's taint follows the
+    # data, and `debug: msg="{{ item }}"` over a hostile module result must
+    # print the text verbatim, never re-render it.
+    #
+    # "Direct reference" is deliberately narrow: the source must be
+    # template-expression ONLY (a single `{{ ... }}` span with no author
+    # literal text around it - `{{ r.stdout_lines }}`,
+    # `{{ hostvars[...].r.y }}`, `{{ r.x | map('upper') | list }}`). A
+    # literal loop list whose ELEMENTS are author template strings
+    # referencing facts (`PowerDNS.pdns`'s
+    # `loop: ["{{ ansible_os_family }}.yml", ...]`, linux-system-roles'
+    # `"{{ role_path }}/vars/{{ ansible_facts['os_family'] }}.yml"`,
+    # willshersystems.sshd's with_first_found files/paths) is NOT one: the
+    # author's template text is trusted and its items must still be
+    # rendered - tainting them left every item verbatim-unrendered and the
+    # role's vars file never loaded. Hostile CONTENT that flows INTO such a
+    # rendered item stays verbatim anyway through the value-level
+    # UnsafeValues registry, so the narrow name taint loses no protection:
+    # it only covers values DERIVED from unsafe data beyond exact-text
+    # matching (the documented residual gap), which is what a direct
+    # reference yields.
     private def mark_loop_derived_unsafe_names(task : Task, resolved_names : Set(String)) : Nil
       sources = [] of String
       if loop_template = task.loop_template
@@ -390,7 +404,8 @@ module Krikri
 
       referenced = Set(String).new
       sources.each do |source|
-        source.scan(/[A-Za-z_][A-Za-z0-9_]*/).each { |match| referenced.add(match[0]) }
+        next unless inner = direct_reference_expression?(source)
+        inner.scan(/[A-Za-z_][A-Za-z0-9_]*/).each { |match| referenced.add(match[0]) }
       end
       return unless referenced.any? { |name| resolved_names.includes?(name) }
 
@@ -402,6 +417,25 @@ module Krikri
       if index_var = task.index_var
         resolved_names.add(index_var)
       end
+    end
+
+    # The template expression *source* is a direct data reference if it is
+    # either exactly one `{{ ... }}` span with no author literal text
+    # around it, or contains no template markers at all and is an
+    # identifier-led expression. Anything else - a literal list element
+    # like `"{{ ansible_os_family }}.yml"` (literal `.yml` around the span),
+    # a multi-span string, a `{%`-block form - carries AUTHOR template text
+    # and is never a taint source. Returns the expression text to scan for
+    # referenced identifiers, or nil.
+    private def direct_reference_expression?(source : String) : String?
+      stripped = source.strip
+      return nil unless stripped.includes?("{{")
+      return nil unless stripped.starts_with?("{{") && stripped.ends_with?("}}")
+      return nil unless stripped.scan("{{").size == 1
+      return nil if stripped.includes?("{%") || stripped.includes?("{#")
+      inner = stripped[2..-3].strip
+      return nil if inner.empty? || inner.includes?("{{") || inner.includes?("}}")
+      inner
     end
 
     # Real Ansible's variable manager treats `ansible_ssh_user`/

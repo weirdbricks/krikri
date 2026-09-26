@@ -65,6 +65,131 @@ private def assert_not_executed(playbook_body : String, *, label : String, file 
   end
 end
 
+# Runs *tasks* under a `gather_facts: true` play in a temp playbook dir
+# that ships vars/Debian.yml and vars/RedHat.yml (whichever matches the
+# spec host's real ansible_os_family is the one include_vars loads).
+# Returns {status, output}. This is the shape the 2026-09 loop-alias
+# over-taint regression broke: a loop LIST of author template strings that
+# REFERENCE facts must still be rendered - the author's template text is
+# trusted, only the fact VALUES it pulls in are data.
+private def fact_loop_run(tasks : String) : {Process::Status, String}
+  dir = File.tempname("unsafe-loop-facts")
+  Dir.mkdir(dir)
+  Dir.mkdir(File.join(dir, "vars"))
+  File.write(File.join(dir, "vars", "Debian.yml"), "loop_loaded: from-debian-vars\n")
+  File.write(File.join(dir, "vars", "RedHat.yml"), "loop_loaded: from-redhat-vars\n")
+  File.write(File.join(dir, "vars", "default.yml"), "loop_loaded: from-default-vars\n")
+  playbook = File.join(dir, "site.yml")
+  File.open(playbook, "w") do |file|
+    file.puts "- name: loop fact templates"
+    file.puts "  hosts: all"
+    file.puts "  gather_facts: true"
+    file.puts "  tasks:"
+    tasks.each_line do |line|
+      file.puts line.empty? ? "" : "    " + line
+    end
+  end
+
+  output = IO::Memory.new
+  status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+  {status, output.to_s}
+ensure
+  FileUtils.rm_rf(dir) if dir && Dir.exists?(dir)
+end
+
+describe "loop items that are author template strings referencing facts still render" do
+  # Regression shape 1 (PowerDNS.pdns): a literal loop list whose elements
+  # are templates over gathered facts, guarded by a fileglob `when:` that
+  # itself references `item`. The over-taint left every item verbatim
+  # unrendered (`skipping: ... (item={{ ansible_os_family }}.yml)`), so
+  # the vars file was never loaded and the role failed with
+  # "'default_pdns_package_name' is undefined". Real Ansible renders the
+  # items (item=Debian.yml) and loads the file.
+  it "renders a literal loop list of fact templates and loads the matching vars file (pdns shape)" do
+    status, output = fact_loop_run(<<-YAML)
+      - name: load os vars
+        ansible.builtin.include_vars: "{{ item }}"
+        loop:
+          - "{{ playbook_dir }}/vars/{{ ansible_os_family }}.yml"
+          - "{{ playbook_dir }}/vars/{{ ansible_distribution }}.yml"
+        when: lookup('ansible.builtin.fileglob', item, wantlist=True) | length > 0
+      - name: show loaded var
+        ansible.builtin.debug:
+          msg: "loop_loaded={{ loop_loaded | default('UNDEFINED') }}"
+      YAML
+    status.success?.should be_true, output
+    output.should match(/loop_loaded=from-(debian|redhat)-vars/), output
+    output.should_not contain("UNDEFINED"), output
+    # The regression's tell: unrendered item labels.
+    output.should_not contain("(item={{"), output
+  end
+
+  # Regression shape 2 (linux-system-roles.metrics/.logging): the whole
+  # list was tainted, so even the plain `default.yml` item stayed
+  # unrendered.
+  it "renders every item of a fact-template loop list, plain entries included (lsr shape)" do
+    status, output = fact_loop_run(<<-YAML)
+      - name: load os vars
+        ansible.builtin.include_vars: "{{ item }}"
+        loop:
+          - "{{ playbook_dir }}/vars/default.yml"
+          - "{{ playbook_dir }}/vars/{{ ansible_facts['os_family'] }}.yml"
+      - name: show loaded var
+        ansible.builtin.debug:
+          msg: "loop_loaded={{ loop_loaded | default('UNDEFINED') }}"
+      YAML
+    status.success?.should be_true, output
+    output.should match(/loop_loaded=from-(debian|redhat)-vars/), output
+    output.should_not contain("UNDEFINED"), output
+    output.should_not contain("(item={{"), output
+  end
+
+  # Regression shape 3 (willshersystems.sshd): with_first_found whose
+  # files/paths are author templates over facts found nothing (templates
+  # unrendered) where real Ansible loads the first existing candidate.
+  it "renders with_first_found files/paths over facts and loads the found vars file (sshd shape)" do
+    status, output = fact_loop_run(<<-YAML)
+      - name: load os vars
+        ansible.builtin.include_vars: "{{ item }}"
+        with_first_found:
+          - files:
+              - "{{ ansible_facts['distribution'] }}_{{ ansible_facts['distribution_major_version'] }}.yml"
+              - "{{ ansible_facts['os_family'] }}.yml"
+            paths:
+              - "{{ playbook_dir }}/vars"
+            skip: true
+      - name: show loaded var
+        ansible.builtin.debug:
+          msg: "loop_loaded={{ loop_loaded | default('UNDEFINED') }}"
+      YAML
+    status.success?.should be_true, output
+    output.should match(/loop_loaded=from-(debian|redhat)-vars/), output
+    output.should_not contain("UNDEFINED"), output
+    output.should_not contain("(item={{"), output
+  end
+
+  # Hostile content flowing INTO a rendered author item must stay
+  # verbatim: the item's template text is trusted and rendered, but the
+  # register value it embeds is data - the derived item text must never
+  # itself be re-rendered as template (taint follows the data).
+  it "renders an author item embedding hostile register data without executing it" do
+    canary = File.tempname("unsafe-derived-item-canary")
+    File.delete(canary) if File.exists?(canary)
+    status, output = hostile_run(<<-YAML, canary: canary)
+      - name: consume
+        ansible.builtin.debug: msg="item={{ item }}"
+        loop:
+          - "{{ r.stdout }}-suffix"
+      YAML
+    status.success?.should be_true, output.to_s
+    File.exists?(canary).should be_false,
+      "hostile lookup EXECUTED on the controller via a derived loop item:\n#{output}"
+    output.to_s.should contain("#{canary_text(canary)}-suffix")
+  ensure
+    File.delete(canary) if canary && File.exists?(canary)
+  end
+end
+
 describe "unsafe module results are never re-templated" do
   assert_not_executed(<<-YAML, label: "when: r.stdout | length > 0")
     - name: consume
