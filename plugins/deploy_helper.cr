@@ -11,11 +11,14 @@ module Krikri
   # Implemented against real deploy_helper.py's control flow:
   #   - directory layout: <path>/releases, <path>/shared, <path>/current
   #     (created for state=present/finalize when missing)
-  #   - state=present: creates the layout, then a new release dir
-  #     <releases>/<release> (release defaults to a timestamp
-  #     YYYYmmddHHMMSS like real's own default, stored in the result's
+  #   - state=present: creates the project/releases/shared dirs only
+  #     (real main()'s three create_path calls - NOT the new release dir
+  #     and NOT current: the release dir is the caller's build step's
+  #     job and `current` only comes into existence at finalize), and
+  #     generates a release name YYYYmmddHHMMSS like real's own default
+  #     when none is given, stored in the result's
   #     `release`/`new_release` return values so follow-up tasks can
-  #     reference it via the registered variable)
+  #     reference it via the registered variable
   #   - state=unfinished: removes a release dir only if it is NOT
   #     pointed at by `current` (real's unfinished-cleanup semantics;
   #     an absent release dir is a no-op)
@@ -105,28 +108,48 @@ module Krikri
         ansible_facts: {"deploy_helper" => [] of String})
     end
 
-    # Creates the directory layout + new release dir. Returns the
-    # release name via the result's `release`/`new_release` keys (real
-    # module's return values, consumed via registered variables).
+    # Creates the directory layout. Real main() runs create_path exactly
+    # three times - project_path, releases_path, shared_path - so the new
+    # release dir and `current` are NOT created here: the release dir is
+    # the caller's build step's job (real's docs clone/copy into
+    # new_release_path themselves) and `current` only comes into
+    # existence at state=finalize. mkdir'ing current_path here as a real
+    # directory made finalize's `ln -sfn` land INSIDE it
+    # (current/<release>) and left current a directory forever.
+    # changed mirrors real's create_path counting: true only when at
+    # least one of the three dirs was actually missing.
     private def present(path : String, releases_path : String, shared_path : String,
                         current_path : String, release : String?, check_mode : Bool) : PluginResult
       release ||= Time.utc.to_s("%Y%m%d%H%M%S")
-      new_release_path = "#{releases_path}/#{release}"
       facts = gather_facts(path, releases_path, shared_path, current_path, release)
 
+      link_check = remote_exec("if [ -e #{Shell.single_quote(current_path)} ] && [ ! -L #{Shell.single_quote(current_path)} ]; then echo not-a-link; fi")
+      if link_check[:stdout].includes?("not-a-link")
+        return PluginResult.new(changed: false, failed: true,
+          msg: "#{current_path} exists but is not a symbolic link")
+      end
+
+      dirs = [path, releases_path, shared_path]
+      missing = dirs.reject do |dir|
+        remote_exec("test -d #{Shell.single_quote(dir)}")[:exit_code] == 0
+      end
+      changed = !missing.empty?
+
       if check_mode
-        return PluginResult.new(changed: true, failed: false,
-          msg: "release #{release} would be created",
+        return PluginResult.new(changed: changed, failed: false,
+          msg: missing.empty? ? "" : "release #{release} would be created",
           ansible_facts: {"deploy_helper" => facts})
       end
 
-      mk = remote_exec("mkdir -p #{[path, releases_path, shared_path, new_release_path, current_path].map { |dir| Shell.single_quote(dir) }.join(' ')}")
-      unless mk[:exit_code] == 0
-        return PluginResult.new(changed: false, failed: true,
-          msg: "failed to create deploy layout: #{mk[:stderr].strip}")
+      unless missing.empty?
+        mk = remote_exec("mkdir -p #{missing.map { |dir| Shell.single_quote(dir) }.join(' ')}")
+        unless mk[:exit_code] == 0
+          return PluginResult.new(changed: false, failed: true,
+            msg: "failed to create deploy layout: #{mk[:stderr].strip}")
+        end
       end
 
-      PluginResult.new(changed: true, failed: false, msg: "release #{release} created", release: release, new_release: release,
+      PluginResult.new(changed: changed, failed: false, msg: "release #{release} created", release: release, new_release: release,
         ansible_facts: {"deploy_helper" => facts})
     end
 
@@ -237,12 +260,19 @@ module Krikri
     # `if self.shared_path` guard.
     private def gather_facts(path : String, releases_path : String, shared_path : String,
                              current_path : String, release : String?) : Hash(String, String?)
+      # Real _get_last_release(): realpath/basename only when the
+      # current path lexists at all; GNU readlink -f on a missing path
+      # still exits 0 printing the would-be path, which would invent a
+      # previous_release of "current" out of thin air.
       previous_release = nil
       previous_release_path = nil
-      probe = remote_exec("readlink -f #{Shell.single_quote(current_path)} 2>/dev/null")
-      if probe[:exit_code] == 0 && !(out = probe[:stdout].strip).empty?
-        previous_release_path = out
-        previous_release = out.split("/").last
+      exists = remote_exec("test -e #{Shell.single_quote(current_path)}")
+      if exists[:exit_code] == 0
+        probe = remote_exec("readlink -f #{Shell.single_quote(current_path)} 2>/dev/null")
+        if probe[:exit_code] == 0 && !(out = probe[:stdout].strip).empty?
+          previous_release_path = out
+          previous_release = out.split("/").last
+        end
       end
 
       shared_param = @params["shared_path"]?
@@ -268,9 +298,10 @@ module Krikri
       # carry the same prospective release a follow-up present would use.
       release ||= Time.utc.to_s("%Y%m%d%H%M%S")
       facts = gather_facts(path, releases_path, shared_path, current_path, release)
-      listing = remote_exec("ls -1 #{Shell.single_quote(releases_path)} 2>/dev/null")
-      releases = listing[:exit_code] == 0 ? listing[:stdout].lines.map(&.strip).reject(&.empty?) : [] of String
-      PluginResult.new(changed: false, failed: false, msg: "", releases: releases,
+      # Real query's result carries only state/changed/ansible_facts -
+      # no top-level releases list (the releases are only ever visible
+      # as a directory listing, not published).
+      PluginResult.new(changed: false, failed: false, msg: "",
         ansible_facts: {"deploy_helper" => facts})
     end
 
