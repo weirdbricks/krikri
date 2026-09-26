@@ -1,4 +1,5 @@
 require "json"
+require "./unsafe_values"
 require "./param_sentinels"
 require "./variable_substitutor/expression_evaluator"
 require "./variable_substitutor/comparison_evaluator"
@@ -286,6 +287,14 @@ module Krikri
     return unless raw.is_a?(String) &&
                   (raw.includes?("{{") || raw.includes?("{%") || raw.includes?("{#"))
 
+    # Unsafe gate (VarSubstitutor.unsafe_root?): the strict probe here
+    # RENDERS the chain source's raw value - on an execution-resolved
+    # root (registered result / set_fact / fact) that render is exactly
+    # the hostile-text execution real ansible-core prevents by marking
+    # such values AnsibleUnsafe. Skipped for unsafe roots: the value is
+    # verbatim content, definitionally "defined".
+    return if VarSubstitutor.unsafe_root?(vars, source)
+    return if UnsafeValues.unsafe_text?(raw)
     Krikri::VarSubstitutor.new(vars: vars).strict_render(raw)
   end
 
@@ -714,10 +723,16 @@ module Krikri
         @@retemplating_depth -= 1
       end
 
-      def self.if_templated(vars : Hash(String, JSON::Any)?, value : JSON::Any?) : JSON::Any?
+      # *source_expr*: the expression the value was resolved FROM (its
+      # leading identifier decides the unsafe gate) - nil keeps the old
+      # always-render behavior for call sites with no expression in hand
+      # (legacy/edge callers), but every evaluation-path caller threads it.
+      def self.if_templated(vars : Hash(String, JSON::Any)?, value : JSON::Any?, source_expr : String? = nil) : JSON::Any?
         return value unless value
         return value unless vars
         return value unless (raw = value.raw).is_a?(String) && (raw.includes?("{{") || raw.includes?("{%") || raw.includes?("{#"))
+        return value if VarSubstitutor.unsafe_root?(vars, source_expr)
+        return value if UnsafeValues.unsafe_text?(raw)
 
         with_depth_guard do
           if raw.includes?("{%") || raw.includes?("{#")
@@ -744,8 +759,11 @@ module Krikri
 
       # Renders *raw* (known to contain `{{`) back to its real value:
       # one whole-string span -> ExpressionEvaluator (preserves result
-      # types); anything else -> full substitution.
-      def self.render_raw(vars : Hash(String, JSON::Any), raw : String) : String
+      # types); anything else -> full substitution. *source_expr* gates
+      # unsafe roots the same way #if_templated does.
+      def self.render_raw(vars : Hash(String, JSON::Any), raw : String, source_expr : String? = nil) : String
+        return raw if VarSubstitutor.unsafe_root?(vars, source_expr)
+        return raw if UnsafeValues.unsafe_text?(raw)
         inner = raw.strip
         if (raw.split("{{").size - 1) == 1 && (raw.split("}}").size - 1) == 1 && inner.starts_with?("{{") && inner.ends_with?("}}")
           ExpressionEvaluator.new(vars).evaluate(inner[2..-3].strip)
@@ -759,9 +777,14 @@ module Krikri
   # VariableSubstitutor - Main class for variable substitution
   # Uses modular components from variable_substitutor/ directory
   class VarSubstitutor
-    # Per-host registry of RESOLVED variable names - names whose current
-    # value was produced by EXECUTION (a `register:`ed module result or a
-    # `set_fact:` write) rather than read out of a YAML defaults/vars file.
+    # Per-host registry of UNSAFE variable names - names whose current
+    # value was produced by EXECUTION (a `register:`ed module result, a
+    # `set_fact:` write, or a gathered fact) rather than read out of a
+    # YAML defaults/vars file. Real ansible-core marks every module
+    # result / fact / registered var AnsibleUnsafe and NEVER re-renders
+    # their text on any evaluation path; krikri must match, or a hostile
+    # target gets controller code execution by returning stdout that
+    # looks like a template (`{{ lookup('pipe', ...) }}`).
     # The recursive re-templating decision (`re_template_from_variable?`)
     # is content-based - "raw value contains `{{`" - and that alone cannot
     # distinguish a YAML-defined template (real Ansible DOES render it
@@ -775,9 +798,11 @@ module Krikri
     # controller with an unhandled "'inner_undefined_name' is undefined"
     # (KNOWN_MISSING.md 0.9.1267 open gap, found via the perf benchmark's
     # Jinja edge-case section). TaskExecutor#build_vars_context publishes
-    # the union of @registered_vars/@set_facts key names for the host here
-    # once per task; the re-pass consults it before trusting the content
-    # heuristic. Process-wide and keyed per host because substitution
+    # the union of @registered_vars/@set_facts/@facts key names (plus the
+    # `ansible_facts` dict name and any loop-item aliases derived from an
+    # unsafe source) for the host here once per task; every re-render
+    # decision consults it - see #unsafe_root? for the single shared
+    # predicate. Process-wide and keyed per host because substitution
     # objects are constructed everywhere without ownership of the
     # executor's stores (same cooperative-scheduling reasoning as the
     # Rerender depth guard: nothing between the per-task recompute and the
@@ -791,6 +816,86 @@ module Krikri
     def self.resolved_var_name?(host_name : String?, name : String) : Bool
       return false unless host_name
       @@resolved_var_names[host_name]?.try(&.includes?(name)) || false
+    end
+
+    # Snapshot of every host's unsafe-name registry - the serialized form
+    # travels inside a `debug:`/`assert:` plugin config (see
+    # build_plugin_config) so the DETACHED plugin process an `async:` task
+    # spawns (`__async_run`, or the module binary uploaded to a remote
+    # target) can rebuild the same registry via
+    # #hydrate_unsafe_registry_from_config: the registry is process memory,
+    # and a fresh child process starts with it empty, which would leave
+    # that process's own re-render gates blind.
+    def self.resolved_names_snapshot : Hash(String, Array(String))
+      @@resolved_var_names.transform_values(&.to_a)
+    end
+
+    # The child-process counterpart of #resolved_names_snapshot: rebuilds
+    # the per-host unsafe-name registry from a plugin config's
+    # `unsafe_registry` field and records the exact text of every
+    # brace-bearing string under those names (the value-level registry,
+    # UnsafeValues) - the current host's values from the config's own
+    # `vars`, every other host's from its `hostvars` entry. No-op when the
+    # field is absent (configs built before this field existed, or plugin
+    # invocations that never carried a vars context).
+    def self.hydrate_unsafe_registry_from_config(config : JSON::Any) : Nil
+      registry = config["unsafe_registry"]?.try(&.as_h?) || return
+      hosts = registry["hosts"]?.try(&.as_h?) || return
+      vars = config["vars"]?.try(&.as_h?)
+      hostvars = vars.try(&.[]?("hostvars")).try(&.as_h?)
+      current_host = registry["host"]?.try(&.as_s?)
+      hosts.each do |host_name, names_json|
+        raw_names = names_json.as_a?
+        next unless raw_names
+        names = raw_names.compact_map(&.as_s?)
+        set_resolved_var_names(host_name, names)
+        source = host_name == current_host ? vars : hostvars.try(&.[]?(host_name)).try(&.as_h?)
+        next unless source
+        names.each do |name|
+          if value = source[name]?
+            UnsafeValues.mark_value(value)
+          end
+        end
+      end
+    end
+
+    # The leading identifier of an expression - `r` for `r.stdout`,
+    # `r.stdout | length > 0`, `r['stdout_lines']`, `ansible_local.evil.v`;
+    # nil when the expression does not start with a plain identifier
+    # (a quoted literal, a `(`-headed parenthesized expression, a
+    # dict/list literal, `&...`). The registry is keyed on these roots:
+    # an unsafe root makes EVERY value reachable through it unsafe, at
+    # any nesting depth, exactly like real Ansible's own taint model
+    # (AnsibleUnsafe wraps whole structures).
+    def self.expression_root(expr : String) : String?
+      expr.strip.match(/\A\s*([A-Za-z_][A-Za-z0-9_]*)/).try(&.[1])
+    end
+
+    # The host a vars hash belongs to - every executor-built context
+    # carries `inventory_hostname`, and the evaluator components
+    # (VariableLookup/FilterEngine/ComparisonEvaluator/ConditionalEvaluator,
+    # the shared Rerender helpers) are constructed with the vars hash
+    # alone, so this is how they reach the per-host registry without
+    # threading a host parameter through every constructor.
+    def self.host_from_vars(vars : Hash(String, JSON::Any)?) : String?
+      vars.try(&.[]?("inventory_hostname")).try(&.as_s?)
+    end
+
+    # THE single shared re-render gate: whether the value an expression
+    # resolved to must NOT be re-rendered because the expression's root
+    # variable is execution-resolved (unsafe). Every evaluation path that
+    # re-renders a resolved value's own template text (Rerender.if_
+    # templated / Rerender.render_raw, VariableLookup's per-site guards,
+    # FilterEngine, ComparisonEvaluator, ConditionalEvaluator,
+    # ExpressionEvaluator#retemplated_lookup_value, the debug action
+    # plugin's var= renderer) funnels through this predicate - fail-safe
+    # by construction: a call site that forgets to pass its expression
+    # simply loses the gate, so new sites should always thread it.
+    def self.unsafe_root?(vars : Hash(String, JSON::Any)?, source_expr : String?) : Bool
+      return false unless vars && source_expr
+      root = expression_root(source_expr)
+      return false unless root
+      resolved_var_name?(host_from_vars(vars), root)
     end
 
     @vars : Hash(String, JSON::Any)
@@ -1174,7 +1279,29 @@ module Krikri
       result = expand_mustache_spans(text) do |inner|
         stripped = strip_span_if_needed(inner)
         rendered = evaluate_stripped_span(stripped, strict, output, native, evaluator)
-        re_template_from_variable?(stripped) ? substitute_impl(rendered, strict, output, native) : rendered
+        # Three reasons to stop at ONE rendering level and never re-scan
+        # the span's output as another template level:
+        # - re_template_from_variable? is false: the span did not resolve
+        #   to a value that is itself template text (literal-origin
+        #   leftovers stay verbatim, exactly like Jinja2).
+        # - the OUTPUT's exact text is registered unsafe (!unsafe-tagged
+        #   or execution-result text) - hostile content relayed through
+        #   any number of author templates must never be executed.
+        # - the span's RESOLVED VALUE references an execution-resolved
+        #   root anywhere in its own template text (`v: "{{ r.stdout }}"
+        #   `, `v: "{{ r.stdout }}-suffix"`, a list of such entries):
+        #   rendering that value pulls hostile data in, so whatever
+        #   braces survive in the output are hostile, not author,
+        #   template text. Real Ansible's taint follows the data; this
+        #   scan is its static approximation at the one site where the
+        #   second-level render would otherwise execute it.
+        if re_template_from_variable?(stripped) &&
+           !UnsafeValues.unsafe_text?(rendered) &&
+           !resolved_span_references_unsafe?(stripped)
+          substitute_impl(rendered, strict, output, native)
+        else
+          rendered
+        end
       end
       result
     end
@@ -1885,6 +2012,10 @@ module Krikri
     private def raise_if_nested_value_undefined(value : JSON::Any) : Nil
       raw = value.raw
       return unless raw.is_a?(String) && raw.includes?("{{")
+      # An `!unsafe`-tagged value is verbatim content, definitionally
+      # defined - the strict probe here RENDERS it (executing any lookup
+      # inside), which is exactly what the tag exists to prevent.
+      return if UnsafeValues.unsafe_text?(raw)
       substitute_impl(raw, true)
     end
 
@@ -1941,6 +2072,30 @@ module Krikri
     # all-pass re-scan it drove is exactly what re-opened the
     # 0.9.1267 resolved-value crash for mixed strings (0.9.1268
     # residual).
+    # Whether the span's resolved value's own raw text (any string leaf,
+    # containers included) references an execution-resolved (unsafe) root
+    # identifier - see the span-gate comment in #substitute_impl_guarded.
+    private def resolved_span_references_unsafe?(span : String) : Bool
+      expr = span.strip
+      expr = expr.split("|").first.strip if expr.includes?("|")
+      return false unless expr.matches?(/\A[A-Za-z_][A-Za-z0-9_.\[\]"']*\z/)
+      resolved = VariableSubstitutor::VariableLookup.new(@vars).resolve(expr) || return false
+      referenced = Set(String).new
+      collect_identifiers(resolved.raw, referenced)
+      referenced.any? { |name| VarSubstitutor.resolved_var_name?(@host_name, name) }
+    end
+
+    private def collect_identifiers(raw, found : Set(String)) : Nil
+      case raw
+      when String
+        raw.scan(/[A-Za-z_][A-Za-z0-9_]*/).each { |match| found.add(match[0]) }
+      when Array
+        raw.each { |element| collect_identifiers(element, found) }
+      when Hash
+        raw.each_value { |element| collect_identifiers(element, found) }
+      end
+    end
+
     private def re_template_from_variable?(span : String) : Bool
       expr = span.strip
       expr = expr.split("|").first.strip if expr.includes?("|")

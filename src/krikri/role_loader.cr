@@ -1,4 +1,5 @@
 require "yaml"
+require "./unsafe_values"
 require "json"
 require "system/user"
 require "./playbook_parser"
@@ -47,7 +48,9 @@ module Krikri
 
     private def self.cached_yaml(path : String) : YAML::Any
       @@parsed_yaml_cache.fetch(path) do
-        @@parsed_yaml_cache[path] = YAML.parse(Vault.maybe_decrypt(File.read(path)))
+        text = Vault.maybe_decrypt(File.read(path))
+        UnsafeValues.mark_yaml_text(text)
+        @@parsed_yaml_cache[path] = YAML.parse(text)
       end
     end
 

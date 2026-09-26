@@ -98,5 +98,14 @@ end
 
 input = STDIN.gets_to_end
 config = JSON.parse(input)
+
+# Rebuild this process' unsafe-name/text registries from the config's
+# serialized snapshot (see build_plugin_config) BEFORE evaluation: an
+# `async:` task runs this binary in a detached process whose registries
+# start empty, which would leave the re-render gates inside
+# ConditionalEvaluator blind to hostile module results. No-op when the
+# config carries no snapshot (manual invocation).
+Krikri::VarSubstitutor.hydrate_unsafe_registry_from_config(config)
+
 plugin = Krikri::AssertPlugin.new(config)
 plugin.run

@@ -4,6 +4,7 @@
 require "option_parser"
 require "colorize"
 require "./src/krikri/version"
+require "./src/krikri/unsafe_values"
 require "./src/krikri_lint/lint"
 
 module Krikri::Lint

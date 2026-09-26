@@ -1,4 +1,5 @@
 require "json"
+require "../unsafe_values"
 require "../base_action_plugin"
 require "../variable_substitutor"
 require "../variable_substitutor/variable_lookup"
@@ -84,8 +85,16 @@ module Krikri
       # like real Ansible aborting the play. This path used to stop at
       # the raw lookup and print the unrendered template string as the
       # "value", letting bad-inventory playbooks run on with an ok:.
+      # Unsafe gate (VarSubstitutor.unsafe_root?): a var resolved through an
+      # execution-resolved root (registered result / set_fact / fact) is
+      # AnsibleUnsafe in real ansible-core - printed verbatim, never
+      # re-templated. Without this, `debug: var=r.stdout` on a hostile
+      # module result whose text looks like a template executed the
+      # template on the controller.
+      unsafe = VarSubstitutor.unsafe_root?(@vars, var_name)
+
       begin
-        rendered = render_lazy_templates(var_value)
+        rendered = unsafe ? var_value : render_lazy_templates(var_value)
       rescue ex
         return ActionResult.failure(ex.message || "templating var '#{var_name}' failed")
       end
@@ -109,6 +118,7 @@ module Krikri
       case value.raw
       when String
         raw = value.as_s
+        return value if UnsafeValues.unsafe_text?(raw)
         return value unless raw.includes?("{{")
         JSON::Any.new(VarSubstitutor.new(vars: @vars, host_name: @host.name).substitute(raw))
       when Array

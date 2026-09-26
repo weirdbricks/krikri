@@ -737,7 +737,8 @@ module Krikri
       host_name : String,
     ) : Array(JSON::Any)?
       begin
-        loop_items.map { |item| deep_render_item(item, vars_context, host_name) }
+        unsafe_items = loop_items_unsafe?(task, host_name)
+        loop_items.map { |item| deep_render_item(item, vars_context, host_name, unsafe: unsafe_items) }
       rescue ex : UndefinedVariableError
         # Same A/B/C leniency scoping as resolve_loop_items_or_raise above
         # (round 701114/821007, redhat_sap.sap_hana_hsr): this is the rescue

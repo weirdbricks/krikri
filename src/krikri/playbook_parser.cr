@@ -1,4 +1,5 @@
 require "yaml"
+require "./unsafe_values"
 require "./loop_resolver"
 require "./python_module_runner"
 require "./role_loader"
@@ -1815,6 +1816,7 @@ module Krikri
       playbook = Playbook.new(path)
 
       begin
+        UnsafeValues.mark_yaml_text(content)
         yaml = YAML.parse(content)
       rescue ex : YAML::ParseException
         raise YamlSyntaxError.new(path, content, ex)

@@ -1,4 +1,5 @@
 require "./executor"
+require "../unsafe_values"
 require "krikri-jinja/krikri_jinja"
 require "../jinja_host_context"
 require "../plugin_helpers/ansible_splitlines"
@@ -55,7 +56,9 @@ module Krikri
           next unless File.exists?(path)
 
           begin
-            parsed = YAML.parse(File.read(path))
+            text = File.read(path)
+            UnsafeValues.mark_yaml_text(text)
+            parsed = YAML.parse(text)
             if hash = parsed.as_h?
               hash.each { |key, value| merged[key.to_s] = JSON.parse(value.to_json) }
             end
@@ -615,8 +618,24 @@ module Krikri
     # unconditionally, re-applying the halt afterward if the block ultimately
     # failed (unrescued, or rescue itself failed, or always: introduced a new
     # failure) unless the block itself has ignore_errors:.
-    private def deep_render_item(item : JSON::Any, vars_context : Hash(String, JSON::Any), host_name : String, depth : Int32 = 0, strict : Bool = true) : JSON::Any
-      return item if depth > 10
+    # Whether this task's loop items derive from execution-resolved (unsafe)
+    # data - the mirror of mark_loop_derived_unsafe_names's publication:
+    # build_vars_context marks `item`/loop_var unsafe for exactly the tasks
+    # whose loop source references an unsafe root, so consulting the
+    # registry here keeps deep_render_item's per-item rendering in sync
+    # with every other evaluation path's gate.
+    private def loop_items_unsafe?(task : Task, host_name : String) : Bool
+      return true if VarSubstitutor.resolved_var_name?(host_name, "item")
+      return true if (loop_var = task.loop_var) && VarSubstitutor.resolved_var_name?(host_name, loop_var)
+      false
+    end
+
+    # *unsafe*: loop items taken from execution-resolved data (see
+    # mark_loop_derived_unsafe_names) are never re-rendered - real
+    # ansible-core marks them AnsibleUnsafe, and rendering their text is
+    # exactly the controller code-execution hole this gate closes.
+    private def deep_render_item(item : JSON::Any, vars_context : Hash(String, JSON::Any), host_name : String, depth : Int32 = 0, strict : Bool = true, unsafe : Bool = false) : JSON::Any
+      return item if unsafe || depth > 10
       case raw = item.raw
       when Hash
         rendered = raw.each_with_object({} of String => JSON::Any) do |(key, value), acc|
@@ -626,6 +645,7 @@ module Krikri
       when Array
         JSON::Any.new(raw.map { |value| deep_render_item(value, vars_context, host_name, strict: strict) })
       when String
+        return item if UnsafeValues.unsafe_text?(raw)
         return item unless raw.includes?("{{")
 
         # A raw value that's *exactly* one bare `{{ variable }}` span (no
@@ -1370,7 +1390,27 @@ module Krikri
         "become_user" => become_user,
       }
 
-      config.to_json
+      # The per-host unsafe-name registry, serialized only for the plugins
+      # whose binary actually reads the vars context (debug:/assert: - the
+      # same set that pays for full `vars` above): an `async:` task runs
+      # its module in a DETACHED process (`__async_run`, or the uploaded
+      # binary on a remote target) whose own VarSubstitutor/UnsafeValues
+      # registries start empty, so without this snapshot that process's
+      # re-render gates are blind and a hostile module result could be
+      # re-templated there. VarSubstitutor.hydrate_unsafe_registry_from_
+      # config rebuilds both registries from it before the plugin runs.
+      if PluginManager.needs_full_vars?(task.module_name)
+        config_hash = JSON.parse(config.to_json).as_h
+        config_hash["unsafe_registry"] = JSON::Any.new({
+          "host"  => JSON::Any.new(host.name),
+          "hosts" => JSON::Any.new(VarSubstitutor.resolved_names_snapshot.transform_values do |names|
+            JSON::Any.new(names.map { |name| JSON::Any.new(name) })
+          end),
+        })
+        config_hash.to_json
+      else
+        config.to_json
+      end
     end
 
     # Matches real Ansible's `stdout_lines`/`stderr_lines` (built from

@@ -1,4 +1,5 @@
 require "yaml"
+require "./unsafe_values"
 require "./vault"
 require "./host"
 require "./inventory_plugins"
@@ -659,7 +660,9 @@ module Krikri
 
     # Parse YAML format inventory
     def self.parse_yaml(path : String, playbook_dir : String? = nil) : Inventory
-      parse_yaml(path, YAML.parse(File.read(path)), playbook_dir)
+      text = File.read(path)
+      UnsafeValues.mark_yaml_text(text)
+      parse_yaml(path, YAML.parse(text), playbook_dir)
     rescue ex : YAML::ParseException
       raise "Invalid YAML in inventory file: #{ex.message}"
     end
@@ -991,7 +994,9 @@ module Krikri
       return unless path
 
       begin
-        yaml = YAML.parse(File.read(path))
+        text = File.read(path)
+        UnsafeValues.mark_yaml_text(text)
+        yaml = YAML.parse(text)
       rescue ex : YAML::ParseException
         raise "Invalid YAML in #{path}: #{ex.message}"
       end

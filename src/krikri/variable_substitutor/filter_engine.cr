@@ -1,4 +1,5 @@
 require "json"
+require "../unsafe_values"
 require "krikri-jinja/krikri_jinja"
 require "../krikri_jinja_filters"
 require "../jinja_host_context"
@@ -126,6 +127,23 @@ module Krikri
       def initialize(@vars : Hash(String, JSON::Any)? = nil)
       end
 
+      # The root identifier of the filter-chain head currently being
+      # evaluated (set at every chain entry point, see
+      # VarSubstitutor.unsafe_root?): the unsafe gate for the leaf-level
+      # renders below (strict_render_deferred_leaves, map/selectattr
+      # attribute extraction) - a value resolved through an
+      # execution-resolved root (registered result / set_fact / fact /
+      # loop item) is never re-rendered, exactly like real ansible-core's
+      # AnsibleUnsafe marking. Chain argument sub-resolutions overwrite it
+      # for their own (self-contained) scope; the next chain entry always
+      # overwrites it before any leaf render can observe a stale value.
+      @chain_root : String? = nil
+
+      private def chain_root_unsafe? : Bool
+        root = @chain_root || return false
+        VarSubstitutor.resolved_var_name?(VarSubstitutor.host_from_vars(@vars), root)
+      end
+
       # Audit pass (2026-08-11, following the ansible-vault/prometheus/
       # grafana rounds finding 5 independent copies of this exact bug):
       # re-renders *value* if its raw form is still a String containing
@@ -135,8 +153,8 @@ module Krikri
       # (VariableSubstitutor::Rerender) - the multi-span and block-tag
       # fixes this copy used to re-discover independently land there
       # once for every caller.
-      private def rerender_if_templated(value : JSON::Any) : JSON::Any
-        Rerender.if_templated(@vars, value) || value
+      private def rerender_if_templated(value : JSON::Any, source_expr : String? = nil) : JSON::Any
+        Rerender.if_templated(@vars, value, source_expr) || value
       end
 
       # Fail-on-access guard for full-structure consumers of a filter-chain
@@ -155,6 +173,7 @@ module Krikri
       # Jinja markers pass through untouched).
       private def strict_render_deferred_leaves(value : JSON::Any) : JSON::Any
         return value unless value.raw.is_a?(Array) || value.raw.is_a?(Hash)
+        return value if chain_root_unsafe?
         JinjaRenderer.rerender_nested_templates(value, VarSubstitutor.new(vars: @vars || Hash(String, JSON::Any).new))
       end
 
@@ -194,12 +213,14 @@ module Krikri
 
       # Applies a `|`-joined chain of filters to *value* in order.
       def apply_chain(value : JSON::Any, chain : String) : JSON::Any
+        @chain_root = VarSubstitutor.expression_root(chain)
         self.class.split_chain(chain).reduce(value) { |acc, filter_expr| apply(acc, filter_expr) }
       end
 
       # Apply a single filter to a value.
       # Example: myvar | default('value')
-      def apply(value : JSON::Any, filter_expr : String) : JSON::Any
+      def apply(value : JSON::Any, filter_expr : String, chain_root : String? = nil) : JSON::Any
+        @chain_root = chain_root if chain_root
         # `ansible.builtin.`-prefixed filter names (a real, if uncommon,
         # spelling - real Ansible's own core filters are all reachable
         # via this FQCN too, not just the bare name) never matched any
@@ -534,7 +555,8 @@ module Krikri
             JSON::Any.new(as_array(value).map do |item|
               extracted = item.raw.is_a?(Hash) ? (item[attr]? || JSON::Any.new(nil)) : JSON::Any.new(nil)
               if (vars = @vars) && (raw_s = extracted.try(&.raw.as?(String))) &&
-                 (raw_s.includes?("{{") || raw_s.includes?("{%") || raw_s.includes?("{#"))
+                 (raw_s.includes?("{{") || raw_s.includes?("{%") || raw_s.includes?("{#")) &&
+                 !chain_root_unsafe? && !UnsafeValues.unsafe_text?(raw_s)
                 JSON::Any.new(VarSubstitutor.new(vars: vars).strict_render(raw_s))
               else
                 extracted
@@ -1957,7 +1979,8 @@ module Krikri
         # result, so the gating task skips), while a resolvable template is
         # its rendered value - defined.
         if (vars = @vars) && (raw_string = attr_value.try(&.raw.as?(String))) &&
-           (raw_string.includes?("{{") || raw_string.includes?("{%") || raw_string.includes?("{#"))
+           (raw_string.includes?("{{") || raw_string.includes?("{%") || raw_string.includes?("{#")) &&
+           !chain_root_unsafe? && !UnsafeValues.unsafe_text?(raw_string)
           if test.in?("defined", "undefined")
             substitutor = VarSubstitutor.new(vars: vars)
             attr_value = nil if substitutor.unresolvable_template?(raw_string)
@@ -2011,6 +2034,7 @@ module Krikri
       # evaluated with no variable scope) or the reference doesn't resolve.
       private def resolve_default_expression(expr : String) : JSON::Any
         expr = expr.strip
+        @chain_root = VarSubstitutor.expression_root(expr)
 
         # Jinja2's inline conditional expression (`'1' if COND else '0'`) -
         # dev-sec os_hardening's own dump:/passno: computation
@@ -2065,7 +2089,7 @@ module Krikri
 
         if (vars = @vars) && !expr.empty?
           resolved = VariableLookup.new(vars).resolve(expr)
-          resolved ? rerender_if_templated(resolved) : JSON::Any.new(expr)
+          resolved ? rerender_if_templated(resolved, expr) : JSON::Any.new(expr)
         else
           JSON::Any.new(expr)
         end
@@ -2118,6 +2142,7 @@ module Krikri
 
       private def resolve_expression(expr : String) : JSON::Any
         expr = expr.strip
+        @chain_root = VarSubstitutor.expression_root(expr)
         expr = unwrap_outer_parens(expr)
 
         if ternary = split_ternary(expr)
@@ -2178,7 +2203,7 @@ module Krikri
 
         if (vars = @vars) && !expr.empty?
           resolved = VariableLookup.new(vars).resolve(expr)
-          resolved ? rerender_if_templated(resolved) : JSON::Any.new(nil)
+          resolved ? rerender_if_templated(resolved, expr) : JSON::Any.new(nil)
         else
           JSON::Any.new(nil)
         end

@@ -1,4 +1,5 @@
 require "json"
+require "./unsafe_values"
 require "yaml"
 
 module Krikri
@@ -53,6 +54,7 @@ module Krikri
     # JSON::Any, the representation the rest of the engine uses.
     private def self.from_structured(text : String, source : String? = nil) : Hash(String, JSON::Any)
       parsed = begin
+        UnsafeValues.mark_yaml_text(text)
         YAML.parse(text)
       rescue ex
         raise Error.new("could not parse extra-vars#{source ? " from #{source}" : ""}: #{ex.message}")
