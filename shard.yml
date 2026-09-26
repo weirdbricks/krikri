@@ -10,7 +10,7 @@ authors:
 dependencies:
   krikri-jinja:
     github: weirdbricks/krikri-jinja
-    tag: v0.4.15
+    tag: v0.4.16
   docr:
     github: weirdbricks/docr
     commit: c90ea8d6a0c5eb9f842ac0da098a1718ecca66ca

@@ -48,4 +48,29 @@ describe Krikri::VariableSubstitutor::JinjaVarResolver do
     Krikri::VariableSubstitutor::JinjaRenderer.new(vars, true)
       .evaluate_value!(%q('a\nb')).should eq(JSON::Any.new("a\nb"))
   end
+
+  it "finds an integer-keyed dict entry whether the index is an int or a string" do
+    # Real bug found benchmarking robertdebock.tomcat: its vars/main.yml
+    # keys `_tomcat_unarchive_urls` by YAML integer (`7:`, `10:`), which
+    # the var pipeline's JSON round trip flattens to plain string keys,
+    # while `_tomcat_unarchive_urls[instance.version | default(...)]`
+    # still indexes with the real integer - the engine's type-preserving
+    # key encoding missed and the lookup silently rendered the literal
+    # string "undefined", which then went out as a download URL. Real
+    # Jinja2 matches dict keys by value, so the integer index must find
+    # the entry; the string index keeps working too (it was the only
+    # form that worked before), and an integer index must NOT start
+    # matching a dict whose keys are genuinely non-numeric strings.
+    vars = {
+      "d"  => JSON.parse(%({"7": "seven", "10": "ten"})),
+      "v"  => JSON::Any.new(10_i64),
+      "d2" => JSON.parse(%({"a": "b"})),
+    }
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(vars)
+    renderer.evaluate_value!("d[v | default(10)]").should eq(JSON::Any.new("ten"))
+    renderer.evaluate_value!("d[10]").should eq(JSON::Any.new("ten"))
+    renderer.evaluate_value!("d['10']").should eq(JSON::Any.new("ten"))
+    renderer.evaluate_value!("d2[10]").should be_nil
+    renderer.evaluate_value!("d2['a']").should eq(JSON::Any.new("b"))
+  end
 end
