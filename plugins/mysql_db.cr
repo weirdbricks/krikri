@@ -137,13 +137,15 @@ module Krikri
 
       encoding = @params["encoding"]?
       collation = @params["collation"]?
-      unless charset_safe?(encoding) && charset_safe?(collation)
-        return PluginResult.new(changed: false, failed: true, msg: "encoding/collation may only contain letters, digits, and underscores")
-      end
-
+      # Real Ansible binds encoding/collation as query parameters, which
+      # reach the server as single-quoted string literals - MySQL accepts
+      # both a bare identifier and a string literal for CHARACTER SET/
+      # COLLATE, so quote_str here matches real behavior AND makes
+      # arbitrary text (a "utf8mb4" with a hyphen, a collation carrying an
+      # embedded quote) injection-safe without any character allow-list.
       clause = String.build do |str|
-        str << " CHARACTER SET " << encoding if encoding
-        str << " COLLATE " << collation if collation
+        str << " CHARACTER SET " << quote_str(encoding) if encoding
+        str << " COLLATE " << quote_str(collation) if collation
       end
 
       db.exec "CREATE DATABASE #{quote_ident(name)}#{clause}"
@@ -365,16 +367,12 @@ module Krikri
       tmp_path
     end
 
-    # encoding:/collation: are bare SQL identifiers (not values), so they
-    # can't go through a bind parameter - restricting them to a safe
-    # charset avoids needing to interpolate arbitrary user input into the
-    # query at all.
-    private def charset_safe?(value : String?) : Bool
-      value.nil? || value.matches?(/\A[A-Za-z0-9_]+\z/)
-    end
-
     private def quote_ident(s : String) : String
       PluginHelpers::SqlQuoting.mysql_quote_ident(s)
+    end
+
+    private def quote_str(s : String) : String
+      PluginHelpers::SqlQuoting.quote_str(s)
     end
   end
 end
