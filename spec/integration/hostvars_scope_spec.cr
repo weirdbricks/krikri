@@ -19,7 +19,7 @@ private def run_scope_playbook : {Process::Status, String}
   output = IO::Memory.new
   status = Process.run(
     BINARY,
-    ["-i", INVENTORY, File.join(PROJECT_ROOT, "testing", "test-hostvars-scope-quick.yml")],
+    ["-i", INVENTORY, File.join(PROJECT_ROOT, "spec", "fixtures", "hostvars-scope-playbook.yml")],
     output: output,
     error: output
   )
