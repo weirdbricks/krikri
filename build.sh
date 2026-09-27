@@ -426,6 +426,35 @@ else
 fi
 echo ""
 
+# Build differential_fuzz (differential fuzzing harness, see
+# src/krikri/differential_fuzz/)
+echo -e "${YELLOW}🔨 Building differential_fuzz...${NC}"
+
+FUZZ_BINARY="$OUTPUT_DIR/differential_fuzz"
+FUZZ_SOURCE="differential_fuzz.cr"
+
+NEEDS_BUILD=false
+
+if [ ! -f "$FUZZ_BINARY" ]; then
+    NEEDS_BUILD=true
+elif [ "$FUZZ_SOURCE" -nt "$FUZZ_BINARY" ]; then
+    NEEDS_BUILD=true
+elif find src/krikri/differential_fuzz -name '*.cr' -newer "$FUZZ_BINARY" -print -quit 2>/dev/null | grep -q .; then
+    NEEDS_BUILD=true
+elif [ -d lib ] && find lib -name '*.cr' -newer "$FUZZ_BINARY" -print -quit | grep -q .; then
+    NEEDS_BUILD=true
+elif [ -n "$(binary_build_flavor "$FUZZ_BINARY")" ] && [ "$(binary_build_flavor "$FUZZ_BINARY")" != "$BUILD_MODE" ]; then
+    NEEDS_BUILD=true
+fi
+
+if [ "$NEEDS_BUILD" = true ]; then
+    MAIN_BUILDS+=("differential_fuzz|$FUZZ_SOURCE|$FUZZ_BINARY")
+else
+    echo -e "   ${BLUE}✓${NC} differential_fuzz (up to date)"
+    echo -e "${GREEN}✅ differential_fuzz up to date${NC}"
+fi
+echo ""
+
 # Build plugins
 echo -e "${YELLOW}🔌 Building plugins...${NC}"
 # DISCOVERED from plugins/*.cr rather than hand-maintained: the old
