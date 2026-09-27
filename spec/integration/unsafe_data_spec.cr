@@ -760,3 +760,49 @@ describe "async debug var= is gated in its detached plugin process" do
     File.delete(playbook) if playbook && File.exists?(playbook)
   end
 end
+
+describe "a handler's register: result is execution data too" do
+  # The handler dispatch path stores its register: through the SAME
+  # register_result the regular-task path uses, so the hostile text must
+  # stay verbatim through a flush and through every downstream consumer -
+  # including a set_fact COPY of it (a set_fact derived from handler-
+  # registered data is execution data exactly like one derived from a
+  # task-registered result).
+  it "never re-renders a hostile handler register via a later set_fact + when: + debug" do
+    canary = File.tempname("unsafe-handler-reg-canary")
+    File.delete(canary) if File.exists?(canary)
+    playbook = File.tempname("unsafe-handler-reg", ".yml")
+    File.write(playbook, <<-YAML)
+      - name: unsafe handler register repro
+        hosts: localhost
+        gather_facts: false
+        handlers:
+          - name: produce hostile output
+            ansible.builtin.command: echo "{{ '{{' }} lookup('pipe', 'touch #{canary}') {{ '}}' }}"
+            register: r
+        tasks:
+          - name: trigger
+            ansible.builtin.command: /bin/true
+            notify: produce hostile output
+          - name: flush
+            ansible.builtin.meta: flush_handlers
+          - name: copy into a fact
+            ansible.builtin.set_fact:
+              copy: "{{ r.stdout }}"
+          - name: consume via a condition and debug
+            ansible.builtin.debug:
+              msg: "saw {{ copy }}"
+            when: copy is defined
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+    status.success?.should be_true, output.to_s
+    File.exists?(canary).should be_false,
+      "hostile lookup EXECUTED on the controller via a handler register:\n#{output}"
+    output.to_s.should contain(canary_text(canary))
+  ensure
+    File.delete(canary) if canary && File.exists?(canary)
+    File.delete(playbook) if playbook && File.exists?(playbook)
+  end
+end
