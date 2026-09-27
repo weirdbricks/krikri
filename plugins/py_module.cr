@@ -102,9 +102,57 @@ module Krikri
       # real ansible-core IS installed (probe passed) the shim is never
       # written and the module keeps running against the real basic.py,
       # unchanged from pre-shim behavior.
+      #
+      # A role shipping its OWN custom module_utils packages (e.g.
+      # linux-system-roles.storage's module_utils/storage_lsr/ beside its
+      # library/blivet.py) gets that tree staged under
+      # ansible/module_utils/ here too, the way real Ansible's AnsiballZ
+      # wrapper bundles the role's own module_utils into the zipapp. The
+      # controller only sends this when the role actually ships a
+      # module_utils/ tree (see executor_run_loop's dispatch), so the
+      # common no-module_utils role costs nothing. When staging, the
+      # shim bundle skeleton (ansible/, ansible/module_utils/) is written
+      # UNCONDITIONALLY rather than probe-gated: even with real
+      # ansible-core installed on the target, its own package tree can
+      # never contain the role's custom package, so only a work-dir-local
+      # `ansible` package (which shadows the installed one - the script
+      # dir is sys.path[0] and a regular package there wins) makes
+      # `ansible.module_utils.<role_pkg>` resolve at all. The standard
+      # shims are written FIRST and role files never overwrite an
+      # existing staged path: a role shipping its own module_utils/basic.
+      # py (a name colliding with the shim) keeps the shim, noted here as
+      # an accepted edge case rather than solved.
+      staged_utils = begin
+        raw = @params["module_utils_files"]?
+        raw.nil? || raw.empty? ? nil : JSON.parse(raw).as_h
+      rescue
+        nil
+      end
+      if staged_utils && !staged_utils.empty?
+        PythonModuleRunner.write_module_utils_bundle(work_dir)
+        staged_utils.each do |rel, encoded|
+          next unless encoded.as_s?
+          rel_path = rel
+          # Path-traversal guard on the controller-supplied relative
+          # path: only plain subdirectory components under
+          # ansible/module_utils/ are ever staged.
+          next if rel_path.empty? || rel_path.starts_with?('/')
+          next if rel_path.split('/').includes?("..")
+          dest = File.join(work_dir, "ansible", "module_utils", rel_path)
+          next if File.exists?(dest)
+          begin
+            content = String.new(Base64.decode(encoded.as_s))
+          rescue
+            next
+          end
+          FileUtils.mkdir_p(File.dirname(dest))
+          File.write(dest, content)
+        end
+      end
+
       probe_out = IO::Memory.new
       probe_err = IO::Memory.new
-      if python_module && (py = python)
+      if python_module && (py = python) && (staged_utils.nil? || staged_utils.empty?)
         probe = Process.new(
           py, ["-c", "from ansible.module_utils.basic import AnsibleModule"],
           output: probe_out, error: probe_err

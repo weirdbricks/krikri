@@ -91,6 +91,49 @@ module Krikri
       nil
     end
 
+    # A role (or the playbook tree) shipping its OWN custom module_utils
+    # packages - e.g. linux-system-roles.storage's module_utils/storage_lsr/
+    # beside its library/blivet.py, which does `from
+    # ansible.module_utils.storage_lsr.argument_validator import
+    # validate_parameters`. Real Ansible's AnsiballZ wrapper bundles the
+    # role's own module_utils tree into the zipapp alongside the module
+    # source so the import resolves; this runner previously uploaded only
+    # the ONE module source file, so the import died with a plain Python
+    # ModuleNotFoundError. The convention mirrors find_source's own two
+    # search roots: `<role_root>/module_utils/` (sibling of the role's
+    # `library/`) and the playbook-adjacent `module_utils/`, nearest-first
+    # - a relative path found under an earlier root shadows the same
+    # relative path under a later one. Collections are NOT part of this
+    # surface: a collection module importing its own utils uses the
+    # `ansible_collections.<ns>.<coll>.plugins.module_utils.*` namespace
+    # (not `ansible.module_utils.*`), and third-party collection modules
+    # remain the unchanged scope cut above.
+    #
+    # Returns RELATIVE path (under module_utils/) -> absolute source path,
+    # empty when neither root exists (the common case - zero overhead, the
+    # caller sends no extra payload at all). Only regular files travel;
+    # .pyc/.pyo caches are skipped the way MODULE_IGNORE_EXTS skips junk
+    # in find_source.
+    def collect_module_utils_files(role_path : String?, playbook_dir : String?) : Hash(String, String)
+      roots = [] of String
+      roots << File.join(role_path, "module_utils") if role_path
+      roots << File.join(playbook_dir, "module_utils") if playbook_dir && !playbook_dir.empty?
+
+      files = Hash(String, String).new
+      roots.each do |root|
+        next unless Dir.exists?(root)
+        Dir.glob(File.join(root, "**", "*")).sort.each do |path|
+          next unless File.file?(path)
+          next if path.ends_with?(".pyc") || path.ends_with?(".pyo")
+          rel = Path.new(path).relative_to?(Path.new(root))
+          next unless rel
+          key = rel.to_s
+          files[key] = path unless files.has_key?(key)
+        end
+      end
+      files
+    end
+
     # Real Ansible's own new-style detection (ansiballz): a module
     # importing ansible.module_utils gets its args as a JSON dict (via
     # the ANSIBLE_MODULE_ARGS env var its basic.py reads when no argv

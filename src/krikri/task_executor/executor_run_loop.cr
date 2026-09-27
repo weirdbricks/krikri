@@ -1804,6 +1804,23 @@ module Krikri
         py_params["kv_argv"] = PythonModuleRunner.build_kv_argv(substituted_params).to_json
       end
 
+      # A role shipping its OWN custom module_utils packages (e.g.
+      # linux-system-roles.storage's module_utils/storage_lsr/ beside its
+      # library/blivet.py) gets that tree bundled into the plugin config
+      # the same way the module source itself travels (base64, relative
+      # path -> content) - the plugin stages it under
+      # ansible/module_utils/ on the target so the module's `from
+      # ansible.module_utils.<role_pkg>...` import resolves, mirroring
+      # real Ansible's AnsiballZ bundling of the role's own
+      # module_utils/. A role with NO module_utils/ directory - the
+      # common case - sends no extra payload at all.
+      module_utils_files = PythonModuleRunner.collect_module_utils_files(task.role_path, @playbook_dir)
+      unless module_utils_files.empty?
+        py_params["module_utils_files"] = module_utils_files
+          .to_a.map { |rel, path| {rel, Base64.strict_encode(File.read(path))} }
+          .to_h.to_json
+      end
+
       # build_plugin_config takes the raw pre-default become_user (its
       # OTHER two call sites - the normal plugin path and the batch
       # path - both pass substituted_become_user unchanged too); only
