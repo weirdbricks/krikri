@@ -35,9 +35,8 @@ module Krikri
         stripped = handler_name.strip
         if stripped.starts_with?("{{") && stripped.ends_with?("}}")
           structural = begin
-            KrikriJinja.evaluate_expression(
-              stripped[2..-3].strip, vars_context, strict: true,
-              host_context: JinjaHostContext.new(vars_context)
+            VariableSubstitutor::JinjaRenderer.evaluate_structured(
+              stripped[2..-3].strip, vars_context, strict: true
             )
           rescue
             nil

@@ -858,9 +858,8 @@ module Krikri
       inner = stripped[2..-3]
       return nil if inner.includes?("{{") || inner.includes?("}}")
 
-      KrikriJinja.evaluate_expression(
-        inner.strip, vars_context, strict: true,
-        host_context: JinjaHostContext.new(vars_context)
+      VariableSubstitutor::JinjaRenderer.evaluate_structured(
+        inner.strip, vars_context, strict: true
       )
     rescue
       nil
