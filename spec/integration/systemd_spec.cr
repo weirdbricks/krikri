@@ -17,11 +17,36 @@ describe "systemd plugin" do
       "one of the following is required: state, enabled, masked, daemon_reload, daemon_reexec")
   end
 
-  it "fails a name-only task with real Ansible's required_one_of message (name is not one of the required options)" do
-    result = PluginSpecHelper.run("systemd", {"name" => "foo.service"})
-    result["failed"].as_bool.should be_true
-    result["msg"].to_s.should eq(
-      "one of the following is required: state, enabled, masked, daemon_reload, daemon_reexec")
+  # Real Ansible's name-only query semantics (ansible/modules/systemd_service.py):
+  # required_one_of is satisfied by a name alone - the module runs
+  # `systemctl show <name>` and populates result['status'] with the unit's
+  # current properties, changed stays False, and no management action runs.
+  # konstruktoid.hardening's own "Get ctrl-alt-del.target information" task
+  # does exactly this (rounds 975062/978000: this used to fail outright with
+  # the required_one_of message instead).
+  it "treats a name-only task as a query-only call: succeeds unchanged with a populated status dict" do
+    result = PluginSpecHelper.run("systemd", {
+      "name"                => "nonexistent-krikri-playbook-unit.service",
+      "_ansible_check_mode" => "true",
+    })
+    result["failed"]?.try(&.as_bool).should be_falsey
+    result["changed"].as_bool.should be_false
+    result["name"].as_s.should eq("nonexistent-krikri-playbook-unit.service")
+    # status is always a dict on success (real: result = dict(status=dict())),
+    # populated from `systemctl show` - on a systemd host even a not-found
+    # unit yields a property dump (Id=, LoadState=not-found, ...), so the
+    # dict is non-empty here; empty only where systemctl itself is absent.
+    result["status"].as_h?.should_not be_nil
+  end
+
+  it "treats a name-alias-only task (service:) the same way - query-only, unchanged" do
+    result = PluginSpecHelper.run("systemd", {
+      "service"             => "nonexistent-krikri-playbook-unit.service",
+      "_ansible_check_mode" => "true",
+    })
+    result["failed"]?.try(&.as_bool).should be_falsey
+    result["changed"].as_bool.should be_false
+    result["name"].as_s.should eq("nonexistent-krikri-playbook-unit.service")
   end
 
   it "fails when state is given without a name, with real Ansible's required_by message" do

@@ -56,22 +56,12 @@ and fixed and when.
   implementation of argument-spec parsing/enforcement, not folded into
   an unrelated fix.
 
-- **`systemd` module has no query-only mode** (`konstruktoid.hardening`,
-  rounds 975062/978000, 2026-09-26): a task calling `systemd:` with just
-  `name:` (no `state`/`enabled`/`masked`/`daemon_reload`/`daemon_reexec`)
-  to gather a unit's current facts via `register:` fails with "one of the
-  following is required: state, enabled, masked, daemon_reload,
-  daemon_reexec". Real Ansible supports this query-only form. Found
-  incidentally - real `ansible-playbook` never completed on this role
-  within a 30-min timeout either time it was tried, so its own behavior
-  couldn't be confirmed as a baseline; this krikri failure is confirmed
-  independently by re-reading the module's own real-Ansible docs.
 - **`konstruktoid.hardening` real-host parity is unconfirmed** (rounds
   975062/978000, 2026-09-26): real `ansible-playbook` doesn't complete
   within 30 minutes on this role even on a fresh host (`rc=124` both
   attempts) - too slow to establish parity either way, not a krikri
-  signal. After krikri's own cold run completed (modulo the `systemd`
-  bug above), the host became SSH-unreachable for the warm run; whether
+  signal. After krikri's own cold run completed (modulo the then-unfixed
+  `systemd` query-only gap), the host became SSH-unreachable for the warm run; whether
   that's a krikri-specific regression or simply this hardening role's own
   SSH/firewall changes taking effect (which real Ansible never got far
   enough to also demonstrate) is unresolved.

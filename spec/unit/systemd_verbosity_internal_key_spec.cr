@@ -50,7 +50,11 @@ describe "systemd: _verbosity is an accepted engine-internal param" do
     Process.run("bin/plugins/systemd", input: IO::Memory.new(config), output: stdout, error: stdout)
     output = JSON.parse(stdout.to_s)
 
-    if output["failed"].as_bool
+    # A name-only task now succeeds as a query-only call (changed: false,
+    # status populated), so `failed` may be absent entirely - the only
+    # thing asserted here is that a failure, if any, is not the
+    # argument-spec rejection.
+    if output["failed"]?.try(&.as_bool)
       output["msg"].as_s.should_not contain("Unsupported parameters")
     end
   end

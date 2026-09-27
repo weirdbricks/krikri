@@ -129,11 +129,21 @@ module Krikri
       # required_one_of=[['state', 'enabled', 'masked', 'daemon_reload',
       # 'daemon_reexec']], required_by={state/enabled/masked: name}. The
       # daemon_reload/daemon_reexec aliases count because real Ansible
-      # resolves them onto the canonical params before the check. Replaces
-      # the previous ad-hoc guards (different wording, truthiness-based,
-      # and daemon_reload: false alone failed instead of succeeding as a
-      # no-op the way real Ansible does).
-      unless @params["state"]? || @params["enabled"]? || @params["masked"]? ||
+      # resolves them onto the canonical params before the check. A name
+      # (or its service/unit aliases) alone also satisfies it: real
+      # Ansible's module takes a name-only call as a QUERY - it runs
+      # `systemctl show <name>` and populates result['status'] with the
+      # unit's current properties (changed stays False, no management
+      # action runs) - konstruktoid.hardening's own "Get ctrl-alt-del.
+      # target information" task does exactly this and registers the
+      # result for a later task to read .status.FragmentPath from (rounds
+      # 975062/978000: this used to fail outright instead). Only a call
+      # with truly nothing - no name AND no action param - fails with
+      # required_one_of's message. Replaces the previous ad-hoc guards
+      # (different wording, truthiness-based, and daemon_reload: false
+      # alone failed instead of succeeding as a no-op the way real
+      # Ansible does).
+      unless name || @params["state"]? || @params["enabled"]? || @params["masked"]? ||
              @params["daemon_reload"]? || @params["daemon-reload"]? ||
              @params["daemon_reexec"]? || @params["daemon-reexec"]?
         return PluginResult.new(
