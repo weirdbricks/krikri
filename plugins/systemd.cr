@@ -192,7 +192,7 @@ module Krikri
             return PluginResult.new(
               changed: false,
               failed: true,
-              msg: "Failed to reload systemd daemon: #{reload_result[:stderr]}"
+              msg: "failure #{reload_result[:exit_code]} during daemon-reload: #{reload_result[:stderr]}"
             )
           end
         end
@@ -211,7 +211,7 @@ module Krikri
             return PluginResult.new(
               changed: false,
               failed: true,
-              msg: "Failed to re-execute systemd daemon: #{reexec_result[:stderr]}"
+              msg: "failure #{reexec_result[:exit_code]} during daemon-reexec: #{reexec_result[:stderr]}"
             )
           end
         end
@@ -235,7 +235,7 @@ module Krikri
               return PluginResult.new(
                 changed: false,
                 failed: true,
-                msg: "Failed to mask #{name}: #{mask_result[:stderr]}"
+                msg: "Failed to mask the service (#{name}): #{mask_result[:stderr].strip}"
               )
             end
           end
@@ -252,7 +252,7 @@ module Krikri
               return PluginResult.new(
                 changed: false,
                 failed: true,
-                msg: "Failed to unmask #{name}: #{unmask_result[:stderr]}"
+                msg: "Failed to unmask the service (#{name}): #{unmask_result[:stderr].strip}"
               )
             end
           end
@@ -294,7 +294,7 @@ module Krikri
               return PluginResult.new(
                 changed: false,
                 failed: true,
-                msg: "Failed to enable #{name}: #{enable_result[:stderr]}"
+                msg: "Unable to enable service #{name}: #{enable_result[:stdout]}#{enable_result[:stderr]}"
               )
             end
           end
@@ -311,7 +311,7 @@ module Krikri
               return PluginResult.new(
                 changed: false,
                 failed: true,
-                msg: "Failed to disable #{name}: #{disable_result[:stderr]}"
+                msg: "Unable to disable service #{name}: #{disable_result[:stdout]}#{disable_result[:stderr]}"
               )
             end
           end
@@ -338,7 +338,7 @@ module Krikri
                 return PluginResult.new(
                   changed: false,
                   failed: true,
-                  msg: "Failed to start #{name}: #{start_result[:stderr]}"
+                  msg: "Unable to start service #{name}: #{start_result[:stderr]}"
                 )
               end
             end
@@ -357,7 +357,7 @@ module Krikri
                 return PluginResult.new(
                   changed: false,
                   failed: true,
-                  msg: "Failed to stop #{name}: #{stop_result[:stderr]}"
+                  msg: "Unable to stop service #{name}: #{stop_result[:stderr]}"
                 )
               end
             end
@@ -368,7 +368,18 @@ module Krikri
             messages << "Would restart #{name}"
             changed = true
           else
-            restart_result = remote_exec("#{scope_env_prefix}systemctl#{scope_flag}#{no_block_flag} restart #{shell_single_quote(name.to_s)}")
+            # Real Ansible picks the state-change verb by the unit's CURRENT
+            # state (systemd_service.py's state block: for restarted,
+            # `if not is_running_service(...): action = 'start'` - so an
+            # INACTIVE unit gets `systemctl start`, never `restart` - else
+            # `action = state[:-2]`). Same selection the `reloaded` branch
+            # below already implements. Found live (systemd-repro container,
+            # Type=oneshot unit failing at start): an inactive unit's failed
+            # restart must report real Ansible's "Unable to start service
+            # ..." wording, which also requires the `start` verb, not just
+            # the message.
+            action = is_running ? "restart" : "start"
+            restart_result = remote_exec("#{scope_env_prefix}systemctl#{scope_flag}#{no_block_flag} #{action} #{shell_single_quote(name.to_s)}")
             if restart_result[:exit_code] == 0
               messages << "Unit restarted"
               changed = true
@@ -376,7 +387,7 @@ module Krikri
               return PluginResult.new(
                 changed: false,
                 failed: true,
-                msg: "Failed to restart #{name}: #{restart_result[:stderr]}"
+                msg: "Unable to #{action} service #{name}: #{restart_result[:stderr]}"
               )
             end
           end
@@ -409,7 +420,7 @@ module Krikri
               return PluginResult.new(
                 changed: false,
                 failed: true,
-                msg: "Failed to start #{name}: #{start_result[:stderr]}"
+                msg: "Unable to start service #{name}: #{start_result[:stderr]}"
               )
             end
           else
@@ -421,7 +432,7 @@ module Krikri
               return PluginResult.new(
                 changed: false,
                 failed: true,
-                msg: "Failed to reload #{name}: #{reload_result[:stderr]}"
+                msg: "Unable to reload service #{name}: #{reload_result[:stderr]}"
               )
             end
           end

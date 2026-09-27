@@ -222,6 +222,7 @@ Style/HeredocEscape:
   - spec/integration/template_spec.cr
   - spec/integration/user_param_coverage_spec.cr
   - spec/unit/playbook_parser_spec.cr
+  - spec/unit/systemd_restart_failure_wording_spec.cr
   - src/krikri/batch_script.cr
   - src/krikri/python_module_runner.cr
 
@@ -258,6 +259,7 @@ Style/HeredocIndent:
   - spec/unit/maven_artifact_command_spec.cr
   - spec/unit/modprobe_command_spec.cr
   - spec/unit/proc_net_tcp_spec.cr
+  - spec/unit/systemd_restart_failure_wording_spec.cr
   - spec/unit/rhsm_repository_spec.cr
   - spec/unit/service_facts_parser_spec.cr
   - src/krikri/batch_script.cr
