@@ -1494,3 +1494,22 @@ describe "out-of-range subscript strictness (differential-fuzz fix, krikri-jinja
     renderer.evaluate_value!("dict_simple['missing']").should be_nil
   end
 end
+
+describe "lazy generator stringification (differential-fuzz follow-up, krikri-jinja v0.4.23)" do
+  # Real ansible-core 2.19 materializes a lazy filter generator into a
+  # real list before stringification - `{{ l | unique ~ 'x' }}` renders
+  # "['b', 'a']x" (live-verified), not the leaked
+  # #<KrikriJinja::GeneratorValue:0x...> repr both krikri evaluators used
+  # to agree on.
+  it "renders a `~`-concatenated generator result as a real list" do
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(
+      {"list_strs" => JSON.parse(%(["b", "a", "b"]))} of String => JSON::Any)
+    renderer.render("{{ list_strs | unique ~ 'x' }}").should eq("['b', 'a']x")
+  end
+
+  it "renders a bare generator result as a real list" do
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(
+      {"list_strs" => JSON.parse(%(["b", "a", "b"]))} of String => JSON::Any)
+    renderer.render("{{ list_strs | unique }}").should eq("['b', 'a']")
+  end
+end
