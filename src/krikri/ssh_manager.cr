@@ -91,6 +91,12 @@ module Krikri
       # Control sockets live here; a predictable /tmp path must never be
       # group/world-readable (0700 also blocks another local user
       # pre-creating the dir before we do and hijacking the sockets).
+      # Both this chmod and the ownership check below run even when the
+      # directory ALREADY existed (the mkdir_p above is then a no-op) -
+      # so a foreign-owned or world-readable pre-existing directory is
+      # caught here, not bypassed: chmod by a non-owner fails loudly and
+      # the owner check raises. There is no window where a pre-existing
+      # wrong directory is used without being verified.
       File.chmod(@@control_path_dir, 0o700)
       # Close the mkdir->chmod window: verify the directory we now own is
       # actually OURS and not a foreign-owned dir planted (or left) at

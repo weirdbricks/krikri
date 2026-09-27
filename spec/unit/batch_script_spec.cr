@@ -14,13 +14,23 @@ private def run_script(script : String) : String
   output
 end
 
+# The generated script's owner checks compare the directory's uid against
+# the uid the script actually runs as, so a per-uid tag keeps consecutive
+# spec runs by different accounts off each other's batch parent (the
+# second run would otherwise fail closed on a foreign-owned parent).
+private SPEC_USER = "spec-uid-#{LibC.getuid}"
+
+private def build(batch_id : String, steps : Array(Krikri::BatchScript::Step)) : String
+  Krikri::BatchScript.build(batch_id, steps, SPEC_USER)
+end
+
 describe Krikri::BatchScript do
   it "round-trips a step's config through /bin/cat and parses the result back" do
     steps = [
       Krikri::BatchScript::Step.new("/bin/cat", %({"changed":false,"failed":false,"msg":"hi"}), false),
     ]
 
-    script = Krikri::BatchScript.build("t1", steps)
+    script = build("t1", steps)
     results = Krikri::BatchScript.parse(run_script(script))
 
     results[0]?.should_not be_nil
@@ -33,7 +43,7 @@ describe Krikri::BatchScript do
     payload = %({"changed":false,"failed":false,"msg":"line one\\nline two\\nline three"})
     steps = [Krikri::BatchScript::Step.new("/bin/cat", payload, false)]
 
-    results = Krikri::BatchScript.parse(run_script(Krikri::BatchScript.build("t2", steps)))
+    results = Krikri::BatchScript.parse(run_script(build("t2", steps)))
 
     results[0].stdout.should eq(payload)
   end
@@ -41,7 +51,7 @@ describe Krikri::BatchScript do
   it "runs every step when none fail" do
     steps = (1..3).map { |i| Krikri::BatchScript::Step.new("/bin/cat", %({"changed":false,"failed":false,"msg":"#{i}"}), false) }
 
-    results = Krikri::BatchScript.parse(run_script(Krikri::BatchScript.build("t3", steps)))
+    results = Krikri::BatchScript.parse(run_script(build("t3", steps)))
 
     results.size.should eq(3)
     results[2].stdout.should eq(%({"changed":false,"failed":false,"msg":"3"}))
@@ -54,7 +64,7 @@ describe Krikri::BatchScript do
       Krikri::BatchScript::Step.new("/bin/cat", %({"changed":false,"failed":false,"msg":"never runs"}), false),
     ]
 
-    results = Krikri::BatchScript.parse(run_script(Krikri::BatchScript.build("t4", steps)))
+    results = Krikri::BatchScript.parse(run_script(build("t4", steps)))
 
     results[0]?.should_not be_nil
     results[1]?.should_not be_nil
@@ -67,7 +77,7 @@ describe Krikri::BatchScript do
       Krikri::BatchScript::Step.new("/bin/cat", %({"changed":false,"failed":false,"msg":"still runs"}), false),
     ]
 
-    results = Krikri::BatchScript.parse(run_script(Krikri::BatchScript.build("t5", steps)))
+    results = Krikri::BatchScript.parse(run_script(build("t5", steps)))
 
     results[0]?.should_not be_nil
     results[1]?.should_not be_nil
@@ -87,7 +97,7 @@ describe Krikri::BatchScript do
       Krikri::BatchScript::Step.new("/bin/cat", %({"changed":false,"failed":false,"msg":"still runs"}), false),
     ]
 
-    results = Krikri::BatchScript.parse(run_script(Krikri::BatchScript.build("t-nested-failed", steps)))
+    results = Krikri::BatchScript.parse(run_script(build("t-nested-failed", steps)))
 
     results[0]?.should_not be_nil
     results[1]?.should_not be_nil
@@ -105,7 +115,7 @@ describe Krikri::BatchScript do
       Krikri::BatchScript::Step.new("/bin/cat", %({"changed":false,"failed":false,"msg":"still runs"}), false),
     ]
 
-    results = Krikri::BatchScript.parse(run_script(Krikri::BatchScript.build("t-escaped-failed", steps)))
+    results = Krikri::BatchScript.parse(run_script(build("t-escaped-failed", steps)))
 
     results[0]?.should_not be_nil
     results[1]?.should_not be_nil
@@ -117,7 +127,7 @@ describe Krikri::BatchScript do
       Krikri::BatchScript::Step.new("/bin/cat", %({"changed":false,"failed":false,"msg":"never runs"}), false),
     ]
 
-    results = Krikri::BatchScript.parse(run_script(Krikri::BatchScript.build("t6", steps)))
+    results = Krikri::BatchScript.parse(run_script(build("t6", steps)))
 
     results[0]?.should_not be_nil
     results[0].exit_code.should_not eq(0)
@@ -126,7 +136,7 @@ describe Krikri::BatchScript do
 
   it "cleans up its remote working directory after a normal finish" do
     steps = [Krikri::BatchScript::Step.new("/bin/cat", %({"changed":false,"failed":false,"msg":"x"}), false)]
-    script = Krikri::BatchScript.build("t7-cleanup-check", steps)
+    script = build("t7-cleanup-check", steps)
 
     # Append a check for the directory's absence after the script's own
     # dump/cleanup runs, reusing the exact same $D the generated script
@@ -142,5 +152,44 @@ describe Krikri::BatchScript do
   it "returns no entry at all for a step index that was never sent" do
     results = Krikri::BatchScript.parse("OUT 0 0 aGk=\n")
     results[5]?.should be_nil
+  end
+
+  it "names the batch parent after the per-connecting-user staging tag, not a shared path" do
+    # Regression for the shared /var/tmp/.krikri-playbook/batch- parent:
+    # two krikri users on one host used to share one entirely predictable
+    # parent (sticky-world /var/tmp, CVE-2014-3498 class). The parent must
+    # now carry the same <user>-<hash> tag the plugin staging dir uses,
+    # and distinct users must map to distinct parents.
+    steps = [Krikri::BatchScript::Step.new("/bin/cat", "{}", false)]
+
+    deploy_script = Krikri::BatchScript.build("t8", steps, "deploy")
+    deploy_tag = Krikri::PluginManager.staging_dir_tag("deploy")
+    deploy_script.should contain("/var/tmp/.krikri-playbook-#{deploy_tag}/batch/batch-t8")
+
+    root_script = Krikri::BatchScript.build("t8", steps, nil)
+    root_script.should contain("/var/tmp/.krikri-playbook-#{Krikri::PluginManager.staging_dir_tag("root")}/batch/batch-t8")
+
+    other_script = Krikri::BatchScript.build("t8", steps, "otheruser")
+    other_tag = Krikri::PluginManager.staging_dir_tag("otheruser")
+    other_script.should_not contain(deploy_tag)
+    deploy_script.should_not contain(other_tag)
+  end
+
+  it "fails closed on the parent (no swallowed chmod) and owner-checks the batch dir too" do
+    steps = [Krikri::BatchScript::Step.new("/bin/cat", "{}", false)]
+    script = build("t9-checks", steps)
+
+    # The old `chmod 700 "$P" 2>/dev/null || true` silently ignored a
+    # failed chmod (the tell-tale sign someone else owns the dir); the
+    # generated script must attempt it bare and let the owner check that
+    # follows abort the run.
+    script.should contain("chmod 700 \"$P\"\n")
+    script.should_not contain("chmod 700 \"$P\" 2>/dev/null || true")
+
+    # The per-batch dir gets the same owner+symlink check the parent has
+    # (the old asymmetry: parent verified, child blindly trusted).
+    script.should contain(%(if [ -L "$D" ] || [ "$(stat -c %u "$D" 2>/dev/null)" != "$(id -u)" ]))
+    # ...as does the per-user base the parent now lives under.
+    script.should contain(%(if [ -L "$B" ] || { [ -e "$B" ] && [ "$(stat -c %u "$B" 2>/dev/null)" != "$(id -u)" ]; }))
   end
 end

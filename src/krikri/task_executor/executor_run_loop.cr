@@ -1321,7 +1321,7 @@ module Krikri
 
     private def run_batch_script(host : Host, connection_host : String, steps : Array(BatchScript::Step)) : Hash(Int32, BatchScript::StepResult)
       batch_id = Random::Secure.hex(8)
-      script = BatchScript.build(batch_id, steps)
+      script = BatchScript.build(batch_id, steps, host.user)
       raw = SSHManager.exec_script(connection_host, host.user || "root", script, host.port, identity_file: host.vars["ansible_ssh_private_key_file"]?.try(&.as_s?))
       parsed = BatchScript.parse(raw[:stdout])
 

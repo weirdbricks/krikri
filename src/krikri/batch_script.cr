@@ -1,5 +1,6 @@
 require "base64"
 
+require "./plugin_manager"
 require "./shell"
 
 module Krikri
@@ -32,7 +33,23 @@ module Krikri
     # why (some hardening roles remount `/tmp` as a fresh, empty tmpfs
     # mid-play, which would silently wipe this batch's own per-step
     # output files out from under it).
-    REMOTE_DIR_PREFIX = "/var/tmp/.krikri-playbook/batch-"
+    REMOTE_DIR_BASE = "/var/tmp/.krikri-playbook"
+
+    # Per-connecting-user parent for batch working dirs, sharing the
+    # plugin staging dir's `<user>-<hash>` tag (PluginManager.staging_dir_tag):
+    # /var/tmp is sticky-world, so the old single shared parent was an
+    # entirely predictable path any local user could pre-create before
+    # krikri's first run (the CVE-2014-3498 class), and two krikri users
+    # on one host fought over it. Per-user, that cross-user race
+    # disappears; the generated script's owner/symlink checks stay as
+    # defense in depth. Lives *under* the plugin staging base (not
+    # beside it) so this script's 0700 chmod can never clobber the
+    # staging base's deliberately traversable 0711 (a `become_user:`
+    # exec reaches binaries through it).
+    def self.remote_dir_prefix(remote_user : String?) : String
+      user = remote_user.presence || "root"
+      "#{REMOTE_DIR_BASE}-#{PluginManager.staging_dir_tag(user)}/batch"
+    end
 
     # awk program (POSIX awk, run against one step's stdout file) that
     # answers "does this result JSON have a TOP-LEVEL \"failed\": true?"
@@ -120,21 +137,33 @@ module Krikri
     # Builds the full script for one batch. *batch_id* should be unique
     # per invocation (avoids any risk of colliding with a leftover
     # directory from an earlier batch against the same host).
-    def self.build(batch_id : String, steps : Array(Step)) : String
-      dir = "#{REMOTE_DIR_PREFIX}#{batch_id}"
+    # *remote_user* is the connecting SSH user - it names the per-user
+    # parent directory (see #remote_dir_prefix).
+    def self.build(batch_id : String, steps : Array(Step), remote_user : String? = nil) : String
+      prefix = remote_dir_prefix(remote_user)
+      dir = "#{prefix}/batch-#{batch_id}"
+      base = File.dirname(prefix)
       s = String.build do |io|
         io << "#!/bin/bash\n"
         io << "set -u\n"
         io << "umask 077\n"
-        io << "P=" << Shell.single_quote(File.dirname(REMOTE_DIR_PREFIX)) << "\n"
-        # Parent dir ownership check: same threat class the plugin staging
-        # path defends against (a local user pre-creating the directory
-        # before our first run, then reading - or swapping - everything we
-        # put under it). Step .out/.err files carry module stdout/stderr,
-        # which can contain secrets.
+        io << "B=" << Shell.single_quote(base) << "\n"
+        io << "P=" << Shell.single_quote(prefix) << "\n"
+        # Parent dir checks: same threat class the plugin staging path
+        # defends against (a local user pre-creating the directory before
+        # our first run, then reading - or swapping - everything we put
+        # under it). Step .out/.err files carry module stdout/stderr,
+        # which can contain secrets. The parent is per-connecting-user
+        # now (see #remote_dir_prefix), so a *second krikri user* can no
+        # longer collide with it - the checks below stay as defense in
+        # depth against a hostile pre-creation at this user's own
+        # predictable path, and unlike the old `chmod ... || true` they
+        # fail closed: a chmod that can't take effect means someone else
+        # owns the directory, and the owner check that follows aborts.
         io << "if [ -e \"$P\" ] && ! [ -d \"$P\" ]; then echo 'krikri batch dir parent is not a directory' >&2; exit 75; fi\n"
+        io << "if [ -L \"$B\" ] || { [ -e \"$B\" ] && [ \"$(stat -c %u \"$B\" 2>/dev/null)\" != \"$(id -u)\" ]; }; then echo 'krikri batch dir base unsafe (symlink or foreign owner)' >&2; exit 75; fi\n"
         io << "mkdir -p \"$P\"\n"
-        io << "chmod 700 \"$P\" 2>/dev/null || true\n"
+        io << "chmod 700 \"$P\"\n"
         io << "if [ -L \"$P\" ] || [ \"$(stat -c %u \"$P\" 2>/dev/null)\" != \"$(id -u)\" ]; then echo 'krikri batch dir parent unsafe (symlink or foreign owner)' >&2; exit 75; fi\n"
         # Sweep stale batch dirs: dump's rm -rf only runs on normal
         # completion - a SIGKILLed SSH connection orphans the dir (and
@@ -146,6 +175,11 @@ module Krikri
         io << "D=" << dir << "\n"
         io << "mkdir -p \"$D\"\n"
         io << "chmod 700 \"$D\"\n"
+        # Same owner+symlink check the parent gets: the random batch id
+        # makes pre-creating this exact path impractical, but the
+        # asymmetry (parent verified, child blindly trusted) was its own
+        # finding - same check, same style.
+        io << "if [ -L \"$D\" ] || [ \"$(stat -c %u \"$D\" 2>/dev/null)\" != \"$(id -u)\" ]; then echo 'krikri batch dir unsafe (symlink or foreign owner)' >&2; exit 75; fi\n"
         io << dump_function << "\n"
 
         steps.each_with_index do |step, idx|

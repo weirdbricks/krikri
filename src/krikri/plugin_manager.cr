@@ -48,8 +48,10 @@ module Krikri
     # Stable, collision-proof directory-name tag for a connecting user:
     # the sanitized name stays human-readable, the hash suffix guarantees
     # two distinct users never map to one directory (and that a hostile
-    # username can't alias an existing path).
-    private def self.staging_dir_tag(user : String) : String
+    # username can't alias an existing path). Shared with BatchScript's
+    # per-user batch parent, so the two remote staging trees always agree
+    # on one user -> one directory.
+    def self.staging_dir_tag(user : String) : String
       safe = user.gsub(/[^a-zA-Z0-9._-]/, "-")
       "#{safe}-#{Digest::SHA1.hexdigest(user)[0, 8]}"
     end
