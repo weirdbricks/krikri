@@ -3537,6 +3537,21 @@ module Krikri
       private def fetch_url_lines(url : String, redirects_left : Int32 = 5) : String
         return "undefined" if redirects_left < 0
 
+        # file:// URLs read a controller-local file - real Ansible's own
+        # url lookup plugin supports the scheme through its shared
+        # fetch_url helper, and it's the offline-testable form of the
+        # with_url:/lookup('url', ...) checksum idiom. A missing file
+        # fails the task like the HTTP-error branch below, matching the
+        # file lookup's own hard-fail behavior.
+        if url.downcase.starts_with?("file://")
+          path = url["file://".size..]
+          begin
+            return File.read(path).lines.map(&.strip).reject(&.empty?).to_json
+          rescue e : File::Error
+            raise "The lookup plugin 'url' failed: Unable to access the file '#{path}': #{e.message}"
+          end
+        end
+
         response = HTTP::Client.get(url)
 
         # GitHub (and most CDNs fronting release assets, exactly what

@@ -6,7 +6,8 @@ module Krikri
     private def task_has_loop?(task : Task) : Bool
       !task.loop_items.nil? || !task.loop_fileglob.nil? || !task.loop_first_found.nil? ||
         !task.loop_template.nil? || !task.loop_flattened.nil? || !task.loop_subelements_list.nil? ||
-        !task.loop_nested_sources.nil? || !task.loop_together_sources.nil? || !task.loop_filetree.nil?
+        !task.loop_nested_sources.nil? || !task.loop_together_sources.nil? || !task.loop_filetree.nil? ||
+        !task.loop_lookup_plugin.nil?
     end
 
     # Runs *tasks* against *hosts* as one shared batch: one "TASK [...]"
@@ -290,6 +291,80 @@ module Krikri
         return nil unless list
         LoopResolver.with_indexed_items(list)
       end
+    end
+
+    LOOP_LOOKUP_TERM_VAR = "krikri_loop_lookup_term"
+
+    # Generic legacy `with_<lookup>:` source (with_url:, with_lines:,
+    # with_env:, with_pipe:, ...). Real Ansible converts the keyword to
+    # `loop: "{{ lookup('<plugin>', <terms>, wantlist=True) }}"` with each
+    # term templated against the variable context first
+    # (listify_lookup_plugin_terms), then runs the lookup plugin on the
+    # controller and iterates its result. Terms are JSON-escaped into the
+    # evaluated expression, so a rendered value containing commas, quotes,
+    # or `{{ }}` text cannot break the argument split. Returns nil when
+    # the task has no generic lookup source at all.
+    private def resolve_loop_lookup(task : Task, vars_context : Hash(String, JSON::Any)) : Array(JSON::Any)?
+      plugin = task.loop_lookup_plugin
+      raw_terms = task.loop_lookup_terms
+      return nil unless plugin && raw_terms && !raw_terms.empty?
+
+      # The plugin name comes from the YAML key itself; anything beyond a
+      # plain lookup-plugin name shape can't be dispatched sensibly.
+      unless plugin.matches?(/^[A-Za-z0-9_.]+$/)
+        raise UndefinedVariableError.new("Invalid lookup plugin name in loop source: '#{plugin}'")
+      end
+
+      # Terms are rendered ONCE (author templates), then handed to the
+      # lookup as VALUES through a reserved variable - never spliced into
+      # expression source text. Splicing re-templated the `{{ }}` inside a
+      # term's string literal, so host-derived text reaching a term
+      # (`with_env: "{{ r.stdout }}"`) executed `lookup('pipe', ...)` on
+      # the controller; real Ansible passes terms as data. Jinja markers
+      # left in a rendered term are data, so they are registered as unsafe
+      # text and never rendered again.
+      terms = raw_terms.flat_map do |term|
+        str = term.as_s?
+        next [term] unless str && str.includes?("{{")
+        stripped = str.strip
+        if stripped.starts_with?("{{") && stripped.ends_with?("}}") && stripped.scan("{{").size == 1
+          # Whole-expression term: native value, a list splices one level
+          # (real listify_lookup_plugin_terms).
+          value = VariableSubstitutor::ExpressionEvaluator.new(vars_context).evaluate_structured(stripped[2..-3].strip)
+          raise UndefinedVariableError.new(Krikri.strict_undefined_message(stripped[2..-3].strip, vars_context)) unless value
+          value.as_a? || [value]
+        else
+          [JSON::Any.new(VarSubstitutor.new(vars: vars_context).substitute(str, strict: true))]
+        end
+      end
+
+      items = [] of JSON::Any
+      terms.each do |term|
+        UnsafeValues.mark_value(term)
+        term_context = vars_context.dup
+        term_context[LOOP_LOOKUP_TERM_VAR] = term
+        result = begin
+          VariableSubstitutor::ExpressionEvaluator.new(term_context)
+            .evaluate_structured("query('#{plugin}', #{LOOP_LOOKUP_TERM_VAR}, wantlist=true)")
+        rescue ex : UndefinedVariableError
+          raise ex
+        rescue ex
+          # A lookup plugin's own failure (unreadable file, HTTP error)
+          # fails the TASK, like real Ansible - it must never escape as an
+          # unhandled exception that kills the whole controller run.
+          raise UndefinedVariableError.new(ex.message || "The lookup plugin '#{plugin}' failed")
+        end
+        if result.nil? || result.raw.nil?
+          raise UndefinedVariableError.new(
+            "The lookup plugin '#{plugin}' failed or is not available for this loop source")
+        end
+        if list = result.as_a?
+          items.concat(list)
+        else
+          items << result
+        end
+      end
+      items
     end
 
     # with_community.general.filetree: resolve each raw source string
