@@ -128,30 +128,44 @@ module Krikri
 
       # #render_via_jinja, but re-routed through the JSON-compact
       # `#render_via_jinja_string` path ONLY when the result is
-      # actually a container - every other case (scalar, or genuinely
-      # Undefined/missing) keeps #render_via_jinja's own stringification
-      # untouched, since #render_via_jinja_string's "undefined" sentinel
-      # for a nil value is wrong for e.g. an else-less ternary's missing
-      # branch (real Jinja renders that as "", not the literal text
-      # "undefined"). A ternary's chosen branch can be an arbitrary
-      # sub-expression - a filter chain producing a real Array (`x |
-      # regex_findall(...) if y else []`, RedHatOfficial.rhel8_pci_dss's
-      # own "Set gpgcheck=1 for each yum repo" loop source) is a real
-      # counter-example to this file's own "ternary is provably
-      # scalar-only" claim near #render_via_jinja_value. Plain
-      # #render_via_jinja alone stringifies a container result through
-      # Crinja's own Python-repr Finalizer (`[['a.repo', 'sec1'], ...]`,
-      # single-quoted, not valid JSON) instead of this codebase's
-      # JSON-compact `VariableLookup#format_value` - the internal
-      # render-then-`JSON.parse`-back round trip every loop-template
-      # caller relies on (`resolve_loop_template`'s own
-      # `parse_list_result`) then fails to parse it, falls through to
+      # actually a container - every other scalar case keeps
+      # #render_via_jinja's own stringification untouched. A ternary's
+      # chosen branch can be an arbitrary sub-expression - a filter chain
+      # producing a real Array (`x | regex_findall(...) if y else []`,
+      # RedHatOfficial.rhel8_pci_dss's own "Set gpgcheck=1 for each yum
+      # repo" loop source) is a real counter-example to this file's own
+      # "ternary is provably scalar-only" claim near
+      # #render_via_jinja_value. Plain #render_via_jinja alone stringifies
+      # a container result through Crinja's own Python-repr Finalizer
+      # (`[['a.repo', 'sec1'], ...]`, single-quoted, not valid JSON)
+      # instead of this codebase's JSON-compact `VariableLookup#format_
+      # value` - the internal render-then-`JSON.parse`-back round trip
+      # every loop-template caller relies on (`resolve_loop_template`'s
+      # own `parse_list_result`) then fails to parse it, falls through to
       # the array-wrapped scalar fallback, and the WHOLE unparsed repr
       # string became ONE loop item instead of the real list of tuples.
-      private def render_via_jinja_container_safe(expr : String) : String
+      #
+      # `undefined_sentinel` controls what an UNDEFINED result renders as.
+      # A ternary WITH an else clause whose CHOSEN branch is undefined
+      # (`missing_var if bool_true else 'x'`) renders the codebase's
+      # standard "undefined" sentinel - the same thing a bare undefined
+      # reference produces on both evaluator entry points (VariableLookup,
+      # `JinjaRenderer#evaluate_value!`'s nil convention) - not the empty
+      # string the krikri-jinja render Finalizer produces for a top-level
+      # Undefined, which made the two entry points disagree with each
+      # other (found by bin/differential_fuzz; real Ansible fails the task
+      # in either shape under StrictUndefined). The else-less ternary
+      # (`TRUTHY if COND` with a FALSE cond) passes false and keeps the
+      # Finalizer's "": there the empty render is load-bearing for real
+      # roles (ansible-community.ansible-vault's `{{ '+ent' if
+      # vault_enterprise }}{{ '.hsm' if vault_enterprise_hsm }}` suffix
+      # concatenation must NOT grow a literal "undefined" text).
+      private def render_via_jinja_container_safe(expr : String, undefined_sentinel : Bool = true) : String
         value = render_via_jinja_value(expr)
         raw = value.try(&.raw)
-        (raw.is_a?(Array) || raw.is_a?(Hash)) ? @lookup.format_value(value.not_nil!) : render_via_jinja(expr)
+        return @lookup.format_value(value.not_nil!) if raw.is_a?(Array) || raw.is_a?(Hash)
+        return "undefined" if value.nil? && undefined_sentinel
+        render_via_jinja(expr)
       end
 
       # #evaluate, but formatting a CONTAINER result the way real Ansible
@@ -294,7 +308,7 @@ module Krikri
           end
         elsif ternary_no_else = split_ternary_no_else(expr)
           begin
-            render_via_jinja_container_safe(expr)
+            render_via_jinja_container_safe(expr, undefined_sentinel: false)
           rescue
             evaluate_ternary_no_else(ternary_no_else)
           end

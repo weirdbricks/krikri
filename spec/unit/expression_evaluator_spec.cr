@@ -1251,6 +1251,25 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
     evaluator.evaluate(%('+ent' if vault_enterprise)).should eq("+ent")
   end
 
+  it "renders a ternary whose CHOSEN branch is undefined as the undefined sentinel, not the empty string" do
+    # Differential-fuzz fix: `{{ missing_var if bool_true else 'x' }}`
+    # rendered "" through the krikri-jinja render finalization (the
+    # Crinja-first path's render! of a top-level Undefined) but the
+    # "undefined" sentinel through JinjaRenderer#evaluate_value! (the
+    # delegation path) - two wrong answers disagreeing with each other
+    # (real Ansible's StrictUndefined fails the task in either shape).
+    # A bare undefined reference already gives "undefined" on both sides,
+    # so the sentinel is the codebase's established convention. The
+    # else-less ternary keeps its "" render (the next spec): there the
+    # empty string is load-bearing for real roles.
+    v = Hash(String, JSON::Any).new
+    v["bool_true"] = JSON::Any.new(true)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator.evaluate("missing_var if bool_true else 'x'").should eq("undefined")
+    evaluator.evaluate("'a' if bool_true else missing_var").should eq("a")
+    evaluator.evaluate("missing_a if bool_false else missing_b").should eq("undefined")
+  end
+
   it "resolves a ternary whose chosen branch is a filter chain producing an Array, as JSON not Python-repr" do
     # Real bug found via RedHatOfficial.rhel8_pci_dss's own "Set
     # gpgcheck=1 for each yum repo" loop source: `loop: "{{

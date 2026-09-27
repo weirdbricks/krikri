@@ -62,14 +62,6 @@ and fixed and when.
     including the one documented predicate hole (a regression of the
     non-numeric-string/bool-vs-string ordering rules is message-
     indistinguishable from the deliberate numeric-string leniency).
-  - **Undefined-result sentinel inconsistency between the two entry
-    points**: a ternary whose CHOSEN branch is undefined renders `""`
-    through the krikri-jinja render finalization (hand-rolled side)
-    but the "undefined" sentinel through `evaluate_value!` (the
-    delegation path). A bare undefined reference gives "undefined" on
-    both sides, so the two paths disagree with each other; real Ansible
-    (StrictUndefined) fails the task in either shape. Minimal
-    reproducer: `{{ missing_var if bool_true else 'x' }}`.
   - **Index out of range on a list**: the hand-rolled side hard-fails
     like real Ansible ("object of type 'list' has no element 9") while
     `evaluate_value!`'s nil convention renders the lenient "undefined"

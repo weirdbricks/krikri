@@ -120,16 +120,6 @@ module Krikri::DifferentialFuzz
     end
 
     KNOWN_DIFFERENCES = [
-      # A ternary whose chosen branch is undefined: the krikri-jinja
-      # RENDER finalization turns the chainable Undefined into "" while
-      # evaluate_value! maps it to the "undefined" sentinel. Real Ansible
-      # (StrictUndefined) fails the task in both shapes; this is an
-      # internal-consistency gap between the two entry points. (Still
-      # open at this commit - removed by the follow-up sentinel-
-      # unification fix.)
-      KnownDifference.new("undefined-ternary-sentinel", ->(o : Outcome) {
-        o.status.mismatch? && o.hand_value == "" && o.jinja_value == "undefined"
-      }),
       # Index out of range on a list (or into a missing value): the
       # hand-rolled side hard-fails like real Ansible, while
       # evaluate_value!'s nil convention renders the lenient "undefined"
