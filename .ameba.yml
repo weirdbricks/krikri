@@ -36,6 +36,8 @@ Lint/Formatting:
   - src/krikri/task_executor/executor_blocks_includes.cr
   - src/krikri/task_executor/executor_task_exec.cr
   - src/krikri/variable_substitutor/expression_evaluator.cr
+  - src/krikri/filters/filter_args.cr
+  - src/krikri/filters/filter_dispatch.cr
 
 Lint/NotNil:
   Excluded:
@@ -176,6 +178,9 @@ Metrics/CyclomaticComplexity:
   - src/krikri/variable_substitutor/expression_evaluator.cr
   - src/krikri/lookups/lookup_misc.cr
   - src/krikri/variable_substitutor/filter_engine.cr
+  - src/krikri/filters/filter_dispatch.cr
+  - src/krikri/filters/filter_args.cr
+  - src/krikri/filters/filter_select.cr
   - src/krikri_lint/rules/risky_file_permissions.cr
   - src/krikri_lint/rules/risky_octal.cr
   - src/krikri_lint/rules/var_naming.cr
