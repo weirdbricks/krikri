@@ -1184,3 +1184,113 @@ describe "cross-host hostvars reads never re-render another host's execution dat
     File.delete(playbook) if playbook && File.exists?(playbook)
   end
 end
+
+# Real ansible-core's taint is a TYPE: `r.stdout | trim` of padded
+# hostile stdout is still AnsibleUnsafeText, so it is never re-rendered
+# even after it is flattened into a loop item under a name no gate
+# knows. The exact-text registry alone could not see such a derived
+# string (the transform dropped the registered whitespace), and
+# `loop: ["look-{{ relay }}-ma"]` consumed by `"x-{{ item }}-y"`
+# executed the controller `lookup('pipe', ...)`. Live-verified against
+# real ansible-playbook 2.19, which prints the item verbatim. Runs the
+# relay shape with *filter* applied to registered (optionally padded)
+# hostile stdout and returns {status, output}.
+private def derived_relay_run(filter : String, *, canary : String, padded : Bool)
+  playbook = File.tempname("unsafe-derived", ".yml")
+  File.open(playbook, "w") do |file|
+    file.puts "- name: derived-taint relay"
+    file.puts "  hosts: all"
+    file.puts "  gather_facts: false"
+    file.puts "  vars:"
+    file.puts "    relay: \"{{ r.stdout | #{filter} }}\""
+    file.puts "  tasks:"
+    file.puts "    - name: produce hostile output"
+    padding = padded ? " " : ""
+    file.puts %(      ansible.builtin.command: echo "#{padding}{{ '{{' }} lookup('pipe', 'touch #{canary}') {{ '}}' }}#{padding}")
+    file.puts "      register: r"
+    file.puts "    - name: flatten the derivative into a loop item"
+    file.puts "      ansible.builtin.command: echo \"x-{{ item }}-y\""
+    file.puts "      loop: [\"look-{{ relay }}-ma\"]"
+    file.puts "      changed_when: false"
+  end
+  output = IO::Memory.new
+  status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+  {status, output.to_s}
+ensure
+  File.delete(playbook) if playbook && File.exists?(playbook)
+end
+
+describe "derived TRANSFORMED hostile strings stay unsafe (registry closed under derivation)" do
+  it "never re-renders a | trim derivative of padded hostile stdout relayed through an author var" do
+    canary = File.tempname("unsafe-derived-trim")
+    File.delete(canary) if File.exists?(canary)
+    status, output = derived_relay_run("trim", canary: canary, padded: true)
+    status.success?.should be_true, output
+    File.exists?(canary).should be_false,
+      "trimmed hostile loop item EXECUTED on the controller:\n#{output}"
+  ensure
+    File.delete(canary) if canary && File.exists?(canary)
+  end
+
+  it "never re-renders a | lower derivative whose text no longer matches any registered leaf" do
+    dir = File.dirname(File.tempname("unsafe-derived-lower-probe"))
+    canary = File.join(dir, "unsafe-derived-lower-canary")
+    hostile = File.join(dir, "UNSAFE-DERIVED-LOWER-CANARY")
+    File.delete(canary) if File.exists?(canary)
+    File.delete(hostile) if File.exists?(hostile)
+    playbook = File.tempname("unsafe-derived-lower", ".yml")
+    File.open(playbook, "w") do |file|
+      file.puts "- name: derived-taint lower relay"
+      file.puts "  hosts: all"
+      file.puts "  gather_facts: false"
+      file.puts "  vars:"
+      file.puts "    relay: \"{{ r.stdout | lower }}\""
+      file.puts "  tasks:"
+      file.puts "    - name: produce hostile output naming the UPPERCASE path"
+      file.puts %(      ansible.builtin.command: echo "{{ '{{' }} lookup('pipe', 'touch #{hostile}') {{ '}}' }}")
+      file.puts "      register: r"
+      file.puts "    - name: flatten the lowercased derivative into a loop item"
+      file.puts "      ansible.builtin.command: echo \"x-{{ item }}-y\""
+      file.puts "      loop: [\"look-{{ relay }}-ma\"]"
+      file.puts "      changed_when: false"
+    end
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+    status.success?.should be_true, output.to_s
+    File.exists?(canary).should be_false,
+      "lowercased hostile loop item EXECUTED on the controller:\n#{output}"
+  ensure
+    File.delete(playbook) if playbook && File.exists?(playbook)
+    File.delete(canary) if canary && File.exists?(canary)
+    File.delete(hostile) if hostile && File.exists?(hostile)
+  end
+
+  it "still renders a legit author chain relayed the same way (no over-taint)" do
+    playbook = File.tempname("unsafe-derived-legit", ".yml")
+    File.open(playbook, "w") do |file|
+      file.puts "- name: legit derived relay"
+      file.puts "  hosts: all"
+      file.puts "  gather_facts: false"
+      file.puts "  vars:"
+      file.puts "    relay: \"{{ b }}\""
+      file.puts "    b: \"hello {{ c }}\""
+      file.puts "    c: world"
+      file.puts "  tasks:"
+      file.puts "    - name: flatten the chain into a loop item"
+      file.puts "      ansible.builtin.command: echo \"x-{{ item }}-y\""
+      file.puts "      loop: [\"look-{{ relay }}-ma\"]"
+      file.puts "      register: o"
+      file.puts "      changed_when: false"
+      file.puts "    - name: show"
+      file.puts "      ansible.builtin.debug:"
+      file.puts "        msg: \"{{ o.results | map(attribute='stdout') | list }}\""
+    end
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+    status.success?.should be_true, output.to_s
+    output.to_s.should contain("look-hello world-ma"),
+      "legit author-chain loop item lost its re-render (over-taint):\n#{output}"
+  ensure
+    File.delete(playbook) if playbook && File.exists?(playbook)
+  end
+end

@@ -28,11 +28,12 @@ module Krikri
   # unsafe-name registry: a value whose exact text is registered here is
   # passed through verbatim on every evaluation path.
   #
-  # Exact-match only: real Ansible's taint would also follow DERIVED
-  # strings (`"x" + unsafe_var`, a `| trim` of hostile text), but
-  # matching by exact text keeps the gate O(1) per re-render decision.
-  # Derived-string taint beyond what the span gate's own resolved-value
-  # scan covers is a documented residual gap.
+  # The registry is closed under DERIVATION: every render whose output
+  # was demonstrably fed by a registered/execution-resolved string is
+  # itself recorded (#mark_unsafe at the span gate, #mark_derived for
+  # whole-text concatenation), so the set tracks real ansible-core's
+  # taint-follows-the-data type across transforms that change the text
+  # (`| trim`, `| lower`) and through author templates that relay it.
   module UnsafeValues
     @@texts = Set(String).new
 
@@ -78,6 +79,27 @@ module Krikri
     def self.contains_unsafe?(text : String) : Bool
       return false unless text.includes?("{{") || text.includes?("{%") || text.includes?("{#")
       @@texts.any? { |hostile| text.includes?(hostile) }
+    end
+
+    # Records *text* as hostile with no substring scan - the DERIVATION
+    # closure of the registry. Callers invoke it exactly where an
+    # evaluation path has just established that a render's OUTPUT was fed
+    # by execution-resolved data (the span gate saw a resolved root in the
+    # expression, a registered hostile inside the output, or a resolved
+    # hostvars origin). Real ansible-core types that output
+    # AnsibleUnsafeText and every later decision honors the type; krikri
+    # has no string type to piggyback on, so the derivation is recorded
+    # here the moment it happens - otherwise a transform that alters the
+    # registered text (`| trim`, `| lower`, concatenation relayed through
+    # an author variable) produced a string that neither the name gate
+    # (the flattened value surfaces under no resolved name) nor the
+    # substring scan (the text no longer contains any registered leaf)
+    # could recognise, and it was re-rendered as template text.
+    # Same cost model as the rest of the registry: only brace-bearing
+    # output is ever stored.
+    def self.mark_unsafe(text : String) : Nil
+      return unless text.includes?("{{") || text.includes?("{%") || text.includes?("{#")
+      @@texts.add(text)
     end
 
     # Records every brace-bearing string inside an execution result

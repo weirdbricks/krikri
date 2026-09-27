@@ -1377,6 +1377,7 @@ module Krikri
     private def substitute_impl_guarded(text : String, strict : Bool = false, output : Bool = false, native : Bool = false) : String
       if text.includes?("{%") || text.includes?("{#")
         rendered_block = render_block_tag_text(text, strict, renderer)
+        UnsafeValues.mark_unsafe(rendered_block) if expression_uses_unsafe_root?(text)
         UnsafeValues.mark_derived(rendered_block)
         return rendered_block
       end
@@ -1450,10 +1451,24 @@ module Krikri
         #   HostvarsContext.origin_unsafe?): registered results/set_facts
         #   are execution data and pass through verbatim.
         origin = VariableSubstitutor::HostvarsContext.origin_host_and_key(@vars, stripped)
-        if re_template_from_variable?(stripped) &&
-           !UnsafeValues.contains_unsafe?(rendered) &&
-           !resolved_span_references_unsafe?(stripped) &&
-           !(origin && VarSubstitutor.resolved_var_name?(origin[0], origin[1]))
+        re_templates = re_template_from_variable?(stripped)
+        unsafe_derived =
+          if re_templates
+            UnsafeValues.contains_unsafe?(rendered) ||
+              resolved_span_references_unsafe?(stripped) ||
+              !!(origin && VarSubstitutor.resolved_var_name?(origin[0], origin[1]))
+          else
+            # non-re-rendering spans still PULL host data in (`{{ r.stdout
+            # | trim }}`, a nested call or ternary over a resolved root);
+            # their output is a derived string real ansible-core would tag
+            # AnsibleUnsafe.
+            (rendered.includes?("{{") || rendered.includes?("{%") || rendered.includes?("{#")) &&
+              (expression_uses_unsafe_root?(stripped) || UnsafeValues.contains_unsafe?(rendered))
+          end
+        if unsafe_derived
+          UnsafeValues.mark_unsafe(rendered)
+        end
+        if re_templates && !unsafe_derived
           # A span rooted at `hostvars[<other host>]` re-renders its own
           # output with THAT host's scope - real Ansible's HostVarsVars
           # templar, not the reading host's. The per-host substitutor's
@@ -2314,6 +2329,38 @@ module Krikri
       else
         false
       end
+    end
+
+    # Whether a span EXPRESSION (not its resolved value - the resolved-side
+    # half is #resolved_span_references_unsafe?) reads an execution-resolved
+    # (register:/set_fact/fact) root anywhere in its source text: `r.stdout
+    # | trim`, `some_fn(r.x)`, a ternary over host data. Filter/function
+    # NAME positions are skipped so common words that are also filter names
+    # (`default`, `map`) don't match a same-named variable by accident.
+    # This is the provenance signal that lets the UNSAFE-text registry be
+    # closed under derivation: any string an unsafe root flowed into gets
+    # registered, exactly like real ansible-core tagging the resulting
+    # AnsibleUnsafeText, so later re-render decisions refuse it by the
+    # (transformed) text itself rather than by name.
+    private def expression_uses_unsafe_root?(expr : String) : Bool
+      host = @host_name
+      expr.scan(/[A-Za-z_][A-Za-z0-9_]*/) do |match|
+        name = match[0]
+        i = match.begin
+        j = i + name.size
+        while j < expr.size && expr[j].ascii_whitespace?
+          j += 1
+        end
+        next if j < expr.size && expr[j] == '(' # function-call head
+        k = i
+        while k > 0 && expr[k - 1].ascii_whitespace?
+          k -= 1
+        end
+        next if k > 0 && expr[k - 1] == '|' # filter name after a pipe
+        next if i > 0 && (expr[i - 1] == '.' || expr[i - 1] == '"' || expr[i - 1] == '\'')
+        return true if VarSubstitutor.resolved_var_name?(host, name)
+      end
+      false
     end
 
     private def collect_identifiers(raw, found : Set(String)) : Nil

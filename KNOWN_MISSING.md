@@ -30,21 +30,10 @@ it does not linger at the top. This file carries no per-round
 narrative or fix history - `git log` is the record of what was found
 and fixed and when.
 
-**Currently at `0.9.1334`.**
+**Currently at `0.9.1335`.**
 
 ## Open gaps
 
-- **Unsafe-data taint is exact-text, not derived-string** (security
-  review, 2026-09-26): execution results and facts are never
-  re-rendered, via the per-host resolved-name registry plus the exact
-  text registry in `unsafe_values.cr` (rendered output that embeds a
-  registered hostile string, and every string leaf of a resolved
-  container, are checked too). Real ansible-core's taint is a true type
-  that follows *derived* strings; krikri's is a structural
-  approximation. It has leaked once already - host data held in a
-  task-level list/dict var (fixed 0.9.1331, see this round's entry) -
-  so any new re-render path needs the hostile matrix in
-  `spec/integration/unsafe_data_spec.cr` extended, not assumed safe.
 - **Role-dependency tasks sometimes lose their `TASK [role : name]`
   prefix** (`buluma.roundcubemail`, `xanmanning.k3s`; round 979000,
   2026-09-26): real `ansible-playbook` prints `TASK [buluma.httpd :
@@ -301,6 +290,20 @@ Everything here is a decision someone already made, with the reasoning
 attached. Nothing here is waiting on anyone. Do not re-litigate without
 new evidence - and if new evidence turns up, move the entry to "Open
 gaps" rather than arguing with the note in place.
+
+### Unsafe-data taint is a provenance-closed registry, not an AnsibleUnsafe type
+
+- Real ansible-core marks host-controlled strings with a type
+  (`AnsibleUnsafeText`) that survives every operation. krikri instead
+  records the hostile TEXTS in a global registry and closes it under
+  derivation: the moment a render decision establishes (by resolved
+  name, expression provenance, or substring containment) that an
+  output was fed by execution data, the transformed output itself is
+  registered, so every later re-render refuses it by text. Same
+  verdict as the type for every shape tested live against
+  ansible-playbook 2.19 - but it is structurally approximate: a NEW
+  re-render path must extend the hostile matrix in
+  `spec/integration/unsafe_data_spec.cr`, not be assumed safe.
 
 ### `fetch:` refuses a destination that escapes `dest`, stricter than real Ansible
 
