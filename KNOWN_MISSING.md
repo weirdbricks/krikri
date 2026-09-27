@@ -45,17 +45,6 @@ and fixed and when.
   DIVERGENT on real hosts. Not yet root-caused - the engine's
   macro/callable branches wrap results in Markup only under autoescape,
   and neither the template nor the role's vars use `| safe`/`| e`.
-- **No role `argument_spec` (`meta/argument_specs.yml`) validation**
-  (`robertdebock.vault_agent`; round 979000, 2026-09-26): real Ansible's
-  synthetic "Validating arguments against arg spec 'main'" task fails
-  immediately with a clean `missing required arguments: ...` error when
-  a `required: true` var is absent. krikri doesn't enforce this at all,
-  so execution falls through into whatever the role does next (here,
-  several `assert |` tasks) before failing later via a generic assertion
-  instead. A real feature gap, not a one-line fix - needs its own scoped
-  implementation of argument-spec parsing/enforcement, not folded into
-  an unrelated fix.
-
 - **`konstruktoid.hardening` real-host parity is unconfirmed** (rounds
   975062/978000, 2026-09-26): real `ansible-playbook` doesn't complete
   within 30 minutes on this role even on a fresh host (`rc=124` both
