@@ -618,24 +618,85 @@ module Krikri
     # unconditionally, re-applying the halt afterward if the block ultimately
     # failed (unrescued, or rescue itself failed, or always: introduced a new
     # failure) unless the block itself has ignore_errors:.
-    # Whether this task's loop items derive from execution-resolved (unsafe)
-    # data - the mirror of mark_loop_derived_unsafe_names's publication:
-    # build_vars_context marks `item`/loop_var unsafe for exactly the tasks
-    # whose loop source references an unsafe root, so consulting the
-    # registry here keeps deep_render_item's per-item rendering in sync
-    # with every other evaluation path's gate.
-    private def loop_items_unsafe?(task : Task, host_name : String) : Bool
-      return true if VarSubstitutor.resolved_var_name?(host_name, "item")
-      return true if (loop_var = task.loop_var) && VarSubstitutor.resolved_var_name?(host_name, loop_var)
-      false
+    # Loop-item safety by VALUE, not by name (see UnsafeValues' own
+    # comment): when the task's own loop SOURCE is a DIRECT reference to an
+    # execution-resolved (unsafe) root, the values the loop yields are
+    # already rendered data by the time they reach the per-item pass -
+    # that pass would be their SECOND render, and rendering data-derived
+    # text is exactly the controller code-execution hole the taint closes
+    # (real ansible-core marks such items AnsibleUnsafe and never
+    # re-templates them). Callers therefore skip the per-item pass for
+    # such loops and instead mark the resulting item VALUES in the
+    # UnsafeValues exact-text registry, so every later re-render
+    # (`msg: "{{ item }}"`, a module arg, a when:) is refused on the value
+    # itself. Taint lives on the data, never on the `item` name: a name
+    # taint cannot distinguish the values a hostile result produced from
+    # the author-written template text that PRODUCED an item, and
+    # suppressing the first render of author text is what left
+    # geerlingguy.php's `with_items: ["{{ php_conf_paths | flatten }}",
+    # "{{ php_extension_conf_paths | flatten }}"]` items verbatim
+    # unrendered - no directories created at all.
+    #
+    # "Direct reference" is deliberately narrow AND whole-source only: the
+    # source must be template-expression ONLY (a single `{{ ... }}` span
+    # with no author literal text around it - `{{ r.stdout_lines }}`,
+    # `{{ hostvars[...].r.y }}`, `{{ r.x | map('upper') | list }}`),
+    # collected from the whole-source loop templates only. The literal
+    # elements of a loop LIST are author template text whose render is
+    # the items' first and only render - they are never taint sources,
+    # whatever they reference (see loop_source_expressions). Hostile
+    # content that flows INTO such a rendered item stays verbatim anyway
+    # through the value-level UnsafeValues registry and mark_derived.
+    private def loop_items_derive_from_unsafe_data?(task : Task, host_name : String) : Bool
+      referenced = Set(String).new
+      loop_source_expressions(task).each do |source|
+        next unless inner = direct_reference_expression?(source)
+        inner.scan(/[A-Za-z_][A-Za-z0-9_]*/).each { |match| referenced.add(match[0]) }
+      end
+      return false if referenced.empty?
+      referenced.any? { |name| VarSubstitutor.resolved_var_name?(host_name, name) }
     end
 
-    # *unsafe*: loop items taken from execution-resolved data (see
-    # mark_loop_derived_unsafe_names) are never re-rendered - real
-    # ansible-core marks them AnsibleUnsafe, and rendering their text is
-    # exactly the controller code-execution hole this gate closes.
-    private def deep_render_item(item : JSON::Any, vars_context : Hash(String, JSON::Any), host_name : String, depth : Int32 = 0, strict : Bool = true, unsafe : Bool = false) : JSON::Any
-      return item if unsafe || depth > 10
+    # The task's whole-source loop template strings - everything EXCEPT
+    # the literal elements of a loop list. A loop list's elements are
+    # author template text (`"{{ paths | flatten }}"`,
+    # `"{{ r.stdout }}"`, `"{{ ansible_os_family }}.yml"`) whose render
+    # is the item's first and only render; only a WHOLE source that is
+    # itself one bare direct reference (`loop: "{{ r.stdout_lines }}"`)
+    # yields items that are already-rendered unsafe data.
+    private def loop_source_expressions(task : Task) : Array(String)
+      sources = [] of String
+      if loop_template = task.loop_template
+        sources << loop_template
+      end
+      {% for field in %w[loop_fileglob loop_file loop_first_found loop_first_found_paths
+                        loop_flattened loop_nested_sources loop_together_sources loop_filetree] %}
+        task.{{ field.id }}.try(&.each { |source| sources << source })
+      {% end %}
+      if subelements_list = task.loop_subelements_list
+        sources << subelements_list
+      end
+      sources
+    end
+
+    # Publishes the final loop-item values of an unsafe-derived loop into
+    # the value-level registry: any brace-bearing string in them is
+    # verbatim data from here on, refused a re-render on every evaluation
+    # path - the value-level replacement for the retired `item`-name
+    # taint (see loop_items_derive_from_unsafe_data? and UnsafeValues).
+    private def mark_unsafe_loop_items(items : Array(JSON::Any)) : Nil
+      items.each { |item| UnsafeValues.mark_value(item) }
+    end
+
+    # *unsafe*: REMOVED - taint never suppresses a render. Loop items
+    # taken from a whole-source direct reference to execution-resolved
+    # data (see loop_items_derive_from_unsafe_data?) are skipped at the
+    # call site (that pass would be their second render) and the resulting
+    # values are marked in UnsafeValues instead; every item this method IS
+    # called on is author-template text receiving its first render, with
+    # hostile content inside it held verbatim by the UnsafeValues gates.
+    private def deep_render_item(item : JSON::Any, vars_context : Hash(String, JSON::Any), host_name : String, depth : Int32 = 0, strict : Bool = true) : JSON::Any
+      return item if depth > 10
       case raw = item.raw
       when Hash
         rendered = raw.each_with_object({} of String => JSON::Any) do |(key, value), acc|

@@ -75,3 +75,38 @@ describe "with_subelements: with a filter-chain source" do
     File.delete(playbook) if playbook && File.exists?(playbook)
   end
 end
+
+# Real ansible-core's subelements lookup hands the task a parent COPY with
+# the subelement key REMOVED (live-verified against 2.19.11:
+# `msg="{{ item.0 | to_json }}"` over {"name": "s1", "kids": [...]} prints
+# {"name": "s1"}). krikri used to hand the full parent dict through, so
+# item.0 exposed the whole raw subelement list where real Ansible never
+# shows it.
+describe "with_subelements: parent dict shape" do
+  it "hands item.0 a copy with the subelement key removed" do
+    playbook = File.tempname("with-subelements-parent", ".yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          mylist: [{"name": "s1", "kids": ["i1", "i2"]}]
+        tasks:
+          - name: manage
+            ansible.builtin.debug:
+              msg: "parent={{ item.0 | to_json }}"
+            with_subelements:
+              - "{{ mylist }}"
+              - kids
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+
+    status.success?.should be_true
+    output.to_s.should contain(%({"name": "s1"}))
+    output.to_s.should_not contain("kids")
+  ensure
+    File.delete(playbook) if playbook && File.exists?(playbook)
+  end
+end

@@ -737,8 +737,15 @@ module Krikri
       host_name : String,
     ) : Array(JSON::Any)?
       begin
-        unsafe_items = loop_items_unsafe?(task, host_name)
-        loop_items.map { |item| deep_render_item(item, vars_context, host_name, unsafe: unsafe_items) }
+        unsafe_items = loop_items_derive_from_unsafe_data?(task, host_name)
+        # Unsafe-derived items are already rendered data (their whole source
+        # was one direct reference) - the pass below would be their second
+        # render, so it is skipped and the values are marked instead (see
+        # loop_items_derive_from_unsafe_data?). Author-template items always
+        # get their first render.
+        rendered_items = unsafe_items ? loop_items : loop_items.map { |item| deep_render_item(item, vars_context, host_name) }
+        mark_unsafe_loop_items(rendered_items) if unsafe_items
+        rendered_items
       rescue ex : UndefinedVariableError
         # Same A/B/C leniency scoping as resolve_loop_items_or_raise above
         # (round 701114/821007, redhat_sap.sap_hana_hsr): this is the rescue
@@ -863,7 +870,14 @@ module Krikri
                        index_var = task.index_var
                        rendered_items.map_with_index do |item, idx|
                          vars_context = running_vars_context.dup
-                         vars_context["item"] = item
+                         # loop_control.loop_var REPLACES "item" - real
+                         # ansible-core binds the item ONLY under the custom
+                         # name (`item | default('x')` reads unset alongside
+                         # a loop_var; live-verified against 2.19.11), and
+                         # its registered per-item results carry the custom
+                         # key, never "item". Binding both made krikri see an
+                         # "item" real Ansible fails as undefined.
+                         vars_context["item"] = item unless loop_var
                          vars_context[loop_var] = item if loop_var
                          vars_context[index_var] = JSON::Any.new(idx.to_i64) if index_var
                          vars_context["ansible_loop"] = ansible_loop_vars(loop_items, idx.to_i) if task.loop_extended?
@@ -1039,7 +1053,8 @@ module Krikri
 
       loop_items.each_with_index do |item, idx|
         vars_context = base_vars_context.dup
-        vars_context["item"] = item
+        # Same loop_var-replaces-item rule as the one-at-a-time path above.
+        vars_context["item"] = item unless loop_var
         vars_context[loop_var] = item if loop_var
         vars_context[index_var] = JSON::Any.new(idx.to_i64) if index_var
         vars_context["ansible_loop"] = ansible_loop_vars(loop_items, idx) if task.loop_extended?
@@ -1256,19 +1271,18 @@ module Krikri
         # per-item results land in the registered aggregate, and real
         # Ansible never exposes `_ansible_*` keys there.
         result_hash.reject! { |key, _| key.starts_with?("_ansible_") }
-        result_hash["item"] = item
-        # loop_control: { loop_var: some_name } exposes the item under
-        # that CUSTOM name too, in addition to "item" (real Ansible's
-        # own behavior, matching how the live execution context already
-        # binds both - see label_context above) - previously only ever
-        # set here regardless of loop_control, so a later `map(attribute:
-        # <custom_name>)`/`selectattr(<custom_name>, ...)` over
-        # registered.results always saw that key as missing (null).
+        # loop_control.loop_var REPLACES "item" - real ansible-core's
+        # registered per-item result carries the CUSTOM key only (plus
+        # ansible_loop_var), never "item" (live-verified against 2.19.11:
+        # out.results[0].keys() with loop_var: p is
+        # ['msg', 'failed', 'changed', 'p', 'ansible_loop_var']).
         # Found benchmarking githubixx.containerd's own "Set
         # modprobe_location" (`loop_control: { loop_var: path }` +
         # `modprobe_locations.results | ... | map(attribute='path')`).
         if loop_var = task.loop_var
           result_hash[loop_var] = item
+        else
+          result_hash["item"] = item
         end
         results << JSON::Any.new(result_hash)
       end

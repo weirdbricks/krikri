@@ -466,23 +466,28 @@ module Krikri
         # item isn't appended, a narrower gap than the fully generic
         # looped-module path.
         item_results = [] of JSON::Any
-        unsafe_items = loop_items_unsafe?(task, host.name)
-        rendered_items = loop_items.map { |item| deep_render_item(item, loop_vars_context, host.name, strict: false, unsafe: unsafe_items) }
+        unsafe_items = loop_items_derive_from_unsafe_data?(task, host.name)
+        # Unsafe-derived items are already rendered data - the pass below
+        # would be their second render, so it is skipped and the values are
+        # marked instead (see loop_items_derive_from_unsafe_data?).
+        rendered_items = unsafe_items ? loop_items : loop_items.map { |item| deep_render_item(item, loop_vars_context, host.name, strict: false) }
+        mark_unsafe_loop_items(rendered_items) if unsafe_items
         rendered_items = flatten_with_items_one_level(rendered_items) if task.loop_items_needs_flatten?
         rendered_items.each_with_index do |item, loop_index|
           item_context = vars_context.dup
-          item_context["item"] = item
-          item_context["ansible_loop"] = ansible_loop_vars(rendered_items, loop_index) if task.loop_extended?
-          # loop_control: { loop_var: some_name } exposes the item under
-          # a CUSTOM name instead of (real Ansible: in addition to) the
-          # default "item" - previously ignored entirely here, always
-          # binding only "item" regardless. buluma.confluence's own
+          # loop_control: { loop_var: some_name } REPLACES "item" - real
+          # ansible-core binds the item ONLY under the custom name
+          # (`item | default('x')` reads unset alongside a loop_var;
+          # live-verified against 2.19.11). buluma.confluence's own
           # `loop_control: { loop_var: _loop_var }` needs `_loop_var`
           # bound for its own `include_vars: "{{ _loop_var }}"` to
           # resolve at all (round165).
           if lv = task.loop_var
             item_context[lv] = item
+          else
+            item_context["item"] = item
           end
+          item_context["ansible_loop"] = ansible_loop_vars(rendered_items, loop_index) if task.loop_extended?
           # task.vars (e.g. `__vars_file: "{{ role_path }}/vars/{{ item
           # }}"`) is stored unrendered in vars_context - it must be
           # re-rendered against THIS item before when: (which reads it
@@ -634,14 +639,11 @@ module Krikri
           end
           return
         end
-        vars_context["item"] = items.first
-        # loop_control: { loop_var: some_name } exposes the found
-        # candidate under a CUSTOM name instead of (real Ansible: in
-        # addition to) the default "item" - this dedicated with_
-        # first_found: path only ever bound "item", the same gap
-        # already fixed for the loop_items branch above (round165,
-        # buluma.confluence) but missed here since with_first_found:
-        # resolves through this separate branch entirely. arillso.*'s
+        vars_context["item"] = items.first unless task.loop_var
+        # loop_control: { loop_var: some_name } REPLACES "item" - real
+        # ansible-core binds the item ONLY under the custom name (live-
+        # verified against 2.19.11). This dedicated with_first_found:
+        # path previously only ever bound "item"; arillso.*'s
         # own `include_vars: '{{ loop_vars }}'` with `loop_control:
         # loop_var: loop_vars` needs `loop_vars` bound to resolve at
         # all - without this it stayed undefined regardless of which
@@ -1248,17 +1250,20 @@ module Krikri
         # `mount` in dev-sec os_hardening's per-mountpoint include loop).
         loop_var = task.loop_var
         index_var = task.index_var
-        unsafe_items = loop_items_unsafe?(task, host.name)
+        unsafe_items = loop_items_derive_from_unsafe_data?(task, host.name)
         if task.loop_items_needs_flatten?
           # with_items:'s implicit flatten(levels=1) needs each raw item
           # RENDERED first (a raw item here is still an unrendered "{{
           # default_directories }}"-style template string, not yet the
           # real array it resolves to) - flatten only makes sense against
-          # the rendered values.
+          # the rendered values. Unsafe-derived items are already rendered
+          # data; their pass would be a second render, so it is skipped
+          # (see loop_items_derive_from_unsafe_data?).
           loop_items = flatten_with_items_one_level(
-            loop_items.map { |item| deep_render_item(item, loop_vars_context, host.name, strict: false, unsafe: unsafe_items) }
+            unsafe_items ? loop_items : loop_items.map { |item| deep_render_item(item, loop_vars_context, host.name, strict: false) }
           )
         end
+        mark_unsafe_loop_items(loop_items) if unsafe_items
         looped_when_failed = false
         loop_items.each_with_index do |item, idx|
           vars_context = base_vars_context.dup
@@ -1271,10 +1276,19 @@ module Krikri
           # `bool` filter treats as truthy regardless of the real value.
           # Item rendering is loop-source-grade templating, so it renders
           # against the alias-free snapshot, while the per-iteration
-          # context the included tasks see keeps the full one.
-          rendered_item = deep_render_item(item, loop_vars_context, host.name, strict: false, unsafe: unsafe_items)
-          vars_context["item"] = rendered_item
-          vars_context[loop_var] = rendered_item if loop_var
+          # context the included tasks see keeps the full one. For an
+          # unsafe-derived loop this pass would be the item's second
+          # render, so it is skipped - the item value is already rendered
+          # data (see loop_items_derive_from_unsafe_data?).
+          rendered_item = unsafe_items ? item : deep_render_item(item, loop_vars_context, host.name, strict: false)
+          # loop_control.loop_var REPLACES "item" - real ansible-core binds
+          # the item ONLY under the custom name (see the task-loop sites in
+          # executor_loops.cr).
+          if loop_var
+            vars_context[loop_var] = rendered_item
+          else
+            vars_context["item"] = rendered_item
+          end
           vars_context[index_var] = JSON::Any.new(idx.to_i64) if index_var
           # Each include_tasks loop iteration counts as one `ok` in the
           # recap, matching real Ansible (which tallies the include plus
@@ -1438,16 +1452,33 @@ module Krikri
       end
 
       # Thread this iteration's item into each included task's own scope as
-      # `item` and, when loop_control.loop_var is set, under that custom name
-      # too (so `mount.path` in a name/param/when: resolves). The banner's
-      # own rendering of a name referencing these happens lazily at print
-      # time - see the note further below.
-      if item = vars_context["item"]?
+      # `item` - or, when loop_control.loop_var is set, under that custom
+      # name ONLY (loop_var replaces "item", see the task-loop sites in
+      # executor_loops.cr; the include itself no longer binds "item" in
+      # that case, so the propagation must not gate on it either - the
+      # included task's `{{ p }}` still has to resolve).
+      if loop_var = task.loop_var
+        if bound = vars_context[loop_var]?
+          lv = loop_var
+          item_value = bound
+          included_tasks.each do |included_task|
+            included_task.vars[lv] = item_value
+            # loop_control.index_var (e.g. riemers.gitlab-runner's own
+            # `index_var: runner_config_index`) was never propagated here -
+            # only loop_var/item were. The include_tasks: task's own vars:/
+            # name still resolved it fine (both render against vars_context
+            # directly, which DOES have it bound a few lines up), but any
+            # included task referencing it directly (config-runner.yml's own
+            # `prefix: gitlab-runner.{{ runner_config_index }}.`) saw
+            # "'runner_config_index' is undefined" instead.
+            if (index_var = task.index_var) && (bound = vars_context[index_var]?)
+              included_task.vars[index_var] = bound
+            end
+          end
+        end
+      elsif item = vars_context["item"]?
         included_tasks.each do |included_task|
           included_task.vars["item"] = item
-          if loop_var = task.loop_var
-            included_task.vars[loop_var] = item
-          end
           # loop_control.index_var (e.g. riemers.gitlab-runner's own
           # `index_var: runner_config_index`) was never propagated here -
           # only loop_var/item were. The include_tasks: task's own vars:/
@@ -1589,17 +1620,24 @@ module Krikri
       if loop_items
         loop_var = task.loop_var
         index_var = task.index_var
-        unsafe_items = loop_items_unsafe?(task, host.name)
+        unsafe_items = loop_items_derive_from_unsafe_data?(task, host.name)
         if task.loop_items_needs_flatten?
+          # Unsafe-derived items are already rendered data - their render
+          # pass would be a second render, so it is skipped (see
+          # loop_items_derive_from_unsafe_data?).
           loop_items = flatten_with_items_one_level(
-            loop_items.map { |item| deep_render_item(item, loop_vars_context, host.name, strict: false, unsafe: unsafe_items) }
+            unsafe_items ? loop_items : loop_items.map { |item| deep_render_item(item, loop_vars_context, host.name, strict: false) }
           )
         end
+        mark_unsafe_loop_items(loop_items) if unsafe_items
         loop_items.each_with_index do |item, idx|
-          vars_context = base_vars_context.dup
-          vars_context["item"] = item
-          vars_context[loop_var] = item if loop_var
-          vars_context[index_var] = JSON::Any.new(idx.to_i64) if index_var
+        vars_context = base_vars_context.dup
+        # Same loop_var-replaces-item rule as the task loop paths
+        # (executor_loops.cr) - real ansible-core binds the item ONLY
+        # under the custom name.
+        vars_context["item"] = item unless loop_var
+        vars_context[loop_var] = item if loop_var
+        vars_context[index_var] = JSON::Any.new(idx.to_i64) if index_var
           run_include_role_once(task, host, vars_context, item_display(item))
         end
       else
@@ -1795,12 +1833,25 @@ module Krikri
         included_task.role_invocation_id = invocation_id
       end
 
-      if item = vars_context["item"]?
+      # Same loop_var-replaces-item propagation as the include_tasks path
+      # above: with loop_control.loop_var set, the custom name is the only
+      # binding the included tasks/handlers see.
+      if loop_var = task.loop_var
+        if bound = vars_context[loop_var]?
+          lv = loop_var
+          item_value = bound
+          (included_tasks + included_handlers).each do |included_task|
+            included_task.vars[lv] = item_value
+            # Same index_var propagation gap as run_include_tasks_once's
+            # identical fix above.
+            if (index_var = task.index_var) && (bound = vars_context[index_var]?)
+              included_task.vars[index_var] = bound
+            end
+          end
+        end
+      elsif item = vars_context["item"]?
         (included_tasks + included_handlers).each do |included_task|
           included_task.vars["item"] = item
-          if (loop_var = task.loop_var) && (bound = vars_context[loop_var]?)
-            included_task.vars[loop_var] = bound
-          end
           # Same index_var propagation gap as run_include_tasks_once's
           # identical fix above.
           if (index_var = task.index_var) && (bound = vars_context[index_var]?)

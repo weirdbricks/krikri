@@ -299,10 +299,7 @@ module Krikri
       #   ansible_local, ansible_env, ... - the whole hostile-target
       #   surface, local .fact files included)
       # - the `ansible_facts` dict spelling of the same facts
-      # - loop-item aliases (`item`, a custom loop_control.loop_var,
-      #   loop_control.index_var, ansible_loop) whenever the task's own
-      #   loop source references any unsafe root - items taken from
-      #   resolved data are unsafe exactly like the data itself
+      # - the `ansible_facts` dict spelling of the same facts
       resolved_names = Set(String).new(registered.keys)
       @set_facts[host.name]?.try(&.each_key { |key| resolved_names.add(key) })
       set_fact_keys = @set_facts[host.name]?
@@ -313,7 +310,6 @@ module Krikri
         resolved_names.add(key)
       end
       resolved_names.add("ansible_facts") unless @facts[host.name].empty?
-      mark_loop_derived_unsafe_names(task, resolved_names)
       VarSubstitutor.set_resolved_var_names(host.name, resolved_names)
 
       # Value-level complement (see UnsafeValues' own comment): record the
@@ -353,70 +349,6 @@ module Krikri
       vars_context["vars"] = JSON::Any.new(self_view)
 
       vars_context
-    end
-
-    # Loop-item alias taint (see build_vars_context's publication comment):
-    # when the task's own loop source is a DIRECT reference to an
-    # execution-resolved (unsafe) root, every value the loop yields derives
-    # from unsafe data, so the `item` / loop_control.loop_var /
-    # loop_control.index_var / ansible_loop aliases those values are
-    # reached through are unsafe too - real Ansible's taint follows the
-    # data, and `debug: msg="{{ item }}"` over a hostile module result must
-    # print the text verbatim, never re-render it.
-    #
-    # "Direct reference" is deliberately narrow: the source must be
-    # template-expression ONLY (a single `{{ ... }}` span with no author
-    # literal text around it - `{{ r.stdout_lines }}`,
-    # `{{ hostvars[...].r.y }}`, `{{ r.x | map('upper') | list }}`). A
-    # literal loop list whose ELEMENTS are author template strings
-    # referencing facts (`PowerDNS.pdns`'s
-    # `loop: ["{{ ansible_os_family }}.yml", ...]`, linux-system-roles'
-    # `"{{ role_path }}/vars/{{ ansible_facts['os_family'] }}.yml"`,
-    # willshersystems.sshd's with_first_found files/paths) is NOT one: the
-    # author's template text is trusted and its items must still be
-    # rendered - tainting them left every item verbatim-unrendered and the
-    # role's vars file never loaded. Hostile CONTENT that flows INTO such a
-    # rendered item stays verbatim anyway through the value-level
-    # UnsafeValues registry, so the narrow name taint loses no protection:
-    # it only covers values DERIVED from unsafe data beyond exact-text
-    # matching (the documented residual gap), which is what a direct
-    # reference yields.
-    private def mark_loop_derived_unsafe_names(task : Task, resolved_names : Set(String)) : Nil
-      sources = [] of String
-      if loop_template = task.loop_template
-        sources << loop_template
-      end
-      {% for field in %w[loop_fileglob loop_file loop_first_found loop_first_found_paths
-                        loop_flattened loop_nested_sources loop_together_sources loop_filetree] %}
-        task.{{ field.id }}.try(&.each { |source| sources << source })
-      {% end %}
-      if subelements_list = task.loop_subelements_list
-        sources << subelements_list
-      end
-      task.loop_items.try(&.each do |entry|
-        case raw = entry.raw
-        when String then sources << raw
-        when Array  then raw.each { |element| sources << element.as_s if element.as_s? }
-        when Hash   then raw.each_value { |element| sources << element.as_s if element.as_s? }
-        end
-      end)
-      return if sources.empty?
-
-      referenced = Set(String).new
-      sources.each do |source|
-        next unless inner = direct_reference_expression?(source)
-        inner.scan(/[A-Za-z_][A-Za-z0-9_]*/).each { |match| referenced.add(match[0]) }
-      end
-      return unless referenced.any? { |name| resolved_names.includes?(name) }
-
-      resolved_names.add("item")
-      resolved_names.add("ansible_loop")
-      if loop_var = task.loop_var
-        resolved_names.add(loop_var)
-      end
-      if index_var = task.index_var
-        resolved_names.add(index_var)
-      end
     end
 
     # The template expression *source* is a direct data reference if it is
