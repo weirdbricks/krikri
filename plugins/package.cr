@@ -241,13 +241,42 @@ module Krikri
       pkg_tokens = names.map { |pkg| shell_single_quote(pkg) }.join(" ")
 
       state = @params["state"]? || "present"
-      # Real Ansible's package/dnf/yum modules accept "installed"/"removed"
-      # as synonyms for "present"/"absent" (documented state choices:
-      # absent, installed, latest, present, removed) - found via
-      # bertvv.rh-base's own `package: state: installed` failing here with
-      # "Invalid state" instead of installing.
-      state = "present" if state == "installed"
-      state = "absent" if state == "removed"
+
+      # Resolve the backend BEFORE validating state: real Ansible's
+      # `package:` is a dispatcher whose argument validation happens
+      # inside the DELEGATED module, so the accepted state choices are
+      # host-dependent. Live-verified against ansible-core 2.19.11
+      # (ChristopherDavenport.universal-tomcat, round 984025): on a
+      # Debian-family host `state: installed` fails at setup with apt's
+      # choices list ("value of state must be one of: absent, build-dep,
+      # fixed, latest, present, got: installed"), while on RedHat-family
+      # hosts dnf/yum legitimately accept installed/removed (the
+      # bertvv.rh-base case the old blanket synonym mapped). The
+      # previous unconditional installed→present / removed→absent alias
+      # accepted on apt hosts exactly where real Ansible errors.
+      package_manager = requested_package_manager || detect_package_manager()
+
+      unless package_manager
+        return PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: "Could not detect a package manager on this host"
+        )
+      end
+
+      if package_manager == "apt"
+        apt_states = %w[absent build-dep fixed latest present]
+        unless apt_states.includes?(state)
+          return PluginResult.new(
+            changed: false,
+            failed: true,
+            msg: "value of state must be one of: #{apt_states.join(", ")}, got: #{state}"
+          )
+        end
+      else
+        state = "present" if state == "installed"
+        state = "absent" if state == "removed"
+      end
 
       # An empty name that SURVIVED parsing (`name: ""`, or an empty
       # comma segment) is a hard failure for present/latest - real
@@ -263,22 +292,6 @@ module Krikri
           changed: false,
           failed: true,
           msg: "No package matching '' is available"
-        )
-      end
-
-      # Resolve the backend: an explicit `use:` overrides auto-detection
-      # UNCONDITIONALLY - it dispatches straight to the named module and
-      # is not a fallback. Live-verified against real ansible-core
-      # 2.19.4: `use: dnf` on this apt host still dispatched to the dnf
-      # module (which then failed on-target with "Could not import the
-      # dnf python module..."), rather than silently reverting to apt.
-      package_manager = requested_package_manager || detect_package_manager()
-
-      unless package_manager
-        return PluginResult.new(
-          changed: false,
-          failed: true,
-          msg: "Could not detect a package manager on this host"
         )
       end
 

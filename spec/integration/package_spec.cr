@@ -3,24 +3,34 @@ require "../spec_helper"
 # The package plugin (ansible.builtin.package) dispatches to the host's
 # real package manager. check_mode keeps these side-effect-free.
 describe "package plugin" do
-  it "accepts state: installed as a synonym for present (real Ansible's own alias)" do
-    # Real Ansible's package/dnf/yum modules document state choices as
-    # absent, installed, latest, present, removed - "installed"/"removed"
-    # are synonyms for "present"/"absent". This engine used to reject
-    # "installed" outright with "Invalid state" instead of installing -
-    # found via bertvv.rh-base's own `package: state: installed` task
-    # (round 60086), which failed here where real Ansible succeeded.
+  it "rejects state: installed on a Debian-family host with apt's own choices error" do
+    # `package:` is a dispatcher - state validation happens inside the
+    # DELEGATED module, so the accepted choices are host-dependent. On
+    # Debian-family hosts real ansible-core fails at setup with apt's
+    # list and never installs - live-verified against
+    # ansible-playbook 2.19.11 (ChristopherDavenport.universal-tomcat,
+    # round 984025: this engine used to alias installed→present for
+    # every family and reported ok where real Ansible errors).
     result = PluginSpecHelper.run("package",
-      {"name" => "definitely-not-a-real-package-xyz", "state" => "installed", "_ansible_check_mode" => "true"})
+      {"name" => "bash", "state" => "installed", "_ansible_check_mode" => "true", "use" => "apt"})
 
-    result["msg"].as_s.should_not contain("Invalid state")
+    result["failed"].as_bool.should be_true
+    result["msg"].as_s.should eq("value of state must be one of: absent, build-dep, fixed, latest, present, got: installed")
   end
 
-  it "accepts state: removed as a synonym for absent" do
-    result = PluginSpecHelper.run("package",
-      {"name" => "definitely-not-a-real-package-xyz", "state" => "removed", "_ansible_check_mode" => "true"})
+  it "keeps installed/removed as valid synonyms on dnf-family backends" do
+    # dnf/yum document state choices as absent, installed, latest,
+    # present, removed - bertvv.rh-base's own `package: state: installed`
+    # tasks (round 60086) succeed on RedHat hosts and must keep working.
+    installed = PluginSpecHelper.run("package",
+      {"name" => "definitely-not-a-real-package-xyz", "state" => "installed",
+       "_ansible_check_mode" => "true", "use" => "dnf"})
+    installed["msg"].as_s.should_not contain("must be one of")
 
-    result["msg"].as_s.should_not contain("Invalid state")
+    removed = PluginSpecHelper.run("package",
+      {"name" => "definitely-not-a-real-package-xyz", "state" => "removed",
+       "_ansible_check_mode" => "true", "use" => "dnf"})
+    removed["msg"].as_s.should_not contain("must be one of")
   end
 
   it "fails a use: naming a backend this engine doesn't ship, with real Ansible's message" do
