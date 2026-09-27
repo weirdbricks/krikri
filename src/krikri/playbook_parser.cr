@@ -1709,8 +1709,8 @@ module Krikri
       # bare-name task (like idealista.consul-role's own sibling roles
       # might write) slipped through ungracefully-skipped instead of
       # hard-stopped, same bug class as docker_service below.
-      "community.general.consul_acl"     => nil,
-      "consul_acl"                       => nil,
+      "community.general.consul_acl" => nil,
+      "consul_acl"                   => nil,
       # Removed from community.general in v2.0.0 (superseded by
       # `docker_compose`), so every controller on a current collection
       # hard-fails on it. krzysztof-magosa.docker writes the BARE name
@@ -1760,8 +1760,8 @@ module Krikri
       return unless REMOVED_MODULE_TOMBSTONES.has_key?(as_written)
 
       raise UnresolvedModuleError.new(REMOVED_MODULE_TOMBSTONES[as_written] ||
-        "couldn't resolve module/action '#{as_written}'. " \
-        "This often indicates a misspelling, missing collection, or incorrect module path.")
+                                      "couldn't resolve module/action '#{as_written}'. " \
+                                      "This often indicates a misspelling, missing collection, or incorrect module path.")
     end
 
     # Real Ansible validates `register:`'s value as a variable-name
@@ -4176,12 +4176,12 @@ module Krikri
     # types through that encoding rather than being stringified.
     private def self.stringify_json_scalar(value : JSON::Any) : String
       case value.raw
-      when String   then value.as_s
-      when Int64    then value.as_i64.to_s
-      when Float64  then value.as_f.to_s
-      when Bool     then value.as_bool.to_s
-      when Nil      then ""
-      else               value.to_json
+      when String  then value.as_s
+      when Int64   then value.as_i64.to_s
+      when Float64 then value.as_f.to_s
+      when Bool    then value.as_bool.to_s
+      when Nil     then ""
+      else              value.to_json
       end
     end
 
@@ -4217,6 +4217,26 @@ module Krikri
             # JSON-encoding here (like "that:") gives coerce's existing
             # leading-bracket check something real to detect.
             params[key.to_s] = value.to_json
+          elsif module_name == "ansible.builtin.set_fact" && fact_literal_scalar?(value)
+            # A literal (non-templated) YAML SCALAR set_fact value keeps its
+            # YAML type across the strings-only param wire the same way a
+            # whole-span `{{ expr }}` one already does (NATIVE_TYPED_PREFIX):
+            # Task#params is Hash(String, String), so stringify_value erases
+            # the type at parse time and SetFactPlugin#coerce's legacy
+            # string-shape coercion re-infers one from the text - `a: "5"`
+            # became the int 5, `a: "true"` the bool true and a quoted
+            # `"[1, 2]"` a real array, where real ansible-core keeps every
+            # one of them the str its YAML quoting says it is (live-verified
+            # vs 2.19.11). Prefixing the JSON encoding of the parsed YAML
+            # value here makes the plugin's existing NATIVE_TYPED_PREFIX
+            # decode keep the exact YAML type: `"5"` str, `5` int, `0644`
+            # the YAML-1.1 octal int 420 (Crystal's YAML parser resolves it
+            # the same PyYAML way), `yes`/`no` the YAML-1.1 bools, `5.0`
+            # float, `~` None, and a quoted `"true"`/`"[1, 2]"` a plain
+            # string. Templated values (any `{{`/`{%`/`{#` marker) are NOT
+            # prefixed - they stay raw template text for the executor's own
+            # whole-span structural evaluation, which owns their type.
+            params[key.to_s] = fact_literal_wire_value(value)
           elsif (module_name == "ansible.mysql.mysql_query" || module_name == "community.mysql.mysql_query") && key.to_s == "query" && value.as_a?
             # `query:` as a list of independent SQL statements (dev-sec
             # mysql_hardening's own "Ensure that there are no users
@@ -4367,33 +4387,48 @@ module Krikri
           params["cmd"] = cmd
           special.each { |key, value| params[key] = value }
         else
-        # A string arg that is ENTIRELY one `{{ ... }}` expression
-        # (`apt: "{{ item }}"` with a loop:, calvinbui.ansible_apt) is
-        # real Ansible's whole-args-template shape: the expression
-        # renders to a dict at run time and THAT dict becomes the
-        # module params (or a string, re-parsed as free-form k=v).
-        # Stashing it here (an `_`-prefixed internal key every plugin's
-        # validation ignores) defers the resolution to run time - at
-        # parse time `item` doesn't exist yet, and kv-parsing the raw
-        # template text wrongly produced `_raw_params`, which strict
-        # modules reject.
-        if yaml.as_s.strip.matches?(/\A\{\{.*\}\}\z/m) && !RAW_COMMAND_MODULES.includes?(module_name)
-          params["_templated_args"] = yaml.as_s.strip
-        else
-        # Real Ansible's parse_kv (the function this mirrors for
-        # non-command modules) only puts "_raw_params" in the result when
-        # the string actually contained tokens with no "=" (leftover
-        # free-form text); a fully key=value string
-        # (`pkg=unzip={{ v }} state=present`, azavea.unzip's own
-        # "Install unzip" task, round-found) produces NO "_raw_params" at
-        # all. Setting it unconditionally made every strictly-validating
-        # module (apt first among them) reject the task with "Unsupported
-        # parameters ...: _raw_params" even though both real params had
-        # been parsed fine.
-        kv_params, raw_leftover = parse_inline_kv_params(yaml.as_s)
-        kv_params.each { |key, value| params[key] = value }
-        params["_raw_params"] = raw_leftover if raw_leftover
-        end
+          # A string arg that is ENTIRELY one `{{ ... }}` expression
+          # (`apt: "{{ item }}"` with a loop:, calvinbui.ansible_apt) is
+          # real Ansible's whole-args-template shape: the expression
+          # renders to a dict at run time and THAT dict becomes the
+          # module params (or a string, re-parsed as free-form k=v).
+          # Stashing it here (an `_`-prefixed internal key every plugin's
+          # validation ignores) defers the resolution to run time - at
+          # parse time `item` doesn't exist yet, and kv-parsing the raw
+          # template text wrongly produced `_raw_params`, which strict
+          # modules reject.
+          if yaml.as_s.strip.matches?(/\A\{\{.*\}\}\z/m) && !RAW_COMMAND_MODULES.includes?(module_name)
+            params["_templated_args"] = yaml.as_s.strip
+          else
+            # Real Ansible's parse_kv (the function this mirrors for
+            # non-command modules) only puts "_raw_params" in the result when
+            # the string actually contained tokens with no "=" (leftover
+            # free-form text); a fully key=value string
+            # (`pkg=unzip={{ v }} state=present`, azavea.unzip's own
+            # "Install unzip" task, round-found) produces NO "_raw_params" at
+            # all. Setting it unconditionally made every strictly-validating
+            # module (apt first among them) reject the task with "Unsupported
+            # parameters ...: _raw_params" even though both real params had
+            # been parsed fine.
+            kv_params, raw_leftover = parse_inline_kv_params(yaml.as_s)
+            # Free-form `set_fact: a=5` k=v values: a literal (non-templated)
+            # value is a plain STRING in real ansible-core (live-verified vs
+            # 2.19.11: `set_fact: a=5`/`a="5"` both stay `str|5`), so it gets
+            # the same NATIVE_TYPED_PREFIX str-preservation as the dict form
+            # above - without it coerce's string-shape coercion manufactured
+            # the int 5. A value carrying template markers stays raw template
+            # text for the executor's whole-span native typing (real Ansible
+            # native-types `set_fact: a={{ 42 }}` to the int 42, also
+            # live-verified).
+            if module_name == "ansible.builtin.set_fact"
+              kv_params.each do |key, value|
+                params[key] = value.includes?("{{") || value.includes?("{%") || value.includes?("{#") ? value : Krikri::NATIVE_TYPED_PREFIX + value.to_json
+              end
+            else
+              kv_params.each { |key, value| params[key] = value }
+            end
+            params["_raw_params"] = raw_leftover if raw_leftover
+          end
         end
       else
         # Other types
@@ -5021,6 +5056,44 @@ module Krikri
     end
 
     # Convert YAML value to string (used for module parameters)
+    # A YAML scalar a set_fact value can carry a meaningful native type
+    # for: any non-container whose raw parse produced String/Int/Float/
+    # Bool/Nil. A String only counts when it is NOT a template - a quoted
+    # `"{{ x }}"` is still a template (YAML quoting is YAML syntax, not
+    # Jinja escaping), and templated values keep the executor's own
+    # whole-span typing path. See the set_fact branch above for why.
+    private def self.fact_literal_scalar?(value : YAML::Any) : Bool
+      case raw = value.raw
+      when String
+        !(raw.includes?("{{") || raw.includes?("{%") || raw.includes?("{#"))
+      when Int64, Int32, Float64, Bool, Nil
+        true
+      else
+        false
+      end
+    end
+
+    # The NATIVE_TYPED_PREFIX wire form of a literal scalar set_fact value:
+    # the JSON encoding of the already-parsed YAML value, so the plugin's
+    # existing prefix decode preserves the exact YAML type (see the set_fact
+    # branch above). Strings go through Vault.maybe_decrypt first, matching
+    # the generic stringify branch's own vault handling.
+    private def self.fact_literal_wire_value(value : YAML::Any) : String
+      json = case raw = value.raw
+             when String
+               Vault.maybe_decrypt(raw).to_json
+             when Int64, Int32
+               raw.to_s
+             when Float64
+               raw.to_s
+             when Bool
+               raw.to_s
+             else
+               "null"
+             end
+      Krikri::NATIVE_TYPED_PREFIX + json
+    end
+
     private def self.stringify_value(yaml : YAML::Any) : String
       case yaml.raw
       when String

@@ -723,6 +723,54 @@ module Krikri
         @@retemplating_depth -= 1
       end
 
+      # Real ansible-core 2.19 native typing for a WHOLE-single-span
+      # `{{ expr }}` value (the template's whole AST is one output node
+      # wrapping one expression): the expression's own result TYPE is the
+      # value's type, so `{{ 42 }}` is the int 42, `{{ '42' }}` the str
+      # "42", `{{ none }}` None - not something re-inferred from the
+      # rendered TEXT. The string detour every re-render path used
+      # (render to text, then re-type by shape) cannot tell a string
+      # expression's output from a number's ("42" either way), so vars
+      # like `b: "{{ 42 }}"` stayed strings here while real Ansible keeps
+      # them ints (live-verified vs ansible-playbook 2.19.11, with the
+      # same matrix for list/dict/bool/None). Evaluating the span
+      # STRUCTURALLY once (the engine's real typed evaluation) recovers
+      # the type at the one point it is still known.
+      #
+      # Returns nil whenever this path does NOT apply or does not
+      # succeed - not a whole single span (multi-span/mixed text, or
+      # block tags, which real Ansible renders to plain text), the
+      # expression genuinely resolves to nothing (Undefined), or the
+      # engine cannot evaluate it. A None result comes back as a JSON
+      # null JSON::Any, not Crystal nil. Every caller falls back to its
+      # pre-existing render-then-retype path on nil, which keeps those
+      # shapes' behavior byte-identical: the engine evaluation only ran
+      # for a value that then resolves to nothing (no side effects to
+      # double), and a strict-undefined failure still fires from the
+      # fallback's own strict substitute.
+      def self.whole_span_structured(vars : Hash(String, JSON::Any), raw : String) : JSON::Any?
+        inner = raw.strip
+        return nil unless (raw.split("{{").size - 1) == 1 && (raw.split("}}").size - 1) == 1 &&
+                          inner.starts_with?("{{") && inner.ends_with?("}}")
+        memo = VarSubstitutor.span_memo
+        # The `{{ d.update(e) }}{{ d }}` mutate-then-reread idiom (see
+        # JinjaRenderer#update_then_reread_merge) persists its merge back
+        # onto the variable mid-operation, so its result must never be
+        # memoized - a later reference in the same operation has to see the
+        # merged value.
+        memoizable = !raw.includes?(".update(")
+        if memo && memoizable && (cached = memo[raw]?)
+          return cached
+        end
+        value = with_depth_guard do
+          ExpressionEvaluator.new(vars).evaluate_structured(inner[2..-3].strip)
+        end
+        memo[raw] = value if memo && memoizable && value
+        value
+      rescue
+        nil
+      end
+
       # *source_expr*: the expression the value was resolved FROM (its
       # leading identifier decides the unsafe gate) - nil keeps the old
       # always-render behavior for call sites with no expression in hand
@@ -753,6 +801,9 @@ module Krikri
             next JSON::Any.new(JinjaRenderer.new(vars).render(raw))
           end
 
+          if structured = whole_span_structured(vars, raw)
+            next structured
+          end
           Krikri.parse_json_or_python_literal(render_raw(vars, raw))
         end
       end
@@ -777,6 +828,32 @@ module Krikri
   # VariableSubstitutor - Main class for variable substitution
   # Uses modular components from variable_substitutor/ directory
   class VarSubstitutor
+    # Per-fiber memo of whole-span structured evaluations, scoped to one
+    # top-level substitute() operation - see #substitute's comment for why.
+    # Keyed by the variable's raw template text; entries are only written
+    # for evaluations that produced a real value (nil results are not
+    # cached, so a strict-undefined fallback still runs its own probe).
+    @@span_memo = {} of Fiber => Hash(String, JSON::Any)
+    @@span_memo_depth = {} of Fiber => Int32
+
+    def self.enter_span_memo_scope : Nil
+      fiber = Fiber.current
+      depth = @@span_memo_depth[fiber]? || 0
+      @@span_memo_depth[fiber] = depth + 1
+      @@span_memo[fiber] = Hash(String, JSON::Any).new if depth == 0
+    end
+
+    def self.exit_span_memo_scope : Nil
+      fiber = Fiber.current
+      depth = (@@span_memo_depth[fiber]? || 1) - 1
+      @@span_memo_depth[fiber] = depth
+      @@span_memo.delete(fiber) if depth == 0
+    end
+
+    def self.span_memo : Hash(String, JSON::Any)?
+      @@span_memo[Fiber.current]?
+    end
+
     # Per-host registry of UNSAFE variable names - names whose current
     # value was produced by EXECUTION (a `register:`ed module result, a
     # `set_fact:` write, or a gathered fact) rather than read out of a
@@ -1112,8 +1189,26 @@ module Krikri
     # JinjaRenderer#evaluate_value!'s comment for the same trap found
     # from the other side.
     def substitute(text : String, strict : Bool = false, output : Bool = false, native : Bool = false) : String
-      TimingProfile.measure("controller.templating", "controller") do
-        substitute_measured(text, strict, output, native)
+      # Whole-span structured evaluations are memoized for the duration of
+      # ONE top-level substitute() operation (per fiber - substitution never
+      # yields, see the re-templating guard's own reasoning). Real
+      # ansible-core templates a variable lazily ONCE per templating
+      # operation and reuses the result for every reference within it
+      # (live-verified vs 2.19.11: `x: "{{ lookup('pipe', ...) }}"` referenced
+      # twice in one msg ran the pipe lookup once); without the memo, the
+      # same var value was re-rendered by the strict-definedness probe, the
+      # span evaluation and the re-template gate - three runs of a
+      # side-effecting lookup where real Ansible ran one, with the LAST
+      # run's output stored. Nested substitute calls (a re-rendered value
+      # re-entering substitute) share the outer operation's memo instead of
+      # starting a new one.
+      self.class.enter_span_memo_scope
+      begin
+        TimingProfile.measure("controller.templating", "controller") do
+          substitute_measured(text, strict, output, native)
+        end
+      ensure
+        self.class.exit_span_memo_scope
       end
     end
 
@@ -2028,7 +2123,29 @@ module Krikri
       # defined - the strict probe here RENDERS it (executing any lookup
       # inside), which is exactly what the tag exists to prevent.
       return if UnsafeValues.unsafe_text?(raw)
+      # Whole-single-span scalars are probed through the memoized
+      # structured evaluation instead of a second strict render - see
+      # #substitute's memo comment (a side-effecting lookup in the value
+      # must not run once per probe). A memo hit from an earlier reference
+      # in the same operation answers the probe for free, and a successful
+      # SCALAR result proves the value resolves (no nested undefined to
+      # chase). Anything else - container results, nil/failed structured
+      # evaluations, multi-span or block-tag text - falls through to the
+      # original strict render below, unchanged.
+      return if (memo = self.class.span_memo) && memo.has_key?(raw)
+      if (structured = VariableSubstitutor::Rerender.whole_span_structured(@vars, raw)) && structured_scalar?(structured)
+        return
+      end
       substitute_impl(raw, true)
+    end
+
+    private def structured_scalar?(value : JSON::Any) : Bool
+      case value.raw
+      when String, Int64, Int32, Float64, Bool, Nil
+        true
+      else
+        false
+      end
     end
 
     # Public form of the same probe, for the Crinja-context conversion
@@ -2039,6 +2156,18 @@ module Krikri
     # task the lenient caller never wanted failed.
     def unresolvable_template?(raw : String) : Bool
       return false unless raw.includes?("{{")
+      # Same memoized-structured short-circuit as
+      # #raise_if_nested_value_undefined: a memo hit (or a successful
+      # scalar structured evaluation) proves the template resolves, and
+      # anything else keeps the original strict render probe below so no
+      # failure mode changes shape. Without this, preparing a var for the
+      # engine's scope rendered the whole value once here and again in the
+      # re-render - two runs of a side-effecting lookup where real Ansible
+      # runs one.
+      return false if (memo = self.class.span_memo) && memo.has_key?(raw)
+      if (structured = VariableSubstitutor::Rerender.whole_span_structured(@vars, raw)) && structured_scalar?(structured)
+        return false
+      end
       substitute_impl(raw, true)
       false
     rescue UndefinedVariableError

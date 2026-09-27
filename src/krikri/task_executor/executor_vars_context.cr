@@ -1426,7 +1426,19 @@ module Krikri
       end
       return nil unless native_value
       raw = native_value.raw
-      return nil if raw.nil? || (raw.is_a?(String) && raw == OMIT_SENTINEL)
+      # A None result (`{{ none }}`, or a var holding YAML `~`) IS kept
+      # natively for set_fact: real ansible-core sets the fact to Python
+      # None (`is none` -> True), not to the empty string. Falling back to
+      # the plain substitution here used to collapse the None into "" and
+      # then into substitute_task_params's whole-span-None NONE_SENTINEL
+      # marking, whose sentinel text leaked into the fact itself (the fact
+      # became the literal string "__crystal_ansible_none__"). The wire
+      # form is just JSON null - the set_fact plugin's prefix decode turns
+      # it into a null fact value. (native_typed_value is only reached for
+      # set_fact params - native_containers - so module params keep their
+      # own explicit-None NONE_SENTINEL argspec flow untouched.)
+      return Krikri::NATIVE_TYPED_PREFIX + "null" if raw.nil?
+      return nil if raw.is_a?(String) && raw == OMIT_SENTINEL
       Krikri::NATIVE_TYPED_PREFIX + native_value.to_json
     end
 
@@ -1593,7 +1605,17 @@ module Krikri
         if key == "mode"
           stripped = value.strip
           if stripped.starts_with?("{{") && stripped.ends_with?("}}") && stripped.scan("{{").size == 1
-            native = VariableSubstitutor::VariableLookup.new(substitutor.vars).resolve(stripped[2..-3].strip)
+            # The structured (memoized) whole-span evaluation first: with
+            # native typing, a vars entry like `m_int: "{{ 420 }}"` now
+            # resolves to the INT 420 (real ansible-core keeps the
+            # expression's type), and the int -> octal reformat below needs
+            # that int - live-verified vs 2.19.11 that `mode: "{{ 420 }}"
+            # applies 0644, while the pre-native-typing string "420" was
+            # applied as octal digits (mode 0o420). The raw lookup stays as
+            # the fallback for anything the structured path doesn't cover
+            # (a var whose stored value is already a YAML int).
+            native = VariableSubstitutor::Rerender.whole_span_structured(substitutor.vars, stripped) ||
+                     VariableSubstitutor::VariableLookup.new(substitutor.vars).resolve(stripped[2..-3].strip)
             if native && (raw = native.raw).is_a?(Int64)
               substituted_value = raw.to_s(8).rjust(4, '0')
             end
