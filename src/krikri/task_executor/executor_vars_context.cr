@@ -1234,9 +1234,28 @@ module Krikri
         else
           current = evaluate_bare_mustache_preserving_type(raw, vars_context) || begin
             inner = raw.strip
-            inner = inner[2..-3].strip if inner.starts_with?("{{") && inner.ends_with?("}}")
-            rendered = VariableSubstitutor::ExpressionEvaluator.new(vars_context).evaluate(inner)
-            Krikri.parse_json_or_python_literal(rendered)
+            if inner.starts_with?("{{") && inner.ends_with?("}}") && inner.scan("{{").size == 1
+              inner = inner[2..-3].strip
+              rendered = VariableSubstitutor::ExpressionEvaluator.new(vars_context).evaluate(inner)
+              Krikri.parse_json_or_python_literal(rendered)
+            else
+              # MIXED literal-plus-expression text (`mixed: "a-{{
+              # lookup('env', 'HOME') }}-b"`, relayed via
+              # `with_items: "{{ mixed }}"`): stripping the outer braces
+              # of such a value's FIRST and LAST span and evaluating the
+              # leftovers as ONE expression turned "a-{{ x }}-b" into the
+              # garbage fragment "a- x -b" (live-verified against
+              # ansible-playbook 2.19.11, which iterates the RENDERED
+              # string `a-/home/labros-b` as the single item - this
+              # engine produced the literal "undefined" sentinel instead)
+              # - a two-span value like "a-{{ x }}-b-{{ y }}" mangles the
+              # same way even though a single {{ }} wrapper "protects" a
+              # one-span value. Render through the full substitute path
+              # (the same templating task params get) so literal text is
+              # kept and every embedded span evaluates.
+              rendered = VarSubstitutor.new(vars: vars_context).substitute(inner, strict: true)
+              Krikri.parse_json_or_python_literal(rendered)
+            end
           end
         end
       end

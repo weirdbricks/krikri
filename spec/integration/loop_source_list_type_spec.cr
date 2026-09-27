@@ -270,3 +270,46 @@ describe "single-element with_items with TWO spans" do
     `rm -rf /tmp/two-span-loop`
   end
 end
+
+# A loop source var whose own value is a literal string with embedded
+# spans (`relay: "{{ mixed }}"`, `mixed: "a-{{ lookup('env','HOME') }}-b"`)
+# must render once and iterate the RESULT. Live-verified against
+# ansible-playbook 2.19.11: on a play carrying all three loop-source
+# shapes, this engine pre-fix bound BOTH relay-shaped sources to the
+# literal "undefined" sentinel (it stripped the outer braces of a value
+# that merely starts/ends with a span and evaluated the leftovers
+# "a- ... -b" as ONE expression).
+describe "loop sources whose resolved value is itself MIXED template text" do
+  # The pre-fix failure needed the whole shape family in one play; each
+  # two-task subset already rendered correctly, so this mirrors the full
+  # reproduction (scalar + array-wrapped + two-element) and asserts on
+  # the two relay-bound tasks.
+  it "renders all relayed loop sources in a play mixing the three shapes" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          mixed: "a-{{ lookup('env', 'HOME') }}-b"
+          plain: hello
+        tasks:
+          - name: scalar source
+            ansible.builtin.debug:
+              msg: "scalar item={{ item }}"
+            with_items: "{{ mixed }}"
+          - name: wrapped source
+            ansible.builtin.debug:
+              msg: "wrapped item={{ item }}"
+            with_items: ["{{ mixed }}"]
+          - name: mixed plus plain
+            ansible.builtin.debug:
+              msg: "two item={{ item }}"
+            loop: ["{{ mixed }}", "{{ plain }}"]
+      YAML
+    status.success?.should be_true, output
+    output.should contain("scalar item=a-#{ENV["HOME"]}-b")
+    output.should contain("wrapped item=a-#{ENV["HOME"]}-b")
+    output.should contain("two item=a-#{ENV["HOME"]}-b")
+    output.should_not contain("item=undefined")
+  end
+end
