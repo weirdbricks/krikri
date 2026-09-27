@@ -1,4 +1,5 @@
 require "../spec_helper"
+require "../../src/krikri/param_sentinels"
 
 describe "set_fact plugin" do
   it "returns given params as ansible_facts, unchanged" do
@@ -85,6 +86,33 @@ describe "set_fact plugin" do
     facts["mode3"].as_s.should eq("0700")
     facts["zero"].as_i64.should eq(0)
     facts["small_float"].as_f.should eq(0.5)
+  end
+
+  it "decodes a NATIVE_TYPED_PREFIX value as its JSON type, never re-coercing" do
+    # A whole-single-span `{{ expr }}` fact arrives prefixed with the JSON
+    # encoding of the expression's natively-typed result (see
+    # substitute_task_params). Real ansible-core 2.19 keeps the
+    # expression's own type: a Jinja string expression stays a str even
+    # when its text looks numeric ("{{ '8.9' }}" -> "8.9" str, pluggero.
+    # openssh round 981024 - the coerced float made an `!=` version
+    # comparison always true and reinstalled openssh every run), while
+    # "{{ 42 }}" -> int 42 and "{{ true }}" -> bool true.
+    result = PluginSpecHelper.run("set_fact", {
+      "str_num"   => "#{Krikri::NATIVE_TYPED_PREFIX}\"8.9\"",
+      "str_bool"  => "#{Krikri::NATIVE_TYPED_PREFIX}\"true\"",
+      "int"       => "#{Krikri::NATIVE_TYPED_PREFIX}42",
+      "float"     => "#{Krikri::NATIVE_TYPED_PREFIX}8.9",
+      "bool"      => "#{Krikri::NATIVE_TYPED_PREFIX}true",
+      "container" => "#{Krikri::NATIVE_TYPED_PREFIX}[1,2]",
+    })
+
+    facts = result["ansible_facts"]
+    facts["str_num"].as_s.should eq("8.9")
+    facts["str_bool"].as_s.should eq("true")
+    facts["int"].as_i64.should eq(42)
+    facts["float"].as_f.should eq(8.9)
+    facts["bool"].as_bool.should be_true
+    facts["container"].as_a.map(&.as_i64).should eq([1, 2])
   end
 
   it "does not turn cacheable: into a literal fact" do

@@ -1451,6 +1451,53 @@ module Krikri
       ConditionalEvaluator.evaluate(rendered, vars) rescue task.no_log?
     end
 
+    # Whole-single-span set_fact values carry their NATIVE type
+    # across the strings-only param wire: real ansible-core 2.19's
+    # templar keeps the expression's own type for a template whose
+    # whole AST is one output node (a Jinja string expression stays
+    # a str even when the text looks numeric - "{{ '8.9' }}" is the
+    # string "8.9", NOT the float 8.9; only an expression that
+    # actually evaluates to a number, e.g. "{{ 8.9 }}" or
+    # "{{ '8.9' | float }}", is one). The substituted string alone
+    # cannot express that ("8.9" from a string expression and from a
+    # float expression are identical text), and the set_fact plugin's
+    # legacy string-shape coercion - a leftover of pre-2.19
+    # ANSIBLE_JINJA2_NATIVE=off literal_eval behavior, introduced
+    # with the plugin itself in 0.9.24 - turned every numeric-looking
+    # string fact into a number. pluggero.openssh (round 981024):
+    # `openssh_installed_version != openssh_pkg_mgr_version` compared
+    # a coerced float against the real string and was always true,
+    # reinstalling openssh on every run. Evaluating the expression
+    # structurally here - INSTEAD of, never in addition to, the string
+    # substitution - (evaluate_structured = the engine's
+    # real typed evaluation) recovers the type at the one point it
+    # is still known; the prefix marks the value on the wire so the
+    # set_fact plugin decodes it instead of re-coercing (see
+    # NATIVE_TYPED_PREFIX). Guarded to exactly the shapes real
+    # Ansible native-types: a failed/unresolvable structured
+    # evaluation (including a None result, which keeps the
+    # NONE_SENTINEL flow in substitute_task_params) and the omit sentinel
+    # fall back to the plain substitution; multi-span/mixed text and
+    # block-tag values never enter this branch (whole_single_span),
+    # matching real Ansible's one-output-node rule.
+    private def native_typed_value(substitutor : VarSubstitutor, stripped_value : String) : String?
+      expr = stripped_value[2..-3].strip
+      # evaluate_structured is lenient about undefined names
+      # (`undefined_var['key'] | list` yields []), so the strict check
+      # #substitute would have run happens here first - and raises.
+      substitutor.check_strict_undefined(expr)
+      native_value = begin
+        VariableSubstitutor::ExpressionEvaluator.new(substitutor.vars)
+          .evaluate_structured(expr)
+      rescue
+        nil
+      end
+      return nil unless native_value
+      raw = native_value.raw
+      return nil if raw.nil? || (raw.is_a?(String) && raw == OMIT_SENTINEL)
+      Krikri::NATIVE_TYPED_PREFIX + native_value.to_json
+    end
+
     private def substitute_task_params(
       params : Hash(String, String),
       substitutor : VarSubstitutor,
@@ -1506,7 +1553,17 @@ module Krikri
         # parse, round 190).
         stripped_value = value.strip
         whole_single_span = stripped_value.starts_with?("{{") && stripped_value.ends_with?("}}") && stripped_value.scan("{{").size == 1
-        substituted_value = substitutor.substitute(value, strict: true, output: !whole_single_span && !native_containers, native: native_containers)
+        # set_fact whole-single-span values are evaluated STRUCTURALLY, once,
+        # to keep the expression's native type (see NATIVE_TYPED_PREFIX's
+        # comment below). Evaluating first and skipping the string
+        # substitution when it succeeds keeps side-effecting expressions
+        # (`lookup('pipe', ...)`, now(), random) to exactly ONE run, like
+        # real Ansible - evaluating twice ran a pipe lookup twice and
+        # stored the second run's output. Undefined/None/omit results fall
+        # back to the plain substitution, which owns the strict-undefined
+        # error and the NONE/OMIT sentinel flows.
+        native_typed = native_containers && whole_single_span ? native_typed_value(substitutor, stripped_value) : nil
+        substituted_value = native_typed || substitutor.substitute(value, strict: true, output: !whole_single_span && !native_containers, native: native_containers)
 
         # A block-tag template (`{%`/`{#`) that renders to a literally
         # EMPTY string is treated as OMITTED, not as an empty-string

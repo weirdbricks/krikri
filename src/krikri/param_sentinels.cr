@@ -20,4 +20,21 @@ module Krikri
   # stays behavior-identical, and only plugins that mirror a real
   # module's argspec consult BasePlugin#explicit_null_param?.
   NONE_SENTINEL = "__crystal_ansible_none__"
+
+  # Prefix marking a set_fact param value as the JSON encoding of the
+  # expression's NATIVELY-TYPED result, not substituted display text.
+  # The executor's param wire is strings-only, so a whole-single-span
+  # `{{ expr }}` set_fact value (the only shape real ansible-core 2.19
+  # native-typing keeps unstringified) would otherwise arrive at the
+  # set_fact plugin as bare text and get re-coerced by string shape -
+  # which is pre-2.19 `ANSIBLE_JINJA2_NATIVE=off` literal_eval behavior,
+  # not 2.19's "the expression's own type is the value's type" rule: a
+  # Jinja string expression stays a str even when it looks like a number
+  # (pluggero.openssh round 981024: "{{ '8.9' }}" became the float 8.9,
+  # so `openssh_installed_version != openssh_pkg_mgr_version` compared
+  # float-to-str and was always true, forcing a package reinstall every
+  # run). The control character makes a false positive on a *literal*
+  # (non-templated) set_fact value - which still takes the legacy
+  # string-shape coercion below - effectively impossible.
+  NATIVE_TYPED_PREFIX = "\u{E000}native:"
 end
