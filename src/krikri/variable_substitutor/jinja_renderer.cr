@@ -488,6 +488,24 @@ module Krikri
         # leaves, `omit`, literals, operators (raise_if_strict_undefined's
         # own bare-ref rule), so deliberately-lenient nested values keep
         # rendering.
+        # Whole-single-span values keep the expression's NATIVE type
+        # (real ansible-core 2.19 native typing - see
+        # Rerender.whole_span_structured): a vars entry `b: "{{ 42 }}"`
+        # is the int 42, `"{{ '42' }}"` the str "42", `"{{ none }}"`
+        # None. The old substitute-then-render_pure_mustache_value detour
+        # re-typed by TEXT shape and only for containers/bools/None, so a
+        # templated int/float var arrived at the engine's scope as a
+        # string (`v_int is integer` -> False where real Ansible says
+        # True, live-verified vs 2.19.11). nil (undefined, engine
+        # failure, or not actually whole-span) falls back to the
+        # pre-existing substitute path below, which owns the
+        # strict-undefined failure and the defer_unresolved carve-out
+        # unchanged - and which only re-runs the evaluation for a value
+        # that just resolved to nothing, so a side-effecting lookup in a
+        # whole-span value still runs exactly once.
+        structured = Rerender.whole_span_structured(substitutor.vars, raw)
+        return structured if structured
+
         begin
           rendered = substitutor.substitute(raw, strict: true)
         rescue e : Krikri::UndefinedVariableError

@@ -303,6 +303,17 @@ module Krikri
         end
 
         inner = inner[2..-3].strip if whole_span
+        # Whole-single-span values keep the expression's NATIVE type
+        # (real ansible-core 2.19 native typing - see
+        # Rerender.whole_span_structured): `{{ 42 }}` is the int 42,
+        # `{{ '42' }}` the str "42". The old render-then-
+        # parse_json_or_python_literal detour re-typed by TEXT shape
+        # instead, which got `{{ 42 }}` right by accident (JSON.parse)
+        # but turned `{{ '42' }}` into the int 42 too. nil (undefined,
+        # engine failure, or not actually whole-span) falls back to the
+        # pre-existing render path below, unchanged.
+        structured = Rerender.whole_span_structured(@vars, raw) if whole_span
+        return structured if structured
         rendered = ExpressionEvaluator.new(@vars).evaluate(inner)
         parse_rendered_or_wrap(rendered)
       end
