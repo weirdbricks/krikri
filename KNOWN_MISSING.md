@@ -313,21 +313,6 @@ gaps" rather than arguing with the note in place.
   independently broken after 0.9.819 introduced it - fixed, and
   confirmed live
   for a self-contained module (`sr_fingerprint`, no unusual imports).
-- **A role-private module importing its OWN custom `ansible.module_
-  utils.*` package is still out of reach** (found via linux-system-
-  roles.storage's `blivet:`, which does `from ansible.module_utils.
-  storage_lsr.argument_validator import validate_parameters` -
-  `storage_lsr` isn't a real ansible-core module_utils package, it's
-  bundled alongside `blivet.py` the same way real Ansible's AnsiballZ
-  wrapper bundles a role/collection's own `module_utils/` tree into the
-  zipapp so the import resolves). This engine's py_module runner
-  uploads and runs only the ONE module source file with no such
-  bundling, so any module reaching for a sibling `module_utils` package
-  fails with a plain Python `ModuleNotFoundError` instead of running.
-  Fixing this needs finding and packaging the role/collection's own
-  `module_utils/` tree alongside the module source (a real, but
-  larger, follow-on to the single-file case above) - not attempted
-  here.
 - **Third-party COLLECTION modules and filters, same cut** (round 199,
   the bodsch.* author's own `bodsch.core`/`bodsch.systemd` collections -
   `bodsch.core.check_mode`, `.facts`, `.type` filter, `.upgrade` filter,
