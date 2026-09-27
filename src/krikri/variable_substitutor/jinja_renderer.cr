@@ -353,14 +353,17 @@ module Krikri
       # unsafe-name registry - another host's registered results/set_facts/
       # facts are unsafe exactly like the current host's (a hostile target
       # reachable through `hostvars['other']` gets no re-render either),
-      # while the host's author-defined template vars still render.
-      def self.prepare_hostvars(raw_value : JSON::Any, substitutor : VarSubstitutor) : JSON::Any
+      # while the host's author-defined template vars still render - and
+      # each entry re-renders in THAT HOST'S OWN scope (HostvarsContext):
+      # real Ansible's HostVarsVars templar renders `hostvars['other'].x`
+      # with the other host's vars, never the reading host's.
+      def self.prepare_hostvars(raw_value : JSON::Any, substitutor : VarSubstitutor, defer_unresolved : Bool = false) : JSON::Any
         @@prepare_vars_depth += 1
         begin
           hosts = raw_value.as_h? || return raw_value
           prepared_hosts = Hash(String, JSON::Any).new(initial_capacity: hosts.size)
           hosts.each do |host_name, entry|
-            prepared_hosts[host_name] = prepare_hostvars_entry(host_name, entry, substitutor)
+            prepared_hosts[host_name] = prepare_hostvars_entry(host_name, entry, substitutor, defer_unresolved)
           end
           JSON::Any.new(prepared_hosts)
         ensure
@@ -368,14 +371,15 @@ module Krikri
         end
       end
 
-      private def self.prepare_hostvars_entry(host_name : String, entry : JSON::Any, substitutor : VarSubstitutor) : JSON::Any
-        hash = entry.as_h? || return rerender_nested_templates(entry, substitutor)
+      private def self.prepare_hostvars_entry(host_name : String, entry : JSON::Any, substitutor : VarSubstitutor, defer_unresolved : Bool = false) : JSON::Any
+        host_subs = HostvarsContext.substitutor_for(host_name, substitutor.vars)
+        hash = entry.as_h? || return rerender_nested_templates(entry, host_subs, defer_unresolved)
         prepared = Hash(String, JSON::Any).new(initial_capacity: hash.size)
         hash.each do |key, value|
           prepared[key] = if VarSubstitutor.resolved_var_name?(host_name, key)
                             value
                           else
-                            rerender_nested_templates(value, substitutor)
+                            rerender_nested_templates(value, host_subs, defer_unresolved)
                           end
         end
         JSON::Any.new(prepared)

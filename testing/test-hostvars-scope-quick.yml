@@ -1,0 +1,62 @@
+# hostvars scope regression matrix: every value read through
+# hostvars[<other host>] must render in THAT host's own variable context
+# (real Ansible's HostVarsVars templar), never the reading host's. The
+# templated group vars (`who`/`nm`/`cfg_a`/`lst`) are the probe: their
+# rendered text is per-host by construction.
+#
+# Covers the access shapes real roles use: a bare span, a list literal,
+# the extract filter over a group, hostvars[item] in a loop, when:,
+# set_fact, delegate_to, nested containers + join, and a template: .j2
+# file read by the krikri-jinja engine.
+- name: hostvars scope smoke test
+  hosts: hostvars_scope
+  gather_facts: false
+
+  tasks:
+    - name: bare spans render in each host's own context
+      ansible.builtin.debug:
+        msg: "bare={{ who }}|{{ hostvars['h1'].who }}|{{ hostvars['h2'].who }}|{{ nm }}|{{ hostvars['h2'].nm }}"
+
+    - name: list-literal elements render per host
+      ansible.builtin.debug:
+        msg: "list=[{{ who }},{{ hostvars['h2']['who'] }},{{ nm }},{{ hostvars['h1'].nm }}]"
+
+    - name: extract filter renders per host
+      ansible.builtin.debug:
+        msg: "extract={{ groups['hostvars_scope'] | map('extract', hostvars, 'who') | list | sort | join(',') }}"
+
+    - name: hostvars[item] renders per host in a loop
+      ansible.builtin.debug:
+        msg: "loop={{ item }}={{ hostvars[item].who }}"
+      loop: "{{ groups['hostvars_scope'] }}"
+
+    - name: when-compare another host's rendered value
+      ansible.builtin.debug:
+        msg: "when=hit"
+      when: hostvars['h2'].who == 'two'
+
+    - name: setfact stores the other host's rendered value
+      ansible.builtin.set_fact:
+        cross: "{{ hostvars['h1'].who }}-{{ hostvars['h2'].nm }}"
+
+    - name: show the stored cross value
+      ansible.builtin.debug:
+        var: cross
+
+    - name: delegateto still reads the referenced host's context
+      ansible.builtin.debug:
+        msg: "delegate={{ hostvars['h2'].who }}"
+      delegate_to: h1
+
+    - name: nested containers and method calls render per host
+      ansible.builtin.debug:
+        msg: "nested={{ hostvars['h2'].cfg_a }}|{{ hostvars['h2'].lst | join('+') }}"
+
+    - name: a .j2 template reads hostvars through the jinja engine
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/hv-scope.j2"
+        dest: "/tmp/krikri-hv-scope-{{ inventory_hostname }}.txt"
+
+    - name: SUCCESS
+      ansible.builtin.debug:
+        msg: "hostvars scope smoke test complete!"

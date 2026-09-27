@@ -227,6 +227,14 @@ module Krikri
       host_name = @vars["inventory_hostname"]?.try(&.as_s?) || @host.name
       vars = {} of String => JSON::Any
       @vars.each do |key, value|
+        if key == "hostvars"
+          # The hostvars magic is NOT one host's value: each entry must
+          # re-render in ITS OWN host's scope (real Ansible's HostVarsVars
+          # templar). The generic re-render below would have rendered
+          # every entry with THIS host's vars.
+          vars[key] = VariableSubstitutor::JinjaRenderer.prepare_hostvars(value, substitutor, defer_unresolved: true)
+          next
+        end
         unless VarSubstitutor.resolved_var_name?(host_name, key)
           begin
             value = VariableSubstitutor::JinjaRenderer.rerender_nested_templates(value, substitutor, defer_unresolved: true)

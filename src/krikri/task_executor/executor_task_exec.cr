@@ -1538,7 +1538,15 @@ module Krikri
       result_hash = result.as_h.dup
       result_hash.reject! { |key, _| key.starts_with?("_ansible_") }
       result_hash.delete("invocation")
-      @registered_vars[host.name][register_name] = with_command_lines_augmented(JSON::Any.new(result_hash))
+      registered = with_command_lines_augmented(JSON::Any.new(result_hash))
+      @registered_vars[host.name][register_name] = registered
+      # Write-time unsafe marking - the per-task context build marks these
+      # stores too, but a host that never executes again would otherwise
+      # never get its write marked, and a cross-host hostvars read of this
+      # result would re-render its text on the reading host (see
+      # VarSubstitutor.add_resolved_var_name's comment).
+      UnsafeValues.mark_value(registered)
+      VarSubstitutor.add_resolved_var_name(host.name, register_name)
       @hv_generation += 1
     end
 

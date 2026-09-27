@@ -1845,6 +1845,18 @@ module Krikri
         nil
       end
 
+      # Whether *source_expr* reads a hostvars entry key that is
+      # execution-resolved for the OWNING host - see
+      # HostvarsContext.origin_host_and_key.
+      private def hostvars_origin_unsafe?(source_expr : String?) : Bool
+        return false unless source_expr
+        if hk = HostvarsContext.origin_host_and_key(@vars, source_expr)
+          VarSubstitutor.resolved_var_name?(hk[0], hk[1])
+        else
+          false
+        end
+      end
+
       # Re-renders a plain-lookup result whose own raw value is still
       # unrendered Jinja template text (`{%`/`{#` block tags need the
       # full Crinja renderer; a `{{ }}`-span re-enters this evaluator) -
@@ -1856,6 +1868,25 @@ module Krikri
       private def retemplated_lookup_value(resolved : JSON::Any?, source_expr : String? = nil) : JSON::Any?
         return nil unless resolved
         return nil if VarSubstitutor.unsafe_root?(@vars, source_expr)
+        # The OTHER host's registry: a value read through
+        # `hostvars[<other>].<name>` whose name is execution-resolved for
+        # THAT host (registered result / set_fact / fact) is verbatim
+        # content - never re-rendered, no matter that the reading host's
+        # own registry knows nothing of the name.
+        return nil if hostvars_origin_unsafe?(source_expr)
+
+        # A hostvars-rooted expression re-renders with the OTHER host's
+        # scope (real Ansible's HostVarsVars templar) - see
+        # HostvarsContext. The unsafe gates above/below still apply: the
+        # other host's own execution-resolved values are gated by its
+        # registry (the merged scope carries its inventory_hostname), and
+        # hostile stored text by the value-level registry.
+        render_vars = if (host = HostvarsContext.origin_host(@vars, source_expr)) &&
+                         (merged = HostvarsContext.merged_vars(host, @vars))
+                        merged
+                      else
+                        @vars
+                      end
 
         # An Array/Hash resolved value can hold nested String elements
         # that are STILL unrendered `{{ }}` text one level down - the
@@ -1890,7 +1921,7 @@ module Krikri
           # (FilterEngine's map/selectattr attribute extraction and the
           # to_json-family serializers), so nothing that today hard-fails
           # silently succeeds with different values.
-          return JinjaRenderer.rerender_nested_templates(resolved, VarSubstitutor.new(vars: @vars), defer_unresolved: true)
+          return JinjaRenderer.rerender_nested_templates(resolved, VarSubstitutor.new(vars: render_vars), defer_unresolved: true)
         end
 
         return nil unless raw.is_a?(String)
@@ -1900,14 +1931,14 @@ module Krikri
           # `{{ }}`-only evaluator - see variable_lookup.cr's identical
           # fix for the full rationale (found via prometheus.prometheus's
           # own _common role's `_common_dependencies` default).
-          rendered = JinjaRenderer.new(@vars, @decode).render(raw)
+          rendered = JinjaRenderer.new(render_vars, @decode).render(raw)
           return (JSON.parse(rendered) rescue JSON::Any.new(rendered))
         end
 
         return nil unless raw.includes?("{{")
         inner = raw.strip
         inner = inner[2..-3].strip if inner.starts_with?("{{") && inner.ends_with?("}}")
-        rendered = evaluate(inner)
+        rendered = render_vars.same?(@vars) ? evaluate(inner) : ExpressionEvaluator.new(render_vars, @decode).evaluate(inner)
         (JSON.parse(rendered) rescue JSON::Any.new(rendered))
       end
 
