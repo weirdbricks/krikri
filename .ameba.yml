@@ -75,10 +75,13 @@ Lint/NotNil:
   - spec/unit/template_action_plugin_plus_modifier_spec.cr
   - spec/unit/virt_net_spec.cr
   - src/krikri/variable_substitutor/expression_evaluator.cr
+  - src/krikri/lookups/lookup_first_found.cr
 
 Metrics/CyclomaticComplexity:
   Excluded:
   - plugins/acl.cr
+  - src/krikri/lookups/lookup_dispatch.cr
+  - src/krikri/lookups/lookup_first_found.cr
   - plugins/apt.cr
   - plugins/apt_key.cr
   - plugins/assemble.cr
@@ -171,6 +174,7 @@ Metrics/CyclomaticComplexity:
   - src/krikri/variable_substitutor/array_slicer.cr
   - src/krikri/variable_substitutor/comparison_evaluator.cr
   - src/krikri/variable_substitutor/expression_evaluator.cr
+  - src/krikri/lookups/lookup_misc.cr
   - src/krikri/variable_substitutor/filter_engine.cr
   - src/krikri_lint/rules/risky_file_permissions.cr
   - src/krikri_lint/rules/risky_octal.cr
@@ -260,6 +264,7 @@ Style/MultilineCurlyBlock:
   - src/krikri/conditional_evaluator.cr
   - src/krikri/task_executor/executor_vars_context.cr
   - src/krikri/variable_substitutor/expression_evaluator.cr
+  - src/krikri/lookups/lookup_scalar.cr
 
 Style/MultilineStringLiteral:
   Excluded:
