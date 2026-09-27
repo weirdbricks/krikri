@@ -156,4 +156,60 @@ describe "generic with_<lookup> loop sources" do
     code.should_not eq(0)
     output.should contain("failed")
   end
+
+  # Security: terms and results of a generic lookup loop are DATA. Each
+  # case below used to run the hostile `lookup('pipe', ...)` on the
+  # controller (live canary); real ansible-playbook 2.19.11 prints the
+  # text verbatim and never executes it.
+  it "never executes Jinja carried by host-derived text in a lookup term" do
+    canary = File.tempname("krikri-lookup-term-canary")
+    code, output = run_play(<<-YAML)
+      - hosts: all
+        gather_facts: false
+        tasks:
+          - command: echo "{{ '{{' }} lookup('pipe', 'touch #{canary}') {{ '}}' }}"
+            register: c
+          - debug: msg="x"
+            with_env: "{{ c.stdout }}"
+      YAML
+
+    code.should eq(0)
+    File.exists?(canary).should be_false
+  ensure
+    File.delete(canary) if canary && File.exists?(canary)
+  end
+
+  it "never renders a with_lines command's output as a template" do
+    canary = File.tempname("krikri-lookup-item-canary")
+    code, output = run_play(<<-YAML)
+      - hosts: all
+        gather_facts: false
+        tasks:
+          - debug: msg="{{ item }}"
+            with_lines: 'echo ''{{ "{{" }} lookup("pipe", "touch #{canary}") {{ "}}" }}'''
+      YAML
+
+    code.should eq(0)
+    File.exists?(canary).should be_false
+    output.should contain(%(item={{ lookup("pipe", "touch #{canary}") }}))
+  ensure
+    File.delete(canary) if canary && File.exists?(canary)
+  end
+
+  it "fails the task, not the whole run, when a with_url lookup fails" do
+    code, output = run_play(<<-YAML)
+      - hosts: all
+        gather_facts: false
+        tasks:
+          - debug: msg="{{ item }}"
+            with_url: 'file:///nonexistent/krikri-missing.txt'
+            ignore_errors: true
+          - debug: msg="after"
+      YAML
+
+    code.should eq(0)
+    output.should_not contain("Unhandled exception")
+    output.should contain("...ignoring")
+    output.should contain("after")
+  end
 end

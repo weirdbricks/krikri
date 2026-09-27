@@ -345,7 +345,7 @@ module Krikri
         term_context[LOOP_LOOKUP_TERM_VAR] = term
         result = begin
           VariableSubstitutor::ExpressionEvaluator.new(term_context)
-            .evaluate_structured("query('#{plugin}', #{LOOP_LOOKUP_TERM_VAR})")
+            .evaluate_structured("query('#{plugin}', #{LOOP_LOOKUP_TERM_VAR}, wantlist=true)")
         rescue ex : UndefinedVariableError
           raise ex
         rescue ex
@@ -354,7 +354,7 @@ module Krikri
           # unhandled exception that kills the whole controller run.
           raise UndefinedVariableError.new(ex.message || "The lookup plugin '#{plugin}' failed")
         end
-        unless result
+        if result.nil? || result.raw.nil?
           raise UndefinedVariableError.new(
             "The lookup plugin '#{plugin}' failed or is not available for this loop source")
         end
