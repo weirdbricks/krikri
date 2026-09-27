@@ -18,6 +18,17 @@ module Krikri
 
       @vars : Hash(String, JSON::Any)
 
+      # The host whose hostvars entry the CURRENT resolve is walking
+      # within, when it descended through `hostvars[<host>]` - values
+      # fetched inside that entry re-render in THAT host's scope (real
+      # Ansible's HostVarsVars templar), not the reading host's. Scoped
+      # per public entry point (save/clear/restore), so one lookup
+      # object reused across expressions never leaks one expression's
+      # origin into the next; sub-expression resolutions (bracket keys,
+      # the resolve_simple/resolve_nested fallback in #resolve_index_key)
+      # clear it the same way, since those read the READING host's vars.
+      @origin : String? = nil
+
       def initialize(@vars : Hash(String, JSON::Any))
       end
 
@@ -33,19 +44,37 @@ module Krikri
 
       # Simple variable lookup
       def simple(name : String) : String
-        resolve_simple(name).try { |v| format_value(v) } || "undefined"
+        saved = @origin
+        @origin = nil
+        begin
+          resolve_simple(name.strip).try { |v| format_value(v) } || "undefined"
+        ensure
+          @origin = saved
+        end
       end
 
       # Nested variable access
       # Example: user.name, config.database.host
       def nested(expr : String) : String
-        resolve_nested(expr).try { |v| format_value(v) } || "undefined"
+        saved = @origin
+        @origin = nil
+        begin
+          resolve_nested(expr).try { |v| format_value(v) } || "undefined"
+        ensure
+          @origin = saved
+        end
       end
 
       # Indexed access (array or hash)
       # Example: mylist[0], mydict['key']
       def indexed(expr : String) : String
-        resolve_indexed(expr).try { |v| format_value(v) } || "undefined"
+        saved = @origin
+        @origin = nil
+        begin
+          resolve_indexed(expr).try { |v| format_value(v) } || "undefined"
+        ensure
+          @origin = saved
+        end
       end
 
       # Resolves any of the three access forms above to its raw JSON::Any
@@ -54,6 +83,14 @@ module Krikri
       # carry real array/hash structure from one filter to the next instead
       # of collapsing to a string after every single filter.
       def resolve(expr : String) : JSON::Any?
+        saved = @origin
+        @origin = nil
+        resolve_scoped(expr)
+      ensure
+        @origin = saved
+      end
+
+      private def resolve_scoped(expr : String) : JSON::Any?
         expr = expr.strip
         top_level_bracket = top_level_char_index(expr, '[')
         top_level_paren = top_level_char_index(expr, '(')
@@ -158,6 +195,14 @@ module Krikri
       # resolve/resolve_indexed/resolve_nested always do. An empty suffix
       # returns *start* unchanged.
       def walk(start : JSON::Any, suffix : String) : JSON::Any?
+        saved = @origin
+        @origin = nil
+        walk_scoped(start, suffix)
+      ensure
+        @origin = saved
+      end
+
+      private def walk_scoped(start : JSON::Any, suffix : String) : JSON::Any?
         current = start
         pos = 0
 
@@ -208,6 +253,21 @@ module Krikri
         @vars[name.strip]?
       end
 
+      # Marks *host* as the origin host when *current* IS the hostvars
+      # magic container and *key* fetched one of its entries - every
+      # later fetch inside that entry (and every internal re-render of a
+      # fetched value) then renders in that host's scope. Identity check,
+      # not name check: a plain variable the play names "hostvars" is
+      # not the magic.
+      private def enter_hostvars_origin(current : JSON::Any, key : String) : Nil
+        return if @origin
+        hostvars_raw = @vars["hostvars"]?.try(&.raw)
+        return unless hostvars_raw.is_a?(Hash)
+        current_hash = current.raw
+        return unless current_hash.is_a?(Hash) && current_hash.same?(hostvars_raw)
+        @origin = key
+      end
+
       # Real Ansible's recursive re-templating, applied to a dotted-access
       # BASE variable before walking `.method()`/`.attr` off of it - one
       # more independent copy of the same bug class this engine has fixed
@@ -235,6 +295,14 @@ module Krikri
         return value unless (raw = value.raw).is_a?(String) && templated_value?(raw)
         return value if UnsafeValues.unsafe_text?(raw)
 
+        # Inside a hostvars entry (see @origin) the value belongs to the
+        # OTHER host and re-renders in its scope, not the reading host's.
+        render_vars = if origin = @origin
+                        HostvarsContext.merged_vars(origin, @vars) || @vars
+                      else
+                        @vars
+                      end
+
         # Depth guard shared with Rerender.if_templated - a cycle can
         # re-enter through either entry point (this method and the
         # Rerender module's), so the counter has to be the same one.
@@ -243,11 +311,11 @@ module Krikri
         # real ansible-core fails the task with "Recursive loop detected
         # in template" instead.
         Rerender.with_depth_guard do
-          rerender_if_templated_inner(raw)
+          rerender_if_templated_inner(raw, render_vars)
         end
       end
 
-      private def rerender_if_templated_inner(raw : String) : JSON::Any
+      private def rerender_if_templated_inner(raw : String, render_vars : Hash(String, JSON::Any)) : JSON::Any
         # A raw value containing `{%`/`{#` (block tags/comments, not just
         # a plain `{{ }}` expression) needs the FULL Crinja renderer -
         # ExpressionEvaluator has no concept of block tags at all. Real
@@ -298,7 +366,7 @@ module Krikri
         # real "/etc/nginx/nginx.conf" (and everything derived from it,
         # here `.lstrip('/')` chained onto it) to an empty string.
         if !whole_span && (raw.includes?("{%") || raw.includes?("{#") || raw.includes?("{{"))
-          rendered = JinjaRenderer.new(@vars).render(raw)
+          rendered = JinjaRenderer.new(render_vars).render(raw)
           return parse_rendered_or_wrap(rendered)
         end
 
@@ -312,9 +380,9 @@ module Krikri
         # but turned `{{ '42' }}` into the int 42 too. nil (undefined,
         # engine failure, or not actually whole-span) falls back to the
         # pre-existing render path below, unchanged.
-        structured = Rerender.whole_span_structured(@vars, raw) if whole_span
+        structured = Rerender.whole_span_structured(render_vars, raw) if whole_span
         return structured if structured
-        rendered = ExpressionEvaluator.new(@vars).evaluate(inner)
+        rendered = ExpressionEvaluator.new(render_vars).evaluate(inner)
         parse_rendered_or_wrap(rendered)
       end
 
@@ -386,8 +454,10 @@ module Krikri
 
           case raw = current.raw
           when Hash
-            current = current[part]?
-            return nil unless current
+            fetched = current[part]?
+            return nil unless fetched
+            enter_hostvars_origin(current, part)
+            current = fetched
           when Array
             # Numeric dot-indexing into a list (`item.1` meaning
             # `item[1]`) - real Jinja2 attribute access falls back to
@@ -424,8 +494,14 @@ module Krikri
       def apply_method_suffix(current : JSON::Any, suffix : String) : JSON::Any?
         return current if suffix.empty?
 
-        suffix = suffix[1..] if suffix.starts_with?('.')
-        apply_dotted_parts(current, split_dotted_parts(suffix))
+        saved = @origin
+        @origin = nil
+        begin
+          suffix = suffix[1..] if suffix.starts_with?('.')
+          apply_dotted_parts(current, split_dotted_parts(suffix))
+        ensure
+          @origin = saved
+        end
       end
 
       # Splits a dotted access path on top-level "." only - outside
@@ -874,7 +950,17 @@ module Krikri
         # this guard already). Real bug found live-verifying
         # prometheus.prometheus.node_exporter: every download's
         # checksum verification failed this way.
-        resolved = (resolve_simple(index_expr) || resolve_nested(index_expr)).try { |value| unsafe_root?(index_expr) ? value : rerender_if_templated(value) }
+        resolved = begin
+          # The index key is the READING host's data even mid-entry-walk
+          # (`hostvars['h2'].list[item]`) - resolve it with the origin
+          # cleared so its own value never renders in the other host's
+          # scope.
+          saved = @origin
+          @origin = nil
+          (resolve_simple(index_expr) || resolve_nested(index_expr)).try { |value| unsafe_root?(index_expr) ? value : rerender_if_templated(value) }
+        ensure
+          @origin = saved
+        end
         case raw = resolved.try(&.raw)
         when String       then raw
         when Int64, Int32 then raw.to_i
@@ -894,7 +980,9 @@ module Krikri
           idx = key.is_a?(Int32) ? key : key.to_i?
           idx ? current[idx]? : nil
         when Hash
-          current[key.to_s]?
+          fetched = current[key.to_s]?
+          enter_hostvars_origin(current, key.to_s) if fetched && key.is_a?(String)
+          fetched
         when String
           # Real Jinja2/Python character indexing (`elasticsearch_version[0]`
           # on a plain "7.x" string) - real bug found benchmarking

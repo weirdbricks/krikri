@@ -1522,7 +1522,23 @@ module Krikri
               morekeys.as_a? ? keys.concat(morekeys.as_a) : keys << morekeys
             end
           end
-          FilterCore.extract(container, keys, hostvars_label)
+          extracted = FilterCore.extract(container, keys, hostvars_label)
+          # The container is the hostvars magic: the walked value belongs
+          # to the host named by the FIRST key (`map('extract', hostvars,
+          # 'who')` over a host-name list, `x | extract(hostvars, 'attr')`)
+          # and re-renders in THAT host's scope, not the reading host's -
+          # the same HostVarsVars semantics the direct `hostvars[h].attr`
+          # lookups get. Hostile stored text stays gated (the value-level
+          # registry), as does the whole chain when its root is an
+          # execution-resolved value.
+          attr_key = keys[1]?.try(&.as_s?)
+          if hostvars_label && !chain_root_unsafe? &&
+             (host = keys[0]?.try(&.as_s?)) &&
+             (host_subs = HostvarsContext.substitutor_for?(host, @vars)) &&
+             !(attr_key && VarSubstitutor.resolved_var_name?(host, attr_key))
+            extracted = JinjaRenderer.rerender_nested_templates(extracted, host_subs)
+          end
+          extracted
         when "from_yaml_all"
           # from_yaml_all() - real Ansible filter: parses a multi-
           # document YAML string (`---`-separated) into a list of parsed

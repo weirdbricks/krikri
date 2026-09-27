@@ -1137,3 +1137,50 @@ end
     end
   end
 end
+
+describe "cross-host hostvars reads never re-render another host's execution data" do
+  # The producer host writes in play 1 and NEVER EXECUTES AGAIN: play 2
+  # targets only the reading host, so the producer's per-task context
+  # build - which is where the per-host unsafe-name registry and the
+  # value-level text registry used to get populated - never runs for it.
+  # hostvars[<producer>] hands its registered result / set_fact value to
+  # the reading host, whose re-render funnels must consult the OWNING
+  # host's registry: registered results and set_facts are execution data
+  # on every host, verbatim forever (real ansible-core's AnsibleUnsafe).
+  # Before the write-time marking + per-host origin gate, the hostile
+  # lookup executed on the controller through the reading host's span
+  # re-pass.
+  it "never re-renders a producer host's registered result / set_fact read via hostvars" do
+    canary = File.tempname("unsafe-hv-cross-canary")
+    File.delete(canary) if File.exists?(canary)
+    playbook = File.tempname("unsafe-hv-cross", ".yml")
+    File.open(playbook, "w") do |file|
+      file.puts "- name: produce hostile output on one host only"
+      file.puts "  hosts: hosttwo"
+      file.puts "  gather_facts: false"
+      file.puts "  tasks:"
+      file.puts "    - name: produce"
+      file.puts %(      ansible.builtin.command: echo "{{ '{{' }} lookup('pipe', 'touch #{canary}') {{ '}}' }}")
+      file.puts "      register: r"
+      file.puts "    - name: copy into a set_fact"
+      file.puts "      ansible.builtin.set_fact:"
+      file.puts %(        hostile_fact: "{{ r.stdout }}")
+      file.puts "- name: consume on the OTHER host - the producer never executes again"
+      file.puts "  hosts: hostone"
+      file.puts "  gather_facts: false"
+      file.puts "  tasks:"
+      file.puts "    - name: consume"
+      file.puts %(      ansible.builtin.debug: msg="fact={{ hostvars['hosttwo'].hostile_fact }}")
+    end
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+    status.success?.should be_true, output.to_s
+    File.exists?(canary).should be_false,
+      "hostile lookup EXECUTED on the controller via a cross-host hostvars read:\n#{output}"
+    output.to_s.should contain(canary_text(canary))
+  ensure
+    File.delete(canary) if canary && File.exists?(canary)
+    File.delete(playbook) if playbook && File.exists?(playbook)
+  end
+end

@@ -309,6 +309,16 @@ module Krikri
       facts_hash.each do |key, value|
         @facts[host.name][key] = value
         @set_facts[host.name][key] = value if high_precedence
+        # Write-time unsafe marking (the per-task context build marks these
+        # stores too, but a host that never executes again would otherwise
+        # never get its write marked - see VarSubstitutor.
+        # add_resolved_var_name's comment). Value-level for every fact;
+        # the NAME-level registry addition is for high-precedence set_fact
+        # keys only, which the context build registers unconditionally -
+        # a bare fact key must not gate an author var that happens to
+        # share its name.
+        UnsafeValues.mark_value(value)
+        VarSubstitutor.add_resolved_var_name(host.name, key) if high_precedence
       end
       @facts_dict_cache.delete(host.name)
       @hv_generation += 1

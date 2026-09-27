@@ -7,6 +7,7 @@ require "./variable_substitutor/filter_engine"
 require "./variable_substitutor/array_slicer"
 require "./variable_substitutor/variable_lookup"
 require "./variable_substitutor/jinja_renderer"
+require "./variable_substitutor/hostvars_context"
 require "./timing_profile"
 
 module Krikri
@@ -759,13 +760,14 @@ module Krikri
         # memoized - a later reference in the same operation has to see the
         # merged value.
         memoizable = !raw.includes?(".update(")
-        if memo && memoizable && (cached = memo[raw]?)
+        memo_key = VarSubstitutor.span_memo_key(vars, raw)
+        if memo && memoizable && (cached = memo[memo_key]?)
           return cached
         end
         value = with_depth_guard do
           ExpressionEvaluator.new(vars).evaluate_structured(inner[2..-3].strip)
         end
-        memo[raw] = value if memo && memoizable && value
+        memo[memo_key] = value if memo && memoizable && value
         value
       rescue
         nil
@@ -780,7 +782,17 @@ module Krikri
         return value unless vars
         return value unless (raw = value.raw).is_a?(String) && (raw.includes?("{{") || raw.includes?("{%") || raw.includes?("{#"))
         return value if VarSubstitutor.unsafe_root?(vars, source_expr)
+        return value if HostvarsContext.origin_unsafe?(vars, source_expr)
         return value if UnsafeValues.unsafe_text?(raw)
+
+        # The other host's scope when the expression read hostvars[host];
+        # otherwise the reading host's own. (nil merged_vars can only mean
+        # the entry vanished between detection and here - fall back.)
+        render_vars = if host = HostvarsContext.origin_host(vars, source_expr)
+                        HostvarsContext.merged_vars(host, vars) || vars
+                      else
+                        vars
+                      end
 
         with_depth_guard do
           if raw.includes?("{%") || raw.includes?("{#")
@@ -798,28 +810,45 @@ module Krikri
             # later `loop: "{{ dbs_repo_old }}"` then correctly hard-
             # failed with "The `loop` value must resolve to a 'list',
             # not 'str'." instead of silently iterating the bogus list.
-            next JSON::Any.new(JinjaRenderer.new(vars).render(raw))
+            next JSON::Any.new(JinjaRenderer.new(render_vars).render(raw))
           end
 
-          if structured = whole_span_structured(vars, raw)
+          if structured = whole_span_structured(render_vars, raw)
             next structured
           end
-          Krikri.parse_json_or_python_literal(render_raw(vars, raw))
+          Krikri.parse_json_or_python_literal(render_raw_vars(render_vars, raw))
         end
       end
 
       # Renders *raw* (known to contain `{{`) back to its real value:
       # one whole-string span -> ExpressionEvaluator (preserves result
       # types); anything else -> full substitution. *source_expr* gates
-      # unsafe roots the same way #if_templated does.
+      # unsafe roots the same way #if_templated does, and selects the
+      # other host's scope for a hostvars-rooted expression (see
+      # #if_templated).
       def self.render_raw(vars : Hash(String, JSON::Any), raw : String, source_expr : String? = nil) : String
         return raw if VarSubstitutor.unsafe_root?(vars, source_expr)
+        return raw if HostvarsContext.origin_unsafe?(vars, source_expr)
         return raw if UnsafeValues.unsafe_text?(raw)
+        render_vars = if host = HostvarsContext.origin_host(vars, source_expr)
+                        HostvarsContext.merged_vars(host, vars) || vars
+                      else
+                        vars
+                      end
+        render_raw_vars(render_vars, raw)
+      end
+
+      # The scope-agnostic half of #render_raw: *render_vars* is already
+      # the scope to render with (the reading host's, or the other host's
+      # merged scope when #if_templated/#render_raw detected a hostvars
+      # origin - detection must not re-run here, the merged scope would
+      # rebuild itself needlessly).
+      def self.render_raw_vars(render_vars : Hash(String, JSON::Any), raw : String) : String
         inner = raw.strip
         if (raw.split("{{").size - 1) == 1 && (raw.split("}}").size - 1) == 1 && inner.starts_with?("{{") && inner.ends_with?("}}")
-          ExpressionEvaluator.new(vars).evaluate(inner[2..-3].strip)
+          ExpressionEvaluator.new(render_vars).evaluate(inner[2..-3].strip)
         else
-          Krikri::VarSubstitutor.new(vars).substitute(raw)
+          Krikri::VarSubstitutor.new(render_vars).substitute(raw)
         end
       end
     end
@@ -848,6 +877,15 @@ module Krikri
       depth = (@@span_memo_depth[fiber]? || 1) - 1
       @@span_memo_depth[fiber] = depth
       @@span_memo.delete(fiber) if depth == 0
+    end
+
+    # Memo entries are keyed by the variable SCOPE as well as the template
+    # text: one templating operation can render the same text in two
+    # scopes (`{{ who }} {{ hostvars['h2'].who }}` renders `{{ myname }}`
+    # for the current host AND for h2), and a text-only key returned the
+    # first scope's value for the second.
+    def self.span_memo_key(vars : Hash(String, JSON::Any), raw : String) : String
+      "#{vars.object_id}\u0000#{raw}"
     end
 
     def self.span_memo : Hash(String, JSON::Any)?
@@ -888,6 +926,21 @@ module Krikri
 
     def self.set_resolved_var_names(host_name : String, names : Enumerable(String)) : Nil
       @@resolved_var_names[host_name] = names.to_set
+    end
+
+    # Write-time complement of #set_resolved_var_names: a register:/set_fact:
+    # write adds its name to the host's registry IMMEDIATELY, instead of
+    # waiting for that host's next vars-context build. Matters for
+    # cross-host reads: hostvars[x] hands another host's registered
+    # results/set_facts to a host that may be the only one executing from
+    # here on, and a value written by a host that never executes again
+    # would otherwise reach the re-render funnels unregistered (the hostile
+    # `{{ lookup('pipe', ...) }}` stdout executed on the controller instead
+    # of passing through verbatim). The next context build still recomputes
+    # the full set and makes this redundant from then on.
+    def self.add_resolved_var_name(host_name : String, name : String) : Nil
+      set = @@resolved_var_names[host_name] ||= Set(String).new
+      set.add(name)
     end
 
     def self.resolved_var_name?(host_name : String?, name : String) : Bool
@@ -1392,10 +1445,26 @@ module Krikri
         #   template text. Real Ansible's taint follows the data; this
         #   scan is its static approximation at the one site where the
         #   second-level render would otherwise execute it.
+        # - the span reads a hostvars entry key that is execution-resolved
+        #   for the OWNING host (its registry, not this host's, decides -
+        #   HostvarsContext.origin_unsafe?): registered results/set_facts
+        #   are execution data and pass through verbatim.
+        origin = VariableSubstitutor::HostvarsContext.origin_host_and_key(@vars, stripped)
         if re_template_from_variable?(stripped) &&
            !UnsafeValues.contains_unsafe?(rendered) &&
-           !resolved_span_references_unsafe?(stripped)
-          substitute_impl(rendered, strict, output, native)
+           !resolved_span_references_unsafe?(stripped) &&
+           !(origin && VarSubstitutor.resolved_var_name?(origin[0], origin[1]))
+          # A span rooted at `hostvars[<other host>]` re-renders its own
+          # output with THAT host's scope - real Ansible's HostVarsVars
+          # templar, not the reading host's. The per-host substitutor's
+          # own re-passes re-enter here for nested hostvars references
+          # inside the other host's values, each level rendering in its
+          # own host's scope (bounded by the shared Rerender depth guard).
+          if host = origin.try(&.[0])
+            VariableSubstitutor::HostvarsContext.substitutor_for(host, @vars).substitute(rendered, strict, output, native)
+          else
+            substitute_impl(rendered, strict, output, native)
+          end
         else
           rendered
         end
@@ -2132,7 +2201,7 @@ module Krikri
       # chase). Anything else - container results, nil/failed structured
       # evaluations, multi-span or block-tag text - falls through to the
       # original strict render below, unchanged.
-      return if (memo = self.class.span_memo) && memo.has_key?(raw)
+      return if (memo = self.class.span_memo) && memo.has_key?(self.class.span_memo_key(@vars, raw))
       if (structured = VariableSubstitutor::Rerender.whole_span_structured(@vars, raw)) && structured_scalar?(structured)
         return
       end
@@ -2164,7 +2233,7 @@ module Krikri
       # engine's scope rendered the whole value once here and again in the
       # re-render - two runs of a side-effecting lookup where real Ansible
       # runs one.
-      return false if (memo = self.class.span_memo) && memo.has_key?(raw)
+      return false if (memo = self.class.span_memo) && memo.has_key?(self.class.span_memo_key(@vars, raw))
       if (structured = VariableSubstitutor::Rerender.whole_span_structured(@vars, raw)) && structured_scalar?(structured)
         return false
       end
