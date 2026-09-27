@@ -24,6 +24,35 @@ describe Krikri::PluginHelpers::PostgresqlAcl do
       parsed = Krikri::PluginHelpers::PostgresqlAcl.parse("{bob=r*w/postgres}")
       parsed["bob"].should eq({'r' => true, 'w' => false})
     end
+
+    # PostgreSQL array-text: an aclitem whose grantee needs quoting is
+    # wrapped in array-level quotes with every embedded quote
+    # backslash-escaped. Keyed under the UNQUOTED role name - the same
+    # name the GRANT was issued for - or idempotency re-grants forever.
+    it "unescapes and unquotes array-escaped quoted grantees" do
+      parsed = Krikri::PluginHelpers::PostgresqlAcl.parse(
+        %q[{pg_database_owner=UC/pg_database_owner,=U/pg_database_owner,"\"peering-manager\"=U/pg_database_owner"}]
+      )
+      parsed["pg_database_owner"].should eq({'U' => false, 'C' => false})
+      parsed["PUBLIC"].should eq({'U' => false})
+      parsed["peering-manager"].should eq({'U' => false})
+    end
+
+    it "round-trips a grantee whose own name contains a double quote" do
+      # role ro"le-x -> grantee renders as "ro""le-x", array-escaped as
+      # "ro""le-x" wrapped: "\"ro\"\"le-x\"=U/postgres"
+      parsed = Krikri::PluginHelpers::PostgresqlAcl.parse(
+        %q[{"\"ro\"\"le-x\"=U/postgres"}]
+      )
+      parsed[%q(ro"le-x)].should eq({'U' => false})
+    end
+
+    it "keys a quoted grantee containing an equals sign or comma under its full name" do
+      parsed = Krikri::PluginHelpers::PostgresqlAcl.parse(
+        %q[{"\"a=b,c\"=U/postgres"}]
+      )
+      parsed["a=b,c"].should eq({'U' => false})
+    end
   end
 
   describe ".has_privilege?/.has_grant_option?" do

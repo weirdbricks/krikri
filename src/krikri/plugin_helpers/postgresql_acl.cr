@@ -130,7 +130,9 @@ module Krikri
         return result if inner.empty?
 
         split_entries(inner).each do |entry|
-          grantee_raw, rest = entry.split('=', 2)
+          parsed = parse_entry(entry)
+          next unless parsed
+          grantee_raw, rest = parsed
           privs_part = rest.split('/', 2)[0]
           grantee = grantee_raw.empty? ? "PUBLIC" : grantee_raw
 
@@ -147,31 +149,81 @@ module Krikri
         result
       end
 
-      # Splits the comma-separated aclitem list. Every field inside a
-      # single aclitem (`grantee=privs/grantor`) that could itself
-      # contain a comma - a double-quoted role name - is a real
-      # PostgreSQL possibility (any identifier can be double-quoted with
-      # arbitrary characters), so a plain `String#split(',')` isn't safe;
-      # track quoting state instead.
+      # Splits the comma-separated aclitem list - PostgreSQL array-text
+      # rules, not bare commas: an element containing anything outside an
+      # identifier's safe set (a quoted role name is enough to trigger
+      # this) is wrapped in its own double quotes with every embedded
+      # quote backslash-escaped (a role named `ro"le-x` renders as
+      # `"\"ro\"\"le-x\"=U/grantor"`), so a plain `String#split(',')`
+      # isn't safe and the wrapping/escaping has to be undone here to
+      # yield the raw aclitem text (`"ro""le-x"=U/grantor`).
       private def self.split_entries(inner : String) : Array(String)
         entries = [] of String
         current = String::Builder.new
         in_quotes = false
+        i = 0
 
-        inner.each_char do |char|
-          if char == '"'
+        while i < inner.size
+          char = inner[i]
+          if char == '\\' && in_quotes && i + 1 < inner.size
+            current << inner[i + 1]
+            i += 2
+          elsif char == '"'
             in_quotes = !in_quotes
-            current << char
+            i += 1
           elsif char == ',' && !in_quotes
             entries << current.to_s
             current = String::Builder.new
+            i += 1
           else
             current << char
+            i += 1
           end
         end
+
         last = current.to_s
         entries << last unless last.empty?
         entries
+      end
+
+      # Splits one aclitem into {grantee, "=privs/grantor" part}. The
+      # grantee is either a bare name (up to the `=`) or a double-quoted
+      # identifier whose embedded quotes are doubled - a quoted grantee
+      # may itself contain `=` characters (`"a=b"=U/x`), so the split
+      # has to respect the quoting rather than cut at the first `=`.
+      # The grantee is returned *unquoted*, keyed exactly the way callers
+      # look grants up (by the same role name the GRANT was issued for -
+      # a quoted role name keeps its case, so quoting must round-trip,
+      # not just survive). Returns nil for a structurally impossible
+      # entry rather than guessing.
+      private def self.parse_entry(entry : String) : {String, String}?
+        return quoted_grantee_entry(entry) if entry.starts_with?('"')
+
+        eq = entry.index('=')
+        return nil unless eq
+        {entry[0...eq], entry[(eq + 1)..]}
+      end
+
+      private def self.quoted_grantee_entry(entry : String) : {String, String}?
+        name = String::Builder.new
+        i = 1
+        while i < entry.size
+          if entry[i] == '"'
+            if i + 1 < entry.size && entry[i + 1] == '"'
+              name << '"'
+              i += 2
+            else
+              i += 1
+              break
+            end
+          else
+            name << entry[i]
+            i += 1
+          end
+        end
+
+        return nil if i >= entry.size || entry[i] != '='
+        {name.to_s, entry[(i + 1)..]}
       end
 
       def self.has_privilege?(parsed : Hash(String, Hash(Char, Bool)), grantee : String, letter : Char) : Bool

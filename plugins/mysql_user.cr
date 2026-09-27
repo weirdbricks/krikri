@@ -295,24 +295,28 @@ module Krikri
     # password first, then plugin+hash (`IDENTIFIED WITH p AS hash`), then
     # plugin+auth_string (`IDENTIFIED WITH p BY auth`, with MariaDB pam ->
     # USING and ed25519 -> USING PASSWORD() special cases), then bare
-    # plugin (`IDENTIFIED WITH p`).
+    # plugin (`IDENTIFIED WITH p`). The plugin name is interpolated as a
+    # single-quoted string literal (quote_str), matching how real Ansible
+    # reaches the server with it (a bound query parameter) - MySQL accepts
+    # a quoted string where the auth plugin name goes, and a raw
+    # interpolation would let `plugin:` carry arbitrary SQL.
     private def build_auth_clause(
       password : String?, plugin : String?, plugin_hash_string : String?, plugin_auth_string : String?,
     ) : String
       if password
         " IDENTIFIED BY #{quote_str(password)}"
       elsif plugin && plugin_hash_string
-        " IDENTIFIED WITH #{plugin} AS #{quote_str(plugin_hash_string)}"
+        " IDENTIFIED WITH #{quote_str(plugin)} AS #{quote_str(plugin_hash_string)}"
       elsif plugin && plugin_auth_string
         if plugin == "pam"
-          " IDENTIFIED WITH #{plugin} USING #{quote_str(plugin_auth_string)}"
+          " IDENTIFIED WITH #{quote_str(plugin)} USING #{quote_str(plugin_auth_string)}"
         elsif plugin == "ed25519"
-          " IDENTIFIED WITH #{plugin} USING PASSWORD(#{quote_str(plugin_auth_string)})"
+          " IDENTIFIED WITH #{quote_str(plugin)} USING PASSWORD(#{quote_str(plugin_auth_string)})"
         else
-          " IDENTIFIED WITH #{plugin} BY #{quote_str(plugin_auth_string)}"
+          " IDENTIFIED WITH #{quote_str(plugin)} BY #{quote_str(plugin_auth_string)}"
         end
       elsif plugin
-        " IDENTIFIED WITH #{plugin}"
+        " IDENTIFIED WITH #{quote_str(plugin)}"
       else
         ""
       end

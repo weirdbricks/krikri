@@ -353,8 +353,6 @@ module Krikri
       target_roles = resolve_target_roles!(type)
 
       objs, all_in_schema = resolve_objs!(type, login_db)
-      skip_obj_check = skip_obj_check?(type)
-      validate_identifiers!(schema, skip_obj_check ? [] of String : objs, roles_raw)
 
       build_resolved_params(type, state, privs, roles_raw, objs, all_in_schema,
         target_roles, schema, login_db)
@@ -364,10 +362,6 @@ module Krikri
       valid_types = PluginHelpers::PostgresqlAcl::PRIV_LETTERS.keys + ["group", "default_privs"]
       raise "type must be one of #{valid_types.join(", ")}, got '#{type}'" unless valid_types.includes?(type)
       raise "state must be 'present' or 'absent', got '#{state}'" unless state == "present" || state == "absent"
-    end
-
-    private def skip_obj_check?(type : String) : Bool
-      ROUTINE_TYPES.includes?(type) || type == "default_privs"
     end
 
     private def build_resolved_params(
@@ -433,22 +427,9 @@ module Krikri
       {objs, false}
     end
 
-    # Routine objs: are deliberately exempt (passed as an empty list by
-    # the caller): a signature legitimately contains parentheses, commas,
-    # spaces and dots (`f(character varying, public.mytype)`), none of
-    # which this identifier check allows. They are validated instead by
-    # PostgreSQL itself, via the bound `regprocedure` cast in
-    # #resolve_routine - which is stricter than this check, not weaker,
-    # since a reference that does not resolve to a real routine fails
-    # outright. schema:/roles: are still checked here for them.
-    private def validate_identifiers!(schema : String, objs : Array(String), roles : Array(String)) : Nil
-      valid = identifier_safe?(schema) &&
-              objs.all? { |obj| identifier_safe?(obj) } &&
-              roles.all? { |role| role == "PUBLIC" || identifier_safe?(role) }
-
-      raise "objs/roles/schema may only contain letters, digits, and underscores" unless valid
-    end
-
+    # (No identifier allow-list: every identifier reaches SQL only through
+    # #qualified_object/#quote_ident, which quote it injection-safely -
+    # see those two methods.)
     # Queries every table/sequence currently in schema, fresh each run -
     # real Ansible's own ALL_IN_SCHEMA behavior (dynamic membership, not
     # a fixed list captured once). relkind filter for tables matches real
@@ -815,9 +796,9 @@ module Krikri
       return obj if ROUTINE_TYPES.includes?(type)
 
       if TYPES_WITH_SCHEMA.includes?(type)
-        "#{quote_ident(schema)}.#{quote_ident(obj)}"
+        "#{quote_identifier(schema, "schema")}.#{quote_identifier(obj, obj_id_type(type))}"
       else
-        quote_ident(obj)
+        quote_identifier(obj, obj_id_type(type))
       end
     end
 
@@ -931,12 +912,40 @@ module Krikri
       SQL
     end
 
-    private def identifier_safe?(value : String) : Bool
-      !!value.matches?(/\A[A-Za-z0-9_]+\z/)
-    end
-
     private def quote_ident(s : String) : String
       PluginHelpers::SqlQuoting.pg_quote_ident(s)
+    end
+
+    # Which pg_quote_identifier dot-level the object type's objs: may
+    # carry; types the real map has no entry for keep real's own fallback
+    # id_type, 'table' (see quote_identifier's doc comment).
+    OBJ_ID_TYPES = {
+      "table"      => "table",
+      "sequence"   => "sequence",
+      "schema"     => "schema",
+      "database"   => "database",
+      "tablespace" => "tablespace",
+    }
+
+    private def obj_id_type(type : String) : String
+      OBJ_ID_TYPES[type]? || "table"
+    end
+
+    # Quotes a raw user-supplied identifier the way real Ansible's
+    # community.postgresql pg_quote_identifier does (see
+    # PluginHelpers::SqlQuoting.pg_quote_identifier): unquoted dotted paths
+    # split per fragment, embedded quotes doubled, over-deep dotted paths
+    # and malformed quoting rejected with real Ansible's own error
+    # messages. The allow-list this replaces rejected entirely legitimate
+    # identifiers (e.g. role: peering-manager - the hyphen), while the
+    # quoting alone is what actually makes arbitrary text injection-safe.
+    # id_type follows the object type: table/sequence/type objs may carry
+    # up to three dot levels (db.schema.object), schema two, database one,
+    # tablespace one; the types real Ansible has no level of its own for
+    # (language, foreign_data_wrapper, foreign_server, parameter) use
+    # real's own fallback id_type, 'table'.
+    private def quote_identifier(s : String, id_type : String) : String
+      PluginHelpers::SqlQuoting.pg_quote_identifier(s, id_type)
     end
   end
 end

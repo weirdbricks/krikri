@@ -148,20 +148,17 @@ module Krikri
 
       owner = @params["owner"]?
       encoding = @params["encoding"]?
-      # owner: is interpolated as a raw SQL IDENTIFIER (quote_ident below
-      # only escapes embedded double-quotes, not arbitrary content), so it
-      # genuinely needs restricting to a safe character set. encoding:
-      # goes through quote_str instead - a SQL STRING literal, already
-      # injection-safe via its own quote-escaping - so the same
-      # restriction on it is both unnecessary and wrong: real PostgreSQL
-      # accepts encoding aliases quote_ident's character class would
-      # reject, e.g. geerlingguy.postgresql's own default `encoding:
-      # 'UTF-8'` (the hyphen isn't in [A-Za-z0-9_]) - confirmed against
-      # real ansible-playbook, which creates the database fine with this
-      # exact value.
-      unless identifier_safe?(owner)
-        return PluginResult.new(changed: false, failed: true, msg: "owner may only contain letters, digits, and underscores")
-      end
+      # owner: is interpolated as a SQL IDENTIFIER, so it goes through
+      # quote_ident below - embedded double-quotes doubled, arbitrary text
+      # (hyphens, dots, spaces) safe. No character allow-list: it rejected
+      # entirely legitimate owner names (e.g. role: peering-manager) while
+      # adding no safety the quoting doesn't already provide. encoding:
+      # goes through quote_str - a SQL STRING literal, injection-safe via
+      # its own quote-escaping - which also means real PostgreSQL's
+      # encoding aliases are accepted, e.g. geerlingguy.postgresql's own
+      # default `encoding: 'UTF-8'` (confirmed against real
+      # ansible-playbook, which creates the database fine with this
+      # exact value).
 
       clause = String.build do |str|
         if o = owner
@@ -365,13 +362,6 @@ module Krikri
       end
       File.write(tmp_path, content)
       tmp_path
-    end
-
-    # owner:/encoding: can't go through a bind parameter (they're
-    # identifiers/keywords, not values), so restrict them to safe
-    # characters rather than interpolating arbitrary input into the query.
-    private def identifier_safe?(value : String?) : Bool
-      value.nil? || value.matches?(/\A[A-Za-z0-9_]+\z/)
     end
 
     private def quote_ident(s : String) : String
