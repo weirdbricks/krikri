@@ -1247,7 +1247,12 @@ module Krikri
           return begin
             value = render_via_jinja_value(expr)
             value ? @lookup.format_value(value) : "undefined"
-          rescue
+          rescue e : KrikriJinja::TemplateError
+            # Same out-of-range propagation as the general bracket path,
+            # surfaced as this evaluator's own strict bracket-index error.
+            if e.message.try(&.includes?("has no element"))
+              raise UndefinedVariableError.new(bracket_index_failure(expr) || e.message.not_nil!)
+            end
             @lookup.format_value(parse_literal_array(expr))
           end
         end
@@ -1280,9 +1285,21 @@ module Krikri
         # Crinja-first delegation, general filter-chain-dispatch
         # construct (general indexed access: `var[key]`, `var[0]`, `var[-1]`) - same
         # pattern as the dotted-access/simple-lookup cases above.
+        #
+        # The engine (krikri-jinja v0.4.20) now hard-fails an out-of-range
+        # list/tuple subscript with real Jinja2's "list object has no
+        # element N" strict undefined - that raise must propagate (real
+        # Ansible fails the task), not fall into the lenient plain-lookup
+        # fallback below, which would render the "undefined" sentinel.
+        # Anything else the engine raises on stays a fallback shape (an
+        # engine-capability gap degrades leniently, never into a spurious
+        # task failure).
         begin
           value = render_via_jinja_value(expr)
-        rescue
+        rescue e : KrikriJinja::TemplateError
+          if e.message.try(&.includes?("has no element"))
+            raise UndefinedVariableError.new(bracket_index_failure(expr) || e.message.not_nil!)
+          end
           return @lookup.indexed(expr)
         end
 
@@ -1885,6 +1902,18 @@ module Krikri
         # for a shape this evaluator simply can't resolve (a lookup(...)
         # call, a crinja-only filter chain) - failing THOSE would turn an
         # evaluator gap into a spurious task failure.
+        # An out-of-range (or None-base) integer bracket index is a real
+        # task failure in real Ansible for EVERY construct, lenient or
+        # strict - the engine (krikri-jinja v0.4.20) raises the same way,
+        # and bracket_index_failure_message diagnoses the shape with real
+        # Ansible's own message. nil for every shape it can't pin down
+        # (missing bare references stay on the strict/lenient gates
+        # below; dict-key misses stay lenient by long-standing
+        # convention).
+        if resolved.nil? && (failure = bracket_index_failure(expr))
+          raise PlusMinusOperandError.new(failure)
+        end
+
         if resolved.nil? && strict && REGEX_BARE_VAR_REF.matches?(expr)
           raise PlusMinusOperandError.new(Krikri.strict_undefined_message(expr, @vars))
         end
@@ -2529,7 +2558,16 @@ module Krikri
       private def evaluate_leading_paren_crinja_first(expr : String, paren : {String, String}) : String
         begin
           value = render_via_jinja_value(expr)
-        rescue
+        rescue e : KrikriJinja::TemplateError
+          # The engine's out-of-range list/tuple subscript failure is a
+          # real task failure, not an engine-capability gap - surface it
+          # as this evaluator's own strict bracket-index error (same
+          # UndefinedVariableError type and krikri message convention the
+          # plain-bracket path raises) instead of degrading to the lenient
+          # hand-rolled fallback.
+          if e.message.try(&.includes?("has no element"))
+            raise UndefinedVariableError.new(bracket_index_failure(expr) || e.message.not_nil!)
+          end
           return evaluate_leading_paren(paren)
         end
 

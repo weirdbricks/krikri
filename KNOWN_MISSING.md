@@ -30,51 +30,10 @@ it does not linger at the top. This file carries no per-round
 narrative or fix history - `git log` is the record of what was found
 and fixed and when.
 
-**Currently at `0.9.1340`.**
+**Currently at `0.9.1347`.**
 
 ## Open gaps
 
-- **Differential-fuzz known differences between the two evaluators**
-  (found by `bin/differential_fuzz`, the seeded ExpressionEvaluator-vs-
-  krikri-jinja comparison harness; 20k+ generated expressions triaged
-  2026-09-27). Three disagreement classes survive triage against real
-  Jinja2 3.1.6, all in lenient (non-strict) substitution mode, none
-  fixed yet:
-  - **The hand-rolled evaluator still answers SOME invalid Jinja
-    leniently** where krikri-jinja raises what real Jinja2 3.1.6 raises.
-    The 2026-09-27 strictness pass fixed the largest shapes: ordering
-    comparisons between incomparable operand classes (containers,
-    None/undefined, non-numeric string vs number, bool vs non-numeric
-    string - `dict <= 6.6`, `missing_var < '17'`), `*`/`/`/`//`
-    type-mismatched operands (with real Python repeat semantics added
-    for the valid `'ab' * 3`/`list * 2` pairs, which previously rendered
-    empty), `not` as a comparison's right operand (`a < not b`), and
-    unary minus over a missing or non-numeric operand (`- missing_var`).
-    Deliberately kept lenient (scoped down, not forced): two-raw-string
-    and numeric-string-vs-number orderings (module stdout values are
-    strings - load-bearing for real roles), per-filter argument type
-    leniency (`| sum` on strings, `| abs` on a string, `| split(dict)`,
-    ...), the unimplemented `%` modulo operator, `not (...)` wrapped
-    around an unimplemented inner construct, and bare-callable
-    attributes (`str.count`). The residual classes are enumerated as
-    three message/shape families in
-    `src/krikri/differential_fuzz/runner.cr` (`KNOWN_DIFFERENCES`),
-    including the one documented predicate hole (a regression of the
-    non-numeric-string/bool-vs-string ordering rules is message-
-    indistinguishable from the deliberate numeric-string leniency).
-  - **Index out of range on a list**: the hand-rolled side hard-fails
-    like real Ansible ("object of type 'list' has no element 9") while
-    `evaluate_value!`'s nil convention renders the lenient "undefined"
-    sentinel. The strict side is the real-Ansible-matching one; listed
-    because the harness flags it and the direction is deliberate.
-  Separately observed (both engines agree, so the differential harness
-  does not flag it; needs real-Ansible verification before acting): a
-  lazy generator rendered into concatenated text (`list | unique ~ 'x'`)
-  leaks its repr (`#<KrikriJinja::GeneratorValue:0x...>x`) where real
-  Ansible's own core filters return lists and render `['a', 'b']x`.
-  The harness's triaged-class list lives in
-  `src/krikri/differential_fuzz/runner.cr` (`KNOWN_DIFFERENCES`); the
-  fixed-seed CI slice is `spec/unit/differential_fuzz_spec.cr`.
 - **`konstruktoid.hardening` real-host parity is unconfirmed** (rounds
   975062/978000, 2026-09-26): real `ansible-playbook` doesn't complete
   within 30 minutes on this role even on a fresh host (`rc=124` both
@@ -171,6 +130,29 @@ Everything here is a decision someone already made, with the reasoning
 attached. Nothing here is waiting on anyone. Do not re-litigate without
 new evidence - and if new evidence turns up, move the entry to "Open
 gaps" rather than arguing with the note in place.
+
+### Differential-fuzz residual leniency between the two Jinja evaluators
+
+- `bin/differential_fuzz` (the seeded ExpressionEvaluator-vs-krikri-jinja
+  comparison harness) triaged 20k+ generated expressions against real
+  Jinja2 3.1.6 on 2026-09-27; the three triaged disagreement classes
+  (lenient answers to invalid Jinja, the undefined-ternary sentinel
+  split between the two entry points, lenient out-of-range list
+  indexes) were fixed the same day - the fixes live in `git log`, with
+  the krikri-jinja engine side in v0.4.20-v0.4.22. What remains is
+  deliberate, not defect: two-raw-string and numeric-string-vs-number
+  orderings (module stdout values are strings), per-filter argument
+  type leniency (`| sum` on strings, `| abs` on a string,
+  `| split(dict)`), the unimplemented `%` modulo operator,
+  `not (...)` wrapped around an unimplemented inner construct,
+  bare-callable attributes (`str.count`), and the engine's lenient
+  chain off a lenient undefined for bracket indexing
+  (`missing_var[9]` stays the "undefined" sentinel engine-side - that
+  chain is the load-bearing shape behind `x | default(other.thing.y)`).
+  The residual classes live as tight predicates in
+  `src/krikri/differential_fuzz/runner.cr` (`KNOWN_DIFFERENCES`,
+  including the one documented predicate hole); the fixed-seed CI
+  slice is `spec/unit/differential_fuzz_spec.cr`.
 
 ### Unsafe-data taint is a provenance-closed registry, not an AnsibleUnsafe type
 

@@ -120,13 +120,18 @@ module Krikri::DifferentialFuzz
     end
 
     KNOWN_DIFFERENCES = [
-      # Index out of range on a list (or into a missing value): the
-      # hand-rolled side hard-fails like real Ansible, while
-      # evaluate_value!'s nil convention renders the lenient "undefined"
-      # sentinel. The strict side matches real Ansible. (Still open -
-      # removed once the evaluate_value! path raises the same way.)
-      KnownDifference.new("hand-strict-index-oob", ->(o : Outcome) {
-        o.status.one_errored? && (o.hand_error || "").includes?("UndefinedVariableError") &&
+      # RESIDUAL after the 2026-09-27 out-of-range fix (krikri-jinja
+      # v0.4.21 now raises like real Ansible for an out-of-range
+      # list/tuple index, an integer subscript of a None base, and any
+      # chain off those strict failures): a bracket-indexed expression
+      # whose BASE is itself undefined (`missing_var[9]`,
+      # `dict.missing_attr[0]`). The hand-rolled side hard-fails like
+      # real Ansible; the engine deliberately keeps the chain off a
+      # lenient undefined LENIENT, because that chain is the documented
+      # load-bearing shape for `x | default(other.thing.y)` - a strict
+      # chain would fail that real-Ansible-working idiom.
+      KnownDifference.new("hand-strict-undefined-base-index", ->(o : Outcome) {
+        o.status.one_errored? && (o.hand_error || "").includes?("None has no element") &&
         o.jinja_value == "undefined" && o.expr.includes?("[")
       }),
       # Filter-operand leniency (see FILTER_OPERAND_LENIENCE above).
@@ -147,11 +152,29 @@ module Krikri::DifferentialFuzz
       #   container/None-vs-anything regression classes produce DIFFERENT
       #   messages (Hash/Array/Nil/Undefined in the compare error) and
       #   still surface as findings.
-      KnownDifference.new("hand-lenient-comparison-operand", ->(o : Outcome) {
+      KnownDifference.new("hand-lenient-nested-or-string-comparison", ->(o : Outcome) {
         if o.status.one_errored? && o.hand_value.is_a?(String) &&
-           (error = o.jinja_error).is_a?(String) && error.includes?("cannot compare")
-          Runner.nested_condition_shape?(o.expr) ||
+           (error = o.jinja_error).is_a?(String) &&
+           (error.includes?("cannot compare") || error.includes?("has no element"))
+          # Nested/compound shapes (ternary conditions, `and`/`or` value
+          # selectors, `is` tests, `not (...)` fallbacks, filter-piped
+          # operands - see nested_condition_shape?) route through fallback
+          # evaluators that are still class-lenient, for comparison-type
+          # errors AND for the engine's out-of-range subscript failure
+          # (a `| replace(x, list[0])` argument, a `not (list[9])` wrap).
+          if Runner.nested_condition_shape?(o.expr)
+            true
+          else
+            # Bare comparisons: only the deliberate string-heavy-pipeline
+            # leniencies. KNOWN HOLE, documented honestly: a regression of
+            # the 2026-09-27 fixes for non-numeric-string-vs-number and
+            # bool-vs-non-numeric-string orderings produces the same jinja
+            # message and would be masked by this predicate - the
+            # container/None-vs-anything regression classes produce
+            # DIFFERENT messages (Hash/Array/Nil/Undefined in the compare
+            # error) and still surface as findings.
             error.matches?(/cannot compare (String and (Int64|Float64)|(Int64|Float64) and String|Bool and String|String and Bool)/)
+          end
         else
           false
         end

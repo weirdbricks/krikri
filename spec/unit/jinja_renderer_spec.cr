@@ -1453,3 +1453,44 @@ describe "JinjaRenderer inline string-literal escapes (round 951xxx digit-escape
     renderer.render(%q({% if 'a\tb' | length == 3 %}LEN3{% endif %})).should eq("LEN3")
   end
 end
+
+describe "out-of-range subscript strictness (differential-fuzz fix, krikri-jinja v0.4.22)" do
+  # The hand-rolled evaluator always hard-failed an out-of-range list
+  # index like real Ansible ("object of type 'list' has no attribute 9"),
+  # but the delegation path (JinjaRenderer#evaluate_value!) rendered the
+  # lenient "undefined" sentinel because the engine mapped a failed
+  # subscript to its lenient chainable undefined. The engine now produces
+  # a STRICT undefined with real Jinja2 3.1.6's own message for an
+  # out-of-range list/tuple index, an integer subscript of a None base,
+  # any chain off those failures, and a subscript into a lazy generator
+  # result - so BOTH entry points fail the task, while `| default(...)`
+  # still catches the failure the way real Ansible answers it.
+  it "raises on an out-of-range list index through evaluate_value!" do
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(
+      {"list_ints" => JSON.parse(%([3, 1, 2]))} of String => JSON::Any)
+    expect_raises(KrikriJinja::TemplateError, "list object has no element 9") do
+      renderer.evaluate_value!("list_ints[9]")
+    end
+  end
+
+  it "raises on an integer subscript of a None base through evaluate_value!" do
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(
+      {"none_var" => JSON::Any.new(nil)} of String => JSON::Any)
+    expect_raises(KrikriJinja::TemplateError, "None has no element 0") do
+      renderer.evaluate_value!("none_var[0]")
+    end
+  end
+
+  it "still lets default() consume an out-of-range index" do
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(
+      {"list_ints" => JSON.parse(%([3, 1, 2]))} of String => JSON::Any)
+    renderer.evaluate_value!("list_ints[9] | default('x')").should eq(JSON::Any.new("x"))
+  end
+
+  it "keeps an in-range negative index and a lenient dict-key miss working" do
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(
+      {"list_ints" => JSON.parse(%([3, 1, 2])), "dict_simple" => JSON.parse(%({"a": 1}))} of String => JSON::Any)
+    renderer.evaluate_value!("list_ints[-1]").should eq(JSON::Any.new(2_i64))
+    renderer.evaluate_value!("dict_simple['missing']").should be_nil
+  end
+end

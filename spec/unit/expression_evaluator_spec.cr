@@ -1458,6 +1458,34 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
     end
   end
 
+  it "raises on an out-of-range index in every operand position, not just a bare bracket" do
+    # Differential-fuzz fix (krikri-jinja v0.4.22): the engine now raises
+    # real Jinja2's "list object has no element N" for an out-of-range
+    # subscript, and every hand-rolled path that delegates to it must
+    # propagate that instead of degrading to the lenient "undefined"
+    # sentinel - a `~` operand, a filter-chain result's index, a lazy
+    # generator's index, and a literal-array index all used to answer
+    # leniently where real Ansible fails the task.
+    v = Hash(String, JSON::Any).new
+    v["list_nested"] = JSON.parse(%([[1, 2], [3, 4]]))
+    v["list_empty"] = JSON.parse(%([]))
+    v["str_plain"] = JSON::Any.new("ab")
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
+
+    expect_raises(Krikri::UndefinedVariableError, /has no (element|attribute) 9/) do
+      evaluator.evaluate("(14 ~ list_nested[9]) | list")
+    end
+    expect_raises(Krikri::UndefinedVariableError, /has no (element|attribute) 0/) do
+      evaluator.evaluate("(list_empty | unique)[0]")
+    end
+    expect_raises(Krikri::UndefinedVariableError, /has no (element|attribute) 1/) do
+      evaluator.evaluate("[18.0][1]")
+    end
+    expect_raises(Krikri::UndefinedVariableError, /has no (element|attribute) 2/) do
+      evaluator.evaluate("(list_empty | sort)[2]")
+    end
+  end
+
   it "coerces Bool operands to their Python int values in + arithmetic" do
     # Real bug found benchmarking galaxyproject.galaxy: its very first
     # task is `assert: that: "(galaxy_manage_clone + galaxy_manage_
