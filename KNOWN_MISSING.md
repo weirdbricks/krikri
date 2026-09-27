@@ -30,7 +30,7 @@ it does not linger at the top. This file carries no per-round
 narrative or fix history - `git log` is the record of what was found
 and fixed and when.
 
-**Currently at `0.9.1335`.**
+**Currently at `0.9.1336`.**
 
 ## Open gaps
 
@@ -155,6 +155,40 @@ only 35 roles run before the round was left mid-triage) still has 85
 roles never run. The shortlist is at
 `testing/kata/round_new_authors/shortlist120.txt` if resuming it -
 against Atlantic.net now, Kata having been retired as a backend.
+
+### Round 984000-984199 + 985000-985073 (2026-09-27): derived-string taint closure, package-state parity, release re-measure
+
+Closing out the last open item of the 0.9.1319-0.9.1322 security review:
+the unsafe-text registry is now closed under DERIVATION (0.9.1335) - a
+live leak was demonstrated (hostile stdout transformed by `| trim`,
+relayed through an author var into a loop item, re-rendered by a
+consumer and EXECUTING a `lookup('pipe')` on the controller where real
+ansible-playbook 2.19 prints it verbatim) and fixed by registering
+every render output provenance-checked as host-derived at the span
+gate; three regression specs added (two fail on the pre-fix build).
+Round 984000 then re-measured the 200 roles from the security-regression
+batch on a RELEASE build (the 981xxx rows' debug timings were
+incomparable): `CLEAN=190 DIVERGENT=10`. Triage: 4 roles are
+unsupported community modules (`java_keystore`, `postgresql_owner`,
+`community.general.yarn`, `ansible.posix.patch`); `willshersystems.sshd`
+is upstream nondeterminism (real Ansible's `intersect` filter returns
+Python set order, hash-seed randomized per process, so the role's own
+facts-presence gate skips-or-runs by luck); 4 were OS drift - the
+reconstructed queue file lost each role's rocky hint and ran it on
+ubuntu. One REAL bug fell out of the OS-drift set: `package:` aliased
+`state: installed`/`removed` for every backend, but real Ansible
+validates inside the DELEGATED module - on Debian-family hosts apt's
+choices reject `installed` and fail the task (fixed 0.9.1336,
+byte-identical apt wording, live-confirmed on ubuntu round 985073).
+Round 985000 re-ran the 73 rocky roles (per their historical OS) plus
+that ubuntu confirmation: `CLEAN=74`, and the 0.9.1335 taint closure
+passed again over all 74 template/register-heavy roles. `ROLES_TESTED.md`
+rows updated with release timings. Two harness notes for future rounds:
+reconstructed queue files must carry the OS hint column, and
+krikri-role-tester's `COMMUNITY_MODULE_MISSING` reclassification greps
+only the parse-time "uses unimplemented plugin:" warning, so roles that
+exit late via the "unavailable modules" recap line (no parse-time hit)
+stay DIVERGENT and need manual triage.
 
 ### Round 981000-981199 + 982000-982023 + 983000 (2026-09-26/27): security review + regression re-check
 
