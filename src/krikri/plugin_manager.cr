@@ -1069,6 +1069,21 @@ module Krikri
       }.to_json)
     end
 
+    # The failed-task result the solo daemon path returns when a request
+    # was dispatched but its response was lost or unparseable. Public
+    # (spec seam) because the SHAPE is the contract: `failed: true` plus
+    # `_connection_failure` - the latter keeps failed_when:/changed_when:
+    # from reinterpreting a result no module produced, and the msg says
+    # explicitly why the task was not retried.
+    def self.daemon_dispatch_unknown_result(ex : SSHManager::DaemonDispatchUnknownError) : JSON::Any
+      JSON.parse({
+        "changed"             => false,
+        "failed"              => true,
+        "msg"                 => "Daemon lost the module's result after dispatch (#{ex.message}); the module may already have run, so the task was NOT re-executed to avoid double-applying a possibly non-idempotent action",
+        "_connection_failure" => true,
+      }.to_json)
+    end
+
     private def self.execute_remote_plugin_transport(
       plugin_name : String,
       config : String,
@@ -1084,11 +1099,17 @@ module Krikri
 
       # Perf items 1-3: try the
       # persistent daemon connection first when opted in and eligible -
-      # on ANY failure (never established, broken pipe, timed out,
-      # target rebooted mid-play and the old pipe is stale) this rescues
-      # and falls through to the proven per-task path below unchanged,
-      # for THIS one call - see SSHManager.daemon_send's own comment for
-      # why that's the entire reconnect story, not just a stopgap.
+      # on a failure that means the request never went out (never
+      # established, broken pipe on the write, target rebooted mid-play
+      # and the old pipe is stale) this rescues and falls through to the
+      # proven per-task path below unchanged, for THIS one call - see
+      # SSHManager.daemon_send's own comment for why that's the entire
+      # reconnect story, not just a stopgap. The one failure that must
+      # NOT fall through is a request that WAS sent but whose response
+      # was lost or unparseable (DaemonDispatchUnknownError): the module
+      # may already have run inside the daemon, and the one-shot path
+      # below would execute it a SECOND time - fatal for a
+      # non-idempotent task - so that case fails the task instead.
       #
       # The path handed to `daemon_send` as "where to start the daemon
       # FROM" is deliberately THIS plugin's own already-uploaded
@@ -1131,6 +1152,15 @@ module Krikri
             identity_file: vars["ansible_ssh_private_key_file"]?.try(&.as_s?),
             become_user: daemon_user
           )
+        rescue ex : SSHManager::DaemonDispatchUnknownError
+          # The request reached the daemon but its response did not come
+          # back intact - the module may have executed, and its result is
+          # unknown. Silently re-running it over the one-shot path below
+          # would double-apply a possibly non-idempotent action, so fail
+          # the task instead. `_connection_failure` keeps
+          # failed_when:/changed_when: from reinterpreting a result no
+          # module actually produced (see apply_changed_failed_when).
+          return daemon_dispatch_unknown_result(ex)
         rescue
           # Fall through to the per-task path below.
         end

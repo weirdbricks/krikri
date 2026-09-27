@@ -1253,12 +1253,13 @@ module Krikri
     # the fallback already sends.
     #
     # On ANY daemon failure this returns nil and the whole group is
-    # re-sent as a script. That carries the same re-execution window the
-    # solo daemon path has always carried (see PluginManager#
-    # execute_remote_plugin's own rescue) - a request whose response was
-    # lost may have run - only widened from one task to one group.
-    # Accepted for the same reason: the alternative is leaving those
-    # members with no cache entry at all, which
+    # re-sent as a script. That re-execution window is now WIDER than the
+    # solo daemon path's, which narrows it to "the request never went
+    # out" and fails the task instead when a dispatched request's
+    # response was lost (SSHManager::DaemonDispatchUnknownError - a
+    # module that ran but reported nothing must not be re-run). The batch
+    # path still re-sends on ANY failure, deliberately: the alternative
+    # is leaving those members with no cache entry at all, which
     # execute_batch_group's contract reads as "skipped", silently NOT
     # running tasks the playbook asked for. A wrongly-repeated
     # idempotent module is a far better failure than a silently dropped

@@ -454,22 +454,57 @@ module Krikri
       @@daemon_failures[{host, user, port, become_user}] >= MAX_DAEMON_FAILURES
     end
 
+    # Spec seams: install/remove a Process as the cached daemon for a
+    # key, so #daemon_send's dispatch-vs-response-lost classification can
+    # be tested against a LOCAL fake daemon process with no SSH in the
+    # loop (a fresh spawn would dial a real host).
+    def self.seed_daemon_process_for_spec(host : String, user : String, port : Int32?, become_user : String?, process : Process) : Nil
+      @@daemon_processes[{host, user, port, become_user}] = process
+    end
+
+    def self.clear_daemon_for_spec(host : String, user : String, port : Int32?, become_user : String?) : Nil
+      kill_daemon(host, user, port, become_user)
+      @@daemon_failures.delete({host, user, port, become_user})
+    end
+
+    # Raised when a daemon request WAS sent (the frame was fully written
+    # into the pipe) but no usable response came back - a timeout waiting
+    # for the response, a truncated/malformed frame, an unparseable one.
+    # In that state the module may already have run inside the daemon, so
+    # the caller must NOT re-execute it over a fallback transport: a
+    # non-idempotent module (a bare command:, an append, an email) would
+    # apply twice. See PluginManager#execute_remote_plugin_transport,
+    # which turns this into a failed-task result instead of its usual
+    # fall-through to the one-shot path.
+    class DaemonDispatchUnknownError < Exception
+    end
+
     # Sends one request and returns the plugin's own JSON result,
     # unwrapped - unlike `exec`/`exec_script`, there is no exit-code-vs-
     # stdout arbitration to do here (that was a one-shot-process
     # concept; `interpret_remote_result` doesn't apply to a persistent
     # pipe), the daemon's response IS the plugin's real output.
     #
-    # On ANY failure (spawn error, broken pipe, timeout, malformed
-    # response) the connection is torn down and NOT retried here - the
-    # exception propagates to `PluginManager`, whose job is to catch it
-    # and fall back to `execute_remote_plugin`'s existing, already-
-    # proven per-task path for that one call. This is deliberately the
-    # WHOLE reconnect story: a stale daemon (e.g. after `ansible.
-    # builtin.reboot` killed the SSH session mid-play) fails exactly
-    # once, falls back safely for that one task, and a fresh daemon gets
-    # lazily spawned the next time this host needs one - no explicit
-    # reboot-awareness needed anywhere in this method.
+    # Failure classification is deliberately split by HOW FAR the request
+    # got, because the caller's fallback re-EXECUTES the module:
+    #
+    # - spawn/write failures mean the frame never went out in full, so
+    #   nothing dispatched and a fresh run cannot double-execute. The
+    #   exception propagates raw (this is also the entire reconnect
+    #   story: a stale daemon - e.g. after `ansible.builtin.reboot`
+    #   killed the SSH session mid-play - fails exactly once as a broken
+    #   pipe on the write, falls back safely for that one task, and a
+    #   fresh daemon gets lazily spawned next time).
+    # - a lost/unusable RESPONSE on a daemon this call spawned itself is
+    #   kept in the same class: a never-proven daemon (refused
+    #   connection, missing remote binary, failed sudo) fails at read
+    #   time exactly like one that died mid-dispatch, and "never came
+    #   up" is the common case - the caller's fallback stays safe.
+    # - a lost/unusable response on an ALREADY-CACHED daemon raises
+    #   DaemonDispatchUnknownError: a successful write proves the remote
+    #   process was alive and reading at that moment, so "it ran and we
+    #   can't tell" is real, and re-executing could double-apply the
+    #   module. The caller fails the task instead.
     def self.daemon_send(
       host : String,
       user : String,
@@ -483,24 +518,47 @@ module Krikri
     ) : JSON::Any
       init
       key = {host, user, port, become_user}
+      # Provenance of the process used below - it decides how a lost
+      # response is classified (see the read rescue).
+      fresh_spawn = @@daemon_processes[key]?.nil?
       process = @@daemon_processes[key]? ||
                 spawn_daemon(host, user, port, remote_binary_path, identity_file, become_user)
 
       request = {"module" => module_name, "config" => config}.to_json
 
       response = TimingProfile.measure("transport.daemon_send", "transport") do
-        run_io_with_timeout(timeout) do
-          write_daemon_frame(process.input, request)
-          read_daemon_frame(process.output)
+        begin
+          run_io_with_timeout(timeout) do
+            write_daemon_frame(process.input, request)
+            ""
+          end
+        rescue ex
+          @@daemon_failures[key] += 1
+          kill_daemon(host, user, port, become_user)
+          raise ex
+        end
+
+        begin
+          run_io_with_timeout(timeout) { read_daemon_frame(process.output) }
+        rescue ex
+          @@daemon_failures[key] += 1
+          kill_daemon(host, user, port, become_user)
+          raise ex if fresh_spawn
+          raise DaemonDispatchUnknownError.new("daemon request for '#{module_name}' was sent but its response was lost (#{ex.class.name}: #{ex.message})", ex)
         end
       end
 
       @@daemon_failures.delete(key)
-      JSON.parse(response)
-    rescue ex
-      @@daemon_failures[{host, user, port, become_user}] += 1
-      kill_daemon(host, user, port, become_user)
-      raise ex
+
+      begin
+        JSON.parse(response)
+      rescue ex
+        @@daemon_failures[key] += 1
+        kill_daemon(host, user, port, become_user)
+        # A response DID arrive and frame cleanly; only its content is
+        # unusable. Whatever produced it already ran - never re-execute.
+        raise DaemonDispatchUnknownError.new("daemon response for '#{module_name}' was not valid JSON (#{ex.message})", ex)
+      end
     end
 
     # Perf item 3: send a whole batch of
@@ -643,8 +701,8 @@ module Krikri
     # call, so a timeout just raises and lets the `rescue` in
     # `#daemon_send` tear the connection down through the normal
     # `#kill_daemon` path instead of a bespoke kill sequence here.
-    private def self.run_io_with_timeout(timeout_seconds : Int32, &block : -> String) : String
-      result_channel = Channel(String).new(1)
+    private def self.run_io_with_timeout(timeout_seconds : Int32, &block : -> T) : T forall T
+      result_channel = Channel(T).new(1)
       error_channel = Channel(Exception).new(1)
 
       spawn do
