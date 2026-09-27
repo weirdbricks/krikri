@@ -6,6 +6,19 @@ require "file_utils"
 
 # A tiny local HTTP server exercising GET/POST/redirect/JSON/plain-text
 # responses, started once for the whole file.
+#
+# The /ims-* routes are a SimpleHTTPRequestHandler-style conditional-GET
+# server (304 when If-Modified-Since >= the fixture file's mtime) so the
+# dest: idempotency specs need no internet; /echo-ims reports the wire
+# headers those specs assert on.
+ims_dir = Dir.tempdir
+ims_old = File.join(ims_dir, "uri-spec-ims-old.asc")
+ims_new = File.join(ims_dir, "uri-spec-ims-new.asc")
+File.write(ims_old, "ims-body")
+File.write(ims_new, "ims-body-v2")
+File.touch(ims_old, time: Time.utc(2020, 1, 1, 0, 0, 0))
+File.touch(ims_new, time: Time.utc(2030, 1, 1, 0, 0, 0))
+
 uri_test_server = HTTP::Server.new do |context|
   request = context.request
   response = context.response
@@ -58,6 +71,30 @@ uri_test_server = HTTP::Server.new do |context|
     response.status_code = 200
     response.headers["Content-Type"] = "text/plain"
     response.print("plain text body")
+  elsif request.method == "GET" && request.path.in?("/ims-old", "/ims-new")
+    file = request.path == "/ims-new" ? ims_new : ims_old
+    mtime = File.info(file).modification_time
+    ims_header = request.headers["If-Modified-Since"]?
+    sent = ims_header.try do |header|
+      begin
+        Time::Format::HTTP_DATE.parse(header)
+      rescue Time::Format::Error
+        nil
+      end
+    end
+    if sent && sent.to_unix >= mtime.to_unix
+      response.status_code = 304
+    else
+      response.status_code = 200
+      response.headers["Content-Type"] = "text/plain"
+      response.headers["Last-Modified"] = Time::Format::HTTP_DATE.format(mtime)
+      response.print(File.read(file))
+    end
+  elsif request.method == "GET" && request.path == "/echo-ims"
+    picked = {"if_modified_since" => request.headers["If-Modified-Since"]?, "cache_control" => request.headers["Cache-Control"]?}
+    response.status_code = 200
+    response.headers["Content-Type"] = "application/json"
+    response.print(picked.to_json)
   else
     case {request.method, request.path}
     when {"GET", "/json"}
@@ -429,5 +466,123 @@ describe "uri plugin" do
     result["status"].as_i.should eq(-1)
     result["elapsed"].as_i.should eq(0)
     result["redirected"].as_bool.should be_false
+  end
+
+  it "sends If-Modified-Since derived from an existing dest file's mtime, as an HTTP-date in GMT" do
+    # Real uri.py: dest already a regular FILE -> fetch_url gets
+    # last_mod_time = the file's mtime, which urls.py renders with
+    # rfc2822_date_string(timetuple, 'GMT'). Round 981032
+    # (claranet.postgresql warm run): this header never went out, so a
+    # 304-able fetch re-downloaded every run and reported changed.
+    path = File.tempname("uri_ims_dest")
+    File.write(path, "stale")
+    File.touch(path, time: Time.utc(2021, 6, 15, 12, 30, 45))
+    begin
+      result = PluginSpecHelper.run("uri", {"url" => "#{uri_base}/echo-ims", "dest" => path})
+      result["json"]["if_modified_since"].as_s.should eq(Time::Format::HTTP_DATE.format(Time.utc(2021, 6, 15, 12, 30, 45)))
+      result["json"]["if_modified_since"].as_s.should match(/\ATue, 15 Jun 2021 12:30:45 GMT\z/)
+    ensure
+      File.delete(path) if File.exists?(path)
+    end
+  end
+
+  it "cold/warm dest: rerun is changed/ok via 304, live-verified against real Ansible (round 981032 claranet.postgresql)" do
+    # Live-verified against ansible-core 2.19: cold run 200/changed=true,
+    # warm run 304/changed=false with msg "HTTP Error 304: Not Modified"
+    # (urllib raises HTTPError for a 304 - no handler exists for it - so
+    # fetch_url's info carries urllib's own string), path: and the
+    # file-common stat keys still present (AnsibleModule._return_formatted's
+    # add_path_info runs for ANY result whose path: exists), and the dest
+    # file left untouched.
+    dest = File.tempname("uri_ims_warm")
+    begin
+      cold = PluginSpecHelper.run("uri", {"url" => "#{uri_base}/ims-old", "dest" => dest, "status_code" => "200,304"})
+      cold["failed"]?.try(&.as_bool).should be_falsey
+      cold["changed"].as_bool.should be_true
+      cold["status"].as_i.should eq(200)
+      File.read(dest).should eq("ims-body")
+
+      warm = PluginSpecHelper.run("uri", {"url" => "#{uri_base}/ims-old", "dest" => dest, "status_code" => "200,304"})
+      warm["failed"]?.try(&.as_bool).should be_falsey
+      warm["changed"].as_bool.should be_false
+      warm["status"].as_i.should eq(304)
+      warm["msg"].as_s.should eq("HTTP Error 304: Not Modified")
+      warm["path"].as_s.should eq(dest)
+      warm["state"].as_s.should eq("file")
+      warm["size"].as_i.should eq(8)
+      warm.as_h.has_key?("mode").should be_true
+      File.read(dest).should eq("ims-body")
+    ensure
+      File.delete(dest) if File.exists?(dest)
+    end
+  end
+
+  it "re-downloads (200, changed) once the server file is newer than the dest file" do
+    dest = File.tempname("uri_ims_touch")
+    begin
+      cold = PluginSpecHelper.run("uri", {"url" => "#{uri_base}/ims-old", "dest" => dest, "status_code" => "200,304"})
+      cold["changed"].as_bool.should be_true
+
+      File.touch(ims_old, time: Time.utc(2030, 1, 1, 0, 0, 0))
+      result = PluginSpecHelper.run("uri", {"url" => "#{uri_base}/ims-old", "dest" => dest, "status_code" => "200,304"})
+      result["changed"].as_bool.should be_true
+      result["status"].as_i.should eq(200)
+    ensure
+      File.touch(ims_old, time: Time.utc(2020, 1, 1, 0, 0, 0))
+      File.delete(dest) if File.exists?(dest)
+    end
+  end
+
+  it "does not send If-Modified-Since when dest is a directory (real isfile gate)" do
+    dir = File.tempname("uri_ims_dir")
+    Dir.mkdir(dir)
+    begin
+      result = PluginSpecHelper.run("uri", {"url" => "#{uri_base}/echo-ims", "dest" => dir})
+      result["json"]["if_modified_since"].as_s?.should be_nil
+    ensure
+      File.delete(File.join(dir, "echo-ims")) if File.exists?(File.join(dir, "echo-ims"))
+      FileUtils.rmdir(dir) rescue nil
+    end
+  end
+
+  it "sends cache-control instead of If-Modified-Since under force: true" do
+    # urls.py's if/elif: force: takes the cache-control branch, no
+    # conditional-get header.
+    path = File.tempname("uri_ims_force")
+    File.write(path, "stale")
+    begin
+      result = PluginSpecHelper.run("uri", {"url" => "#{uri_base}/echo-ims", "dest" => path, "force" => "true"})
+      result["json"]["if_modified_since"].as_s?.should be_nil
+      result["json"]["cache_control"].as_s.should eq("no-cache")
+    ensure
+      File.delete(path) if File.exists?(path)
+    end
+  end
+
+  it "lets a user-supplied If-Modified-Since header win over the derived one" do
+    path = File.tempname("uri_ims_user")
+    File.write(path, "stale")
+    begin
+      result = PluginSpecHelper.run("uri", {
+        "url" => "#{uri_base}/echo-ims", "dest" => path,
+        "headers" => %({"If-Modified-Since": "Mon, 01 Jan 2001 00:00:00 GMT"}),
+      })
+      result["json"]["if_modified_since"].as_s.should eq("Mon, 01 Jan 2001 00:00:00 GMT")
+    ensure
+      File.delete(path) if File.exists?(path)
+    end
+  end
+
+  it "fails a 304 outside status_code with the urllib-shaped msg" do
+    path = File.tempname("uri_ims_fail")
+    File.write(path, "ims-body")
+    begin
+      result = PluginSpecHelper.run("uri", {"url" => "#{uri_base}/ims-old", "dest" => path})
+      result["failed"].as_bool.should be_true
+      result["status"].as_i.should eq(304)
+      result["msg"].as_s.should eq("Status code was 304 and not [200]: HTTP Error 304: Not Modified")
+    ensure
+      File.delete(path) if File.exists?(path)
+    end
   end
 end
