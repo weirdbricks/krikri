@@ -1393,7 +1393,7 @@ module Krikri
         #   scan is its static approximation at the one site where the
         #   second-level render would otherwise execute it.
         if re_template_from_variable?(stripped) &&
-           !UnsafeValues.unsafe_text?(rendered) &&
+           !UnsafeValues.contains_unsafe?(rendered) &&
            !resolved_span_references_unsafe?(stripped)
           substitute_impl(rendered, strict, output, native)
         else
@@ -2221,9 +2221,30 @@ module Krikri
       expr = expr.split("|").first.strip if expr.includes?("|")
       return false unless expr.matches?(/\A[A-Za-z_][A-Za-z0-9_.\[\]"']*\z/)
       resolved = VariableSubstitutor::VariableLookup.new(@vars).resolve(expr) || return false
+      return true if resolved_value_has_unsafe_leaf?(resolved)
       referenced = Set(String).new
       collect_identifiers(resolved.raw, referenced)
       referenced.any? { |name| VarSubstitutor.resolved_var_name?(@host_name, name) }
+    end
+
+    # Whether any STRING leaf anywhere inside a resolved container value
+    # is itself a registered hostile text. The exact-text registry holds
+    # the leaves of an execution result, so a list/dict OF hostile strings
+    # is tainted even though no single registry entry equals the whole
+    # container - without this structural walk the span re-render gate
+    # only ever saw the container's stringified form, whose exact text is
+    # a member nowhere, and re-rendered hostile leaves as template text.
+    private def resolved_value_has_unsafe_leaf?(value : JSON::Any) : Bool
+      case raw = value.raw
+      when String
+        UnsafeValues.unsafe_text?(raw)
+      when Array
+        raw.any? { |element| resolved_value_has_unsafe_leaf?(element) }
+      when Hash
+        raw.each_value.any? { |element| resolved_value_has_unsafe_leaf?(element) }
+      else
+        false
+      end
     end
 
     private def collect_identifiers(raw, found : Set(String)) : Nil

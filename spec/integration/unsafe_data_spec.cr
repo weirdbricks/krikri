@@ -806,3 +806,334 @@ describe "a handler's register: result is execution data too" do
     File.delete(playbook) if playbook && File.exists?(playbook)
   end
 end
+
+# ---------------------------------------------------------------------------
+# Full hostile-container matrix: hostile data (a module result whose text is
+# itself a `{{ lookup('pipe', ...) }}` template) held by a task-level var,
+# a block var, a role var, or an include_role var, in every container shape
+# (scalar, list, dict, nested list-of-dict, dict-of-list), consumed directly,
+# through filters, in `when:`, in `loop:`, in module args, in `template:`,
+# and through a set_fact copy. Every case gets its own canary file the
+# hostile lookup would create if the controller ever rendered the data as
+# template text; every expectation below was verified live against real
+# ansible-playbook (2.19) so the assertions pin parity, not just safety.
+# ---------------------------------------------------------------------------
+private MATRIX_SHAPES    = %w(scalar list dict list_of_dict dict_of_list)
+private MATRIX_CONSUMERS = %w(direct var f_list f_first f_join f_to_json
+  f_dict2items when loop args template setfact)
+
+private record MatrixCase, index : Int32, shape : String, kind : String, consumer : String
+private record MatrixRun, dir : String, status : Process::Status,
+  output : String, sections : Hash(String, String)
+
+private def matrix_kind(shape : String) : String
+  case shape
+  when "scalar", "list" then shape
+  when "list_of_dict"   then "list"
+  else                       "dict"
+  end
+end
+
+private def matrix_allowed?(kind : String, consumer : String) : Bool
+  case consumer
+  when "f_dict2items" then kind == "dict"
+  when "f_first"      then kind == "list"
+  when "f_join"       then kind == "list" || kind == "dict"
+  else                     true
+  end
+end
+
+private def matrix_cases : Array(MatrixCase)
+  cases = [] of MatrixCase
+  i = 0
+  MATRIX_SHAPES.each do |shape|
+    kind = matrix_kind(shape)
+    MATRIX_CONSUMERS.each do |consumer|
+      next unless matrix_allowed?(kind, consumer)
+      cases << MatrixCase.new(i, shape, kind, consumer)
+      i += 1
+    end
+  end
+  cases
+end
+
+# The var definition for one case: an expression over that case's own
+# registered result, so the hostile text carries the case's own canary.
+private def matrix_shape_expr(shape : String, reg : String) : String
+  case shape
+  when "scalar"       then "{{ #{reg}.stdout }}"
+  when "list"         then "{{ #{reg}.stdout_lines }}"
+  when "dict"         then "{{ {'a': #{reg}.stdout} }}"
+  when "list_of_dict" then "{{ [{'a': #{reg}.stdout}] }}"
+  when "dict_of_list" then "{{ {'a': #{reg}.stdout_lines} }}"
+  else                     raise "unknown shape #{shape}"
+  end
+end
+
+private def matrix_consumer_task_lines(mc : MatrixCase, dir : String, var_expr : String?) : Array(String)
+  v = "b#{mc.index}"
+  lines =
+    case mc.consumer
+    when "direct"
+      ["- name: c#{mc.index}_direct",
+       "  ansible.builtin.debug:",
+       "    msg: \"{{ #{v} }}\""]
+    when "var"
+      ["- name: c#{mc.index}_var",
+       "  ansible.builtin.debug: var=#{v}"]
+    when .starts_with?("f_")
+      ["- name: c#{mc.index}_#{mc.consumer}",
+       "  ansible.builtin.debug:",
+       "    msg: \"{{ #{v} | #{mc.consumer[2..]} }}\""]
+    when "when"
+      ["- name: c#{mc.index}_when",
+       "  ansible.builtin.debug:",
+       "    msg: when-ran",
+       "  when: #{v} | length > 0"]
+    when "loop"
+      ["- name: c#{mc.index}_loop",
+       "  ansible.builtin.debug:",
+       "    msg: \"{{ item }}\"",
+       "  loop: \"{{ #{v} }}\""]
+    when "args"
+      ["- name: c#{mc.index}_args",
+       "  ansible.builtin.command: echo \"{{ #{v} }}\"",
+       "  register: ca#{mc.index}",
+       "- name: c#{mc.index}_args_show",
+       "  ansible.builtin.debug:",
+       "    msg: \"{{ ca#{mc.index}.stdout }}\""]
+    when "template"
+      ["- name: c#{mc.index}_template",
+       "  ansible.builtin.template:",
+       "    src: t#{mc.index}.j2",
+       "    dest: #{dir}/dest#{mc.index}.txt",
+       "- name: c#{mc.index}_tmpl_show",
+       "  ansible.builtin.command: cat #{dir}/dest#{mc.index}.txt",
+       "  register: ct#{mc.index}",
+       "- name: c#{mc.index}_tmpl_show2",
+       "  ansible.builtin.debug:",
+       "    msg: \"{{ ct#{mc.index}.stdout }}\""]
+    when "setfact"
+      ["- name: c#{mc.index}_setfact",
+       "  ansible.builtin.set_fact:",
+       "    sf#{mc.index}: \"{{ #{v} }}\"",
+       "- name: c#{mc.index}_setfact_show",
+       "  ansible.builtin.debug:",
+       "    msg: \"{{ sf#{mc.index} }}\""]
+    else
+      raise "unknown consumer #{mc.consumer}"
+    end
+  # ignore_errors (and the task-scope var definition) attach to the case's
+  # FIRST task - the one that consumes the hostile var - so one failing case
+  # (a loop source that legitimately fails, exactly like real Ansible) doesn't
+  # stop the remaining cases from running, and multi-task cases (args/
+  # template/setfact show tasks) don't inherit the var definition.
+  second_task = lines.index { |l| l.starts_with?("- name:") && l != lines[0] } || lines.size
+  opts = ["  ignore_errors: true"]
+  if var_expr
+    opts << "  vars:"
+    opts << "    b#{mc.index}: \"#{var_expr}\""
+  end
+  opts.each_with_index { |opt, offset| lines.insert(second_task + offset, opt) }
+  lines
+end
+
+private def matrix_producer_lines(mc : MatrixCase, canary : String) : Array(String)
+  ["- name: p#{mc.index}",
+   "  ansible.builtin.command: echo \"{{ '{{' }} lookup('pipe', 'touch #{canary}') {{ '}}' }}\"",
+   "  register: r#{mc.index}"]
+end
+
+# Section expectations, verified live against real ansible-playbook:
+# - most cases print the hostile text verbatim (real Ansible's unsafe-data
+#   passthrough) - assert the canary path appears in the task's output;
+# - `when:` only proves the condition evaluated ("when-ran");
+# - a scalar/dict/dict-of-list `loop:` source FAILS in real Ansible too
+#   ("must resolve to a 'list'") - assert the same failure message;
+# - a scalar through `| list` is split into single-char strings (real
+#   Ansible does the same to a string);
+# - a dict through `| list`/`| join` yields only the KEY ("a") - the
+#   hostile VALUE must not even surface in the output.
+private def matrix_expectation(shape : String, consumer : String, canary : String) : {String, String}
+  hostile = "touch #{canary}"
+  case consumer
+  when "when"
+    {"when-ran", ""}
+  when "loop"
+    case shape
+    when "scalar"               then {"not 'str'", ""}
+    when "dict", "dict_of_list" then {"not 'dict'", ""}
+    else                             {hostile, ""}
+    end
+  when "f_list"
+    case shape
+    when "scalar"               then {"\"t\",\"o\",\"u\",\"c\",\"h\"", ""}
+    when "dict", "dict_of_list" then {"[\"a\"]", hostile}
+    else                             {hostile, ""}
+    end
+  when "f_join"
+    case shape
+    when "dict", "dict_of_list" then {"a", hostile}
+    else                             {hostile, ""}
+    end
+  else
+    {hostile, ""}
+  end
+end
+
+private def matrix_section(run : MatrixRun, name : String) : String?
+  return run.sections[name]? if run.sections.has_key?(name)
+  # role tasks are reported with the role-name prefix ("mvar : c0_direct")
+  run.sections.each_key do |key|
+    return run.sections[key] if key.ends_with?(name)
+  end
+  nil
+end
+
+private MATRIX_RUNS = {} of String => MatrixRun
+
+private def matrix_sections(output : String) : Hash(String, String)
+  sections = Hash(String, String).new("")
+  current = nil
+  output.each_line do |line|
+    if line.starts_with?("TASK [") && (close = line.index(']'))
+      current = line[6...close]
+      sections[current.not_nil!] = ""
+    elsif line.starts_with?("PLAY [") || line.starts_with?("PLAY RECAP")
+      current = nil
+    elsif cur = current
+      sections[cur] += line + "\n"
+    end
+  end
+  sections
+end
+
+private def matrix_run(scope : String) : MatrixRun
+  MATRIX_RUNS[scope] ||= begin
+    dir = File.tempname("unsafe-matrix-#{scope}")
+    Dir.mkdir(dir)
+    at_exit { FileUtils.rm_rf(dir) unless ENV["KEEP_MATRIX"]? }
+    cases = matrix_cases
+    play_tasks = [] of String
+    role_tasks = [] of String
+    role_vars = [] of String
+    include_vars = [] of String
+
+    cases.each do |mc|
+      canary = File.join(dir, "PWNED_#{scope}_#{mc.shape}_#{mc.consumer}")
+      expr = matrix_shape_expr(mc.shape, "r#{mc.index}")
+      producer = matrix_producer_lines(mc, canary)
+      consumer = matrix_consumer_task_lines(mc, dir, scope == "task" ? expr : nil)
+      case scope
+      when "task"
+        play_tasks.concat(producer.map { |l| "    " + l })
+        play_tasks.concat(consumer.map { |l| "    " + l })
+      when "block"
+        block = ["- name: blk#{mc.index}",
+                 "  vars:",
+                 "    b#{mc.index}: \"#{expr}\"",
+                 "  block:"]
+        block.concat(consumer.map { |l| "    " + l })
+        play_tasks.concat(producer.map { |l| "    " + l })
+        play_tasks.concat(block.map { |l| "    " + l })
+      when "role"
+        role_vars << "b#{mc.index}: \"#{expr}\""
+        role_tasks.concat(consumer.map { |l| "  " + l })
+        play_tasks.concat(producer.map { |l| "    " + l })
+      when "include_role"
+        include_vars << "        b#{mc.index}: \"#{expr}\""
+        role_tasks.concat(consumer.map { |l| "  " + l })
+        play_tasks.concat(producer.map { |l| "    " + l })
+      end
+    end
+
+    role_base = ""
+    if scope == "role"
+      role_base = File.join(dir, "roles", "mvar")
+      Dir.mkdir_p(File.join(role_base, "tasks"))
+      Dir.mkdir_p(File.join(role_base, "vars"))
+      Dir.mkdir_p(File.join(role_base, "templates"))
+      File.write(File.join(role_base, "vars", "main.yml"), role_vars.join("\n") + "\n")
+      File.write(File.join(role_base, "tasks", "main.yml"), role_tasks.join("\n") + "\n")
+    elsif scope == "include_role"
+      role_base = File.join(dir, "roles", "mvar2")
+      Dir.mkdir_p(File.join(role_base, "tasks"))
+      Dir.mkdir_p(File.join(role_base, "templates"))
+      File.write(File.join(role_base, "tasks", "main.yml"), role_tasks.join("\n") + "\n")
+    end
+
+    # template sources: each case's .j2 simply interpolates its var
+    cases.each do |mc|
+      base = scope.in?("task", "block") ? dir : role_base
+      File.write(File.join(base, "t#{mc.index}.j2"), "{{ b#{mc.index} }}\n")
+    end
+
+    playbook_lines =
+      if scope == "role"
+        ["- name: hostile matrix role",
+         "  hosts: all",
+         "  gather_facts: false",
+         "  pre_tasks:"] + play_tasks + ["  roles:", "    - role: mvar"]
+      else
+        head = ["- name: hostile matrix #{scope}",
+                "  hosts: all",
+                "  gather_facts: false",
+                "  tasks:"] + play_tasks
+        if scope == "include_role"
+          head + ["    - name: include role",
+                  "      ansible.builtin.include_role:",
+                  "        name: mvar2",
+                  "      vars:"] + include_vars
+        else
+          head
+        end
+      end
+    playbook = File.join(dir, "site.yml")
+    File.write(playbook, playbook_lines.join("\n") + "\n")
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+    MatrixRun.new(dir, status, output.to_s, matrix_sections(output.to_s))
+  end
+end
+
+[
+  {"task", "task-level vars"},
+  {"block", "block vars"},
+  {"role", "role vars"},
+  {"include_role", "include_role vars"},
+].each do |scope, label|
+  describe "hostile containers in #{label} are never re-rendered (full matrix vs real-Ansible-verified output)" do
+    it "runs the #{scope}-scope matrix playbook successfully" do
+      run = matrix_run(scope)
+      run.status.success?.should be_true, run.output
+    end
+
+    matrix_cases.each do |mc|
+      it "#{mc.shape} var via #{mc.consumer}: no canary file is created and the output matches real Ansible" do
+        run = matrix_run(scope)
+        canary = File.join(run.dir, "PWNED_#{scope}_#{mc.shape}_#{mc.consumer}")
+        File.exists?(canary).should be_false,
+          "hostile lookup EXECUTED on the controller (#{scope} var, #{mc.shape}, #{mc.consumer}):\n#{run.output}"
+
+        section_name =
+          case mc.consumer
+          when "args"     then "c#{mc.index}_args_show"
+          when "template" then "c#{mc.index}_tmpl_show2"
+          when "setfact"  then "c#{mc.index}_setfact_show"
+          else                 "c#{mc.index}_#{mc.consumer}"
+          end
+        section = matrix_section(run, section_name)
+        section.should_not be_nil, "missing output section #{section_name}\n#{run.output}"
+
+        must_contain, must_not_contain = matrix_expectation(mc.shape, mc.consumer, canary)
+        section.not_nil!.should contain(must_contain),
+          "expected real-Ansible output for #{mc.shape}/#{mc.consumer} missing:\n#{section}"
+        unless must_not_contain.empty?
+          section.not_nil!.should_not contain(must_not_contain),
+            "hostile value surfaced in a keys-only #{mc.consumer} result:\n#{section}"
+        end
+      end
+    end
+  end
+end

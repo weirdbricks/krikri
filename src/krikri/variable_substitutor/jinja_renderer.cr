@@ -381,6 +381,29 @@ module Krikri
         JSON::Any.new(prepared)
       end
 
+      # Structured (typed) evaluation of a bare expression against the
+      # LAZY variable scope every other evaluation path uses
+      # (JinjaVarResolver -> prepare_var's recursive re-templating).
+      # Callers must not use KrikriJinja.evaluate_expression directly
+      # with a full vars context: that API converts the whole hash
+      # EAGERLY (KrikriJinja.from_json_any), so a variable whose stored
+      # value is itself unrendered Jinja (an author vars file loaded by
+      # include_vars, a role default) reaches the engine as literal
+      # text - `{{ __pk | list }}` over an include_vars-loaded template
+      # produced the template's own characters as a list instead of
+      # rendering it first (linux-system-roles.postgresql, round
+      # 981063). Returns nil for an undefined result.
+      def self.evaluate_structured(source : String, vars : Hash(String, JSON::Any), strict : Bool = false) : JSON::Any?
+        value = KrikriJinja.default_engine.evaluate_parsed(
+          KrikriJinja.parse_expression(source),
+          resolver: JinjaVarResolver.new(vars, VarSubstitutor.new(vars: vars)),
+          undefined: strict ? KrikriJinja::StrictUndefined.new : KrikriJinja::Undefined.new(nil, chainable: true),
+          host_context: JinjaHostContext.new(vars)
+        )
+        return nil if value.raw.is_a?(KrikriJinja::Undefined)
+        KrikriJinja.to_json_any(value)
+      end
+
       # Real bug found benchmarking geerlingguy.postgresql: its own
       # pg_hba.conf.j2 iterates `postgresql_hba_entries` (a list of
       # dicts) via `{% for client in ... %} ... {{ client.auth_method

@@ -62,6 +62,24 @@ module Krikri
       @@texts.includes?(raw)
     end
 
+    # Whether *text* embeds any registered hostile text as a substring -
+    # the read-only twin of #mark_derived's own scan. The exact-text
+    # registry holds the LEAF strings of an execution result, so a
+    # container's stringified form (`["{{ ... }}"]`, `{"k": "{{ ... }}"}`)
+    # is a member nowhere, yet every hostile leaf it carries appears in it
+    # verbatim - a re-render decision on that text must treat it as
+    # tainted exactly like real ansible-core's taint-follows-the-data
+    # model, or the hostile leaves inside the container get rendered as
+    # controller-side template text (a task-level `vars: b: "{{ r.stdout_
+    # lines }}"` re-rendered the whole-list repr and executed a
+    # `lookup('pipe', ...)` the module result merely carried as data).
+    # Same cost model as #mark_derived: only called on text that still
+    # contains a Jinja marker.
+    def self.contains_unsafe?(text : String) : Bool
+      return false unless text.includes?("{{") || text.includes?("{%") || text.includes?("{#")
+      @@texts.any? { |hostile| text.includes?(hostile) }
+    end
+
     # Records every brace-bearing string inside an execution result
     # (*value*) - called on the per-host registered/set_fact/fact stores
     # once per task. Only strings that actually contain a Jinja marker
