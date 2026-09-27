@@ -325,9 +325,9 @@ module Krikri
 
       private def numeric_or_nil(value : JSON::Any) : Float64?
         case raw = value.raw
-        when Int64  then raw.to_f64
+        when Int64   then raw.to_f64
         when Float64 then raw
-        when String then raw.to_f64?
+        when String  then raw.to_f64?
         end
       end
 

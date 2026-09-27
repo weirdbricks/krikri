@@ -2432,14 +2432,14 @@ module Krikri
       private def python_type_name(value : JSON::Any) : String
         return "_OmitType" if value.raw == OMIT_SENTINEL
         case value.raw
-        when Nil    then "NoneType"
-        when Bool   then "bool"
-        when Int64  then "int"
+        when Nil     then "NoneType"
+        when Bool    then "bool"
+        when Int64   then "int"
         when Float64 then "float"
-        when String then "str"
-        when Array  then "list"
-        when Hash   then "dict"
-        else             "object"
+        when String  then "str"
+        when Array   then "list"
+        when Hash    then "dict"
+        else              "object"
         end
       end
 

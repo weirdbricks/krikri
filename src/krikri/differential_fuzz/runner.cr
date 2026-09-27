@@ -136,8 +136,12 @@ module Krikri::DifferentialFuzz
       }),
       # Filter-operand leniency (see FILTER_OPERAND_LENIENCE above).
       KnownDifference.new("hand-lenient-filter-operand", ->(o : Outcome) {
-        o.status.one_errored? && o.hand_value.is_a?(String) && o.jinja_error.is_a?(String) &&
-          FILTER_OPERAND_LENIENCE.any? { |pattern| o.jinja_error.not_nil!.matches?(pattern) }
+        if o.status.one_errored? && o.hand_value.is_a?(String) &&
+           (error = o.jinja_error).is_a?(String)
+          FILTER_OPERAND_LENIENCE.any? { |pattern| error.matches?(pattern) }
+        else
+          false
+        end
       }),
       # Remaining "cannot compare" leniency, split by shape:
       # - nested/compound shapes (see nested_condition_shape?): the
@@ -194,11 +198,11 @@ module Krikri::DifferentialFuzz
           /integer division|division by zero/.matches?(error) ||
           /unexpected token|expected "/.matches?(error) ||
           /' is undefined|is undefined'/.matches?(error) ||
-            /has no attribute|not JSON-compatible/.matches?(error) ||
-            /Cast from .+ to String failed/.matches?(error)
-          else
-            false
-          end
+          /has no attribute|not JSON-compatible/.matches?(error) ||
+          /Cast from .+ to String failed/.matches?(error)
+        else
+          false
+        end
       }),
     ]
 
