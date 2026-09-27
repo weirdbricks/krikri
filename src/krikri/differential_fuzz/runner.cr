@@ -104,11 +104,15 @@ module Krikri::DifferentialFuzz
       # sentinel. The strict side matches real Ansible.
       KnownDifference.new("hand-strict-index-oob", ->(o : Outcome) {
         o.status.one_errored? && (o.hand_error || "").includes?("UndefinedVariableError") &&
-          o.jinja_value == "undefined" && o.expr.includes?("[")
+        o.jinja_value == "undefined" && o.expr.includes?("[")
       }),
     ]
 
     getter vars : Hash(String, JSON::Any)
+
+    # When false, triaged known differences are reported as findings too
+    # (the unfiltered strict view).
+    property? classify_known_differences : Bool = true
 
     def initialize(@vars : Hash(String, JSON::Any) = Fixtures.build)
       @evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(@vars)
@@ -134,7 +138,7 @@ module Krikri::DifferentialFuzz
       end
       status = classify(hand_value, hand_error, jinja_value, jinja_error)
       outcome = Outcome.new(expr, status, hand_value, jinja_value, hand_error, jinja_error)
-      if outcome.disagreement? && (known = known_difference(outcome))
+      if outcome.disagreement? && classify_known_differences? && (known = known_difference(outcome))
         Outcome.new(expr, status, hand_value, jinja_value, hand_error, jinja_error, known)
       else
         outcome
@@ -150,7 +154,7 @@ module Krikri::DifferentialFuzz
         Status::BothErrored
       elsif hand_error || jinja_error
         Status::OneErrored
-      elsif agree?(hand_value.not_nil!, jinja_value.not_nil!)
+      elsif agree?(hand_value || "", jinja_value || "")
         Status::Agree
       else
         Status::Mismatch
@@ -204,9 +208,9 @@ module Krikri::DifferentialFuzz
     private def find_reduction(current : Node, signature : String, trials : Int32) : Node?
       return nil if trials >= @max_trials
       targets = [] of Node
-      current.each_node { |n| targets << n }
+      current.each_node { |subtree| targets << subtree }
       targets.each do |target|
-        candidates = target.children.map { |c| c.as Node } + MINIMAL_LITERALS
+        candidates = target.children.map { |child| child.as Node } + MINIMAL_LITERALS
         candidates.each do |candidate|
           trial = current.replace(target, candidate)
           next if trial.to_expr == current.to_expr

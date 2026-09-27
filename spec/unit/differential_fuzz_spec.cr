@@ -38,7 +38,7 @@ describe Krikri::DifferentialFuzz::Runner do
     run_once = -> do
       runner = Krikri::DifferentialFuzz::Runner.new
       generator = Krikri::DifferentialFuzz::Generator.new(Random.new(3), 4)
-      60.times.map { runner.run(generator.generate.to_expr).signature }.to_a
+      Array.new(60) { runner.run(generator.generate.to_expr).signature }
     end
     run_once.call.should eq(run_once.call)
   end

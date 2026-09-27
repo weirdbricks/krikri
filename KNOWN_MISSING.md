@@ -34,6 +34,43 @@ and fixed and when.
 
 ## Open gaps
 
+- **Differential-fuzz known differences between the two evaluators**
+  (found by `bin/differential_fuzz`, the seeded ExpressionEvaluator-vs-
+  krikri-jinja comparison harness; 20k+ generated expressions triaged
+  2026-09-27). Three disagreement classes survive triage against real
+  Jinja2 3.1.6, all in lenient (non-strict) substitution mode, none
+  fixed yet:
+  - **The hand-rolled evaluator answers invalid Jinja leniently** where
+    krikri-jinja raises exactly what real Jinja2 raises (bad syntax like
+    `a != not b`; type-mismatched operations like `dict <= 6.6`,
+    `str * list`, `| split(dict)`; comparisons against an undefined var).
+    Real ansible-playbook fails these tasks; krikri's `{{ }}` substitute
+    path silently produces a value ("False", "0", ...). This is the
+    heuristic parser's own fallback design showing, on ~15% of generated
+    invalid-ish expressions. Shrinking this leniency means making
+    ExpressionEvaluator strict-parse before answering - follow-on work,
+    not started.
+  - **Undefined-result sentinel inconsistency between the two entry
+    points**: a ternary whose CHOSEN branch is undefined renders `""`
+    through the krikri-jinja render finalization (hand-rolled side)
+    but the "undefined" sentinel through `evaluate_value!` (the
+    delegation path). A bare undefined reference gives "undefined" on
+    both sides, so the two paths disagree with each other; real Ansible
+    (StrictUndefined) fails the task in either shape. Minimal
+    reproducer: `{{ missing_var if bool_true else 'x' }}`.
+  - **Index out of range on a list**: the hand-rolled side hard-fails
+    like real Ansible ("object of type 'list' has no element 9") while
+    `evaluate_value!`'s nil convention renders the lenient "undefined"
+    sentinel. The strict side is the real-Ansible-matching one; listed
+    because the harness flags it and the direction is deliberate.
+  Separately observed (both engines agree, so the differential harness
+  does not flag it; needs real-Ansible verification before acting): a
+  lazy generator rendered into concatenated text (`list | unique ~ 'x'`)
+  leaks its repr (`#<KrikriJinja::GeneratorValue:0x...>x`) where real
+  Ansible's own core filters return lists and render `['a', 'b']x`.
+  The harness's triaged-class list lives in
+  `src/krikri/differential_fuzz/runner.cr` (`KNOWN_DIFFERENCES`); the
+  fixed-seed CI slice is `spec/unit/differential_fuzz_spec.cr`.
 - **`konstruktoid.hardening` real-host parity is unconfirmed** (rounds
   975062/978000, 2026-09-26): real `ansible-playbook` doesn't complete
   within 30 minutes on this role even on a fresh host (`rc=124` both

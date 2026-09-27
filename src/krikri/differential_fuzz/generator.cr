@@ -30,7 +30,7 @@ module Krikri::DifferentialFuzz
     }
 
     def self.build : Hash(String, JSON::Any)
-      JSON.parse(<<-'JSON'
+      JSON.parse(<<-JSON
         {
           "str_plain": "hello world",
           "str_empty": "",
@@ -80,6 +80,7 @@ module Krikri::DifferentialFuzz
         node.render(io)
       end
     end
+
     abstract def render(io : IO) : Nil
     abstract def children : Array(Node)
     abstract def size : Int32
@@ -379,7 +380,8 @@ module Krikri::DifferentialFuzz
   end
 
   class Test < Node
-    getter operand : Node, name : String, negated : Bool, arg : Node?
+    getter operand : Node, name : String, arg : Node?
+    getter? negated : Bool
 
     def initialize(@operand : Node, @name : String, @negated : Bool = false, @arg : Node? = nil)
     end
@@ -403,26 +405,26 @@ module Krikri::DifferentialFuzz
     def replace(target : Node, replacement : Node) : Node
       return replacement if same?(target)
       replaced_operand = operand.replace(target, replacement)
-      if arg
-        replaced_arg = arg.not_nil!.replace(target, replacement)
-        if replaced_operand.same?(operand) && replaced_arg.same?(arg)
+      if test_arg = arg
+        replaced_arg = test_arg.replace(target, replacement)
+        if replaced_operand.same?(operand) && replaced_arg.same?(test_arg)
           self
         else
-          Test.new(replaced_operand, name, negated, replaced_arg)
+          Test.new(replaced_operand, name, negated?, replaced_arg)
         end
       elsif replaced_operand.same?(operand)
         self
       else
-        Test.new(replaced_operand, name, negated)
+        Test.new(replaced_operand, name, negated?)
       end
     end
 
     def render(io : IO) : Nil
       render_operand(operand, io)
-      io << (negated ? " is not " : " is ") << name
-      if arg
+      io << (negated? ? " is not " : " is ") << name
+      if test_arg = arg
         io << '('
-        arg.not_nil!.render(io)
+        test_arg.render(io)
         io << ')'
       end
     end
@@ -578,12 +580,12 @@ module Krikri::DifferentialFuzz
         leaf
       else
         case @rng.rand(100)
-        when 0...35        then filter_chain(depth)
-        when 35...62       then binop(depth)
-        when 62...72       then ternary(depth)
-        when 72...82       then test(depth)
-        when 82...92       then attribute_or_index(depth)
-        else                    unary(depth)
+        when 0...35  then filter_chain(depth)
+        when 35...62 then binop(depth)
+        when 62...72 then ternary(depth)
+        when 72...82 then test(depth)
+        when 82...92 then attribute_or_index(depth)
+        else              unary(depth)
         end
       end
     end
