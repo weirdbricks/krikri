@@ -41,6 +41,12 @@ module Krikri
     # -tagged scalars and records their values. Cheap when the document
     # contains no tag at all; a malformed document must never fail the
     # real parse that follows, so any pull-parser error is swallowed.
+    # A parseABLE document whose walk still fails (any non-parse
+    # exception mid-walk) must neither crash the run nor silently
+    # disable marking: the walk degrades to a partial pass (scalars
+    # recorded before the failure stay registered - the registry only
+    # grows) and the abort is surfaced as a warning, because an
+    # unmarked `!unsafe` scalar is a silently disabled security control.
     def self.mark_yaml_text(text : String) : Nil
       return unless text.includes?("!unsafe")
       begin
@@ -53,6 +59,8 @@ module Krikri
         end
       rescue YAML::ParseException
         nil
+      rescue ex : Exception
+        STDERR.puts "[WARNING]: !unsafe pre-scan aborted mid-document (#{ex.class}: #{ex.message}); any !unsafe scalars after the failure point were NOT marked and will be treated as template text. Document began with: #{text.byte_slice(0, 120)}"
       end
     end
 
