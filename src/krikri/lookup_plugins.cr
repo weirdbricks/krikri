@@ -63,6 +63,14 @@ module Krikri
     def self.fetch_url_lines(url : String, redirects_left : Int32 = 5) : Array(String)?
       return nil if redirects_left < 0
 
+      # file:// reads a controller-local file, like real Ansible's url
+      # lookup (open_url handles the scheme) - same line handling as the
+      # HTTP body below, and the offline-testable form of the
+      # with_url:/lookup('url', ...) checksum idiom.
+      if url.downcase.starts_with?("file://")
+        return File.read(url["file://".size..]).lines.map(&.strip).reject(&.empty?)
+      end
+
       response = HTTP::Client.get(url)
 
       if response.status.redirection? && (location = response.headers["Location"]?)

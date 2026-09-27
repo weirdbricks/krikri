@@ -648,6 +648,12 @@ module Krikri
     # content that flows INTO such a rendered item stays verbatim anyway
     # through the value-level UnsafeValues registry and mark_derived.
     private def loop_items_derive_from_unsafe_data?(task : Task, host_name : String) : Bool
+      # A generic `with_<lookup>:` loop's items ARE lookup results (a
+      # command's stdout for with_lines, a URL body for with_url) - real
+      # Ansible marks every lookup result unsafe, so they are data, never
+      # template text: rendering them ran `{{ lookup('pipe', ...) }}` that
+      # a with_lines command merely printed.
+      return true if task.loop_lookup_plugin
       referenced = Set(String).new
       loop_source_expressions(task).each do |source|
         next unless inner = direct_reference_expression?(source)

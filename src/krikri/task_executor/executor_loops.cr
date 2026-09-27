@@ -293,6 +293,8 @@ module Krikri
       end
     end
 
+    LOOP_LOOKUP_TERM_VAR = "krikri_loop_lookup_term"
+
     # Generic legacy `with_<lookup>:` source (with_url:, with_lines:,
     # with_env:, with_pipe:, ...). Real Ansible converts the keyword to
     # `loop: "{{ lookup('<plugin>', <terms>, wantlist=True) }}"` with each
@@ -313,48 +315,53 @@ module Krikri
         raise UndefinedVariableError.new("Invalid lookup plugin name in loop source: '#{plugin}'")
       end
 
-      args = raw_terms.map do |term|
-        if (str = term.as_s?) && str.includes?("{{")
-          value = resolve_template_value(str, vars_context)
-          if value
-            # listify_lookup_plugin_terms: a term resolving to a LIST is
-            # spliced one level into the terms list - `with_lines:
-            # "{{ cmd_list }}"` runs each element as its own command.
-            if arr = value.as_a?
-              arr.map { |entry| entry.to_json }
-            else
-              [value.to_json]
-            end
-          else
-            # Not a plain variable reference (e.g. `{{ u }}.sha512`):
-            # embed the raw template as a quoted literal - the lookup
-            # argument pipeline re-renders double-templated quoted
-            # literals itself.
-            [JSON::Any.new(str).to_json]
-          end
+      # Terms are rendered ONCE (author templates), then handed to the
+      # lookup as VALUES through a reserved variable - never spliced into
+      # expression source text. Splicing re-templated the `{{ }}` inside a
+      # term's string literal, so host-derived text reaching a term
+      # (`with_env: "{{ r.stdout }}"`) executed `lookup('pipe', ...)` on
+      # the controller; real Ansible passes terms as data. Jinja markers
+      # left in a rendered term are data, so they are registered as unsafe
+      # text and never rendered again.
+      terms = raw_terms.flat_map do |term|
+        str = term.as_s?
+        next [term] unless str && str.includes?("{{")
+        stripped = str.strip
+        if stripped.starts_with?("{{") && stripped.ends_with?("}}") && stripped.scan("{{").size == 1
+          # Whole-expression term: native value, a list splices one level
+          # (real listify_lookup_plugin_terms).
+          value = VariableSubstitutor::ExpressionEvaluator.new(vars_context).evaluate_structured(stripped[2..-3].strip)
+          raise UndefinedVariableError.new(Krikri.strict_undefined_message(stripped[2..-3].strip, vars_context)) unless value
+          value.as_a? || [value]
         else
-          [term.to_json]
+          [JSON::Any.new(VarSubstitutor.new(vars: vars_context).substitute(str, strict: true))]
         end
-      end.flatten
+      end
 
-      # One lookup call PER TERM, results concatenated: real lookup
-      # plugins receive every term and return their results combined
-      # (`with_lines: "{{ cmd_list }}"` over a two-command list runs both
-      # commands), while this engine's own lookup('lines'/'url'/...)
-      # argument plumbing reads only the first positional term.
       items = [] of JSON::Any
-      args.each do |arg|
-        result = expression_evaluator_for(vars_context).evaluate(
-          "query('#{plugin}', #{arg}, wantlist=true)")
-        if result == "undefined"
+      terms.each do |term|
+        UnsafeValues.mark_value(term)
+        term_context = vars_context.dup
+        term_context[LOOP_LOOKUP_TERM_VAR] = term
+        result = begin
+          VariableSubstitutor::ExpressionEvaluator.new(term_context)
+            .evaluate_structured("query('#{plugin}', #{LOOP_LOOKUP_TERM_VAR})")
+        rescue ex : UndefinedVariableError
+          raise ex
+        rescue ex
+          # A lookup plugin's own failure (unreadable file, HTTP error)
+          # fails the TASK, like real Ansible - it must never escape as an
+          # unhandled exception that kills the whole controller run.
+          raise UndefinedVariableError.new(ex.message || "The lookup plugin '#{plugin}' failed")
+        end
+        unless result
           raise UndefinedVariableError.new(
             "The lookup plugin '#{plugin}' failed or is not available for this loop source")
         end
-        parsed = parse_list_result(result, vars_context)
-        if parsed
-          items.concat(parsed)
+        if list = result.as_a?
+          items.concat(list)
         else
-          items << JSON::Any.new(result)
+          items << result
         end
       end
       items
