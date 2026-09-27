@@ -284,6 +284,19 @@ module Krikri
                  execute_handler_plugin_once(handler, host, vars_context)
                end
 
+      # A handler's set_fact: must land in the executor's fact stores
+      # exactly like a regular task's - the action plugin returns the
+      # facts in the result's "ansible_facts" key and the regular-task
+      # path merges them in #finish_single_task, but this handler path
+      # never did, so a fact set by a handler was invisible to every
+      # later task on the host (after a meta: flush_handlers, in the
+      # next play, and to handlers later in the same flush) - real
+      # ansible-playbook keeps all of them visible. merge_ansible_facts
+      # is a no-op for every non-set_fact module result (no
+      # "ansible_facts" key), so this is safe unconditionally; looped
+      # handlers merge per item inside #execute_handler_loop.
+      merge_ansible_facts(host, result, handler.module_name.ends_with?("set_fact"))
+
       # A handler can itself notify: further handlers (robertdebock.
       # auditd's own "Run augenrules" -> notify: "Load rules" -> real
       # Ansible runs "Load rules" within the SAME flush_handlers pass,
@@ -382,6 +395,7 @@ module Krikri
         vars_context[index_var] = JSON::Any.new(idx.to_i64) if index_var
 
         result = execute_handler_plugin_once(handler, host, vars_context)
+        merge_ansible_facts(host, result, handler.module_name.ends_with?("set_fact"))
         next if result["skipped"]?.try(&.as_bool)
 
         executed_count += 1
