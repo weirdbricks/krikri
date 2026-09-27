@@ -251,6 +251,24 @@ module Krikri
       # (loop-source resolution sees undefined, the honest verdict), and
       # the per-iteration re-render - or the zero-iteration skip - gives
       # the authoritative one.
+      # Value-level complement (see UnsafeValues' own comment): record the
+      # exact text of every brace-bearing string in this host's registered
+      # results / set_facts / facts, so the same hostile text is refused a
+      # re-render even after flowing through an author-defined template or
+      # a set_fact copy. Only brace-bearing strings are recorded, so the
+      # common case adds nothing.
+      # Both registries are populated BEFORE rendering task-level vars:
+      # that render re-templates referenced vars through the resolver-
+      # backed engine, and publishing only afterwards left the registries
+      # holding the PREVIOUS task's state - which never includes a result
+      # that previous task itself registered. `vars: {a: "{{ r.stdout }}"}`
+      # then re-rendered a hostile stdout and ran its lookup on the
+      # controller. The name registry is republished below once
+      # task/extra vars are merged.
+      @registered_vars[host.name].each_value { |value| UnsafeValues.mark_value(value) }
+      @set_facts[host.name]?.try(&.each_value { |value| UnsafeValues.mark_value(value) })
+      @facts[host.name].each_value { |value| UnsafeValues.mark_value(value) }
+      VarSubstitutor.set_resolved_var_names(host.name, resolved_var_names_for(host, registered, vars_context))
       render_task_vars(task, vars_context, host.name, loop_lenient: loop_lenient_vars)
 
       # connection: local (or any other connection: override) on this
@@ -300,27 +318,7 @@ module Krikri
       #   surface, local .fact files included)
       # - the `ansible_facts` dict spelling of the same facts
       # - the `ansible_facts` dict spelling of the same facts
-      resolved_names = Set(String).new(registered.keys)
-      @set_facts[host.name]?.try(&.each_key { |key| resolved_names.add(key) })
-      set_fact_keys = @set_facts[host.name]?
-      @facts[host.name].each do |key, value|
-        next if set_fact_keys.try(&.has_key?(key))
-        next if registered.has_key?(key)
-        next if (ctx_val = vars_context[key]?) && ctx_val != value
-        resolved_names.add(key)
-      end
-      resolved_names.add("ansible_facts") unless @facts[host.name].empty?
-      VarSubstitutor.set_resolved_var_names(host.name, resolved_names)
-
-      # Value-level complement (see UnsafeValues' own comment): record the
-      # exact text of every brace-bearing string in this host's registered
-      # results / set_facts / facts, so the same hostile text is refused a
-      # re-render even after flowing through an author-defined template or
-      # a set_fact copy. Only brace-bearing strings are recorded, so the
-      # common case adds nothing.
-      @registered_vars[host.name].each_value { |value| UnsafeValues.mark_value(value) }
-      @set_facts[host.name]?.try(&.each_value { |value| UnsafeValues.mark_value(value) })
-      @facts[host.name].each_value { |value| UnsafeValues.mark_value(value) }
+      VarSubstitutor.set_resolved_var_names(host.name, resolved_var_names_for(host, registered, vars_context))
 
       # Real Ansible's `vars` magic variable: a dict of every variable in
       # scope, most often used for a membership test rather than to read
@@ -349,6 +347,24 @@ module Krikri
       vars_context["vars"] = JSON::Any.new(self_view)
 
       vars_context
+    end
+
+    # Names whose current value came from EXECUTION (register:, set_fact:,
+    # gathered facts) for *host* - see VarSubstitutor.set_resolved_var_names.
+    # A fact name the author overrides with a different value in
+    # *vars_context* is author data again and stays re-renderable.
+    private def resolved_var_names_for(host : Host, registered : Hash(String, JSON::Any), vars_context : Hash(String, JSON::Any)) : Set(String)
+      resolved_names = Set(String).new(registered.keys)
+      @set_facts[host.name]?.try(&.each_key { |key| resolved_names.add(key) })
+      set_fact_keys = @set_facts[host.name]?
+      @facts[host.name].each do |key, value|
+        next if set_fact_keys.try(&.has_key?(key))
+        next if registered.has_key?(key)
+        next if (ctx_val = vars_context[key]?) && ctx_val != value
+        resolved_names.add(key)
+      end
+      resolved_names.add("ansible_facts") unless @facts[host.name].empty?
+      resolved_names
     end
 
     # The template expression *source* is a direct data reference if it is
