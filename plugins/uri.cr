@@ -20,16 +20,32 @@ module Krikri
   # not support check mode.", verified against a real ansible-playbook
   # --check run, not assumed) - so this doesn't special-case GET/HEAD the
   # way an initial reading of the docs might suggest; every method skips.
-  # `changed:` is always false, EXCEPT for the one stateful case real
-  # Ansible's own module has: `dest:` file writing - and there, live-
-  # verified against ansible-core 2.19.4 (see the dest: block below),
-  # real Ansible reports `changed: true` on EVERY run with a writable
-  # status, even when the response body is byte-identical to what's
-  # already on disk (uri.py's write_file() skips the physical move on a
-  # SHA1 match, but main() sets resp['changed'] = True unconditionally
-  # right after it). The physical write itself is still skipped on
-  # identical content, exactly like real Ansible's atomic_move-only-on-
-  # checksum-mismatch.
+  #  `changed:` is always false, EXCEPT for the one stateful case real
+  #  Ansible's own module has: `dest:` file writing - and there, live-
+  #  verified against ansible-core 2.19.4 (see the dest: block below),
+  #  real Ansible reports `changed: true` on EVERY 200 run with a writable
+  #  status, even when the response body is byte-identical to what's
+  #  already on disk (uri.py's write_file() skips the physical move on a
+  #  SHA1 match, but main() sets resp['changed'] = True unconditionally
+  #  right after it). The physical write itself is still skipped on
+  #  identical content, exactly like real Ansible's atomic_move-only-on-
+  #  checksum-mismatch.
+  #
+  #  The idempotency half of that story: when `dest:` already exists as a
+  #  FILE (a directory dest gets no such header), real uri.py passes the
+  #  file's mtime to fetch_url as last_mod_time, which becomes an
+  #  `If-Modified-Since: <HTTP-date GMT>` request header (urls.py's
+  #  rfc2822_date_string, live-verified). A 304 response then skips the
+  #  write entirely and `changed:` stays false - so the warm run of a
+  #  role fetching an unchanging file (claranet.postgresql's apt key,
+  #  round 981032) reports `ok` in real Ansible, not `changed`. A 304
+  #  reaches the module as urllib's HTTPError (urllib raises for every
+  #  non-2xx it has no handler for), so the result msg carries urllib's
+  #  "HTTP Error 304: Not Modified" string while the task itself still
+  #  succeeds when 304 is in status_code. `force: true` replaces the
+  #  header with `cache-control: no-cache` (urls.py's if/elif), and a
+  #  user-supplied If-Modified-Since header wins over ours, matching
+  #  urls.py's add_header ordering.
   class UriPlugin < BasePlugin
     MAX_REDIRECTS = 10
 
@@ -105,8 +121,18 @@ module Krikri
       end
 
       start = Time.monotonic
+      # Real uri.py: when dest is already a regular FILE (checked on the
+      # ORIGINAL dest, before any directory-filename resolution), the
+      # file's mtime goes to fetch_url as last_mod_time and comes out as
+      # an If-Modified-Since header; a 304 then leaves the file alone
+      # and changed: stays false. A directory dest gets no header.
+      last_mod_time = nil
+      if dest_param = @params["dest"]?
+        dest_path = expand_tilde(dest_param)
+        last_mod_time = File.info(dest_path).modification_time if File.file?(dest_path)
+      end
       begin
-        status, headers, body, redirected, final_url, reason = request(url, method, username, password, src_body)
+        status, headers, body, redirected, final_url, reason = request(url, method, username, password, src_body, last_mod_time: last_mod_time)
       rescue ex
         # Real Ansible's uri result ALWAYS carries a status field, even when
         # the request dies before any HTTP response: its fetch_url() info
@@ -136,11 +162,17 @@ module Krikri
       # (fetch_url catches the HTTPError and stuffs str(e) into info['msg'],
       # and uri.py formats 'Status code was %s and not %s: %s') -
       # live-verified: "Status code was 404 and not [200]: HTTP Error 404:
-      # Not Found". urllib raises HTTPError only for 4xx/5xx, so other
-      # out-of-list statuses (e.g. a 302 with follow_redirects: none) keep
-      # the bare msg.
+      # Not Found". urllib raises HTTPError for every status it has no
+      # handler for - not just 4xx/5xx but also a 304 (no handler exists
+      # for it), live-verified: a 304-in-status_code run succeeds with msg
+      # "HTTP Error 304: Not Modified", and a 304 NOT in status_code fails
+      # with "Status code was 304 and not [200]: HTTP Error 304: Not
+      # Modified". Other out-of-list statuses (e.g. a 302 with
+      # follow_redirects: none) keep the bare msg.
       msg = if failed
-              status >= 400 ? "Status code was #{status} and not #{status_codes}: HTTP Error #{status}: #{http_reason(status, reason)}" : "Status code was #{status} and not #{status_codes}"
+              status >= 400 || status == 304 ? "Status code was #{status} and not #{status_codes}: HTTP Error #{status}: #{http_reason(status, reason)}" : "Status code was #{status} and not #{status_codes}"
+            elsif status == 304
+              "HTTP Error #{status}: #{http_reason(status, reason)}"
             else
               "OK (#{body.bytesize} bytes)"
             end
@@ -158,18 +190,25 @@ module Krikri
         dest = File.join(dest, response_filename(headers, final_url)) if Dir.exists?(dest)
         if !failed && status != 304
           # Live-verified against ansible-core 2.19.4: changed: true on
-          # EVERY dest: run with a success status, even when the file
-          # already holds identical content (uri.py sets resp['changed']
-          # = True unconditionally after write_file, whose SHA1 check
-          # only gates the physical move). The old behavior here -
-          # changed: false on identical content - was a guessed
-          # "idempotency fix" that actually diverged.
+          # EVERY 200 dest: run, even when the file already holds
+          # identical content (uri.py sets resp['changed'] = True
+          # unconditionally after write_file, whose SHA1 check only
+          # gates the physical move). The 304 leg (no write at all,
+          # changed: stays false) is what makes the warm rerun of a
+          # dest: fetch idempotent - that header comes from the
+          # last_mod_time computed before the request above.
           write_dest(dest, body)
           result.changed = true
           apply_file_attributes(dest)
-          apply_dest_file_keys(result, dest)
         end
         result.extra["path"] = JSON::Any.new(dest)
+        # Real AnsibleModule._return_formatted's add_path_info: ANY
+        # result carrying a path: whose file exists gets the file-common
+        # stat keys merged in - including a 304 run (nothing was written
+        # but the dest file exists) and a failed run over an existing
+        # dest. Live-verified: the 304 result carries owner/group/mode/
+        # size/state/uid/gid exactly like the 200 one.
+        apply_dest_file_keys(result, dest)
       end
 
       result.extra["elapsed"] = JSON::Any.new(elapsed)
@@ -247,12 +286,12 @@ module Krikri
     # a real version, producing a download URL that 404'd. The 6th
     # element is the response's reason phrase (real failure msgs embed
     # it, see #execute).
-    private def request(url : String, method : String, username : String? = nil, password : String = "", src_body : String? = nil, redirects_left : Int32 = MAX_REDIRECTS, redirected : Bool = false) : {Int32, HTTP::Headers, String, Bool, String, String}
+    private def request(url : String, method : String, username : String? = nil, password : String = "", src_body : String? = nil, redirects_left : Int32 = MAX_REDIRECTS, redirected : Bool = false, last_mod_time : Time? = nil) : {Int32, HTTP::Headers, String, Bool, String, String}
       raise "too many redirects" if redirects_left < 0
 
       uri = URI.parse(url)
       client = build_client(uri)
-      headers, body = request_headers_and_body(src_body, redirected)
+      headers, body = request_headers_and_body(src_body, redirected, last_mod_time)
 
       # Basic auth. force_basic_auth: true sends the Authorization header
       # on the FIRST request (real urls.py's basic_auth_header branch);
@@ -276,7 +315,7 @@ module Krikri
       end
 
       if response.status.redirection? && (location = response.headers["Location"]?) && should_follow_redirect?(method)
-        return request(resolve_redirect(uri, location), redirect_method(method, response.status_code), username, password, src_body, redirects_left - 1, true)
+        return request(resolve_redirect(uri, location), redirect_method(method, response.status_code), username, password, src_body, redirects_left - 1, true, last_mod_time)
       end
 
       {response.status_code, response.headers, response.body, redirected, url, response.status_message || ""}
@@ -343,13 +382,24 @@ module Krikri
       client
     end
 
-    private def request_headers_and_body(src_body : String? = nil, redirected : Bool = false) : {HTTP::Headers, String?}
+    private def request_headers_and_body(src_body : String? = nil, redirected : Bool = false, last_mod_time : Time? = nil) : {HTTP::Headers, String?}
       headers = HTTP::Headers.new
       headers["User-Agent"] = @params["http_agent"]? || "ansible-httpget"
 
       # force: real urls.py's open() sends 'cache-control: no-cache' to
       # bypass any caching layer between here and the server.
       headers["Cache-Control"] = "no-cache" if true?(@params["force"]?)
+
+      # last_mod_time -> If-Modified-Since: real urls.py's if/elif -
+      # force: takes the cache-control branch and no conditional-get
+      # header is sent; otherwise the dest file's mtime formatted as an
+      # HTTP-date in GMT (urls.py's rfc2822_date_string(timetuple,
+      # 'GMT'), e.g. "Fri, 09 Nov 2001 01:08:47 GMT"). Set BEFORE the
+      # user-headers merge below so a user-supplied If-Modified-Since
+      # wins, matching urls.py's add_header ordering.
+      if last_mod_time && !true?(@params["force"]?) && !headers.has_key?("If-Modified-Since")
+        headers["If-Modified-Since"] = Time::Format::HTTP_DATE.format(last_mod_time)
+      end
 
       # decompress: false (real uri.py's decompress param, default true)
       # suppresses gzip at the REQUEST level: Crystal's HTTP::Client
