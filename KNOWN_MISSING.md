@@ -30,20 +30,21 @@ it does not linger at the top. This file carries no per-round
 narrative or fix history - `git log` is the record of what was found
 and fixed and when.
 
-**Currently at `0.9.1307`.**
+**Currently at `0.9.1334`.**
 
 ## Open gaps
 
 - **Unsafe-data taint is exact-text, not derived-string** (security
   review, 2026-09-26): execution results and facts are never
   re-rendered, via the per-host resolved-name registry plus the exact
-  text registry in `unsafe_values.cr`. Real ansible-core's taint
-  follows *derived* strings too; krikri's text registry only matches
-  a hostile string verbatim. No live exploit found - 20+ transform
-  shapes (`| trim`, `replace`, `regex_replace`, `from_json`, concat,
-  author vars, `template:`/`{% include %}`/`lookup('template')`) all
-  came out safe, because rendered output is no longer re-scanned - but
-  the guarantee is structural rather than a true taint type.
+  text registry in `unsafe_values.cr` (rendered output that embeds a
+  registered hostile string, and every string leaf of a resolved
+  container, are checked too). Real ansible-core's taint is a true type
+  that follows *derived* strings; krikri's is a structural
+  approximation. It has leaked once already - host data held in a
+  task-level list/dict var (fixed 0.9.1331, see this round's entry) -
+  so any new re-render path needs the hostile matrix in
+  `spec/integration/unsafe_data_spec.cr` extended, not assumed safe.
 - **Role-dependency tasks sometimes lose their `TASK [role : name]`
   prefix** (`buluma.roundcubemail`, `xanmanning.k3s`; round 979000,
   2026-09-26): real `ansible-playbook` prints `TASK [buluma.httpd :
@@ -165,6 +166,61 @@ only 35 roles run before the round was left mid-triage) still has 85
 roles never run. The shortlist is at
 `testing/kata/round_new_authors/shortlist120.txt` if resuming it -
 against Atlantic.net now, Kata having been retired as a backend.
+
+### Round 981000-981199 + 982000-982023 + 983000 (2026-09-26/27): security review + regression re-check
+
+A security review of krikri found controller-side code execution from
+host-controlled data (module results, facts and `facts.d` values were
+re-rendered as Jinja - real Ansible's AnsibleUnsafe marking never does
+that), `fetch:` writing outside `dest`, shell injection through unquoted
+task params in ~15 plugins, and `unarchive` applying `mode:`/`owner:`
+outside `dest` through `../` and symlink members. All fixed in
+0.9.1319-0.9.1322. Round 981000 re-ran 200 previously-clean,
+template/register-heavy roles against real `ansible-playbook` to catch
+regressions: `CLEAN=170 DIVERGENT=30`. Every divergence was triaged;
+24 re-ran CLEAN in confirm round 982000.
+
+Regressions introduced by the security fix, all fixed and confirmed:
+- author-written `loop:`/`with_first_found:` items that reference facts
+  were never rendered (0.9.1321), then `with_items:` elements
+  referencing `set_fact`/`register` data (19 `geerlingguy.php`-family
+  roles, 0.9.1325). Taint now attaches to item VALUES, never the first
+  render of author text.
+
+Controller code-execution paths found and closed along the way:
+- a task/block/role/include_role var holding host data in a list or
+  dict (`vars: {b: "{{ r.stdout_lines }}"}`) was re-rendered - present
+  since at least 0.9.1321, a gap in the original fix (0.9.1331, with a
+  full hostile-container matrix spec);
+- two introduced by fix branches and caught before merge: generic
+  `with_<lookup>` terms spliced into expression source, and lookup
+  results rendered as templates (0.9.1326);
+- cross-host: a producer host's registered output read via `hostvars`
+  from another host (0.9.1332).
+
+Pre-existing bugs the round surfaced (all fixed, verified live):
+regex `multiline=True` also meant DOTALL (0.9.1323); `set_fact`
+re-coerced numeric-looking strings and YAML-quoted literals, and `vars:`
+whole-span templates lost their native type (0.9.1324, 0.9.1330);
+generic `with_<lookup>:` loops (`with_url`, `with_lines`, ...) were
+unsupported (0.9.1326); `+` operands ignored filter precedence
+(0.9.1327); handler `set_fact` results were invisible afterwards
+(0.9.1328); `uri: dest=` never sent `If-Modified-Since` (0.9.1329);
+looped `include_vars` values rendered as literal text from task vars
+(0.9.1331, culprit 8540b2b8); `hostvars[<other host>]` values rendered
+in the reading host's context (0.9.1332); `postgresql_privs` rejected
+non-`[A-Za-z0-9_]` identifiers instead of quoting them, plus two SQL
+injections in `mysql_db`/`mysql_user` (0.9.1333); `type: bool` module
+params accepted any non-empty string (0.9.1334).
+
+Not krikri bugs: `coopdevs.backups_role`, `devops37.node_exporter`,
+`dockpack.base_goss` and `tschoonj.ansible_role_guacamole_exporter`
+download to a fixed controller `/tmp` path under `delegate_to:
+localhost`, which both engines share while running in parallel - a
+harness race, not a parity gap. `lean_delivery.jenkins`
+(`java_keystore`) and `gmazoyer.peering_manager`'s remaining delta
+(`postgresql_owner`) are unsupported community modules. Timings in
+ROLES_TESTED.md for this round come from a debug build.
 
 ### Round 975000-975099 + 976000-976002 + 977000-977001 + 978000 (2026-09-26): krikri-jinja migration pre-merge validation
 

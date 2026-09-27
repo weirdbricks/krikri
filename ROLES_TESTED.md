@@ -9473,3 +9473,219 @@ round narrative for the full root-cause writeups.
 | `robertdebock.elastic_repo` | ubuntu | ✅ clean. Times: cold py 22.94s vs cr 8.84s; warm py 6.72s vs cr 0.80s. |
 | `robertdebock.elasticsearch` | ubuntu | ✅ clean. Times: cold py 5.80s vs cr 5.87s; warm py 4.82s vs cr 1.44s. |
 | `konstruktoid.hardening` | ubuntu | ⚠️ inconclusive (rounds 975062 + 978000): real ansible-playbook doesn't complete within 30 min on this role (rc=124 both attempts) - too slow to establish parity either way. krikri's own cold run completed (ok=184 changed=87) except for a real bug found along the way: a query-only `systemd:` task (no state/enabled/masked/daemon_reload/daemon_reexec, just gathering unit facts) fails with "one of the following is required: ..." - real Ansible supports this query-only form, krikri does not. After krikri's cold run the host became SSH-unreachable for warm (cannot confirm whether this is a krikri regression or just this role's own hardening effect, since real ansible never completed cold to compare against). Times: cold py TIMEOUT(1800s) vs cr 510.79s; warm py 1363.90s vs cr UNREACHABLE. |
+
+## Round 981000-981199 + 982000-982023 + 983000 (2026-09-26/27): security-review regression re-check, 200 template/register-heavy roles
+
+Re-check of 200 previously-clean roles after the 0.9.1319-0.9.1322
+security fixes (host-data re-templating, `fetch` traversal, plugin shell
+quoting, `unarchive` containment), picked for heavy `.j2` template and
+`register:` use and a real-Ansible cold run of at least 15s. Round
+981000 ran 0.9.1321: `CLEAN=170 DIVERGENT=30`. The 24 divergences with a
+krikri root cause (19 of them one `with_items` regression) re-ran CLEAN in
+confirm round 982000 on 0.9.1332; `gmazoyer.peering_manager` was confirmed
+separately in round 983000 on 0.9.1333. Rows below give the confirm-round
+timings where a role was re-run. All timings come from a debug build (about
+1.8x slower than release). See `KNOWN_MISSING.md`'s entry for this round.
+
+| Role | OS | Status |
+|---|---|---|
+| `willshersystems.sshd` | ubuntu | ✅ clean (round 981000, 0.9.1321 security re-check). Times: cold py 25.06s vs cr 7.81s; warm py 20.19s vs cr 4.11s. |
+| `Graylog2.graylog` | ubuntu | ✅ clean (round 981001, 0.9.1321 security re-check). Times: cold py 475.34s vs cr 361.76s; warm py 409.41s vs cr 299.98s. |
+| `dokku_bot.ansible_dokku` | ubuntu | ✅ clean (round 981002, 0.9.1321 security re-check). Times: cold py 67.45s vs cr 43.10s; warm py 22.52s vs cr 1.07s. |
+| `linux-system-roles.metrics` | rocky | ✅ clean (round 981003, 0.9.1321 security re-check). Times: cold py 47.73s vs cr 32.71s; warm py 26.10s vs cr 1.68s. |
+| `linux-system-roles.logging` | rocky | ✅ clean (round 981004, 0.9.1321 security re-check). Times: cold py 23.05s vs cr 13.84s; warm py 21.55s vs cr 3.04s. |
+| `openwisp.openwisp2` | ubuntu | ✅ clean (round 981005, 0.9.1321 security re-check). Times: cold py 53.65s vs cr 41.03s; warm py 20.95s vs cr 4.11s. |
+| `nginxinc.nginx` | ubuntu | ✅ clean (round 981006, 0.9.1321 security re-check). Times: cold py 84.58s vs cr 52.61s; warm py 24.72s vs cr 10.63s. |
+| `juju4.zeek` | rocky | ✅ clean (round 981007, 0.9.1321 security re-check). Times: cold py 89.22s vs cr 68.94s; warm py 30.83s vs cr 2.41s. |
+| `alvistack.bitbucket` | rocky | ✅ clean (round 981008, 0.9.1321 security re-check). Times: cold py 66.57s vs cr 52.46s; warm py 54.15s vs cr 31.85s. |
+| `grycap.kubernetes` | rocky | ✅ clean (round 981009, 0.9.1321 security re-check). Times: cold py 16.97s vs cr 12.79s; warm py 14.55s vs cr 2.43s. |
+| `PowerDNS.pdns` | ubuntu | ✅ clean (round 981010, 0.9.1321 security re-check). Times: cold py 38.37s vs cr 22.07s; warm py 15.69s vs cr 0.71s. |
+| `konstruktoid.docker_rootless` | ubuntu | ✅ clean (round 981011, 0.9.1321 security re-check). Times: cold py 82.65s vs cr 34.39s; warm py 46.27s vs cr 4.63s. |
+| `lean_delivery.jenkins` | ubuntu | ➖ out of scope (round 981012): `java_keystore` is an unsupported community module (real Ansible fails on missing `keytool`). Times: cold py 53.98s vs cr 65.59s; warm py 27.15s vs cr 7.18s. |
+| `juju4.auditd` | ubuntu | ✅ clean (round 981013, 0.9.1321 security re-check). Times: cold py 98.54s vs cr 29.46s; warm py 79.27s vs cr 8.13s. |
+| `inmotionhosting.wordpress` | ubuntu | ✅ clean (round 981014, 0.9.1321 security re-check). Times: cold py 383.52s vs cr 185.90s; warm py 168.02s vs cr 15.71s. |
+| `juju4.falco` | ubuntu | ✅ clean (round 981015, 0.9.1321 security re-check). Times: cold py 133.52s vs cr 81.72s; warm py 56.23s vs cr 6.25s. |
+| `roles-ansible.gitea` | ubuntu | ✅ clean (round 981016, 0.9.1321 security re-check). Times: cold py 114.66s vs cr 50.31s; warm py 48.92s vs cr 8.03s. |
+| `jahrik.zsh` | ubuntu | ✅ clean (round 981017, 0.9.1321 security re-check). Times: cold py 73.58s vs cr 48.41s; warm py 26.58s vs cr 4.32s. |
+| `haxorof.docker_ce` | ubuntu | ✅ clean (round 981018, 0.9.1321 security re-check). Times: cold py 138.89s vs cr 94.02s; warm py 66.89s vs cr 17.22s. |
+| `bingo_soft.postgresql` | rocky | ✅ clean (round 981019, 0.9.1321 security re-check). Times: cold py 20.58s vs cr 26.62s; warm py 7.08s vs cr 2.16s. |
+| `ChristopherDavenport.universal-tomcat` | rocky | ✅ clean (round 981020, 0.9.1321 security re-check). Times: cold py 54.65s vs cr 48.28s; warm py 17.16s vs cr 0.79s. |
+| `mikroways.workstation` | rocky | ✅ clean (round 981021, 0.9.1321 security re-check). Times: cold py 68.74s vs cr 57.90s; warm py 19.68s vs cr 1.15s. |
+| `riemers.gitlab_runner` | rocky | ✅ clean (round 981022, 0.9.1321 security re-check). Times: cold py 174.26s vs cr 150.85s; warm py 37.72s vs cr 2.76s. |
+| `riemers.ansible-gitlab-runner` | ubuntu | ✅ clean (round 981023, 0.9.1321 security re-check). Times: cold py 200.48s vs cr 154.66s; warm py 48.15s vs cr 5.56s. |
+| `pluggero.openssh` | ubuntu | ✅ clean after fix (round 981024 divergent: regex `multiline=True` let `.` cross lines + `set_fact` coerced `'8.9'` to a float (fixed 0.9.1323/0.9.1324); confirmed round 982000). Times (confirm round): cold py 22.82s vs cr 8.63s; warm py 17.29s vs cr 2.32s. |
+| `babidi34.openclaw` | ubuntu | ✅ clean (round 981025, 0.9.1321 security re-check). Times: cold py 144.46s vs cr 134.06s; warm py 64.62s vs cr 44.90s. |
+| `pluggero.python` | ubuntu | ✅ clean (round 981026, 0.9.1321 security re-check). Times: cold py 900.02s vs cr 900.01s; warm py 900.01s vs cr 900.01s. |
+| `pacifica.ansible_pacifica` | rocky | ✅ clean (round 981027, 0.9.1321 security re-check). Times: cold py 27.97s vs cr 26.16s; warm py 25.81s vs cr 2.31s. |
+| `nginxinc.nginx_app_protect` | rocky | ✅ clean (round 981028, 0.9.1321 security re-check). Times: cold py 33.67s vs cr 48.76s; warm py 30.73s vs cr 5.26s. |
+| `alvistack.cri_o` | rocky | ✅ clean (round 981029, 0.9.1321 security re-check). Times: cold py 72.76s vs cr 54.22s; warm py 62.38s vs cr 35.42s. |
+| `buluma.phpmyadmin` | ubuntu | ✅ clean after fix (round 981030 divergent: `with_items:` list elements referencing set_fact data never rendered (0.9.1320 unsafe-data regression, fixed 0.9.1325); confirmed round 982001). Times (confirm round): cold py 91.17s vs cr 49.56s; warm py 37.86s vs cr 1.05s. |
+| `githubixx.kubernetes_worker` | ubuntu | ✅ clean (round 981031, 0.9.1321 security re-check). Times: cold py 108.17s vs cr 77.35s; warm py 33.50s vs cr 1.66s. |
+| `claranet.postgresql` | ubuntu | ✅ clean after fix (round 981032 divergent: `uri: dest=` never sent If-Modified-Since, warm run reported changed (fixed 0.9.1329); confirmed round 982002). Times (confirm round): cold py 146.26s vs cr 92.49s; warm py 56.17s vs cr 7.58s. |
+| `lean_delivery.oracle_db` | rocky | ✅ clean (round 981033, 0.9.1321 security re-check). Times: cold py 69.50s vs cr 54.44s; warm py 66.53s vs cr 41.64s. |
+| `anmoel.kubernetes` | rocky | ✅ clean (round 981034, 0.9.1321 security re-check). Times: cold py 17.27s vs cr 19.80s; warm py 15.79s vs cr 8.51s. |
+| `wcm_io_devops.conga_ansible_controlhost` | ubuntu | ✅ clean (round 981035, 0.9.1321 security re-check). Times: cold py 33.48s vs cr 22.73s; warm py 10.40s vs cr 1.31s. |
+| `oatakan.rhel_template_build` | rocky | ✅ clean (round 981036, 0.9.1321 security re-check). Times: cold py 27.50s vs cr 19.14s; warm py 24.55s vs cr 6.21s. |
+| `alvistack.bootstrap` | rocky | ✅ clean (round 981037, 0.9.1321 security re-check). Times: cold py 386.41s vs cr 291.31s; warm py 235.32s vs cr 131.77s. |
+| `oatakan.debian_template_build` | ubuntu | ✅ clean (round 981038, 0.9.1321 security re-check). Times: cold py 20.14s vs cr 8.94s; warm py 16.50s vs cr 3.88s. |
+| `idealista.solrcloud-role` | ubuntu | ✅ clean (round 981039, 0.9.1321 security re-check). Times: cold py 54.28s vs cr 24.66s; warm py 41.60s vs cr 18.95s. |
+| `idealista.solr_role` | ubuntu | ✅ clean (round 981040, 0.9.1321 security re-check). Times: cold py 57.75s vs cr 25.37s; warm py 40.16s vs cr 18.64s. |
+| `geerlingguy.phpmyadmin` | ubuntu | ✅ clean (round 981041, 0.9.1321 security re-check). Times: cold py 94.35s vs cr 67.04s; warm py 23.31s vs cr 1.19s. |
+| `racqspace.unattended_upgrades` | ubuntu | ✅ clean (round 981042, 0.9.1321 security re-check). Times: cold py 34.30s vs cr 18.39s; warm py 17.24s vs cr 1.08s. |
+| `hifis.gitlab_runner` | rocky | ✅ clean (round 981043, 0.9.1321 security re-check). Times: cold py 68.83s vs cr 58.31s; warm py 20.18s vs cr 1.21s. |
+| `thorian93.nextcloud` | ubuntu | ✅ clean (round 981044, 0.9.1321 security re-check). Times: cold py 77.30s vs cr 65.00s; warm py 14.07s vs cr 1.45s. |
+| `ableton.prometheus_node_exporter` | ubuntu | ✅ clean (round 981045, 0.9.1321 security re-check). Times: cold py 35.77s vs cr 23.06s; warm py 14.44s vs cr 0.96s. |
+| `sensu.sensu` | ubuntu | ✅ clean (round 981046, 0.9.1321 security re-check). Times: cold py 20.68s vs cr 18.82s; warm py 7.86s vs cr 0.62s. |
+| `CSCfi.hp-firmware-upgrade` | rocky | ✅ clean (round 981047, 0.9.1321 security re-check). Times: cold py 18.71s vs cr 12.80s; warm py 15.23s vs cr 0.49s. |
+| `linux-system-roles.nbde_client` | rocky | ✅ clean (round 981048, 0.9.1321 security re-check). Times: cold py 115.06s vs cr 112.74s; warm py 19.55s vs cr 2.63s. |
+| `l3d.gitea` | ubuntu | ✅ clean (round 981049, 0.9.1321 security re-check). Times: cold py 95.77s vs cr 50.77s; warm py 55.76s vs cr 6.01s. |
+| `kyl191.openvpn` | ubuntu | ✅ clean (round 981050, 0.9.1321 security re-check). Times: cold py 69.74s vs cr 31.70s; warm py 36.22s vs cr 1.37s. |
+| `dj-wasabi.telegraf` | ubuntu | ✅ clean (round 981051, 0.9.1321 security re-check). Times: cold py 64.03s vs cr 48.05s; warm py 44.72s vs cr 25.18s. |
+| `mila.bareos` | ubuntu | ✅ clean (round 981052, 0.9.1321 security re-check). Times: cold py 52.41s vs cr 22.76s; warm py 11.29s vs cr 1.22s. |
+| `lukasic.ispconfig` | ubuntu | ✅ clean (round 981053, 0.9.1321 security re-check). Times: cold py 86.59s vs cr 60.99s; warm py 27.51s vs cr 10.99s. |
+| `lean_delivery.solr_standalone` | ubuntu | ✅ clean after fix (round 981054 divergent: generic `with_<lookup>:` loops (`with_url`) unsupported (fixed 0.9.1326); confirmed round 982003). Times (confirm round): cold py 80.23s vs cr 57.75s; warm py 45.64s vs cr 13.45s. |
+| `grycap.slurm` | rocky | ✅ clean (round 981055, 0.9.1321 security re-check). Times: cold py 47.38s vs cr 41.45s; warm py 11.90s vs cr 0.98s. |
+| `giner.barman` | ubuntu | ✅ clean (round 981056, 0.9.1321 security re-check). Times: cold py 64.87s vs cr 35.02s; warm py 24.50s vs cr 4.40s. |
+| `idealista.airflow-role` | ubuntu | ✅ clean (round 981057, 0.9.1321 security re-check). Times: cold py 22.25s vs cr 11.88s; warm py 20.77s vs cr 4.51s. |
+| `grycap.galaxy` | rocky | ✅ clean (round 981058, 0.9.1321 security re-check). Times: cold py 17.41s vs cr 15.42s; warm py 14.86s vs cr 1.95s. |
+| `ImNtReal.epic_odb` | ubuntu | ✅ clean (round 981059, 0.9.1321 security re-check). Times: cold py 17.06s vs cr 10.62s; warm py 14.01s vs cr 0.50s. |
+| `usegalaxy_eu.rustus` | ubuntu | ✅ clean (round 981060, 0.9.1321 security re-check). Times: cold py 38.06s vs cr 23.00s; warm py 21.95s vs cr 2.16s. |
+| `nvjacobo.snowflake` | rocky | ✅ clean (round 981061, 0.9.1321 security re-check). Times: cold py 190.03s vs cr 179.43s; warm py 25.50s vs cr 3.24s. |
+| `mrlesmithjr.docker` | ubuntu | ✅ clean (round 981062, 0.9.1321 security re-check). Times: cold py 106.84s vs cr 74.23s; warm py 26.40s vs cr 2.56s. |
+| `linux-system-roles.postgresql` | rocky | ✅ clean after fix (round 981063 divergent: looped `include_vars` values rendered as literal text from task vars (fixed 0.9.1331); confirmed round 982004). Times (confirm round): cold py 42.90s vs cr 28.63s; warm py 33.41s vs cr 2.24s. |
+| `imntreal.smallstep_ca` | ubuntu | ✅ clean (round 981064, 0.9.1321 security re-check). Times: cold py 50.06s vs cr 12.78s; warm py 39.54s vs cr 4.50s. |
+| `ea31337.wine` | ubuntu | ✅ clean (round 981065, 0.9.1321 security re-check). Times: cold py 182.36s vs cr 147.69s; warm py 6.46s vs cr 0.63s. |
+| `tcharl.kubernetes` | rocky | ✅ clean (round 981066, 0.9.1321 security re-check). Times: cold py 303.28s vs cr 283.65s; warm py 101.08s vs cr 62.63s. |
+| `tag1consulting.borgbackup` | ubuntu | ✅ clean (round 981067, 0.9.1321 security re-check). Times: cold py 66.92s vs cr 46.79s; warm py 65.64s vs cr 41.80s. |
+| `sdarwin.vnc` | ubuntu | ✅ clean (round 981068, 0.9.1321 security re-check). Times: cold py 291.44s vs cr 271.26s; warm py 138.36s vs cr 124.25s. |
+| `systemli.jitsi_meet` | ubuntu | ✅ clean (round 981069, 0.9.1321 security re-check). Times: cold py 67.10s vs cr 29.56s; warm py 46.09s vs cr 8.84s. |
+| `openmicroscopy.omero-server` | rocky | ✅ clean (round 981070, 0.9.1321 security re-check). Times: cold py 58.01s vs cr 49.46s; warm py 27.54s vs cr 2.54s. |
+| `ome.omero_web_django_prometheus` | rocky | ✅ clean (round 981071, 0.9.1321 security re-check). Times: cold py 42.43s vs cr 35.53s; warm py 17.30s vs cr 3.20s. |
+| `mrlesmithjr.guacamole` | rocky | ✅ clean (round 981072, 0.9.1321 security re-check). Times: cold py 58.16s vs cr 53.91s; warm py 37.66s vs cr 19.75s. |
+| `linux-system-roles.tlog` | rocky | ✅ clean (round 981073, 0.9.1321 security re-check). Times: cold py 42.81s vs cr 26.70s; warm py 30.27s vs cr 2.02s. |
+| `indigo-dc.jupyterhub` | ubuntu | ✅ clean (round 981074, 0.9.1321 security re-check). Times: cold py 512.35s vs cr 479.43s; warm py 24.71s vs cr 1.52s. |
+| `grycap.mesos` | rocky | ✅ clean (round 981075, 0.9.1321 security re-check). Times: cold py 20.15s vs cr 14.24s; warm py 18.44s vs cr 2.10s. |
+| `geerlingguy.sonar` | rocky | ✅ clean (round 981076, 0.9.1321 security re-check). Times: cold py 58.15s vs cr 44.87s; warm py 21.40s vs cr 1.07s. |
+| `skriptfabrik.sshd` | ubuntu | ✅ clean (round 981077, 0.9.1321 security re-check). Times: cold py 29.70s vs cr 14.20s; warm py 19.12s vs cr 1.40s. |
+| `nl2go.clickhouse_backup` | ubuntu | ✅ clean (round 981078, 0.9.1321 security re-check). Times: cold py 26.79s vs cr 20.95s; warm py 22.49s vs cr 1.81s. |
+| `newrelic.newrelic-infra` | ubuntu | ✅ clean (round 981079, 0.9.1321 security re-check). Times: cold py 79.63s vs cr 49.71s; warm py 24.38s vs cr 7.44s. |
+| `mrlesmithjr.mongodb` | ubuntu | ✅ clean after fix (round 981080 divergent: `+` operand ignored filter precedence (`'x'+v|string`) (fixed 0.9.1327); confirmed round 982005). Times (confirm round): cold py 58.92s vs cr 31.43s; warm py 31.16s vs cr 12.45s. |
+| `grycap.nomad` | ubuntu | ✅ clean (round 981081, 0.9.1321 security re-check). Times: cold py 63.22s vs cr 35.22s; warm py 34.52s vs cr 7.06s. |
+| `gmazoyer.peering_manager` | ubuntu | ➖ out of scope after fix (round 981082: `postgresql_privs` rejected the hyphenated role name, fixed 0.9.1333 and confirmed in round 983000; the remaining recap delta is `community.postgresql.postgresql_owner`, an unsupported community module krikri skips). Times (confirm round): cold py 123.37s vs cr 80.81s; warm py 52.38s vs cr 3.59s. |
+| `fourforbusiness.mysql-prepare-db` | rocky | ✅ clean (round 981083, 0.9.1321 security re-check). Times: cold py 57.70s vs cr 46.73s; warm py 20.10s vs cr 1.07s. |
+| `buluma.roundcubemail` | rocky | ✅ clean (round 981084, 0.9.1321 security re-check). Times: cold py 32.58s vs cr 25.18s; warm py 17.20s vs cr 3.13s. |
+| `ricsanfre.vault` | rocky | ✅ clean (round 981085, 0.9.1321 security re-check). Times: cold py 51.71s vs cr 22.69s; warm py 24.18s vs cr 1.14s. |
+| `ricsanfre.backup` | rocky | ✅ clean (round 981086, 0.9.1321 security re-check). Times: cold py 63.14s vs cr 21.41s; warm py 37.26s vs cr 3.15s. |
+| `mrlesmithjr.lighttpd` | ubuntu | ✅ clean (round 981087, 0.9.1321 security re-check). Times: cold py 27.68s vs cr 19.53s; warm py 9.50s vs cr 0.71s. |
+| `juwai.php-memcached` | rocky | ✅ clean after fix (round 981088 divergent: `with_items:` list elements referencing set_fact data never rendered (0.9.1320 unsafe-data regression, fixed 0.9.1325); confirmed round 982006). Times (confirm round): cold py 61.48s vs cr 40.99s; warm py 20.45s vs cr 1.70s. |
+| `idealista.tomcat-role` | ubuntu | ✅ clean (round 981089, 0.9.1321 security re-check). Times: cold py 19.40s vs cr 9.60s; warm py 24.60s vs cr 4.15s. |
+| `geerlingguy.kubernetes` | ubuntu | ✅ clean (round 981090, 0.9.1321 security re-check). Times: cold py 111.55s vs cr 70.73s; warm py 39.86s vs cr 2.79s. |
+| `ricsanfre.rustfs` | rocky | ✅ clean (round 981091, 0.9.1321 security re-check). Times: cold py 59.85s vs cr 30.73s; warm py 33.74s vs cr 2.12s. |
+| `nl2go.hetzner_failover` | ubuntu | ✅ clean (round 981092, 0.9.1321 security re-check). Times: cold py 23.27s vs cr 19.66s; warm py 8.36s vs cr 0.64s. |
+| `manala.grafana` | ubuntu | ✅ clean (round 981093, 0.9.1321 security re-check). Times: cold py 8.95s vs cr 7.14s; warm py 5.63s vs cr 0.74s. |
+| `lean_delivery.zabbix_agent` | ubuntu | ✅ clean (round 981094, 0.9.1321 security re-check). Times: cold py 57.17s vs cr 32.51s; warm py 55.18s vs cr 24.81s. |
+| `lean_delivery.elasticsearch` | ubuntu | ✅ clean (round 981095, 0.9.1321 security re-check). Times: cold py 132.95s vs cr 83.68s; warm py 89.10s vs cr 52.83s. |
+| `grzegorznowak.query_exporter` | ubuntu | ✅ clean (round 981096, 0.9.1321 security re-check). Times: cold py 74.84s vs cr 42.31s; warm py 32.49s vs cr 3.44s. |
+| `coopdevs.monitoring_role` | ubuntu | ✅ clean (round 981097, 0.9.1321 security re-check). Times: cold py 74.69s vs cr 49.58s; warm py 25.61s vs cr 0.96s. |
+| `buluma.php` | ubuntu | ✅ clean (round 981098, 0.9.1321 security re-check). Times: cold py 89.81s vs cr 60.47s; warm py 29.80s vs cr 1.27s. |
+| `buluma.mediawiki` | ubuntu | ✅ clean (round 981099, 0.9.1321 security re-check). Times: cold py 105.11s vs cr 81.16s; warm py 23.06s vs cr 1.27s. |
+| `veselahouba.nginx` | rocky | ✅ clean (round 981100, 0.9.1321 security re-check). Times: cold py 47.99s vs cr 20.24s; warm py 36.40s vs cr 1.37s. |
+| `trfore.mongodb_install` | ubuntu | ✅ clean (round 981101, 0.9.1321 security re-check). Times: cold py 95.06s vs cr 57.72s; warm py 26.66s vs cr 14.63s. |
+| `ome.prometheus` | ubuntu | ✅ clean (round 981102, 0.9.1321 security re-check). Times: cold py 21.50s vs cr 5.72s; warm py 20.69s vs cr 0.68s. |
+| `mrlesmithjr.haproxy` | ubuntu | ✅ clean (round 981103, 0.9.1321 security re-check). Times: cold py 54.10s vs cr 39.90s; warm py 55.78s vs cr 36.03s. |
+| `florianutz.DockerCE-CIS` | ubuntu | ✅ clean (round 981104, 0.9.1321 security re-check). Times: cold py 44.25s vs cr 24.98s; warm py 25.66s vs cr 0.65s. |
+| `dockpack.base_rsyslog` | rocky | ✅ clean (round 981105, 0.9.1321 security re-check). Times: cold py 27.03s vs cr 16.41s; warm py 20.61s vs cr 1.44s. |
+| `coopdevs.backups_role` | ubuntu | ⚠️ harness race (round 981106): a `delegate_to: localhost` download to a fixed controller `/tmp` path is shared by both engines running in parallel - not a krikri bug. Times: cold py 22.35s vs cr 17.01s; warm py 13.80s vs cr 1.10s. |
+| `openwisp.wifi_login_pages` | rocky | ✅ clean (round 981107, 0.9.1321 security re-check). Times: cold py 65.69s vs cr 54.25s; warm py 63.72s vs cr 40.59s. |
+| `mrlesmithjr.zfs` | ubuntu | ✅ clean (round 981108, 0.9.1321 security re-check). Times: cold py 60.51s vs cr 45.66s; warm py 20.57s vs cr 1.13s. |
+| `mircomasa.filebeat` | rocky | ✅ clean (round 981109, 0.9.1321 security re-check). Times: cold py 49.18s vs cr 32.77s; warm py 22.74s vs cr 2.13s. |
+| `mdsketch.teleport` | ubuntu | ✅ clean (round 981110, 0.9.1321 security re-check). Times: cold py 45.00s vs cr 30.23s; warm py 7.88s vs cr 0.82s. |
+| `jdauphant.nginx` | rocky | ✅ clean (round 981111, 0.9.1321 security re-check). Times: cold py 38.83s vs cr 17.33s; warm py 28.75s vs cr 1.09s. |
+| `geerlingguy.php-pear` | ubuntu | ✅ clean after fix (round 981112 divergent: `with_items:` list elements referencing set_fact data never rendered (0.9.1320 unsafe-data regression, fixed 0.9.1325); confirmed round 982007). Times (confirm round): cold py 90.66s vs cr 50.36s; warm py 36.12s vs cr 1.84s. |
+| `geerlingguy.mysql` | ubuntu | ✅ clean (round 981113, 0.9.1321 security re-check). Times: cold py 93.51s vs cr 64.59s; warm py 20.83s vs cr 1.00s. |
+| `fubarhouse.commons` | ubuntu | ✅ clean (round 981114, 0.9.1321 security re-check). Times: cold py 35.64s vs cr 22.28s; warm py 17.48s vs cr 1.02s. |
+| `entercloudsuite.mysql` | ubuntu | ✅ clean (round 981115, 0.9.1321 security re-check). Times: cold py 10.43s vs cr 9.62s; warm py 9.71s vs cr 5.26s. |
+| `buluma.httpd` | ubuntu | ✅ clean (round 981116, 0.9.1321 security re-check). Times: cold py 44.45s vs cr 27.46s; warm py 15.06s vs cr 0.83s. |
+| `badsectorlabs.ludus_elastic_container` | ubuntu | ✅ clean (round 981117, 0.9.1321 security re-check). Times: cold py 90.89s vs cr 58.68s; warm py 27.75s vs cr 1.43s. |
+| `antmelekhin.gitlab_runner` | ubuntu | ✅ clean (round 981118, 0.9.1321 security re-check). Times: cold py 143.38s vs cr 133.03s; warm py 16.25s vs cr 7.02s. |
+| `warhorse.nighthawk_docker` | rocky | ✅ clean (round 981119, 0.9.1321 security re-check). Times: cold py 62.62s vs cr 58.90s; warm py 19.67s vs cr 1.12s. |
+| `sig-ansible.tomcat` | rocky | ✅ clean (round 981120, 0.9.1321 security re-check). Times: cold py 22.61s vs cr 15.92s; warm py 16.20s vs cr 1.89s. |
+| `mrlesmithjr.kvm` | ubuntu | ✅ clean (round 981121, 0.9.1321 security re-check). Times: cold py 73.95s vs cr 75.74s; warm py 11.17s vs cr 6.13s. |
+| `mrlesmithjr.config-interfaces` | ubuntu | ✅ clean (round 981122, 0.9.1321 security re-check). Times: cold py 26.07s vs cr 21.37s; warm py 6.21s vs cr 0.54s. |
+| `micko920.homelab_base_system` | ubuntu | ✅ clean (round 981123, 0.9.1321 security re-check). Times: cold py 57.94s vs cr 40.91s; warm py 29.74s vs cr 12.02s. |
+| `mawalu.wireguard_private_networking` | ubuntu | ✅ clean (round 981124, 0.9.1321 security re-check). Times: cold py 30.74s vs cr 21.69s; warm py 14.35s vs cr 4.11s. |
+| `lean_delivery.endeca_mdex` | ubuntu | ✅ clean (round 981125, 0.9.1321 security re-check). Times: cold py 29.31s vs cr 19.12s; warm py 29.89s vs cr 13.98s. |
+| `jriguera.configdrive` | ubuntu | ✅ clean (round 981126, 0.9.1321 security re-check). Times: cold py 59.01s vs cr 40.22s; warm py 15.65s vs cr 4.33s. |
+| `jgeusebroek.docker` | rocky | ✅ clean (round 981127, 0.9.1321 security re-check). Times: cold py 19.70s vs cr 14.58s; warm py 19.25s vs cr 2.59s. |
+| `itnok.install_ros_ubuntu` | ubuntu | ✅ clean (round 981128, 0.9.1321 security re-check). Times: cold py 41.89s vs cr 22.01s; warm py 27.13s vs cr 2.45s. |
+| `geerlingguy.blackfire` | rocky | ✅ clean after fix (round 981129 divergent: `with_items:` list elements referencing set_fact data never rendered (0.9.1320 unsafe-data regression, fixed 0.9.1325); confirmed round 982008). Times (confirm round): cold py 79.81s vs cr 68.16s; warm py 27.81s vs cr 2.16s. |
+| `devops37.node_exporter` | ubuntu | ⚠️ harness race (round 981130): a `delegate_to: localhost` download to a fixed controller `/tmp` path is shared by both engines running in parallel - not a krikri bug. Times: cold py 31.64s vs cr 19.38s; warm py 7.43s vs cr 0.54s. |
+| `christiangda.amazon_cloudwatch_agent` | ubuntu | ✅ clean (round 981131, 0.9.1321 security re-check). Times: cold py 63.54s vs cr 52.93s; warm py 25.67s vs cr 3.42s. |
+| `bsmeding.nginx_docker` | rocky | ✅ clean (round 981132, 0.9.1321 security re-check). Times: cold py 17.05s vs cr 12.70s; warm py 16.24s vs cr 0.79s. |
+| `thom8.php-upload-progress` | rocky | ✅ clean after fix (round 981133 divergent: `with_items:` list elements referencing set_fact data never rendered (0.9.1320 unsafe-data regression, fixed 0.9.1325); confirmed round 982009). Times (confirm round): cold py 75.07s vs cr 59.58s; warm py 27.85s vs cr 1.14s. |
+| `stevenjlho.deployer` | ubuntu | ✅ clean after fix (round 981134 divergent: `with_items:` list elements referencing set_fact data never rendered (0.9.1320 unsafe-data regression, fixed 0.9.1325); confirmed round 982010). Times (confirm round): cold py 85.65s vs cr 41.57s; warm py 48.80s vs cr 1.31s. |
+| `roles-ansible.restic` | ubuntu | ✅ clean (round 981135, 0.9.1321 security re-check). Times: cold py 28.38s vs cr 11.18s; warm py 19.27s vs cr 1.24s. |
+| `mrlesmithjr.mariadb-mysql` | rocky | ✅ clean (round 981136, 0.9.1321 security re-check). Times: cold py 33.19s vs cr 25.74s; warm py 30.46s vs cr 14.62s. |
+| `mondoo.client` | ubuntu | ✅ clean (round 981137, 0.9.1321 security re-check). Times: cold py 69.84s vs cr 48.40s; warm py 21.65s vs cr 9.67s. |
+| `lean_delivery.jenkins_slave` | ubuntu | ✅ clean (round 981138, 0.9.1321 security re-check). Times: cold py 24.69s vs cr 21.17s; warm py 11.95s vs cr 0.62s. |
+| `geerlingguy.php-xhprof` | ubuntu | ✅ clean after fix (round 981139 divergent: `with_items:` list elements referencing set_fact data never rendered (0.9.1320 unsafe-data regression, fixed 0.9.1325); confirmed round 982011). Times (confirm round): cold py 86.39s vs cr 44.33s; warm py 40.03s vs cr 1.90s. |
+| `geerlingguy.php-xdebug` | ubuntu | ✅ clean after fix (round 981140 divergent: `with_items:` list elements referencing set_fact data never rendered (0.9.1320 unsafe-data regression, fixed 0.9.1325); confirmed round 982012). Times (confirm round): cold py 85.35s vs cr 42.51s; warm py 42.24s vs cr 1.93s. |
+| `geerlingguy.php-tideways` | ubuntu | ✅ clean after fix (round 981141 divergent: `with_items:` list elements referencing set_fact data never rendered (0.9.1320 unsafe-data regression, fixed 0.9.1325); confirmed round 982013). Times (confirm round): cold py 83.50s vs cr 42.09s; warm py 39.68s vs cr 2.12s. |
+| `geerlingguy.php-pecl` | ubuntu | ✅ clean after fix (round 981142 divergent: `with_items:` list elements referencing set_fact data never rendered (0.9.1320 unsafe-data regression, fixed 0.9.1325); confirmed round 982014). Times (confirm round): cold py 94.97s vs cr 43.81s; warm py 40.67s vs cr 1.17s. |
+| `geerlingguy.drupal-console` | rocky | ✅ clean after fix (round 981143 divergent: `with_items:` list elements referencing set_fact data never rendered (0.9.1320 unsafe-data regression, fixed 0.9.1325); confirmed round 982015). Times (confirm round): cold py 54.72s vs cr 39.47s; warm py 20.21s vs cr 1.69s. |
+| `galaxyproject.postgresql` | ubuntu | ✅ clean (round 981144, 0.9.1321 security re-check). Times: cold py 67.76s vs cr 46.62s; warm py 19.18s vs cr 1.56s. |
+| `dictcp.php-elasticache` | ubuntu | ✅ clean after fix (round 981145 divergent: `with_items:` list elements referencing set_fact data never rendered (0.9.1320 unsafe-data regression, fixed 0.9.1325); confirmed round 982016). Times (confirm round): cold py 80.76s vs cr 42.09s; warm py 34.74s vs cr 1.85s. |
+| `dev-sec.mysql` | ubuntu | ✅ clean (round 981146, 0.9.1321 security re-check). Times: cold py 74.17s vs cr 61.84s; warm py 12.99s vs cr 1.63s. |
+| `buluma.redis` | ubuntu | ✅ clean (round 981147, 0.9.1321 security re-check). Times: cold py 26.98s vs cr 19.00s; warm py 9.29s vs cr 0.57s. |
+| `almart.nginx_docker` | rocky | ✅ clean (round 981148, 0.9.1321 security re-check). Times: cold py 68.06s vs cr 57.33s; warm py 18.03s vs cr 1.68s. |
+| `almart.evilginx2_docker` | rocky | ✅ clean (round 981149, 0.9.1321 security re-check). Times: cold py 68.37s vs cr 55.22s; warm py 18.67s vs cr 1.68s. |
+| `HanXHX.php` | ubuntu | ✅ clean (round 981150, 0.9.1321 security re-check). Times: cold py 95.28s vs cr 59.75s; warm py 36.14s vs cr 2.98s. |
+| `Akman.ioncube_loader` | ubuntu | ✅ clean after fix (round 981151 divergent: `with_items:` list elements referencing set_fact data never rendered (0.9.1320 unsafe-data regression, fixed 0.9.1325); confirmed round 982017). Times (confirm round): cold py 98.10s vs cr 48.80s; warm py 46.91s vs cr 1.76s. |
+| `wunzeco.nginx-docker` | rocky | ✅ clean (round 981152, 0.9.1321 security re-check). Times: cold py 15.63s vs cr 10.83s; warm py 13.78s vs cr 0.44s. |
+| `thystips.php_fpm_exporter` | ubuntu | ✅ clean (round 981153, 0.9.1321 security re-check). Times: cold py 25.45s vs cr 8.15s; warm py 17.00s vs cr 1.36s. |
+| `pluggero.burpsuite` | ubuntu | ✅ clean (round 981154, 0.9.1321 security re-check). Times: cold py 134.32s vs cr 93.88s; warm py 30.49s vs cr 5.02s. |
+| `openwisp.wireguard_openwisp` | rocky | ✅ clean (round 981155, 0.9.1321 security re-check). Times: cold py 68.10s vs cr 51.19s; warm py 66.42s vs cr 40.99s. |
+| `mrlesmithjr.ansible_dnsmasq` | rocky | ✅ clean (round 981156, 0.9.1321 security re-check). Times: cold py 18.25s vs cr 22.06s; warm py 12.29s vs cr 0.90s. |
+| `karlmdavis.jenkins2` | rocky | ✅ clean (round 981157, 0.9.1321 security re-check). Times: cold py 20.84s vs cr 27.89s; warm py 12.16s vs cr 2.11s. |
+| `inverse_inc.gitlab_buildpkg_tools` | ubuntu | ✅ clean (round 981158, 0.9.1321 security re-check). Times: cold py 89.58s vs cr 75.26s; warm py 75.76s vs cr 59.17s. |
+| `hispanico.nginx_revproxy` | rocky | ✅ clean (round 981159, 0.9.1321 security re-check). Times: cold py 145.19s vs cr 131.73s; warm py 141.54s vs cr 110.95s. |
+| `grycap.htcondor` | rocky | ✅ clean (round 981160, 0.9.1321 security re-check). Times: cold py 18.30s vs cr 22.65s; warm py 14.27s vs cr 1.93s. |
+| `geometrylabs.polkadot_base` | ubuntu | ✅ clean (round 981161, 0.9.1321 security re-check). Times: cold py 30.64s vs cr 7.44s; warm py 12.85s vs cr 1.36s. |
+| `geerlingguy.php-redis` | ubuntu | ✅ clean after fix (round 981162 divergent: `with_items:` list elements referencing set_fact data never rendered (0.9.1320 unsafe-data regression, fixed 0.9.1325); confirmed round 982018). Times (confirm round): cold py 83.73s vs cr 55.02s; warm py 38.06s vs cr 1.80s. |
+| `geerlingguy.php-pgsql` | ubuntu | ✅ clean after fix (round 981163 divergent: `with_items:` list elements referencing set_fact data never rendered (0.9.1320 unsafe-data regression, fixed 0.9.1325); confirmed round 982019). Times (confirm round): cold py 99.22s vs cr 49.95s; warm py 38.64s vs cr 1.85s. |
+| `geerlingguy.php-mysql` | ubuntu | ✅ clean after fix (round 981164 divergent: `with_items:` list elements referencing set_fact data never rendered (0.9.1320 unsafe-data regression, fixed 0.9.1325); confirmed round 982020). Times (confirm round): cold py 90.65s vs cr 41.53s; warm py 37.66s vs cr 1.22s. |
+| `geerlingguy.php-memcached` | ubuntu | ✅ clean after fix (round 981165 divergent: `with_items:` list elements referencing set_fact data never rendered (0.9.1320 unsafe-data regression, fixed 0.9.1325); confirmed round 982021). Times (confirm round): cold py 83.52s vs cr 40.95s; warm py 53.83s vs cr 1.03s. |
+| `geerlingguy.php` | ubuntu | ✅ clean after fix (round 981166 divergent: `with_items:` list elements referencing set_fact data never rendered (0.9.1320 unsafe-data regression, fixed 0.9.1325); confirmed round 982022). Times (confirm round): cold py 126.91s vs cr 38.74s; warm py 84.01s vs cr 1.19s. |
+| `escalate.grafana` | rocky | ✅ clean (round 981167, 0.9.1321 security re-check). Times: cold py 34.31s vs cr 17.08s; warm py 33.67s vs cr 0.63s. |
+| `dockpack.base_goss` | ubuntu | ⚠️ harness race (round 981168): a `delegate_to: localhost` download to a fixed controller `/tmp` path is shared by both engines running in parallel - not a krikri bug. Times: cold py 27.19s vs cr 33.79s; warm py 17.46s vs cr 0.84s. |
+| `buluma.solr` | rocky | ✅ clean (round 981169, 0.9.1321 security re-check). Times: cold py 40.55s vs cr 60.23s; warm py 22.68s vs cr 29.58s. |
+| `andrewrothstein.maven` | rocky | ✅ clean (round 981170, 0.9.1321 security re-check). Times: cold py 36.42s vs cr 45.56s; warm py 11.79s vs cr 0.60s. |
+| `alvistack.containers_common` | rocky | ✅ clean (round 981171, 0.9.1321 security re-check). Times: cold py 88.30s vs cr 83.80s; warm py 31.34s vs cr 6.27s. |
+| `volker-raschek.bind9` | rocky | ✅ clean (round 981172, 0.9.1321 security re-check). Times: cold py 47.83s vs cr 19.58s; warm py 37.30s vs cr 2.02s. |
+| `tavexit.certbot` | ubuntu | ✅ clean (round 981173, 0.9.1321 security re-check). Times: cold py 46.27s vs cr 39.34s; warm py 10.37s vs cr 0.47s. |
+| `systemli.letsencrypt` | ubuntu | ✅ clean (round 981174, 0.9.1321 security re-check). Times: cold py 34.87s vs cr 23.29s; warm py 14.68s vs cr 1.00s. |
+| `mullholland.docker` | ubuntu | ✅ clean (round 981175, 0.9.1321 security re-check). Times: cold py 65.35s vs cr 43.90s; warm py 20.37s vs cr 1.41s. |
+| `linux-system-roles.journald` | ubuntu | ✅ clean (round 981176, 0.9.1321 security re-check). Times: cold py 25.46s vs cr 7.72s; warm py 18.58s vs cr 1.71s. |
+| `lean_delivery.nodejs` | rocky | ✅ clean (round 981177, 0.9.1321 security re-check). Times: cold py 55.43s vs cr 61.68s; warm py 53.66s vs cr 41.73s. |
+| `lean_delivery.kibana` | rocky | ✅ clean (round 981178, 0.9.1321 security re-check). Times: cold py 112.34s vs cr 79.43s; warm py 33.45s vs cr 1.40s. |
+| `kevinquick.ansible_role_squid` | ubuntu | ✅ clean (round 981179, 0.9.1321 security re-check). Times: cold py 76.73s vs cr 57.06s; warm py 22.89s vs cr 3.77s. |
+| `itnok.install_ros2_ubuntu` | ubuntu | ✅ clean (round 981180, 0.9.1321 security re-check). Times: cold py 42.00s vs cr 20.82s; warm py 26.45s vs cr 2.51s. |
+| `infOpen.docker` | ubuntu | ✅ clean (round 981181, 0.9.1321 security re-check). Times: cold py 868.11s vs cr 64.91s; warm py 861.35s vs cr 43.72s. |
+| `fnzv.beats` | ubuntu | ✅ clean (round 981182, 0.9.1321 security re-check). Times: cold py 41.97s vs cr 25.23s; warm py 12.19s vs cr 1.68s. |
+| `evrardjp.keepalived` | ubuntu | ✅ clean (round 981183, 0.9.1321 security re-check). Times: cold py 127.57s vs cr 112.83s; warm py 111.43s vs cr 92.77s. |
+| `escalate.influxdb` | rocky | ✅ clean (round 981184, 0.9.1321 security re-check). Times: cold py 16.65s vs cr 13.90s; warm py 15.09s vs cr 0.52s. |
+| `chusiang.php7` | ubuntu | ✅ clean (round 981185, 0.9.1321 security re-check). Times: cold py 43.27s vs cr 29.49s; warm py 44.44s vs cr 23.96s. |
+| `andrewrothstein.zookeeper-cluster` | ubuntu | ✅ clean (round 981186, 0.9.1321 security re-check). Times: cold py 43.40s vs cr 27.17s; warm py 18.10s vs cr 1.38s. |
+| `andrewrothstein.gitlab_runner` | rocky | ✅ clean after fix (round 981187 divergent: SSH 'Too many authentication failures' on plugin upload (infra flake, not krikri); confirmed round 982023). Times (confirm round): cold py 28.75s vs cr 19.60s; warm py 19.06s vs cr 0.98s. |
+| `Turgon37.ssh_server` | ubuntu | ✅ clean (round 981188, 0.9.1321 security re-check). Times: cold py 19.18s vs cr 8.01s; warm py 15.42s vs cr 1.76s. |
+| `Temelio.statsd` | ubuntu | ✅ clean (round 981189, 0.9.1321 security re-check). Times: cold py 108.23s vs cr 83.51s; warm py 105.35s vs cr 63.09s. |
+| `KAMI911.java_open_jdk11` | ubuntu | ✅ clean (round 981190, 0.9.1321 security re-check). Times: cold py 66.94s vs cr 27.22s; warm py 50.62s vs cr 8.02s. |
+| `wunzeco.consul-template` | rocky | ✅ clean (round 981191, 0.9.1321 security re-check). Times: cold py 28.10s vs cr 16.26s; warm py 16.12s vs cr 1.20s. |
+| `tschoonj.ansible_role_guacamole_exporter` | rocky | ⚠️ harness race (round 981192): a `delegate_to: localhost` download to a fixed controller `/tmp` path is shared by both engines running in parallel - not a krikri bug. Times: cold py 28.39s vs cr 26.17s; warm py 6.59s vs cr 0.49s. |
+| `pluggero.swaywm` | ubuntu | ✅ clean (round 981193, 0.9.1321 security re-check). Times: cold py 235.80s vs cr 162.22s; warm py 66.05s vs cr 3.21s. |
+| `openmicroscopy.ansible-role-prometheus` | rocky | ✅ clean (round 981194, 0.9.1321 security re-check). Times: cold py 21.84s vs cr 17.97s; warm py 22.08s vs cr 1.95s. |
+| `mrlesmithjr.manage_lvm` | rocky | ✅ clean (round 981195, 0.9.1321 security re-check). Times: cold py 19.40s vs cr 31.35s; warm py 14.08s vs cr 0.77s. |
+| `mrlesmithjr.manage-lvm` | rocky | ✅ clean (round 981196, 0.9.1321 security re-check). Times: cold py 23.34s vs cr 28.51s; warm py 15.11s vs cr 0.83s. |
+| `mrlesmithjr.kea-dhcp` | rocky | ✅ clean (round 981197, 0.9.1321 security re-check). Times: cold py 32.51s vs cr 41.15s; warm py 10.01s vs cr 0.56s. |
+| `moletti.apt` | ubuntu | ✅ clean (round 981198, 0.9.1321 security re-check). Times: cold py 11.17s vs cr 5.39s; warm py 9.81s vs cr 0.81s. |
+| `juju4.harden_sysctl` | rocky | ✅ clean (round 981199, 0.9.1321 security re-check). Times: cold py 76.39s vs cr 14.73s; warm py 61.20s vs cr 2.42s. |
