@@ -93,20 +93,56 @@ jobs:
           docker pull busybox:latest
           docker tag busybox:latest localhost/krikri-playbook-compat:latest
 
+      - name: Cache spec compiler caches
+        # spec-parallel.sh compiles one spec binary per bucket (unit,
+        # integration, lint) into per-bucket cache dirs. Without this cache
+        # every CI run pays three cold compiles; with it only the first run
+        # after a dependency change does. Crystal's cache is content-addressed
+        # and revalidates against source changes, so a stale-hit is safe.
+        uses: actions/cache@v4
+        with:
+          path: /root/.cache/krikri-spec-parallel
+          key: spec-parallel-${{ runner.os }}-${{ hashFiles('shard.lock') }}
+          restore-keys: |
+            spec-parallel-${{ runner.os }}-
+
       - name: Run specs
-        # Pragmatic mitigation, not a fix: spec/unit/filter_batch2_spec.cr's
-        # "strftime rejects non-datetime targets" example started failing
-        # intermittently in CI on 2026-09-22 (~4 of 7 runs that day) as an
-        # unhandled Crinja::RuntimeError escaping the example's own `rescue e`
-        # clause - never reproduced locally (isolated file or full suite,
-        # multiple runs) or in a fresh clone inside the exact CI container
-        # image, with or without a --cpus constraint. Root cause not pinned
-        # down despite that investigation; retrying absorbs the rare case
-        # without masking a real, consistently-reproducible failure (a
-        # genuine regression fails all 3 attempts). Revisit with a real fix
-        # if this recurs with more evidence (e.g. it starts failing a
-        # DIFFERENT spec, or a retry stops being enough).
-        run: crystal spec || crystal spec || crystal spec
+        # Runs the suite as three parallel crystal spec processes (unit,
+        # integration, lint), each with its own CRYSTAL_CACHE_DIR so the
+        # concurrent compilers never contend on one lock; wall time drops to
+        # roughly the integration bucket's own. The script exits non-zero if
+        # any bucket fails or exceeds SPEC_PARALLEL_TIMEOUT, so CI still
+        # fails on a real regression, and the single retry reruns all
+        # buckets - a genuine, reproducible failure fails both attempts.
+        #
+        # Flake history: on 2026-09-22 spec/unit/filter_batch2_spec.cr's
+        # strftime error-path example failed intermittently in CI (~4 of 7
+        # runs) and was papered over with a `crystal spec` x3 retry. That
+        # comment blamed a Crinja::RuntimeError escaping the example's
+        # `rescue e` clause, but both the claim and the code are stale:
+        # Crinja has since been removed entirely and the example was
+        # rewritten against the krikri-jinja engine. A 2026-09-27
+        # re-investigation ran the unit bucket 43x and the full suite 7x -
+        # one under CI's actual default (defined) order, six with
+        # `--order <seed>` randomized - and the strftime rejection examples
+        # never failed on the current engine; their krikri-jinja path is
+        # deterministic (each delegated filter call builds a fresh
+        # FilterEngine, and engine registrations happen only at require
+        # time). Randomized order is NOT CI's default - plain `crystal spec`
+        # runs examples in defined order - but it did expose unrelated
+        # order-dependent test bugs, most importantly role_loader_spec's
+        # FQCN example, which failed about half of randomized unit-bucket
+        # runs because two fixtures wrote different task content to the
+        # same my_collections/.../installer/tasks/main.yml path while
+        # RoleLoader's parsed-YAML cache outlives the per-example fixture
+        # wipe; that is fixed by giving the fixtures distinct role names
+        # (also a prerequisite for ever enabling randomized order here).
+        # The bucket split additionally isolates each bucket's process from
+        # state leaked by the others' specs.
+        env:
+          SPEC_PARALLEL_TIMEOUT: 900
+          SPEC_PARALLEL_CACHE_ROOT: /root/.cache/krikri-spec-parallel
+        run: scripts/spec-parallel.sh || scripts/spec-parallel.sh
 
       - name: Lint (ameba)
         # lib/ameba/bin/ameba does not exist after `shards install`:

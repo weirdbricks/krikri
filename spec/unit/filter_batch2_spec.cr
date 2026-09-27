@@ -90,11 +90,17 @@ describe "filter batch 2 (P2.8-P2.14, P2.15 verification)" do
     end
 
     it "rejects a non-string piped value (the old to_datetime idiom)" do
-      filter_batch2_crinja_render("{{ '2024-03-05 07:08:09' | to_datetime | strftime('%H:%M') }}").should contain("ERR")
+      result = filter_batch2_crinja_render("{{ '2024-03-05 07:08:09' | to_datetime | strftime('%H:%M') }}")
+      # This error-path example failed intermittently in CI before the
+      # Crinja removal and was never reproduced since. If it ever fails
+      # again, show the actual render output so the failing engine layer
+      # is visible, instead of a bare contains() mismatch.
+      fail("render did not fail as expected; output was #{result.inspect}") unless result.includes?("ERR")
     end
 
     it "rejects a non-numeric epoch argument" do
-      filter_batch2_crinja_render("{{ '%Y' | strftime('not-an-epoch') }}").should contain("ERR")
+      result = filter_batch2_crinja_render("{{ '%Y' | strftime('not-an-epoch') }}")
+      fail("render did not fail as expected; output was #{result.inspect}") unless result.includes?("ERR")
     end
   end
 

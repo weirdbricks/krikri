@@ -680,14 +680,22 @@ describe Krikri::RoleLoader do
     # `regex_replace(ansible_collection_name ~ '.', '')`, computing a
     # short service name from the FQCN). Undefined for a plain bare-name
     # role, since that isn't a real collection role at all.
+    # Fixture note: this example and the FQCN-resolves-via-ANSIBLE_COLLECTIONS_PATH
+    # example above use DIFFERENT collection role names on purpose. RoleLoader
+    # caches parsed YAML by file path for the whole process, and this file's
+    # before_each wipes the fixture directory but not that cache - two examples
+    # writing different task content to the same
+    # my_collections/.../roles/<name>/tasks/main.yml path made whichever ran
+    # second read the first's stale content, so a shared "installer" name
+    # failed this file ~half the time under spec's default randomized order.
     collections_root = File.join(ROLES_ROOT, "my_collections")
-    role_dir = File.join(collections_root, "ansible_collections", "acme", "widgets", "roles", "installer")
+    role_dir = File.join(collections_root, "ansible_collections", "acme", "widgets", "roles", "installer_meta")
     Dir.mkdir_p(File.join(role_dir, "tasks"))
     File.write(File.join(role_dir, "tasks", "main.yml"), "- name: t\n  ansible.builtin.debug:\n    msg: hi\n")
 
     ENV["ANSIBLE_COLLECTIONS_PATH"] = collections_root
     begin
-      tasks, _ = Krikri::RoleLoader.load_roles(roles_yaml("- acme.widgets.installer"), fresh_play, ROLES_ROOT)
+      tasks, _ = Krikri::RoleLoader.load_roles(roles_yaml("- acme.widgets.installer_meta"), fresh_play, ROLES_ROOT)
       tasks[0].ansible_collection_name.should eq("acme.widgets")
     ensure
       ENV.delete("ANSIBLE_COLLECTIONS_PATH")
