@@ -68,18 +68,42 @@ module Krikri
     def self.serve(& : String, JSON::Any -> String) : Nil
       loop do
         frame = read_frame(STDIN)
-        request = JSON.parse(String.new(frame))
-
-        result = if batch = request["batch"]?
-                   run_batch(batch) { |name, config| yield name, config }
-                 else
-                   yield request["module"].as_s, request["config"]
-                 end
-
+        result = dispatch_frame(frame) { |name, config| yield name, config }
         write_frame(STDOUT, result)
       end
     rescue IO::EOFError
       # STDIN closed - clean shutdown.
+    end
+
+    # One request's dispatch, isolated: a module handler that RAISES (a
+    # Crystal-level bug in the module, an unexpected nil, anything
+    # fail_json never got a chance to report) used to propagate out of
+    # `serve`'s loop and kill the whole daemon process, taking every
+    # later task for that host down with it and forcing a full daemon
+    # respawn mid-play. The controller's one-shot path catches the same
+    # class of exception and turns it into a failed-task JSON (see
+    # `PluginManager`'s "Execution failed" rescue) - this returns the
+    # SAME shape so the daemon transport stays result-compatible with
+    # every other transport, and the daemon itself lives on to serve the
+    # next request. Frame-level corruption (from `read_frame` itself)
+    # still kills the process: that is a broken pipe/protocol, not a
+    # module failure.
+    private def self.dispatch_frame(frame : Bytes, & : String, JSON::Any -> String) : String
+      request = JSON.parse(String.new(frame))
+
+      if batch = request["batch"]?
+        run_batch(batch) { |name, config| yield name, config }
+      else
+        yield request["module"].as_s, request["config"]
+      end
+    rescue ex
+      {
+        "changed"             => false,
+        "failed"              => true,
+        "msg"                 => "Plugin execution failed: #{ex.message}",
+        "exception_class"     => ex.class.name,
+        "_connection_failure" => true,
+      }.to_json
     end
 
     # Perf item 3: a batch request carries a

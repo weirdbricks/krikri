@@ -67,13 +67,12 @@ ameba                               # lint
 "still broken" result against a real host - plugin binaries compile separately from the main
 executable and a manual build of just one leaves the other stale.
 
-**Adding a new plugin** (e.g. a new module) needs registering in *three* places, easy to
-miss one:
+**Adding a new plugin** (e.g. a new module) needs registering in *two* places:
 1. `plugins/<name>.cr` - the plugin itself (see any existing one for the `BasePlugin` pattern).
 2. `src/krikri/playbook_parser.cr`'s `AVAILABLE_PLUGINS` array - module-name dispatch.
-3. `build.sh`'s `PLUGINS` array - or `./build.sh` silently never rebuilds it. (This list was
-   already found out of sync once - `apt_key` had no entry despite a real compiled binary - so
-   don't assume it's currently complete without checking.)
+
+`build.sh` auto-discovers plugins from `plugins/*.cr`, so the old third-place
+registration (and its past sync drift, e.g. the `apt_key` omission) is gone.
 
 ## Version bumping
 

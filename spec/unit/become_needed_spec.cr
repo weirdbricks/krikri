@@ -49,5 +49,10 @@ describe Krikri::PluginManager do
       Krikri::PluginManager.remote_plugin_target("copy", true, "appuser", "root")
         .should eq("sudo -n -u appuser -- #{Krikri::PluginManager.remote_plugin_dir(nil)}/copy")
     end
+
+    it "shell-quotes a hostile become_user as defense in depth" do
+      target = Krikri::PluginManager.remote_plugin_target("copy", true, "root; rm -rf /", "deploy")
+      target.should contain("sudo -n -u 'root; rm -rf /' --")
+    end
   end
 end

@@ -284,6 +284,50 @@ describe "fat plugin binary --daemon mode" do
     end
   end
 
+  it "returns a structured error frame when a request raises at dispatch time, and keeps serving after it" do
+    pending! "fat plugin binary not built (run ./build.sh first)" unless File.exists?(daemon_binary)
+
+    process = Process.new(daemon_binary, ["--daemon"],
+      input: Process::Redirect::Pipe, output: Process::Redirect::Pipe, error: Process::Redirect::Close)
+
+    begin
+      # Malformed JSON in the frame - JSON.parse raises at dispatch time.
+      raw = "not json{"
+      bytes = raw.to_slice
+      process.input.write_bytes(bytes.size.to_u32, IO::ByteFormat::BigEndian)
+      process.input.write(bytes)
+      process.input.flush
+
+      length = process.output.read_bytes(UInt32, IO::ByteFormat::BigEndian)
+      response = Bytes.new(length)
+      process.output.read_fully(response)
+      error = JSON.parse(String.new(response))
+      error["failed"].as_bool.should be_true
+      error["msg"].as_s.should contain("Plugin execution failed")
+
+      # Well-formed JSON but no "module" key - request["module"] raises.
+      request = {"config" => {"host" => {"name" => "localhost"}}}.to_json
+      bytes = request.to_slice
+      process.input.write_bytes(bytes.size.to_u32, IO::ByteFormat::BigEndian)
+      process.input.write(bytes)
+      process.input.flush
+
+      length = process.output.read_bytes(UInt32, IO::ByteFormat::BigEndian)
+      response = Bytes.new(length)
+      process.output.read_fully(response)
+      error = JSON.parse(String.new(response))
+      error["failed"].as_bool.should be_true
+
+      # Neither dispatch exception killed the daemon - the SAME process
+      # still answers a real request afterward.
+      ok = daemon_send(process, "command", {"host" => {"name" => "localhost", "user" => ENV["USER"]? || "root", "port" => 22}, "vars" => {} of String => String, "params" => {"_raw_params" => "echo survived"}})
+      ok["stdout"]?.try(&.as_s).should eq("survived")
+    ensure
+      process.input.close rescue nil
+      process.wait rescue nil
+    end
+  end
+
   it "exits cleanly when stdin is closed" do
     pending! "fat plugin binary not built (run ./build.sh first)" unless File.exists?(daemon_binary)
 

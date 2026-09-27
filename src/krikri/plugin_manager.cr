@@ -1334,7 +1334,7 @@ module Krikri
     def self.remote_plugin_target(plugin_name : String, become : Bool, become_user : String?, remote_user : String? = nil) : String
       simple_name = simple_plugin_name(plugin_name)
       remote_plugin_path = "#{remote_plugin_dir(remote_user)}/#{simple_name}"
-      become_needed?(become, become_user, remote_user) ? "sudo -n -u #{become_user} -- #{remote_plugin_path}" : remote_plugin_path
+      become_needed?(become, become_user, remote_user) ? "sudo -n -u #{Shell.quote_arg(become_user.to_s)} -- #{remote_plugin_path}" : remote_plugin_path
     end
 
     # `ANSIBLE_BECOME_ALLOW_SAME_USER` - real Ansible's own config knob,
