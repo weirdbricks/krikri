@@ -30,21 +30,10 @@ it does not linger at the top. This file carries no per-round
 narrative or fix history - `git log` is the record of what was found
 and fixed and when.
 
-**Currently at `0.9.1337`.**
+**Currently at `0.9.1340`.**
 
 ## Open gaps
 
-- **Template-module render crashes on a `KrikriJinja::Markup` value**
-  (`xanmanning.k3s` "Ensure k3s service unit file is present"; rounds
-  979194 and 986000): `template:` of the role's own `k3s.service.j2`
-  fails with "Failed to render template: line 0: value of type
-  KrikriJinja::Markup is not JSON-compatible" where real
-  ansible-playbook 2.19.11 renders the unit file fine; the role runs
-  clean on krikri up to that task. This - not the (already fixed in
-  0.9.1330) skipped-block prefix cosmetic - is what makes the role
-  DIVERGENT on real hosts. Not yet root-caused - the engine's
-  macro/callable branches wrap results in Markup only under autoescape,
-  and neither the template nor the role's vars use `| safe`/`| e`.
 - **`konstruktoid.hardening` real-host parity is unconfirmed** (rounds
   975062/978000, 2026-09-26): real `ansible-playbook` doesn't complete
   within 30 minutes on this role even on a fresh host (`rc=124` both
