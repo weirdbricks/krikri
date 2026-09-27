@@ -53,44 +53,21 @@ in wall-clock time - see **Performance** below.
 
 ### What's structurally different (by design, not a gap)
 
-Third-party COLLECTION Python modules aren't reimplemented wholesale -
-this project doesn't ship or vendor a collections directory, so a
-`community.*`/`bodsch.*`/etc. module only runs if it's been natively
-ported into a compiled plugin binary (a role's OWN private `library/*.py`
-module is unaffected either way - that always runs fine, delegated to the
-target's real python3). But that porting isn't hypothetical or "not our
-problem": every one of the **6,680+ real Galaxy roles** this project is
-benchmarked against (see **How this differs** above) surfaces whichever
-third-party modules that role's own tasks actually call, and the ones
-that show up often enough get natively ported the same way an
-`ansible.builtin` gap does - found via a real role hitting it, fixed,
-verified against real `ansible-playbook` output. **62 third-party
-collection modules are natively ported as of this writing** - the most
-common `community.general`/`community.docker`/`community.crypto`/
-`community.mysql`/`community.rabbitmq` modules real-world roles reach
-for (`docker_container`, `docker_image`, `archive`, `ufw`, `htpasswd`,
-`openssl_csr`, `mysql_db`, and more - see `AVAILABLE_PLUGINS` in
-`src/krikri/playbook_parser.cr` for the current full list). A module
-outside that set still hard-stops cleanly (`"krikri does not yet have
-module 'x.y.z' implemented"`, see **What's missing** below) rather than
-silently skipping - the gap is real, but it shrinks by usage frequency,
-not by chasing collection completeness for its own sake.
+Third-party collection modules aren't vendored wholesale - a
+`community.*`/etc. module only runs once natively ported into a compiled
+plugin binary (a role's own private `library/*.py` module is unaffected
+either way). Porting is usage-driven: every one of the **6,680+ real
+Galaxy roles** this project is benchmarked against surfaces whichever
+third-party modules real tasks actually call, and **62 are natively
+ported as of this writing** (see `AVAILABLE_PLUGINS` in
+`src/krikri/playbook_parser.cr`). Anything else hard-stops cleanly
+(`"krikri does not yet have module 'x.y.z' implemented"`) rather than
+silently skipping.
 
-Cloud provider *modules* are a genuine, deliberate structural exclusion
-for every provider **except AWS/EC2**, which is fully supported as of
-this writing: `ec2_instance` plus the minimum cluster needed to actually
-use it - `ec2_key`, `ec2_security_group`, `ec2_vpc_net_info`,
-`ec2_vpc_subnet_info`, `ec2_ami_info` (all real, signed EC2 Query API
-calls, not stubs) - alongside the pre-existing `ec2_metadata_facts`.
-Other providers' resource-management modules (`azure_rm_*`, GCP, etc.)
-remain out of scope - these model an entire cloud provider's API surface
-rather than a single host-local operation, and AWS/EC2 was a deliberate,
-scoped exception rather than an opening of that whole category. Cloud
-*inventory* plugins are a similar partial exception: `aws_ec2` is
-implemented (real signed EC2 API calls), alongside
-`host_list`/`ini`/`yaml`/`constructed`; other providers' inventory
-plugins (azure, gcp, openstack, ...) are not. See **What's missing**
-below.
+Cloud provider modules are out of scope **except AWS/EC2**, which is
+fully supported (`ec2_instance` and its supporting cluster, plus the
+`aws_ec2` inventory plugin) - a deliberate, scoped exception, not an
+opening of the whole category. See **What's missing** below.
 
 ---
 
@@ -172,28 +149,6 @@ shards install
 # With options
 ./bin/krikri-playbook --check --diff -i inventory.ini playbook.yml
 ```
-
----
-
-## 📁 Project Structure
-
-```
-krikri-playbook/
-├── krikri-playbook.cr              # CLI entry point
-├── krikri-lint.cr                  # krikri-lint CLI entry point
-├── src/krikri/            # Engine: parser, task executor, SSH,
-│                                 # inventory, roles, loops, vault, facts
-├── src/krikri_lint/       # Lint engine: rules, config, fixer, profiles
-├── plugins/                     # One binary per Ansible module
-├── spec/                        # crystal spec unit + integration tests
-├── compat/                      # Docker-based real-ansible-playbook
-│                                 # compatibility harness
-├── testing/                     # Manual smoke-test fixture playbooks
-├── build.sh                     # Build script (all plugins + CLI)
-└── shard.yml                    # Dependencies
-```
-
-Go to [`plugins/`](plugins) to see the implemented plugins.
 
 ---
 
