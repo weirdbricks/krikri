@@ -85,6 +85,32 @@ module PluginSpecHelper
   ensure
     File.delete(probe) if probe && (File.exists?(probe) || File.symlink?(probe))
   end
+
+  # Whether the spec process itself runs as root (uid 0). Some plugin
+  # behaviors only exist as root (sysctl -w actually writing the live
+  # kernel value) while others only reproduce as non-root (unarchive's
+  # Uid/Gid idempotency, where real Ansible only ignores a tar
+  # Uid/Gid-differs line when run as root) - both gate on this same
+  # probe so the privilege condition is stated and checked one way.
+  def self.running_as_root? : Bool
+    LibC.getuid == 0
+  end
+
+  # Whether the environment can apply file capabilities at all: a real
+  # `setcap` on a throwaway file succeeds. Needs root or CAP_SETFCAP;
+  # rootless containers reject every setcap operation, and on such an
+  # environment real Ansible fails the task identically, so specs
+  # pinning the changed path (which only a capability-capable
+  # environment can produce) probe this first and skip rather than
+  # assert success the environment can never deliver.
+  def self.setcap_supported? : Bool
+    probe = File.tempname("setcap-probe")
+    File.write(probe, "")
+    Process.run("setcap", ["cap_chown+eip", probe],
+      output: Process::Redirect::Close, error: Process::Redirect::Close).success?
+  ensure
+    File.delete(probe) if probe && File.exists?(probe)
+  end
 end
 
 # Shared helper for krikri-lint task-rule specs: write YAML, load it,

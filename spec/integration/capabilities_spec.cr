@@ -28,11 +28,7 @@ describe "capabilities plugin result shape" do
   end
 
   it "returns changed/state/msg/stdout on the changed path (needs CAP_SETFCAP)" do
-    probe = File.tempname("capabilities-probe")
-    File.write(probe, "")
-    setcap_ok = Process.run("setcap", ["cap_chown+eip", probe]).success?
-    File.delete(probe)
-    pending! "needs CAP_SETFCAP (setcap not permitted in this environment)" unless setcap_ok
+    pending! "needs CAP_SETFCAP (setcap not permitted in this environment)" unless PluginSpecHelper.setcap_supported?
 
     path = File.tempname("capabilities-changed")
     File.write(path, "")

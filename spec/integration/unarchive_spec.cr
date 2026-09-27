@@ -420,7 +420,7 @@ describe "unarchive plugin" do
     # real-world release tarball). This spec runs as whatever non-root
     # user `crystal spec` itself runs as - skip it if that's ever not
     # true, since the real bug only reproduces as non-root.
-    pending! "must run as non-root to reproduce/verify this" if LibC.getuid == 0
+    pending! "must run as non-root to reproduce/verify this" if PluginSpecHelper.running_as_root?
 
     dest = fresh_dest("tar-foreign-owner-idempotent")
     PluginSpecHelper.run("unarchive", {"src" => File.join(TMP_DIR, "foreign_owner.tar.gz"), "dest" => dest, "mode" => "0755"})

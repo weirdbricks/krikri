@@ -139,7 +139,7 @@ describe "sysctl plugin" do
     # needs to undo.
     key_path = "/proc/sys/net/ipv4/ip_local_port_range"
     pending! "no #{key_path} on this host" unless File.exists?(key_path)
-    pending! "sysctl -w needs root" unless LibC.getuid == 0
+    pending! "sysctl -w needs root" unless PluginSpecHelper.running_as_root?
     current_value = File.read(key_path).strip.split(/\s+/).join(" ")
 
     conf = fresh_conf("space-value.conf")
