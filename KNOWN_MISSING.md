@@ -34,17 +34,17 @@ and fixed and when.
 
 ## Open gaps
 
-- **Role-dependency tasks sometimes lose their `TASK [role : name]`
-  prefix** (`buluma.roundcubemail`, `xanmanning.k3s`; round 979000,
-  2026-09-26): real `ansible-playbook` prints `TASK [buluma.httpd :
-  Modify selinux settings]` for a task pulled in via a role's own
-  `meta/main.yml` `dependencies:`; krikri sometimes prints just `TASK
-  [Modify selinux settings]`, dropping the dependency role's name.
-  Cosmetic only (recap counts match) but not yet root-caused: a minimal
-  repro reproducing the same `dependencies:` + `block:`/`when:` shape
-  (including running the actual cached `buluma.roundcubemail`/
-  `buluma.httpd` role checkout directly) rendered the prefix correctly
-  both times, so the actual trigger is still unknown.
+- **Template-module render crashes on a `KrikriJinja::Markup` value**
+  (`xanmanning.k3s` "Ensure k3s service unit file is present"; rounds
+  979194 and 986000): `template:` of the role's own `k3s.service.j2`
+  fails with "Failed to render template: line 0: value of type
+  KrikriJinja::Markup is not JSON-compatible" where real
+  ansible-playbook 2.19.11 renders the unit file fine; the role runs
+  clean on krikri up to that task. This - not the (already fixed in
+  0.9.1330) skipped-block prefix cosmetic - is what makes the role
+  DIVERGENT on real hosts. Not yet root-caused - the engine's
+  macro/callable branches wrap results in Markup only under autoescape,
+  and neither the template nor the role's vars use `| safe`/`| e`.
 - **No role `argument_spec` (`meta/argument_specs.yml`) validation**
   (`robertdebock.vault_agent`; round 979000, 2026-09-26): real Ansible's
   synthetic "Validating arguments against arg spec 'main'" task fails
