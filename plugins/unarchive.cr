@@ -127,6 +127,15 @@ module Krikri
   # include:/exclude: are mutually exclusive (real Ansible's own
   # argument-spec validation) - giving both fails immediately.
   class UnarchivePlugin < BasePlugin
+    # ansible.builtin.unarchive's `type: bool` options, in the real
+    # argument-spec declaration order (ansible-doc -j
+    # ansible.builtin.unarchive). Validated at module setup by
+    # BasePlugin#validate_bool_params! - see its block comment for the
+    # real-Ansible semantics and message wording.
+    protected def bool_params : Array(String)
+      %w[copy decrypt keep_newer list_files remote_src unsafe_writes validate_certs]
+    end
+
     MAX_REDIRECTS = 10
 
     def execute : PluginResult
@@ -164,6 +173,17 @@ module Krikri
       if error = validate_src_and_dest(src, dest)
         return PluginResult.new(changed: false, failed: true, msg: error)
       end
+
+      # Real AnsibleModule validates bool-typed params at module setup -
+      # but live-verified against ansible-core 2.19.11, unarchive's own
+      # dest-existence check ("dest '...' must be an existing dir") and
+      # the controller's src lookup both still fire BEFORE it, and an
+      # existing creates: path does NOT save an invalid `remote_src:
+      # blah` from failing. This engine therefore validates after
+      # resolve_src/validate_src_and_dest (mirroring the src/dest gates)
+      # but before the creates: short-circuit below - which now sits
+      # after validation exactly like real's module main() does.
+      validate_bool_params!
 
       begin
         run(src, dest)

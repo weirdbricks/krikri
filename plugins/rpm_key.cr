@@ -33,7 +33,16 @@ module Krikri
   # - validate_certs: default true; false skips TLS verification for a
   #   `key:` URL.
   class RpmKeyPlugin < BasePlugin
+    # ansible.builtin.rpm_key's `type: bool` options, in the real argument-spec
+    # declaration order (ansible-doc -j ansible.builtin.rpm_key). Validated at
+    # module setup by BasePlugin#validate_bool_params! - see its block
+    # comment for the real-Ansible semantics and message wording.
+    protected def bool_params : Array(String)
+      %w[validate_certs]
+    end
+
     def execute : PluginResult
+      validate_bool_params!
       key = @params["key"]?
       return PluginResult.new(changed: false, failed: true, msg: "missing required arguments: key") unless key
 

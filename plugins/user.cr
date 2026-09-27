@@ -118,6 +118,27 @@ module Krikri
   # fails, on a value that doesn't look hashed - this plugin passes
   # `password:` straight through either way).
   class UserPlugin < BasePlugin
+    # ansible.builtin.user's `type: bool` options, in the real argument-spec
+    # declaration order (ansible-doc -j ansible.builtin.user). Validated at
+    # module setup by BasePlugin#validate_bool_params! - see its block
+    # comment for the real-Ansible semantics and message wording.
+    protected def bool_params : Array(String)
+      %w[append create_home force generate_ssh_key hidden local move_home non_unique
+        password_lock remove system]
+    end
+
+    protected def bool_param_aliases : Hash(String, String)
+      {
+        "createhome" => "create_home",
+      }
+    end
+
+    # These default to None in real's argspec, so an explicit null
+    # skips type validation there (see BasePlugin#bool_params_none_default).
+    protected def bool_params_none_default : Array(String)
+      %w[hidden password_lock]
+    end
+
     def execute : PluginResult
       # Real ansible.builtin.user's argument_spec declares `name` with
       # alias `user` (`name=dict(type='str', required=True,
@@ -135,6 +156,12 @@ module Krikri
 
       name = @params["name"]?
       return missing_param("name") unless name
+
+      # Bool-typed params: real AnsibleModule type-converts them at module
+      # setup, after the required-args/alias-resolution gates above - now
+      # via the shared BasePlugin#validate_bool_params! (see its block
+      # comment).
+      validate_bool_params!
 
       # Real Ansible's own __init__ check, exact message (live-verified:
       # `ansible localhost -m user -a 'name=x umask=027 local=true'`

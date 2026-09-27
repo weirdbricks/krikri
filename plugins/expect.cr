@@ -66,11 +66,20 @@ TIOCSCTTY = 0x540E_u64
 
 module Krikri
   class ExpectPlugin < BasePlugin
+    # ansible.builtin.expect's `type: bool` options, in the real argument-spec
+    # declaration order (ansible-doc -j ansible.builtin.expect). Validated at
+    # module setup by BasePlugin#validate_bool_params! - see its block
+    # comment for the real-Ansible semantics and message wording.
+    protected def bool_params : Array(String)
+      %w[echo]
+    end
+
     # (pattern key for real's "No remaining responses for '<key>'" msg,
     # compiled regex, answers, whether the task gave a LIST response)
     alias Response = {String, Regex, Array(String), Bool}
 
     def execute : PluginResult
+      validate_bool_params!
       command = @params["command"]? || @params["_raw_params"]?
       return PluginResult.new(changed: false, failed: true, msg: "missing required arguments: command") unless command
 

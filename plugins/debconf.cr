@@ -28,7 +28,16 @@ module Krikri
   # shape; a `vtype: password` task here always re-applies (`changed:
   # true` every run) rather than silently under-reporting drift.
   class DebconfPlugin < BasePlugin
+    # ansible.builtin.debconf's `type: bool` options, in the real argument-spec
+    # declaration order (ansible-doc -j ansible.builtin.debconf). Validated at
+    # module setup by BasePlugin#validate_bool_params! - see its block
+    # comment for the real-Ansible semantics and message wording.
+    protected def bool_params : Array(String)
+      %w[unseen]
+    end
+
     def execute : PluginResult
+      validate_bool_params!
       pkg = @params["name"]? || @params["pkg"]?
       return missing_param("name") unless pkg
 

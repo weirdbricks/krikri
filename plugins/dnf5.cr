@@ -17,12 +17,35 @@ module Krikri
   # words positionally), and this plugin's own argument-spec validation.
   # dnf5 shares ansible-core's `yumdnf_argument_spec` but ADDS
   # `auto_install_module_deps`/`best` and does NOT accept dnf's
-  # `use_backend` or the retired `install_repoquery`.
+  # `use_backend`. (2.19 still validates the retired `install_repoquery`
+  # as a bool - live-verified - so it stays in the supported set.)
   #
   # Live-verified against real ansible-core 2.21.4 on Fedora 41 (dnf5
   # 5.2.17): the whole option matrix is checked side-by-side in
   # testing/dnf5/dnf5_options.yml.
   class Dnf5Plugin < BasePlugin
+    # ansible.builtin.dnf5's `type: bool` options, in the real argument-spec
+    # declaration order (ansible-doc -j ansible.builtin.dnf5). Validated at
+    # module setup by BasePlugin#validate_bool_params! - see its block
+    # comment for the real-Ansible semantics and message wording.
+    protected def bool_params : Array(String)
+      %w[allow_downgrade allowerasing auto_install_module_deps autoremove best bugfix
+        cacheonly disable_gpg_check download_only install_repoquery install_weak_deps nobest
+        security skip_broken sslverify update_cache update_only validate_certs]
+    end
+
+    protected def bool_param_aliases : Hash(String, String)
+      {
+        "expire-cache" => "update_cache",
+      }
+    end
+
+    # These default to None in real's argspec, so an explicit null skips
+    # type validation there (see BasePlugin#bool_params_none_default).
+    protected def bool_params_none_default : Array(String)
+      %w[best nobest]
+    end
+
     include PluginHelpers::RpmPackage
 
     private def pkg_manager_binary : String
@@ -99,14 +122,17 @@ module Krikri
     end
 
     # Real dnf5's supported set = shared yumdnf_argument_spec + auto_install_module_deps
-    # + best, and (unlike dnf) WITHOUT use_backend / install_repoquery. The
+    # + best and (unlike dnf) WITHOUT use_backend. 2.19's dnf5 argspec
+    # does still validate install_repoquery as a bool (live-verified:
+    # `dnf5: {install_repoquery: blah}` fails with the bool wording), so
+    # it stays supported here. The
     # trailing "(expire-cache, pkg)" is real's aliases appended to the list.
     private def unsupported_rejection : PluginResult?
       dnf5_supported = {"allow_downgrade", "allowerasing", "auto_install_module_deps",
                         "autoremove", "best", "bugfix", "cacheonly", "conf_file",
                         "disable_excludes", "disable_gpg_check", "disable_plugin",
                         "disablerepo", "download_dir", "download_only", "enable_plugin",
-                        "enablerepo", "exclude", "install_weak_deps", "installroot",
+                        "enablerepo", "exclude", "install_repoquery", "install_weak_deps", "installroot",
                         "list", "lock_timeout", "name", "nobest", "pkg", "releasever",
                         "security", "skip_broken", "sslverify", "state", "update_cache",
                         "update_only", "validate_certs", "expire-cache"}
@@ -121,33 +147,19 @@ module Krikri
              "Supported parameters include: " \
              "allow_downgrade, allowerasing, auto_install_module_deps, autoremove, best, bugfix, " \
              "cacheonly, conf_file, disable_excludes, disable_gpg_check, disable_plugin, disablerepo, " \
-             "download_dir, download_only, enable_plugin, enablerepo, exclude, install_weak_deps, " \
+             "download_dir, download_only, enable_plugin, enablerepo, exclude, install_repoquery, install_weak_deps, " \
              "installroot, list, lock_timeout, name, nobest, releasever, security, skip_broken, " \
              "sslverify, state, update_cache, update_only, validate_certs (expire-cache, pkg)."
       )
     end
 
-    # Real AnsibleModule fails a bool-typed arg given a non-boolean string
-    # (see plugins/dnf.cr for the full story). The valid-boolean list in
-    # real's message is a Python set serialized in arbitrary order, so the
-    # ELEMENTS (not their order) are what must match.
-    private def bool_rejection : PluginResult?
-      dnf5_bool_params = {"allow_downgrade", "allowerasing", "auto_install_module_deps",
-                          "autoremove", "best", "bugfix", "cacheonly", "disable_gpg_check",
-                          "download_only", "install_weak_deps", "nobest", "security",
-                          "skip_broken", "sslverify", "update_cache", "update_only",
-                          "validate_certs", "expire-cache"}
-      valid_booleans = {"0", "1", "true", "off", "yes", "t", "false", "on", "f", "n", "y", "no"}
-      bad = @params.select { |k, v| dnf5_bool_params.includes?(k) && !valid_booleans.includes?(v.downcase) }.keys.sort!
-      return nil if bad.empty?
-
-      PluginResult.new(
-        changed: false,
-        failed: true,
-        msg: "argument '#{bad.first}' is of type str and we were unable to convert to bool: " \
-             "The value '#{@params[bad.first]}' is not a valid boolean. " \
-             "Valid booleans include: 0, 1, 'y', '0', 'off', 't', 'n', '1', 'f', 'true', 'on', 'false', 'yes', 'no'"
-      )
+    # Real AnsibleModule fails a bool-typed arg given a non-boolean value
+    # at module setup - now via the shared BasePlugin#validate_bool_params!
+    # raised inside the same rejection chain, keeping real's check order
+    # (unsupported params -> bool types -> list coercion -> mutual
+    # exclusion; see plugins/dnf.cr for the message-provenance story).
+    private def bool_rejection : Nil
+      validate_bool_params!
     end
 
     # Real AnsibleModule's `type: list` coercion fails an EXPLICIT None

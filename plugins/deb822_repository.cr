@@ -73,12 +73,30 @@ module Krikri
   # Ansible's own module, which rewrites (not merges) the whole file
   # and reports changed based on a content diff.
   class Deb822RepositoryPlugin < BasePlugin
+    # ansible.builtin.deb822_repository's `type: bool` options, in the real argument-spec
+    # declaration order (ansible-doc -j ansible.builtin.deb822_repository). Validated at
+    # module setup by BasePlugin#validate_bool_params! - see its block
+    # comment for the real-Ansible semantics and message wording.
+    protected def bool_params : Array(String)
+      %w[allow_downgrade_to_insecure allow_insecure allow_weak by_hash check_date
+        check_valid_until enabled pdiffs trusted]
+    end
+
+    # Every bool option here defaults to None in real's argspec, so an
+    # explicit null skips type validation there (see
+    # BasePlugin#bool_params_none_default).
+    protected def bool_params_none_default : Array(String)
+      %w[allow_downgrade_to_insecure allow_insecure allow_weak by_hash check_date
+        check_valid_until enabled pdiffs trusted]
+    end
+
     SOURCES_LIST_D = "/etc/apt/sources.list.d"
     KEYRINGS_DIR   = "/etc/apt/keyrings"
 
     @slug : String = ""
 
     def execute : PluginResult
+      validate_bool_params!
       # Real Ansible rejects ANY parameter outside its own argument_spec
       # at module-arg validation, before any action runs (ansible-core
       # 2.15 has no body_string/body - a body-only task fails with

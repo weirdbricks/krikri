@@ -73,15 +73,36 @@ module Krikri
       "allow_unauthenticated"        => ["allow-unauthenticated"],
       "allow_downgrade"              => ["allow-downgrade", "allow-downgrades", "allow_downgrades"],
       "allow_change_held_packages"   => [] of String,
+      "auto_install_module_deps"     => [] of String,
       "lock_timeout"                 => [] of String,
     }
 
-    # apt.py's bool-typed params, in argument_spec declaration order -
-    # real AnsibleModule's type validation walks the spec in declaration
-    # order and only ever surfaces the first error.
-    private APT_BOOL_PARAMS = %w[update_cache purge install_recommends force autoremove autoclean
-      fail_on_autoremove only_upgrade force_apt_get clean
-      allow_unauthenticated allow_downgrade allow_change_held_packages]
+    # ansible.builtin.apt's `type: bool` options, in the real
+    # argument-spec declaration order (ansible-doc -j ansible.builtin.apt).
+    protected def bool_params : Array(String)
+      %w[allow_change_held_packages allow_downgrade allow_unauthenticated
+        auto_install_module_deps autoclean autoremove clean
+        fail_on_autoremove force force_apt_get install_recommends
+        only_upgrade purge update_cache]
+    end
+
+    protected def bool_param_aliases : Hash(String, String)
+      {
+        "allow-downgrade"       => "allow_downgrade",
+        "allow_downgrades"      => "allow_downgrade",
+        "allow-downgrades"      => "allow_downgrade",
+        "allow-unauthenticated" => "allow_unauthenticated",
+        "install-recommends"    => "install_recommends",
+        "update-cache"          => "update_cache",
+      }
+    end
+
+    # install_recommends/update_cache default to None in real's argspec,
+    # so an explicit null skips type validation there (see
+    # BasePlugin#bool_params_none_default).
+    protected def bool_params_none_default : Array(String)
+      %w[install_recommends update_cache]
+    end
 
     # apt.py's state choice list (2.14: includes build-dep and fixed).
     private APT_STATES = %w[absent build-dep fixed latest present]
@@ -196,21 +217,16 @@ module Krikri
         return choices_error("state", APT_STATES, state)
       end
 
-      # Bool-typed params: a non-boolean string value fails the module
-      # at setup the same way (real check_type_bool via
-      # validate_argument_types; wording live-verified: "argument
-      # 'install_recommends' is of type <class 'str'> and we were unable
-      # to convert to bool: The value 'sometimes' is not a valid
-      # boolean.  Valid booleans include: ..."). Previously this plugin
-      # silently coerced anything non-"true" to false and happily
-      # proceeded where real Ansible never gets past argument
-      # validation.
-      APT_BOOL_PARAMS.each do |bool_param|
-        next unless (raw = @params[bool_param]?)
-        unless bool_convertible?(raw)
-          return bool_type_error(bool_param, raw)
-        end
-      end
+      # Bool-typed params: a non-boolean value fails the module at setup
+      # with real check_type_bool's wording, via the shared BasePlugin
+      # validator (see its own block comment for the full story; message
+      # live-verified against ansible-core 2.19.11: "argument
+      # 'install_recommends' is of type str and we were unable to convert
+      # to bool: The value 'sometimes' is not a valid boolean. Valid
+      # booleans include: ..."). Previously this plugin silently coerced
+      # anything non-"true" to false and happily proceeded where real
+      # Ansible never gets past argument validation.
+      validate_bool_params!
 
       # Real ansible's apt module on a non-Debian-family host: it first
       # auto-installs its python3-apt dependency ("Updating cache and

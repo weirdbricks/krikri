@@ -36,6 +36,14 @@ module Krikri
   # "127.0.0.1  localhost  ip6-..."). A duplicate key (tcp+udp service
   # pairs) becomes a list of field-lists on enumeration only.
   class GetentPlugin < BasePlugin
+    # ansible.builtin.getent's `type: bool` options, in the real argument-spec
+    # declaration order (ansible-doc -j ansible.builtin.getent). Validated at
+    # module setup by BasePlugin#validate_bool_params! - see its block
+    # comment for the real-Ansible semantics and message wording.
+    protected def bool_params : Array(String)
+      %w[fail_key]
+    end
+
     include PluginHelpers::AnsibleArgValidation
 
     # Databases real Ansible colon-splits by default; everything else
@@ -142,10 +150,12 @@ module Krikri
           msg: "missing required arguments: database")
       end
 
-      if raw = @params["fail_key"]?
-        unless bool_convertible?(raw)
-          return bool_type_error("fail_key", raw)
-        end
+      if @params["fail_key"]?
+        # Real AnsibleModule type-converts fail_key at module setup -
+        # now via the shared BasePlugin#validate_bool_params! (see its
+        # block comment; the <class 'str'> double-space wording this
+        # check used to pin came from ansible-core 2.14).
+        validate_bool_params!
       end
 
       if unsupported = unsupported_param_keys(@params, SPEC)

@@ -18,8 +18,8 @@ describe "getent plugin argument validation" do
     result = PluginSpecHelper.run("getent", {"database" => "passwd", "fail_key" => "banana"})
 
     result["failed"].as_bool.should be_true
-    result["msg"].as_s.should contain("argument 'fail_key' is of type <class 'str'> and we were unable to convert to bool: " \
-                                      "The value 'banana' is not a valid boolean.  Valid booleans include: ")
+    result["msg"].as_s.should contain("argument 'fail_key' is of type str and we were unable to convert to bool: " \
+                                      "The value 'banana' is not a valid boolean. Valid booleans include: ")
   end
 
   it "rejects unsupported parameters (no aliases, no parenthetical)" do

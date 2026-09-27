@@ -18,9 +18,19 @@ module Krikri
   # HTTP::Client call made from inside this process already runs on
   # whichever host - local or remote - the task is targeting.
   class GetUrlPlugin < BasePlugin
+    # ansible.builtin.get_url's `type: bool` options, in the real argument-spec
+    # declaration order (ansible-doc -j ansible.builtin.get_url). Validated at
+    # module setup by BasePlugin#validate_bool_params! - see its block
+    # comment for the real-Ansible semantics and message wording.
+    protected def bool_params : Array(String)
+      %w[backup decompress force force_basic_auth unsafe_writes use_gssapi use_netrc
+        use_proxy validate_certs]
+    end
+
     MAX_REDIRECTS = 10
 
     def execute : PluginResult
+      validate_bool_params!
       url = @params["url"]?
       dest = @params["dest"]?
       return PluginResult.new(changed: false, failed: true, msg: "missing required argument: url") unless url

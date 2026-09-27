@@ -15,6 +15,24 @@ module Krikri
   # result's `ansible_facts` into that host's fact store, so set_fact just
   # needs to be a plain module that returns one.
   class SetFactPlugin < BasePlugin
+    # Real ansible-core 2.19 validates set_fact's cacheable: CONTROLLER-
+    # side (the task executor's fact path, not a module argspec), so the
+    # failure carries no "argument 'cacheable' is of type ..." wrapper -
+    # just check_type_bool's own TypeError text under the "Task failed: "
+    # controller-error prefix. An explicit null routes through
+    # boolean(None) there, producing "The value 'None' is not a valid
+    # boolean ..." instead of the argspec path's NoneType message (both
+    # live-verified against ansible-core 2.19.11).
+    protected def validate_bool_params! : Nil
+      raw_params = @config["params"]?.try(&.as_h?) || return nil
+      raw = raw_params["cacheable"]? || return nil
+      if raw.raw.nil? || raw.as_s? == NONE_SENTINEL
+        raise BoolParamError.new("Task failed: #{bool_none_violation_detail}")
+      end
+      detail = bool_violation_detail(raw) || return nil
+      raise BoolParamError.new("Task failed: #{detail}")
+    end
+
     # set_fact's own control parameter, not a fact to set. `cacheable:`
     # (persisting into a fact cache plugin) has no cache backend to persist
     # into here, so it's accepted and ignored rather than turned into a
@@ -22,6 +40,8 @@ module Krikri
     CONTROL_PARAMS = {"cacheable"}
 
     def execute : PluginResult
+      validate_bool_params!
+
       facts = Hash(String, JSON::Any).new
 
       @params.each do |key, value|

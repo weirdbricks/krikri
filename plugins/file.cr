@@ -76,6 +76,14 @@ module Krikri
   # native. This matches the *existing* (pre-conversion) limitation
   # documented in `normalize_mode` below, not a new one introduced here.
   class FilePlugin < BasePlugin
+    # ansible.builtin.file's `type: bool` options, in the real argument-spec
+    # declaration order (ansible-doc -j ansible.builtin.file). Validated at
+    # module setup by BasePlugin#validate_bool_params! - see its block
+    # comment for the real-Ansible semantics and message wording.
+    protected def bool_params : Array(String)
+      %w[follow force recurse unsafe_writes]
+    end
+
     class InvalidModeError < Exception; end
 
     property? check_mode : Bool
@@ -99,6 +107,7 @@ module Krikri
           msg: "Missing required parameter: path"
         )
       end
+      validate_bool_params!
       path = expand_tilde(path)
 
       recurse = true?(@params["recurse"]?)

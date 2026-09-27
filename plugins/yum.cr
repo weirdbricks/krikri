@@ -52,6 +52,28 @@ module Krikri
   #     name: "@Development tools"
   #     state: present
   class YumPlugin < BasePlugin
+    # ansible.builtin.dnf's `type: bool` options, in the real argument-spec
+    # declaration order (ansible-doc -j ansible.builtin.dnf). Validated at
+    # module setup by BasePlugin#validate_bool_params! - see its block
+    # comment for the real-Ansible semantics and message wording.
+    protected def bool_params : Array(String)
+      %w[allow_downgrade allowerasing autoremove best bugfix cacheonly disable_gpg_check
+        download_only install_repoquery install_weak_deps nobest security skip_broken
+        sslverify update_cache update_only validate_certs]
+    end
+
+    protected def bool_param_aliases : Hash(String, String)
+      {
+        "expire-cache" => "update_cache",
+      }
+    end
+
+    # These default to None in real's argspec, so an explicit null skips
+    # type validation there (see BasePlugin#bool_params_none_default).
+    protected def bool_params_none_default : Array(String)
+      %w[best nobest]
+    end
+
     include PluginHelpers::RpmPackage
 
     private def pkg_manager_binary : String
@@ -99,28 +121,11 @@ module Krikri
       end
 
       # Real AnsibleModule type-converts every bool-typed argument_spec
-      # param and fails the task on a non-boolean string - same bug
-      # class as dnf.cr's identical check (disable_gpg_check: sometimes
-      # live-verified against bookworm's ansible-core 2.14 dnf). Params
-      # arrive as strings here; lowercase compare matches
-      # AnsibleModule's own case-insensitive boolean() check.
-      yum_bool_params = {"allow_downgrade", "autoremove", "bugfix", "cacheonly",
-                         "disable_gpg_check", "download_only", "install_repoquery",
-                         "install_weak_deps", "nobest", "security", "skip_broken",
-                         "sslverify", "update_cache", "update_only", "validate_certs",
-                         "expire-cache"}
-      valid_booleans = {"0", "1", "true", "off", "yes", "t", "false", "on", "f", "n", "y", "no"}
-      bad_bool_keys = @params.select { |k, v| yum_bool_params.includes?(k) && !valid_booleans.includes?(v.downcase) }.keys
-      bad_bool = bad_bool_keys.sort
-      unless bad_bool.empty?
-        return PluginResult.new(
-          changed: false,
-          failed: true,
-          msg: "argument '#{bad_bool.first}' is of type <class 'str'> and we were unable to convert to bool: " \
-               "The value '#{@params[bad_bool.first]}' is not a valid boolean.  " \
-               "Valid booleans include: 0, 1, 'true', 'off', 'yes', '1', 't', '0', 'false', 'on', 'f', 'n', 'y', 'no'"
-        )
-      end
+      # param and fails the task on a non-boolean value at module setup -
+      # now via the shared BasePlugin#validate_bool_params! (same bug
+      # class as dnf.cr's migrated check; the <class 'str'> double-space
+      # wording this check used to pin came from 2.14).
+      validate_bool_params!
 
       # Real AnsibleModule's `type: list` argspec coercion fails an
       # EXPLICIT None with its generic list-conversion message (param

@@ -40,8 +40,8 @@ describe "shell plugin argument validation" do
     result = PluginSpecHelper.run("shell", {"_raw_params" => "echo hi", "stdin_add_newline" => "sometimes"})
 
     result["failed"].as_bool.should be_true
-    result["msg"].as_s.should contain("argument 'stdin_add_newline' is of type <class 'str'> and we were unable to convert to bool: " \
-                                      "The value 'sometimes' is not a valid boolean.  Valid booleans include: ")
+    result["msg"].as_s.should contain("argument 'stdin_add_newline' is of type str and we were unable to convert to bool: " \
+                                      "The value 'sometimes' is not a valid boolean. Valid booleans include: ")
   end
 
   it "still executes when every param is inside the argspec" do

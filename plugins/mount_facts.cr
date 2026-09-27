@@ -49,11 +49,27 @@ module Krikri
   #
   # Read-only, so it's safe under --check.
   class MountFactsPlugin < BasePlugin
+    # ansible.builtin.mount_facts's `type: bool` options, in the real argument-spec
+    # declaration order (ansible-doc -j ansible.builtin.mount_facts). Validated at
+    # module setup by BasePlugin#validate_bool_params! - see its block
+    # comment for the real-Ansible semantics and message wording.
+    protected def bool_params : Array(String)
+      %w[include_aggregate_mounts]
+    end
+
+    # Every bool option here defaults to None in real's argspec, so an
+    # explicit null skips type validation there (see
+    # BasePlugin#bool_params_none_default).
+    protected def bool_params_none_default : Array(String)
+      %w[include_aggregate_mounts]
+    end
+
     DYNAMIC_SOURCES  = ["/etc/mtab", "/proc/mounts", "/etc/mnttab"]
     STATIC_SOURCES   = ["/etc/fstab", "/etc/vfstab", "/etc/filesystems"]
     MOUNT_BINARY_CMD = "mount"
 
     def execute : PluginResult
+      validate_bool_params!
       devices = pattern_list("devices")
       fstypes = pattern_list("fstypes")
       sources = get_sources

@@ -34,6 +34,27 @@ module Krikri
   #   systemd:
   #     daemon_reload: yes
   class SystemdPlugin < BasePlugin
+    # ansible.builtin.systemd's `type: bool` options, in the real argument-spec
+    # declaration order (ansible-doc -j ansible.builtin.systemd). Validated at
+    # module setup by BasePlugin#validate_bool_params! - see its block
+    # comment for the real-Ansible semantics and message wording.
+    protected def bool_params : Array(String)
+      %w[daemon_reexec daemon_reload enabled force masked no_block]
+    end
+
+    protected def bool_param_aliases : Hash(String, String)
+      {
+        "daemon-reexec" => "daemon_reexec",
+        "daemon-reload" => "daemon_reload",
+      }
+    end
+
+    # These default to None in real's argspec, so an explicit null
+    # skips type validation there (see BasePlugin#bool_params_none_default).
+    protected def bool_params_none_default : Array(String)
+      %w[enabled force masked]
+    end
+
     property? check_mode : Bool
 
     def initialize(config : JSON::Any)
@@ -42,6 +63,7 @@ module Krikri
     end
 
     def execute : PluginResult
+      validate_bool_params!
       # Real AnsibleModule argument-spec validation: any key outside real
       # Ansible's argument_spec (ansible/modules/systemd_service.py: name/
       # service/unit, state, enabled, force, masked, daemon_reload/

@@ -33,6 +33,14 @@ module Krikri
   # command.cr's own doc comment for how this was found (a real playbook
   # over real SSH comparing captured stdout against a constant).
   class ShellPlugin < BasePlugin
+
+    # ansible.builtin.shell's `type: bool` options, in the real argument-spec
+    # declaration order (ansible-doc -j ansible.builtin.shell). Validated at
+    # module setup by BasePlugin#validate_bool_params! - see its block
+    # comment for the real-Ansible semantics and message wording.
+    protected def bool_params : Array(String)
+      %w[stdin_add_newline]
+    end
     include PluginHelpers::AnsibleArgValidation
 
     # Real shell module's own argspec - which IS command.py's (bookworm
@@ -58,8 +66,6 @@ module Krikri
       "stdin_add_newline" => [] of String,
       "strip_empty_ends"  => [] of String,
     }
-
-    private SHELL_BOOL_PARAMS = %w[stdin_add_newline strip_empty_ends]
 
     property? check_mode : Bool
     property? diff_mode : Bool
@@ -95,13 +101,6 @@ module Krikri
         return unsupported_params_error("ansible.legacy.command", unsupported, SHELL_SPEC)
       end
 
-      SHELL_BOOL_PARAMS.each do |bool_param|
-        next unless (raw = @params[bool_param]?)
-        unless bool_convertible?(raw)
-          return bool_type_error(bool_param, raw)
-        end
-      end
-
       # Same `warn:` rejection as command.cr - real ansible-core 2.19
       # rejects the removed param identically (message adjusted for the
       # shell module's own supported-parameter list; the tail after
@@ -120,6 +119,11 @@ module Krikri
           msg: "no command given"
         )
       end
+
+      # Bool-typed params: real AnsibleModule type-converts them at module
+      # setup, after the required-args gate above - now via the shared
+      # BasePlugin#validate_bool_params! (see its block comment).
+      validate_bool_params!
 
       # `argv:` works identically on shell to command's argv: - real
       # 2.19.4 shares the same underlying module implementation (the

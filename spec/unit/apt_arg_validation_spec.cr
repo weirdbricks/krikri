@@ -57,7 +57,8 @@ describe "apt plugin argument validation" do
     result["failed"].as_bool.should be_true
     result["msg"].as_s.should eq("Unsupported parameters for (ansible.builtin.apt) module: krikri_not_an_apt_param. " \
                                  "Supported parameters include: allow_change_held_packages, allow_downgrade, " \
-                                 "allow_unauthenticated, autoclean, autoremove, cache_valid_time, clean, deb, " \
+                                 "allow_unauthenticated, auto_install_module_deps, autoclean, autoremove, " \
+                                 "cache_valid_time, clean, deb, " \
                                  "default_release, dpkg_options, fail_on_autoremove, force, force_apt_get, " \
                                  "install_recommends, lock_timeout, only_upgrade, package, policy_rc_d, purge, " \
                                  "state, update_cache, update_cache_retries, update_cache_retry_max_delay, upgrade " \
@@ -69,8 +70,8 @@ describe "apt plugin argument validation" do
     result = PluginSpecHelper.run("apt", {"name" => "curl", "install_recommends" => "sometimes"})
 
     result["failed"].as_bool.should be_true
-    result["msg"].as_s.should contain("argument 'install_recommends' is of type <class 'str'> and we were unable to convert to bool: " \
-                                      "The value 'sometimes' is not a valid boolean.  Valid booleans include: ")
+    result["msg"].as_s.should contain("argument 'install_recommends' is of type str and we were unable to convert to bool: " \
+                                      "The value 'sometimes' is not a valid boolean. Valid booleans include: ")
   end
 
   it "still accepts the alias names real's argspec lists" do

@@ -105,6 +105,20 @@ module Krikri
   # remaining shell calls - genuine gaps (a real system operation and a
   # binary-data-safety constraint, respectively), not oversights.
   class AptRepositoryPlugin < BasePlugin
+    # ansible.builtin.apt_repository's `type: bool` options, in the real argument-spec
+    # declaration order (ansible-doc -j ansible.builtin.apt_repository). Validated at
+    # module setup by BasePlugin#validate_bool_params! - see its block
+    # comment for the real-Ansible semantics and message wording.
+    protected def bool_params : Array(String)
+      %w[install_python_apt update_cache validate_certs]
+    end
+
+    protected def bool_param_aliases : Hash(String, String)
+      {
+        "update-cache" => "update_cache",
+      }
+    end
+
     include AptRepositoryCacheRetry
 
     SOURCES_LIST       = "/etc/apt/sources.list"
@@ -115,6 +129,7 @@ module Krikri
     @warnings = [] of String
 
     def execute : PluginResult
+      validate_bool_params!
       # Real ansible's apt_repository runs `apt-get update` (and its own
       # add/remove paths shell out to apt-key/apt-get); on a host without
       # apt-get (any non-Debian family host) it fails with exactly

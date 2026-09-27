@@ -44,7 +44,16 @@ require "../src/krikri/base_plugin"
 
 module Krikri
   class AssemblePlugin < BasePlugin
+    # ansible.builtin.assemble's `type: bool` options, in the real argument-spec
+    # declaration order (ansible-doc -j ansible.builtin.assemble). Validated at
+    # module setup by BasePlugin#validate_bool_params! - see its block
+    # comment for the real-Ansible semantics and message wording.
+    protected def bool_params : Array(String)
+      %w[backup decrypt ignore_hidden remote_src unsafe_writes]
+    end
+
     def execute : PluginResult
+      validate_bool_params!
       src = @params["src"]?
       dest = @params["dest"]?
       return PluginResult.new(changed: false, failed: true, msg: "missing required argument: src") unless src

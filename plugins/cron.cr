@@ -68,7 +68,16 @@ module Krikri
   # uses) rather than adding a live-crontab spec that could still
   # corrupt whoever runs this test suite's own real crontab.
   class CronPlugin < BasePlugin
+    # ansible.builtin.cron's `type: bool` options, in the real argument-spec
+    # declaration order (ansible-doc -j ansible.builtin.cron). Validated at
+    # module setup by BasePlugin#validate_bool_params! - see its block
+    # comment for the real-Ansible semantics and message wording.
+    protected def bool_params : Array(String)
+      %w[backup disabled env]
+    end
+
     def execute : PluginResult
+      validate_bool_params!
       name = @params["name"]?
       return missing_param("name") unless name
 

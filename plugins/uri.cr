@@ -47,9 +47,19 @@ module Krikri
   #  user-supplied If-Modified-Since header wins over ours, matching
   #  urls.py's add_header ordering.
   class UriPlugin < BasePlugin
+    # ansible.builtin.uri's `type: bool` options, in the real argument-spec
+    # declaration order (ansible-doc -j ansible.builtin.uri). Validated at
+    # module setup by BasePlugin#validate_bool_params! - see its block
+    # comment for the real-Ansible semantics and message wording.
+    protected def bool_params : Array(String)
+      %w[decompress force force_basic_auth remote_src return_content unsafe_writes use_gssapi
+        use_netrc use_proxy validate_certs]
+    end
+
     MAX_REDIRECTS = 10
 
     def execute : PluginResult
+      validate_bool_params!
       url = @params["url"]?
       return PluginResult.new(changed: false, failed: true, msg: "missing required argument: url") unless url
 

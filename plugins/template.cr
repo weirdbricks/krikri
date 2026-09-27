@@ -37,6 +37,18 @@ module Krikri
   #
   # This is a simplified version that delegates all rendering to the action plugin.
   class TemplatePlugin < BasePlugin
+
+    # ansible.builtin.template's `type: bool` options that real forwards
+    # to the copy module for validation, in the real argument-spec
+    # declaration order (ansible-doc -j ansible.builtin.template).
+    # trim_blocks/lstrip_blocks are deliberately absent: the template
+    # ACTION plugin consumes them before the module sees any args, so
+    # real Ansible never argspec-validates them (live-verified against
+    # ansible-core 2.19.11: `trim_blocks: blah` renders fine). Validated
+    # by BasePlugin#validate_bool_params! - see its block comment.
+    protected def bool_params : Array(String)
+      %w[backup follow force unsafe_writes]
+    end
     property? check_mode : Bool
     property? diff_mode : Bool
 
@@ -56,6 +68,10 @@ module Krikri
           msg: "Missing required parameter: dest"
         )
       end
+
+      # Real AnsibleModule validates bool-typed params at module setup,
+      # after the required-args gate (see BasePlugin#validate_bool_params!).
+      validate_bool_params!
       dest = expand_tilde(dest)
 
       # Real ansible.builtin.template, like copy: a dest that signals a

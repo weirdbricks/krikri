@@ -432,25 +432,34 @@ describe "apt plugin - parameter coverage" do
       end
     end
 
-    # Real Ansible 2.19 REMOVED auto_install_module_deps from apt's
-    # argument_spec and now rejects it at module-arg validation -
-    # live-verified via a debian:bookworm ansible-core container:
-    # `auto_install_module_deps: true` on a real ansible-playbook fails
-    # with "Unsupported parameters for (ansible.builtin.apt) module:
-    # auto_install_module_deps" (the option governed installing the
-    # python3-apt bindings, which the 2.19 module no longer manages this
-    # way). The engine used to treat it as a silent no-op back when an
-    # older ansible-core still listed it; matching 2.19 now means
-    # rejecting it like any other out-of-spec parameter (apt.cr's
-    # unsupported-parameter validation, added 0.9.1086).
-    it "auto_install_module_deps is REJECTED like real Ansible 2.19 (removed from its argument_spec)" do
+    # auto_install_module_deps is a LIVE bool param in the local
+    # reference ansible-core 2.19.11's apt argument_spec - live-verified:
+    # a valid value passes argspec and reaches the package operation
+    # ("No package matching ... is available" for a fake pkg), while an
+    # INVALID value fails with the shared strict-bool wording (NOT the
+    # unsupported-parameters rejection an earlier 0.9.1086 verification
+    # against a different ansible-core pinned here). The engine matches
+    # 2.19.11: apt.cr's argspec accepts it and the shared
+    # BasePlugin#validate_bool_params! type-checks it.
+    it "auto_install_module_deps is bool-validated like real 2.19.11, not rejected" do
       result = PluginSpecHelper.run("apt", {
         "name"                     => "krikri-fake-pkg",
         "state"                    => "present",
         "auto_install_module_deps" => "false",
       })
       result["failed"].as_bool.should be_true
-      result["msg"].as_s.should contain("Unsupported parameters for (ansible.builtin.apt) module: auto_install_module_deps.")
+      result["msg"].as_s.should_not contain("Unsupported parameters for (ansible.builtin.apt) module")
+      result["msg"].as_s.should_not contain("unable to convert to bool")
+    end
+
+    it "auto_install_module_deps rejects a non-boolean value with the shared bool wording" do
+      result = PluginSpecHelper.run("apt", {
+        "name"                     => "krikri-fake-pkg",
+        "state"                    => "present",
+        "auto_install_module_deps" => "krikri-not-a-bool",
+      })
+      result["failed"].as_bool.should be_true
+      result["msg"].as_s.should contain("argument 'auto_install_module_deps' is of type str and we were unable to convert to bool")
     end
   end
 

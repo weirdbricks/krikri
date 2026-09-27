@@ -54,7 +54,7 @@ describe "dnf: argument-spec validation" do
   it "rejects a non-boolean value for a bool-typed param" do
     result = run_dnf({"name" => "bash", "state" => "present", "disable_gpg_check" => "sometimes"})
     result["failed"].as_bool.should be_true
-    result["msg"].as_s.should contain("argument 'disable_gpg_check' is of type <class 'str'>")
+    result["msg"].as_s.should contain("argument 'disable_gpg_check' is of type str")
     result["msg"].as_s.should contain("The value 'sometimes' is not a valid boolean")
   end
 

@@ -30,9 +30,18 @@ module Krikri
   # `-w` entirely below iptables 1.4.20 and seconds support below 1.6.0;
   # every current distro ships >= 1.6.0).
   class IptablesPlugin < BasePlugin
+    # ansible.builtin.iptables's `type: bool` options, in the real argument-spec
+    # declaration order (ansible-doc -j ansible.builtin.iptables). Validated at
+    # module setup by BasePlugin#validate_bool_params! - see its block
+    # comment for the real-Ansible semantics and message wording.
+    protected def bool_params : Array(String)
+      %w[chain_management flush numeric]
+    end
+
     @failure : String?
 
     def execute : PluginResult
+      validate_bool_params!
       check_mode = true?(@params["_ansible_check_mode"]?)
       ip_version = @params["ip_version"]? || "ipv4"
       binaries = ip_version == "both" ? ["iptables", "ip6tables"] : [ip_version == "ipv6" ? "ip6tables" : "iptables"]
