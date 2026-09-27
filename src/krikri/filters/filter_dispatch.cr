@@ -722,9 +722,8 @@ module Krikri
           # the name now routes through the ONE native
           # `Crinja.filter(:items2dict)` registration (jinja_filters.cr)
           # via #delegate_to_jinja_filter, the same pilot shape as
-          # dict2items. The probe battery
-          # (scripts/crinja_corpus/probe_items2dict_divergence.cr)
-          # found the two copies identical on 17 of 19 cases and found
+          # dict2items. A probe battery comparing the two copies
+          # found them identical on 17 of 19 cases and found
           # BOTH divergences in the hand-rolled copy's disfavor when
           # arbitrated against real ansible-core 2.19.11: a non-string
           # key (`{'key': 1}`) must stringify (real Ansible renders
@@ -1396,9 +1395,8 @@ module Krikri
           # through untouched, so the sentinel string then flows out
           # exactly like real Ansible's omit object and is stripped by
           # the same substitute_task_params contract as before).
-          # The probe battery
-          # (scripts/crinja_corpus/probe_ternary_divergence.cr) found
-          # the two copies identical on 19 of 24 cases and three
+          # A probe battery comparing the two copies found them
+          # identical on 19 of 24 cases and three
           # divergences, all arbitrated against real ansible-core
           # 2.19.11 and all fixed in the old copy's disfavor: the string
           # conditions "0"/"false"/"False" are TRUTHY (Python bool() on

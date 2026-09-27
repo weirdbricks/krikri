@@ -403,9 +403,8 @@ module Krikri
       #
       # Differential-tested, not just spec-tested: ran all 3080 real
       # "output"-kind `{{ }}` expressions scraped from `testing/roles` +
-      # 21 benchmarked Galaxy roles (`scripts/crinja_corpus/corpus.
-      # jsonl`) through `ExpressionEvaluator#evaluate` before and after
-      # this change - byte-identical output (or identical raised
+      # 21 benchmarked Galaxy roles through `ExpressionEvaluator#evaluate`
+      # before and after this change - byte-identical output (or identical raised
       # exception class) for all 3080, confirming the memoization is
       # invisible to real-world dispatch behavior, not just this
       # project's own spec suite.
