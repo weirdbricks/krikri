@@ -1373,6 +1373,72 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
     evaluator.evaluate("n / 1024 / 1024").should eq("256.0")
   end
 
+  it "repeats strings/lists for Python-valid `*` pairs and raises on invalid ones" do
+    # Differential-fuzz fix: combine_mult_div used to collapse every
+    # non-numeric operand pair to JSON null (rendered as ""), so even the
+    # VALID Python repeat shapes (`'-' * 40`, a real Ansible idiom)
+    # rendered empty while real Ansible repeats them, and the invalid
+    # ones (`str * list`, `str / float`) were silently answered where
+    # real Jinja2 raises TypeError and real ansible-playbook fails the
+    # task. Also fixed en route: split_top_level_mult_div discarded the
+    # `//` operator step's own skip-ahead return value, splitting `//`
+    # twice (parts ["10", "", "0"], ops ["//", "/"]) - the phantom empty
+    # operand combined to null, silently papering over every `//` the
+    # Crinja-first attempt didn't handle.
+    v = Hash(String, JSON::Any).new
+    v["str_plain"] = JSON::Any.new("ab")
+    v["list_ints"] = JSON.parse(%([3, 1]))
+    v["str_num"] = JSON::Any.new("17")
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
+
+    evaluator.evaluate("'ab' * 3").should eq("ababab")
+    evaluator.evaluate("3 * 'ab'").should eq("ababab")
+    evaluator.evaluate("'ab' * -1").should eq("")
+    evaluator.evaluate("list_ints * 2").should eq("[3, 1, 3, 1]")
+    evaluator.evaluate("2 * list_ints").should eq("[3, 1, 3, 1]")
+
+    expect_raises(Krikri::PlusMinusOperandError, /unsupported operand type\(s\) for \*/) do
+      evaluator.evaluate("str_plain * list_ints")
+    end
+    expect_raises(Krikri::PlusMinusOperandError, /unsupported operand type\(s\) for \*\: 'str' and 'float'/) do
+      evaluator.evaluate("'ab' * 2.0")
+    end
+    expect_raises(Krikri::PlusMinusOperandError, /unsupported operand type\(s\) for \//) do
+      evaluator.evaluate("str_num / 17.3")
+    end
+    expect_raises(Krikri::PlusMinusOperandError, /unsupported operand type\(s\) for \//) do
+      evaluator.evaluate("missing_var / 2")
+    end
+  end
+
+  it "raises on a unary minus over a missing or non-numeric operand" do
+    # Differential-fuzz fix: `- missing_var` / `- 'abc'` / `- dict_var`
+    # fell through to a plain variable lookup and silently rendered the
+    # "undefined" sentinel where real Jinja2/Ansible fails the task
+    # (cannot negate / bad operand type for unary -). Numeric operands
+    # keep negating; an operand shape the evaluator can't resolve
+    # conservatively still falls back leniently instead of becoming a
+    # spurious task failure.
+    v = Hash(String, JSON::Any).new
+    v["int_neg"] = JSON::Any.new(-7_i64)
+    v["str_plain"] = JSON::Any.new("ab")
+    v["dict_simple"] = JSON.parse(%({"a": 1}))
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
+
+    evaluator.evaluate("- int_neg").should eq("7")
+    evaluator.evaluate("- (5)").should eq("-5")
+
+    expect_raises(Krikri::PlusMinusOperandError, /'missing_var' is undefined/) do
+      evaluator.evaluate("- missing_var")
+    end
+    expect_raises(Krikri::PlusMinusOperandError, /bad operand type for unary -/) do
+      evaluator.evaluate("- 'abc'")
+    end
+    expect_raises(Krikri::PlusMinusOperandError, /bad operand type for unary -/) do
+      evaluator.evaluate("- dict_simple")
+    end
+  end
+
   it "coerces Bool operands to their Python int values in + arithmetic" do
     # Real bug found benchmarking galaxyproject.galaxy: its very first
     # task is `assert: that: "(galaxy_manage_clone + galaxy_manage_

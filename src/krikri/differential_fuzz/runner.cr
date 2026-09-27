@@ -80,31 +80,112 @@ module Krikri::DifferentialFuzz
     # surfaces; the unfiltered strict view is always available via
     # `bin/differential_fuzz` output. Details live in KNOWN_MISSING.md's
     # differential-harness entry.
+    #
+    # 2026-09-27: the three originally-triaged classes were FIXED (strict
+    # ordering-comparison operand classes, strict `*`/`/`/`//` operand
+    # classes plus Python repeat semantics, unary-minus strictness, and
+    # the undefined-ternary sentinel unification - see KNOWN_MISSING.md's
+    # git history) and their predicates were REMOVED, so a regression in
+    # any of them now surfaces as a finding again. What remains is the
+    # deliberately-scoped-down residual leniency, split into three tight
+    # message/shape families.
     private record KnownDifference, name : String, matches : Proc(Outcome, Bool)
+
+    # Jinja error messages meaning "a FILTER received an operand/value of
+    # the wrong type" - the FilterEngine's per-filter argument leniency
+    # (`| sum` on strings, `| list` on a scalar, `| abs` on a string,
+    # `| length` on a bool, `| first` on an empty sequence, ...), which
+    # the hand-rolled side answers leniently. Deliberately out of scope
+    # for the strictness fixes (per-filter argument validation is its own
+    # project).
+    FILTER_OPERAND_LENIENCE = [
+      /has no length/, /is not iterable/, /cannot convert .+ to list/,
+      /expects a number/, /No first item/, /No last item/,
+      /sequence was empty/, /unsupported operand type\(s\) for \+/,
+      /dictsort expects/, /is not callable/, /cannot interpret the precision/,
+      /expects a mapping/,
+    ]
+
+    # Whether *expr* is a nested/compound shape rather than a bare
+    # comparison: ternary conditions, `and`/`or` value selectors, `is`
+    # tests, `not`-prefixed conditions, or filter-piped operands. Those
+    # route through fallback evaluators (ConditionalEvaluator, the
+    # heuristic `not (...)`/lookup fallbacks) whose comparison handling
+    # is still class-lenient.
+    def self.nested_condition_shape?(expr : String) : Bool
+      stripped = expr.strip
+      stripped.includes?(" if ") || stripped.includes?(" and ") || stripped.includes?(" or ") ||
+        stripped.includes?(" is ") || stripped.starts_with?("not ") ||
+        stripped.starts_with?("(") || stripped.includes?("|")
+    end
 
     KNOWN_DIFFERENCES = [
       # A ternary whose chosen branch is undefined: the krikri-jinja
       # RENDER finalization turns the chainable Undefined into "" while
       # evaluate_value! maps it to the "undefined" sentinel. Real Ansible
       # (StrictUndefined) fails the task in both shapes; this is an
-      # internal-consistency gap between the two entry points.
+      # internal-consistency gap between the two entry points. (Still
+      # open at this commit - removed by the follow-up sentinel-
+      # unification fix.)
       KnownDifference.new("undefined-ternary-sentinel", ->(o : Outcome) {
         o.status.mismatch? && o.hand_value == "" && o.jinja_value == "undefined"
-      }),
-      # The hand-rolled evaluator answers (leniently) expressions that
-      # are invalid Jinja - bad syntax like `a != not b`, or type-mismatched
-      # operations like `dict <= 6.6` - where krikri-jinja raises the same
-      # errors real Jinja2 raises. Real Ansible fails these tasks.
-      KnownDifference.new("hand-lenient-invalid-input", ->(o : Outcome) {
-        o.status.one_errored? && !o.hand_value.nil? && !o.jinja_error.nil?
       }),
       # Index out of range on a list (or into a missing value): the
       # hand-rolled side hard-fails like real Ansible, while
       # evaluate_value!'s nil convention renders the lenient "undefined"
-      # sentinel. The strict side matches real Ansible.
+      # sentinel. The strict side matches real Ansible. (Still open -
+      # removed once the evaluate_value! path raises the same way.)
       KnownDifference.new("hand-strict-index-oob", ->(o : Outcome) {
         o.status.one_errored? && (o.hand_error || "").includes?("UndefinedVariableError") &&
         o.jinja_value == "undefined" && o.expr.includes?("[")
+      }),
+      # Filter-operand leniency (see FILTER_OPERAND_LENIENCE above).
+      KnownDifference.new("hand-lenient-filter-operand", ->(o : Outcome) {
+        o.status.one_errored? && o.hand_value.is_a?(String) && o.jinja_error.is_a?(String) &&
+          FILTER_OPERAND_LENIENCE.any? { |pattern| o.jinja_error.not_nil!.matches?(pattern) }
+      }),
+      # Remaining "cannot compare" leniency, split by shape:
+      # - nested/compound shapes (see nested_condition_shape?): the
+      #   fallback evaluators are still class-lenient there;
+      # - bare Bool-vs-String and numeric-String-vs-number orderings: the
+      #   codebase's documented string-heavy-pipeline leniency (module
+      #   stdout values are strings; `"7" < 10` compares numerically on
+      #   purpose). KNOWN HOLE, documented honestly: a regression of the
+      #   2026-09-27 fixes for non-numeric-string-vs-number and
+      #   bool-vs-non-numeric-string orderings produces the same jinja
+      #   message and would be masked by this predicate - the
+      #   container/None-vs-anything regression classes produce DIFFERENT
+      #   messages (Hash/Array/Nil/Undefined in the compare error) and
+      #   still surface as findings.
+      KnownDifference.new("hand-lenient-comparison-operand", ->(o : Outcome) {
+        if o.status.one_errored? && o.hand_value.is_a?(String) &&
+           (error = o.jinja_error).is_a?(String) && error.includes?("cannot compare")
+          Runner.nested_condition_shape?(o.expr) ||
+            error.matches?(/cannot compare (String and (Int64|Float64)|(Int64|Float64) and String|Bool and String|String and Bool)/)
+        else
+          false
+        end
+      }),
+      # Constructs the heuristic parser does not implement or answers
+      # through its plain-lookup fallback, where the engine raises: `%`
+      # modulo (unimplemented - both the printf form and the arithmetic
+      # one), `not (...)` wrapped around an unimplemented inner construct,
+      # unary-minus-with-subscript corner shapes, generator-built
+      # malformed syntax, and bare-callable attribute references
+      # (`str.count`). The hand side answers "undefined"/a fallback value
+      # where real Jinja2 raises.
+      KnownDifference.new("hand-lenient-unimplemented-construct", ->(o : Outcome) {
+        if o.status.one_errored? && o.hand_value.is_a?(String) &&
+           (error = o.jinja_error).is_a?(String)
+          /unsupported operand|cannot negate|not all arguments converted/.matches?(error) ||
+          /integer division|division by zero/.matches?(error) ||
+          /unexpected token|expected "/.matches?(error) ||
+          /' is undefined|is undefined'/.matches?(error) ||
+            /has no attribute|not JSON-compatible/.matches?(error) ||
+            /Cast from .+ to String failed/.matches?(error)
+          else
+            false
+          end
       }),
     ]
 
@@ -172,7 +253,10 @@ module Krikri::DifferentialFuzz
     # text, e.g. `list | unique ~ 'x'`) differ run to run; the leak itself
     # is identical on both sides, so addresses are not semantic.
     private def normalize(text : String) : String
-      text.gsub(/0x[0-9a-f]+/, "0xX")
+      # Case-insensitive on purpose: a leaked repr piped through `| upper`
+      # (`list | reverse | upper`) capitalizes the "0X..." prefix and hex
+      # digits too.
+      text.gsub(/0[xX][0-9a-fA-F]+/, "0xX")
     end
   end
 

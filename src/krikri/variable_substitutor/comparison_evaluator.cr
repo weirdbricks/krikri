@@ -5,6 +5,19 @@ require "./jinja_renderer"
 
 module Krikri
   module VariableSubstitutor
+    # Raised when an ordering comparison (`<`, `<=`, `>`, `>=`) gets
+    # operands real Jinja2/Python cannot compare - a container against
+    # anything, nil/None against anything, a non-numeric string against a
+    # number, a boolean against a non-numeric string. Real Jinja2 raises
+    # TypeError ("'<=' not supported between instances of 'dict' and
+    # 'float'") and real ansible-playbook fails the task; this evaluator
+    # historically stringified both operands and compared the texts,
+    # silently answering where real Ansible fails (found by
+    # bin/differential_fuzz against the krikri-jinja engine, which already
+    # raises exactly what real Jinja2 3.1.6 raises).
+    class ComparisonTypeError < Exception
+    end
+
     # ComparisonEvaluator - Handles boolean comparison expressions
     # Supports: ==, !=, <, >, <=, >=
     class ComparisonEvaluator
@@ -33,6 +46,15 @@ module Krikri
 
       # Evaluate a comparison expression
       # Example: ssl_check.rc == 0, count > 5
+      #
+      # Operands are resolved STRUCTURED (JSON::Any, not pre-stringified)
+      # so the ordering comparisons below can see real operand classes:
+      # the old String-typed operands collapsed a container operand to its
+      # JSON text and then silently string-compared it (`dict <= 6.6`
+      # answered "False" where real Jinja2 raises TypeError), and a
+      # missing/None operand collapsed to a string too (`missing_var <
+      # '17'` answered "True" where real Jinja2 raises on the comparison
+      # against Undefined/None).
       def evaluate(expr : String) : String
         # Try operators in order (longest first to avoid false matches)
         operators = ["==", "!=", "<=", ">=", ">", "<"]
@@ -43,8 +65,22 @@ module Krikri
           # the old `expr.includes?(op)` + `split(op, 2)` split inside
           # the quotes and compared garbage.
           if parts = split_outside_quotes(expr, op)
-            left = evaluate_simple_value(parts[0].strip)
-            right = evaluate_simple_value(parts[1].strip)
+            left_text = parts[0].strip
+            right_text = parts[1].strip
+
+            # Real Jinja2's grammar allows `not` only as a unary prefix
+            # over a whole comparison (`not a == b`), never as the RIGHT
+            # operand of one (`a == not b` is a syntax error). The
+            # heuristic operand resolver below treated such an operand as
+            # an (always-undefined) variable name and silently compared
+            # garbage; raise instead. Only the right side is guarded: a
+            # LEFT operand starting with `not` is the legitimate prefix-
+            # negation spelling this split-on-operator-first evaluator
+            # sees for `not x == y` (real parse: `not (x == y)`).
+            guard_boolean_keyword_operand(right_text)
+
+            left = evaluate_simple_value_typed(left_text)
+            right = evaluate_simple_value_typed(right_text)
 
             result = case op
                      when "=="
@@ -52,13 +88,13 @@ module Krikri
                      when "!="
                        !values_equal?(left, right)
                      when "<"
-                       compare_values(left, right) < 0
+                       compare_values(left, right, op) < 0
                      when ">"
-                       compare_values(left, right) > 0
+                       compare_values(left, right, op) > 0
                      when "<="
-                       compare_values(left, right) <= 0
+                       compare_values(left, right, op) <= 0
                      when ">="
-                       compare_values(left, right) >= 0
+                       compare_values(left, right, op) >= 0
                      else
                        false
                      end
@@ -68,6 +104,17 @@ module Krikri
         end
 
         "false"
+      end
+
+      # A comparison operand whose (unquoted) text starts with a boolean
+      # keyword is a real-Jinja syntax error, not a value - raise instead
+      # of silently resolving it as an always-undefined variable name.
+      private def guard_boolean_keyword_operand(text : String) : Nil
+        stripped = text.strip
+        return if stripped.empty? || stripped.starts_with?('\'') || stripped.starts_with?('"')
+        keyword = stripped.match(/\A(not|and|or|is)\b/).try(&.[1])
+        return unless keyword
+        raise ComparisonTypeError.new("unexpected token '#{keyword}' after expression")
       end
 
       # Splits *expr* on the first occurrence of *op* outside single/
@@ -96,26 +143,55 @@ module Krikri
         nil
       end
 
-      # Evaluate a simple value (literal or variable reference)
+      # Legacy String-typed form of #evaluate_simple_value_typed, kept for
+      # API compatibility - every internal consumer now uses the typed
+      # resolver directly.
       def evaluate_simple_value(expr : String) : String | Int64 | Bool | Nil
+        json_any_to_value(evaluate_simple_value_typed(expr))
+      end
+
+      # Structured (JSON::Any) resolution of a single comparison operand -
+      # the same resolution order the legacy String-typed version used
+      # (quoted literal, boolean literal, numeric literal, filter-chain/
+      # paren/`~`/bracket delegation to a fresh ExpressionEvaluator,
+      # dotted-path walk, bare-name lookup with re-templating), but
+      # PRESERVING the operand's real type instead of collapsing
+      # containers to their JSON text and numbers to strings, so
+      # #compare_values can raise exactly where real Jinja2/Python raises
+      # on incomparable operand classes.
+      #
+      # A missing dotted path or bare name resolves to JSON null - which
+      # for an ORDERING comparison then raises like real Jinja2 raises on
+      # both a None operand and an Undefined one (a defined-null `None <
+      # 3` and a missing var are indistinguishable at this layer, and
+      # real Python raises TypeError on both).
+      private def evaluate_simple_value_typed(expr : String) : JSON::Any
         expr = expr.strip
 
         # Handle quoted strings
         if (expr.starts_with?('"') && expr.ends_with?('"')) ||
            (expr.starts_with?('\'') && expr.ends_with?('\''))
-          return expr[1..-2]
+          return JSON::Any.new(expr[1..-2])
         end
 
         # Handle booleans
         if expr == "true" || expr == "True"
-          return true
+          return JSON::Any.new(true)
         elsif expr == "false" || expr == "False"
-          return false
+          return JSON::Any.new(false)
         end
 
-        # Handle numbers
+        # Handle numbers - including FLOAT literals, which the legacy
+        # String-typed resolver never recognized: "6.6" contains a ".", so
+        # it fell into the dotted-lookup branch below, looked up a variable
+        # literally named "6" and compared against the "undefined" sentinel
+        # text (`dict <= 6.6` answered "False" for the wrong reason; a real
+        # `count > 1.5` comparison answered against undefined too).
         if int_val = expr.to_i64?
-          return int_val
+          return JSON::Any.new(int_val)
+        end
+        if float_val = expr.to_f64?
+          return JSON::Any.new(float_val)
         end
 
         # A filter chain or parenthesized sub-expression used as a
@@ -163,21 +239,66 @@ module Krikri
         # repeatedly" pattern this codebase's own CLAUDE.md warns about.
         if expr.includes?("|") || expr.starts_with?('(') || expr.includes?("~") || expr.includes?("[")
           rendered = ExpressionEvaluator.new(@vars).evaluate(expr)
-          return json_any_to_value(Krikri.parse_json_or_python_literal(rendered))
+          parsed = Krikri.parse_json_or_python_literal(rendered)
+          # A delegated sub-expression that bottomed out at an undefined
+          # reference renders the "undefined" SENTINEL text here - as a
+          # comparison operand that must be a real miss (JSON null), not a
+          # string that then silently string-compares
+          # (`(int_neg[0] <= 'hello world')` answered "False" where real
+          # Jinja2 raises on the comparison against Undefined).
+          return JSON::Any.new(nil) if parsed.raw == "undefined"
+          return parsed
         end
 
         # Handle nested variable access (e.g., result.rc)
         if expr.includes?(".")
-          value_str = lookup_nested_variable(expr)
-          # Try to parse as number
-          if int_val = value_str.to_i64?
-            return int_val
-          end
-          return value_str
+          return resolve_json(expr) || JSON::Any.new(nil)
         end
 
         # Simple variable lookup
-        lookup_simple_variable(expr)
+        lookup_simple_variable_typed(expr)
+      end
+
+      # Structured form of #lookup_simple_variable: same re-templating
+      # guards (a variable whose own raw value is still unrendered Jinja is
+      # rendered before being compared - the ansible-community.ansible-vault
+      # `vault_version` case), but preserving the value's real JSON type
+      # instead of collapsing containers to `to_s` text.
+      private def lookup_simple_variable_typed(name : String) : JSON::Any
+        name = name.strip
+
+        if @vars.has_key?(name)
+          value = @vars[name]
+          case raw = value.raw
+          when String
+            if raw.includes?("{%") || raw.includes?("{#")
+              unless VarSubstitutor.unsafe_root?(@vars, name) || UnsafeValues.unsafe_text?(raw)
+                rendered = JinjaRenderer.new(@vars).render(raw)
+                return rendered_string_to_typed(rendered)
+              end
+              return JSON::Any.new(raw.strip)
+            end
+            if raw.includes?("{{")
+              rendered = render_raw_template_string(raw, name)
+              return rendered_string_to_typed(rendered)
+            end
+            return JSON::Any.new(raw.strip)
+          else
+            return value
+          end
+        end
+
+        JSON::Any.new(nil)
+      end
+
+      # A re-templated bare operand's rendered text, typed the way the
+      # legacy lookup_simple_variable typed it (integer when the whole
+      # render parses as one, string otherwise).
+      private def rendered_string_to_typed(rendered : String) : JSON::Any
+        if int_val = rendered.to_i64?
+          return JSON::Any.new(int_val)
+        end
+        JSON::Any.new(rendered)
       end
 
       # `==`/`!=`: a raw match first (handles Bool/Nil, and same-type
@@ -190,108 +311,91 @@ module Krikri
       # because the two values are actually different - "7" and 7 should
       # compare equal here the same way compare_values already treats
       # them for `<`/`>`/etc, just applied to `==`/`!=` too.
-      private def values_equal?(left : String | Int64 | Bool | Nil, right : String | Int64 | Bool | Nil) : Bool
-        return true if left == right
+      #
+      # Equality stays type-lenient on purpose: real Python answers False
+      # (never an error) for `{} == 6`, `'a' == 7`, `None == 0` - only the
+      # ORDERING comparisons below are class-strict.
+      private def values_equal?(left : JSON::Any, right : JSON::Any) : Bool
+        return true if left.raw == right.raw
 
         left_num = numeric_or_nil(left)
         right_num = numeric_or_nil(right)
         !left_num.nil? && !right_num.nil? && left_num == right_num
       end
 
-      private def numeric_or_nil(value : String | Int64 | Bool | Nil) : Float64?
-        case value
-        when Int64  then value.to_f64
-        when String then value.to_f64?
+      private def numeric_or_nil(value : JSON::Any) : Float64?
+        case raw = value.raw
+        when Int64  then raw.to_f64
+        when Float64 then raw
+        when String then raw.to_f64?
         end
       end
 
-      # Compare two values intelligently
-      private def compare_values(left : String | Int64 | Bool | Nil,
-                                 right : String | Int64 | Bool | Nil) : Int32
-        # Try numeric comparison first
-        if left.is_a?(Int64) && right.is_a?(Int64)
-          return left <=> right
-        end
+      # Compare two values for an ORDERING comparison (`<`/`>`/`<=`/`>=`).
+      #
+      # Strict on operand class, matching real Jinja2/Python, which raises
+      # TypeError - and real ansible-playbook fails the task - for any
+      # ordering comparison between incomparable classes (dict vs float,
+      # str vs int, None vs anything, list vs anything). The historical
+      # behavior here stringified both operands and compared the texts,
+      # silently answering every one of those (`dict <= 6.6` -> "False",
+      # `missing_var < '17'` -> "True").
+      #
+      # Deliberately KEPT lenient (pre-existing, load-bearing for real
+      # roles whose values are strings from module stdout):
+      # - two raw Strings compare as strings (int/float-parsable pairs
+      #   numerically first, exactly as before), matching Python's own
+      #   lexicographic str-vs-str ordering;
+      # - a numeric string against a real number compares numerically
+      #   ("7" < 10).
+      # A Bool orders numerically as its int-subclass value (True == 1 in
+      # Python: `True > False` and `bool_var < 2` are valid Python).
+      private def compare_values(left : JSON::Any, right : JSON::Any, op : String) : Int32
+        left_num = numeric_or_nil(left)
+        right_num = numeric_or_nil(right)
 
-        # Try to parse as integers
-        if left_int = left.to_s.to_i64?
-          if right_int = right.to_s.to_i64?
-            return left_int <=> right_int
+        # Two raw strings: keep the historical numeric-first cascade for
+        # numeric-string pairs, lexicographic for anything else (Python's
+        # own str-vs-str semantics).
+        if left.raw.is_a?(String) && right.raw.is_a?(String)
+          if left_num && right_num
+            return (left_num <=> right_num) || 0
           end
+          return left.as_s <=> right.as_s
         end
 
-        # Try to parse as floats
-        if left_float = left.to_s.to_f64?
-          if right_float = right.to_s.to_f64?
-            comparison = left_float <=> right_float
-            return comparison if comparison
-          end
+        # Bool coerces to its Python int-subclass value for ordering.
+        # (A nil-check, not an `if raw = ...` truthiness test: False is a
+        # valid Bool operand and would skip the branch.)
+        if (left_bool = left.raw.as?(Bool)).is_a?(Bool)
+          left_num = left_bool ? 1.0 : 0.0
+        end
+        if (right_bool = right.raw.as?(Bool)).is_a?(Bool)
+          right_num = right_bool ? 1.0 : 0.0
         end
 
-        # Fall back to string comparison
-        left.to_s <=> right.to_s
+        if left_num && right_num
+          return (left_num <=> right_num) || 0
+        end
+
+        raise ComparisonTypeError.new(
+          "'#{op}' not supported between instances of '#{python_type_name(left)}' and '#{python_type_name(right)}'")
       end
 
-      # Look up a simple variable
-      private def lookup_simple_variable(name : String) : String | Int64 | Bool | Nil
-        name = name.strip
-
-        if @vars.has_key?(name)
-          value = @vars[name]
-          case raw = value.raw
-          when String
-            # Real Ansible's recursive re-templating: a variable whose
-            # own raw value is itself unrendered Jinja (a role default
-            # defined in terms of another default, e.g. ansible-
-            # community.ansible-vault's own `vault_version: "{{
-            # lookup('env', 'VAULT_VERSION') | default('2.0.3', true)
-            # }}"`) must be rendered before being compared - otherwise
-            # `installed_vault_version.stdout != vault_version` compared
-            # the real installed version string against the raw,
-            # unrendered template text itself (never equal to anything),
-            # always concluding a reinstall was needed. `{{ vault_version
-            # }}` alone rendered correctly (a different code path -
-            # VarSubstitutor#substitute's own re-templating pass -
-            # already handled it), but this plain-lookup fallback for a
-            # bare comparison operand didn't.
-            if raw.includes?("{%") || raw.includes?("{#")
-              unless VarSubstitutor.unsafe_root?(@vars, name) || UnsafeValues.unsafe_text?(raw)
-                rendered = JinjaRenderer.new(@vars).render(raw)
-                return rendered.to_i64? || rendered
-              end
-              return raw.strip
-            end
-            if raw.includes?("{{")
-              rendered = render_raw_template_string(raw, name)
-              return rendered.to_i64? || rendered
-            end
-            return raw.strip
-          when Int64
-            return value.as_i64
-          when Bool
-            return value.as_bool
-          when Nil
-            return nil
-          else
-            return value.to_s
-          end
+      # Python's own class name for a JSON::Any operand, for the
+      # TypeError-style message above (real message: "'<=' not supported
+      # between instances of 'dict' and 'float'").
+      private def python_type_name(value : JSON::Any) : String
+        case value.raw
+        when String  then "str"
+        when Int64   then "int"
+        when Float64 then "float"
+        when Bool    then "bool"
+        when Nil     then "NoneType"
+        when Array   then "list"
+        when Hash    then "dict"
+        else              "object"
         end
-
-        nil
-      end
-
-      # Look up a nested variable (e.g., result.rc) - the shared
-      # plain-hash walker (see VariableSubstitutor.walk_dotted_path);
-      # this was its own copy that could drift.
-      private def lookup_nested_variable(expr : String) : String
-        parts = expr.split(".")
-        base = @vars[parts[0]]?
-        return "undefined" unless base
-
-        current = VariableSubstitutor.walk_dotted_path(base, parts[1..])
-        return "undefined" unless current
-
-        rerender_if_templated(current, expr).to_s
       end
 
       # Resolves a simple or dotted expression to its raw JSON::Any value

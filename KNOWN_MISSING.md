@@ -40,16 +40,28 @@ and fixed and when.
   2026-09-27). Three disagreement classes survive triage against real
   Jinja2 3.1.6, all in lenient (non-strict) substitution mode, none
   fixed yet:
-  - **The hand-rolled evaluator answers invalid Jinja leniently** where
-    krikri-jinja raises exactly what real Jinja2 raises (bad syntax like
-    `a != not b`; type-mismatched operations like `dict <= 6.6`,
-    `str * list`, `| split(dict)`; comparisons against an undefined var).
-    Real ansible-playbook fails these tasks; krikri's `{{ }}` substitute
-    path silently produces a value ("False", "0", ...). This is the
-    heuristic parser's own fallback design showing, on ~15% of generated
-    invalid-ish expressions. Shrinking this leniency means making
-    ExpressionEvaluator strict-parse before answering - follow-on work,
-    not started.
+  - **The hand-rolled evaluator still answers SOME invalid Jinja
+    leniently** where krikri-jinja raises what real Jinja2 3.1.6 raises.
+    The 2026-09-27 strictness pass fixed the largest shapes: ordering
+    comparisons between incomparable operand classes (containers,
+    None/undefined, non-numeric string vs number, bool vs non-numeric
+    string - `dict <= 6.6`, `missing_var < '17'`), `*`/`/`/`//`
+    type-mismatched operands (with real Python repeat semantics added
+    for the valid `'ab' * 3`/`list * 2` pairs, which previously rendered
+    empty), `not` as a comparison's right operand (`a < not b`), and
+    unary minus over a missing or non-numeric operand (`- missing_var`).
+    Deliberately kept lenient (scoped down, not forced): two-raw-string
+    and numeric-string-vs-number orderings (module stdout values are
+    strings - load-bearing for real roles), per-filter argument type
+    leniency (`| sum` on strings, `| abs` on a string, `| split(dict)`,
+    ...), the unimplemented `%` modulo operator, `not (...)` wrapped
+    around an unimplemented inner construct, and bare-callable
+    attributes (`str.count`). The residual classes are enumerated as
+    three message/shape families in
+    `src/krikri/differential_fuzz/runner.cr` (`KNOWN_DIFFERENCES`),
+    including the one documented predicate hole (a regression of the
+    non-numeric-string/bool-vs-string ordering rules is message-
+    indistinguishable from the deliberate numeric-string leniency).
   - **Undefined-result sentinel inconsistency between the two entry
     points**: a ternary whose CHOSEN branch is undefined renders `""`
     through the krikri-jinja render finalization (hand-rolled side)

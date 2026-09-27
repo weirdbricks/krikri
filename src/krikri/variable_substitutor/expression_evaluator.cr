@@ -1115,8 +1115,62 @@ module Krikri
           value = render_via_jinja_value(expr)
           value ? @lookup.format_value(value) : "undefined"
         rescue
+          # A leading unary minus whose Crinja evaluation failed: negate a
+          # numeric operand, raise on a missing bare reference or a
+          # non-numeric one - real Jinja2/Ansible fails the task on both
+          # (`- missing_var`, `- 'abc'`), while the plain-lookup fallback
+          # below silently rendered the "undefined" sentinel (found by
+          # bin/differential_fuzz: "cannot negate" divergences). Same
+          # conservative shape-gating the strict `+` operand resolution
+          # uses: a genuinely-missing operand only raises when it matches
+          # REGEX_BARE_VAR_REF (an operand shape this evaluator simply
+          # can't resolve must stay a lenient fallback, not become a
+          # spurious task failure).
+          if operand = unary_minus_operand(expr)
+            negated = evaluate_unary_minus(operand)
+            return negated if negated
+          end
           @lookup.simple(expr)
         end
+      end
+
+      # The operand text of a leading unary minus (`- 5`, `- var.attr`),
+      # or nil when *expr* doesn't start with one. A bare `-5` numeric
+      # literal never reaches here (parsed earlier as a literal).
+      private def unary_minus_operand(expr : String) : String?
+        stripped = expr.strip
+        return nil unless stripped.starts_with?('-') && stripped.size > 1
+        rest = stripped[1..].strip
+        rest.empty? ? nil : rest
+      end
+
+      # Negate *operand* for a leading unary minus, or nil when the shape
+      # can't be resolved conservatively (the caller keeps the lenient
+      # plain-lookup fallback). A genuinely-missing bare reference raises
+      # real Ansible's strict-undefined message (via resolve_plus_operand's
+      # own strict gate); a resolvable non-numeric operand raises real
+      # Python's unary-minus TypeError.
+      private def evaluate_unary_minus(operand : String) : String?
+        resolved =
+          begin
+            resolve_plus_operand(operand, strict: true)
+          rescue e : PlusMinusOperandError
+            # A missing bare reference is a real strict failure; any other
+            # shape-gated failure means "can't resolve conservatively" and
+            # keeps the lenient plain-lookup fallback.
+            raise e if REGEX_BARE_VAR_REF.matches?(operand)
+            return nil
+          end
+
+        if number = python_number(resolved)
+          return @lookup.format_value(JSON::Any.new(-number))
+        end
+
+        if resolved.raw.nil? && !REGEX_BARE_VAR_REF.matches?(operand) && !@lookup.resolve(operand)
+          return nil
+        end
+
+        raise PlusMinusOperandError.new("bad operand type for unary -: '#{python_type_name(resolved)}'")
       end
 
       # Dotted variable/attribute access - split out of
@@ -1509,7 +1563,15 @@ module Krikri
         when '\'', '"', '[', '(', '{', ']', ')', '}'
           split_mult_div_delimiter(state, char)
         when '*', '/'
-          split_mult_div_operator(state, chars, i, char)
+          # The operator step's own skip-ahead return value (i + 2 for a
+          # `//` pair) must propagate: the old code discarded it and
+          # advanced only one character, so `10 // 0` split as
+          # parts ["10", "", "0"], ops ["//", "/"] - the phantom empty
+          # operand combined to JSON null, which silently papered over
+          # every `//` the Crinja-first attempt didn't handle (and, after
+          # combine_mult_div went strict, surfaced as a spurious
+          # unsupported-operand error on the empty part).
+          return split_mult_div_operator(state, chars, i, char)
         else
           state.current << char
         end
@@ -1582,31 +1644,87 @@ module Krikri
       private def combine_mult_div(a : JSON::Any, b : JSON::Any, op : String) : JSON::Any
         af = numeric_operand(a)
         bf = numeric_operand(b)
-        return JSON::Any.new(nil) unless af && bf
-
-        both_int = (a.raw.is_a?(Int64) || a.raw.is_a?(Bool)) &&
-                   (b.raw.is_a?(Int64) || b.raw.is_a?(Bool))
 
         case op
         when "*"
-          both_int ? JSON::Any.new((af * bf).to_i64) : JSON::Any.new(af * bf)
+          if af && bf
+            both_int = (a.raw.is_a?(Int64) || a.raw.is_a?(Bool)) &&
+                       (b.raw.is_a?(Int64) || b.raw.is_a?(Bool))
+            return both_int ? JSON::Any.new((af * bf).to_i64) : JSON::Any.new(af * bf)
+          end
+
+          # Real Python/Jinja2 `*` also repeats: str*int, int*str,
+          # list*int, int*list (bool counts as its int-subclass value).
+          # Previously any non-numeric pair silently produced JSON null
+          # (rendered as ""), so even the VALID repeat shapes
+          # (`'-' * 40`, a real Ansible idiom) rendered empty while real
+          # Ansible repeated the operand, and the invalid ones
+          # (`str * list`) were silently answered where real Jinja2
+          # raises TypeError (found by bin/differential_fuzz).
+          if (repeat = python_repeat(a, b)) || (repeat = python_repeat(b, a))
+            return repeat
+          end
         when "/"
-          JSON::Any.new(af / bf)
+          if af && bf
+            return JSON::Any.new(af / bf)
+          end
         when "//"
-          # `10 // 0` previously crashed the whole process with an
-          # uncaught `OverflowError` (`(10.0 / 0.0).floor` is
-          # `Float64::INFINITY`, and `Infinity.to_i64` overflows Int64) -
-          # found probing whether `*`/`/`/`//` were safe to converge to
-          # Crinja-first as part of the general filter-chain-dispatch
-          # construct; real Crinja raises a clean `DivisionByZeroError`
-          # for the same input instead of crashing, which is what exposed
-          # this. `/`'s own by-zero case already degrades leniently to
-          # `Infinity` rather than raising (line above) - matching that
-          # existing convention here (nil/"undefined", not a crash) is
-          # more consistent than introducing a hard failure only `//` has.
-          bf.zero? ? JSON::Any.new(nil) : JSON::Any.new((af / bf).floor.to_i64)
-        else
-          JSON::Any.new(nil)
+          if af && bf
+            # `10 // 0` previously crashed the whole process with an
+            # uncaught `OverflowError` (`(10.0 / 0.0).floor` is
+            # `Float64::INFINITY`, and `Infinity.to_i64` overflows Int64) -
+            # found probing whether `*`/`/`/`//` were safe to converge to
+            # Crinja-first as part of the general filter-chain-dispatch
+            # construct; real Crinja raises a clean `DivisionByZeroError`
+            # for the same input instead of crashing, which is what exposed
+            # this. `/`'s own by-zero case already degrades leniently to
+            # `Infinity` rather than raising (line above) - matching that
+            # existing convention here (nil/"undefined", not a crash) is
+            # more consistent than introducing a hard failure only `//` has.
+            return bf.zero? ? JSON::Any.new(nil) : JSON::Any.new((af / bf).floor.to_i64)
+          end
+        end
+
+        # Every non-numeric, non-repeatable operand pair is a strict
+        # operand-class failure - real Python/Jinja2 raises TypeError
+        # (`unsupported operand type(s) for /: 'str' and 'float'`) and real
+        # Ansible fails the task; the old `JSON::Any.new(nil)` here
+        # silently rendered "" instead.
+        raise PlusMinusOperandError.new(
+          "unsupported operand type(s) for #{op}: '#{python_type_name(a)}' and '#{python_type_name(b)}'")
+      end
+
+      # Python `*` repeat semantics: a String or Array operand repeated by
+      # an int-coercible one (Bool counts as its int-subclass value; a
+      # Float64 multiplier is a real TypeError, not a repeat). Returns nil
+      # when the pair isn't a repeat shape at all. Checked in BOTH
+      # orientations by the caller (`str * int` and `int * str`). A
+      # negative count repeats zero times (Python semantics); a count that
+      # would materialize more than MAX_REPEAT_ELEMENTS elements raises
+      # rather than exhausting memory the way real Python's MemoryError
+      # fails the task.
+      MAX_REPEAT_ELEMENTS = 10_000_000
+
+      private def python_repeat(value : JSON::Any, count : JSON::Any) : JSON::Any?
+        return nil unless value.raw.is_a?(String) || value.raw.is_a?(Array)
+        times = python_repeat_count(count) || return nil
+        if value.raw.is_a?(String)
+          return JSON::Any.new(times <= 0 ? "" : value.as_s * times)
+        end
+        base = value.as_a
+        return JSON::Any.new([] of JSON::Any) if times <= 0 || base.empty?
+        if times > MAX_REPEAT_ELEMENTS // base.size
+          raise Exception.new("repetition of #{python_type_name(value)} by #{times} exceeds the maximum supported size")
+        end
+        result = [] of JSON::Any
+        times.times { result.concat(base) }
+        JSON::Any.new(result)
+      end
+
+      private def python_repeat_count(count : JSON::Any) : Int64?
+        case raw = count.raw
+        when Bool  then raw ? 1_i64 : 0_i64
+        when Int64 then raw
         end
       end
 
