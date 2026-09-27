@@ -51,9 +51,18 @@ module Krikri
   # Real Ansible returns name/state always, and gid/system whenever the
   # group exists after the task - attached to the result here the same way.
   class GroupPlugin < BasePlugin
+    # ansible.builtin.group's `type: bool` options, in the real argument-spec
+    # declaration order (ansible-doc -j ansible.builtin.group). Validated at
+    # module setup by BasePlugin#validate_bool_params! - see its block
+    # comment for the real-Ansible semantics and message wording.
+    protected def bool_params : Array(String)
+      %w[force local non_unique system]
+    end
+
     def execute : PluginResult
       name = @params["name"]?
       return missing_param("name") unless name
+      validate_bool_params!
 
       # Real Ansible's argument-validation order (live-verified): the
       # AnsibleModule ctor's required_if check first, then main()'s

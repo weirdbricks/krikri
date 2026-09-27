@@ -20,6 +20,20 @@ module Krikri
   # this plugin it is never vault-armored, so decrypt: is still accepted
   # and ignored here.
   class CopyPlugin < BasePlugin
+    # ansible.builtin.copy's `type: bool` options, in the real argument-spec
+    # declaration order (ansible-doc -j ansible.builtin.copy). Validated at
+    # module setup by BasePlugin#validate_bool_params! - see its block
+    # comment for the real-Ansible semantics and message wording.
+    protected def bool_params : Array(String)
+      %w[backup decrypt follow force local_follow remote_src unsafe_writes]
+    end
+
+    # These default to None in real's argspec, so an explicit null
+    # skips type validation there (see BasePlugin#bool_params_none_default).
+    protected def bool_params_none_default : Array(String)
+      %w[local_follow]
+    end
+
     property? check_mode : Bool
     property? diff_mode : Bool
 
@@ -30,6 +44,7 @@ module Krikri
     end
 
     def execute : PluginResult
+      validate_bool_params!
       # Get destination (required)
       dest = @params["dest"]?
       unless dest

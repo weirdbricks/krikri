@@ -86,6 +86,14 @@ module Krikri
   # larger pre-existing gap not touched in this pass. Per-package
   # `state: absent` version pinning (uninstall doesn't take a version).
   class PipPlugin < BasePlugin
+    # ansible.builtin.pip's `type: bool` options, in the real argument-spec
+    # declaration order (ansible-doc -j ansible.builtin.pip). Validated at
+    # module setup by BasePlugin#validate_bool_params! - see its block
+    # comment for the real-Ansible semantics and message wording.
+    protected def bool_params : Array(String)
+      %w[break_system_packages editable virtualenv_site_packages]
+    end
+
     # Set by #resolve_pip_binary when THIS task invocation itself created
     # the target virtualenv (it didn't exist before the task ran). Real
     # Ansible's pip module counts creating a virtualenv as a change in
@@ -97,6 +105,7 @@ module Krikri
     @created_virtualenv = false
 
     def execute : PluginResult
+      validate_bool_params!
       # Real Ansible's required_one_of / mutually_exclusive checks run
       # inside AnsibleModule.__init__, before main() ever touches pip
       # discovery or venv creation - so a pip-less host with bad

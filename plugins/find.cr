@@ -78,6 +78,14 @@ module Krikri
   #
   # Read-only, never-`changed`, like stat.
   class FindPlugin < BasePlugin
+    # ansible.builtin.find's `type: bool` options, in the real argument-spec
+    # declaration order (ansible-doc -j ansible.builtin.find). Validated at
+    # module setup by BasePlugin#validate_bool_params! - see its block
+    # comment for the real-Ansible semantics and message wording.
+    protected def bool_params : Array(String)
+      %w[exact_mode follow get_checksum hidden read_whole_file recurse use_regex]
+    end
+
     # Bundles every filter/output option parsed from @params once, rather
     # than threading a dozen separate arguments through execute/mch -
     # what pushed execute's own cyclomatic complexity over ameba's
@@ -106,6 +114,7 @@ module Krikri
       encoding : String?
 
     def execute : PluginResult
+      validate_bool_params!
       # Real Ansible's find module declares `paths` with aliases `path`
       # and `name` (`ansible.plugins.modules.find`'s own argument_spec) -
       # a single-path invocation almost always uses the singular form

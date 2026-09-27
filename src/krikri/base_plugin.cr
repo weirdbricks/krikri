@@ -10,6 +10,7 @@ require "./shell"
 require "./ssh_manager"
 require "./local_executor"
 require "./param_sentinels"
+require "./plugin_helpers/strict_bool_params"
 require "./plugin_helpers/stat_fields"
 require "./plugin_helpers/controlling_tty"
 require "./plugin_helpers/ansible_splitlines"
@@ -227,6 +228,14 @@ module Krikri
     # own driver trailer) is unaffected.
     def run_and_capture : String
       execute.to_json
+    rescue ex : BoolParamError
+      # The message is already the exact user-facing failure real Ansible
+      # produces at module setup (parameters.py's check_type_bool wrapper,
+      # live-verified against ansible-core 2.19.11) - surface it verbatim
+      # instead of the generic "Plugin execution failed: " wrapper real
+      # never produces, same reasoning as the OwnerLookupFailure rescue
+      # below.
+      PluginResult.new(changed: false, failed: true, msg: ex.message || "invalid boolean parameter").to_json
     rescue ex : OwnerLookupFailure
       # The message is already the exact user-facing failure real
       # Ansible produces ("chown failed: failed to look up user <name>"
@@ -709,6 +718,24 @@ module Krikri
     protected def false?(value : String?) : Bool
       return false unless value
       ["false", "no", "0", "off", "n", "f"].includes?(value.downcase)
+    end
+
+    # --- strict `type: bool` param validation (real check_type_bool) ---
+    #
+    # Shared with the controller-side action plugins through
+    # PluginHelpers::StrictBoolValidation (see that module's block comment
+    # for the real-Ansible semantics, wording provenance and opt-in
+    # contract). A plugin opts in by overriding #bool_params (plus
+    # #bool_param_aliases / #bool_params_none_default where real's argspec
+    # has them) and calling #validate_bool_params! where real's
+    # module-setup validation would sit in its own arg-check ordering.
+    include PluginHelpers::StrictBoolValidation
+
+    # Convenience wrapper: pulls the raw param wire off the plugin config
+    # and runs the shared validator over it.
+    protected def validate_bool_params! : Nil
+      raw_params = @config["params"]?.try(&.as_h?) || return nil
+      validate_bool_params_in!(raw_params)
     end
 
     # Owner/group name -> uid/gid for the file-common owner:/group: args,

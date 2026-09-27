@@ -109,6 +109,29 @@ module Krikri
   # `cat`/`rm -f`/`mkdir -p`, plus `BasePlugin#apply_owner_group_mode`
   # for `chown`/`chgrp`/`chmod`).
   class YumRepositoryPlugin < BasePlugin
+    # ansible.builtin.yum_repository's `type: bool` options, in the real argument-spec
+    # declaration order (ansible-doc -j ansible.builtin.yum_repository). Validated at
+    # module setup by BasePlugin#validate_bool_params! - see its block
+    # comment for the real-Ansible semantics and message wording.
+    protected def bool_params : Array(String)
+      %w[async countme enabled enablegroups gpgcheck keepalive module_hotfixes protect
+        repo_gpgcheck s3_enabled skip_if_unavailable ssl_check_cert_permissions sslverify
+        unsafe_writes]
+    end
+
+    protected def bool_param_aliases : Hash(String, String)
+      {
+        "validate_certs" => "sslverify",
+      }
+    end
+
+    # These default to None in real's argspec, so an explicit null
+    # skips type validation there (see BasePlugin#bool_params_none_default).
+    protected def bool_params_none_default : Array(String)
+      %w[async countme enabled enablegroups gpgcheck keepalive module_hotfixes protect
+        repo_gpgcheck s3_enabled skip_if_unavailable ssl_check_cert_permissions sslverify]
+    end
+
     BOOL_KEYS = %w[
       enabled gpgcheck countme enablegroups keepalive module_hotfixes protect
       repo_gpgcheck s3_enabled skip_if_unavailable ssl_check_cert_permissions sslverify
@@ -150,6 +173,7 @@ module Krikri
     end
 
     def execute : PluginResult
+      validate_bool_params!
       name = @params["name"]?
       unless name
         return PluginResult.new(changed: false, failed: true, msg: "missing required argument: name")

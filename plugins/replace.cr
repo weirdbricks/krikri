@@ -34,6 +34,14 @@ module Krikri
   # the file was modified, and re-running with no remaining matches reports
   # changed: false. Real Ansible fails if the file doesn't exist.
   class ReplacePlugin < BasePlugin
+    # ansible.builtin.replace's `type: bool` options, in the real argument-spec
+    # declaration order (ansible-doc -j ansible.builtin.replace). Validated at
+    # module setup by BasePlugin#validate_bool_params! - see its block
+    # comment for the real-Ansible semantics and message wording.
+    protected def bool_params : Array(String)
+      %w[backup unsafe_writes]
+    end
+
     property? check_mode : Bool
 
     def initialize(config : JSON::Any)
@@ -42,6 +50,7 @@ module Krikri
     end
 
     def execute : PluginResult
+      validate_bool_params!
       # Real ansible's replace module rejects ANY parameter outside its
       # own argument_spec at module-arg validation, before any action
       # runs - notably `ignorecase:`, which belongs to lineinfile, not

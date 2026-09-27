@@ -34,9 +34,18 @@ module Krikri
   #     after/before it (skipped at EOF/BOF or when the neighbor is
   #     already blank)
   class BlockInFilePlugin < BasePlugin
+    # ansible.builtin.blockinfile's `type: bool` options, in the real argument-spec
+    # declaration order (ansible-doc -j ansible.builtin.blockinfile). Validated at
+    # module setup by BasePlugin#validate_bool_params! - see its block
+    # comment for the real-Ansible semantics and message wording.
+    protected def bool_params : Array(String)
+      %w[append_newline backup create prepend_newline unsafe_writes]
+    end
+
     DEFAULT_MARKER = "# {mark} ANSIBLE MANAGED BLOCK"
 
     def execute : PluginResult
+      validate_bool_params!
       path = @params["path"]? || @params["dest"]? || @params["destfile"]? || @params["name"]?
       return missing_param("path") unless path
       path = expand_tilde(path)

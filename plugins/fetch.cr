@@ -16,12 +16,21 @@ module Krikri
   # this module" (verified against a real ansible-playbook --check run,
   # not the docs) - reused verbatim here.
   class FetchPlugin < BasePlugin
+    # ansible.builtin.fetch's `type: bool` options, in the real argument-spec
+    # declaration order (ansible-doc -j ansible.builtin.fetch). Validated at
+    # module setup by BasePlugin#validate_bool_params! - see its block
+    # comment for the real-Ansible semantics and message wording.
+    protected def bool_params : Array(String)
+      %w[fail_on_missing flat validate_checksum]
+    end
+
     def execute : PluginResult
       src = @params["src"]?
       dest = @params["dest"]?
       return PluginResult.new(changed: false, failed: true, msg: "missing required argument: src") unless src
       return PluginResult.new(changed: false, failed: true, msg: "missing required argument: dest") unless dest
       dest = expand_tilde(dest)
+      validate_bool_params!
 
       if !true?(@params["flat"]?) && unsafe_host_dir_name?(@host.name)
         return PluginResult.new(
@@ -114,10 +123,10 @@ module Krikri
     # message from that guard instead of writing outside it.
     private def resolve_dest_path(dest : String, src : String) : {path: String?, error: String?}
       composed = if true?(@params["flat"]?)
-        dest.ends_with?(File::SEPARATOR) ? File.join(dest, File.basename(src)) : dest
-      else
-        File.join(dest, @host.name, src)
-      end
+                   dest.ends_with?(File::SEPARATOR) ? File.join(dest, File.basename(src)) : dest
+                 else
+                   File.join(dest, @host.name, src)
+                 end
       normalized = File.expand_path(composed)
       return {path: normalized, error: nil} if contained_in_dest?(dest, normalized)
       {path: nil, error: "Detected directory traversal, expected to be contained in '#{dest}' but got '#{composed}'"}

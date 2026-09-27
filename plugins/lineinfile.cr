@@ -32,10 +32,19 @@ module Krikri
   #   unsafe_writes: fall back to a direct in-place write when the atomic
   #     rename into place fails
   class LineInFilePlugin < BasePlugin
+    # ansible.builtin.lineinfile's `type: bool` options, in the real argument-spec
+    # declaration order (ansible-doc -j ansible.builtin.lineinfile). Validated at
+    # module setup by BasePlugin#validate_bool_params! - see its block
+    # comment for the real-Ansible semantics and message wording.
+    protected def bool_params : Array(String)
+      %w[backrefs backup create firstmatch unsafe_writes]
+    end
+
     def execute : PluginResult
       path = @params["path"]? || @params["dest"]? || @params["name"]?
       return missing_param("path") unless path
       path = expand_tilde(path)
+      validate_bool_params!
 
       line = @params["line"]?
       regexp = @params["regexp"]?

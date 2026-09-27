@@ -37,6 +37,14 @@ module Krikri
   # ansible-playbook strips it, so real playbooks are routinely written
   # assuming stdout has no trailing newline.
   class CommandPlugin < BasePlugin
+    # ansible.builtin.command's `type: bool` options, in the real argument-spec
+    # declaration order (ansible-doc -j ansible.builtin.command). Validated at
+    # module setup by BasePlugin#validate_bool_params! - see its block
+    # comment for the real-Ansible semantics and message wording.
+    protected def bool_params : Array(String)
+      %w[expand_argument_vars stdin_add_newline strip_empty_ends]
+    end
+
     property? check_mode : Bool
 
     def initialize(config : JSON::Any)
@@ -116,6 +124,11 @@ module Krikri
           msg: "Missing required parameter: cmd"
         )
       end
+
+      # Bool-typed params: real AnsibleModule type-converts them at module
+      # setup, after the required-args gate above - now via the shared
+      # BasePlugin#validate_bool_params! (see its block comment).
+      validate_bool_params!
 
       # `argv:` gives the exact argument list literally - no shell
       # quoting/splitting at all, real ansible-core's own command.py runs

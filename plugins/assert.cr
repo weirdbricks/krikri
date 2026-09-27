@@ -56,7 +56,16 @@ module Krikri
   # `_ansible_*` keys are stripped before register, so the registered
   # var shape stays identical to real Ansible's).
   class AssertPlugin < BasePlugin
+    # ansible.builtin.assert's `type: bool` options, in the real argument-spec
+    # declaration order (ansible-doc -j ansible.builtin.assert). Validated at
+    # module setup by BasePlugin#validate_bool_params! - see its block
+    # comment for the real-Ansible semantics and message wording.
+    protected def bool_params : Array(String)
+      %w[quiet]
+    end
+
     def execute : PluginResult
+      validate_bool_params!
       that_json = @params["that"]?
       return PluginResult.new(changed: false, failed: true, msg: "missing required argument: that") unless that_json
 

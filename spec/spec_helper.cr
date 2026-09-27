@@ -40,6 +40,34 @@ module PluginSpecHelper
     JSON.parse(output.to_s)
   end
 
+  # Same as #run, but the params keep their NATIVE JSON types (int, float,
+  # bool, null, list, dict) instead of being stringified - needed by specs
+  # that exercise type-aware plugin behavior (e.g. the strict bool-param
+  # validator's "of type int"/NoneType/list error branches, which real
+  # Ansible derives from the value's own type).
+  def self.run_raw(name : String, params : Hash(String, JSON::Any), vars : Hash(String, String) = {} of String => String, host_name : String = "localhost") : JSON::Any
+    binary = File.join(PLUGINS_DIR, name)
+    raise "Plugin binary not found: \#{binary} (run ./build.sh first)" unless File.exists?(binary)
+
+    config = {
+      "host" => {
+        "name" => host_name,
+        "user" => ENV["USER"]? || "root",
+        "port" => 22,
+      },
+      "params" => params,
+      "vars"   => vars,
+    }
+
+    output = IO::Memory.new
+    Process.run(binary, input: Process::Redirect::Pipe, output: output, error: Process::Redirect::Inherit) do |process|
+      process.input.print(config.to_json)
+      process.input.close
+    end
+
+    JSON.parse(output.to_s)
+  end
+
   # Whether the filesystem holding `dir` (default: the spec tempdir)
   # accepts `chattr -i` at all. Rootless fuse-overlayfs containers (and
   # other fuse-backed overlay filesystems) reject every chattr flag

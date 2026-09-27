@@ -1,5 +1,6 @@
 require "json"
 require "../base_action_plugin"
+require "../plugin_helpers/strict_bool_params"
 require "../conditional_evaluator"
 require "../variable_substitutor"
 require "../krikri_jinja_filters"
@@ -28,7 +29,25 @@ module Krikri
   # ResultDisplay suppresses the msg for it. Failures report
   # msg/assertion/evaluated_to identically with or without `quiet:`.
   class AssertActionPlugin < ActionPlugin
+    # Real AnsibleModule argspec-validates assert's `quiet:` (type: bool)
+    # at module setup - the same StrictBoolValidation the module plugins
+    # use, since this action plugin computes the whole result without
+    # ever running plugins/assert.cr. Live-verified against ansible-core
+    # 2.19.11: `quiet: blah` fails with "argument 'quiet' is of type str
+    # and we were unable to convert to bool: The value 'blah' is not a
+    # valid boolean. Valid booleans include: ...".
+    include PluginHelpers::StrictBoolValidation
+
+    protected def bool_params : Array(String)
+      %w[quiet]
+    end
+
     def execute : ActionResult
+      if (raw = @params["quiet"]?) &&
+         (msg = bool_param_error_msg("quiet", JSON::Any.new(raw)))
+        return ActionResult.final(ActionResult.plugin_result_json(false, true, msg))
+      end
+
       that_json = @params["that"]?
       unless that_json
         return ActionResult.final(ActionResult.plugin_result_json(false, true, "missing required argument: that"))

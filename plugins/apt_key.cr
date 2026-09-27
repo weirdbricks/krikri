@@ -74,7 +74,16 @@ module Krikri
   #   verify after every add (url:/data:/file:/keyserver:) with its
   #   exact failure message.
   class AptKeyPlugin < BasePlugin
+    # ansible.builtin.apt_key's `type: bool` options, in the real argument-spec
+    # declaration order (ansible-doc -j ansible.builtin.apt_key). Validated at
+    # module setup by BasePlugin#validate_bool_params! - see its block
+    # comment for the real-Ansible semantics and message wording.
+    protected def bool_params : Array(String)
+      %w[validate_certs]
+    end
+
     def execute : PluginResult
+      validate_bool_params!
       # Real Ansible's argument-spec validation (mutually_exclusive=
       # (('data', 'file', 'keyserver', 'url'),)) runs before main() and
       # before any param resolution, so this is deliberately the first

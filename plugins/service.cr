@@ -50,6 +50,21 @@ module Krikri
   # confirming the 0.9.726 fixes in a container (no init at all): both
   # engines were expected to agree and only krikri failed.
   class ServicePlugin < BasePlugin
+    # ansible.builtin.service's `type: bool` options, in the real argument-spec
+    # declaration order (ansible-doc -j ansible.builtin.service). Validated at
+    # module setup by BasePlugin#validate_bool_params! - see its block
+    # comment for the real-Ansible semantics and message wording.
+    protected def bool_params : Array(String)
+      %w[enabled]
+    end
+
+    # Every bool option here defaults to None in real's argspec, so an
+    # explicit null skips type validation there (see
+    # BasePlugin#bool_params_none_default).
+    protected def bool_params_none_default : Array(String)
+      %w[enabled]
+    end
+
     property? check_mode : Bool
 
     # Which init system drives this service. Mirrors the branches of real
@@ -143,6 +158,7 @@ module Krikri
     end
 
     def execute : PluginResult
+      validate_bool_params!
       # Validate required parameters
       name = @params["name"]?
       unless name

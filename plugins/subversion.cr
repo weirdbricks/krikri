@@ -30,10 +30,19 @@ require "../src/krikri/base_plugin"
 
 module Krikri
   class SubversionPlugin < BasePlugin
+    # ansible.builtin.subversion's `type: bool` options, in the real argument-spec
+    # declaration order (ansible-doc -j ansible.builtin.subversion). Validated at
+    # module setup by BasePlugin#validate_bool_params! - see its block
+    # comment for the real-Ansible semantics and message wording.
+    protected def bool_params : Array(String)
+      %w[checkout export force in_place switch update validate_certs]
+    end
+
     REVISION_LINE_RE = /^\w+\s?:\s+\d+$/
     URL_LINE_RE      = /^URL\s?:/
 
     def execute : PluginResult
+      validate_bool_params!
       repo = @params["repo"]?
       return missing_param("repo") unless repo
 

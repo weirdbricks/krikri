@@ -27,7 +27,16 @@ require "../src/krikri/plugin_helpers/known_hosts_key"
 
 module Krikri
   class KnownHostsPlugin < BasePlugin
+    # ansible.builtin.known_hosts's `type: bool` options, in the real argument-spec
+    # declaration order (ansible-doc -j ansible.builtin.known_hosts). Validated at
+    # module setup by BasePlugin#validate_bool_params! - see its block
+    # comment for the real-Ansible semantics and message wording.
+    protected def bool_params : Array(String)
+      %w[hash_host]
+    end
+
     def execute : PluginResult
+      validate_bool_params!
       name = @params["name"]? || @params["host"]?
       return PluginResult.new(changed: false, failed: true, msg: "missing required arguments: name") unless name
 

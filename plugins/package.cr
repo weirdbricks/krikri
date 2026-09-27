@@ -21,6 +21,40 @@ module Krikri
   #     name: nginx
   #     state: present
   class PackagePlugin < BasePlugin
+
+    # Real's package: action plugin forwards the call to the detected
+    # backend module, whose own argspec validates every provided param -
+    # so the engine's package plugin validates the UNION of its backends'
+    # `type: bool` options (apt + dnf; ansible-doc -j). Validated by
+    # BasePlugin#validate_bool_params! - see its block comment. A bool
+    # param only the OTHER family's backend has fails here with the bool
+    # wording where real would fail it as an unsupported param - same
+    # outcome, different message, accepted edge.
+    protected def bool_params : Array(String)
+      %w[allow_change_held_packages allow_downgrade allow_unauthenticated
+        auto_install_module_deps autoclean autoremove best bugfix cacheonly clean
+        disable_gpg_check download_only fail_on_autoremove force force_apt_get
+        install_repoquery install_weak_deps nobest only_upgrade purge security skip_broken
+        sslverify update_cache update_only validate_certs]
+    end
+
+    protected def bool_param_aliases : Hash(String, String)
+      {
+        "allow-downgrade" => "allow_downgrade",
+        "allow_downgrades" => "allow_downgrade",
+        "allow-downgrades" => "allow_downgrade",
+        "allow-unauthenticated" => "allow_unauthenticated",
+        "install-recommends" => "install_recommends",
+        "update-cache" => "update_cache",
+        "expire-cache" => "update_cache",
+      }
+    end
+
+    # These default to None in real's argspec, so an explicit null skips
+    # type validation there (see StrictBoolValidation#bool_params_none_default).
+    protected def bool_params_none_default : Array(String)
+      %w[best install_recommends nobest update_cache]
+    end
     include AptLockRetry
     property? check_mode : Bool
 
@@ -53,6 +87,9 @@ module Krikri
           msg: "Could not find a matching action for the \"#{use}\" package manager."
         )
       end
+
+      # Backend-argspec bool validation (see the bool_params comment above).
+      validate_bool_params!
 
       # Validate required parameters. `name:` isn't required when
       # update_cache: true is given with nothing else - real Ansible's

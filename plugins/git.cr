@@ -41,6 +41,15 @@ module Krikri
   # accept_hostkey/accept_newhostkey are mutually exclusive; archive_prefix
   # requires archive.
   class GitPlugin < BasePlugin
+    # ansible.builtin.git's `type: bool` options, in the real argument-spec
+    # declaration order (ansible-doc -j ansible.builtin.git). Validated at
+    # module setup by BasePlugin#validate_bool_params! - see its block
+    # comment for the real-Ansible semantics and message wording.
+    protected def bool_params : Array(String)
+      %w[accept_hostkey accept_newhostkey bare clone force recursive single_branch
+        track_submodules update verify_commit]
+    end
+
     @git_path : String = "git"
     @cmd_prefix : String = ""
     @repo : String = ""
@@ -55,6 +64,7 @@ module Krikri
     @gpg_allowlist : Array(String) = [] of String
 
     def execute : PluginResult
+      validate_bool_params!
       if violation = validate_param_rules
         return violation
       end

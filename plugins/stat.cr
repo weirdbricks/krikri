@@ -47,6 +47,24 @@ module Krikri
   # Ansible's stat, it exists to feed `register:` + `when:`, not to make
   # changes itself.
   class StatPlugin < BasePlugin
+    # ansible.builtin.stat's `type: bool` options, in the real argument-spec
+    # declaration order (ansible-doc -j ansible.builtin.stat). Validated at
+    # module setup by BasePlugin#validate_bool_params! - see its block
+    # comment for the real-Ansible semantics and message wording.
+    protected def bool_params : Array(String)
+      %w[follow get_attributes get_checksum get_mime]
+    end
+
+    protected def bool_param_aliases : Hash(String, String)
+      {
+        "attr"       => "get_attributes",
+        "attributes" => "get_attributes",
+        "mime"       => "get_mime",
+        "mime_type"  => "get_mime",
+        "mime-type"  => "get_mime",
+      }
+    end
+
     # Real Ansible's alias resolution (_handle_aliases in module_utils/
     # common/parameters.py) iterates the argument_spec's aliases list in
     # order and each present alias OVERWRITES the canonical name, so any
@@ -69,6 +87,7 @@ module Krikri
         return PluginResult.new(changed: false, failed: true, msg: "missing required arguments: path")
       end
       path = expand_tilde(path)
+      validate_bool_params!
 
       follow = true?(@params["follow"]?, default: false)
       get_checksum = true?(@params["get_checksum"]?, default: true)
