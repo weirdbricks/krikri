@@ -1852,6 +1852,15 @@ module Krikri
       result
     end
 
+    # Public entry to the strict-undefined check substitute(strict: true)
+    # runs before evaluating a whole `{{ }}` span - for callers that
+    # evaluate a span STRUCTURALLY instead of through #substitute (the
+    # set_fact native-typing path), so the evaluation happens once and the
+    # strict-undefined failure still fires exactly as it would have.
+    def check_strict_undefined(inner : String) : Nil
+      raise_if_strict_undefined(inner)
+    end
+
     # strict: helper - raises UndefinedVariableError when *inner* (a single
     # `{{ }}` span's full content, already stripped) is a BARE variable
     # reference (see REGEX_BARE_VAR_REF) that resolves to nothing. Any

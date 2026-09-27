@@ -1481,9 +1481,14 @@ module Krikri
     # block-tag values never enter this branch (whole_single_span),
     # matching real Ansible's one-output-node rule.
     private def native_typed_value(substitutor : VarSubstitutor, stripped_value : String) : String?
+      expr = stripped_value[2..-3].strip
+      # evaluate_structured is lenient about undefined names
+      # (`undefined_var['key'] | list` yields []), so the strict check
+      # #substitute would have run happens here first - and raises.
+      substitutor.check_strict_undefined(expr)
       native_value = begin
         VariableSubstitutor::ExpressionEvaluator.new(substitutor.vars)
-          .evaluate_structured(stripped_value[2..-3].strip)
+          .evaluate_structured(expr)
       rescue
         nil
       end
