@@ -6,7 +6,8 @@ module Krikri
     private def task_has_loop?(task : Task) : Bool
       !task.loop_items.nil? || !task.loop_fileglob.nil? || !task.loop_first_found.nil? ||
         !task.loop_template.nil? || !task.loop_flattened.nil? || !task.loop_subelements_list.nil? ||
-        !task.loop_nested_sources.nil? || !task.loop_together_sources.nil? || !task.loop_filetree.nil?
+        !task.loop_nested_sources.nil? || !task.loop_together_sources.nil? || !task.loop_filetree.nil? ||
+        !task.loop_lookup_plugin.nil?
     end
 
     # Runs *tasks* against *hosts* as one shared batch: one "TASK [...]"
@@ -290,6 +291,73 @@ module Krikri
         return nil unless list
         LoopResolver.with_indexed_items(list)
       end
+    end
+
+    # Generic legacy `with_<lookup>:` source (with_url:, with_lines:,
+    # with_env:, with_pipe:, ...). Real Ansible converts the keyword to
+    # `loop: "{{ lookup('<plugin>', <terms>, wantlist=True) }}"` with each
+    # term templated against the variable context first
+    # (listify_lookup_plugin_terms), then runs the lookup plugin on the
+    # controller and iterates its result. Terms are JSON-escaped into the
+    # evaluated expression, so a rendered value containing commas, quotes,
+    # or `{{ }}` text cannot break the argument split. Returns nil when
+    # the task has no generic lookup source at all.
+    private def resolve_loop_lookup(task : Task, vars_context : Hash(String, JSON::Any)) : Array(JSON::Any)?
+      plugin = task.loop_lookup_plugin
+      raw_terms = task.loop_lookup_terms
+      return nil unless plugin && raw_terms && !raw_terms.empty?
+
+      # The plugin name comes from the YAML key itself; anything beyond a
+      # plain lookup-plugin name shape can't be dispatched sensibly.
+      unless plugin.matches?(/^[A-Za-z0-9_.]+$/)
+        raise UndefinedVariableError.new("Invalid lookup plugin name in loop source: '#{plugin}'")
+      end
+
+      args = raw_terms.map do |term|
+        if (str = term.as_s?) && str.includes?("{{")
+          value = resolve_template_value(str, vars_context)
+          if value
+            # listify_lookup_plugin_terms: a term resolving to a LIST is
+            # spliced one level into the terms list - `with_lines:
+            # "{{ cmd_list }}"` runs each element as its own command.
+            if arr = value.as_a?
+              arr.map { |entry| entry.to_json }
+            else
+              [value.to_json]
+            end
+          else
+            # Not a plain variable reference (e.g. `{{ u }}.sha512`):
+            # embed the raw template as a quoted literal - the lookup
+            # argument pipeline re-renders double-templated quoted
+            # literals itself.
+            [JSON::Any.new(str).to_json]
+          end
+        else
+          [term.to_json]
+        end
+      end.flatten
+
+      # One lookup call PER TERM, results concatenated: real lookup
+      # plugins receive every term and return their results combined
+      # (`with_lines: "{{ cmd_list }}"` over a two-command list runs both
+      # commands), while this engine's own lookup('lines'/'url'/...)
+      # argument plumbing reads only the first positional term.
+      items = [] of JSON::Any
+      args.each do |arg|
+        result = expression_evaluator_for(vars_context).evaluate(
+          "query('#{plugin}', #{arg}, wantlist=true)")
+        if result == "undefined"
+          raise UndefinedVariableError.new(
+            "The lookup plugin '#{plugin}' failed or is not available for this loop source")
+        end
+        parsed = parse_list_result(result, vars_context)
+        if parsed
+          items.concat(parsed)
+        else
+          items << JSON::Any.new(result)
+        end
+      end
+      items
     end
 
     # with_community.general.filetree: resolve each raw source string

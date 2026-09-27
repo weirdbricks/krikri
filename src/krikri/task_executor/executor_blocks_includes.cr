@@ -439,7 +439,7 @@ module Krikri
         # Ansible's own scoping - see #synthesize_legacy_ssh_aliases).
         loop_vars_context = loop_source_vars_context(task, host, vars_context)
         loop_items = resolve_loop_items_or_raise(task, host, loop_vars_context) do
-          task.loop_items || resolve_loop_template(task, loop_vars_context) || resolve_loop_nested(task, loop_vars_context, host.name) || resolve_loop_together(task, loop_vars_context, host.name) || resolve_fileglob(task, host, loop_vars_context)
+          task.loop_items || resolve_loop_template(task, loop_vars_context) || resolve_loop_nested(task, loop_vars_context, host.name) || resolve_loop_together(task, loop_vars_context, host.name) || resolve_fileglob(task, host, loop_vars_context) || resolve_loop_lookup(task, loop_vars_context)
         end
       rescue ex : WhenEvaluationError
         finish_include_vars_failure(task, host, ex.message || "is undefined")
@@ -1227,7 +1227,8 @@ module Krikri
             resolve_loop_together(task, loop_vars_context, host.name) ||
             resolve_loop_flattened(task, loop_vars_context, host.name) ||
             resolve_loop_subelements(task, loop_vars_context) ||
-            resolve_loop_filetree(task, host, loop_vars_context)
+            resolve_loop_filetree(task, host, loop_vars_context) ||
+            resolve_loop_lookup(task, loop_vars_context)
         end
       rescue ex : WhenEvaluationError
         swallow_when_error(task, host, ex)
@@ -1610,7 +1611,8 @@ module Krikri
             resolve_loop_together(task, loop_vars_context, host.name) ||
             resolve_loop_flattened(task, loop_vars_context, host.name) ||
             resolve_loop_subelements(task, loop_vars_context) ||
-            resolve_loop_filetree(task, host, loop_vars_context)
+            resolve_loop_filetree(task, host, loop_vars_context) ||
+            resolve_loop_lookup(task, loop_vars_context)
         end
       rescue ex : WhenEvaluationError
         swallow_when_error(task, host, ex)

@@ -262,6 +262,18 @@ module Krikri
     # FiletreeLookup for the real lookup-plugin semantics the executor's
     # resolve_loop_filetree hands these to.
     property loop_filetree : Array(String)?
+    # Any OTHER legacy `with_<lookup>:` source (with_url:, with_lines:,
+    # with_env:, with_pipe:, ...) - real Ansible treats ANY with_-prefixed
+    # task key as a loop keyword equivalent to
+    # `loop: "{{ lookup('<plugin>', <terms>, wantlist=True) }}"`, with the
+    # terms templated first. Kept raw (plugin name + term list) and
+    # resolved at execution time by TaskExecutor#resolve_loop_lookup;
+    # without this the keyword silently fell through as an unrecognized
+    # task key and the task ran exactly ONCE with the loop variable
+    # unbound ("'sha_url_item' is undefined" - lean_delivery.
+    # solr_standalone's sha512 fetch).
+    property loop_lookup_plugin : String?
+    property loop_lookup_terms : Array(JSON::Any)?
     # loop_control.loop_var - the variable name the loop item is exposed
     # under (Ansible default "item"). Roles like dev-sec os_hardening set
     # `loop_control: { loop_var: mount }` so an include_tasks/loop can refer
@@ -2614,6 +2626,44 @@ module Krikri
       nil
     end
 
+    # Loop keywords consumed by their own dedicated parser branches above
+    # (plus loop: itself) - a with_-prefixed key on this list never reaches
+    # the generic lookup-loop fallback below.
+    GENERIC_LOOKUP_LOOP_SKIP = %w[
+      loop with_items with_dict with_nested with_together with_indexed_items
+      with_sequence with_first_found with_fileglob with_file with_subelements
+      with_flattened with_community.general.flattened with_community.general.filetree
+    ]
+
+    # Finds the FIRST `with_<lookup>:` task key that no dedicated branch
+    # handles (with_url:, with_lines:, with_env:, with_pipe:, ...) and
+    # returns {plugin_name, terms}. Real Ansible's ModuleArgsParser/Task
+    # machinery treats ANY with_-prefixed key as a legacy loop keyword, so
+    # an unknown-looking one is still a loop over that lookup plugin's
+    # result, not a module param. A scalar value is one lookup term; a
+    # YAML sequence is one term PER ELEMENT (real Ansible's
+    # listify_lookup_plugin_terms flattens a list term one level into the
+    # terms list).
+    private def self.find_generic_lookup_loop(task_hash : Hash(YAML::Any, YAML::Any)) : {String, Array(JSON::Any)}?
+      task_hash.each do |key, value|
+        key_str = key.to_s
+        next unless key_str.starts_with?("with_")
+        next if GENERIC_LOOKUP_LOOP_SKIP.includes?(key_str)
+        next if LOOP_TEMPLATE_KEYS.includes?(key_str)
+        plugin = key_str.sub(/^with_/, "")
+                     .sub(/^ansible\.builtin\./, "")
+                     .sub(/^ansible\.legacy\./, "")
+                     .sub(/^community\.general\./, "")
+        terms = if arr = value.as_a?
+                  arr.map { |item| JSON.parse(item.to_json) }
+                else
+                  [JSON.parse(value.to_json)]
+                end
+        return {plugin, terms}
+      end
+      nil
+    end
+
     # Parse a single task
     private def self.parse_task(yaml : YAML::Any, index : Int32, play : Play, file_dir : String, role_path : String? = nil, playbook_dir : String? = nil) : Task
       unless yaml.as_h?
@@ -2756,7 +2806,11 @@ module Krikri
         key_str = key.to_s
         if legacy_conflicting_keys.includes?(key_str)
           legacy_conflict_key = key_str
-        elsif !SPECIAL_KEYS.includes?(key_str) && !module_name
+        elsif !SPECIAL_KEYS.includes?(key_str) && !module_name && !key_str.starts_with?("with_")
+          # with_-prefixed keys are legacy LOOP keywords in real Ansible
+          # (any `with_<lookup>:`), never a module name - excluding them
+          # here keeps a `with_url:` written before the module key from
+          # being mistaken for the action itself.
           module_name = key_str
           module_params = value
         end
@@ -3174,6 +3228,16 @@ module Krikri
         task.loop_template_kind = template_source[0]
         task.loop_template = template_source[1]
         task.loop_template_array_wrapped = template_source[2]
+      elsif generic_lookup = find_generic_lookup_loop(task_hash)
+        # Any remaining `with_<lookup>:` keyword (with_url:, with_lines:,
+        # with_env:, ...): real Ansible converts it to
+        # `loop: "{{ lookup('<plugin>', <terms>, wantlist=True) }}"` with
+        # the terms templated first. Store the plugin name + raw terms for
+        # the executor; without this the keyword fell through as an
+        # unrecognized task key and the task ran once with the loop
+        # variable unbound.
+        task.loop_lookup_plugin = generic_lookup[0]
+        task.loop_lookup_terms = generic_lookup[1]
       end
 
       # loop_control.loop_var - exposes the loop item under a custom name
@@ -3454,6 +3518,9 @@ module Krikri
         task.loop_template_kind = template_loop[0]
         task.loop_template = template_loop[1]
         task.loop_template_array_wrapped = template_loop[2]
+      elsif generic_lookup = find_generic_lookup_loop(task_hash)
+        task.loop_lookup_plugin = generic_lookup[0]
+        task.loop_lookup_terms = generic_lookup[1]
       end
 
       # loop_control.loop_var - exposes the loop item under a custom
@@ -3841,6 +3908,11 @@ module Krikri
         # allowlist anyway but the same skip-by-exception would
         # land here; the allowlist check below covers it.
         next if key_str == directive_key
+        # Any with_-prefixed key is a legacy loop keyword in real
+        # Ansible (with_url:, with_lines:, ...) - accepted on an
+        # include the same way loop: is, and converted to a lookup
+        # loop at execution time.
+        next if key_str.starts_with?("with_")
         next if TASK_INCLUDE_VALID_KEYWORDS.includes?(key_str)
         # Match real ansible's exact error message so any tooling
         # that greps for it stays compatible, and the user sees a
@@ -3939,6 +4011,12 @@ module Krikri
         # bug this mirrors.
         task.loop_subelements_list = with_subelements[0]?.try { |v| safe_yaml_to_string(v) }
         task.loop_subelements_key = with_subelements[1]?.try { |v| safe_yaml_to_string(v) }
+      elsif generic_lookup = find_generic_lookup_loop(task_hash)
+        # Any other with_<lookup>: source (with_url:, with_lines:, ...):
+        # real Ansible runs the include once per lookup result, same as
+        # the loop:/with_items: forms above.
+        task.loop_lookup_plugin = generic_lookup[0]
+        task.loop_lookup_terms = generic_lookup[1]
       end
 
       # loop_control.loop_var - expose each item under the custom name
@@ -4000,6 +4078,9 @@ module Krikri
       elsif with_items = task_hash["with_items"]?.try(&.as_a?)
         task.loop_items = with_items.map { |item| JSON.parse(item.to_json) }
         task.loop_items_needs_flatten = true
+      elsif generic_lookup = find_generic_lookup_loop(task_hash)
+        task.loop_lookup_plugin = generic_lookup[0]
+        task.loop_lookup_terms = generic_lookup[1]
       end
 
       if loop_control = task_hash["loop_control"]?.try(&.as_h?)
