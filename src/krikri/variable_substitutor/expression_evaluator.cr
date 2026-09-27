@@ -1686,6 +1686,18 @@ module Krikri
 
       private def resolve_plus_operand(expr : String, strict : Bool = false) : JSON::Any
         expr = expr.strip
+        # Strict +/- mode, undefined filter-chain operand: real Ansible
+        # hard-fails `'a' + undef_var|string` ("'undef_var' is undefined")
+        # - the lenient render path below collapses the chain to "" and
+        # silently concatenates. Same conservative probe the bare-reference
+        # branch further down already uses (bare head genuinely absent from
+        # vars, first filter not undefined-tolerant), so an evaluator gap
+        # still can't become a spurious failure. Only the `+`/`-` constructs
+        # pass strict: true; `~` and mult/div keep the lenient default
+        # (b6a5a157's deliberate scope boundary).
+        if strict && (undefined_name = Krikri.undefined_filter_chain_source(expr, @vars))
+          raise PlusMinusOperandError.new(Krikri.strict_undefined_message(undefined_name, @vars))
+        end
         value = resolve_plus_operand_literal(expr)
         return value if value
         value = resolve_plus_operand_mult_div(expr)
@@ -1788,6 +1800,30 @@ module Krikri
         # recursive evaluator, not the plain variable lookup below, which
         # only ever resolves a bare/dotted/indexed name.
         if expr.includes?('|') || (expr.starts_with?('(') && expr.ends_with?(')'))
+          # Crinja (krikri-jinja) FIRST, as a typed structured value: `|`
+          # binds tighter than `+`, so a filter-chain operand's own result
+          # type is what `combine_plus` must see - `v|string` on a float
+          # var is the STRING "4.0", not the float the old
+          # stringify-then-`JSON.parse` round trip below turned it into
+          # (mrlesmithjr.mongodb round 981080: `'https://x/server-' +
+          # v|string + '.asc'` hard-failed "can only concatenate str
+          # (not "float") to str" where real Ansible concatenated). A
+          # stringly-typed re-parse cannot distinguish a str that merely
+          # LOOKS numeric from a real number; only the structured engine
+          # result can. nil (Crinja-undefined) deliberately falls through
+          # to the old path so strict-undefined operand handling is
+          # untouched. Side-effecting lookups skip the Crinja attempt:
+          # a failure here would fall back to #evaluate below and run
+          # the lookup a second time.
+          unless side_effecting_call?(expr)
+            begin
+              if value = render_via_jinja_value(expr)
+                return value
+              end
+            rescue
+              # fall through to the hand-rolled path below
+            end
+          end
           rendered = evaluate(expr)
           # `return X rescue Y` is NOT `return (X rescue Y)` in Crystal -
           # the rescue modifier attaches to the whole `return X` statement,
@@ -4013,12 +4049,14 @@ module Krikri
       # Real Ansible's Python type name for a +/- operand value, for the
       # strict failure messages (`unsupported operand type(s) for +:
       # 'NoneType' and 'str'`). The OMIT_SENTINEL string is this
-      # codebase's own encoding of real Ansible's omit - named "omit"
-      # here rather than ansible-core's internal `_OmitType` (whose
-      # tagged-str/lazy-container counterparts are likewise reported by
-      # their plain Python names: str, not `_AnsibleTaggedStr`).
+      # codebase's own encoding of real Ansible's omit - live-verified
+      # against local ansible-core: real Python reports an omit operand
+      # by its class name `_OmitType` (`can only concatenate str (not
+      # "_OmitType") to str`, `unsupported operand type(s) for +:
+      # '_OmitType' and 'str'`), so the older plain-"omit" wording here
+      # was renamed to match.
       private def python_type_name(value : JSON::Any) : String
-        return "omit" if value.raw == OMIT_SENTINEL
+        return "_OmitType" if value.raw == OMIT_SENTINEL
         case value.raw
         when Nil    then "NoneType"
         when Bool   then "bool"
@@ -4035,9 +4073,30 @@ module Krikri
         # The omit sentinel is itself a String, so it would otherwise hit
         # the {String, String} branch below and silently concatenate -
         # real Ansible fails the task on an omit operand (`_OmitType`).
-        if a.raw == OMIT_SENTINEL || b.raw == OMIT_SENTINEL
+        # Omit on the LEFT: every real Python class pair fails the same
+        # way (`unsupported operand type(s) for +: '_OmitType' and 'str'`).
+        # Omit on the RIGHT is side-dependent - str/list left operands
+        # fail with the concat wording (`can only concatenate str (not
+        # "_OmitType") to str`, live-verified), everything else with the
+        # unsupported-operand wording - so it is left to the typed
+        # branches below, which the sentinel (a String) would otherwise
+        # silently concatenate into.
+        if a.raw == OMIT_SENTINEL
           raise PlusMinusOperandError.new(
             "unsupported operand type(s) for +: '#{python_type_name(a)}' and '#{python_type_name(b)}'")
+        end
+        if b.raw == OMIT_SENTINEL
+          case a.raw
+          when String
+            raise PlusMinusOperandError.new(
+              %(can only concatenate str (not "#{python_type_name(b)}") to str))
+          when Array
+            raise PlusMinusOperandError.new(
+              %(can only concatenate list (not "#{python_type_name(b)}") to list))
+          else
+            raise PlusMinusOperandError.new(
+              "unsupported operand type(s) for +: '#{python_type_name(a)}' and '#{python_type_name(b)}'")
+          end
         end
 
         if coerced = combine_with_bool_coercion(a, b, '+')

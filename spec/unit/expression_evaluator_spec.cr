@@ -1878,16 +1878,16 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
       end
     end
 
-    it "raises on an `omit` operand of `+`" do
+    it "raises on an `omit` operand of `+` (real Ansible's `_OmitType` concat wording, right-hand)" do
       expect_raises(Krikri::PlusMinusOperandError,
-        "unsupported operand type(s) for +: 'str' and 'omit'") do
+        %(can only concatenate str (not "_OmitType") to str)) do
         evaluator.evaluate("host + omit")
       end
     end
 
-    it "raises on a var whose own value renders to `omit` (nested sentinel)" do
+    it "raises on a var whose own value renders to `omit` (nested sentinel, same wording)" do
       expect_raises(Krikri::PlusMinusOperandError,
-        "unsupported operand type(s) for +: 'str' and 'omit'") do
+        %(can only concatenate str (not "_OmitType") to str)) do
         evaluator.evaluate("host + omit_var")
       end
     end
@@ -1933,6 +1933,102 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
       # only the pre-Crinja strict gate makes these fail.
       expect_raises(Krikri::PlusMinusOperandError) do
         evaluator.evaluate("host + null_var")
+      end
+    end
+  end
+
+  # Filter precedence inside binary-operator operands: `|` binds TIGHTER
+  # than `+`/`-`/`~`/`*`, so each operand's own filter chain applies BEFORE
+  # the operator combines - and the operand must reach the combine with its
+  # FILTERED type intact (`v|string` on a float var is the string "4.0",
+  # not the float the old stringify-then-JSON.parse round trip turned it
+  # into). Found via mrlesmithjr.mongodb round 981080:
+  # `{{ 'https://x/server-' + v|string + '.asc' }}` hard-failed "can only
+  # concatenate str (not \"float\") to str" where real ansible
+  # concatenated. All values here live-verified against local
+  # ansible-playbook.
+  describe "filter precedence inside binary-operator operands" do
+    v = Hash(String, JSON::Any).new
+    v["v"] = JSON::Any.new(4.0)
+    v["n"] = JSON::Any.new("2")
+    v["lst"] = JSON.parse(%(["A", "B"]))
+    v["mtch"] = JSON::Any.new("a+b")
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
+
+    it "concatenates a filtered float operand as its filtered STRING result" do
+      evaluator.evaluate("'a' + v|string").should eq("a4.0")
+      evaluator.evaluate("'https://x/server-' + v|string + '.asc'")
+        .should eq("https://x/server-4.0.asc")
+    end
+
+    it "keeps the filtered type through a parenthesized operand too" do
+      evaluator.evaluate("'a' + (v|string) + 'b'").should eq("a4.0b")
+    end
+
+    it "adds a filtered numeric operand numerically" do
+      evaluator.evaluate("v|int + 1").should eq("5")
+      evaluator.evaluate("1 + v|float").should eq("5.0")
+      evaluator.evaluate("lst|length + 1").should eq("3")
+      evaluator.evaluate("n|int * 3").should eq("6")
+    end
+
+    it "still raises str + int on a FILTERED non-string operand (type comes from the filter, not the var)" do
+      expect_raises(Krikri::PlusMinusOperandError,
+        %(can only concatenate str (not "int") to str)) do
+        evaluator.evaluate("'a' + v|int")
+      end
+    end
+
+    it "tilde-concatenates filtered operands" do
+      evaluator.evaluate("'a' ~ v|string ~ 'b'").should eq("a4.0b")
+    end
+
+    it "concatenates a filtered string operand mid-chain" do
+      evaluator.evaluate("v|string + 'x'").should eq("4.0x")
+    end
+
+    it "filters with operator-bearing quoted arguments stay intact" do
+      evaluator.evaluate("'a+b' | replace('+', '-')").should eq("a-b")
+      evaluator.evaluate("mtch | replace('+', ' AND ')").should eq("a AND b")
+      evaluator.evaluate("x|default('a' + 'b')").should eq("ab")
+    end
+
+    it "fails on an undefined filter-chain operand exactly like real Ansible" do
+      expect_raises(Krikri::PlusMinusOperandError, "'undef_var' is undefined") do
+        evaluator.evaluate("'a' + undef_var|string")
+      end
+    end
+
+    it "still allows an undefined-tolerant first filter to consume the undefined" do
+      evaluator.evaluate("'a' + undef_var|default('b')").should eq("ab")
+    end
+
+    it "raises `_OmitType` unsupported-operand wording for omit on the LEFT of `+`" do
+      expect_raises(Krikri::PlusMinusOperandError,
+        "unsupported operand type(s) for +: '_OmitType' and 'str'") do
+        evaluator.evaluate("omit + 'a'")
+      end
+    end
+
+    it "raises `_OmitType` concat wording for omit on the RIGHT of a list `+`" do
+      expect_raises(Krikri::PlusMinusOperandError,
+        %(can only concatenate list (not "_OmitType") to list)) do
+        evaluator.evaluate("lst + omit")
+      end
+    end
+
+    it "raises `_OmitType` unsupported wording for numeric + omit and - omit (both sides)" do
+      expect_raises(Krikri::PlusMinusOperandError,
+        "unsupported operand type(s) for +: 'int' and '_OmitType'") do
+        evaluator.evaluate("1 + omit")
+      end
+      expect_raises(Krikri::PlusMinusOperandError,
+        "unsupported operand type(s) for -: '_OmitType' and 'int'") do
+        evaluator.evaluate("omit - 1")
+      end
+      expect_raises(Krikri::PlusMinusOperandError,
+        "unsupported operand type(s) for -: 'int' and '_OmitType'") do
+        evaluator.evaluate("1 - omit")
       end
     end
   end
