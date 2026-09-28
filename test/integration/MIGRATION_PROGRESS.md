@@ -62,8 +62,15 @@ run, `-p 4` run, `crystal tool format`, ameba) and committed separately.
   file_common_result_fields_spec.cr, fileglob_list_spec.cr,
   fileglob_role_files_dir_spec.cr, file_spec.cr, find_spec.cr
 
+### Batch 8 (10 files): firewalld_state .. git_config
+- firewalld_state_spec.cr, first_found_list_candidate_lenient_spec.cr,
+  first_found_no_match_fails_spec.cr, first_found_subdir_order_spec.cr,
+  gather_subset_remote_user_spec.cr, generic_lookup_loop_spec.cr,
+  getent_loop_invocation_spec.cr, getent_spec.cr, get_url_spec.cr,
+  git_config_spec.cr
+
 ### Next file to convert
-- fires_before_handlers_spec.cr and on (alphabetical)
+- group_param_coverage_spec.cr and on (alphabetical)
 
 ## Count table
 
@@ -76,6 +83,7 @@ run, `-p 4` run, `crystal tool format`, ameba) and committed separately.
 | 5 | 15 | 107 | cron backup specs serialize on STATE_MUTEX and count glob SET differences (see below) |
 | 6 | 10 | 56 | dnf recording helper holds ENV_MUTEX; dpkg_divert's `tags:` kwarg dropped |
 | 7 | 15 | 170 | file/find fixture trees moved to per-test tmp_path; describe-body locals became methods |
+| 8 | 10 | 93 | get_url's file-scoped server locals became private constants; git_config tmp_path'd |
 
 ## Renames / deviations
 
@@ -161,6 +169,11 @@ run, `-p 4` run, `crystal tool format`, ameba) and committed separately.
 - environment_key_injection_test: describe-body local `marker` became a
   method (stays a fixed /tmp path by design - the probe deletes and
   checks it).
+- get_url_test: the file-scoped HTTP-double locals (server/address/base)
+  became private file-level constants, started once at require time (all
+  test files compile into one binary).
+- generic_lookup_loop_test: one `code, output = run_play(...)` with a
+  dead `output` became `code, _ =` (ameba Lint/UselessAssign).
 - assemble/authorized_key: shared `spec/tmp` roots moved to per-test
   `PluginSpecHelper.tmp_path`; before_suite mkdir_p dropped.
 
