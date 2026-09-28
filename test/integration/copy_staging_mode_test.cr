@@ -29,13 +29,6 @@ private def with_temp_dir(&)
   end
 end
 
-private def with_umask(mask : UInt32, &)
-  old_mask = LibC.umask(mask)
-  yield
-ensure
-  LibC.umask(old_mask || mask)
-end
-
 describe "copy: staging temp never holds content wider than its final mode" do
   it "stages content with mode: 0600 at 0600 while the validate: command runs" do
     with_temp_dir do |dir|
@@ -56,21 +49,19 @@ describe "copy: staging temp never holds content wider than its final mode" do
   end
 
   it "stages content with no mode: at 0644 (0666 & ~umask) while validate: runs" do
-    with_umask(0o022_u32) do
-      with_temp_dir do |dir|
-        probe = File.join(dir, "mode-probe")
-        dest = File.join(dir, "plain.conf")
+    with_temp_dir do |dir|
+      probe = File.join(dir, "mode-probe")
+      dest = File.join(dir, "plain.conf")
 
-        result = PluginSpecHelper.run("copy", {
-          "content"  => "plain config\n",
-          "dest"     => dest,
-          "validate" => "stat -c %a %s > #{probe}",
-        })
+      result = PluginSpecHelper.run("copy", {
+        "content"  => "plain config\n",
+        "dest"     => dest,
+        "validate" => "stat -c %a %s > #{probe}",
+      }, umask: 0o022)
 
-        result["changed"].as_bool.must_equal(true)
-        File.info(dest).permissions.value.must_equal(0o644)
-        File.read(probe).strip.must_equal("644")
-      end
+      result["changed"].as_bool.must_equal(true)
+      File.info(dest).permissions.value.must_equal(0o644)
+      File.read(probe).strip.must_equal("644")
     end
   end
 end

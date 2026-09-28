@@ -77,9 +77,16 @@ module PluginSpecHelper
   # reading stdin until then. Together they let a test put the CHILD in a
   # state (e.g. its starting directory deleted) without ever touching this
   # process's own cwd, which every concurrently running test shares.
+  #
+  # `umask` runs the plugin under that umask via `sh -c 'umask ...; exec'`.
+  # Never LibC.umask the test process instead: the umask is process-wide
+  # and inherited by EVERY child, so concurrently running tests' plugins
+  # (tar/unzip extractions, file creation) would get the wrong modes.
   def self.run_plugin_with_timeout(binary : String, config_json : String, output : IO,
-                                   chdir : String? = nil, before_input : Proc(Nil)? = nil) : Nil
-    process = Process.new(binary, input: Process::Redirect::Pipe,
+                                   chdir : String? = nil, before_input : Proc(Nil)? = nil,
+                                   umask : Int32? = nil) : Nil
+    command, args = umask ? {"/bin/sh", ["-c", "umask #{umask.to_s(8)} && exec \"$0\"", binary]} : {binary, [] of String}
+    process = Process.new(command, args, input: Process::Redirect::Pipe,
       output: Process::Redirect::Pipe, error: Process::Redirect::Inherit, chdir: chdir)
     before_input.try &.call
 
@@ -126,7 +133,8 @@ module PluginSpecHelper
   # localhost host so plugins that check ansible_connection/host.name treat
   # this as a local, non-SSH execution.
   def self.run(name : String, params : Hash(String, String), vars : Hash(String, String) = {} of String => String, host_name : String = "localhost",
-               chdir : String? = nil, before_input : Proc(Nil)? = nil) : JSON::Any
+               chdir : String? = nil, before_input : Proc(Nil)? = nil,
+               umask : Int32? = nil) : JSON::Any
     binary = File.join(PLUGINS_DIR, name)
     raise "Plugin binary not found: #{binary} (run ./build.sh first)" unless File.exists?(binary)
 
@@ -141,7 +149,7 @@ module PluginSpecHelper
     }
 
     output = IO::Memory.new
-    run_plugin_with_timeout(binary, config.to_json, output, chdir, before_input)
+    run_plugin_with_timeout(binary, config.to_json, output, chdir, before_input, umask)
 
     JSON.parse(output.to_s)
   end
@@ -152,7 +160,8 @@ module PluginSpecHelper
   # validator's "of type int"/NoneType/list error branches, which real
   # Ansible derives from the value's own type).
   def self.run_raw(name : String, params : Hash(String, JSON::Any), vars : Hash(String, String) = {} of String => String, host_name : String = "localhost",
-                   chdir : String? = nil, before_input : Proc(Nil)? = nil) : JSON::Any
+                   chdir : String? = nil, before_input : Proc(Nil)? = nil,
+                   umask : Int32? = nil) : JSON::Any
     binary = File.join(PLUGINS_DIR, name)
     raise "Plugin binary not found: #{binary} (run ./build.sh first)" unless File.exists?(binary)
 
@@ -167,7 +176,7 @@ module PluginSpecHelper
     }
 
     output = IO::Memory.new
-    run_plugin_with_timeout(binary, config.to_json, output, chdir, before_input)
+    run_plugin_with_timeout(binary, config.to_json, output, chdir, before_input, umask)
 
     JSON.parse(output.to_s)
   end

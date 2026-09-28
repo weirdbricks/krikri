@@ -12,33 +12,23 @@ require "http/server"
 # these specs pin. Existing-dest overwrites are NOT covered here: real
 # Ansible preserves an existing dest's mode across the move, which is a
 # separate behavior (copy.cr's stat-preservation).
-private def with_umask(mask : UInt32, &)
-  old_mask = LibC.umask(mask)
-  yield
-ensure
-  LibC.umask(old_mask || mask)
-end
 
 describe "default mode of newly created files tracks the umask (no explicit mode:)" do
   it "copy (content:) creates the file 0666 & ~umask" do
-    with_umask(0o002_u32) do
-      dest = File.tempname("umask-copy-002")
+    dest = File.tempname("umask-copy-002")
 
-      result = PluginSpecHelper.run("copy", {"content" => "umask-copy\n", "dest" => dest})
+    result = PluginSpecHelper.run("copy", {"content" => "umask-copy\n", "dest" => dest}, umask: 0o002)
 
-      result["changed"].as_bool.must_equal(true)
-      result["mode"].as_s.must_equal("0664")
-      File.info(dest).permissions.value.must_equal(0o664)
-    end
+    result["changed"].as_bool.must_equal(true)
+    result["mode"].as_s.must_equal("0664")
+    File.info(dest).permissions.value.must_equal(0o664)
 
-    with_umask(0o022_u32) do
-      dest = File.tempname("umask-copy-022")
+    dest = File.tempname("umask-copy-022")
 
-      result = PluginSpecHelper.run("copy", {"content" => "umask-copy\n", "dest" => dest})
+    result = PluginSpecHelper.run("copy", {"content" => "umask-copy\n", "dest" => dest}, umask: 0o022)
 
-      result["mode"].as_s.must_equal("0644")
-      File.info(dest).permissions.value.must_equal(0o644)
-    end
+    result["mode"].as_s.must_equal("0644")
+    File.info(dest).permissions.value.must_equal(0o644)
   ensure
     FileUtils.rm_f(["umask-copy-002", "umask-copy-022"].map { |name| "/tmp/#{name}" })
   end
@@ -49,34 +39,28 @@ describe "default mode of newly created files tracks the umask (no explicit mode
     File.write(src, "umask-src-content\n")
     File.chmod(src, 0o600)
 
-    with_umask(0o002_u32) do
-      result = PluginSpecHelper.run("copy", {"src" => src, "dest" => dest})
+    result = PluginSpecHelper.run("copy", {"src" => src, "dest" => dest}, umask: 0o002)
 
-      result["changed"].as_bool.must_equal(true)
-      result["mode"].as_s.must_equal("0664")
-      File.info(dest).permissions.value.must_equal(0o664)
-    end
+    result["changed"].as_bool.must_equal(true)
+    result["mode"].as_s.must_equal("0664")
+    File.info(dest).permissions.value.must_equal(0o664)
   ensure
     File.delete(src) if src && File.exists?(src)
     File.delete(dest) if dest && File.exists?(dest)
   end
 
   it "file state=touch creating a NEW file uses 0666 & ~umask" do
-    with_umask(0o002_u32) do
-      path = File.tempname("umask-touch-002")
+    path = File.tempname("umask-touch-002")
 
-      PluginSpecHelper.run("file", {"path" => path, "state" => "touch"})
+    PluginSpecHelper.run("file", {"path" => path, "state" => "touch"}, umask: 0o002)
 
-      File.info(path).permissions.value.must_equal(0o664)
-    end
+    File.info(path).permissions.value.must_equal(0o664)
 
-    with_umask(0o022_u32) do
-      path = File.tempname("umask-touch-022")
+    path = File.tempname("umask-touch-022")
 
-      PluginSpecHelper.run("file", {"path" => path, "state" => "touch"})
+    PluginSpecHelper.run("file", {"path" => path, "state" => "touch"}, umask: 0o022)
 
-      File.info(path).permissions.value.must_equal(0o644)
-    end
+    File.info(path).permissions.value.must_equal(0o644)
   ensure
     FileUtils.rm_f(Dir["/tmp/umask-touch-*"])
   end
@@ -90,24 +74,20 @@ describe "default mode of newly created files tracks the umask (no explicit mode
     spawn { server.listen }
     Fiber.yield
 
-    with_umask(0o002_u32) do
-      dest = File.tempname("umask-geturl-002")
+    dest = File.tempname("umask-geturl-002")
 
-      result = PluginSpecHelper.run("get_url", {"url" => "http://#{address}/file.txt", "dest" => dest})
+    result = PluginSpecHelper.run("get_url", {"url" => "http://#{address}/file.txt", "dest" => dest}, umask: 0o002)
 
-      result["changed"].as_bool.must_equal(true)
-      result["mode"].as_s.must_equal("0664")
-      File.info(dest).permissions.value.must_equal(0o664)
-    end
+    result["changed"].as_bool.must_equal(true)
+    result["mode"].as_s.must_equal("0664")
+    File.info(dest).permissions.value.must_equal(0o664)
 
-    with_umask(0o022_u32) do
-      dest = File.tempname("umask-geturl-022")
+    dest = File.tempname("umask-geturl-022")
 
-      result = PluginSpecHelper.run("get_url", {"url" => "http://#{address}/file.txt", "dest" => dest})
+    result = PluginSpecHelper.run("get_url", {"url" => "http://#{address}/file.txt", "dest" => dest}, umask: 0o022)
 
-      result["mode"].as_s.must_equal("0644")
-      File.info(dest).permissions.value.must_equal(0o644)
-    end
+    result["mode"].as_s.must_equal("0644")
+    File.info(dest).permissions.value.must_equal(0o644)
   ensure
     server.try(&.close)
     FileUtils.rm_f(Dir["/tmp/umask-geturl-*"])
