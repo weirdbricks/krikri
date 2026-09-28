@@ -353,10 +353,20 @@ describe "cron plugin" do
   # workers they would see each other's backups, so they serialize on
   # STATE_MUTEX.
   describe "backup" do
+    # /tmp/crontab* is host-wide: any other process running this suite
+    # (or real crontab) adds files there between a test's before/after
+    # globs. So each test's crontab carries a unique marker, and only new
+    # backups containing that marker count.
+    private def new_backups_with(before : Set(String), marker : String) : Set(String)
+      (Dir.glob("/tmp/crontab*").to_set - before).select { |f| (File.read(f) rescue "").includes?(marker) }.to_set
+    end
+
     it "writes a /tmp/crontabXXXXXXXX backup of the original content and reports backup_file" do
       PluginSpecHelper::STATE_MUTEX.synchronize do
         path = tmp_path("cron-backup.txt")
-        File.write(path, "MAILTO=root\n")
+        marker = "# krikri-cron-backup #{Random::Secure.hex(8)}"
+        original = "MAILTO=root\n#{marker}\n"
+        File.write(path, original)
         before = Dir.glob("/tmp/crontab*").to_set
 
         result = PluginSpecHelper.run("cron", {
@@ -369,11 +379,8 @@ describe "cron plugin" do
         result["changed"].as_bool.must_equal(true)
         backup_file = result["backup_file"].as_s
         backup_file.must_match(%r{/tmp/crontab[a-z0-9_]{8}})
-        File.read(backup_file).must_equal("MAILTO=root\n")
-        # Set difference, not a count delta: leftover /tmp/crontab* files
-        # from an earlier failed run (this process's or another's) must
-        # not skew the assertion.
-        (Dir.glob("/tmp/crontab*").to_set - before).must_equal([backup_file].to_set)
+        File.read(backup_file).must_equal(original)
+        new_backups_with(before, marker).must_equal([backup_file].to_set)
         File.delete(backup_file)
       end
     end
@@ -381,6 +388,8 @@ describe "cron plugin" do
     it "reports no backup_file and leaves none behind when nothing changed" do
       PluginSpecHelper::STATE_MUTEX.synchronize do
         path = tmp_path("cron-backup-noop.txt")
+        marker = "# krikri-cron-backup-noop #{Random::Secure.hex(8)}"
+        File.write(path, "#{marker}\n")
         PluginSpecHelper.run("cron", {"name" => "a job", "job" => "/bin/true", "cron_file" => path})
         before = Dir.glob("/tmp/crontab*").to_set
 
@@ -393,14 +402,16 @@ describe "cron plugin" do
 
         result["changed"].as_bool.must_equal(false)
         result["backup_file"]?.must_be_nil
-        (Dir.glob("/tmp/crontab*").to_set - before).must_be_empty
+        new_backups_with(before, marker).must_be_empty
       end
     end
 
     it "takes no backup in check mode and writes nothing" do
       PluginSpecHelper::STATE_MUTEX.synchronize do
         path = tmp_path("cron-backup-check.txt")
-        File.write(path, "MAILTO=root\n")
+        marker = "# krikri-cron-backup-check #{Random::Secure.hex(8)}"
+        original = "MAILTO=root\n#{marker}\n"
+        File.write(path, original)
         before = Dir.glob("/tmp/crontab*").to_set
 
         result = PluginSpecHelper.run("cron", {
@@ -413,8 +424,8 @@ describe "cron plugin" do
 
         result["changed"].as_bool.must_equal(true)
         result["backup_file"]?.must_be_nil
-        (Dir.glob("/tmp/crontab*").to_set - before).must_be_empty
-        File.read(path).must_equal("MAILTO=root\n")
+        new_backups_with(before, marker).must_be_empty
+        File.read(path).must_equal(original)
       end
     end
 
