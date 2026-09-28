@@ -647,7 +647,7 @@ describe Krikri::VariableSubstitutor::FilterEngine do
     # item, every downstream `item.key`/`item.value` was undefined,
     # and a regression spec for the related mode bug had to be
     # rewritten as a plain `set_fact: my_mode: "1777"` (see
-    # spec/integration/mode_octal_via_variable_spec.cr, which is now
+    # test/integration/mode_octal_via_variable_test.cr, which is now
     # able to use the real os_hardening shape).
     input = JSON.parse(%({"a": 1, "b": 2, "c": 3}))
     result = engine.apply(input, "dict2items").as_a

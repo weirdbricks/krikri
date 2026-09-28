@@ -13,7 +13,7 @@ require "../../src/krikri/vault"
 # The private method is exercised through a subclass (Crystal private
 # methods are callable from subclasses via the implicit receiver), the
 # same probe pattern copy_binary_source_staging_spec.cr uses. The vault
-# crypto itself is spec'd in spec/unit/vault_spec.cr - this only covers
+# crypto itself is spec'd in test/unit/vault_test.cr - this only covers
 # the wiring: inline_copy_source_content must actually call
 # Vault.maybe_decrypt, honor decrypt: false, and fail with Vault::Error
 # when no usable password is configured.

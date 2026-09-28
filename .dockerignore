@@ -1,4 +1,4 @@
 .git
 bin/
 lib/
-spec/tmp/
+test/tmp/

@@ -5,7 +5,7 @@ require "file_utils"
 # the earlier specs exercise check_mode only (read-only, safe on a real
 # machine); the sources_added/sources_removed ones write for real but
 # through the plugin's `_sources_list`/`_sources_list_d` scratch-dir
-# seams (same convention as spec/integration/apt_repository_param_coverage_spec.cr),
+# seams (same convention as test/integration/apt_repository_param_coverage_test.cr),
 # so nothing here touches /etc/apt either.
 private def scratch_sources(tag : String) : {String, String}
   dir = File.join(Dir.tempdir, "krikri-aptrepo-fields-#{tag}-#{Random.rand(1_000_000)}")

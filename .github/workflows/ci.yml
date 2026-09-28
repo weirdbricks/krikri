@@ -125,12 +125,14 @@ jobs:
         # process-wide state serialize on PluginSpecHelper::ENV_MUTEX /
         # ::STATE_MUTEX, and the workers stay on ONE OS thread
         # (CRYSTAL_WORKERS=1) because the Crystal MT runtime hits GC
-        # double-free aborts across multiple threads. The single retry
-        # reruns the whole suite - a genuine, reproducible failure fails
-        # both attempts.
+        # double-free aborts across multiple threads. No retry: every
+        # intermittent failure found while porting the suite was a real
+        # bug (shared tmp dirs, process-wide cwd/umask/ENV changes, an fd
+        # double-close, a Process#wait race, an engine PEM-ordering bug),
+        # so a flake here is a bug to fix, not to rerun past.
         env:
           CRYSTAL_CACHE_DIR: /root/.cache/krikri-minitest
-        run: scripts/minitest.sh -- -p 4 || scripts/minitest.sh -- -p 4
+        run: scripts/minitest.sh -- -p 4
 
       - name: Lint (ameba)
         # lib/ameba/bin/ameba does not exist after `shards install`:

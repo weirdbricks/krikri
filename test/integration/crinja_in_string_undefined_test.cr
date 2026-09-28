@@ -2,7 +2,7 @@ require "../minitest_helper"
 
 # Runs the compiled binary against a real .j2 template file (the
 # vendored-Crinja rendering path, separate from the hand-rolled {{ }}
-# evaluator that spec/unit/conditional_evaluator_spec.cr already covers
+# evaluator that test/unit/conditional_evaluator_test.cr already covers
 # for the same bug shape).
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")

@@ -5,7 +5,7 @@ require "file_utils"
 # `ansible` ad-hoc option surface (verified against ansible-core
 # 2.19.4's own `ansible --help`). These specs drive the compiled binary
 # against local-connection fixtures, the same "no SSH required" trick
-# spec/integration/cli_spec.cr uses for krikri-playbook.
+# test/integration/cli_test.cr uses for krikri-playbook.
 
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri")

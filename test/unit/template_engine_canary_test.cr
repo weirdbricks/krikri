@@ -158,7 +158,7 @@ describe "template engine canary" do
   # Jinja2; Python/Jinja2 reject them as "No filter named ..."), mirrored
   # here in jinja_filters.cr so a `.j2` template's `{% for %}` block-tag
   # chain can use them. The hand-rolled FilterEngine has the same pair
-  # for the plain `{{ }}` filter chain (spec/unit/filter_engine_spec.cr) -
+  # for the plain `{{ }}` filter chain (test/unit/filter_engine_test.cr) -
   # this is the Crinja-side dual registration of the bug class that
   # historically lived independently in both evaluators.
   it "registers dict2items (default key_name='key', value_name='value')" do

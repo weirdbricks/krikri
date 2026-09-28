@@ -10,9 +10,9 @@ fixed on this branch after the round was recorded. Do not re-fix.**
 - igor_nikiforov.etcd -> fixed in d93ca1cd (strict-undefined dict-subscript
   misses for loop items/sources, 0.9.786; KNOWN_MISSING.md round 43000)
 - wezhai.minio -> fixed in 44e56427 (unarchive resolves bare relative src
-  from the role's files/ dir; spec spec/integration/cli_spec.cr)
+  from the role's files/ dir; spec test/integration/cli_test.cr)
 - nginxinc.nginx -> fixed in 3cee0a56 (systemd/service state: reloaded
-  starts an inactive unit, 0.9.877; spec spec/integration/systemd_spec.cr)
+  starts an inactive unit, 0.9.877; spec test/integration/systemd_test.cr)
 
 ## Divergences found so far
 

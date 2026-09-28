@@ -10,7 +10,7 @@ require "file_utils"
 # `update_cache_only` never read `cache_valid_time:` at all and always
 # ran the refresh, so a warm rerun inside the window still touched the
 # apt lists and reported changed: true where real Ansible reported ok.
-# apt.cr's own equivalent path (spec/integration/apt_cache_updated_spec.cr)
+# apt.cr's own equivalent path (test/integration/apt_cache_updated_test.cr)
 # already pins the correct behavior; this mirrors it for the
 # OS-agnostic package plugin.
 

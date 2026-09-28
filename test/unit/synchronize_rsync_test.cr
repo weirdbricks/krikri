@@ -5,7 +5,7 @@ require "../../src/krikri/plugin_helpers/synchronize_rsync"
 # argv construction ported from real ansible.posix's
 # plugins/modules/synchronize.py, and the itemize-changes protocol its
 # changed detection rides on. The integration specs
-# (spec/integration/synchronize_spec.cr) exercise the same code against a
+# (test/integration/synchronize_test.cr) exercise the same code against a
 # real rsync; these pin the flag algebra without needing the binary.
 describe Krikri::SynchronizeRsync do
   describe "build_argv" do

@@ -3,7 +3,7 @@ require "../minitest_helper"
 # deb822_repository writes to /etc/apt/sources.list.d/, which needs
 # root - these specs exercise check_mode / param-rendering only (no
 # real file write needed to observe the rendered content), matching
-# the same convention spec/integration/apt_repository_spec.cr already
+# the same convention test/integration/apt_repository_test.cr already
 # uses for root-only plugins.
 describe "deb822_repository plugin" do
   it "fails with a clear message when name is missing" do

@@ -1,7 +1,7 @@
 # become: is only verified here via "become to yourself" (sudo -n -u
 # <the same user already running this>, which every sudo/PAM default
 # allows without a password since it's not a real privilege change) - the
-# same convention test/integration/user_test.cr/group_spec.cr use for
+# same convention test/integration/user_test.cr/group_test.cr use for
 # never requiring real root on whatever machine runs this fixture. sudo
 # always sets SUDO_USER in the child's environment when it actually wraps
 # a command, so `printenv SUDO_USER` matching the invoking user is a real

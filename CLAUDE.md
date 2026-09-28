@@ -81,14 +81,22 @@ script runs that file directly, and anything after `--` goes to
   `PluginSpecHelper::STATE_MUTEX` across setup, body AND teardown, and
   before_each/after_each ENV pinning is covered too. Helpers that need
   the same guarantee take that mutex themselves (it is reentrant).
-- `PluginSpecHelper.run_plugin`/`run_plugin_json` accept `chdir:`,
+- `PluginSpecHelper.run`/`run_raw` accept `chdir:`,
   `before_input:` and `umask:` parameters - use them instead of doing it
   yourself: never `Dir.cd` the suite process, never `LibC.umask` the
   suite process (umask is process-wide and leaks across workers), and
   never make process-wide ENV changes outside a `serial!` test.
 - When draining a child process's stdout, drain to EOF BEFORE
-  `Process#wait` (see `run_plugin_with_timeout`) - waiting first
-  deadlocks on full pipes.
+  `Process#wait` (see `run_plugin_with_timeout`): `#wait` closes the
+  process's pipes, so a drain fiber still reading dies on "Closed
+  stream" and the test hangs or sees truncated output. Never
+  `LibC.close` an fd an IO object wraps - its GC finalizer closes the
+  (by then reused) fd number again.
+- Every `it` needs a name unique within its `describe` (and top-level
+  `describe` subjects must be unique across `test/`): minitest turns
+  names into methods, so a bare `it { }` or a duplicate would silently
+  replace a sibling - `test/minitest_helper.cr` makes both a compile
+  error.
 
 **Always run `./build.sh`**, never a bare `crystal build krikri-playbook.cr` alone, before trusting a
 "still broken" result against a real host - plugin binaries compile separately from the main

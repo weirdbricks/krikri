@@ -5,7 +5,7 @@ require "file_utils"
 # binary and network access, and mutates the machine running the test
 # suite - these specs exercise validation only (safe, no real
 # execution), matching the same convention apt.cr's own fixes use
-# (spec/integration/apt_repository_spec.cr's own comment, and
+# (test/integration/apt_repository_test.cr's own comment, and
 # haproxy-certbot-benchmark-round.md's documented rationale for why
 # cron.cr's user-crontab path has no spec either).
 describe "pip plugin" do

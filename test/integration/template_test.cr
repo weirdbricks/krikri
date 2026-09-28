@@ -2,7 +2,7 @@ require "file_utils"
 require "../minitest_helper"
 
 # Param-coverage pass for template:'s remaining documented parameters,
-# mirroring spec/integration/file_spec.cr's conventions for the
+# mirroring test/integration/file_test.cr's conventions for the
 # file-common args (SELinux context parts, attributes:/unsafe_writes:,
 # follow:/force:) and the template-only rendering params (trim_blocks:,
 # lstrip_blocks:, newline_sequence:, output_encoding:).
@@ -599,7 +599,7 @@ describe "template plugin param coverage" do
 
   describe "seuser:/serole:/setype:/selevel: (SELinux context params)" do
     # Identical semantics to file.cr's merged implementation (see
-    # spec/integration/file_spec.cr's matching section, and the full
+    # test/integration/file_test.cr's matching section, and the full
     # module_utils/basic.py grounding in file.cr's comments): real
     # Ansible accepts the params on every host but only acts when
     # SELinux is actually enabled - a graceful no-op here (this spec
