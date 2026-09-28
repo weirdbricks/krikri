@@ -54,8 +54,16 @@ run, `-p 4` run, `crystal tool format`, ameba) and committed separately.
   docker_compose_v2_spec.cr, docker_network_info_spec.cr,
   dpkg_divert_spec.cr, dpkg_selections_spec.cr, ec2_metadata_facts_spec.cr
 
+### Batch 7 (15 files): empty_loop_unavailable_module .. find
+- empty_loop_unavailable_module_spec.cr, empty_loop_vars_skip_spec.cr,
+  environment_key_injection_spec.cr, environment_strict_undefined_spec.cr,
+  expect_spec.cr, extra_vars_spec.cr, fact_cache_spec.cr, facts_spec.cr,
+  failed_when_arg_templating_spec.cr, fetch_spec.cr,
+  file_common_result_fields_spec.cr, fileglob_list_spec.cr,
+  fileglob_role_files_dir_spec.cr, file_spec.cr, find_spec.cr
+
 ### Next file to convert
-- empty_inventory_extra_vars_spec.cr and on (alphabetical)
+- fires_before_handlers_spec.cr and on (alphabetical)
 
 ## Count table
 
@@ -67,6 +75,7 @@ run, `-p 4` run, `crystal tool format`, ameba) and committed separately.
 | 4 | 15 | 71 | connection_plugin_resolution's conn_type loop unrolled (spec file shows 4 `it` blocks, one is the loop) |
 | 5 | 15 | 107 | cron backup specs serialize on STATE_MUTEX and count glob SET differences (see below) |
 | 6 | 10 | 56 | dnf recording helper holds ENV_MUTEX; dpkg_divert's `tags:` kwarg dropped |
+| 7 | 15 | 170 | file/find fixture trees moved to per-test tmp_path; describe-body locals became methods |
 
 ## Renames / deviations
 
@@ -145,6 +154,13 @@ run, `-p 4` run, `crystal tool format`, ameba) and committed separately.
   (minitest's it macro has no tags; -n pattern filtering covers it).
 - dnf_versionlock_test: block-form matcher `each(&.as_s.should(match(re)))`
   became `each(&.as_s.must_match(re))`.
+- file_test/find_test: shared spec/tmp fixture trees -> per-test
+  tmp_path (find's before_suite tree builder became a per-call def).
+- facts_test: `x = y.should_not be_nil` (returns the narrowed value)
+  split into assertion + not_nil! read.
+- environment_key_injection_test: describe-body local `marker` became a
+  method (stays a fixed /tmp path by design - the probe deletes and
+  checks it).
 - assemble/authorized_key: shared `spec/tmp` roots moved to per-test
   `PluginSpecHelper.tmp_path`; before_suite mkdir_p dropped.
 
