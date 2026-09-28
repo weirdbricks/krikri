@@ -100,8 +100,16 @@ run, `-p 4` run, `crystal tool format`, ameba) and committed separately.
   missing_dest_dir_spec.cr, mode_octal_string_spec.cr,
   mode_octal_via_variable_spec.cr, modprobe_spec.cr
 
+### Batch 13 (15 files): module_defaults .. openssl_privatekey_info
+- module_defaults_spec.cr, mount_spec.cr, mysql_user_msg_spec.cr,
+  mysql_user_validation_spec.cr, nested_block_banner_spec.cr,
+  no_log_delegate_display_spec.cr, no_log_spec.cr, npm_spec.cr,
+  nsupdate_spec.cr, omit_in_first_found_args_spec.cr, omit_spec.cr,
+  openssl_certificate_alias_spec.cr, openssl_csr_spec.cr,
+  openssl_pkcs12_spec.cr, openssl_privatekey_info_spec.cr
+
 ### Next file to convert
-- module_defaults_spec.cr and on (alphabetical)
+- openssl_privatekey_spec.cr and on (alphabetical)
 
 ## Count table
 
@@ -116,6 +124,7 @@ run, `-p 4` run, `crystal tool format`, ameba) and committed separately.
 | 7 | 15 | 170 | file/find fixture trees moved to per-test tmp_path; describe-body locals became methods |
 | 8 | 10 | 93 | get_url's file-scoped server locals became private constants; git_config tmp_path'd |
 | 10 | 15 | 55 | htpasswd before_suite/tmp_path folded into PluginSpecHelper.tmp_path |
+| 13 | 15 | 107 | openssl_pkcs12's before_suite fixtures + cross-test archive reuse became per-test seeding (tests are shuffled/concurrent, so each test now re-creates what it reads); openssl_csr's shared KEY became a per-test csr_key def and its order-dependent a.csr tests seed themselves; openssl_certificate_alias's runtime module-name loop unrolled to 5 compile-time its |
 | 12 | 15 | 91 | make's fixed shared spec/tmp/make_spec dir became per-test tmp_path (concurrent make tests clobbered each other's Makefile); modprobe pending!s became skips |
 | 11 | 15 | 150 | inventory_hostnames' CASES runtime loop became a compile-time {% for %} (12 tests); ini_file/kernel_blacklist/known_hosts/lineinfile/inventory_sources before_suite+TMP_DIR became per-test tmp_path; java_cert/locale_gen `next if` became skip; lookup_url's HTTP double became require-time constants; lineinfile chattr `next unless` became skip |
 
@@ -213,6 +222,24 @@ run, `-p 4` run, `crystal tool format`, ameba) and committed separately.
 - htpasswd_test: the before_suite mkdir_p + file-scoped `tmp_path` def
   became per-test `PluginSpecHelper.tmp_path`; the `start_with` hash-prefix
   check became `expect(str_starts_with?(...)).must_equal(true)`.
+- openssl_pkcs12_test: under minitest the tests are shuffled and run
+  concurrently (lib/minitest randomize_and_run_tests dispatches to N
+  workers), so the classic suite's linear fixture chain (key/csr/cert in
+  before_suite; a.p12/c.p12/parse.p12 exported by earlier tests and read
+  by later ones) had to become self-sufficient: seed_pkcs12_inputs
+  generates key/csr/cert into each test's tmp_path on first use (called
+  from export_params), and the idempotency/name-change/cert-change/
+  state-absent/parse-idempotent tests re-create the archive they read
+  before asserting on it. Same assertions, a few more plugin runs.
+- openssl_csr_test: the shared 2048-bit KEY became a csr_key def that
+  generates into the test's own tmp_path on first use; the a.csr tests
+  (SAN default, idempotency, subject-change, key-change) now create the
+  a.csr they previously inherited from the preceding test; the
+  start_with CSR-content check became
+  expect(str_starts_with?(...)).must_equal(true).
+- openssl_certificate_alias_test: the `%w[...].each` runtime loop around
+  describe unrolled into a compile-time `{% for %}` (5 its, one per
+  module name spelling); before_suite rm_rf/mkdir_p dropped.
 - make_test: the fixed shared `spec/tmp/make_spec` TMP_DIR (Makefile +
   output.txt rewritten and deleted per test) became per-test
   `PluginSpecHelper.tmp_path("make")` - two concurrent make tests would
