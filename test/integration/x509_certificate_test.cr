@@ -85,9 +85,11 @@ describe "x509_certificate plugin" do
   end
 
   it "is idempotent despite the random serial and fresh timestamps" do
-    key = path_for("a.key")
-    csr = path_for("a.csr")
+    key = make_key("a.key")
+    csr = make_csr("a.csr", key, "self.example.com")
     path = path_for("a.crt")
+    PluginSpecHelper.run("x509_certificate",
+      {"path" => path, "privatekey_path" => key, "csr_path" => csr, "provider" => "selfsigned"})
     before = File.read(path)
 
     result = PluginSpecHelper.run("x509_certificate",
@@ -98,10 +100,13 @@ describe "x509_certificate plugin" do
   end
 
   it "reissues when the CSR's subject changes" do
-    key = path_for("a.key")
-    csr = make_csr("a.csr", key, "renamed.example.com")
+    key = make_key("a.key")
+    csr = make_csr("a.csr", key, "self.example.com")
     path = path_for("a.crt")
+    PluginSpecHelper.run("x509_certificate",
+      {"path" => path, "privatekey_path" => key, "csr_path" => csr, "provider" => "selfsigned"})
 
+    csr = make_csr("a.csr", key, "renamed.example.com")
     result = PluginSpecHelper.run("x509_certificate",
       {"path" => path, "privatekey_path" => key, "csr_path" => csr, "provider" => "selfsigned"})
 
@@ -110,9 +115,14 @@ describe "x509_certificate plugin" do
   end
 
   it "reissues when the private key no longer matches the certificate" do
+    key = make_key("a.key")
+    csr = make_csr("a.csr", key, "self.example.com")
+    path = path_for("a.crt")
+    PluginSpecHelper.run("x509_certificate",
+      {"path" => path, "privatekey_path" => key, "csr_path" => csr, "provider" => "selfsigned"})
+
     new_key = make_key("a2.key")
     csr = make_csr("a.csr", new_key, "renamed.example.com")
-    path = path_for("a.crt")
 
     result = PluginSpecHelper.run("x509_certificate",
       {"path" => path, "privatekey_path" => new_key, "csr_path" => csr, "provider" => "selfsigned"})
@@ -152,8 +162,25 @@ describe "x509_certificate plugin" do
   # unverifiable and has to be reissued. Caught via the authority key
   # identifier, which is what the real module compares too.
   it "reissues when the CA is regenerated under the same subject name" do
-    ca_key = path_for("ca.key")
+    ca_key = make_key("ca.key")
+    ca_csr = make_csr("ca.csr", ca_key, "My CA",
+      {"basic_constraints" => %(["CA:TRUE"]), "basic_constraints_critical" => "true",
+       "key_usage" => %(["keyCertSign"])})
     ca_crt = path_for("ca.crt")
+    PluginSpecHelper.run("x509_certificate",
+      {"path" => ca_crt, "privatekey_path" => ca_key, "csr_path" => ca_csr, "provider" => "selfsigned"})
+
+    leaf_key = make_key("leaf.key")
+    leaf_csr = make_csr("leaf.csr", leaf_key, "leaf.example.com")
+    leaf_crt = path_for("leaf.crt")
+    PluginSpecHelper.run("x509_certificate",
+      {"path" => leaf_crt, "csr_path" => leaf_csr, "ownca_path" => ca_crt,
+       "ownca_privatekey_path" => ca_key, "provider" => "ownca"})
+
+    # The case a subject comparison alone cannot see: the CA is rebuilt
+    # under the same name, so every certificate it signed is now
+    # unverifiable and has to be reissued. Caught via the authority key
+    # identifier, which is what the real module compares too.
     PluginSpecHelper.run("openssl_privatekey", {"path" => ca_key, "size" => "2048", "force" => "true"})
     ca_csr = make_csr("ca.csr", ca_key, "My CA",
       {"basic_constraints" => %(["CA:TRUE"]), "basic_constraints_critical" => "true",
@@ -163,16 +190,16 @@ describe "x509_certificate plugin" do
        "provider" => "selfsigned", "force" => "true"})
 
     result = PluginSpecHelper.run("x509_certificate",
-      {"path" => path_for("leaf.crt"), "csr_path" => path_for("leaf.csr"), "ownca_path" => ca_crt,
+      {"path" => leaf_crt, "csr_path" => leaf_csr, "ownca_path" => ca_crt,
        "ownca_privatekey_path" => ca_key, "provider" => "ownca"})
 
     result["changed"].as_bool.must_equal(true)
-    `openssl verify -CAfile #{ca_crt} #{path_for("leaf.crt")} 2>&1`.must_include("OK")
+    `openssl verify -CAfile #{ca_crt} #{leaf_crt} 2>&1`.must_include("OK")
   end
 
   it "honours a relative not_after other than the default" do
-    key = path_for("a.key")
-    csr = path_for("a.csr")
+    key = make_key("a.key")
+    csr = make_csr("a.csr", key, "self.example.com")
     path = path_for("shortlived.crt")
 
     result = PluginSpecHelper.run("x509_certificate",
@@ -184,8 +211,8 @@ describe "x509_certificate plugin" do
   end
 
   it "leaves permissions to the umask unless mode is given" do
-    key = path_for("a.key")
-    csr = path_for("a.csr")
+    key = make_key("a.key")
+    csr = make_csr("a.csr", key, "self.example.com")
     path = path_for("perm.crt")
 
     PluginSpecHelper.run("x509_certificate",
@@ -195,7 +222,12 @@ describe "x509_certificate plugin" do
   end
 
   it "removes the certificate for state: absent" do
+    key = make_key("a.key")
+    csr = make_csr("a.csr", key, "self.example.com")
     path = path_for("perm.crt")
+    PluginSpecHelper.run("x509_certificate",
+      {"path" => path, "privatekey_path" => key, "csr_path" => csr, "provider" => "selfsigned"})
+
     removed = PluginSpecHelper.run("x509_certificate", {"path" => path, "state" => "absent"})
     removed["changed"].as_bool.must_equal(true)
     File.exists?(path).must_equal(false)
@@ -203,8 +235,10 @@ describe "x509_certificate plugin" do
   end
 
   it "rejects providers it does not implement instead of pretending" do
+    key = make_key("a.key")
+    csr = make_csr("a.csr", key, "self.example.com")
     result = PluginSpecHelper.run("x509_certificate",
-      {"path" => path_for("acme.crt"), "csr_path" => path_for("a.csr"), "provider" => "acme"})
+      {"path" => path_for("acme.crt"), "csr_path" => csr, "provider" => "acme"})
 
     result["failed"].as_bool.must_equal(true)
     result["msg"].as_s.must_include("not supported")
