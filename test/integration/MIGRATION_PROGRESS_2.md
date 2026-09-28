@@ -81,3 +81,42 @@ first try.
 | template_for_loop_undefined_iteration_test.cr | 2 | 2 | |
 
 Verification: serial 4828 tests, 0 failures / 0 errors; `-p 4` clean.
+
+## Batch 5 (committed): template_handler .. tmp_symlink_race (13 files)
+
+| file | spec its | test its | notes |
+|------|---------|----------|-------|
+| template_handler_test.cr | 1 | 1 | |
+| template_import_with_context_test.cr | 2 | 2 | |
+| template_include_search_path_test.cr | 2 | 2 | |
+| template_in_operator_test.cr | 1 | 1 | |
+| template_markup_safe_toplevel_test.cr | 2 | 2 | |
+| template_nbsp_whitespace_test.cr | 1 | 1 | |
+| template_test.cr | 32 | 32 | before_suite fixture tree -> file-level begin-block constant (unique per process); 6 `next if root/no-chattr` guards -> `skip "..." if`; nested describe `newline_sequence: (default "\n")` renamed to `(default LF)` - minitest interpolates nested describe names into generated code, a literal backslash-escape breaks it |
+| template_string_entry_retemplating_test.cr | 2 | 2 | |
+| template_trailing_slash_dest_test.cr | 3 | 3 | |
+| template_tuple_sort_test.cr | 1 | 1 | spec's `fail(...)` -> minitest `flunk(...)`; `should be <` -> `(a < b).must_equal(true)` |
+| template_undefined_chain_default_test.cr | 1 | 1 | |
+| template_validate_remote_tmp_test.cr | 2 | 2 | |
+| tmp_symlink_race_test.cr | 1 | 1 | before_suite fixture tree + HTTP server + `race_base` closure local -> file-level constants (RACE_DIR/RACE_TEST_SERVER/RACE_BASE, unique per process) |
+
+## Batch 6 (committed): touch_result_shape .. until_list_retry (13 files)
+
+| file | spec its | test its | notes |
+|------|---------|----------|-------|
+| touch_result_shape_test.cr | 6 | 6 | |
+| unarchive_controller_src_staging_test.cr | 3 | 3 | before_suite tar build -> file-level constant (unique per process) |
+| unarchive_loop_creates_skip_test.cr | 3 | 3 | same; one `should contain("...(item=")` (unbalanced paren) fixed by hand |
+| unarchive_test.cr | 28 | 28 | before_suite fixture tree -> begin-block constant; HTTP server locals -> UNARCHIVE_* constants |
+| unarchive_zip_slip_test.cr | 5 | 5 | before_suite (python hostile-archive build) -> file-level setup |
+| undefined_filter_chain_strict_test.cr | 3 | 3 | |
+| unknown_filter_task_vars_test.cr | 3 | 3 | |
+| unreachable_host_halt_test.cr | 3 | 3 | |
+| unreachable_host_test.cr | 6 | 6 | |
+| unreachable_port_refused_test.cr | 3 | 3 | |
+| unresolved_module_hard_stop_test.cr | 5 | 5 | |
+| unsafe_data_test.cr | 33 it-lines (matches spec runtime count) | 32 it-lines | spec's runtime `.each`-loop describes/tests -> nested `{% for %}` macro loops replicating the matrix_cases filter and index order; `assert_not_executed` helper -> macro stamping one named test per call site; spec's parenless two-line `should be_false, "msg"` forms -> `must_equal(false, "msg")`; single-char/short block params renamed (ameba) |
+| until_list_retry_test.cr | 1 | 1 | |
+
+Verification (both batches): serial 5208 tests, 0 failures / 0 errors;
+`-p 4` clean.
