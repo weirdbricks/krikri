@@ -128,7 +128,11 @@ describe "krikri-playbook CLI (--check mode)" do
   end
 
   it "runs test-async-quick.yml to completion" do
-    status, output = run_playbook("test-async-quick.yml")
+    # Own HOME, so its ~/.ansible_async jobs can't be swept by anything
+    # else on the host (see the async/poll/async_status test below).
+    home = PluginSpecHelper.tmp_path("home")
+    Dir.mkdir_p(home)
+    status, output = run_playbook("test-async-quick.yml", env: {"HOME" => home})
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
@@ -2060,23 +2064,19 @@ describe "krikri-playbook CLI (--check mode)" do
   end
 
   it "runs async: tasks in the background, blocks for poll: > 0, and lets async_status: poll a poll: 0 job to completion" do
-    # The spawned playbook's job files live in the SHARED
-    # ~/.ansible_async (AsyncJobs::DIR is a require-time constant of the
-    # child), so this test holds STATE_MUTEX against the async_jobs unit
-    # specs' cleanup_all sweep, and ENV_MUTEX because the job dir is
-    # HOME-derived and spawned children read this process's env.
-    PluginSpecHelper::STATE_MUTEX.synchronize do
-      PluginSpecHelper::ENV_MUTEX.synchronize do
-        run_async_smoke
-      end
-    end
-  end
-
-  private def run_async_smoke : Nil
+    # The playbook's job files go under $HOME/.ansible_async
+    # (AsyncJobs::DIR is a require-time constant of the child). The real
+    # ~/.ansible_async is host-wide - the async_jobs unit specs'
+    # cleanup_all sweep, or any other process running this suite, wipes it
+    # - so the child gets its own per-test HOME and nothing else can touch
+    # its jobs.
+    home = PluginSpecHelper.tmp_path("home")
+    Dir.mkdir_p(home)
     status, output = run_playbook(
       "test-async-quick.yml",
       [] of String,
-      inventory: File.join(__DIR__, "..", "fixtures", "inventory-testservers-local.ini")
+      inventory: File.join(__DIR__, "..", "fixtures", "inventory-testservers-local.ini"),
+      env: {"HOME" => home}
     )
 
     status.success?.must_equal(true)
