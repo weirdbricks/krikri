@@ -105,19 +105,14 @@ module Krikri
 
       stdout = IO::Memory.new
       stderr = IO::Memory.new
-      # Drain from dup'd descriptors: Process#wait closes the process's own
-      # pipes on return, which would kill a drain fiber still mid-read
-      # ("Closed stream", swallowed below) and truncate the capture.
-      stdout_pipe = process.output.dup
-      stderr_pipe = process.error.dup
+      stdout_pipe = process.output
+      stderr_pipe = process.error
       stdout_done = drain(stdout_pipe, stdout)
       stderr_done = drain(stderr_pipe, stderr)
 
       exit_status = process.wait
       await(stdout_pipe, stdout_done)
       await(stderr_pipe, stderr_done)
-      stdout_pipe.close rescue nil
-      stderr_pipe.close rescue nil
 
       {
         exit_code: signal_safe_exit_code(exit_status),
