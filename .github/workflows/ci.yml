@@ -38,7 +38,10 @@ jobs:
         # plugin's virtualenv tests), python3-apt (the apt plugin's
         # candidate pre-flight - without it the plugin auto-installs
         # python3-apt like real Ansible does, which pollutes the apt
-        # tests' own apt-get call logs), and docker.io +
+        # tests' own apt-get call logs), python3-debian (deb822_repository
+        # imports debian.deb822 exactly like the real module and fails the
+        # task without it; its tests pin a host where the module works),
+        # and docker.io +
         # docker-compose-v2 for the live docker_compose_v2 tests (the
         # runner mounts the host docker socket into job containers, so
         # a client-side install is enough to reach it).
@@ -48,7 +51,7 @@ jobs:
             liblzma-dev libbz2-dev libssl-dev libpcre2-dev \
             libevent-dev libgmp-dev libyaml-dev libxml2-dev zlib1g-dev \
             rsync iproute2 libcap2-bin kmod \
-            python3 python3-pip python3-venv python3-apt \
+            python3 python3-pip python3-venv python3-apt python3-debian \
             curl zip unzip sudo \
             docker.io docker-compose-v2
 

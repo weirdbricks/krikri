@@ -60,7 +60,7 @@ describe "task-level gather_facts" do
             ansible.builtin.gather_facts: {}
           - name: read a fact directly
             ansible.builtin.debug:
-              msg: "os={{ ansible_distribution | default('MISSING') }}"
+              msg: "os={{ ansible_system | default('MISSING') }}"
       YAML
 
     status.success?.must_equal(true, output)
