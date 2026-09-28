@@ -108,8 +108,17 @@ run, `-p 4` run, `crystal tool format`, ameba) and committed separately.
   openssl_certificate_alias_spec.cr, openssl_csr_spec.cr,
   openssl_pkcs12_spec.cr, openssl_privatekey_info_spec.cr
 
+### Batch 14 (15 files): openssl_privatekey .. pause
+- openssl_privatekey_spec.cr, openssl_publickey_spec.cr,
+  order_throttle_spec.cr, os_family_spec.cr, ovirt_auth_spec.cr,
+  package_cache_valid_time_spec.cr, package_dpkg_options_spec.cr,
+  package_facts_spec.cr, package_spec.cr, pamd_validation_spec.cr,
+  pam_limits_spec.cr, parser_error_exit_code_spec.cr,
+  parted_lvg_snap_deploy_helper_spec.cr, path_magic_vars_spec.cr,
+  pause_spec.cr
+
 ### Next file to convert
-- openssl_privatekey_spec.cr and on (alphabetical)
+- ping_spec.cr and on (alphabetical)
 
 ## Count table
 
@@ -124,9 +133,10 @@ run, `-p 4` run, `crystal tool format`, ameba) and committed separately.
 | 7 | 15 | 170 | file/find fixture trees moved to per-test tmp_path; describe-body locals became methods |
 | 8 | 10 | 93 | get_url's file-scoped server locals became private constants; git_config tmp_path'd |
 | 10 | 15 | 55 | htpasswd before_suite/tmp_path folded into PluginSpecHelper.tmp_path |
-| 13 | 15 | 107 | openssl_pkcs12's before_suite fixtures + cross-test archive reuse became per-test seeding (tests are shuffled/concurrent, so each test now re-creates what it reads); openssl_csr's shared KEY became a per-test csr_key def and its order-dependent a.csr tests seed themselves; openssl_certificate_alias's runtime module-name loop unrolled to 5 compile-time its |
-| 12 | 15 | 91 | make's fixed shared spec/tmp/make_spec dir became per-test tmp_path (concurrent make tests clobbered each other's Makefile); modprobe pending!s became skips |
 | 11 | 15 | 150 | inventory_hostnames' CASES runtime loop became a compile-time {% for %} (12 tests); ini_file/kernel_blacklist/known_hosts/lineinfile/inventory_sources before_suite+TMP_DIR became per-test tmp_path; java_cert/locale_gen `next if` became skip; lookup_url's HTTP double became require-time constants; lineinfile chattr `next unless` became skip |
+| 12 | 15 | 91 | make's fixed shared spec/tmp/make_spec dir became per-test tmp_path (concurrent make tests clobbered each other's Makefile); modprobe pending!s became skips |
+| 13 | 15 | 107 | openssl_pkcs12's before_suite fixtures + cross-test archive reuse became per-test seeding (tests are shuffled/concurrent, so each test now re-creates what it reads); openssl_csr's shared KEY became a per-test csr_key def and its order-dependent a.csr tests seed themselves; openssl_certificate_alias's runtime module-name loop unrolled to 5 compile-time its |
+| 14 | 15 | 115 | openssl_privatekey/publickey order-dependent key fixtures became per-test seed_key/genrsa self-seeding (like batch 13's pkcs12); path_magic_vars' shared tree became a per-test tmp_dir def and the "not the working directory" test now writes its own playbook; os_family pending!s, package_cache_valid_time `next unless` and pamd_validation `should_not(be_true)` converted |
 
 ## Renames / deviations
 
@@ -222,6 +232,22 @@ run, `-p 4` run, `crystal tool format`, ameba) and committed separately.
 - htpasswd_test: the before_suite mkdir_p + file-scoped `tmp_path` def
   became per-test `PluginSpecHelper.tmp_path`; the `start_with` hash-prefix
   check became `expect(str_starts_with?(...)).must_equal(true)`.
+- openssl_privatekey_test/openssl_publickey_test: the classic suite's
+  linear state chain (rsa.key from test 1 read by the idempotency/size/
+  regenerate-never/fail tests; encrypted pw.key; secp256r1 ec.key;
+  rsa.pub from the PEM test) became per-test self-seeding: a seed_key
+  helper generates into the test's own tmp_path on first use, and the
+  publickey tests genrsa + pre-derive before asserting.
+- path_magic_vars_test: the shared spec/tmp/path_magic_vars tree became
+  a per-test tmp_dir def (mkdir_p sub + hosts.ini per call); the "not
+  the working directory" test writes its own play.yml (it inherited it
+  from the preceding test's write).
+- os_family_test: the four `pending!` environment guards became `skip`.
+- package_cache_valid_time_test: the three `next unless
+  python_apt_available?` guards became `skip ... unless`.
+- pamd_validation_test: `.should_not(be_true)` became
+  `falsey?(...).must_equal(true)`; the shared spec/tmp root became
+  per-test tmp_path (base_dir/tmp_dir helpers).
 - openssl_pkcs12_test: under minitest the tests are shuffled and run
   concurrently (lib/minitest randomize_and_run_tests dispatches to N
   workers), so the classic suite's linear fixture chain (key/csr/cert in
