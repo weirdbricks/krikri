@@ -120,3 +120,24 @@ Verification: serial 4828 tests, 0 failures / 0 errors; `-p 4` clean.
 
 Verification (both batches): serial 5208 tests, 0 failures / 0 errors;
 `-p 4` clean.
+
+## Batch 7 (committed): uri .. when_evaluation_error (14 files)
+
+| file | spec its | test its | notes |
+|------|---------|----------|-------|
+| uri_test.cr | 42 | 42 | HTTP server locals -> URI_* constants; ims fixture locals (read by the server closure AND tests) -> IMS_OLD/IMS_NEW constants, unique per process; one deeply-nested eq fixed by hand |
+| url_lookup_test.cr | 5 | 5 | server locals -> URL_LOOKUP_* constants; `expect_raises` -> `assert_raises_message` |
+| user_generate_ssh_key_test.cr | 3 | 3 | |
+| user_param_coverage_test.cr | 14 | 14 | one `should be <` ordering -> `(a < b).must_equal(true)` |
+| user_test.cr | 13 | 13 | |
+| vars_and_literal_native_typing_test.cr | 6 | 6 | |
+| vars_files_test.cr | 4 | 4 | |
+| vars_prompt_vault_id_test.cr | 4 | 4 | |
+| verbosity_test.cr | 4 | 4 | |
+| version_compare_test_test.cr | 3 | 3 | |
+| version_test_hash_operand_test.cr | 2 | 2 | |
+| wait_for_connection_test.cr | 2 | 2 | |
+| wait_for_test.cr | 20 | 20 | |
+| when_evaluation_error_test.cr | 4 | 4 | |
+
+Verification: serial 5334 tests, 0 failures / 0 errors; `-p 4` clean.
