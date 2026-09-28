@@ -10,6 +10,15 @@ private def fresh_file(name : String, content : String) : String
   path
 end
 
+# The classic suite kept its files in a shared spec/tmp/replace dir that
+# before_suite created; the minitest equivalent is a per-test "replace"
+# subtree under tmp_path, created on first use.
+private def replace_dir : String
+  dir = PluginSpecHelper.tmp_path("replace")
+  FileUtils.mkdir_p(dir)
+  dir
+end
+
 describe "replace plugin" do
   it "replaces a regex match in the file" do
     path = fresh_file("one.conf", "  gpgcheck = 0\n")
@@ -168,7 +177,8 @@ describe "replace plugin" do
   end
 
   it "creates no backup without backup: yes" do
-    path = fresh_file("nobackup.conf", "gpgcheck=0\n")
+    path = File.join(replace_dir, "nobackup.conf")
+    File.write(path, "gpgcheck=0\n")
 
     result = PluginSpecHelper.run("replace", {"path" => path, "regexp" => "gpgcheck=0", "replace" => "gpgcheck=1"})
 
@@ -207,7 +217,7 @@ describe "replace plugin" do
   end
 
   it "reads and writes with the given encoding" do
-    path = File.join(PluginSpecHelper.tmp_path("replace"), "encoding.txt")
+    path = File.join(replace_dir, "encoding.txt")
     File.write(path, "caf".to_slice + Bytes[0xe9] + "=1".to_slice)
 
     result = PluginSpecHelper.run("replace", {"path" => path, "regexp" => "=1", "replace" => "=2", "encoding" => "latin1"})
@@ -238,9 +248,9 @@ describe "replace plugin" do
     result["failed"].as_bool.must_equal(true)
     result["changed"].as_bool.must_equal(false)
     result["msg"].as_s.must_equal("Unsupported parameters for (ansible.builtin.replace) module: ignorecase. " \
-                                 "Supported parameters include: after, attributes, backup, before, encoding, group, mode, owner, " \
-                                 "path, regexp, replace, selevel, serole, setype, seuser, unsafe_writes, validate " \
-                                 "(attr, dest, destfile, name).")
+                                  "Supported parameters include: after, attributes, backup, before, encoding, group, mode, owner, " \
+                                  "path, regexp, replace, selevel, serole, setype, seuser, unsafe_writes, validate " \
+                                  "(attr, dest, destfile, name).")
     File.read(path).must_equal("hue\n")
   end
 end
