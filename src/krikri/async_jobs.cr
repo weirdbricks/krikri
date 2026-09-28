@@ -12,9 +12,10 @@ module Krikri
   module AsyncJobs
     class InvalidJidError < Exception; end
 
-    # Jids are joined into file paths under DIR, so anything that isn't a
-    # bare, simple job-id-shaped token (generate_jid's "<unix_ts>.<hex>",
-    # real Ansible's own "12345.67890123" shape, or a lookup probe like
+    # Jids are joined into file paths under the async dir, so anything
+    # that isn't a bare, simple job-id-shaped token (generate_jid's
+    # "<unix_ts>.<hex>", real Ansible's own "12345.67890123" shape, or a
+    # lookup probe like
     # "no-such-job-...") is rejected before it can carry "/" or ".." into
     # the join - a traversal jid would otherwise let an async_status task
     # read (status mode) or delete (mode: cleanup) an arbitrary
@@ -25,23 +26,43 @@ module Krikri
       !jid.empty? && JID_PATTERN.matches?(jid)
     end
 
-    DIR = File.join(ENV["HOME"]? || "/tmp", ".ansible_async")
+    # The controller-local async dir, resolved at call time (not require
+    # time) so tests and concurrent processes can redirect it: env
+    # ANSIBLE_ASYNC_DIR when set (the shell plugin's `async_dir` option;
+    # real Ansible's own env name and default ~/.ansible_async, confirmed
+    # via `ansible-doc -t shell sh`), else the HOME default. A leading ~
+    # in the configured value is expanded against HOME.
+    def self.dir : String
+      if configured = ENV["ANSIBLE_ASYNC_DIR"]?
+        return expand_home(configured) unless configured.empty?
+      end
+      File.join(ENV["HOME"]? || "/tmp", ".ansible_async")
+    end
+
+    private def self.expand_home(path : String) : String
+      return path unless path.starts_with?('~')
+      home = ENV["HOME"]?
+      return path if home.nil? || home.empty?
+      return home if path == "~"
+      return File.join(home, path.lchop("~/")) if path.starts_with?("~/")
+      path
+    end
 
     def self.status_path(jid : String) : String
       raise InvalidJidError.new("invalid jid: #{jid}") unless valid_jid?(jid)
-      File.join(DIR, jid)
+      File.join(dir, jid)
     end
 
     def self.config_path(jid : String) : String
       raise InvalidJidError.new("invalid jid: #{jid}") unless valid_jid?(jid)
-      File.join(DIR, "#{jid}.config.json")
+      File.join(dir, "#{jid}.config.json")
     end
 
     # Atomic (write-then-rename) so a concurrent reader never sees a
     # half-written file. Written 0600 - status payloads can carry module
-    # output, and the DIR path is predictable.
+    # output, and the dir path is predictable.
     def self.write_status(jid : String, data : JSON::Any) : Nil
-      Dir.mkdir_p(DIR)
+      Dir.mkdir_p(dir)
       path = status_path(jid)
       tmp = "#{path}.tmp"
       # chmod BEFORE writing: a chmod-after-write leaves the tmp file
@@ -60,7 +81,7 @@ module Krikri
     # included. chmod BEFORE writing so the file never exists with the
     # payload at umask-default perms.
     def self.write_config(jid : String, data : String) : Nil
-      Dir.mkdir_p(DIR)
+      Dir.mkdir_p(dir)
       File.open(config_path(jid), "w") do |file|
         file.chmod(0o600)
         file.write(data.to_slice)
@@ -91,10 +112,10 @@ module Krikri
       # existed, "file absent" meant running and this key check was the
       # only signal; now: explicit 0 = running, absent or 1 = finished.
       case finished = status["finished"]?.try(&.raw)
-      when Nil    then true
-      when Int64  then finished == 1
-      when Bool   then finished
-      else             true
+      when Nil   then true
+      when Int64 then finished == 1
+      when Bool  then finished
+      else            true
       end
     end
 
@@ -122,10 +143,11 @@ module Krikri
     # Stray .tmp leftovers from a crashed write are swept too. Returns
     # the number of files removed.
     def self.cleanup_all : Int32
-      return 0 unless Dir.exists?(DIR)
+      dir = self.dir
+      return 0 unless Dir.exists?(dir)
       removed = 0
-      Dir.each_child(DIR) do |name|
-        File.delete(File.join(DIR, name))
+      Dir.each_child(dir) do |name|
+        File.delete(File.join(dir, name))
         removed += 1
       rescue File::Error
         # A concurrent job's transient file - leave it.

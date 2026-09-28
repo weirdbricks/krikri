@@ -9,9 +9,10 @@ require "file_utils"
 # - booleans since ansible-core 2.19). Runs the compiled plugin binary
 # via PluginSpecHelper, the same way PluginManager invokes it.
 #
-# The async dir is resolved at spec-run time (not via Krikri::AsyncJobs::DIR,
-# a require-time constant) because other specs mutate ENV["HOME"], and the
-# plugin binary resolves it from HOME in its own process at startup.
+# The async dir is resolved at spec-run time (not via Krikri::AsyncJobs.dir)
+# because other specs mutate ENV["HOME"], and the plugin binary resolves it
+# from HOME in its own process at call time (ANSIBLE_ASYNC_DIR is unset
+# here, so the HOME default applies).
 private def async_dir : String
   File.join(ENV["HOME"]? || "/tmp", ".ansible_async")
 end

@@ -1,7 +1,25 @@
 require "../minitest_helper"
+require "file_utils"
 require "../../src/krikri/async_jobs"
 
+# Every example that writes or sweeps job files runs with ANSIBLE_ASYNC_DIR
+# pointed at a fresh temp directory - without this, cleanup_all sweeps the
+# developer's REAL ~/.ansible_async, destroying in-flight real-Ansible job
+# files and any other concurrently running test process's job files.
+# The env var is set before, restored (or deleted) after, in ensure.
+private def in_temp_async_dir(&)
+  original = ENV["ANSIBLE_ASYNC_DIR"]?
+  dir = File.join(Dir.tempdir, "krikri-async-jobs-spec-#{Random::Secure.hex(4)}")
+  ENV["ANSIBLE_ASYNC_DIR"] = dir
+  yield dir
+ensure
+  original ? (ENV["ANSIBLE_ASYNC_DIR"] = original) : ENV.delete("ANSIBLE_ASYNC_DIR")
+  FileUtils.rm_rf(dir) if dir
+end
+
 describe Krikri::AsyncJobs do
+  serial! # sets ANSIBLE_ASYNC_DIR / HOME (process-wide ENV)
+
   it "generates unique job ids" do
     jids = Array.new(20) { Krikri::AsyncJobs.generate_jid }
     jids.uniq.size.must_equal(20)
@@ -22,12 +40,14 @@ describe Krikri::AsyncJobs do
   end
 
   it "returns nil for a job that was never written" do
-    Krikri::AsyncJobs.read_status("no-such-job-#{Krikri::AsyncJobs.generate_jid}").must_be_nil
+    in_temp_async_dir do
+      Krikri::AsyncJobs.read_status("no-such-job-#{Krikri::AsyncJobs.generate_jid}").must_be_nil
+    end
   end
 
   it "cleanup removes one job's status and config files" do
-    jid = Krikri::AsyncJobs.generate_jid
-    begin
+    in_temp_async_dir do
+      jid = Krikri::AsyncJobs.generate_jid
       Krikri::AsyncJobs.write_status(jid, JSON.parse({"finished" => 1}.to_json))
       File.write(Krikri::AsyncJobs.config_path(jid), "{}")
 
@@ -36,38 +56,29 @@ describe Krikri::AsyncJobs do
       File.exists?(Krikri::AsyncJobs.config_path(jid)).must_equal(false)
       # Second cleanup finds nothing - reports false, no error.
       Krikri::AsyncJobs.cleanup(jid).must_equal(false)
-    ensure
-      File.delete?(Krikri::AsyncJobs.status_path(jid))
-      File.delete?(Krikri::AsyncJobs.config_path(jid))
     end
   end
 
   it "cleanup_all sweeps every job file including stray tmp leftovers" do
-    jid_a = Krikri::AsyncJobs.generate_jid
-    jid_b = Krikri::AsyncJobs.generate_jid
-    begin
+    in_temp_async_dir do
+      jid_a = Krikri::AsyncJobs.generate_jid
+      jid_b = Krikri::AsyncJobs.generate_jid
       Krikri::AsyncJobs.write_status(jid_a, JSON.parse({"finished" => 1}.to_json))
       Krikri::AsyncJobs.write_status(jid_b, JSON.parse({"finished" => 1}.to_json))
       File.write("#{Krikri::AsyncJobs.status_path(jid_a)}.tmp", "partial")
 
       removed = Krikri::AsyncJobs.cleanup_all
       expect((removed) >= (3)).must_equal(true)
-      Dir.exists?(Krikri::AsyncJobs::DIR).must_equal(true)
+      Dir.exists?(Krikri::AsyncJobs.dir).must_equal(true)
       File.exists?(Krikri::AsyncJobs.status_path(jid_a)).must_equal(false)
       File.exists?(Krikri::AsyncJobs.status_path(jid_b)).must_equal(false)
-    ensure
-      File.delete?(Krikri::AsyncJobs.status_path(jid_a))
-      File.delete?(Krikri::AsyncJobs.status_path(jid_b))
-      File.delete?("#{Krikri::AsyncJobs.status_path(jid_a)}.tmp")
-      File.delete?(Krikri::AsyncJobs.config_path(jid_a))
-      File.delete?(Krikri::AsyncJobs.config_path(jid_b))
     end
   end
 
   it "round-trips a status write/read and reports finished? correctly" do
-    jid = Krikri::AsyncJobs.generate_jid
+    in_temp_async_dir do
+      jid = Krikri::AsyncJobs.generate_jid
 
-    begin
       Krikri::AsyncJobs.write_status(jid, JSON.parse({"started" => 1, "finished" => 0}.to_json))
       status = (Krikri::AsyncJobs.read_status(jid) || raise "unexpected nil")
       Krikri::AsyncJobs.finished?(status).must_equal(false)
@@ -76,9 +87,6 @@ describe Krikri::AsyncJobs do
       status = (Krikri::AsyncJobs.read_status(jid) || raise "unexpected nil")
       Krikri::AsyncJobs.finished?(status).must_equal(true)
       status["changed"].as_bool.must_equal(true)
-    ensure
-      File.delete?(Krikri::AsyncJobs.status_path(jid))
-      File.delete?("#{Krikri::AsyncJobs.status_path(jid)}.tmp")
     end
   end
 
@@ -91,13 +99,83 @@ describe Krikri::AsyncJobs do
   # held the payload (verified by code reading - the window between
   # create and chmod holds an empty file, which a race can't leak).
   it "writes the config file 0600 with the payload intact" do
-    jid = Krikri::AsyncJobs.generate_jid
-    begin
+    in_temp_async_dir do
+      jid = Krikri::AsyncJobs.generate_jid
       Krikri::AsyncJobs.write_config(jid, %({"login_password": "s3cret"}))
       (File.info(Krikri::AsyncJobs.config_path(jid)).permissions.value & 0o777).must_equal(0o600)
       File.read(Krikri::AsyncJobs.config_path(jid)).must_equal(%({"login_password": "s3cret"}))
+    end
+  end
+
+  # Regression: the async dir used to be fixed at require time, so a spec
+  # sweeping it hit the developer's real ~/.ansible_async. It must now be
+  # resolved at call time from ANSIBLE_ASYNC_DIR (real Ansible's own shell
+  # plugin env name, confirmed via `ansible-doc -t shell sh`).
+  it "resolves status/config paths under ANSIBLE_ASYNC_DIR when set" do
+    in_temp_async_dir do |dir|
+      jid = Krikri::AsyncJobs.generate_jid
+      Krikri::AsyncJobs.status_path(jid).must_equal(File.join(dir, jid))
+      Krikri::AsyncJobs.config_path(jid).must_equal(File.join(dir, "#{jid}.config.json"))
+
+      Krikri::AsyncJobs.write_status(jid, JSON.parse({"finished" => 1}.to_json))
+      File.exists?(File.join(dir, jid)).must_equal(true)
+
+      Krikri::AsyncJobs.write_config(jid, "{}")
+      File.exists?(File.join(dir, "#{jid}.config.json")).must_equal(true)
+
+      Krikri::AsyncJobs.cleanup_all
+      Dir.children(dir).must_equal([] of String)
+    end
+  end
+
+  it "resolves status paths under the HOME default when ANSIBLE_ASYNC_DIR is unset" do
+    original = ENV["ANSIBLE_ASYNC_DIR"]?
+    original_home = ENV["HOME"]?
+    home = File.join(Dir.tempdir, "krikri-async-jobs-spec-home-#{Random::Secure.hex(4)}")
+    ENV.delete("ANSIBLE_ASYNC_DIR")
+    ENV["HOME"] = home
+    begin
+      jid = Krikri::AsyncJobs.generate_jid
+      expected = File.join(home, ".ansible_async")
+      Krikri::AsyncJobs.dir.must_equal(expected)
+      Krikri::AsyncJobs.status_path(jid).must_equal(File.join(expected, jid))
+      Krikri::AsyncJobs.config_path(jid).must_equal(File.join(expected, "#{jid}.config.json"))
     ensure
-      File.delete?(Krikri::AsyncJobs.config_path(jid))
+      original ? (ENV["ANSIBLE_ASYNC_DIR"] = original) : ENV.delete("ANSIBLE_ASYNC_DIR")
+      original_home ? (ENV["HOME"] = original_home) : ENV.delete("HOME")
+      FileUtils.rm_rf(home)
+    end
+  end
+
+  it "expands a leading ~ in ANSIBLE_ASYNC_DIR against HOME" do
+    original = ENV["ANSIBLE_ASYNC_DIR"]?
+    original_home = ENV["HOME"]?
+    home = File.join(Dir.tempdir, "krikri-async-jobs-spec-home-#{Random::Secure.hex(4)}")
+    ENV["HOME"] = home
+    ENV["ANSIBLE_ASYNC_DIR"] = "~/async-jobs-custom"
+    begin
+      Krikri::AsyncJobs.dir.must_equal(File.join(home, "async-jobs-custom"))
+      ENV["ANSIBLE_ASYNC_DIR"] = "~"
+      Krikri::AsyncJobs.dir.must_equal(home)
+    ensure
+      original ? (ENV["ANSIBLE_ASYNC_DIR"] = original) : ENV.delete("ANSIBLE_ASYNC_DIR")
+      original_home ? (ENV["HOME"] = original_home) : ENV.delete("HOME")
+      FileUtils.rm_rf(home)
+    end
+  end
+
+  it "falls back to the HOME default when ANSIBLE_ASYNC_DIR is set but empty" do
+    original = ENV["ANSIBLE_ASYNC_DIR"]?
+    original_home = ENV["HOME"]?
+    home = File.join(Dir.tempdir, "krikri-async-jobs-spec-home-#{Random::Secure.hex(4)}")
+    ENV["HOME"] = home
+    ENV["ANSIBLE_ASYNC_DIR"] = ""
+    begin
+      Krikri::AsyncJobs.dir.must_equal(File.join(home, ".ansible_async"))
+    ensure
+      original ? (ENV["ANSIBLE_ASYNC_DIR"] = original) : ENV.delete("ANSIBLE_ASYNC_DIR")
+      original_home ? (ENV["HOME"] = original_home) : ENV.delete("HOME")
+      FileUtils.rm_rf(home)
     end
   end
 end
