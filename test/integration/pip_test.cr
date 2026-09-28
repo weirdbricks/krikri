@@ -370,7 +370,10 @@ describe "pip plugin" do
     # use." message on a host where real Ansible succeeded.
     #
     # Simulated with a shim dir REPLACING the whole PATH (apt_key_spec.cr's
-    # established shim pattern): python3.9 present (a wrapper that execs
+    # established shim pattern, scoped to the plugin child via the
+    # `_environment` param rather than this process's own ENV - a process-
+    # wide PATH swap would break every concurrently running test's own
+    # shell-outs under --parallel): python3.9 present (a wrapper that execs
     # the real interpreter for discovery but answers the uninstall
     # invocation itself), python3 and pip3 absent. state: absent now
     # runs `pip uninstall` unconditionally (real Ansible semantics), so
@@ -393,12 +396,11 @@ describe "pip plugin" do
       )
       File.chmod(File.join(shim_dir, "python3.9"), 0o755)
       File.symlink("/bin/sh", File.join(shim_dir, "sh"))
-      old_path = ENV["PATH"]?
-      ENV["PATH"] = shim_dir
       begin
         result = PluginSpecHelper.run("pip", {
-          "name"  => "definitely-not-a-real-package-xyz",
-          "state" => "absent",
+          "name"         => "definitely-not-a-real-package-xyz",
+          "state"        => "absent",
+          "_environment" => {"PATH" => shim_dir}.to_json,
         })
 
         # Got past discovery (not the "Unable to find any of pip3"
@@ -408,7 +410,6 @@ describe "pip plugin" do
         result["failed"]?.try(&.as_bool).wont_equal(true)
         result["msg"].as_s.must_equal("Package already absent")
       ensure
-        ENV["PATH"] = old_path if old_path
         FileUtils.rm_rf(shim_dir)
       end
     end
@@ -433,14 +434,13 @@ describe "pip plugin" do
       File.symlink("/bin/sh", File.join(shim_dir, "sh"))
       write_venv_shim(shim_dir, "fakevenv", false)
       venv = File.join(Dir.tempdir, "krikri-pip-spec-venv-#{Random::Secure.hex(8)}")
-      old_path = ENV["PATH"]?
-      ENV["PATH"] = shim_dir
       begin
         result = PluginSpecHelper.run("pip", {
           "name"                     => "pip",
           "virtualenv"               => venv,
           "virtualenv_command"       => "fakevenv",
           "virtualenv_site_packages" => "true",
+          "_environment"             => {"PATH" => shim_dir}.to_json,
         })
 
         result["failed"]?.try(&.as_bool).wont_equal(true)
@@ -449,7 +449,6 @@ describe "pip plugin" do
         marker.must_include("--system-site-packages")
         marker.wont_include("--no-site-packages")
       ensure
-        ENV["PATH"] = old_path if old_path
         FileUtils.rm_rf(shim_dir)
         FileUtils.rm_rf(venv)
       end
@@ -467,13 +466,12 @@ describe "pip plugin" do
       write_venv_shim(shim_dir, "venvtool", true)
       write_venv_shim(shim_dir, "venvtool_like", false)
       venv = File.join(Dir.tempdir, "krikri-pip-spec-venv-#{Random::Secure.hex(8)}")
-      old_path = ENV["PATH"]?
-      ENV["PATH"] = shim_dir
       begin
         result = PluginSpecHelper.run("pip", {
           "name"               => "pip",
           "virtualenv"         => venv,
           "virtualenv_command" => "venvtool",
+          "_environment"       => {"PATH" => shim_dir}.to_json,
         })
         result["failed"]?.try(&.as_bool).wont_equal(true)
         File.read(File.join(shim_dir, "marker")).must_include("--no-site-packages")
@@ -485,11 +483,11 @@ describe "pip plugin" do
           "name"               => "pip",
           "virtualenv"         => venv,
           "virtualenv_command" => "venvtool_like",
+          "_environment"       => {"PATH" => shim_dir}.to_json,
         })
         result["failed"]?.try(&.as_bool).wont_equal(true)
         File.read(File.join(shim_dir, "marker")).wont_include("--no-site-packages")
       ensure
-        ENV["PATH"] = old_path if old_path
         FileUtils.rm_rf(shim_dir)
         FileUtils.rm_rf(venv)
       end
