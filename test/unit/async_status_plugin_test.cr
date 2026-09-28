@@ -69,22 +69,24 @@ describe "async_status plugin result shapes" do
     # traversal jid "../<sentinel>" would, if the validation were missing,
     # delete the sentinel - a real deletion proof that never risks a real
     # system file even on a broken build.
-    original_home = ENV["HOME"]?
-    home = File.join(Dir.tempdir, "krikri-async-status-spec-#{Random::Secure.hex(4)}")
-    Dir.mkdir_p(File.join(home, ".ansible_async"))
-    ENV["HOME"] = home
-    sentinel = File.join(home, "sentinel-#{Random::Secure.hex(4)}")
-    File.write(sentinel, "still here")
-    begin
-      result = PluginSpecHelper.run("async_status", {"jid" => "../#{File.basename(sentinel)}", "mode" => "cleanup"})
+    PluginSpecHelper::ENV_MUTEX.synchronize do
+      original_home = ENV["HOME"]?
+      home = File.join(Dir.tempdir, "krikri-async-status-spec-#{Random::Secure.hex(4)}")
+      Dir.mkdir_p(File.join(home, ".ansible_async"))
+      ENV["HOME"] = home
+      sentinel = File.join(home, "sentinel-#{Random::Secure.hex(4)}")
+      File.write(sentinel, "still here")
+      begin
+        result = PluginSpecHelper.run("async_status", {"jid" => "../#{File.basename(sentinel)}", "mode" => "cleanup"})
 
-      result["failed"].as_bool.must_equal(true)
-      result["msg"].as_s.must_equal("invalid jid: ../#{File.basename(sentinel)}")
-      File.exists?(sentinel).must_equal(true)
-    ensure
-      FileUtils.rm_r(home) if original_home != home
-      original_home ? (ENV["HOME"] = original_home) : ENV.delete("HOME")
-      File.delete?(sentinel)
+        result["failed"].as_bool.must_equal(true)
+        result["msg"].as_s.must_equal("invalid jid: ../#{File.basename(sentinel)}")
+        File.exists?(sentinel).must_equal(true)
+      ensure
+        FileUtils.rm_r(home) if original_home != home
+        original_home ? (ENV["HOME"] = original_home) : ENV.delete("HOME")
+        File.delete?(sentinel)
+      end
     end
   end
 
@@ -102,24 +104,26 @@ describe "async_status plugin result shapes" do
     # Some specs leave ENV["HOME"] pointing somewhere unwritable; point it
     # at our own temp dir for the duration so both this process and the
     # plugin subprocess resolve the same writable async dir, then restore.
-    original_home = ENV["HOME"]?
-    home = File.join(Dir.tempdir, "krikri-async-status-spec-#{Random::Secure.hex(4)}")
-    Dir.mkdir_p(File.join(home, ".ansible_async"))
-    ENV["HOME"] = home
-    begin
-      File.write(File.join(async_dir, jid), {"finished" => 1, "changed" => true, "rc" => 0}.to_json)
+    PluginSpecHelper::ENV_MUTEX.synchronize do
+      original_home = ENV["HOME"]?
+      home = File.join(Dir.tempdir, "krikri-async-status-spec-#{Random::Secure.hex(4)}")
+      Dir.mkdir_p(File.join(home, ".ansible_async"))
+      ENV["HOME"] = home
+      begin
+        File.write(File.join(async_dir, jid), {"finished" => 1, "changed" => true, "rc" => 0}.to_json)
 
-      result = PluginSpecHelper.run("async_status", {"jid" => jid})
+        result = PluginSpecHelper.run("async_status", {"jid" => jid})
 
-      result["failed"]?.must_be_nil
-      result["changed"].as_bool.must_equal(true)
-      result["finished"].as_i.must_equal(1)
-      result["rc"].as_i.must_equal(0)
-    ensure
-      FileUtils.rm_r(home) if original_home != home
-      original_home ? (ENV["HOME"] = original_home) : ENV.delete("HOME")
-      File.delete?(status_path(jid))
-      File.delete?(config_path(jid))
+        result["failed"]?.must_be_nil
+        result["changed"].as_bool.must_equal(true)
+        result["finished"].as_i.must_equal(1)
+        result["rc"].as_i.must_equal(0)
+      ensure
+        FileUtils.rm_r(home) if original_home != home
+        original_home ? (ENV["HOME"] = original_home) : ENV.delete("HOME")
+        File.delete?(status_path(jid))
+        File.delete?(config_path(jid))
+      end
     end
   end
 end

@@ -37,19 +37,21 @@ describe "command: per-token tilde and variable expansion" do
     skip "no home directory for current user" unless current_home
     fake_home = File.tempname("krikri-cmd-expand")
     Dir.mkdir_p(fake_home)
-    previous = ENV["HOME"]?
-    begin
-      ENV["HOME"] = fake_home
-      result = PluginSpecHelper.run("command", {
-        "cmd" => "printf %s ~/inside",
-      })
-    ensure
-      previous ? (ENV["HOME"] = previous) : ENV.delete("HOME")
-      FileUtils.rm_r(fake_home)
-    end
+    PluginSpecHelper::ENV_MUTEX.synchronize do
+      previous = ENV["HOME"]?
+      begin
+        ENV["HOME"] = fake_home
+        result = PluginSpecHelper.run("command", {
+          "cmd" => "printf %s ~/inside",
+        })
 
-    result["rc"].as_i.must_equal(0)
-    result["stdout"].as_s.must_equal(File.join(fake_home, "inside"))
+        result["rc"].as_i.must_equal(0)
+        result["stdout"].as_s.must_equal(File.join(fake_home, "inside"))
+      ensure
+        previous ? (ENV["HOME"] = previous) : ENV.delete("HOME")
+        FileUtils.rm_r(fake_home)
+      end
+    end
   end
 
   it "expands $VAR and ${VAR} from the task's environment in argument tokens" do

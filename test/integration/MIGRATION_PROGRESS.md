@@ -26,8 +26,12 @@ run, `-p 4` run, `crystal tool format`, ameba) and committed separately.
   capabilities_spec.cr, changed_when_stderr_lines_spec.cr,
   check_mode_scope_inheritance_spec.cr
 
+### Batch 3 (4 files): cli, command_shell_check_mode, command, community_crypto_short_name
+- cli_spec.cr, command_shell_check_mode_spec.cr, command_spec.cr,
+  community_crypto_short_name_spec.cr
+
 ### Next file to convert
-- cli_spec.cr (2229 lines), then command_shell_check_mode_spec.cr, ...
+- connection_cli_flags_spec.cr (then connection_failure_unignorable_by_failed_when_spec.cr, ...)
 
 ## Count table
 
@@ -35,6 +39,7 @@ run, `-p 4` run, `crystal tool format`, ameba) and committed separately.
 |-------|-------|-------------|-------|
 | 1 | 16 | 124 | see renames/deviations below |
 | 2 | 16 | 105 | see renames/deviations below |
+| 3 | 4 | 180 | cli_spec's `it`-per-fixture Dir.glob loop unrolled; counts below are RUNTIME tests (spec file shows 101 `it` blocks because the loop counts once) |
 
 ## Renames / deviations
 
@@ -68,6 +73,17 @@ run, `-p 4` run, `crystal tool format`, ameba) and committed separately.
   body becomes `skip "..." unless <cond>` (crystal spec's `next` counted a
   pass, minitest's skip counts a skip - blockinfile_param_coverage's
   chattr-guarded example is the first instance).
+- cli_test: before_suite build trigger -> fail-fast check; scratch
+  playbooks moved from shared spec/tmp to per-test tmp_path
+  (run_playbook now accepts absolute fixture paths); the Dir.glob loop
+  unrolling above; describe-body locals (testservers/magicvars/
+  hostvars/explicit inventories) became methods; the loop-counting
+  fixture's baked-in /tmp path is rewritten per test to a tmp_path.
+- command_test's expanduser test and the ENV["HOME"]-mutating unit specs
+  (filter_engine, jinja_renderer, mysql_connection, async_status_plugin,
+  command_expand_argument_vars) now hold ENV_MUTEX and RESTORE HOME -
+  the leaked /home/testuser HOME from the expanduser unit specs crashed
+  the CLI async: spec's spawned binary (mkdir /home/testuser denied).
 - assemble/authorized_key: shared `spec/tmp` roots moved to per-test
   `PluginSpecHelper.tmp_path`; before_suite mkdir_p dropped.
 

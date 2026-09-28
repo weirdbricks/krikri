@@ -913,13 +913,24 @@ describe Krikri::VariableSubstitutor::JinjaRenderer do
   end
 
   it "expanduser/expandvars expand ~ and $VAR from the controller's environment" do
-    v = Hash(String, JSON::Any).new
-    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
-    ENV["HOME"] = "/home/testuser"
-    renderer.render(%({{ "~/foo" | expanduser }})).must_equal("/home/testuser/foo")
-    ENV["CRYSTAL_ANSIBLE_SPEC_CRINJA_EXPANDVAR"] = "hello"
-    renderer.render(%({{ "v=$CRYSTAL_ANSIBLE_SPEC_CRINJA_EXPANDVAR" | expandvars }})).must_equal("v=hello")
-    ENV.delete("CRYSTAL_ANSIBLE_SPEC_CRINJA_EXPANDVAR")
+    # ENV is process-global: hold ENV_MUTEX so concurrent tests that read
+    # HOME (e.g. the command plugin's expanduser specs) never see this.
+    PluginSpecHelper::ENV_MUTEX.synchronize do
+      v = Hash(String, JSON::Any).new
+      renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
+      original_home = ENV["HOME"]?
+      ENV["HOME"] = "/home/testuser"
+      begin
+        renderer.render(%({{ "~/foo" | expanduser }})).must_equal("/home/testuser/foo")
+        ENV["CRYSTAL_ANSIBLE_SPEC_CRINJA_EXPANDVAR"] = "hello"
+        renderer.render(%({{ "v=$CRYSTAL_ANSIBLE_SPEC_CRINJA_EXPANDVAR" | expandvars }})).must_equal("v=hello")
+      ensure
+        # Restore - later specs (the CLI integration suite's async: jobs)
+        # spawn binaries that inherit this process's HOME.
+        ENV.delete("CRYSTAL_ANSIBLE_SPEC_CRINJA_EXPANDVAR")
+        original_home ? (ENV["HOME"] = original_home) : ENV.delete("HOME")
+      end
+    end
   end
 
   it "normpath/relpath/commonpath mirror Python's os.path helpers" do

@@ -6,14 +6,18 @@ describe Krikri::PluginHelpers::MysqlConnection do
 
   describe ".build_uri" do
     it "defaults to localhost:3306, with the current OS user as the connection username" do
-      original_user = ENV["USER"]?
-      ENV["USER"] = "specuser"
-      Krikri::PluginHelpers::MysqlConnection.build_uri.must_equal("mysql://specuser@localhost:3306?ssl-mode=disabled")
-    ensure
-      if original_user
-        ENV["USER"] = original_user
-      else
-        ENV.delete("USER")
+      PluginSpecHelper::ENV_MUTEX.synchronize do
+        original_user = ENV["USER"]?
+        ENV["USER"] = "specuser"
+        begin
+          Krikri::PluginHelpers::MysqlConnection.build_uri.must_equal("mysql://specuser@localhost:3306?ssl-mode=disabled")
+        ensure
+          if original_user
+            ENV["USER"] = original_user
+          else
+            ENV.delete("USER")
+          end
+        end
       end
     end
 
@@ -28,11 +32,15 @@ describe Krikri::PluginHelpers::MysqlConnection do
     end
 
     it "falls back to 'root' as the connection username when neither user: nor $USER is available" do
-      original_user = ENV["USER"]?
-      ENV.delete("USER")
-      Krikri::PluginHelpers::MysqlConnection.build_uri(host: "localhost").must_equal("mysql://root@localhost:3306?ssl-mode=disabled")
-    ensure
-      ENV["USER"] = original_user if original_user
+      PluginSpecHelper::ENV_MUTEX.synchronize do
+        original_user = ENV["USER"]?
+        ENV.delete("USER")
+        begin
+          Krikri::PluginHelpers::MysqlConnection.build_uri(host: "localhost").must_equal("mysql://root@localhost:3306?ssl-mode=disabled")
+        ensure
+          ENV["USER"] = original_user if original_user
+        end
+      end
     end
 
     it "always disables TLS, since the mysql shard's own default (preferred) doesn't fall back to plaintext on a failed handshake" do
@@ -104,28 +112,32 @@ describe Krikri::PluginHelpers::MysqlConnection do
     end
 
     it "does not honor a [client] socket when login_host is explicit" do
-      original_user = ENV["USER"]?
-      ENV["USER"] = "specuser"
-      p = setup("[client]\nsocket=/run/mysqld/mysqld.sock\n")
-      begin
-        # login_host given => socket ignored, host honored; no user in the
-        # file, so the connection username falls back to the OS user.
-        uri = Krikri::PluginHelpers::MysqlConnection.build_uri(host: "db", config_file: p)
-        uri.must_equal("mysql://specuser@db:3306?ssl-mode=disabled")
-      ensure
-        teardown(p)
-        ENV["USER"] = original_user if original_user
+      PluginSpecHelper::ENV_MUTEX.synchronize do
+        original_user = ENV["USER"]?
+        ENV["USER"] = "specuser"
+        p = setup("[client]\nsocket=/run/mysqld/mysqld.sock\n")
+        begin
+          # login_host given => socket ignored, host honored; no user in the
+          # file, so the connection username falls back to the OS user.
+          uri = Krikri::PluginHelpers::MysqlConnection.build_uri(host: "db", config_file: p)
+          uri.must_equal("mysql://specuser@db:3306?ssl-mode=disabled")
+        ensure
+          teardown(p)
+          ENV["USER"] = original_user if original_user
+        end
       end
     end
 
     it "returns no error for a missing option file (treated as absent)" do
-      original_user = ENV["USER"]?
-      ENV["USER"] = "specuser"
-      begin
-        uri = Krikri::PluginHelpers::MysqlConnection.build_uri(config_file: "/no/such/my.cnf")
-        uri.must_equal("mysql://specuser@localhost:3306?ssl-mode=disabled")
-      ensure
-        ENV["USER"] = original_user if original_user
+      PluginSpecHelper::ENV_MUTEX.synchronize do
+        original_user = ENV["USER"]?
+        ENV["USER"] = "specuser"
+        begin
+          uri = Krikri::PluginHelpers::MysqlConnection.build_uri(config_file: "/no/such/my.cnf")
+          uri.must_equal("mysql://specuser@localhost:3306?ssl-mode=disabled")
+        ensure
+          ENV["USER"] = original_user if original_user
+        end
       end
     end
 
@@ -140,36 +152,40 @@ describe Krikri::PluginHelpers::MysqlConnection do
     end
 
     it "uses defaults when the file has no [client] section" do
-      original_user = ENV["USER"]?
-      ENV["USER"] = "specuser"
-      p = setup("[mysqld]\nuser=someuser\npassword=whatever\n")
-      begin
-        uri = Krikri::PluginHelpers::MysqlConnection.build_uri(config_file: p)
-        uri.must_equal("mysql://specuser@localhost:3306?ssl-mode=disabled")
-      ensure
-        teardown(p)
-        ENV["USER"] = original_user if original_user
+      PluginSpecHelper::ENV_MUTEX.synchronize do
+        original_user = ENV["USER"]?
+        ENV["USER"] = "specuser"
+        p = setup("[mysqld]\nuser=someuser\npassword=whatever\n")
+        begin
+          uri = Krikri::PluginHelpers::MysqlConnection.build_uri(config_file: p)
+          uri.must_equal("mysql://specuser@localhost:3306?ssl-mode=disabled")
+        ensure
+          teardown(p)
+          ENV["USER"] = original_user if original_user
+        end
       end
     end
 
     it "expands a leading ~ in the config_file using $HOME (matches os.path.expanduser)" do
-      original_user = ENV["USER"]?
-      original_home = ENV["HOME"]?
-      ENV["USER"] = "specuser"
-      home = File.join(Dir.tempdir, "crystal_ansible_spec_home_#{Random.rand(100_000)}")
-      Dir.mkdir_p(home)
-      ENV["HOME"] = home
-      File.write(File.join(home, ".my.cnf"), "[client]\nuser=\"root\"\npassword=\"tildehome\"\n")
-      begin
-        # DEFAULT_OPTION_FILE is "~/.my.cnf" - must resolve via $HOME, not
-        # against the CWD (Crystal's File.expand_path does not expand ~).
-        uri = Krikri::PluginHelpers::MysqlConnection.build_uri(config_file: "~/.my.cnf")
-        uri.must_equal("mysql://root:tildehome@localhost:3306?ssl-mode=disabled")
-      ensure
-        File.delete?(File.join(home, ".my.cnf"))
-        Dir.delete?(home)
-        ENV["USER"] = original_user if original_user
-        ENV["HOME"] = original_home if original_home
+      PluginSpecHelper::ENV_MUTEX.synchronize do
+        original_user = ENV["USER"]?
+        original_home = ENV["HOME"]?
+        ENV["USER"] = "specuser"
+        home = File.join(Dir.tempdir, "crystal_ansible_spec_home_#{Random.rand(100_000)}")
+        Dir.mkdir_p(home)
+        ENV["HOME"] = home
+        File.write(File.join(home, ".my.cnf"), "[client]\nuser=\"root\"\npassword=\"tildehome\"\n")
+        begin
+          # DEFAULT_OPTION_FILE is "~/.my.cnf" - must resolve via $HOME, not
+          # against the CWD (Crystal's File.expand_path does not expand ~).
+          uri = Krikri::PluginHelpers::MysqlConnection.build_uri(config_file: "~/.my.cnf")
+          uri.must_equal("mysql://root:tildehome@localhost:3306?ssl-mode=disabled")
+        ensure
+          File.delete?(File.join(home, ".my.cnf"))
+          Dir.delete?(home)
+          ENV["USER"] = original_user if original_user
+          ENV["HOME"] = original_home if original_home
+        end
       end
     end
   end

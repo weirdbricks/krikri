@@ -929,10 +929,21 @@ describe Krikri::VariableSubstitutor::FilterEngine do
   end
 
   it "expanduser expands a leading ~" do
-    ENV["HOME"] = "/home/testuser"
-    engine.apply(s("~/foo"), "expanduser").as_s.must_equal("/home/testuser/foo")
-    engine.apply(s("~"), "expanduser").as_s.must_equal("/home/testuser")
-    engine.apply(s("/already/absolute"), "expanduser").as_s.must_equal("/already/absolute")
+    # ENV is process-global: hold ENV_MUTEX so concurrent tests that read
+    # HOME (e.g. the command plugin's expanduser specs) never see this.
+    PluginSpecHelper::ENV_MUTEX.synchronize do
+      original_home = ENV["HOME"]?
+      ENV["HOME"] = "/home/testuser"
+      begin
+        engine.apply(s("~/foo"), "expanduser").as_s.must_equal("/home/testuser/foo")
+        engine.apply(s("~"), "expanduser").as_s.must_equal("/home/testuser")
+        engine.apply(s("/already/absolute"), "expanduser").as_s.must_equal("/already/absolute")
+      ensure
+        # Restore - later specs (the CLI integration suite's async: jobs)
+        # spawn binaries that inherit this process's HOME.
+        original_home ? (ENV["HOME"] = original_home) : ENV.delete("HOME")
+      end
+    end
   end
 
   it "expandvars expands $VAR/${VAR} from the controller's environment" do
