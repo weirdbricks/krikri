@@ -69,8 +69,21 @@ run, `-p 4` run, `crystal tool format`, ameba) and committed separately.
   getent_loop_invocation_spec.cr, getent_spec.cr, get_url_spec.cr,
   git_config_spec.cr
 
+### Batch 10 (15 files): htpasswd .. include_vars_templated_value
+- htpasswd_spec.cr, ignore_errors_recap_stats_spec.cr,
+  import_role_when_expansion_spec.cr,
+  import_tasks_parent_when_short_circuit_spec.cr,
+  include_load_failure_recap_spec.cr,
+  include_loop_broken_when_recap_spec.cr,
+  include_loop_no_load_after_halt_spec.cr,
+  include_role_missing_recap_spec.cr,
+  include_role_vars_cross_reference_spec.cr,
+  include_tasks_empty_file_spec.cr, include_tasks_index_var_spec.cr,
+  include_vars_dir_spec.cr, include_vars_failed_when_spec.cr,
+  include_vars_loop_spec.cr, include_vars_templated_value_spec.cr
+
 ### Next file to convert
-- group_param_coverage_spec.cr and on (alphabetical)
+- include_vars_undefined_path_spec.cr and on (alphabetical)
 
 ## Count table
 
@@ -84,6 +97,7 @@ run, `-p 4` run, `crystal tool format`, ameba) and committed separately.
 | 6 | 10 | 56 | dnf recording helper holds ENV_MUTEX; dpkg_divert's `tags:` kwarg dropped |
 | 7 | 15 | 170 | file/find fixture trees moved to per-test tmp_path; describe-body locals became methods |
 | 8 | 10 | 93 | get_url's file-scoped server locals became private constants; git_config tmp_path'd |
+| 10 | 15 | 55 | htpasswd before_suite/tmp_path folded into PluginSpecHelper.tmp_path |
 
 ## Renames / deviations
 
@@ -176,6 +190,12 @@ run, `-p 4` run, `crystal tool format`, ameba) and committed separately.
   dead `output` became `code, _ =` (ameba Lint/UselessAssign).
 - assemble/authorized_key: shared `spec/tmp` roots moved to per-test
   `PluginSpecHelper.tmp_path`; before_suite mkdir_p dropped.
+- htpasswd_test: the before_suite mkdir_p + file-scoped `tmp_path` def
+  became per-test `PluginSpecHelper.tmp_path`; the `start_with` hash-prefix
+  check became `expect(str_starts_with?(...)).must_equal(true)`.
+- Batch 10's `File.join(PROJECT_ROOT, "spec", "fixtures", ...)` inventory
+  refs repointed to `File.join(__DIR__, "..", "fixtures", ...)` per the
+  batch-4 convention (test/fixtures carries identical copies).
 
 ## Known pre-existing failures
 
