@@ -94,6 +94,8 @@ private def run_module(params : Hash(String, String), handler : Proc(String, Str
 end
 
 describe "Krikri::PluginHelpers::Ec2Info (ec2_ami_info_test.cr)" do
+  serial! # mutates process-global state (ENV / engine settings)
+
   before_each do
     @old_access = ENV["AWS_ACCESS_KEY_ID"]?
     @old_secret = ENV["AWS_SECRET_ACCESS_KEY"]?

@@ -48,16 +48,17 @@ module PluginSpecHelper
     File.join(dir, *parts)
   end
 
-  # ENV is process-global mutable state, so tests that repoint PATH,
-  # CAPTURE_DIR and friends cannot run concurrently with each other - one
-  # fiber's restore would clobber another's override mid-spawn. Helpers that
-  # mutate ENV synchronize on this for the whole yield block.
-  ENV_MUTEX = Mutex.new
-
-  # Same story for tests that drive engine-level global state (TimingProfile
-  # buckets, daemon caches): their whole body holds this mutex so two such
-  # tests never interleave.
-  STATE_MUTEX = Mutex.new
+  # ONE lock for all process-global mutable state: ENV (PATH, HOME,
+  # AWS_*, ANSIBLE_* ...) and engine-level class settings (Ec2Api/IamApi
+  # transports, poll intervals, CliOptions, Vault, TimingProfile, daemon
+  # caches). Under -p N one test's override - or its teardown's restore -
+  # would otherwise land in the middle of another test's run at any IO
+  # yield point. Reentrant, so a `serial!` test can still call helpers
+  # (with_vault, the ENV shims) that take it again. ENV_MUTEX is the same
+  # lock: a test can touch ENV and engine state together, and a single lock
+  # has no lock-ordering deadlocks.
+  STATE_MUTEX = Mutex.new(:reentrant)
+  ENV_MUTEX   = STATE_MUTEX
 
   # Runs `binary` with `config_json` on stdin, streaming stdout into
   # `output`. Crystal 1.21's Process.run has no timeout parameter anymore,
@@ -285,11 +286,31 @@ end
 class Minitest::Spec
   include RaisesAssertion
 
+  # Describes whose tests mutate process-global state (ENV, engine class
+  # settings) call `serial!` in their body: every test in that describe -
+  # and in its nested describes, which minitest generates as subclasses -
+  # then holds STATE_MUTEX across setup, body AND teardown, so
+  # before_each/after_each ENV pinning is covered too. Only serial tests
+  # wait on each other; the rest of the suite keeps running concurrently.
+  def serial? : Bool
+    false
+  end
+
+  macro serial!
+    def serial? : Bool
+      true
+    end
+  end
+
   # One tmp scope per test: setup, body and teardown all run inside run_one
   # on the same worker fiber, so begin/end here bracket exactly one test.
   def run_one(name : String, proc : Test ->) : Nil
     PluginSpecHelper.begin_test_tmp
-    super
+    if serial?
+      PluginSpecHelper::STATE_MUTEX.synchronize { super }
+    else
+      super
+    end
   ensure
     PluginSpecHelper.end_test_tmp
   end

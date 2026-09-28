@@ -18,6 +18,8 @@ require "file_utils"
 # same convention as controlling_tty_spec - the parsing/expansion lives in
 # the plugin process, so that is the boundary that has to be proven.
 describe "command: per-token tilde and variable expansion" do
+  serial! # mutates process-global state (ENV / engine settings)
+
   private def current_home
     File.expand_path("~")
   end

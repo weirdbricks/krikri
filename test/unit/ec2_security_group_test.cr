@@ -118,6 +118,8 @@ private def run_module(params : Hash(String, String), handler : Proc(String, Str
 end
 
 describe Krikri::PluginHelpers::Ec2SecurityGroup do
+  serial! # mutates process-global state (ENV / engine settings)
+
   before_each do
     # The module resolves credentials from the environment - pin them so
     # the specs neither depend on the runner's real AWS env nor leak into

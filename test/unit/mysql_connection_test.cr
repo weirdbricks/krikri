@@ -2,6 +2,8 @@ require "../minitest_helper"
 require "../../src/krikri/plugin_helpers/mysql_connection"
 
 describe Krikri::PluginHelpers::MysqlConnection do
+  serial! # mutates process-global state (ENV / engine settings)
+
   describe ".build_uri" do
     it "defaults to localhost:3306, with the current OS user as the connection username" do
       original_user = ENV["USER"]?

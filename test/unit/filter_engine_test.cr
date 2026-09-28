@@ -8,6 +8,8 @@ private def s(value : String) : JSON::Any
 end
 
 describe Krikri::VariableSubstitutor::FilterEngine do
+  serial! # mutates process-global state (ENV / engine settings)
+
   private def engine
     Krikri::VariableSubstitutor::FilterEngine.new
   end

@@ -97,6 +97,8 @@ private def run_module(params : Hash(String, String), handler : Proc(String, Str
 end
 
 describe Krikri::PluginHelpers::IamUser do
+  serial! # mutates process-global state (ENV / engine settings)
+
   describe ".run" do
     it "shapes a GetUser result with the real module's fields, tags and login_profile" do
       result = run_module({"name" => "lchaidas"}, ->(body : String) do

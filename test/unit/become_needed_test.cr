@@ -2,6 +2,8 @@ require "../minitest_helper"
 require "../../src/krikri/plugin_manager"
 
 describe "Krikri::PluginManager (become_needed_test.cr)" do
+  serial! # mutates process-global state (ENV / engine settings)
+
   describe ".become_needed?" do
     it "is false when escalating to the user we already are" do
       # Real Ansible's own gate (_low_level_execute_command):

@@ -22,6 +22,8 @@ require "../../src/krikri/plugin_manager"
 #      without which this would be a correctness bug rather than an
 #      optimization.
 describe "plugin host-state cache (item 6a)" do
+  serial! # mutates process-global state (ENV / engine settings)
+
   after_each do
     Krikri::PluginManager.clear_cache
     Krikri::PluginManager.host_state_cache_enabled = true

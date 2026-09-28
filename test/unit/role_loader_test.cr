@@ -61,6 +61,8 @@ private def fresh_play : Krikri::Play
 end
 
 describe Krikri::RoleLoader do
+  serial! # mutates process-global state (ENV / engine settings)
+
   include RaisesAssertion
   before_each do
     FileUtils.rm_rf(roles_root) if Dir.exists?(roles_root)

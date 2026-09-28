@@ -7,6 +7,8 @@ require "krikri-xml"
 # XML responses (the same transport-seam pattern the ec2_*_info specs
 # use) - a real AWS account is not available in spec environments.
 describe Krikri::PluginHelpers::IamApi do
+  serial! # mutates process-global state (ENV / engine settings)
+
   include RaisesAssertion
   after_each do
     Krikri::PluginHelpers::IamApi.transport = nil

@@ -33,6 +33,8 @@ end
 private EMPTY_VARS = Hash(String, JSON::Any).new
 
 describe Krikri::ConditionalEvaluator do
+  serial! # mutates process-global state (ENV / engine settings)
+
   describe "equality" do
     it "evaluates == true when values match" do
       v = vars({"foo" => "bar"} of String => JSON::Any::Type)

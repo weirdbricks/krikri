@@ -25,6 +25,8 @@ private def config_path(jid : String) : String
 end
 
 describe "async_status plugin result shapes" do
+  serial! # mutates process-global state (ENV / engine settings)
+
   it "phrases a missing jid like AnsibleModule's fixed wording (plural 'arguments')" do
     result = PluginSpecHelper.run("async_status", {} of String => String)
 

@@ -14,6 +14,8 @@ require "../../src/krikri/cli_options"
 # option: bogusoptionxyz", where the previous build ignored it and
 # completed ok=3; a valid `-l 8192` completes normally.
 describe Krikri::CliOptions do
+  serial! # mutates process-global state (ENV / engine settings)
+
   after_each do
     Krikri::CliOptions.ssh_common_args = nil
     Krikri::CliOptions.ssh_extra_args = nil

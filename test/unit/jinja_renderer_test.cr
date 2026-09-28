@@ -32,6 +32,8 @@ Fiber.yield
 CRINJA_URL_LOOKUP_BASE = "http://#{CRINJA_URL_LOOKUP_TEST_ADDRESS}"
 
 describe Krikri::VariableSubstitutor::JinjaRenderer do
+  serial! # mutates process-global state (ENV / engine settings)
+
   it "re-templates a variable whose own value is itself a {{ }} expression" do
     # Real bug found benchmarking geerlingguy.nginx: role defaults/main.yml
     # commonly defines a var whose *value* is itself more Jinja -
@@ -1264,6 +1266,8 @@ end
 # `python-netaddr`/`python-dnspython` package names on every real
 # Debian/Ubuntu target instead of `python3-*`.
 describe "JinjaRenderer.rerender_nested_templates (round 170 - scalar-vs-container parse-back)" do
+  serial! # mutates process-global state (ENV / engine settings)
+
   it "keeps a purely-numeric-looking nested template as a string, not an int" do
     v = Hash(String, JSON::Any).new
     v["bind_default_python_version"] = JSON::Any.new("3")
@@ -1413,6 +1417,8 @@ describe "JinjaRenderer.rerender_nested_templates (round 170 - scalar-vs-contain
 end
 
 describe "JinjaRenderer inline string-literal escapes (round 951xxx digit-escape)" do
+  serial! # mutates process-global state (ENV / engine settings)
+
   # Real ansible-playbook 2.19.11 does NOT decode string-literal escapes
   # in inline `{{ }}` task-arg templating: its own AnsibleLexer doubles
   # every backslash before Jinja's `unicode-escape` decode, netting exact
@@ -1458,6 +1464,8 @@ describe "JinjaRenderer inline string-literal escapes (round 951xxx digit-escape
 end
 
 describe "out-of-range subscript strictness (differential-fuzz fix, krikri-jinja v0.4.22)" do
+  serial! # mutates process-global state (ENV / engine settings)
+
   # The hand-rolled evaluator always hard-failed an out-of-range list
   # index like real Ansible ("object of type 'list' has no attribute 9"),
   # but the delegation path (JinjaRenderer#evaluate_value!) rendered the
@@ -1499,6 +1507,8 @@ describe "out-of-range subscript strictness (differential-fuzz fix, krikri-jinja
 end
 
 describe "lazy generator stringification (differential-fuzz follow-up, krikri-jinja v0.4.23)" do
+  serial! # mutates process-global state (ENV / engine settings)
+
   # Real ansible-core 2.19 materializes a lazy filter generator into a
   # real list before stringification - `{{ l | unique ~ 'x' }}` renders
   # "['b', 'a']x" (live-verified), not the leaked
