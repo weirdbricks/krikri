@@ -103,18 +103,19 @@ describe "command plugin" do
     target = File.join(Dir.tempdir, "krikri-playbook-spec-chdir-target-#{Random.rand(1_000_000)}")
     Dir.mkdir(target) unless Dir.exists?(target)
     Dir.mkdir(original) unless Dir.exists?(original)
-    saved_cwd = Dir.current
 
-    Dir.cd(original)
-    Dir.delete(original)
-
+    # The plugin child starts in `original`, which is deleted before the
+    # child is sent its config - the same deleted-starting-directory state
+    # as the real task, without ever Dir.cd'ing this test process (its cwd
+    # is shared by every concurrently running test under -p).
     begin
-      result = PluginSpecHelper.run("command", {"cmd" => "echo ok", "chdir" => target})
+      result = PluginSpecHelper.run("command", {"cmd" => "echo ok", "chdir" => target},
+        chdir: original, before_input: -> { Dir.delete(original); nil })
       result["changed"].as_bool.must_equal(true)
       result["stdout"].as_s.must_equal("ok")
     ensure
-      Dir.cd(saved_cwd)
       FileUtils.rm_rf(target)
+      FileUtils.rm_rf(original)
     end
   end
 
