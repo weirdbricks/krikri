@@ -760,17 +760,24 @@ end
 # Execute playbook
 all_hosts = [] of Krikri::Host
 combined_results = Hash(String, Hash(String, Int32)).new
-# Run-scoped fact store, shared by every play's TaskExecutor under
-# --gathering smart so a host gathered in one play isn't re-queried in
-# the next. nil under the default implicit mode, where each executor
-# builds its own per-play store exactly as before.
 # --flush-cache clears any persisted fact cache before the run. This
 # engine keeps facts only in the run-scoped store below (there is no
 # on-disk fact cache to invalidate), so a fresh store IS a flushed one -
 # the flag is accepted and correct here, it simply has nothing older to
 # discard.
 _ = flush_cache
-run_fact_store = gathering == "smart" ? Hash(String, Hash(String, JSON::Any)).new : nil
+# Run-scoped fact store, shared by every play's TaskExecutor in every
+# gathering mode: real Ansible keeps each host's facts in memory for the
+# WHOLE run, so a fact gathered (or set_fact'd) in play 1 is still visible
+# to play 2 - directly AND through hostvars - with no fact cache configured
+# (verified against ansible-core 2.19.11). This used to be nil under the
+# default implicit mode, so every play's executor built its own per-play
+# store and cross-play facts only survived via the fact-cache plugin path.
+# Under implicit gathering each play with gather_facts: true still
+# re-gathers and merges over this store (real Ansible's own re-gather
+# merges, it does not discard what earlier plays collected), while
+# --gathering smart uses the same store to skip already-gathered hosts.
+run_fact_store = Hash(String, Hash(String, JSON::Any)).new
 # Run-scoped set_fact store, shared by every play's TaskExecutor in every
 # gathering mode: real Ansible ranks set_facts near the top of the
 # precedence ladder and keeps them for the whole run, so a play-2 play
@@ -778,6 +785,12 @@ run_fact_store = gathering == "smart" ? Hash(String, Hash(String, JSON::Any)).ne
 # ansible-core 2.19 with a two-play repro). Facts themselves stay
 # per-play under implicit gathering - only set_facts carry across.
 run_set_fact_store = Hash(String, Hash(String, JSON::Any)).new
+# Run-scoped registered-vars store, shared by every play's TaskExecutor:
+# real Ansible keeps a `register:` result on the host for the whole run,
+# so play 2 can read play 1's registered var directly and through
+# hostvars[<host>] (verified against ansible-core 2.19.11). Used to be
+# per-play, so exactly those reads came back undefined.
+run_registered_store = Hash(String, Hash(String, JSON::Any)).new
 # Hosts that hard-failed (a task failed without ignore_errors:) in an
 # earlier play this run - excluded from every *remaining* play's host
 # list too, matching real Ansible's own behavior (a failure removes a
@@ -961,6 +974,7 @@ playbook.plays.each_with_index do |play, _play_index|
       smart_gathering: gathering == "smart",
       fact_store: run_fact_store,
       set_fact_store: run_set_fact_store,
+      registered_store: run_registered_store,
       extra_vars: extra_vars,
       force_handlers: force_handlers || play.force_handlers?,
       vars_files: play.vars_files,

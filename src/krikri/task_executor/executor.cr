@@ -351,6 +351,13 @@ module Krikri
       # the same store to every play's executor; per-play isolation
       # remains the default when nil (specs, ad-hoc use).
       set_fact_store : Hash(String, Hash(String, JSON::Any))? = nil,
+      # Run-scoped store for `register:` results. Real Ansible keeps a
+      # registered result on the host for the WHOLE RUN - play 2 can read
+      # play 1's registered var directly and through hostvars[<host>]
+      # (verified against ansible-core 2.19.11). The caller passes the
+      # same store to every play's executor; per-play isolation remains
+      # the default when nil (specs, ad-hoc use).
+      registered_store : Hash(String, Hash(String, JSON::Any))? = nil,
       @adhoc = false,
       # -e/--extra-vars. Real Ansible's HIGHEST-precedence scope: they
       # beat play vars, role vars, task vars, inventory and facts, and
@@ -402,13 +409,18 @@ module Krikri
       @playbook_file : String? = nil,
     )
       @results = Hash(String, Hash(String, Int32)).new
-      @registered_vars = Hash(String, Hash(String, JSON::Any)).new
-      # Under --gathering smart the caller owns a single run-scoped store
-      # and hands the same one to every play's executor, so facts gathered
-      # in play 1 are still there in play 4. With no store passed (the
-      # default), this is per-play exactly as before.
+      @results = Hash(String, Hash(String, Int32)).new
+      # The caller owns run-scoped stores and hands the same ones to every
+      # play's executor, so facts (and set_facts/registered vars) from
+      # play 1 are still there in play 4 - real Ansible keeps them in
+      # memory for the whole run, cache or not. With no store passed (the
+      # default), this is per-play exactly as before (specs, ad-hoc use).
       @facts = fact_store || Hash(String, Hash(String, JSON::Any)).new
       @set_facts = set_fact_store || Hash(String, Hash(String, JSON::Any)).new
+      # Registered vars share the run the same way (real Ansible keeps a
+      # register: result visible to every later play, directly and via
+      # hostvars).
+      @registered_vars = registered_store || Hash(String, Hash(String, JSON::Any)).new
       @halted_hosts = Set(String).new
       @ended_hosts = Set(String).new
       @cleared_error_hosts = Set(String).new
@@ -429,10 +441,10 @@ module Krikri
           "rescued"     => 0,
           "ignored"     => 0,
         }
-        @registered_vars[host.name] = {} of String => JSON::Any
+        @registered_vars[host.name] ||= {} of String => JSON::Any
         # ||=, not =: a shared run-scoped store may already hold this
         # host's facts from an earlier play, and pre-seeding must not
-        # wipe them. Registered vars deliberately stay per-play.
+        # wipe them. Registered vars carry across plays the same way.
         @facts[host.name] ||= {} of String => JSON::Any
         # ||= for set_facts too - same reasoning, same run scope (real
         # Ansible keeps a play-1 set_fact above play vars in play 2).

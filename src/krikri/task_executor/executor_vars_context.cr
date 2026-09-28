@@ -654,8 +654,8 @@ module Krikri
     # a stale snapshot would miss updates. Deliberately narrower than a
     # full recursive #build_vars_context call per other host (which
     # would also need its own "hostvars" key excluded to avoid infinite
-    # recursion) - inventory vars + facts + registered vars covers every
-    # real-world hostvars[...] use seen so far.
+    # recursion) - inventory vars + facts + registered vars + set_facts
+    # covers every real-world hostvars[...] use seen so far.
     # playbook_dir / inventory_dir / inventory_file - real Ansible's path
     # magic vars, all three ABSOLUTE regardless of how the paths were
     # spelled on the command line (verified against ansible-core 2.19.4
@@ -707,6 +707,15 @@ module Krikri
         other_host.vars.each { |key, value| entry[key] = value }
         @facts[other_host.name]?.try(&.each { |key, value| entry[key] = value })
         @registered_vars[other_host.name]?.try(&.each { |key, value| entry[key] = value })
+        # set_facts rank ABOVE both (real Ansible's "set_facts / registered
+        # vars" tier sits near the very top of the precedence ladder), so
+        # they merge last. They also land in @facts via
+        # merge_ansible_facts, but the run-scoped store's re-gather merges
+        # rather than the entry staying hand-synced with @set_facts - a
+        # host whose play-2 re-gather ran while a play-1 set_fact exists
+        # must still show the set_fact value here (verified against
+        # ansible-core 2.19.11).
+        @set_facts[other_host.name]?.try(&.each { |key, value| entry[key] = value })
         entry["inventory_hostname"] = JSON::Any.new(other_host.name)
         # No synthesized ansible_host here: real Ansible's hostvars magic
         # view carries ONLY actually-defined vars (inventory + facts +

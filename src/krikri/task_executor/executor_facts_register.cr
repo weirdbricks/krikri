@@ -6,10 +6,11 @@ module Krikri
       # --gathering smart: a host whose facts this run already collected
       # (in an earlier play, via the shared run-scoped store) is not
       # queried again. Under the default `implicit` mode every play
-      # re-gathers, matching real ansible-playbook's own default - a
-      # playbook that deliberately re-gathers after a reboot or a package
-      # install must keep seeing fresh facts, which is exactly why this
-      # is opt-in rather than a silent default flip.
+      # re-gathers (merging over the shared store), matching real
+      # ansible-playbook's own default - a playbook that deliberately
+      # re-gathers after a reboot or a package install must keep seeing
+      # fresh facts, which is exactly why this is opt-in rather than a
+      # silent default flip.
       #
       # Also under --gathering smart: a persisted fact-cache
       # (ANSIBLE_CACHE_PLUGIN=jsonfile) is consulted for any host this
@@ -22,7 +23,7 @@ module Krikri
       # instead of always re-gathering - see KNOWN_MISSING.md.
       if @smart_gathering && FactCache.enabled?
         @hosts.each do |host|
-          next unless @facts[host.name].empty?
+          next if gathered_facts_for?(host)
           if cached = FactCache.read(host.name)
             @facts[host.name] = cached
             @facts_dict_cache.delete(host.name)
@@ -32,7 +33,7 @@ module Krikri
       end
 
       targets = if @smart_gathering
-                  @hosts.reject { |host| !@facts[host.name].empty? }
+                  @hosts.reject { |host| gathered_facts_for?(host) }
                 else
                   @hosts
                 end
@@ -262,7 +263,15 @@ module Krikri
       if ansible_facts = result["ansible_facts"]?
         facts = Hash(String, JSON::Any).new
         ansible_facts.as_h.each { |key, value| facts[key] = value }
-        @facts[host.name] = facts
+        # Merge, not replace: with the run-scoped fact store this host may
+        # already carry facts/set_facts from earlier plays of this run, and
+        # real Ansible's own re-gather merges the fresh discovery OVER the
+        # existing fact cache (set_facts and earlier gathered facts
+        # survive; verified against ansible-core 2.19.11). Under the old
+        # per-play store the incoming hash started empty, so replace and
+        # merge were indistinguishable there.
+        @facts[host.name] ||= {} of String => JSON::Any
+        facts.each { |key, value| @facts[host.name][key] = value }
         @facts_dict_cache.delete(host.name)
         @hv_generation += 1
         FactCache.write(host.name, facts) if @smart_gathering
@@ -271,6 +280,23 @@ module Krikri
       {true, nil, false}
     rescue ex
       {false, ex.message, false}
+    end
+
+    # Whether *host* has any GATHERED fact this run - a fact that came
+    # from fact gathering, not from a high-precedence set_fact. The two
+    # used to be the same question because the pre-gather check ran on a
+    # per-play store that was always empty of set_facts at gather time;
+    # with the run-scoped store a play-1 set_fact alone must NOT count as
+    # "already gathered" for --gathering smart (real Ansible's smart
+    # gathering consults the fact cache, which set_facts don't enter
+    # unless cacheable: yes). merge_ansible_facts writes every
+    # high-precedence key into BOTH stores, so "every @facts key is also
+    # a @set_facts key" means "set_facts only".
+    private def gathered_facts_for?(host : Host) : Bool
+      facts = @facts[host.name]?
+      return false if facts.nil? || facts.empty?
+      set_names = @set_facts[host.name]?
+      facts.keys.any? { |key| set_names.nil? || !set_names.has_key?(key) }
     end
 
     # Real Ansible's setup result carries `discovered_interpreter_python`
