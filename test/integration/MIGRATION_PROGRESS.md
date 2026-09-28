@@ -91,8 +91,17 @@ run, `-p 4` run, `crystal tool format`, ameba) and committed separately.
   list_tasks_syntax_check_spec.cr, local_action_localhost_spec.cr,
   locale_gen_spec.cr, lookup_url_task_failure_spec.cr
 
+### Batch 12 (15 files): loop_batched_task_vars .. modprobe
+- loop_batched_task_vars_spec.cr, loop_control_spec.cr,
+  looped_include_task_name_spec.cr, loop_register_aggregate_shape_spec.cr,
+  loop_scalar_flatten_spec.cr, loop_source_list_type_spec.cr,
+  loop_source_strict_undefined_spec.cr, loop_ternary_filter_chain_spec.cr,
+  lvol_spec.cr, make_spec.cr, maven_artifact_spec.cr,
+  missing_dest_dir_spec.cr, mode_octal_string_spec.cr,
+  mode_octal_via_variable_spec.cr, modprobe_spec.cr
+
 ### Next file to convert
-- loop_batched_task_vars_spec.cr and on (alphabetical)
+- module_defaults_spec.cr and on (alphabetical)
 
 ## Count table
 
@@ -107,6 +116,7 @@ run, `-p 4` run, `crystal tool format`, ameba) and committed separately.
 | 7 | 15 | 170 | file/find fixture trees moved to per-test tmp_path; describe-body locals became methods |
 | 8 | 10 | 93 | get_url's file-scoped server locals became private constants; git_config tmp_path'd |
 | 10 | 15 | 55 | htpasswd before_suite/tmp_path folded into PluginSpecHelper.tmp_path |
+| 12 | 15 | 91 | make's fixed shared spec/tmp/make_spec dir became per-test tmp_path (concurrent make tests clobbered each other's Makefile); modprobe pending!s became skips |
 | 11 | 15 | 150 | inventory_hostnames' CASES runtime loop became a compile-time {% for %} (12 tests); ini_file/kernel_blacklist/known_hosts/lineinfile/inventory_sources before_suite+TMP_DIR became per-test tmp_path; java_cert/locale_gen `next if` became skip; lookup_url's HTTP double became require-time constants; lineinfile chattr `next unless` became skip |
 
 ## Renames / deviations
@@ -203,6 +213,11 @@ run, `-p 4` run, `crystal tool format`, ameba) and committed separately.
 - htpasswd_test: the before_suite mkdir_p + file-scoped `tmp_path` def
   became per-test `PluginSpecHelper.tmp_path`; the `start_with` hash-prefix
   check became `expect(str_starts_with?(...)).must_equal(true)`.
+- make_test: the fixed shared `spec/tmp/make_spec` TMP_DIR (Makefile +
+  output.txt rewritten and deleted per test) became per-test
+  `PluginSpecHelper.tmp_path("make")` - two concurrent make tests would
+  have clobbered each other's files under -p 4.
+- modprobe_test: the two `pending!` environment guards became `skip`.
 - lookup_url_task_failure_test: the file-scoped HTTP-double locals
   (server/address/base) became private constants started once at require
   time (same shape as get_url_test); java_cert/locale_gen's `next if`
