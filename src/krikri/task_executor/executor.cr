@@ -409,7 +409,6 @@ module Krikri
       @playbook_file : String? = nil,
     )
       @results = Hash(String, Hash(String, Int32)).new
-      @results = Hash(String, Hash(String, Int32)).new
       # The caller owns run-scoped stores and hands the same ones to every
       # play's executor, so facts (and set_facts/registered vars) from
       # play 1 are still there in play 4 - real Ansible keeps them in
