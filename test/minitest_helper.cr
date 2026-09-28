@@ -71,9 +71,17 @@ module PluginSpecHelper
   # stream and dies ("Unhandled exception in spawn: Closed stream") - the
   # caller then either gets truncated stdout or blocks forever waiting for
   # a completion signal that fiber never sends (both seen under -p 4).
-  def self.run_plugin_with_timeout(binary : String, config_json : String, output : IO) : Nil
+  #
+  # `chdir` starts the plugin in that directory and `before_input` runs
+  # after the spawn but before the config is written - the plugin blocks
+  # reading stdin until then. Together they let a test put the CHILD in a
+  # state (e.g. its starting directory deleted) without ever touching this
+  # process's own cwd, which every concurrently running test shares.
+  def self.run_plugin_with_timeout(binary : String, config_json : String, output : IO,
+                                   chdir : String? = nil, before_input : Proc(Nil)? = nil) : Nil
     process = Process.new(binary, input: Process::Redirect::Pipe,
-      output: Process::Redirect::Pipe, error: Process::Redirect::Inherit)
+      output: Process::Redirect::Pipe, error: Process::Redirect::Inherit, chdir: chdir)
+    before_input.try &.call
 
     # Fed from its own fiber so a plugin that writes before it reads can't
     # deadlock against a blocked write here.
@@ -117,7 +125,8 @@ module PluginSpecHelper
   # {host, params, vars} config shape BasePlugin expects. Defaults to a
   # localhost host so plugins that check ansible_connection/host.name treat
   # this as a local, non-SSH execution.
-  def self.run(name : String, params : Hash(String, String), vars : Hash(String, String) = {} of String => String, host_name : String = "localhost") : JSON::Any
+  def self.run(name : String, params : Hash(String, String), vars : Hash(String, String) = {} of String => String, host_name : String = "localhost",
+               chdir : String? = nil, before_input : Proc(Nil)? = nil) : JSON::Any
     binary = File.join(PLUGINS_DIR, name)
     raise "Plugin binary not found: #{binary} (run ./build.sh first)" unless File.exists?(binary)
 
@@ -132,7 +141,7 @@ module PluginSpecHelper
     }
 
     output = IO::Memory.new
-    run_plugin_with_timeout(binary, config.to_json, output)
+    run_plugin_with_timeout(binary, config.to_json, output, chdir, before_input)
 
     JSON.parse(output.to_s)
   end
@@ -142,7 +151,8 @@ module PluginSpecHelper
   # that exercise type-aware plugin behavior (e.g. the strict bool-param
   # validator's "of type int"/NoneType/list error branches, which real
   # Ansible derives from the value's own type).
-  def self.run_raw(name : String, params : Hash(String, JSON::Any), vars : Hash(String, String) = {} of String => String, host_name : String = "localhost") : JSON::Any
+  def self.run_raw(name : String, params : Hash(String, JSON::Any), vars : Hash(String, String) = {} of String => String, host_name : String = "localhost",
+                   chdir : String? = nil, before_input : Proc(Nil)? = nil) : JSON::Any
     binary = File.join(PLUGINS_DIR, name)
     raise "Plugin binary not found: #{binary} (run ./build.sh first)" unless File.exists?(binary)
 
@@ -157,7 +167,7 @@ module PluginSpecHelper
     }
 
     output = IO::Memory.new
-    run_plugin_with_timeout(binary, config.to_json, output)
+    run_plugin_with_timeout(binary, config.to_json, output, chdir, before_input)
 
     JSON.parse(output.to_s)
   end
