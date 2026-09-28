@@ -18,13 +18,13 @@ Lint/Formatting:
   - plugins/postgresql_query.cr
   - plugins/shell.cr
   - plugins/template.cr
-  - spec/integration/apt_param_coverage_spec.cr
-  - spec/integration/maven_artifact_spec.cr
-  - spec/unit/add_host_action_plugin_spec.cr
-  - spec/unit/ansible_mounts_numeric_stats_spec.cr
-  - spec/unit/ec2_instance_spec.cr
-  - spec/unit/nsupdate_message_spec.cr
-  - spec/unit/zfs_commands_spec.cr
+  - test/integration/apt_param_coverage_test.cr
+  - test/integration/maven_artifact_test.cr
+  - test/unit/add_host_action_plugin_test.cr
+  - test/unit/ansible_mounts_numeric_stats_test.cr
+  - test/unit/ec2_instance_test.cr
+  - test/unit/nsupdate_message_test.cr
+  - test/unit/zfs_commands_test.cr
   - src/krikri/conditional_evaluator.cr
   - src/krikri/playbook_parser.cr
   - src/krikri/plugin_helpers/dpkg_divert_command.cr
@@ -42,6 +42,14 @@ Lint/Formatting:
 Lint/NotNil:
   Excluded:
   - test/integration/*
+  - test/unit/python_module_runner_test.cr
+  - test/unit/docker_login_test.cr
+  - test/unit/mount_facts_test.cr
+  - test/unit/homebrew_test.cr
+  - test/unit/facts_gatherer_test.cr
+  - test/unit/x509_csr_info_test.cr
+  - test/unit/jinja_var_resolver_test.cr
+  - test/unit/filetree_lookup_test.cr
   - krikri-playbook.cr
   - plugins/apt.cr
   - plugins/assemble.cr
@@ -58,25 +66,25 @@ Lint/NotNil:
   - plugins/selinux.cr
   - plugins/seport.cr
   - plugins/xml.cr
-  - spec/integration/apt_key_spec.cr
-  - spec/integration/apt_param_coverage_spec.cr
-  - spec/integration/service_param_coverage_spec.cr
-  - spec/integration/user_param_coverage_spec.cr
-  - spec/unit/add_host_action_plugin_spec.cr
-  - spec/unit/ansible_mounts_numeric_stats_spec.cr
-  - spec/unit/apt_lock_retry_spec.cr
-  - spec/unit/current_container_facts_spec.cr
-  - spec/unit/ec2_ami_info_spec.cr
-  - spec/unit/ec2_instance_spec.cr
-  - spec/unit/ec2_key_spec.cr
-  - spec/unit/ec2_security_group_spec.cr
-  - spec/unit/ec2_vpc_net_info_spec.cr
-  - spec/unit/ec2_vpc_subnet_info_spec.cr
-  - spec/unit/iam_user_info_spec.cr
-  - spec/unit/lvol_size_spec.cr
-  - spec/unit/rhsm_repository_spec.cr
-  - spec/unit/template_action_plugin_plus_modifier_spec.cr
-  - spec/unit/virt_net_spec.cr
+  - test/integration/apt_key_test.cr
+  - test/integration/apt_param_coverage_test.cr
+  - test/integration/service_param_coverage_test.cr
+  - test/integration/user_param_coverage_test.cr
+  - test/unit/add_host_action_plugin_test.cr
+  - test/unit/ansible_mounts_numeric_stats_test.cr
+  - test/unit/apt_lock_retry_test.cr
+  - test/unit/current_container_facts_test.cr
+  - test/unit/ec2_ami_info_test.cr
+  - test/unit/ec2_instance_test.cr
+  - test/unit/ec2_key_test.cr
+  - test/unit/ec2_security_group_test.cr
+  - test/unit/ec2_vpc_net_info_test.cr
+  - test/unit/ec2_vpc_subnet_info_test.cr
+  - test/unit/iam_user_info_test.cr
+  - test/unit/lvol_size_test.cr
+  - test/unit/rhsm_repository_test.cr
+  - test/unit/template_action_plugin_plus_modifier_test.cr
+  - test/unit/virt_net_test.cr
   - src/krikri/variable_substitutor/expression_evaluator.cr
   - src/krikri/lookups/lookup_first_found.cr
 
@@ -193,10 +201,34 @@ Performance/AnyInsteadOfPresent:
   - krikri-playbook.cr
   - plugins/locale_gen.cr
 
+Lint/NotNilAfterNoBang:
+  Excluded:
+  - test/unit/filetree_lookup_test.cr
+
+Lint/WhitespaceAroundMacroExpression:
+  Excluded:
+  - test/unit/dnf_yum_arg_spec_validation_test.cr
+  - test/unit/rabbitmq_plugin_resolution_test.cr
+  - test/unit/bool_param_validation_test.cr
+  - test/unit/playbook_parser_test.cr
+  - test/unit/openssl_certificate_info_alias_test.cr
+  - test/unit/distribution_facts_test.cr
+
+Lint/UselessAssign:
+  Excluded:
+  - test/unit/expression_evaluator_test.cr
+  - test/unit/maven_artifact_command_test.cr
+
+Naming/BlockParameterName:
+  Excluded:
+  - test/minitest_helper.cr
+  - test/integration/cron_test.cr
+  - test/unit/shell_test.cr
+
 Performance/ChainedCallWithNoBang:
   Excluded:
-  - spec/unit/add_host_action_plugin_spec.cr
-  - spec/unit/ec2_security_group_spec.cr
+  - test/unit/add_host_action_plugin_test.cr
+  - test/unit/ec2_security_group_test.cr
   - src/krikri/plugin_helpers/facts_gatherer.cr
   - src/krikri/task_executor/result_display.cr
 
@@ -208,63 +240,64 @@ Performance/ExcessiveAllocations:
 Style/HeredocEscape:
   Excluded:
   - test/integration/*
-  - spec/integration/apache2_module_spec.cr
-  - spec/integration/apt_key_spec.cr
-  - spec/integration/apt_pinned_version_spec.cr
-  - spec/integration/apt_repository_param_coverage_spec.cr
-  - spec/integration/apt_upgrade_idempotency_spec.cr
-  - spec/integration/docker_compose_v2_spec.cr
-  - spec/integration/group_param_coverage_spec.cr
-  - spec/integration/hostname_param_coverage_spec.cr
-  - spec/integration/inventory_hostnames_lookup_spec.cr
-  - spec/integration/loop_ternary_filter_chain_spec.cr
-  - spec/integration/service_param_coverage_spec.cr
-  - spec/integration/subversion_param_coverage_spec.cr
-  - spec/integration/subversion_result_shape_spec.cr
-  - spec/integration/template_spec.cr
-  - spec/integration/user_param_coverage_spec.cr
-  - spec/unit/playbook_parser_spec.cr
-  - spec/unit/systemd_restart_failure_wording_spec.cr
+  - test/integration/apache2_module_test.cr
+  - test/integration/apt_key_test.cr
+  - test/integration/apt_pinned_version_test.cr
+  - test/integration/apt_repository_param_coverage_test.cr
+  - test/integration/apt_upgrade_idempotency_test.cr
+  - test/integration/docker_compose_v2_test.cr
+  - test/integration/group_param_coverage_test.cr
+  - test/integration/hostname_param_coverage_test.cr
+  - test/integration/inventory_hostnames_lookup_test.cr
+  - test/integration/loop_ternary_filter_chain_test.cr
+  - test/integration/service_param_coverage_test.cr
+  - test/integration/subversion_param_coverage_test.cr
+  - test/integration/subversion_result_shape_test.cr
+  - test/integration/template_test.cr
+  - test/integration/user_param_coverage_test.cr
+  - test/unit/playbook_parser_test.cr
+  - test/unit/systemd_restart_failure_wording_test.cr
   - src/krikri/batch_script.cr
   - src/krikri/python_module_runner.cr
 
 Style/HeredocIndent:
   Excluded:
   - test/integration/*
+  - test/unit/firewalld_command_test.cr
   - plugins/modprobe.cr
   - plugins/postgresql_privs.cr
   - plugins/service.cr
   - plugins/ufw.cr
-  - spec/integration/apt_key_spec.cr
-  - spec/integration/apt_param_coverage_spec.cr
-  - spec/integration/apt_pinned_version_spec.cr
-  - spec/integration/apt_upgrade_idempotency_spec.cr
-  - spec/integration/dnf_param_coverage_spec.cr
-  - spec/integration/docker_compose_v2_spec.cr
-  - spec/integration/group_param_coverage_spec.cr
-  - spec/integration/hostname_param_coverage_spec.cr
-  - spec/integration/include_vars_undefined_path_spec.cr
-  - spec/integration/omit_spec.cr
-  - spec/integration/role_scope_spec.cr
-  - spec/integration/rpm_key_param_coverage_spec.cr
-  - spec/integration/service_param_coverage_spec.cr
-  - spec/integration/strict_conditionals_spec.cr
-  - spec/integration/unknown_filter_task_vars_spec.cr
-  - spec/integration/user_param_coverage_spec.cr
-  - spec/unit/ec2_ami_info_spec.cr
-  - spec/unit/ec2_instance_spec.cr
-  - spec/unit/ec2_key_spec.cr
-  - spec/unit/ec2_security_group_spec.cr
-  - spec/unit/ec2_vpc_net_info_spec.cr
-  - spec/unit/ec2_vpc_subnet_info_spec.cr
-  - spec/unit/iam_user_spec.cr
-  - spec/unit/inventory_plugins_spec.cr
-  - spec/unit/maven_artifact_command_spec.cr
-  - spec/unit/modprobe_command_spec.cr
-  - spec/unit/proc_net_tcp_spec.cr
-  - spec/unit/systemd_restart_failure_wording_spec.cr
-  - spec/unit/rhsm_repository_spec.cr
-  - spec/unit/service_facts_parser_spec.cr
+  - test/integration/apt_key_test.cr
+  - test/integration/apt_param_coverage_test.cr
+  - test/integration/apt_pinned_version_test.cr
+  - test/integration/apt_upgrade_idempotency_test.cr
+  - test/integration/dnf_param_coverage_test.cr
+  - test/integration/docker_compose_v2_test.cr
+  - test/integration/group_param_coverage_test.cr
+  - test/integration/hostname_param_coverage_test.cr
+  - test/integration/include_vars_undefined_path_test.cr
+  - test/integration/omit_test.cr
+  - test/integration/role_scope_test.cr
+  - test/integration/rpm_key_param_coverage_test.cr
+  - test/integration/service_param_coverage_test.cr
+  - test/integration/strict_conditionals_test.cr
+  - test/integration/unknown_filter_task_vars_test.cr
+  - test/integration/user_param_coverage_test.cr
+  - test/unit/ec2_ami_info_test.cr
+  - test/unit/ec2_instance_test.cr
+  - test/unit/ec2_key_test.cr
+  - test/unit/ec2_security_group_test.cr
+  - test/unit/ec2_vpc_net_info_test.cr
+  - test/unit/ec2_vpc_subnet_info_test.cr
+  - test/unit/iam_user_test.cr
+  - test/unit/inventory_plugins_test.cr
+  - test/unit/maven_artifact_command_test.cr
+  - test/unit/modprobe_command_test.cr
+  - test/unit/proc_net_tcp_test.cr
+  - test/unit/systemd_restart_failure_wording_test.cr
+  - test/unit/rhsm_repository_test.cr
+  - test/unit/service_facts_parser_test.cr
   - src/krikri/batch_script.cr
   - src/krikri/task_executor/executor_display_misc.cr
 
@@ -280,16 +313,16 @@ Style/MultilineStringLiteral:
   Excluded:
   - plugins/apt.cr
   - plugins/package.cr
-  - spec/integration/expect_spec.cr
-  - spec/unit/ansible_mounts_numeric_stats_spec.cr
-  - spec/unit/expression_evaluator_spec.cr
-  - spec/unit/filter_batch2_spec.cr
-  - spec/unit/filter_engine_spec.cr
-  - spec/unit/interface_fact_vars_lookup_spec.cr
-  - spec/unit/sefcontext_commands_spec.cr
-  - spec/unit/virt_net_spec.cr
-  - spec/unit/x509_csr_info_spec.cr
-  - spec/unit/xml_spec.cr
+  - test/integration/expect_test.cr
+  - test/unit/ansible_mounts_numeric_stats_test.cr
+  - test/unit/expression_evaluator_test.cr
+  - test/unit/filter_batch2_test.cr
+  - test/unit/filter_engine_test.cr
+  - test/unit/interface_fact_vars_lookup_test.cr
+  - test/unit/sefcontext_commands_test.cr
+  - test/unit/virt_net_test.cr
+  - test/unit/x509_csr_info_test.cr
+  - test/unit/xml_test.cr
   - src/krikri/plugin_helpers/x509_cert_info.cr
   - src/krikri/task_executor/executor.cr
 
