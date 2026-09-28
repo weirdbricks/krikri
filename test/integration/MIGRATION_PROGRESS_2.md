@@ -61,3 +61,23 @@ failure under concurrency, not in this range; re-run confirmed).
 
 Verification: serial 4782 tests, 0 failures / 0 errors; `-p 4` clean
 first try.
+
+## Batch 4 (committed): tag_selection .. template_for_loop_undefined_iteration (13 files)
+
+| file | spec its | test its | notes |
+|------|---------|----------|-------|
+| tag_selection_test.cr | 14 | 14 | |
+| task_arg_undefined_context_test.cr | 1 | 1 | |
+| task_check_mode_test.cr | 5 | 5 | before_suite rm_rf+mkdir of shared dir -> per-test tmp_path |
+| task_less_play_facts_test.cr | 2 | 2 | |
+| task_role_prefix_test.cr | 3 | 3 | |
+| tempfile_test.cr | 6 | 6 | |
+| template_ansible_hostname_undefined_test.cr | 2 | 2 | |
+| template_bare_if_undefined_test.cr | 4 | 4 | |
+| templated_action_plugin_upload_test.cr | 1 | 1 | |
+| template_destpath_magic_var_test.cr | 1 | 1 | |
+| templated_ignore_errors_test.cr | 2 | 2 | |
+| templated_no_log_test.cr | 3 | 3 | |
+| template_for_loop_undefined_iteration_test.cr | 2 | 2 | |
+
+Verification: serial 4828 tests, 0 failures / 0 errors; `-p 4` clean.
