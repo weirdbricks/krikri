@@ -72,6 +72,19 @@ module Krikri
   # whatever's already on disk at the target path - matching real
   # Ansible's own module, which rewrites (not merges) the whole file
   # and reports changed based on a content diff.
+  #
+  # Dependency gate: the real module is Python and imports
+  # `debian.deb822` unconditionally right after its own module-arg
+  # validation - a target without python3-debian FAILS the task with
+  # missing_required_lib("python3-debian") wording (live-verified
+  # against ansible-core 2.19.11 on trixie and 2.19's own source;
+  # neither auto-installs the dependency, unlike devel's
+  # install_python_debian/respawn path). This plugin previously
+  # skipped that gate entirely and happily wrote the file, reporting
+  # changed=1 where real reports a failed (often ignore_errors'd)
+  # task - found via krikri-playbook-generator's fixed generic
+  # dependency set, which does NOT preinstall python3-debian in its
+  # real-ansible container.
   class Deb822RepositoryPlugin < BasePlugin
     # ansible.builtin.deb822_repository's `type: bool` options, in the real argument-spec
     # declaration order (ansible-doc -j ansible.builtin.deb822_repository). Validated at
@@ -120,6 +133,26 @@ module Krikri
       name = @params["name"]?
       return PluginResult.new(changed: false, failed: true, msg: "missing required argument: name") unless name
 
+      # Real Ansible's own argument_spec validates `types` elements
+      # against choices=[deb, deb-src] and FAILS the task (changed=False)
+      # on anything else - it does not silently write the invalid value.
+      # uris/suites are NOT required by real Ansible: a name-only task
+      # succeeds and writes just X-Repolib-Name + the Types: deb default.
+      # This is argspec-level validation (fires for state=absent too,
+      # like every choices check inside AnsibleModule's init).
+      if types = @params["types"]?
+        bad = parse_list_param(types).reject { |type| %w[deb deb-src].includes?(type) }
+        return PluginResult.new(changed: false, failed: true, msg: "value of types must be one or more of: deb, deb-src. Got no match for: #{bad.join(", ")}") unless bad.empty?
+      end
+
+      # The real module's `from debian.deb822 import Deb822` runs right
+      # after its own argspec validation and before ANY state handling,
+      # so a python3-debian-less target fails identically for
+      # state=present and state=absent (and in check mode).
+      if gate = python3_debian_gate
+        return gate
+      end
+
       state = @params["state"]? || "present"
       @slug = slug_for(name)
       target = File.join(SOURCES_LIST_D, "#{@slug}.sources")
@@ -129,17 +162,42 @@ module Krikri
         return remove(target, check_mode)
       end
 
-      # Real Ansible's own argument_spec validates `types` elements
-      # against choices=[deb, deb-src] and FAILS the task (changed=False)
-      # on anything else - it does not silently write the invalid value.
-      # uris/suites are NOT required by real Ansible: a name-only task
-      # succeeds and writes just X-Repolib-Name + the Types: deb default.
-      if types = @params["types"]?
-        bad = parse_list_param(types).reject { |type| %w[deb deb-src].includes?(type) }
-        return PluginResult.new(changed: false, failed: true, msg: "value of types must be one or more of: deb, deb-src. Got no match for: #{bad.join(", ")}") unless bad.empty?
-      end
-
       add(target, check_mode)
+    end
+
+    # The real module's unconditional `from debian.deb822 import Deb822`
+    # (ansible-core 2.15+ through 2.19.x; devel's install_python_debian
+    # auto-install path does not exist in any released core): a target
+    # without python3-debian fails with missing_required_lib wording
+    # before the module does anything. Probed through the same
+    # interpreter resolution the boto3 gate in AwsModuleArgs uses -
+    # `python3` first, then `python`, reporting sys.executable.
+    private def python3_debian_gate : PluginResult?
+      python = python_interpreter
+      return nil unless python
+
+      probe = Process.run(python, {"-c", "from debian.deb822 import Deb822"}, error: Process::Redirect::Close)
+      return nil if probe.success?
+
+      PluginResult.new(
+        changed: false,
+        failed: true,
+        msg: "Failed to import the required Python library (python3-debian) on #{System.hostname}'s Python #{python}. " \
+             "Please read the module documentation and install it in the appropriate location. " \
+             "If the required library is installed, but Ansible is using the wrong Python interpreter, " \
+             "please consult the documentation on ansible_python_interpreter",
+      )
+    end
+
+    private def python_interpreter : String?
+      ["python3", "python"].each do |name|
+        next unless Process.find_executable(name)
+        io = IO::Memory.new
+        status = Process.run(name, {"-c", "import sys; print(sys.executable)"}, output: io, error: Process::Redirect::Close)
+        path = io.to_s.strip
+        return path if status.success? && !path.empty?
+      end
+      nil
     end
 
     # Real Ansible's own filename slug: reuses a legacy-normalized

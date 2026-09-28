@@ -30,7 +30,7 @@ it does not linger at the top. This file carries no per-round
 narrative or fix history - `git log` is the record of what was found
 and fixed and when.
 
-**Currently at `0.9.1351`.**
+**Currently at `0.9.1352`.**
 
 ## Open gaps
 

@@ -101,6 +101,46 @@ describe "deb822_repository plugin" do
     result["changed"].as_bool.must_equal(false)
   end
 
+  it "fails on an invalid types choice even with state: absent (the real module's choices check lives in module-arg validation, before state handling)" do
+    result = PluginSpecHelper.run("deb822_repository", {
+      "name"  => "totally-fake-absent-badtype",
+      "types" => "banana",
+      "state" => "absent",
+    })
+
+    result["failed"].as_bool.must_equal(true)
+    result["changed"].as_bool.must_equal(false)
+    result["msg"].as_s.must_include("banana")
+  end
+
+  it "gates on python3-debian like the real module's unconditional `from debian.deb822 import Deb822` (host-dependent)" do
+    # The real module fails with missing_required_lib wording on any
+    # target without python3-debian - before state handling, so both
+    # states fail identically. This dev/spec host may or may not have
+    # the library, so the expectation is conditional on a direct probe
+    # of the same import (found via krikri-playbook-generator: its
+    # real-ansible container lacks python3-debian, so real reported a
+    # failed-ignored task / changed=0 where krikri happily wrote the
+    # file and reported changed=1).
+    probe = Process.run("python3", {"-c", "from debian.deb822 import Deb822"}, error: Process::Redirect::Close)
+    {"present", "absent"}.each do |state|
+      result = PluginSpecHelper.run("deb822_repository", {
+        "name"                => "testrepo-debian-gate",
+        "uris"                => "https://example.com/repo",
+        "state"               => state,
+        "_ansible_check_mode" => "true",
+      })
+
+      if probe.success?
+        expect(falsey?(result["failed"]?.try(&.as_bool))).must_equal(true)
+      else
+        result["failed"].as_bool.must_equal(true)
+        result["changed"].as_bool.must_equal(false)
+        result["msg"].as_s.must_include("Failed to import the required Python library (python3-debian)")
+      end
+    end
+  end
+
   describe "signed_by" do
     it "renders with an inline ASCII-armored key without crashing (check mode)" do
       result = PluginSpecHelper.run("deb822_repository", {
