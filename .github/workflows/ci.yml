@@ -30,16 +30,16 @@ jobs:
         # workflow's own Alpine build already installs the equivalent
         # (xz-dev/xz-libs, etc.) and has never hit this.
         #
-        # The rest of the list is what the spec suite itself shells out
-        # to on a bare image, discovered one spec failure at a time from
+        # The rest of the list is what the test suite itself shells out
+        # to on a bare image, discovered one test failure at a time from
         # the CI logs: rsync (synchronize plugin), iproute2 (the `ip`
         # binary gating network facts, FS5), libcap2-bin (setcap/getcap,
         # capabilities plugin), kmod (modprobe), python3-venv (pip
-        # plugin's virtualenv specs), python3-apt (the apt plugin's
+        # plugin's virtualenv tests), python3-apt (the apt plugin's
         # candidate pre-flight - without it the plugin auto-installs
         # python3-apt like real Ansible does, which pollutes the apt
-        # specs' own apt-get call logs), and docker.io +
-        # docker-compose-v2 for the live docker_compose_v2 specs (the
+        # tests' own apt-get call logs), and docker.io +
+        # docker-compose-v2 for the live docker_compose_v2 tests (the
         # runner mounts the host docker socket into job containers, so
         # a client-side install is enough to reach it).
         run: |
@@ -52,11 +52,11 @@ jobs:
             curl zip unzip sudo \
             docker.io docker-compose-v2
 
-      - name: Install ansible-core for lookup-plugin specs
-        # The role-local lookup_plugins/*.py specs dispatch through the
+      - name: Install ansible-core for lookup-plugin tests
+        # The role-local lookup_plugins/*.py tests dispatch through the
         # controller's python3 and need it to import the real `ansible`
         # package (the engine degrades to the old undefined/[] behavior
-        # without it, which four of those specs fail on by design).
+        # without it, which four of those tests fail on by design).
         run: pip3 install --break-system-packages ansible-core
 
       - name: Cache shards
@@ -74,7 +74,7 @@ jobs:
         run: ./build.sh
 
       - name: Provide the docker smoke-test image
-        # cli_spec.cr's end-to-end docker smoke test runs
+        # cli_test.cr's end-to-end docker smoke test runs
         # testing/test-docker-quick.yml, which treats
         # localhost/krikri-playbook-compat:latest as an ambient precondition:
         # on dev boxes the compat harness (compat/Dockerfile) has already
@@ -86,63 +86,51 @@ jobs:
         # real compat image here would add a full from-source
         # krikri-playbook build inside the image for no smoke-test value;
         # the fixture only needs the ref to resolve locally plus something
-        # that can `sleep 300`, so a busybox tag satisfies it. The spec
-        # pendings gracefully when the image is absent, so dev boxes without
+        # that can `sleep 300`, so a busybox tag satisfies it. The test
+        # pends gracefully when the image is absent, so dev boxes without
         # the compat harness still pass the suite.
         run: |
           docker pull busybox:latest
           docker tag busybox:latest localhost/krikri-playbook-compat:latest
 
-      - name: Cache spec compiler caches
-        # spec-parallel.sh compiles one spec binary per bucket (unit,
-        # integration, lint) into per-bucket cache dirs. Without this cache
-        # every CI run pays three cold compiles; with it only the first run
-        # after a dependency change does. Crystal's cache is content-addressed
-        # and revalidates against source changes, so a stale-hit is safe.
+      - name: Cache compiler caches
+        # scripts/minitest.sh compiles the whole test/ suite into a single
+        # .minitest_all.bin binary (hash-gated: it only recompiles when
+        # test/, src/, plugins/ or lib/ actually change). Without a cache
+        # every CI run pays that compile cold; with it only the first run
+        # after a dependency change does. Crystal's cache is
+        # content-addressed and revalidates against source changes, so a
+        # stale hit is safe.
         uses: actions/cache@v4
         with:
-          path: /root/.cache/krikri-spec-parallel
-          key: spec-parallel-${{ runner.os }}-${{ hashFiles('shard.lock') }}
+          path: /root/.cache/krikri-minitest
+          key: minitest-${{ runner.os }}-${{ hashFiles('shard.lock') }}
           restore-keys: |
-            spec-parallel-${{ runner.os }}-
+            minitest-${{ runner.os }}-
 
-      - name: Run specs
-        # Runs the suite as three parallel crystal spec processes (unit,
-        # integration, lint), each with its own CRYSTAL_CACHE_DIR so the
-        # concurrent compilers never contend on one lock; wall time drops to
-        # roughly the integration bucket's own. The script exits non-zero if
-        # any bucket fails or exceeds SPEC_PARALLEL_TIMEOUT, so CI still
-        # fails on a real regression, and the single retry reruns all
-        # buckets - a genuine, reproducible failure fails both attempts.
+      - name: Run minitest suite
+        # scripts/minitest.sh globs test/**/*_test.cr into a generated
+        # entrypoint (minitest registers tests in-process, so one entrypoint
+        # has to require every test file), builds the .minitest_all.bin
+        # binary once, and runs the suite. `-- -p 4` runs the tests on 4
+        # worker fibers: the suite is IO/sleep bound, so they genuinely
+        # overlap and wall time drops accordingly. MINITEST_TIMEOUT (the
+        # script's default is 600s) hard-fails a wedged run instead of
+        # hanging the job.
         #
-        # Flake history: on 2026-09-22 spec/unit/filter_batch2_spec.cr's
-        # strftime error-path example failed intermittently in CI (~4 of 7
-        # runs) and was papered over with a `crystal spec` x3 retry. That
-        # comment blamed a Crinja::RuntimeError escaping the example's
-        # `rescue e` clause, but both the claim and the code are stale:
-        # Crinja has since been removed entirely and the example was
-        # rewritten against the krikri-jinja engine. A 2026-09-27
-        # re-investigation ran the unit bucket 43x and the full suite 7x -
-        # one under CI's actual default (defined) order, six with
-        # `--order <seed>` randomized - and the strftime rejection examples
-        # never failed on the current engine; their krikri-jinja path is
-        # deterministic (each delegated filter call builds a fresh
-        # FilterEngine, and engine registrations happen only at require
-        # time). Randomized order is NOT CI's default - plain `crystal spec`
-        # runs examples in defined order - but it did expose unrelated
-        # order-dependent test bugs, most importantly role_loader_spec's
-        # FQCN example, which failed about half of randomized unit-bucket
-        # runs because two fixtures wrote different task content to the
-        # same my_collections/.../installer/tasks/main.yml path while
-        # RoleLoader's parsed-YAML cache outlives the per-example fixture
-        # wipe; that is fixed by giving the fixtures distinct role names
-        # (also a prerequisite for ever enabling randomized order here).
-        # The bucket split additionally isolates each bucket's process from
-        # state leaked by the others' specs.
+        # Minitest randomizes test order by default, so tests must not
+        # depend on each other. The parallel-safety rules live in
+        # test/minitest_helper.cr: per-test tmp space comes from
+        # PluginSpecHelper.tmp_path, tests that touch ENV or other
+        # process-wide state serialize on PluginSpecHelper::ENV_MUTEX /
+        # ::STATE_MUTEX, and the workers stay on ONE OS thread
+        # (CRYSTAL_WORKERS=1) because the Crystal MT runtime hits GC
+        # double-free aborts across multiple threads. The single retry
+        # reruns the whole suite - a genuine, reproducible failure fails
+        # both attempts.
         env:
-          SPEC_PARALLEL_TIMEOUT: 900
-          SPEC_PARALLEL_CACHE_ROOT: /root/.cache/krikri-spec-parallel
-        run: scripts/spec-parallel.sh || scripts/spec-parallel.sh
+          CRYSTAL_CACHE_DIR: /root/.cache/krikri-minitest
+        run: scripts/minitest.sh -- -p 4 || scripts/minitest.sh -- -p 4
 
       - name: Lint (ameba)
         # lib/ameba/bin/ameba does not exist after `shards install`:
