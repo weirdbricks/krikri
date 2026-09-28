@@ -7,7 +7,7 @@ require "file_utils"
 # unit spec without constructing a whole TaskExecutor.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
-private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
+private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
 describe "with_file:" do
   # Real bug found benchmarking juju4.adduser's own "Add authorized keys
@@ -22,7 +22,7 @@ describe "with_file:" do
   # filename, unlike with_fileglob's pattern matching) and searches a
   # relative entry under the role's own files/ dir.
   it "reads each listed file's content into item, searching a relative entry under the role's files/ dir" do
-    role_dir = File.join(PROJECT_ROOT, "spec", "tmp", "with_file_role_spec")
+    role_dir = File.join(PROJECT_ROOT, "test", "tmp", "with_file_role_spec")
     FileUtils.rm_rf(role_dir)
     Dir.mkdir_p(File.join(role_dir, "files"))
     Dir.mkdir_p(File.join(role_dir, "tasks"))

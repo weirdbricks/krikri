@@ -6,7 +6,7 @@ require "../minitest_helper"
 # for the same bug shape).
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
-private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
+private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
 describe "in <string> with an undefined left operand in a real .j2 template" do
   it "raises the real Jinja2/ansible-core TypeError instead of silently coercing to true" do

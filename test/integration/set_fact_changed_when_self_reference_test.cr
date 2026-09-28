@@ -17,8 +17,8 @@ private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 
 describe "set_fact: changed_when: referencing a fact the same task just set" do
   it "resolves the just-set fact instead of raising undefined" do
-    Dir.mkdir_p(File.join(PROJECT_ROOT, "spec", "tmp"))
-    playbook = File.join(PROJECT_ROOT, "spec", "tmp", "setfact-changed-when-self-ref.yml")
+    Dir.mkdir_p(File.join(PROJECT_ROOT, "test", "tmp"))
+    playbook = File.join(PROJECT_ROOT, "test", "tmp", "setfact-changed-when-self-ref.yml")
     File.write(playbook, <<-YAML)
       - hosts: all
         connection: local

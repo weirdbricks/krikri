@@ -12,8 +12,8 @@ private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 
 describe "set_fact run scope" do
   it "keeps a play-1 set_fact above a play-2 play var of the same name" do
-    Dir.mkdir_p(File.join(PROJECT_ROOT, "spec", "tmp"))
-    playbook = File.join(PROJECT_ROOT, "spec", "tmp", "setfact-run-scope.yml")
+    Dir.mkdir_p(File.join(PROJECT_ROOT, "test", "tmp"))
+    playbook = File.join(PROJECT_ROOT, "test", "tmp", "setfact-run-scope.yml")
     File.write(playbook, <<-YAML)
       - hosts: all
         connection: local

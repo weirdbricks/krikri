@@ -11,7 +11,7 @@ require "file_utils"
 # display + recap accounting.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
-private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
+private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
 # crystal spec created this once in Spec.before_suite (rm_rf + mkdir
 # fresh); the minitest suite needs it at file level, unique per process.

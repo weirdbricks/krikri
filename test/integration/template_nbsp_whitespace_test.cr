@@ -5,7 +5,7 @@ require "../minitest_helper"
 # from the krikri-playbook fork of the crinja shard).
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
-private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
+private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
 describe "a {{ }} expression whose leading whitespace is a non-ASCII Unicode space" do
   it "renders correctly with a U+00A0 NO-BREAK SPACE right after {{, matching real Ansible" do

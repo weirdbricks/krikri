@@ -6,7 +6,7 @@ require "file_utils"
 # real role/include_tasks dispatch to exercise cleanly.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
-private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
+private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
 describe "with_first_found: with no candidate matching (no skip:)" do
   it "fails an include_tasks: + with_first_found: task instead of silently skipping it" do

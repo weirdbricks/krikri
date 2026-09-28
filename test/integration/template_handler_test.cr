@@ -6,7 +6,7 @@ require "../minitest_helper"
 # reachable from a unit spec without constructing a whole TaskExecutor.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
-private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
+private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
 describe "a template: task written as a handler (handlers/main.yml, not tasks/)" do
   it "runs the controller-side render step, matching what a regular template: task already gets" do

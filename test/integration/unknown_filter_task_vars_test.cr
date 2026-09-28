@@ -8,7 +8,7 @@ require "../minitest_helper"
 # live TaskExecutor run can prove the process survives it.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
-private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
+private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
 describe "unknown filter in a task's own vars: block" do
   # nephelaiio.pip / nephelaiio.gitlab's own `nephelaiio.plugins.sorted_get`

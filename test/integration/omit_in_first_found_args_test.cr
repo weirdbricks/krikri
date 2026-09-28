@@ -7,7 +7,7 @@ require "file_utils"
 # exercise cleanly.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
-private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
+private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
 describe "the `omit` magic bareword inside a first_found lookup's args" do
   it "does not fail an include_vars: task whose candidates default a missing fact to omit" do

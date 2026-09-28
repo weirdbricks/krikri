@@ -7,7 +7,7 @@ require "../minitest_helper"
 # spec.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
-private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
+private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
 # Found via a live 100-role confirm round: marcinpraczko.goss-install's
 # own `when: ansible_verbosity is defined` style check raised

@@ -12,7 +12,7 @@ require "../minitest_helper"
 # killed the whole controller process - not even a task failure.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
-private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
+private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
 private def run_playbook(yaml : String)
   playbook = File.tempname("resolved-brace-text", ".yml")

@@ -37,7 +37,7 @@ require "file_utils"
 # it's a real module this engine executes.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
-private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
+private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
 private def run_playbook(pb : String) : {Process::Status, String}
   playbook = File.tempname("unresolved-module", ".yml")

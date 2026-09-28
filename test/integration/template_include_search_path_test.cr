@@ -6,7 +6,7 @@ require "file_utils"
 # templates/ directory and {% include %} to exercise cleanly.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
-private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
+private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
 describe "template:'s {% include %} resolves against the role's templates/ root, not just the CWD" do
   it "finds a bare-filename {% include %} target that lives beside the including template, several directories under templates/" do

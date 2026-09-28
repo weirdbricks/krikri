@@ -6,7 +6,7 @@ require "../minitest_helper"
 # hand-rolled plain {{ }} evaluator.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
-private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
+private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
 describe "a {% for %} loop over an undefined variable" do
   it "fails the task instead of silently rendering zero iterations" do

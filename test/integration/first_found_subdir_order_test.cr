@@ -7,7 +7,7 @@ require "file_utils"
 # only shows up with a real role dispatch.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
-private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
+private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
 describe "with_first_found: default search roots vs the task's action" do
   it "never matches vars/ for an include_tasks: with_first_found:, even when vars/ has the candidate" do

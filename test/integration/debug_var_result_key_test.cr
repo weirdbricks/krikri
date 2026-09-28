@@ -3,7 +3,7 @@ require "../minitest_helper"
 # Runs the compiled binary against a real playbook.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
-private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
+private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
 # Real Ansible's debug action plugin puts a `var:` result under the
 # VARIABLE NAME key - never under msg (podman-diff debug_edge_cases

@@ -6,7 +6,7 @@ require "../minitest_helper"
 # hand-rolled plain {{ }} evaluator.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
-private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
+private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
 describe "a real Jinja2 default() fallback that chains through an undefined value" do
   it "doesn't crash the whole template render when the fallback branch is never actually needed" do

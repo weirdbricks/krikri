@@ -7,7 +7,7 @@ require "../minitest_helper"
 # 2.19.4, including the two different exit codes it uses.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
-private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
+private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
 private def run_in_dir(yaml : String, &)
   dir = File.tempname("static-import")

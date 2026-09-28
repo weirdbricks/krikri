@@ -16,12 +16,12 @@ module PluginSpecHelper
   PLUGINS_DIR  = File.join(PROJECT_ROOT, "bin", "plugins")
 
   # Parallel-safe test temp space. Each running test gets its own subtree
-  # under spec/tmp/p/<nonce>: the run_one hook below opens the scope before
+  # under test/tmp/p/<nonce>: the run_one hook below opens the scope before
   # setup and closes it after teardown, keyed by the worker fiber, so every
   # tmp_path() call from anywhere in that test resolves inside it. Without
   # this, converted specs that rm_rf a fixed shared root in setup would wipe
   # another concurrent test's tree mid-run under minitest --parallel.
-  TEST_TMP_BASE = File.join(PROJECT_ROOT, "spec", "tmp")
+  TEST_TMP_BASE = File.join(PROJECT_ROOT, "test", "tmp")
 
   @@tmp_mutex = Mutex.new
   @@tmp_dir_by_fiber = {} of Fiber => String

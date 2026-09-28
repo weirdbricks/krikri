@@ -20,7 +20,7 @@ require "../minitest_helper"
 # loop_source_strict_undefined_spec.cr's with_first_found example.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
-private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
+private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
 private def run_playbook(yaml : String)
   playbook = File.tempname("first-found-lenient", ".yml")

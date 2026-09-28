@@ -21,7 +21,7 @@ require "../minitest_helper"
 # rendering rv.elapsed, the exact shape that diverged.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
-private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
+private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
 private def run_reboot_playbook(extra_args : Array(String) = [] of String)
   dir = File.tempname("reboot-elapsed")

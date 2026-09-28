@@ -12,7 +12,7 @@ require "file_utils"
 # facts - controller code execution from module output.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
-private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-two-local-hosts.ini")
+private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-two-local-hosts.ini")
 
 # The hostile text a producer task's registered result carries - exactly
 # the string whose re-render would touch *canary*.

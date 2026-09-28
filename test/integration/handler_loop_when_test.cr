@@ -6,7 +6,7 @@ require "file_utils"
 # spec against a single method can exercise cleanly.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
-private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
+private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
 describe "a looped handler with a per-item when: referencing item" do
   it "evaluates when: once per iteration (with item bound), not once before the loop with no item at all" do

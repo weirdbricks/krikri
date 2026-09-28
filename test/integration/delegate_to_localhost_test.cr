@@ -21,7 +21,7 @@ require "../minitest_helper"
 # [[round188-delegate-to-localhost-ssh-reupload]] for the live trace.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
-private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
+private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
 private def run_playbook(pb : String) : {Process::Status, String}
   playbook = File.tempname("delegate-to-localhost-188", ".yml")

@@ -13,7 +13,7 @@ require "../minitest_helper"
 # point, overriding the wrong guess.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
-private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
+private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
 private def run_playbook(extra_args : Array(String)) : {Process::Status, String}
   playbook = File.tempname("templated-ignore-errors", ".yml")

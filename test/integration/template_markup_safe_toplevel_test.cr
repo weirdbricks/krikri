@@ -7,7 +7,7 @@ require "../minitest_helper"
 # plain {{ }} evaluator.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
-private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
+private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
 private def run_template_task(content : String, extra_vars : String = "")
   src = File.tempname("markup-safe-src", ".j2")

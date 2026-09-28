@@ -6,7 +6,7 @@ require "../minitest_helper"
 # a real {% for %} + sort filter template render.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
-private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
+private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
 describe "sorting a dict's .items() (a list of 2-tuples) in a template" do
   it "sorts lexicographically by key instead of raising 'cannot compare'" do

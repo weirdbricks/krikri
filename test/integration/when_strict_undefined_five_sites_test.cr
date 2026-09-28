@@ -16,7 +16,7 @@ require "file_utils"
 #      0.9.548's own REGEX_BARE_VAR_REF-shaped boundary.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
-private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
+private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
 private def run_playbook(yaml : String, inventory : String = INVENTORY)
   playbook = File.tempname("when-strict-five-sites", ".yml")

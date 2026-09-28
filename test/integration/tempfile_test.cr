@@ -31,7 +31,7 @@ describe "tempfile plugin" do
   end
 
   it "creates the file under path: when given" do
-    dir = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp")
+    dir = File.join(PluginSpecHelper::PROJECT_ROOT, "test", "tmp")
     Dir.mkdir_p(dir)
 
     result = PluginSpecHelper.run("tempfile", {"path" => dir})

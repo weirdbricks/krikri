@@ -16,7 +16,7 @@ require "file_utils"
 # against ansible-core 2.19.4 (/tmp minimal repro, 2026-09-26).
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
-private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
+private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
 private def run_role_roleplay(argument_specs : String, play_vars : String = "")
   dir = File.tempname("argspec-required", ".d")

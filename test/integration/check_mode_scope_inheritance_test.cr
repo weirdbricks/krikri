@@ -3,7 +3,7 @@ require "../minitest_helper"
 # Runs the compiled binary against a real playbook.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
-private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-two-local-hosts.ini")
+private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-two-local-hosts.ini")
 
 # Real Ansible honors `check_mode:` at play, block AND task level (2.7+),
 # most specific wins; command/shell/raw/script do not support check mode,

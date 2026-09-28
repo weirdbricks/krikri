@@ -11,7 +11,7 @@ require "../minitest_helper"
 # `loop:` form does NOT flatten (loop: has no such legacy behavior).
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
-private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
+private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
 private def run_playbook(yaml : String)
   playbook = File.tempname("with-items-flatten", ".yml")

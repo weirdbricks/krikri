@@ -6,7 +6,7 @@ require "../minitest_helper"
 # unit spec without constructing a whole TaskExecutor.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
-private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
+private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
 describe "loop: item whose native-type value is itself unrendered Jinja" do
   it "falls through to full substitution rather than handing back literal unparsed {{ }} text" do

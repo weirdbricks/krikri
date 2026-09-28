@@ -6,7 +6,7 @@ require "../minitest_helper"
 # not reachable from a unit spec.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
-private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
+private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
 # Found via a live 100-role confirm round: two independent real roles
 # (grzegorznowak.nvm_node's own `template: ... mode="u+x,g+x"`,

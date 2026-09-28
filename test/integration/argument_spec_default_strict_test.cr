@@ -12,7 +12,7 @@ require "file_utils"
 # when the same expression surfaced in a `when:`.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
-private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
+private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
 private def run_role_roleplay(argument_specs : String, extra_vars : String = "")
   dir = File.tempname("argspec-default", ".d")

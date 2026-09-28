@@ -17,7 +17,7 @@ require "file_utils"
 # role-local filter plugin can prove the looped shapes stay clean.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
-private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
+private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
 private def write_role_with_raising_filter(root : String, tasks_body : String) : Nil
   Dir.mkdir_p(File.join(root, "roles", "myrole", "filter_plugins"))

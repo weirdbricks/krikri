@@ -3,7 +3,7 @@ require "../minitest_helper"
 # Runs the compiled binary against a real playbook.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
-private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
+private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
 # Real Ansible's task-arg templating failure for a strict-undefined
 # module argument is NOT the bare inner error text - it wraps it ("The

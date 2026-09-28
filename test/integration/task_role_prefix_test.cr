@@ -6,7 +6,7 @@ require "../minitest_helper"
 # executor.cr/handler_runner.cr - not reachable from a unit spec.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
-private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
+private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
 # Found while fixing the "Generic TASK [Task 1] label on a nameless
 # task" gap: TASK[]/HANDLER[] banners never carried the owning role's

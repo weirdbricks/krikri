@@ -13,13 +13,13 @@ require "file_utils"
 
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
-private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-hostvars-scope.ini")
+private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-hostvars-scope.ini")
 
 private def run_scope_playbook : {Process::Status, String}
   output = IO::Memory.new
   status = Process.run(
     BINARY,
-    ["-i", INVENTORY, File.join(PROJECT_ROOT, "spec", "fixtures", "hostvars-scope-playbook.yml")],
+    ["-i", INVENTORY, File.join(PROJECT_ROOT, "test", "fixtures", "hostvars-scope-playbook.yml")],
     output: output,
     error: output
   )

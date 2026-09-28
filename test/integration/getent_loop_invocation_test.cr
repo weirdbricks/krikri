@@ -7,7 +7,7 @@ require "../minitest_helper"
 # pieces no single unit spec can see at once.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
-private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
+private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
 describe "looped+registered getent invocation" do
   it "lets a later task index ansible_facts via results[].invocation.module_args.key (galaxyproject.pulsar pattern)" do

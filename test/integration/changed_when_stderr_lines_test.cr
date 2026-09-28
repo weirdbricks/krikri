@@ -5,7 +5,7 @@ require "../minitest_helper"
 # without constructing a whole TaskExecutor.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
-private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
+private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
 describe "changed_when:/failed_when: referencing the task's own stdout_lines/stderr_lines" do
   it "sees stdout_lines/stderr_lines on its OWN task's result, not just a later task's" do

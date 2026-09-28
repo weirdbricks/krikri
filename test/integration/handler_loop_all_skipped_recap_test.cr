@@ -7,7 +7,7 @@ require "file_utils"
 # against a single method can exercise cleanly.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
-private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
+private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
 describe "a looped handler whose every item is skipped by when:" do
   it "books the handler as skipped=1 in the recap (not ok=1), with a bare trailing skipping: line" do

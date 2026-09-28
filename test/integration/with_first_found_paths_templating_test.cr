@@ -6,7 +6,7 @@ require "file_utils"
 # which needs a real role_path/vars/loop interplay to exercise cleanly.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
-private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
+private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
 describe "with_first_found: a custom paths: entry containing {{ role_path }}" do
   it "templates each custom path before joining it against the role root, instead of doubling the literal template text into the path" do

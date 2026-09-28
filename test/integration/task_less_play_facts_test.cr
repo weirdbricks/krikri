@@ -6,7 +6,7 @@ require "../minitest_helper"
 # from a unit spec.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
-private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
+private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
 describe "a play with an empty tasks: list" do
   it "still gathers facts and recaps ok=1 when gather_facts: is left at its default" do

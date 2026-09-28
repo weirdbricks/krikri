@@ -9,7 +9,7 @@ require "../minitest_helper"
 # renders "host=x" without facts, the real hostname after them).
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
-private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
+private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
 private def render_with(gather_facts : String) : String
   src = File.tempname("hostname-fact-src", ".j2")

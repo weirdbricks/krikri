@@ -6,7 +6,7 @@ require "../minitest_helper"
 # from a unit spec.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
-private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
+private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
 # Found via bertvv.dhcp round 312: template:'s `validate:` staging used
 # to happen next to dest_dir instead of real Ansible's own remote_tmp

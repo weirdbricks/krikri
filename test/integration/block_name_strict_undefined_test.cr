@@ -8,7 +8,7 @@ require "../minitest_helper"
 # shapes end to end.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
-private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
+private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
 describe "block: name keyword strict-undefined" do
   # ikke_t.podman_container_systemd (round 813203, via grafana_podman):

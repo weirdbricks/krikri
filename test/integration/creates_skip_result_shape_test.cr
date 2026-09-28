@@ -17,7 +17,7 @@ require "file_utils"
 # attribute 'rc'" - the whole warm run diverged only on krikri's side.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
-private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
+private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
 describe "a creates:-skipped command result carries rc: 0" do
   it "lets a later changed_when: read .rc/.stdout on the registered skip" do

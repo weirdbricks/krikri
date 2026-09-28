@@ -162,7 +162,7 @@ describe "shell plugin" do
   # marker-file probe is the whole point: the old regression was the
   # shell command running FOR REAL under --check.
   it "skips without running under _ansible_check_mode (side-effect file NOT created)" do
-    marker = File.join(PluginSpecHelper::PROJECT_ROOT, "spec", "tmp", "shell_check_mode_marker")
+    marker = File.join(PluginSpecHelper::PROJECT_ROOT, "test", "tmp", "shell_check_mode_marker")
 
     result = PluginSpecHelper.run("shell", {"cmd" => "touch #{marker}", "_ansible_check_mode" => "true"})
 

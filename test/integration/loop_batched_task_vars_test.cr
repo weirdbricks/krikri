@@ -7,7 +7,7 @@ require "../minitest_helper"
 # controller (action-plugin final_result) and never opens an SSH connection.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
-private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-nonlocal-host.ini")
+private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-nonlocal-host.ini")
 
 describe "a looped task whose own vars: reference item (batched loop path)" do
   # aisbergg.beats round 90007 (Ubuntu 22.04): `install Beats (Debian)` has

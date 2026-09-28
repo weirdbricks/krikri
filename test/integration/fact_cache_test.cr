@@ -12,7 +12,7 @@ require "../minitest_helper"
 # configured; only `smart` consults it.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
-private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
+private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
 private def run(playbook : String, extra_args : Array(String), cache_dir : String) : {Process::Status, String}
   output = IO::Memory.new

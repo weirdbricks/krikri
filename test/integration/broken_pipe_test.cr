@@ -10,7 +10,7 @@ require "../minitest_helper"
 # and `--version | head -1` each produce no stderr and PIPESTATUS[0]=0).
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
-private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
+private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
 # Runs *shell_command* and returns {exit status of the FIRST pipeline
 # element, stderr}. PIPESTATUS[0] is what matters here - the pipeline's

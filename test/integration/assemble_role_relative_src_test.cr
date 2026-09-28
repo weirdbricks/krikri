@@ -6,7 +6,7 @@ require "file_utils"
 # plugin itself, which handles absolute paths fine).
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
-private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
+private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
 describe "assemble:'s relative src: resolves against the role's files/ directory" do
   it "resolves src: files/ (remote_src: false) to the role's own files/ dir" do

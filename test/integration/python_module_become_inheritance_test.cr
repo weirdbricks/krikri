@@ -28,7 +28,7 @@ require "file_utils"
 # two actually diverge.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
-private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
+private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
 describe "role-private python module dispatch re-resolves a templated become: at runtime" do
   it "does not attempt privilege escalation when a templated become: resolves to false" do

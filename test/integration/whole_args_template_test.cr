@@ -7,7 +7,7 @@ require "file_utils"
 # becomes the module's real params).
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
-private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
+private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
 describe "whole-args template (`module: \"{{ item }}\"`)" do
   # Real bug found in round 827232 (calvinbui.ansible_apt): its only

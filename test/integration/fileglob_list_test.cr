@@ -7,7 +7,7 @@ require "file_utils"
 # unit spec without constructing a whole TaskExecutor.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
-private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
+private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
 describe "with_fileglob: templating a list variable" do
   it "treats each list element as its own glob pattern, not the JSON array text as one pattern" do

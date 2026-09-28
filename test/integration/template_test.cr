@@ -23,7 +23,7 @@ require "../minitest_helper"
 # use PluginSpecHelper.run like file_spec.cr does.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
-private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
+private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
 # The classic suite pre-created a shared spec/tmp/template in before_suite
 # (rm_rf + mkdir); the minitest suite gives every test its own tmp_path

@@ -22,7 +22,7 @@ require "file_utils"
 # raising, so a naive rescue-only safety net does NOT protect this.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
-private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
+private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
 private def run_role_playbook(hide_it : String) : {Process::Status, String}
   root = File.tempname("templated-no-log")

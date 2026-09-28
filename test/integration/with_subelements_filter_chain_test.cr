@@ -6,7 +6,7 @@ require "../minitest_helper"
 # (resolve_loop_subelements), not reachable from a unit spec.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
-private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
+private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
 # Real bug found via a live 100-role confirm round: GROG.authorized-key's
 # own idiom - `with_subelements: - "{{ authorized_key_list_all |

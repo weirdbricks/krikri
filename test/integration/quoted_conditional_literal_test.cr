@@ -7,7 +7,7 @@ require "file_utils"
 # result to exercise cleanly.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
-private INVENTORY    = File.join(PROJECT_ROOT, "spec", "fixtures", "inventory-explicit-localhost.ini")
+private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
 describe "a changed_when:/failed_when: whose whole value is one quoted string" do
   it "evaluates a fully-quoted changed_when as a Jinja string constant, not an expression to split" do
