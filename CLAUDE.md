@@ -51,33 +51,44 @@ sequential tasks into one SSH round trip where safe.
                                      #   *timing* matters: `--version`'s `Build:` line reports debug/release,
                                      #   and a debug binary runs ~1.8x slower wall-clock on identical work -
                                      #   `krikri-role-tester run` warns (not refuses) when it detects one
-crystal spec                        # full suite
-scripts/spec-parallel.sh            # same suite as parallel unit/integration/lint buckets
-                                     #   (each bucket gets its own CRYSTAL_CACHE_DIR - never run
-                                     #   concurrent `crystal spec` invocations sharing one cache
-                                     #   dir; they contend on the compiler lock and can hang)
-crystal spec spec/unit/foo_spec.cr  # one file - NOTE: some files fail in isolation (a pre-existing
-                                     #   require-ordering artifact, not a real regression) - always
-                                     #   confirm any single-file failure against the full `crystal spec` run
-crystal spec spec/foo_spec.cr:42    # one example
-scripts/minitest.sh                 # the minitest suite under test/ (see below)
-scripts/spec.sh                     # crystal spec under a hard timeout (the spec
-                                     #   binary can rarely wedge with no summary;
-                                     #   SIGTERM+SIGKILL after SPEC_TIMEOUT, default 900s)
+scripts/minitest.sh                 # the full minitest suite under test/
+scripts/minitest.sh -- -p 4         # same suite on 4 worker fibers (the suite is
+                                     #   IO/sleep-bound, so tests genuinely overlap;
+                                     #   parallel-safety rules in test/minitest_helper.cr)
+scripts/minitest.sh test/unit/foo_test.cr   # one file
+scripts/minitest.sh -- -n /pattern/ # a subset by test-name regex
 ameba                               # lint
 ```
 
-**Test frameworks**: `spec/` is `crystal spec` (RSpec-style `describe`/`it`
-with `should`/`must_eq`); `test/` is the in-progress
-[minitest](https://github.com/ysbaddaden/minitest.cr) migration
-(`describe`/`it` with `must_equal`/`assert_*`). They are deliberately
-separate directories - `crystal spec` only globs `spec/**/*_spec.cr`, so a
-minitest file living under `spec/` would be picked up by the wrong runner.
-Minitest has no per-file discovery, so `scripts/minitest.sh` globs
-`test/**/*_test.cr` into a generated entrypoint (`.minitest_all.cr`,
-gitignored) and runs it; passing a single existing file to the script runs
-that file directly, and anything after `--` goes to `Minitest.run` (e.g.
-`-- -n /pattern/`).
+**Test framework**: the whole suite is
+[minitest.cr](https://github.com/ysbaddaden/minitest.cr) under `test/`
+(`unit/`, `integration/`, `lint/`; `describe`/`it` with
+`must_equal`/`assert_*`). Minitest randomizes test order by default, so
+tests must not depend on each other. Minitest has no per-file discovery,
+so `scripts/minitest.sh` globs `test/**/*_test.cr` into a generated
+entrypoint (`.minitest_all.cr`, gitignored), builds one hash-gated binary
+(`.minitest_all.bin`), and runs it; passing a single existing file to the
+script runs that file directly, and anything after `--` goes to
+`Minitest.run`.
+
+**Parallel-safety rules** (required for `-- -p N`; full detail in
+`test/minitest_helper.cr`):
+- Per-test scratch space comes from `PluginSpecHelper.tmp_path` - a
+  private subtree under `test/tmp/p/<nonce>`, scoped by the `run_one`
+  hook to the running test's fiber.
+- Tests that touch `ENV` or other process-wide state call `serial!` in
+  their `describe` body: they then serialize on
+  `PluginSpecHelper::STATE_MUTEX` across setup, body AND teardown, and
+  before_each/after_each ENV pinning is covered too. Helpers that need
+  the same guarantee take that mutex themselves (it is reentrant).
+- `PluginSpecHelper.run_plugin`/`run_plugin_json` accept `chdir:`,
+  `before_input:` and `umask:` parameters - use them instead of doing it
+  yourself: never `Dir.cd` the suite process, never `LibC.umask` the
+  suite process (umask is process-wide and leaks across workers), and
+  never make process-wide ENV changes outside a `serial!` test.
+- When draining a child process's stdout, drain to EOF BEFORE
+  `Process#wait` (see `run_plugin_with_timeout`) - waiting first
+  deadlocks on full pipes.
 
 **Always run `./build.sh`**, never a bare `crystal build krikri-playbook.cr` alone, before trusting a
 "still broken" result against a real host - plugin binaries compile separately from the main
@@ -98,7 +109,7 @@ the same investigation - not one per file touched.
 
 ## The real-host benchmark-round workflow
 
-This is the primary way bugs get found - unit specs alone (900+) have never been enough; every real
+This is the primary way bugs get found - unit tests alone (6000+) have never been enough; every real
 round against a production Ansible role finds more. Read `KNOWN_MISSING.md`'s own intro before
 starting a round.
 
@@ -146,12 +157,12 @@ from this repo.
    --round-end <N>` once the batch finishes, then dedupe the collected divergences - if two or
    more roles hit the same root cause, that's one fix to make, not two.
 
-4. **Fix phase (serial):** apply fixes one at a time against the unit specs (concurrent edits to
+4. **Fix phase (serial):** apply fixes one at a time against the unit tests (concurrent edits to
    the same evaluator/plugin code aren't safe to parallelize even though the discovery phase is).
-   Add a regression spec where practically possible (some things - real dpkg/apt mutation, real
-   crontab mutation, real pip installs - have no spec at all by design; verify those live instead
+   Add a regression test where practically possible (some things - real dpkg/apt mutation, real
+   crontab mutation, real pip installs - have no test at all by design; verify those live instead
    and say so in the commit message). Bump `VERSION` per logical fix or tightly-related group of
-   fixes, run the full `crystal spec` suite, and `./build.sh`.
+   fixes, run the full `scripts/minitest.sh -- -p 4` suite, and `./build.sh`.
 
 5. **Confirm phase:** re-run *only* the roles that diverged, via a fresh queue file against the
    rebuilt binary, before considering any fix done.

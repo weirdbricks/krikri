@@ -276,8 +276,11 @@ divergences and `.github/workflows/lint-parity.yml` for parity status.
 ## ✅ Testing
 
 ```bash
-# Unit + integration specs (crystal spec's own test runner)
-crystal spec
+# Full minitest suite (test/ - unit, integration, lint)
+scripts/minitest.sh
+
+# Same suite on 4 parallel worker fibers (faster; tests are parallel-safe)
+scripts/minitest.sh -- -p 4
 
 # Ansible compatibility harness - runs the same playbooks through real
 # ansible-playbook and krikri-playbook side by side and diffs the result
@@ -296,7 +299,7 @@ Contributions welcome! Please:
 1. Review the existing code structure and [KNOWN_MISSING.md](KNOWN_MISSING.md)
 2. Verify any Ansible-compatibility claims against real `ansible-playbook`
    output, not just documentation
-3. Test your changes thoroughly (`crystal spec`, and `compat/run.cr` for
+3. Test your changes thoroughly (`scripts/minitest.sh`, and `compat/run.cr` for
    plugin behavior changes)
 4. Submit a pull request with a clear description
 

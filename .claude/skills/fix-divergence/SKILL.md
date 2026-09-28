@@ -82,7 +82,7 @@ Your prompt to Crush needs, self-contained:
   bumps happen once, centrally, at merge time (step 5) - if you're working
   2 roles interleaved, both worktrees start from the same `main`, so
   bumping early in either one just produces a collision to untangle later
-  for no benefit (nothing in the spec suite checks the number itself, only
+  for no benefit (nothing in the test suite checks the number itself, only
   that `RUNTIME_DEPENDENCY_FORK_NOTES` matches `shard.yml`'s tags - the
   bump is pure traceability).
 
@@ -119,9 +119,10 @@ skip the check.
    check for a dropped `return`, a wrong variable name, or logic that
    doesn't match the stated root cause.
 3. `./build.sh` must build clean.
-4. `crystal spec` (full suite, not just the new spec file) — the ONLY known
-   pre-existing failure is `spec/integration/cli_spec.cr:1246` (needs a real
-   Docker/Podman daemon). Anything else failing is real; don't land it.
+4. `scripts/minitest.sh` (full suite, not just the new test file) — the
+   only conditional ones are `test/integration/cli_test.cr`'s docker
+   tests (skip themselves when no Docker/Podman daemon). Anything else
+   failing is real; don't land it.
 5. `ameba` on the changed files — copy the binary in if the worktree doesn't
    have one (`cp /home/labros/git_work/krikri/bin/ameba <worktree>/bin/ameba`).
    A finding on a changed line is real; a finding on an unrelated

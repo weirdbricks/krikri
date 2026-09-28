@@ -271,10 +271,10 @@ this validation**:
 
 1. Read the diff as an outside reviewer would, not as a rubber stamp — check
    version bump present (`src/krikri/version.cr`), plugin
-   three-place-registration if a plugin was touched, and a regression spec
+   three-place-registration if a plugin was touched, and a regression test
    added where practical (or a stated reason in the intended commit message
    if not, per `CLAUDE.md`).
-2. Run `crystal spec` (full suite) and `./build.sh` — both must pass clean
+2. Run `scripts/minitest.sh -- -p 4` (full suite) and `./build.sh` — both must pass clean
    before anything is trusted.
 3. If validation finds real problems, push back and fix by hand rather than
    deferring to Crush's implementation choices — Crush's output is a second
@@ -289,8 +289,8 @@ need its `VERSION`/`KNOWN_MISSING.md` bump renumbered by hand).
 
 ## 11. Confirm each fix against the real host
 
-Passing `crystal spec`/`./build.sh` proves the fix doesn't regress anything
-covered by unit specs — it does **not** prove the original divergence is
+Passing `scripts/minitest.sh`/`./build.sh` proves the fix doesn't regress anything
+covered by unit tests — it does **not** prove the original divergence is
 actually gone. Per `CLAUDE.md`'s confirm phase, after a fix for a role is
 merged to `main`:
 
