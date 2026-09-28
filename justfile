@@ -16,14 +16,13 @@ build-release:
     ./build.sh --release
 
 test:
-    crystal spec
+    scripts/minitest.sh
 
-# Runs the spec buckets (unit/integration/lint) as parallel crystal spec
-# processes - wall time drops to roughly the integration bucket's own.
-# Each bucket gets its own compiler cache dir, so concurrent runs never
-# contend on a compiler lock.
+# Runs the whole minitest suite on 4 worker fibers - the suite is
+# IO/sleep bound, so tests genuinely overlap and wall time drops well
+# below a serial run. Parallel-safety rules live in test/minitest_helper.cr.
 test-parallel:
-    scripts/spec-parallel.sh
+    scripts/minitest.sh -- -p 4
 
 lint:
     crystal build lib/ameba/bin/ameba.cr -o lib/ameba/bin/ameba

@@ -69,7 +69,7 @@ while [[ $# -gt 0 ]]; do
             echo "             removed, so function names will show as '??' in a crash dump"
             echo "             (line numbers / addresses still print, the runtime is fine)"
             echo "  --debug    Build with debug symbols (default, faster build, full"
-            echo "             backtraces in 'crystal spec' / crash output)"
+            echo "             backtraces in crash / test-failure output)"
             echo "  --static   Statically link (passes --static to the compiler). Needs the"
             echo "             musl/Alpine toolchain (e.g. the crystallang/crystal:*-alpine"
             echo "             image) plus static dev libs (pcre2-static, openssl-libs-static,"
@@ -224,8 +224,7 @@ trap 'rm -rf "$STATUS_DIR"' EXIT
 # .symtab / .strtab on top of any remaining debug symbols that
 # --no-debug at compile time didn't already take out. In debug mode,
 # no-op (debug builds need those symbols for backtraces, and stripping
-# here would silently break 'crystal spec' + the integration specs'
-# crash forensics). Silently no-ops if 'strip' isn't on PATH - the
+# here would silently break the minitest suite's crash forensics). Silently no-ops if 'strip' isn't on PATH - the
 # build still completes, just without the size win. Hardlinks (e.g.
 # each bin/plugins/<name> name pointing at bin/plugins/.fat-plugin)
 # share one inode, so stripping the one path propagates to all names
@@ -464,7 +463,7 @@ echo -e "${YELLOW}🔌 Building plugins...${NC}"
 # source in plugins/ is built - there is no "listed but absent" state
 # to drift into anymore. Only STANDALONE_PLUGINS and FAT_EXTRA_MODULES
 # below stay hand-listed (they describe build SHAPES, not membership);
-# spec/unit/available_plugins_spec.cr cross-checks the third list
+# test/unit/available_plugins_test.cr cross-checks the third list
 # (playbook_parser.cr's AVAILABLE_PLUGINS) against this same directory.
 PLUGINS=()
 for plugin_source in plugins/*.cr; do
