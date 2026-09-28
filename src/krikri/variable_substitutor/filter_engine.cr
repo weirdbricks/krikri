@@ -66,7 +66,7 @@ module Krikri
       # short-circuiting never reaches the clause that uses it - real
       # Jinja resolves every filter name in the whole expression at
       # compile time, before any and/or evaluation). Kept in sync with
-      # the dispatch by spec/unit/conditional_filter_prepass_spec.cr, which
+      # the dispatch by test/unit/conditional_filter_prepass_test.cr, which
       # applies every name here to a nil value and fails if any of them
       # raises UnknownFilterError (i.e. the dispatch stopped knowing a
       # name the list still advertises). Deliberately EXCLUDES names the
@@ -162,7 +162,7 @@ module Krikri
       # to_json reads EVERY leaf by definition, though, and real Ansible
       # fails the task there ("'x' is undefined") - which is exactly what
       # this engine did before laziness landed, spec'd in
-      # spec/unit/nested_container_undefined_filter_spec.cr. Re-running the
+      # test/unit/nested_container_undefined_filter_test.cr. Re-running the
       # strict whole-structure render here restores that failure; it is a
       # no-op for every already-rendered container (leaves without any
       # Jinja markers pass through untouched).

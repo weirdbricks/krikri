@@ -3,7 +3,7 @@
 # without failing it." Verified live against real ansible-playbook: a
 # SECOND host whose own when: skips this exact task entirely keeps
 # running normally afterward - unlike end_play, this does NOT affect
-# other hosts. Requires spec/fixtures/inventory-two-local-hosts.ini
+# other hosts. Requires test/fixtures/inventory-two-local-hosts.ini
 # (hostone/hosttwo) to actually exercise the per-host scoping - under
 # the default single-host inventory this just no-ops for "localhost"
 # (still safe, still completes).

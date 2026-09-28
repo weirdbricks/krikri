@@ -1,5 +1,5 @@
 # run_once: failure propagation. Targets the "threelocal" group, which
-# only exists in spec/fixtures/inventory-three-local-hosts.ini (three
+# only exists in test/fixtures/inventory-three-local-hosts.ini (three
 # hosts, all ansible_connection=local so this is safe to run for real
 # without machines to SSH into) - under the generic empty inventory used
 # by every other testing/*.yml fixture, "threelocal" resolves to zero

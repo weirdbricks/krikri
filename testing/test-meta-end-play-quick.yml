@@ -4,7 +4,7 @@
 # per-host - a SECOND host whose own when: skips this exact task entirely
 # (never itself executes it) still gets blocked from every later task the
 # moment ANY other host does. Requires
-# spec/fixtures/inventory-two-local-hosts.ini (hostone/hosttwo) to
+# test/fixtures/inventory-two-local-hosts.ini (hostone/hosttwo) to
 # actually exercise the cross-host propagation.
 - name: meta end_play smoke test
   hosts: all

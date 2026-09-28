@@ -1,5 +1,5 @@
 # --forks smoke test. Targets the "multilocal" group (see
-# spec/fixtures/inventory-multi-local.ini) - two hosts, both
+# test/fixtures/inventory-multi-local.ini) - two hosts, both
 # ansible_connection=local, so multi-host fan-out can be exercised for
 # real without needing a second machine to SSH into. Under the generic
 # empty inventory used by every other testing/*.yml fixture, "multilocal"

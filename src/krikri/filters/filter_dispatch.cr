@@ -472,7 +472,7 @@ module Krikri
           # `recursive` must arrive as a real Bool - the text "false"
           # would be truthy to the Crinja filter's `truthy?`. Behavior
           # contract unchanged and still enforced by
-          # spec/unit/lazy_dict_templating_spec.cr (recursive deep-merge
+          # test/unit/lazy_dict_templating_test.cr (recursive deep-merge
           # plus every list_merge mode against real ansible-core 2.19).
           # #combine_hash is deleted too now: lists_mergeby migrated
           # onto its own Crinja registration (see the lists_mergeby
@@ -535,7 +535,7 @@ module Krikri
           # item or an item missing the merge key, rather than
           # silently skipping - which would hide the role's own data
           # bug) now lives in the registration, enforced by
-          # spec/unit/lists_mergeby_spec.cr through this delegated
+          # test/unit/lists_mergeby_test.cr through this delegated
           # path.
           recursive_arg = false
           list_merge_arg = "replace"
@@ -698,7 +698,7 @@ module Krikri
           # direction the already-delegated names (combine, lists_mergeby,
           # dict2items, and since the Phase-3 slice below, items2dict)
           # resolved. Behavior contract is
-          # unchanged and still enforced by spec/unit/filter_engine_spec.cr:
+          # unchanged and still enforced by test/unit/filter_engine_test.cr:
           # insertion order, kwarg overrides, empty list for a non-dict
           # input, and undefined-input rejection handled upstream by
           # Krikri.undefined_filter_chain_source (the strict-undefined
@@ -735,7 +735,7 @@ module Krikri
           # raises) is the shared, spec-locked krikri contract on both
           # sides and is preserved unchanged - both engines deliberately
           # tolerate a malformed element rather than fail the whole
-          # filter (spec/unit/filter_engine_spec.cr). Undefined-input
+          # filter (test/unit/filter_engine_test.cr). Undefined-input
           # rejection still happens upstream in
           # Krikri.undefined_filter_chain_source, before any filter runs.
           key_name = parse_kwarg(filter_args, "key_name") || "key"
@@ -983,7 +983,7 @@ module Krikri
           # name reaches the JMESPath engine verbatim. The
           # missing-expression guard stays here (a Crinja vararg is a
           # truthy value even when empty-string). Behavior contract
-          # unchanged and still enforced by spec/unit/jmespath_spec.cr
+          # unchanged and still enforced by test/unit/jmespath_test.cr
           # (both engines' happy paths plus the invalid-expression task
           # failure).
           expr = parse_filter_arg(filter_args)
@@ -1131,7 +1131,7 @@ module Krikri
           # didn't matter. With the head deferring, the chain falls through
           # to this dispatch, where an unknown-filter error would have
           # replaced the real undefined-name message (caught by
-          # spec/unit/nested_container_undefined_filter_spec.cr). The
+          # test/unit/nested_container_undefined_filter_test.cr). The
           # strict re-render below restores fail-on-access, matching real
           # Ansible for a serializer that reads every leaf.
           sort_keys = (kw = parse_kwarg_expr(filter_args, "sort_keys")) ? truthy?(kw) : true

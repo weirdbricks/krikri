@@ -2455,7 +2455,7 @@ describe "krikri-playbook CLI (--check mode)" do
   end
 
   it "runs a plugin against a host with no explicit ansible_user= (regression: Host.from_json crashed on a JSON-null user)" do
-    # spec/fixtures/inventory.ini is empty, so "localhost" always takes the
+    # test/fixtures/inventory.ini is empty, so "localhost" always takes the
     # separate "implicit localhost" path in InventoryParser#get_hosts,
     # which unconditionally defaults a non-nil user - it never exercises a
     # Host whose user is genuinely nil. An explicitly-declared

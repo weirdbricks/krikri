@@ -4,7 +4,7 @@
 # exercises that a LATER task on one host sees an EARLIER task's
 # register:/set_fact:/meta: clear_facts on a DIFFERENT host via
 # hostvars[...] - a stale cache would keep serving the pre-mutation
-# snapshot instead. Targets both h1/h2 (spec/fixtures/inventory-
+# snapshot instead. Targets both h1/h2 (test/fixtures/inventory-
 # hostvars-local.ini), both ansible_connection=local.
 - name: hostvars cache invalidation smoke test
   hosts: hostvars_test

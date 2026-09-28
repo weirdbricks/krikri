@@ -1,6 +1,6 @@
 # group_vars:/host_vars: directory loading smoke test. Targets the "web"
 # group, which only exists in
-# spec/fixtures/group_host_vars/inventory.ini (+ its own group_vars/ and
+# test/fixtures/group_host_vars/inventory.ini (+ its own group_vars/ and
 # host_vars/ directories) - under the generic empty inventory used by
 # every other testing/*.yml fixture, "web" resolves to zero hosts and
 # this play is skipped, same convention as the "testservers" fixtures.

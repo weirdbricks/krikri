@@ -152,7 +152,7 @@ module Krikri
     #
     # Public (not private) so the timeout semantics can be spec'd
     # directly against a real local process - see
-    # spec/unit/ssh_manager_timeout_spec.cr.
+    # test/unit/ssh_manager_timeout_test.cr.
     def self.run_with_timeout(
       process : Process,
       timeout_seconds : Int32,

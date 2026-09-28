@@ -2,7 +2,7 @@
 # compat playbook here, this one runs as root inside its throwaway
 # container (the compat image's own default user), so it can exercise a
 # real privilege drop rather than the "become to yourself" trick
-# spec/integration/cli_spec.cr's dedicated become spec uses to stay safe
+# test/integration/cli_test.cr's dedicated become spec uses to stay safe
 # on an arbitrary, non-root dev machine.
 
 - name: become compat

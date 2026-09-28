@@ -5,7 +5,7 @@ require "json"
 # previous_nth_usable, network_in_network, network_in_usable, ip4_hex),
 # mirrored against real ansible-core 2.19.4 + ansible.utils + netaddr
 # 1.3.0 live (every query probed against real ansible-playbook on this
-# host - see the specs in spec/unit/ipaddr_spec.cr). Operates on
+# host - see the specs in test/unit/ipaddr_test.cr). Operates on
 # JSON::Any so both the hand-rolled FilterEngine and the Crinja
 # registration in jinja_filters.cr can share one implementation.
 #

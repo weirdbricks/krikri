@@ -2,7 +2,7 @@
 # same convention as test-copy.yml/test-async-quick.yml/etc.: under the
 # generic empty static inventory used by every other testing/*.yml
 # fixture, "testservers" resolves to zero hosts and this play is skipped.
-# Run for real against spec/fixtures/dynamic_inventory/inventory.sh, whose
+# Run for real against test/fixtures/dynamic_inventory/inventory.sh, whose
 # --list output connects "dynhost1" locally.
 
 - name: dynamic inventory test

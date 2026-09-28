@@ -1,10 +1,10 @@
 ---
-# connection: local parsing/threading regression fixture (spec/
-# integration/cli_spec.cr) - both hosts in inventory-two-local-hosts.ini
+# connection: local parsing/threading regression fixture (test/
+# integration/cli_test.cr) - both hosts in inventory-two-local-hosts.ini
 # are already local-connection, so this only proves connection: local
 # is parsed at all and threaded into ansible_connection for that task
 # (previously silently dropped), not that it overrides an otherwise-
-# remote host - see that spec's own comment for why a real override
+# remote host - see that test's own comment for why a real override
 # test isn't practical in this suite.
 - name: Connection local parsing test
   hosts: all

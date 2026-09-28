@@ -1,6 +1,6 @@
 ---
-# Used only by the --limit regression spec (spec/integration/cli_spec.cr)
-# against spec/fixtures/inventory-two-local-hosts.ini.
+# Used only by the --limit regression spec (test/integration/cli_test.cr)
+# against test/fixtures/inventory-two-local-hosts.ini.
 - name: Limit test
   hosts: all
   gather_facts: false

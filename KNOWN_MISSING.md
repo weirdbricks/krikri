@@ -152,7 +152,7 @@ gaps" rather than arguing with the note in place.
   The residual classes live as tight predicates in
   `src/krikri/differential_fuzz/runner.cr` (`KNOWN_DIFFERENCES`,
   including the one documented predicate hole); the fixed-seed CI
-  slice is `spec/unit/differential_fuzz_spec.cr`.
+  slice is `test/unit/differential_fuzz_test.cr`.
 
 ### Unsafe-data taint is a provenance-closed registry, not an AnsibleUnsafe type
 
@@ -166,7 +166,7 @@ gaps" rather than arguing with the note in place.
   verdict as the type for every shape tested live against
   ansible-playbook 2.19 - but it is structurally approximate: a NEW
   re-render path must extend the hostile matrix in
-  `spec/integration/unsafe_data_spec.cr`, not be assumed safe.
+  `test/integration/unsafe_data_test.cr`, not be assumed safe.
 
 ### `fetch:` refuses a destination that escapes `dest`, stricter than real Ansible
 

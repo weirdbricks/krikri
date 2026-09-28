@@ -1,5 +1,5 @@
 ---
-# block:-level notify: regression fixture (spec/integration/cli_spec.cr) -
+# block:-level notify: regression fixture (test/integration/cli_test.cr) -
 # real Ansible fires a handler notified by a block: if ANY task inside it
 # changed, even though none of the individual nested tasks have their own
 # notify:.

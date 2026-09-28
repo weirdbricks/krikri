@@ -32,8 +32,8 @@ Containers are genuinely disposable (`--rm`), so playbooks are run for
 real, not just `--check` - including real `useradd`/`groupadd` in
 `05-user-group.yml`, which would never be safe to run for real on a
 developer's actual machine (see `feedback_no_customer_beta`-style caution
-in the rest of this repo's testing: the plain `spec/integration/{user,
-group}_spec.cr` specs deliberately only exercise `--check` mode or
+in the rest of this repo's testing: the plain `test/integration/{user,
+group}_test.cr` tests deliberately only exercise `--check` mode or
 read-only `getent` lookups for exactly this reason - they run on a real
 machine, this harness does not).
 
@@ -80,7 +80,7 @@ anyone was looking for them:
    to drop that artifact was conditioned on the *negation* of exactly the
    case where it needed to fire, so it never actually popped anything.
    Every unit test of the pure line-matching logic
-   (`spec/unit/line_editor_spec.cr`) passed throughout, because that logic
+   (`test/unit/line_editor_test.cr`) passed throughout, because that logic
    only ever sees an already-split `Array(String)` - the bug lived
    entirely in the plugin's own split/rejoin glue, one level up, which is
    exactly the kind of thing an integration-level, real-content diff
@@ -157,7 +157,7 @@ the container's real running kernel is never touched. `mount`
 `fstab:` file - add, idempotent rerun, update an existing entry's
 `opts:`, add with `boot: false`, and `absent_from_fstab` - `mounted`/
 `unmounted` (which run real `mount`/`umount`) aren't exercised here,
-matching how `spec/integration/mount_spec.cr` only checks those via
+matching how `test/integration/mount_test.cr` only checks those via
 `check_mode`. `firewalld` (`26-firewalld.yml`, `offline: true,
 permanent: true` throughout - see git log for why) covers enabling
 a service, an idempotent rerun, a rich rule, masquerade, disabling the
@@ -233,7 +233,7 @@ and there's no reason to churn a passing playbook.
 deliberately runs as root inside its own throwaway container (the compat
 image's default user) rather than working around it like every other
 playbook - the whole point is to exercise a *real* privilege drop, which
-`spec/integration/cli_spec.cr`'s own become spec can't safely do on an
+`test/integration/cli_test.cr`'s own become test can't safely do on an
 arbitrary dev machine (it only ever "becomes" the same user already
 running it). Creates a throwaway non-root user, then covers: `whoami`
 with no `become:`, with an explicit `become_user:`, and with `become:`
@@ -323,7 +323,7 @@ target container instead of the one the engine ran inside of.
 
 ## Why this isn't wired into GitHub Actions
 
-`.github/workflows/ci.yml` runs `crystal spec` + `ameba` on every push and
+`.github/workflows/ci.yml` runs the minitest suite + `ameba` on every push and
 needs to stay fast. This harness rebuilds a from-source krikri-playbook
 inside a fresh container and spins up ~20 more containers on top of that
 - multiple minutes, and it needs `docker`/a container runtime, which the

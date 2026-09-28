@@ -4,7 +4,7 @@
 # reporting every disagreement.
 #
 # CI runs a small fixed-seed slice of this as a permanent regression spec
-# (spec/unit/differential_fuzz_spec.cr); use this tool for larger
+# (test/unit/differential_fuzz_test.cr); use this tool for larger
 # exploratory runs, e.g.:
 #
 #   bin/differential_fuzz --seed 42 --count 5000 --shrink

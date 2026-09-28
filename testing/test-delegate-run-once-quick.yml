@@ -1,5 +1,5 @@
 # delegate_to:/run_once: smoke test. Targets the "multilocal" group, which
-# only exists in spec/fixtures/inventory-multi-local.ini (two hosts, both
+# only exists in test/fixtures/inventory-multi-local.ini (two hosts, both
 # ansible_connection=local so this is safe to run for real without a
 # second machine to SSH into) - under the generic empty inventory used by
 # every other testing/*.yml fixture, "multilocal" resolves to zero hosts

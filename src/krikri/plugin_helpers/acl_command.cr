@@ -7,7 +7,7 @@ module Krikri
     # shape here is ported field-for-field from real ansible.posix's own
     # acl.py (build_command/split_entry/build_entry/acl_changed/run_acl)
     # and cross-checked against the actual setfacl 2.3.2 --test output
-    # (see spec/unit/acl_command_spec.cr's notes).
+    # (see test/unit/acl_command_test.cr's notes).
     module AclCommand
       # Splits an `entry:` shorthand string into its parts - mirrors
       # real acl.py's split_entry: an optional leading `d`/`default`

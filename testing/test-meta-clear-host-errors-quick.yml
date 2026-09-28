@@ -8,7 +8,7 @@
 # to still be active enough to individually execute this meta task (the
 # failed host itself is ALREADY excluded from this task too, so scoping
 # to `host` alone would make the feature unusable). Requires
-# spec/fixtures/inventory-two-local-hosts.ini (hostone/hosttwo) to
+# test/fixtures/inventory-two-local-hosts.ini (hostone/hosttwo) to
 # actually exercise it - under the default single-host inventory the
 # `command:` task is skipped under --check mode anyway, so this
 # harmlessly no-ops.
