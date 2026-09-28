@@ -39,8 +39,17 @@ run, `-p 4` run, `crystal tool format`, ameba) and committed separately.
   copy_staging_mode_spec.cr, copy_trailing_slash_dest_spec.cr,
   copy_validate_spec.cr, copy_vault_decrypt_spec.cr
 
+### Batch 5 (15 files): creates_skip_result_shape .. delegate_to_localhost
+- creates_skip_result_shape_spec.cr, crinja_in_string_undefined_spec.cr,
+  cron_spec.cr, cronvar_spec.cr, deb822_repository_param_coverage_spec.cr,
+  deb822_repository_spec.cr, debconf_param_coverage_spec.cr,
+  debugger_spec.cr, debug_msg_var_exclusive_spec.cr,
+  debug_var_lazy_extract_raise_spec.cr, debug_var_result_key_spec.cr,
+  debug_verbosity_skip_spec.cr, deep_render_item_audit_spec.cr,
+  default_file_mode_umask_spec.cr, delegate_to_localhost_spec.cr
+
 ### Next file to convert
-- cron_spec.cr (then cronvar_spec.cr, dnf_*, docker_*, ...)
+- dir_listing_spec.cr and on (alphabetical)
 
 ## Count table
 
@@ -50,6 +59,7 @@ run, `-p 4` run, `crystal tool format`, ameba) and committed separately.
 | 2 | 16 | 105 | see renames/deviations below |
 | 3 | 4 | 180 | cli_spec's `it`-per-fixture Dir.glob loop unrolled; counts below are RUNTIME tests (spec file shows 101 `it` blocks because the loop counts once) |
 | 4 | 15 | 71 | connection_plugin_resolution's conn_type loop unrolled (spec file shows 4 `it` blocks, one is the loop) |
+| 5 | 15 | 107 | cron backup specs serialize on STATE_MUTEX and count glob SET differences (see below) |
 
 ## Renames / deviations
 
@@ -114,6 +124,13 @@ run, `-p 4` run, `crystal tool format`, ameba) and committed separately.
   STATE_MUTEX, and the CLI async:/async_status: smoke test holds
   STATE_MUTEX + ENV_MUTEX - the sweep could delete an in-flight
   integration job's status file ("could not find job" flake under -p 4).
+- cron_test: the backup specs count /tmp/crontab* set differences, not
+  size deltas (leftover backup files from an earlier failed run skewed
+  size deltas), and the three backup specs serialize on STATE_MUTEX -
+  the cron plugin's real backups land in the fixed /tmp/crontab*
+  namespace (real crontab's own convention), so concurrent tests would
+  see each other's files.
+- debugger_test: describe-body local `templated` became a method.
 - assemble/authorized_key: shared `spec/tmp` roots moved to per-test
   `PluginSpecHelper.tmp_path`; before_suite mkdir_p dropped.
 
