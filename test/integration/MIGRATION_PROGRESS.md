@@ -30,8 +30,17 @@ run, `-p 4` run, `crystal tool format`, ameba) and committed separately.
 - cli_spec.cr, command_shell_check_mode_spec.cr, command_spec.cr,
   community_crypto_short_name_spec.cr
 
+### Batch 4 (15 files): connection_cli_flags .. copy_vault_decrypt
+- connection_cli_flags_spec.cr, connection_failure_unignorable_by_failed_when_spec.cr,
+  connection_plugin_resolution_spec.cr, copy_attribute_reconcile_spec.cr,
+  copy_backup_file_spec.cr, copy_binary_source_staging_spec.cr,
+  copy_directory_spec.cr, copy_missing_src_spec.cr, copy_owner_spec.cr,
+  copy_param_coverage_spec.cr, copy_precomputed_match_spec.cr,
+  copy_staging_mode_spec.cr, copy_trailing_slash_dest_spec.cr,
+  copy_validate_spec.cr, copy_vault_decrypt_spec.cr
+
 ### Next file to convert
-- connection_cli_flags_spec.cr (then connection_failure_unignorable_by_failed_when_spec.cr, ...)
+- cron_spec.cr (then cronvar_spec.cr, dnf_*, docker_*, ...)
 
 ## Count table
 
@@ -40,6 +49,7 @@ run, `-p 4` run, `crystal tool format`, ameba) and committed separately.
 | 1 | 16 | 124 | see renames/deviations below |
 | 2 | 16 | 105 | see renames/deviations below |
 | 3 | 4 | 180 | cli_spec's `it`-per-fixture Dir.glob loop unrolled; counts below are RUNTIME tests (spec file shows 101 `it` blocks because the loop counts once) |
+| 4 | 15 | 71 | connection_plugin_resolution's conn_type loop unrolled (spec file shows 4 `it` blocks, one is the loop) |
 
 ## Renames / deviations
 
@@ -84,6 +94,26 @@ run, `-p 4` run, `crystal tool format`, ameba) and committed separately.
   command_expand_argument_vars) now hold ENV_MUTEX and RESTORE HOME -
   the leaked /home/testuser HOME from the expanduser unit specs crashed
   the CLI async: spec's spawned binary (mkdir /home/testuser denied).
+- connection_plugin_resolution_test: the conn_type loop around describe
+  unrolled (5 static its); bare-`next` podman-skip became `skip`.
+- copy_missing_src_test: `json = result.should be_a(JSON::Any)` (spec
+  matchers return the narrowed value) became an explicit
+  `result.as(JSON::Any)` cast plus the assertion.
+- command_test's "starting directory deleted out from under it" spec no
+  longer points the SHARED minitest process's cwd at a deleted dir
+  (under -p 4 that handed every concurrently-spawned plugin child a
+  deleted cwd, surfacing as "Error getting current directory" in
+  unrelated tests); a throwaway shell now cds into a temp dir, deletes
+  it out from under itself and execs the plugin, so the scenario is
+  scoped to the plugin process.
+- copy_vault_decrypt_test: vault-password mutations wrapped in the
+  `with_vault` helper (STATE_MUTEX).
+- copy_backup_file/copy_param_coverage: shared spec/tmp root ->
+  tmp_path; chattr `next unless` -> `skip unless`.
+- async_jobs_test's cleanup_all sweep (shared ~/.ansible_async) holds
+  STATE_MUTEX, and the CLI async:/async_status: smoke test holds
+  STATE_MUTEX + ENV_MUTEX - the sweep could delete an in-flight
+  integration job's status file ("could not find job" flake under -p 4).
 - assemble/authorized_key: shared `spec/tmp` roots moved to per-test
   `PluginSpecHelper.tmp_path`; before_suite mkdir_p dropped.
 

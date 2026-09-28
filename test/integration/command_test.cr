@@ -1,5 +1,6 @@
 require "../minitest_helper"
 require "file_utils"
+require "../../src/krikri/shell"
 
 # Read-only - just runs plain commands and inspects captured output, never
 # touches the filesystem outside spec/tmp or mutates host state. Commands
