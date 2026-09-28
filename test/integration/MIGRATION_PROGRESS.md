@@ -48,8 +48,14 @@ run, `-p 4` run, `crystal tool format`, ameba) and committed separately.
   debug_verbosity_skip_spec.cr, deep_render_item_audit_spec.cr,
   default_file_mode_umask_spec.cr, delegate_to_localhost_spec.cr
 
+### Batch 6 (10 files): delegate_to_undefined .. ec2_metadata_facts
+- delegate_to_undefined_spec.cr, diff_mode_spec.cr, dnf_list_query_spec.cr,
+  dnf_param_coverage_spec.cr, dnf_versionlock_spec.cr,
+  docker_compose_v2_spec.cr, docker_network_info_spec.cr,
+  dpkg_divert_spec.cr, dpkg_selections_spec.cr, ec2_metadata_facts_spec.cr
+
 ### Next file to convert
-- dir_listing_spec.cr and on (alphabetical)
+- empty_inventory_extra_vars_spec.cr and on (alphabetical)
 
 ## Count table
 
@@ -60,6 +66,7 @@ run, `-p 4` run, `crystal tool format`, ameba) and committed separately.
 | 3 | 4 | 180 | cli_spec's `it`-per-fixture Dir.glob loop unrolled; counts below are RUNTIME tests (spec file shows 101 `it` blocks because the loop counts once) |
 | 4 | 15 | 71 | connection_plugin_resolution's conn_type loop unrolled (spec file shows 4 `it` blocks, one is the loop) |
 | 5 | 15 | 107 | cron backup specs serialize on STATE_MUTEX and count glob SET differences (see below) |
+| 6 | 10 | 56 | dnf recording helper holds ENV_MUTEX; dpkg_divert's `tags:` kwarg dropped |
 
 ## Renames / deviations
 
@@ -131,6 +138,13 @@ run, `-p 4` run, `crystal tool format`, ameba) and committed separately.
   namespace (real crontab's own convention), so concurrent tests would
   see each other's files.
 - debugger_test: describe-body local `templated` became a method.
+- dnf_param_coverage_test: with_recording_pkg_managers (fake dnf/rpm on
+  PATH + log path via ENV) holds ENV_MUTEX - concurrent dnf specs got
+  each other's log paths and flaked.
+- dpkg_divert_test: crystal spec's `tags: "needs_dpkg"` kwarg dropped
+  (minitest's it macro has no tags; -n pattern filtering covers it).
+- dnf_versionlock_test: block-form matcher `each(&.as_s.should(match(re)))`
+  became `each(&.as_s.must_match(re))`.
 - assemble/authorized_key: shared `spec/tmp` roots moved to per-test
   `PluginSpecHelper.tmp_path`; before_suite mkdir_p dropped.
 
