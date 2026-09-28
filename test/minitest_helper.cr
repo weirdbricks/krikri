@@ -286,6 +286,23 @@ end
 class Minitest::Spec
   include RaisesAssertion
 
+  # minitest's own `it` names a bare `it { }` test_anonymous and turns any
+  # name into a method, so two unnamed examples - or two whose names
+  # sanitize to the same method - silently overwrite each other and the
+  # suite quietly runs fewer tests (found converting spec/lint: 4 unnamed
+  # fixer examples collapsed into 1). Same method-naming as minitest's
+  # macro, but both cases are compile errors here.
+  macro it(name = nil, &block)
+    {% raise "every `it` needs a name (minitest names a bare `it { }` test_anonymous, silently overwriting its siblings)" if name.is_a?(NilLiteral) %}
+    {% meth = "test_" + name.strip.gsub(/[^\p{L}\p{N}]+/, "_") %}
+    {% if @type.methods.any? { |m| m.name.stringify == meth } %}
+      {% raise "duplicate test name in #{@type}: #{meth} (a second `it` with this name would silently replace the first)" %}
+    {% end %}
+    def {{ meth.id }}
+      {{ yield }}
+    end
+  end
+
   # Describes whose tests mutate process-global state (ENV, engine class
   # settings) call `serial!` in their body: every test in that describe -
   # and in its nested describes, which minitest generates as subclasses -
