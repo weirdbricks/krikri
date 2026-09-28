@@ -33,6 +33,99 @@ describe Krikri::VariableSubstitutor::ComparisonEvaluator do
     evaluator.evaluate("no operator here").must_equal("false")
   end
 
+  describe "strict ordering comparisons (differential-fuzz fix)" do
+    # The hand-rolled evaluator used to stringify both operands and
+    # compare the texts, silently answering ordering comparisons real
+    # Jinja2/Python raises TypeError on (and real ansible-playbook fails
+    # the task) - found by bin/differential_fuzz against the krikri-jinja
+    # engine, which already raises exactly what real Jinja2 3.1.6 raises.
+    # Deliberately KEPT lenient: two raw strings (int/float-parsable
+    # pairs numerically first, exactly as before - module stdout values
+    # are strings in real roles), and a numeric string against a real
+    # number.
+
+    it "raises on a container vs number ordering comparison" do
+      v = Hash(String, JSON::Any).new
+      v["dict_simple"] = JSON.parse(%({"a": 1}))
+      evaluator = Krikri::VariableSubstitutor::ComparisonEvaluator.new(v)
+      assert_raises_message(Krikri::VariableSubstitutor::ComparisonTypeError, /'<=' not supported between instances of 'dict' and 'float'/) do
+        evaluator.evaluate("dict_simple <= 6.6")
+      end
+    end
+
+    it "raises on an ordering comparison against an undefined variable" do
+      v = Hash(String, JSON::Any).new
+      evaluator = Krikri::VariableSubstitutor::ComparisonEvaluator.new(v)
+      assert_raises(Krikri::VariableSubstitutor::ComparisonTypeError) do
+        evaluator.evaluate("missing_var < '17'")
+      end
+    end
+
+    it "raises on an ordering comparison against a real None" do
+      v = Hash(String, JSON::Any).new
+      v["none_var"] = JSON::Any.new(nil)
+      evaluator = Krikri::VariableSubstitutor::ComparisonEvaluator.new(v)
+      assert_raises_message(Krikri::VariableSubstitutor::ComparisonTypeError, /'<' not supported between instances of 'NoneType' and 'int'/) do
+        evaluator.evaluate("none_var < 3")
+      end
+    end
+
+    it "raises on a non-numeric string vs number ordering comparison" do
+      v = Hash(String, JSON::Any).new
+      v["str_plain"] = JSON::Any.new("hello")
+      evaluator = Krikri::VariableSubstitutor::ComparisonEvaluator.new(v)
+      assert_raises(Krikri::VariableSubstitutor::ComparisonTypeError) do
+        evaluator.evaluate("str_plain < 20")
+      end
+    end
+
+    it "still compares a numeric string against a real number" do
+      v = Hash(String, JSON::Any).new
+      v["str_num"] = JSON::Any.new("17")
+      evaluator = Krikri::VariableSubstitutor::ComparisonEvaluator.new(v)
+      evaluator.evaluate("str_num < 20").must_equal("true")
+    end
+
+    it "still compares two strings lexicographically" do
+      v = Hash(String, JSON::Any).new
+      v["a"] = JSON::Any.new("abc")
+      v["b"] = JSON::Any.new("abd")
+      evaluator = Krikri::VariableSubstitutor::ComparisonEvaluator.new(v)
+      evaluator.evaluate("a < b").must_equal("true")
+    end
+
+    it "orders Bools numerically like Python's int subclass" do
+      v = Hash(String, JSON::Any).new
+      v["t"] = JSON::Any.new(true)
+      v["f"] = JSON::Any.new(false)
+      evaluator = Krikri::VariableSubstitutor::ComparisonEvaluator.new(v)
+      evaluator.evaluate("t > f").must_equal("true")
+    end
+
+    it "compares float literals (which the old resolver looked up as variable names)" do
+      v = Hash(String, JSON::Any).new
+      v["count"] = JSON::Any.new(2_i64)
+      evaluator = Krikri::VariableSubstitutor::ComparisonEvaluator.new(v)
+      evaluator.evaluate("count > 1.5").must_equal("true")
+    end
+
+    it "raises when the right operand is a bare boolean keyword (real Jinja syntax error)" do
+      v = Hash(String, JSON::Any).new
+      v["list_strs"] = JSON.parse(%(["b", "a"]))
+      evaluator = Krikri::VariableSubstitutor::ComparisonEvaluator.new(v)
+      assert_raises_message(Krikri::VariableSubstitutor::ComparisonTypeError, /unexpected token 'not'/) do
+        evaluator.evaluate("list_strs < not False")
+      end
+    end
+
+    it "keeps equality type-lenient across classes (real Python answers False, never errors)" do
+      v = Hash(String, JSON::Any).new
+      v["dict_simple"] = JSON.parse(%({"a": 1}))
+      evaluator = Krikri::VariableSubstitutor::ComparisonEvaluator.new(v)
+      evaluator.evaluate("dict_simple == 6").must_equal("false")
+    end
+  end
+
   describe "filter chains as comparison operands" do
     # Real, previously-shipped bug: a comparison operator was detected
     # before any `|` filter check, so `{{ mylist | length > 0 }}` (used

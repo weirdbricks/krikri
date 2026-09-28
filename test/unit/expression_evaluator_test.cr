@@ -1252,6 +1252,25 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
     evaluator.evaluate(%('+ent' if vault_enterprise)).must_equal("+ent")
   end
 
+  it "renders a ternary whose CHOSEN branch is undefined as the undefined sentinel, not the empty string" do
+    # Differential-fuzz fix: `{{ missing_var if bool_true else 'x' }}`
+    # rendered "" through the krikri-jinja render finalization (the
+    # Crinja-first path's render! of a top-level Undefined) but the
+    # "undefined" sentinel through JinjaRenderer#evaluate_value! (the
+    # delegation path) - two wrong answers disagreeing with each other
+    # (real Ansible's StrictUndefined fails the task in either shape).
+    # A bare undefined reference already gives "undefined" on both sides,
+    # so the sentinel is the codebase's established convention. The
+    # else-less ternary keeps its "" render (the next spec): there the
+    # empty string is load-bearing for real roles.
+    v = Hash(String, JSON::Any).new
+    v["bool_true"] = JSON::Any.new(true)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator.evaluate("missing_var if bool_true else 'x'").must_equal("undefined")
+    evaluator.evaluate("'a' if bool_true else missing_var").must_equal("a")
+    evaluator.evaluate("missing_a if bool_false else missing_b").must_equal("undefined")
+  end
+
   it "resolves a ternary whose chosen branch is a filter chain producing an Array, as JSON not Python-repr" do
     # Real bug found via RedHatOfficial.rhel8_pci_dss's own "Set
     # gpgcheck=1 for each yum repo" loop source: `loop: "{{
@@ -1372,6 +1391,100 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
     evaluator.evaluate("2.5 * 2").must_equal("5.0")
     evaluator.evaluate("2 + 3 * 4").must_equal("14")
     evaluator.evaluate("n / 1024 / 1024").must_equal("256.0")
+  end
+
+  it "repeats strings/lists for Python-valid `*` pairs and raises on invalid ones" do
+    # Differential-fuzz fix: combine_mult_div used to collapse every
+    # non-numeric operand pair to JSON null (rendered as ""), so even the
+    # VALID Python repeat shapes (`'-' * 40`, a real Ansible idiom)
+    # rendered empty while real Ansible repeats them, and the invalid
+    # ones (`str * list`, `str / float`) were silently answered where
+    # real Jinja2 raises TypeError and real ansible-playbook fails the
+    # task. Also fixed en route: split_top_level_mult_div discarded the
+    # `//` operator step's own skip-ahead return value, splitting `//`
+    # twice (parts ["10", "", "0"], ops ["//", "/"]) - the phantom empty
+    # operand combined to null, silently papering over every `//` the
+    # Crinja-first attempt didn't handle.
+    v = Hash(String, JSON::Any).new
+    v["str_plain"] = JSON::Any.new("ab")
+    v["list_ints"] = JSON.parse(%([3, 1]))
+    v["str_num"] = JSON::Any.new("17")
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
+
+    evaluator.evaluate("'ab' * 3").must_equal("ababab")
+    evaluator.evaluate("3 * 'ab'").must_equal("ababab")
+    evaluator.evaluate("'ab' * -1").must_equal("")
+    evaluator.evaluate("list_ints * 2").must_equal("[3, 1, 3, 1]")
+    evaluator.evaluate("2 * list_ints").must_equal("[3, 1, 3, 1]")
+
+    assert_raises_message(Krikri::PlusMinusOperandError, /unsupported operand type\(s\) for \*/) do
+      evaluator.evaluate("str_plain * list_ints")
+    end
+    assert_raises_message(Krikri::PlusMinusOperandError, /unsupported operand type\(s\) for \*\: 'str' and 'float'/) do
+      evaluator.evaluate("'ab' * 2.0")
+    end
+    assert_raises_message(Krikri::PlusMinusOperandError, /unsupported operand type\(s\) for \//) do
+      evaluator.evaluate("str_num / 17.3")
+    end
+    assert_raises_message(Krikri::PlusMinusOperandError, /unsupported operand type\(s\) for \//) do
+      evaluator.evaluate("missing_var / 2")
+    end
+  end
+
+  it "raises on a unary minus over a missing or non-numeric operand" do
+    # Differential-fuzz fix: `- missing_var` / `- 'abc'` / `- dict_var`
+    # fell through to a plain variable lookup and silently rendered the
+    # "undefined" sentinel where real Jinja2/Ansible fails the task
+    # (cannot negate / bad operand type for unary -). Numeric operands
+    # keep negating; an operand shape the evaluator can't resolve
+    # conservatively still falls back leniently instead of becoming a
+    # spurious task failure.
+    v = Hash(String, JSON::Any).new
+    v["int_neg"] = JSON::Any.new(-7_i64)
+    v["str_plain"] = JSON::Any.new("ab")
+    v["dict_simple"] = JSON.parse(%({"a": 1}))
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
+
+    evaluator.evaluate("- int_neg").must_equal("7")
+    evaluator.evaluate("- (5)").must_equal("-5")
+
+    assert_raises_message(Krikri::PlusMinusOperandError, /'missing_var' is undefined/) do
+      evaluator.evaluate("- missing_var")
+    end
+    assert_raises_message(Krikri::PlusMinusOperandError, /bad operand type for unary -/) do
+      evaluator.evaluate("- 'abc'")
+    end
+    assert_raises_message(Krikri::PlusMinusOperandError, /bad operand type for unary -/) do
+      evaluator.evaluate("- dict_simple")
+    end
+  end
+
+  it "raises on an out-of-range index in every operand position, not just a bare bracket" do
+    # Differential-fuzz fix (krikri-jinja v0.4.22): the engine now raises
+    # real Jinja2's "list object has no element N" for an out-of-range
+    # subscript, and every hand-rolled path that delegates to it must
+    # propagate that instead of degrading to the lenient "undefined"
+    # sentinel - a `~` operand, a filter-chain result's index, a lazy
+    # generator's index, and a literal-array index all used to answer
+    # leniently where real Ansible fails the task.
+    v = Hash(String, JSON::Any).new
+    v["list_nested"] = JSON.parse(%([[1, 2], [3, 4]]))
+    v["list_empty"] = JSON.parse(%([]))
+    v["str_plain"] = JSON::Any.new("ab")
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
+
+    assert_raises_message(Krikri::UndefinedVariableError, /has no (element|attribute) 9/) do
+      evaluator.evaluate("(14 ~ list_nested[9]) | list")
+    end
+    assert_raises_message(Krikri::UndefinedVariableError, /has no (element|attribute) 0/) do
+      evaluator.evaluate("(list_empty | unique)[0]")
+    end
+    assert_raises_message(Krikri::UndefinedVariableError, /has no (element|attribute) 1/) do
+      evaluator.evaluate("[18.0][1]")
+    end
+    assert_raises_message(Krikri::UndefinedVariableError, /has no (element|attribute) 2/) do
+      evaluator.evaluate("(list_empty | sort)[2]")
+    end
   end
 
   it "coerces Bool operands to their Python int values in + arithmetic" do

@@ -5,7 +5,7 @@
 # hook, so one entrypoint has to require every test file - there is no
 # per-file discovery like `crystal spec` does. This script globs
 # test/**/*_test.cr into .minitest_all.cr, builds .minitest_all.bin once,
-# and reuses that binary until test/, src/, plugins/ or shard.lock change
+# and reuses that binary until test/, src/, plugins/, lib/ or shard.lock change
 # (content-hash-gated, same idea as build.sh's mtime skip) - `crystal run`
 # would otherwise pay the
 # full ~12-15s compile on every invocation.
@@ -60,13 +60,14 @@ while IFS= read -r file; do
   support_files+=("$file")
 done < <(find "$ROOT/test" -name '*.cr' ! -name '*_test.cr' | sort)
 
-# The code under test (src/, plugins/) and the resolved shard versions are
-# compiled into the binary too - leave them out and an engine-only change
-# silently runs against the previous build.
+# The code under test (src/, plugins/) and the installed shards (lib/ -
+# shard.lock alone isn't enough: lib/ can lag it after a rebase until the
+# next `shards install`) are compiled into the binary too - leave them out
+# and an engine-only change silently runs against the previous build.
 source_files=()
 while IFS= read -r file; do
   source_files+=("$file")
-done < <(find "$ROOT/src" "$ROOT/plugins" -name '*.cr' | sort)
+done < <(find "$ROOT/src" "$ROOT/plugins" "$ROOT/lib" -name '*.cr' | sort)
 
 hash=$(cat "${files[@]}" "${support_files[@]}" "${source_files[@]}" "$ROOT/shard.lock" | sha256sum | cut -d' ' -f1)
 

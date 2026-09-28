@@ -222,6 +222,119 @@ describe Krikri::PythonModuleRunner do
     result["stderr"].as_s.must_include("boom")
   end
 
+  # ---- role's own module_utils package collection ----
+
+  it "collects a role's own module_utils package tree, relative paths first" do
+    role = File.join(Dir.tempdir, "krikri-pymod-spec-#{Random.rand(1_000_000)}")
+    Dir.mkdir_p(File.join(role, "module_utils", "my_custom_pkg"))
+    init = File.join(role, "module_utils", "my_custom_pkg", "__init__.py")
+    helper = File.join(role, "module_utils", "my_custom_pkg", "helper.py")
+    File.write(init, "")
+    File.write(helper, "def my_function():\n    return 'bundled'\n")
+    collected = Krikri::PythonModuleRunner.collect_module_utils_files(role, nil)
+    collected.keys.must_equal(["my_custom_pkg/__init__.py", "my_custom_pkg/helper.py"])
+    collected["my_custom_pkg/helper.py"].must_equal(helper)
+    FileUtils.rm_r(role)
+  end
+
+  it "collects nothing (empty hash) for a role with no module_utils directory" do
+    role = File.join(Dir.tempdir, "krikri-pymod-spec-#{Random.rand(1_000_000)}")
+    Dir.mkdir_p(role)
+    write_module(role, "plain.py", "# test module")
+    Krikri::PythonModuleRunner.collect_module_utils_files(role, nil).must_be_empty
+    FileUtils.rm_r(role)
+  end
+
+  it "collects playbook-adjacent module_utils and lets the role tree shadow it" do
+    role = File.join(Dir.tempdir, "krikri-pymod-spec-#{Random.rand(1_000_000)}")
+    pb = File.join(Dir.tempdir, "krikri-pymod-spec-#{Random.rand(1_000_000)}")
+    Dir.mkdir_p(File.join(role, "module_utils", "pkg"))
+    Dir.mkdir_p(File.join(pb, "module_utils", "pkg"))
+    File.write(File.join(role, "module_utils", "pkg", "a.py"), "# role\n")
+    File.write(File.join(pb, "module_utils", "pkg", "b.py"), "# playbook\n")
+    File.write(File.join(pb, "module_utils", "pkg", "a.py"), "# playbook a\n")
+    collected = Krikri::PythonModuleRunner.collect_module_utils_files(role, pb)
+    collected.has_key?("pkg/b.py").must_equal(true)
+    # nearest-first: the role's own pkg/a.py shadows the playbook's
+    collected["pkg/a.py"].must_equal(File.join(role, "module_utils", "pkg", "a.py"))
+    FileUtils.rm_r(role)
+    FileUtils.rm_r(pb)
+  end
+
+  it "skips compiled .pyc/.pyo caches when collecting module_utils files" do
+    role = File.join(Dir.tempdir, "krikri-pymod-spec-#{Random.rand(1_000_000)}")
+    Dir.mkdir_p(File.join(role, "module_utils", "pkg"))
+    File.write(File.join(role, "module_utils", "pkg", "a.py"), "# src\n")
+    File.write(File.join(role, "module_utils", "pkg", "a.cpython-311.pyc"), "junk")
+    collected = Krikri::PythonModuleRunner.collect_module_utils_files(role, nil)
+    collected.keys.must_equal(["pkg/a.py"])
+    FileUtils.rm_r(role)
+  end
+
+  # ---- end-to-end through the plugin binary (local connection): the
+  # ---- role's own module_utils package staged under ansible/module_utils ----
+
+  it "stages a role's own module_utils package so its import resolves end to end" do
+    skip("python3 not available") unless File.exists?("/usr/bin/python3")
+    role = File.join(Dir.tempdir, "krikri-pymod-spec-#{Random.rand(1_000_000)}")
+    Dir.mkdir_p(File.join(role, "module_utils", "my_custom_pkg"))
+    File.write(File.join(role, "module_utils", "my_custom_pkg", "__init__.py"), "")
+    File.write(File.join(role, "module_utils", "my_custom_pkg", "helper.py"),
+      "def my_function():\n    return 'bundled-value'\n")
+    collected = Krikri::PythonModuleRunner.collect_module_utils_files(role, nil)
+    files_json = collected.to_a.map { |rel, path| {rel, Base64.strict_encode(File.read(path))} }.to_h.to_json
+    # The exact shape the task names: a role-private module importing its
+    # OWN custom ansible.module_utils package
+    # (linux-system-roles.storage's blivet.py ->
+    # ansible.module_utils.storage_lsr.argument_validator shape).
+    source = "from ansible.module_utils.basic import AnsibleModule\n" \
+             "from ansible.module_utils.my_custom_pkg.helper import my_function\n" \
+             "module = AnsibleModule(argument_spec={})\n" \
+             "module.exit_json(changed=False, value=my_function())\n"
+    result = PluginSpecHelper.run("py_module", {
+      "module_name"         => "mymod_utils",
+      "module_source"       => Base64.strict_encode(source),
+      "new_style"           => "true",
+      "module_args"         => %q({"_ansible_check_mode": false}),
+      "module_utils_files"  => files_json,
+      "_ansible_check_mode" => "false",
+    })
+    expect(falsey?(result["failed"]?)).must_equal(true)
+    result["value"].as_s.must_equal("bundled-value")
+  ensure
+    FileUtils.rm_rf(role) if role
+  end
+
+  it "stages the module_utils bundle skeleton alongside role packages so basic.py still imports" do
+    skip("python3 not available") unless File.exists?("/usr/bin/python3")
+    # With role module_utils staged, the work-dir-local `ansible` package
+    # shadows any installed ansible-core (a regular package in the
+    # script's sys.path[0] dir wins) - so the standard basic.py shim must
+    # be written too, or every role-module_utils invocation would trade
+    # one ModuleNotFoundError for another.
+    role = File.join(Dir.tempdir, "krikri-pymod-spec-#{Random.rand(1_000_000)}")
+    Dir.mkdir_p(File.join(role, "module_utils", "pkg"))
+    File.write(File.join(role, "module_utils", "pkg", "x.py"), "X = 1\n")
+    files_json = Krikri::PythonModuleRunner.collect_module_utils_files(role, nil)
+      .to_a.map { |rel, path| {rel, Base64.strict_encode(File.read(path))} }.to_h.to_json
+    source = "from ansible.module_utils.basic import AnsibleModule\n" \
+             "from ansible.module_utils.pkg.x import X\n" \
+             "module = AnsibleModule(argument_spec={'v': {'type': 'int', 'required': True}})\n" \
+             "module.exit_json(changed=False, total=module.params['v'] + X)\n"
+    result = PluginSpecHelper.run("py_module", {
+      "module_name"         => "mymod_mixed",
+      "module_source"       => Base64.strict_encode(source),
+      "new_style"           => "true",
+      "module_args"         => %q({"v": 41, "_ansible_check_mode": false}),
+      "module_utils_files"  => files_json,
+      "_ansible_check_mode" => "false",
+    })
+    expect(falsey?(result["failed"]?)).must_equal(true)
+    result["total"].as_i.must_equal(42)
+  ensure
+    FileUtils.rm_rf(role) if role
+  end
+
   # ---- the basic.py shim (targets without ansible-core) ----
 
   it "shims ansible.module_utils.basic for a new-style module on a target without ansible-core" do
