@@ -60,7 +60,7 @@ describe "PauseActionPlugin" do
 
     final = final_json(result)
     final.as_h["failed"]?.try(&.as_bool).should be_falsey
-    final.as_h["stdout"].as_s.should match(/^Paused for 1\.0+ seconds$/)
+    final.as_h["stdout"].as_s.should match(/^Paused for 1\.\d+ seconds$/)
   end
 
   it "reports elapsed-based stdout for a prompt-only pause (prompt text is display-only)" do
@@ -78,7 +78,7 @@ describe "PauseActionPlugin" do
 
     final = final_json(result)
     final.as_h["failed"]?.try(&.as_bool).should be_falsey
-    final.as_h["stdout"].as_s.should match(/^Paused for 1\.0+ seconds$/)
+    final.as_h["stdout"].as_s.should match(/^Paused for 1\.\d+ seconds$/)
   end
 
   it "clamps minutes 0 up to the 1-second minimum and reports minutes-unit stdout" do

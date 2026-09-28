@@ -60,8 +60,24 @@ crystal spec spec/unit/foo_spec.cr  # one file - NOTE: some files fail in isolat
                                      #   require-ordering artifact, not a real regression) - always
                                      #   confirm any single-file failure against the full `crystal spec` run
 crystal spec spec/foo_spec.cr:42    # one example
+scripts/minitest.sh                 # the minitest suite under test/ (see below)
+scripts/spec.sh                     # crystal spec under a hard timeout (the spec
+                                     #   binary can rarely wedge with no summary;
+                                     #   SIGTERM+SIGKILL after SPEC_TIMEOUT, default 900s)
 ameba                               # lint
 ```
+
+**Test frameworks**: `spec/` is `crystal spec` (RSpec-style `describe`/`it`
+with `should`/`must_eq`); `test/` is the in-progress
+[minitest](https://github.com/ysbaddaden/minitest.cr) migration
+(`describe`/`it` with `must_equal`/`assert_*`). They are deliberately
+separate directories - `crystal spec` only globs `spec/**/*_spec.cr`, so a
+minitest file living under `spec/` would be picked up by the wrong runner.
+Minitest has no per-file discovery, so `scripts/minitest.sh` globs
+`test/**/*_test.cr` into a generated entrypoint (`.minitest_all.cr`,
+gitignored) and runs it; passing a single existing file to the script runs
+that file directly, and anything after `--` goes to `Minitest.run` (e.g.
+`-- -n /pattern/`).
 
 **Always run `./build.sh`**, never a bare `crystal build krikri-playbook.cr` alone, before trusting a
 "still broken" result against a real host - plugin binaries compile separately from the main

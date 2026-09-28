@@ -1,0 +1,6 @@
+NAME="Cumulus Linux"
+VERSION_ID=4.4.2
+VERSION="Cumulus Linux 4.4.2"
+PRETTY_NAME="Cumulus Linux"
+ID=cumulus-linux
+ID_LIKE=debian

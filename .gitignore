@@ -72,3 +72,10 @@ __pycache__/
 /.spec-cache/
 /.spec-logs/
 /krikri-playbook
+
+# scripts/minitest.sh's generated suite entrypoint
+/.minitest_all.cr
+
+# scripts/minitest.sh's build-once suite binary + file-list hash
+/.minitest_all.bin
+/.minitest_all.hash

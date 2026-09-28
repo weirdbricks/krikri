@@ -1,0 +1,195 @@
+require "../minitest_helper"
+require "json"
+require "../../src/krikri/plugin_helpers/ec2_api"
+require "../../src/krikri/plugin_helpers/ec2_info"
+
+# Read-only lookup specs for amazon.aws.ec2_vpc_subnet_info. Everything
+# runs through the Ec2Api transport seam (no network): canned
+# DescribeSubnets XML in, assertions on the shaped `subnets` result and
+# the exact form bodies the module sends.
+private DESCRIBE_ONE = <<-XML
+<?xml version="1.0" encoding="UTF-8"?>
+  <DescribeSubnetsResponse xmlns="http://ec2.amazonaws.com/doc/2016-11-15/">
+    <requestId>req-1</requestId>
+    <subnetSet>
+      <item>
+        <subnetId>subnet-aaaa</subnetId>
+        <subnetArn>arn:aws:ec2:us-east-1:123456789012:subnet/subnet-aaaa</subnetArn>
+        <vpcId>vpc-1234</vpcId>
+        <cidrBlock>10.0.1.0/24</cidrBlock>
+        <availabilityZone>us-east-1a</availabilityZone>
+        <availabilityZoneId>use1-az6</availabilityZoneId>
+        <state>available</state>
+        <availableIpAddressCount>251</availableIpAddressCount>
+        <defaultForAz>false</defaultForAz>
+        <mapPublicIpOnLaunch>true</mapPublicIpOnLaunch>
+        <assignIpv6AddressOnCreation>false</assignIpv6AddressOnCreation>
+        <ownerId>123456789012</ownerId>
+        <tagSet>
+          <item><key>Name</key><value>web</value></item>
+          <item><key>env</key><value>staging</value></item>
+        </tagSet>
+        <ipv6CidrBlockAssociationSet>
+          <item>
+            <associationId>subnet-cidr-assoc-1</associationId>
+            <ipv6CidrBlock>2001:db8::/64</ipv6CidrBlock>
+            <ipv6CidrBlockState><state>associated</state></ipv6CidrBlockState>
+          </item>
+        </ipv6CidrBlockAssociationSet>
+      </item>
+    </subnetSet>
+  </DescribeSubnetsResponse>
+XML
+
+private DESCRIBE_NONE = <<-XML
+<?xml version="1.0" encoding="UTF-8"?>
+  <DescribeSubnetsResponse xmlns="http://ec2.amazonaws.com/doc/2016-11-15/">
+    <requestId>req-2</requestId>
+    <subnetSet/>
+  </DescribeSubnetsResponse>
+XML
+
+# A subnet with no tags and no ipv6 associations - the wire omits
+# tagSet entirely and carries ipv6CidrBlockAssociationSet as an empty
+# element, matching the real API's shape for a default subnet.
+private DESCRIBE_BARE = <<-XML
+<?xml version="1.0" encoding="UTF-8"?>
+  <DescribeSubnetsResponse xmlns="http://ec2.amazonaws.com/doc/2016-11-15/">
+    <requestId>req-3</requestId>
+    <subnetSet>
+      <item>
+        <subnetId>subnet-bbbb</subnetId>
+        <vpcId>vpc-1234</vpcId>
+        <cidrBlock>10.0.2.0/24</cidrBlock>
+        <state>available</state>
+        <availableIpAddressCount>4091</availableIpAddressCount>
+        <ipv6CidrBlockAssociationSet/>
+      </item>
+    </subnetSet>
+  </DescribeSubnetsResponse>
+XML
+
+private EMPTY_PARAMS = Hash(String, String).new
+
+private def run_module(params : Hash(String, String), handler : Proc(String, String, String)) : JSON::Any
+  Krikri::PluginHelpers::Ec2Api.transport = handler
+  begin
+    result = Krikri::PluginHelpers::Ec2Info.run_subnets(params)
+    JSON.parse(result.to_json)
+  ensure
+    Krikri::PluginHelpers::Ec2Api.transport = nil
+  end
+end
+
+describe "Krikri::PluginHelpers::Ec2Info (ec2_vpc_subnet_info_test.cr)" do
+  before_each do
+    @old_access = ENV["AWS_ACCESS_KEY_ID"]?
+    @old_secret = ENV["AWS_SECRET_ACCESS_KEY"]?
+    ENV["AWS_ACCESS_KEY_ID"] = "test-access"
+    ENV["AWS_SECRET_ACCESS_KEY"] = "test-secret"
+  end
+
+  after_each do
+    if @old_access
+      ENV["AWS_ACCESS_KEY_ID"] = @old_access
+    else
+      ENV.delete("AWS_ACCESS_KEY_ID")
+    end
+    if @old_secret
+      ENV["AWS_SECRET_ACCESS_KEY"] = @old_secret
+    else
+      ENV.delete("AWS_SECRET_ACCESS_KEY")
+    end
+  end
+
+  describe ".run_subnets" do
+    it "shapes a subnet with the real module's field names" do
+      result = run_module({"region" => "us-east-1"}, ->(_region : String, _body : String) { DESCRIBE_ONE })
+
+      expect(falsey?(result["failed"]?)).must_equal(true)
+      subnet = result["subnets"][0]
+      subnet["id"].must_equal("subnet-aaaa")
+      subnet["subnet_id"].must_equal("subnet-aaaa")
+      subnet["subnet_arn"].must_equal("arn:aws:ec2:us-east-1:123456789012:subnet/subnet-aaaa")
+      subnet["vpc_id"].must_equal("vpc-1234")
+      subnet["cidr_block"].must_equal("10.0.1.0/24")
+      subnet["availability_zone"].must_equal("us-east-1a")
+      subnet["availability_zone_id"].must_equal("use1-az6")
+      subnet["state"].must_equal("available")
+      subnet["available_ip_address_count"].must_equal(251)
+      subnet["default_for_az"].must_equal(false)
+      subnet["map_public_ip_on_launch"].must_equal(true)
+      subnet["assign_ipv6_address_on_creation"].must_equal(false)
+      subnet["owner_id"].must_equal("123456789012")
+      subnet["tags"]["Name"].must_equal("web")
+      subnet["tags"]["env"].must_equal("staging")
+    end
+
+    it "shapes the nested ipv6 association set" do
+      result = run_module({"region" => "us-east-1"}, ->(_region : String, _body : String) { DESCRIBE_ONE })
+      v6 = result["subnets"][0]["ipv6_cidr_block_association_set"][0]
+      v6["association_id"].must_equal("subnet-cidr-assoc-1")
+      v6["ipv6_cidr_block"].must_equal("2001:db8::/64")
+      v6["ipv6_cidr_block_state"]["state"].must_equal("associated")
+    end
+
+    it "returns an empty list when no subnets match" do
+      result = run_module({"region" => "us-east-1"}, ->(_region : String, _body : String) { DESCRIBE_NONE })
+      result["subnets"].as_a.must_be_empty
+    end
+
+    it "defaults tags to {} and empty sets to [] when the wire response has neither" do
+      result = run_module({"region" => "us-east-1"}, ->(_region : String, _body : String) { DESCRIBE_BARE })
+      subnet = result["subnets"][0]
+      subnet["tags"].as_h.must_be_empty
+      subnet["ipv6_cidr_block_association_set"].as_a.must_be_empty
+    end
+
+    it "carries no msg on success (fail_json-only field)" do
+      result = run_module({"region" => "us-east-1"}, ->(_region : String, _body : String) { DESCRIBE_ONE })
+      result["msg"]?.must_be_nil
+    end
+
+    it "sends SubnetId.N and Filter.N.Name/Value.M wire params" do
+      bodies = [] of String
+      handler = ->(_region : String, body : String) do
+        bodies << body
+        DESCRIBE_NONE
+      end
+      run_module({
+        "region"     => "us-east-1",
+        "subnet_ids" => %(["subnet-aaaa", "subnet-bbbb"]),
+        "filters"    => %({"vpc-id": "vpc-1234", "tag:Name": ["web", "db"]}),
+      }, handler)
+
+      body = bodies.first.not_nil!
+      params = URI::Params.parse(body)
+      params.fetch_all("SubnetId.1").must_equal(["subnet-aaaa"])
+      params.fetch_all("SubnetId.2").must_equal(["subnet-bbbb"])
+      params.fetch_all("Filter.1.Name").must_equal(["vpc-id"])
+      params.fetch_all("Filter.1.Value.1").must_equal(["vpc-1234"])
+      params.fetch_all("Filter.2.Name").must_equal(["tag:Name"])
+      params.fetch_all("Filter.2.Value.1").must_equal(["web"])
+      params.fetch_all("Filter.2.Value.2").must_equal(["db"])
+    end
+
+    it "fails with the API error message when a call errors" do
+      result = run_module({"region" => "us-east-1"}, ->(_region : String, _body : String) { raise Krikri::PluginHelpers::Ec2Api::Error.new("UnauthorizedOperation: fake") })
+      result["failed"].must_equal(true)
+      result["msg"].must_equal("UnauthorizedOperation: fake")
+    end
+
+    it "fails without a region" do
+      old_region = ENV["AWS_REGION"]?
+      ENV.delete("AWS_REGION")
+      ENV.delete("AWS_DEFAULT_REGION")
+      begin
+        result = run_module(EMPTY_PARAMS, ->(_region : String, _body : String) { DESCRIBE_NONE })
+        result["failed"].must_equal(true)
+        result["msg"].as_s.must_include("region")
+      ensure
+        ENV["AWS_REGION"] = old_region if old_region
+      end
+    end
+  end
+end

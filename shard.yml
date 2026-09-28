@@ -40,6 +40,9 @@ development_dependencies:
   ameba:
     github: crystal-ameba/ameba
     version: 1.7.0
+  minitest:
+    github: ysbaddaden/minitest.cr
+    tag: v1.6.1
 
 crystal: ">= 1.0.0"
 

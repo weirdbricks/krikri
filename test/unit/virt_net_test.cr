@@ -1,0 +1,135 @@
+require "../minitest_helper"
+require "../../src/krikri/plugin_helpers/virsh_net"
+require "../../src/krikri/playbook_parser"
+require "../../src/krikri/plugin_manager"
+
+# Unit-tests the virsh output parsing against real
+# community.libvirt.virt_net's own behavior (read from its source) -
+# the plugin's execution paths need a live libvirt daemon, the
+# `virsh net-info`/net-dumpxml parsing doesn't.
+describe Krikri::PluginHelpers::VirshNet do
+  private def sample_info
+    "Name:           default
+UUID:           828fcd0e-90ee-4a58-a52d-7f1b38a2af17
+Active:         yes
+Persistent:     yes
+Autostart:      no
+Bridge:         virbr0
+"
+  end
+
+  describe ".parse_net_info" do
+    it "parses the yes/no fields and bridge" do
+      info = Krikri::PluginHelpers::VirshNet.parse_net_info(sample_info)
+      info[:active].must_equal(true)
+      info[:autostart].must_equal(false)
+      info[:persistent].must_equal(true)
+      info[:bridge].must_equal("virbr0")
+    end
+
+    it "leaves a missing Bridge line as nil" do
+      info = Krikri::PluginHelpers::VirshNet.parse_net_info("Name: x\nActive: no\n")
+      info[:bridge].must_be_nil
+      info[:active].must_equal(false)
+    end
+  end
+
+  describe ".parse_forward_mode / .parse_domain / .parse_macaddress" do
+    private def xml
+      "<network><name>default</name><forward mode='nat'/><domain name='example.lan'/><mac address='52:54:00:aa:bb:cc'/></network>"
+    end
+
+    it "extracts the fact fields the real module xpath-scans" do
+      Krikri::PluginHelpers::VirshNet.parse_forward_mode(xml).must_equal("nat")
+      Krikri::PluginHelpers::VirshNet.parse_domain(xml).must_equal("example.lan")
+      Krikri::PluginHelpers::VirshNet.parse_macaddress(xml).must_equal("52:54:00:aa:bb:cc")
+    end
+
+    it "returns nil when the element is absent" do
+      Krikri::PluginHelpers::VirshNet.parse_forward_mode("<network/>").must_be_nil
+      Krikri::PluginHelpers::VirshNet.parse_domain("<network/>").must_be_nil
+      Krikri::PluginHelpers::VirshNet.parse_macaddress("<network/>").must_be_nil
+    end
+  end
+
+  describe ".parse_dhcp_hosts" do
+    it "extracts mac/name/ip from self-closing host entries" do
+      xml = "<network><ip><dhcp><host mac='FC:C2:33:00:6c:3c' name='my_vm' ip='192.168.122.30'/></dhcp></ip></network>"
+      hosts = Krikri::PluginHelpers::VirshNet.parse_dhcp_hosts(xml)
+      hosts.size.must_equal(1)
+      hosts[0].mac.must_equal("FC:C2:33:00:6c:3c")
+      hosts[0].name.must_equal("my_vm")
+      hosts[0].ip.must_equal("192.168.122.30")
+    end
+  end
+
+  describe ".net_update_command" do
+    it "maps a host entry to add-last ip-dhcp-host, live+config when active" do
+      cmd = Krikri::PluginHelpers::VirshNet.net_update_command(
+        "qemu:///system", "br_nat", "<host mac='FC:C2:33:00:6c:3c' name='my_vm' ip='192.168.122.30'/>", true
+      )
+      cmd.must_equal(["virsh", "--connect", "qemu:///system", "net-update", "br_nat",
+                      "add-last", "ip-dhcp-host", "<host mac='FC:C2:33:00:6c:3c' name='my_vm' ip='192.168.122.30'/>",
+                      "--live", "--config"])
+    end
+
+    it "is config-only when the network is inactive" do
+      cmd = Krikri::PluginHelpers::VirshNet.net_update_command("qemu:///system", "br_nat", "<host mac='x'/>", false)
+      cmd.not_nil!.wont_include("--live")
+    end
+
+    it "rejects non-host sections like the real module" do
+      Krikri::PluginHelpers::VirshNet.net_update_command("qemu:///system", "br_nat", "<bridge/>", false).must_be_nil
+    end
+  end
+
+  describe ".virsh" do
+    it "threads the connection URI before the subcommand" do
+      Krikri::PluginHelpers::VirshNet.virsh("qemu:///system", "net-start", "br_nat")
+        .must_equal(["virsh", "--connect", "qemu:///system", "net-start", "br_nat"])
+    end
+  end
+end
+
+describe "virt_net registration" do
+  it "resolves the bare and FQCN spellings onto the virt_net plugin" do
+    Krikri::PlaybookParser.resolve_module_name("virt_net").must_equal("virt_net")
+    Krikri::PlaybookParser.resolve_module_name("community.libvirt.virt_net").must_equal("virt_net")
+    Krikri::PluginManager.simple_plugin_name("virt_net").must_equal("virt_net")
+  end
+end
+
+describe "virt_net plugin - argument validation before the HAS_VIRT probe" do
+  # Real AnsibleModule construction (choices + required_if) fires BEFORE
+  # the libvirt import probe, so a libvirt-less host still fails invalid
+  # arguments with parameters.py's wording - found via the
+  # virt_net_edge_cases podman-diff case, where the probe message leaked
+  # over the choice/required_if errors. These run the real plugin binary
+  # and never reach the probe, so they're deterministic with or without
+  # `virsh` installed.
+  it "rejects an invalid state choice with parameters.py wording" do
+    result = PluginSpecHelper.run("virt_net", {
+      "name"  => "krikri-net",
+      "state" => "krikri_bogus",
+    })
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("value of state must be one of: active, inactive, present, absent, got: krikri_bogus")
+  end
+
+  it "rejects an invalid command choice with parameters.py wording" do
+    result = PluginSpecHelper.run("virt_net", {
+      "name"    => "krikri-net",
+      "command" => "krikri_bogus",
+    })
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("value of command must be one of: create, status, start, stop, undefine, destroy, get_xml, define, modify, list_nets, facts, info, got: krikri_bogus")
+  end
+
+  it "enforces required_if name for entry commands" do
+    result = PluginSpecHelper.run("virt_net", {
+      "command" => "create",
+    })
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("command is create but all of the following are missing: name")
+  end
+end

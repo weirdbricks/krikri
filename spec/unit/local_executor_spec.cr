@@ -76,7 +76,10 @@ describe Krikri::LocalExecutor do
       # The backgrounded daemon should still actually be running - this
       # isn't testing that the command failed to start, only that waiting
       # for its own output doesn't block the caller.
-      10.times do
+      # Polled for up to 5s: on a loaded machine (parallel test runs) the
+      # backgrounded subshell can take well over half a second to get
+      # scheduled, and a pass still returns as soon as the marker appears.
+      100.times do
         break if File.exists?(marker)
         sleep 50.milliseconds
       end

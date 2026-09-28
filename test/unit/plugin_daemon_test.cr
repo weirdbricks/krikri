@@ -1,0 +1,343 @@
+require "../minitest_helper"
+
+# Perf items 1-3 - drives the REAL
+# compiled `.fat-plugin --daemon` binary as a local subprocess (no SSH
+# involved at all), the same "exercise the real entrypoint, not a
+# reimplementation of it" spirit `PluginSpecHelper` already uses for
+# one-shot plugin binaries. This is genuine automated coverage of the
+# framing/dispatch protocol `ssh_manager.cr`'s `daemon_send` speaks over
+# a real SSH session - only the transport (a local pipe instead of SSH)
+# differs, the wire protocol itself is identical.
+private def daemon_send(process : Process, module_name : String, config : Hash) : JSON::Any
+  request = {"module" => module_name, "config" => config}.to_json
+  bytes = request.to_slice
+  process.input.write_bytes(bytes.size.to_u32, IO::ByteFormat::BigEndian)
+  process.input.write(bytes)
+  process.input.flush
+
+  length = process.output.read_bytes(UInt32, IO::ByteFormat::BigEndian)
+  response = Bytes.new(length)
+  process.output.read_fully(response)
+  JSON.parse(String.new(response))
+end
+
+# Item 3's batch request shape: one frame carrying a LIST of steps,
+# answered with one frame of index-keyed results.
+private def daemon_batch(process : Process, steps : Array(Hash(String, JSON::Any))) : Hash(String, JSON::Any)
+  request = {"batch" => steps}.to_json
+  bytes = request.to_slice
+  process.input.write_bytes(bytes.size.to_u32, IO::ByteFormat::BigEndian)
+  process.input.write(bytes)
+  process.input.flush
+
+  length = process.output.read_bytes(UInt32, IO::ByteFormat::BigEndian)
+  response = Bytes.new(length)
+  process.output.read_fully(response)
+  JSON.parse(String.new(response))["results"].as_h
+end
+
+private def batch_step(raw_command : String, ignore_errors : Bool = false) : Hash(String, JSON::Any)
+  config = {
+    "host"   => {"name" => "localhost", "user" => ENV["USER"]? || "root", "port" => 22},
+    "vars"   => {"ansible_connection" => "local"},
+    "params" => {"_raw_params" => raw_command},
+  }
+  {
+    "module"        => JSON::Any.new("command"),
+    "config"        => JSON.parse(config.to_json),
+    "ignore_errors" => JSON::Any.new(ignore_errors),
+  }
+end
+
+describe "fat plugin binary --daemon mode" do
+  private def daemon_binary
+    File.join(PluginSpecHelper::PLUGINS_DIR, ".fat-plugin")
+  end
+
+  # Perf item 2. `facts` was the one real
+  # remote module missing from this binary's dispatch table, so it was
+  # explicitly held off the daemon path (DAEMON_INELIGIBLE_PLUGINS) -
+  # otherwise every fact gather, the one task that runs on every host in
+  # every play, would have hit the "unknown plugin" fallback. This is
+  # the check that the exclusion is genuinely no longer needed: a real
+  # `--daemon` process must answer a facts request with real facts, and
+  # must still serve an ordinary module afterwards on the same pipe.
+  # Perf item 3. Batching and the daemon
+  # used to be mutually exclusive PER TASK: a batched group went out as
+  # a fresh ssh + bash + base64 script and the daemon served only solo
+  # tasks, so every task took one optimization and forfeited the other.
+  #
+  # What has to hold for that to be safe is that the two transports are
+  # indistinguishable from the result: same fail-fast rule, same
+  # ignore_errors override, and the same "an absent index never ran"
+  # contract BatchScript.parse documents. Those are what is pinned here,
+  # against the REAL compiled daemon rather than a reimplementation.
+  it "runs a batch of steps in one request, in order" do
+    skip "fat plugin binary not built (run ./build.sh first)" unless File.exists?(daemon_binary)
+
+    process = Process.new(daemon_binary, ["--daemon"],
+      input: Process::Redirect::Pipe, output: Process::Redirect::Pipe, error: Process::Redirect::Close)
+
+    begin
+      results = daemon_batch(process, [
+        batch_step("echo one"),
+        batch_step("echo two"),
+        batch_step("echo three"),
+      ])
+
+      results.size.must_equal(3)
+      results["0"]["stdout"].as_s.must_equal("one")
+      results["1"]["stdout"].as_s.must_equal("two")
+      results["2"]["stdout"].as_s.must_equal("three")
+    ensure
+      process.input.close rescue nil
+      process.wait rescue nil
+    end
+  end
+
+  it "backfills failed/changed on a successful batch step, matching the script transport's interpreted shape" do
+    # Round 813096 (also 813254/813290/813354 - one root cause): a
+    # daemon-batched successful slurp: registered a dict with NO "failed"
+    # key (a module's wire JSON omits it on success; the script
+    # transport's controller-side interpret_remote_result ->
+    # normalize_module_result backfills it, the daemon batch response
+    # didn't). elan.monitoring_blackbox_exporter's sibling block then
+    # evaluated `when: blackbox_exporter_remote_version["failed"] or ...`
+    # against that shape and died with "object of type 'dict' has no
+    # attribute 'failed'" once per loop item on the warm run, where real
+    # ansible-playbook skips the whole block (its warm recap there:
+    # ok=9 skipped=10; krikri's: ok=7 failed=1). This drives the REAL
+    # compiled daemon over the same length-prefixed pipe
+    # SSHManager.daemon_send_batch speaks over - only the transport
+    # (local pipe, not SSH) differs.
+    skip "fat plugin binary not built (run ./build.sh first)" unless File.exists?(daemon_binary)
+
+    process = Process.new(daemon_binary, ["--daemon"],
+      input: Process::Redirect::Pipe, output: Process::Redirect::Pipe, error: Process::Redirect::Close)
+
+    begin
+      slurp_config = {
+        "host"   => {"name" => "localhost", "user" => ENV["USER"]? || "root", "port" => 22},
+        "vars"   => {"ansible_connection" => "local"},
+        "params" => {"src" => "/etc/hostname"},
+      }
+      results = daemon_batch(process, [
+        {"module" => JSON::Any.new("slurp"), "config" => JSON.parse(slurp_config.to_json), "ignore_errors" => JSON::Any.new(false)},
+      ])
+
+      results["0"]["failed"]?.try(&.as_bool).must_equal(false)
+      results["0"]["changed"]?.try(&.as_bool).must_equal(false)
+      # The backfill must not have disturbed the payload itself.
+      results["0"]["content"]?.wont_be_nil
+    ensure
+      process.input.close rescue nil
+      process.wait rescue nil
+    end
+  end
+
+  it "stops a batch at the first failing step, exactly as the script transport does" do
+    skip "fat plugin binary not built (run ./build.sh first)" unless File.exists?(daemon_binary)
+
+    process = Process.new(daemon_binary, ["--daemon"],
+      input: Process::Redirect::Pipe, output: Process::Redirect::Pipe, error: Process::Redirect::Close)
+
+    begin
+      results = daemon_batch(process, [
+        batch_step("echo a"),
+        batch_step("exit 7"),
+        batch_step("echo never"),
+      ])
+
+      results["0"]["stdout"].as_s.must_equal("a")
+      results["1"]["failed"].as_bool.must_equal(true)
+      # Absent, not present-and-failed: the step genuinely never ran, and
+      # that is how the caller distinguishes the two.
+      results.has_key?("2").must_equal(false)
+    ensure
+      process.input.close rescue nil
+      process.wait rescue nil
+    end
+  end
+
+  it "lets an ignore_errors step fail without stopping the batch" do
+    skip "fat plugin binary not built (run ./build.sh first)" unless File.exists?(daemon_binary)
+
+    process = Process.new(daemon_binary, ["--daemon"],
+      input: Process::Redirect::Pipe, output: Process::Redirect::Pipe, error: Process::Redirect::Close)
+
+    begin
+      results = daemon_batch(process, [
+        batch_step("echo a"),
+        batch_step("exit 7", ignore_errors: true),
+        batch_step("echo after"),
+      ])
+
+      results.size.must_equal(3)
+      results["1"]["failed"].as_bool.must_equal(true)
+      results["2"]["stdout"].as_s.must_equal("after")
+    ensure
+      process.input.close rescue nil
+      process.wait rescue nil
+    end
+  end
+
+  it "keeps serving solo requests on the same process after a batch" do
+    skip "fat plugin binary not built (run ./build.sh first)" unless File.exists?(daemon_binary)
+
+    process = Process.new(daemon_binary, ["--daemon"],
+      input: Process::Redirect::Pipe, output: Process::Redirect::Pipe, error: Process::Redirect::Close)
+
+    begin
+      daemon_batch(process, [batch_step("echo batched")])
+
+      base_config = {"host" => {"name" => "localhost", "user" => ENV["USER"]? || "root", "port" => 22}, "vars" => {"ansible_connection" => "local"}}
+      solo = daemon_send(process, "command", base_config.merge({"params" => {"_raw_params" => "echo solo"}}))
+      solo["stdout"]?.try(&.as_s).must_equal("solo")
+    ensure
+      process.input.close rescue nil
+      process.wait rescue nil
+    end
+  end
+
+  it "serves facts over the daemon, on the same process as any other module" do
+    skip "fat plugin binary not built (run ./build.sh first)" unless File.exists?(daemon_binary)
+
+    process = Process.new(daemon_binary, ["--daemon"],
+      input: Process::Redirect::Pipe, output: Process::Redirect::Pipe, error: Process::Redirect::Close)
+
+    begin
+      base_config = {"host" => {"name" => "localhost", "user" => ENV["USER"]? || "root", "port" => 22}, "vars" => {} of String => String}
+
+      facts = daemon_send(process, "facts", base_config.merge({"params" => {} of String => String}))
+      facts["failed"]?.try(&.as_bool).must_equal(false)
+      gathered = facts["ansible_facts"].as_h
+      gathered["ansible_system"]?.wont_be_nil
+      gathered["ansible_distribution"]?.wont_be_nil
+      # Not the "unknown plugin: facts" shape the exclusion existed to
+      # avoid - that one carries a msg and no ansible_facts at all.
+      facts["msg"]?.must_be_nil
+
+      # gather_subset still reaches the gatherer through the wire config.
+      minimal = daemon_send(process, "facts", base_config.merge({"params" => {"gather_subset" => "min"}}))
+      expect(minimal["ansible_facts"].as_h.size < gathered.size).must_equal(true)
+
+      # One daemon, both kinds of module.
+      after = daemon_send(process, "command", base_config.merge({"params" => {"_raw_params" => "echo after-facts"}}))
+      after["stdout"]?.try(&.as_s).must_equal("after-facts")
+    ensure
+      process.input.close rescue nil
+      process.wait rescue nil
+    end
+  end
+
+  it "serves multiple requests over the SAME long-lived process, matching one-shot output" do
+    skip "fat plugin binary not built (run ./build.sh first)" unless File.exists?(daemon_binary)
+
+    process = Process.new(daemon_binary, ["--daemon"],
+      input: Process::Redirect::Pipe, output: Process::Redirect::Pipe, error: Process::Redirect::Close)
+
+    begin
+      base_config = {"host" => {"name" => "localhost", "user" => ENV["USER"]? || "root", "port" => 22}, "vars" => {} of String => String}
+
+      first = daemon_send(process, "command", base_config.merge({"params" => {"_raw_params" => "echo daemon-one"}}))
+      first["stdout"]?.try(&.as_s).must_equal("daemon-one")
+      # The daemon returns the plugin's own WIRE result verbatim, which
+      # since the module-protocol fix no longer carries failed: false on
+      # a success (the controller's normalize_module_result backfills it
+      # after parsing - the one-shot PluginSpecHelper.run path goes
+      # through it, this direct-daemon path deliberately does not).
+      expect(falsey?(first["failed"]?)).must_equal(true)
+
+      # A SECOND request over the identical process/pipe - the whole
+      # point of the daemon: no new process spawned between these two
+      # calls, unlike the one-shot path.
+      second = daemon_send(process, "command", base_config.merge({"params" => {"_raw_params" => "echo daemon-two"}}))
+      second["stdout"]?.try(&.as_s).must_equal("daemon-two")
+
+      # Matches what the equivalent one-shot invocation produces for the
+      # identical input - the daemon path must be behaviorally
+      # transparent, not just independently "working".
+      one_shot = PluginSpecHelper.run("command", {"_raw_params" => "echo daemon-one"})
+      one_shot["stdout"]?.try(&.as_s).must_equal(first["stdout"]?.try(&.as_s))
+    ensure
+      process.input.close rescue nil
+      process.wait
+    end
+  end
+
+  it "returns a graceful JSON failure (not a crash) for an unrecognized module name, and keeps serving after it" do
+    skip "fat plugin binary not built (run ./build.sh first)" unless File.exists?(daemon_binary)
+
+    process = Process.new(daemon_binary, ["--daemon"],
+      input: Process::Redirect::Pipe, output: Process::Redirect::Pipe, error: Process::Redirect::Close)
+
+    begin
+      bad = daemon_send(process, "no_such_module", {"host" => {"name" => "localhost"}, "params" => {} of String => String})
+      bad["failed"]?.try(&.as_bool).must_equal(true)
+      bad["msg"]?.to_s.must_include("unknown plugin")
+
+      # One bad request must not have killed the daemon - the SAME
+      # process still answers a real request afterward.
+      ok = daemon_send(process, "command", {"host" => {"name" => "localhost", "user" => ENV["USER"]? || "root", "port" => 22}, "vars" => {} of String => String, "params" => {"_raw_params" => "echo still-alive"}})
+      ok["stdout"]?.try(&.as_s).must_equal("still-alive")
+    ensure
+      process.input.close rescue nil
+      process.wait
+    end
+  end
+
+  it "returns a structured error frame when a request raises at dispatch time, and keeps serving after it" do
+    skip "fat plugin binary not built (run ./build.sh first)" unless File.exists?(daemon_binary)
+
+    process = Process.new(daemon_binary, ["--daemon"],
+      input: Process::Redirect::Pipe, output: Process::Redirect::Pipe, error: Process::Redirect::Close)
+
+    begin
+      # Malformed JSON in the frame - JSON.parse raises at dispatch time.
+      raw = "not json{"
+      bytes = raw.to_slice
+      process.input.write_bytes(bytes.size.to_u32, IO::ByteFormat::BigEndian)
+      process.input.write(bytes)
+      process.input.flush
+
+      length = process.output.read_bytes(UInt32, IO::ByteFormat::BigEndian)
+      response = Bytes.new(length)
+      process.output.read_fully(response)
+      error = JSON.parse(String.new(response))
+      error["failed"].as_bool.must_equal(true)
+      error["msg"].as_s.must_include("Plugin execution failed")
+
+      # Well-formed JSON but no "module" key - request["module"] raises.
+      request = {"config" => {"host" => {"name" => "localhost"}}}.to_json
+      bytes = request.to_slice
+      process.input.write_bytes(bytes.size.to_u32, IO::ByteFormat::BigEndian)
+      process.input.write(bytes)
+      process.input.flush
+
+      length = process.output.read_bytes(UInt32, IO::ByteFormat::BigEndian)
+      response = Bytes.new(length)
+      process.output.read_fully(response)
+      error = JSON.parse(String.new(response))
+      error["failed"].as_bool.must_equal(true)
+
+      # Neither dispatch exception killed the daemon - the SAME process
+      # still answers a real request afterward.
+      ok = daemon_send(process, "command", {"host" => {"name" => "localhost", "user" => ENV["USER"]? || "root", "port" => 22}, "vars" => {} of String => String, "params" => {"_raw_params" => "echo survived"}})
+      ok["stdout"]?.try(&.as_s).must_equal("survived")
+    ensure
+      process.input.close rescue nil
+      process.wait rescue nil
+    end
+  end
+
+  it "exits cleanly when stdin is closed" do
+    skip "fat plugin binary not built (run ./build.sh first)" unless File.exists?(daemon_binary)
+
+    process = Process.new(daemon_binary, ["--daemon"],
+      input: Process::Redirect::Pipe, output: Process::Redirect::Pipe, error: Process::Redirect::Close)
+
+    process.input.close
+    status = process.wait
+    status.exit_code.must_equal(0)
+  end
+end

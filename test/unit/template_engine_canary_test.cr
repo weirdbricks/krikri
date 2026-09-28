@@ -1,0 +1,267 @@
+require "../minitest_helper"
+require "../support/jinja_render_helper"
+# Canary for the template engine a real `.j2` render uses (the shared
+# krikri-jinja engine plus krikri's Ansible registrations), bypassing
+# JinjaRenderer's variable preparation: after a krikri-jinja release,
+# these tell you whether an Ansible behavior krikri relies on still holds.
+# jinja_renderer_spec.cr covers the re-templating/var-context machinery.
+require "../../src/krikri/krikri_jinja_filters"
+
+private def crinja_render(tpl : String, vars = nil) : String
+  krikri_jinja_render(tpl, vars)
+end
+
+describe "template engine canary" do
+  # Bool finalization is Python-parity "True"/"False" (was lowercase
+  # true/false in the fork before the intentional fix).
+  it "finalizes bare booleans capitalized, Python-style" do
+    crinja_render("{{ true }}|{{ false }}").must_equal("True|False")
+  end
+
+  it "keeps `and`/`or` as value selectors, returning the winning operand" do
+    crinja_render("{{ '' or 'fallback' }}").must_equal("fallback")
+    crinja_render("{{ 'x' or 'y' }}").must_equal("x")
+    crinja_render("{{ 1 and 2 }}").must_equal("2")
+  end
+
+  it "supports the in / not in operators (was entirely absent)" do
+    crinja_render("{{ 'a' in ['a', 'b'] }}").must_equal("True")
+    crinja_render("{{ 'a' not in ['a', 'b'] }}").must_equal("False")
+    crinja_render("{{ 'enabled' not in 'disabled' }}").must_equal("True")
+  end
+
+  it "renders native inline ternary" do
+    crinja_render("{{ 'a' if true else 'b' }}").must_equal("a")
+    crinja_render("{{ 'a' if false else 'b' }}").must_equal("b")
+    crinja_render("{{ ('a' if false else 'b' if false else 'c') }}").must_equal("c")
+  end
+
+  # dict() single positional-iterable form (fork crystal-play-0.9.4).
+  it "builds a dict from a positional iterable of pairs" do
+    crinja_render("{{ dict([['a', 1], ['b', 2]]) }}").must_equal("{'a': 1, 'b': 2}")
+    crinja_render("{{ dict({'x': 'y'}) }}").must_equal("{'x': 'y'}")
+  end
+
+  # to_datetime (jinja_filters.cr) + fork Time subtraction -> TimeDelta.days
+  # (fork crystal-play-0.9.5).
+  it "subtracts two to_datetime values and reads .days" do
+    crinja_render(
+      "{{ (a | to_datetime('%b %d, %Y') - b | to_datetime('%b %d, %Y')).days }}",
+      {"a" => "Jan 02, 2024", "b" => "Jan 01, 2024"}
+    ).must_equal("1")
+  end
+
+  # `+`/`*` on a Time/TimeDelta - the "addition/multiplication" half of
+  # to_datetime()/timedelta arithmetic this codebase deliberately left
+  # narrowly scoped to subtraction-only until a real role needed more.
+  it "adds a timedelta back onto a datetime (Python's datetime + timedelta)" do
+    # b + (a - b) should land back on a - verified by re-subtracting a
+    # from the result and checking a zero-second difference, since
+    # Crinja's own Time value has no strftime/formatting support to
+    # compare against a literal date string directly.
+    crinja_render(
+      "{{ (( (b | to_datetime('%b %d, %Y')) + (a | to_datetime('%b %d, %Y') - b | to_datetime('%b %d, %Y')) ) - (a | to_datetime('%b %d, %Y'))).total_seconds() }}",
+      {"a" => "Jan 03, 2024", "b" => "Jan 01, 2024"}
+    ).must_equal("0.0")
+  end
+
+  it "adds two timedeltas together" do
+    crinja_render(
+      "{{ ((a | to_datetime('%b %d, %Y') - b | to_datetime('%b %d, %Y')) + (a | to_datetime('%b %d, %Y') - b | to_datetime('%b %d, %Y'))).days }}",
+      {"a" => "Jan 03, 2024", "b" => "Jan 01, 2024"}
+    ).must_equal("4")
+  end
+
+  it "multiplies a timedelta by a scalar in either order" do
+    crinja_render(
+      "{{ ((a | to_datetime('%b %d, %Y') - b | to_datetime('%b %d, %Y')) * 3).days }}",
+      {"a" => "Jan 02, 2024", "b" => "Jan 01, 2024"}
+    ).must_equal("3")
+
+    crinja_render(
+      "{{ (3 * (a | to_datetime('%b %d, %Y') - b | to_datetime('%b %d, %Y'))).days }}",
+      {"a" => "Jan 02, 2024", "b" => "Jan 01, 2024"}
+    ).must_equal("3")
+  end
+
+  # Ansible-specific filters/tests that live in jinja_filters.cr and must
+  # stay registered - a future fork addition would make these redundant
+  # (then can be deleted), a regression would fail here.
+  it "registers the regex_search filter with backreference arg" do
+    # A backreference group_ref ALWAYS returns a LIST of the captured
+    # group(s), even for a single `\1` - live-verified against
+    # ansible-core 2.19.4 (regex_search with one group_ref returns
+    # `['12']`, never a bare "12" string) - this canary previously
+    # asserted the wrong (bare-string) rendering, which had silently
+    # broken any real `regex_search(...) | first` chain (the idiom
+    # every real role using this shape actually writes): `| first` on
+    # a bare string returns the string's own first CHARACTER, not the
+    # whole captured group.
+    #
+    # The backreference argument needs a DOUBLED backslash in the
+    # template source (`'\\1'`, i.e. two literal backslash characters
+    # here in Crystal source) since crinja (crystal-play-0.9.52+) now
+    # fully decodes Python-style string-literal escapes in `{{ }}`,
+    # matching real Ansible's own verified template-FILE behavior: a
+    # bare `\1` decodes to a single control character (octal escape)
+    # before the filter ever sees it, breaking the backreference -
+    # live-verified against real ansible-playbook 2.19 rendering a
+    # real `.j2` file (`'\1'` renders `length=1`, i.e. it really is
+    # decoded; `'\\1'` is required for a working backreference). This
+    # is a genuine, if surprising, real-Ansible limitation of `.j2`
+    # template files, not a crinja bug - inline YAML task params go
+    # through krikri's separate hand-rolled evaluator, which never
+    # decodes backslashes, so `'\1'` still works fine there.
+    crinja_render("{{ 'aa12bb' | regex_search('(\\d+)', '\\\\1') }}").must_equal("['12']")
+    crinja_render("{{ 'aa12bb' | regex_search('(\\d+)', '\\\\1') | first }}").must_equal("12")
+  end
+
+  it "regex_search resolves \\g<name> named group refs and [null] for a non-participating group (shared core with FilterEngine)" do
+    # Phase-3 slice 3: the Crinja registration now delegates to the SAME
+    # FilterCore.regex_search core as the hand-rolled FilterEngine case
+    # branch, so both sides answer identically on the group-ref grammar
+    # arbitrated against real ansible-core 2.19.11 (see
+    # filter_engine_spec.cr for the full battery and the pre-change
+    # divergence inventory).
+    crinja_render("{{ 'a' | regex_search('(?<foo>a)', '\\\\g<foo>') }}").must_equal("['a']")
+    crinja_render("{{ 'a' | regex_search('(a)|(b)', '\\\\2') }}").must_equal("[None]")
+  end
+
+  it "regex_search honors the ignorecase/multiline kwargs on the Crinja path" do
+    crinja_render("{{ 'HELLO' | regex_search('hello', ignorecase=True) }}").must_equal("HELLO")
+    crinja_render("{{ 'x\\nend: 42' | regex_search('^end: (\\\\d+)', '\\\\1', multiline=True) }}").must_equal("['42']")
+  end
+
+  it "regex_findall honors named multiline/ignorecase kwargs on the Crinja path" do
+    crinja_render("{{ 'A1B2' | regex_findall('[a-z][0-9]', ignorecase=True) }}").must_equal("['A1', 'B2']")
+    crinja_render("{{ 'A1\\nb2' | regex_findall('^b(\\d)', multiline=True) }}").must_equal("['2']")
+  end
+
+  it "multiline=True maps to Python re.M only: ^/$ move, `.` does NOT cross newlines" do
+    # Real Ansible's regex filters build flags = re.I | re.M; Python's
+    # re.M only moves ^/$ to line boundaries, it is NOT re.DOTALL.
+    # Crystal's Regex::Options::MULTILINE maps to PCRE MULTILINE|DOTALL
+    # (Ruby semantics), so `Version:\ .*:` swallowed across the newline
+    # and captured "1.1.4" from an unrelated later " compat:" line
+    # instead of the version on the Version: line itself
+    # (pluggero.openssh, round 981024).
+    crinja_render("{{ 'Version: 1:8.9p1-3ubuntu0.10\\n compat:1.1.4 notes' | regex_search('Version:\\\\ .*:([\\\\d\\\\.]{2,})', '\\\\1', multiline=True) | first }}").must_equal("8.9")
+    crinja_render("{{ 'Version: 1:8.9p1-3ubuntu0.10\\n compat:1.1.4 notes' is search('Version:\\\\ .*compat', multiline=True) }}").must_equal("False")
+    crinja_render("{{ 'Version: 1:8.9p1-3ubuntu0.10\\n compat:1.1.4 notes' is search('^ compat:1', multiline=True) }}").must_equal("True")
+  end
+
+  it "registers combine (shallow merge, later wins)" do
+    crinja_render("{{ {'a': 1, 'b': 2} | combine({'b': 3, 'c': 4}) }}").must_equal("{'a': 1, 'b': 3, 'c': 4}")
+  end
+
+  # dict2items / items2dict - real Ansible's own filters (NOT standard
+  # Jinja2; Python/Jinja2 reject them as "No filter named ..."), mirrored
+  # here in jinja_filters.cr so a `.j2` template's `{% for %}` block-tag
+  # chain can use them. The hand-rolled FilterEngine has the same pair
+  # for the plain `{{ }}` filter chain (spec/unit/filter_engine_spec.cr) -
+  # this is the Crinja-side dual registration of the bug class that
+  # historically lived independently in both evaluators.
+  it "registers dict2items (default key_name='key', value_name='value')" do
+    crinja_render("{{ {'a': 1, 'b': 2} | dict2items | length }}").must_equal("2")
+    crinja_render("{{ {'a': 1} | dict2items | first | type_debug }}").must_equal("dict")
+    crinja_render("{{ {'a': 1} | dict2items | first }}").must_equal("{'key': 'a', 'value': 1}")
+  end
+
+  it "registers dict2items with custom key_name and value_name kwargs" do
+    crinja_render("{{ {'x': 'foo'} | dict2items(key_name='name', value_name='data') | first }}").must_equal("{'name': 'x', 'data': 'foo'}")
+  end
+
+  it "registers items2dict (inverse of dict2items, later-wins on key collision)" do
+    crinja_render("{{ [{'key': 'a', 'value': 1}, {'key': 'b', 'value': 2}] | items2dict }}").must_equal("{'a': 1, 'b': 2}")
+    crinja_render("{{ [{'key': 'a', 'value': 1}, {'key': 'a', 'value': 2}] | items2dict }}").must_equal("{'a': 2}")
+  end
+
+  it "registers items2dict with custom key_name and value_name kwargs" do
+    crinja_render("{{ [{'name': 'x', 'data': 'foo'}] | items2dict(key_name='name', value_name='data') }}").must_equal("{'x': 'foo'}")
+  end
+
+  it "registers intersect and flatten" do
+    crinja_render("{{ [1, 2, 3] | intersect([2, 3, 4]) | sort | join(',') }}").must_equal("2,3")
+    crinja_render("{{ [1, [2, 3], 4] | flatten | join(',') }}").must_equal("1,2,3,4")
+  end
+
+  it "registers type_debug / basename / dirname / to_nice_yaml" do
+    crinja_render("{{ 'x' | type_debug }}").must_equal("str")
+    crinja_render("{{ '/a/b/c.txt' | basename }}").must_equal("c.txt")
+    crinja_render("{{ '/a/b/c.txt' | dirname }}").must_equal("/a/b")
+  end
+
+  it "registers the boolean / integer / float type tests" do
+    crinja_render("{{ true is boolean }}|{{ 'true' is boolean }}").must_equal("True|False")
+    crinja_render("{{ 5 is integer }}|{{ 5.5 is integer }}").must_equal("True|False")
+    crinja_render("{{ 5.5 is float }}|{{ 5 is float }}").must_equal("True|False")
+  end
+
+  it "registers the register-result tests (failed/changed/succeeded...)" do
+    result = {"failed" => false, "changed" => true}
+    crinja_render("{{ r is failed }}|{{ r is changed }}|{{ r is succeeded }}", {"r" => result}).must_equal("False|True|True")
+  end
+
+  # Python string-method support on the fork's String values.
+  it "supports .split() and .startswith()/.endswith() string methods" do
+    crinja_render("{{ s.split() | join(',') }}", {"s" => "a b"}).must_equal("a,b")
+    crinja_render("{{ m.startswith('/home') }}", {"m" => "/home/user"}).must_equal("True")
+    crinja_render("{{ m.endswith('.j2') }}", {"m" => "config.j2"}).must_equal("True")
+  end
+
+  # Real bug found in a 150-role overnight round (jdauphant.nginx's own
+  # nginx.conf.j2: `{% if v.find('\n') != -1 %}`, checking a config
+  # line for an embedded newline before deciding how to quote it -
+  # ".find is undefined" failed the whole template). crystal-play-0.9.28.
+  it "supports .find() as a real Python string method" do
+    crinja_render("{{ s.find('\\n') }}", {"s" => "hello\nworld"}).must_equal("5")
+    crinja_render("{{ s.find('xyz') }}", {"s" => "hello world"}).must_equal("-1")
+    crinja_render("{{ s.find('o', 5) }}", {"s" => "hello world"}).must_equal("7")
+  end
+
+  # Same round as .find() above (jdauphant.nginx's nginx.conf.j2),
+  # chained one line later: `v.replace(";", ";\n").replace(" {", " {\n
+  # ")...`, rewriting a config line's punctuation into indented
+  # multi-line form. crystal-play-0.9.28.
+  it "supports .replace() as a real Python string method" do
+    crinja_render(%({{ s.replace(";", ";\\n") }}), {"s" => "a;b;c"}).must_equal("a;\nb;\nc")
+    crinja_render(%({{ s.replace("a", "X", 1) }}), {"s" => "aaa"}).must_equal("Xaa")
+  end
+
+  it "keeps first/list/join lenient on Undefined input" do
+    crinja_render("{{ missing | first }}").must_equal("")
+    crinja_render("{{ missing | join(',') }}").must_equal("")
+    crinja_render("{% set x = missing | list %}{{ x }}").must_equal("[]")
+  end
+
+  # Real bug found via srsp.oracle-java (nested dep of
+  # wcm_io_devops.aem_cms): the vendored float filter's guard was
+  # `raw.responds_to?(:to_f?)` - Crystal's own Float64/Int64 have no
+  # `to_f?` (only String does) - so `{{ x | float }}` on a variable
+  # holding a native number answered the DEFAULT (0.0), and the role's
+  # `when: java_subversion | float == 0.1` skipped a task real Ansible
+  # runs. krikri's override lives in jinja_filters.cr; this canary pins
+  # the registration (and flags it as redundant if the fork ever fixes
+  # the guard itself).
+  it "float filter converts native numbers, not just strings" do
+    crinja_render("{{ x | float }}", {"x" => 0.1}).must_equal("0.1")
+    crinja_render("{{ x | float }}", {"x" => 13}).must_equal("13.0")
+    crinja_render("{{ x | float == 0.1 }}", {"x" => 0.1}).must_equal("True")
+    crinja_render("{{ x | float }}", {"x" => "0.1"}).must_equal("0.1")
+    crinja_render("{{ x | float }}", {"x" => "not a number"}).must_equal("0.0")
+  end
+
+  # Real bug found via linux-system-roles.ssh (round 700466): the
+  # vendored trim filter casts its target to String and raises "Cast from
+  # Bool to (SafeString | String) failed" on a non-string. Real Jinja2's
+  # trim applies soft_str (Python str()) to its target first, so
+  # `true | trim` renders "True" (capitalized) and strips fine -
+  # ssh_config.j2 guards default options with
+  # `__ssh_skip_defaults | trim | bool`, where __ssh_skip_defaults is a
+  # native bool.
+  it "trim filter stringifies a non-string target instead of raising" do
+    crinja_render("{{ x | trim }}", {"x" => true}).must_equal("True")
+    crinja_render("{{ x | trim }}", {"x" => false}).must_equal("False")
+    crinja_render("{{ x | trim }}", {"x" => "  padded  "}).must_equal("padded")
+  end
+end

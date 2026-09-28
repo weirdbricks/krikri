@@ -1,0 +1,241 @@
+require "../minitest_helper"
+require "../../src/krikri/variable_substitutor"
+
+# Regression cover for the 0.9.79 performance work: the Crinja environment
+# is now shared process-wide, the JSON::Any -> Crinja::Value conversion is
+# memoized per renderer, and VarSubstitutor builds its evaluator/renderer
+# lazily. All three are only safe if nothing leaks between renders or
+# survives a set_variable, which is what these assert.
+private def vars_of(pairs : Hash(String, String)) : Hash(String, JSON::Any)
+  result = Hash(String, JSON::Any).new
+  pairs.each { |key, value| result[key] = JSON::Any.new(value) }
+  result
+end
+
+describe "Krikri::VarSubstitutor (var_substitutor_caching_test.cr)" do
+  describe "shared Crinja environment" do
+    it "keeps two substitutors with different variable sets independent" do
+      first = Krikri::VarSubstitutor.new(vars: vars_of({"name" => "alpha"}), host_name: "h1")
+      second = Krikri::VarSubstitutor.new(vars: vars_of({"name" => "beta"}), host_name: "h2")
+
+      template = "{% if name %}{{ name }}{% endif %}"
+
+      first.substitute(template).must_equal("alpha")
+      second.substitute(template).must_equal("beta")
+      # Re-render the first one *after* the second has used the shared
+      # environment - a leaked context would show "beta" here.
+      first.substitute(template).must_equal("alpha")
+    end
+
+    it "does not leak a top-level {% set %} from one render into the next" do
+      subject = Krikri::VarSubstitutor.new(vars: vars_of({"base" => "x"}), host_name: "h")
+
+      subject.substitute("{% set leaked = 'yes' %}{{ base }}").must_equal("x")
+      # `leaked` was only ever bound in the previous render's scope.
+      # (Note the `{{ }}`: substitute only reaches the Crinja path at all
+      # for text containing one, so the else-branch carries it.)
+      subject.substitute("{% if leaked is defined %}LEAK{% else %}{{ base }}{% endif %}").must_equal("x")
+    end
+
+    it "renders a {% for %} loop identically on repeated calls" do
+      subject = Krikri::VarSubstitutor.new(vars: vars_of({"sep" => "-"}), host_name: "h")
+      template = "{% for i in [1, 2, 3] %}{{ i }}{{ sep }}{% endfor %}"
+
+      first = subject.substitute(template)
+      first.must_equal("1-2-3-")
+      subject.substitute(template).must_equal(first)
+    end
+  end
+
+  describe "#set_variable" do
+    it "is visible to the plain {{ }} path after lazy construction" do
+      subject = Krikri::VarSubstitutor.new(vars: vars_of({"a" => "1"}), host_name: "h")
+
+      subject.substitute("{{ a }}").must_equal("1")
+      subject.set_variable("a", "2")
+      subject.substitute("{{ a }}").must_equal("2")
+    end
+
+    it "invalidates the renderer's memoized variable conversion" do
+      subject = Krikri::VarSubstitutor.new(vars: vars_of({"a" => "1"}), host_name: "h")
+      template = "{% if a %}{{ a }}{% endif %}"
+
+      # Force the renderer to build and memoize its converted vars first,
+      # so the set_variable below has something stale to invalidate.
+      subject.substitute(template).must_equal("1")
+      subject.set_variable("a", "2")
+      subject.substitute(template).must_equal("2")
+    end
+
+    it "is visible when set before anything has been substituted at all" do
+      subject = Krikri::VarSubstitutor.new(vars: vars_of({"a" => "1"}), host_name: "h")
+
+      subject.set_variable("b", "new")
+      subject.substitute("{{ b }}").must_equal("new")
+      subject.substitute("{% if b %}{{ b }}{% endif %}").must_equal("new")
+    end
+  end
+
+  describe "lazy component construction" do
+    it "still returns literal text untouched without building anything" do
+      subject = Krikri::VarSubstitutor.new(vars: vars_of({"a" => "1"}), host_name: "h")
+      subject.substitute("no placeholders here").must_equal("no placeholders here")
+    end
+
+    it "still exposes magic variables" do
+      subject = Krikri::VarSubstitutor.new(vars: vars_of({} of String => String), host_name: "web1")
+      subject.substitute("{{ inventory_hostname }}").must_equal("web1")
+    end
+  end
+
+  describe "re-templating a value that is itself more Jinja" do
+    it "re-renders a variable's own value through the full Crinja pipeline when it contains block tags, not just {{ }}" do
+      # Real bug found benchmarking githubixx.ansible_role_wireguard:
+      # `wireguard_remote_directory`'s own default value is a multi-line
+      # `{%- if ... -%}...{%- elif ... -%}...{%- endif -%}` block (no
+      # `{{ }}` inside at all). A task param like `dest: "{{
+      # wireguard_remote_directory }}/{{ wireguard_conf_filename }}"`
+      # fetched that raw block-tag text as a plain string - format_value
+      # doesn't template it - and the outer re-pass loop only ever
+      # checked for leftover "{{", never "{%"/"{#", so it never got a
+      # second pass to actually evaluate the block. The literal,
+      # unparsed "{%- if ... %}" text became the real `dest:` path.
+      v = Hash(String, JSON::Any).new
+      v["use_netplan"] = JSON::Any.new(false)
+      v["remote_dir"] = JSON::Any.new(<<-JINJA.strip)
+        {%- if use_netplan -%}
+        /etc/netplan
+        {%- else -%}
+        /etc/wireguard
+        {%- endif -%}
+        JINJA
+      v["conf_filename"] = JSON::Any.new("wg0.conf")
+      subject = Krikri::VarSubstitutor.new(vars: v, host_name: "h")
+
+      result = subject.substitute("{{ remote_dir }}/{{ conf_filename }}")
+      result.wont_include("{%")
+      result.must_include("/etc/wireguard")
+      result.must_include("wg0.conf")
+    end
+
+    it "doesn't stack-overflow on a variable whose value mixes {{ }} and {% %}" do
+      # Real bug found benchmarking cloudalchemy.grafana's own
+      # `grafana_package: "grafana{% if ansible_architecture == 'armv6l'
+      # %}-rpi{% endif %}{{ (grafana_version != 'latest') |
+      # ternary('=' ~ grafana_version, '') }}"` (vars/debian.yml -
+      # unconditional role vars, not a default). JinjaRenderer#
+      # prepare_crinja_vars pre-renders any `{{`-containing value via a
+      # *fresh* VarSubstitutor (documented there as safe since it "can't
+      # recurse back into this same render" - true only when the value
+      # contains `{{` alone). A value with BOTH `{{` and a block tag
+      # escalates straight to renderer.render, which calls
+      # prepare_crinja_vars again on the same @vars, building *another*
+      # fresh VarSubstitutor for the same still-unrendered value,
+      # forever - crashed the whole engine with a stack overflow instead
+      # of failing one task.
+      #
+      # The guarantee this asserts is termination without a crash, not
+      # full resolution: the fix is a process-wide recursion-depth cap
+      # (MAX_BLOCK_TAG_ESCALATION_DEPTH), which turns unbounded
+      # recursion into a bounded one that returns the raw, still-
+      # unrendered text once the cap is hit rather than segfaulting -
+      # verified separately, against the full engine with a realistic
+      # vars_context (many more magic vars than this minimal 3-key one),
+      # to actually converge to the correct "grafana" rather than
+      # hitting the cap; a bare, hand-built vars hash this small doesn't
+      # reliably reach the same convergence path.
+      v = Hash(String, JSON::Any).new
+      v["ansible_architecture"] = JSON::Any.new("x86_64")
+      v["grafana_version"] = JSON::Any.new("latest")
+      v["grafana_package"] = JSON::Any.new(
+        %(grafana{% if ansible_architecture == 'armv6l' %}-rpi{% endif %}{{ (grafana_version != 'latest') | ternary('=' ~ grafana_version, '') }})
+      )
+      subject = Krikri::VarSubstitutor.new(vars: v, host_name: "h")
+
+      result = subject.substitute("{{ grafana_package }}")
+      result.wont_be_nil
+      result.starts_with?("grafana").must_equal(true)
+    end
+  end
+
+  describe "block-tag-only task params (no {{ }} anywhere)" do
+    it "renders {% %} block tags even when the whole span has no {{ }} at all" do
+      # Real bug found benchmarking prometheus.prometheus._common's own
+      # vars/main.yml: `_common_dependencies: "{% if (...) %}{{ (...)
+      # }}{% else %}{% endif %}"` - substitute()'s own top-level guard
+      # only ever checked for "{{" before doing ANY work, so a value
+      # that's pure block-tag Jinja with the {{ }} interpolation nested
+      # inside (only reachable via a variable lookup returning this raw
+      # text, not visible at the outer text's own top level) short-
+      # circuited immediately, never reaching Crinja at all.
+      subject = Krikri::VarSubstitutor.new(vars: vars_of({"pkg_mgr" => "apt"}), host_name: "h")
+
+      subject.substitute("x={% if pkg_mgr == 'apt' %}YES{% else %}NO{% endif %}").must_equal("x=YES")
+    end
+  end
+
+  describe "Hash(String, JSON::Any)-typed constructor overload (SUGGESTED_PERFORMANCE_IMPROVEMENTS.md item #18)" do
+    it "does not mutate the caller's own vars_context hash" do
+      # TaskExecutor constructs a VarSubstitutor straight from an
+      # already-Hash(String, JSON::Any) vars_context at 28+ call sites -
+      # the fast-path overload skips the general constructor's per-key
+      # case/when copy in favor of a bulk `Hash#dup`, but MUST still be
+      # a real private copy: #add_magic_variables mutates `@vars` in
+      # place (inventory_hostname/ansible_hostname/ansible_host), and a
+      # caller's own vars_context is very often read again after
+      # constructing a substitutor over it (e.g. the next loop
+      # iteration's `base_vars_context.dup`). A bare reference instead
+      # of a real dup would leak that mutation back into the caller,
+      # the same class of stale/wrong-variable-visibility bug this
+      # project's bug history is dominated by.
+      caller_vars = Hash(String, JSON::Any).new
+      caller_vars["greeting"] = JSON::Any.new("hi")
+
+      Krikri::VarSubstitutor.new(vars: caller_vars, host_name: "real-host")
+
+      caller_vars.has_key?("inventory_hostname").must_equal(false)
+      caller_vars.has_key?("ansible_hostname").must_equal(false)
+      caller_vars.has_key?("ansible_host").must_equal(false)
+      caller_vars.size.must_equal(1)
+    end
+
+    it "still applies magic variables and substitutes correctly through the fast-path overload" do
+      caller_vars = Hash(String, JSON::Any).new
+      caller_vars["greeting"] = JSON::Any.new("hi")
+
+      subject = Krikri::VarSubstitutor.new(vars: caller_vars, host_name: "real-host")
+
+      subject.substitute("{{ greeting }} from {{ inventory_hostname }}").must_equal("hi from real-host")
+    end
+  end
+
+  describe "expression-tag whitespace-trim markers" do
+    it "strips a trailing '-' trim marker instead of corrupting the expression into a dangling operator" do
+      # Real bug: `{{ 'x' -}}` (no surrounding {% %} block tags, so this
+      # goes through the plain mustache-span scanner, not Crinja) passed
+      # the trim marker straight into the expression body as literal
+      # text ("'x'-"), which then evaluated as a dangling arithmetic
+      # minus operator, rendering "undefined" instead of "x".
+      subject = Krikri::VarSubstitutor.new(vars: Hash(String, JSON::Any).new, host_name: "h")
+
+      subject.substitute("a{{ 'x' -}}b").must_equal("axb")
+      subject.substitute("a{{- 'x' }}b").must_equal("axb")
+    end
+
+    # Real bug found benchmarking andrewrothstein.temurin (0.9.614): a
+    # multi-line YAML `|-` literal block scalar building a filename out of
+    # one `{{ part -}}`/`_{{ part -}}` span per line, relying on the trim
+    # markers to collapse the block's own line breaks into a single-line
+    # string. The marker CHARACTER was already stripped (test above), but
+    # its WHITESPACE-TRIMMING EFFECT wasn't applied, so every line break
+    # in the source survived into the rendered string, corrupting a
+    # download URL/filename into one with literal newlines in the middle.
+    it "actually trims the adjacent whitespace/newline a trim marker implies, not just the marker character" do
+      subject = Krikri::VarSubstitutor.new(vars: Hash(String, JSON::Any).new, host_name: "h")
+
+      subject.substitute("a{{ 'x' -}}\n  b").must_equal("axb")
+      subject.substitute("a  \n{{- 'x' }}b").must_equal("axb")
+      subject.substitute("OpenJDK{{ 'jdk' -}}\n_{{ 'x64' -}}\n.tar.gz").must_equal("OpenJDKjdk_x64.tar.gz")
+    end
+  end
+end

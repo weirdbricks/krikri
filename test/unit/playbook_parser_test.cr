@@ -1,0 +1,3203 @@
+require "../minitest_helper"
+require "file_utils"
+require "../../src/krikri/playbook_parser"
+require "../../src/krikri/plugin_manager"
+
+private VALID_PLAYBOOK = <<-YAML
+  - name: Example play
+    hosts: webservers
+    gather_facts: false
+    vars:
+      greeting: hello
+    tasks:
+      - name: Say hello
+        ansible.builtin.debug:
+          msg: "{{ greeting }}"
+        register: result
+        when: greeting == "hello"
+        tags: [demo]
+    handlers:
+      - name: Restart service
+        ansible.builtin.service:
+          name: nginx
+          state: restarted
+  YAML
+
+private PLAYBOOK_WITH_BLOCK = <<-YAML
+  - name: play
+    hosts: all
+    tasks:
+      - name: my block
+        block:
+          - name: inner one
+            ansible.builtin.debug:
+              msg: one
+        rescue:
+          - name: inner two
+            ansible.builtin.debug:
+              msg: two
+        always:
+          - name: inner three
+            ansible.builtin.command: /bin/true
+  YAML
+
+private def import_tasks_root(name : String) : String
+  root = PluginSpecHelper.tmp_path(name)
+  FileUtils.rm_rf(root) if Dir.exists?(root)
+  Dir.mkdir_p(root)
+  root
+end
+
+private def single_task(task_yaml : String) : Krikri::Task
+  task_block = task_yaml.strip.lines.map { |line| "    #{line}" }.join("\n")
+  playbook_yaml = "- name: Loop test play\n  hosts: all\n  tasks:\n#{task_block}\n"
+  playbook = Krikri::PlaybookParser.parse_string(playbook_yaml)
+  playbook.plays[0].tasks[0]
+end
+
+describe Krikri::PlaybookParser do
+  describe ".parse_string" do
+    it "parses plays, tasks and handlers" do
+      playbook = Krikri::PlaybookParser.parse_string(VALID_PLAYBOOK)
+
+      playbook.plays.size.must_equal(1)
+      play = playbook.plays[0]
+      play.name.must_equal("Example play")
+      play.hosts.must_equal("webservers")
+      play.gather_facts?.must_equal(false)
+      play.tasks.size.must_equal(1)
+      play.handlers.size.must_equal(1)
+
+      task = play.tasks[0]
+      task.module_name.must_equal("ansible.builtin.debug")
+      task.params["msg"].must_equal("{{ greeting }}")
+      task.register.must_equal("result")
+      task.when_condition.must_equal(%(greeting == "hello"))
+      task.tags.must_equal(["demo"])
+    end
+
+    it "falls back to the hosts: value as the play name, not a generic 'Play N' placeholder" do
+      # Real ansible-playbook displays a nameless play's PLAY banner as
+      # its hosts: value (`PLAY [all]`), never a generic placeholder -
+      # found round 300-303 (cloudalchemy.cortex, gantsign.intellij-
+      # plugins).
+      playbook = Krikri::PlaybookParser.parse_string(<<-YAML)
+        - hosts: all
+          gather_facts: false
+          tasks:
+            - ansible.builtin.debug:
+                msg: hi
+        YAML
+
+      playbook.plays[0].name.must_equal("all")
+    end
+
+    it "joins a list hosts: value with commas for the fallback play name" do
+      playbook = Krikri::PlaybookParser.parse_string(<<-YAML)
+        - hosts: [web, db]
+          gather_facts: false
+          tasks:
+            - ansible.builtin.debug:
+                msg: hi
+        YAML
+
+      playbook.plays[0].name.must_equal("web,db")
+    end
+
+    it "keeps a task whose own integer param exceeds Int32 range, instead of silently dropping it with \"Arithmetic overflow\"" do
+      # Regression: safe_yaml_to_string/stringify_value both did
+      # `yaml.as_i.to_s` - YAML::Any#as_i is Int32-only, so a real
+      # (unremarkable) value like a uid: one past Int32::MAX raised
+      # "Arithmetic overflow", silently dropping the WHOLE task at parse
+      # time. Found via robertdebock.cve_2018_19788's own "Create user"
+      # task (uid: 2147483659).
+      playbook = <<-YAML
+        - name: Example play
+          hosts: all
+          gather_facts: false
+          tasks:
+            - name: Create user
+              ansible.builtin.user:
+                name: cve_2018_19788
+                uid: 2147483659
+                state: present
+        YAML
+
+      result = Krikri::PlaybookParser.parse_string(playbook)
+
+      result.plays[0].tasks.size.must_equal(1)
+      result.plays[0].tasks[0].params["uid"].must_equal("2147483659")
+    end
+
+    it "recognizes listen: as a task keyword on a handler, not a module name" do
+      # Real bug found benchmarking prometheus.prometheus.node_exporter's
+      # own handlers/main.yml: `listen:` wasn't in the special_keys
+      # exclusion list module detection scans, so a handler whose YAML
+      # happened to list `listen:` before its real module key (`listen:
+      # "restart node_exporter"` above `ansible.builtin.systemd: ...`)
+      # got "listen" itself picked as the module name - "Plugin not
+      # available: listen" - instead of the real ansible.builtin.systemd
+      # module underneath it.
+      playbook = Krikri::PlaybookParser.parse_string(<<-YAML)
+        - hosts: all
+          handlers:
+            - name: Restart thing
+              listen: "restart thing"
+              ansible.builtin.debug:
+                msg: restarted
+        YAML
+
+      handler = playbook.plays[0].handlers[0]
+      handler.module_name.must_equal("ansible.builtin.debug")
+      handler.listen.must_equal(["restart thing"])
+    end
+
+    it "parses a handler's listen: as a LIST of topics when written as one" do
+      # Regression (round 811339, CVi.thanos): real Ansible's handler
+      # listen: accepts a single string OR a YAML list of topics - a
+      # handler can subscribe to several notification topics at once.
+      # The list form was handed to safe_yaml_to_string and stringified,
+      # so no bare notify: naming one of the topics ever matched and
+      # notify_handlers raised HandlerNotFoundError, aborting the run.
+      playbook = Krikri::PlaybookParser.parse_string(<<-YAML)
+        - hosts: all
+          handlers:
+            - name: Restart sidecar service
+              listen:
+                - restart thanos
+                - restart thanos-sidecar
+                - restart thanos bucket
+              ansible.builtin.systemd:
+                name: thanos-sidecar
+                state: restarted
+        YAML
+
+      handler = playbook.plays[0].handlers[0]
+      handler.module_name.must_equal("ansible.builtin.systemd")
+      handler.listen.must_equal(["restart thanos", "restart thanos-sidecar", "restart thanos bucket"])
+    end
+
+    it "recognizes become_method: as a task keyword, not a module name" do
+      # Real bug found benchmarking logdna.logdna's cold run: its "Activating
+      # LogDNA Agent Service" task (`become: true` / `become_method: sudo` /
+      # `shell: ...`) printed "skipping:" where real Ansible printed
+      # "changed:" - become_method: wasn't in the special_keys exclusion list
+      # module detection scans, and it iterated before the real module key in
+      # the YAML, so "become_method" itself got picked as the module name
+      # (shell: silently ignored), the task degraded to an unavailable-module
+      # skip, and the run ended rc=4 "unavailable modules: become_method".
+      # Same shape as the listen: fix below/above. become_flags/become_pass/
+      # become_exe are the remaining become_* task keywords with the identical
+      # exposure.
+      task = single_task(<<-YAML)
+        - name: Activating LogDNA Agent Service
+          become: true
+          become_method: sudo
+          shell: "update-rc.d logdna-agent defaults"
+        YAML
+
+      task.module_name.must_equal("ansible.builtin.shell")
+      task.unavailable_module.must_be_nil
+    end
+
+    it "merges args: (a sibling keyword) into a free-form module's params" do
+      # Real bug found benchmarking githubixx.ansible_role_wireguard's
+      # own public-key derivation: `command: "wg pubkey" / args: {stdin:
+      # "{{ key }}"}` - real Ansible's own idiom for extra params on a
+      # free-form module (command/shell's stdin:/chdir:/creates:/etc)
+      # when the module's own value is a bare command string. args: was
+      # not in special_keys at all (risking misdetection as the module
+      # name itself) and never merged into task.params regardless -
+      # `wg pubkey` always ran with empty stdin, always "Key is not the
+      # correct length or format".
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.command: cat
+          args:
+            stdin: "hello"
+            chdir: /tmp
+        YAML
+
+      task.params["stdin"].must_equal("hello")
+      task.params["chdir"].must_equal("/tmp")
+    end
+
+    it "does not drop the whole task when become: is a templated string, not a literal boolean" do
+      # Real bug found benchmarking ansible-community.ansible-vault's own
+      # `become: "{{ vault_privileged_install }}"` - the old `.as_bool`
+      # call raised outright for anything that wasn't a literal YAML
+      # boolean, and that exception propagated all the way up to
+      # parse_tasks' own per-task rescue, silently dropping the ENTIRE
+      # task (not just mis-resolving become:) with only a generic "Cast
+      # from String to Bool failed" warning nowhere near obviously about
+      # become: at all.
+      task = single_task(<<-YAML)
+        - name: t
+          become: "{{ some_var }}"
+          ansible.builtin.debug:
+            msg: hi
+        YAML
+
+      task.name.must_equal("t")
+      task.become?.must_equal(true)
+    end
+
+    it "still parses a literal become: boolean normally" do
+      task = single_task(<<-YAML)
+        - name: t
+          become: false
+          ansible.builtin.debug:
+            msg: hi
+        YAML
+
+      task.become?.must_equal(false)
+    end
+
+    it "lets a task's explicit become: false override a play-level become: true" do
+      # Real, deeper pre-existing bug found while fixing the templated-
+      # become: crash above (benchmarking ansible-community.ansible-
+      # vault): `parse_become_value(...) || play.become` treated an
+      # EXPLICIT `become: false` identically to become: being absent
+      # entirely, since Bool false and nil are both falsy to `||` - a
+      # task deliberately opting OUT of a play-level `become: true`
+      # (the role's own "Check Vault package file (local)": `become:
+      # false`, delegate_to: 127.0.0.1, explicitly not wanting to sudo
+      # for a controller-side stat check) silently kept becoming root
+      # anyway - "sudo: a password is required" with no evident tie
+      # back to the task's own explicit become: false.
+      playbook = Krikri::PlaybookParser.parse_string(<<-YAML
+        - name: play
+          hosts: all
+          become: true
+          tasks:
+            - name: opts out
+              become: false
+              ansible.builtin.debug:
+                msg: hi
+            - name: inherits play become
+              ansible.builtin.debug:
+                msg: hi
+        YAML
+      )
+
+      tasks = playbook.plays[0].tasks
+      tasks[0].become?.must_equal(false)
+      tasks[1].become?.must_equal(true)
+    end
+
+    it "orders pre_tasks:, roles:, tasks:, and post_tasks: correctly, matching real Ansible" do
+      # Real gap found benchmarking every one of geerlingguy.docker/mysql/
+      # postgresql/nginx/php/security: pre_tasks:/post_tasks: were
+      # entirely unparsed (a documented-in-comment, but not in
+      # KNOWN_MISSING.md, simplification) - a play using pre_tasks: for
+      # its usual "update apt cache" idiom (the exact shape every one of
+      # those roles' own molecule converge.yml uses) silently never ran
+      # it at all, with no warning.
+      playbook = Krikri::PlaybookParser.parse_string(<<-YAML
+        - name: play
+          hosts: all
+          pre_tasks:
+            - name: pre one
+              ansible.builtin.debug:
+                msg: pre
+          tasks:
+            - name: main one
+              ansible.builtin.debug:
+                msg: main
+          post_tasks:
+            - name: post one
+              ansible.builtin.debug:
+                msg: post
+        YAML
+      )
+
+      play = playbook.plays[0]
+      play.tasks.map(&.name).must_equal(["pre one", "main one", "post one"])
+    end
+
+    it "recognizes community.general.gem: (real Ansible's own FQCN for it), not just the bare gem: short name" do
+      # Regression: AVAILABLE_PLUGINS registered this as
+      # "ansible.builtin.gem" - not a real Ansible module (gem has
+      # always lived in community.general, never ansible-core). A bare
+      # `gem:` task still happened to resolve via MODULE_SEARCH_
+      # COLLECTIONS regardless, but a role writing the fully-qualified
+      # `community.general.gem:` form (the far more common style in
+      # practice) got "Plugin not available" and the whole task
+      # silently dropped, even though plugins/gem.cr is a real, working
+      # plugin. Found via robertdebock.travis's own "install travis"
+      # task.
+      playbook = <<-YAML
+        - name: Example play
+          hosts: all
+          gather_facts: false
+          tasks:
+            - name: install travis
+              community.general.gem:
+                name: travis
+                state: present
+        YAML
+
+      result = Krikri::PlaybookParser.parse_string(playbook)
+
+      result.plays[0].tasks.size.must_equal(1)
+      result.plays[0].tasks[0].module_name.must_equal("community.general.gem")
+    end
+
+    it "raises when the only play has no hosts field" do
+      # parse_play's error is caught per-play and downgraded to a warning,
+      # so a playbook where every play fails to parse surfaces as this
+      # top-level error rather than the underlying "missing 'hosts'" message.
+      assert_raises_message(Exception, /No valid plays found/) do
+        Krikri::PlaybookParser.parse_string(<<-YAML
+          - name: No hosts
+            tasks: []
+          YAML
+        )
+      end
+    end
+
+    it "raises when the top-level document is not a list" do
+      assert_raises_message(Exception, /must be a YAML list/) do
+        Krikri::PlaybookParser.parse_string(<<-YAML
+          name: Not a list
+          YAML
+        )
+      end
+    end
+
+    it "raises a fatal InvalidRegisterError (aborts the whole playbook) when register: is not a legal identifier" do
+      # webbylab.sources (round 900914), reduced to a minimal case and
+      # verified directly against real ansible-playbook (ansible-core
+      # 2.19.11): the role's `register: '{{sources_register}}'` (default
+      # sources_register: "") - real Ansible validates the RAW register:
+      # value as a variable-name identifier at task-load time (it never
+      # templates the value) and refuses the WHOLE RUN: "Invalid
+      # 'register' specified: Invalid variable name '{{sources_register}}'."
+      # (rc=4, no PLAY RECAP; '123bad', 'foo bar' and '' fail identically).
+      # This engine previously accepted it at parse time and failed later
+      # with a confusing runtime error instead.
+      ["{{sources_register}}", "123bad", "foo bar", ""].each do |bad|
+        assert_raises_message(Krikri::InvalidRegisterError,
+          "Invalid 'register' specified: Invalid variable name '#{bad}'. " \
+          "Variable names must be strings starting with a letter or underscore character, " \
+          "and contain only letters, numbers and underscores.") do
+          Krikri::PlaybookParser.parse_string(<<-YAML
+            - hosts: all
+              tasks:
+                - name: bad register
+                  ansible.builtin.debug:
+                    msg: hi
+                  register: '#{bad}'
+            YAML
+          )
+        end
+      end
+    end
+
+    it "still accepts a legal register: identifier, including underscores and digits after the first character" do
+      playbook = Krikri::PlaybookParser.parse_string(<<-YAML
+        - hosts: all
+          tasks:
+            - name: good register
+              ansible.builtin.debug:
+                msg: hi
+              register: result_2
+        YAML
+      )
+
+      playbook.plays[0].tasks[0].register.must_equal("result_2")
+    end
+
+    it "aborts the whole playbook parse for a removed ansible.builtin.include: task, not just skips it" do
+      # Real bug found benchmarking robertdebock.awx (round 162): real
+      # ansible-core removed the `include:` action entirely after
+      # 2023-05-16 and refuses to even START the run when a playbook
+      # uses it (rc=1, zero tasks execute) - this previously treated it
+      # as merely "Plugin not available: include" (the same soft
+      # per-task skip as any not-yet-implemented module) and kept
+      # executing every task after it. Verified live against real
+      # ansible-playbook 2.19.4: byte-identical error message (the
+      # "[ERROR]: " prefix comes from krikri-playbook.cr's own handler,
+      # same as real Ansible's tombstone display).
+      assert_raises_message(Krikri::RemovedActionError,
+        "The 'ansible.builtin.include' action plugin has been removed. " \
+        "Use include_tasks or import_tasks instead. This feature was " \
+        "removed from ansible-core in a release after 2023-05-16.") do
+        Krikri::PlaybookParser.parse_string(<<-YAML
+          - hosts: all
+            tasks:
+              - name: legacy include
+                ansible.builtin.include:
+                  file: something.yml
+          YAML
+        )
+      end
+    end
+
+    it "also aborts for the bare (non-FQCN) include: spelling" do
+      assert_raises_message(Krikri::RemovedActionError,
+        "The 'ansible.builtin.include' action plugin has been removed. " \
+        "Use include_tasks or import_tasks instead. This feature was " \
+        "removed from ansible-core in a release after 2023-05-16.") do
+        Krikri::PlaybookParser.parse_string(<<-YAML
+          - hosts: all
+            tasks:
+              - name: legacy include
+                include: something.yml
+          YAML
+        )
+      end
+    end
+
+    it "does NOT treat include_vars: (a real, still-valid directive) as the removed include: action" do
+      result = Krikri::PlaybookParser.parse_string(<<-YAML
+        - hosts: all
+          tasks:
+            - name: real task
+              ansible.builtin.include_vars:
+                file: something.yml
+        YAML
+      )
+      result.plays[0].tasks.size.must_equal(1)
+    end
+
+    it "hard-stops the parse for a bare module name removed from ansible-core entirely (ec2_remote_facts)" do
+      # Verified live against real ansible-playbook 2.19.4: a playbook
+      # with an `ec2_remote_facts:` task (removed from ansible-core and
+      # from amazon.aws years ago) refuses to even start the run with
+      # "[ERROR]: couldn't resolve module/action 'ec2_remote_facts'.
+      # This often indicates a misspelling, missing collection, or
+      # incorrect module path." (rc=4, no PLAY RECAP), even with the
+      # task behind a `when:`. This engine previously took the graceful
+      # per-task unavailable_module skip, kept executing every other
+      # task, and hit unrelated downstream failures that masked the
+      # divergence shape (Aplyca.EC2Describe, round71000). The message
+      # text is real Ansible's exact wording (the "[ERROR]: " prefix
+      # comes from krikri-playbook.cr's own handler).
+      assert_raises_message(Krikri::UnresolvedModuleError,
+        "couldn't resolve module/action 'ec2_remote_facts'. " \
+        "This often indicates a misspelling, missing collection, or incorrect module path.") do
+        Krikri::PlaybookParser.parse_string(<<-YAML
+          - hosts: all
+            tasks:
+              - name: removed module
+                ec2_remote_facts:
+          YAML
+        )
+      end
+    end
+
+    it "hard-stops the parse for the amazon.aws-qualified spelling of the removed module too" do
+      assert_raises_message(Krikri::UnresolvedModuleError,
+        /couldn't resolve module\/action 'amazon\.aws\.ec2_remote_facts'/) do
+        Krikri::PlaybookParser.parse_string(<<-YAML
+          - hosts: all
+            tasks:
+              - name: removed module
+                amazon.aws.ec2_remote_facts:
+          YAML
+        )
+      end
+    end
+
+    it "hard-stops the parse for a module removed from community.general in v10 (consul_acl)" do
+      # community.general removed `consul_acl` in v10.0.0 (its own
+      # runtime.yml tombstones the FQCN), so real ansible-playbook
+      # hard-fails immediately (rc=1, no PLAY RECAP) on a playbook
+      # using it - this engine previously took the graceful per-task
+      # unavailable_module skip, kept executing every other task, and
+      # produced ok=9 changed=6 failed=1 instead of the hard stop
+      # (idealista.consul-role, round 033).
+      assert_raises_message(Krikri::UnresolvedModuleError,
+        "couldn't resolve module/action 'community.general.consul_acl'. " \
+        "This often indicates a misspelling, missing collection, or incorrect module path.") do
+        Krikri::PlaybookParser.parse_string(<<-YAML
+          - hosts: all
+            tasks:
+              - name: removed module
+                community.general.consul_acl:
+          YAML
+        )
+      end
+    end
+
+    it "hard-stops the parse for a module removed from community.general in v2 (docker_service)" do
+      # community.general removed `docker_service` in v2.0.0
+      # (superseded by `docker_compose`), so real ansible-playbook
+      # hard-fails immediately (rc=1, no PLAY RECAP) on a playbook
+      # using it - this engine previously took the graceful per-task
+      # unavailable_module skip and kept executing the rest of the play
+      # (krzysztof-magosa.docker).
+      assert_raises_message(Krikri::UnresolvedModuleError,
+        "couldn't resolve module/action 'community.general.docker_service'. " \
+        "This often indicates a misspelling, missing collection, or incorrect module path.") do
+        Krikri::PlaybookParser.parse_string(<<-YAML
+          - hosts: all
+            tasks:
+              - name: removed module
+                community.general.docker_service:
+          YAML
+        )
+      end
+    end
+
+    it "hard-stops the parse for a bare (unqualified) removed-module name too" do
+      # krzysztof-magosa.docker writes the BARE `docker_service:` (no
+      # FQCN) - the tombstone check is an exact string match against
+      # `as_written`, so only the FQCN spelling was tombstoned at first
+      # and a bare-name task slipped through to the graceful skip
+      # instead of hard-stopping, confirmed live against the rebuilt
+      # binary still gracefully skipping it (round 043 confirm-phase).
+      assert_raises_message(Krikri::UnresolvedModuleError,
+        "couldn't resolve module/action 'docker_service'. " \
+        "This often indicates a misspelling, missing collection, or incorrect module path.") do
+        Krikri::PlaybookParser.parse_string(<<-YAML
+          - hosts: all
+            tasks:
+              - name: removed module, bare name
+                docker_service:
+          YAML
+        )
+      end
+
+      assert_raises_message(Krikri::UnresolvedModuleError,
+        "couldn't resolve module/action 'consul_acl'. " \
+        "This often indicates a misspelling, missing collection, or incorrect module path.") do
+        Krikri::PlaybookParser.parse_string(<<-YAML
+          - hosts: all
+            tasks:
+              - name: removed module, bare name
+                consul_acl:
+          YAML
+        )
+      end
+    end
+
+    it "hard-stops the parse for docker_compose (v1), removed from community.docker in v4.0.0, with its own removal message" do
+      # lucasmaurice.awx (round 900444) writes the BARE `docker_compose:`
+      # (compose v1) - community.docker removed the module in v4.0.0
+      # (docker-compose v1 is End-of-Life; docker_compose_v2 is the
+      # replacement) and community.general's redirect lands on that
+      # tombstone, so real ansible-playbook hard-stops with the
+      # collection's OWN removal message, not the generic
+      # couldn't-resolve wording (verified live against ansible-core
+      # 2.19.11 with a minimal repro for all three spellings - bare,
+      # community.general.- and community.docker.-qualified - each
+      # printing the identical community.docker.docker_compose message,
+      # no PLAY RECAP). This engine previously fell through to the
+      # unavailable-module path and failed at RUN time with a misleading
+      # "docker: No such file or directory" instead.
+      removal_message = "The 'community.docker.docker_compose' module has been removed. " \
+                        "This module uses docker-compose v1, which is End of Life since July 2022. " \
+                        "Please migrate to community.docker.docker_compose_v2. " \
+                        "This feature was removed from collection 'community.docker' version 4.0.0."
+
+      ["docker_compose", "community.general.docker_compose", "community.docker.docker_compose"].each do |name|
+        assert_raises_message(Krikri::UnresolvedModuleError, removal_message) do
+          Krikri::PlaybookParser.parse_string(<<-YAML
+            - hosts: all
+              tasks:
+                - name: removed compose v1 module
+                  #{name}:
+                    project_src: /tmp/x
+            YAML
+          )
+        end
+      end
+    end
+
+    it "still resolves docker_compose_v2 (it is a separate, implemented plugin, not the removed v1)" do
+      # Guard for the tombstone above: docker_compose_v2 is a distinct,
+      # fully-implemented module - tombstoning docker_compose v1 must
+      # not catch it.
+      playbook = Krikri::PlaybookParser.parse_string(<<-YAML
+        - hosts: all
+          tasks:
+            - name: compose v2 stays fine
+              community.docker.docker_compose_v2:
+                project_src: /tmp/x
+        YAML
+      )
+
+      playbook.plays[0].tasks.size.must_equal(1)
+      playbook.plays[0].tasks[0].unavailable_module.must_be_nil
+    end
+
+    it "keeps a module from a collection with zero krikri modules as unavailable_module, no longer raising (0.9.1050)" do
+      # Round 811000 reversed 0.9.903's unconditional parse-time
+      # hard-stop for plain unimplemented modules: kubernetes.core and
+      # bodsch.scm are both real collections real ansible-playbook
+      # would resolve and run fine, and real Ansible resolves a task's
+      # module lazily, per task, only once the task is about to run -
+      # so the task now parses with unavailable_module set and takes
+      # the runtime reachability-tracked skip path instead of aborting
+      # the whole load.
+      task = Krikri::PlaybookParser.parse_string(<<-YAML
+          - hosts: all
+            tasks:
+              - name: unported module in a real unported collection
+                kubernetes.core.helm_repository:
+                  repo_name: foo
+        YAML
+      ).plays[0].tasks[0]
+      task.unavailable_module.must_equal("kubernetes.core.helm_repository")
+
+      task = Krikri::PlaybookParser.parse_string(<<-YAML
+          - hosts: all
+            tasks:
+              - name: niche collection, same shape
+                bodsch.scm.github_latest:
+                  repo: foo
+        YAML
+      ).plays[0].tasks[0]
+      task.unavailable_module.must_equal("bodsch.scm.github_latest")
+    end
+
+    it "keeps a not-yet-implemented module from a RECOGNIZED collection as unavailable_module too (0.9.1050)" do
+      # Same reversal, exercised on both sides of the OLD boundary: a
+      # real builtin this engine hasn't implemented
+      # (ansible.builtin.sysvinit) and an unimplemented module inside a
+      # collection the engine otherwise ships modules for (amazon.aws)
+      # both now parse through with unavailable_module set instead of
+      # refusing the whole run.
+      task = Krikri::PlaybookParser.parse_string(<<-YAML
+          - hosts: all
+            tasks:
+              - name: unimplemented builtin
+                ansible.builtin.sysvinit:
+                  name: foo
+        YAML
+      ).plays[0].tasks[0]
+      task.unavailable_module.must_equal("ansible.builtin.sysvinit")
+
+      task = Krikri::PlaybookParser.parse_string(<<-YAML
+          - hosts: all
+            tasks:
+              - name: unimplemented module in an implemented collection
+                amazon.aws.s3_bucket_info_xyz:
+        YAML
+      ).plays[0].tasks[0]
+      task.unavailable_module.must_equal("amazon.aws.s3_bucket_info_xyz")
+    end
+
+    it "keeps a task using an unimplemented plugin as unavailable_module instead of raising (0.9.1050)" do
+      # A fictional module name, deliberately - a real module name planted
+      # here has twice now stopped being "unimplemented" out from under
+      # this spec (first ansible.builtin.mount, then ansible.builtin.
+      # add_host, each fixed in a later round without anyone remembering
+      # this spec pinned its wording to that exact name).
+      task = Krikri::PlaybookParser.parse_string(<<-YAML
+        - name: Uses unavailable plugin
+          hosts: all
+          tasks:
+            - name: Not implemented
+              ansible.builtin.totally_fake_unimplemented_module_xyz:
+                path: /mnt/data
+        YAML
+      ).plays[0].tasks[0]
+      task.unavailable_module.must_equal("ansible.builtin.totally_fake_unimplemented_module_xyz")
+    end
+
+    it "does NOT silently treat an underscore-prefixed name as a resolved builtin (keeps it as unavailable_module)" do
+      # Real bug found benchmarking amtega.check_platform/amtega.epel
+      # (round814/815): resolve_module_name used to blanket-pass any
+      # module name starting with '_' straight through as "resolved",
+      # on the mistaken assumption every leading-underscore name was one
+      # of this engine's own internal pseudo-modules (_block, _meta,
+      # etc - which are never routed through resolve_module_name at all,
+      # they're constructed directly via Task.new). A role's own custom
+      # action plugin conventionally named with a leading underscore hit
+      # that bypass instead, got treated as available with no backing
+      # plugin binary, and crashed the whole run outright in
+      # PluginManager#get_local_plugin_path ("Plugin binary not found:
+      # _check_platform"). This spec has no role context (no
+      # library/_check_platform.py to find), so the correct outcome is
+      # the graceful unavailable_module path (0.9.1050) - the runtime
+      # skip keeps it from ever reaching the plugin dispatch - see the
+      # integration-level role-private-module spec for the case where a
+      # real backing source DOES exist and the task keeps running.
+      task = Krikri::PlaybookParser.parse_string(<<-YAML
+        - name: Uses a role-local custom module
+          hosts: all
+          tasks:
+            - name: Check platform
+              _check_platform:
+        YAML
+      ).plays[0].tasks[0]
+      task.unavailable_module.must_equal("_check_platform")
+    end
+
+    it "raises when no plays parse successfully" do
+      assert_raises_message(Exception, /No valid plays found/) do
+        Krikri::PlaybookParser.parse_string(<<-YAML
+          - tasks: []
+          YAML
+        )
+      end
+    end
+  end
+
+  describe "notify: handler-name validation is NOT done at parse time" do
+    # An unmatched notify: is real Ansible's error only when the
+    # notifying task actually fires the notification, at RUN time -
+    # verified against ansible-core 2.19.4: a task that reports `ok`
+    # (unchanged) or is skipped by its `when:` notifies nothing and the
+    # run completes green, even with a notify: naming a handler that
+    # exists nowhere. This engine used to reject all three at PARSE
+    # time with rc=4, failing playbooks real Ansible runs fine, and
+    # simultaneously missed a bad notify inside an include_tasks:-
+    # loaded file, which no parse-time sweep can see. The check now
+    # lives in TaskExecutor#notify_handlers - see
+    # cli_spec.cr's "notify: naming a nonexistent handler" specs for the
+    # run-time behavior, and HandlerNotFoundError's own comment.
+    it "parses a bare literal notify: target with no matching handler without raising" do
+      result = Krikri::PlaybookParser.parse_string(<<-YAML
+        - hosts: all
+          tasks:
+            - name: touch a file
+              ansible.builtin.file:
+                path: /tmp/x
+                state: touch
+              notify: restart httpd
+          handlers:
+            - name: restart apache2
+              ansible.builtin.debug:
+                msg: restarted
+        YAML
+      )
+      result.plays[0].tasks.size.must_equal(1)
+    end
+
+    it "does not raise when the notify: target matches a real handler name" do
+      result = Krikri::PlaybookParser.parse_string(<<-YAML
+        - hosts: all
+          tasks:
+            - name: touch a file
+              ansible.builtin.file:
+                path: /tmp/x
+                state: touch
+              notify: restart httpd
+          handlers:
+            - name: restart httpd
+              ansible.builtin.debug:
+                msg: restarted
+        YAML
+      )
+      result.plays[0].tasks.size.must_equal(1)
+    end
+
+    it "does not raise when the notify: target matches a handler's listen: topic" do
+      result = Krikri::PlaybookParser.parse_string(<<-YAML
+        - hosts: all
+          tasks:
+            - name: touch a file
+              ansible.builtin.file:
+                path: /tmp/x
+                state: touch
+              notify: webserver restarted
+          handlers:
+            - name: restart httpd
+              listen: webserver restarted
+              ansible.builtin.debug:
+                msg: restarted
+        YAML
+      )
+      result.plays[0].tasks.size.must_equal(1)
+    end
+
+    it "does not raise for a templated notify: target (unresolvable statically)" do
+      result = Krikri::PlaybookParser.parse_string(<<-YAML
+        - hosts: all
+          tasks:
+            - name: touch a file
+              ansible.builtin.file:
+                path: /tmp/x
+                state: touch
+              notify: "{{ some_handler_var }}"
+          handlers:
+            - name: unrelated handler
+              ansible.builtin.debug:
+                msg: restarted
+        YAML
+      )
+      result.plays[0].tasks.size.must_equal(1)
+    end
+
+    it "does not raise for a role-qualified (' : '-shaped) notify: target" do
+      result = Krikri::PlaybookParser.parse_string(<<-YAML
+        - hosts: all
+          tasks:
+            - name: touch a file
+              ansible.builtin.file:
+                path: /tmp/x
+                state: touch
+              notify: "some_role : restart httpd"
+          handlers:
+            - name: restart httpd
+              ansible.builtin.debug:
+                msg: restarted
+        YAML
+      )
+      result.plays[0].tasks.size.must_equal(1)
+    end
+
+    it "does not raise when a play has no handlers: and no tasks notify: anything" do
+      result = Krikri::PlaybookParser.parse_string(<<-YAML
+        - hosts: all
+          tasks:
+            - name: plain task
+              ansible.builtin.debug:
+                msg: hi
+        YAML
+      )
+      result.plays[0].tasks.size.must_equal(1)
+    end
+
+    it "finds a matching handler nested inside a block:" do
+      result = Krikri::PlaybookParser.parse_string(<<-YAML
+        - hosts: all
+          tasks:
+            - block:
+                - name: touch a file
+                  ansible.builtin.file:
+                    path: /tmp/x
+                    state: touch
+                  notify: restart httpd
+          handlers:
+            - block:
+                - name: restart httpd
+                  ansible.builtin.debug:
+                    msg: restarted
+        YAML
+      )
+      result.plays[0].tasks.size.must_equal(1)
+    end
+  end
+
+  describe ".validate" do
+    it "warns about plays with no tasks" do
+      playbook = Krikri::PlaybookParser.parse_string(<<-YAML
+        - name: Empty play
+          hosts: all
+        YAML
+      )
+
+      warnings = Krikri::PlaybookParser.validate(playbook)
+      warnings.any?(&.includes?("has no tasks")).must_equal(true)
+    end
+  end
+
+  describe ".stats" do
+    it "counts plays, tasks, handlers and distinct modules" do
+      playbook = Krikri::PlaybookParser.parse_string(VALID_PLAYBOOK)
+      stats = Krikri::PlaybookParser.stats(playbook)
+
+      stats["plays"].must_equal(1)
+      stats["tasks"].must_equal(1)
+      stats["handlers"].must_equal(1)
+      stats["modules_used"].must_equal(2)
+    end
+  end
+
+  describe "loop parsing" do
+    it "parses loop: into loop_items" do
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.debug:
+            msg: "{{ item }}"
+          loop: [a, b, c]
+        YAML
+
+      task.loop_items.try(&.map(&.as_s)).must_equal(["a", "b", "c"])
+    end
+
+    it "parses with_items: into loop_items (same as loop:)" do
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.debug:
+            msg: "{{ item }}"
+          with_items: [a, b, c]
+        YAML
+
+      task.loop_items.try(&.map(&.as_s)).must_equal(["a", "b", "c"])
+    end
+
+    it "parses a single-element-array with_items holding a template as a loop template" do
+      # `with_items: ["{{ some_list | map(...) | ... }}"]` is the shape roles
+      # (dev-sec os_hardening's yum gpg-check) use; Ansible flattens one
+      # level so the template (expanding to a list) becomes the items. It
+      # must be captured as a runtime-resolved loop template, not treated as
+      # one literal item equal to the "{{ ... }}" string.
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.file:
+            path: "{{ item }}"
+            state: absent
+          with_items:
+            - "{{ my_list | default([]) | map(attribute='path') | list }}"
+        YAML
+
+      task.loop_items.must_be_nil
+      task.loop_template_kind.must_equal("with_items")
+      task.loop_template.must_equal("{{ my_list | default([]) | map(attribute='path') | list }}")
+    end
+
+    it "parses a single-element-array with_items whose item merely embeds a template as a literal loop_items entry, not a loop template" do
+      # Real bug found benchmarking geerlingguy.mysql's "Disallow root
+      # login remotely": `with_items: ["DELETE FROM mysql.user WHERE
+      # User='{{ mysql_root_username }}' AND ..."]` - a single LITERAL
+      # loop item whose text happens to embed a template, unlike the
+      # spec above where the element IS one bare `{{ ... }}` expression
+      # standing for the whole list. The old check (`includes?("{{")`)
+      # couldn't tell these apart and always treated this shape as a
+      # list-producing template too, so task.loop_items ended up nil and
+      # the task ran once with `item` completely unbound ("undefined")
+      # instead of once with the rendered SQL string.
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.command: '{{ item }}'
+          with_items:
+            - "DELETE FROM mysql.user WHERE User='{{ mysql_root_username }}' AND Host NOT IN ('localhost')"
+        YAML
+
+      task.loop_template_kind.must_be_nil
+      task.loop_items.try(&.size).must_equal(1)
+      task.loop_items.try(&.first.as_s).must_equal(
+        "DELETE FROM mysql.user WHERE User='{{ mysql_root_username }}' AND Host NOT IN ('localhost')"
+      )
+    end
+
+    it "parses loop_control.loop_var onto the task" do
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.include_tasks: inner.yml
+          loop_control:
+            loop_var: mount
+          loop:
+            - { path: /boot }
+        YAML
+
+      task.loop_var.must_equal("mount")
+    end
+
+    it "leaves loop_var nil when no loop_control is given (defaults to item)" do
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.debug:
+            msg: "hi"
+          loop: [a, b]
+        YAML
+
+      task.loop_var.must_be_nil
+    end
+
+    it "parses with_dict: into key/value loop_items" do
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.debug:
+            msg: "{{ item.key }}={{ item.value }}"
+          with_dict:
+            one: "1"
+            two: "2"
+        YAML
+
+      items = task.loop_items.as(Array(JSON::Any))
+      items.size.must_equal(2)
+      items.map(&.["key"].as_s).must_equal(["one", "two"])
+    end
+
+    it "parses with_nested: into a cartesian-product loop" do
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.debug:
+            msg: "{{ item }}"
+          with_nested:
+            - [a, b]
+            - [x, y]
+        YAML
+
+      items = task.loop_items.as(Array(JSON::Any))
+      items.map(&.as_a.map(&.as_s)).must_equal([["a", "x"], ["a", "y"], ["b", "x"], ["b", "y"]])
+    end
+
+    it "defers a with_nested: array with templated scalar sources to runtime" do
+      # gantsign.sdkman-shaped: each source is a whole-list variable
+      # reference, so the cartesian product's factor sizes (including
+      # zero) are only knowable at execution time - the old parse-time
+      # branch pinned every templated source to a ONE-element list.
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.debug:
+            msg: "{{ item }}"
+          with_nested:
+            - "{{ users }}"
+            - "{{ groups }}"
+        YAML
+
+      task.loop_items.must_be_nil
+      task.loop_nested_sources.must_equal(["{{ users }}", "{{ groups }}"])
+    end
+
+    it "parses with_together: into an elementwise-zip loop" do
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.debug:
+            msg: "{{ item }}"
+          with_together:
+            - [a, b]
+            - [x, y]
+        YAML
+
+      items = task.loop_items.as(Array(JSON::Any))
+      items.map(&.as_a.map(&.as_s)).must_equal([["a", "x"], ["b", "y"]])
+    end
+
+    it "defers a with_together: array with templated scalar sources to runtime" do
+      # manala.accounts-shaped: each source is a whole-list variable
+      # reference (and may be empty), so the zip's row count is only
+      # knowable at execution time - same defer design as with_nested's
+      # own templated-source shape above.
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.debug:
+            msg: "{{ item }}"
+          with_together:
+            - "{{ users }}"
+            - "{{ groups }}"
+        YAML
+
+      task.loop_items.must_be_nil
+      task.loop_together_sources.must_equal(["{{ users }}", "{{ groups }}"])
+    end
+
+    it "parses with_sequence: into a numeric range" do
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.debug:
+            msg: "{{ item }}"
+          with_sequence: "start=1 end=3"
+        YAML
+
+      task.loop_items.try(&.map(&.as_s)).must_equal(["1", "2", "3"])
+    end
+
+    it "parses a bare numeric with_sequence:" do
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.debug:
+            msg: "{{ item }}"
+          with_sequence: 3
+        YAML
+
+      task.loop_items.try(&.map(&.as_s)).must_equal(["1", "2", "3"])
+    end
+
+    it "parses with_indexed_items: into [index, value] pairs" do
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.debug:
+            msg: "{{ item }}"
+          with_indexed_items: [x, y]
+        YAML
+
+      items = task.loop_items.as(Array(JSON::Any))
+      items.map(&.as_a.map(&.as_s)).must_equal([["0", "x"], ["1", "y"]])
+    end
+
+    it "parses with_fileglob: into raw patterns (resolved at execution time)" do
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.debug:
+            msg: "{{ item }}"
+          with_fileglob: "/etc/*.conf"
+        YAML
+
+      task.loop_fileglob.must_equal(["/etc/*.conf"])
+      task.loop_items.must_be_nil
+    end
+
+    it "stashes a variable-referenced loop: as a template for the executor to resolve" do
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.debug:
+            msg: "{{ item }}"
+          loop: "{{ colors }}"
+        YAML
+
+      task.loop_items.must_be_nil
+      task.loop_template_kind.must_equal("loop")
+      task.loop_template.must_equal("{{ colors }}")
+    end
+
+    it "stashes a variable-referenced with_dict: as a template for the executor to resolve" do
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.debug:
+            msg: "{{ item.key }}={{ item.value }}"
+          with_dict: "{{ some_dict }}"
+        YAML
+
+      task.loop_items.must_be_nil
+      task.loop_template_kind.must_equal("with_dict")
+      task.loop_template.must_equal("{{ some_dict }}")
+    end
+
+    it "leaves loop_items nil for a task without any loop source" do
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.debug:
+            msg: hello
+        YAML
+
+      task.loop_items.must_be_nil
+      task.loop_fileglob.must_be_nil
+    end
+  end
+
+  describe "until / retries / delay parsing" do
+    it "parses until, retries and delay" do
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.command: /bin/true
+          register: result
+          until: result.rc == 0
+          retries: 5
+          delay: 2
+        YAML
+
+      task.until_condition.must_equal("result.rc == 0")
+      task.retries.must_equal(5)
+      task.delay.must_equal(2)
+    end
+
+    it "defaults retries to 3 and delay to 5 when omitted" do
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.command: /bin/true
+          register: result
+          until: result.rc == 0
+        YAML
+
+      task.retries.must_equal(3)
+      task.delay.must_equal(5)
+    end
+
+    # Real Ansible accepts a LIST of until: clauses (ANDed). Stringifying
+    # the list as its literal to_s ("[moodle_download is succeeded]") left
+    # the condition unresolvable, so the retry loop ran every attempt and
+    # the final idempotent attempt's changed: false replaced attempt 1's
+    # real changed: true (round 979035, buluma.moodle).
+    it "parses a single-clause until: list as the bare clause" do
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.command: /bin/true
+          register: result
+          until:
+            - result is succeeded
+        YAML
+
+      task.until_condition.must_equal("result is succeeded")
+    end
+
+    it "parses a multi-clause until: list as an AND of the clauses" do
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.command: /bin/true
+          register: result
+          until:
+            - result is succeeded
+            - result.rc == 0
+        YAML
+
+      task.until_condition.must_equal("(result is succeeded) and (result.rc == 0)")
+    end
+  end
+
+  describe "changed_when / failed_when parsing" do
+    it "parses changed_when and failed_when as strings" do
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.command: /bin/true
+          register: result
+          changed_when: result.rc != 0
+          failed_when: "'ERROR' in result.stdout"
+        YAML
+
+      task.changed_when.must_equal("result.rc != 0")
+      task.failed_when.must_equal("'ERROR' in result.stdout")
+    end
+
+    it "parses a bare boolean changed_when: false into the string \"false\"" do
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.command: /bin/true
+          changed_when: false
+        YAML
+
+      task.changed_when.must_equal("false")
+    end
+
+    it "leaves changed_when and failed_when nil when omitted" do
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.command: /bin/true
+        YAML
+
+      task.changed_when.must_be_nil
+      task.failed_when.must_be_nil
+    end
+  end
+
+  describe "delegate_to / run_once parsing" do
+    it "parses delegate_to as a string" do
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.debug:
+            msg: hello
+          delegate_to: localhost
+        YAML
+
+      task.delegate_to.must_equal("localhost")
+    end
+
+    it "parses a templated delegate_to" do
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.debug:
+            msg: hello
+          delegate_to: "{{ target_host }}"
+        YAML
+
+      task.delegate_to.must_equal("{{ target_host }}")
+    end
+
+    it "parses run_once: true" do
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.debug:
+            msg: hello
+          run_once: true
+        YAML
+
+      task.run_once?.must_equal(true)
+    end
+
+    it "defaults run_once to false and delegate_to to nil when omitted" do
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.debug:
+            msg: hello
+        YAML
+
+      task.run_once?.must_equal(false)
+      task.delegate_to.must_be_nil
+    end
+  end
+
+  describe "task-level vars: parsing" do
+    # Real, previously-shipped bug: nothing in parse_task ever read a
+    # plain task's own vars: key into task.vars - only import_tasks:'s
+    # separate vars: mechanism was ever wired up. Silently dropped, not
+    # an error, so it went unnoticed: VariableContext#build already
+    # folds task.vars in at highest priority, so the value was simply
+    # invisible everywhere (both {{ }} substitution and bare when:/
+    # assert: that:), not just in one code path.
+
+    it "parses a task's own vars: into task.vars" do
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.debug:
+            msg: hello
+          vars:
+            my_var: 3
+        YAML
+
+      task.vars["my_var"]?.try(&.as_i).must_equal(3)
+    end
+
+    it "parses vars: listed before the module key without it being mistaken for the module name" do
+      # special_keys (used to find "the first key that isn't a keyword,
+      # that's the module") didn't include "vars" - a task listing vars:
+      # before its real module key would have had "vars" itself parsed
+      # as the module name instead, failing with "Plugin not available:
+      # vars" the moment key order didn't happen to put the module
+      # first.
+      task = single_task(<<-YAML)
+        - name: t
+          vars:
+            my_var: 3
+          ansible.builtin.debug:
+            msg: hello
+        YAML
+
+      task.module_name.must_equal("ansible.builtin.debug")
+      task.vars["my_var"]?.try(&.as_i).must_equal(3)
+    end
+
+    it "keeps task-level vars: scoped to that task only, not shared across tasks" do
+      playbook = Krikri::PlaybookParser.parse_string(<<-YAML)
+        - name: p
+          hosts: all
+          tasks:
+            - name: t1
+              ansible.builtin.debug:
+                msg: hello
+              vars:
+                my_var: 3
+            - name: t2
+              ansible.builtin.debug:
+                msg: hello
+        YAML
+
+      playbook.plays[0].tasks[0].vars["my_var"]?.try(&.as_i).must_equal(3)
+      playbook.plays[0].tasks[1].vars.has_key?("my_var").must_equal(false)
+    end
+
+    it "defaults task.vars to empty when no vars: key is given" do
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.debug:
+            msg: hello
+        YAML
+
+      task.vars.must_be_empty
+    end
+  end
+
+  describe "async / poll parsing" do
+    it "parses async and poll as integers" do
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.command: /bin/true
+          async: 30
+          poll: 5
+        YAML
+
+      task.async_seconds.must_equal(30)
+      task.poll_seconds.must_equal(5)
+    end
+
+    it "parses poll: 0 (fire-and-forget) as zero, not nil" do
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.command: /bin/true
+          async: 30
+          poll: 0
+        YAML
+
+      task.poll_seconds.must_equal(0)
+    end
+
+    it "leaves async_seconds and poll_seconds nil when omitted" do
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.command: /bin/true
+        YAML
+
+      task.async_seconds.must_be_nil
+      task.poll_seconds.must_be_nil
+    end
+  end
+
+  describe "block / rescue / always parsing" do
+    it "parses block: into block_tasks and marks the task as a block" do
+      task = single_task(<<-YAML)
+        - name: my block
+          block:
+            - name: inner one
+              ansible.builtin.debug:
+                msg: one
+            - name: inner two
+              ansible.builtin.debug:
+                msg: two
+        YAML
+
+      task.block?.must_equal(true)
+      task.module_name.must_equal("_block")
+      block_tasks = task.block_tasks.as(Array(Krikri::Task))
+      block_tasks.map(&.name).must_equal(["inner one", "inner two"])
+      block_tasks.map(&.module_name).must_equal(["ansible.builtin.debug", "ansible.builtin.debug"])
+    end
+
+    it "parses rescue: and always: alongside block:" do
+      task = single_task(<<-YAML)
+        - name: my block
+          block:
+            - name: risky
+              ansible.builtin.command: /bin/false
+          rescue:
+            - name: recover
+              ansible.builtin.debug:
+                msg: recovering
+          always:
+            - name: cleanup
+              ansible.builtin.debug:
+                msg: cleaning up
+        YAML
+
+      task.block_tasks.as(Array(Krikri::Task)).map(&.name).must_equal(["risky"])
+      task.rescue_tasks.as(Array(Krikri::Task)).map(&.name).must_equal(["recover"])
+      task.always_tasks.as(Array(Krikri::Task)).map(&.name).must_equal(["cleanup"])
+    end
+
+    # Real bug found benchmarking konstruktoid.docker_rootless (0.9.621):
+    # `become:`/`become_user:` set at the BLOCK level (not on each child
+    # task individually - the common "run this whole block as another
+    # user" idiom) was never inherited by the nested tasks at all. Each
+    # child's own become/become_user resolved only against the PLAY's
+    # top-level value (real Ansible's precedence is task > block > role >
+    # play), so every task inside silently ran as whatever the play-level
+    # default was (usually root) instead of the block's own become_user -
+    # found via a block wrapping `systemd_service: {scope: user}`, which
+    # then targeted root's own session bus instead of the intended user's,
+    # "Unit file ... does not exist" for a unit that genuinely existed
+    # under that OTHER user's `~/.config/systemd/user/`.
+    it "inherits become:/become_user: from an enclosing block onto its child tasks" do
+      task = single_task(<<-YAML)
+        - name: my block
+          become: true
+          become_user: dockeruser
+          block:
+            - name: inner (no become of its own)
+              ansible.builtin.debug:
+                msg: hi
+        YAML
+
+      inner = task.block_tasks.as(Array(Krikri::Task)).first
+      inner.become?.must_equal(true)
+      inner.become_user.must_equal("dockeruser")
+    end
+
+    it "lets a child task's own become:/become_user: override the enclosing block's" do
+      task = single_task(<<-YAML)
+        - name: my block
+          become: true
+          become_user: dockeruser
+          block:
+            - name: inner (its own become_user)
+              become_user: someoneelse
+              ansible.builtin.debug:
+                msg: hi
+        YAML
+
+      inner = task.block_tasks.as(Array(Krikri::Task)).first
+      inner.become?.must_equal(true)
+      inner.become_user.must_equal("someoneelse")
+    end
+
+    it "leaves rescue_tasks/always_tasks nil when not specified" do
+      task = single_task(<<-YAML)
+        - name: my block
+          block:
+            - name: inner
+              ansible.builtin.debug:
+                msg: hi
+        YAML
+
+      task.rescue_tasks.must_be_nil
+      task.always_tasks.must_be_nil
+    end
+
+    it "parses when:/ignore_errors:/tags: at the block level" do
+      task = single_task(<<-YAML)
+        - name: my block
+          when: some_var == "yes"
+          ignore_errors: true
+          tags: [risky]
+          block:
+            - name: inner
+              ansible.builtin.debug:
+                msg: hi
+        YAML
+
+      task.when_condition.must_equal(%(some_var == "yes"))
+      task.ignore_errors?.must_equal(true)
+      task.tags.must_equal(["risky"])
+    end
+
+    it "defaults a templated ignore_errors: to true, same heuristic as become:'s own templated-value fix" do
+      # Real bug found benchmarking levonet.ci_github_rm_branch's own
+      # `ignore_errors: "{{ ci_github_ignore_error }}"` (default: yes) -
+      # ignore_errors: is a plain parse-time Bool, so a templated string
+      # can't be fully resolved without deferring to runtime (a bigger
+      # change than this fix, matching parse_become_value's own
+      # documented trade-off just below this code). The old code fell
+      # through to `false` for anything that wasn't a literal
+      # true/yes/on/false/no/off, so this real Ansible task that real
+      # Ansible always ignores (ignored=1, failed=0) instead hard-failed
+      # the whole play every single run.
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.debug:
+            msg: hi
+          ignore_errors: "{{ some_var }}"
+        YAML
+
+      task.ignore_errors?.must_equal(true)
+    end
+
+    it "supports nested blocks inside a block" do
+      task = single_task(<<-YAML)
+        - name: outer
+          block:
+            - name: inner block
+              block:
+                - name: innermost
+                  ansible.builtin.debug:
+                    msg: hi
+        YAML
+
+      outer_children = task.block_tasks.as(Array(Krikri::Task))
+      outer_children.size.must_equal(1)
+      inner_block = outer_children[0]
+      inner_block.block?.must_equal(true)
+      inner_block.block_tasks.as(Array(Krikri::Task)).map(&.name).must_equal(["innermost"])
+    end
+
+    it "parses a block containing an unimplemented module, keeping it as unavailable_module (0.9.1050)" do
+      task = single_task(<<-YAML)
+        - name: my block
+          block:
+            - name: good
+              ansible.builtin.debug:
+                msg: hi
+            - name: bad
+              ansible.builtin.nope: {}
+        YAML
+      children = task.block_tasks.as(Array(Krikri::Task))
+      children[0].unavailable_module.must_be_nil
+      children[1].unavailable_module.must_equal("ansible.builtin.nope")
+    end
+  end
+
+  describe "block/rescue/always in .validate and .stats" do
+    it "counts nested block/rescue/always tasks in .stats, not the block pseudo-task itself" do
+      stats = Krikri::PlaybookParser.stats(Krikri::PlaybookParser.parse_string(PLAYBOOK_WITH_BLOCK))
+      # inner one + inner two + inner three = 3 real tasks, across 2
+      # distinct modules (ansible.builtin.debug, ansible.builtin.command).
+      stats["tasks"].must_equal(3)
+      stats["modules_used"].must_equal(2)
+    end
+
+    it "does not flag the block pseudo-module itself as an unimplemented plugin" do
+      # Without recursing into block_tasks, .validate would see module_name
+      # "_block" directly (it's deliberately not in AVAILABLE_PLUGINS) and
+      # spuriously warn "uses unimplemented plugin: _block" on every block.
+      playbook = Krikri::PlaybookParser.parse_string(<<-YAML)
+        - name: play
+          hosts: all
+          tasks:
+            - name: my block
+              block:
+                - name: inner
+                  ansible.builtin.debug:
+                    msg: hi
+        YAML
+
+      warnings = Krikri::PlaybookParser.validate(playbook)
+      warnings.any?(&.includes?("_block")).must_equal(false)
+    end
+  end
+
+  describe "roles: wiring" do
+    it "runs role tasks before the play's own tasks:, in role list order" do
+      root = PluginSpecHelper.tmp_path("playbook_parser_roles_spec")
+      FileUtils.rm_rf(root) if Dir.exists?(root)
+      Dir.mkdir_p(File.join(root, "roles", "myrole", "tasks"))
+      File.write(File.join(root, "roles", "myrole", "tasks", "main.yml"), <<-YAML)
+        - name: role task
+          ansible.builtin.debug:
+            msg: from role
+        YAML
+
+      playbook_yaml = <<-YAML
+        - name: play
+          hosts: all
+          roles:
+            - myrole
+          tasks:
+            - name: own task
+              ansible.builtin.debug:
+                msg: from play
+        YAML
+
+      playbook = Krikri::PlaybookParser.parse_string(playbook_yaml, File.join(root, "site.yml"))
+
+      playbook.plays[0].tasks.map(&.name).must_equal(["role task", "own task"])
+    end
+
+    it "templates an import_tasks: file path against the role's own defaults/vars" do
+      # Real bug found benchmarking openstack.ansible-hardening: its own
+      # tasks/main.yml does `import_tasks: "{{ stig_version }}stig/main.
+      # yml"` (stig_version is a plain role default, "rhel7") to pick
+      # its OS-versioned STIG control set - 105 of the role's ~112 tasks
+      # live behind this one import. import_tasks:'s file path was never
+      # templated at all - the literal, unrendered "{{ stig_version
+      # }}stig/main.yml" was used directly, always "file not found",
+      # silently skipping the entire STIG control set with just a
+      # warning (not a hard failure, so easy to miss).
+      root = PluginSpecHelper.tmp_path("playbook_parser_import_tasks_templated_path_spec")
+      FileUtils.rm_rf(root) if Dir.exists?(root)
+      Dir.mkdir_p(File.join(root, "roles", "myrole", "tasks", "rhel7stig"))
+      Dir.mkdir_p(File.join(root, "roles", "myrole", "defaults"))
+      File.write(File.join(root, "roles", "myrole", "defaults", "main.yml"), "stig_version: rhel7\n")
+      File.write(File.join(root, "roles", "myrole", "tasks", "main.yml"), <<-YAML)
+        - name: import versioned stig tasks
+          import_tasks: "{{ stig_version }}stig/main.yml"
+        YAML
+      File.write(File.join(root, "roles", "myrole", "tasks", "rhel7stig", "main.yml"), <<-YAML)
+        - name: stig task
+          ansible.builtin.debug:
+            msg: stig ran
+        YAML
+
+      playbook_yaml = <<-YAML
+        - name: play
+          hosts: all
+          roles:
+            - myrole
+        YAML
+
+      playbook = Krikri::PlaybookParser.parse_string(playbook_yaml, File.join(root, "site.yml"))
+
+      playbook.plays[0].tasks.map(&.name).must_equal(["stig task"])
+    end
+
+    it "treats a comment-only import_tasks: target as zero tasks, not an error" do
+      # Real bug found benchmarking ansistrano.deploy (round826): its
+      # tasks/main.yml does `include_tasks: "{{ ansistrano_before_setup_
+      # tasks_file | default('empty.yml') }}"` at 10 different hook
+      # points, all defaulting to the same deliberately-empty tasks/
+      # empty.yml (a comment-only no-op file, shipped by the role itself
+      # for exactly this "no custom hook" case). YAML.parse returns a
+      # bare `nil` document for comment-only content, not an empty
+      # array - `unless imported_yaml.as_a?` (written for a genuinely
+      # malformed file) treated `nil` the same way, raising "Imported
+      # tasks file must be a YAML list" and crashing the whole run
+      # outright instead of just running zero tasks, matching real
+      # Ansible.
+      root = PluginSpecHelper.tmp_path("playbook_parser_import_tasks_comment_only_spec")
+      FileUtils.rm_rf(root) if Dir.exists?(root)
+      Dir.mkdir_p(File.join(root, "roles", "myrole", "tasks"))
+      File.write(File.join(root, "roles", "myrole", "tasks", "empty.yml"), "# intentionally empty\n")
+      File.write(File.join(root, "roles", "myrole", "tasks", "main.yml"), <<-YAML)
+        - name: before hook
+          import_tasks: empty.yml
+        - name: real task
+          ansible.builtin.debug:
+            msg: after import
+        YAML
+
+      playbook_yaml = <<-YAML
+        - name: play
+          hosts: all
+          roles:
+            - myrole
+        YAML
+
+      playbook = Krikri::PlaybookParser.parse_string(playbook_yaml, File.join(root, "site.yml"))
+
+      playbook.plays[0].tasks.map(&.name).must_equal(["real task"])
+    end
+
+    it "raises a fatal StaticImportUndefinedError (aborts the whole playbook) when an import_tasks: path references a fact, not a var/default" do
+      # Round172's buluma.php_versions repro (Rocky 9.6), reduced to a
+      # minimal case and verified directly against real ansible-playbook:
+      # `import_tasks: "setup-{{ ansible_os_family }}.yml"` with no
+      # default/var providing ansible_os_family (a facts-only magic var)
+      # - real Ansible refuses the WHOLE PLAYBOOK at parse time ("Error
+      # when evaluating variable in import path... Static imports cannot
+      # use variables from facts... 'ansible_os_family' is undefined",
+      # rc=4, zero tasks run). Previously this engine's non-strict
+      # substitution silently rendered the missing var as its own
+      # "undefined" sentinel ("setup-undefined.yml"), which then just
+      # failed to resolve as a file path and was swallowed into a soft
+      # "Warning: ... not found" - the play "succeeded" with the import
+      # simply missing (ok=0, exit 0) instead of a hard parse failure.
+      root = PluginSpecHelper.tmp_path("playbook_parser_import_tasks_fact_path_spec")
+      FileUtils.rm_rf(root) if Dir.exists?(root)
+      Dir.mkdir_p(File.join(root, "roles", "myrole", "tasks"))
+      Dir.mkdir_p(File.join(root, "roles", "myrole", "defaults"))
+      File.write(File.join(root, "roles", "myrole", "defaults", "main.yml"), "---\n")
+      File.write(File.join(root, "roles", "myrole", "tasks", "main.yml"), <<-YAML)
+        - import_tasks: "setup-{{ ansible_os_family }}.yml"
+        YAML
+      File.write(File.join(root, "roles", "myrole", "tasks", "setup-RedHat.yml"), <<-YAML)
+        - name: redhat branch
+          ansible.builtin.debug:
+            msg: hi
+        YAML
+
+      playbook_yaml = <<-YAML
+        - name: play
+          hosts: all
+          roles:
+            - myrole
+        YAML
+
+      assert_raises_message(Krikri::StaticImportUndefinedError, /'ansible_os_family' is undefined/) do
+        Krikri::PlaybookParser.parse_string(playbook_yaml, File.join(root, "site.yml"))
+      end
+    end
+
+    it "still resolves an import_tasks: path templated against a real role default (not a fact)" do
+      root = PluginSpecHelper.tmp_path("playbook_parser_import_tasks_default_path_spec")
+      FileUtils.rm_rf(root) if Dir.exists?(root)
+      Dir.mkdir_p(File.join(root, "roles", "myrole", "tasks"))
+      Dir.mkdir_p(File.join(root, "roles", "myrole", "defaults"))
+      File.write(File.join(root, "roles", "myrole", "defaults", "main.yml"), "my_variant: Debian\n")
+      File.write(File.join(root, "roles", "myrole", "tasks", "main.yml"), <<-YAML)
+        - import_tasks: "setup-{{ my_variant }}.yml"
+        YAML
+      File.write(File.join(root, "roles", "myrole", "tasks", "setup-Debian.yml"), <<-YAML)
+        - name: debian branch
+          ansible.builtin.debug:
+            msg: hi
+        YAML
+
+      playbook_yaml = <<-YAML
+        - name: play
+          hosts: all
+          roles:
+            - myrole
+        YAML
+
+      playbook = Krikri::PlaybookParser.parse_string(playbook_yaml, File.join(root, "site.yml"))
+
+      playbook.plays[0].tasks.map(&.name).must_equal(["debian branch"])
+    end
+
+    it "raises a fatal StaticImportMissingFileError (aborts the whole playbook) when an import_tasks: path resolves to a file that doesn't exist" do
+      # lucascbeyeler.zimbra (round 900185), reduced to a minimal case
+      # and verified directly against real ansible-playbook
+      # (ansible-core 2.19.11): `import_tasks: "vars/{{ zimbra_version
+      # }}.yml"` templates fine at parse time (zimbra_version IS
+      # defined) but points at vars/8.8.12.yml when only vars/8.8.15.yml
+      # exists - real Ansible refuses the WHOLE RUN ("[ERROR]: Unable to
+      # retrieve file contents. Could not find or access '...vars/
+      # 8.8.12.yml' on the Ansible Controller.", no PLAY RECAP; a plain
+      # literal missing path fails identically). This engine raised a
+      # bare-String exception that parse_tasks's generic per-task rescue
+      # swallowed into a "Warning: Skipping task" - the play "succeeded"
+      # with the import's tasks simply missing (exit 0) instead of the
+      # fatal abort.
+      root = PluginSpecHelper.tmp_path("playbook_parser_import_tasks_missing_file_spec")
+      FileUtils.rm_rf(root) if Dir.exists?(root)
+      Dir.mkdir_p(File.join(root, "roles", "myrole", "tasks"))
+      Dir.mkdir_p(File.join(root, "roles", "myrole", "tasks", "vars"))
+      Dir.mkdir_p(File.join(root, "roles", "myrole", "defaults"))
+      File.write(File.join(root, "roles", "myrole", "defaults", "main.yml"), "zimbra_version: 8.8.12\n")
+      File.write(File.join(root, "roles", "myrole", "tasks", "main.yml"), <<-YAML)
+        - import_tasks: "vars/{{ zimbra_version }}.yml"
+        YAML
+      File.write(File.join(root, "roles", "myrole", "tasks", "vars", "8.8.15.yml"), <<-YAML)
+        - name: the version that exists
+          ansible.builtin.debug:
+            msg: hi
+        YAML
+
+      playbook_yaml = <<-YAML
+        - name: play
+          hosts: all
+          roles:
+            - myrole
+        YAML
+
+      assert_raises_message(Krikri::StaticImportMissingFileError, /Could not find or access '.*vars\/8\.8\.12\.yml' on the Ansible Controller\./) do
+        Krikri::PlaybookParser.parse_string(playbook_yaml, File.join(root, "site.yml"))
+      end
+    end
+
+    it "raises a hard RoleNotFoundError (rc=1 at the top level) when a role can't be found, matching real Ansible's own immediate refusal" do
+      root = PluginSpecHelper.tmp_path("playbook_parser_missing_role_spec")
+      FileUtils.rm_rf(root) if Dir.exists?(root)
+      Dir.mkdir_p(root)
+
+      playbook_yaml = <<-YAML
+        - name: play
+          hosts: all
+          roles:
+            - does_not_exist
+        YAML
+
+      assert_raises_message(Krikri::RoleNotFoundError, /Role not found/) do
+        Krikri::PlaybookParser.parse_string(playbook_yaml, File.join(root, "site.yml"))
+      end
+    end
+  end
+
+  describe "import_playbook: wiring" do
+    it "splices an imported playbook's plays in place, in order, alongside the importer's own plays" do
+      root = PluginSpecHelper.tmp_path("import_playbook_spec")
+      FileUtils.rm_rf(root) if Dir.exists?(root)
+      Dir.mkdir_p(root)
+
+      File.write(File.join(root, "webservers.yml"), <<-YAML)
+        - name: webservers play
+          hosts: all
+          tasks:
+            - name: webservers task
+              ansible.builtin.debug:
+                msg: hi
+        YAML
+
+      File.write(File.join(root, "site.yml"), <<-YAML)
+        - import_playbook: webservers.yml
+        - name: main play
+          hosts: all
+          tasks:
+            - name: main task
+              ansible.builtin.debug:
+                msg: hi
+        YAML
+
+      playbook = Krikri::PlaybookParser.parse(File.join(root, "site.yml"))
+
+      playbook.plays.map(&.name).must_equal(["webservers play", "main play"])
+    end
+
+    it "resolves the imported path relative to the importing playbook's own directory" do
+      root = PluginSpecHelper.tmp_path("import_playbook_nested_spec")
+      FileUtils.rm_rf(root) if Dir.exists?(root)
+      Dir.mkdir_p(File.join(root, "plays"))
+
+      File.write(File.join(root, "plays", "sub.yml"), <<-YAML)
+        - name: sub play
+          hosts: all
+          tasks: []
+        YAML
+
+      File.write(File.join(root, "site.yml"), <<-YAML)
+        - import_playbook: plays/sub.yml
+        YAML
+
+      playbook = Krikri::PlaybookParser.parse(File.join(root, "site.yml"))
+
+      playbook.plays.map(&.name).must_equal(["sub play"])
+    end
+
+    it "warns and continues (not a hard failure) when the imported file doesn't exist" do
+      root = PluginSpecHelper.tmp_path("import_playbook_missing_spec")
+      FileUtils.rm_rf(root) if Dir.exists?(root)
+      Dir.mkdir_p(root)
+
+      File.write(File.join(root, "site.yml"), <<-YAML)
+        - import_playbook: does_not_exist.yml
+        - name: main play
+          hosts: all
+          tasks: []
+        YAML
+
+      playbook = Krikri::PlaybookParser.parse(File.join(root, "site.yml"))
+
+      playbook.plays.map(&.name).must_equal(["main play"])
+    end
+  end
+
+  describe "import_tasks: wiring" do
+    it "splices the imported file's tasks in place (not wrapped in a single pseudo-task)" do
+      root = import_tasks_root("import_tasks_spec")
+      File.write(File.join(root, "common.yml"), <<-YAML)
+        - name: imported one
+          ansible.builtin.debug:
+            msg: hi
+        - name: imported two
+          ansible.builtin.debug:
+            msg: hi
+        YAML
+
+      playbook = Krikri::PlaybookParser.parse_string(<<-YAML, File.join(root, "site.yml"))
+        - name: play
+          hosts: all
+          tasks:
+            - import_tasks: common.yml
+            - name: own task
+              ansible.builtin.debug:
+                msg: hi
+        YAML
+
+      playbook.plays[0].tasks.map(&.name).must_equal(["imported one", "imported two", "own task"])
+    end
+
+    it "applies the import's own when: to each imported task individually, ANDed with any when: the task already has" do
+      root = import_tasks_root("import_tasks_when_spec")
+      File.write(File.join(root, "common.yml"), <<-YAML)
+        - name: unconditioned
+          ansible.builtin.debug:
+            msg: hi
+        - name: already conditioned
+          ansible.builtin.debug:
+            msg: hi
+          when: other_var == "x"
+        YAML
+
+      playbook = Krikri::PlaybookParser.parse_string(<<-YAML, File.join(root, "site.yml"))
+        - name: play
+          hosts: all
+          tasks:
+            - import_tasks: common.yml
+              when: foo == "bar"
+        YAML
+
+      tasks = playbook.plays[0].tasks
+      tasks[0].when_condition.must_equal(%(foo == "bar"))
+      # Round 188: parent `when:` is PREPENDED, not appended, so the
+      # cheaper/gate-like operand is evaluated first and `and` can
+      # short-circuit the more-expensive one when the gate is false.
+      # Real Ansible evaluates `and` left-to-right with short-circuit,
+      # so `(foo == "bar") and (other_var == "x")` correctly avoids
+      # evaluating `other_var == "x"` when the parent's `foo == "bar"`
+      # is false (and vice versa for the old, child-first order which
+      # raised an undefined-var on the child when the parent was false).
+      tasks[1].when_condition.must_equal(%((foo == "bar") and (other_var == "x")))
+    end
+
+    it "keeps the import's scalar when: in the imported task's when: list alongside the child's own list items" do
+      # Round 601595 (opendevshop.aegir-apache, via geerlingguy.git):
+      # the import's `when:` was a SCALAR (`git_install_from_source |
+      # bool`, default false) but the imported task's own `when:` was a
+      # two-item LIST (install-from-source.yml's OS-family check). The
+      # list rebuild only ran when the PARENT's when: was itself a
+      # multi-item list, so the child's when_condition_list kept only
+      # its own two items - and the executor prefers the list over the
+      # joined string, so the parent's false gate never got evaluated
+      # and the task ran as `ok` where real Ansible skips it.
+      root = import_tasks_root("import_tasks_scalar_parent_list_child_spec")
+      File.write(File.join(root, "common.yml"), <<-YAML)
+        - name: list-conditioned child
+          ansible.builtin.debug:
+            msg: hi
+          when:
+            - ansible_os_family == "RedHat"
+            - not is_fedora
+        YAML
+
+      playbook = Krikri::PlaybookParser.parse_string(<<-YAML, File.join(root, "site.yml"))
+        - name: play
+          hosts: all
+          vars:
+            git_install_from_source: false
+          tasks:
+            - import_tasks: common.yml
+              when: git_install_from_source | bool
+        YAML
+
+      task = playbook.plays[0].tasks[0]
+      # Parent scalar becomes a single-item prefix; the child's own
+      # two items follow it - every one now evaluated, so the false
+      # parent gate actually skips the task.
+      task.when_condition_list.must_equal(["git_install_from_source | bool", %q(ansible_os_family == "RedHat"), "not is_fedora"])
+      task.when_condition.must_equal(%((git_install_from_source | bool) and ((ansible_os_family == "RedHat") and (not is_fedora))))
+    end
+
+    it "applies the import's own tags: to each imported task individually" do
+      root = import_tasks_root("import_tasks_tags_spec")
+      File.write(File.join(root, "common.yml"), <<-YAML)
+        - name: t
+          ansible.builtin.debug:
+            msg: hi
+        YAML
+
+      playbook = Krikri::PlaybookParser.parse_string(<<-YAML, File.join(root, "site.yml"))
+        - name: play
+          hosts: all
+          tasks:
+            - import_tasks: common.yml
+              tags: [imported]
+        YAML
+
+      playbook.plays[0].tasks[0].tags.must_equal(["imported"])
+    end
+
+    it "applies the import's own notify: to each imported task individually" do
+      # Real bug found benchmarking filviu.activemq's own "Install
+      # apachemq {{ activemq_version }}" (`import_tasks: install.yml,
+      # notify: restart activemq`) - when:/tags: on the import line were
+      # already propagated onto each inlined task (see the specs just
+      # above), but notify: was not, so the handler never fired at all
+      # even when several of install.yml's own inlined tasks (unarchive,
+      # deploy config) reported changed on the exact same run real
+      # Ansible fired it on.
+      root = import_tasks_root("import_tasks_notify_spec")
+      File.write(File.join(root, "common.yml"), <<-YAML)
+        - name: t
+          ansible.builtin.debug:
+            msg: hi
+        YAML
+
+      playbook = Krikri::PlaybookParser.parse_string(<<-YAML, File.join(root, "site.yml"))
+        - name: play
+          hosts: all
+          tasks:
+            - import_tasks: common.yml
+              notify: restart thing
+        YAML
+
+      playbook.plays[0].tasks[0].notify.must_equal(["restart thing"])
+    end
+
+    it "applies the import's own become:/become_user: to each imported task individually" do
+      # Real bug found benchmarking silverlogic.rvm's tasks/main.yml
+      # (`import_tasks: 'rvm.yml', become: yes, become_user: '{{ rvm1_user }}'`):
+      # when:/tags:/notify: on the import line were already propagated onto
+      # each inlined task (see the specs just above), but become:/
+      # become_user: were silently dropped - every rvm.yml task ran as root
+      # instead of the (nonexistent-on-target) rvm1_user. Real Ansible
+      # fatals immediately on the first inlined task's privilege-escalation
+      # temp-file setup; here the whole role actually executed (real
+      # network installer + keyserver timeouts, ~250s vs ~5s).
+      root = import_tasks_root("import_tasks_become_spec")
+      File.write(File.join(root, "common.yml"), <<-YAML)
+        - name: imported one
+          ansible.builtin.debug:
+            msg: hi
+        - name: imported two
+          ansible.builtin.debug:
+            msg: hi
+        YAML
+
+      playbook = Krikri::PlaybookParser.parse_string(<<-YAML, File.join(root, "site.yml"))
+        - name: play
+          hosts: all
+          tasks:
+            - import_tasks: common.yml
+              become: true
+              become_user: somebody
+        YAML
+
+      tasks = playbook.plays[0].tasks
+      tasks[0].become?.must_equal(true)
+      tasks[0].become_user.must_equal("somebody")
+      tasks[1].become?.must_equal(true)
+      tasks[1].become_user.must_equal("somebody")
+    end
+
+    it "lets an imported task's own become:/become_user: override the import line's" do
+      # Child wins over parent, same precedence as block: (task > block >
+      # play) - so the propagation must be ambient-fallback, not a
+      # clobbering iteration over the parsed tasks.
+      root = import_tasks_root("import_tasks_become_child_override_spec")
+      File.write(File.join(root, "common.yml"), <<-YAML)
+        - name: plain child
+          ansible.builtin.debug:
+            msg: hi
+        - name: specific child
+          ansible.builtin.debug:
+            msg: hi
+          become: false
+          become_user: otheruser
+        YAML
+
+      playbook = Krikri::PlaybookParser.parse_string(<<-YAML, File.join(root, "site.yml"))
+        - name: play
+          hosts: all
+          tasks:
+            - import_tasks: common.yml
+              become: true
+              become_user: somebody
+        YAML
+
+      tasks = playbook.plays[0].tasks
+      tasks[0].become?.must_equal(true)
+      tasks[0].become_user.must_equal("somebody")
+      tasks[1].become?.must_equal(false)
+      tasks[1].become_user.must_equal("otheruser")
+    end
+
+    it "does not leak the import line's become into sibling tasks parsed after it" do
+      root = import_tasks_root("import_tasks_become_no_leak_spec")
+      File.write(File.join(root, "common.yml"), <<-YAML)
+        - name: imported task
+          ansible.builtin.debug:
+            msg: hi
+        YAML
+
+      playbook = Krikri::PlaybookParser.parse_string(<<-YAML, File.join(root, "site.yml"))
+        - name: play
+          hosts: all
+          tasks:
+            - import_tasks: common.yml
+              become: true
+              become_user: somebody
+            - name: sibling after
+              ansible.builtin.debug:
+                msg: hi
+        YAML
+
+      sibling = playbook.plays[0].tasks[1]
+      sibling.become?.must_equal(false)
+      sibling.become_user.must_be_nil
+    end
+
+    it "resolves a nested import_tasks: relative to the file that contains it, not the top-level playbook" do
+      root = import_tasks_root("import_tasks_nested_spec")
+      Dir.mkdir_p(File.join(root, "sub"))
+      File.write(File.join(root, "sub", "inner.yml"), <<-YAML)
+        - name: innermost task
+          ansible.builtin.debug:
+            msg: hi
+        YAML
+      File.write(File.join(root, "sub", "outer.yml"), <<-YAML)
+        - import_tasks: inner.yml
+        YAML
+
+      playbook = Krikri::PlaybookParser.parse_string(<<-YAML, File.join(root, "site.yml"))
+        - name: play
+          hosts: all
+          tasks:
+            - import_tasks: sub/outer.yml
+        YAML
+
+      playbook.plays[0].tasks.map(&.name).must_equal(["innermost task"])
+    end
+
+    it "hard-fails (not warns) when the imported file doesn't exist" do
+      # Updated from "warns and continues" to the fatal behavior real
+      # ansible-playbook itself has (ansible-core 2.19.11, verified live
+      # with a minimal repro: "[ERROR]: Unable to retrieve file
+      # contents. Could not find or access '...does_not_exist.yml' on
+      # the Ansible Controller.", no PLAY RECAP, whole run aborted) -
+      # see StaticImportMissingFileError's own comment (round 900185).
+      root = import_tasks_root("import_tasks_missing_spec")
+
+      assert_raises_message(Krikri::StaticImportMissingFileError, /Could not find or access '.*does_not_exist\.yml'/) do
+        Krikri::PlaybookParser.parse_string(<<-YAML, File.join(root, "site.yml"))
+          - name: play
+            hosts: all
+            tasks:
+              - import_tasks: does_not_exist.yml
+              - name: own task
+                ansible.builtin.debug:
+                  msg: hi
+          YAML
+      end
+    end
+
+    # Round 188: parent `when:` is PREPENDED, not appended, specifically
+    # so `and` can short-circuit. The previous test verifies the
+    # string shape; this one verifies the integration-time effect: a
+    # gated `import_tasks:` whose child file's last task references a
+    # `register:` from a prior inner task that the gate skipped, the
+    # whole file is skipped, the child's `when:` is never evaluated,
+    # and a strict-undefined reference to a missing registered var
+    # does NOT raise. Pre-fix this raised "'item_stat.stat.exists' is
+    # undefined" at the child's when-eval, aborting the play; the fix
+    # prepends the parent so `(parent) and (child)` short-circuits
+    # when the parent is false, exactly like real Ansible.
+    it "parent when: false short-circuits the child's when: (no strict-undef on the child operand)" do
+      root = import_tasks_root("import_tasks_parent_gate_short_circuits_spec")
+      File.write(File.join(root, "inner.yml"), <<-YAML)
+        - name: write registered var
+          ansible.builtin.set_fact:
+            item_stat: {stat: {exists: false}}
+        - name: gated by parent AND by self
+          ansible.builtin.debug:
+            msg: "should be skipped"
+          when: not item_stat.stat.exists
+        YAML
+
+      playbook = Krikri::PlaybookParser.parse_string(<<-YAML, File.join(root, "site.yml"))
+        - name: play
+          hosts: all
+          gather_facts: false
+          tasks:
+            - import_tasks: inner.yml
+              when: parent_gate | bool
+        YAML
+
+      # The child task's when_condition is `(parent) and (child)` -
+      # parent FIRST. (Pre-fix it was `(child) and (parent)`.)
+      tasks = playbook.plays[0].tasks
+      tasks[0].when_condition.must_equal(%(parent_gate | bool))
+      tasks[1].when_condition.must_equal(%((parent_gate | bool) and (not item_stat.stat.exists)))
+    end
+
+    it "rejects static: on import_tasks: like real ansible (removed pre-2.x attribute)" do
+      # Real bug found benchmarking ovirt.image-template (round 74003):
+      # the role's tasks/qcow2_image.yml carries `static: no` on an
+      # `import_tasks:` - a pre-2.x include attribute modern ansible-core
+      # removed entirely. Real ansible-playbook 2.19 constructs a
+      # TaskInclude for import_tasks: and its attribute validation
+      # hard-fails the whole run ("'static' is not a valid attribute for
+      # a TaskInclude", rc=4, no PLAY RECAP); krikri previously ignored
+      # the key and ran to a normal recap (rc=0), diverging completely.
+      assert_raises_message(Krikri::PlaybookParser::InvalidIncludeAttributeError, /'static' is not a valid attribute for a TaskInclude/) do
+        Krikri::PlaybookParser.parse_string(<<-YAML)
+          - name: play
+            hosts: all
+            gather_facts: false
+            tasks:
+              - name: Include prerequisites tasks for VM
+                import_tasks: prerequisites.yml
+                static: no
+          YAML
+      end
+    end
+
+    it "rejects static: on import_role: like real ansible (IncludeRole inherits TaskInclude's attribute validation)" do
+      # Same removal as import_tasks:'s static: - real ansible parses
+      # import_role: as an IncludeRole, which inherits TaskInclude's
+      # fattributes, and neither class has a static field, so the error
+      # there names IncludeRole instead of TaskInclude.
+      assert_raises_message(Krikri::PlaybookParser::InvalidIncludeAttributeError, /'static' is not a valid attribute for a IncludeRole/) do
+        Krikri::PlaybookParser.parse_string(<<-YAML)
+          - name: play
+            hosts: all
+            gather_facts: false
+            tasks:
+              - import_role:
+                  name: bogus
+                static: no
+          YAML
+      end
+    end
+  end
+
+  describe "module name resolution" do
+    # Round 188: a bare `community.crypto.*` short name (e.g.
+    # `openssl_privatekey:`) must resolve to the registered
+    # `community.crypto.openssl_privatekey` FQCN exactly the way
+    # `ansible.builtin.foo` -> `foo` already worked. Bare names are
+    # the community-collection idiom (every role tested writes
+    # `openssl_privatekey:` / `openssl_csr:` / `openssl_pkcs12:` etc.,
+    # not the FQCN), and real Ansible auto-aliases them via the
+    # collection-aliasing mechanism. The fix is one line in
+    # MODULE_SEARCH_COLLECTIONS: adding "community.crypto" so
+    # `#resolve_module_name` tries `community.crypto.<raw>` as a
+    # fallback when the bare name isn't directly in AVAILABLE_PLUGINS.
+    # Pre-fix the bare name was unresolvable, the role-side task was
+    # dropped with a "uses unimplemented plugin" warning, and the
+    # `community.crypto modules implemented` 0.9.608 work had
+    # arguably unblocked the engine from rc=4 errors but NOT actually
+    # run the work - silently skipped, green play, missing the real
+    # change.
+    describe "community.crypto short names" do
+      {% for short_name in %w[openssl_privatekey openssl_csr x509_certificate openssl_pkcs12 openssh_keypair] %}
+        {% cname = "resolves bare `" + short_name.id.stringify + ":` to community.crypto." + short_name.id.stringify %}
+        it {{ cname }} do
+          task = single_task(<<-YAML)
+            - name: t
+              {{short_name.id}}:
+                path: /tmp/x
+            YAML
+          task.module_name.must_equal("community.crypto.{{short_name.id}}")
+        end
+      {% end %}
+    end
+
+    # openssl_certificate is x509_certificate's old name (renamed when
+    # the module moved into community.crypto; ansible-core's builtin
+    # runtime still redirects the bare/builtin/legacy spellings, and
+    # community.general redirected its pre-2.0 copy there too). All five
+    # spellings real roles write must resolve onto the
+    # community.crypto.x509_certificate plugin via MODULE_ALIASES -
+    # before this, every spelling was unresolvable and the task dropped
+    # with a "uses unimplemented plugin" warning.
+    describe "openssl_certificate aliases" do
+      {% for spelling in %w[openssl_certificate ansible.builtin.openssl_certificate ansible.legacy.openssl_certificate community.crypto.openssl_certificate community.general.openssl_certificate] %}
+        {% cname = "resolves `" + spelling.id.stringify + ":` to community.crypto.x509_certificate" %}
+        it {{ cname }} do
+          task = single_task(<<-YAML)
+            - name: t
+              {{spelling.id}}:
+                path: /tmp/x
+                provider: selfsigned
+                csr_path: /tmp/x.csr
+            YAML
+          task.module_name.must_equal("community.crypto.x509_certificate")
+        end
+      {% end %}
+    end
+
+    # ovirt_auth is registered under both spellings real oVirt roles
+    # write: the bare legacy short name (which the ovirt.ovirt
+    # collection keeps redirecting) and the FQCN. The cluster-upgrade /
+    # disaster-recovery / manageiq rounds (300133/300144/310133) all
+    # hard-stopped on the bare `ovirt_auth:` because only the FQCN was
+    # registered.
+    describe "ovirt_auth short name" do
+      it "resolves bare `ovirt_auth:` (registered verbatim)" do
+        task = single_task(<<-YAML)
+          - name: t
+            ovirt_auth:
+              url: https://engine.example.com/ovirt-engine/api
+              username: admin@internal
+              password: x
+          YAML
+        task.module_name.must_equal("ovirt_auth")
+      end
+
+      it "resolves the FQCN `ovirt.ovirt.ovirt_auth:` unchanged" do
+        task = single_task(<<-YAML)
+          - name: t
+            ovirt.ovirt.ovirt_auth:
+              url: https://engine.example.com/ovirt-engine/api
+              username: admin@internal
+              password: x
+          YAML
+        task.module_name.must_equal("ovirt.ovirt.ovirt_auth")
+      end
+
+      it "dispatches both spellings to the same `ovirt_auth` plugin binary" do
+        Krikri::PluginManager.simple_plugin_name("ovirt_auth").must_equal("ovirt_auth")
+        Krikri::PluginManager.simple_plugin_name("ovirt.ovirt.ovirt_auth").must_equal("ovirt_auth")
+      end
+    end
+
+    # authorized_key is registered under both spellings real playbooks
+    # write: the FQCN (ansible.posix, where the implementation lives) and
+    # `ansible.builtin.authorized_key`, which real ansible-core keeps
+    # resolving via a legacy redirect even though the module moved to
+    # ansible.posix years ago. The ome.local_accounts round (400072)
+    # hard-stopped on the builtin spelling because only the posix FQCN
+    # was registered.
+    describe "authorized_key builtin alias" do
+      it "resolves the FQCN `ansible.posix.authorized_key:` unchanged" do
+        task = single_task(<<-YAML)
+          - name: t
+            ansible.posix.authorized_key:
+              user: root
+              key: ssh-rsa AAAA test
+          YAML
+        task.module_name.must_equal("ansible.posix.authorized_key")
+      end
+
+      it "resolves the legacy redirect `ansible.builtin.authorized_key:` verbatim" do
+        task = single_task(<<-YAML)
+          - name: t
+            ansible.builtin.authorized_key:
+              user: root
+              key: ssh-rsa AAAA test
+          YAML
+        task.module_name.must_equal("ansible.builtin.authorized_key")
+      end
+
+      it "dispatches both spellings to the same `authorized_key` plugin binary" do
+        Krikri::PluginManager.simple_plugin_name("ansible.posix.authorized_key").must_equal("authorized_key")
+        Krikri::PluginManager.simple_plugin_name("ansible.builtin.authorized_key").must_equal("authorized_key")
+      end
+    end
+
+    # Same legacy-core-FQCN redirect story as authorized_key above, for
+    # three more modules that moved out of ansible-core into a separate
+    # collection years ago: real ansible-core's own
+    # ansible_builtin_runtime.yml still transparently redirects the old
+    # `ansible.builtin.` spelling, but krikri had no equivalent alias, so
+    # a task spelling out the legacy name hard-stopped even though the
+    # plugin is fully implemented under its real FQCN. Found in the
+    # 400-new-role batch (rounds 601000-601999): Appsilon.mount_efs
+    # (ansible.builtin.mount), jtprogru.configure_timesyncd
+    # (ansible.builtin.timezone), T2L.php (ansible.builtin.alternatives).
+    describe "legacy-core-FQCN redirects for mount/timezone/alternatives" do
+      it "resolves ansible.builtin.mount to the ansible.posix.mount plugin" do
+        Krikri::PlaybookParser.resolve_module_name("ansible.builtin.mount").must_equal("ansible.builtin.mount")
+        Krikri::PluginManager.simple_plugin_name("ansible.builtin.mount").must_equal("mount")
+        Krikri::PluginManager.simple_plugin_name("ansible.posix.mount").must_equal("mount")
+      end
+
+      it "resolves ansible.builtin.timezone to the community.general.timezone plugin" do
+        Krikri::PlaybookParser.resolve_module_name("ansible.builtin.timezone").must_equal("ansible.builtin.timezone")
+        Krikri::PluginManager.simple_plugin_name("ansible.builtin.timezone").must_equal("timezone")
+        Krikri::PluginManager.simple_plugin_name("community.general.timezone").must_equal("timezone")
+      end
+
+      it "resolves ansible.builtin.alternatives to the community.general.alternatives plugin" do
+        Krikri::PlaybookParser.resolve_module_name("ansible.builtin.alternatives").must_equal("ansible.builtin.alternatives")
+        Krikri::PluginManager.simple_plugin_name("ansible.builtin.alternatives").must_equal("alternatives")
+        Krikri::PluginManager.simple_plugin_name("community.general.alternatives").must_equal("alternatives")
+      end
+
+      it "resolves ansible.builtin.acl to the ansible.posix.acl plugin" do
+        Krikri::PlaybookParser.resolve_module_name("ansible.builtin.acl").must_equal("ansible.builtin.acl")
+        Krikri::PluginManager.simple_plugin_name("ansible.builtin.acl").must_equal("acl")
+        Krikri::PluginManager.simple_plugin_name("ansible.posix.acl").must_equal("acl")
+      end
+    end
+
+    # The other collections already in MODULE_SEARCH_COLLECTIONS
+    # (ansible.builtin/legacy/posix, community.general/docker/
+    # mysql/postgresql) were never broken and shouldn't have changed -
+    # regression-test the existing behavior alongside the new one.
+    describe "other collection short names (regression)" do
+      it "resolves bare `apt_key:` to ansible.builtin.apt_key" do
+        task = single_task(<<-YAML)
+          - name: t
+            apt_key:
+              url: https://x
+          YAML
+        task.module_name.must_equal("ansible.builtin.apt_key")
+      end
+
+      it "resolves bare `docker_container:` to community.docker.docker_container" do
+        task = single_task(<<-YAML)
+          - name: t
+            docker_container:
+              name: x
+          YAML
+        task.module_name.must_equal("community.docker.docker_container")
+      end
+    end
+
+    # Already-resolved FQCNs and `ansible.builtin.*` short names must
+    # still work unchanged.
+    describe "FQCNs and ansible.builtin are unchanged" do
+      it "leaves an explicit FQCN alone" do
+        task = single_task(<<-YAML)
+          - name: t
+            community.crypto.openssl_privatekey:
+              path: /tmp/x
+          YAML
+        task.module_name.must_equal("community.crypto.openssl_privatekey")
+      end
+
+      it "leaves a bare ansible.builtin.* module alone" do
+        task = single_task(<<-YAML)
+          - name: t
+            ansible.builtin.debug:
+              msg: hi
+          YAML
+        task.module_name.must_equal("ansible.builtin.debug")
+      end
+    end
+  end
+
+  describe "include_tasks: parsing" do
+    it "parses a bare-string include_tasks: into a single pseudo-task (not spliced at parse time)" do
+      task = single_task(<<-YAML)
+        - include_tasks: dynamic.yml
+        YAML
+
+      task.include_tasks?.must_equal(true)
+      task.module_name.must_equal("_include_tasks")
+      task.include_file.must_equal("dynamic.yml")
+    end
+
+    it "parses the file: sub-key form" do
+      task = single_task(<<-YAML)
+        - include_tasks:
+            file: dynamic.yml
+        YAML
+
+      task.include_file.must_equal("dynamic.yml")
+    end
+
+    it "parses when:, tags:, and loop: on the include statement itself" do
+      task = single_task(<<-YAML)
+        - include_tasks: dynamic.yml
+          when: some_var == "yes"
+          tags: [dynamic]
+          loop: [a, b, c]
+        YAML
+
+      task.when_condition.must_equal(%(some_var == "yes"))
+      task.tags.must_equal(["dynamic"])
+      task.loop_items.try(&.map(&.as_s)).must_equal(["a", "b", "c"])
+    end
+
+    it "parses with_first_found: on the include statement itself" do
+      # Real bug found benchmarking githubixx.ansible_role_wireguard's
+      # own "Include tasks depending on OS" (`include_tasks: {file: "{{
+      # item }}"}` paired with with_first_found: candidates, picking the
+      # OS-specific setup file to include) - previously unparsed at all
+      # (only loop:/with_items: were), so `item` stayed completely
+      # unbound and the include's own "{{ item }}" file path rendered to
+      # the literal text "undefined", always "file not found".
+      task = single_task(<<-YAML)
+        - include_tasks:
+            file: "{{ item }}"
+          with_first_found:
+            - "setup-{{ ansible_facts['distribution'] }}.yml"
+            - "setup-default.yml"
+        YAML
+
+      task.loop_first_found.must_equal(["setup-{{ ansible_facts['distribution'] }}.yml", "setup-default.yml"])
+    end
+
+    it "parses with_subelements: on the include statement itself without rejecting it as an invalid TaskInclude attribute" do
+      # Real bug found benchmarking f5devcentral.bigiq_move_app_dashboard/
+      # .bigiq_pinning_deploy_objects, both looping an `include_tasks:`
+      # over `with_subelements: [apps, pin]` - TASK_INCLUDE_VALID_KEYWORDS
+      # had every other with_* loop-lookup variant (with_items,
+      # with_fileglob, with_first_found, ...) but not this one, so the
+      # parser raised "'with_subelements' is not a valid attribute for a
+      # TaskInclude" and refused to even start the play (rc=4, no recap)
+      # where real ansible-core runs it fine.
+      task = single_task(<<-YAML)
+        - include_tasks: move-merge.yaml
+          vars:
+            app: "{{ item.0.name }}"
+          with_subelements:
+            - "{{ apps }}"
+            - pin
+        YAML
+
+      task.include_tasks?.must_equal(true)
+      task.loop_subelements_list.must_equal("{{ apps }}")
+      task.loop_subelements_key.must_equal("pin")
+    end
+
+    it "does not recurse into the included file's tasks at parse time (dynamic, unlike import_tasks)" do
+      task = single_task(<<-YAML)
+        - include_tasks: does_not_exist_yet.yml
+        YAML
+
+      # No error at parse time even though the file doesn't exist - it's
+      # only resolved when this task actually executes.
+      task.include_tasks?.must_equal(true)
+    end
+
+    it "puts vars: into BOTH task.vars (the include's own loop:/when: scope) and task.include_vars (propagated to the included file)" do
+      # Real bug found benchmarking round166's buluma.bitbucket on Rocky
+      # 9.6: `loop: "{{ query('first_found', _params) }}"` with `vars:
+      # {_params: ...}` on the SAME include_tasks: task ("Include release
+      # specific tasks") - task.vars stayed empty (only task.include_vars
+      # was populated), so build_vars_context never saw `_params` when
+      # resolving the include's own loop, which silently resolved to zero
+      # items and skipped the whole include - even though the identically-
+      # shaped `include_vars:` sibling task with the same `_params` vars:
+      # block worked fine.
+      task = single_task(<<-YAML)
+        - include_tasks: "{{ _loop_var }}"
+          loop: "{{ query('first_found', _params) }}"
+          loop_control:
+            loop_var: _loop_var
+          vars:
+            _params:
+              files: [redhat.yml]
+              paths: ["."]
+        YAML
+
+      task.vars["_params"]?.wont_be_nil
+      task.include_vars.try(&.["_params"]?).wont_be_nil
+    end
+  end
+
+  describe "include_role: parsing" do
+    it "parses name: into include_role_name (not spliced at parse time)" do
+      task = single_task(<<-YAML)
+        - include_role:
+            name: greeter
+        YAML
+
+      task.include_role?.must_equal(true)
+      task.module_name.must_equal("_include_role")
+      task.include_role_name.must_equal("greeter")
+    end
+
+    it "skips (with a warning) an include_role: with no name: rather than failing the whole play" do
+      playbook = Krikri::PlaybookParser.parse_string(<<-YAML)
+        - name: play
+          hosts: all
+          tasks:
+            - include_role:
+                allow_duplicates: true
+        YAML
+
+      playbook.plays[0].tasks.must_be_empty
+    end
+
+    it "treats vars: as a sibling task keyword, not nested inside include_role: (per ansible-doc)" do
+      task = single_task(<<-YAML)
+        - include_role:
+            name: greeter
+          vars:
+            target: krikri-playbook
+        YAML
+
+      task.include_role_vars.wont_be_nil
+      task.include_role_vars.as(Hash(String, JSON::Any))["target"].as_s.must_equal("krikri-playbook")
+    end
+
+    it "parses when:, tags:, and loop: on the include_role statement itself" do
+      task = single_task(<<-YAML)
+        - include_role:
+            name: greeter
+          when: some_var == "yes"
+          tags: [dynamic]
+          loop: [a, b]
+        YAML
+
+      task.when_condition.must_equal(%(some_var == "yes"))
+      task.tags.must_equal(["dynamic"])
+      task.loop_items.try(&.map(&.as_s)).must_equal(["a", "b"])
+    end
+  end
+
+  describe "module param encoding" do
+    # A plain list (real Ansible's `type: list, elements: str`) stays
+    # comma-joined - the format every existing plugin's list params
+    # already expect (ports:, volumes:, includepkgs:, ...).
+    it "comma-joins a plain scalar list param" do
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.debug:
+            msg: "{{ item }}"
+          loop: [a, b]
+        YAML
+
+      other_task = single_task(<<-YAML)
+        - name: t
+          community.docker.docker_container:
+            includepkgs: [foo, bar, baz]
+        YAML
+      other_task.params["includepkgs"].must_equal("foo,bar,baz")
+      task.params["msg"].must_equal("{{ item }}")
+    end
+
+    # A list of dicts (real Ansible's `type: list, elements: dict`, e.g.
+    # docker_container's networks:) can't be comma-joined at all - each
+    # element's own Hash#to_json output glued together with commas isn't
+    # valid JSON once there's more than one element. It's emitted as a
+    # real JSON array instead, decodable via `JSON.parse(json).as_a`.
+    it "emits a list of dicts as a real JSON array, not comma-joined Hash blobs" do
+      task = single_task(<<-YAML)
+        - name: t
+          community.docker.docker_container:
+            networks:
+              - name: net-a
+                aliases: [alias-a]
+              - name: net-b
+        YAML
+
+      parsed = JSON.parse(task.params["networks"]).as_a
+      parsed.size.must_equal(2)
+      parsed[0]["name"].as_s.must_equal("net-a")
+      parsed[0]["aliases"].as_a.map(&.as_s).must_equal(["alias-a"])
+      parsed[1]["name"].as_s.must_equal("net-b")
+    end
+
+    it "still emits a single-element dict list as valid JSON (not just a bare Hash blob)" do
+      task = single_task(<<-YAML)
+        - name: t
+          community.docker.docker_container:
+            networks:
+              - name: solo-net
+        YAML
+
+      parsed = JSON.parse(task.params["networks"]).as_a
+      parsed.size.must_equal(1)
+      parsed[0]["name"].as_s.must_equal("solo-net")
+    end
+
+    it "recovers the octal digit text for an unquoted mode: value" do
+      # Real bug found benchmarking cloudalchemy.prometheus's own
+      # directory/file tasks (mode: 0770, mode: 0644, unquoted - the way
+      # most real playbooks write it): YAML 1.1 treats a leading-zero
+      # unquoted scalar as octal notation, and Crystal's own YAML parser
+      # follows that, silently resolving "0770" to the *decimal* value
+      # 504 rather than preserving the literal digit text real Ansible's
+      # own YAML loader would. stringify_value's normal Int64 handling
+      # then produced the literal string "504", which file.cr's own
+      # octal parser (mode.to_i(8)) reinterpreted as MORE octal digits -
+      # a chmod of 0o504 instead of the intended 0o770. In one real case
+      # this was restrictive enough that the prometheus service user
+      # couldn't even read its own config file.
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.file:
+            path: /tmp/x
+            mode: 0770
+        YAML
+
+      task.params["mode"].must_equal("0770")
+    end
+
+    it "applies the same octal round-trip to a leading-zero-less mode: too, matching real ansible-playbook" do
+      # Verified against real ansible-playbook directly: `mode: 644`
+      # (no leading zero) parses as plain decimal 644, which Ansible's
+      # own file module then ALSO reinterprets via octal conversion -
+      # producing mode 1204 (a real, if surprising, well-known Ansible
+      # gotcha: "always quote your mode or use a leading 0"), not the
+      # literal digits 644. This matches that real behavior exactly
+      # rather than trying to "fix" it into something more intuitive.
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.file:
+            path: /tmp/x
+            mode: 644
+        YAML
+
+      task.params["mode"].must_equal("01204")
+    end
+
+    it "prepends a leading zero so copy.cr/template.cr's own starts_with?(\"0\") octal check still fires" do
+      # Real regression caught immediately after the fix above, on the
+      # very next task in the same real-host round: Int#to_s(8) never
+      # includes a leading zero, but copy.cr and template.cr (unlike
+      # file.cr's own regex-based parser, which treats a leading zero as
+      # always-optional) branch on `mode.starts_with?("0")` to decide
+      # octal-vs-decimal. Without the leading zero, "640" reached
+      # template.cr's own parser as a bare *decimal* 640, chmod'ing
+      # prometheus's own config file to an unreadable 1200 instead of
+      # 0640.
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.template:
+            src: x.j2
+            dest: /tmp/x
+            mode: 0640
+        YAML
+
+      task.params["mode"].must_equal("0640")
+      task.params["mode"].starts_with?("0").must_equal(true)
+    end
+
+    it "leaves an explicitly-quoted mode: string untouched" do
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.file:
+            path: /tmp/x
+            mode: "0770"
+        YAML
+
+      task.params["mode"].must_equal("0770")
+    end
+  end
+
+  describe "legacy inline key=value module args" do
+    # Real bug found benchmarking geerlingguy.redis: its handler uses
+    # the legacy free-form syntax (`service: "name={{ x }} state=y"`),
+    # where a value itself contains `{{ redis_daemon }}` - a Jinja span
+    # with its own internal spaces. split_shell_like tokenized on every
+    # whitespace character with no awareness of `{{ }}`/`{% %}` as an
+    # opaque span, shattering the expression into three bogus tokens
+    # (`name={{`, `redis_daemon`, `}}`) - the middle two silently
+    # dropped (no `=`), leaving params["name"] as the literal,
+    # unrenderable string "{{". The service module then tried to
+    # restart a unit literally named "{{".
+    it "keeps a {{ }} expression with internal spaces as one token" do
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.service: "name={{ redis_daemon }} state=restarted"
+        YAML
+
+      task.params["name"].must_equal("{{ redis_daemon }}")
+      task.params["state"].must_equal("restarted")
+    end
+
+    it "keeps a {% %} statement span with internal spaces as one token" do
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.debug: "msg={% if x %}yes{% else %}no{% endif %} other=val"
+        YAML
+
+      task.params["msg"].must_equal("{% if x %}yes{% else %}no{% endif %}")
+      task.params["other"].must_equal("val")
+    end
+  end
+
+  describe "command:/shell: trailing special params (creates:/removes:/chdir:/executable:)" do
+    # Real bug found benchmarking geerlingguy.firewall's own "Flush
+    # iptables the first time playbook runs." task: `command: >
+    # iptables -F creates=/etc/firewall.bash`. Real Ansible's command:/
+    # shell: modules recognize these as trailing key=value params
+    # written inline, stripping them out of the actual command text
+    # before running it - previously the ENTIRE string was dumped
+    # verbatim into cmd, so "iptables -F creates=/etc/firewall.bash"
+    # ran literally and iptables failed trying to interpret
+    # "creates=..." as an option/chain name.
+    it "extracts a trailing creates= and leaves the rest of the command untouched" do
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.command: iptables -F creates=/etc/firewall.bash
+        YAML
+
+      task.params["cmd"].must_equal("iptables -F")
+      task.params["creates"].must_equal("/etc/firewall.bash")
+    end
+
+    it "extracts multiple trailing special params in any order" do
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.shell: echo hello chdir=/tmp creates=/tmp/marker
+        YAML
+
+      task.params["cmd"].must_equal("echo hello")
+      task.params["chdir"].must_equal("/tmp")
+      task.params["creates"].must_equal("/tmp/marker")
+    end
+
+    it "extracts a trailing special param whose templated value has internal spaces" do
+      # Real bug found benchmarking geerlingguy.logstash's own "Get list
+      # of installed plugins." task: `./bin/logstash-plugin list
+      # chdir={{ logstash_dir }}` - the near-universal `{{ x }}` spacing
+      # style. The value alternation only had a quoted-string or bare
+      # `\S+` option, and `\S+` only matched up to the template's own
+      # leading space ("{{"), leaving "target_dir }}" where `\s*\z`
+      # needed pure trailing whitespace - the whole match failed
+      # silently, so chdir was never applied at all and the untemplated
+      # "chdir={{ logstash_dir }}" text stayed glued onto the command.
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.command: ./bin/logstash-plugin list chdir={{ logstash_dir }}
+        YAML
+
+      task.params["cmd"].must_equal("./bin/logstash-plugin list")
+      task.params["chdir"].must_equal("{{ logstash_dir }}")
+    end
+
+    it "extracts a trailing special param with a single template block followed by trailing literal text" do
+      # Real bug found benchmarking geerlingguy.solr's own "Run Solr
+      # installation script." task: `creates={{ solr_install_path
+      # }}/bin/solr` - exactly one `{{ }}` block followed by literal
+      # text and no further "}}" anywhere else in the string. The old
+      # `\{\{.*?\}\}` alternative only ever matches a single brace
+      # pair; it happened to keep working for values with a SECOND
+      # template block further along (the lazy `.*?` could backtrack
+      # into it), but with only one block and no other "}}" to reach,
+      # the whole alternation failed outright, so extraction silently
+      # never ran and "creates={{ solr_install_path }}/bin/solr" stayed
+      # glued onto the command, running literally.
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.command: /opt/solr/bin/install_solr_service.sh creates={{ solr_install_path }}/bin/solr
+        YAML
+
+      task.params["cmd"].must_equal("/opt/solr/bin/install_solr_service.sh")
+      task.params["creates"].must_equal("{{ solr_install_path }}/bin/solr")
+    end
+
+    it "extracts two separate trailing special params, each with its own template block, without one absorbing the other" do
+      # Real bug found benchmarking geerlingguy.svn's own "Create a
+      # test repository." task: `svnadmin create testrepo chdir={{
+      # svn_repository_home }} creates={{ svn_repository_home }}/
+      # testrepo/README.txt` - TWO separate key=value params, each with
+      # its own `{{ }}` block. The regex-based extraction's `\{\{.*?
+      # \}\}` alternative could backtrack straight through the entire
+      # `creates=` param (including the space and braces separating it
+      # from `chdir=`) to reach ITS closing "}}", so `chdir`'s value
+      # absorbed the whole trailing "{{ svn_repository_home }}
+      # creates={{ svn_repository_home }}/testrepo/README.txt" as one
+      # blob instead of stopping at its own param boundary - `chdir=`
+      # failed outright ("No such file or directory") on the resulting
+      # not-a-real-path string.
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.command: svnadmin create testrepo chdir={{ svn_repository_home }} creates={{ svn_repository_home }}/testrepo/README.txt
+        YAML
+
+      task.params["cmd"].must_equal("svnadmin create testrepo")
+      task.params["chdir"].must_equal("{{ svn_repository_home }}")
+      task.params["creates"].must_equal("{{ svn_repository_home }}/testrepo/README.txt")
+    end
+
+    it "preserves internal newlines in a multi-statement shell: command, not just a trailing chdir/creates" do
+      # Real bug found benchmarking buluma.consul_ca (round 157):
+      # extract_command_special_params tokenized the WHOLE raw string
+      # via split_shell_like and rejoined the surviving tokens with
+      # `.join(" ")` - unconditionally, even when there were no
+      # trailing key=value params to strip at all. That collapsed every
+      # real newline in a multi-line `shell:` string (a common idiom
+      # for readability: `"set -euo pipefail\ncmd1 | cmd2\n"`) into a
+      # single space. `set -euo pipefail cmd1 | cmd2` on ONE line means
+      # something completely different from real Ansible's two
+      # sequential statements: `set` just assigns its trailing words as
+      # positional parameters ($1, $2, ...) and does NOT execute them -
+      # the actual `cmd1 | cmd2` pipeline the role intended never ran
+      # at all, while real ansible-playbook (which never rejoins/
+      # re-tokenizes the command string this way) ran it correctly.
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.shell: "echo one\\necho two\\n"
+        YAML
+
+      task.params["cmd"].must_equal("echo one\necho two\n")
+    end
+
+    it "does not corrupt a command containing its own unrelated = text" do
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.command: env VAR=1 somecommand
+        YAML
+
+      task.params["cmd"].must_equal("env VAR=1 somecommand")
+      task.params.has_key?("creates").must_equal(false)
+    end
+
+    it "leaves a quoted creates= value's spaces intact" do
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.command: touch somefile creates="/path with spaces/marker"
+        YAML
+
+      task.params["cmd"].must_equal("touch somefile")
+      task.params["creates"].must_equal("/path with spaces/marker")
+    end
+
+    it "leaves a creates= inside a whole-command {% if %} block alone at parse time, and strips it from the RENDERED text (kamaln7.swapfile shape)" do
+      # Found live via kamaln7.swapfile: the whole free-form string is a
+      # `{% if %}...{% endif %}` block, so the RAW text's last token is
+      # the literal `{% endif %}` tag and the parse-time strip (which
+      # only ever looks at the trailing end) never fires - `creates=...`
+      # legitimately stays inside cmd at parse time. Real Ansible strips
+      # it AFTER templating, from the rendered one-branch command line
+      # where `creates=` genuinely IS last - the executor now does the
+      # same post-render pass (see substitute_task_params), and this
+      # spec pins both halves of that behavior.
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.command: >
+            {% if swapfile_use_dd %}
+            dd if=/dev/zero of={{ swapfile_location }} bs=1M count={{ swapfile_size }} creates={{ swapfile_location }}
+            {% else %}
+            fallocate -l {{ swapfile_size }} {{ swapfile_location }} creates={{ swapfile_location }}
+            {% endif %}
+        YAML
+
+      # Parse time: nothing stripped, cmd still carries the whole block.
+      task.params["cmd"].includes?("{% endif %}").must_equal(true)
+      task.params.has_key?("creates").must_equal(false)
+
+      # Render time: the {% if %} resolves to one flat command line whose
+      # last token IS `creates=...` - the post-render extraction now
+      # catches it (this is the exact call the executor makes).
+      rendered = "fallocate -l 1024 /swapfile creates=/swapfile"
+      cmd, special = Krikri::PlaybookParser.extract_command_special_params(rendered)
+      cmd.must_equal("fallocate -l 1024 /swapfile")
+      special["creates"].must_equal("/swapfile")
+    end
+  end
+
+  describe ".strip_line_continuation_tokens (standalone-backslash drop)" do
+    # Real bug found benchmarking githubixx.kubernetes_ca (round900207),
+    # "Generate the etcd certificate authority (CA) and private key":
+    # a folded-scalar `shell: >` with trailing `\` continuations. PyYAML
+    # folds that to "...errexit; \ set -o pipefail..." which bash itself
+    # rejects (exit 127, "line 1:  set: command not found" - the `\ `
+    # starts a command word " set" that is no builtin); real Ansible
+    # succeeds because its controller runs parse_kv → split_args on the
+    # free-form string at parse time and split_args drops every
+    # standalone `\` token BEFORE the string is ever templated or handed
+    # to bash. Byte-for-byte expectations below were captured live from
+    # real ansible-playbook 2.19 on a minimal repro of the exact folded
+    # shape (logged via a wrapping `executable:` and cross-checked
+    # against the module-visible `cmd`).
+    it "drops standalone backslashes from the exact round900207 folded-scalar shape, preserving internal spacing and the trailing newline" do
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.shell: >
+            set -o errexit; \\
+            set -o pipefail; \\
+            echo first \\
+              -second \\
+            | cat
+          args:
+            executable: "/bin/bash"
+        YAML
+
+      # Real ansible-playbook passes bash exactly this string (logged
+      # argv: the double space between "first" and "-second" is the
+      # more-indented line's leading spaces surviving the drop; the
+      # trailing newline is the folded scalar's own final break).
+      task.params["cmd"].must_equal("set -o errexit; set -o pipefail; echo first  -second | cat\n")
+    end
+
+    it "keeps the transformation lossless for strings without a standalone backslash" do
+      Krikri::PlaybookParser.strip_line_continuation_tokens("set -euo pipefail\necho one | wc -l\n").must_equal("set -euo pipefail\necho one | wc -l\n")
+      Krikri::PlaybookParser.strip_line_continuation_tokens("echo a  b   c").must_equal("echo a  b   c")
+      Krikri::PlaybookParser.strip_line_continuation_tokens("").must_equal("")
+    end
+
+    it "collapses a mid-line standalone backslash and its separator to a single space" do
+      # Real split_args: token `\` dropped, remaining tokens rejoined by
+      # join_args with single spaces (the buluma.influxdb2 round-155
+      # authoring convention, at the controller layer rather than the
+      # command plugin's argv layer this time).
+      Krikri::PlaybookParser.strip_line_continuation_tokens("influx ping \\ --host host.example").must_equal("influx ping --host host.example")
+    end
+
+    it "keeps backslashes that are not standalone tokens or that live inside quotes" do
+      Krikri::PlaybookParser.strip_line_continuation_tokens(%(find /tmp -exec printf '%s' {} \\;)).must_equal(%(find /tmp -exec printf '%s' {} \\;))
+      Krikri::PlaybookParser.strip_line_continuation_tokens(%q(echo "a \ b" end)).must_equal(%q(echo "a \ b" end))
+      Krikri::PlaybookParser.strip_line_continuation_tokens("ls path\\to").must_equal("ls path\\to")
+    end
+
+    it "suppresses the newline after a continuation line, keeping quoted newlines intact" do
+      # `\` at end of line: the drop AND the newline restoration are both
+      # real split_args behavior - bash then sees one joined line.
+      Krikri::PlaybookParser.strip_line_continuation_tokens("echo one \\\nls\n").must_equal("echo one ls\n")
+      # No backslash: real split_args restores every newline verbatim
+      # (quote state persists across the split, so a newline INSIDE
+      # quotes survives inside the quotes too).
+      Krikri::PlaybookParser.strip_line_continuation_tokens("echo \"a\nb\"\n").must_equal("echo \"a\nb\"\n")
+    end
+
+    it "does not touch a dict-form cmd: value or post-render text (real split_args only sees parse-time free-form strings)" do
+      # Dict-form `shell: {cmd: ...}` bypasses the free-form branch
+      # entirely - the backslash survives into cmd, as in real Ansible.
+      # Escaping is two layers deep here: the Crystal heredoc needs
+      # `\\` for one literal backslash in the YAML text, and the YAML
+      # must be SINGLE-quoted because in double-quoted YAML `\ ` is the
+      # YAML 1.1 escaped-space escape - PyYAML (real Ansible's own
+      # loader) drops it at load time too. Only the single-quoted form
+      # actually exercises "a literal backslash reached the parser and
+      # was not stripped".
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.shell:
+            cmd: 'set -o errexit; \\ set -o pipefail; echo done'
+        YAML
+
+      task.params["cmd"].must_equal(%q(set -o errexit; \ set -o pipefail; echo done))
+    end
+  end
+
+  describe "nameless task fallback name" do
+    it "uses the as-written action name, not an index-based 'Task N', for a nameless module task" do
+      root = File.tempname("nameless-task-spec")
+      Dir.mkdir_p(root)
+      File.write(File.join(root, "site.yml"), <<-YAML)
+        - hosts: all
+          tasks:
+            - debug:
+                msg: hi
+        YAML
+
+      playbook = Krikri::PlaybookParser.parse(File.join(root, "site.yml"))
+
+      playbook.plays.first.tasks.first.name.must_equal("debug")
+    ensure
+      FileUtils.rm_rf(root) if root
+    end
+
+    it "falls back to the directive's own keyword for a nameless include_tasks/block/meta task" do
+      root = File.tempname("nameless-task-directives-spec")
+      Dir.mkdir_p(root)
+      File.write(File.join(root, "included.yml"), <<-YAML)
+        - debug: {msg: hi}
+        YAML
+      File.write(File.join(root, "site.yml"), <<-YAML)
+        - hosts: all
+          tasks:
+            - include_tasks: included.yml
+            - block:
+                - debug: {msg: hi}
+            - meta: flush_handlers
+        YAML
+
+      playbook = Krikri::PlaybookParser.parse(File.join(root, "site.yml"))
+
+      names = playbook.plays.first.tasks.map(&.name)
+      names.must_equal(["include_tasks", "block", "meta"])
+    ensure
+      FileUtils.rm_rf(root) if root
+    end
+  end
+
+  describe ".resolve_include_path" do
+    it "falls back to the role root when the target isn't under the including file's own tasks/ dir" do
+      # Real bug found benchmarking ansible-network.cisco_ios (round821):
+      # tasks/main.yml's own `include_tasks: includes/init.yaml` targets
+      # <role>/includes/init.yaml, a sibling of tasks/ - not <role>/
+      # tasks/includes/init.yaml, which doesn't exist. Real ansible-
+      # playbook finds it via its own role-root fallback search; this
+      # engine raised "Included tasks file not found" and crashed the
+      # whole run outright instead of just failing this one task.
+      role_root = File.tempname("role-root")
+      Dir.mkdir_p(File.join(role_root, "tasks"))
+      Dir.mkdir_p(File.join(role_root, "includes"))
+      File.write(File.join(role_root, "includes", "init.yaml"), "- name: noop\n  ansible.builtin.debug: {msg: hi}\n")
+
+      resolved = Krikri::PlaybookParser.resolve_include_path("includes/init.yaml", File.join(role_root, "tasks"))
+      resolved.must_equal(File.join(role_root, "includes", "init.yaml"))
+    ensure
+      FileUtils.rm_rf(role_root) if role_root
+    end
+
+    it "falls back to the role's tasks/ root when a nested include's relative path doubles a directory segment" do
+      # Real bug found in a 150-role overnight round (inmotionhosting.
+      # apache): tasks/configure/main.yml's own `include_tasks:
+      # "configure/{{ ansible_os_family | lower }}.yml"` is written
+      # relative to the role's tasks/ ROOT (a role convention: every
+      # include_tasks: path inside <role>/tasks/**, however deeply
+      # nested, is anchored at tasks/ itself, not at the including
+      # file's own directory) - real Ansible finds <role>/tasks/
+      # configure/debian.yml this way. Resolving relative to file_dir
+      # (tasks/configure/) doubled it into tasks/configure/configure/
+      # debian.yml, which doesn't exist, and this engine raised
+      # "Included tasks file not found" - a different, closer-to-caller
+      # fallback than the role-ROOT case above (that one is a SIBLING of
+      # tasks/, not nested under it).
+      role_root = File.tempname("role-root-tasks-fallback")
+      Dir.mkdir_p(File.join(role_root, "tasks", "configure"))
+      File.write(File.join(role_root, "tasks", "configure", "debian.yml"), "- name: noop\n  ansible.builtin.debug: {msg: hi}\n")
+
+      resolved = Krikri::PlaybookParser.resolve_include_path("configure/debian.yml", File.join(role_root, "tasks", "configure"))
+      resolved.must_equal(File.join(role_root, "tasks", "configure", "debian.yml"))
+    ensure
+      FileUtils.rm_rf(role_root) if role_root
+    end
+  end
+
+  describe "meta: task vars: parsing" do
+    # Regression: linux-system-roles.podman (round 310089) gates its twin
+    # "Podman package version must be 5.0 or later for Pod quadlets"
+    # fail:/meta: end_host pair through each task's OWN vars: block
+    # (`vars: {__has_type_pod: "{{ ... selectattr ... }}"}`, consumed by
+    # that same task's when:). parse_meta_task early-returns before
+    # parse_common_task_attributes ever runs, so a meta: task's vars:
+    # were silently dropped and its when: raised "'__has_type_pod' is
+    # undefined" - failing the whole run - while the fail: twin (an
+    # ordinary task) evaluated fine.
+    it "parses task-level vars: on a meta: task into task.vars for its own when:" do
+      task = single_task(<<-YAML)
+        - name: Verify podman version supports Pod quadlets
+          meta: end_host
+          vars:
+            __has_type_pod: "{{ __podman_podman_package | default('') }}"
+          when: __has_type_pod
+        YAML
+
+      task.meta_action.must_equal("end_host")
+      task.vars["__has_type_pod"]?.try(&.as_s).must_equal("{{ __podman_podman_package | default('') }}")
+      task.when_condition.must_equal("__has_type_pod")
+    end
+  end
+
+  describe "with_community.general.filetree: parsing" do
+    # Regression: buluma.vector (round 300054) iterates its config
+    # skeleton with `with_community.general.filetree:` - previously an
+    # unrecognized task key, silently dropped, leaving `item` unbound so
+    # `when: item.state == 'directory'` raised "'item.state' is
+    # undefined" instead of iterating the tree.
+    it "parses an array of source directories into loop_filetree, raw" do
+      task = single_task(<<-YAML)
+        - name: Create templates config skeleton
+          ansible.builtin.copy:
+            src: "{{ item.src }}"
+            dest: "{{ item.path }}"
+          with_community.general.filetree:
+            - "{{ role_path }}/templates/config/"
+            - templates/config/
+          when: item.state == 'directory'
+        YAML
+
+      task.loop_filetree.must_equal(["{{ role_path }}/templates/config/", "templates/config/"])
+    end
+
+    it "parses a single scalar source into a one-element loop_filetree" do
+      task = single_task(<<-YAML)
+        - name: Create templates config skeleton
+          ansible.builtin.copy:
+            src: "{{ item.src }}"
+            dest: "{{ item.path }}"
+          with_community.general.filetree: "{{ role_path }}/templates/config/"
+        YAML
+
+      task.loop_filetree.must_equal(["{{ role_path }}/templates/config/"])
+    end
+
+    it "marks a task with a filetree loop as having a loop source" do
+      task = single_task(<<-YAML)
+        - name: Create templates config skeleton
+          ansible.builtin.copy:
+            src: "{{ item.src }}"
+            dest: "{{ item.path }}"
+          with_community.general.filetree:
+            - templates/config/
+        YAML
+
+      task.loop_filetree.wont_be_nil
+    end
+  end
+end

@@ -55,8 +55,13 @@ def capture_stderr(&)
     err_file.gets_to_end
   ensure
     if saved_fd >= 0
-      STDERR.reopen(IO::FileDescriptor.new(saved_fd))
-      LibC.close(saved_fd)
+      # Close through the wrapper, never LibC.close: a wrapper whose fd was
+      # closed behind its back still closes that fd NUMBER from its GC
+      # finalizer later - by then reused by some other test's pipe/file
+      # (EBADF on close, dup2 failures in Process.new children).
+      saved = IO::FileDescriptor.new(saved_fd)
+      STDERR.reopen(saved)
+      saved.close
     end
     err_file.try(&.close)
   end

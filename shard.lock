@@ -32,6 +32,10 @@ shards:
     git: https://github.com/weirdbricks/krikri-xml.git
     version: 0.3.0+git.commit.dd0bfa2966bca2326818011f7b24dbf19c4fe2a5
 
+  minitest:
+    git: https://github.com/ysbaddaden/minitest.cr.git
+    version: 1.6.1+git.commit.678126f87b2f75b0bf02b0f92ff943fcaa01f498
+
   mysql:
     git: https://github.com/weirdbricks/crystal-mysql.git
     version: 0.17.0+git.commit.a91a592e518e856b44f94fbe95c1842dae8819ec
