@@ -83,7 +83,7 @@ describe "generic with_<lookup> loop sources" do
   end
 
   it "loops set_fact over with_lines with a custom loop_var" do
-    code, _ = run_play(<<-YAML)
+    code, output = run_play(<<-YAML)
       - hosts: all
         gather_facts: false
         tasks:
@@ -104,7 +104,7 @@ describe "generic with_<lookup> loop sources" do
     # and splices the resolved LIST one level into the lookup's terms, so
     # each element runs as its own command (ansible-core 2.19: two items,
     # alpha and beta).
-    code, _ = run_play(<<-YAML)
+    code, output = run_play(<<-YAML)
       - hosts: all
         gather_facts: false
         vars:
@@ -144,7 +144,7 @@ describe "generic with_<lookup> loop sources" do
   end
 
   it "fails the task like real Ansible when the with_url file:// target is missing" do
-    code, _ = run_play(<<-YAML)
+    code, output = run_play(<<-YAML)
       - hosts: all
         gather_facts: false
         tasks:
@@ -181,7 +181,7 @@ describe "generic with_<lookup> loop sources" do
 
   it "never renders a with_lines command's output as a template" do
     canary = File.tempname("krikri-lookup-item-canary")
-    code, _ = run_play(<<-YAML)
+    code, output = run_play(<<-YAML)
       - hosts: all
         gather_facts: false
         tasks:
@@ -197,7 +197,7 @@ describe "generic with_<lookup> loop sources" do
   end
 
   it "fails the task, not the whole run, when a with_url lookup fails" do
-    code, _ = run_play(<<-YAML)
+    code, output = run_play(<<-YAML)
       - hosts: all
         gather_facts: false
         tasks:
