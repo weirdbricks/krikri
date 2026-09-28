@@ -56,6 +56,14 @@ private def write_notify_playbook(name : String, body : String) : String
   path
 end
 
+# Fixture playbooks act on FIXED host resources (/tmp paths, Docker
+# container/network names, MySQL databases), and several fixtures are run
+# by more than one test (a --check smoke run plus a real end-to-end one).
+# Under minitest -p those would interleave on the same resources, so two
+# runs of the SAME fixture never overlap; different fixtures still run
+# concurrently.
+CLI_TEST_FIXTURE_LOCKS = Hash(String, Mutex).new { |hash, key| hash[key] = Mutex.new }
+
 private def run_playbook(
   fixture : String,
   mode_args : Array(String) = ["--check"],
@@ -65,14 +73,16 @@ private def run_playbook(
 ) : {Process::Status, String}
   output = IO::Memory.new
   playbook = fixture.starts_with?("/") ? fixture : File.join(FIXTURES_DIR, fixture)
-  status = Process.run(
-    BINARY,
-    mode_args + ["-i", inventory, playbook],
-    output: output,
-    error: output,
-    chdir: chdir,
-    env: env
-  )
+  status = CLI_TEST_FIXTURE_LOCKS[playbook].synchronize do
+    Process.run(
+      BINARY,
+      mode_args + ["-i", inventory, playbook],
+      output: output,
+      error: output,
+      chdir: chdir,
+      env: env
+    )
+  end
   {status, output.to_s}
 end
 
