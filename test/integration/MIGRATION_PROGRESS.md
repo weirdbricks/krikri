@@ -82,8 +82,17 @@ run, `-p 4` run, `crystal tool format`, ameba) and committed separately.
   include_vars_dir_spec.cr, include_vars_failed_when_spec.cr,
   include_vars_loop_spec.cr, include_vars_templated_value_spec.cr
 
+### Batch 11 (15 files): include_vars_undefined_path .. lookup_url_task_failure
+- include_vars_undefined_path_spec.cr, ini_file_spec.cr,
+  inventory_hostnames_lookup_spec.cr, inventory_ranges_magic_vars_spec.cr,
+  inventory_sources_spec.cr, java_cert_spec.cr, kernel_blacklist_spec.cr,
+  known_hosts_spec.cr, lazy_selectattr_undefined_leaf_spec.cr,
+  lineinfile_spec.cr, list_hosts_tags_spec.cr,
+  list_tasks_syntax_check_spec.cr, local_action_localhost_spec.cr,
+  locale_gen_spec.cr, lookup_url_task_failure_spec.cr
+
 ### Next file to convert
-- include_vars_undefined_path_spec.cr and on (alphabetical)
+- loop_batched_task_vars_spec.cr and on (alphabetical)
 
 ## Count table
 
@@ -98,6 +107,7 @@ run, `-p 4` run, `crystal tool format`, ameba) and committed separately.
 | 7 | 15 | 170 | file/find fixture trees moved to per-test tmp_path; describe-body locals became methods |
 | 8 | 10 | 93 | get_url's file-scoped server locals became private constants; git_config tmp_path'd |
 | 10 | 15 | 55 | htpasswd before_suite/tmp_path folded into PluginSpecHelper.tmp_path |
+| 11 | 15 | 150 | inventory_hostnames' CASES runtime loop became a compile-time {% for %} (12 tests); ini_file/kernel_blacklist/known_hosts/lineinfile/inventory_sources before_suite+TMP_DIR became per-test tmp_path; java_cert/locale_gen `next if` became skip; lookup_url's HTTP double became require-time constants; lineinfile chattr `next unless` became skip |
 
 ## Renames / deviations
 
@@ -193,6 +203,22 @@ run, `-p 4` run, `crystal tool format`, ameba) and committed separately.
 - htpasswd_test: the before_suite mkdir_p + file-scoped `tmp_path` def
   became per-test `PluginSpecHelper.tmp_path`; the `start_with` hash-prefix
   check became `expect(str_starts_with?(...)).must_equal(true)`.
+- lookup_url_task_failure_test: the file-scoped HTTP-double locals
+  (server/address/base) became private constants started once at require
+  time (same shape as get_url_test); java_cert/locale_gen's `next if`
+  guards became `skip ... if` (crystal spec's bare `next` is a compile
+  error inside minitest's generated method bodies).
+- inventory_hostnames_lookup_test: the `CASES.each` runtime loop with
+  interpolated `it` names became a compile-time `{% begin %}`/`{% for %}`
+  table (12 static tests, same names); the playbook heredoc moved into a
+  `pattern_playbook(expr)` def so its literal `{{ }}` stays outside the
+  macro expansion.
+- inventory_sources_test: the before_suite directory-of-sources tree is
+  rebuilt per test by an `inv_dir` def under that test's tmp_path; the
+  bare.ini/single.ini writes also moved to tmp_path.
+- lineinfile_test: `param_path` repointed to tmp_path; the chattr
+  `next unless` guard became `skip ... unless` (probe dir arg dropped -
+  the helper's default probe is fine).
 - Batch 10's `File.join(PROJECT_ROOT, "spec", "fixtures", ...)` inventory
   refs repointed to `File.join(__DIR__, "..", "fixtures", ...)` per the
   batch-4 convention (test/fixtures carries identical copies).
