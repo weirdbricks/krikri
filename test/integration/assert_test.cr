@@ -1,0 +1,106 @@
+require "../minitest_helper"
+
+private def that_json(*conditions : String) : String
+  conditions.to_a.to_json
+end
+
+describe "assert plugin" do
+  it "requires that:" do
+    result = PluginSpecHelper.run("assert", {} of String => String)
+    result["failed"].as_bool.must_equal(true)
+  end
+
+  it "passes when every condition is true, with the default success message" do
+    result = PluginSpecHelper.run("assert", {"that" => that_json("1 == 1", "2 == 2")})
+    falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+    result["changed"].as_bool.must_equal(false)
+    result["msg"].as_s.must_equal("All assertions passed")
+  end
+
+  it "fails at the first failing condition, with the default failure message" do
+    result = PluginSpecHelper.run("assert", {"that" => that_json("my_param <= 100", "my_param >= 0")}, {"my_param" => "150"})
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("Assertion failed")
+    result["assertion"].as_s.must_equal("my_param <= 100")
+    result["evaluated_to"].as_bool.must_equal(false)
+  end
+
+  it "uses a custom fail_msg" do
+    result = PluginSpecHelper.run("assert", {"that" => that_json("false"), "fail_msg" => "custom failure"})
+    result["msg"].as_s.must_equal("custom failure")
+  end
+
+  it "accepts msg as an alias for fail_msg" do
+    result = PluginSpecHelper.run("assert", {"that" => that_json("false"), "msg" => "via alias"})
+    result["msg"].as_s.must_equal("via alias")
+  end
+
+  it "uses a custom success_msg" do
+    result = PluginSpecHelper.run("assert", {"that" => that_json("true"), "success_msg" => "all good"})
+    result["msg"].as_s.must_equal("all good")
+  end
+
+  it "evaluates a {{ }}-wrapped condition with dotted variable access" do
+    result = PluginSpecHelper.run("assert", {"that" => that_json("{{ my_param > 100 }}")}, {"my_param" => "150"})
+    falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+  end
+
+  it "passes an 'is regex(...)' test - Crinja's custom test/filter library must be linked into this plugin's own binary" do
+    # Real bug found benchmarking robertdebock.hashicorp (round 107):
+    # `item.name is regex('^(consul|...|vault).*')` (the role's own
+    # assert.yml) always failed even for a genuinely matching name.
+    # assert.cr evaluates `that:` conditions via the same
+    # ConditionalEvaluator -> Crinja-delegation fallback `when:`
+    # conditions use, but `assert:` compiles as its OWN standalone
+    # plugin binary (this codebase's one-binary-per-module
+    # architecture) - the `regex`/`version`/etc Crinja test
+    # registrations only get linked in by requiring jinja_filters.cr
+    # (previously pulled in transitively by other files in the MAIN
+    # engine binary, never by this plugin), so the plugin's own binary
+    # silently lacked them and the Crinja delegation rendered to
+    # something other than the literal "True". Fixed by requiring
+    # jinja_filters.cr directly in assert.cr.
+    result = PluginSpecHelper.run("assert", {"that" => that_json("myname is regex('^terraform')")}, {"myname" => "terraform"})
+    falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+  end
+
+  it "never reports changed" do
+    result = PluginSpecHelper.run("assert", {"that" => that_json("true")})
+    result["changed"].as_bool.must_equal(false)
+  end
+
+  describe "quiet:" do
+    # Real ansible-core 2.19.4, live-verified: quiet: is display-only. A
+    # passing assert with quiet: true still carries msg in its
+    # result/registered var (exactly {changed, failed, msg}); only the
+    # success message's *display* is suppressed. A failing assert reports
+    # msg/assertion/evaluated_to identically with or without quiet:.
+    it "tags a passing assert with the private _ansible_quiet marker while keeping msg" do
+      result = PluginSpecHelper.run("assert", {"that" => that_json("1 == 1"), "quiet" => "true"})
+      falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+      result["msg"].as_s.must_equal("All assertions passed")
+      result["_ansible_quiet"].as_bool.must_equal(true)
+    end
+
+    it "coerces quiet as an Ansible bool (yes/no)" do
+      result = PluginSpecHelper.run("assert", {"that" => that_json("true"), "quiet" => "yes"})
+      result["_ansible_quiet"].as_bool.must_equal(true)
+      result = PluginSpecHelper.run("assert", {"that" => that_json("true"), "quiet" => "no"})
+      result["_ansible_quiet"]?.must_be_nil
+    end
+
+    it "leaves a passing assert untagged without quiet:" do
+      result = PluginSpecHelper.run("assert", {"that" => that_json("true")})
+      result["_ansible_quiet"]?.must_be_nil
+    end
+
+    it "does not suppress a failing assert's report" do
+      result = PluginSpecHelper.run("assert", {"that" => that_json("1 == 2"), "quiet" => "true"})
+      result["failed"].as_bool.must_equal(true)
+      result["msg"].as_s.must_equal("Assertion failed")
+      result["assertion"].as_s.must_equal("1 == 2")
+      result["evaluated_to"].as_bool.must_equal(false)
+      result["_ansible_quiet"]?.must_be_nil
+    end
+  end
+end

@@ -16,14 +16,25 @@ run, `-p 4` run, `crystal tool format`, ameba) and committed separately.
   apt_pinned_version_spec.cr, apt_repository_param_coverage_spec.cr,
   apt_repository_spec.cr
 
+### Batch 2 (16 files): assemble_role_relative_src .. check_mode_scope_inheritance
+- assemble_role_relative_src_spec.cr, assemble_spec.cr, assert_spec.cr,
+  assert_strict_boolean_spec.cr, assert_strict_undefined_spec.cr,
+  assert_undefined_register_shape_spec.cr, authorized_key_spec.cr,
+  blockinfile_param_coverage_spec.cr, blockinfile_spec.cr,
+  block_name_strict_undefined_spec.cr, block_rescue_accounting_spec.cr,
+  block_when_skip_register_spec.cr, broken_pipe_spec.cr,
+  capabilities_spec.cr, changed_when_stderr_lines_spec.cr,
+  check_mode_scope_inheritance_spec.cr
+
 ### Next file to convert
-- assemble_role_relative_src_spec.cr (then assemble_spec.cr, assert_spec.cr, ...)
+- cli_spec.cr (2229 lines), then command_shell_check_mode_spec.cr, ...
 
 ## Count table
 
 | Batch | Files | `it` blocks | Notes |
 |-------|-------|-------------|-------|
 | 1 | 16 | 124 | see renames/deviations below |
+| 2 | 16 | 105 | see renames/deviations below |
 
 ## Renames / deviations
 
@@ -50,6 +61,15 @@ run, `-p 4` run, `crystal tool format`, ameba) and committed separately.
 - `.ameba.yml`: `Lint/NotNil`, `Style/HeredocEscape` and
   `Style/HeredocIndent` now exclude `test/integration/*` (converted files
   carry the same heredoc shims the spec exclusions already covered).
+
+- Shared converter now handles failure-message arguments
+  (`x.should eq(y), "msg"` -> `x.must_equal(y, "msg")`) and argless
+  `be_nil`/`be_empty`; crystal spec's `next unless <cond>` inside an `it`
+  body becomes `skip "..." unless <cond>` (crystal spec's `next` counted a
+  pass, minitest's skip counts a skip - blockinfile_param_coverage's
+  chattr-guarded example is the first instance).
+- assemble/authorized_key: shared `spec/tmp` roots moved to per-test
+  `PluginSpecHelper.tmp_path`; before_suite mkdir_p dropped.
 
 ## Known pre-existing failures
 
