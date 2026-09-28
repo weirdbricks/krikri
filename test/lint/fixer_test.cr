@@ -77,10 +77,18 @@ module Krikri::Lint
 
   describe Fixer do
     describe ".effective_write_set" do
-      it { Fixer.effective_write_set(["all"]).must_equal(Set{"all"}) }
-      it { Fixer.effective_write_set([] of String).must_be_empty }
-      it { Fixer.effective_write_set(["none"]).must_equal(Set{"none"}) }
-      it do
+      # Named explicitly: minitest names every bare `it { }` test_anonymous,
+      # so unnamed examples silently overwrite each other.
+      it "keeps all" do
+        Fixer.effective_write_set(["all"]).must_equal(Set{"all"})
+      end
+      it "is empty for an empty list" do
+        Fixer.effective_write_set([] of String).must_be_empty
+      end
+      it "keeps none" do
+        Fixer.effective_write_set(["none"]).must_equal(Set{"none"})
+      end
+      it "resets at none and keeps only the rules after it" do
         Fixer.effective_write_set(["fqcn[action-core]", "none", "name"])
           .must_equal(Set{"name"})
       end
