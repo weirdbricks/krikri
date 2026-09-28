@@ -29,6 +29,15 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+# The caller's ANSIBLE_* settings leak into every krikri-playbook the suite
+# spawns: a developer shell with ANSIBLE_CACHE_PLUGIN=...pickle made
+# cross-play hostvars reads pass locally (served from the pickle cache)
+# while the same tests failed in CI. Tests that need an ANSIBLE_* value set
+# it themselves.
+while IFS= read -r var; do
+  unset "$var"
+done < <(env | grep -o '^ANSIBLE_[A-Za-z0-9_]*')
+
 # A single explicit test file is run directly; no globbing needed.
 if [ $# -gt 0 ] && [ -f "${1:-}" ]; then
   cd "$ROOT"
