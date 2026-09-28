@@ -1,0 +1,281 @@
+require "../minitest_helper"
+
+# The systemd plugin drives the real `systemctl` on the target, so — like the
+# `user`/`group` plugins — these tests exercise only the paths that can't
+# mutate a real system: pure validation (missing params, invalid state) and
+# check-mode predictions. Never run a non-check-mode state/mask/enable call
+# here; that would actually start/stop/mask a unit on the dev machine.
+describe "systemd plugin" do
+  it "fails when no action parameter is given, with real Ansible's required_one_of message" do
+    # Real AnsibleModule validation (ansible/modules/systemd.py):
+    # required_one_of=[['state', 'enabled', 'masked', 'daemon_reload',
+    # 'daemon_reexec']]. Replaces the previous ad-hoc guard's own
+    # "Must specify at least one of ..." wording.
+    result = PluginSpecHelper.run("systemd", {} of String => String)
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].to_s.must_equal(
+      "one of the following is required: state, enabled, masked, daemon_reload, daemon_reexec")
+  end
+
+  # Real Ansible's name-only query semantics (ansible/modules/systemd_service.py):
+  # required_one_of is satisfied by a name alone - the module runs
+  # `systemctl show <name>` and populates result['status'] with the unit's
+  # current properties, changed stays False, and no management action runs.
+  # konstruktoid.hardening's own "Get ctrl-alt-del.target information" task
+  # does exactly this (rounds 975062/978000: this used to fail outright with
+  # the required_one_of message instead).
+  it "treats a name-only task as a query-only call: succeeds unchanged with a populated status dict" do
+    result = PluginSpecHelper.run("systemd", {
+      "name"                => "nonexistent-krikri-playbook-unit.service",
+      "_ansible_check_mode" => "true",
+    })
+    falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+    result["changed"].as_bool.must_equal(false)
+    result["name"].as_s.must_equal("nonexistent-krikri-playbook-unit.service")
+    # status is always a dict on success (real: result = dict(status=dict())),
+    # populated from `systemctl show` - on a systemd host even a not-found
+    # unit yields a property dump (Id=, LoadState=not-found, ...), so the
+    # dict is non-empty here; empty only where systemctl itself is absent.
+    result["status"].as_h?.wont_be_nil
+  end
+
+  it "treats a name-alias-only task (service:) the same way - query-only, unchanged" do
+    result = PluginSpecHelper.run("systemd", {
+      "service"             => "nonexistent-krikri-playbook-unit.service",
+      "_ansible_check_mode" => "true",
+    })
+    falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+    result["changed"].as_bool.must_equal(false)
+    result["name"].as_s.must_equal("nonexistent-krikri-playbook-unit.service")
+  end
+
+  it "fails when state is given without a name, with real Ansible's required_by message" do
+    # required_by={state: name, enabled: name, masked: name} - real
+    # Ansible's check_required_by wording, per-parameter. Replaces the
+    # previous "Must specify 'name' when using ..." wording.
+    result = PluginSpecHelper.run("systemd", {"state" => "started"})
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].to_s.must_equal("missing parameter(s) required by 'state': name")
+  end
+
+  {% for key, value in {"enabled" => "true", "masked" => "true"} %}
+    it "fails when {{ key.id }} is given without a name, with real Ansible's required_by message" do
+      result = PluginSpecHelper.run("systemd", { {{ key.id.stringify }} => {{ value.id.stringify }} })
+      result["failed"].as_bool.must_equal(true)
+      result["msg"].to_s.must_equal("missing parameter(s) required by '{{ key.id }}': name")
+    end
+  {% end %}
+
+  it "accepts force: with enabled: in check mode (flags only affect the real invocations)" do
+    result = PluginSpecHelper.run("systemd", {
+      "name"                => "nonexistent-krikri-playbook-unit.service",
+      "enabled"             => "true",
+      "force"               => "true",
+      "_ansible_check_mode" => "true",
+    })
+    falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+    result["changed"].as_bool.must_equal(true)
+    result["msg"].to_s.must_include("enable")
+  end
+
+  it "accepts no_block: with state: started in check mode (flags only affect the real invocations)" do
+    result = PluginSpecHelper.run("systemd", {
+      "name"                => "nonexistent-krikri-playbook-unit.service",
+      "state"               => "started",
+      "no_block"            => "yes",
+      "_ansible_check_mode" => "true",
+    })
+    falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+    result["changed"].as_bool.must_equal(true)
+    result["msg"].to_s.must_include("start")
+  end
+
+  # Real bug found via round 813233 (role libre_ops.multi_redis): the
+  # role passes `systemd: {name: ..., status: ...}` - `status` is not a
+  # parameter of real Ansible's systemd module at all
+  # (ansible/modules/systemd_service.py's argument_spec), so real
+  # ansible-playbook rejects the task outright at argument-spec
+  # validation time, before the module runs. This plugin previously
+  # silently accepted and ignored the unknown key and ran anyway.
+  it "rejects an unsupported parameter with real Ansible's argument-spec message" do
+    result = PluginSpecHelper.run("systemd", {
+      "name"   => "foo.service",
+      "state"  => "started",
+      "status" => "yes",
+    })
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].to_s.must_equal(
+      "Unsupported parameters for (systemd) module: status. " \
+      "Supported parameters include: daemon_reexec, daemon_reload, enabled, force, masked, name, no_block, scope, state " \
+      "(daemon-reexec, daemon-reload, service, unit).")
+  end
+
+  it "sorts multiple unsupported parameters alphabetically in real Ansible's argument-spec message" do
+    result = PluginSpecHelper.run("systemd", {
+      "name"    => "foo.service",
+      "state"   => "started",
+      "status"  => "yes",
+      "pattern" => "foo*",
+    })
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].to_s.must_equal(
+      "Unsupported parameters for (systemd) module: pattern, status. " \
+      "Supported parameters include: daemon_reexec, daemon_reload, enabled, force, masked, name, no_block, scope, state " \
+      "(daemon-reexec, daemon-reload, service, unit).")
+  end
+
+  it "rejects an invalid state" do
+    result = PluginSpecHelper.run("systemd", {"name" => "foo.service", "state" => "frobnitz"})
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].to_s.must_include("Invalid state")
+  end
+
+  it "predicts a daemon-reload in check mode without touching the system, reporting unchanged" do
+    # Verified against a real ansible-playbook --check run of a bare
+    # `systemd: {daemon_reload: true}` task: real Ansible's own module
+    # has no notion of daemon-reload "changedness" and always reports
+    # `ok:`, in check mode and for real.
+    result = PluginSpecHelper.run("systemd", {"daemon_reload" => "true", "_ansible_check_mode" => "true"})
+    falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+    result["changed"].as_bool.must_equal(false)
+  end
+
+  it "predicts a daemon-reexec in check mode without touching the system, reporting unchanged" do
+    # Real bug found benchmarking robertdebock.mysql's own "Systemctl
+    # daemon-reexec" handler: `ansible.builtin.systemd: {daemon_reexec:
+    # true}`, no other params at all (round 18). `daemon_reexec` was
+    # entirely unrecognized before - fell into the "no action" guard
+    # and failed outright instead of running the reexec real
+    # ansible-playbook performs (same "no changed signal" semantics as
+    # daemon_reload above).
+    result = PluginSpecHelper.run("systemd", {"daemon_reexec" => "true", "_ansible_check_mode" => "true"})
+    falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+    result["changed"].as_bool.must_equal(false)
+  end
+
+  it "predicts a start for a stopped unit in check mode" do
+    result = PluginSpecHelper.run("systemd", {
+      "name"                => "nonexistent-krikri-playbook-unit.service",
+      "state"               => "started",
+      "_ansible_check_mode" => "true",
+    })
+    # This is a unit that almost certainly does not exist (is-active fails),
+    # so check mode predicts a change — and never actually runs systemctl.
+    falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+    result["changed"].as_bool.must_equal(true)
+  end
+
+  # Real bug found benchmarking konstruktoid.docker_rootless (0.9.619):
+  # `scope: user` (real Ansible's `systemd_service`/`systemd` parameter
+  # for targeting the invoking user's OWN systemd session manager - the
+  # idiomatic way a rootless-Docker/Podman role enables its own user
+  # unit) was completely unhandled: every `systemctl` call always hit
+  # the SYSTEM manager regardless, so `konstruktoid.docker_rootless`'s
+  # own "Enable and start Docker" (`scope: user`) failed outright
+  # ("Unit file docker.service does not exist" - looking at the system
+  # namespace instead of `~/.config/systemd/user/docker.service`).
+  # Live-verified end-to-end against a real per-user systemd unit
+  # (enable+start actually took effect under `systemctl --user`) - this
+  # spec only checks `scope: user` is accepted and handled like any
+  # other query, staying inside this file's own no-real-mutation
+  # convention.
+  it "accepts scope: user without rejecting the parameter" do
+    result = PluginSpecHelper.run("systemd", {
+      "name"                => "nonexistent-krikri-playbook-user-unit.service",
+      "state"               => "started",
+      "scope"               => "user",
+      "_ansible_check_mode" => "true",
+    })
+    falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+    result["changed"].as_bool.must_equal(true)
+  end
+
+  # Real bug found benchmarking mdsketch.teleport: its own
+  # "Reload_Teleport" handler (`ansible.builtin.systemd: {name: teleport,
+  # state: reloaded, daemon_reload: yes, enabled: yes}`) fired on a fresh
+  # install where the unit file was created in the same play and the
+  # service had never started. Real Ansible's systemd module STARTS an
+  # inactive unit for `state: reloaded` (plain `systemctl reload` of an
+  # inactive unit fails "is not active, cannot reload" - exactly the
+  # error krikri's handler died with); krikri ran the reload
+  # unconditionally and failed. Same semantics plugins/service.cr already
+  # implements for the `service` module's `state: reloaded`. Check mode
+  # on a nonexistent (hence inactive) unit must therefore predict a
+  # START, not a reload.
+  it "predicts a start (not a reload) for an inactive unit with state: reloaded in check mode" do
+    result = PluginSpecHelper.run("systemd", {
+      "name"                => "nonexistent-krikri-playbook-unit.service",
+      "state"               => "reloaded",
+      "_ansible_check_mode" => "true",
+    })
+    falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+    result["changed"].as_bool.must_equal(true)
+    result["msg"].to_s.must_include("start")
+    result["msg"].to_s.wont_include("reload")
+  end
+
+  # Real bug found via round 903000 (konstruktoid.hardening's own
+  # tasks/timesyncd.yml): the role registers the systemd_service result and
+  # its changed_when reads the TOP-LEVEL `enabled`/`state` fields real
+  # Ansible's module returns (systemd_service.py: `result['enabled'] = ...`
+  # / `result['state'] = module.params['state']`, siblings of the nested
+  # `status` dict). This plugin only ever returned the nested `status`,
+  # so `not timesyncd_start.enabled == true` failed the task with
+  # "object of type 'dict' has no attribute 'enabled'" while real
+  # ansible-playbook ran the same task fine.
+  describe "top-level result fields (real Ansible's systemd_service shape)" do
+    it "exposes enabled as a top-level bool when the enabled param was given" do
+      result = PluginSpecHelper.run("systemd", {
+        "name"                => "nonexistent-krikri-playbook-unit.service",
+        "enabled"             => "true",
+        "_ansible_check_mode" => "true",
+      })
+      falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+      # check mode predicts the enable, so the reported enabled state is
+      # the post-change one (real Ansible sets result['enabled'] = not
+      # enabled outside its check_mode guard)
+      result["enabled"].as_bool.must_equal(true)
+      result["name"].as_s.must_equal("nonexistent-krikri-playbook-unit.service")
+      # status is always a dict on success (real: result = dict(status=dict()))
+      result["status"].as_h?.wont_be_nil
+    end
+
+    it "exposes the requested state as a top-level string when state was given" do
+      result = PluginSpecHelper.run("systemd", {
+        "name"                => "nonexistent-krikri-playbook-unit.service",
+        "state"               => "started",
+        "_ansible_check_mode" => "true",
+      })
+      falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+      result["state"].as_s.must_equal("started")
+      # ...and omits enabled when the enabled param was not given
+      result["enabled"]?.must_be_nil
+    end
+
+    it "normalizes restarted/reloaded to 'started' in the top-level state" do
+      # real: result['state'] = 'started' inside the ActiveState branch,
+      # for every requested state - the requested 'restarted'/'reloaded'
+      # never survives verbatim
+      {"restarted", "reloaded"}.each do |requested|
+        result = PluginSpecHelper.run("systemd", {
+          "name"                => "nonexistent-krikri-playbook-unit.service",
+          "state"               => requested,
+          "_ansible_check_mode" => "true",
+        })
+        falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+        result["state"].as_s.must_equal("started")
+      end
+    end
+
+    it "omits both fields (and reports an empty status dict) for a daemon_reload-only task" do
+      result = PluginSpecHelper.run("systemd", {
+        "daemon_reload"       => "true",
+        "_ansible_check_mode" => "true",
+      })
+      falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+      result["enabled"]?.must_be_nil
+      result["state"]?.must_be_nil
+      result["status"].as_h.size.must_equal(0)
+    end
+  end
+end
