@@ -41,6 +41,7 @@ Lint/Formatting:
 
 Lint/NotNil:
   Excluded:
+  - test/integration/*
   - krikri-playbook.cr
   - plugins/apt.cr
   - plugins/assemble.cr
@@ -206,6 +207,7 @@ Performance/ExcessiveAllocations:
 
 Style/HeredocEscape:
   Excluded:
+  - test/integration/*
   - spec/integration/apache2_module_spec.cr
   - spec/integration/apt_key_spec.cr
   - spec/integration/apt_pinned_version_spec.cr
@@ -228,6 +230,7 @@ Style/HeredocEscape:
 
 Style/HeredocIndent:
   Excluded:
+  - test/integration/*
   - plugins/modprobe.cr
   - plugins/postgresql_privs.cr
   - plugins/service.cr
