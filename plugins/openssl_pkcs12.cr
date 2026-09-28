@@ -3,6 +3,7 @@
 require "json"
 require "../src/krikri/base_plugin"
 require "../src/krikri/plugin_helpers/ansible_arg_validation"
+require "../src/krikri/plugin_helpers/pem_bundle"
 
 module Krikri
   # openssl_pkcs12 plugin (community.crypto.openssl_pkcs12) - bundles a
@@ -248,28 +249,9 @@ module Krikri
       result_parse(attrs_changed, path, src)
     end
 
-    # The real module's parse concatenates [privatekey, certificate,
-    # other certificates] in that order; openssl's own dump puts the
-    # certificates first - so the blocks are reordered here, and the
-    # same ordering applies on the idempotency comparison (both sides
-    # of it go through this).
     private def key_first_bundle(dump : String?) : String?
       return nil unless dump
-      blocks = [] of Tuple(Bool, String)
-      scanner = dump
-      while start = scanner.index("-----BEGIN ")
-        stop = scanner.index("-----END ", start)
-        break unless stop
-        line_end = scanner.index('\n', stop)
-        block = scanner[start...(line_end || scanner.size)]
-        blocks << {block.includes?("KEY"), block}
-        scanner = scanner[(line_end || scanner.size)..]
-      end
-      return nil if blocks.empty?
-      # Each block is newline-terminated in the real module's output;
-      # extract_block cuts before the '\n', so re-join with separators
-      # and a trailing newline.
-      blocks.sort_by { |is_key, _| is_key ? 0 : 1 }.map { |_, pem_block| pem_block + "\n" }.join
+      PluginHelpers::PemBundle.key_first(dump)
     end
 
     private def result_parse(changed : Bool, path : String, src : String, backup_file : String? = nil) : PluginResult
