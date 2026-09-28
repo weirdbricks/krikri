@@ -1402,8 +1402,11 @@ module Krikri
       # it on the host's FIRST module invocation that runs interpreter
       # discovery, never after (see first_gather_for_host?); the gate is
       # executor state, so it is threaded to the gatherer here and in the
-      # implicit Gathering Facts path.
-      if task.module_name.split(".").last == "setup"
+      # implicit Gathering Facts path. A direct gather_facts: task is the
+      # same thing (an action plugin delegating to setup), so it gets the
+      # identical gate - on a gather_facts: false play its invocation IS
+      # the host's first gather.
+      if ["setup", "gather_facts"].includes?(task.module_name.split(".").last)
         final_params["_first_gather"] = first_gather_for_host?(host).to_s
       end
 

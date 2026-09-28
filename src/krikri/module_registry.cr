@@ -42,6 +42,20 @@ module Krikri
       "ansible.builtin.debug",
       "ansible.builtin.command",
       "ansible.builtin.setup",
+      # gather_facts (0.9.1351): real Ansible also lets `gather_facts`
+      # be invoked as an ordinary task action (it delegates to setup
+      # with the task's gather_subset/gather_timeout/fact_path/filter)
+      # - useful for re-gathering mid-play or gathering with different
+      # subsets than the play-level keyword used. krikri only ever
+      # implemented the play-level `gather_facts:` setting, so a direct
+      # task was skipped and the run exited rc=4 with "unavailable
+      # modules" (found by krikri-playbook-generator, seed 42).
+      # Registered as its own FQCN with its own plugin binary (same
+      # FactsGatherer body as setup) rather than a MODULE_ALIASES entry,
+      # so the task's _module_name echoes the invoked spelling and the
+      # registry cross-check spec's binary pairing stays uniform. See
+      # plugins/gather_facts.cr.
+      "ansible.builtin.gather_facts",
       # facts: - the binary exists (plugins/facts.cr, built and uploaded
       # by plugin_manager's own facts-gathering path) but had no entry
       # here, so a role writing `facts:` directly was silently dropped
