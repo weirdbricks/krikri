@@ -54,12 +54,15 @@ describe "command/shell check-mode gating (creates:/removes:)" do
             ansible.builtin.shell: echo gated-check-probe
             args:
               creates: #{__DIR__}/definitely-missing-#{Random::Secure.hex(4)}.txt
+            register: probe
+          - debug:
+              var: probe
       YAML
 
     status.success?.must_equal(true)
     output.must_include("Command would have run if not in check mode")
     output.wont_include("skipping:")
-    output.must_match(/ok=1\b/)
+    output.must_match(/ok=2\b/)
     output.must_match(/skipped=0\b/)
   end
 
@@ -72,12 +75,15 @@ describe "command/shell check-mode gating (creates:/removes:)" do
             ansible.builtin.shell: echo held-check-probe
             args:
               creates: #{marker}
+            register: probe
+          - debug:
+              var: probe
       YAML
 
     status.success?.must_equal(true)
     output.must_include("Would not run command since '#{marker}' exists")
     output.wont_include("skipping:")
-    output.wont_include("held-check-probe")
+    output.wont_include("\"stdout\": \"held-check-probe")
   ensure
     File.delete(marker) if marker && File.exists?(marker)
   end
@@ -88,6 +94,9 @@ describe "command/shell check-mode gating (creates:/removes:)" do
             ansible.builtin.shell: echo removes-check-probe
             args:
               removes: #{__DIR__}/definitely-missing-#{Random::Secure.hex(4)}.txt
+            register: probe
+          - debug:
+              var: probe
       YAML
 
     status.success?.must_equal(true)
@@ -104,6 +113,9 @@ describe "command/shell check-mode gating (creates:/removes:)" do
             ansible.builtin.shell: echo normal-skip-probe
             args:
               creates: #{marker}
+            register: probe
+          - debug:
+              var: probe
       YAML
 
     status.success?.must_equal(true)

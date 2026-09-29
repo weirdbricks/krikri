@@ -1338,7 +1338,7 @@ module Krikri
 
           item_delegate = delegate_hosts.try(&.[idx])
           delegate_target = item_delegate && item_delegate != host ? item_delegate.connection_host : nil
-          ResultDisplay.display_result(host, result, @diff_mode, item_label: item_label, ignore_errors: resolve_task_ignore_errors(task, base_vars_context), no_log: resolve_task_no_log(task, base_vars_context), delegate_target: delegate_target)
+          ResultDisplay.display_result(host, result, @diff_mode, item_label: item_label, ignore_errors: resolve_task_ignore_errors(task, base_vars_context), no_log: resolve_task_no_log(task, base_vars_context), module_name: task.module_name, delegate_target: delegate_target)
         end
 
         result_hash = result.as_h.dup
@@ -1490,6 +1490,7 @@ module Krikri
         end
 
         substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
+        maybe_conditional_delimiters_deprecation(task, until_condition, "until", vars_context)
         substituted_condition = substitutor.substitute(until_condition)
         break if ConditionalEvaluator.evaluate(substituted_condition, vars_context)
 

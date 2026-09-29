@@ -76,22 +76,23 @@ module Krikri
       # bool) - real Ansible fails the whole play at this first task;
       # this plugin silently treated the nonzero int as truthy and let
       # the play continue for 5 more tasks before diverging elsewhere.
-      # NO `changed` key on either conditional-error result: the
-      # conditional failed before any module ran, and real Ansible's
-      # registered var for this shape carries ONLY failed+msg
-      # (live-verified against ansible-core 2.19: `assert: that: undef
-      # == 1` with register: gives keys=['failed', 'msg'], while an
-      # ordinary failing assertion still registers changed: false
-      # alongside). plugin_result_json can't express the missing key,
-      # so both rescues use conditional_error_result_json instead.
+      # Both conditional-error rescues carry changed=false (real
+      # ansible-core 2.19.11 registers changed=false+failed=true+msg for
+      # a failed conditional, live-verified; see
+      # ActionResult.conditional_error_result_json itself).
       begin
         failing = conditions.find do |condition|
           substituted = substitutor.substitute(condition)
           !ConditionalEvaluator.evaluate(substituted, @vars, strict: true, raise_undefined: true)
         end
       rescue ex : ConditionalEvaluator::UndefinedVariableError
+        # Real ansible-core 2.19.11 prefixes assert:'s undefined-
+        # conditional failure with "Task failed: " exactly like its
+        # non-bool one (live-verified: `assert: that: x` on an undefined
+        # var → fatal msg "Task failed: Error while evaluating
+        # conditional: 'x' is undefined").
         return ActionResult.final(ActionResult.conditional_error_result_json(
-          "Error while evaluating conditional: #{ex.message}"))
+          "Task failed: Error while evaluating conditional: #{ex.message}"))
       rescue ex : ConditionalEvaluator::ConditionalBooleanError
         # Real Ansible's assert: prefixes this specific failure
         # "Task failed: " rather than when:'s own "Error while
@@ -113,7 +114,13 @@ module Krikri
           extra = {"_ansible_quiet" => JSON::Any.new(true)}
           ActionResult.final(ActionResult.plugin_result_json(false, false, success_msg, extra))
         else
-          ActionResult.final(ActionResult.plugin_result_json(false, false, success_msg))
+          # Real assert tags its successful result _ansible_verbose_always
+          # so the default callback dumps it (`ok: [host] => {"changed":
+          # false, "msg": ...}`); a quiet: success is dumped by nothing
+          # and prints a bare `ok: [host]` (both live-verified against
+          # ansible-core 2.19.11).
+          extra = {"_ansible_verbose_always" => JSON::Any.new(true)}
+          ActionResult.final(ActionResult.plugin_result_json(false, false, success_msg, extra))
         end
       end
     end

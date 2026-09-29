@@ -7,6 +7,7 @@
 # - task_executor/result_display.cr  - Result display and formatting
 # - task_executor/handler_runner.cr  - Handler notification and execution
 
+require "./output_banner"
 require "./task_executor/executor"
 require "./task_executor/executor_run_loop"
 require "./task_executor/executor_task_exec"

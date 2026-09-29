@@ -52,7 +52,10 @@ describe "strict boolean conditionals" do
     status.exit_code.must_equal(2)
     output.must_include("Conditional result (True) was derived from value of type 'str'")
     output.must_include("Conditionals must have a boolean result")
-    output.wont_include("TASK-RAN")
+    # The [ERROR] chain's Origin context quotes the playbook SOURCE
+    # (real Ansible's own chain does too); assert on the executed-task
+    # display instead.
+    output.wont_include("\"msg\": \"TASK-RAN\"")
   end
 
   # The case that silently diverged: this engine read "false" as false
@@ -99,7 +102,10 @@ describe "strict boolean conditionals" do
     status.exit_code.must_equal(2)
     output.must_include("Task failed: Conditional result (True) was derived from value of type 'list'")
     output.must_include("Conditionals must have a boolean result")
-    output.wont_include("TASK-RAN")
+    # The [ERROR] chain's Origin context quotes the playbook SOURCE
+    # (real Ansible's own chain does too); assert on the executed-task
+    # display instead.
+    output.wont_include("\"msg\": \"TASK-RAN\"")
   end
 
   it "accepts a genuine boolean" do

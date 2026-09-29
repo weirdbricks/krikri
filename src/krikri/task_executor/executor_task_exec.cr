@@ -230,7 +230,7 @@ module Krikri
       # ignore_errors: stats semantics (ok+ignored, not failed) stay
       # identical to the rest of the engine.
       ignore_errors = resolve_task_ignore_errors(task)
-      ResultDisplay.display_result(host, result, @diff_mode, ignore_errors: ignore_errors)
+      ResultDisplay.display_result(host, result, @diff_mode, ignore_errors: ignore_errors, module_name: task.module_name)
       ResultDisplay.update_stats(@results[host.name], result, ignore_errors)
       @halted_hosts.add(host.name) if !errors.empty? && !ignore_errors
     end
@@ -596,8 +596,7 @@ module Krikri
           next
         end
 
-        puts "TASK [#{task_role_prefix(nested_task)}#{render_task_name_for_display(nested_task, host)}]".colorize(:white).bold
-        puts "*" * 70
+        Krikri::OutputBanner.banner("TASK [#{task_role_prefix(nested_task)}#{render_task_name_for_display(nested_task, host)}]")
         puts "skipping: [#{connection_host}]".colorize(:cyan)
         # A skipped meta: task (e.g. a named meta: flush_handlers inside
         # a when:-false block) prints its "skipping:" line but is NOT
@@ -608,7 +607,6 @@ module Krikri
           @results[host.name]["skipped"] += 1
           register_skip_result(nested_task, host)
         end
-        puts ""
       end
     end
 

@@ -37,7 +37,10 @@ module Krikri
       host_label = delegate_target ? "#{host.connection_host} -> #{delegate_target}" : host.connection_host
       changed = result["changed"]?.try(&.as_bool) || false
       failed = Krikri.result_failed_flag(result)
-      msg = result["msg"]?.try(&.as_s) || ""
+      # as_s? (not as_s): the debug action plugin keeps a whole-span
+      # container msg natively (a real dict/list - see its own re-parse),
+      # so a naive as_s cast crashes the whole display fiber on it.
+      msg = result["msg"]?.try(&.as_s?) || ""
 
       # no_log: print the status line and NOTHING else - no msg, no
       # stdout, no diff, no error detail. Real ansible-playbook shows
@@ -90,7 +93,10 @@ module Krikri
       # a documented, deliberately-not-yet-matched cosmetic gap - so only
       # the NON-loop (no item_label) case takes the single-line dump.
       if failed && item_label.nil?
-        puts "fatal: [#{host_label}]: FAILED! => #{ResultDisplay.python_json_dump(result)}"
+        # Real's stdout callbacks strip failed/skipped/_ansible_* before
+        # dumping (as_callback_task_result), so the FAILED! dump carries
+        # neither "failed": true nor any _ansible_* key.
+        puts "fatal: [#{host_label}]: FAILED! => #{ResultDisplay.python_json_dump(clean_for_display(result))}"
         # Real ansible-playbook prints a bare "...ignoring" line right
         # after a failed task's output when ignore_errors: caught it
         # (live-verified against a real run) - the single-line dump above
@@ -113,44 +119,22 @@ module Krikri
         return
       end
 
-      puts "#{status}: [#{host_label}]#{suffix}"
+      # Real ansible appends the full result JSON (pretty, 4-space indent,
+      # sorted keys) to the status line when the run is verbose OR the
+      # result carries _ansible_verbose_always (the debug and assert
+      # action plugins tag their results that way). At default verbosity
+      # without the tag, real prints ONLY the status line - never a msg
+      # body - so the engine's old `  msg` display for successful tasks
+      # is gone: a non-verbose success shows just `ok: [host]`.
+      verbose_always = !failed &&
+        result["_ansible_verbose_always"]?.try(&.as_bool) == true &&
+        result["_ansible_verbose_override"]?.try(&.as_bool) != true
 
-      # Show message for successful tasks if msg is present and meaningful
-      # This allows debug plugin output to be visible
-      #
-      # quiet: (assert:'s own option, tagged on the result by the assert
-      # plugins as the private `_ansible_quiet` key) suppresses ONLY the
-      # passing assert's message display - a failing one still reports
-      # msg/assertion/evaluated_to exactly as without quiet:. Live-verified
-      # against real ansible-core 2.19.4 (quiet success prints a bare
-      # `ok:` line; quiet failure output is unchanged).
-      quiet_success = result["_ansible_quiet"]?.try(&.as_bool) || false
-      # Real Ansible displays a successful debug task as a JSON dump, so
-      # a msg CONTAINING newlines arrives as ONE physical line with \n
-      # escapes - this engine's raw multi-line display could never line
-      # up with anything comparing real's single-line form (podman-diff
-      # set_fact_edge_cases S1: identical msg content, unmatchable
-      # shape). Keep the established raw-text display (single-line msgs
-      # print exactly as before), but for a debug result escape the
-      # newlines onto one line the way real's dump does. A var: result
-      # (no msg, payload under the var-name key) dumps as real does.
-      if !failed && module_name.try(&.ends_with?("debug")) && result["_ansible_verbose_always"]?.try(&.as_bool)
-        if msg.empty?
-          cleaned = clean_for_display(result)
-          if h = cleaned.as_h?
-            h.delete("changed")
-          end
-          puts dump_pretty(cleaned)
-        else
-          puts "  #{msg.gsub("\n", "\\n")}".colorize(:white)
-        end
-      elsif !failed && msg && !msg.empty? && !quiet_success && !["ok", "Command executed successfully", "File already exists with identical content"].includes?(msg)
-        # Format multi-line messages nicely
-        if msg.includes?("\n")
-          puts msg.split("\n").map { |line| "  #{line}" }.join("\n")
-        else
-          puts "  #{msg}".colorize(:white)
-        end
+      if verbose_always
+        cleaned = module_name.try(&.ends_with?("debug")) ? debug_clean_result(result) : clean_for_display(result)
+        puts "#{status}: [#{host_label}]#{suffix} => #{dump_pretty(cleaned)}"
+      else
+        puts "#{status}: [#{host_label}]#{suffix}"
       end
 
       # If failed, show additional error details
@@ -408,6 +392,25 @@ module Krikri
       end
     end
 
+    # Real ansible's CallbackBase._clean_results for a debug action, run
+    # before the verbose dump: a msg: result keeps ONLY msg (plus keys
+    # real's own pipeline strips later - failed/skipped/_ansible_* are
+    # already gone via clean_for_display), a var: result additionally
+    # drops the _hide_in_debug bookkeeping keys. clean_for_display must
+    # run first - it strips exactly the keys _dump_results would.
+    private def self.debug_clean_result(result : JSON::Any) : JSON::Any
+      cleaned = clean_for_display(result)
+      if h = cleaned.as_h?
+        if result["msg"]?
+          h.select! { |key, _| {"msg", "exception", "warnings", "deprecations"}.includes?(key) || key.starts_with?('_') }
+        else
+          ["changed", "failed", "skipped", "invocation", "skip_reason",
+           "ansible_loop_var", "ansible_index_var", "ansible_loop"].each { |key| h.delete(key) }
+        end
+      end
+      cleaned
+    end
+
     # _dump_results(indent=4, sort_keys=True) - real minimal-callback JSON
     # dump shape.
     private def self.dump_pretty(result : JSON::Any) : String
@@ -571,7 +574,12 @@ module Krikri
       end
     end
 
-    # Show recap of all host results
+    # Show recap of all host results, matching real ansible-playbook's
+    # v2_playbook_on_stats byte-for-byte: host column padded to 26 plain
+    # (37 when colorized, padding applied AROUND the ANSI-wrapped name
+    # the way real's `%-37s` does), then " : ", then the seven counters
+    # each shaped `lead=%-4s` and joined with single spaces - so every
+    # counter carries trailing padding, including the last one.
     def self.show_recap(hosts : Array(Host), results : Hash(String, Hash(String, Int32))) : Nil
       # Sorted by host name, matching real ansible-playbook - this used
       # to print in inventory order, so a recap for db1/web1/web2 came
@@ -587,79 +595,51 @@ module Krikri
           "ok" => 0, "changed" => 0, "unreachable" => 0, "failed" => 0, "skipped" => 0, "rescued" => 0, "ignored" => 0,
         }
 
-        status_parts = [] of String
-
-        # Real ansible-playbook's own recap ALWAYS prints all 7 counters,
-        # in this exact order, even when a given counter is 0 - never
-        # conditionally omitted. Verified directly against a real
-        # ansible-playbook run: `ok=44   changed=6    unreachable=0
-        # failed=0    skipped=5    rescued=0    ignored=0`. This recap
-        # used to omit `skipped=`/`rescued=`/`ignored=` entirely whenever
-        # they were 0, and never printed `unreachable=` at all (no key
-        # for it existed in the stats hash) - a purely cosmetic
-        # difference (the underlying pass/fail/skip behavior always
-        # matched), but one that made an otherwise byte-identical recap
-        # diff from real Ansible on every single run. Found repeatedly
-        # across benchmark rounds (buluma.openssl, geerlingguy.helm,
-        # robertdebock.types) and never fixed in one place before.
-
-        # OK count (green)
-        status_parts << "ok=#{stats["ok"]}".colorize(:green).to_s
-
-        # Changed count (yellow if any)
-        if stats["changed"] > 0
-          status_parts << "changed=#{stats["changed"]}".colorize(:yellow).to_s
-        else
-          status_parts << "changed=#{stats["changed"]}".colorize(:green).to_s
-        end
-
-        # Unreachable count (red if any) - always printed; this engine
-        # doesn't yet distinguish a genuinely unreachable host from an
-        # ordinary task failure (see KNOWN_MISSING.md), so this is
-        # currently always 0, matching what's actually true today.
         unreachable = stats["unreachable"]? || 0
-        if unreachable > 0
-          status_parts << "unreachable=#{unreachable}".colorize(:red).to_s
-        else
-          status_parts << "unreachable=#{unreachable}".colorize(:green).to_s
-        end
-
-        # Failed count (red if any)
-        if stats["failed"] > 0
-          status_parts << "failed=#{stats["failed"]}".colorize(:red).to_s
-        else
-          status_parts << "failed=#{stats["failed"]}".colorize(:green).to_s
-        end
-
-        # Skipped count (cyan if any, green at 0 - always printed)
         skipped = stats["skipped"]? || 0
-        if skipped > 0
-          status_parts << "skipped=#{skipped}".colorize(:cyan).to_s
-        else
-          status_parts << "skipped=#{skipped}".colorize(:green).to_s
-        end
-
-        # Rescued count (yellow if any, green at 0 - always printed) -
-        # block: failures recovered by rescue:
         rescued = stats["rescued"]? || 0
-        if rescued > 0
-          status_parts << "rescued=#{rescued}".colorize(:yellow).to_s
-        else
-          status_parts << "rescued=#{rescued}".colorize(:green).to_s
-        end
-
-        # Ignored count (yellow if any, green at 0 - always printed) -
-        # tasks that failed but were caught by ignore_errors:, matching
-        # real ansible-playbook's own ignored=N field (see #update_stats
-        # for the increment logic).
         ignored = stats["ignored"]? || 0
-        if ignored > 0
-          status_parts << "ignored=#{ignored}".colorize(:yellow).to_s
-        else
-          status_parts << "ignored=#{ignored}".colorize(:green).to_s
+
+        # Real's colorize(lead, num, color) shapes `lead=%-4s` and colors
+        # the WHOLE field only when num != 0 (zero counters stay plain
+        # even on a tty). rescued shares ok's green, ignored shares
+        # changed's warning color - both per real's own v2_playbook_on_stats.
+        counters = [
+          {"ok", stats["ok"], :green},
+          {"changed", stats["changed"], :yellow},
+          {"unreachable", unreachable, :red},
+          {"failed", stats["failed"], :red},
+          {"skipped", skipped, :cyan},
+          {"rescued", rescued, :green},
+          {"ignored", ignored, :yellow},
+        ] of {String, Int32, Symbol}
+
+        parts = counters.map do |label, num, color|
+          field = "#{label}=#{num}".ljust(label.size + 5)
+          if num != 0 && Colorize.enabled?
+            field.colorize(color).to_s
+          else
+            field
+          end
         end
 
-        puts "#{host.name.ljust(20)} : #{status_parts.join("  ")}"
+        host_field = if Colorize.enabled?
+          # Real's hostcolor colored branch pads the ANSI-wrapped name to
+          # 37 (26 visible + 11 for the escape bytes); failure or
+          # unreachability wins over changed, which wins over plain ok.
+          color = if stats["failed"] != 0 || unreachable != 0
+                    :red
+                  elsif stats["changed"] != 0
+                    :yellow
+                  else
+                    :green
+                  end
+          host.name.colorize(color).to_s.ljust(37)
+        else
+          host.name.ljust(26)
+        end
+
+        puts "#{host_field} : #{parts.join(" ")}"
       end
     end
 

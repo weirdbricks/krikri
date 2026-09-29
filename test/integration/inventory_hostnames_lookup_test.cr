@@ -48,8 +48,8 @@ describe "lookup('inventory_hostnames', ...)" do
   {% begin %}
     {% cases = {
          "t01" => {"lookup('inventory_hostnames', 'webservers')", "web1,web2"},
-         "t02" => {"lookup('inventory_hostnames', 'webservers', wantlist=True)", "[\"web1\",\"web2\"]"},
-         "t03" => {"query('inventory_hostnames', 'all')", "[\"ungroupedhost\",\"web1\",\"web2\",\"db1\"]"},
+         "t02" => {"lookup('inventory_hostnames', 'webservers', wantlist=True)", "[\\\"web1\\\",\\\"web2\\\"]"},
+         "t03" => {"query('inventory_hostnames', 'all')", "[\\\"ungroupedhost\\\",\\\"web1\\\",\\\"web2\\\",\\\"db1\\\"]"},
          "t04" => {"lookup('inventory_hostnames', 'webservers:dbservers')", "web1,web2,db1"},
          "t05" => {"lookup('inventory_hostnames', 'all:!webservers')", "ungroupedhost,db1"},
          "t06" => {"lookup('inventory_hostnames', 'webservers[0]')", "web1"},
@@ -74,7 +74,7 @@ describe "lookup('inventory_hostnames', ...)" do
 
         captured = IO::Memory.new
         Process.run(BINARY, ["-i", inventory, playbook], output: captured, error: captured)
-        rendered = captured.to_s[/TAG=(.*)/, 1]
+        rendered = captured.to_s[/TAG=(.*)"/, 1]
         rendered.must_equal(expected)
       ensure
         FileUtils.rm_r(dir) if dir && Dir.exists?(dir)

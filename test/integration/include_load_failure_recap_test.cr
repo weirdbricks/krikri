@@ -67,7 +67,7 @@ describe "include_tasks: whose included file fails to load" do
     status.exit_code.must_equal(2)
     output.must_include("Failed to load included tasks")
     output.wont_include("never reached")
-    output.must_include("ok=0  changed=0  unreachable=0  failed=1")
+    output.must_include("ok=0    changed=0    unreachable=0    failed=1")
   end
 
   it "recaps the include task as failed only, never ok+failed (looped, per-iteration path)" do
@@ -90,7 +90,7 @@ describe "include_tasks: whose included file fails to load" do
 
     status.exit_code.must_equal(2)
     output.must_include("Failed to load included tasks")
-    output.must_include("ok=0  changed=0  unreachable=0  failed=1")
+    output.must_include("ok=0    changed=0    unreachable=0    failed=1")
   end
 
   it "still credits ok for an include whose file loads cleanly (the non-failure shape is unchanged)" do
@@ -113,6 +113,6 @@ describe "include_tasks: whose included file fails to load" do
 
     status.exit_code.must_equal(0)
     output.must_include("included")
-    output.must_include("ok=2  changed=0  unreachable=0  failed=0")
+    output.must_include("ok=2    changed=0    unreachable=0    failed=0")
   end
 end

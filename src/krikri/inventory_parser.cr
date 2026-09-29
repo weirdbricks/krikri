@@ -1271,7 +1271,7 @@ module Krikri
       warnings = [] of String
 
       if inventory.hosts.empty?
-        warnings << "Inventory has no hosts"
+        warnings << "provided hosts list is empty, only localhost is available. Note that the implicit localhost does not match 'all'"
       end
 
       warnings

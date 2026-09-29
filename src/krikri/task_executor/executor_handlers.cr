@@ -400,7 +400,7 @@ module Krikri
         executed_count += 1
         any_changed ||= result["changed"]?.try(&.as_bool) || false
         any_failed ||= Krikri.result_failed_flag(result)
-        ResultDisplay.display_result(host, result, @diff_mode, item_label: item_display(item), ignore_errors: resolve_task_ignore_errors(handler, base_vars_context), no_log: resolve_task_no_log(handler, base_vars_context))
+        ResultDisplay.display_result(host, result, @diff_mode, item_label: item_display(item), ignore_errors: resolve_task_ignore_errors(handler, base_vars_context), no_log: resolve_task_no_log(handler, base_vars_context), module_name: handler.module_name)
       end
 
       # A looped handler whose every item was skipped (per-item when:,

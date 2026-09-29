@@ -44,8 +44,11 @@ private def run_repro(tasks : String)
 
   output = IO::Memory.new
   status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output, chdir: src_dir)
-  msg_line = output.to_s.lines.reverse_each.find(&.starts_with?("  [")) || ""
-  {status, msg_line}
+  # The debug msg now displays as real Ansible 2.19.11 does (live-captured):
+  # a whole-span list value is a NATIVE container, pretty-printed as
+  # `    "msg": [` + the elements - never the old JSON-string dump
+  # `    "msg": "[\"pg-server\"]"`.
+  {status, output.to_s}
 ensure
   FileUtils.rm_rf(src_dir) if src_dir
 end
@@ -107,25 +110,29 @@ private PLAIN_TASKS = <<-YAML
 describe "include_vars-loaded template values consumed from task-level vars:" do
   it "renders the template, not its literal text (looped include_vars, round 981063 repro)" do
     # Real ansible-playbook renders the loaded author template lazily:
-    # `["pg-server"]`. The regression rendered the template SOURCE text
-    # and split it into single characters with `| list`.
-    status, msg = run_repro(REPRO_TASKS)
+    # a native one-element list, pretty-printed. The regression rendered
+    # the template SOURCE text and split it into single characters with
+    # `| list`.
+    status, output = run_repro(REPRO_TASKS)
     status.success?.must_equal(true)
-    msg.must_equal("  [\"pg-server\"]")
-    msg.wont_include("{")
+    output.must_include("\"msg\": [")
+    output.must_include("\"pg-server\"")
+    output.wont_include("{{")
   end
 
   it "renders the template when the include_vars loop items are fact templates" do
-    status, msg = run_repro(FACT_TEMPLATE_LOOP_TASKS)
+    status, output = run_repro(FACT_TEMPLATE_LOOP_TASKS)
     status.success?.must_equal(true)
-    msg.must_equal("  [\"pg-server\"]")
-    msg.wont_include("{")
+    output.must_include("\"msg\": [")
+    output.must_include("\"pg-server\"")
+    output.wont_include("{{")
   end
 
   it "renders the template for a plain (non-looped) include_vars too" do
-    status, msg = run_repro(PLAIN_TASKS)
+    status, output = run_repro(PLAIN_TASKS)
     status.success?.must_equal(true)
-    msg.must_equal("  [\"pg-server\"]")
-    msg.wont_include("{")
+    output.must_include("\"msg\": [")
+    output.must_include("\"pg-server\"")
+    output.wont_include("{{")
   end
 end

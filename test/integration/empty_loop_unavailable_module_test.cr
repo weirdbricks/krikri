@@ -79,7 +79,7 @@ describe "an unimplemented module behind an empty loop is a plain skip, rc=0" do
       YAML
     status.success?.must_equal(false, output)
     status.exit_code.must_equal(4, output)
-    output.must_include("unavailable modules: community.grafana.grafana_datasource", output)
+    # The old "✔ unavailable modules" footer is gone (real ansible-playbook prints nothing after the recap); rc=4 and the skip shape remain the observable behavior.
     output.must_include("PLAY RECAP", output)
   end
 
@@ -95,6 +95,6 @@ describe "an unimplemented module behind an empty loop is a plain skip, rc=0" do
       YAML
     status.success?.must_equal(false, output)
     status.exit_code.must_equal(4, output)
-    output.must_include("unavailable modules: community.grafana.grafana_datasource", output)
+    # The old "✔ unavailable modules" footer is gone (real ansible-playbook prints nothing after the recap); rc=4 and the skip shape remain the observable behavior.
   end
 end

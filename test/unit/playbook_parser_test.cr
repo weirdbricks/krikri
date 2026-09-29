@@ -1101,7 +1101,9 @@ describe Krikri::PlaybookParser do
         YAML
 
       items = task.loop_items.as(Array(JSON::Any))
-      items.map(&.as_a.map(&.as_s)).must_equal([["0", "x"], ["1", "y"]])
+      # Int index - Python enumerate() semantics, live-verified vs real
+      # ansible-core 2.19.11.
+      items.map(&.as_a.map(&.raw)).must_equal([[0, "x"], [1, "y"]])
     end
 
     it "parses with_fileglob: into raw patterns (resolved at execution time)" do

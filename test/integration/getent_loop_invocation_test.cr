@@ -46,7 +46,7 @@ describe "looped+registered getent invocation" do
     text.must_include("failed=0")
     # root's GID (field [2] of the passwd entry) is always 0 - the debug
     # task prints it on its own line.
-    text.must_include("\n  0\n")
+    text.must_include("\"msg\": \"0\"")
   ensure
     File.delete(playbook) if playbook && File.exists?(playbook)
   end

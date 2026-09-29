@@ -79,11 +79,14 @@ module Krikri
       result
     end
 
-    # with_indexed_items: [x, y] -> [["0", x], ["1", y]]
+    # with_indexed_items: [x, y] -> [[0, x], [1, y]] - Python's
+    # enumerate(), so the index is an INT, not a string (live-verified
+    # against ansible-core 2.19.11: debug shows `item=[0, 'x']`, and
+    # arithmetic on item[0] works).
     # Access in a task via item[0] (index) and item[1] (value).
     def self.with_indexed_items(items : Array(JSON::Any)) : Array(JSON::Any)
       items.map_with_index do |item, index|
-        JSON::Any.new([JSON::Any.new(index.to_s), item])
+        JSON::Any.new([JSON::Any.new(index.to_i64), item])
       end
     end
 

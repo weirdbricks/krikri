@@ -81,8 +81,7 @@ module Krikri
     end
 
     private def execute_include_tasks_multi(task : Task, hosts : Array(Host)) : Nil
-      puts "TASK [#{task_role_prefix(task)}#{render_task_name_for_display(task, hosts.first)}]".colorize(:white).bold
-      puts "*" * 70
+      Krikri::OutputBanner.banner("TASK [#{task_role_prefix(task)}#{render_task_name_for_display(task, hosts.first)}]")
 
       run_hosts, skip_hosts = partition_by_when(task, hosts)
 
@@ -119,8 +118,6 @@ module Krikri
 
         run_groups[resolved_path] << host
       end
-
-      puts ""
 
       run_groups.each do |resolved_path, group_hosts|
         begin
@@ -186,7 +183,6 @@ module Krikri
 
           connection_names = group_hosts.map { |host| host.vars["ansible_host"]?.try(&.as_s?) || host.name }
           puts "included: #{resolved_path} for #{connection_names.join(", ")}".colorize(:cyan)
-          puts ""
 
           run_task_batch(included_tasks, group_hosts)
         rescue ex : HandlerNotFoundError
@@ -1266,6 +1262,7 @@ module Krikri
         end
         mark_unsafe_loop_items(loop_items) if unsafe_items
         looped_when_failed = false
+        deferred_iterations = [] of Array(Task)
         loop_items.each_with_index do |item, idx|
           vars_context = base_vars_context.dup
           # Render any string field of the item that is itself a template
@@ -1301,7 +1298,7 @@ module Krikri
           # ultimately skipped still got counted as `ok` AND `skipped`
           # for the same task. See the non-looped branch's comment below
           # for how this was found.
-          unless run_include_tasks_once(task, host, vars_context, item_display(item), defer_when_stats: true)
+          unless run_include_tasks_once(task, host, vars_context, item_display(item), defer_when_stats: true, defer_run: true, collected: deferred_iterations)
             looped_when_failed = true
           end
         end
@@ -1316,6 +1313,17 @@ module Krikri
           else
             @results[host.name]["failed"] += 1
           end
+        end
+        # Real Ansible runs a looped include in two phases: every
+        # iteration's `included: ... => (item=...)` line prints under the
+        # include's own banner FIRST, then the iterations' included tasks
+        # run in order (pluggero.upgrade round 601548; byte-verified
+        # against ansible-core 2.19.11 on testing/test-include-tasks-
+        # quick.yml). The old interleave printed each iteration's tasks
+        # before the next iteration's included: line - a different shape
+        # than anything real produces.
+        deferred_iterations.each do |included_tasks|
+          run_task_list(included_tasks, host)
         end
       else
         # Non-looped include_tasks: itself counts as one `ok` in the
@@ -1344,7 +1352,7 @@ module Krikri
       end
     end
 
-    private def run_include_tasks_once(task : Task, host : Host, vars_context : Hash(String, JSON::Any), item_label : String?, defer_when_stats : Bool = false) : Bool
+    private def run_include_tasks_once(task : Task, host : Host, vars_context : Hash(String, JSON::Any), item_label : String?, defer_when_stats : Bool = false, defer_run : Bool = false, collected : Array(Array(Task))? = nil) : Bool
       if task.when_condition
         begin
           when_result = evaluate_when_items(task, vars_context, host)
@@ -1528,6 +1536,18 @@ module Krikri
       # (see the halted-host comment above for the round 979000
       # buluma.tomcat case that moved this credit here).
       @results[host.name]["ok"] += 1
+
+      # Real Ansible's v2_playbook_on_include line: `included: <path> for
+      # <host>` (plus ` => (item=...)` for a looped include). Printed
+      # after the load succeeds, before any included task runs.
+      connection_names = [host.vars["ansible_host"]?.try(&.as_s?) || host.name]
+      suffix = item_label ? " => (item=#{item_label})" : ""
+      puts "included: #{resolved_path} for #{connection_names.join(", ")}#{suffix}".colorize(:cyan)
+
+      if defer_run
+        collected.try(&.push(included_tasks))
+        return true
+      end
 
       run_task_list(included_tasks, host)
       true

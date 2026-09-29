@@ -228,8 +228,7 @@ module Krikri
         # tasks do (see is_static_import's own comment).
         unless @adhoc || (task.include_role? && task.is_static_import?)
           display_host = active_hosts.first? || hosts.first
-          puts "TASK [#{task_role_prefix(task)}#{render_task_name_for_display(task, display_host)}]".colorize(:white).bold
-          puts "*" * 70
+          Krikri::OutputBanner.banner("TASK [#{task_role_prefix(task)}#{render_task_name_for_display(task, display_host)}]")
         end
 
         if @forks > 1 && task_forkable?(task) && active_hosts.size > 1 && task.throttle != 1 && (task.debugger || @debugger).nil?
@@ -238,7 +237,7 @@ module Krikri
           active_hosts.each { |host| execute_task(task, host) }
         end
 
-        puts "" unless @adhoc
+        puts "" if @adhoc
       end
     end
 
@@ -587,8 +586,14 @@ module Krikri
         # through finish_single_task (register/notify/display/stats/halt,
         # ignore_errors: and all), recapping failed=1 (never reached the
         # loop, so never skipped=1 either) - matching real Ansible's own
-        # degrade-to-one-clean-failed-task behavior.
-        finish_single_task(task, host, when_error_result(ex), vars_context: vars_context)
+        # degrade-to-one-clean-failed-task behavior. Real 2.19.11 also
+        # prefixes the loop-source error with "Task failed: " and prints
+        # the fatal JSON with changed=false (live-verified: `loop: "{{
+        # no_such_list }}"` on an undefined var → fatal {"changed": false,
+        # "msg": "Task failed: 'no_such_list' is undefined"}).
+        prefixed = ex.message.to_s.starts_with?("Task failed: ") ? ex.message.to_s : "Task failed: #{ex.message}"
+        emit_when_error_chain(task, prefixed)
+        finish_single_task(task, host, when_error_result(WhenEvaluationError.new(prefixed)), vars_context: vars_context)
         return
       end
 
@@ -603,7 +608,11 @@ module Krikri
           # (igor_nikiforov.etcd's `{{ etcd_config['data-dir'] }}` on a
           # dict missing that key), so this is one failed task, recapped
           # failed=1, with register/notify/halt/ignore_errors applied.
-          finish_single_task(task, host, when_error_result(ex), vars_context: vars_context)
+          # Same "Task failed: " prefix + chain treatment as the loop-
+          # source rescue above.
+          prefixed = ex.message.to_s.starts_with?("Task failed: ") ? ex.message.to_s : "Task failed: #{ex.message}"
+          emit_when_error_chain(task, prefixed)
+          finish_single_task(task, host, when_error_result(WhenEvaluationError.new(prefixed)), vars_context: vars_context)
           return
         end
         return
@@ -750,7 +759,13 @@ module Krikri
     # itself is about to use - it's cosmetic-only (a mistake here can't
     # affect what actually runs), so best-effort: on any substitution
     # error, fall back to the raw unrendered name rather than raising.
-    private def evaluate_when(when_condition : String, vars_context : Hash(String, JSON::Any), host : Host, substitutor : VarSubstitutor? = nil) : Bool
+    private def evaluate_when(when_condition : String, vars_context : Hash(String, JSON::Any), host : Host, substitutor : VarSubstitutor? = nil, task : Task? = nil) : Bool
+      # Real Ansible's conditional-as-template deprecation fires while the
+      # conditional is being evaluated (see
+      # maybe_conditional_delimiters_deprecation) - before the evaluation
+      # itself, matching real's warning-then-error order for a non-string
+      # whole-template result.
+      maybe_conditional_delimiters_deprecation(task, when_condition, "when", vars_context) if task
       sub = substitutor || VarSubstitutor.new(vars: vars_context, host_name: host.name)
       substituted_condition = sub.substitute(when_condition)
 
@@ -773,7 +788,7 @@ module Krikri
         # identical split lives in assert_action_plugin.cr).
         raise WhenEvaluationError.new("Task failed: #{ex.message}")
       rescue ex
-        raise WhenEvaluationError.new("Error while evaluating conditional: #{ex.message}")
+        raise WhenEvaluationError.new("Task failed: Error while evaluating conditional: #{ex.message}")
       end
     end
 
@@ -793,11 +808,11 @@ module Krikri
     private def evaluate_when_items(task : Task, vars_context : Hash(String, JSON::Any), host : Host, substitutor : VarSubstitutor? = nil) : Bool
       if items = task.when_condition_list
         items.each do |item|
-          return false unless evaluate_when(item, vars_context, host, substitutor)
+          return false unless evaluate_when(item, vars_context, host, substitutor, task)
         end
         true
       else
-        evaluate_when(task.when_condition.as(String), vars_context, host, substitutor)
+        evaluate_when(task.when_condition.as(String), vars_context, host, substitutor, task)
       end
     end
 
@@ -924,17 +939,13 @@ module Krikri
     # hand-rolling that bookkeeping a second time keeps it consistent
     # with every other failure path.
     #
-    # NO `changed` key - the conditional failed before any module ran,
-    # and real Ansible's registered var for this shape carries ONLY
-    # failed+msg (live-verified against ansible-core 2.19: `when: undef
-    # == 1` with register: gives keys=['failed', 'msg']; a later task
-    # reading `<reg>.changed` sees it as undefined and fails its own
-    # templating, it does not see `changed: false`).
+    # `changed: false` IS present - live-verified against ansible-core
+    # 2.19.11: a `when:`-raising task with register: gives a registered
+    # var carrying changed=false+failed=true+msg, and the fatal line
+    # dumps {"changed": false, "msg": "Task failed: ..."} (a later task
+    # reading `<reg>.changed` sees false, not undefined).
     private def when_error_result(ex : WhenEvaluationError) : JSON::Any
-      # No "changed" key, matching real Ansible: a conditional that raises
-      # registers a msg-only result (verified live, ansible-core 2.19 -
-      # fail_edge_cases.yml F6/F7 in the podman-diff harness).
-      JSON.parse({"failed" => true, "msg" => ex.message || "Error while evaluating conditional"}.to_json)
+      JSON.parse({"changed" => false, "failed" => true, "msg" => ex.message || "Error while evaluating conditional"}.to_json)
     end
 
     # For a `when_passes?` call site with no real per-item result
@@ -971,6 +982,23 @@ module Krikri
         if resolve_task_no_log(task)
           suffix = item_label ? " => (item=(censored due to no_log))" : ""
           puts %(fatal: [#{host.connection_host}]#{suffix}: FAILED! => {"censored": "the output has been hidden due to the fact that 'no_log: true' was specified for this result"}).colorize(:red)
+        elsif conditional_evaluation_failure?(msg)
+          # Real ansible-core 2.19.11 (live-captured): a conditional-
+          # evaluation failure prints a two-level [ERROR] chain block on
+          # stdout BEFORE the fatal line, and the fatal line itself is the
+          # result JSON {"changed": false, "msg": "Task failed: ..."} - the
+          # error message prefixed with "Task failed: " - not the bare
+          # message. A looped task's per-item failure lines use real's
+          # loop-failure shape instead of the solo fatal: one
+          # (`failed: [host] (item=N) => {...}` - item BEFORE the =>),
+          # with the chain printed once per task, before the items.
+          emit_when_error_chain(task, msg) unless item_label
+          display_msg = msg.starts_with?("Task failed: ") ? msg : "Task failed: #{msg}"
+          if item_label
+            puts "failed: [#{host.connection_host}] (item=#{item_label}) => {\"changed\": false, \"msg\": #{display_msg.to_json}}".colorize(:red)
+          else
+            puts "fatal: [#{host.connection_host}]: FAILED! => {\"changed\": false, \"msg\": #{display_msg.to_json}}".colorize(:red)
+          end
         else
           puts "fatal: [#{host.connection_host}]#{suffix}: FAILED! => #{msg}".colorize(:red)
         end
@@ -978,12 +1006,14 @@ module Krikri
       end
       register_name = task.register
       unless register_name.nil? || register_name.empty?
-        # Same changed-less shape as when_error_result: real Ansible's
+        # Same changed-carrying shape as when_error_result: real Ansible's
         # registered var for a conditional-evaluation failure carries
-        # ONLY failed+msg (live-verified, ansible-core 2.19).
+        # changed=false+failed=true+msg (live-verified, ansible-core
+        # 2.19.11).
         register_result(host, register_name, JSON.parse({
-          "failed" => true,
-          "msg"    => msg,
+          "changed" => false,
+          "failed"  => true,
+          "msg"     => msg,
         }.to_json))
       end
       false
@@ -1389,6 +1419,9 @@ module Krikri
         # UndefinedVariableError (or a lookup('url', ...) HTTP failure,
         # the pre-existing case this class of rescue was built for) would
         # have crashed the whole run instead of failing just this task.
+        # Same [ERROR] chain block + changed: false as
+        # execute_task_once's identical rescue (2.19.11 live-captured).
+        emit_finalization_error_block(task, ex) if ex.is_a?(UndefinedVariableError)
         failed = JSON.parse({
           "changed" => false,
           "failed"  => true,
@@ -1563,6 +1596,14 @@ module Krikri
         # in the recap (matching real Ansible's "One or more items
         # failed"), not `skipped=1` the way silently returning nil here
         # used to.
+        #
+        # Real ansible-core 2.19.11 prints the [ERROR] chain block BEFORE
+        # the fatal line (see emit_when_error_chain) - here, at catch
+        # time, so it precedes whatever the pipeline prints. For a looped
+        # task every failing item raises through this same rescue; the
+        # chain itself dedups per distinct text, so a loop displays it
+        # once, exactly like real.
+        emit_when_error_chain(task, ex.message || "")
         return when_error_result(ex)
       end
 
@@ -1608,14 +1649,14 @@ module Krikri
         # "{{ lookup('url', ...) }}"` against a 404'd release checksums
         # file (a broken-upstream default, but real Ansible still
         # degrades to one clean failed task, not a crash).
-        # No "changed" key, matching real Ansible: a param-templating
-        # failure happens BEFORE the module runs, so there is no module
-        # result to carry a changed flag - the registered result is
-        # msg-only (verified live, ansible-core 2.19 - fail_edge_cases.
-        # yml F2 in the podman-diff harness).
+        # No "changed" key would match real Ansible's pre-2.19 display;
+        # 2.19.11 (live-captured) shows {"changed": false, "msg": ...},
+        # so the failed result carries changed: false.
+        emit_finalization_error_block(task, ex) if ex.is_a?(UndefinedVariableError)
         result = JSON.parse({
-          "failed" => true,
-          "msg"    => finalize_args_failure_message(ex, task),
+          "changed" => false,
+          "failed"  => true,
+          "msg"     => finalize_args_failure_message(ex, task),
         }.to_json)
         # Deliberately NOT routed through apply_changed_failed_when:
         # failed_when:/changed_when: govern whether a MODULE RESULT counts
@@ -1976,10 +2017,12 @@ module Krikri
           # reaching evaluate_value's own "not found" exit raises - a
           # `| default(...)`-guarded chain stays lenient, as it must.
           if changed_when
+            maybe_conditional_delimiters_deprecation(task, changed_when, "changed_when", eval_context)
             hash["changed"] = JSON::Any.new(ConditionalEvaluator.evaluate(substitutor.substitute(changed_when), eval_context, strict: true, raise_undefined: true))
           end
 
           if failed_when
+            maybe_conditional_delimiters_deprecation(task, failed_when, "failed_when", eval_context)
             hash["failed"] = JSON::Any.new(ConditionalEvaluator.evaluate(substitutor.substitute(failed_when), eval_context, strict: true, raise_undefined: true))
           end
         rescue e : ConditionalEvaluator::ConditionalBooleanError | ConditionalEvaluator::UndefinedVariableError | VariableSubstitutor::FilterEngine::UnknownFilterError
@@ -2170,10 +2213,8 @@ module Krikri
           next
         end
 
-        puts "TASK [#{task_role_prefix(nested_task)}#{render_task_name_for_display(nested_task, host)}]".colorize(:white).bold
-        puts "*" * 70
+        Krikri::OutputBanner.banner("TASK [#{task_role_prefix(nested_task)}#{render_task_name_for_display(nested_task, host)}]")
         execute_task(nested_task, host)
-        puts ""
       end
     end
 

@@ -43,7 +43,16 @@ describe "whole-span `{{ }}` module args carry the JSON container wire form" do
       YAML
 
     status.success?.must_equal(true)
-    output.must_include("[\"probe-pkg-one\",\"probe-pkg-two\"]")
+    # Real ansible-core 2.19.11 (live-captured, non-tty) pretty-prints the
+    # native container msg across lines:
+    #   "msg": [
+    #       "probe-pkg-one",
+    #       "probe-pkg-two"
+    #   ]
+    # - the double-quoted JSON element form, never Python repr.
+    output.must_include("\"msg\": [")
+    output.must_include("\"probe-pkg-one\"")
+    output.must_include("\"probe-pkg-two\"")
     output.wont_include("['probe-pkg-one', 'probe-pkg-two']")
   end
 

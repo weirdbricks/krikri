@@ -56,9 +56,17 @@ describe "connection CLI flags" do
   end
 
   # Real Ansible's own short forms, which this engine previously lacked.
+  # -C's observable effect: a command task reports "skipping:" (the
+  # module does not run in check mode), like real ansible-playbook -C.
   it "supports -C for check mode and -D for diff mode" do
-    _, check = run_with(["-C"], SHOW_VARS)
-    check.must_include("CHECK")
+    _, check = run_with(["-C"], <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - ansible.builtin.command: echo check-probe
+      YAML
+    check.must_include("skipping: [localhost]")
     status, _ = run_with(["-D"], SHOW_VARS)
     status.exit_code.must_equal(0)
   end

@@ -24,7 +24,7 @@ private def hosts_in_order(keywords : String) : Array(String)
 
   stdout_io = IO::Memory.new
   Process.run(BINARY, ["-i", "inv.ini", "pb.yml"], output: stdout_io, error: stdout_io, chdir: dir)
-  stdout_io.to_s.scan(/^\s{2}H-(h\d)$/m).map { |mat| mat[1] }
+  stdout_io.to_s.scan(/^\s{4}"msg": "H-(h\d)"$/m).map { |mat| mat[1] }
 ensure
   FileUtils.rm_rf(dir) if dir && Dir.exists?(dir)
 end
@@ -74,7 +74,7 @@ describe "throttle:" do
       status = Process.run(BINARY, ["-i", "inv.ini", "pb.yml"],
         output: stdout_io, error: stdout_io, chdir: dir)
       status.exit_code.must_equal(0)
-      stdout_io.to_s.scan(/^\s{2}H-(h\d)$/m).map { |mat| mat[1] }.must_equal(["h3", "h1", "h2"])
+      stdout_io.to_s.scan(/^\s{4}"msg": "H-(h\d)"$/m).map { |mat| mat[1] }.must_equal(["h3", "h1", "h2"])
     ensure
       FileUtils.rm_rf(dir) if Dir.exists?(dir)
     end

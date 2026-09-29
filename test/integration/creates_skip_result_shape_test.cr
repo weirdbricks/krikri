@@ -38,6 +38,8 @@ describe "a creates:-skipped command result carries rc: 0" do
             changed_when:
               - user_linger.rc == 0
               - "'skipped' not in user_linger.stdout"
+          - debug:
+              var: user_linger
       YAML
 
     output = IO::Memory.new

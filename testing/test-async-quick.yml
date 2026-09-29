@@ -28,6 +28,10 @@
       poll: 0
       register: bg_result
 
+    - name: dump the fire-and-forget registered shape
+      ansible.builtin.debug:
+        var: bg_result
+
     - name: poll the fire-and-forget job via async_status until it finishes
       ansible.builtin.async_status:
         jid: "{{ bg_result.ansible_job_id }}"

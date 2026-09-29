@@ -73,7 +73,10 @@ describe "looped include_tasks with a raising when: recaps one failure" do
 
     status.exit_code.must_equal(2)
     output.must_include("Conditionals must have a boolean result")
-    output.must_include("fatal: [localhost] => (item=")
+    # Real ansible-core 2.19.11's loop-item failure line shape (live-
+    # verified for this exact playbook): `failed: [host] (item=...) =>
+    # {...}` - "failed:", item before the =>, never "fatal:".
+    output.must_include("failed: [localhost] (item=")
     output.must_include("failed=1")
     output.wont_include("failed=2")
     output.wont_include("failed=3")

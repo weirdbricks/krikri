@@ -32,7 +32,9 @@ private def run_strategy(strategy : String?) : {Int32, Array(String)}
   # The banner/result sequence IS the observable difference.
   lines = stdout_io.to_s.lines.compact_map do |lv2|
     if lv2.starts_with?("TASK [")
-      lv2.strip
+      # Real's banner pads the line with "*" to the display width;
+      # strip the padding so the sequence assertions stay name-only.
+      lv2.sub(/ \*+$/, "")
     elsif lv2 =~ /^(changed|ok): \[(h\d)\]/
       "#{$1}:#{$2}"
     end
