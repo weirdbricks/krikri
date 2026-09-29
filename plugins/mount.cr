@@ -154,6 +154,21 @@ module Krikri
       fstab = @params["fstab"]? || DEFAULT_FSTAB
       check_mode = true?(@params["_ansible_check_mode"]?)
 
+      # Real mount.py creates a missing fstab file BEFORE any state
+      # handling (except ephemeral, which ignores fstab entirely), even
+      # in check mode: `if not os.path.exists(args['fstab'])` - makedirs
+      # the parent when missing, then `open(args['fstab'], 'a')`. A bare
+      # relative filename has os.path.dirname() == '' and
+      # os.makedirs('') raises FileNotFoundError - an UNCAUGHT module
+      # exception real 2.19.11 surfaces as "Task failed: Module failed:
+      # [Errno 2] No such file or directory: ''" (live-verified) -
+      # emulated here the same way apt's python-apt SystemError is.
+      unless state == "ephemeral"
+        if failure = ensure_fstab_file(fstab)
+          return failure
+        end
+      end
+
       case state
       when "present", "mounted" then run_present(path, state, fstab, check_mode)
       when "unmounted"          then run_unmounted(path, check_mode)
@@ -163,11 +178,78 @@ module Krikri
       end
     end
 
+    # Real mount.py's own pre-state fstab creation (runs even in check
+    # mode - it is outside any check_mode guard). Returns a failure
+    # PluginResult when real Ansible would have failed here, nil when
+    # execution continues.
+    private def ensure_fstab_file(fstab : String) : PluginResult?
+      return nil if remote_file_exists?(fstab)
+
+      # os.path.dirname('uybxfa') == '' (Crystal's File.dirname would say
+      # "." - not the same contract); os.path.exists('') is False.
+      dirname = fstab.includes?('/') ? File.dirname(fstab) : ""
+      exists = dirname.empty? ? false : dir_exists?(dirname)
+      unless exists
+        if dirname.empty?
+          # os.makedirs('') raises FileNotFoundError: uncaught, the module
+          # crash real renders as "Task failed: Module failed: ..." in both
+          # the [ERROR] block and the fatal msg.
+          detail = "[Errno 2] No such file or directory: ''"
+          return PluginResult.new(changed: false, failed: true,
+            msg: "Task failed: Module failed: #{detail}", _ansible_error_detail: detail)
+        end
+        if local_connection?
+          Dir.mkdir_p(dirname)
+        else
+          remote_exec("mkdir -p #{shell_single_quote(dirname)}")
+        end
+      end
+
+      if local_connection?
+        begin
+          File.touch(fstab)
+        rescue e : File::AccessDeniedError
+          return fstab_open_failure(fstab, permission: true, detail: e.message.to_s)
+        rescue e
+          return fstab_open_failure(fstab, permission: false, detail: e.message.to_s)
+        end
+      else
+        result = remote_exec("touch #{shell_single_quote(fstab)}")
+        if result[:exit_code] != 0
+          return fstab_open_failure(fstab,
+            permission: result[:stderr].includes?("Permission denied"),
+            detail: result[:stderr])
+        end
+      end
+      nil
+    end
+
+    # Real's two open-failure fail_json texts.
+    private def fstab_open_failure(fstab : String, permission : Bool, detail : String) : PluginResult
+      if permission
+        PluginResult.new(changed: false, failed: true,
+          msg: "Failed to open #{fstab} due to permission issue")
+      else
+        PluginResult.new(changed: false, failed: true,
+          msg: "Failed to open #{fstab} due to #{detail}")
+      end
+    end
+
+    private def dir_exists?(path : String) : Bool
+      if local_connection?
+        Dir.exists?(path)
+      else
+        remote_exec("test -d #{shell_single_quote(path)}")[:exit_code] == 0
+      end
+    end
+
     private def run_present(path : String, state : String, fstab : String, check_mode : Bool) : PluginResult
       fstab_changed, backup_file = set_fstab_entry(path, fstab, check_mode)
       if state == "mounted"
         mount_changed, error = ensure_mounted(path, check_mode)
-        return PluginResult.new(changed: fstab_changed, failed: true, msg: error || "mount failed", name: path, fstab: fstab, backup_file: backup_file) if error
+        # Real mount's failures are all bare fail_json(msg=...) - no
+        # name/fstab/backup_file echo (live-verified vs 2.19.11).
+        return PluginResult.new(changed: fstab_changed, failed: true, msg: error || "mount failed") if error
       else
         mount_changed = false
       end
@@ -176,7 +258,7 @@ module Krikri
 
     private def run_unmounted(path : String, check_mode : Bool) : PluginResult
       changed, error = ensure_unmounted(path, check_mode)
-      return PluginResult.new(changed: false, failed: true, msg: error, name: path) if error
+      return PluginResult.new(changed: false, failed: true, msg: error) if error
       success_result(changed, path, @params["fstab"]? || DEFAULT_FSTAB, "", include_src_fstype: false)
     end
 
@@ -184,7 +266,7 @@ module Krikri
       fstab_changed, backup_file = remove_fstab_entry(path, fstab, check_mode)
       if state == "absent"
         unmount_changed, error = ensure_unmounted(path, check_mode)
-        return PluginResult.new(changed: fstab_changed, failed: true, msg: error || "mount failed", name: path, fstab: fstab, backup_file: backup_file) if error
+        return PluginResult.new(changed: fstab_changed, failed: true, msg: error || "mount failed") if error
       else
         unmount_changed = false
       end
@@ -450,13 +532,13 @@ module Krikri
       result = remote_exec(cmd)
       if result[:exit_code] != 0
         if custom_opts
+          # Real remount()'s fail_json here is msg-only - no name echo.
           return PluginResult.new(
             changed: false, failed: true,
             msg: "Options were specified with remounted, but the remount command failed. " \
                  "Failing in order to prevent an unexpected mount result. Try replacing this " \
                  "command with a \"state: unmounted\" followed by a \"state: mounted\" using " \
-                 "the full desired mount options instead.",
-            name: path
+                 "the full desired mount options instead."
           )
         end
 
@@ -478,13 +560,17 @@ module Krikri
       success_result(true, path, @params["fstab"]? || DEFAULT_FSTAB, "")
     end
 
+    # Real mount.py: remount()'s umount+mount fallback returns (rc, msg)
+    # to main, whose remounted branch fails with
+    # "Error remounting %s: %s" (name, out+err) - NOT "Error
+    # unmounting"/"Error mounting" (those texts belong to the absent/
+    # mounted states' own fail_json calls). msg-only, no name echo.
     private def remount_via_umount_mount(path : String, fstab : String?) : PluginResult
       umount_result = remote_exec("umount #{shell_single_quote(path)}")
       if umount_result[:exit_code] != 0
         return PluginResult.new(
           changed: false, failed: true,
-          msg: "Error unmounting #{path}: #{umount_result[:stdout]}#{umount_result[:stderr]}",
-          name: path
+          msg: "Error remounting #{path}: #{umount_result[:stdout]}#{umount_result[:stderr]}"
         )
       end
 
@@ -498,8 +584,7 @@ module Krikri
       if mount_result[:exit_code] != 0
         return PluginResult.new(
           changed: false, failed: true,
-          msg: "Error mounting #{path}: #{mount_result[:stdout]}#{mount_result[:stderr]}",
-          name: path
+          msg: "Error remounting #{path}: #{mount_result[:stdout]}#{mount_result[:stderr]}"
         )
       end
 
@@ -527,7 +612,7 @@ module Krikri
 
       result = remote_exec("mount -t #{shell_single_quote(fstype)} -o #{shell_single_quote(desired_opts)} #{shell_single_quote(src)} #{shell_single_quote(path)}")
       if result[:exit_code] != 0
-        return PluginResult.new(changed: false, failed: true, msg: "Error mounting #{path}: #{result[:stdout]}#{result[:stderr]}", name: path)
+        return PluginResult.new(changed: false, failed: true, msg: "Error mounting #{path}: #{result[:stdout]}#{result[:stderr]}")
       end
 
       success_result(true, path, @params["fstab"]? || DEFAULT_FSTAB, "")
@@ -545,8 +630,7 @@ module Krikri
           msg: "Ephemeral mount point is already mounted with a different source than the specified one. " \
                "Failing in order to prevent an unwanted unmount or override operation. Try replacing this " \
                "command with a \"state: unmounted\" followed by a \"state: ephemeral\", or use a different " \
-               "destination path.",
-          name: path
+               "destination path."
         )
       end
 
@@ -554,7 +638,7 @@ module Krikri
 
       result = remote_exec(ephemeral_remount_command(path, src, fstype))
       if result[:exit_code] != 0
-        return PluginResult.new(changed: false, failed: true, msg: "Error mounting #{path}: #{result[:stdout]}#{result[:stderr]}", name: path)
+        return PluginResult.new(changed: false, failed: true, msg: "Error mounting #{path}: #{result[:stdout]}#{result[:stderr]}")
       end
 
       success_result(true, path, @params["fstab"]? || DEFAULT_FSTAB, "")

@@ -52,4 +52,25 @@ describe "group plugin" do
     result = PluginSpecHelper.run("group", {} of String => String)
     result["failed"].as_bool.must_equal(true)
   end
+
+  # Real group.py's create/modify/delete failures are all
+  # fail_json(name=group.name, msg=err) - msg is the RAW groupadd
+  # stderr (trailing newline included), plus the name echo, with no
+  # "Failed to <action>: " prefix (live-verified vs 2.19.11 as root:
+  # fatal => {"changed": false, "msg": "groupadd: Invalid
+  # configuration: GID_MIN (1000), GID_MAX (86)\n", "name": ...}).
+  # Deliberately triggers groupadd for real, but it can never mutate:
+  # GID_MAX=86 < GID_MIN makes the creation fail as root ("Invalid
+  # configuration"), and non-root fails even earlier ("Permission
+  # denied") - either way the group is not created.
+  it "fails groupadd with raw stderr as msg plus the name echo - no 'Failed to' prefix" do
+    result = PluginSpecHelper.run("group", {"name" => NONEXISTENT_GROUP, "gid_max" => "86"})
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.starts_with?("Failed to").must_equal(false)
+    result["msg"].as_s.must_include("groupadd:")
+    result["msg"].as_s.ends_with?("\n").must_equal(true)
+    result["name"].as_s.must_equal(NONEXISTENT_GROUP)
+    result.as_h.has_key?("state").must_equal(false)
+  end
 end

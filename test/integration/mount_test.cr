@@ -252,13 +252,71 @@ describe "mount plugin" do
     # "/" (this sandbox has no privilege to remount/umount/mount it, so
     # both the initial remount AND the umount+mount fallback genuinely
     # fail) - no real mount state is touched either way, and the plugin
-    # should now report a REAL failure (umount's own error) instead of
-    # silently reporting changed: true.
+    # should now report a REAL failure instead of silently reporting
+    # changed: true. Real's remounted-branch failure text is
+    # "Error remounting %s: %s" with the FALLBACK command's output -
+    # main()'s remounted branch wraps whatever remount() returned, it
+    # never re-words it as "Error unmounting"/"Error mounting"
+    # (mount.py source, live-verified vs 2.19.11).
     result = PluginSpecHelper.run("mount", {
       "path" => "/", "state" => "remounted",
     })
 
     result["failed"].as_bool.must_equal(true)
-    result["msg"].as_s.must_include("unmounting")
+    result["msg"].as_s.must_include("remounting")
+  end
+
+  # Real mount.py fails every mount/umount/remount error with a bare
+  # fail_json(msg=...) - no name echo (live-verified vs 2.19.11 in a
+  # privileged container: fatal => {"changed": false, "msg": "Error
+  # mounting ...: mount: ... unknown filesystem type ..."}).
+  it "fails a failed ephemeral mount with msg only - no name echo" do
+    path = PluginSpecHelper.tmp_path("ephemeral-fail-mount")
+    result = PluginSpecHelper.run("mount", {
+      "path" => path, "src" => "/opt/kpg-fixtures/template.j2",
+      "fstype" => "krikri_nonexistent_fs", "state" => "ephemeral",
+    })
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.starts_with?("Error mounting #{path}: ").must_equal(true)
+    result.as_h.has_key?("name").must_equal(false)
+  end
+
+  # Real mount.py creates a missing fstab file before any state handling
+  # (except ephemeral), even in check mode. A bare relative fstab
+  # filename has os.path.dirname() == '' and os.makedirs('') raises
+  # FileNotFoundError - an UNCAUGHT module exception real 2.19.11
+  # renders as "Task failed: Module failed: [Errno 2] No such file or
+  # directory: ''" in both the [ERROR] block and the fatal msg
+  # (live-verified). No fstab file may be left behind either.
+  it "reproduces real's uncaught os.makedirs('') crash for a bare relative fstab filename with state: remounted" do
+    dir = PluginSpecHelper.tmp_path("remount-bare-fstab")
+    FileUtils.mkdir_p(dir)
+
+    result = PluginSpecHelper.run("mount", {
+      "path" => File.join(dir, "sub"), "state" => "remounted", "fstab" => "uybxfa",
+    }, chdir: dir)
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("Task failed: Module failed: [Errno 2] No such file or directory: ''")
+    result["_ansible_error_detail"].as_s.must_equal("[Errno 2] No such file or directory: ''")
+    File.exists?(File.join(dir, "uybxfa")).must_equal(false)
+  end
+
+  # The same pre-state step's success side: a missing fstab under a
+  # missing parent directory gets mkdir -p'd and touched before the
+  # state handling runs - even in check mode (real's creation block is
+  # outside any check_mode guard).
+  it "creates a missing fstab file and its parent directories before state handling, even in check mode" do
+    fstab = PluginSpecHelper.tmp_path("nested", "dir", "created.fstab")
+    FileUtils.rm_rf(PluginSpecHelper.tmp_path("nested", "dir"))
+
+    result = PluginSpecHelper.run("mount", {
+      "path" => PluginSpecHelper.tmp_path("nested-mount-point"), "state" => "remounted",
+      "fstab" => fstab, "_ansible_check_mode" => "true",
+    })
+
+    result["changed"].as_bool.must_equal(true)
+    File.exists?(fstab).must_equal(true)
   end
 end
