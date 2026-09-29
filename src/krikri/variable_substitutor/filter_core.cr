@@ -1,4 +1,5 @@
 require "json"
+require "../py_dump"
 require "uri"
 require "openssl/digest"
 require "uuid"
@@ -344,7 +345,7 @@ module Krikri
       # to_json(**kwargs) - Python json.dumps() shape: default ", "/
       # ": " item/key separators, not Crystal's compact JSON::Builder.
       def self.to_json(value : JSON::Any) : String
-        String.build { |io| python_json_dump(value, io) }
+        Krikri::PyDump.json(value)
       end
 
       def self.python_json_dump(value : JSON::Any, io : IO) : Nil

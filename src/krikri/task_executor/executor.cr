@@ -45,10 +45,10 @@ module Krikri
   # 2.x-shaped comparison target, not a sub-1.0 one - reporting crystal's
   # own version here would make EVERY such min-version check fail
   # unconditionally, a worse outcome than picking one fixed real version.
-  # 2.19.4 matches the exact ansible-core release this project's own
+  # 2.19.11 matches the exact ansible-core release this project's own
   # benchmark rounds compare against (see CLAUDE.md/ROLES_TESTED.md).
   ANSIBLE_VERSION_MAGIC_VAR = JSON.parse(%({
-    "full": "2.19.4", "major": 2, "minor": 19, "revision": 4, "string": "2.19.4"
+    "full": "2.19.11", "major": 2, "minor": 19, "revision": 11, "string": "2.19.11"
   }))
 
   # TaskExecutor - Executes tasks on hosts

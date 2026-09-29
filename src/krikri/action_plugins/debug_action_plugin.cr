@@ -83,25 +83,6 @@ module Krikri
           "_ansible_verbose_always" => true,
         }.to_json))
       end
-      # Real Ansible's native typing keeps a WHOLE-SPAN container
-      # expression (`msg: "{{ {'a': 1, 'b': omit} }}"`) a real dict/list
-      # in the debug result - the callback pretty-prints it as a native
-      # container (live-verified vs ansible-core 2.19.11), never as the
-      # JSON-wire string this engine's string-only param layer carries.
-      # Re-parse exactly that shape here so the displayed AND registered
-      # msg is the native container. Cost of the string-only wire: a msg
-      # whose text merely parses as JSON because an expression rendered
-      # it that way (`{{ x | to_json }}` as the whole span) is kept
-      # natively too, where real keeps the string - scalar msgs ("123",
-      # "true") are left alone, only objects/arrays convert.
-      if (parsed = JSON.parse(msg.to_s) rescue nil) && (parsed.as_h? || parsed.as_a?)
-        final = JSON.parse({
-          "changed"                 => false,
-          "failed"                  => false,
-          "msg"                     => parsed,
-          "_ansible_verbose_always" => true,
-        }.to_json)
-      end
       ActionResult.final(final)
     end
 

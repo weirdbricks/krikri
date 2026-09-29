@@ -423,7 +423,7 @@ describe Krikri::VariableSubstitutor::JinjaRenderer do
     renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
 
     renderer.render(%({{ [{"name": "x", "rules": ["a", "b"]}] | to_nice_yaml }})).must_equal(
-      "- name: x\n  rules:\n  - a\n  - b"
+      "-   name: x\n    rules:\n    - a\n    - b\n"
     )
   end
 
@@ -431,8 +431,8 @@ describe Krikri::VariableSubstitutor::JinjaRenderer do
     v = Hash(String, JSON::Any).new
     renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
 
-    renderer.render(%({{ {"b": 1, "a": 2} | to_nice_yaml }})).must_equal("a: 2\nb: 1")
-    renderer.render(%({{ {"b": 1, "a": 2} | to_nice_yaml(sort_keys=False) }})).must_equal("b: 1\na: 2")
+    renderer.render(%({{ {"b": 1, "a": 2} | to_nice_yaml }})).must_equal("a: 2\nb: 1\n")
+    renderer.render(%({{ {"b": 1, "a": 2} | to_nice_yaml(sort_keys=False) }})).must_equal("b: 1\na: 2\n")
   end
 
   it "renders an empty dict as {} for to_nice_yaml/to_yaml, not a stray '--- {}' doc marker" do
@@ -446,8 +446,8 @@ describe Krikri::VariableSubstitutor::JinjaRenderer do
     v = Hash(String, JSON::Any).new
     renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
 
-    renderer.render(%({{ {} | to_nice_yaml }})).must_equal("{}")
-    renderer.render(%({{ {} | to_yaml }})).must_equal("{}")
+    renderer.render(%({{ {} | to_nice_yaml }})).must_equal("{}\n")
+    renderer.render(%({{ {} | to_yaml }})).must_equal("{}\n")
   end
 
   it "b64encode/b64decode round-trip in a .j2 template" do
@@ -493,7 +493,7 @@ describe Krikri::VariableSubstitutor::JinjaRenderer do
     v = Hash(String, JSON::Any).new
     renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
 
-    renderer.render(%({{ {"b": 1, "a": 2} | to_yaml }})).must_equal("a: 2\nb: 1")
+    renderer.render(%({{ {"b": 1, "a": 2} | to_yaml }})).must_equal("{a: 2, b: 1}\n")
   end
 
   it "checksum computes a sha1 hex digest" do
