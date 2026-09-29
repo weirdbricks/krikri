@@ -10,25 +10,12 @@ module Krikri
   # (path/dest, section, option, value, state, create, exclusive,
   # no_extra_spaces, backup, mode).
   class IniFilePlugin < BasePlugin
-    def execute : PluginResult # ameba:disable Metrics/CyclomaticComplexity
+    def execute : PluginResult
       path = @params["path"]? || @params["dest"]?
       return missing_param("path") unless path
       path = expand_tilde(path)
 
-      section = @params["section"]?
-      # Real ini_file: `section=None` is SECTIONLESS - the option lines
-      # live above every `[section]` header (real do_ini treats a None
-      # section as "no section in play" and inserts at the top region of
-      # the file), while an EMPTY STRING section is a real (weird) section
-      # named "" and gets a `[]` header. The executor's explicit-null
-      # bookkeeping is what keeps the two apart on the params wire - a
-      # `section: null` task param demotes to "" here (see NONE_SENTINEL
-      # in param_sentinels.cr) and must be lifted back to nil, or the
-      # sectionless spelling sprouted a literal `[]` header after the
-      # last section (found live via modules_data.yml's ini sectionless
-      # probe: real wrote `root-flag = true` above [main], krikri wrote
-      # `[]` + the option after [net]).
-      section = nil if explicit_null_param?("section")
+      section = parse_section
       option = @params["option"]?
       value = @params["value"]?
       values_param = @params["values"]?
@@ -38,22 +25,9 @@ module Krikri
       no_extra_spaces = true?(@params["no_extra_spaces"]?)
       check_mode = true?(@params["_ansible_check_mode"]?)
 
-      # Real ini_file accepts either `value` (a single string, sugar for a
-      # one-element list) or `values` (the list form), never both - its
-      # argspec declares mutually_exclusive=[['value', 'values']] and
-      # ansible-core rejects the combination with the standard mutual
-      # exclusion failure (same wording blockinfile.cr already uses).
-      if value && values_param
-        return PluginResult.new(changed: false, failed: true, msg: "parameters are mutually exclusive: value|values")
-      end
-
-      # RedHatOfficial.rhel9_cui (round900703) ships tasks passing `values:`
-      # as a list of plain strings (two ExecStart= lines under [Service]) -
-      # this engine only ever read `value:` and silently ignored `values:`,
-      # failing outright with the value-required error. Both params funnel
-      # into one internal list from here on, mirroring real do_ini's own
-      # `if value is not None: values = [value]` merge.
-      values = values_param ? parse_values_list(values_param) : (value ? [value] : nil)
+      merged = merged_values(value, values_param)
+      return merged if merged.is_a?(PluginResult)
+      values = merged
 
       if err = validate_inputs(path, section, option, values, state, create)
         return err
@@ -65,6 +39,45 @@ module Krikri
       new_lines, changed, branch_msg = apply(lines, section, option, values, state, create, exclusive, no_extra_spaces)
 
       finish_execute(path, original, new_lines, changed, branch_msg, check_mode)
+    end
+
+    # Real ini_file: `section=None` is SECTIONLESS - the option lines
+    # live above every `[section]` header (real do_ini treats a None
+    # section as "no section in play" and inserts at the top region of
+    # the file), while an EMPTY STRING section is a real (weird) section
+    # named "" and gets a `[]` header. The executor's explicit-null
+    # bookkeeping is what keeps the two apart on the params wire - a
+    # `section: null` task param demotes to "" here (see NONE_SENTINEL
+    # in param_sentinels.cr) and must be lifted back to nil, or the
+    # sectionless spelling sprouted a literal `[]` header after the
+    # last section (found live via modules_data.yml's ini sectionless
+    # probe: real wrote `root-flag = true` above [main], krikri wrote
+    # `[]` + the option after [net]).
+    private def parse_section : String?
+      section = @params["section"]?
+      section = nil if explicit_null_param?("section")
+      section
+    end
+
+    # Real ini_file accepts either `value` (a single string, sugar for a
+    # one-element list) or `values` (the list form), never both - its
+    # argspec declares mutually_exclusive=[['value', 'values']] and
+    # ansible-core rejects the combination with the standard mutual
+    # exclusion failure (same wording blockinfile.cr already uses).
+    #
+    # RedHatOfficial.rhel9_cui (round900703) ships tasks passing `values:`
+    # as a list of plain strings (two ExecStart= lines under [Service]) -
+    # this engine only ever read `value:` and silently ignored `values:`,
+    # failing outright with the value-required error. Both params funnel
+    # into one internal list from here on, mirroring real do_ini's own
+    # `if value is not None: values = [value]` merge. Returns the
+    # mutual-exclusion failure instead when both params were given.
+    private def merged_values(value : String?, values_param : String?) : PluginResult | Array(String)?
+      if value && values_param
+        return PluginResult.new(changed: false, failed: true, msg: "parameters are mutually exclusive: value|values")
+      end
+
+      values_param ? parse_values_list(values_param) : (value ? [value] : nil)
     end
 
     private def finish_execute(path : String, original : String, new_lines : Array(String),
