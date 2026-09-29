@@ -963,8 +963,7 @@ module Krikri
         return
       end
 
-      puts "failed: [#{host.name}]".colorize(:red)
-      puts "  Message: #{message}".colorize(:red)
+      display_include_vars_failure(task, host, message)
       # ignore_errors: on a failed include_vars: - matching real
       # Ansible's own strategy/__init__.py, which counts this as `ok`
       # AND `ignored`, never `failed`, and never halts the host. Found
@@ -982,6 +981,46 @@ module Krikri
         @results[host.name]["failed"] += 1
         @halted_hosts.add(host.name)
       end
+    end
+
+    # include_vars failures through the standard result display (real 2.19.11,
+    # live-verified): a missing/unparsable file is the action's own failure -
+    # {ansible_facts: {}, ansible_included_var_files: [], changed: false,
+    # message: <detail>, msg: "Task failed: Action failed: Unknown error"} with
+    # a bare "Task failed: Action failed: Unknown error." block; an undefined
+    # variable in the args is the usual multi-level finalization failure.
+    private def display_include_vars_failure(task : Task, host : Host, message : String) : Nil
+      h = Hash(String, JSON::Any).new
+      if message.starts_with?("include_vars: file not found: ") || message.starts_with?("include_vars: could not parse ") || message.ends_with?(" directory does not exist")
+        detail = if message.starts_with?("include_vars: file not found: ")
+                   "Could not find or access '#{message.sub("include_vars: file not found: ", "")}' on the Ansible Controller.\nIf you are using a module and expect the file to exist on the remote, see the remote_src option"
+                 elsif message.ends_with?(" directory does not exist")
+                   message
+                 else
+                   # PyYAML's MarkedYAMLError text: "<While context> <problem>."
+                   raw = message.sub(/\Ainclude_vars: could not parse [^:]*: /, "")
+                   if m = raw.match(/\A(.*?) at line \d+, column \d+, (while [^,]*?) at line \d+, column \d+\z/)
+                     "YAML parsing failed: #{m[2].capitalize} #{m[1]}."
+                   else
+                     "YAML parsing failed: #{raw}"
+                   end
+                 end
+        h["ansible_facts"] = JSON::Any.new({} of String => JSON::Any)
+        h["ansible_included_var_files"] = JSON::Any.new([] of JSON::Any)
+        h["changed"] = JSON::Any.new(false)
+        h["failed"] = JSON::Any.new(true)
+        h["message"] = JSON::Any.new(detail)
+        h["msg"] = JSON::Any.new("Task failed: Action failed: Unknown error.")
+        h["_ansible_action_level"] = JSON::Any.new(true)
+        h["_ansible_error_detail"] = JSON::Any.new("Action failed: Unknown error.")
+        result = JSON::Any.new(h)
+      else
+        key = free_form_call?(task) ? "_raw_params" : "file"
+        ex = UndefinedVariableError.new("Error while resolving value for '#{key}': #{message}")
+        emit_finalization_error_block(task, ex)
+        result = finalization_failure_json(ex, task)
+      end
+      ResultDisplay.display_result(host, result, @diff_mode, ignore_errors: task.ignore_errors?, module_name: task.module_name, source_task: task)
     end
 
     # RoleLoader's auto-synthesized "Validating arguments against arg

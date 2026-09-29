@@ -452,7 +452,29 @@ module Krikri
   # message not live-verified, keep the generic text - key expression itself
   # undefined, non-dict intermediate, nested brackets this simple walker
   # doesn't parse).
+  # Python type name of the object the last dict_chain_step miss hit
+  # ("dict" for a missing key, "int"/"str"/... for `.attr` on a scalar).
+  @@miss_type = "dict"
+
+  def self.miss_type : String
+    @@miss_type
+  end
+
+  private def self.python_type_name(value : JSON::Any) : String
+    case value.raw
+    when Nil     then "NoneType"
+    when Bool    then "bool"
+    when Int     then "int"
+    when Float   then "float"
+    when String  then "str"
+    when Array   then "list"
+    when Hash    then "dict"
+    else              "object"
+    end
+  end
+
   def self.dict_attribute_miss_name(expr : String, vars : Hash(String, JSON::Any)) : String?
+    @@miss_type = "dict"
     return nil unless expr.matches?(/\A[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*|\[[^\[\]]+\])*\z/)
 
     base_end = expr.index(/\.|\[/) || expr.size
@@ -477,16 +499,28 @@ module Krikri
     when Hash
       key = dict_chain_key(token, vars)
       return {nil, nil} unless key
-      return {key, nil} unless raw.has_key?(key)
+      unless raw.has_key?(key)
+        @@miss_type = "dict"
+        return {key, nil}
+      end
       {nil, raw[key]}
     when Array
       # An out-of-range list index raises with different wording in real
       # Ansible ("list index out of range") - not live-verified, so stay
       # on the generic message rather than guess.
+      if token.starts_with?('.')
+        @@miss_type = "list"
+        return {token[1..], nil}
+      end
       return {nil, nil} unless token.starts_with?('[') && (idx = token[1..-2].strip.to_i32?)
       return {nil, nil} if idx.negative? || idx >= raw.size
       {nil, raw[idx]}
     else
+      # `.attr` on a scalar: Python's "object of type 'int' has no attribute 'b'"
+      if token.starts_with?('.')
+        @@miss_type = python_type_name(current)
+        return {token[1..], nil}
+      end
       {nil, nil}
     end
   end
@@ -515,7 +549,7 @@ module Krikri
   # attribute-error wording, everything else the classic "'x' is undefined".
   def self.strict_undefined_message(expr : String, vars : Hash(String, JSON::Any)) : String
     if missing_key = dict_attribute_miss_name(expr, vars)
-      "object of type 'dict' has no attribute '#{missing_key}'"
+      "object of type '#{@@miss_type}' has no attribute '#{missing_key}'"
     else
       "'#{expr}' is undefined"
     end
@@ -1812,7 +1846,7 @@ module Krikri
       root = block_tag_ref_root(ident)
       raise UndefinedVariableError.new("'#{root}' is undefined") unless @vars.has_key?(root)
       if missing_key = Krikri.dict_attribute_miss_name(ident, @vars)
-        raise UndefinedVariableError.new("object of type 'dict' has no attribute '#{missing_key}'")
+        raise UndefinedVariableError.new("object of type '#{Krikri.miss_type}' has no attribute '#{missing_key}'")
       end
     end
 

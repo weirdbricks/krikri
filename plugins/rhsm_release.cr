@@ -35,7 +35,7 @@ module Krikri
       check = remote_exec("command -v #{bin}")
       if check[:exit_code] != 0
         return PluginResult.new(changed: false, failed: true,
-          msg: "Failed to find required executable #{bin} in paths: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
+          msg: missing_executable_message(bin.to_s))
       end
 
       show = remote_exec("export LANGUAGE=C LC_ALL=C; #{bin} release --show")

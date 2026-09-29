@@ -136,8 +136,9 @@ describe "subversion plugin - parameter coverage" do
 
   it "dest is required whenever checkout, update, or export is enabled" do
     result = PluginSpecHelper.run("subversion", {
-      "repo"   => "svn+ssh://example.com/repo",
-      "update" => "yes",
+      "repo"       => "svn+ssh://example.com/repo",
+      "update"     => "yes",
+      "executable" => "/bin/true", # real resolves svn (get_bin_path) BEFORE the dest check
     })
 
     truthy?(result["failed"].as_bool).must_equal(true)

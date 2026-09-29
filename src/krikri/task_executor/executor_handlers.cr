@@ -615,11 +615,7 @@ module Krikri
         substituted_params = substitute_task_params(handler.params, substitutor, native_containers: handler.module_name.ends_with?("set_fact"), module_name: handler.module_name)
         substituted_env = substitute_task_environment(handler, substitutor)
       rescue ex
-        result = JSON.parse({
-          "changed" => false,
-          "failed"  => true,
-          "msg"     => finalize_args_failure_message(ex, handler),
-        }.to_json)
+        result = finalization_failure_json(ex, handler)
         # Not routed through apply_changed_failed_when - failed_when:/
         # changed_when: only reinterpret a MODULE result, and arg
         # finalization failed before any module ran (same reasoning as

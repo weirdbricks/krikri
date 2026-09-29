@@ -32,7 +32,7 @@ module Krikri
 
       brew_path = find_brew(path)
       return PluginResult.new(changed: false, failed: true,
-        msg: "Failed to find required executable brew in paths: #{path}") unless brew_path
+        msg: missing_executable_message("brew")) unless brew_path
 
       changed = false
       changed_pkgs = [] of String

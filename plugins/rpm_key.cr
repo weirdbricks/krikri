@@ -48,6 +48,11 @@ module Krikri
 
       state = @params["state"]?.try(&.downcase) || "present"
 
+      # RpmKey.__init__: get_bin_path('rpm', True) before anything touches the key
+      unless remote_exec("command -v rpm >/dev/null 2>&1")[:exit_code] == 0
+        return PluginResult.new(changed: false, failed: true, msg: missing_executable_message("rpm"))
+      end
+
       if state == "absent"
         remove_key(key)
       else

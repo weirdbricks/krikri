@@ -1433,11 +1433,7 @@ module Krikri
         # Same [ERROR] chain block + changed: false as
         # execute_task_once's identical rescue (2.19.11 live-captured).
         emit_finalization_error_block(task, ex) if ex.is_a?(UndefinedVariableError)
-        failed = JSON.parse({
-          "changed" => false,
-          "failed"  => true,
-          "msg"     => finalize_args_failure_message(ex, task),
-        }.to_json)
+        failed = finalization_failure_json(ex, task)
         # Not routed through apply_changed_failed_when - same reasoning as
         # execute_task_once's identical rescue: failed_when:/changed_when:
         # only reinterpret a MODULE result, and no module ran here.
@@ -1683,11 +1679,7 @@ module Krikri
         # 2.19.11 (live-captured) shows {"changed": false, "msg": ...},
         # so the failed result carries changed: false.
         emit_finalization_error_block(task, ex) if ex.is_a?(UndefinedVariableError)
-        result = JSON.parse({
-          "changed" => false,
-          "failed"  => true,
-          "msg"     => finalize_args_failure_message(ex, task),
-        }.to_json)
+        result = finalization_failure_json(ex, task)
         # Deliberately NOT routed through apply_changed_failed_when:
         # failed_when:/changed_when: govern whether a MODULE RESULT counts
         # as failed/changed, and arg finalization failed before any module

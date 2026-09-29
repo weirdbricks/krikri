@@ -80,8 +80,9 @@ describe "looped+registered getent invocation" do
 
     status.success?.must_equal(true)
     text = output.to_s
-    text.must_include("False")
-    text.wont_include("True")
+    # a whole-span boolean expression prints as a native JSON bool on 2.19.11
+    text.must_include(%("msg": false))
+    text.wont_include(%("msg": true))
   ensure
     File.delete(playbook) if playbook && File.exists?(playbook)
   end

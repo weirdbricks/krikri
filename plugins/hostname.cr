@@ -112,7 +112,7 @@ module Krikri
       when "macos", "macosx", "darwin"
         # DarwinStrategy.__init__ does get_bin_path('scutil', True) - never
         # present on a Linux host, so real fails with get_bin_path's message
-        missing_executable_result("scutil")
+        PluginResult.new(changed: false, failed: true, msg: missing_executable_message("scutil"))
       when "freebsd", "openbsd", "solaris"
         PluginResult.new(
           changed: false,
@@ -249,18 +249,6 @@ module Krikri
     # stripped content ("" when missing), set_current_hostname is a no-op,
     # so changed rests entirely on the file and the live kernel hostname
     # is never read or written.
-    # module_utils get_bin_path(required=True) failure text: the module
-    # process's PATH plus /sbin, /usr/sbin, /usr/local/sbin when missing
-    # from it and present on disk.
-    private def missing_executable_result(name : String) : PluginResult
-      paths = (ENV["PATH"]? || "").split(':')
-      {"/sbin", "/usr/sbin", "/usr/local/sbin"}.each do |dir|
-        paths << dir if !paths.includes?(dir) && Dir.exists?(dir)
-      end
-      PluginResult.new(changed: false, failed: true,
-        msg: %(Failed to find required executable "#{name}" in paths: #{paths.join(':')}))
-    end
-
     private def file_strategy(name : String, file : String) : PluginResult
       permanent = File.file?(file) ? File.read(file).strip : ""
       hostname_facts = build_facts(name)

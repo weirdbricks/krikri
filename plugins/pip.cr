@@ -156,6 +156,14 @@ module Krikri
       pip_bin = resolve_pip_binary
       return pip_bin if pip_bin.is_a?(PluginResult)
 
+      # pip.py: version= with more than one package - after the virtualenv/pip
+      # resolution above, before any install (that order is real's)
+      if @params["version"]? && name && name.split(",").map(&.strip).reject(&.empty?).size > 1
+        return PluginResult.new(changed: false, failed: true,
+          msg: "'version' argument is ambiguous when installing multiple package distributions. " \
+               "Please specify version restrictions next to each package in 'name' argument.")
+      end
+
       if bad_umask = umask_error
         return bad_umask
       end
@@ -428,8 +436,7 @@ module Krikri
       unless cmd0.includes?('/')
         found = remote_exec("sh -c 'command -v #{Shell.single_quote(cmd0)}'")
         unless found[:exit_code] == 0
-          paths = remote_exec("echo $PATH")[:stdout].strip
-          return PluginResult.new(changed: false, failed: true, msg: "Failed to find required executable #{cmd0} in paths: #{paths}")
+          return PluginResult.new(changed: false, failed: true, msg: missing_executable_message(cmd0.to_s))
         end
         cmd0 = found[:stdout].strip
       end

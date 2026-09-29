@@ -9,7 +9,7 @@ describe "subversion plugin" do
   end
 
   it "fails when dest is missing" do
-    result = PluginSpecHelper.run("subversion", {"repo" => "https://example.com/svn/repo"})
+    result = PluginSpecHelper.run("subversion", {"repo" => "https://example.com/svn/repo", "executable" => "/bin/true"})
 
     result["failed"].as_bool.must_equal(true)
     result["msg"].as_s.must_include("dest")

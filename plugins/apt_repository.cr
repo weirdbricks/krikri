@@ -163,7 +163,7 @@ module Krikri
 
       normalized = PluginHelpers::AptRepositoryLine.normalize(repo)
       unless normalized
-        return PluginResult.new(changed: false, failed: true, msg: "Invalid repo line: #{repo}")
+        return PluginResult.new(changed: false, failed: true, msg: "Invalid repository string: #{repo}")
       end
 
       if state == "absent"

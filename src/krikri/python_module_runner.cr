@@ -420,7 +420,7 @@ module Krikri
                   candidate = os.path.join(d, arg)
                   if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
                       return candidate
-              msg = ('Failed to find required executable %s in paths: %s'
+              msg = ('Failed to find required executable "%s" in paths: %s'
                      % (arg, ':'.join(paths)))
               if required:
                   self.fail_json(msg=msg)

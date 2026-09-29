@@ -201,4 +201,45 @@ describe "error-path parity with real ansible (fuzzer findings)" do
       "Unsupported parameters for (ansible_collections.ansible.builtin.plugins.action.assert) module: that_bogus. " \
       "Supported parameters include: fail_msg, quiet, success_msg, that (msg).")
   end
+
+  it "package: an unknown use: is an action-level failure; the delegate module validates the rest" do
+    vars = Hash(String, JSON::Any).new
+    use = Krikri::ArgspecValidator.validate("ansible.builtin.package", "ansible.builtin.package", {"name" => "x", "use" => "dqjdfl"}, vars)
+    use.not_nil!.msg.must_equal(%(Could not find a matching action for the "dqjdfl" package manager.))
+    use.not_nil!.action_level?.must_equal(true)
+
+    if File.exists?("/usr/bin/apt-get")
+      state = Krikri::ArgspecValidator.validate("ansible.builtin.package", "ansible.builtin.package", {"name" => "x", "state" => "bogus"}, vars)
+      state.not_nil!.msg.must_equal("value of state must be one of: absent, build-dep, fixed, latest, present, got: bogus")
+    end
+  end
+
+  it "get_url/uri: checksum format, scheme-less URLs and real's failure keys" do
+    dest = File.join(scratch_dir, "gu-dest")
+    checksum = PluginSpecHelper.run("get_url", {"url" => "http://example.invalid/x", "dest" => dest, "checksum" => "nocolon"})
+    checksum["msg"].as_s.must_equal("The checksum parameter has to be in format <algorithm>:<checksum>")
+    checksum["checksum_dest"].raw.must_be_nil
+    checksum["url"].as_s.must_equal("http://example.invalid/x")
+
+    scheme = PluginSpecHelper.run("get_url", {"url" => "wezwmn", "dest" => dest})
+    scheme["msg"].as_s.must_equal("unknown url type: 'wezwmn'")
+    scheme["status"].as_i.must_equal(-1)
+    scheme["dest"]?.must_be_nil
+
+    uri = PluginSpecHelper.run("uri", {"url" => "wezwmn"})
+    uri["msg"].as_s.must_equal("Status code was -1 and not [200]: Connection failure: [Errno 2] No such file or directory")
+    uri["content"]?.must_be_nil
+  end
+
+  it "rpm_key/subversion/git: real's missing-executable and details keys" do
+    if Process.find_executable("rpm").nil?
+      PluginSpecHelper.run("rpm_key", {"key" => "x"})["msg"].as_s.must_match(/\AFailed to find required executable "rpm" in paths: /)
+    end
+    if Process.find_executable("svn").nil?
+      PluginSpecHelper.run("subversion", {"repo" => "svn://x", "dest" => File.join(scratch_dir, "svn")})["msg"].as_s.must_match(/\AFailed to find required executable "svn" in paths: /)
+    end
+    git = PluginSpecHelper.run("git", {"repo" => "x", "dest" => File.join(scratch_dir, "g"), "umask" => "zz9"})
+    git["msg"].as_s.must_equal("umask must be an octal integer")
+    git["details"].as_s.must_equal("invalid literal for int() with base 8: 'zz9'")
+  end
 end

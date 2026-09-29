@@ -1549,8 +1549,11 @@ module Krikri
         # stored the second run's output. Undefined/None/omit results fall
         # back to the plain substitution, which owns the strict-undefined
         # error and the NONE/OMIT sentinel flows.
-        native_typed = native_containers && whole_single_span ? native_typed_value(substitutor, stripped_value) : nil
+        debug_msg = key == "msg" && module_name == "ansible.builtin.debug"
         begin
+          # inside the begin: native_typed_value's strict-undefined check must
+          # get the same "Error while resolving value for '<key>'" wrapper
+          native_typed = (native_containers || debug_msg) && whole_single_span ? native_typed_value(substitutor, stripped_value) : nil
           substituted_value = native_typed || substitutor.substitute(value, strict: true, output: !whole_single_span && !native_containers, native: native_containers)
         rescue e : UndefinedVariableError
           # Real ansible-core 2.19 wraps every undefined module-arg
@@ -1800,12 +1803,55 @@ module Krikri
       msg = ex.message || "Failed to resolve task arguments"
       return msg unless ex.is_a?(UndefinedVariableError)
       return msg if msg.starts_with?("Error processing keyword") || msg.starts_with?("Task failed:")
+      msg = msg.sub("Error while resolving value for 'cmd':", "Error while resolving value for '_raw_params':") if free_form_raw_command?(task)
 
       "Task failed: Finalization of task args for '#{finalization_module_name(task)}' failed: #{msg}"
     end
 
+    # The failed result for a task-arg finalization failure: `debug` (which
+    # templates its own msg inside the action plugin) fails with no `changed`
+    # key; every other module - action-only ones like fail/assert/set_fact
+    # included - carries changed: false. Live-verified vs 2.19.11 for
+    # set_fact/assert/add_host/group_by/include_vars/pause/stat/ping/debug.
+    private def finalization_failure_json(ex : Exception, task : Task) : JSON::Any
+      h = Hash(String, JSON::Any).new
+      h["changed"] = JSON::Any.new(false) unless finalization_module_name(task) == "ansible.builtin.debug"
+      h["failed"] = JSON::Any.new(true)
+      h["msg"] = JSON::Any.new(finalize_args_failure_message(ex, task))
+      JSON::Any.new(h)
+    end
+
+    # command/shell/script/raw written free-form (`command: echo {{ x }}`, also
+    # folded/literal blocks) name their argument `_raw_params` in real's error
+    # text, krikri's parser calls it `cmd`.
+    private def free_form_raw_command?(task : Task) : Bool
+      return false unless PlaybookParser::RAW_COMMAND_MODULES.includes?(task.module_name)
+      free_form_call?(task)
+    end
+
+    # True when the task's module key carries an inline value (`module: text`,
+    # `module: >`), i.e. the argument arrives as `_raw_params` rather than a
+    # `key: value` mapping.
+    private def free_form_call?(task : Task) : Bool
+      path = task.source_file
+      return false unless path && task.source_line > 0 && File.file?(path)
+      lines = File.read_lines(path)
+      short = Regex.escape(task.module_name.split(".").last)
+      matcher = /\A(?:ansible\.(?:builtin|legacy)\.)?#{short}:/
+      ((task.source_line - 1)...Math.min(lines.size, task.source_line + 40)).each do |idx|
+        stripped = lines[idx].strip.lchop("- ").strip
+        next unless stripped.matches?(matcher)
+        rest = stripped.split(":", 2)[1]?.to_s.strip
+        return !rest.empty? && !rest.starts_with?('{')
+      end
+      false
+    end
+
     private def finalization_module_name(task : Task) : String
-      PlaybookParser.resolve_module_name(task.module_name) || task.module_name
+      name = PlaybookParser.resolve_module_name(task.module_name) || task.module_name
+      # engine-internal pseudo modules (_include_vars, ...) are real actions
+      name = "ansible.builtin.#{name.lchop('_')}" if name.starts_with?('_')
+      name
     end
 
     # The `[ERROR]:` chain block real ansible-core 2.19.11 prints on
@@ -1838,34 +1884,60 @@ module Krikri
       return unless path && File.file?(path)
 
       lines = File.read_lines(path)
-      name_line = locate_name_line(lines, task)
-      return unless name_line
-      name_idx, name_col = name_line
-
-      module_line = locate_module_key_line(lines, name_idx, task.module_name)
-      return unless module_line
-      module_idx, module_col = module_line
-
       msg = ex.message || ""
-      key_line = locate_param_value_line(lines, module_idx, msg)
-      param_idx, param_col = key_line || module_line
+      free_form = free_form_raw_command?(task)
+      msg = msg.sub("Error while resolving value for 'cmd':", "Error while resolving value for '_raw_params':") if free_form
       l3 = msg
       l2 = "Finalization of task args for '#{finalization_module_name(task)}' failed."
       l1 = "Task failed: Finalization of task args for '#{finalization_module_name(task)}' failed: #{msg}"
 
+      name_line = locate_name_line(lines, task)
+      if name_line
+        name_idx, name_col = name_line
+        module_line = locate_module_key_line(lines, name_idx, task.module_name)
+        return unless module_line
+        module_idx, module_col = module_line
+        two_level = false
+      else
+        # A task without `name:` starts at its module key: the task-level
+        # and module-level origins are the same line, so real prints two
+        # levels - "Task failed: Finalization ... failed." then the cause.
+        return unless task.source_line > 0
+        module_idx = task.source_line - 1
+        module_col = task.source_col > 0 ? task.source_col : (lines[module_idx].size - lines[module_idx].lstrip.size + 1)
+        name_idx, name_col = module_idx, module_col
+        two_level = true
+      end
+
+      param_idx, param_col = free_form ? free_form_value_position(lines, module_idx, task.module_name) : (locate_param_value_line(lines, module_idx, msg) || {module_idx, module_col})
+
       text = String.build do |io|
         io << "[ERROR]: " << l1 << "\n"
-        io << "\nTask failed.\n"
-        io << origin_context_block(path, lines, name_idx + 1, name_col)
-        io << "\n<<< caused by >>>\n\n"
-        io << l2 << "\n"
-        io << origin_context_block(path, lines, module_idx + 1, module_col)
+        if two_level
+          io << "\n" << "Task failed: Finalization of task args for '#{finalization_module_name(task)}' failed.\n"
+          io << origin_context_block(path, lines, module_idx + 1, module_col)
+        else
+          io << "\nTask failed.\n"
+          io << origin_context_block(path, lines, name_idx + 1, name_col)
+          io << "\n<<< caused by >>>\n\n"
+          io << l2 << "\n"
+          io << origin_context_block(path, lines, module_idx + 1, module_col)
+        end
         io << "\n<<< caused by >>>\n\n"
         io << l3 << "\n"
         io << origin_context_block(path, lines, param_idx + 1, param_col)
         io << "\n"
       end
       puts text
+    end
+
+    # The value token's position for a free-form module call: on the module
+    # key's own line, just past `<module>:` (real's origin for `_raw_params`).
+    private def free_form_value_position(lines : Array(String), module_idx : Int32, module_name : String) : {Int32, Int32}
+      line = lines[module_idx]
+      colon = line.index(':', line.index(module_name.split(".").last) || 0) || 0
+      rest = line[(colon + 1)..]
+      {module_idx, colon + 1 + (rest.size - rest.lstrip.size) + 1}
     end
 
     # Shared Origin renderer (also used by the task-name template-error

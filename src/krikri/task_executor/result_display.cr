@@ -61,6 +61,8 @@ module Krikri
         next unless @@warned_texts.add?(text)
         STDERR.puts "[WARNING]: #{text.strip}".colorize(:light_magenta)
       end
+      emit_debug_template_error_warning(source_task, result)
+
       # Real's callback (CallbackBase._dump_results) drops these top-level
       # keys before any dump at verbosity < 3: `warnings`/`deprecations` are
       # only ever shown as their own [WARNING] lines, `invocation` is hidden
@@ -290,6 +292,10 @@ module Krikri
     private def self.emit_task_error_block(source_task : Task?, result : JSON::Any, msg : String) : Nil
       return unless source_task
       return if source_task.no_log?
+      # Task-arg finalization failures ("Task failed: Finalization of task
+      # args for ...") get their own multi-level block from the executor
+      # (emit_finalization_error_block) before the fatal line.
+      return if msg.starts_with?("Task failed: Finalization of task args for")
       # assert:'s that: conditional failure: two-level chain, the second
       # Origin pointing at the failing that: item (index carried in the
       # internal _ansible_that_index key; when: failures are emitted by
@@ -320,6 +326,31 @@ module Krikri
         return
       end
       ErrorBlock.emit(task_error_chain(source_task.module_name, msg, origin))
+    end
+
+    # `debug: var: undefined_name` renders the error inline ("<< error 1 - ...
+    # >>", see DebugActionPlugin) and real ALSO prints a "[WARNING]:
+    # Encountered 1 template error." block on stderr naming the var: value's
+    # Origin (live-verified 2.19.11); deduped like every Display.warning.
+    private def self.emit_debug_template_error_warning(task : Task?, result : JSON::Any) : Nil
+      return unless task && (hash = result.as_h?)
+      hash.each_value do |value|
+        next unless (text = value.as_s?) && (m = text.match(/\A<< error (\d+) - (.*) >>\z/))
+        path = task.source_file
+        next unless path && task.source_line > 0 && File.file?(path)
+        lines = File.read_lines(path)
+        origin = nil
+        ((task.source_line - 1)...Math.min(lines.size, task.source_line + 40)).each do |idx|
+          line = lines[idx]
+          next unless (at = line.index(/\bvar:\s*/))
+          rest = line[(at + 4)..]
+          origin = ErrorBlock.origin_context(path, idx + 1, at + 4 + (rest.size - rest.lstrip.size) + 1)
+          break
+        end
+        next unless origin
+        warning = "[WARNING]: Encountered #{m[1]} template error.\nerror #{m[1]} - #{m[2]}\n#{origin}\n\n"
+        STDERR.puts warning if @@warned_texts.add?(warning)
+      end
     end
 
     private def self.emit_assert_that_chain(task : Task, inner : String, index : Int32) : Nil

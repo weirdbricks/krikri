@@ -175,6 +175,17 @@ module Krikri
       @null_params.includes?(key)
     end
 
+    # module_utils get_bin_path(required=True) failure text: the module
+    # process's PATH plus /sbin, /usr/sbin, /usr/local/sbin when missing from
+    # it and present on disk, with the executable name double-quoted.
+    protected def missing_executable_message(name : String) : String
+      paths = (ENV["PATH"]? || "").split(':')
+      {"/sbin", "/usr/sbin", "/usr/local/sbin"}.each do |dir|
+        paths << dir if !paths.includes?(dir) && Dir.exists?(dir)
+      end
+      %(Failed to find required executable "#{name}" in paths: #{paths.join(':')})
+    end
+
     # command/shell's failed os.chdir(): real's fatal msg is the generic
     # "Unable to change directory before execution." while the [ERROR] block
     # shows the OSError text too (Python bytes repr of the path).

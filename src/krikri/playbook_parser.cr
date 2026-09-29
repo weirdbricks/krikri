@@ -2184,7 +2184,9 @@ module Krikri
       end
 
       if include_vars_yaml = directive(task_hash, "include_vars")
-        return parse_include_vars_task(name || "include_vars", task_hash, include_vars_yaml)
+        # An unnamed task's banner is the action AS WRITTEN (FQCN or short)
+        written = ["include_vars", "ansible.builtin.include_vars", "ansible.legacy.include_vars"].find { |key| task_hash.has_key?(key) } || "include_vars"
+        return parse_include_vars_task(name || written, task_hash, include_vars_yaml)
       end
 
       # Find the module (first key that's not a special keyword). Built
@@ -3628,6 +3630,11 @@ module Krikri
             # JSON-encoding here (like "that:") gives coerce's existing
             # leading-bracket check something real to detect.
             params[key.to_s] = value.to_json
+          elsif module_name == "ansible.builtin.debug" && key.to_s == "msg" && (value.raw.is_a?(Int64) || value.raw.is_a?(Int32) || value.raw.is_a?(Float64) || value.raw.is_a?(Bool))
+            # debug: msg: 1 / true / 1.5 prints the native YAML scalar (real
+            # templates msg through the native-typing Templar); the strings-only
+            # wire would otherwise turn it into "1"/"true"
+            params[key.to_s] = fact_literal_wire_value(value)
           elsif module_name == "ansible.builtin.set_fact" && fact_literal_scalar?(value)
             # A literal (non-templated) YAML SCALAR set_fact value keeps its
             # YAML type across the strings-only param wire the same way a

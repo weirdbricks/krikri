@@ -32,6 +32,10 @@ module Krikri
     # Kept out of validation: engine-internal wire keys real's module
     # never sees (real strips the _ansible_* namespace generically; the
     # others are krikri's own bookkeeping keys).
+    # Package-manager modules `package: use:` can name (core + common community).
+    PACKAGE_MANAGERS = %w[apt apt_rpm dnf dnf5 yum yum4 dnf4 zypper pacman apk homebrew pkgng openbsd_pkg
+      pkgin portage xbps slackpkg swupd urpmi opkg pkg5 rpm_ostree_pkg macports bsd_pkg]
+
     INTERNAL_KEYS = [
       "_module_name", "_first_gather", "_environment", "_verbosity",
       "_rendered_from_template", "_content_checksum",
@@ -75,6 +79,7 @@ module Krikri
       return nil unless entry
       return nil if entry["no_validate"]?
       return :action if module_name == "ansible.builtin.template" && msg == "src and dest are required"
+      return :action if module_name == "ansible.builtin.package" && msg.starts_with?("Could not find a matching action for the")
       return :action if module_name == "ansible.builtin.unarchive" &&
                         {"parameters are mutually exclusive: ('copy', 'remote_src')", "src (or content) and dest are required"}.includes?(msg)
       return nil unless validation_msg?(msg)
@@ -119,6 +124,11 @@ module Krikri
       # BEFORE any module argument validation (AnsibleActionFail).
       if module_name == "ansible.builtin.template" && (!params.has_key?("src") || !params.has_key?("dest"))
         return Failure.new("src and dest are required", true)
+      end
+      # package's action plugin: an unknown `use:` manager fails before the
+      # delegated module ever validates anything.
+      if module_name == "ansible.builtin.package" && (use = params["use"]?) && use != "auto" && !PACKAGE_MANAGERS.includes?(use)
+        return Failure.new(%(Could not find a matching action for the "#{use}" package manager.), true)
       end
       # unarchive's action plugin, in order: copy+remote_src conflict, src/dest
       # required, then (below) dest must be an existing dir - all before the
@@ -241,17 +251,24 @@ module Krikri
       if fact_delegate = entry["fact_delegate"]?
         fact = fact_delegate["fact"].as_s
         fact_value = vars_context[fact]?.try(&.as_s?) || ""
-        # Facts not gathered: real's action plugin runs setup for just
-        # ansible_service_mgr on demand - systemd only when PID 1 is systemd.
+        # Facts not gathered: real's action plugin runs setup for just the
+        # delegating fact on demand. service: systemd only when PID 1 is
+        # systemd, any other manager runs the service module ITSELF against
+        # its own spec. package: the host's package manager (apt on Debian).
         if fact_value.empty?
-          fact_value = File.read("/proc/1/comm").strip == "systemd" ? "systemd" : "service" rescue "service"
+          case fact
+          when "ansible_service_mgr"
+            fact_value = File.read("/proc/1/comm").strip == "systemd" ? "systemd" : "service" rescue "service"
+          when "ansible_pkg_mgr"
+            fact_value = File.exists?("/usr/bin/apt-get") ? "apt" : ""
+          end
         end
         target = fact_delegate["map"].as_h[fact_value]?.try(&.as_s)
         if target && (target_entry = table[target]?)
           return {"ansible.legacy.#{target.split(".").last}", target_entry}
         end
-        # Any other manager (sysvinit/service/...): the action plugin runs
-        # the service module ITSELF, validated against its own spec.
+        return {action_name, nil} unless fact == "ansible_service_mgr"
+
         return {"ansible.legacy.#{module_name.split(".").last}", entry}
       end
 

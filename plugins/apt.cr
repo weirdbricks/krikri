@@ -147,7 +147,9 @@ module Krikri
 
     def execute : PluginResult
       result = execute_inner
-      result.extra["cache_updated"] = JSON.parse(@cache_updated.to_json)
+      # an unhandled module exception (python-apt's SystemError) never reaches
+      # exit_json, so its failure carries no cache_updated key
+      result.extra["cache_updated"] = JSON.parse(@cache_updated.to_json) unless result.extra.has_key?("_ansible_error_detail")
       result
     end
 
@@ -321,6 +323,17 @@ module Krikri
       @allow_downgrade = true?(@params["allow_downgrade"]?)
       @allow_change_held_packages = true?(@params["allow_change_held_packages"]?)
       @default_release = @params["default_release"]?
+      # python-apt opens the cache with APT::Default-Release set and raises
+      # SystemError("E:The value ... is invalid ...") for an unknown release -
+      # an unhandled module exception, surfaced as "Task failed: Module failed:"
+      # in the fatal msg and the [ERROR] block (live-verified vs 2.19.11).
+      if release = @default_release.presence
+        probe = remote_exec("apt-get -o APT::Default-Release=#{Process.quote(release)} check 2>&1")
+        if line = probe[:stdout].lines.find(&.includes?("is invalid for APT::Default-Release"))
+          detail = line.strip.sub(/\AE: /, "E:")
+          return PluginResult.new(changed: false, failed: true, msg: "Task failed: Module failed: #{detail}", _ansible_error_detail: detail)
+        end
+      end
       if ir = @params["install_recommends"]?
         @install_recommends = true?(ir)
       end
@@ -351,7 +364,10 @@ module Krikri
       # cache refresh's own changed: in here; this engine saw a present
       # name: param and never did, losing the changed: entirely).
       no_effective_packages = (raw_name = name_or_pkg_param?).nil? || parse_package_names(raw_name).empty?
-      cache_update_is_sole_operation = no_effective_packages && !@params["upgrade"]? && !@params["deb"]?
+      # upgrade: "no" is the argspec default spelled out - apt.py maps it to
+      # None (`if p['upgrade'] == 'no': p['upgrade'] = None`), i.e. no upgrade
+      upgrade_requested = (raw_upgrade = @params["upgrade"]?) && raw_upgrade != "no"
+      cache_update_is_sole_operation = no_effective_packages && !upgrade_requested && !@params["deb"]?
 
       # Handle cache update
       if update_cache || has_cache_valid_time
@@ -457,6 +473,7 @@ module Krikri
       autoclean = true?(@params["autoclean"]?)
       clean = true?(@params["clean"]?)
       upgrade = @params["upgrade"]?
+      upgrade = nil if upgrade == "no"
 
       # Real Ansible's apt module NEVER reaches its own cleanup()
       # (autoremove/autoclean) when `upgrade:` is set: upgrade() always

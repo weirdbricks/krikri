@@ -55,7 +55,23 @@ module Krikri
       revision = @params["revision"]? || "HEAD"
       force = true?(@params["force"]?)
       check_mode = true?(@params["_ansible_check_mode"]?)
-      svn = @params["executable"]? || "svn"
+      # module.params['executable'] or module.get_bin_path('svn', True)
+      svn = @params["executable"]?.presence
+      if svn.nil?
+        unless remote_exec("command -v svn >/dev/null 2>&1")[:exit_code] == 0
+          return PluginResult.new(changed: false, failed: true, msg: missing_executable_message("svn"))
+        end
+        svn = "svn"
+      elsif remote_exec("test -x #{shell_quote(svn)}")[:exit_code] != 0
+        # run_command([svn_path, '--version', '--quiet'], check_rc=True) on an
+        # executable that cannot be spawned: basic.py's "Error executing
+        # command." failure (the OSError text rides in the [ERROR] block only)
+        errno = remote_exec("test -e #{shell_quote(svn)}")[:exit_code] == 0 ? "[Errno 13] Permission denied" : "[Errno 2] No such file or directory"
+        return PluginResult.new(changed: false, failed: true, msg: "Error executing command.",
+          cmd: "#{svn} --version --quiet", rc: 2, stdout: "", stdout_lines: [] of String,
+          stderr: "", stderr_lines: [] of String,
+          _ansible_error_detail: "Error executing command: #{errno}: b'#{svn}'")
+      end
       auth = build_auth_args(validate_certs)
 
       dest = @params["dest"]?
