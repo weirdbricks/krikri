@@ -149,6 +149,9 @@ gathering = {"implicit", "explicit", "smart"}.includes?(ENV["ANSIBLE_GATHERING"]
 # than taking the max of one.
 verbosity_level = ARGV.select { |arg| arg =~ /\A-v+\z/ }.sum(&.size.-(1))
 verbose = verbosity_level > 0
+# krikri's own extra -v output (statistics, host lists, upload progress) is
+# not part of ansible-playbook's output; opt in with KRIKRI_VERBOSE_EXTRAS=1.
+verbose_extras = ENV["KRIKRI_VERBOSE_EXTRAS"]? == "1"
 cli_args = ARGV.reject { |arg| arg =~ /\A-v+\z/ }
 limit_hosts = ""
 tags = [] of String
@@ -479,7 +482,7 @@ begin
     exit 0
   end
 
-  if verbose
+  if verbose && verbose_extras
     stats = Krikri::PlaybookParser.stats(playbook)
     puts "Playbook Statistics:".colorize(:green).bold
     puts "  Plays: #{stats["plays"]}".colorize(:white)
@@ -600,7 +603,7 @@ inventory = Krikri::Inventory.new
 begin
   inventory = Krikri::TimingProfile.measure("parse.inventory") { Krikri::InventoryParser.parse(inventory_file, File.dirname(File.expand_path(playbook_file))) }
 
-  if verbose
+  if verbose && verbose_extras
     stats = Krikri::InventoryParser.stats(inventory)
     puts "Inventory Statistics:".colorize(:green).bold
     puts "  Hosts: #{stats["hosts"]}".colorize(:white)
@@ -703,7 +706,7 @@ if list_hosts_only
   exit 0
 end
 
-if verbose
+if verbose && verbose_extras
   puts "Available Hosts:".colorize(:cyan).bold
   inventory.hosts.each do |_name, host|
     # An un-set port is not "22" - it's "ssh decides" (~/.ssh/config and
@@ -715,7 +718,12 @@ if verbose
 end
 
 # Set verbose mode for plugin manager
-Krikri::PluginManager.verbose = verbose
+Krikri::PluginManager.verbose = verbose && verbose_extras
+# Real ansible-playbook -v opens with its config-file line.
+if verbose
+  cfg = ENV["ANSIBLE_CONFIG"]? || (File.exists?("ansible.cfg") ? File.expand_path("ansible.cfg") : nil)
+  puts cfg ? "Using #{cfg} as config file" : "No config file found; using defaults"
+end
 Krikri::PluginManager.daemon_enabled = persistent_daemon
 
 # Batch upload plugins to all remote hosts before execution
@@ -776,6 +784,21 @@ run_registered_store = Hash(String, Hash(String, JSON::Any)).new
 # carries that forward across the per-play loop below.
 permanently_failed_hosts = Set(String).new
 
+# A --limit that matches nothing in the whole inventory aborts before any
+# play: one warning per unmatched pattern, then the no-hosts error, rc 1.
+unless limit_hosts.empty?
+  limit_tokens = limit_hosts.split(/[,:]/).map(&.strip).reject(&.empty?)
+  limit_tokens.each do |tok|
+    next if tok.starts_with?('!') || tok.starts_with?('&')
+    next unless inventory.get_hosts(tok).empty?
+    STDERR.puts "[WARNING]: Could not match supplied host pattern, ignoring: #{tok}".colorize(:yellow)
+  end
+  if inventory.get_hosts(limit_hosts).empty?
+    STDERR.puts "[ERROR]: Specified inventory, host pattern and/or --limit leaves us with no hosts to target.".colorize(:red)
+    exit 1
+  end
+end
+
 playbook.plays.each_with_index do |play, _play_index|
   Krikri::RunOptions.play_name = play.name
   Krikri::OutputBanner.banner("PLAY [#{play.name}]")
@@ -810,7 +833,7 @@ playbook.plays.each_with_index do |play, _play_index|
   # Track hosts for recap
   all_hosts.concat(hosts)
 
-  if verbose
+  if verbose && verbose_extras
     # Show connection hosts (IPs) if different from inventory names
     host_display = hosts.map do |host|
       connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
