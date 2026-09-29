@@ -173,6 +173,20 @@ def clean_option(spec_entry):
         out["choices"] = spec_entry["choices"]
     if "default" in spec_entry:
         out["default"] = spec_entry["default"]
+    if spec_entry.get("elements"):
+        # Element type: drives the elements-level conversion checks (e.g.
+        # elements=dict strings must parse as dicts - check_type_dict's
+        # bare TypeError surfaces verbatim as the module failure msg).
+        out["elements"] = spec_entry["elements"]
+    if spec_entry.get("options") is not None:
+        # Nested sub-spec (suboptions): presence alone decides whether
+        # real's _list_no_log_values walk descends into the param's
+        # elements (a list/dict option WITHOUT options= never raises the
+        # dict-parse error); the sub-options themselves are captured
+        # recursively so the walk can validate one level down.
+        out["options"] = {
+            name: clean_option(sub or {}) for name, sub in spec_entry["options"].items()
+        }
     return out
 
 

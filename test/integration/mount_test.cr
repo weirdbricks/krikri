@@ -106,6 +106,55 @@ describe "mount plugin" do
     result["msg"].as_s.must_include("path")
   end
 
+  # Real ansible.posix.mount passes a `warnings` list to its single
+  # exit_json success exit, and ansible-core 2.19's _return_formatted
+  # deprecates that - every successful run carries the structured
+  # `deprecations` entry into registered vars plus the display marker
+  # ResultDisplay renders as the [DEPRECATION WARNING] stderr line
+  # (captured live against 2.19.11). Real's fail_json paths don't pass
+  # args, so failures carry neither.
+  it "carries the exit_json warnings deprecation on every successful result" do
+    fstab = fresh_fstab("deprecation.fstab")
+
+    result = PluginSpecHelper.run("mount", {
+      "path" => "/mnt/dep", "src" => "/dev/sdb1", "fstype" => "ext4", "state" => "present", "fstab" => fstab,
+    })
+
+    deprecations = result["deprecations"].as_a
+    deprecations.size.must_equal(1)
+    entry = deprecations[0].as_h
+    entry["msg"].as_s.must_equal("Passing `warnings` to `exit_json` or `fail_json` is deprecated.")
+    entry["version"].as_s.must_equal("2.23")
+    entry["collection_name"].as_s.must_equal("ansible.builtin")
+    entry["deprecator"].as_h["resolved_name"].as_s.must_equal("ansible.builtin")
+    result["_ansible_core_deprecations"].as_a.size.must_equal(1)
+    result["_ansible_core_deprecations"].as_a[0].as_s.must_equal(
+      "Passing `warnings` to `exit_json` or `fail_json` is deprecated. " \
+      "This feature will be removed from ansible-core version 2.23. " \
+      "Use `AnsibleModule.warn` instead.")
+  end
+
+  it "carries no deprecation on a failed result (real's fail_json passes no args)" do
+    fstab = fresh_fstab("deprecation-fail.fstab")
+
+    result = PluginSpecHelper.run("mount", {"path" => "/mnt/x", "state" => "present", "fstab" => fstab})
+
+    result["failed"].as_bool.must_equal(true)
+    result["deprecations"]?.must_be_nil
+    result["_ansible_core_deprecations"]?.must_be_nil
+  end
+
+  it "omits src/fstype from the result when the task did not pass them (real only copies non-None params)" do
+    fstab = fresh_fstab("no-fstype-param.fstab")
+
+    result = PluginSpecHelper.run("mount", {
+      "path" => "/mnt/nofstype", "src" => "/dev/sdb1", "state" => "absent", "fstab" => fstab,
+    })
+
+    result["src"]?.must_equal("/dev/sdb1")
+    result["fstype"]?.must_be_nil
+  end
+
   it "reports it would mount (check mode, no real mount attempted) for a path that isn't currently mounted" do
     fstab = fresh_fstab("mounted-check.fstab")
 

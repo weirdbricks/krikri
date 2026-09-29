@@ -34,7 +34,8 @@
      "executable_user"
     ],
     "default": [],
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "filters": {
     "default": {},
@@ -45,14 +46,16 @@
      "image_id"
     ],
     "default": [],
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "owners": {
     "aliases": [
      "owner"
     ],
     "default": [],
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "profile": {
     "aliases": [
@@ -145,7 +148,25 @@
     "aliases": [
      "tower_callback"
     ],
-    "type": "dict"
+    "type": "dict",
+    "options": {
+     "host_config_key": {
+      "type": "str"
+     },
+     "job_template_id": {
+      "type": "str"
+     },
+     "set_password": {
+      "type": "str"
+     },
+     "tower_address": {
+      "type": "str"
+     },
+     "windows": {
+      "default": false,
+      "type": "bool"
+     }
+    }
    },
    "access_key": {
     "aliases": [
@@ -177,7 +198,21 @@
     "type": "str"
    },
    "cpu_options": {
-    "type": "dict"
+    "type": "dict",
+    "options": {
+     "core_count": {
+      "required": true,
+      "type": "int"
+     },
+     "threads_per_core": {
+      "choices": [
+       1,
+       2
+      ],
+      "required": true,
+      "type": "int"
+     }
+    }
    },
    "debug_botocore_endpoint_logs": {
     "default": false,
@@ -213,14 +248,26 @@
     "type": "str"
    },
    "image": {
-    "type": "dict"
+    "type": "dict",
+    "options": {
+     "id": {
+      "type": "str"
+     },
+     "kernel": {
+      "type": "str"
+     },
+     "ramdisk": {
+      "type": "str"
+     }
+    }
    },
    "image_id": {
     "type": "str"
    },
    "instance_ids": {
     "default": [],
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "instance_initiated_shutdown_behavior": {
     "choices": [
@@ -239,10 +286,55 @@
     "type": "dict"
    },
    "license_specifications": {
-    "type": "list"
+    "type": "list",
+    "elements": "dict",
+    "options": {
+     "license_configuration_arn": {
+      "required": true,
+      "type": "str"
+     }
+    }
    },
    "metadata_options": {
-    "type": "dict"
+    "type": "dict",
+    "options": {
+     "http_endpoint": {
+      "choices": [
+       "enabled",
+       "disabled"
+      ],
+      "default": "enabled",
+      "type": "str"
+     },
+     "http_protocol_ipv6": {
+      "choices": [
+       "disabled",
+       "enabled"
+      ],
+      "default": "disabled",
+      "type": "str"
+     },
+     "http_put_response_hop_limit": {
+      "default": 1,
+      "type": "int"
+     },
+     "http_tokens": {
+      "choices": [
+       "optional",
+       "required"
+      ],
+      "default": "optional",
+      "type": "str"
+     },
+     "instance_metadata_tags": {
+      "choices": [
+       "disabled",
+       "enabled"
+      ],
+      "default": "disabled",
+      "type": "str"
+     }
+    }
    },
    "name": {
     "type": "str"
@@ -252,13 +344,96 @@
     "type": "dict"
    },
    "network_interfaces": {
-    "type": "list"
+    "type": "list",
+    "elements": "dict",
+    "options": {
+     "assign_public_ip": {
+      "type": "bool"
+     },
+     "delete_on_termination": {
+      "default": true,
+      "type": "bool"
+     },
+     "description": {
+      "type": "str"
+     },
+     "device_index": {
+      "default": 0,
+      "type": "int"
+     },
+     "groups": {
+      "elements": "str",
+      "type": "list"
+     },
+     "ipv6_addresses": {
+      "elements": "str",
+      "type": "list"
+     },
+     "private_ip_address": {
+      "type": "str"
+     },
+     "private_ip_addresses": {
+      "elements": "dict",
+      "options": {
+       "primary": {
+        "type": "bool"
+       },
+       "private_ip_address": {
+        "required": true,
+        "type": "str"
+       }
+      },
+      "type": "list"
+     },
+     "subnet_id": {
+      "type": "str"
+     }
+    }
    },
    "network_interfaces_ids": {
-    "type": "list"
+    "type": "list",
+    "elements": "dict",
+    "options": {
+     "device_index": {
+      "default": 0,
+      "type": "int"
+     },
+     "id": {
+      "required": true,
+      "type": "str"
+     }
+    }
    },
    "placement": {
-    "type": "dict"
+    "type": "dict",
+    "options": {
+     "affinity": {
+      "type": "str"
+     },
+     "availability_zone": {
+      "type": "str"
+     },
+     "group_name": {
+      "type": "str"
+     },
+     "host_id": {
+      "type": "str"
+     },
+     "host_resource_group_arn": {
+      "type": "str"
+     },
+     "partition_number": {
+      "type": "int"
+     },
+     "tenancy": {
+      "choices": [
+       "dedicated",
+       "default",
+       "host"
+      ],
+      "type": "str"
+     }
+    }
    },
    "placement_group": {
     "type": "str"
@@ -291,7 +466,8 @@
    },
    "security_groups": {
     "default": [],
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "session_token": {
     "aliases": [
@@ -341,7 +517,8 @@
    },
    "volumes": {
     "default": null,
-    "type": "list"
+    "type": "list",
+    "elements": "dict"
    },
    "vpc_subnet_id": {
     "aliases": [
@@ -544,13 +721,111 @@
     "type": "str"
    },
    "rules": {
-    "type": "list"
+    "type": "list",
+    "elements": "dict",
+    "options": {
+     "cidr_ip": {
+      "elements": "raw",
+      "type": "list"
+     },
+     "cidr_ipv6": {
+      "elements": "raw",
+      "type": "list"
+     },
+     "from_port": {
+      "type": "int"
+     },
+     "group_desc": {
+      "type": "str"
+     },
+     "group_id": {
+      "elements": "str",
+      "type": "list"
+     },
+     "group_name": {
+      "elements": "str",
+      "type": "list"
+     },
+     "icmp_code": {
+      "type": "int"
+     },
+     "icmp_type": {
+      "type": "int"
+     },
+     "ip_prefix": {
+      "elements": "str",
+      "type": "list"
+     },
+     "ports": {
+      "elements": "str",
+      "type": "list"
+     },
+     "proto": {
+      "default": "tcp",
+      "type": "str"
+     },
+     "rule_desc": {
+      "type": "str"
+     },
+     "to_port": {
+      "type": "int"
+     }
+    }
    },
    "rules_egress": {
     "aliases": [
      "egress_rules"
     ],
-    "type": "list"
+    "type": "list",
+    "elements": "dict",
+    "options": {
+     "cidr_ip": {
+      "elements": "raw",
+      "type": "list"
+     },
+     "cidr_ipv6": {
+      "elements": "raw",
+      "type": "list"
+     },
+     "from_port": {
+      "type": "int"
+     },
+     "group_desc": {
+      "type": "str"
+     },
+     "group_id": {
+      "elements": "str",
+      "type": "list"
+     },
+     "group_name": {
+      "elements": "str",
+      "type": "list"
+     },
+     "icmp_code": {
+      "type": "int"
+     },
+     "icmp_type": {
+      "type": "int"
+     },
+     "ip_prefix": {
+      "elements": "str",
+      "type": "list"
+     },
+     "ports": {
+      "elements": "str",
+      "type": "list"
+     },
+     "proto": {
+      "default": "tcp",
+      "type": "str"
+     },
+     "rule_desc": {
+      "type": "str"
+     },
+     "to_port": {
+      "type": "int"
+     }
+    }
    },
    "secret_key": {
     "aliases": [
@@ -667,7 +942,8 @@
    },
    "vpc_ids": {
     "default": [],
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    }
   },
   "required_by": {},
@@ -735,7 +1011,8 @@
      "subnet_id"
     ],
     "default": [],
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "validate_certs": {
     "default": true,
@@ -941,7 +1218,22 @@
     "aliases": [
      "slaves"
     ],
-    "type": "list"
+    "type": "list",
+    "elements": "dict",
+    "options": {
+     "link": {
+      "required": true,
+      "type": "path"
+     },
+     "name": {
+      "required": true,
+      "type": "str"
+     },
+     "path": {
+      "required": true,
+      "type": "path"
+     }
+    }
    }
   },
   "required_by": {},
@@ -1047,7 +1339,8 @@
      "name",
      "pkg"
     ],
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "policy_rc_d": {
     "default": null,
@@ -1493,7 +1786,8 @@
     "type": "bool"
    },
    "argv": {
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "chdir": {
     "type": "path"
@@ -1779,7 +2073,8 @@
     "type": "bool"
    },
    "architectures": {
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "by_hash": {
     "type": "bool"
@@ -1791,7 +2086,8 @@
     "type": "bool"
    },
    "components": {
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "date_max_future": {
     "type": "int"
@@ -1803,7 +2099,8 @@
     "type": "str"
    },
    "languages": {
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "mode": {
     "default": "0644",
@@ -1828,10 +2125,12 @@
     "type": "str"
    },
    "suites": {
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "targets": {
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "trusted": {
     "type": "bool"
@@ -1844,10 +2143,12 @@
     "default": [
      "deb"
     ],
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "uris": {
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    }
   },
   "required_by": {},
@@ -1979,11 +2280,13 @@
    },
    "disable_plugin": {
     "default": [],
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "disablerepo": {
     "default": [],
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "download_dir": {
     "default": null,
@@ -1995,15 +2298,18 @@
    },
    "enable_plugin": {
     "default": [],
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "enablerepo": {
     "default": [],
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "exclude": {
     "default": [],
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "install_repoquery": {
     "default": true,
@@ -2029,7 +2335,8 @@
      "pkg"
     ],
     "default": [],
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "nobest": {
     "type": "bool"
@@ -2300,7 +2607,8 @@
     "aliases": [
      "exclude"
     ],
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "file_type": {
     "choices": [
@@ -2336,14 +2644,16 @@
      "path"
     ],
     "required": true,
-    "type": "list"
+    "type": "list",
+    "elements": "path"
    },
    "patterns": {
     "aliases": [
      "pattern"
     ],
     "default": [],
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "read_whole_file": {
     "default": false,
@@ -2387,7 +2697,8 @@
     "type": "str"
    },
    "ciphers": {
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "client_cert": {
     "type": "path"
@@ -2448,7 +2759,8 @@
    },
    "unredirected_headers": {
     "default": [],
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "unsafe_writes": {
     "default": false,
@@ -2572,7 +2884,8 @@
      "gpg_whitelist"
     ],
     "default": [],
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "key_file": {
     "default": null,
@@ -2836,7 +3149,8 @@
    },
    "ctstate": {
     "default": [],
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "destination": {
     "type": "str"
@@ -2846,7 +3160,8 @@
    },
    "destination_ports": {
     "default": [],
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "dst_range": {
     "type": "str"
@@ -2918,7 +3233,8 @@
    },
    "match": {
     "default": [],
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "match_set": {
     "type": "str"
@@ -3006,7 +3322,17 @@
     "type": "str"
    },
    "tcp_flags": {
-    "type": "dict"
+    "type": "dict",
+    "options": {
+     "flags": {
+      "elements": "str",
+      "type": "list"
+     },
+     "flags_set": {
+      "elements": "str",
+      "type": "list"
+     }
+    }
    },
    "to_destination": {
     "type": "str"
@@ -3221,7 +3547,8 @@
     "type": "str"
    },
    "pvs": {
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "resizefs": {
     "default": false,
@@ -3354,11 +3681,13 @@
   "options": {
    "devices": {
     "default": null,
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "fstypes": {
     "default": null,
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "include_aggregate_mounts": {
     "default": null,
@@ -3379,7 +3708,8 @@
    },
    "sources": {
     "default": null,
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "timeout": {
     "type": "float"
@@ -3405,7 +3735,8 @@
     "default": [
      "auto"
     ],
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "strategy": {
     "choices": [
@@ -3477,7 +3808,8 @@
     "type": "str"
    },
    "name": {
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "requirements": {
     "type": "str"
@@ -3607,7 +3939,8 @@
   "mutually_exclusive": [],
   "options": {
    "fingerprint": {
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "key": {
     "required": true,
@@ -3747,13 +4080,15 @@
    },
    "filter": {
     "default": [],
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "gather_subset": {
     "default": [
      "all"
     ],
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "gather_timeout": {
     "default": 10,
@@ -3782,7 +4117,8 @@
     "type": "bool"
    },
    "argv": {
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "chdir": {
     "type": "path"
@@ -4232,18 +4568,21 @@
    },
    "exclude": {
     "default": [],
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "extra_opts": {
     "default": [],
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "group": {
     "type": "str"
    },
    "include": {
     "default": [],
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "io_buffer_size": {
     "default": 65536,
@@ -4332,7 +4671,8 @@
     "type": "path"
    },
    "ciphers": {
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "client_cert": {
     "type": "path"
@@ -4421,7 +4761,8 @@
     "default": [
      200
     ],
-    "type": "list"
+    "type": "list",
+    "elements": "int"
    },
    "timeout": {
     "default": 30,
@@ -4432,7 +4773,8 @@
    },
    "unredirected_headers": {
     "default": [],
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "unsafe_writes": {
     "default": false,
@@ -4513,7 +4855,8 @@
     "type": "str"
    },
    "groups": {
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "hidden": {
     "type": "bool"
@@ -4647,7 +4990,8 @@
      "SYN_SENT",
      "TIME_WAIT"
     ],
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "connect_timeout": {
     "default": 5,
@@ -4658,7 +5002,8 @@
     "type": "int"
    },
    "exclude_hosts": {
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "host": {
     "default": "127.0.0.1",
@@ -4730,7 +5075,8 @@
     "type": "str"
    },
    "baseurl": {
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "cost": {
     "type": "str"
@@ -4757,7 +5103,8 @@
     "aliases": [
      "excludepkgs"
     ],
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "failovermethod": {
     "choices": [
@@ -4776,7 +5123,8 @@
     "type": "bool"
    },
    "gpgkey": {
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "group": {
     "type": "str"
@@ -4793,7 +5141,8 @@
     "type": "str"
    },
    "includepkgs": {
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "ip_resolve": {
     "choices": [
@@ -5035,7 +5384,8 @@
    },
    "ignore_tables": {
     "default": [],
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "login_host": {
     "default": "localhost",
@@ -5069,7 +5419,8 @@
      "db"
     ],
     "required": true,
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "pipefail": {
     "default": true,
@@ -5156,10 +5507,12 @@
     "type": "int"
    },
    "exclude_fields": {
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "filter": {
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "login_db": {
     "type": "str"
@@ -5255,7 +5608,8 @@
     "type": "dict"
    },
    "positional_args": {
-    "type": "list"
+    "type": "list",
+    "elements": "raw"
    },
    "query": {
     "required": true,
@@ -5613,7 +5967,8 @@
     "type": "str"
    },
    "port_forward": {
-    "type": "list"
+    "type": "list",
+    "elements": "dict"
    },
    "protocol": {
     "type": "str"
@@ -5873,7 +6228,8 @@
     "type": "bool"
    },
    "link_dest": {
-    "type": "list"
+    "type": "list",
+    "elements": "path"
    },
    "links": {
     "type": "bool"
@@ -5904,7 +6260,8 @@
    },
    "rsync_opts": {
     "default": [],
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "rsync_path": {
     "type": "str"
@@ -6007,7 +6364,8 @@
     "type": "path"
    },
    "ciphers": {
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "get_certificate_chain": {
     "default": false,
@@ -6050,7 +6408,8 @@
     "type": "int"
    },
    "tls_ctx_options": {
-    "type": "list"
+    "type": "list",
+    "elements": "raw"
    }
   },
   "required_by": {},
@@ -6183,7 +6542,8 @@
     "type": "str"
    },
    "authority_cert_issuer": {
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "authority_cert_serial_number": {
     "type": "int"
@@ -6199,7 +6559,8 @@
     "aliases": [
      "basicConstraints"
     ],
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "basic_constraints_critical": {
     "aliases": [
@@ -6227,7 +6588,36 @@
     "type": "bool"
    },
    "crl_distribution_points": {
-    "type": "list"
+    "type": "list",
+    "elements": "dict",
+    "options": {
+     "crl_issuer": {
+      "elements": "str",
+      "type": "list"
+     },
+     "full_name": {
+      "elements": "str",
+      "type": "list"
+     },
+     "reasons": {
+      "choices": [
+       "key_compromise",
+       "ca_compromise",
+       "affiliation_changed",
+       "superseded",
+       "cessation_of_operation",
+       "certificate_hold",
+       "privilege_withdrawn",
+       "aa_compromise"
+      ],
+      "elements": "str",
+      "type": "list"
+     },
+     "relative_name": {
+      "elements": "str",
+      "type": "list"
+     }
+    }
    },
    "digest": {
     "default": "sha256",
@@ -6245,7 +6635,8 @@
      "extKeyUsage",
      "extendedKeyUsage"
     ],
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "extended_key_usage_critical": {
     "aliases": [
@@ -6266,7 +6657,8 @@
     "aliases": [
      "keyUsage"
     ],
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "key_usage_critical": {
     "aliases": [
@@ -6290,10 +6682,12 @@
     "type": "bool"
    },
    "name_constraints_excluded": {
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "name_constraints_permitted": {
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "ocsp_must_staple": {
     "aliases": [
@@ -6385,7 +6779,8 @@
     "aliases": [
      "subjectAltName"
     ],
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "subject_alt_name_critical": {
     "aliases": [
@@ -6398,7 +6793,8 @@
     "type": "str"
    },
    "subject_ordered": {
-    "type": "list"
+    "type": "list",
+    "elements": "dict"
    },
    "unsafe_writes": {
     "default": false,
@@ -6632,10 +7028,12 @@
     "aliases": [
      "ca_certificates"
     ],
-    "type": "list"
+    "type": "list",
+    "elements": "path"
    },
    "other_certificates_content": {
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "other_certificates_parse_all": {
     "default": false,
@@ -7406,17 +7804,20 @@
     "type": "str"
    },
    "env_files": {
-    "type": "list"
+    "type": "list",
+    "elements": "path"
    },
    "files": {
-    "type": "list"
+    "type": "list",
+    "elements": "path"
    },
    "ignore_build_events": {
     "default": true,
     "type": "bool"
    },
    "profiles": {
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "project_name": {
     "type": "str"
@@ -7466,7 +7867,8 @@
     "type": "dict"
    },
    "services": {
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "state": {
     "choices": [
@@ -7547,10 +7949,12 @@
     "type": "path"
    },
    "cap_drop": {
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "capabilities": {
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "cgroup_parent": {
     "type": "str"
@@ -7631,34 +8035,103 @@
     "type": "bool"
    },
    "device_cgroup_rules": {
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "device_read_bps": {
-    "type": "list"
+    "type": "list",
+    "elements": "dict",
+    "options": {
+     "path": {
+      "required": true,
+      "type": "str"
+     },
+     "rate": {
+      "required": true,
+      "type": "str"
+     }
+    }
    },
    "device_read_iops": {
-    "type": "list"
+    "type": "list",
+    "elements": "dict",
+    "options": {
+     "path": {
+      "required": true,
+      "type": "str"
+     },
+     "rate": {
+      "required": true,
+      "type": "int"
+     }
+    }
    },
    "device_requests": {
-    "type": "list"
+    "type": "list",
+    "elements": "dict",
+    "options": {
+     "capabilities": {
+      "elements": "list",
+      "type": "list"
+     },
+     "count": {
+      "type": "int"
+     },
+     "device_ids": {
+      "elements": "str",
+      "type": "list"
+     },
+     "driver": {
+      "type": "str"
+     },
+     "options": {
+      "type": "dict"
+     }
+    }
    },
    "device_write_bps": {
-    "type": "list"
+    "type": "list",
+    "elements": "dict",
+    "options": {
+     "path": {
+      "required": true,
+      "type": "str"
+     },
+     "rate": {
+      "required": true,
+      "type": "str"
+     }
+    }
    },
    "device_write_iops": {
-    "type": "list"
+    "type": "list",
+    "elements": "dict",
+    "options": {
+     "path": {
+      "required": true,
+      "type": "str"
+     },
+     "rate": {
+      "required": true,
+      "type": "int"
+     }
+    }
    },
    "devices": {
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "dns_opts": {
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "dns_search_domains": {
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "dns_servers": {
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "docker_host": {
     "aliases": [
@@ -7671,7 +8144,8 @@
     "type": "str"
    },
    "entrypoint": {
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "env": {
     "type": "dict"
@@ -7687,7 +8161,8 @@
      "expose",
      "exposed"
     ],
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "force_kill": {
     "aliases": [
@@ -7697,10 +8172,35 @@
     "type": "bool"
    },
    "groups": {
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "healthcheck": {
-    "type": "dict"
+    "type": "dict",
+    "options": {
+     "interval": {
+      "type": "str"
+     },
+     "retries": {
+      "type": "int"
+     },
+     "start_interval": {
+      "type": "str"
+     },
+     "start_period": {
+      "type": "str"
+     },
+     "test": {
+      "type": "raw"
+     },
+     "test_cli_compatible": {
+      "default": false,
+      "type": "bool"
+     },
+     "timeout": {
+      "type": "str"
+     }
+    }
    },
    "healthy_wait_timeout": {
     "default": 300,
@@ -7759,7 +8259,8 @@
     "type": "dict"
    },
    "links": {
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "log_driver": {
     "type": "str"
@@ -7786,7 +8287,89 @@
     "type": "int"
    },
    "mounts": {
-    "type": "list"
+    "type": "list",
+    "elements": "dict",
+    "options": {
+     "consistency": {
+      "choices": [
+       "default",
+       "consistent",
+       "cached",
+       "delegated"
+      ],
+      "type": "str"
+     },
+     "create_mountpoint": {
+      "type": "bool"
+     },
+     "labels": {
+      "type": "dict"
+     },
+     "no_copy": {
+      "type": "bool"
+     },
+     "non_recursive": {
+      "type": "bool"
+     },
+     "propagation": {
+      "choices": [
+       "private",
+       "rprivate",
+       "shared",
+       "rshared",
+       "slave",
+       "rslave"
+      ],
+      "type": "str"
+     },
+     "read_only": {
+      "type": "bool"
+     },
+     "read_only_force_recursive": {
+      "type": "bool"
+     },
+     "read_only_non_recursive": {
+      "type": "bool"
+     },
+     "source": {
+      "type": "str"
+     },
+     "subpath": {
+      "type": "str"
+     },
+     "target": {
+      "required": true,
+      "type": "str"
+     },
+     "tmpfs_mode": {
+      "type": "str"
+     },
+     "tmpfs_options": {
+      "elements": "dict",
+      "type": "list"
+     },
+     "tmpfs_size": {
+      "type": "str"
+     },
+     "type": {
+      "choices": [
+       "bind",
+       "volume",
+       "tmpfs",
+       "npipe",
+       "cluster",
+       "image"
+      ],
+      "default": "volume",
+      "type": "str"
+     },
+     "volume_driver": {
+      "type": "str"
+     },
+     "volume_options": {
+      "type": "dict"
+     }
+    }
    },
    "name": {
     "required": true,
@@ -7796,7 +8379,37 @@
     "type": "str"
    },
    "networks": {
-    "type": "list"
+    "type": "list",
+    "elements": "dict",
+    "options": {
+     "aliases": {
+      "elements": "str",
+      "type": "list"
+     },
+     "driver_opts": {
+      "type": "dict"
+     },
+     "gw_priority": {
+      "type": "int"
+     },
+     "ipv4_address": {
+      "type": "str"
+     },
+     "ipv6_address": {
+      "type": "str"
+     },
+     "links": {
+      "elements": "str",
+      "type": "list"
+     },
+     "mac_address": {
+      "type": "str"
+     },
+     "name": {
+      "required": true,
+      "type": "str"
+     }
+    }
    },
    "networks_cli_compatible": {
     "default": true,
@@ -7834,7 +8447,8 @@
     "aliases": [
      "ports"
     ],
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "pull": {
     "choices": [
@@ -7885,7 +8499,8 @@
     "type": "str"
    },
    "security_opts": {
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "shm_size": {
     "type": "str"
@@ -7925,13 +8540,15 @@
     "type": "str"
    },
    "tmpfs": {
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "tty": {
     "type": "bool"
    },
    "ulimits": {
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "use_ssh_client": {
     "default": false,
@@ -7957,10 +8574,12 @@
     "type": "str"
    },
    "volumes": {
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "volumes_from": {
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "working_dir": {
     "type": "str"
@@ -8005,7 +8624,76 @@
     "type": "path"
    },
    "build": {
-    "type": "dict"
+    "type": "dict",
+    "options": {
+     "args": {
+      "type": "dict"
+     },
+     "cache_from": {
+      "elements": "str",
+      "type": "list"
+     },
+     "container_limits": {
+      "options": {
+       "cpusetcpus": {
+        "type": "str"
+       },
+       "cpushares": {
+        "type": "int"
+       },
+       "memory": {
+        "type": "str"
+       },
+       "memswap": {
+        "type": "str"
+       }
+      },
+      "type": "dict"
+     },
+     "dockerfile": {
+      "type": "str"
+     },
+     "etc_hosts": {
+      "type": "dict"
+     },
+     "http_timeout": {
+      "type": "int"
+     },
+     "labels": {
+      "type": "dict"
+     },
+     "network": {
+      "type": "str"
+     },
+     "nocache": {
+      "default": false,
+      "type": "bool"
+     },
+     "path": {
+      "required": true,
+      "type": "path"
+     },
+     "platform": {
+      "type": "str"
+     },
+     "pull": {
+      "default": false,
+      "type": "bool"
+     },
+     "rm": {
+      "default": true,
+      "type": "bool"
+     },
+     "shm_size": {
+      "type": "str"
+     },
+     "target": {
+      "type": "str"
+     },
+     "use_config_proxy": {
+      "type": "bool"
+     }
+    }
    },
    "ca_path": {
     "aliases": [
@@ -8060,7 +8748,12 @@
     "type": "str"
    },
    "pull": {
-    "type": "dict"
+    "type": "dict",
+    "options": {
+     "platform": {
+      "type": "str"
+     }
+    }
    },
    "push": {
     "default": false,
@@ -8172,7 +8865,8 @@
     "type": "path"
    },
    "cache_from": {
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "cli_context": {
     "type": "str"
@@ -8221,14 +8915,43 @@
     "type": "bool"
    },
    "outputs": {
-    "type": "list"
+    "type": "list",
+    "elements": "dict",
+    "options": {
+     "context": {
+      "type": "str"
+     },
+     "dest": {
+      "type": "path"
+     },
+     "name": {
+      "elements": "str",
+      "type": "list"
+     },
+     "push": {
+      "default": false,
+      "type": "bool"
+     },
+     "type": {
+      "choices": [
+       "local",
+       "tar",
+       "oci",
+       "docker",
+       "image"
+      ],
+      "required": true,
+      "type": "str"
+     }
+    }
    },
    "path": {
     "required": true,
     "type": "path"
    },
    "platform": {
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "pull": {
     "default": false,
@@ -8243,7 +8966,32 @@
     "type": "str"
    },
    "secrets": {
-    "type": "list"
+    "type": "list",
+    "elements": "dict",
+    "options": {
+     "env": {
+      "type": "str"
+     },
+     "id": {
+      "required": true,
+      "type": "str"
+     },
+     "src": {
+      "type": "path"
+     },
+     "type": {
+      "choices": [
+       "file",
+       "env",
+       "value"
+      ],
+      "required": true,
+      "type": "str"
+     },
+     "value": {
+      "type": "str"
+     }
+    }
    },
    "shm_size": {
     "type": "str"
@@ -8454,7 +9202,8 @@
      "containers"
     ],
     "default": [],
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "debug": {
     "default": false,
@@ -8492,7 +9241,22 @@
     "type": "bool"
    },
    "ipam_config": {
-    "type": "list"
+    "type": "list",
+    "elements": "dict",
+    "options": {
+     "aux_addresses": {
+      "type": "dict"
+     },
+     "gateway": {
+      "type": "str"
+     },
+     "iprange": {
+      "type": "str"
+     },
+     "subnet": {
+      "type": "str"
+     }
+    }
    },
    "ipam_driver": {
     "type": "str"
@@ -8673,7 +9437,22 @@
     "aliases": [
      "slaves"
     ],
-    "type": "list"
+    "type": "list",
+    "elements": "dict",
+    "options": {
+     "link": {
+      "required": true,
+      "type": "path"
+     },
+     "name": {
+      "required": true,
+      "type": "str"
+     },
+     "path": {
+      "required": true,
+      "type": "path"
+     }
+    }
    }
   },
   "required_by": {},
@@ -8736,10 +9515,12 @@
    },
    "exclude_path": {
     "default": [],
-    "type": "list"
+    "type": "list",
+    "elements": "path"
    },
    "exclusion_patterns": {
-    "type": "list"
+    "type": "list",
+    "elements": "path"
    },
    "force_archive": {
     "default": false,
@@ -8767,7 +9548,8 @@
    },
    "path": {
     "required": true,
-    "type": "list"
+    "type": "list",
+    "elements": "path"
    },
    "remove": {
     "default": false,
@@ -8924,7 +9706,8 @@
   "options": {
    "name": {
     "default": [],
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "raw": {
     "default": false,
@@ -9253,7 +10036,8 @@
     "aliases": [
      "options"
     ],
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "name": {
     "aliases": [
@@ -9261,7 +10045,8 @@
      "package",
      "pkg"
     ],
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "path": {
     "default": "/usr/local/bin:/opt/homebrew/bin:/home/linuxbrew/.linuxbrew/bin",
@@ -9295,7 +10080,8 @@
     "type": "bool"
    },
    "upgrade_options": {
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    }
   },
   "required_by": {},
@@ -9449,7 +10235,21 @@
     "type": "str"
    },
    "section_has_values": {
-    "type": "list"
+    "type": "list",
+    "elements": "dict",
+    "options": {
+     "option": {
+      "required": true,
+      "type": "str"
+     },
+     "value": {
+      "type": "str"
+     },
+     "values": {
+      "elements": "str",
+      "type": "list"
+     }
+    }
    },
    "selevel": {
     "type": "str"
@@ -9479,7 +10279,8 @@
     "type": "str"
    },
    "values": {
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    }
   },
   "required_by": {},
@@ -9645,7 +10446,8 @@
   "options": {
    "name": {
     "required": true,
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "state": {
     "choices": [
@@ -9681,7 +10483,8 @@
     "type": "bool"
    },
    "pvs": {
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "remove_extra_pvs": {
     "default": true,
@@ -9745,7 +10548,8 @@
     "type": "str"
    },
    "pvs": {
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "resizefs": {
     "default": false,
@@ -9815,7 +10619,8 @@
     "type": "str"
    },
    "targets": {
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    }
   },
   "required_by": {},
@@ -9929,7 +10734,8 @@
     "type": "int"
    },
    "unredirected_headers": {
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "unsafe_writes": {
     "default": false,
@@ -10141,7 +10947,8 @@
     "type": "str"
    },
    "value": {
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "zone": {
     "type": "str"
@@ -10235,7 +11042,8 @@
     "type": "str"
    },
    "module_arguments": {
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "module_path": {
     "required": true,
@@ -10352,7 +11160,8 @@
     "type": "str"
    },
    "flags": {
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "fs_type": {
     "type": "str"
@@ -10508,7 +11317,8 @@
    },
    "pool_ids": {
     "default": [],
-    "type": "list"
+    "type": "list",
+    "elements": "raw"
    },
    "release": {
     "type": "str"
@@ -10555,7 +11365,26 @@
     "type": "str"
    },
    "syspurpose": {
-    "type": "dict"
+    "type": "dict",
+    "options": {
+     "addons": {
+      "elements": "str",
+      "type": "list"
+     },
+     "role": {
+      "type": "str"
+     },
+     "service_level_agreement": {
+      "type": "str"
+     },
+     "sync": {
+      "default": false,
+      "type": "bool"
+     },
+     "usage": {
+      "type": "str"
+     }
+    }
    },
    "token": {
     "type": "str"
@@ -10610,7 +11439,8 @@
   "options": {
    "name": {
     "required": true,
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "purge": {
     "default": false,
@@ -10734,7 +11564,8 @@
    },
    "ports": {
     "required": true,
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "proto": {
     "choices": [
@@ -10784,10 +11615,12 @@
    },
    "name": {
     "required": true,
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "options": {
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "state": {
     "choices": [
@@ -10814,7 +11647,8 @@
   ],
   "options": {
    "commands": {
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "group": {
     "type": "str"
@@ -11108,7 +11942,8 @@
   ],
   "options": {
    "add_children": {
-    "type": "list"
+    "type": "list",
+    "elements": "raw"
    },
    "attribute": {
     "type": "raw"
@@ -11164,7 +11999,8 @@
     "type": "bool"
    },
    "set_children": {
-    "type": "list"
+    "type": "list",
+    "elements": "raw"
    },
    "state": {
     "aliases": [
@@ -11260,7 +12096,8 @@
   "options": {
    "name": {
     "required": true,
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "state": {
     "choices": [
@@ -11369,7 +12206,8 @@
    },
    "ignore_tables": {
     "default": [],
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "login_host": {
     "default": "localhost",
@@ -11403,7 +12241,8 @@
      "db"
     ],
     "required": true,
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "pipefail": {
     "default": false,
@@ -11490,10 +12329,12 @@
     "type": "int"
    },
    "exclude_fields": {
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "filter": {
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "login_db": {
     "type": "str"
@@ -11589,7 +12430,8 @@
     "type": "dict"
    },
    "positional_args": {
-    "type": "list"
+    "type": "list",
+    "elements": "raw"
    },
    "query": {
     "required": true,
@@ -12217,13 +13059,15 @@
     "type": "dict"
    },
    "positional_args": {
-    "type": "list"
+    "type": "list",
+    "elements": "raw"
    },
    "query": {
     "type": "raw"
    },
    "search_path": {
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "session_role": {
     "type": "str"
@@ -12483,7 +13327,8 @@
    },
    "permissions": {
     "default": [],
-    "type": "list"
+    "type": "list",
+    "elements": "dict"
    },
    "read_priv": {
     "default": "^$",
@@ -12503,7 +13348,8 @@
    },
    "topic_permissions": {
     "default": [],
-    "type": "list"
+    "type": "list",
+    "elements": "dict"
    },
    "update_password": {
     "choices": [
@@ -12562,7 +13408,48 @@
      "buildargs"
     ],
     "default": {},
-    "type": "dict"
+    "type": "dict",
+    "options": {
+     "annotation": {
+      "type": "dict"
+     },
+     "cache": {
+      "default": true,
+      "type": "bool"
+     },
+     "container_file": {
+      "type": "str"
+     },
+     "extra_args": {
+      "type": "str"
+     },
+     "file": {
+      "type": "path"
+     },
+     "force_rm": {
+      "default": false,
+      "type": "bool"
+     },
+     "format": {
+      "choices": [
+       "oci",
+       "docker"
+      ],
+      "default": "oci",
+      "type": "str"
+     },
+     "rm": {
+      "default": true,
+      "type": "bool"
+     },
+     "target": {
+      "type": "str"
+     },
+     "volume": {
+      "elements": "str",
+      "type": "list"
+     }
+    }
    },
    "ca_cert_dir": {
     "type": "path"
@@ -12598,7 +13485,46 @@
    },
    "push_args": {
     "default": {},
-    "type": "dict"
+    "type": "dict",
+    "options": {
+     "compress": {
+      "type": "bool"
+     },
+     "dest": {
+      "aliases": [
+       "destination"
+      ],
+      "type": "str"
+     },
+     "extra_args": {
+      "type": "str"
+     },
+     "format": {
+      "choices": [
+       "oci",
+       "v2s1",
+       "v2s2"
+      ],
+      "type": "str"
+     },
+     "remove_signatures": {
+      "type": "bool"
+     },
+     "sign_by": {
+      "type": "str"
+     },
+     "transport": {
+      "choices": [
+       "dir",
+       "docker-archive",
+       "docker-daemon",
+       "oci-archive",
+       "ostree",
+       "docker"
+      ],
+      "type": "str"
+     }
+    }
    },
    "quadlet_dir": {
     "type": "path"
@@ -12610,7 +13536,8 @@
     "type": "str"
    },
    "quadlet_options": {
-    "type": "list"
+    "type": "list",
+    "elements": "str"
    },
    "state": {
     "choices": [

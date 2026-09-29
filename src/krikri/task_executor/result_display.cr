@@ -26,6 +26,14 @@ module Krikri
     # Warning texts already printed this run (real Display.warning dedups).
     @@warned_texts = Set(String).new
 
+    # Core-emitted deprecation lines already printed this run (real
+    # Display._deprecated dedups on the formatted message) and the
+    # one-time "Deprecation warnings can be disabled" hint real prints
+    # before the first deprecation of a run - both shared across every
+    # deprecation source, exactly like real's Display state.
+    @@deprecation_texts = Set(String).new
+    @@deprecation_hint_seen = false
+
     # Display task result with appropriate formatting.
     # item_label is set for looped tasks, rendering `ok: [host] => (item=x)`
     # to match how Ansible annotates per-iteration output.
@@ -52,6 +60,29 @@ module Krikri
       # so a naive as_s cast crashes the whole display fiber on it.
       msg = result["msg"]?.try(&.as_s?) || ""
 
+      # Core-emitted deprecations (a module's result carrying the
+      # `_ansible_core_deprecations` marker - e.g. ansible.posix.mount's
+      # `warnings`-in-exit_json deprecation) print on stderr BEFORE the
+      # module-warnings block: real emits the deprecation inside the
+      # module's own _return_formatted, before any self.warn() calls it
+      # makes afterwards. The formatted [DEPRECATION WARNING] line dedups
+      # like every Display message, and the "Deprecation warnings can be
+      # disabled" hint prints once per run before the first deprecation -
+      # both live-verified against 2.19.11 with two mount tasks back to
+      # back (second one silent). The marker itself is engine-internal
+      # (stripped below, like the `_ansible_*` register strip) - the
+      # result's real `deprecations` list stays untouched for register.
+      result["_ansible_core_deprecations"]?.try(&.as_a?).try &.each do |deprecation|
+        text = deprecation.as_s? || deprecation.to_s
+        line = "[DEPRECATION WARNING]: #{text}"
+        next unless @@deprecation_texts.add?(line)
+        unless @@deprecation_hint_seen
+          @@deprecation_hint_seen = true
+          STDERR.puts "[WARNING]: Deprecation warnings can be disabled by setting `deprecation_warnings=False` in ansible.cfg.".colorize(:light_magenta)
+        end
+        STDERR.puts line.colorize(:light_magenta)
+      end
+
       # Module warnings (result["warnings"]) print as `[WARNING]: <text>` on
       # stderr BEFORE the status line, each distinct text once per run - real
       # ansible's Display.warning dedups on the message (live-verified vs
@@ -67,8 +98,8 @@ module Krikri
       # keys before any dump at verbosity < 3: `warnings`/`deprecations` are
       # only ever shown as their own [WARNING] lines, `invocation` is hidden
       # unless -vvv (getent-style results carry one for `register`).
-      if (top = result.as_h?) && (top.has_key?("warnings") || top.has_key?("invocation") || top.has_key?("deprecations"))
-        result = JSON::Any.new(top.reject("warnings", "invocation", "deprecations"))
+      if (top = result.as_h?) && (top.has_key?("warnings") || top.has_key?("invocation") || top.has_key?("deprecations") || top.has_key?("_ansible_core_deprecations"))
+        result = JSON::Any.new(top.reject("warnings", "invocation", "deprecations", "_ansible_core_deprecations"))
       end
 
       # no_log: print the status line and NOTHING else - no msg, no

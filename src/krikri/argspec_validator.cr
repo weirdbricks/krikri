@@ -266,6 +266,19 @@ module Krikri
       defaults : Hash(String, JSON::Any),
       unsupported : Array(String),
     ) : String?
+      # Real's ArgumentSpecValidator.validate runs its no_log value walk
+      # (_list_no_log_values) immediately after alias resolution - before
+      # mutually_exclusive, required, or any type conversion. A string
+      # element of a dict-typed option THAT HAS suboptions (or a dict
+      # option itself) which cannot be parsed as a dict raises
+      # check_type_dict's bare TypeError there, and its text becomes
+      # errors[0] verbatim - the "Elements value for option ..." wrapping
+      # only happens later, for options WITHOUT suboptions (which the
+      # walk never descends into). Specs regenerated with nested
+      # "options"/"elements" keys make this check data-driven.
+      if msg = check_no_log_walk(options, provided)
+        return msg
+      end
       if msg = check_mutually_exclusive(entry, provided)
         return msg
       end
@@ -393,6 +406,175 @@ module Krikri
         return error if error
       end
       nil
+    end
+
+    # Real's _list_no_log_values walk: for every provided option that is
+    # type=dict, or type=list with elements=dict AND its own options=
+    # sub-spec, each element must be a dict - a string element goes
+    # through check_type_dict (bare TypeError on failure, surfaced
+    # verbatim as the module failure msg) and a parsed dict descends one
+    # level into the sub-spec recursively. Elements that are neither
+    # strings nor dicts fail with real's own (format-arg-swapped)
+    # "Value 'x' in the sub parameter field 'y' must be a ..." wording.
+    private def check_no_log_walk(options : Hash(String, JSON::Any), provided : Hash(String, String)) : String?
+      options.each do |name, spec|
+        sub_spec = spec["options"]?.try(&.as_h?) || next
+        wanted = spec["type"]?.try(&.as_s?) || "str"
+        next unless wanted == "dict" ||
+                    (wanted == "list" && spec["elements"]?.try(&.as_s?) == "dict")
+        raw = provided[name]?
+        next unless raw
+        next if raw == Krikri::NONE_SENTINEL
+        json = JSON.parse(raw) rescue nil
+        error = no_log_walk_elements(sub_spec, json || JSON::Any.new(raw), name, wanted)
+        return error if error
+      end
+      nil
+    end
+
+    # One option's (container-or-string) wire value against its
+    # sub-spec. Real sees the decoded param: a list is iterated, anything
+    # else is treated as a one-element list.
+    private def no_log_walk_elements(sub_spec : Hash(String, JSON::Any), value : JSON::Any,
+                                     arg_name : String, wanted_type : String) : String?
+      elements = value.as_a? || [value]
+      elements.each do |element|
+        case raw = element.raw
+        when String
+          if error = check_type_dict_error(raw)
+            return error
+          end
+          parsed = parsed_dict_value(raw)
+          if parsed && (failure = no_log_walk_params(sub_spec, parsed))
+            return failure
+          end
+        when Hash(String, JSON::Any)
+          if failure = no_log_walk_params(sub_spec, element)
+            return failure
+          end
+        else
+          return "Value '#{python_value_repr(element)}' in the sub parameter field '#{arg_name}' " \
+                 "must be a #{wanted_type}, not '#{python_class_name(element)}'"
+        end
+      end
+      nil
+    end
+
+    # Recursion one level down: the parsed dict's values against the
+    # sub-spec's own dict-shaped options (real's
+    # _list_no_log_values(sub_argument_spec, sub_param)).
+    private def no_log_walk_params(spec : Hash(String, JSON::Any), params : JSON::Any) : String?
+      return nil unless params_h = params.as_h?
+      spec.each do |name, sub|
+        sub_sub = sub["options"]?.try(&.as_h?) || next
+        wanted = sub["type"]?.try(&.as_s?) || "str"
+        next unless wanted == "dict" ||
+                    (wanted == "list" && sub["elements"]?.try(&.as_s?) == "dict")
+        value = params_h[name]? || next
+        next if value.raw.nil?
+        error = no_log_walk_elements(sub_sub, value, name, wanted)
+        return error if error
+      end
+      nil
+    end
+
+    # check_type_dict's conversion semantics on a string: a "{"-leading
+    # string must be a JSON object (real also tries literal_eval - krikri
+    # approximates the same way its top-level dict conversion already
+    # does), a string containing "=" must be fully key=value shaped, and
+    # anything else raises the bare "dictionary requested, could not
+    # parse JSON or key=value" TypeError. Returns the error text, or nil
+    # when the string parses.
+    private def check_type_dict_error(raw : String) : String?
+      if raw.strip.starts_with?("{")
+        json = JSON.parse(raw) rescue nil
+        return nil if json && json.as_h?
+        return "unable to evaluate string as dictionary"
+      end
+      return kv_parse_error(raw) if raw.includes?("=")
+      "dictionary requested, could not parse JSON or key=value"
+    end
+
+    # Real's key=value field splitter (quote- and escape-aware, fields
+    # separated on commas/spaces): every field must carry an "=" or the
+    # whole string fails with the "key=value format" wording.
+    private def kv_parse_error(raw : String) : String?
+      fields = kv_fields(raw)
+      fields.each do |field|
+        return "unable to evaluate string in the \"key=value\" format as dictionary" unless field.includes?("=")
+      end
+      nil
+    end
+
+    private def kv_fields(raw : String) : Array(String)
+      fields = [] of String
+      field_buffer = ""
+      in_quote = nil
+      in_escape = false
+      raw.strip.each_char do |char|
+        if in_escape
+          field_buffer += char
+          in_escape = false
+        elsif char == '\\'
+          in_escape = true
+        elsif in_quote.nil? && (char == '\'' || char == '"')
+          in_quote = char
+        elsif in_quote == char
+          in_quote = nil
+        elsif in_quote.nil? && (char == ',' || char == ' ')
+          fields << field_buffer unless field_buffer.empty?
+          field_buffer = ""
+        else
+          field_buffer += char
+        end
+      end
+      fields << field_buffer unless field_buffer.empty?
+      fields
+    end
+
+    # The parsed dict behind a string that check_type_dict accepted, for
+    # the recursive sub-spec walk (nil when only the k=v shape was
+    # validated without building a dict - the recursion then simply
+    # finds no sub-values).
+    private def parsed_dict_value(raw : String) : JSON::Any?
+      if raw.strip.starts_with?("{")
+        json = JSON.parse(raw) rescue nil
+        return json if json && json.as_h?
+        return nil
+      end
+      fields = kv_fields(raw)
+      return nil unless fields.all?(&.includes?("="))
+      object = Hash(String, JSON::Any).new
+      fields.each do |field|
+        key, value = field.split("=", 2)
+        object[key] = JSON::Any.new(value)
+      end
+      JSON::Any.new(object)
+    end
+
+    # Python repr/str of a non-string, non-dict element value, for the
+    # "Value '...' in the sub parameter field ..." wording (real embeds
+    # str(value) there).
+    private def python_value_repr(value : JSON::Any) : String
+      case raw = value.raw
+      when Nil              then "None"
+      when Bool             then raw ? "True" : "False"
+      when Int64            then raw.to_s
+      when Float64          then raw.to_s
+      when Array(JSON::Any) then "[#{raw.map { |item| python_value_repr(item) }.join(", ")}]"
+      else                       raw.to_s
+      end
+    end
+
+    private def python_class_name(value : JSON::Any) : String
+      case value.raw
+      when Nil              then "NoneType"
+      when Bool             then "bool"
+      when Int64            then "int"
+      when Float64          then "float"
+      when Array(JSON::Any) then "list"
+      else                       "str"
+      end
     end
 
     # One wire value -> real's typed view. The wire is strings-only, so

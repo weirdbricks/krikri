@@ -190,6 +190,41 @@ describe "archive plugin" do
     File.exists?(dest).must_equal(false)
   end
 
+  # Real fails with `if not self.paths: module.fail_json(...)` when
+  # NOTHING survives the exclude_path subtraction - and real's self.paths
+  # still contains missing literal paths at that point, so a merely
+  # absent source does NOT trigger this (that is the dest_state: absent
+  # case above). Captured live against community.general 12.5.0 /
+  # ansible-core 2.19.11: the fatal dump carries the original path list
+  # joined with ", " plus both expanded lists (exclude duplicates kept).
+  it "fails with real's exact 'no source paths were found' message when exclude_path removes every source" do
+    missing = PluginSpecHelper.tmp_path("all-excluded-out2.txt")
+    sub = PluginSpecHelper.tmp_path("all-excluded-sub")
+
+    result = PluginSpecHelper.run("archive", {
+      "path"          => missing,
+      "exclude_path"  => "#{sub},#{missing},#{missing}",
+      "force_archive" => "true",
+    })
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("Error, no source paths were found")
+    result["path"].as_s.must_equal(missing)
+    result["expanded_paths"].as_s.must_equal(missing)
+    result["expanded_exclude_paths"].as_s.must_equal("#{sub}, #{missing}, #{missing}")
+  end
+
+  it "fails with an empty expanded_paths string when only unmatched globs were given" do
+    result = PluginSpecHelper.run("archive", {
+      "path" => File.join(fixture_base, "no-glob-match-*.txt"),
+      "dest" => dest_path("glob-empty.tar.gz"),
+    })
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("Error, no source paths were found")
+    result["expanded_paths"].as_s.must_be_empty
+  end
+
   it "removes the source after a successful archive when remove: true" do
     source_dir = PluginSpecHelper.tmp_path("removeme")
     FileUtils.mkdir_p(source_dir)

@@ -243,6 +243,48 @@ describe Krikri::ArgspecValidator do
     ).must_be_nil
   end
 
+  # Real's ArgumentSpecValidator runs its no_log value walk
+  # (_list_no_log_values) BEFORE every other check: a string element of
+  # a dict-shaped option WITH suboptions that can't be parsed as a dict
+  # raises check_type_dict's bare TypeError, and its text is the module
+  # failure msg verbatim (no "argument 'x' is of type" wrapping).
+  # Captured live from real ansible-playbook 2.19.11 with
+  # community.general.ini_file's section_has_values: ["fwtaiy"].
+  it "fails a non-dict string element of a dict-elements option with check_type_dict's bare message" do
+    failure = Krikri::ArgspecValidator.validate(
+      "community.general.ini_file", "community.general.ini_file",
+      {"path" => "/tmp/x", "section_has_values" => %(["fwtaiy"])}, vars)
+    failure.wont_be_nil
+    failure.not_nil!.msg.must_equal("dictionary requested, could not parse JSON or key=value")
+    failure.not_nil!.action_level?.must_equal(false)
+  end
+
+  it "lets dict-shaped string elements of a dict-elements option through" do
+    Krikri::ArgspecValidator.validate(
+      "community.general.ini_file", "community.general.ini_file",
+      {"path" => "/tmp/x", "section_has_values" => %([{"option": "AllowedIps", "value": "10.4.0.11/32"}])}, vars
+    ).must_be_nil
+    Krikri::ArgspecValidator.validate(
+      "community.general.ini_file", "community.general.ini_file",
+      {"path" => "/tmp/x", "section_has_values" => %(["option=AllowedIps"])}, vars
+    ).must_be_nil
+  end
+
+  it "reports a non-string non-dict element with real's own (format-swapped) wording" do
+    failure = Krikri::ArgspecValidator.validate(
+      "community.general.ini_file", "community.general.ini_file",
+      {"path" => "/tmp/x", "section_has_values" => %([5])}, vars)
+    failure.not_nil!.msg.must_equal(
+      "Value '5' in the sub parameter field 'section_has_values' must be a list, not 'int'")
+  end
+
+  it "runs the no_log walk before every other check (bare dict error beats mutual exclusion)" do
+    failure = Krikri::ArgspecValidator.validate(
+      "community.general.ini_file", "community.general.ini_file",
+      {"path" => "/tmp/x", "section_has_values" => %(["fwtaiy"]), "value" => "a", "values" => %(["b"])}, vars)
+    failure.not_nil!.msg.must_equal("dictionary requested, could not parse JSON or key=value")
+  end
+
   it "classifies failure chain shapes for ResultDisplay's error blocks" do
     Krikri::ArgspecValidator.failure_kind?(
       "ansible.builtin.lineinfile",

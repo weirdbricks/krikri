@@ -94,6 +94,14 @@ module Krikri
   # format only), `opts_no_log`, `fstab` `backup`'s exact filename format
   # (a reasonable equivalent is used instead).
   class MountPlugin < BasePlugin
+    # The exact stderr text ansible-core 2.19 renders for this
+    # deprecation (msg + "This feature will be removed from ansible-core
+    # version 2.23." + help_text), carried verbatim in the result's
+    # `_ansible_core_deprecations` display marker.
+    CORE_WARNINGS_DEPRECATION_TEXT = "Passing `warnings` to `exit_json` or `fail_json` is deprecated. " \
+                                     "This feature will be removed from ansible-core version 2.23. " \
+                                     "Use `AnsibleModule.warn` instead."
+
     DEFAULT_FSTAB = "/etc/fstab"
 
     def execute : PluginResult
@@ -189,8 +197,12 @@ module Krikri
     # container, 2026-09-13): every success carries name (the mount
     # point), fstab, backup_file ("" when none was created), boot
     # ("yes"/"no"), opts, dump, and passno - with src and fstype
-    # included for every state EXCEPT `unmounted`, which omits both.
-    # The values are threaded through the fields the plugin already
+    # included whenever the task actually passed those params (real
+    # only copies `module.params[key]` into its args dict when it is
+    # not None, so an absent fstype param means NO fstype key in the
+    # result at all, not an empty string - re-verified 2026-09-29 with
+    # state=absent/unmounted tasks passing src but no fstype). The
+    # values are threaded through the fields the plugin already
     # computed to build/edit the fstab entry (desired_fields), not
     # recomputed.
     private def result_fields(path : String, fstab : String, backup_file : String, include_src_fstype : Bool = true) : Hash(String, String)
@@ -204,8 +216,8 @@ module Krikri
         "dump"        => desired[4],
         "passno"      => desired[5],
       }
-      fields["src"] = desired[0] if include_src_fstype
-      fields["fstype"] = desired[2] if include_src_fstype
+      fields["src"] = desired[0] if include_src_fstype && @params["src"]?
+      fields["fstype"] = desired[2] if include_src_fstype && @params["fstype"]?
       fields
     end
 
@@ -214,7 +226,30 @@ module Krikri
       result_fields(path, fstab, backup_file, include_src_fstype).each do |key, value|
         result.extra[key] = JSON::Any.new(value)
       end
+      add_exit_json_warnings_deprecation(result)
       result
+    end
+
+    # Real mount keeps a `warnings` list in the args dict it passes to
+    # its single `module.exit_json(changed=changed, **args)` success
+    # exit (ansible.posix 2.x mount.py) - and ansible-core 2.19's
+    # `_return_formatted` deprecates any `warnings` key passed to
+    # exit_json/fail_json outright. The deprecation rides every
+    # successful module run: the controller prints the "Deprecation
+    # warnings can be disabled" hint plus the [DEPRECATION WARNING] line
+    # (see ResultDisplay's `_ansible_core_deprecations` handling), while
+    # the result's own `deprecations` list still carries the structured
+    # entry into registered vars (both live-verified against 2.19.11).
+    # Real's fail_json paths don't pass args, so failed results carry no
+    # deprecation.
+    private def add_exit_json_warnings_deprecation(result : PluginResult) : Nil
+      result.extra["deprecations"] = JSON.parse([{
+        "collection_name" => "ansible.builtin",
+        "deprecator"      => {"resolved_name" => "ansible.builtin", "type" => nil},
+        "msg"             => "Passing `warnings` to `exit_json` or `fail_json` is deprecated.",
+        "version"         => "2.23",
+      }].to_json)
+      result.extra["_ansible_core_deprecations"] = JSON.parse([CORE_WARNINGS_DEPRECATION_TEXT].to_json)
     end
 
     private def desired_opts : String

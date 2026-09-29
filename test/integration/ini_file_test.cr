@@ -307,4 +307,92 @@ describe "ini_file plugin" do
       result["backup_file"]?.must_be_nil
     end
   end
+
+  # Real community.general.ini_file 12.5.0 main()'s own guard (captured
+  # live against ansible-core 2.19.11): `if state == 'present' and not
+  # allow_no_value and value is None and not values` - no option
+  # requirement, an explicitly empty values list fails identically, and
+  # the old "Value must be set when state=present and option is defined"
+  # wording is gone.
+  describe "value-required guard (real wording)" do
+    it "fails with real's exact message when no value/values is given" do
+      path = PluginSpecHelper.tmp_path("ini_file-value-required")
+      File.delete(path) if File.exists?(path)
+
+      result = PluginSpecHelper.run("ini_file", {"path" => path, "section" => "sec", "option" => "opt"})
+
+      result["failed"].as_bool.must_equal(true)
+      result["msg"].as_s.must_equal("Parameter 'value(s)' must be defined if state=present and allow_no_value=False.")
+      File.exists?(path).must_equal(false)
+    end
+
+    it "fails identically without an option at all" do
+      path = PluginSpecHelper.tmp_path("ini_file-value-required-no-option")
+      File.delete(path) if File.exists?(path)
+
+      result = PluginSpecHelper.run("ini_file", {"path" => path})
+
+      result["failed"].as_bool.must_equal(true)
+      result["msg"].as_s.must_equal("Parameter 'value(s)' must be defined if state=present and allow_no_value=False.")
+    end
+
+    it "fails identically for an explicitly empty values list" do
+      path = PluginSpecHelper.tmp_path("ini_file-value-required-empty-list")
+
+      result = PluginSpecHelper.run("ini_file", {"path" => path, "option" => "opt", "values" => "[]"})
+
+      result["failed"].as_bool.must_equal(true)
+      result["msg"].as_s.must_equal("Parameter 'value(s)' must be defined if state=present and allow_no_value=False.")
+    end
+
+    it "does not fail for state=absent" do
+      path = PluginSpecHelper.tmp_path("ini_file-absent-no-value")
+      File.write(path, "[sec]\nopt = 1\n")
+
+      result = PluginSpecHelper.run("ini_file", {"path" => path, "section" => "sec", "option" => "opt", "state" => "absent"})
+
+      result["msg"].as_s.must_equal("option changed")
+    end
+  end
+
+  # allow_no_value=True with no values: real do_ini rewrites the FIRST
+  # matching line (match_opt matches bare `option` lines too) to a bare
+  # `option` line, or inserts one at the end of the section when absent -
+  # captured live against ansible-core 2.19.11 ("changed" on a fresh
+  # file and on `opt1 = x`, ok on a re-run and on an existing bare line).
+  describe "allow_no_value with no values" do
+    it "creates a bare option line in a fresh file" do
+      path = PluginSpecHelper.tmp_path("ini_file-anv-fresh")
+      File.delete(path) if File.exists?(path)
+
+      result = PluginSpecHelper.run("ini_file", {"path" => path, "option" => "opt1", "allow_no_value" => "true"})
+
+      result["changed"].as_bool.must_equal(true)
+      result["msg"].as_s.must_equal("option added")
+      # Byte-identical to real 2.19.11 (xxd-verified): the option line,
+      # then the seed blank line's own newline as trailing content.
+      File.read(path).must_equal("opt1\n\n")
+    end
+
+    it "is idempotent on an existing bare option line" do
+      path = PluginSpecHelper.tmp_path("ini_file-anv-idempotent")
+      File.write(path, "opt1\n")
+
+      result = PluginSpecHelper.run("ini_file", {"path" => path, "option" => "opt1", "allow_no_value" => "true"})
+
+      result["changed"].as_bool.must_equal(false)
+      File.read(path).must_equal("opt1\n")
+    end
+
+    it "rewrites an existing valued option line to a bare line" do
+      path = PluginSpecHelper.tmp_path("ini_file-anv-rewrite")
+      File.write(path, "opt1 = x\n")
+
+      result = PluginSpecHelper.run("ini_file", {"path" => path, "option" => "opt1", "allow_no_value" => "true"})
+
+      result["changed"].as_bool.must_equal(true)
+      result["msg"].as_s.must_equal("option changed")
+      File.read(path).must_equal("opt1\n")
+    end
+  end
 end
