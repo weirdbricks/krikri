@@ -140,6 +140,16 @@ module Krikri
     end
 
     def execute : PluginResult
+      result = execute_inner
+      # user.py warns (deprecation-style) when append is set without groups
+      if true?(@params["append"]?) && @params["groups"]?.to_s.strip.empty? && @params["groups"]?.to_s != "[]"
+        existing = result.extra["warnings"]?.try(&.as_a?) || [] of JSON::Any
+        result.extra["warnings"] = JSON::Any.new(existing + [JSON::Any.new("'append' is set, but no 'groups' are specified. Use 'groups' for appending new groups.This will change to an error in Ansible 2.14.")])
+      end
+      result
+    end
+
+    def execute_inner : PluginResult
       # Real ansible.builtin.user's argument_spec declares `name` with
       # alias `user` (`name=dict(type='str', required=True,
       # aliases=['user'])`) - RedHatOfficial.rhel9_pci_dss (round 812000)

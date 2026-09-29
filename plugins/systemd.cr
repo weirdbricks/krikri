@@ -217,6 +217,21 @@ module Krikri
         end
       end
 
+      # enabled:/masked: probe the unit first; with no systemd running real's
+      # run_command result becomes the failure (cmd is the bare systemctl path)
+      # (a unit with a SysV init script counts as found and skips this)
+      if name && !File.exists?("/etc/init.d/#{name.to_s.sub(/\.service\z/, "")}")
+        probe = remote_exec("#{scope_env_prefix}systemctl#{scope_flag} show #{shell_single_quote(name.to_s)}")
+        if probe[:stderr].includes?("System has not been booted with systemd")
+          bin = remote_exec("command -v systemctl")[:stdout].strip
+          bin = "/usr/bin/systemctl" if bin.empty?
+          err = probe[:stderr]
+          return PluginResult.new(changed: false, failed: true, msg: err.strip, cmd: bin, rc: probe[:exit_code],
+            stdout: probe[:stdout], stdout_lines: probe[:stdout].lines.map(&.chomp),
+            stderr: err, stderr_lines: err.lines.map(&.chomp))
+        end
+      end
+
       # Masked/unmasked
       if masked
         should_mask = true?(masked)
