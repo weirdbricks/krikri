@@ -97,13 +97,13 @@ module Krikri
       run(path_param, dest, format)
     end
 
-    private def run(path_param : String, dest_param : String?, format : String) : PluginResult # ameba:disable Metrics/CyclomaticComplexity
+    private def run(path_param : String, dest_param : String?, format : String) : PluginResult
       dest = dest_param ? expand_tilde(dest_param) : nil
-      requested_paths = path_param.split(",").map(&.strip).reject(&.empty?).map { |pth| expand_tilde(pth) }
-      requested_excludes = (@params["exclude_path"]? || "").split(",").map(&.strip).reject(&.empty?).map { |pth| expand_tilde(pth) }
+      requested_paths = split_csv_values(path_param).map { |pth| expand_tilde(pth) }
+      requested_excludes = param_list("exclude_path").map { |pth| expand_tilde(pth) }
       force_archive = true?(@params["force_archive"]?, default: false)
       remove = true?(@params["remove"]?, default: false)
-      exclusion_patterns = (@params["exclusion_patterns"]? || "").split(",").map(&.strip).reject(&.empty?)
+      exclusion_patterns = param_list("exclusion_patterns")
 
       expanded_paths, missing = expand_paths(requested_paths)
       expanded_excludes, _ = expand_paths(requested_excludes)
@@ -123,21 +123,9 @@ module Krikri
       candidate_paths = expanded_paths.reject { |path| expanded_excludes.includes?(path) }
       found_paths = candidate_paths.reject { |path| missing.includes?(path) }
 
-      if found_paths.empty?
-        return PluginResult.new(
-          changed: false,
-          failed: false,
-          msg: "",
-          dest: dest,
-          dest_state: "absent",
-          archived: [] of String,
-          missing: missing,
-          expanded_paths: expanded_paths
-        )
-      end
+      return absent_result(dest, missing, expanded_paths) if found_paths.empty?
 
-      single_compress = !force_archive && format != "tar" && format != "zip" &&
-                        candidate_paths.size == 1 && found_paths.size == 1 && !Dir.exists?(found_paths[0])
+      single_compress = single_file_compress?(force_archive, format, candidate_paths, found_paths)
 
       # Real archive's dest-defaulting (ansible-core community.general
       # source): dest is OPTIONAL. When omitted and the call is a
@@ -151,11 +139,7 @@ module Krikri
       # both required") - found live via modules_data.yml's gz
       # single-file probe, which real runs fine with no dest.
       unless dest
-        must_archive = force_archive ||
-                       requested_paths.any? { |pth| pth.includes?('*') || pth.includes?('?') } ||
-                       (candidate_paths.size > 0 && Dir.exists?(candidate_paths[0])) ||
-                       candidate_paths.size > 1
-        if must_archive
+        if must_archive?(force_archive, requested_paths, candidate_paths)
           return PluginResult.new(changed: false, failed: true,
             msg: "Error, must specify \"dest\" when archiving multiple files or trees")
         end
@@ -166,6 +150,39 @@ module Krikri
       members = single_compress ? found_paths : collect_members(found_paths, root, exclusion_patterns)
 
       build_and_finalize(dest, format, single_compress, root, members, found_paths, missing, expanded_paths, remove)
+    end
+
+    private def split_csv_values(value : String) : Array(String)
+      value.split(",").map(&.strip).reject(&.empty?)
+    end
+
+    private def param_list(key : String) : Array(String)
+      split_csv_values(@params[key]? || "")
+    end
+
+    private def absent_result(dest : String?, missing : Array(String), expanded_paths : Array(String)) : PluginResult
+      PluginResult.new(
+        changed: false,
+        failed: false,
+        msg: "",
+        dest: dest,
+        dest_state: "absent",
+        archived: [] of String,
+        missing: missing,
+        expanded_paths: expanded_paths
+      )
+    end
+
+    private def single_file_compress?(force_archive : Bool, format : String, candidate_paths : Array(String), found_paths : Array(String)) : Bool
+      !force_archive && format != "tar" && format != "zip" &&
+        candidate_paths.size == 1 && found_paths.size == 1 && !Dir.exists?(found_paths[0])
+    end
+
+    private def must_archive?(force_archive : Bool, requested_paths : Array(String), candidate_paths : Array(String)) : Bool
+      force_archive ||
+        requested_paths.any? { |pth| pth.includes?('*') || pth.includes?('?') } ||
+        (candidate_paths.size > 0 && Dir.exists?(candidate_paths[0])) ||
+        candidate_paths.size > 1
     end
 
     # Expands each requested path: a shell-glob (contains * or ?) that
