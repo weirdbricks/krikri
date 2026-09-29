@@ -114,7 +114,9 @@ module Krikri
 
       if failing
         fail_msg = @params["fail_msg"]? || @params["msg"]? || "Assertion failed"
-        extra = {"assertion" => JSON::Any.new(failing), "evaluated_to" => JSON::Any.new(false)}
+        # a bare YAML bool item (`that: [false]`) is reported as the bool itself
+        assertion = failing == "false" ? JSON::Any.new(false) : (failing == "true" ? JSON::Any.new(true) : JSON::Any.new(failing))
+        extra = {"assertion" => assertion, "evaluated_to" => JSON::Any.new(false)}
         # Real assert tags the FAILURE result _ansible_verbose_always too
         # (its action sets it once up front for any non-quiet run), so
         # the default callback dumps the failed assertion pretty-printed

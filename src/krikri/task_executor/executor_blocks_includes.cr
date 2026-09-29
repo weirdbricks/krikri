@@ -12,7 +12,10 @@ module Krikri
       return unless failed
       failed_task, failed_result = failed
       task_view = Hash(String, JSON::Any).new
-      task_view["name"] = JSON::Any.new(failed_task.name)
+      # An unnamed task's default display name is its action as written; real's
+      # ansible_failed_task.name is the empty string for it.
+      unnamed = failed_task.name == (failed_task.action_name || failed_task.module_name) || failed_task.name == failed_task.module_name
+      task_view["name"] = JSON::Any.new(unnamed ? "" : failed_task.name)
       task_view["action"] = JSON::Any.new(PlaybookParser.resolve_module_name(failed_task.module_name) || failed_task.module_name)
       args = Hash(String, JSON::Any).new
       failed_task.params.each { |key, value| args[key] = JSON::Any.new(value) }
