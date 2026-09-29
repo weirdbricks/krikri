@@ -42,6 +42,11 @@ module Krikri
       "__original_src_basename",
     ]
 
+    # The assemble-only options real's action plugin consumes itself and
+    # never forwards to the copy module it delegates to when
+    # remote_src: is falsy (assemble.py action's clean-up loop).
+    ASSEMBLE_ACTION_CONSUMED = ["remote_src", "regexp", "delimiter", "ignore_hidden", "decrypt"]
+
     # convert_bool.py's BOOLEANS as real's error message reprs them (a
     # Python set iteration - order differs between module processes, so
     # this fixed order is one real emits; only the membership is stable).
@@ -183,6 +188,24 @@ module Krikri
         return nil
       end
 
+      # assemble with remote_src: false (and a src that IS a directory):
+      # real's action plugin assembles the fragments on the controller and
+      # delegates the file placement to the COPY module
+      # (assemble.py action: _execute_module('ansible.legacy.copy')) after
+      # stripping the assemble-only options (remote_src/regexp/delimiter/
+      # ignore_hidden/decrypt) - so the module-level argument validation
+      # that rejects anything is COPY's spec, not assemble's: the message
+      # names (ansible.legacy.copy) and lists copy's own supported
+      # parameters (live-verified vs 2.19.11: a typo'd ignoer_hidden/
+      # mode_bogus fails through copy's spec, not assemble's).
+      if module_name == "ansible.builtin.assemble" &&
+         {"false", "no", "n", "0", "off", "f"}.includes?(params["remote_src"]?.to_s.downcase) &&
+         (copy_entry = table["ansible.builtin.copy"]?)
+        delegated = params.reject { |key, _| ASSEMBLE_ACTION_CONSUMED.includes?(key) }
+        return validate_spec_entry("ansible.builtin.copy", "ansible.builtin.copy", delegated,
+          copy_entry, non_string_natives, vars_context)
+      end
+
       # template's controller-side action plugin checks src/dest presence
       # BEFORE any module argument validation (AnsibleActionFail). The
       # check only ever sees the ORIGINAL task params: once the action has
@@ -217,6 +240,33 @@ module Krikri
       print_name, entry = resolve_entry(action_name, module_name, entry, vars_context)
       return nil unless entry
 
+      validate_spec_entry_tail(action_name, print_name, entry, params, non_string_natives)
+    end
+
+    # The spec-check tail shared by the direct path and the assemble ->
+    # copy delegation above: fact-delegated/print-name resolution, then
+    # the check chain and the Unsupported-parameters failure.
+    private def validate_spec_entry(
+      action_name : String,
+      module_name : String,
+      params : Hash(String, String),
+      entry : JSON::Any,
+      non_string_natives : Hash(String, JSON::Any),
+      vars_context : Hash(String, JSON::Any),
+    ) : Failure?
+      print_name, entry = resolve_entry(action_name, module_name, entry, vars_context)
+      return nil unless entry
+
+      validate_spec_entry_tail(action_name, print_name, entry, params, non_string_natives)
+    end
+
+    private def validate_spec_entry_tail(
+      action_name : String,
+      print_name : String,
+      entry : JSON::Any,
+      params : Hash(String, String),
+      non_string_natives : Hash(String, JSON::Any),
+    ) : Failure?
       if supported = entry["supported"]?.try(&.as_a?)
         return virtual_supported_failure(action_name, print_name, entry, params, supported)
       end

@@ -153,3 +153,170 @@ describe "non-string YAML literal module args (copy/fetch/template)" do
     File.exists?(File.join(scratch, "True")).must_equal(true)
   end
 end
+
+describe "non-string YAML literal module args (script/unarchive/assemble)" do
+  it "script searches for (and reports missing) the Python str() of a non-string cmd" do
+    output, _scratch = run_playbook(<<-YAML)
+          - script:
+              cmd: 75
+              executable: /bin/sh
+            ignore_errors: true
+          - script:
+              cmd: true
+            ignore_errors: true
+          - script:
+              cmd: 7.5
+            ignore_errors: true
+    YAML
+
+    # live-verified vs 2.19.11: the searched-in list carries the same
+    # text, twice per root (files/ then the root itself)
+    output.must_include(%(fatal: [localhost]: FAILED! => {"changed": false, "msg": "Could not find or access '75'\\nSearched in:))
+    output.must_include("Could not find or access '75'\nSearched in:\n\t")
+    output.must_include("files/75")
+    output.must_include("Could not find or access 'True'")
+    output.must_include("Could not find or access '7.5'")
+    # The internal marker must never leak into any message or path.
+    output.to_s.wont_include("\u{E000}")
+  end
+
+  it "unarchive crashes on a non-string dest/src/creates at the action plugin's own touch points" do
+    output, _scratch = run_playbook(<<-YAML)
+          - unarchive:
+              dest: 59
+              remote_src: "true"
+              src: #{__DIR__}/../minitest_helper.cr
+            ignore_errors: true
+          - unarchive:
+              dest: true
+              remote_src: "true"
+              src: #{__DIR__}/../minitest_helper.cr
+            ignore_errors: true
+          - unarchive:
+              dest: 7.5
+              remote_src: "true"
+              src: #{__DIR__}/../minitest_helper.cr
+            ignore_errors: true
+          - unarchive:
+              dest: /tmp
+              src: 75
+            ignore_errors: true
+          - unarchive:
+              creates: 7
+              dest: /tmp
+              src: #{__DIR__}/../minitest_helper.cr
+            ignore_errors: true
+    YAML
+
+    output.must_include(%("msg": "Task failed: '_AnsibleTaggedInt' object has no attribute 'startswith'"))
+    output.must_include(%("msg": "Task failed: 'bool' object has no attribute 'startswith'"))
+    output.must_include(%("msg": "Task failed: '_AnsibleTaggedFloat' object has no attribute 'startswith'"))
+    output.must_include(%("msg": "Task failed: expected str, bytes or os.PathLike object, not _AnsibleTaggedInt"))
+    output.to_s.wont_include("\u{E000}")
+  end
+
+  it "assemble crashes like real's atomic_move on a dest real cannot move onto" do
+    scratch = PluginSpecHelper.tmp_path("nonstring-assemble-cwd")
+    FileUtils.mkdir_p(File.join(scratch, "frags"))
+    File.write(File.join(scratch, "frags", "01-a.txt"), "frag one\n")
+    playbook = File.join(scratch, "play.yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          # bare relative dest: real's rename creates the file, then the
+          # creating-branch os.stat(b'') crashes the module
+          - assemble:
+              dest: 75
+              src: #{scratch}/frags
+            ignore_errors: true
+          - assemble:
+              dest: relmissing.txt
+              src: #{scratch}/frags
+            ignore_errors: true
+          # missing parent dir: the rename itself fails ENOENT
+          - assemble:
+              dest: #{scratch}/nodir/out.txt
+              src: #{scratch}/frags
+            ignore_errors: true
+      YAML
+    output = IO::Memory.new
+    Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output, chdir: scratch)
+
+    output.to_s.must_include(%(fatal: [localhost]: FAILED! => {"changed": false, "msg": "Task failed: Module failed: [Errno 2] No such file or directory: b''"}))
+    output.to_s.must_include("[ERROR]: Task failed: Module failed: [Errno 2] No such file or directory: b''")
+    output.to_s.must_include("Module failed: Could not replace '#{scratch}/nodir/out.txt' with '")
+    # the bare-relative dest file IS created before the crash, in both engines
+    File.read(File.join(scratch, "75")).must_equal("frag one\n")
+    File.read(File.join(scratch, "relmissing.txt")).must_equal("frag one\n")
+    File.exists?(File.join(scratch, "nodir", "out.txt")).must_equal(false)
+  end
+
+  it "assemble with remote_src false validates through copy's spec, like real's delegation" do
+    scratch = PluginSpecHelper.tmp_path("nonstring-assemble-copy-cwd")
+    FileUtils.mkdir_p(File.join(scratch, "frags"))
+    File.write(File.join(scratch, "frags", "01-a.txt"), "frag one\n")
+    playbook = File.join(scratch, "play.yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - assemble:
+              backup: true
+              dest: #{scratch}/out2.txt
+              mode: "0600"
+              regexp: \\.txt$
+              remote_src: "false"
+              src: #{scratch}/frags
+              ignoer_hidden: false
+              mode_bogus: "0600"
+            ignore_errors: true
+          # the default remote_src keeps validating through assemble's own spec
+          - assemble:
+              dest: #{scratch}/out3.txt
+              src: #{scratch}/frags
+              ignoer_hidden: false
+            ignore_errors: true
+      YAML
+    output = IO::Memory.new
+    Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output, chdir: scratch)
+
+    output.to_s.must_include(%(Unsupported parameters for (ansible.legacy.copy) module: ignoer_hidden, mode_bogus. Supported parameters include: _original_basename, attributes, backup, checksum, content, dest, directory_mode, follow, force, group, local_follow, mode, owner, remote_src, selevel, serole, setype, seuser, src, unsafe_writes, validate (attr).))
+    output.to_s.must_include(%(Unsupported parameters for (ansible.legacy.assemble) module: ignoer_hidden. ))
+  end
+end
+
+describe "copy argspec-failure checksum (template carries it, copy only on the _copy_file path)" do
+  it "omits checksum for a remote_src copy failure, carries it for content/controller-src ones" do
+    output, _scratch = run_playbook(<<-YAML)
+          - copy:
+              dest: /tmp/krikri-spec-c1.txt
+              remote_src: true
+              src: #{__DIR__}/../minitest_helper.cr
+              validate_bogus: x
+            ignore_errors: true
+          - copy:
+              content: hello
+              dest: /tmp/krikri-spec-c2.txt
+              validate_bogus: x
+            ignore_errors: true
+          - copy:
+              dest: /tmp/krikri-spec-c3.txt
+              src: #{__DIR__}/../minitest_helper.cr
+              validate_bogus: x
+            ignore_errors: true
+    YAML
+
+    text = output.to_s
+    # content/controller-src: the _copy_file tail adds the source SHA1 to
+    # the failed result; the remote_src branch returns the module result
+    # directly and never adds one (copy.py:466-468, live-verified vs
+    # 2.19.11)
+    text.scan(%("checksum": "#{Digest::SHA1.hexdigest("hello")}")).size.must_equal(1)
+    text.scan(%("checksum": "#{Digest::SHA1.hexdigest(File.read("#{__DIR__}/../minitest_helper.cr"))}")).size.must_equal(1)
+    # exactly one of the three fatal dumps carries NO checksum key
+    text.scan(%(FAILED! => {"changed": false, "msg": "Unsupported parameters)).size.must_equal(1)
+  end
+end

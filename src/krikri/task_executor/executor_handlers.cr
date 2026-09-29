@@ -654,6 +654,17 @@ module Krikri
         return result
       end
       substituted_params = copied
+      # Real's unarchive/assemble action plugins crash on non-string
+      # literal args at their own controller-side touch points, before
+      # the src staging paths could leak the marker into a message or
+      # upload path - see unarchive_assemble_literal_type_failure.
+      if violation = unarchive_assemble_literal_type_failure(handler, substituted_params)
+        result = apply_changed_failed_when(handler, violation, vars_context, host)
+        if register_name = handler.register
+          register_result(host, register_name, result) unless register_name.empty?
+        end
+        return result
+      end
       staged = stage_unarchive_remote_src(handler, substituted_params, host, vars_context)
       if staged.is_a?(JSON::Any)
         result = apply_changed_failed_when(handler, staged, vars_context, host)

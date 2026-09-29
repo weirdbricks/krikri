@@ -278,7 +278,14 @@ module Krikri
       end
       if params_any = @config["params"]?
         if raw_umask = params_any["umask"]?
-          unless raw_umask.raw.is_a?(String)
+          # A parser-marked non-string YAML literal (NON_STRING_PARAM_PREFIX)
+          # rides the raw wire as a prefixed STRING - real's
+          # isinstance(umask, string_types) sees the native int/float and
+          # fails "umask must be defined as a quoted octal integer", so the
+          # marker must decode to its native value before the str check,
+          # never pass as the marker text.
+          marked_native = raw_umask.as_s?.try { |text| Krikri.non_string_scalar(text) }
+          if marked_native || !raw_umask.raw.is_a?(String)
             return PluginResult.new(changed: false, failed: true,
               msg: "umask must be defined as a quoted octal integer")
           end

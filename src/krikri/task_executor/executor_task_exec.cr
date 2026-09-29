@@ -1239,7 +1239,7 @@ module Krikri
     # substitution rescue blocks build).
     private def stage_unarchive_remote_src(task : Task, params : Hash(String, String), host : Host, vars_context : Hash(String, JSON::Any)) : Hash(String, String) | JSON::Any
       return params unless task.module_name == "ansible.builtin.unarchive"
-      return params if ["true", "yes", "1", "on"].includes?(params["remote_src"]?.try(&.downcase))
+      return params if ansible_boolean_param?(params["remote_src"]?)
       # copy: is unarchive's OLDER param spelling, mutually exclusive
       # with remote_src: per real Ansible's own argument_spec, and
       # INVERTED - copy: false means the same thing as remote_src: true
@@ -1252,7 +1252,7 @@ module Krikri
       # CONTROLLER, found nothing, and failed the task where real
       # Ansible (which treats copy: no identically to remote_src: true)
       # succeeds.
-      return params if ["false", "no", "0", "off"].includes?(params["copy"]?.try(&.downcase))
+      return params if params.has_key?("copy") && !ansible_boolean_param?(params["copy"]?)
 
       src = params["src"]?
       return params if src.nil? || src.empty?
@@ -1350,6 +1350,17 @@ module Krikri
 
       cmd = params["cmd"]? || params["_raw_params"]?
       return params unless cmd
+      # Real's script action plugin runs the task args through
+      # validate_argument_spec (type str) before the _find_needle lookup,
+      # so a non-string YAML literal (the parser marks those; see
+      # NON_STRING_PARAM_PREFIX) renders through Python str() there - bools
+      # become "True"/"False" - and the file is searched for, and reported
+      # missing ("Could not find or access '75'"), under that text. Without
+      # this the internal marker prefix leaked into the message and every
+      # Searched-in path (live-verified vs 2.19.11).
+      if native = Krikri.non_string_scalar(cmd)
+        cmd = Krikri.python_str_scalar(native)
+      end
 
       parts = cmd.strip.split(/\s+/, 2)
       local_path = parts[0]?
@@ -1416,7 +1427,7 @@ module Krikri
     # itself once uploaded/executed.
     private def stage_assemble_dir(task : Task, params : Hash(String, String), host : Host, vars_context : Hash(String, JSON::Any)) : Hash(String, String)
       return params unless task.module_name == "ansible.builtin.assemble"
-      return params if ["true", "yes", "1", "on"].includes?(params["remote_src"]?.try(&.downcase)) || params["remote_src"]?.nil?
+      return params if ansible_boolean_param?(params["remote_src"]?) || params["remote_src"]?.nil?
       return params if PluginManager.local_connection?(host, vars_context)
 
       src = params["src"]?
@@ -1637,7 +1648,18 @@ module Krikri
     end
 
     private def literal_attribute_crash_result(native : JSON::Any, attribute : String) : JSON::Any
-      bare = "'#{Krikri.python_scalar_type_name(native)}' object has no attribute '#{attribute}'"
+      literal_crash_result("'#{Krikri.python_scalar_type_name(native)}' object has no attribute '#{attribute}'")
+    end
+
+    # os.path.expanduser(os.fspath(x)) on a non-string YAML literal - the
+    # crash real's unarchive action hits on a non-string src
+    # (`source = os.path.expanduser(source)`, unarchive.py action, both
+    # remote_src flavors, live-verified vs 2.19.11).
+    private def literal_expanduser_crash_result(native : JSON::Any) : JSON::Any
+      literal_crash_result("expected str, bytes or os.PathLike object, not #{Krikri.python_scalar_type_name(native)}")
+    end
+
+    private def literal_crash_result(bare : String) : JSON::Any
       JSON.parse({
         "changed"               => false,
         "failed"                => true,
@@ -1647,8 +1669,72 @@ module Krikri
       }.to_json)
     end
 
+    # convert_bool()-shaped truthiness for a param real reads through
+    # boolean(..., strict=False): a parser-marked non-string literal
+    # contributes its NATIVE truthiness (1/1.0/true truthy, 0/0.0/false
+    # falsy), a plain string the boolean-literal spelling check the plain
+    # wire always used.
+    private def ansible_boolean_param?(value : String?) : Bool
+      return false unless value
+      return Krikri.python_param_truthy?(value) if Krikri.non_string_scalar(value)
+      ["true", "yes", "1", "on"].includes?(value.downcase)
+    end
+
+    # Real's unarchive/assemble action plugins crash on non-string YAML
+    # literal args (the parser marks those; see NON_STRING_PARAM_PREFIX)
+    # at their own controller-side touch points, before the module or the
+    # "dest must be an existing dir"/isdir checks - all live-verified vs
+    # 2.19.11:
+    # - unarchive creates (when truthy): _remote_expand_user(creates)'s
+    #   `startswith('~')` - "'<type>' object has no attribute 'startswith'";
+    # - unarchive dest: the same _remote_expand_user call (unarchive.py:66),
+    #   firing for EVERY non-string literal dest, falsy ones included (the
+    #   presence check is a None check, not a truthiness check);
+    # - unarchive src: `os.path.expanduser(source)` right after the dest
+    #   expand (unarchive.py:67) - "expected str, bytes or os.PathLike
+    #   object, not <type>", in BOTH remote_src flavors;
+    # - assemble src (only when remote_src is explicitly falsy - the
+    #   default delegates to the module, whose path-typed spec coerces the
+    #   literal to text instead): _find_needle(src)'s startswith.
+    # Checked before the src staging paths so the marker text can never
+    # leak into a Searched-in list or an upload path; the src/dest presence
+    # guards keep real's ordering when either is genuinely absent (real
+    # fails "src (or content) and dest are required" / "src and dest are
+    # required" before touching any of them), as does skipping the
+    # unarchive checks when the copy/remote_src mutual exclusion applies.
+    private def unarchive_assemble_literal_type_failure(task : Task, params : Hash(String, String)) : JSON::Any?
+      if task.module_name == "ansible.builtin.unarchive"
+        return nil unless params.has_key?("src") && params.has_key?("dest")
+        return nil if params.has_key?("copy") && params.has_key?("remote_src")
+        if ansible_boolean_param?(params["creates"]?) && (native = Krikri.non_string_scalar(params["creates"]?))
+          return literal_attribute_crash_result(native, "startswith")
+        end
+        if native = Krikri.non_string_scalar(params["dest"]?)
+          return literal_attribute_crash_result(native, "startswith")
+        end
+        if native = Krikri.non_string_scalar(params["src"]?)
+          return literal_expanduser_crash_result(native)
+        end
+        return nil
+      end
+      if task.module_name == "ansible.builtin.assemble"
+        return nil unless params.has_key?("src") && params.has_key?("dest")
+        return nil unless assemble_remote_src_explicitly_falsy?(params)
+        if native = Krikri.non_string_scalar(params["src"]?)
+          return literal_attribute_crash_result(native, "startswith")
+        end
+      end
+      nil
+    end
+
+    private def assemble_remote_src_explicitly_falsy?(params : Hash(String, String)) : Bool
+      value = params["remote_src"]? || return false
+      return !Krikri.python_param_truthy?(value) if Krikri.non_string_scalar(value)
+      {"false", "no", "n", "0", "off", "f"}.includes?(value.downcase)
+    end
+
     private def remote_src_param?(params : Hash(String, String)) : Bool
-      ["true", "yes", "1", "on"].includes?(params["remote_src"]?.try(&.downcase))
+      ansible_boolean_param?(params["remote_src"]?)
     end
 
     # Data-driven module argument validation (see ArgspecValidator): the
@@ -1692,10 +1778,19 @@ module Krikri
       result.delete("changed") if failure.omit_changed?
       # copy/template: real's action plugin computes the source SHA1
       # before the module runs and merges it into the failed result, so
-      # the fatal dump carries "checksum" for these two modules only.
-      # (Only for MODULE-level failures: the action plugin's own required-
+      # the fatal dump carries "checksum" for these two modules - but
+      # only where real's action plugin actually reaches the
+      # checksum-merging tail (live-verified vs 2.19.11): template:'s
+      # delegation always does, while copy:'s remote_src branch returns
+      # the module result directly (copy.py:466-468) and never adds a
+      # checksum - only the _copy_file path (content:, or a
+      # controller-side src with remote_src falsy) does. (Only for
+      # MODULE-level failures: the action plugin's own required-
       # argument checks fail before it computes any checksum.)
-      if !action_level_only && {"ansible.builtin.copy", "ansible.builtin.template"}.includes?(task.module_name)
+      if !action_level_only &&
+         (task.module_name == "ansible.builtin.template" ||
+           (task.module_name == "ansible.builtin.copy" &&
+             (params.has_key?("content") || !remote_src_param?(params))))
         if checksum = argspec_source_checksum(params)
           result["checksum"] = JSON::Any.new(checksum)
         end

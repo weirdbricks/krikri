@@ -1461,6 +1461,13 @@ module Krikri
         return apply_changed_failed_when(task, copied, vars_context, host)
       end
       substituted_params = copied
+      # Real's unarchive/assemble action plugins crash on non-string
+      # literal args at their own controller-side touch points, before
+      # the src staging paths could leak the marker into a message or
+      # upload path - see unarchive_assemble_literal_type_failure.
+      if violation = unarchive_assemble_literal_type_failure(task, substituted_params)
+        return apply_changed_failed_when(task, violation, vars_context, host)
+      end
       staged = stage_unarchive_remote_src(task, substituted_params, host, vars_context)
       if staged.is_a?(JSON::Any)
         return apply_changed_failed_when(task, staged, vars_context, host)
@@ -1760,6 +1767,13 @@ module Krikri
       # (inline_copy_source_content above) - the last of copy.py's
       # non-string-literal crash points, see copy_literal_type_failure.
       if violation = copy_dest_expand_failure(task, substituted_params)
+        return apply_changed_failed_when(task, violation, vars_context, host)
+      end
+      # Real's unarchive/assemble action plugins crash on non-string
+      # literal args at their own controller-side touch points, before
+      # the src staging paths could leak the marker into a message or
+      # upload path - see unarchive_assemble_literal_type_failure.
+      if violation = unarchive_assemble_literal_type_failure(task, substituted_params)
         return apply_changed_failed_when(task, violation, vars_context, host)
       end
       staged = stage_unarchive_remote_src(task, substituted_params, exec_host, vars_context)
