@@ -97,7 +97,7 @@ module Krikri
       run(path_param, dest, format)
     end
 
-    private def run(path_param : String, dest_param : String?, format : String) : PluginResult
+    private def run(path_param : String, dest_param : String?, format : String) : PluginResult # ameba:disable Metrics/CyclomaticComplexity
       dest = dest_param ? expand_tilde(dest_param) : nil
       requested_paths = path_param.split(",").map(&.strip).reject(&.empty?).map { |pth| expand_tilde(pth) }
       requested_excludes = (@params["exclude_path"]? || "").split(",").map(&.strip).reject(&.empty?).map { |pth| expand_tilde(pth) }

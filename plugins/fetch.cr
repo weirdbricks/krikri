@@ -24,7 +24,7 @@ module Krikri
       %w[fail_on_missing flat validate_checksum]
     end
 
-    def execute : PluginResult
+    def execute : PluginResult # ameba:disable Metrics/CyclomaticComplexity
       src = @params["src"]?
       dest = @params["dest"]?
       return PluginResult.new(changed: false, failed: true, msg: "missing required argument: src") unless src
@@ -56,7 +56,7 @@ module Krikri
       if failure = dest_check[:error]
         return PluginResult.new(changed: false, failed: true, msg: failure)
       end
-      dest_path = dest_check[:path].not_nil!
+      dest_path = dest_check[:path] || raise("resolve_dest_path returned no path and no error")
       remote_checksum = source_checksum(src)
 
       if unchanged?(dest_path, remote_checksum)

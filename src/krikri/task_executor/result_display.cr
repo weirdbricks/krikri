@@ -663,51 +663,51 @@ module Krikri
       end
     end
 
-  # Serializes *result* the way real Ansible dumps a failed task's JSON:
-  # keys sorted alphabetically at every level, single line, Python's
-  # json.dumps default separators (", " between items, ": " after keys).
-  def self.python_json_dump(result : JSON::Any) : String
-    python_json_value(result)
-  end
+    # Serializes *result* the way real Ansible dumps a failed task's JSON:
+    # keys sorted alphabetically at every level, single line, Python's
+    # json.dumps default separators (", " between items, ": " after keys).
+    def self.python_json_dump(result : JSON::Any) : String
+      python_json_value(result)
+    end
 
-  # Python's repr() of a value, matching how real Ansible renders a loop
-  # item in its `failed:`/`changed:` display (`True`/`False`/`None`,
-  # single-quoted strings/dict-keys, insertion-order dict `{k: v}`, `[..]`
-  # lists) - distinct from the JSON dump used for the result object, which
-  # stays lower-case true/false.
-  def self.python_repr(value : JSON::Any) : String
-    case raw = value.raw
-    when Hash(String, JSON::Any)
-      inner = raw.map { |k, v| "'#{k}': #{python_repr(v)}" }.join(", ")
-      "{#{inner}}"
-    when Array(JSON::Any)
-      "[" + raw.map { |v| python_repr(v) }.join(", ") + "]"
-    when Nil
-      "None"
-    when Bool
-      raw ? "True" : "False"
-    when Int64, Int32, Float64
-      raw.to_s
-    else
-      "'" + value.to_s.gsub("\\", "\\\\").gsub("'", "\\'") + "'"
+    # Python's repr() of a value, matching how real Ansible renders a loop
+    # item in its `failed:`/`changed:` display (`True`/`False`/`None`,
+    # single-quoted strings/dict-keys, insertion-order dict `{k: v}`, `[..]`
+    # lists) - distinct from the JSON dump used for the result object, which
+    # stays lower-case true/false.
+    def self.python_repr(value : JSON::Any) : String
+      case raw = value.raw
+      when Hash(String, JSON::Any)
+        inner = raw.map { |k, v| "'#{k}': #{python_repr(v)}" }.join(", ")
+        "{#{inner}}"
+      when Array(JSON::Any)
+        "[" + raw.map { |v| python_repr(v) }.join(", ") + "]"
+      when Nil
+        "None"
+      when Bool
+        raw ? "True" : "False"
+      when Int64, Int32, Float64
+        raw.to_s
+      else
+        "'" + value.to_s.gsub("\\", "\\\\").gsub("'", "\\'") + "'"
+      end
+    end
+
+    private def self.python_json_value(value : JSON::Any) : String
+      case raw = value.raw
+      when Hash(String, JSON::Any)
+        "{#{raw.to_a.sort_by(&.[0]).map { |k, v| %("#{k}": #{python_json_value(v)}) }.join(", ")}}"
+      when Array(JSON::Any)
+        "[#{raw.map { |item| python_json_value(item) }.join(", ")}]"
+      when Nil
+        "null"
+      when Bool
+        raw ? "true" : "false"
+      when Int64, Float64
+        raw.to_s
+      else
+        value.to_s.to_json
+      end
     end
   end
-
-  private def self.python_json_value(value : JSON::Any) : String
-    case raw = value.raw
-    when Hash(String, JSON::Any)
-      "{#{raw.to_a.sort_by(&.[0]).map { |k, v| %("#{k}": #{python_json_value(v)}) }.join(", ")}}"
-    when Array(JSON::Any)
-      "[#{raw.map { |item| python_json_value(item) }.join(", ")}]"
-    when Nil
-      "null"
-    when Bool
-      raw ? "true" : "false"
-    when Int64, Float64
-      raw.to_s
-    else
-      value.to_s.to_json
-    end
-  end
-end
 end

@@ -24,7 +24,7 @@ module Krikri
   # module's own changed status, not a hardcoded false) - false while
   # still running, since there's nothing changed to report yet.
   class AsyncStatusPlugin < BasePlugin
-    def execute : PluginResult
+    def execute : PluginResult # ameba:disable Metrics/CyclomaticComplexity
       # Real async_status.py: jid is required=True for EVERY mode (cleanup
       # included), and the job-file existence check runs BEFORE the mode
       # check - so cleanup on a jid that never ran fails with the same

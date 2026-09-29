@@ -10,7 +10,7 @@ module Krikri
   # (path/dest, section, option, value, state, create, exclusive,
   # no_extra_spaces, backup, mode).
   class IniFilePlugin < BasePlugin
-    def execute : PluginResult
+    def execute : PluginResult # ameba:disable Metrics/CyclomaticComplexity
       path = @params["path"]? || @params["dest"]?
       return missing_param("path") unless path
       path = expand_tilde(path)

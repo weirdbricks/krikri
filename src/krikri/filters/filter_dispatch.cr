@@ -595,7 +595,6 @@ module Krikri
           # epoch value (%H:%M)" (live-verified against 2.19.11), NOT an
           # error about the format. A non-string piped value with no
           # epoch argument only fails later inside time.strftime().
-          second_str = nil
           unless epoch_arg.nil? || epoch_arg.raw == nil
             second_str = as_string(epoch_arg)
             seconds = second_str.to_i64? || second_str.to_f64?.try(&.to_i64)
@@ -605,19 +604,17 @@ module Krikri
             raise "strftime: string_format must be a string (#{as_string(value).inspect})"
           end
           fmt = value.as_s
-          seconds = second_str ? (second_str.to_i64? || second_str.to_f64?.try(&.to_i64)) : nil
           # Python truthiness for the utc flag: anything but nil/false/0
           # /empty-string is truthy (real `if utc:` - so the literal
           # string 'UTC' IS truthy, and so is the string 'false').
           utc_truthy = case raw = utc_arg.try(&.raw)
-                       when Nil      then false
-                       when Bool     then raw
-                       when Int64    then raw != 0
-                       when Float64  then raw != 0.0
-                       when String   then !raw.empty?
-                       else               true
+                       when Nil     then false
+                       when Bool    then raw
+                       when Int64   then raw != 0
+                       when Float64 then raw != 0.0
+                       when String  then !raw.empty?
+                       else              true
                        end
-          time = nil
           if epoch_arg.nil? || epoch_arg.raw == nil
             time = utc_truthy ? Time.utc : Time.local
           else
