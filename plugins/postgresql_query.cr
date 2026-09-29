@@ -75,25 +75,25 @@ module Krikri
     # argument_spec + postgresql_query's own update) in declaration
     # order - values are the spec's aliases.
     SPEC = {
-      "login_user"     => [] of String,
-      "login_password" => [] of String,
-      "login_host"     => [] of String,
+      "login_user"        => [] of String,
+      "login_password"    => [] of String,
+      "login_host"        => [] of String,
       "login_unix_socket" => [] of String,
-      "login_port"     => [] of String,
-      "ssl_mode"       => [] of String,
-      "ca_cert"        => ["ssl_rootcert"],
-      "ssl_cert"       => [] of String,
-      "ssl_key"        => [] of String,
-      "connect_params" => [] of String,
-      "query"          => [] of String,
-      "login_db"       => [] of String,
-      "positional_args" => [] of String,
-      "named_args"     => [] of String,
-      "session_role"   => [] of String,
-      "autocommit"     => [] of String,
-      "encoding"       => [] of String,
-      "trust_input"    => [] of String,
-      "search_path"    => [] of String,
+      "login_port"        => [] of String,
+      "ssl_mode"          => [] of String,
+      "ca_cert"           => ["ssl_rootcert"],
+      "ssl_cert"          => [] of String,
+      "ssl_key"           => [] of String,
+      "connect_params"    => [] of String,
+      "query"             => [] of String,
+      "login_db"          => [] of String,
+      "positional_args"   => [] of String,
+      "named_args"        => [] of String,
+      "session_role"      => [] of String,
+      "autocommit"        => [] of String,
+      "encoding"          => [] of String,
+      "trust_input"       => [] of String,
+      "search_path"       => [] of String,
     }
 
     INT_PARAMS  = {"login_port"}
@@ -227,8 +227,8 @@ module Krikri
         # SELECT.
         last_result = rows
         changed = true if PluginHelpers::PostgresqlQueryHeuristics.changed?(
-          PluginHelpers::PostgresqlQueryHeuristics.leading_keyword(expanded_sql), affected
-        )
+                            PluginHelpers::PostgresqlQueryHeuristics.leading_keyword(expanded_sql), affected
+                          )
       end
 
       RunOutcome.new(last_sql, last_result, all_results, rowcount, statusmessage, changed)

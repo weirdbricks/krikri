@@ -802,7 +802,7 @@ module Krikri
 
       files = [] of String
       if err = collect_include_vars_dir_files(dir, depth, 1, extensions, files_matching,
-        ignore_patterns, task.include_vars_ignore_unknown_extensions || false, files)
+           ignore_patterns, task.include_vars_ignore_unknown_extensions || false, files)
         finish_include_vars_failure(task, host, err)
         return
       end
@@ -873,7 +873,7 @@ module Krikri
       return nil if depth != 0 && level >= depth
       subdirs.each do |sub|
         if err = collect_include_vars_dir_files(sub, depth, level + 1, extensions, files_matching,
-          ignore_patterns, ignore_unknown_extensions, files)
+             ignore_patterns, ignore_unknown_extensions, files)
           return err
         end
       end
@@ -1633,13 +1633,13 @@ module Krikri
         end
         mark_unsafe_loop_items(loop_items) if unsafe_items
         loop_items.each_with_index do |item, idx|
-        vars_context = base_vars_context.dup
-        # Same loop_var-replaces-item rule as the task loop paths
-        # (executor_loops.cr) - real ansible-core binds the item ONLY
-        # under the custom name.
-        vars_context["item"] = item unless loop_var
-        vars_context[loop_var] = item if loop_var
-        vars_context[index_var] = JSON::Any.new(idx.to_i64) if index_var
+          vars_context = base_vars_context.dup
+          # Same loop_var-replaces-item rule as the task loop paths
+          # (executor_loops.cr) - real ansible-core binds the item ONLY
+          # under the custom name.
+          vars_context["item"] = item unless loop_var
+          vars_context[loop_var] = item if loop_var
+          vars_context[index_var] = JSON::Any.new(idx.to_i64) if index_var
           run_include_role_once(task, host, vars_context, item_display(item))
         end
       else
@@ -1893,15 +1893,15 @@ module Krikri
       return params if src.includes?(':') || src.starts_with?("rsync://")
 
       subdir = case task.module_name
-               when "ansible.builtin.copy"     then "files"
-               when "ansible.builtin.template" then "templates"
-               when "ansible.builtin.assemble" then "files"
+               when "ansible.builtin.copy"      then "files"
+               when "ansible.builtin.template"  then "templates"
+               when "ansible.builtin.assemble"  then "files"
                when "ansible.posix.synchronize" then "files"
                end
       return params unless subdir
 
       role_dir = case task.module_name
-                 when "ansible.builtin.copy"     then task.role_files_dir
+                 when "ansible.builtin.copy" then task.role_files_dir
                  when "ansible.builtin.template"
                    # No templates/ dir at all: real Ansible's own search
                    # list for a relative template: src: goes from
@@ -1917,7 +1917,7 @@ module Krikri
                    # not found on controller" where real ansible-playbook
                    # changed the file.
                    task.role_templates_dir || task.role_path
-                 when "ansible.builtin.assemble" then task.role_files_dir
+                 when "ansible.builtin.assemble"  then task.role_files_dir
                  when "ansible.posix.synchronize" then task.role_files_dir
                  end
       return params unless role_dir

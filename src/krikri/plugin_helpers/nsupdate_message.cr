@@ -19,10 +19,10 @@ module Krikri
         1 => "A", 2 => "NS", 5 => "CNAME", 6 => "SOA", 12 => "PTR",
         15 => "MX", 16 => "TXT", 28 => "AAAA", 33 => "SRV", 255 => "ANY",
       }
-      CLASS_IN  = 1
+      CLASS_IN   =   1
       CLASS_NONE = 254
-      CLASS_ANY = 255
-      TYPE_TSIG = 250
+      CLASS_ANY  = 255
+      TYPE_TSIG  = 250
 
       # dnspython's dns.rcode.to_text table (the ones a DDNS update flow
       # can realistically see).
@@ -272,10 +272,10 @@ module Krikri
         put16(io, id)
         flags = (5 << 11) # OPCODE=UPDATE
         put16(io, flags.to_u16)
-        put16(io, 1u16)                         # ZOCOUNT
-        put16(io, prerequisites.size.to_u16)    # PRCOUNT
-        put16(io, updates.size.to_u16)          # UPCOUNT
-        put16(io, tsig ? 1u16 : 0u16)           # ARCOUNT
+        put16(io, 1u16)                      # ZOCOUNT
+        put16(io, prerequisites.size.to_u16) # PRCOUNT
+        put16(io, updates.size.to_u16)       # UPCOUNT
+        put16(io, tsig ? 1u16 : 0u16)        # ARCOUNT
         io.write(encode_name(zone))
         prerequisites.each { |record| pack_rr(io, record) }
         updates.each { |record| pack_rr(io, record) }
@@ -319,10 +319,10 @@ module Krikri
         5.downto(0) { |shift| io.write_byte(((now >> (shift * 8)) & 0xFF).to_u8) }
         put16(io, 300u16) # Fudge
         mac_field_at = io.pos
-        put16(io, 0u16)   # MAC size (empty while signing)
-        put16(io, id)     # Original ID
-        put16(io, 0u16)   # Error
-        put16(io, 0u16)   # Other len
+        put16(io, 0u16) # MAC size (empty while signing)
+        put16(io, id)   # Original ID
+        put16(io, 0u16) # Error
+        put16(io, 0u16) # Other len
         rdata_end = io.pos
 
         # sign over the message with the MAC field empty (rdlength
@@ -354,8 +354,8 @@ module Krikri
         # the real module's (dnspython's) canonical hmac-md5 name
         algo = "hmac-md5" if algo == "hmac-md5.sig-alg.reg.int"
         algorithm = case algo
-                    when "hmac-md5"   then OpenSSL::Algorithm::MD5
-                    when "hmac-sha1"  then OpenSSL::Algorithm::SHA1
+                    when "hmac-md5"    then OpenSSL::Algorithm::MD5
+                    when "hmac-sha1"   then OpenSSL::Algorithm::SHA1
                     when "hmac-sha224" then OpenSSL::Algorithm::SHA224
                     when "hmac-sha256" then OpenSSL::Algorithm::SHA256
                     when "hmac-sha384" then OpenSSL::Algorithm::SHA384

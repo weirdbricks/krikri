@@ -2018,9 +2018,9 @@ module Krikri
         next if GENERIC_LOOKUP_LOOP_SKIP.includes?(key_str)
         next if LOOP_TEMPLATE_KEYS.includes?(key_str)
         plugin = key_str.sub(/^with_/, "")
-                     .sub(/^ansible\.builtin\./, "")
-                     .sub(/^ansible\.legacy\./, "")
-                     .sub(/^community\.general\./, "")
+          .sub(/^ansible\.builtin\./, "")
+          .sub(/^ansible\.legacy\./, "")
+          .sub(/^community\.general\./, "")
         terms = if arr = value.as_a?
                   arr.map { |item| JSON.parse(item.to_json) }
                 else

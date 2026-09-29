@@ -122,20 +122,20 @@ module Krikri
       end
 
       # ----- `list:` query mode -----
-        # Real ansible.builtin.dnf/yum treat a scalar `list:` value as a
-        # QUERY, never as packages to act on: `dnf: {list: updates}`
-        # lists available updates and returns {"changed": false,
-        # "results": [...]} where each result carries name/arch/epoch/
-        # version/release/repo (+ nevra/envra). This plugin family
-        # previously concatenated a scalar `list:` into the package
-        # names (parse_package_names' rescue), so `dnf: {list: updates}`
-        # ran `dnf install updates` and failed with "Error: Unable to
-        # find a match: updates" where real Ansible succeeded - found
-        # via oatakan.rhel_upgrade's own "check for missing updates
-        # (dnf)" task (round 310183). A JSON-array `list:` keeps the
-        # old package-list behavior below, so this only intercepts the
-        # scalar form.
-        private def list_query_result : PluginResult?
+      # Real ansible.builtin.dnf/yum treat a scalar `list:` value as a
+      # QUERY, never as packages to act on: `dnf: {list: updates}`
+      # lists available updates and returns {"changed": false,
+      # "results": [...]} where each result carries name/arch/epoch/
+      # version/release/repo (+ nevra/envra). This plugin family
+      # previously concatenated a scalar `list:` into the package
+      # names (parse_package_names' rescue), so `dnf: {list: updates}`
+      # ran `dnf install updates` and failed with "Error: Unable to
+      # find a match: updates" where real Ansible succeeded - found
+      # via oatakan.rhel_upgrade's own "check for missing updates
+      # (dnf)" task (round 310183). A JSON-array `list:` keeps the
+      # old package-list behavior below, so this only intercepts the
+      # scalar form.
+      private def list_query_result : PluginResult?
         list_value = @params["list"]?
         return nil unless list_value
 

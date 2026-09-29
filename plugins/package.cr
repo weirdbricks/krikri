@@ -21,7 +21,6 @@ module Krikri
   #     name: nginx
   #     state: present
   class PackagePlugin < BasePlugin
-
     # Real's package: action plugin forwards the call to the detected
     # backend module, whose own argspec validates every provided param -
     # so the engine's package plugin validates the UNION of its backends'
@@ -40,13 +39,13 @@ module Krikri
 
     protected def bool_param_aliases : Hash(String, String)
       {
-        "allow-downgrade" => "allow_downgrade",
-        "allow_downgrades" => "allow_downgrade",
-        "allow-downgrades" => "allow_downgrade",
+        "allow-downgrade"       => "allow_downgrade",
+        "allow_downgrades"      => "allow_downgrade",
+        "allow-downgrades"      => "allow_downgrade",
         "allow-unauthenticated" => "allow_unauthenticated",
-        "install-recommends" => "install_recommends",
-        "update-cache" => "update_cache",
-        "expire-cache" => "update_cache",
+        "install-recommends"    => "install_recommends",
+        "update-cache"          => "update_cache",
+        "expire-cache"          => "update_cache",
       }
     end
 
@@ -55,6 +54,7 @@ module Krikri
     protected def bool_params_none_default : Array(String)
       %w[best install_recommends nobest update_cache]
     end
+
     include AptLockRetry
     property? check_mode : Bool
 
@@ -231,8 +231,7 @@ module Krikri
       # run `apt-get remove` on the empty token and report "Package
       # removed" (double space) as changed on every run, breaking
       # idempotency.
-      return PluginResult.new(changed: false, failed: false, msg: "Nothing to do") if
-        names.empty?
+      return PluginResult.new(changed: false, failed: false, msg: "Nothing to do") if names.empty?
 
       # Per-element shell quoting for the actual package-manager command
       # line - each element quoted as its own atomic token, since a
@@ -764,10 +763,10 @@ module Krikri
       update_cache = true?(@params["update_cache"]?)
       cache_valid_time = @params["cache_valid_time"]?.try(&.to_i) || 0
       if failure = apt_update_cache_before_operation(
-             update_cache, cache_valid_time,
-             @params["update_cache_retries"]?.try(&.to_i) || AptLockRetry::DEFAULT_UPDATE_CACHE_RETRIES,
-             @params["update_cache_retry_max_delay"]?.try(&.to_i) || AptLockRetry::DEFAULT_UPDATE_CACHE_RETRY_MAX_DELAY,
-             @check_mode, ->remote_exec(String))
+           update_cache, cache_valid_time,
+           @params["update_cache_retries"]?.try(&.to_i) || AptLockRetry::DEFAULT_UPDATE_CACHE_RETRIES,
+           @params["update_cache_retry_max_delay"]?.try(&.to_i) || AptLockRetry::DEFAULT_UPDATE_CACHE_RETRY_MAX_DELAY,
+           @check_mode, ->remote_exec(String))
         return PluginResult.new(
           changed: false,
           failed: true,

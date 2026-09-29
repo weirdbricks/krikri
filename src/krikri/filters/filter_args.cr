@@ -58,7 +58,7 @@ module Krikri
         # without touching every other resolve_expression caller.
         if top_level_plus_or_minus?(first_arg)
           return KrikriJinja.evaluate_expression(first_arg, @vars || Hash(String, JSON::Any).new) ||
-                 JSON::Any.new(nil)
+            JSON::Any.new(nil)
         end
 
         resolve_expression(first_arg)
@@ -210,7 +210,7 @@ module Krikri
         # filename, which don't exist under that name.
         if top_level_plus_or_minus?(expr)
           return KrikriJinja.evaluate_expression(expr, @vars || Hash(String, JSON::Any).new) ||
-                 JSON::Any.new(nil)
+            JSON::Any.new(nil)
         end
 
         parts = self.class.split_chain(expr)

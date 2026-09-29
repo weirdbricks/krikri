@@ -4,7 +4,6 @@ require "krikri-jinja/krikri_jinja"
 require "../jinja_host_context"
 require "../plugin_helpers/ansible_splitlines"
 
-
 module Krikri
   class TaskExecutor
     private def notify_hosts_if_changed(task : Task, hosts : Array(Host), changed_before : Hash(String, Int32)) : Nil

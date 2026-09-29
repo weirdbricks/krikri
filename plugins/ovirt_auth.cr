@@ -270,8 +270,8 @@ module Krikri
           end
         end
         response = client.post(uri.path + (uri.query ? "?#{uri.query}" : ""),
-          HTTP::Headers{"Accept" => "application/json",
-                         "Content-Type" => "application/x-www-form-urlencoded"},
+          HTTP::Headers{"Accept"       => "application/json",
+                        "Content-Type" => "application/x-www-form-urlencoded"},
           body)
         response.body
       rescue e

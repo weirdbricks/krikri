@@ -15,9 +15,9 @@ module Krikri
     # The +/- operator only applies when resizing (an existing LV);
     # lvcreate itself never takes it.
     module LvolSize
-      PERCENT_TARGETS    = ["VG", "PVS", "FREE", "ORIGIN"]
-      UNIT_SUFFIXES      = "bskmgtpe"
-      DEFAULT_SIZE_UNIT  = "m"
+      PERCENT_TARGETS     = ["VG", "PVS", "FREE", "ORIGIN"]
+      UNIT_SUFFIXES       = "bskmgtpe"
+      DEFAULT_SIZE_UNIT   = "m"
       DEFAULT_EXTENT_UNIT = "m"
 
       record Parsed,

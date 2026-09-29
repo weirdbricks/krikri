@@ -7,9 +7,9 @@ module Krikri
     # (or a Debian host at all); the plugin itself executes them.
     module DpkgDivertCommand
       record Options,
-        state : String,            # "present" / "absent"
-        holder : String?,          # nil -> --local (LOCAL)
-        divert : String?,          # nil -> <path>.distrib
+        state : String,   # "present" / "absent"
+        holder : String?, # nil -> --local (LOCAL)
+        divert : String?, # nil -> <path>.distrib
         rename : Bool,
         force : Bool
 

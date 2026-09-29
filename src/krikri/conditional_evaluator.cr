@@ -273,7 +273,7 @@ module Krikri
             if !condition.includes?("|") && !condition.match(/\bis\s+/)
               converted_vars = vars.transform_values { |value| KrikriJinja.from_json_any(value) }
               rendered = KrikriJinja.render("{{ 'True' if (#{condition}) else 'False' }}", converted_vars,
-          host_context: JinjaHostContext.new(vars))
+                host_context: JinjaHostContext.new(vars))
               return rendered.strip == "True"
             end
             rendered = VariableSubstitutor::JinjaRenderer.new(vars, true).render("{{ 'True' if (#{condition}) else 'False' }}")
@@ -2160,16 +2160,16 @@ module Krikri
           end
 
           case text[i + 1]
-          when '\\'     then buf << '\\'
-          when '\''     then buf << '\''
-          when '"'      then buf << '"'
-          when 'n'      then buf << '\n'
-          when 't'      then buf << '\t'
-          when 'r'      then buf << '\r'
-          when 'a'      then buf << '\a'
-          when 'b'      then buf << '\b'
-          when 'f'      then buf << '\f'
-          when 'v'      then buf << '\v'
+          when '\\' then buf << '\\'
+          when '\'' then buf << '\''
+          when '"'  then buf << '"'
+          when 'n'  then buf << '\n'
+          when 't'  then buf << '\t'
+          when 'r'  then buf << '\r'
+          when 'a'  then buf << '\a'
+          when 'b'  then buf << '\b'
+          when 'f'  then buf << '\f'
+          when 'v'  then buf << '\v'
           when 'x'
             if i + 3 < text.size && text[i + 2].hex? && text[i + 3].hex?
               buf << (text[i + 2].to_i(16) * 16 + text[i + 3].to_i(16)).chr

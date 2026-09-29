@@ -33,7 +33,6 @@ module Krikri
   # command.cr's own doc comment for how this was found (a real playbook
   # over real SSH comparing captured stdout against a constant).
   class ShellPlugin < BasePlugin
-
     # ansible.builtin.shell's `type: bool` options, in the real argument-spec
     # declaration order (ansible-doc -j ansible.builtin.shell). Validated at
     # module setup by BasePlugin#validate_bool_params! - see its block
@@ -41,6 +40,7 @@ module Krikri
     protected def bool_params : Array(String)
       %w[stdin_add_newline]
     end
+
     include PluginHelpers::AnsibleArgValidation
 
     # Real shell module's own argspec - which IS command.py's (bookworm

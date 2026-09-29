@@ -22,10 +22,10 @@ module Krikri
           key, _, value = line.partition(':')
           value = value.strip
           case key.strip
-          when "Active"    then active = value == "yes"
-          when "Autostart" then autostart = value == "yes"
+          when "Active"     then active = value == "yes"
+          when "Autostart"  then autostart = value == "yes"
           when "Persistent" then persistent = value == "yes"
-          when "Bridge"    then bridge = value.empty? ? nil : value
+          when "Bridge"     then bridge = value.empty? ? nil : value
           end
         end
 

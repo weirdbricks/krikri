@@ -35,9 +35,9 @@ module Krikri
 
         properties.each do |prop, value|
           case prop
-          when "volsize"     then cmd += ["-V", value]
+          when "volsize"      then cmd += ["-V", value]
           when "volblocksize" then cmd += ["-b", value]
-          else                    cmd += ["-o", "#{prop}=#{value}"]
+          else                     cmd += ["-o", "#{prop}=#{value}"]
           end
         end
 

@@ -120,8 +120,7 @@ module Krikri
       end
       type_code = PluginHelpers::NsupdateMessage::TYPES[record_type.upcase].to_i32
 
-      result = state == "absent" ? remove_record(server.not_nil!, port, protocol, zone.as(String), record, type_code) :
-                create_or_update_record(server.not_nil!, port, protocol, zone.as(String), record, fqdn, type_code, ttl, values)
+      result = state == "absent" ? remove_record(server.not_nil!, port, protocol, zone.as(String), record, type_code) : create_or_update_record(server.not_nil!, port, protocol, zone.as(String), record, fqdn, type_code, ttl, values)
       return result if result.is_a?(PluginResult)
 
       changed, failed = result.as(Tuple(Bool, Bool))

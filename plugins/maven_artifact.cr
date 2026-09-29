@@ -122,9 +122,7 @@ module Krikri
       end
 
       repo_relative = PluginHelpers::MavenArtifactCommand.artifact_path(group_id.not_nil!, artifact_id.not_nil!, version_str)
-      artifact_file = version_part == version_str && !is_snapshot ?
-        "#{artifact_id}-#{version_str}#{classifier.empty? ? "" : "-#{classifier}"}.#{extension}" :
-        "#{artifact_id}-#{version_part}#{classifier.empty? ? "" : "-#{classifier}"}.#{extension}"
+      artifact_file = version_part == version_str && !is_snapshot ? "#{artifact_id}-#{version_str}#{classifier.empty? ? "" : "-#{classifier}"}.#{extension}" : "#{artifact_id}-#{version_part}#{classifier.empty? ? "" : "-#{classifier}"}.#{extension}"
       artifact_url = "#{base}/#{repo_relative}/#{artifact_file}"
 
       # dest is a directory -> generated filename under it; dest is a
@@ -139,9 +137,7 @@ module Krikri
       # downloading anything).
       dest_str = dest.not_nil!
       Dir.mkdir_p(dest_str) if dest_str.ends_with?("/") && !Dir.exists?(dest_str)
-      final_dest = (dest_str.ends_with?("/") || Dir.exists?(dest_str)) ?
-        PluginHelpers::MavenArtifactCommand.dest_filename(dest_str, artifact_id.not_nil!, version_part, classifier, extension, keep_name) :
-        dest_str
+      final_dest = (dest_str.ends_with?("/") || Dir.exists?(dest_str)) ? PluginHelpers::MavenArtifactCommand.dest_filename(dest_str, artifact_id.not_nil!, version_part, classifier, extension, keep_name) : dest_str
 
       verify_download = ["download", "always"].includes?(verify_checksum)
       verify_change = ["change", "always"].includes?(verify_checksum)

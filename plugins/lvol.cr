@@ -245,15 +245,15 @@ module Krikri
           size_free = vg_info[:free]
           if size_free <= 0 || size_free < (size_requested - this_lv[:size])
             return {changed_flag: false, failed: true,
-              msg: "Logical Volume #{this_lv[:name]} could not be extended. Not enough free space left " \
-                   "(#{size_requested - this_lv[:size]}m required / #{size_free}m available)"}
+                    msg: "Logical Volume #{this_lv[:name]} could not be extended. Not enough free space left " \
+                         "(#{size_requested - this_lv[:size]}m required / #{size_free}m available)"}
           end
           return resize_run("lvextend", size_requested, parsed, lv_path, opts, pvs, resizefs, check_mode, false)
         elsif shrink && this_lv[:size] > size_requested + vg_info[:ext_size]
           return {changed_flag: false, failed: true,
-            msg: "Sorry, no shrinking of #{this_lv[:name]} to 0 permitted."} if size_requested < 1
+                  msg: "Sorry, no shrinking of #{this_lv[:name]} to 0 permitted."} if size_requested < 1
           return {changed_flag: false, failed: true,
-            msg: "Sorry, no shrinking of #{this_lv[:name]} without force=true"} unless force
+                  msg: "Sorry, no shrinking of #{this_lv[:name]} without force=true"} unless force
           return resize_run("lvreduce --force", size_requested, parsed, lv_path, opts, pvs, resizefs, check_mode, true)
         end
       else
@@ -262,9 +262,9 @@ module Krikri
           return resize_run("lvextend", size_val, parsed, lv_path, opts, pvs, resizefs, check_mode, false)
         elsif shrink && (size_val < this_lv[:size] || parsed.operator == "-")
           return {changed_flag: false, failed: true,
-            msg: "Sorry, no shrinking of #{this_lv[:name]} to 0 permitted."} if size_val == 0
+                  msg: "Sorry, no shrinking of #{this_lv[:name]} to 0 permitted."} if size_val == 0
           return {changed_flag: false, failed: true,
-            msg: "Sorry, no shrinking of #{this_lv[:name]} without force=true."} unless force
+                  msg: "Sorry, no shrinking of #{this_lv[:name]} without force=true."} unless force
           return resize_run("lvreduce --force", size_val, parsed, lv_path, opts, pvs, resizefs, check_mode, true)
         end
       end
@@ -297,7 +297,7 @@ module Krikri
           return {changed_flag: false, failed: false, msg: "Original size is larger than requested size"}
         end
         return {changed_flag: false, failed: true,
-          msg: "Unable to resize #{lv_path}: #{err}"}
+                msg: "Unable to resize #{lv_path}: #{err}"}
       end
 
       {changed_flag: true, failed: false, msg: "Volume #{lv_path} resized"}
@@ -333,12 +333,12 @@ module Krikri
 
     private def vgs_command(vg : String, units : String) : String
       "vgs --noheadings --nosuffix -o vg_name,size,free,vg_extent_size " \
-        "--units #{units.downcase} --separator ';' #{shell_quote(vg)}"
+      "--units #{units.downcase} --separator ';' #{shell_quote(vg)}"
     end
 
     private def lvs_command(vg : String, units : String) : String
       "lvs -a --noheadings --nosuffix -o lv_name,size,lv_attr " \
-        "--units #{units.downcase} --separator ';' #{shell_quote(vg)}"
+      "--units #{units.downcase} --separator ';' #{shell_quote(vg)}"
     end
 
     private def parse_vgs(data : String)
