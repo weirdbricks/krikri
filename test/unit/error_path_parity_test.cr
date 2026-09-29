@@ -1,5 +1,6 @@
 require "../minitest_helper"
 require "file_utils"
+require "../../src/krikri/argspec_validator"
 
 private def scratch_dir : String
   dir = PluginSpecHelper.tmp_path("error-path-parity")
@@ -80,5 +81,44 @@ describe "error-path parity with real ansible (fuzzer findings)" do
     result["file"]?.must_be_nil
     result["_ansible_error_detail"].as_s.must_equal(
       "File not found: #{missing}: [Errno 2] No such file or directory: '#{missing}'")
+  end
+
+  it "lineinfile: state=present without line uses real's wording" do
+    file = File.join(scratch_dir, "li-file")
+    File.write(file, "x\n")
+    result = PluginSpecHelper.run("lineinfile", {"path" => file, "state" => "present"})
+    result["msg"].as_s.must_equal("line is required with state=present")
+  end
+
+  it "file: recurse on a non-directory carries add_path_info like real's fail_json(path=...)" do
+    file = File.join(scratch_dir, "recurse-file")
+    File.write(file, "x\n")
+    result = PluginSpecHelper.run("file", {"path" => file, "recurse" => "true"})
+    result["msg"].as_s.must_equal("recurse option requires state to be 'directory'")
+    result["path"].as_s.must_equal(file)
+    result["state"].as_s.must_equal("file")
+    result["size"].as_i.must_equal(2)
+  end
+
+  it "find: an unknown contains: encoding abandons the search path (skipped_paths + warning)" do
+    dir = File.join(scratch_dir, "enc-dir")
+    FileUtils.mkdir_p(dir)
+    File.write(File.join(dir, "f.txt"), "tree\n")
+    result = PluginSpecHelper.run("find", {"paths" => dir, "contains" => "tree", "encoding" => "podiis"})
+    result["skipped_paths"][dir].as_s.must_equal("unknown encoding: podiis")
+    result["warnings"].as_a.map(&.as_s).must_equal(
+      ["Skipped '#{dir}' path due to this access issue: unknown encoding: podiis\n"])
+  end
+
+  it "template/copy required-argument checks are action-level and come first" do
+    vars = Hash(String, JSON::Any).new
+    template = Krikri::ArgspecValidator.validate("template", "ansible.builtin.template", {"src" => "x"}, vars)
+    template.not_nil!.msg.must_equal("src and dest are required")
+    template.not_nil!.action_level?.must_equal(true)
+
+    copy_dest = Krikri::ArgspecValidator.validate("copy", "ansible.builtin.copy", {"src" => "x"}, vars)
+    copy_dest.not_nil!.msg.must_equal("dest is required")
+    copy_src = Krikri::ArgspecValidator.validate("copy", "ansible.builtin.copy", {"dest" => "x"}, vars)
+    copy_src.not_nil!.msg.must_equal("src (or content) is required")
   end
 end

@@ -93,7 +93,7 @@ module Krikri
           return PluginResult.new(changed: false, failed: true, msg: "regexp is required with backrefs=true")
         end
 
-        return PluginResult.new(changed: false, failed: true, msg: "line parameter required when state=present") unless line
+        return PluginResult.new(changed: false, failed: true, msg: "line is required with state=present") unless line
       end
 
       if state == "absent" && !regexp && !search_string && !line

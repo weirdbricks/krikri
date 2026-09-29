@@ -375,7 +375,7 @@ module Krikri
           not_found = "Could not find or access '#{match[1]}' on the Ansible Controller.\nIf you are using a module and expect the file to exist on the remote, see the remote_src option"
           root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new("Unexpected AnsibleActionFail error.").with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(not_found)))
         elsif module_name.try(&.ends_with?(".copy")) &&
-              msg == "src and content are mutually exclusive"
+              {"src and content are mutually exclusive", "src (or content) is required", "dest is required"}.includes?(msg)
           # copy's action-level src/content conflict (raised before
           # argspec validation, ordering live-verified against 2.19.11):
           # real's chain is the action-level "Action failed." shape.

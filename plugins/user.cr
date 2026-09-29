@@ -864,7 +864,9 @@ module Krikri
     end
 
     private def command_failure(action : String, result : NamedTuple(exit_code: Int32, stdout: String, stderr: String)) : PluginResult
-      PluginResult.new(changed: false, failed: true, msg: "Failed to #{action}: #{result[:stderr].empty? ? result[:stdout] : result[:stderr]}")
+      # real user.py: fail_json(name=self.name, msg=err, rc=rc) - the raw
+      # stderr as msg (no "Failed to ..." prefix), plus name and rc.
+      PluginResult.new(changed: false, failed: true, msg: result[:stderr], name: @params["name"]?, rc: result[:exit_code])
     end
 
     private def missing_param(name : String) : PluginResult

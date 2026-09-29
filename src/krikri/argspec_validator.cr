@@ -74,6 +74,7 @@ module Krikri
       entry = table[module_name]?
       return nil unless entry
       return nil if entry["no_validate"]?
+      return :action if module_name == "ansible.builtin.template" && msg == "src and dest are required"
       return nil unless validation_msg?(msg)
       entry["action_level"]?.try(&.as_bool?) ? :action : :module
     end
@@ -110,6 +111,18 @@ module Krikri
          {"false", "no", "n", "0", "off", "f"}.includes?(params["remote_src"]?.to_s.downcase) &&
          (src = params["src"]?) && !Dir.exists?(src)
         return nil
+      end
+
+      # template's controller-side action plugin checks src/dest presence
+      # BEFORE any module argument validation (AnsibleActionFail).
+      if module_name == "ansible.builtin.template" && (!params.has_key?("src") || !params.has_key?("dest"))
+        return Failure.new("src and dest are required", true)
+      end
+      # copy's action plugin (copy.py:428-430) likewise checks first, with its
+      # own two messages (a failed result, "Action failed." chain).
+      if module_name == "ansible.builtin.copy"
+        return Failure.new("src (or content) is required", true) if !params.has_key?("src") && !params.has_key?("content")
+        return Failure.new("dest is required", true) unless params.has_key?("dest")
       end
 
       print_name, entry = resolve_entry(action_name, module_name, entry, vars_context)

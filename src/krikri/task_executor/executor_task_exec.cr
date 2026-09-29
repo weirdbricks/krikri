@@ -1565,7 +1565,9 @@ module Krikri
       # copy/template: real's action plugin computes the source SHA1
       # before the module runs and merges it into the failed result, so
       # the fatal dump carries "checksum" for these two modules only.
-      if {"ansible.builtin.copy", "ansible.builtin.template"}.includes?(task.module_name)
+      # (Only for MODULE-level failures: the action plugin's own required-
+      # argument checks fail before it computes any checksum.)
+      if !action_level_only && {"ansible.builtin.copy", "ansible.builtin.template"}.includes?(task.module_name)
         if checksum = argspec_source_checksum(params)
           result["checksum"] = JSON::Any.new(checksum)
         end

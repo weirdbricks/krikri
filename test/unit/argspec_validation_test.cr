@@ -47,7 +47,7 @@ describe Krikri::ArgspecValidator do
   it "validates template against copy's spec under real's ansible.legacy.copy name" do
     failure = Krikri::ArgspecValidator.validate(
       "template", "ansible.builtin.template",
-      {"dest" => "/tmp/x", "mdoe" => "0644"}, vars)
+      {"src" => "t.j2", "dest" => "/tmp/x", "mdoe" => "0644"}, vars)
     failure.not_nil!.msg.must_equal(
       "Unsupported parameters for (ansible.legacy.copy) module: mdoe. " \
       "Supported parameters include: _original_basename, attributes, backup, checksum, " \
@@ -58,7 +58,7 @@ describe Krikri::ArgspecValidator do
   it "does not flag template's Jinja-rendering knobs (the action consumes them)" do
     failure = Krikri::ArgspecValidator.validate(
       "template", "ansible.builtin.template",
-      {"dest" => "/tmp/x", "newline_sequence" => "\\n", "trim_blocks" => "true",
+      {"src" => "t.j2", "dest" => "/tmp/x", "newline_sequence" => "\\n", "trim_blocks" => "true",
        "output_encoding" => "utf-8"}, vars)
     failure.must_be_nil
   end
