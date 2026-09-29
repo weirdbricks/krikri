@@ -59,7 +59,9 @@ module Krikri
         puts "  play ##{index + 1} (#{host_pattern(play)}): #{play.name}\tTAGS: [#{play.tags.sort.join(", ")}]"
 
         tags = [] of String
-        TagFilter.apply(play.tasks, only, skip).each do |task|
+        # Without --tags/--skip-tags real lists every tag, `never` included.
+        selected = only.empty? && skip.empty? ? play.tasks : TagFilter.apply(play.tasks, only, skip)
+        selected.each do |task|
           collect_tags(task, [] of String, tags)
         end
         puts "      TASK TAGS: [#{tags.uniq.sort!.join(", ")}]"

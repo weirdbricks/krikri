@@ -1050,7 +1050,8 @@ unreachable_hosts.each do |name|
   end
 end
 
-Krikri::ResultDisplay.show_recap(all_hosts.uniq(&.name), combined_results)
+# No task ever ran when --start-at-task matched nothing: real lists no hosts.
+Krikri::ResultDisplay.show_recap(all_hosts.uniq(&.name), combined_results) unless start_at_task && start_at_pending
 
 puts ""
 
