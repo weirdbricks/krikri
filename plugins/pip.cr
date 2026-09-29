@@ -137,6 +137,11 @@ module Krikri
       # binary already creates the venv (and fails there if that
       # itself doesn't work), so its own pip is guaranteed to exist by
       # the time this runs.
+      # pip.py converts umask before any virtualenv/pip resolution
+      if bad_umask = umask_error
+        return bad_umask
+      end
+
       if missing_binary = ensure_pip_binary
         return missing_binary
       end
@@ -162,10 +167,6 @@ module Krikri
         return PluginResult.new(changed: false, failed: true,
           msg: "'version' argument is ambiguous when installing multiple package distributions. " \
                "Please specify version restrictions next to each package in 'name' argument.")
-      end
-
-      if bad_umask = umask_error
-        return bad_umask
       end
 
       result = case state
@@ -336,7 +337,10 @@ module Krikri
     # result for an invalid (non-octal) value, or nil.
     private def umask_error : PluginResult?
       if umask = @params["umask"]?
-        return PluginResult.new(changed: false, failed: true, msg: "umask must be an octal integer") unless umask =~ /\A0?[0-7]{1,4}\z/
+        unless umask.to_i?(8)
+          return PluginResult.new(changed: false, failed: true, msg: "umask must be an octal integer",
+            details: "invalid literal for int() with base 8: '#{umask}'")
+        end
       end
       nil
     end

@@ -151,7 +151,7 @@ module Krikri
       result = execute_inner
       # an unhandled module exception (python-apt's SystemError) never reaches
       # exit_json, so its failure carries no cache_updated key
-      result.extra["cache_updated"] = JSON.parse(@cache_updated.to_json) unless result.extra.has_key?("_ansible_error_detail") || @omit_cache_updated
+      result.extra["cache_updated"] = JSON.parse(@cache_updated.to_json) unless result.extra.has_key?("_ansible_error_detail") || @omit_cache_updated || result.msg.to_s.starts_with?("No package matching")
       result
     end
 
