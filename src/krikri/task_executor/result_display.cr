@@ -23,6 +23,9 @@ module Krikri
 
   # ResultDisplay - Handles displaying task results and diffs
   module ResultDisplay
+    # Warning texts already printed this run (real Display.warning dedups).
+    @@warned_texts = Set(String).new
+
     # Display task result with appropriate formatting.
     # item_label is set for looped tasks, rendering `ok: [host] => (item=x)`
     # to match how Ansible annotates per-iteration output.
@@ -48,6 +51,23 @@ module Krikri
       # container msg natively (a real dict/list - see its own re-parse),
       # so a naive as_s cast crashes the whole display fiber on it.
       msg = result["msg"]?.try(&.as_s?) || ""
+
+      # Module warnings (result["warnings"]) print as `[WARNING]: <text>` on
+      # stderr BEFORE the status line, each distinct text once per run - real
+      # ansible's Display.warning dedups on the message (live-verified vs
+      # 2.19.11 with find's "Skipped '<path>' path due to this access issue").
+      result["warnings"]?.try(&.as_a?).try &.each do |warning|
+        text = warning.as_s? || warning.to_s
+        next unless @@warned_texts.add?(text)
+        STDERR.puts "[WARNING]: #{text.strip}".colorize(:light_magenta)
+      end
+      # Real's callback (CallbackBase._dump_results) drops these top-level
+      # keys before any dump at verbosity < 3: `warnings`/`deprecations` are
+      # only ever shown as their own [WARNING] lines, `invocation` is hidden
+      # unless -vvv (getent-style results carry one for `register`).
+      if (top = result.as_h?) && (top.has_key?("warnings") || top.has_key?("invocation") || top.has_key?("deprecations"))
+        result = JSON::Any.new(top.reject("warnings", "invocation", "deprecations"))
+      end
 
       # no_log: print the status line and NOTHING else - no msg, no
       # stdout, no diff, no error detail. Real ansible-playbook shows
@@ -280,6 +300,17 @@ module Krikri
       origin = error_origin_context(source_task)
       return unless origin
 
+      # A plugin whose block text differs from the fatal msg (fetch's slurp
+      # failure) hands the block its own text via _ansible_error_detail.
+      msg = result["_ansible_error_detail"]?.try(&.as_s?) || msg
+      # A plugin flagging _ansible_action_level failed in real's controller-
+      # side ACTION plugin (a bare AnsibleActionFail: no "Module failed."
+      # middle segment), e.g. assemble's remote_src: false isdir() check.
+      if result["_ansible_action_level"]?.try(&.as_bool?) == true
+        root = ErrorBlock::Node.new("Task failed.", source_context: origin)
+        ErrorBlock.emit(root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(msg)))
+        return
+      end
       ErrorBlock.emit(task_error_chain(source_task.module_name, msg, origin))
     end
 

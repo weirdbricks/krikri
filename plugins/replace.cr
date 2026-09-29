@@ -111,7 +111,8 @@ module Krikri
         return PluginResult.new(
           changed: false,
           failed: true,
-          msg: "Path #{path} is a directory !"
+          msg: "Path #{path} is a directory !",
+          rc: 256
         )
       end
 
@@ -122,7 +123,8 @@ module Krikri
         return PluginResult.new(
           changed: false,
           failed: true,
-          msg: "Path #{path} does not exist"
+          msg: "Path #{path} does not exist !",
+          rc: 257
         )
       end
 

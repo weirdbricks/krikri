@@ -175,6 +175,14 @@ module Krikri
       @null_params.includes?(key)
     end
 
+    # command/shell's failed os.chdir(): real's fatal msg is the generic
+    # "Unable to change directory before execution." while the [ERROR] block
+    # shows the OSError text too (Python bytes repr of the path).
+    protected def chdir_error_detail(path : String) : String
+      errno = File.exists?(path) ? "[Errno 20] Not a directory" : "[Errno 2] No such file or directory"
+      "Unable to change directory before execution: #{errno}: b'#{path}'"
+    end
+
     def initialize(@config : JSON::Any)
       @host = Host.from_json(@config["host"])
 

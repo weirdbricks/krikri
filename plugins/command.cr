@@ -180,7 +180,11 @@ module Krikri
       # "must run" - where real ansible-playbook reported changed=0.
       chdir = @params["chdir"]?.try { |itm| expand_tilde(itm) }
 
-      if creates = @params["creates"]?
+      # real command.py os.chdir()s BEFORE its creates:/removes: checks, so a
+      # bad chdir fails the task even when creates:/removes: would skip it
+      chdir_invalid = !chdir.nil? && !File.directory?(chdir)
+
+      if !chdir_invalid && (creates = @params["creates"]?)
         if path_or_glob_exists?(resolve_against_chdir(creates, chdir))
           skipped_stdout = "skipped, since #{creates} exists"
           # Real ansible-core 2.19.11 words the check-mode variant of this
@@ -207,7 +211,7 @@ module Krikri
       # Check removes parameter (conditional execution) - same real-
       # Ansible "ok", not "skipping:", shape as creates: above, with the
       # same full command-module result keys (see the creates: branch).
-      if removes = @params["removes"]?
+      if !chdir_invalid && (removes = @params["removes"]?)
         unless path_or_glob_exists?(resolve_against_chdir(removes, chdir))
           skipped_stdout = "skipped, since #{removes} does not exist"
           skip_msg = @check_mode ? "Would not run command since '#{removes}' does not exist" : "Did not run command since '#{removes}' does not exist"
@@ -293,7 +297,6 @@ module Krikri
       # every time (robertdebock.nextcloud's own `Configure nextcloud`
       # task, `chdir: /var/www/html/nextcloud`, `become_user: www-data`).
       if chdir && !File.directory?(chdir)
-        reason = File.exists?(chdir) ? "Not a directory" : "No such file or directory"
         # The result carries the FULL real command-module shape with
         # rc: NULL (not absent, not 0) - real Ansible's chdir failure
         # happens inside run_command, whose fail_json populates
@@ -308,7 +311,8 @@ module Krikri
         return with_executable_warning(PluginResult.new(
           changed: false,
           failed: true,
-          msg: "Failed to change directory to #{chdir}: #{reason}",
+          msg: "Unable to change directory before execution.",
+          _ansible_error_detail: chdir_error_detail(chdir),
           cmd: cmd,
           rc: nil,
           stdout: "",

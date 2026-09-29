@@ -122,7 +122,15 @@ module Krikri
     private def missing_src_result(src : String) : PluginResult
       msg = "the remote file does not exist, not transferring, ignored"
       fail_on_missing = true?(@params["fail_on_missing"]?, default: true)
-      PluginResult.new(changed: false, failed: fail_on_missing, msg: msg, file: src)
+      # fail_on_missing (default): real 2.19.11's action plugin ends up with
+      # the slurp module's failure - the fatal dump carries only changed+msg
+      # (no `file` key) while the [ERROR] block shows the module's own text
+      # (carried in _ansible_error_detail, stripped from every dump).
+      if fail_on_missing
+        return PluginResult.new(changed: false, failed: true, msg: msg,
+          _ansible_error_detail: "File not found: #{src}: [Errno 2] No such file or directory: '#{src}'")
+      end
+      PluginResult.new(changed: false, failed: false, msg: msg, file: src)
     end
 
     private def unchanged?(dest_path : String, remote_checksum : String) : Bool

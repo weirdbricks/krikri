@@ -156,13 +156,32 @@ module Krikri
       # doesn't parse ("banana" etc.); it does NOT silently drop the
       # filter and return unfiltered matches.
       if (age = options.age_filter) && parse_age(age).nil?
-        return PluginResult.new(changed: false, failed: true, msg: "failed to process age")
+        return PluginResult.new(changed: false, failed: true, msg: "failed to process age", age: age)
       end
       if (size = options.size_filter) && parse_size(size).nil?
-        return PluginResult.new(changed: false, failed: true, msg: "failed to process size")
+        return PluginResult.new(changed: false, failed: true, msg: "failed to process size", size: size)
       end
 
       files, examined, skipped_paths = collect_matches(paths, options)
+
+      # find.py: module.warn("Skipped '%s' path due to this access issue: %s\n")
+      # per skipped path - the trailing newline stays in the registered
+      # warning text (the [WARNING] display strips it).
+      warnings = skipped_paths.map { |path, why| "Skipped '#{path}' path due to this access issue: #{why}\n" }
+      extra = warnings.empty? ? nil : warnings
+
+      if extra
+        return PluginResult.new(
+          changed: false,
+          failed: false,
+          msg: "All paths examined",
+          examined: examined,
+          matched: files.size,
+          files: files,
+          skipped_paths: skipped_paths,
+          warnings: extra
+        )
+      end
 
       PluginResult.new(
         changed: false,

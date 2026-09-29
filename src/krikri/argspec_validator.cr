@@ -104,6 +104,14 @@ module Krikri
       return nil unless entry
       return nil if entry["no_validate"]?
 
+      # assemble with remote_src: false: the controller-side action plugin's
+      # isdir() check fails BEFORE any module argument validation runs.
+      if module_name == "ansible.builtin.assemble" &&
+         {"false", "no", "n", "0", "off", "f"}.includes?(params["remote_src"]?.to_s.downcase) &&
+         (src = params["src"]?) && !Dir.exists?(src)
+        return nil
+      end
+
       print_name, entry = resolve_entry(action_name, module_name, entry, vars_context)
       return nil unless entry
 

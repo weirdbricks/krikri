@@ -26,7 +26,10 @@ describe "command/shell failure-path result shape" do
       result["stderr"].as_s.must_equal("")
       result["stdout_lines"].as_a.must_be_empty
       result["stderr_lines"].as_a.must_be_empty
-      result["msg"].as_s.must_include("/nonexistent-krikri-spec-dir-zzz")
+      # real 2.19.11's fatal msg is the generic text; the path lives only in
+      # the [ERROR] block's detail (carried in _ansible_error_detail)
+      result["msg"].as_s.must_equal("Unable to change directory before execution.")
+      result["_ansible_error_detail"].as_s.must_include("/nonexistent-krikri-spec-dir-zzz")
     end
   end
 

@@ -113,7 +113,7 @@ module Krikri
       return {false, nil} if File.exists?(path)
 
       unless create
-        return {false, PluginResult.new(changed: false, failed: true, msg: "File #{path} does not exist. Use create: yes to create it.")}
+        return {false, PluginResult.new(changed: false, failed: true, msg: "Destination #{path} does not exist !", rc: 257)}
       end
 
       unless check_mode

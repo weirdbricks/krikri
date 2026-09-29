@@ -59,8 +59,18 @@ module Krikri
       return PluginResult.new(changed: false, failed: true, msg: "missing required argument: src") unless src
       return PluginResult.new(changed: false, failed: true, msg: "missing required argument: dest") unless dest
 
+      # remote_src: false runs assemble's controller-side action plugin
+      # first - its isdir() check is a plain AnsibleActionFail ("Source (..)
+      # is not a directory", no "Module failed." chain segment). With the
+      # default remote_src the module itself reports missing vs not-a-dir
+      # separately (assemble.py:232/235).
       unless Dir.exists?(src)
-        return PluginResult.new(changed: false, failed: true, msg: "Source (#{src}) does not exist")
+        if {"false", "no", "n", "0", "off", "f"}.includes?(@params["remote_src"]?.to_s.downcase)
+          return PluginResult.new(changed: false, failed: true, msg: "Source (#{src}) is not a directory",
+            _ansible_action_level: true)
+        end
+        msg = File.exists?(src) ? "Source (#{src}) is not a directory" : "Source (#{src}) does not exist"
+        return PluginResult.new(changed: false, failed: true, msg: msg)
       end
 
       ignore_hidden = true?(@params["ignore_hidden"]?)

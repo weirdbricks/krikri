@@ -61,7 +61,7 @@ module Krikri
       # Real Ansible fails on a directory path before anything else
       # (fail_json rc=256, msg='Path %s is a directory !').
       if File.directory?(path)
-        return PluginResult.new(changed: false, failed: true, msg: "Path #{path} is a directory !")
+        return PluginResult.new(changed: false, failed: true, msg: "Path #{path} is a directory !", rc: 256)
       end
 
       # Real Ansible: a missing file with state=absent and create=true
@@ -98,7 +98,7 @@ module Krikri
       return {false, nil} if File.exists?(path)
 
       unless create
-        return {false, PluginResult.new(changed: false, failed: true, msg: "Path #{path} does not exist!")}
+        return {false, PluginResult.new(changed: false, failed: true, msg: "Path #{path} does not exist !", rc: 257)}
       end
 
       unless check_mode
