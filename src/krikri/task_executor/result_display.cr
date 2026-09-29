@@ -3,6 +3,7 @@ require "colorize"
 require "../host"
 require "../timing_profile"
 require "../variable_substitutor/filter_core"
+require "../argspec_validator"
 require "./error_block"
 
 module Krikri
@@ -306,6 +307,22 @@ module Krikri
     private def self.task_error_chain(module_name : String?, msg : String, origin : String) : ErrorBlock::Node
       root = ErrorBlock::Node.new("Task failed.", source_context: origin)
 
+      # An argspec-validation failure we emitted has real's own chain
+      # shape, which differs from every other failure class: module-level
+      # validation (the generated spec table) is the generic collapsed
+      # "Module failed." chain - this matters for template:, whose usual
+      # two-segment handling chain would wrongly duplicate the message -
+      # while action-only directives (debug/assert/fail/...) fail with
+      # NO middle segment at all.
+      if kind = module_name.try { |name| ArgspecValidator.failure_kind?(name, msg) }
+        case kind
+        when :action
+          return root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(msg))
+        else
+          return root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new("Module failed.").with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(msg)))
+        end
+      end
+
       short = module_name.try { |name| name.split(".").last }
       case short
       when "template"
@@ -326,6 +343,12 @@ module Krikri
           # (live-verified: copy: with a missing src under -c local).
           not_found = "Could not find or access '#{match[1]}' on the Ansible Controller.\nIf you are using a module and expect the file to exist on the remote, see the remote_src option"
           root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new("Unexpected AnsibleActionFail error.").with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(not_found)))
+        elsif module_name.try(&.ends_with?(".copy")) &&
+              msg == "src and content are mutually exclusive"
+          # copy's action-level src/content conflict (raised before
+          # argspec validation, ordering live-verified against 2.19.11):
+          # real's chain is the action-level "Action failed." shape.
+          root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new("Action failed.").with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(msg)))
         else
           root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new("Module failed.").with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(msg)))
         end

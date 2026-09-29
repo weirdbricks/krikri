@@ -1519,6 +1519,74 @@ module Krikri
       PluginHelpers::AnsibleSplitlines.split(text)
     end
 
+    # Real's copy action plugin rejects src+content together before the
+    # src file is even looked at (live-verified: the mutual-exclusion
+    # error wins over a MISSING src too, and an EMPTY src is simply
+    # ignored - `src: ""` + content runs the content path, no conflict).
+    # Runs before inline_copy_source_content so the task's own src wins
+    # the conflict detection instead of being consumed by the inliner.
+    private def copy_src_content_conflict(task : Task, params : Hash(String, String)) : JSON::Any?
+      return nil unless task.module_name == "ansible.builtin.copy"
+      src = params["src"]?
+      return nil unless src && !src.empty?
+      return nil unless params.has_key?("content")
+      JSON.parse({"changed" => false, "failed" => true, "msg" => "src and content are mutually exclusive"}.to_json)
+    end
+
+    # Data-driven module argument validation (see ArgspecValidator): the
+    # failing result JSON for this task's module args, or nil when
+    # validation passes or does not apply. Real Ansible runs these checks
+    # inside the module's own AnsibleModule init - i.e. after the action
+    # plugin stage, before any module-side file access - which is exactly
+    # where the two callers of this hook sit.
+    private def argspec_validation_result(
+      task : Task,
+      params : Hash(String, String),
+      vars_context : Hash(String, JSON::Any),
+      action_level_only : Bool,
+    ) : JSON::Any?
+      # Role-private library/ modules and the py_module runner run real
+      # Python whose spec we don't know - nothing to validate against.
+      return nil if task.unavailable_module
+      action_name = task.action_name || task.module_name
+      failure = ArgspecValidator.validate(action_name, task.module_name, params, vars_context)
+      return nil unless failure
+      # The pre-action hook (action_level_only) takes only the
+      # action-plugin-level failures; the post-action hook takes only
+      # the module-level ones.
+      return nil if failure.action_level? != action_level_only
+
+      result = {
+        "changed" => JSON::Any.new(false),
+        "failed"  => JSON::Any.new(true),
+        "msg"     => JSON::Any.new(failure.msg),
+      } of String => JSON::Any
+      result.delete("changed") if failure.omit_changed?
+      # copy/template: real's action plugin computes the source SHA1
+      # before the module runs and merges it into the failed result, so
+      # the fatal dump carries "checksum" for these two modules only.
+      if {"ansible.builtin.copy", "ansible.builtin.template"}.includes?(task.module_name)
+        if checksum = argspec_source_checksum(params)
+          result["checksum"] = JSON::Any.new(checksum)
+        end
+      end
+      JSON.parse(result.to_json)
+    end
+
+    # SHA1 of the source content a copy/template task would deploy - the
+    # value real's copy action plugin puts in its result (live-verified:
+    # sha1 of the content string, or of the source FILE's bytes when src
+    # is a controller file; nothing when src is remote or missing).
+    private def argspec_source_checksum(params : Hash(String, String)) : String?
+      if content = params["content"]?
+        return Digest::SHA1.hexdigest(content)
+      end
+      return nil if params["remote_src"]?.try(&.downcase) == "true"
+      src = params["src"]?
+      return nil unless src && File.exists?(src) && !File.directory?(src)
+      Digest::SHA1.hexdigest(File.read(src))
+    end
+
     # Adds stdout_lines/stderr_lines (real Ansible behavior - each module
     # that has stdout/stderr sets these itself; krikri derives them
     # centrally here instead) to a plugin result. Shared by register_result

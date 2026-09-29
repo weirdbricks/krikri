@@ -12,10 +12,15 @@
         name: "krikri-playbook smoke test"
         job: "/bin/true"
         hour: "3"
+        # real ansible requires user= alongside cron_file= (and always
+        # requires it for authorized_key) - this fixture used to omit both,
+        # which krikri tolerated but real ansible-playbook rejects
+        user: root
         cron_file: /tmp/krikri-playbook-cron-test
 
     - name: add an authorized key to a scratch file
       ansible.posix.authorized_key:
+        user: root
         path: /tmp/krikri-playbook-authorized-keys-test
         key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEXAMPLE krikri-playbook@test"
 

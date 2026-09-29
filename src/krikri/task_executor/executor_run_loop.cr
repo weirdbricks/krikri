@@ -1445,6 +1445,11 @@ module Krikri
       end
 
       substituted_params = resolve_role_relative_src(task, substituted_params)
+      # Same pre-inline copy src+content gate as execute_task_once (see
+      # there) - the batched path must fail identically.
+      if violation = copy_src_content_conflict(task, substituted_params)
+        return apply_changed_failed_when(task, violation, vars_context, host)
+      end
       copied = inline_copy_source_content(task, substituted_params, host, vars_context)
       if copied.is_a?(JSON::Any)
         return apply_changed_failed_when(task, copied, vars_context, host)
@@ -1458,6 +1463,12 @@ module Krikri
       substituted_params = stage_script_src(task, substituted_params, host, vars_context)
       substituted_params = stage_assemble_dir(task, substituted_params, host, vars_context)
       substituted_become_user = task.become_user.try { |raw_user| substitutor.substitute(raw_user) }
+
+      # Action-only directives: pre-action validation gate (see
+      # execute_task_once's identical hook).
+      if violation = argspec_validation_result(task, substituted_params, vars_context, action_level_only: true)
+        return apply_changed_failed_when(task, violation, vars_context, host)
+      end
 
       if ActionPluginManager.has_action_plugin?(task.module_name)
         action_result = ActionPluginManager.execute_action(task.module_name, substituted_params, vars_context, host, @inventory, host, resolve_task_check_mode(task, vars_context))
@@ -1480,6 +1491,13 @@ module Krikri
         end
 
         substituted_params = action_result.modified_params || substituted_params
+      end
+
+      # Same argspec-validation gates as execute_task_once (see there) -
+      # batched tasks must fail on a typo'd option exactly like
+      # non-batched ones.
+      if violation = argspec_validation_result(task, substituted_params, vars_context, action_level_only: false)
+        return apply_changed_failed_when(task, violation, vars_context, host)
       end
 
       become = resolve_task_become(task, substitutor)
@@ -1579,6 +1597,7 @@ module Krikri
 
       resolved_task = task.dup
       resolved_task.module_name = resolved
+      resolved_task.action_name = raw_name
       resolved_task.params = merged
       resolved_task
     end
@@ -1683,6 +1702,16 @@ module Krikri
         return result
       end
 
+      # Action-only directives (debug/assert/fail/pause/script/... and
+      # group_by) are validated by real's ACTION PLUGIN, before any
+      # action runs - this pre-action hook handles exactly those; the
+      # post-action hook below handles every module-level spec. Placed
+      # before the controller-side pseudo-module branches (group_by)
+      # so their action-level "Invalid options" check is not preempted.
+      if violation = argspec_validation_result(task, substituted_params, vars_context, action_level_only: true)
+        return apply_changed_failed_when(task, violation, vars_context, host)
+      end
+
       if task.module_name == "ansible.builtin.reboot"
         result = execute_reboot(substituted_params, exec_host, vars_context, resolve_task_check_mode(task, vars_context))
         return apply_changed_failed_when(task, result, vars_context, host)
@@ -1699,6 +1728,12 @@ module Krikri
       end
 
       substituted_params = resolve_role_relative_src(task, substituted_params)
+      # Real's copy ACTION plugin rejects src+content together before
+      # anything else runs (even before the src file lookup) - live-
+      # verified ordering, see ArgspecValidator's module comment.
+      if violation = copy_src_content_conflict(task, substituted_params)
+        return apply_changed_failed_when(task, violation, vars_context, host)
+      end
       copied = inline_copy_source_content(task, substituted_params, exec_host, vars_context)
       if copied.is_a?(JSON::Any)
         return apply_changed_failed_when(task, copied, vars_context, host)
@@ -1744,6 +1779,18 @@ module Krikri
         if modified_params = action_result.modified_params
           substituted_params = modified_params
         end
+      end
+
+      # Data-driven module argument validation against real Ansible's own
+      # argument specs (see ArgspecValidator) - the same checks the real
+      # module's AnsibleModule init runs, controller-side, before the
+      # plugin is dispatched (so a typo'd option fails without any file
+      # access, exactly like real). Runs after the action-plugin stage:
+      # template's Jinja knobs are consumed there, and copy/template's
+      # source content is already inline for the failure dump's checksum.
+      # Action-level entries were already handled above.
+      if violation = argspec_validation_result(task, substituted_params, vars_context, action_level_only: false)
+        return apply_changed_failed_when(task, violation, vars_context, host)
       end
 
       # Same override execute_remote_plugin used to apply to the wire

@@ -15,6 +15,14 @@ module Krikri
   class Task
     property name : String
     property module_name : String
+    # The module spelling AS WRITTEN in the task source (before FQCN
+    # resolution and before MODULE_ALIASES redirect) - real Ansible's
+    # "Unsupported parameters for (...) module" argument-validation error
+    # echoes this spelling verbatim for non-delegating modules (bare
+    # `lineinfile:` prints "(lineinfile)", the FQCN prints the FQCN), so
+    # argspec validation needs it alongside the resolved module_name.
+    # nil for tasks built outside the parser (defaults to module_name).
+    property action_name : String?
     # Set for ANY module name that resolves to nothing this engine ships -
     # a role-private `library/<name>.py` module (module_name above keeps
     # the raw requested name, e.g. "sr_fingerprint", whose source
@@ -2371,6 +2379,7 @@ module Krikri
       module_name = resolved_module_name || module_name
 
       task = Task.new(name || as_written_module_name, module_name)
+      task.action_name = as_written_module_name
       if templated_action_string
         task.templated_action = templated_action_string
         # A dict-form directive's args: payload is static (only the module
@@ -3833,8 +3842,11 @@ module Krikri
           end
         end
       else
-        # Other types
-        params["value"] = stringify_value(yaml)
+        # Other types. A null args value (`ansible.builtin.package_facts:` with
+        # nothing after the colon) is NO params in real ansible - a phantom
+        # "value" key would read as an unsupported option to the argspec
+        # validator (real accepts the bare module call).
+        params["value"] = stringify_value(yaml) unless yaml.raw.nil?
       end
 
       params

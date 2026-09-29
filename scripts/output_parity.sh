@@ -58,8 +58,14 @@ fi
 # The mask strips exactly that one line - hostname and interpreter path
 # wildcarded - from stderr on both sides (a no-op for krikri, which
 # never emits it). Nothing else may be masked.
+# Second entry, same class: real ansible also attaches the discovered
+# interpreter to a failed task's result, so its `fatal: ... FAILED! => {..}`
+# JSON dump carries a lone `"ansible_facts": {"discovered_interpreter_python":
+# "..."}, ` key. Krikri has no Python interpreter and can never emit it.
+# Only that exact lone key is stripped; any other ansible_facts stays.
 MASKS=(
   "/^\\[WARNING\\]: Host '[^']*' is using the discovered Python interpreter at '[^']*', but future installation of another Python interpreter could cause a different interpreter to be discovered\\. See .* for more information\\.$/d"
+  "s/\"ansible_facts\": \\{\"discovered_interpreter_python\": \"[^\"]*\"\\}, //g"
 )
 
 mask() {
@@ -68,8 +74,11 @@ mask() {
     cp "$src" "$dst"
     return
   fi
-  # Only reached when MASKS is non-empty; each mask is a sed -E script.
-  sed -E "${MASKS[@]}" "$src" >"$dst"
+  # Only reached when MASKS is non-empty; each mask is a sed -E script,
+  # passed as its own -e (a bare second script arg would be read as a file).
+  local args=() m
+  for m in "${MASKS[@]}"; do args+=(-e "$m"); done
+  sed -E "${args[@]}" "$src" >"$dst"
 }
 
 run_engine() {

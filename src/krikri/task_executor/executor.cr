@@ -18,6 +18,7 @@ require "../ssh_manager"
 require "../custom_stats"
 require "../timing_profile"
 require "../fact_cache"
+require "../argspec_validator"
 require "../python_module_runner"
 require "random/secure"
 
