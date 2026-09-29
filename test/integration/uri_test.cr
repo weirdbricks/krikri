@@ -11,12 +11,21 @@ require "file_utils"
 # server (304 when If-Modified-Since >= the fixture file's mtime) so the
 # dest: idempotency specs need no internet; /echo-ims reports the wire
 # headers those specs assert on.
-IMS_OLD = File.join(Dir.tempdir, "uri-spec-ims-old-#{Random::Secure.hex(4)}.asc")
-IMS_NEW = File.join(Dir.tempdir, "uri-spec-ims-new-#{Random::Secure.hex(4)}.asc")
+#
+# /ims-flip serves the same conditional-GET behavior from its OWN fixture
+# so the one spec that needs to move a server file's mtime forward (the
+# re-download spec) never mutates a fixture other specs read: IMS_OLD is
+# shared by every 304-expecting spec, and under -p N a concurrent warm
+# run against it would see the 2030 mtime and get a 200 instead.
+IMS_OLD  = File.join(Dir.tempdir, "uri-spec-ims-old-#{Random::Secure.hex(4)}.asc")
+IMS_NEW  = File.join(Dir.tempdir, "uri-spec-ims-new-#{Random::Secure.hex(4)}.asc")
+IMS_FLIP = File.join(Dir.tempdir, "uri-spec-ims-flip-#{Random::Secure.hex(4)}.asc")
 File.write(IMS_OLD, "ims-body")
 File.write(IMS_NEW, "ims-body-v2")
+File.write(IMS_FLIP, "ims-body")
 File.touch(IMS_OLD, time: Time.utc(2020, 1, 1, 0, 0, 0))
 File.touch(IMS_NEW, time: Time.utc(2030, 1, 1, 0, 0, 0))
+File.touch(IMS_FLIP, time: Time.utc(2020, 1, 1, 0, 0, 0))
 
 URI_TEST_SERVER = HTTP::Server.new do |context|
   request = context.request
@@ -70,8 +79,12 @@ URI_TEST_SERVER = HTTP::Server.new do |context|
     response.status_code = 200
     response.headers["Content-Type"] = "text/plain"
     response.print("plain text body")
-  elsif request.method == "GET" && request.path.in?("/ims-old", "/ims-new")
-    file = request.path == "/ims-new" ? IMS_NEW : IMS_OLD
+  elsif request.method == "GET" && request.path.in?("/ims-old", "/ims-new", "/ims-flip")
+    file = case request.path
+           when "/ims-new"  then IMS_NEW
+           when "/ims-flip" then IMS_FLIP
+           else                  IMS_OLD
+           end
     mtime = File.info(file).modification_time
     ims_header = request.headers["If-Modified-Since"]?
     sent = ims_header.try do |header|
@@ -519,15 +532,15 @@ describe "uri plugin" do
   it "re-downloads (200, changed) once the server file is newer than the dest file" do
     dest = File.tempname("uri_ims_touch")
     begin
-      cold = PluginSpecHelper.run("uri", {"url" => "#{URI_BASE}/ims-old", "dest" => dest, "status_code" => "200,304"})
+      cold = PluginSpecHelper.run("uri", {"url" => "#{URI_BASE}/ims-flip", "dest" => dest, "status_code" => "200,304"})
       cold["changed"].as_bool.must_equal(true)
 
-      File.touch(IMS_OLD, time: Time.utc(2030, 1, 1, 0, 0, 0))
-      result = PluginSpecHelper.run("uri", {"url" => "#{URI_BASE}/ims-old", "dest" => dest, "status_code" => "200,304"})
+      File.touch(IMS_FLIP, time: Time.utc(2030, 1, 1, 0, 0, 0))
+      result = PluginSpecHelper.run("uri", {"url" => "#{URI_BASE}/ims-flip", "dest" => dest, "status_code" => "200,304"})
       result["changed"].as_bool.must_equal(true)
       result["status"].as_i.must_equal(200)
     ensure
-      File.touch(IMS_OLD, time: Time.utc(2020, 1, 1, 0, 0, 0))
+      File.touch(IMS_FLIP, time: Time.utc(2020, 1, 1, 0, 0, 0))
       File.delete(dest) if File.exists?(dest)
     end
   end
