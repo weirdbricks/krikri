@@ -2,6 +2,7 @@ require "../run_options"
 require "./executor"
 require "krikri-jinja/krikri_jinja"
 require "../jinja_host_context"
+require "../needle_lookup"
 
 module Krikri
   class TaskExecutor
@@ -142,6 +143,17 @@ module Krikri
       if role_path = task.role_path
         vars_context["role_path"] = JSON::Any.new(role_path)
       end
+
+      # ansible_search_path - real Ansible's own job var
+      # (task_executor.py sets it to Task#get_search_path() plus the
+      # loader basedir when not already present): the role dependency
+      # chain, current role first, then the directory of the file the
+      # task lives in. The template action plugin's controller-side src
+      # lookup and its "Searched in:" list are built from this.
+      search_path = Krikri::NeedleLookup.search_stack(task.role_path, task.role_parent_paths, needle_task_file_dir(task))
+      basedir = File.expand_path(@playbook_dir)
+      search_path << basedir unless search_path.includes?(basedir)
+      vars_context["ansible_search_path"] = JSON::Any.new(search_path.map { |path| JSON::Any.new(path) })
 
       # `ansible_facts` - the same facts again, under their unprefixed
       # names, as one dict. Real Ansible exposes every fact both ways
@@ -687,6 +699,25 @@ module Krikri
     # load a directory of inventory sources at all (it tries to execute
     # it as a dynamic inventory script). Those are separate, pre-existing
     # gaps in the loader, not in these magic vars.
+    # The directory of the file the task lives in - real's
+    # `dirname(task.get_path())`, the last entry of the search stack.
+    # Role-file tasks have no source_file stamp (role_loader passes
+    # none), so fall back to the including task file's directory and
+    # then the role's own tasks/ directory - real's task dir for a
+    # role's main.yml tasks.
+    private def needle_task_file_dir(task : Task) : String?
+      if file = task.source_file
+        return File.dirname(file)
+      end
+      if dir = task.include_file_dir
+        return dir
+      end
+      if role = task.role_path
+        return File.join(role, "tasks")
+      end
+      nil
+    end
+
     private def apply_path_magic_vars(vars_context : Hash(String, JSON::Any)) : Nil
       vars_context["playbook_dir"] = JSON::Any.new(File.expand_path(@playbook_dir))
 

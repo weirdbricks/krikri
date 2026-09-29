@@ -1,4 +1,5 @@
 require "./executor"
+require "../needle_lookup"
 require "../unsafe_values"
 require "krikri-jinja/krikri_jinja"
 require "../jinja_host_context"
@@ -862,17 +863,24 @@ module Krikri
           params = params.dup
           params["src"] = src
         else
-          return controller_missing_copy_local_result(src) if local_connection
-          return params
+          # real's _find_needle miss on the controller - a relative src,
+          # so the failure carries the full Searched-in list (both
+          # connection flavors live-verified against 2.19.11).
+          candidates = NeedleLookup.candidates(
+            NeedleLookup.search_stack(task.role_path, task.role_parent_paths, needle_task_file_dir(task)),
+            File.expand_path(@playbook_dir), "files", src)
+          return controller_missing_copy_local_result(src, candidates) if local_connection
+          return controller_missing_copy_result(src, candidates)
         end
       elsif local_connection
         # Absolute src on a local connection: the controller-side
         # existence check IS the whole story (same filesystem), so a
         # miss fails here with real's wording instead of reaching the
-        # plugin binary.
+        # plugin binary. An absolute src builds no searched-paths list
+        # in real (its absolute lookup branch never populates one).
         is_directory = Dir.exists?(src) rescue false
         return params if is_directory
-        return controller_missing_copy_local_result(src) unless File.exists?(src)
+        return controller_missing_copy_local_result(src, [] of String) unless File.exists?(src)
         return params
       end
 
@@ -889,7 +897,7 @@ module Krikri
       return stage_directory_copy_source(params, src, host, vars_context) if is_directory
 
       size = File.size(src) rescue nil
-      return controller_missing_copy_result(src) unless size
+      return controller_missing_copy_result(src, [] of String) unless size
 
       # Real Ansible's `copy:` auto-decrypts a vault-armored src on the
       # CONTROLLER before transfer (decrypt: true is the default;
@@ -975,12 +983,15 @@ module Krikri
     # Real Ansible's own failure text for a controller-side src: miss
     # (copy action plugin) - byte-identical to the unarchive variant
     # below so divergence triage compares cleanly against a real
-    # ansible-playbook run of the same role.
-    private def controller_missing_copy_result(src : String) : JSON::Any
+    # ansible-playbook run of the same role. A relative src carries the
+    # full Searched-in list (real's AnsibleFileNotFound paths); an
+    # absolute one carries none (real's absolute lookup branch never
+    # populates one).
+    private def controller_missing_copy_result(src : String, candidates : Array(String)) : JSON::Any
       JSON.parse({
         "changed" => false,
         "failed"  => true,
-        "msg"     => "Task failed: Could not find or access '#{src}' on the Ansible Controller.\nIf you are using a module and expect the file to exist on the remote, see the remote_src option",
+        "msg"     => "Task failed: #{NeedleLookup.not_found_message(src, candidates)}",
       }.to_json)
     end
 
@@ -988,11 +999,11 @@ module Krikri
     # 2.19.11's fatal msg carries the "Unexpected AnsibleActionFail
     # error: " prefix itself, WITHOUT the "Task failed: " prefix the
     # remote-host variant above carries (both live-verified).
-    private def controller_missing_copy_local_result(src : String) : JSON::Any
+    private def controller_missing_copy_local_result(src : String, candidates : Array(String)) : JSON::Any
       JSON.parse({
         "changed" => false,
         "failed"  => true,
-        "msg"     => "Unexpected AnsibleActionFail error: Could not find or access '#{src}' on the Ansible Controller.\nIf you are using a module and expect the file to exist on the remote, see the remote_src option",
+        "msg"     => "Unexpected AnsibleActionFail error: #{NeedleLookup.not_found_message(src, candidates)}",
       }.to_json)
     end
 
@@ -1265,10 +1276,10 @@ module Krikri
         # path relative to the controller's own cwd - if neither has it,
         # real Ansible's controller-side lookup has run out of places to
         # look and the task fails here, before the plugin ever runs.
-        return controller_missing_unarchive_result(original_src) unless resolved_local
+        return controller_missing_unarchive_result(original_src, unarchive_candidates(task, original_src)) unless resolved_local
         src = resolved_local
       end
-      return controller_missing_unarchive_result(original_src) unless File.exists?(src)
+      return controller_missing_unarchive_result(original_src, unarchive_candidates(task, original_src)) unless File.exists?(src)
 
       # A local connection runs the plugin on the controller itself -
       # hand it the resolved ABSOLUTE path, no staging (the transfer-
@@ -1305,13 +1316,21 @@ module Krikri
     # Real Ansible's own failure text for a controller-side src: miss
     # (unarchive action plugin, remote_src: false) - byte-identical so
     # divergence triage compares cleanly against a real ansible-playbook
-    # run of the same role.
-    private def controller_missing_unarchive_result(src : String) : JSON::Any
+    # run of the same role. A relative src carries the full Searched-in
+    # list (live-verified against 2.19.11); an absolute one none.
+    private def controller_missing_unarchive_result(src : String, candidates : Array(String)) : JSON::Any
       JSON.parse({
         "changed" => false,
         "failed"  => true,
-        "msg"     => "Task failed: Could not find or access '#{src}' on the Ansible Controller.\nIf you are using a module and expect the file to exist on the remote, see the remote_src option",
+        "msg"     => "Task failed: #{NeedleLookup.not_found_message(src, candidates)}",
       }.to_json)
+    end
+
+    private def unarchive_candidates(task : Task, src : String) : Array(String)
+      return [] of String if src.starts_with?('/') || src.starts_with?("~")
+      NeedleLookup.candidates(
+        NeedleLookup.search_stack(task.role_path, task.role_parent_paths, needle_task_file_dir(task)),
+        File.expand_path(@playbook_dir), "files", src)
     end
 
     # script:'s free-form `cmd` (or bare-string `_raw_params`, resolved to
@@ -1326,7 +1345,7 @@ module Krikri
     # (a role-relative name isn't meaningful relative to the plugin
     # process's own cwd otherwise) but never staged - the plugin process
     # already runs directly on the controller's filesystem in that case.
-    private def stage_script_src(task : Task, params : Hash(String, String), host : Host, vars_context : Hash(String, JSON::Any)) : Hash(String, String)
+    private def stage_script_src(task : Task, params : Hash(String, String), host : Host, vars_context : Hash(String, JSON::Any)) : Hash(String, String) | JSON::Any
       return params unless task.module_name == "ansible.builtin.script"
 
       cmd = params["cmd"]? || params["_raw_params"]?
@@ -1338,7 +1357,27 @@ module Krikri
       rest = parts[1]?
 
       resolved_local = resolve_script_path(local_path, task)
-      return params unless resolved_local
+      unless resolved_local
+        # real's script action plugin fails the task ON THE CONTROLLER
+        # when _find_needle can't find the file - an AnsibleActionFail
+        # carrying the loader's not-found text verbatim (no
+        # "Task failed: " prefix; the Searched-in list for a relative
+        # src, none for an absolute one - both live-verified against
+        # 2.19.11). Previously the task fell through to the plugin
+        # binary and failed with an unrelated transfer message.
+        candidates = if local_path.starts_with?('/') || local_path.starts_with?("~")
+                       [] of String
+                     else
+                       NeedleLookup.candidates(
+                         NeedleLookup.search_stack(task.role_path, task.role_parent_paths, needle_task_file_dir(task)),
+                         File.expand_path(@playbook_dir), "files", local_path)
+                     end
+        return JSON.parse({
+          "changed" => false,
+          "failed"  => true,
+          "msg"     => NeedleLookup.not_found_message(local_path, candidates),
+        }.to_json)
+      end
 
       if PluginManager.local_connection?(host, vars_context)
         resolved = params.dup

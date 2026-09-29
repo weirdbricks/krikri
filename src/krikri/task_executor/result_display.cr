@@ -363,6 +363,23 @@ module Krikri
         ErrorBlock.emit(root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(msg)))
         return
       end
+      # set_fact's validate_variable_name failure: real's cause carries
+      # the invalid key's own Origin (the mapping key inside the task)
+      # plus a fixed help_text paragraph, so the chain cannot collapse.
+      if (match = msg.match(/\ATask failed: Invalid variable name '(.*)'\.\z/)) &&
+         source_task.module_name.try { |name| name.split(".").last } == "set_fact"
+        key = match[1]
+        inner = "Invalid variable name '#{key}'."
+        root = ErrorBlock::Node.new("Task failed.", source_context: origin)
+        if key_origin = set_fact_key_origin(source_task, key)
+          cause = ErrorBlock::Node.new(inner, source_context: key_origin,
+            help_text: "Variable names must be strings starting with a letter or underscore character, and contain only letters, numbers and underscores.")
+        else
+          cause = ErrorBlock::Node.new(inner)
+        end
+        ErrorBlock.emit(root.with_chain(ErrorBlock::DIRECT_CAUSE, true, cause))
+        return
+      end
       ErrorBlock.emit(task_error_chain(source_task.module_name, msg, origin))
     end
 
@@ -438,6 +455,30 @@ module Krikri
       nil
     end
 
+    # Origin context of a set_fact mapping key named `key`: the key's own
+    # line/column inside the task, found by scanning the task's source
+    # lines for the key followed by ':' (a quoted key points at the
+    # opening quote, like real's per-key Origin).
+    private def self.set_fact_key_origin(task : Task, key : String) : String?
+      path = task.source_file
+      return nil unless path && task.source_line > 0 && File.file?(path)
+
+      lines = File.read_lines(path)
+      needle = "#{key}:"
+      ((task.source_line - 1)...lines.size).each do |idx|
+        line = lines[idx]
+        at = line.index(needle)
+        next unless at
+        prefix = line[0...at]
+        # only a mapping key: nothing but whitespace/quotes before it
+        stripped = prefix.strip
+        next unless stripped.empty? || (stripped.size == 1 && {"'", '"'}.includes?(stripped))
+        column = stripped.empty? ? at + 1 : at
+        return ErrorBlock.origin_context(path, idx + 1, column)
+      end
+      nil
+    end
+
     private def self.error_origin_context(task : Task) : String?
       path = task.source_file
       return nil unless path && task.source_line > 0
@@ -462,6 +503,16 @@ module Krikri
     private def self.task_error_chain(module_name : String?, msg : String, origin : String) : ErrorBlock::Node
       root = ErrorBlock::Node.new("Task failed.", source_context: origin)
 
+      # set_fact's strict cacheable: conversion failure (a plain
+      # convert_bool TypeError - no result contribution, no handling
+      # chain): the fatal msg is the whole collapsed-chain brief and the
+      # block is the single collapsed segment carrying the raw error.
+      if msg.starts_with?("Task failed: The value '") &&
+         msg.includes?(" is not a valid boolean. Valid booleans include: ") &&
+         module_name.try { |name| name.split(".").last } == "set_fact"
+        return root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(msg["Task failed: ".size..]))
+      end
+
       # An argspec-validation failure we emitted has real's own chain
       # shape, which differs from every other failure class: module-level
       # validation (the generated spec table) is the generic collapsed
@@ -481,22 +532,55 @@ module Krikri
       short = module_name.try { |name| name.split(".").last }
       case short
       when "template"
-        root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(msg).with_chain(ErrorBlock::HANDLING, false, ErrorBlock::Node.new(msg)))
+        # real's template action plugin raises AnsibleActionFail
+        # directly for every arg-validation failure (state/src+dest/
+        # newline_sequence) - a bare raise, no exception context, so
+        # real's renderer COLLAPSES the chain into one segment. Only the
+        # _find_needle failure is re-raised inside `except` (its
+        # AnsibleFileNotFound becomes the __context__), producing the
+        # two-segment handling chain (live-verified against 2.19.11:
+        # newline_sequence: 15 collapses, a missing relative src does
+        # not).
+        if msg.starts_with?("Could not find or access '")
+          root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(msg).with_chain(ErrorBlock::HANDLING, false, ErrorBlock::Node.new(msg)))
+        else
+          root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(msg))
+        end
+      when "set_fact"
+        # real's set_fact action plugin raises AnsibleActionFail
+        # directly (no key/value pairs) - bare action-level failure,
+        # collapsed chain, no middle segment.
+        root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(msg))
+      when "unarchive"
+        # real's unarchive action raises a non-contributing AnsibleError
+        # for a controller-side src miss (live-verified: the fatal msg
+        # carries the "Task failed: " brief prefix itself and the block
+        # is the single collapsed segment).
+        inner = msg.starts_with?("Task failed: ") ? msg["Task failed: ".size..] : msg
+        root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(inner))
+      when "script"
+        if msg.starts_with?("Could not find or access '")
+          # script:'s controller-side src miss: real re-raises the
+          # loader's file-not-found inside `except` - the same two-segment
+          # handling chain as template's (live-verified against 2.19.11).
+          root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(msg).with_chain(ErrorBlock::HANDLING, false, ErrorBlock::Node.new(msg)))
+        else
+          root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new("Module failed.").with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(msg)))
+        end
       when "fail", "assert"
         root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new("Action failed.").with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(msg)))
       else
-        if (match = msg.match(/\ATask failed: Could not find or access '([^']*)' on the Ansible Controller\./)) &&
-           msg.includes?("If you are using a module and expect the file to exist on the remote, see the remote_src option")
-          not_found = "Could not find or access '#{match[1]}' on the Ansible Controller.\nIf you are using a module and expect the file to exist on the remote, see the remote_src option"
-          root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new("Unexpected AnsibleActionFail error.").with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(not_found)))
-        elsif (match = msg.match(/\AUnexpected AnsibleActionFail error: Could not find or access '([^']*)' on the Ansible Controller\./)) &&
-              msg.includes?("If you are using a module and expect the file to exist on the remote, see the remote_src option")
-          # copy:'s controller-side src miss on a LOCAL connection: real
-          # 2.19.11's fatal msg carries the "Unexpected AnsibleActionFail
-          # error: " prefix itself (no "Task failed: " prefix), and the
-          # block chain is the same collapsed shape
-          # (live-verified: copy: with a missing src under -c local).
-          not_found = "Could not find or access '#{match[1]}' on the Ansible Controller.\nIf you are using a module and expect the file to exist on the remote, see the remote_src option"
+        # copy:'s controller-side src miss (both the remote-host variant,
+        # whose fatal msg carries the "Task failed: " brief prefix, and
+        # the local-connection variant, whose fatal msg carries the
+        # "Unexpected AnsibleActionFail error: " prefix itself - both
+        # live-verified): the chain is the collapsed
+        # "Unexpected AnsibleActionFail error." shape carrying real's
+        # full not-found text (now including the Searched-in list).
+        if (msg.starts_with?("Task failed: Could not find or access '") ||
+           msg.starts_with?("Unexpected AnsibleActionFail error: Could not find or access '")) &&
+           msg.includes?("see the remote_src option")
+          not_found = msg.sub(/\A(?:Task failed: |Unexpected AnsibleActionFail error: )/, "")
           root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new("Unexpected AnsibleActionFail error.").with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(not_found)))
         elsif module_name.try(&.ends_with?(".copy")) &&
               {"src and content are mutually exclusive", "src (or content) is required", "dest is required"}.includes?(msg)

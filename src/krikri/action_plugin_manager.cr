@@ -1,4 +1,5 @@
 require "json"
+require "./needle_lookup"
 require "./base_action_plugin"
 require "./template_action_plugin"
 require "./action_plugins/debug_action_plugin"

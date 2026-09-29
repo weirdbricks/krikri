@@ -12,16 +12,130 @@ module Krikri
   class SetFactActionPlugin < ActionPlugin
     CONTROL_PARAMS = {"cacheable"}
 
+    # real's utils/vars.py validate_variable_name allowlist: a Python
+    # str.isidentifier() (ASCII-only enforced here) that is not one of
+    # the few Jinja-reserved words.
+    JINJA_KEYWORD_KEYS = {"True", "False", "None", "true", "false", "none", "not"}
+
     def execute : ActionResult
+      # real's set_fact action plugin pops `cacheable` and runs it
+      # through convert_bool.boolean() with strict=True BEFORE anything
+      # else - a value that is not one of real's booleans fails the
+      # whole task there. The plain TypeError is not a result-
+      # contributing exception, so real's fatal msg is the collapsed
+      # chain brief: "Task failed: " + the conversion error.
+      if raw = @params["cacheable"]?
+        if error = strict_boolean_error(cacheable_native(raw))
+          return ActionResult.final(ActionResult.plugin_result_json(false, true, "Task failed: #{error}"))
+        end
+      end
+
       facts = Hash(String, JSON::Any).new
 
       @params.each do |key, value|
-        next if CONTROL_PARAMS.includes?(key)
+        # execute_action injects its own engine-wire keys into every
+        # action plugin's params (real's _task.args never sees them);
+        # they are not user facts and must not satisfy real's
+        # no-key/value-pairs check either.
+        next if CONTROL_PARAMS.includes?(key) || key == "_verbosity" || key == "_ansible_check_mode"
+        # real validates EVERY fact key with validate_variable_name() in
+        # insertion order and fails on the first invalid one; the raised
+        # AnsibleError contributes no result, so the fatal msg again
+        # carries the "Task failed: " brief prefix (the error block's
+        # cause segment then points at the key's own Origin with real's
+        # help text - see ResultDisplay's emit path).
+        unless valid_variable_name?(key)
+          return ActionResult.final(ActionResult.plugin_result_json(false, true, "Task failed: Invalid variable name '#{key}'."))
+        end
         facts[key] = coerce(value)
+      end
+
+      if facts.empty?
+        # real: AnsibleActionFail - a result-CONTRIBUTING action failure,
+        # so the fatal msg carries NO "Task failed: " prefix.
+        return ActionResult.final(ActionResult.plugin_result_json(false, true, "No key/value pairs provided, at least one is required for this action to succeed"))
       end
 
       extra = {"ansible_facts" => JSON::Any.new(facts)}
       ActionResult.final(ActionResult.plugin_result_json(false, false, "", extra))
+    end
+
+    # The executor marks every set_fact param value with
+    # NATIVE_TYPED_PREFIX + the JSON encoding of the value's native type
+    # (see #coerce) - decode `cacheable` back to that native value so
+    # the strict check sees what real's boolean() sees (an int 5 is not
+    # a boolean, the float 1.0 is, a bare `esfzey` is the string it
+    # looks like).
+    private def cacheable_native(raw : String) : JSON::Any
+      if raw.starts_with?(Krikri::NATIVE_TYPED_PREFIX)
+        begin
+          JSON.parse(raw[Krikri::NATIVE_TYPED_PREFIX.size..])
+        rescue JSON::ParseException
+          JSON::Any.new(raw)
+        end
+      elsif raw == NONE_SENTINEL
+        JSON::Any.new(nil)
+      else
+        JSON::Any.new(raw)
+      end
+    end
+
+    # convert_bool.boolean(strict=True) over the value's native type:
+    # the boolean spellings real accepts case-insensitively after strip,
+    # plus the ints 1/0 and floats 1.0/0.0 (real's BOOLEANS set holds
+    # them as numbers - a quoted "1.0" STRING is NOT valid there, but a
+    # demoted literal is text this wire cannot distinguish; the native
+    # form is the common one).
+    private def strict_boolean_error(native : JSON::Any) : String?
+      case raw = native.raw
+      when Bool
+        nil
+      when Int64
+        return nil if raw == 1 || raw == 0
+        value_error(native)
+      when Float64
+        return nil if raw == 1.0 || raw == 0.0
+        value_error(native)
+      when String
+        normalized = raw.downcase.strip
+        return nil if ArgspecValidator::REAL_TRUE.includes?(normalized)
+        return nil if ArgspecValidator::REAL_FALSE.includes?(normalized)
+        value_error(native)
+      else
+        value_error(native)
+      end
+    end
+
+    private def value_error(native : JSON::Any) : String
+      "The value '#{python_value_text(native)}' is not a valid boolean. Valid booleans include: #{ArgspecValidator::BOOLEANS_REPR.join(", ")}"
+    end
+
+    # to_text(value) for the error message: scalars match real's str()
+    # directly; JSON-shaped containers get real's Python str() spacing
+    # (", " between items).
+    private def python_value_text(native : JSON::Any) : String
+      case raw = native.raw
+      when Nil            then "None"
+      when Bool           then raw ? "True" : "False"
+      when Int64, Float64 then raw.to_s
+      when Array          then "[" + native.as_a.map { |item| python_scalar_repr(item) }.join(", ") + "]"
+      when Hash           then "{" + native.as_h.map { |key, value| "'#{key}': #{python_scalar_repr(value)}" }.join(", ") + "}"
+      else                     native.as_s
+      end
+    end
+
+    private def python_scalar_repr(value : JSON::Any) : String
+      case raw = value.raw
+      when Bool   then raw ? "True" : "False"
+      when String then "'#{raw}'"
+      when Nil    then "None"
+      else             value.to_s
+      end
+    end
+
+    private def valid_variable_name?(key : String) : Bool
+      return false unless key.matches?(/\A[A-Za-z_][A-Za-z0-9_]*\z/)
+      !JINJA_KEYWORD_KEYS.includes?(key)
     end
 
     private def coerce(value : String) : JSON::Any
