@@ -55,6 +55,25 @@ describe Krikri::LocalExecutor do
       result[:stdout].must_equal("--opt=value\n")
     end
 
+    # Regression test for a stdout-truncation flake seen in CI: used to
+    # spawn with Process::Redirect::Pipe and call Process#wait right after
+    # starting the drain fibers, but wait's own `ensure` closes the
+    # process's pipes the moment it returns - which can beat a drain fiber
+    # that hasn't yet read output the child left buffered in the pipe
+    # (under a loaded, parallel test runner the drain fiber may not even
+    # have been scheduled yet). The drain then died on "Closed stream",
+    # its bare `rescue` swallowed the error, and the capture came back
+    # empty. Each iteration here is a command that prints and exits
+    # immediately - the shape that lost the race.
+    it "captures stdout in full across many immediately-exiting commands" do
+      100.times do |i|
+        result = Krikri::LocalExecutor.exec("SOME_VAR=hello#{i} sh -c 'echo $SOME_VAR'")
+        result[:exit_code].must_equal(0)
+        result[:stdout].must_equal("hello#{i}\n")
+        result[:stderr].must_equal("")
+      end
+    end
+
     # Regression test for a real, previously-shipped bug: `sleep N && daemon &`
     # backgrounds a *shell* that blocks in its own wait() on `daemon` (nohup
     # only suppresses SIGHUP, it doesn't exempt a child from its parent's own
