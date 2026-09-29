@@ -1793,6 +1793,13 @@ module Krikri
       # here, since Task is shared/reused across hosts and loop iterations.
       substituted_become_user = task.become_user.try { |raw_user| substitutor.substitute(raw_user) }
 
+      # Real's add_host: the groups failure (action stage) and the
+      # inventory.add_host name crash (result-processing stage, which
+      # aborts the whole run) - see add_host_literal_type_failure.
+      if violation = add_host_literal_type_failure(task, substituted_params)
+        return apply_changed_failed_when(task, violation, vars_context, host)
+      end
+
       if ActionPluginManager.has_action_plugin?(task.module_name)
         action_result = ActionPluginManager.execute_action(
           task.module_name,

@@ -320,3 +320,92 @@ describe "copy argspec-failure checksum (template carries it, copy only on the _
     text.scan(%(FAILED! => {"changed": false, "msg": "Unsupported parameters)).size.must_equal(1)
   end
 end
+
+describe "non-string YAML literal module args (group_by/add_host)" do
+  # group_by's action crashes while building its result dict
+  # (`group_name.replace(' ', '-')` for key, the parents comprehension
+  # for a non-list parents) and add_host's crash points straddle two
+  # stages - the action's "Groups must be specified as a list."
+  # AnsibleActionFail (with the failing param value's own Origin in the
+  # [ERROR] block) and the executor's inventory.add_host name checks,
+  # which abort the WHOLE run with a bare stderr [ERROR] line, rc 1 and
+  # no recap. Every expectation below was probed against real
+  # ansible-playbook 2.19.11.
+  it "group_by crashes on int/bool/float key like real's group_name.replace" do
+    output, _scratch = run_playbook(<<-YAML)
+          - group_by:
+              key: 19
+            ignore_errors: true
+          - group_by:
+              key: true
+            ignore_errors: true
+          - group_by:
+              key: 1.5
+            ignore_errors: true
+          - group_by:
+              key: "text key"
+            ignore_errors: true
+    YAML
+
+    output.must_include(%("msg": "Task failed: '_AnsibleTaggedInt' object has no attribute 'replace'"))
+    output.must_include(%("msg": "Task failed: 'bool' object has no attribute 'replace'"))
+    output.must_include(%("msg": "Task failed: '_AnsibleTaggedFloat' object has no attribute 'replace'"))
+    output.must_include(%("msg": "Task failed: '_AnsibleTaggedInt' object has no attribute 'replace'"))
+  end
+
+  it "group_by crashes on a non-list parents like real's comprehension iteration" do
+    output, _scratch = run_playbook(<<-YAML)
+          - group_by:
+              key: abc
+              parents: 7
+            ignore_errors: true
+          - group_by:
+              key: abc
+              parents: false
+            ignore_errors: true
+    YAML
+
+    output.must_include(%("msg": "Task failed: '_AnsibleTaggedInt' object is not iterable"))
+    output.must_include(%("msg": "Task failed: 'bool' object is not iterable"))
+  end
+
+  it "add_host fails a truthy non-string groups with real's AnsibleActionFail block" do
+    output, _scratch = run_playbook(<<-YAML)
+          - add_host:
+              name: h1
+              groups: 5
+            ignore_errors: true
+    YAML
+
+    output.must_include("[ERROR]: Task failed: Groups must be specified as a list.")
+    output.must_include("<<< caused by >>>")
+    output.must_include(%("msg": "Groups must be specified as a list."))
+    output.wont_include(%("msg": "Task failed: Groups must be specified as a list."))
+    output.must_include("Origin:")
+  end
+
+  it "add_host aborts the run on a non-string name like real's inventory.add_host" do
+    output, _scratch = run_playbook(<<-YAML)
+          - add_host:
+              name: 5
+            ignore_errors: true
+          - debug:
+              msg: never reached
+    YAML
+
+    output.must_include("[ERROR]: Invalid host name supplied, expected a string but got <class 'ansible.module_utils._internal._datatag._AnsibleTaggedInt'> for 5")
+    output.wont_include("never reached")
+    output.wont_include("PLAY RECAP")
+  end
+
+  it "add_host aborts the run on a falsy non-string name like real's empty-host check" do
+    output, _scratch = run_playbook(<<-YAML)
+          - add_host:
+              name: 0
+            ignore_errors: true
+    YAML
+
+    output.must_include("[ERROR]: Invalid empty host name provided: 0")
+    output.wont_include("PLAY RECAP")
+  end
+end

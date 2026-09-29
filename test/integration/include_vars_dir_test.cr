@@ -243,6 +243,26 @@ describe "include_vars: with malformed parameters" do
     output.to_s.wont_include("Could not find file on the Ansible Controller.")
   end
 
+  it "reports the alphabetically-first unknown argument, not the YAML-first one" do
+    # Real 2.19's chain templar rebuilds the task args mapping with a
+    # SORTED keys() iteration, so the include_vars action's
+    # first-invalid-key report comes out in alphabetical key order, not
+    # YAML order: `files_macthing:` written AFTER `free-form:` is still
+    # the one reported ("files_macthing" < "free-form"), whichever order
+    # the playbook lists them in (live-verified vs 2.19.11 both ways).
+    status, output = run_playbook(<<-YAML)
+      - name: sorted unknown arg
+        include_vars:
+          file: /nonexistent-krikri-test.yml
+          free-form: uexnfi
+          files_macthing: hnarks
+      YAML
+
+    status.success?.must_equal(false)
+    output.to_s.must_include("files_macthing is not a valid option in include_vars")
+    output.to_s.wont_include("free-form is not a valid option in include_vars")
+  end
+
   it "fails the task when file:-style and dir:-style arguments are mixed" do
     # Real ansible-core 2.19.11 (live-verified): the mixing rejection is
     # the include_vars ACTION's own runtime check - an ordinary failed

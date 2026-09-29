@@ -355,6 +355,19 @@ module Krikri
         ErrorBlock.emit(root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new("Action failed.")))
         return
       end
+      # A failed result carrying _ansible_fail_param names the task param
+      # whose VALUE real's action plugin attached as the raise's obj
+      # (add_host's "Groups must be specified as a list." AnsibleActionFail):
+      # the chain cannot collapse - real's cause event carries the param
+      # value's own Origin, producing the two-segment block with the
+      # brief "Task failed: <msg>." header line.
+      if (fail_param = result["_ansible_fail_param"]?.try(&.as_s?)) &&
+         (param_origin = task_param_value_origin(source_task, fail_param))
+        root = ErrorBlock::Node.new("Task failed.", source_context: origin)
+        cause = ErrorBlock::Node.new(msg, source_context: param_origin)
+        ErrorBlock.emit(root.with_chain(ErrorBlock::DIRECT_CAUSE, true, cause))
+        return
+      end
       # A plugin flagging _ansible_action_level failed in real's controller-
       # side ACTION plugin (a bare AnsibleActionFail: no "Module failed."
       # middle segment), e.g. assemble's remote_src: false isdir() check.
@@ -475,6 +488,35 @@ module Krikri
         next unless stripped.empty? || (stripped.size == 1 && {"'", '"'}.includes?(stripped))
         column = stripped.empty? ? at + 1 : at
         return ErrorBlock.origin_context(path, idx + 1, column)
+      end
+      nil
+    end
+
+    # The Origin of a task param's VALUE (the position real's
+    # AnsibleActionFail obj= attaches as the failing event's source
+    # context - e.g. add_host's `groups: 5` points at the 5, column of
+    # the value, not the key). Same best-effort text scan as
+    # set_fact_key_origin above, but the caret lands on the first
+    # non-space character after `key:`.
+    private def self.task_param_value_origin(task : Task, key : String) : String?
+      path = task.source_file
+      return nil unless path && task.source_line > 0 && File.file?(path)
+
+      lines = File.read_lines(path)
+      needle = "#{key}:"
+      ((task.source_line - 1)...lines.size).each do |idx|
+        line = lines[idx]
+        at = line.index(needle)
+        next unless at
+        prefix = line[0...at]
+        # only a mapping key: nothing but whitespace/quotes before it
+        stripped = prefix.strip
+        next unless stripped.empty? || (stripped.size == 1 && {"'", '"'}.includes?(stripped))
+        col = at + needle.size
+        while col < line.size && line[col] == ' '
+          col += 1
+        end
+        return ErrorBlock.origin_context(path, idx + 1, col + 1)
       end
       nil
     end

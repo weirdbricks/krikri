@@ -145,4 +145,18 @@ module Krikri
     else                   native.raw.class.to_s
     end
   end
+
+  # The FULL Python class path real's inventory layer reports for a
+  # non-string scalar host name - Inventory.add_host's
+  # "expected a string but got %s for %s" formats type(host), which is
+  # the fully-qualified class, not the short name the task-executor
+  # crash messages use (live-verified vs 2.19.11).
+  def self.python_scalar_class_path(native : JSON::Any) : String
+    case native.raw
+    when Int64, Int32 then "ansible.module_utils._internal._datatag._AnsibleTaggedInt"
+    when Float64      then "ansible.module_utils._internal._datatag._AnsibleTaggedFloat"
+    when Bool         then "bool"
+    else                   native.raw.class.to_s
+    end
+  end
 end

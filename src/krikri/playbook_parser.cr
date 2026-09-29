@@ -2883,8 +2883,13 @@ module Krikri
         invalid_arg = nil
         dirs = 0
         files = 0
-        hash.each_key do |key|
-          k = key.to_s
+        # Real 2.19's chain templar rebuilds the task-args mapping with a
+        # SORTED keys() iteration (_internal/_templating/_chain_templar.py's
+        # LayeredTemplarMapping.keys), so the action's first-invalid-key
+        # report comes out in alphabetical key order, not YAML order - e.g.
+        # `files_macthing:` after `free-form:` still reports files_macthing
+        # because "files_macthing" < "free-form".
+        hash.keys.map(&.to_s).sort.each do |k|
           if INCLUDE_VARS_DIR_ARGS.includes?(k)
             dirs += 1
           elsif INCLUDE_VARS_FILE_ARGS.includes?(k)

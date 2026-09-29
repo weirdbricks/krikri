@@ -380,6 +380,23 @@ module Krikri
         return JSON.parse({"changed" => false, "failed" => true, "msg" => "group_by: no inventory available in this context"}.to_json)
       end
 
+      # Real's group_by action crashes on non-string YAML literal args
+      # (the parser marks those; see NON_STRING_PARAM_PREFIX) while
+      # building its result dict: key hits `group_name.replace(' ', '-')`
+      # - "'<type>' object has no attribute 'replace'" - and parents, a
+      # non-list/non-string, hits the
+      # `[name.replace(' ', '-') for name in parent_groups]` comprehension
+      # - "'<type>' object is not iterable". Falsy literals crash too
+      # (args.get returns the value whenever the key is present); the key
+      # crash precedes the parents crash (add_group is assigned first).
+      # Live-verified vs 2.19.11 for int/float/bool on both params.
+      if native = Krikri.non_string_scalar(key)
+        return literal_attribute_crash_result(native, "replace")
+      end
+      if (parents_raw = params["parents"]?) && (native = Krikri.non_string_scalar(parents_raw))
+        return literal_crash_result("'#{Krikri.python_scalar_type_name(native)}' object is not iterable")
+      end
+
       group_names = key.split(",").map(&.strip).reject(&.empty?)
       parent_names = params["parents"]?.try(&.split(",").map(&.strip).reject(&.empty?)) || [] of String
 
@@ -1735,6 +1752,62 @@ module Krikri
 
     private def remote_src_param?(params : Hash(String, String)) : Bool
       ansible_boolean_param?(params["remote_src"]?)
+    end
+
+    # Real's add_host: non-string YAML literal args (the parser marks
+    # those; see NON_STRING_PARAM_PREFIX) crash the run at two different
+    # stages, both live-verified vs 2.19.11:
+    #
+    # - groups/group/groupname (real precedence, first present wins): a
+    #   TRUTHY non-list/non-string fails the task inside the action
+    #   plugin with AnsibleActionFail "Groups must be specified as a
+    #   list." - an un-prefixed fatal msg plus a two-segment [ERROR]
+    #   block whose cause carries the failing param value's own Origin
+    #   (see emit_task_error_block's _ansible_fail_param branch). A falsy
+    #   literal (0/0.0/false) is skipped by the action's `if groups:`
+    #   truthiness check entirely.
+    # - name/hostname: the action itself never type-checks the name; the
+    #   crash fires later, in the executor's result processing
+    #   (inventory.add_host): a truthy non-string aborts the WHOLE run
+    #   with a bare stderr line - "Invalid host name supplied, expected a
+    #   string but got <class 'ansible.module_utils._internal._datatag
+    #   ._AnsibleTaggedInt'> for 5" - and a falsy one with "Invalid empty
+    #   host name provided: 0"; both rc 1, no recap, no further output.
+    #   The groups failure precedes the name crash (action stage before
+    #   result processing).
+    private def add_host_literal_type_failure(task : Task, params : Hash(String, String)) : JSON::Any?
+      return nil unless task.module_name == "ansible.builtin.add_host" || task.module_name == "add_host"
+
+      {"groupname", "groups", "group"}.each do |group_key|
+        raw = params[group_key]? || next
+        next unless native = Krikri.non_string_scalar(raw)
+        next unless Krikri.python_param_truthy?(raw)
+        return JSON.parse({
+          "changed"               => false,
+          "failed"                => true,
+          "msg"                   => "Groups must be specified as a list.",
+          "_ansible_action_level" => true,
+          "_ansible_error_detail" => "Groups must be specified as a list.",
+          "_ansible_fail_param"   => group_key,
+        }.to_json)
+      end
+
+      {"name", "hostname"}.each do |name_key|
+        raw = params[name_key]? || next
+        next unless native = Krikri.non_string_scalar(raw)
+        if Krikri.python_param_truthy?(raw)
+          STDERR.puts "[ERROR]: Invalid host name supplied, expected a string but got <class '#{Krikri.python_scalar_class_path(native)}'> for #{Krikri.python_str_scalar(native)}".colorize(:red)
+        else
+          STDERR.puts "[ERROR]: Invalid empty host name provided: #{Krikri.python_str_scalar(native)}".colorize(:red)
+        end
+        # Same Process.exit reasoning as abort_invalid_meta_action: this
+        # runs inside the executor's per-task paths, which swallow `exit`'s
+        # ExitException; both streams are flushed explicitly first.
+        STDOUT.flush
+        STDERR.flush
+        Process.exit(1)
+      end
+      nil
     end
 
     # Data-driven module argument validation (see ArgspecValidator): the
