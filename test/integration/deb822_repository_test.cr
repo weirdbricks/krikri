@@ -113,16 +113,46 @@ describe "deb822_repository plugin" do
     result["msg"].as_s.must_include("banana")
   end
 
-  it "gates on python3-debian like the real module's unconditional `from debian.deb822 import Deb822` (host-dependent)" do
+  it "gates on python3-debian deterministically: a stub `debian` package on PYTHONPATH forces the missing-lib branch on any host" do
     # The real module fails with missing_required_lib wording on any
     # target without python3-debian - before state handling, so both
-    # states fail identically. This dev/spec host may or may not have
-    # the library, so the expectation is conditional on a direct probe
-    # of the same import (found via krikri-playbook-generator: its
-    # real-ansible container lacks python3-debian, so real reported a
-    # failed-ignored task / changed=0 where krikri happily wrote the
-    # file and reported changed=1).
+    # states fail identically. Instead of depending on whether THIS
+    # host has the library, the failure branch is forced
+    # deterministically: a PYTHONPATH entry precedes site-packages in
+    # sys.path, so a stub `debian` package whose __init__ raises
+    # ImportError makes `from debian.deb822 import Deb822` fail on
+    # every host. The env reaches the probe because the plugin spawns
+    # python3 with an inherited environment (Process.run without an
+    # env: argument), so PYTHONPATH flows test process -> plugin ->
+    # python3.
+    skip "no python3/python on this host (the gate needs an interpreter to fail)" unless Process.find_executable("python3") || Process.find_executable("python")
+
+    stub_root = PluginSpecHelper.tmp_path("python-debian-stub")
+    FileUtils.mkdir_p(File.join(stub_root, "debian"))
+    File.write(File.join(stub_root, "debian", "__init__.py"),
+      "raise ImportError(\"deb822 gate spec stub: python3-debian forced absent\")\n")
+
+    {"present", "absent"}.each do |state|
+      result = PluginSpecHelper.run("deb822_repository", {
+        "name"                => "testrepo-debian-gate",
+        "uris"                => "https://example.com/repo",
+        "state"               => state,
+        "_ansible_check_mode" => "true",
+      }, env: {"PYTHONPATH" => stub_root})
+
+      result["failed"].as_bool.must_equal(true)
+      result["changed"].as_bool.must_equal(false)
+      result["msg"].as_s.must_include("Failed to import the required Python library (python3-debian)")
+    end
+  end
+
+  it "succeeds on hosts that actually have python3-debian (skipped elsewhere; the PYTHONPATH-stub spec covers the failure branch)" do
+    # Companion to the deterministic gate spec above: on a host WITH
+    # python3-debian (and no PYTHONPATH override) the gate probe finds
+    # the real module and the task proceeds normally.
     probe = Process.run("python3", {"-c", "from debian.deb822 import Deb822"}, error: Process::Redirect::Close)
+    skip "python3-debian not installed on this host" unless probe.success?
+
     {"present", "absent"}.each do |state|
       result = PluginSpecHelper.run("deb822_repository", {
         "name"                => "testrepo-debian-gate",
@@ -131,13 +161,7 @@ describe "deb822_repository plugin" do
         "_ansible_check_mode" => "true",
       })
 
-      if probe.success?
-        expect(falsey?(result["failed"]?.try(&.as_bool))).must_equal(true)
-      else
-        result["failed"].as_bool.must_equal(true)
-        result["changed"].as_bool.must_equal(false)
-        result["msg"].as_s.must_include("Failed to import the required Python library (python3-debian)")
-      end
+      expect(falsey?(result["failed"]?.try(&.as_bool))).must_equal(true)
     end
   end
 

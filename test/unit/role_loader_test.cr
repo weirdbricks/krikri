@@ -553,7 +553,11 @@ describe Krikri::RoleLoader do
     # fixed in plugin_helpers/mysql_connection.cr's
     # resolve_option_file_path (KNOWN_MISSING.md 0.9.346) and in
     # BasePlugin#expand_tilde (used by every plugin's path-type arg);
-    # this test pins the role_loader's own copy.
+    # this test pins the role_loader's own copy. (The original repro
+    # Dir.cd'd this process to /tmp; that's gone - the suite process's
+    # cwd is shared by every concurrent test, and a regression joins `~`
+    # to WHATEVER cwd the suite runs from, where the literal-~ path
+    # never exists, so the not-found failure is caught either way.)
     #
     # The fix uses System::User.find_by? to find the home dir (not
     # ENV["HOME"], which can be overridden by env stubs or
@@ -567,8 +571,6 @@ describe Krikri::RoleLoader do
     # under the same path and removed afterward.
     ENV.delete("ANSIBLE_COLLECTIONS_PATH")
     ENV.delete("ANSIBLE_COLLECTIONS_PATHS")
-    original_cwd = Dir.current
-    Dir.cd("/tmp")
 
     # The loader resolves `~` through the passwd database (the real home),
     # so a temp HOME can't redirect it - the fixture has to live under the
@@ -611,7 +613,6 @@ describe Krikri::RoleLoader do
       tasks[0].name.must_include("Validating arguments")
     ensure
       FileUtils.rm_rf(File.join(collection_dir, "roles", "mysql_hardening")) if fixture_created
-      Dir.cd(original_cwd)
     end
   end
 
