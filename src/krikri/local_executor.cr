@@ -8,26 +8,19 @@ module Krikri
     # How long to keep draining stdout/stderr after the process itself has
     # already exited, before giving up on a pipe that hasn't reached EOF.
     #
-    # Passing output/error as a plain IO (as this used to) makes
-    # Process#wait itself block until BOTH the process exits AND its
-    # stdout/stderr pipes reach EOF - which requires every process holding
-    # a duplicate of the pipe's write end to close it, not just the direct
-    # child. A shell command shaped like `sleep N && daemon &` backgrounds
-    # a *shell* that blocks in its own wait() on `daemon` (a trailing `&`
-    # backgrounds the whole `&&`-list, and `nohup` only suppresses
-    # SIGHUP - it doesn't exempt a child from its parent's wait()), so if
-    # `daemon` never exits, neither does that shell, and the pipe it's
-    # still holding open never reaches EOF - hanging this call forever even
-    # though the actual process we spawned already finished.
-    #
-    # Using Process::Redirect::Pipe instead and managing our own drain
-    # fibers lets us wait for the process's own exit independently of the
-    # pipes, then give any already-buffered output a short, bounded window
-    # to be read before force-closing the pipes and moving on - a real
-    # command's own output is already fully written into the pipe's kernel
-    # buffer by the time it exits, so this window only matters for
-    # draining that tail, not for waiting on an unrelated backgrounded
-    # process that was never supposed to be waited on in the first place.
+    # A shell command shaped like `sleep N && daemon &` backgrounds a *shell*
+    # that blocks in its own wait() on `daemon` (a trailing `&` backgrounds
+    # the whole `&&`-list, and `nohup` only suppresses SIGHUP - it doesn't
+    # exempt a child from its parent's wait()), so if `daemon` never exits,
+    # neither does that shell, and the pipe it's still holding open never
+    # reaches EOF. Waiting unconditionally for EOF on our pipes would hang
+    # this call forever even though the actual process we spawned already
+    # finished - so once the process itself has exited, any pipe still not
+    # at EOF gets this much grace before being force-closed and abandoned
+    # (a real command's own output is already fully written into the pipe's
+    # kernel buffer by the time it exits, so this window only matters for
+    # draining that tail, plus the rare writer still running in the
+    # background that we've chosen not to wait for).
     DRAIN_GRACE_PERIOD = 200.milliseconds
 
     # Any of these anywhere in the command string means it actually needs
@@ -85,40 +78,81 @@ module Krikri
       # `sh -c <string>`; live-verified 2026-09-15). The command module
       # keeps the fast path - real Ansible's command module genuinely
       # execs argv without a shell.
-      process =
-        if force_shell || needs_shell?(command)
-          Process.new(
-            "/bin/bash",
-            ["-c", command],
-            output: Process::Redirect::Pipe,
-            error: Process::Redirect::Pipe
-          )
-        else
-          argv = Process.parse_arguments(command)
-          Process.new(
-            argv[0],
-            argv[1..],
-            output: Process::Redirect::Pipe,
-            error: Process::Redirect::Pipe
-          )
-        end
+      #
+      # The child gets OUR OWN pipe write ends (an IO::FileDescriptor
+      # passed as output/error is inherited by the child directly - the
+      # same mechanism a `File` redirect uses), and the drain fibers below
+      # read from the read ends. This deliberately avoids
+      # Process::Redirect::Pipe: Process#wait closes whatever pipe IOs the
+      # Process object holds in its own `ensure` block the moment it
+      # returns, which can beat a drain fiber that is still mid-read on
+      # output the child left buffered in the pipe - the drain dies on
+      # "Closed stream" and the capture comes back truncated (observed in
+      # CI as an intermittently empty stdout for `echo`-style commands).
+      # Process#wait never touches these read ends, so a drain fiber is
+      # free to keep reading right up to real EOF or the grace-period
+      # abandon in #await below.
+      stdout_pipe, stdout_child_end = IO.pipe(write_blocking: true)
+      stderr_pipe, stderr_child_end = IO.pipe(write_blocking: true)
 
-      stdout = IO::Memory.new
-      stderr = IO::Memory.new
-      stdout_pipe = process.output
-      stderr_pipe = process.error
-      stdout_done = drain(stdout_pipe, stdout)
-      stderr_done = drain(stderr_pipe, stderr)
+      begin
+        process =
+          if force_shell || needs_shell?(command)
+            Process.new(
+              "/bin/bash",
+              ["-c", command],
+              output: stdout_child_end,
+              error: stderr_child_end
+            )
+          else
+            argv = Process.parse_arguments(command)
+            Process.new(
+              argv[0],
+              argv[1..],
+              output: stdout_child_end,
+              error: stderr_child_end
+            )
+          end
 
-      exit_status = process.wait
-      await(stdout_pipe, stdout_done)
-      await(stderr_pipe, stderr_done)
+        # The parent must not hold the write ends: EOF on a pipe - what the
+        # drain fibers wait for - requires every write end to be closed,
+        # and the child already owns its inherited copies. (Keeping them
+        # here would hang every command on the first #await.)
+        stdout_child_end.close
+        stderr_child_end.close
 
-      {
-        exit_code: signal_safe_exit_code(exit_status),
-        stdout:    stdout.to_s,
-        stderr:    stderr.to_s,
-      }
+        stdout = IO::Memory.new
+        stderr = IO::Memory.new
+        stdout_done = drain(stdout_pipe, stdout)
+        stderr_done = drain(stderr_pipe, stderr)
+
+        # Safe to wait here: with the write ends passed as plain
+        # IO::FileDescriptors, Process#wait blocks only until the direct
+        # child exits (no internal copy fibers to wait on, unlike a plain
+        # `IO` argument, which would reintroduce the backgrounded-daemon
+        # hang), and its `ensure close` can only close the write ends -
+        # already closed above - never the read ends being drained.
+        exit_status = process.wait
+
+        await(stdout_pipe, stdout_done)
+        await(stderr_pipe, stderr_done)
+
+        {
+          exit_code: signal_safe_exit_code(exit_status),
+          stdout:    stdout.to_s,
+          stderr:    stderr.to_s,
+        }
+      ensure
+        # Covers both the Process.new failure path (nothing spawned, all
+        # four ends still open) and the grace-abandonment path (#await
+        # already force-closed a read end; close is idempotent). Without
+        # this the read ends would leak an fd per exec on the EOF path,
+        # since Process no longer owns them.
+        stdout_pipe.close
+        stderr_pipe.close
+        stdout_child_end.close
+        stderr_child_end.close
+      end
     rescue ex
       {
         exit_code: 1,
