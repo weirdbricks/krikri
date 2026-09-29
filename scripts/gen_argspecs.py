@@ -300,10 +300,25 @@ VIRTUAL = {
     "ansible.builtin.pause": {
         "action_level": True,
         "unsupported_kind": "module",
-        "supported": ["echo", "minutes", "prompt", "seconds"],
-        "print": {
-            "ansible.builtin.pause": "ansible_collections.ansible.builtin.plugins.action.pause",
+        # Real's pause action validates its OWN spec (plugins/action/
+        # pause.py validate_argument_spec): mutually exclusive first, then
+        # types in declaration order, unsupported parameters LAST - a
+        # wrong-typed seconds/minutes beats a typo'd param (live-verified
+        # vs 2.19.11). minutes/seconds are the int CALLABLE, not the 'int'
+        # string type: native floats/bools pass (int(1.5) == 1), while a
+        # string goes through int(str) directly - "1.5" fails with the raw
+        # ValueError "invalid literal for int() with base 10: '1.5'".
+        "options": {
+            "echo": {"type": "bool", "default": True},
+            "minutes": {"type": "int_callable"},
+            "seconds": {"type": "int_callable"},
+            "prompt": {"type": "str"},
         },
+        "mutually_exclusive": [["minutes", "seconds"]],
+        # Real's UnsupportedError names the action plugin's RESOLVED fqcn
+        # (self._load_name) whatever spelling the task used - fixed, not
+        # spelling-keyed.
+        "print": {"fixed": "ansible_collections.ansible.builtin.plugins.action.pause"},
     },
     "ansible.builtin.script": {
         # The script action plugin runs its own validate_argument_spec
@@ -389,6 +404,28 @@ NO_VALIDATE = {
 }
 
 
+def ordered_table(table):
+    """Serialize deterministically WITHOUT sorting each module's options.
+
+    ``json.dump(sort_keys=True)`` flattened every module's options into
+    alphabetical order, but real ansible-core's own validation walks the
+    argument_spec dict in DECLARATION order
+    (``_validate_argument_types``/``_validate_argument_values``: ``for
+    param, spec in argument_spec.items()``), so the FIRST type/choices
+    error real reports is the first failing option in that order
+    (live-verified against 2.19.11: apt with both a wrong ``force`` bool
+    and a wrong ``update_cache_retry_max_delay`` int reports the int,
+    which is declared 4th vs force's 11th). Everything else stays sorted
+    like before; only the ``options`` maps (and their nested sub-specs)
+    keep their captured insertion order.
+    """
+    out = {}
+    for fqcn in sorted(table):
+        body = table[fqcn]
+        out[fqcn] = {k: body[k] for k in sorted(body)}
+    return out
+
+
 def main():
     plugins, aliases = krikri_modules()
     table = {}
@@ -452,7 +489,7 @@ def main():
     os.makedirs(os.path.join(REPO, "data"), exist_ok=True)
     out = os.path.join(REPO, "data/argspecs.json")
     with open(out, "w") as f:
-        json.dump(table, f, indent=1, sort_keys=True)
+        json.dump(ordered_table(table), f, indent=1)
     print(f"wrote {out}: {len(table)} modules")
     for e in errors:
         print("ERROR", e)

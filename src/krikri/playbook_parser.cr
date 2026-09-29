@@ -491,6 +491,14 @@ module Krikri
     property include_vars_ignore_files : Array(String)?
     property include_vars_ignore_unknown_extensions : Bool?
     property include_vars_extensions : Array(String)?
+    # The first include_vars: argument real's action-level validation
+    # loop rejects ("<key> is not a valid option in include_vars"), and
+    # whether a file:-style key appears beside a dir:-style key (the
+    # "You are mixing file only and dir only arguments" failure). Both
+    # fire at RUN time in real Ansible, never at parse - see
+    # execute_include_vars.
+    property include_vars_invalid_arg : String?
+    property? include_vars_mixed : Bool = false
     # vars: on an include_tasks: statement - visible to every task in the
     # included file (unlike import_tasks:'s vars:, which is merged
     # directly into each imported task at parse time, this has to be
@@ -893,6 +901,20 @@ module Krikri
   # at parse time (helpers.py's load_list_of_tasks) with its
   # parser-error exit code 4.
   class EndRoleOutsideRoleError < Exception
+  end
+
+  # A non-string free-form value on a meta: task (`meta: 5`, `meta: 3.5`,
+  # `meta: [a]`). Real Ansible refuses it at playbook-load time with
+  # mod_args.py's own AnsibleParserError - "[ERROR]: unexpected parameter
+  # type in action: <class ...>", rc=4, with the task's Origin block
+  # (live-verified vs 2.19.11). Strings, mappings and nulls parse fine
+  # there and fail later, at strategy time (see TaskExecutor#execute_meta).
+  class MetaActionTypeError < Exception
+    getter render : String
+
+    def initialize(@render : String)
+      super(render.lines.first?.try(&.lchop("[ERROR]: ")) || "unexpected parameter type in action")
+    end
   end
 
   class Playbook
@@ -1336,12 +1358,11 @@ module Krikri
           # check (line just below) would fire with the original
           # InvalidIncludeAttributeError message lost.
           raise ex
-        rescue ex : IncludeVarsArgumentError
-          # Same bypass - a malformed include_vars: (neither file:/path:/
-          # dir: given, or file:-style and dir:-style arguments mixed)
-          # must hard-stop the run per the 0.9.903 policy, not degrade
-          # to a "Warning: Failed to parse play N" that silently drops
-          # the play. See that class's own comment.
+        rescue ex : MetaActionTypeError
+          # Same bypass - a non-string free-form meta: value (an int, a
+          # float, a bool, a list) is real Ansible's own playbook-load
+          # refusal (rc=4, see that class's own comment), not a per-play
+          # soft-skip.
           raise ex
         rescue ex
           puts "Warning: Failed to parse play #{index + 1}: #{ex.message}".colorize(:yellow)
@@ -1692,11 +1713,11 @@ module Krikri
           # See InvalidIncludeAttributeError's own comment and the
           # round-194 writeup for the divergence history.
           raise ex
-        rescue ex : IncludeVarsArgumentError
-          # Same bypass - a malformed include_vars: (neither file:/path:/
-          # dir: given, or file:-style and dir:-style arguments mixed)
-          # must hard-stop the run per the 0.9.903 policy, not degrade
-          # to the generic warning below. See that class's own comment.
+        rescue ex : MetaActionTypeError
+          # Same bypass - a non-string free-form meta: value (an int, a
+          # float, a bool, a list) is real Ansible's own playbook-load
+          # refusal (rc=4, see that class's own comment), not a per-task
+          # graceful skip.
           raise ex
         rescue ex
           puts "Warning: Skipping #{context} #{index + 1}: #{ex.message}".colorize(:yellow)
@@ -2180,7 +2201,7 @@ module Krikri
       end
 
       if meta_yaml = directive(task_hash, "meta")
-        return parse_meta_task(name || "meta", task_hash, meta_yaml)
+        return parse_meta_task(name || "meta", task_hash, meta_yaml, source_file, source_map, source_prefix, index)
       end
 
       if include_vars_yaml = directive(task_hash, "include_vars")
@@ -2832,21 +2853,54 @@ module Krikri
       end
     end
 
+    # Real include_vars action's own argument classification
+    # (plugins/action/include_vars.py): VALID_DIR_ARGUMENTS,
+    # VALID_FILE_ARGUMENTS, VALID_ALL. Anything else fails the task at
+    # RUN time ("<key> is not a valid option in include_vars") - see
+    # parse_include_vars_task / execute_include_vars.
+    INCLUDE_VARS_DIR_ARGS  = ["dir", "depth", "files_matching", "ignore_files", "extensions", "ignore_unknown_extensions"]
+    INCLUDE_VARS_FILE_ARGS = ["file", "_raw_params"]
+    INCLUDE_VARS_ALL_ARGS  = ["name", "hash_behaviour"]
+
     private def self.parse_include_vars_task(name : String, task_hash : Hash(YAML::Any, YAML::Any), value : YAML::Any) : Task
       task = Task.new(name, "_include_vars")
 
       if hash = value.as_h?
-        file = hash["file"]? || hash["path"]?
+        # Real ansible-core's include_vars action validates its OWN args
+        # at RUN time (plugins/action/include_vars.py's validate loop):
+        # every key must be a known dir-only option, file-only option, or
+        # one of name:/hash_behaviour:, the FIRST unknown key (in
+        # task-arg order) fails the task with "<key> is not a valid
+        # option in include_vars", and only after that loop completes
+        # does a file:-style key beside a dir:-style key fail with "You
+        # are mixing file only and dir only arguments, these are
+        # incompatible". Both checks previously ran HERE as
+        # IncludeVarsArgumentError parse-time hard-stops, which diverges
+        # in exactly the shapes real's loop reaches: the generator's
+        # `free-form:` chaos shape and a file/dir-less task run on real
+        # Ansible as ordinary failed tasks (`...ignoring` under
+        # ignore_errors:, recap ignored=1), not playbook-load aborts.
+        invalid_arg = nil
+        dirs = 0
+        files = 0
+        hash.each_key do |key|
+          k = key.to_s
+          if INCLUDE_VARS_DIR_ARGS.includes?(k)
+            dirs += 1
+          elsif INCLUDE_VARS_FILE_ARGS.includes?(k)
+            files += 1
+          elsif INCLUDE_VARS_ALL_ARGS.includes?(k)
+            # pass
+          else
+            invalid_arg = k
+            break
+          end
+        end
+        task.include_vars_invalid_arg = invalid_arg
+        task.include_vars_mixed = invalid_arg.nil? && dirs > 0 && files > 0
+
         dir = hash["dir"]?
         if dir
-          # Real ansible-core's include_vars action rejects file-only and
-          # dir-only arguments appearing together ("You are mixing file
-          # only and dir only arguments, these are incompatible") - the
-          # dir: form wins nothing by silently ignoring a file: sibling.
-          if file
-            raise IncludeVarsArgumentError.new(
-              "You are mixing file only and dir only arguments, these are incompatible")
-          end
           task.include_vars_dir = safe_yaml_to_string(dir)
           task.include_vars_depth = hash["depth"]?.try { |depth_val| safe_yaml_to_string(depth_val) }
           task.include_vars_files_matching = hash["files_matching"]?.try { |pattern| safe_yaml_to_string(pattern) }
@@ -2857,11 +2911,7 @@ module Krikri
           task.include_vars_extensions = hash["extensions"]?.try do |list|
             list.as_a?.try(&.map { |entry| safe_yaml_to_string(entry) }) || [safe_yaml_to_string(list)]
           end
-        else
-          # The typed class is what makes this reach the hard-stop path
-          # (per KNOWN_MISSING.md's 0.9.903 policy) instead of the
-          # generic per-task "Warning: Skipping task" graceful-skip.
-          raise IncludeVarsArgumentError.new("include_vars: requires a file or dir (or a bare filename)") unless file
+        elsif file = hash["file"]?
           task.include_vars_file = file.as_s
         end
         task.include_vars_name = hash["name"]?.try(&.as_s?)
@@ -2997,19 +3047,35 @@ module Krikri
     # connection state (daemons + ssh ControlMaster sockets).
     SUPPORTED_META_ACTIONS = Set{"clear_facts", "flush_handlers", "end_host", "end_play", "clear_host_errors", "noop", "refresh_inventory", "end_batch", "end_role", "reset_connection"}
 
-    private def self.parse_meta_task(name : String, task_hash : Hash(YAML::Any, YAML::Any), meta_yaml : YAML::Any) : Task
-      action = meta_yaml.as_s?.try(&.strip)
-
-      if action.nil? || action.empty?
-        raise "meta: requires a string action (only #{SUPPORTED_META_ACTIONS.join("/")} are supported)"
-      end
-
-      unless SUPPORTED_META_ACTIONS.includes?(action)
-        raise "meta: #{action} is not supported (only #{SUPPORTED_META_ACTIONS.join("/")} are)"
-      end
-
+    private def self.parse_meta_task(name : String, task_hash : Hash(YAML::Any, YAML::Any), meta_yaml : YAML::Any, source_file : String? = nil, source_map : YamlSourceMap? = nil, source_prefix : String = "", index : Int32 = 0) : Task
       task = Task.new(name, "_meta")
-      task.meta_action = action
+
+      # Real Ansible reads the meta action from the task args' `_raw_params`
+      # at STRATEGY time (task.py's _get_meta), not at parse time - so a
+      # null, mapping or unrecognized value is NOT a parse error but a
+      # mid-run abort AFTER the PLAY/TASK banners: "[ERROR]: invalid meta
+      # action requested: <action>" on stderr with the task's Origin, rc=1,
+      # no recap (live-verified vs 2.19.11 - the raise happens inside the
+      # strategy before any task result exists, so ignore_errors: never
+      # applies):
+      #   - a null/missing value or a mapping (the generator's
+      #     `meta: {free_form: noop}` shape) leaves _raw_params unset, and
+      #     real reports the action as the literal None
+      #   - an unrecognized STRING (`meta: bogus`) is reported verbatim
+      #   - an EMPTY string drops out of the args entirely -> None too
+      # Only a non-string SCALAR/container free-form value is refused at
+      # load time (unexpected parameter type, above) - real's arg parse
+      # never even builds a task for it.
+      if class_name = unexpected_meta_param_type(meta_yaml)
+        raise MetaActionTypeError.new(origin_error_render(
+          "unexpected parameter type in action: <class '#{class_name}'>",
+          source_file, source_map, task_source_prefix(source_prefix, index)))
+      end
+
+      if action = meta_yaml.as_s?
+        action = action.strip
+        task.meta_action = action.empty? ? nil : action
+      end
 
       # `when:` on a meta: task previously wasn't parsed at all - this
       # early-return branch skipped straight past #parse_task's generic
@@ -3042,6 +3108,45 @@ module Krikri
       end
 
       task
+    end
+
+    # The Python class name real's mod_args refuses for a non-string,
+    # non-mapping free-form meta value (nil for acceptable shapes).
+    # Bools ride untagged ("<class 'bool'>"); the other scalars/containers
+    # carry 2.19's datatag subclasses.
+    private def self.unexpected_meta_param_type(meta_yaml : YAML::Any) : String?
+      case meta_yaml.raw
+      when Int64       then "ansible.module_utils._internal._datatag._AnsibleTaggedInt"
+      when Float64     then "ansible.module_utils._internal._datatag._AnsibleTaggedFloat"
+      when Bool        then "bool"
+      when Array(YAML::Any) then "ansible.module_utils._internal._datatag._AnsibleTaggedList"
+      end
+    end
+
+    # A parse-time task error with source context, in real ansible-core's
+    # _error_utils.SourceContext layout: "[ERROR]: <msg>", "Origin:
+    # <abs path>:<line>:<col>", a blank line, then the two preceding
+    # source lines + the target line (right-aligned line-number labels,
+    # tabs echoed as spaces) and a caret under the column. Best-effort:
+    # without a source position only the [ERROR] line is rendered.
+    private def self.origin_error_render(message : String, path : String?, source_map : YamlSourceMap?, prefix : String) : String
+      String.build do |io|
+        io << "[ERROR]: " << message << "\n"
+        if path && source_map && (pos = source_map.at?(prefix)) && File.file?(path)
+          line, col = pos
+          lines = File.read_lines(path)
+          io << "Origin: " << File.expand_path(path) << ":" << line << ":" << col << "\n"
+          io << "\n"
+          label_width = line.to_s.size
+          start_idx = Math.max(0, (line - 1) - 2)
+          (start_idx..(line - 1)).each do |idx|
+            src = lines[idx].chomp.gsub('\t', ' ')
+            io << (idx + 1).to_s.rjust(label_width) << (src.empty? ? "" : " ") << src << "\n"
+          end
+          io << " " * label_width << " " << " " * (col - 1) << "^ column " << col << "\n"
+        end
+        io << "\n"
+      end
     end
 
     # naturally through parse_tasks -> parse_task -> parse_block_task).
@@ -3283,22 +3388,6 @@ module Krikri
 
       def initialize(@key : String, @kind : String)
         super("'#{@key}' is not a valid attribute for a #{@kind}")
-      end
-    end
-
-    # Raised by parse_include_vars_task for a malformed include_vars:
-    # hash form - neither file:/path:/dir: given, or file:-style and
-    # dir:-style arguments mixed (real ansible-core's own AnsibleError
-    # text for the mixing case: "You are mixing file only and dir only
-    # arguments, these are incompatible"). The typed class makes
-    # parse_tasks's rescue chain propagate it as a hard stop (per
-    # KNOWN_MISSING.md's 0.9.903 policy: a malformed include_vars: form
-    # must refuse the whole run, not degrade to a "Warning: Skipping
-    # task" that silently loses the task) - the same bypass
-    # InvalidIncludeAttributeError etc. use.
-    class IncludeVarsArgumentError < Exception
-      def initialize(message : String)
-        super(message)
       end
     end
 

@@ -388,6 +388,76 @@ describe Krikri::ArgspecValidator do
       "some_library_module", "Unsupported parameters for (some_library_module) module: x."
     ).must_be_nil
   end
+
+  it "reports type errors in the module's own argument_spec order, not alphabetically" do
+    # Real's _validate_argument_types walks argument_spec.items() in
+    # DECLARATION order and the module fails on errors[0] - live-verified
+    # vs 2.19.11 with apt (which declares update_cache_retry_max_delay
+    # 4th, force 11th, allow_downgrade 22nd, lock_timeout 24th): a
+    # wrong-typed int/bool pair reports whichever fails FIRST in that
+    # order, so an alphabetical walk picks the wrong argument.
+    failure = Krikri::ArgspecValidator.validate(
+      "apt", "ansible.builtin.apt",
+      {"name" => "x", "force" => "teoqdi", "update_cache_retry_max_delay" => "phxszz"}, vars)
+    failure.not_nil!.msg.must_equal(
+      "argument 'update_cache_retry_max_delay' is of type str and we were unable to convert to int: " \
+      "\"'phxszz'\" cannot be converted to an int")
+
+    # Two wrong bools: spec order (force 11th) beats alphabetical order
+    # (allow_downgrade sorts 2nd).
+    failure = Krikri::ArgspecValidator.validate(
+      "apt", "ansible.builtin.apt",
+      {"name" => "x", "allow_downgrade" => "zz", "force" => "yy"}, vars)
+    failure.not_nil!.msg.must_equal(
+      "argument 'force' is of type str and we were unable to convert to bool: " \
+      "The value 'yy' is not a valid boolean. Valid booleans include: " \
+      "'off', 1, 'true', 'y', 0, 'false', 'on', 'no', '1', 'yes', '0', 'n', 'f', 't'")
+  end
+
+  it "validates pause's int-callable seconds/minutes before unsupported params" do
+    # Real's pause action validates its own spec (validate_argument_spec):
+    # mutually exclusive, then types in declaration order, unsupported
+    # params LAST - so a wrong-typed seconds beats a typo'd param
+    # (live-verified vs 2.19.11 with seconds: lraeca + miuntes: mngkxw).
+    failure = Krikri::ArgspecValidator.validate(
+      "pause", "ansible.builtin.pause",
+      {"seconds" => "lraeca", "miuntes" => "mngkxw"}, vars)
+    failure.not_nil!.msg.must_equal(
+      "argument 'seconds' is of type str and we were unable to convert to int: " \
+      "invalid literal for int() with base 10: 'lraeca'")
+    failure.not_nil!.action_level?.must_equal(true)
+
+    # minutes/seconds are the int CALLABLE, not the 'int' string type: a
+    # quoted float string goes through int(str) directly and fails with
+    # int()'s raw ValueError (live-verified: seconds: '1.5'), while a
+    # native float truncates (int(1.5) == 1) and a native bool passes.
+    failure = Krikri::ArgspecValidator.validate(
+      "pause", "ansible.builtin.pause", {"seconds" => "1.5"}, vars)
+    failure.not_nil!.msg.must_equal(
+      "argument 'seconds' is of type str and we were unable to convert to int: " \
+      "invalid literal for int() with base 10: '1.5'")
+    Krikri::ArgspecValidator.validate(
+      "pause", "ansible.builtin.pause",
+      {"seconds" => Krikri::NON_STRING_PARAM_PREFIX + "1.5"}, vars).must_be_nil
+    Krikri::ArgspecValidator.validate(
+      "pause", "ansible.builtin.pause",
+      {"seconds" => Krikri::NON_STRING_PARAM_PREFIX + "true"}, vars).must_be_nil
+
+    # mutually exclusive still beats the type errors (real appends it
+    # first), in real's own "a|b" join.
+    failure = Krikri::ArgspecValidator.validate(
+      "pause", "ansible.builtin.pause",
+      {"minutes" => "aa", "seconds" => "bb"}, vars)
+    failure.not_nil!.msg.must_equal("parameters are mutually exclusive: minutes|seconds")
+
+    # and the unsupported-params shape is unchanged
+    failure = Krikri::ArgspecValidator.validate(
+      "pause", "ansible.builtin.pause",
+      {"prompt" => "uxpvfh", "prompt_bogus" => "uxpvfh"}, vars)
+    failure.not_nil!.msg.must_equal(
+      "Unsupported parameters for (ansible_collections.ansible.builtin.plugins.action.pause) " \
+      "module: prompt_bogus. Supported parameters include: echo, minutes, prompt, seconds.")
+  end
 end
 
 # End-to-end display shape: a validation failure flowing through

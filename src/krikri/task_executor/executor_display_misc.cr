@@ -455,7 +455,21 @@ module Krikri
     # mode anyway, which would otherwise turn every retry loop into a slow,
     # guaranteed-to-fail wait for no reason.
     private def execute_meta(task : Task, host : Host) : Nil
-      case task.meta_action
+      # Real Ansible reads the meta action from the task args' _raw_params
+      # at strategy time and raises for anything it doesn't recognize -
+      # INCLUDING the literal None real reports when _raw_params is unset
+      # (a null value, an empty string, or the generator's
+      # `meta: {free_form: noop}` mapping shape). The raise happens after
+      # the PLAY/TASK banners and is a run-level AnsibleError, not a task
+      # result: the [ERROR] block goes to stderr with the task's Origin,
+      # nothing further runs, and there is no recap - rc 1 (live-verified
+      # vs 2.19.11). See PlaybookParser.parse_meta_task for the parse-time
+      # shapes this engine still refuses outright.
+      action = task.meta_action
+      unless action && Krikri::PlaybookParser::SUPPORTED_META_ACTIONS.includes?(action)
+        abort_invalid_meta_action(task, action || "None")
+      end
+      case action
       when "flush_handlers"
         # Called once per host by the outer per-task host loop in #run,
         # but @tasks.each is sequential across tasks - every active host
@@ -605,6 +619,28 @@ module Krikri
         @facts_dict_cache.delete(host.name)
         @hv_generation += 1
       end
+    end
+
+    # The strategy-time unknown-meta-action abort (see execute_meta's own
+    # comment): the [ERROR] block goes to STDERR - banners already on
+    # stdout - with the task's Origin (the task's own mapping position,
+    # the origin real's task-level errors carry), then the run stops with
+    # rc 1 and no recap. Real's block closes with one blank line.
+    # Process.exit rather than `exit`: this runs inside the executor's
+    # per-task exception paths (including the --forks worker fiber's
+    # generic rescue), which would swallow the ExitException `exit`
+    # raises; both streams are flushed explicitly first.
+    private def abort_invalid_meta_action(task : Task, action : String) : Nil
+      STDERR.puts "[ERROR]: invalid meta action requested: #{action}".colorize(:red)
+      path = task.source_file
+      if path && task.source_line > 0 && File.file?(path)
+        lines = File.read_lines(path)
+        STDERR.puts origin_context_block(path, lines, task.source_line, task.source_col)
+        STDERR.puts ""
+      end
+      STDOUT.flush
+      STDERR.flush
+      Process.exit(1)
     end
   end
 end

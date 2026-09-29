@@ -1835,23 +1835,15 @@ describe "krikri-playbook CLI (--check mode)" do
     end
 
     it "reports an unsupported meta action instead of treating it as a no-op" do
-      # A meta action this engine does not model is rejected at parse time
-      # with a named error, rather than being accepted and silently doing
-      # nothing - a `meta: frobnicate` that quietly did nothing
-      # would change what the playbook means. (end_play/end_host/
-      # clear_host_errors/noop/refresh_inventory/end_batch/end_role/
-      # reset_connection are all real, supported actions now - see
-      # PlaybookParser::SUPPORTED_META_ACTIONS and
-      # TaskExecutor#execute_meta, each verified against real
-      # ansible-playbook.)
-      #
-      # It surfaces as a warning and the task is dropped, which is how the
-      # parser handles *every* parse error (see PlaybookParser.parse_tasks'
-      # rescue) - not as a non-zero exit. An earlier version of this spec
-      # asserted a failing exit code and passed for the wrong reason: the
-      # resulting task-less play then hit a crash in show_recap, which is
-      # what actually produced the non-zero status. That crash is fixed,
-      # so this now asserts the behavior that is really there.
+      # A meta action real Ansible does not recognize fails the RUN at
+      # strategy time - not at parse, and not as a silent no-op that
+      # would change what the playbook means. Live-verified against
+      # ansible-core 2.19.11: the PLAY/TASK banners print, then the
+      # strategy's own AnsibleError surfaces as "[ERROR]: invalid meta
+      # action requested: frobnicate" on stderr with the task's Origin
+      # block, rc 1, and NO recap (the raise happens before any task
+      # result exists, so ignore_errors: never applies - it is not the
+      # per-task "Warning: Skipping task" degradation either).
       tmp = File.tempname("meta-unsupported", ".yml")
       File.write(tmp, <<-YAML)
         - name: unsupported meta
@@ -1863,10 +1855,102 @@ describe "krikri-playbook CLI (--check mode)" do
         YAML
       begin
         captured = IO::Memory.new
-        Process.run(BINARY, ["-i", testservers_inventory, tmp], output: captured, error: captured)
-        captured.to_s.must_include("meta: frobnicate is not supported")
+        status = Process.run(BINARY, ["-i", testservers_inventory, tmp], output: captured, error: captured)
+        captured.to_s.must_include("TASK [frobnicate]")
+        captured.to_s.must_include("[ERROR]: invalid meta action requested: frobnicate")
+        captured.to_s.must_include("Origin: ")
         # and the task genuinely did not run
         captured.to_s.wont_include("frobnicate the florb")
+        # no recap - the run aborted before it could be printed
+        captured.to_s.wont_include("PLAY RECAP")
+        status.success?.must_equal(false)
+      ensure
+        File.delete(tmp) rescue nil
+      end
+    end
+
+    it "reports a null/mapping meta value as the literal None at strategy time" do
+      # Real Ansible reads the meta action from the task args' _raw_params
+      # (task.py's _get_meta): a null value, an empty string, or a
+      # mapping (`meta: {free_form: noop}` - the generator's happy shape)
+      # leaves _raw_params unset, and the strategy reports the action as
+      # the literal None - banners first, then "[ERROR]: invalid meta
+      # action requested: None" on stderr with the Origin, rc 1, no
+      # recap (live-verified vs 2.19.11). Not a parse-time skip.
+      tmp = File.tempname("meta-null", ".yml")
+      File.write(tmp, <<-YAML)
+        - name: null meta
+          hosts: testservers
+          gather_facts: false
+          tasks:
+            - name: frobnicate
+              ansible.builtin.meta:
+                free_form: noop
+        YAML
+      begin
+        captured = IO::Memory.new
+        status = Process.run(BINARY, ["-i", testservers_inventory, tmp], output: captured, error: captured)
+        captured.to_s.must_include("PLAY [null meta]")
+        captured.to_s.must_include("TASK [frobnicate]")
+        captured.to_s.must_include("[ERROR]: invalid meta action requested: None")
+        captured.to_s.wont_include("Warning: Skipping")
+        captured.to_s.wont_include("PLAY RECAP")
+        status.success?.must_equal(false)
+      ensure
+        File.delete(tmp) rescue nil
+      end
+    end
+
+    it "warns on stderr when pause would prompt with a non-interactive stdin" do
+      # Real 2.19.11, live-verified with stdin from /dev/null: `pause: {}`
+      # (no duration - the action always prompts for Enter) raises
+      # AnsiblePromptNoninteractive, the action warns ONCE globally
+      # (Display deduplicates warnings) and continues immediately - the
+      # task is ok. Krikri never blocks on stdin, so it must still emit
+      # the warning its behavior implies.
+      tmp = File.tempname("pause-noninteractive", ".yml")
+      File.write(tmp, <<-YAML)
+        - name: pause without duration
+          hosts: localhost
+          gather_facts: false
+          tasks:
+            - name: wait for enter
+              ansible.builtin.pause: {}
+        YAML
+      begin
+        captured = IO::Memory.new
+        status = Process.run(BINARY, ["-i", "localhost,", tmp], output: captured, error: captured)
+        captured.to_s.must_include(
+          "[WARNING]: Not waiting for response to prompt as stdin is not interactive")
+        captured.to_s.must_include("ok: [localhost]")
+        status.success?.must_equal(true)
+      ensure
+        File.delete(tmp) rescue nil
+      end
+    end
+
+    it "refuses a non-string free-form meta value at playbook-load time" do
+      # Real's mod_args refuses a non-string, non-mapping free-form value
+      # when loading the playbook - "[ERROR]: unexpected parameter type
+      # in action: <class 'ansible.module_utils._internal._datatag.
+      # _AnsibleTaggedInt'>", rc 4, no banners (live-verified vs 2.19.11).
+      tmp = File.tempname("meta-int", ".yml")
+      File.write(tmp, <<-YAML)
+        - name: int meta
+          hosts: testservers
+          gather_facts: false
+          tasks:
+            - name: frobnicate
+              ansible.builtin.meta: 5
+        YAML
+      begin
+        captured = IO::Memory.new
+        status = Process.run(BINARY, ["-i", testservers_inventory, tmp], output: captured, error: captured)
+        captured.to_s.must_include("[ERROR]: unexpected parameter type in action: " \
+                                   "<class 'ansible.module_utils._internal._datatag._AnsibleTaggedInt'>")
+        captured.to_s.must_include("Origin: ")
+        captured.to_s.wont_include("PLAY [")
+        status.exit_code.must_equal(4)
       ensure
         File.delete(tmp) rescue nil
       end

@@ -414,6 +414,35 @@ module Krikri
         return
       end
 
+      # Real's include_vars action validates its own arguments at the
+      # START of its run (plugins/action/include_vars.py's validate
+      # loop), before anything is looked up: the first unknown key fails
+      # the task ("<key> is not a valid option in include_vars"), then a
+      # file:-style key beside a dir:-style key fails ("You are mixing
+      # file only and dir only arguments, these are incompatible"), and
+      # with neither file nor dir the null source_file reaches
+      # _find_needle - which warns on stderr and fails with "Could not
+      # find file on the Ansible Controller. ...". The first two shapes
+      # are an AnsibleActionFail (fatal dump carries only changed + the
+      # wrapped msg); the null-file one is the action's own failed result
+      # (message + empty ansible_facts/ansible_included_var_files).
+      if invalid = task.include_vars_invalid_arg
+        finish_include_vars_arg_failure(task, host, "#{invalid} is not a valid option in include_vars")
+        return
+      end
+      if task.include_vars_mixed?
+        finish_include_vars_arg_failure(task, host, "You are mixing file only and dir only arguments, these are incompatible")
+        return
+      end
+      unless task.include_vars_dir || task.include_vars_file
+        unless @include_vars_null_warned
+          STDERR.puts "[WARNING]: Invalid request to find a file that matches a \"null\" value"
+          @include_vars_null_warned = true
+        end
+        finish_include_vars_failure(task, host, "include_vars: null file")
+        return
+      end
+
       # The dir: form (load every vars file in a directory) runs through
       # its own path below - before the loop machinery, which keys off
       # include_vars_file and would have nothing to substitute for a
@@ -962,29 +991,7 @@ module Krikri
       end
 
       if suppressed
-        store = (@included_vars[host.name] ||= Hash(String, JSON::Any).new)
-        # Real Ansible defines the `name:` var as an empty hash even on a
-        # suppressed missing-file include_vars: (`npm defined=True`,
-        # ansible_facts: {}) - the consumer's `when: npm is defined`
-        # guards rely on that shape.
-        if name = task.include_vars_name
-          store[name] = JSON::Any.new(Hash(String, JSON::Any).new)
-        end
-        # Bump the context-cache generation whenever anything changed -
-        # the included_vars store is generation-keyed, so a skipped bump
-        # leaves every later task reading the pre-include context.
-        @hv_generation += 1
-        if register_name = task.register
-          unless register_name.empty?
-            @registered_vars[host.name][register_name] = JSON::Any.new({
-              "changed"       => JSON::Any.new(false),
-              "failed"        => JSON::Any.new(false),
-              "ansible_facts" => JSON::Any.new({} of String => JSON::Any),
-            } of String => JSON::Any)
-          end
-        end
-        puts "ok: [#{host.name}]".colorize(:green)
-        @results[host.name]["ok"] += 1
+        include_vars_suppressed_success(task, host)
         return
       end
 
@@ -999,6 +1006,68 @@ module Krikri
       # (the only include_vars: failure path that never consulted
       # ignore_errors: at all for its OWN stats, unlike every other
       # failure path in this file) showed `ok=9 failed=1 ignored=0`.
+      include_vars_failure_stats(task, host)
+    end
+
+    # The include_vars action's own argument-validation failures ("X is
+    # not a valid option in include_vars", "You are mixing file only and
+    # dir only arguments, these are incompatible") - real's
+    # AnsibleActionFail shape: the fatal dump carries ONLY changed + the
+    # wrapped "Task failed: ..." msg (no ansible_facts/message keys), the
+    # [ERROR] block is the single-level chain over the unwrapped text,
+    # and failed_when:/ignore_errors: apply as to any task failure.
+    private def finish_include_vars_arg_failure(task : Task, host : Host, message : String) : Nil
+      result_json = JSON::Any.new({
+        "changed"               => JSON::Any.new(false),
+        "failed"                => JSON::Any.new(true),
+        "msg"                   => JSON::Any.new("Task failed: #{message}"),
+        "_ansible_action_level" => JSON::Any.new(true),
+        "_ansible_error_detail" => JSON::Any.new(message),
+      } of String => JSON::Any)
+      suppressed = begin
+        vars_context = build_vars_context(task, host)
+        result = apply_changed_failed_when(task, result_json, vars_context, host)
+        !result["failed"].as_bool
+      rescue
+        false
+      end
+
+      if suppressed
+        include_vars_suppressed_success(task, host)
+        return
+      end
+
+      ResultDisplay.display_result(host, result_json, @diff_mode, ignore_errors: task.ignore_errors?, module_name: task.module_name, source_task: task)
+      include_vars_failure_stats(task, host)
+    end
+
+    # A suppressed (failed_when:-false) include_vars: failure still
+    # defines the `name:` var as an empty hash and registers a
+    # changed:false / failed:false result - real Ansible's own shapes
+    # (see finish_include_vars_failure's history note).
+    private def include_vars_suppressed_success(task : Task, host : Host) : Nil
+      store = (@included_vars[host.name] ||= Hash(String, JSON::Any).new)
+      if name = task.include_vars_name
+        store[name] = JSON::Any.new(Hash(String, JSON::Any).new)
+      end
+      # Bump the context-cache generation whenever anything changed -
+      # the included_vars store is generation-keyed, so a skipped bump
+      # leaves every later task reading the pre-include context.
+      @hv_generation += 1
+      if register_name = task.register
+        unless register_name.empty?
+          @registered_vars[host.name][register_name] = JSON::Any.new({
+            "changed"       => JSON::Any.new(false),
+            "failed"        => JSON::Any.new(false),
+            "ansible_facts" => JSON::Any.new({} of String => JSON::Any),
+          } of String => JSON::Any)
+        end
+      end
+      puts "ok: [#{host.name}]".colorize(:green)
+      @results[host.name]["ok"] += 1
+    end
+
+    private def include_vars_failure_stats(task : Task, host : Host) : Nil
       if task.ignore_errors?
         @results[host.name]["ok"] += 1
         @results[host.name]["ignored"] += 1
@@ -1016,7 +1085,21 @@ module Krikri
     # variable in the args is the usual multi-level finalization failure.
     private def display_include_vars_failure(task : Task, host : Host, message : String) : Nil
       h = Hash(String, JSON::Any).new
-      if message.starts_with?("include_vars: file not found: ") || message.starts_with?("include_vars: could not parse ") || message.ends_with?(" directory does not exist")
+      if message == "include_vars: null file"
+        # Real's _find_needle('vars', None) - the dataloader refuses a
+        # null lookup value WITHOUT the quoted-name form the missing-
+        # file case gets: "Could not find file on the Ansible
+        # Controller." (live-verified vs 2.19.11).
+        h["ansible_facts"] = JSON::Any.new({} of String => JSON::Any)
+        h["ansible_included_var_files"] = JSON::Any.new([] of JSON::Any)
+        h["changed"] = JSON::Any.new(false)
+        h["failed"] = JSON::Any.new(true)
+        h["message"] = JSON::Any.new("Could not find file on the Ansible Controller.\nIf you are using a module and expect the file to exist on the remote, see the remote_src option")
+        h["msg"] = JSON::Any.new("Task failed: Action failed: Unknown error.")
+        h["_ansible_action_level"] = JSON::Any.new(true)
+        h["_ansible_error_detail"] = JSON::Any.new("Action failed: Unknown error.")
+        result = JSON::Any.new(h)
+      elsif message.starts_with?("include_vars: file not found: ") || message.starts_with?("include_vars: could not parse ") || message.ends_with?(" directory does not exist")
         detail = if message.starts_with?("include_vars: file not found: ")
                    "Could not find or access '#{message.sub("include_vars: file not found: ", "")}' on the Ansible Controller.\nIf you are using a module and expect the file to exist on the remote, see the remote_src option"
                  elsif message.ends_with?(" directory does not exist")

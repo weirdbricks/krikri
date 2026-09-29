@@ -581,6 +581,15 @@ rescue ex : Krikri::YamlSyntaxError
   # with a caret. See YamlSyntaxError#render.
   print ex.render
   exit 4
+rescue ex : Krikri::MetaActionTypeError
+  # A non-string free-form meta: value (`meta: 5`, `meta: [a]`) is real
+  # Ansible's own playbook-load refusal - mod_args.py's AnsibleParserError,
+  # "[ERROR]: unexpected parameter type in action: <class ...>" with the
+  # task's Origin block, parser-error rc=4 on STDERR (live-verified vs
+  # 2.19.11). The render was built at the raise site (it needs the source
+  # map); print it verbatim.
+  STDERR.print ex.render
+  exit 4
 rescue ex
   puts "Error parsing playbook:".colorize(:red).bold
   puts "  #{ex.message}".colorize(:red)

@@ -699,10 +699,19 @@ module Krikri
       json = (JSON.parse(raw) rescue nil)
       kind = value_kind(raw, json) # :str | :bool | :list | :dict
 
+      conversion_type_error(name, wanted, raw, kind, native)
+    end
+
+    # The per-wanted-type dispatch (real's checker selection). Keeps
+    # type_error itself under the complexity limit now that the
+    # int-callable branch joined the chain.
+    private def conversion_type_error(name : String, wanted : String, raw : String, kind : Symbol, native : JSON::Any?) : String?
       if wanted == "bool"
         bool_type_error(name, raw, kind)
       elsif wanted == "int"
         int_type_error(name, raw, kind)
+      elsif wanted == "int_callable"
+        int_callable_type_error(name, raw, kind, native)
       elsif wanted == "float"
         float_type_error(name, raw, kind)
       elsif wanted == "dict"
@@ -762,6 +771,31 @@ module Krikri
       else
         "argument '#{name}' is of type #{kind} and we were unable to convert to int: " \
         "\"#{python_repr(kind, raw)}\" cannot be converted to an int"
+      end
+    end
+
+    # pause's minutes/seconds ride the int CALLABLE (not the 'int' string
+    # type) in the action's own spec - native floats truncate (int(1.5)
+    # == 1) and bools pass (int(True) == 1), but a string goes through
+    # int(str) DIRECTLY, so "1.5" fails with int()'s raw ValueError text
+    # ("invalid literal for int() with base 10: '1.5'") where the 'int'
+    # string type's Decimal-based checker would report the "'1.5'"-quoted
+    # form instead. A container raises int()'s own TypeError wording.
+    private def int_callable_type_error(name : String, raw : String, kind : Symbol, native : JSON::Any?) : String?
+      case native.try(&.raw)
+      when Int64, Int32, Float64, Bool
+        return nil
+      end
+      case kind
+      when :bool
+        nil
+      when :str
+        return nil if int_like?(raw)
+        "argument '#{name}' is of type str and we were unable to convert to int: " \
+        "invalid literal for int() with base 10: '#{raw}'"
+      else
+        "argument '#{name}' is of type #{kind} and we were unable to convert to int: " \
+        "int() argument must be a string, a bytes-like object or a real number, not '#{kind}'"
       end
     end
 
