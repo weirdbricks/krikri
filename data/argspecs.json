@@ -1298,7 +1298,10 @@
     "required": true
    }
   },
-  "unsupported_kind": "module"
+  "unsupported_kind": "module",
+  "print": {
+   "ansible.builtin.assert": "ansible_collections.ansible.builtin.plugins.action.assert"
+  }
  },
  "ansible.builtin.async_status": {
   "action_level": true,

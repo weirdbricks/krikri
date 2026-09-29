@@ -193,4 +193,12 @@ describe "error-path parity with real ansible (fuzzer findings)" do
     result["size"].as_i.must_equal(6)
     result["path"].as_s.must_equal(file)
   end
+
+  it "assert: unsupported parameters name the action plugin's module path like real" do
+    vars = Hash(String, JSON::Any).new
+    failure = Krikri::ArgspecValidator.validate("ansible.builtin.assert", "ansible.builtin.assert", {"that" => "true", "that_bogus" => "1"}, vars)
+    failure.not_nil!.msg.must_equal(
+      "Unsupported parameters for (ansible_collections.ansible.builtin.plugins.action.assert) module: that_bogus. " \
+      "Supported parameters include: fail_msg, quiet, success_msg, that (msg).")
+  end
 end

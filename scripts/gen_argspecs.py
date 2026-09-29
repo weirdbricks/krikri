@@ -320,6 +320,9 @@ VIRTUAL = {
             "success_msg": {},
             "that": {"required": True},
         },
+        "print": {
+            "ansible.builtin.assert": "ansible_collections.ansible.builtin.plugins.action.assert",
+        },
     },
     "ansible.builtin.fail": {
         "action_level": True,
