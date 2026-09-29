@@ -24,7 +24,7 @@ module Krikri
   # module's own changed status, not a hardcoded false) - false while
   # still running, since there's nothing changed to report yet.
   class AsyncStatusPlugin < BasePlugin
-    def execute : PluginResult # ameba:disable Metrics/CyclomaticComplexity
+    def execute : PluginResult
       # Real async_status.py: jid is required=True for EVERY mode (cleanup
       # included), and the job-file existence check runs BEFORE the mode
       # check - so cleanup on a jid that never ran fails with the same
@@ -32,7 +32,7 @@ module Krikri
       # success (confirmed via the podman-diff async_status cases, D2b).
       jid = @params["jid"]?
       unless jid
-        return PluginResult.new(changed: false, failed: true, msg: "missing required arguments: jid")
+        return missing_jid_result
       end
 
       # The jid is joined into the async dir path by AsyncJobs - reject
@@ -41,8 +41,7 @@ module Krikri
       # status mode into an arbitrary-file read or cleanup into an
       # arbitrary-file delete.
       unless AsyncJobs.valid_jid?(jid)
-        return PluginResult.new(changed: false, failed: true, msg: "invalid jid: #{jid}",
-          ansible_job_id: jid)
+        return invalid_jid_result(jid)
       end
 
       status = AsyncJobs.read_status(jid)
@@ -51,16 +50,37 @@ module Krikri
         # fail_json call): msg without the jid interpolated, jid carried
         # separately as ansible_job_id, and started/finished as real
         # JSON booleans (ansible-core 2.19+ wording).
-        return PluginResult.new(changed: false, failed: true, msg: "could not find job",
-          ansible_job_id: jid, started: true, finished: true)
+        return not_found_result(jid)
       end
 
       if @params["mode"]? == "cleanup"
-        AsyncJobs.cleanup(jid)
-        return PluginResult.new(changed: false, failed: false, msg: "Cleaned up job file for #{jid}",
-          ansible_job_id: jid, erased: AsyncJobs.status_path(jid))
+        return cleanup_result(jid)
       end
 
+      status_result(status)
+    end
+
+    private def missing_jid_result : PluginResult
+      PluginResult.new(changed: false, failed: true, msg: "missing required arguments: jid")
+    end
+
+    private def invalid_jid_result(jid : String) : PluginResult
+      PluginResult.new(changed: false, failed: true, msg: "invalid jid: #{jid}",
+        ansible_job_id: jid)
+    end
+
+    private def not_found_result(jid : String) : PluginResult
+      PluginResult.new(changed: false, failed: true, msg: "could not find job",
+        ansible_job_id: jid, started: true, finished: true)
+    end
+
+    private def cleanup_result(jid : String) : PluginResult
+      AsyncJobs.cleanup(jid)
+      PluginResult.new(changed: false, failed: false, msg: "Cleaned up job file for #{jid}",
+        ansible_job_id: jid, erased: AsyncJobs.status_path(jid))
+    end
+
+    private def status_result(status : JSON::Any) : PluginResult
       finished = AsyncJobs.finished?(status)
       job_changed = status["changed"]?.try(&.as_bool) || false
       job_failed = status["failed"]?.try(&.as_bool) || false
