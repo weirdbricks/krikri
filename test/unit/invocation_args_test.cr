@@ -1,5 +1,6 @@
 require "../minitest_helper"
 require "../../src/krikri/argspec_validator"
+require "../../src/krikri/variable_substitutor"
 
 describe Krikri::ArgspecValidator do
   it "builds invocation.module_args with spec defaults for command" do
@@ -12,5 +13,12 @@ describe Krikri::ArgspecValidator do
 
   it "has no invocation for an unknown module" do
     Krikri::ArgspecValidator.invocation_args("ansible.builtin.nope", {} of String => String).must_be_nil
+  end
+end
+
+describe "mustache scanning with escaped quotes" do
+  it "does not end a string literal at a backslash-escaped quote" do
+    r = Krikri::VarSubstitutor.new(vars: Hash(String, JSON::Any).new, host_name: "h")
+    r.substitute("{{ 'q\\'uote' }} x").must_equal("q\\'uote x")
   end
 end

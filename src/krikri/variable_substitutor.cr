@@ -2602,11 +2602,18 @@ module Krikri
     private struct MustacheScanState
       property depth = 0
       property quote : Char? = nil
+      property escaped = false
 
       def closes_at?(text : String, j : Int32) : Bool
         char = text[j]
         if q = quote
-          self.quote = nil if char == q
+          if escaped
+            self.escaped = false
+          elsif char == '\\'
+            self.escaped = true
+          elsif char == q
+            self.quote = nil
+          end
           return false
         end
 
