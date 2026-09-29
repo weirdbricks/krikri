@@ -806,13 +806,20 @@ module Krikri
     # list (Task#when_condition_list) through the same strict path, in
     # order with early exit on the first false, restores it.
     private def evaluate_when_items(task : Task, vars_context : Hash(String, JSON::Any), host : Host, substitutor : VarSubstitutor? = nil) : Bool
+      @last_false_condition = nil
       if items = task.when_condition_list
         items.each do |item|
-          return false unless evaluate_when(item, vars_context, host, substitutor, task)
+          unless evaluate_when(item, vars_context, host, substitutor, task)
+            @last_false_condition = item
+            return false
+          end
         end
         true
       else
-        evaluate_when(task.when_condition.as(String), vars_context, host, substitutor, task)
+        condition = task.when_condition.as(String)
+        passed = evaluate_when(condition, vars_context, host, substitutor, task)
+        @last_false_condition = condition unless passed
+        passed
       end
     end
 
@@ -922,7 +929,7 @@ module Krikri
         # Ansible prints `(item=(censored due to no_log))` - the item
         # can itself be the secret)
         shown = resolve_task_no_log(task) ? "(censored due to no_log)" : item_label
-        suffix = shown ? " => (item=#{shown})" : ""
+        suffix = shown ? " => (item=#{shown}) " : ""
         puts "skipping: [#{host.connection_host}]#{suffix}".colorize(:cyan)
       end
       register_skip_result(task, host)
@@ -2073,7 +2080,15 @@ module Krikri
 
           if failed_when
             maybe_conditional_delimiters_deprecation(task, failed_when, "failed_when", eval_context)
-            hash["failed"] = JSON::Any.new(ConditionalEvaluator.evaluate(substitutor.substitute(failed_when), eval_context, strict: true, raise_undefined: true))
+            failed_when_result = ConditionalEvaluator.evaluate(substitutor.substitute(failed_when), eval_context, strict: true, raise_undefined: true)
+            hash["failed"] = JSON::Any.new(failed_when_result)
+            # TaskExecutor: result['failed_when_result'] = <verdict> whenever failed_when: is set
+            hash["failed_when_result"] = JSON::Any.new(failed_when_result)
+            # a module failure that failed_when: overrides to "not failed" keeps its
+            # traceback marker under the suppressed-exception key
+            if !failed_when_result && (suppressed = hash.delete("exception"))
+              hash["failed_when_suppressed_exception"] = suppressed
+            end
           end
         rescue e : ConditionalEvaluator::ConditionalBooleanError | ConditionalEvaluator::UndefinedVariableError | VariableSubstitutor::FilterEngine::UnknownFilterError
           # Matches real Ansible: a changed_when:/failed_when: whose value
@@ -2116,9 +2131,10 @@ module Krikri
     # against real ansible-playbook 2.19.11: a run_once ansible.builtin.
     # fail in a 3-host play recaps failed=1 and no host reaches the next
     # task's banner).
-    private def halt_if_failed(task : Task, host : Host, failed : Bool) : Nil
+    private def halt_if_failed(task : Task, host : Host, failed : Bool, result : JSON::Any? = nil) : Nil
       return unless failed && !resolve_task_ignore_errors(task)
 
+      @failed_task_info[host.name] = {task, result} if result
       @halted_hosts.add(host.name)
       return unless task.run_once?
 

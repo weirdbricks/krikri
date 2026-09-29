@@ -85,6 +85,8 @@ module Krikri
     # every host this project benchmarks against (Ubuntu/RHEL-family).
     getter reachable_unavailable_modules = Set(String).new
     # Track registered variables per host
+    # the when: expression that last evaluated False (for register's false_condition)
+    @last_false_condition : String? = nil
     @registered_vars : Hash(String, Hash(String, JSON::Any))
     # Handler runner
     @handler_runner : HandlerRunner
@@ -422,6 +424,12 @@ module Krikri
       # hostvars).
       @registered_vars = registered_store || Hash(String, Hash(String, JSON::Any)).new
       @halted_hosts = Set(String).new
+
+      # The failing task + result per host, for `rescue:`'s ansible_failed_task /
+      # ansible_failed_result vars (real exposes both inside rescue and always
+      # only after a block failure; cleared when the rescue finishes).
+    @failed_task_info = Hash(String, {Task, JSON::Any}).new
+      @failure_vars = Hash(String, Hash(String, JSON::Any)).new
       @ended_hosts = Set(String).new
       @cleared_error_hosts = Set(String).new
       @role_ended_hosts = Hash(String, Set(String)).new

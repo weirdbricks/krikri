@@ -3,6 +3,27 @@ require "../unsafe_values"
 
 module Krikri
   class TaskExecutor
+    # ansible_failed_task / ansible_failed_result inside rescue: (and the
+    # always: that follows it); they stay bound until the next block failure
+    # replaces them, matching real, where they are ordinary host vars set when
+    # the rescue is entered.
+    private def bind_failure_vars(host : Host) : Nil
+      failed = @failed_task_info[host.name]?
+      return unless failed
+      failed_task, failed_result = failed
+      task_view = Hash(String, JSON::Any).new
+      task_view["name"] = JSON::Any.new(failed_task.name)
+      task_view["action"] = JSON::Any.new(PlaybookParser.resolve_module_name(failed_task.module_name) || failed_task.module_name)
+      args = Hash(String, JSON::Any).new
+      failed_task.params.each { |key, value| args[key] = JSON::Any.new(value) }
+      task_view["args"] = JSON::Any.new(args)
+      @failure_vars[host.name] = {
+        "ansible_failed_task"   => JSON::Any.new(task_view),
+        "ansible_failed_result" => failed_result,
+      }
+      @hv_generation += 1
+    end
+
     private def execute_block_multi(task : Task, hosts : Array(Host)) : Nil
       # Propagate role context BEFORE the when: partition - a host whose
       # block when: is false prints each child's own "TASK [role : name]"
@@ -58,6 +79,7 @@ module Krikri
         end
 
         propagate_role_context(task, rescue_tasks)
+        rescue_hosts.each { |host| bind_failure_vars(host) }
         run_task_batch(rescue_tasks, rescue_hosts)
 
         rescue_hosts.each do |host|
@@ -1108,6 +1130,7 @@ module Krikri
         end
 
         propagate_role_context(task, rescue_tasks)
+        bind_failure_vars(host)
         run_task_list(rescue_tasks, host)
         block_failed = @halted_hosts.includes?(host.name)
       end
@@ -1411,7 +1434,7 @@ module Krikri
 
         unless when_result
           connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
-          suffix = item_label ? " => (item=#{item_label})" : ""
+          suffix = item_label ? " => (item=#{item_label}) " : ""
           puts "skipping: [#{connection_host}]#{suffix}".colorize(:cyan)
           @results[host.name]["skipped"] += 1
           return true
@@ -1739,7 +1762,7 @@ module Krikri
 
         unless when_result
           connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
-          suffix = item_label ? " => (item=#{item_label})" : ""
+          suffix = item_label ? " => (item=#{item_label}) " : ""
           puts "skipping: [#{connection_host}]#{suffix}".colorize(:cyan)
           @results[host.name]["skipped"] += 1
           return

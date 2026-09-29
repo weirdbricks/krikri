@@ -532,6 +532,7 @@ module Krikri
 
       result = Hash(String, JSON::Any).new(initial_capacity: 128)
       @included_vars[host.name]?.try(&.each { |key, value| result[key] = value })
+      @failure_vars[host.name]?.try(&.each { |key, value| result[key] = value })
       # Only the set_fact subset rides at this high tier - see the
       # @set_facts ivar comment. Ordinary gathered facts (setup:/
       # package_facts:/service_facts:/etc) are filled in at the LOW

@@ -2714,6 +2714,15 @@ module Krikri
     # block:/rescue:/always: are deliberately absent: those are playbook
     # *keywords*, not modules, and real Ansible does not accept an
     # `ansible.builtin.` prefix on them either.
+    private def self.inherit_ignore_errors(block : Task) : Nil
+      [block.block_tasks, block.rescue_tasks, block.always_tasks].each do |children|
+        children.try &.each do |child|
+          child.ignore_errors = true
+          inherit_ignore_errors(child)
+        end
+      end
+    end
+
     private def self.directive(task_hash : Hash(YAML::Any, YAML::Any), name : String) : YAML::Any?
       task_hash[name]? || task_hash["ansible.builtin.#{name}"]? || task_hash["ansible.legacy.#{name}"]?
     end
@@ -3128,6 +3137,10 @@ module Krikri
       # Block-level settings gate/apply to the block as a whole; each
       # nested task still evaluates its own when:/tags:/etc in addition.
       parse_common_task_attributes(task, task_hash)
+      # A block's ignore_errors: is inherited by every task inside block:,
+      # rescue: and always: (real resolves it through the parent chain), so a
+      # failing rescue task under `ignore_errors: true` is ignored too.
+      inherit_ignore_errors(task) if task.ignore_errors?
       task.become = resolve_become(task_hash, play)
       task.become_expr = become_expr(task_hash)
       task.become_user = task_hash["become_user"]?.try { |v| safe_yaml_to_string(v) } || play.become_user

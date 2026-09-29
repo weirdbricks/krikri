@@ -317,6 +317,13 @@ module Krikri
       # A plugin whose block text differs from the fatal msg (fetch's slurp
       # failure) hands the block its own text via _ansible_error_detail.
       msg = result["_ansible_error_detail"]?.try(&.as_s?) || msg
+      # failed_when: turned an otherwise successful module result into a
+      # failure: real's block is just "Task failed: Action failed."
+      if result["failed_when_result"]?.try(&.as_bool?) == true && result["msg"]?.try(&.as_s?).to_s.empty?
+        root = ErrorBlock::Node.new("Task failed.", source_context: origin)
+        ErrorBlock.emit(root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new("Action failed.")))
+        return
+      end
       # A plugin flagging _ansible_action_level failed in real's controller-
       # side ACTION plugin (a bare AnsibleActionFail: no "Module failed."
       # middle segment), e.g. assemble's remote_src: false isdir() check.
@@ -655,17 +662,20 @@ module Krikri
     # key from the callback-visible result, recursively
     # (executor/task_result.py's _IGNORE + vars/clean.py's
     # strip_internal_keys).
-    private def self.clean_for_display(value : JSON::Any) : JSON::Any
+    private def self.clean_for_display(value : JSON::Any, top_level : Bool = true) : JSON::Any
       case raw = value.raw
       when Hash
         cleaned = Hash(String, JSON::Any).new
         raw.each do |key, v|
-          next if key == "failed" || key == "skipped" || key.starts_with?("_ansible_")
-          cleaned[key] = clean_for_display(v)
+          # `failed`/`skipped` only leave the TOP-level result (a registered
+          # skipped result printed via debug var: keeps its nested `skipped`)
+          next if top_level && (key == "failed" || key == "skipped" || key == "exception")
+          next if key.starts_with?("_ansible_")
+          cleaned[key] = clean_for_display(v, false)
         end
         JSON::Any.new(cleaned)
       when Array
-        JSON::Any.new(raw.map { |item| clean_for_display(item) })
+        JSON::Any.new(raw.map { |item| clean_for_display(item, false) })
       else
         value
       end

@@ -123,6 +123,7 @@ module Krikri
       # Bool-typed params: real AnsibleModule type-converts them at module
       # setup, after the required-args gate above - now via the shared
       # BasePlugin#validate_bool_params! (see its block comment).
+      started_at = Time.utc
       validate_bool_params!
 
       # `argv:` works identically on shell to command's argv: - real
@@ -439,8 +440,11 @@ module Krikri
         stdout_lines: PluginHelpers::AnsibleSplitlines.split(final_stdout),
         stderr: final_stderr,
         stderr_lines: PluginHelpers::AnsibleSplitlines.split(final_stderr),
-        exit_code: result[:exit_code],
-        rc: result[:exit_code], # Add rc as alias for Ansible compatibility
+        rc: result[:exit_code],
+        start: started_at.to_s("%F %H:%M:%S.%6N"),
+        end: Time.utc.to_s("%F %H:%M:%S.%6N"),
+        delta: python_delta(Time.utc - started_at),
+        failed_flag: false,
         diff: diff_data
       )
     end

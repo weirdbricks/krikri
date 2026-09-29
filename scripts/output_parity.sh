@@ -70,6 +70,11 @@ MASKS=(
   # BOOLEANS set in per-process hash-randomized iteration order (two real
   # ansible runs already disagree byte-for-byte); only the order is masked.
   "s/(Valid booleans include: )[^\"]*/\\1<BOOLEAN-SET-ORDER>/g"
+  # Fourth/fifth entries: command/shell results carry the run's wall-clock
+  # start/end timestamps and duration (delta), different on every execution by
+  # construction - only the values are masked, the keys still must match.
+  "s/\"delta\": \"[0-9]+:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?\"/\"delta\": \"<DELTA>\"/g"
+  "s/\"(start|end)\": \"[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9:.]+\"/\"\\1\": \"<TIMESTAMP>\"/g"
 )
 
 mask() {

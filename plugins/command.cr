@@ -338,6 +338,8 @@ module Krikri
       # itself (live-verified against 2.19.4: `cmd: ["echo", "hi"]`).
       cmd_parts = argv_parts || (cmd ? parse_command(cmd) : [] of String)
 
+      started_at = Time.utc
+      ended_at = started_at
       begin
         # Real Ansible's AnsibleModule.run_command (expand_user_and_vars,
         # driven by the command module's expand_argument_vars, default true)
@@ -418,6 +420,7 @@ module Krikri
 
         status = process.wait
         exit_code = status.exit_code
+        ended_at = Time.utc
       rescue ex
         # Real Ansible's command module never gets here at all - Python's
         # `subprocess`/`AnsibleModule.run_command` catches ENOENT (a
@@ -443,7 +446,6 @@ module Krikri
           msg: "Failed to execute command: #{ex.message}",
           stdout: "",
           stderr: ex.message || "",
-          exit_code: 2,
           rc: 2
         ))
       end
@@ -484,8 +486,13 @@ module Krikri
         stdout_lines: PluginHelpers::AnsibleSplitlines.split(final_stdout),
         stderr: final_stderr,
         stderr_lines: PluginHelpers::AnsibleSplitlines.split(final_stderr),
-        exit_code: exit_code,
-        rc: exit_code # Add rc as alias for Ansible compatibility
+        rc: exit_code,
+        # command.py's start/end/delta (str(datetime) forms, UTC-naive local
+        # time in real; never byte-matchable - the parity harness masks them)
+        start: started_at.to_s("%F %H:%M:%S.%6N"),
+        end: ended_at.to_s("%F %H:%M:%S.%6N"),
+        delta: python_delta(ended_at - started_at),
+        failed_flag: false
       ))
     end
 

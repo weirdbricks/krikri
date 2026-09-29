@@ -1042,6 +1042,22 @@ module Krikri
                          delegate_hosts[idx] = item_exec_host if task.delegate_to
 
                          item_label = item_label_for(task, item, vars_context, host)
+                         # A when:-false item defers its "skipping:" line to
+                         # finish_looped_task like the batched path does: the
+                         # executed items are displayed there too, so printing the
+                         # skip inline here would put every skip ahead of them
+                         # (real prints in iteration order).
+                         if task.when_condition
+                           passes = begin
+                             when_passes?(task, vars_context, host, item_label: item_label, defer_stats: true, defer_display: true)
+                           rescue WhenEvaluationError
+                             true # execute_task_once re-evaluates and turns the raise into a real failed result
+                           end
+                           unless passes
+                             skipped_labels[idx] = item_label
+                             next nil
+                           end
+                         end
                          result = if (until_condition = task.until_condition) && !resolve_task_check_mode(task, vars_context)
                                     # Real Ansible retries each loop item
                                     # independently under until:/retries: - the
@@ -1268,7 +1284,7 @@ module Krikri
         if (sk_lbl = skipped_labels[idx]?)
           connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
           shown = resolve_task_no_log(task, base_vars_context) ? "(censored due to no_log)" : sk_lbl
-          puts "skipping: [#{connection_host}] => (item=#{shown})".colorize(:cyan)
+          puts "skipping: [#{connection_host}] => (item=#{shown}) ".colorize(:cyan)
           next
         end
 
@@ -1334,7 +1350,7 @@ module Krikri
           # Ansible prints `(item=(censored due to no_log))` - the item
           # can itself be the secret)
           item_shown = resolve_task_no_log(task, base_vars_context) ? "(censored due to no_log)" : item_label
-          puts "skipping: [#{connection_host}] => (item=#{item_shown})".colorize(:cyan)
+          puts "skipping: [#{connection_host}] => (item=#{item_shown}) ".colorize(:cyan)
         else
           executed_count += 1
           merge_ansible_facts(fact_hosts.try(&.[idx]) || host, result, task.module_name.ends_with?("set_fact"))
@@ -1540,7 +1556,7 @@ module Krikri
         ResultDisplay.display_result(host, result, @diff_mode, ignore_errors: resolve_task_ignore_errors(task, vars_context), no_log: resolve_task_no_log(task, vars_context), source_task: task)
       end
       ResultDisplay.update_stats(@results[host.name], result, resolve_task_ignore_errors(task, vars_context))
-      halt_if_failed(task, host, failed)
+      halt_if_failed(task, host, failed, result)
     end
 
     # Prints and counts each of *tasks* as individually skipped - used

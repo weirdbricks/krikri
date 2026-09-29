@@ -87,9 +87,10 @@ describe "command/shell failure-path result shape" do
         "executable" => "/bin/bash",
       })
 
-      # A successful module's wire result never carries `failed` at all
-      # (only fail_json adds it) - see BasePlugin#to_json.
-      result["failed"]?.must_be_nil
+      # command/shell are the exception to "success results carry no failed
+      # key": their exit_json result reports `failed: false` explicitly
+      # (live-compared against 2.19.11 via a registered result dump).
+      result["failed"].as_bool.must_equal(false)
       result["changed"].as_bool.must_equal(true)
       result["rc"].as_i.must_equal(0)
       result["stdout"].as_s.must_equal("shell-ok")

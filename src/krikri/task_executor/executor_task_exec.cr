@@ -329,11 +329,16 @@ module Krikri
       register_name = task.register
       return if register_name.nil? || register_name.empty?
 
-      register_result(host, register_name, JSON.parse({
-        "changed"     => false,
-        "skipped"     => true,
-        "skip_reason" => "Conditional result was False",
-      }.to_json))
+      # false_condition: the when: expression that evaluated False (the bare
+      # literal `false` stays a bool, like YAML gives real)
+      condition = @last_false_condition
+      false_condition = condition == "false" ? JSON::Any.new(false) : JSON::Any.new(condition || "")
+      register_result(host, register_name, JSON::Any.new({
+        "changed"         => JSON::Any.new(false),
+        "false_condition" => false_condition,
+        "skipped"         => JSON::Any.new(true),
+        "skip_reason"     => JSON::Any.new("Conditional result was False"),
+      } of String => JSON::Any))
     end
 
     # Reports a when:-skipped batch member: the print and skipped counter
@@ -569,7 +574,7 @@ module Krikri
         ResultDisplay.display_result(host, result, @diff_mode, ignore_errors: ignore_errors, no_log: no_log, module_name: task.module_name, delegate_target: exec_host && exec_host != host ? exec_host.connection_host : nil, source_task: task)
       end
       ResultDisplay.update_stats(@results[host.name], result, ignore_errors)
-      halt_if_failed(task, host, failed)
+      halt_if_failed(task, host, failed, result)
     end
 
     # Marks `host` as halted (no further tasks in this play run for it)

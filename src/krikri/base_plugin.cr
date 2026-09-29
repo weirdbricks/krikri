@@ -123,6 +123,10 @@ module Krikri
       # UNDEFINED, and `when: r.changed` on it raises the same
       # "has no attribute" error real Ansible raises.
       result["changed"] = @changed unless @omit_changed
+      # fail_json adds exception: "(traceback unavailable)" in 2.19 (seen only
+      # through a registered result - the display drops it); controller-side
+      # action failures (omit_changed / _ansible_action_level) never carry it
+      result["exception"] = "(traceback unavailable)" if @failed && !@omit_changed && !@extra.has_key?("_ansible_action_level")
       # Real Ansible's module protocol (module_utils/basic.py) only adds
       # `failed`/`msg` to the result dict on a fail_json exit - a
       # successful module's wire result never carries either key at all
@@ -140,8 +144,11 @@ module Krikri
 
       # Add extra fields
       @extra.each do |key, value|
+        next if key == "failed_flag"
         result[key] = value.raw # Extract the raw value from JSON::Any
       end
+      # command.py-style modules report `failed: false` explicitly on success
+      result["failed"] = false if @extra.has_key?("failed_flag") && !@failed
 
       result.to_json(io)
     end
@@ -184,6 +191,15 @@ module Krikri
         paths << dir if !paths.includes?(dir) && Dir.exists?(dir)
       end
       %(Failed to find required executable "#{name}" in paths: #{paths.join(':')})
+    end
+
+    # Python str(timedelta) for a sub-day span: H:MM:SS.ffffff
+    protected def python_delta(span : Time::Span) : String
+      total_us = span.total_microseconds.to_i64
+      seconds, micros = total_us.divmod(1_000_000_i64)
+      minutes, secs = seconds.divmod(60_i64)
+      hours, mins = minutes.divmod(60_i64)
+      "#{hours}:#{mins.to_s.rjust(2, '0')}:#{secs.to_s.rjust(2, '0')}.#{micros.to_s.rjust(6, '0')}"
     end
 
     # command/shell's failed os.chdir(): real's fatal msg is the generic
