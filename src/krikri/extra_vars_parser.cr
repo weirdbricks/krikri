@@ -79,9 +79,8 @@ module Krikri
       result = {} of String => JSON::Any
       text.split(/\s+/).reject(&.empty?).each do |pair|
         separator = pair.index('=')
-        unless separator && separator > 0
-          raise Error.new("extra-vars must be key=value, JSON, or @file - got #{pair.inspect}")
-        end
+        # parse_kv drops a token without '=' (real ansible ignores it)
+        next unless separator && separator > 0
 
         result[pair[0...separator]] = JSON::Any.new(pair[(separator + 1)..])
       end
