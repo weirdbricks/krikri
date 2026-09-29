@@ -119,6 +119,8 @@ module Krikri
     # cache-refresh task) hard-fails with "object of type 'dict' has no
     # attribute 'cache_updated'" the moment a registered result lacks it.
     @cache_updated = false
+    # early fail_json paths (before any cache work) carry no cache_updated key
+    @omit_cache_updated = false
 
     # Real-Ansible apt module params this plugin threads into its apt-get
     # invocations (defaults mirror apt.py's argument_spec). Booleans are
@@ -149,7 +151,7 @@ module Krikri
       result = execute_inner
       # an unhandled module exception (python-apt's SystemError) never reaches
       # exit_json, so its failure carries no cache_updated key
-      result.extra["cache_updated"] = JSON.parse(@cache_updated.to_json) unless result.extra.has_key?("_ansible_error_detail")
+      result.extra["cache_updated"] = JSON.parse(@cache_updated.to_json) unless result.extra.has_key?("_ansible_error_detail") || @omit_cache_updated
       result
     end
 
@@ -272,6 +274,10 @@ module Krikri
 
       # Get state (default: present)
       state = @params["state"]? || "present"
+      if @params["deb"]? && state != "present"
+        @omit_cache_updated = true
+        return PluginResult.new(changed: false, failed: true, msg: "deb only supports state=present")
+      end
       update_cache = true?(@params["update_cache"]?)
       cache_valid_time = @params["cache_valid_time"]?.try(&.to_i) || 0
       # Real Ansible treats a bare `cache_valid_time: N` with NO name/

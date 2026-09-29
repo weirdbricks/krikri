@@ -320,6 +320,13 @@ module Krikri
 
       result_state : String? = nil
       if state && name_for_active
+        # real bails out when `systemctl show` yields no ActiveState (e.g. no
+        # systemd running), reporting whatever properties it did get
+        probe = systemctl_show(name_for_active)
+        unless probe.has_key?("ActiveState")
+          return PluginResult.new(changed: false, failed: true, msg: "Service is in unknown state",
+            status: JSON.parse(probe.to_json))
+        end
         is_running = active?(name_for_active)
         result_state = state
 

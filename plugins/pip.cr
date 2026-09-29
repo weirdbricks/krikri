@@ -232,7 +232,21 @@ module Krikri
     # check keeps working on hosts with no `which` binary at all.
     private def discover_system_pip : String | PluginResult
       if executable = @params["executable"]?
-        return executable if executable.starts_with?("/")
+        if executable.starts_with?("/")
+          # a missing absolute executable fails inside run_command (Errno 2)
+          unless remote_exec("test -e #{shell_single_quote(executable)}")[:exit_code] == 0
+            state = @params["state"]? || "present"
+            raw_names = @params["name"]?.to_s
+            names = (JSON.parse(raw_names).as_a.map(&.to_s) rescue raw_names.split(",").map(&.strip)).reject(&.empty?)
+            extra = @params["extra_args"]?.to_s.strip
+            verb = state == "absent" ? "uninstall -y" : (state == "latest" ? "install -U" : "install")
+            cmd_text = ([executable] + verb.split + (extra.empty? ? [] of String : extra.split) + names).join(" ")
+            return PluginResult.new(changed: false, failed: true, msg: "Error executing command.",
+              cmd: cmd_text, rc: 2, stdout: "", stdout_lines: [] of String, stderr: "", stderr_lines: [] of String,
+              _ansible_error_detail: "Error executing command: [Errno 2] No such file or directory: b'#{executable}'")
+          end
+          return executable
+        end
 
         unless remote_exec("sh -c #{Shell.single_quote("command -v #{executable}")}")[:exit_code] == 0
           return PluginResult.new(changed: false, failed: true, msg: "Unable to find any of #{executable} to use.  pip needs to be installed.")
@@ -482,7 +496,9 @@ module Krikri
 
     private def with_chdir(command : String) : String
       if chdir = @params["chdir"]?
-        "cd #{shell_single_quote(expand_tilde(chdir))} && #{command}"
+        # real's run_command only honors cwd when it is an existing directory
+        quoted = shell_single_quote(expand_tilde(chdir))
+        "{ [ ! -d #{quoted} ] || cd #{quoted}; } && #{command}"
       else
         command
       end
