@@ -1,3 +1,4 @@
+require "../run_options"
 require "./executor"
 require "krikri-jinja/krikri_jinja"
 require "../jinja_host_context"
@@ -213,6 +214,12 @@ module Krikri
       # where real ansible-playbook just skips.
       vars_context["ansible_diff_mode"] = JSON::Any.new(@diff_mode)
       vars_context["ansible_verbosity"] = JSON::Any.new(@verbosity.to_i64)
+      vars_context["ansible_play_name"] = JSON::Any.new(Krikri::RunOptions.play_name)
+      vars_context["ansible_inventory_sources"] = JSON::Any.new(Krikri::RunOptions.inventory_sources.map { |t| JSON::Any.new(t) })
+      run_tags = Krikri::RunOptions.run_tags
+      vars_context["ansible_run_tags"] = JSON::Any.new((run_tags.empty? ? ["all"] : run_tags).map { |t| JSON::Any.new(t) })
+      vars_context["ansible_skip_tags"] = JSON::Any.new(Krikri::RunOptions.skip_tags.map { |t| JSON::Any.new(t) })
+      vars_context["ansible_forks"] = JSON::Any.new((Krikri::RunOptions.forks || 5).to_i64)
       apply_path_magic_vars(vars_context)
 
       # ansible_connection - real Ansible always resolves this magic var

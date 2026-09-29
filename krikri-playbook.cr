@@ -10,6 +10,7 @@
 # registered falls through unchanged) - this only matters once a
 # --forks > 1 run is actually in flight.
 require "./src/krikri/output_banner"
+require "./src/krikri/run_options"
 require "./src/krikri/task_executor/output_routing"
 
 require "option_parser"
@@ -182,6 +183,7 @@ begin
     parser.on("-i INVENTORY", "--inventory=INVENTORY", "Specify inventory file") do |inv|
       inventory_file = inv
       inventory_explicit = true
+      Krikri::RunOptions.inventory_sources << (File.exists?(inv) ? File.expand_path(inv) : inv)
     end
 
     # Real Ansible's own deprecated long spelling for -i/--inventory
@@ -222,6 +224,7 @@ begin
 
     parser.on("-f FORKS", "--forks=FORKS", "Run each task against up to FORKS hosts concurrently (default: 25 - higher than ansible-playbook's own default of 5, since a \"fork\" here is a cheap fiber, not a forked Python interpreter; --forks 5 matches real ansible-playbook's default exactly, --forks 1 restores one-host-at-a-time)") do |fval|
       forks = fval.to_i? || 25
+      Krikri::RunOptions.forks = fval.to_i?
     end
 
     parser.on("--gathering=MODE", "Fact gathering policy, matching ansible-playbook: implicit (default, every play re-gathers), explicit (only plays with gather_facts: true), or smart (each host gathered at most once per run; use meta: clear_facts to force a re-gather)") do |mode|
@@ -331,9 +334,11 @@ begin
     end
     parser.on("--skip-tags=TAGS", "Only run tasks whose tags do NOT match these") do |tval|
       skip_tags = tval.split(",").map(&.strip).reject(&.empty?)
+      Krikri::RunOptions.skip_tags = skip_tags
     end
     parser.on("-t TAGS", "--tags=TAGS", "Only run tasks with these tags") do |tval|
       tags = tval.split(",").map(&.strip).reject(&.empty?)
+      Krikri::RunOptions.run_tags = tags
     end
 
     parser.on("--vault-password-file=FILE", "Vault password file") do |file|
@@ -772,6 +777,7 @@ run_registered_store = Hash(String, Hash(String, JSON::Any)).new
 permanently_failed_hosts = Set(String).new
 
 playbook.plays.each_with_index do |play, _play_index|
+  Krikri::RunOptions.play_name = play.name
   Krikri::OutputBanner.banner("PLAY [#{play.name}]")
 
   # Get hosts for this play from inventory, excluding any host that
