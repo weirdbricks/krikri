@@ -180,6 +180,15 @@ module Krikri
       groups = match.try(&.to_a[1..].compact.map { |group| JSON::Any.new(group) }) || [] of JSON::Any
       result.extra["match_groups"] = JSON::Any.new(groups)
       result.extra["match_groupdict"] = JSON::Any.new(Hash(String, JSON::Any).new)
+      # wait_for.py's exit_json(state=, port=, search_regex=, ...) echoes these
+      # three even when null/default (visible through a registered result).
+      result.extra["state"] = JSON::Any.new(@params["state"]?.presence || "started")
+      result.extra["port"] = (port_value = @params["port"]?.try(&.to_i64?)) ? JSON::Any.new(port_value) : JSON::Any.new(nil)
+      result.extra["search_regex"] = (regex = @params["search_regex"]?) ? JSON::Any.new(regex) : JSON::Any.new(nil)
+      # exit_json(path=...) runs add_path_info: an existing path's uid/gid/
+      # owner/group/mode/size land in the result and `state` becomes the
+      # path's own state ("file"/"directory"), overriding the wait state.
+      add_path_info(result, path) if path
       result
     end
 

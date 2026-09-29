@@ -235,6 +235,8 @@ DELEGATES = {
     "ansible.builtin.command": (None, "ansible.legacy.command"),
     "ansible.builtin.uri": (None, "ansible.legacy.uri"),
     "ansible.builtin.copy": (None, "ansible.legacy.copy"),
+    # the unarchive action plugin runs the module as ansible.legacy.unarchive
+    "ansible.builtin.unarchive": (None, "ansible.legacy.unarchive"),
 }
 
 # Modules whose action plugin delegates per-host to another module; the

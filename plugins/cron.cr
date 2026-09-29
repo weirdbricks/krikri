@@ -169,7 +169,7 @@ module Krikri
         return PluginResult.new(changed: false, failed: true, msg: "You must specify time and date fields or special time.")
       end
       return nil unless state == "present"
-      return PluginResult.new(changed: false, failed: true, msg: "job parameter required when state=present") unless job
+      return PluginResult.new(changed: false, failed: true, msg: "You must specify 'job' to install a new cron job or variable") unless job
       if (insertafter || insertbefore) && !env
         return PluginResult.new(changed: false, failed: true, msg: "Insertafter and insertbefore parameters are valid only with env=yes")
       end

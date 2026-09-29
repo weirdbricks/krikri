@@ -4292,7 +4292,10 @@
   "required_by": {},
   "required_if": [],
   "required_one_of": [],
-  "required_together": []
+  "required_together": [],
+  "print": {
+   "fixed": "ansible.legacy.unarchive"
+  }
  },
  "ansible.builtin.uri": {
   "mutually_exclusive": [

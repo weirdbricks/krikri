@@ -75,6 +75,8 @@ module Krikri
       return nil unless entry
       return nil if entry["no_validate"]?
       return :action if module_name == "ansible.builtin.template" && msg == "src and dest are required"
+      return :action if module_name == "ansible.builtin.unarchive" &&
+                        {"parameters are mutually exclusive: ('copy', 'remote_src')", "src (or content) and dest are required"}.includes?(msg)
       return nil unless validation_msg?(msg)
       entry["action_level"]?.try(&.as_bool?) ? :action : :module
     end
@@ -117,6 +119,13 @@ module Krikri
       # BEFORE any module argument validation (AnsibleActionFail).
       if module_name == "ansible.builtin.template" && (!params.has_key?("src") || !params.has_key?("dest"))
         return Failure.new("src and dest are required", true)
+      end
+      # unarchive's action plugin, in order: copy+remote_src conflict, src/dest
+      # required, then (below) dest must be an existing dir - all before the
+      # module validates anything.
+      if module_name == "ansible.builtin.unarchive"
+        return Failure.new("parameters are mutually exclusive: ('copy', 'remote_src')", true) if params.has_key?("copy") && params.has_key?("remote_src")
+        return Failure.new("src (or content) and dest are required", true) unless params.has_key?("src") && params.has_key?("dest")
       end
       # unarchive's action plugin checks that dest is an existing directory
       # (AnsibleActionFail) before the module ever validates its arguments;

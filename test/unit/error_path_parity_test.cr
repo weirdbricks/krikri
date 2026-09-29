@@ -161,4 +161,36 @@ describe "error-path parity with real ansible (fuzzer findings)" do
       "Supported parameters include: arguments, enabled, name, pattern, runlevel, sleep, state (args).")
     Krikri::ArgspecValidator.validate("service", "ansible.builtin.service", {"use" => "auto", "name" => "x", "state" => "started"}, service_vars).must_be_nil
   end
+
+  it "cron: state=present without job uses cron.py's wording" do
+    result = PluginSpecHelper.run("cron", {"name" => "x", "user" => "root", "cron_file" => File.join(scratch_dir, "kpgcron")})
+    result["msg"].as_s.must_equal("You must specify 'job' to install a new cron job or variable")
+  end
+
+  it "unarchive: the action plugin's own checks come first, in order, and the module prints as ansible.legacy" do
+    vars = Hash(String, JSON::Any).new
+    both = Krikri::ArgspecValidator.validate("unarchive", "ansible.builtin.unarchive",
+      {"src" => "a.tar", "dest" => "/tmp", "copy" => "false", "remote_src" => "true"}, vars)
+    both.not_nil!.msg.must_equal("parameters are mutually exclusive: ('copy', 'remote_src')")
+    both.not_nil!.action_level?.must_equal(true)
+    Krikri::ArgspecValidator.failure_kind?("ansible.builtin.unarchive", both.not_nil!.msg).must_equal(:action)
+
+    missing = Krikri::ArgspecValidator.validate("unarchive", "ansible.builtin.unarchive", {"dest" => "/tmp"}, vars)
+    missing.not_nil!.msg.must_equal("src (or content) and dest are required")
+
+    typo = Krikri::ArgspecValidator.validate("unarchive", "ansible.builtin.unarchive",
+      {"src" => "a.tar", "dest" => "/tmp", "remote_src" => "true", "zz" => "1"}, vars)
+    typo.not_nil!.msg.must_match(/\AUnsupported parameters for \(ansible\.legacy\.unarchive\) module: zz\./)
+  end
+
+  it "wait_for: a successful result echoes state/port/search_regex and the path's add_path_info fields" do
+    file = File.join(scratch_dir, "wf-file")
+    File.write(file, "hello\n")
+    result = PluginSpecHelper.run("wait_for", {"path" => file, "timeout" => "2", "search_regex" => "hello"})
+    result["port"].raw.must_be_nil
+    result["search_regex"].as_s.must_equal("hello")
+    result["state"].as_s.must_equal("file") # add_path_info overrides the wait state
+    result["size"].as_i.must_equal(6)
+    result["path"].as_s.must_equal(file)
+  end
 end
