@@ -211,7 +211,14 @@ module Krikri
         raw.to_i64?.try { |v| JSON::Any.new(v) } || JSON::Any.new(raw)
       when "float"
         raw.to_f64?.try { |v| JSON::Any.new(v) } || JSON::Any.new(raw)
-      when "list", "dict"
+      when "list"
+        parsed = (JSON.parse(raw) rescue nil)
+        if parsed && parsed.as_a?
+          parsed
+        else
+          JSON::Any.new(raw.split(",").map { |part| JSON::Any.new(part.strip) })
+        end
+      when "dict"
         (JSON.parse(raw) rescue JSON::Any.new(raw))
       when "path"
         JSON::Any.new(raw.starts_with?("~") ? File.expand_path(raw) : raw)
