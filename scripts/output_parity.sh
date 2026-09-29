@@ -87,7 +87,16 @@ mask() {
   # passed as its own -e (a bare second script arg would be read as a file).
   local args=() m
   for m in "${MASKS[@]}"; do args+=(-e "$m"); done
-  sed -E "${args[@]}" "$src" >"$dst"
+  # Multi-line form of the same two interpreter-discovery artifacts, as they
+  # appear inside pretty-printed registered results (`debug: var: r`): the
+  # `ansible_facts.discovered_interpreter_python` block and the `warnings`
+  # entry carrying the discovery warning. Same justification as entries 1-2;
+  # krikri can never emit either.
+  sed -E "${args[@]}" "$src" | perl -0pe '
+    s/^[ ]*"ansible_facts": \{\n[ ]*"discovered_interpreter_python": "[^"]*"\n[ ]*\},\n//mg;
+    s/,\n[ ]*"warnings": \[\n[ ]*"Host \x27[^\x27]*\x27 is using the discovered Python interpreter[^\n]*"\n[ ]*\]//g;
+    s/^[ ]*"warnings": \[\n[ ]*"Host \x27[^\x27]*\x27 is using the discovered Python interpreter[^\n]*"\n[ ]*\],\n//mg;
+  ' >"$dst"
 }
 
 run_engine() {

@@ -1380,6 +1380,11 @@ module Krikri
         # Found benchmarking githubixx.containerd's own "Set
         # modprobe_location" (`loop_control: { loop_var: path }` +
         # `modprobe_locations.results | ... | map(attribute='path')`).
+        result_hash["ansible_loop_var"] = JSON::Any.new(task.loop_var || "item")
+        if index_var = task.index_var
+          result_hash["ansible_index_var"] = JSON::Any.new(index_var)
+          result_hash[index_var] = JSON::Any.new(idx.to_i64)
+        end
         if loop_var = task.loop_var
           result_hash[loop_var] = item
         else
@@ -1460,9 +1465,13 @@ module Krikri
           if any_failed
             aggregate["failed"] = JSON::Any.new(true)
             aggregate["msg"] = JSON::Any.new("One or more items failed")
+          elsif executed_count == 0 && !results.empty?
+            aggregate["msg"] = JSON::Any.new("All items skipped")
+            aggregate["skipped"] = JSON::Any.new(true)
           else
             aggregate["msg"] = JSON::Any.new("All items completed")
           end
+          aggregate["skipped"] = JSON::Any.new(false) if executed_count > 0
           @registered_vars[host.name][register_name] = JSON::Any.new(aggregate)
           @hv_generation += 1
         end

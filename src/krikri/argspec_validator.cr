@@ -176,6 +176,50 @@ module Krikri
       end
     end
 
+    # `invocation.module_args` of a module result: every spec option under
+    # its canonical name, the provided (type-converted) value or its default
+    # (null when none). nil for a module without a spec or an action-plugin
+    # module whose result carries no invocation.
+    def invocation_args(module_name : String, params : Hash(String, String)) : Hash(String, JSON::Any)?
+      entry = table[module_name]?
+      return nil unless entry
+      return nil if entry["no_validate"]? || entry["supported"]? || entry["unsupported_kind"]?
+      options = entry["options"]?.try(&.as_h?) || return nil
+      return nil if options.empty?
+      provided, _unsupported = collect_provided(params, options, consumed_keys(entry))
+      result = Hash(String, JSON::Any).new
+      options.each do |name, spec|
+        if (raw = provided[name]?) && raw == Krikri::NONE_SENTINEL
+          result[name] = JSON::Any.new(nil)
+        elsif raw = provided[name]?
+          result[name] = convert_invocation_value(raw, spec["type"]?.try(&.as_s?) || "str")
+        else
+          result[name] = spec["default"]? || JSON::Any.new(nil)
+        end
+      end
+      result
+    end
+
+    private def convert_invocation_value(raw : String, type : String) : JSON::Any
+      case type
+      when "bool"
+        down = raw.downcase
+        return JSON::Any.new(true) if REAL_TRUE.includes?(down)
+        return JSON::Any.new(false) if REAL_FALSE.includes?(down)
+        JSON::Any.new(raw)
+      when "int"
+        raw.to_i64?.try { |v| JSON::Any.new(v) } || JSON::Any.new(raw)
+      when "float"
+        raw.to_f64?.try { |v| JSON::Any.new(v) } || JSON::Any.new(raw)
+      when "list", "dict"
+        (JSON.parse(raw) rescue JSON::Any.new(raw))
+      when "path"
+        JSON::Any.new(raw.starts_with?("~") ? File.expand_path(raw) : raw)
+      else
+        JSON::Any.new(raw)
+      end
+    end
+
     # Wire params, alias-normalized: canonical name -> raw wire string.
     # Real's _handle_aliases runs before every check, so an alias
     # spelling counts exactly like its canonical name; anything that

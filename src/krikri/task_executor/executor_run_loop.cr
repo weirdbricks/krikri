@@ -1862,7 +1862,29 @@ module Krikri
         become_user
       )
 
+      result = attach_invocation(task, substituted_params, result)
       apply_changed_failed_when(task, result, vars_context, host)
+    end
+
+    # Modules whose registered per-item results (loop `results[]`) carry
+    # real's `invocation.module_args` and whose args this engine can
+    # reproduce from the argspec table (verified against ansible-core 2.19.11).
+    INVOCATION_MODULES = %w[command shell]
+
+    private def attach_invocation(task : Task, params : Hash(String, String), result : JSON::Any) : JSON::Any
+      short = task.module_name.sub(/\Aansible\.(builtin|legacy)\./, "")
+      return result unless INVOCATION_MODULES.includes?(short)
+      hash = result.as_h? || return result
+      return result if hash.has_key?("invocation")
+      args = ArgspecValidator.invocation_args("ansible.builtin.#{short}", params) || return result
+      args["_uses_shell"] = JSON::Any.new(true) if short == "shell"
+      if free_form_raw_command?(task) && args["cmd"]?.try(&.raw.is_a?(String))
+        args["_raw_params"] = args["cmd"]
+        args["cmd"] = JSON::Any.new(nil)
+      end
+      copy = hash.dup
+      copy["invocation"] = JSON::Any.new({"module_args" => JSON::Any.new(args)} of String => JSON::Any)
+      JSON::Any.new(copy)
     end
 
     # Dispatches an unavailable-module task that has a role-private

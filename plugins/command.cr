@@ -145,6 +145,8 @@ module Krikri
       # the `unless cmd` check above via the OR, so this is unreachable
       # with cmd nil only via that path.
       argv_parts = argv.try { |raw| parse_argv_list(raw) }
+      # real returns the (shlex-split, unexpanded) argv list as `cmd` on every path
+      cmd_list = argv_parts || (cmd ? parse_command(cmd) : [] of String)
 
       # Check creates parameter (idempotency). Real Ansible reports this
       # as an ORDINARY "ok" result (changed: false), never a task-level
@@ -195,7 +197,7 @@ module Krikri
             changed: false,
             failed: false,
             msg: skip_msg,
-            cmd: cmd,
+            cmd: cmd_list,
             rc: 0,
             stdout: skipped_stdout,
             stdout_lines: [skipped_stdout],
@@ -219,7 +221,7 @@ module Krikri
             changed: false,
             failed: false,
             msg: skip_msg,
-            cmd: cmd,
+            cmd: cmd_list,
             rc: 0,
             stdout: skipped_stdout,
             stdout_lines: [skipped_stdout],
@@ -257,7 +259,7 @@ module Krikri
           failed: false,
           msg: "Command would have run if not in check mode",
           skipped: !gated,
-          cmd: cmd,
+          cmd: cmd_list,
           rc: 0,
           stdout: "",
           stdout_lines: [] of String,
@@ -313,7 +315,7 @@ module Krikri
           failed: true,
           msg: "Unable to change directory before execution.",
           _ansible_error_detail: chdir_error_detail(chdir),
-          cmd: cmd,
+          cmd: cmd_list,
           rc: nil,
           stdout: "",
           stdout_lines: [] of String,
