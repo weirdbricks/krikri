@@ -91,9 +91,23 @@ module Krikri
       poll_drained(drained_port, host_hex, timeout, started)
     end
 
+    # wait_for.py's own runtime checks, in its order, all failing with
+    # elapsed=0 (main(), before any waiting).
+    VALID_CONNECTION_STATES = %w[ESTABLISHED SYN_SENT SYN_RECV FIN_WAIT1 FIN_WAIT2 TIME_WAIT]
+
+    private def early_failure(msg : String) : PluginResult
+      PluginResult.new(changed: false, failed: true, msg: msg, elapsed: 0)
+    end
+
     private def validate(port : Int32?, path : String?, state : String) : PluginResult?
-      if port && path
-        return PluginResult.new(changed: false, failed: true, msg: "path and port are mutually exclusive parameters")
+      return early_failure("port and path parameter can not both be passed to wait_for") if port && path
+      return early_failure("state=stopped should only be used for checking a port in the wait_for module") if path && state == "stopped"
+      return early_failure("state=drained should only be used for checking a port in the wait_for module") if path && state == "drained"
+      return early_failure("exclude_hosts should only be with state=drained") if @params["exclude_hosts"]? && state != "drained"
+      if raw_states = @params["active_connection_states"]?
+        raw_states.split(',').map(&.strip).each do |candidate|
+          return early_failure("unknown active_connection_state (#{candidate}) defined") unless VALID_CONNECTION_STATES.includes?(candidate)
+        end
       end
 
       if state == "drained"

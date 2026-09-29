@@ -290,6 +290,14 @@ module Krikri
     private def self.emit_task_error_block(source_task : Task?, result : JSON::Any, msg : String) : Nil
       return unless source_task
       return if source_task.no_log?
+      # assert:'s that: conditional failure: two-level chain, the second
+      # Origin pointing at the failing that: item (index carried in the
+      # internal _ansible_that_index key; when: failures are emitted by
+      # TaskExecutor's own emit_when_error_chain instead).
+      if (idx = result["_ansible_that_index"]?.try(&.as_i64?)) && msg.starts_with?("Task failed: Error while evaluating conditional")
+        emit_assert_that_chain(source_task, msg["Task failed: ".size..], idx.to_i)
+        return
+      end
       return if msg.includes?("Error while evaluating conditional")
       # Non-boolean conditional failures are likewise emitted by
       # emit_when_error_chain (with the when: value's own Origin); a
@@ -312,6 +320,53 @@ module Krikri
         return
       end
       ErrorBlock.emit(task_error_chain(source_task.module_name, msg, origin))
+    end
+
+    private def self.emit_assert_that_chain(task : Task, inner : String, index : Int32) : Nil
+      task_origin = error_origin_context(task)
+      item_origin = assert_that_origin(task, index)
+      return unless task_origin && item_origin
+
+      root = ErrorBlock::Node.new("Task failed.", source_context: task_origin)
+      cause = ErrorBlock::Node.new(inner, source_context: item_origin)
+      ErrorBlock.emit(root.with_chain(ErrorBlock::DIRECT_CAUSE, true, cause))
+    end
+
+    # Origin context of assert's that: item number `index` (0-based): the
+    # scalar's own line/column, found by scanning the task's source lines
+    # (the parser tracks per-task, not per-list-item, positions).
+    private def self.assert_that_origin(task : Task, index : Int32) : String?
+      path = task.source_file
+      return nil unless path && task.source_line > 0 && File.file?(path)
+
+      lines = File.read_lines(path)
+      ((task.source_line - 1)...lines.size).each do |idx|
+        line = lines[idx]
+        key_at = line.index("that:")
+        next unless key_at && line[0...key_at].strip.empty?
+        rest = line[(key_at + 5)..]
+        unless rest.strip.empty?
+          column = key_at + 5 + (rest.size - rest.lstrip.size) + 1
+          return ErrorBlock.origin_context(path, idx + 1, column)
+        end
+
+        count = 0
+        ((idx + 1)...lines.size).each do |item_idx|
+          item_line = lines[item_idx]
+          stripped = item_line.strip
+          next if stripped.empty? || stripped.starts_with?('#')
+          break unless stripped.starts_with?("- ")
+          if count == index
+            dash = item_line.index("- ").not_nil!
+            item_rest = item_line[(dash + 2)..]
+            column = dash + 2 + (item_rest.size - item_rest.lstrip.size) + 1
+            return ErrorBlock.origin_context(path, item_idx + 1, column)
+          end
+          count += 1
+        end
+        return nil
+      end
+      nil
     end
 
     private def self.error_origin_context(task : Task) : String?

@@ -218,10 +218,11 @@ describe Krikri::ArgspecValidator do
       "masked, name, no_block, scope, state (daemon-reexec, daemon-reload, service, unit).")
   end
 
-  it "skips service validation when the service_mgr fact is absent" do
+  it "validates service against its own spec for a non-systemd manager (real gathers the fact on demand)" do
     failure = Krikri::ArgspecValidator.validate(
-      "service", "ansible.builtin.service", {"name" => "ssh", "zz" => "1"}, vars)
-    failure.must_be_nil
+      "service", "ansible.builtin.service", {"name" => "ssh", "state" => "started", "zz" => "1"},
+      {"ansible_service_mgr" => JSON::Any.new("sysvinit")})
+    failure.not_nil!.msg.starts_with?("Unsupported parameters for (ansible.legacy.service) module: zz.").must_equal(true)
   end
 
   it "never validates the modules real does not validate" do

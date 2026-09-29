@@ -118,6 +118,12 @@ module Krikri
       if module_name == "ansible.builtin.template" && (!params.has_key?("src") || !params.has_key?("dest"))
         return Failure.new("src and dest are required", true)
       end
+      # unarchive's action plugin checks that dest is an existing directory
+      # (AnsibleActionFail) before the module ever validates its arguments;
+      # a dest that is not a directory here defers to the plugin's own failure.
+      if module_name == "ansible.builtin.unarchive" && (dest = params["dest"]?) && !Dir.exists?(dest)
+        return nil
+      end
       # copy's action plugin (copy.py:428-430) likewise checks first, with its
       # own two messages (a failed result, "Action failed." chain).
       if module_name == "ansible.builtin.copy"
@@ -226,11 +232,18 @@ module Krikri
       if fact_delegate = entry["fact_delegate"]?
         fact = fact_delegate["fact"].as_s
         fact_value = vars_context[fact]?.try(&.as_s?) || ""
-        target = fact_delegate["map"].as_h[fact_value]?.try(&.as_s)
-        unless target && (target_entry = table[target]?)
-          return {action_name, nil}
+        # Facts not gathered: real's action plugin runs setup for just
+        # ansible_service_mgr on demand - systemd only when PID 1 is systemd.
+        if fact_value.empty?
+          fact_value = File.read("/proc/1/comm").strip == "systemd" ? "systemd" : "service" rescue "service"
         end
-        return {"ansible.legacy.#{target.split(".").last}", target_entry}
+        target = fact_delegate["map"].as_h[fact_value]?.try(&.as_s)
+        if target && (target_entry = table[target]?)
+          return {"ansible.legacy.#{target.split(".").last}", target_entry}
+        end
+        # Any other manager (sysvinit/service/...): the action plugin runs
+        # the service module ITSELF, validated against its own spec.
+        return {"ansible.legacy.#{module_name.split(".").last}", entry}
       end
 
       print_name = action_name

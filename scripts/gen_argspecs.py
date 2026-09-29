@@ -262,6 +262,8 @@ CONSUMED_BY_ACTION = {
         "comment_start_string", "comment_end_string",
         "trim_blocks", "lstrip_blocks", "output_encoding",
     ],
+    # the service action plugin consumes `use:` (module selection) itself
+    "ansible.builtin.service": ["use"],
 }
 
 # Action-only directives: there is no module binary, so validation is

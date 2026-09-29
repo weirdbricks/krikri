@@ -3716,7 +3716,10 @@
     "enabled"
    ]
   ],
-  "required_together": []
+  "required_together": [],
+  "consumed_by_action": [
+   "use"
+  ]
  },
  "ansible.builtin.service_facts": {
   "mutually_exclusive": [],
@@ -4019,13 +4022,13 @@
    }
   },
   "required_by": {
+   "state": [
+    "name"
+   ],
    "enabled": [
     "name"
    ],
    "masked": [
-    "name"
-   ],
-   "state": [
     "name"
    ]
   },
@@ -5649,11 +5652,11 @@
    "interface": [
     "zone"
    ],
-   "source": [
-    "permanent"
-   ],
    "target": [
     "zone"
+   ],
+   "source": [
+    "permanent"
    ]
   },
   "required_if": [],

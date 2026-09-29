@@ -121,4 +121,44 @@ describe "error-path parity with real ansible (fuzzer findings)" do
     copy_src = Krikri::ArgspecValidator.validate("copy", "ansible.builtin.copy", {"dest" => "x"}, vars)
     copy_src.not_nil!.msg.must_equal("src (or content) is required")
   end
+
+  it "cron: cron_file without user and the cron_file basename warning follow cron.py" do
+    result = PluginSpecHelper.run("cron", {"name" => "x", "job" => "true", "cron_file" => File.join(scratch_dir, "bad.name")})
+    result["msg"].as_s.must_equal("To use cron_file=... parameter you must specify user=... as well")
+    result["warnings"].as_a.map(&.as_s).must_equal(
+      [%(Filename portion of cron_file ("bad.name") should consist solely of upper- and lower-case letters, digits, underscores, and hyphens)])
+  end
+
+  it "wait_for: runtime checks fail with real's wording and elapsed=0" do
+    both = PluginSpecHelper.run("wait_for", {"port" => "80", "path" => "/tmp"})
+    both["msg"].as_s.must_equal("port and path parameter can not both be passed to wait_for")
+    both["elapsed"].as_i.must_equal(0)
+
+    stopped = PluginSpecHelper.run("wait_for", {"path" => "/tmp", "state" => "stopped"})
+    stopped["msg"].as_s.must_equal("state=stopped should only be used for checking a port in the wait_for module")
+
+    bogus = PluginSpecHelper.run("wait_for", {"port" => "1", "active_connection_states" => "ESTABLISHED,BOGUS"})
+    bogus["msg"].as_s.must_equal("unknown active_connection_state (BOGUS) defined")
+  end
+
+  it "unarchive: a dest that is not a directory is an action-level failure" do
+    src = File.join(scratch_dir, "a.tar")
+    File.write(src, "x")
+    result = PluginSpecHelper.run("unarchive", {"src" => src, "dest" => File.join(scratch_dir, "no-such-dir"), "remote_src" => "true"})
+    result["msg"].as_s.must_match(/\Adest '.*no-such-dir' must be an existing dir\z/)
+    result["_ansible_action_level"].as_bool.must_equal(true)
+  end
+
+  it "validator: systemd required_by keeps spec order; service validates its own spec without a systemd fact" do
+    vars = Hash(String, JSON::Any).new
+    systemd = Krikri::ArgspecValidator.validate("systemd", "ansible.builtin.systemd", {"state" => "started", "enabled" => "true"}, vars)
+    systemd.not_nil!.msg.must_equal("missing parameter(s) required by 'state': name")
+
+    service_vars = {"ansible_service_mgr" => JSON::Any.new("service")}
+    service = Krikri::ArgspecValidator.validate("service", "ansible.builtin.service", {"zz" => "1", "name" => "x", "state" => "started"}, service_vars)
+    service.not_nil!.msg.must_equal(
+      "Unsupported parameters for (ansible.legacy.service) module: zz. " \
+      "Supported parameters include: arguments, enabled, name, pattern, runlevel, sleep, state (args).")
+    Krikri::ArgspecValidator.validate("service", "ansible.builtin.service", {"use" => "auto", "name" => "x", "state" => "started"}, service_vars).must_be_nil
+  end
 end

@@ -77,6 +77,24 @@ module Krikri
     end
 
     def execute : PluginResult
+      result = execute_impl
+      if warning = cron_file_warning
+        result.extra["warnings"] = JSON::Any.new([JSON::Any.new(warning)])
+      end
+      result
+    end
+
+    # cron.py main(): module.warn when the cron_file basename falls outside
+    # [A-Z0-9_-] (case-insensitive) - the warning rides on the result.
+    private def cron_file_warning : String?
+      cron_file = @params["cron_file"]?
+      return nil if cron_file.nil? || cron_file.empty?
+      base = File.basename(cron_file)
+      return nil if base.matches?(/\A[A-Z0-9_-]+\z/i)
+      %(Filename portion of cron_file ("#{base}") should consist solely of upper- and lower-case letters, digits, underscores, and hyphens)
+    end
+
+    private def execute_impl : PluginResult
       validate_bool_params!
       name = @params["name"]?
       return missing_param("name") unless name
@@ -108,6 +126,10 @@ module Krikri
       # mutually exclusive - compared against the argument_spec's literal
       # "*" defaults, so only an explicitly-SET field rejects, not the
       # implicit defaults.
+      if state == "present" && @params["cron_file"]?.presence && @params["user"]?.presence.nil?
+        return PluginResult.new(changed: false, failed: true, msg: "To use cron_file=... parameter you must specify user=... as well")
+      end
+
       if failure = validate_present_params(state, job, env, insertafter, insertbefore)
         return failure
       end

@@ -17,13 +17,13 @@ describe "cron plugin" do
       "job"       => "/usr/local/bin/backup.sh",
       "hour"      => "2",
       "minute"    => "0",
-      "cron_file" => path,
+      "cron_file" => path, "user" => "root",
     })
 
     result["changed"].as_bool.must_equal(true)
     content = File.read(path)
     content.must_include("#Ansible: nightly backup")
-    content.must_include("0 2 * * * /usr/local/bin/backup.sh")
+    content.must_include("0 2 * * * root /usr/local/bin/backup.sh")
   end
 
   it "resolves a relative cron_file: against /etc/cron.d, matching real Ansible" do
@@ -37,7 +37,7 @@ describe "cron plugin" do
       "job"       => "/tmp/lynis/lynis --cronjob audit system",
       "hour"      => "4",
       "minute"    => "23",
-      "cron_file" => "krikri-playbook-spec-relative",
+      "cron_file" => "krikri-playbook-spec-relative", "user" => "root",
     })
 
     resolved = "/etc/cron.d/krikri-playbook-spec-relative"
@@ -61,7 +61,7 @@ describe "cron plugin" do
     params = {
       "name"      => "idempotent job",
       "job"       => "/bin/true",
-      "cron_file" => path,
+      "cron_file" => path, "user" => "root",
     }
 
     first = PluginSpecHelper.run("cron", params)
@@ -73,21 +73,21 @@ describe "cron plugin" do
 
   it "updates the schedule in place when it changes" do
     path = tmp_path("cron-update.txt")
-    PluginSpecHelper.run("cron", {"name" => "job", "job" => "/bin/true", "hour" => "1", "cron_file" => path})
+    PluginSpecHelper.run("cron", {"name" => "job", "job" => "/bin/true", "hour" => "1", "cron_file" => path, "user" => "root"})
 
-    result = PluginSpecHelper.run("cron", {"name" => "job", "job" => "/bin/true", "hour" => "5", "cron_file" => path})
+    result = PluginSpecHelper.run("cron", {"name" => "job", "job" => "/bin/true", "hour" => "5", "cron_file" => path, "user" => "root"})
 
     result["changed"].as_bool.must_equal(true)
     content = File.read(path)
-    content.must_include("* 5 * * * /bin/true")
+    content.must_include("* 5 * * * root /bin/true")
     content.wont_include("* 1 * * * /bin/true")
   end
 
   it "removes the entry when state=absent" do
     path = tmp_path("cron-remove.txt")
-    PluginSpecHelper.run("cron", {"name" => "to remove", "job" => "/bin/true", "cron_file" => path})
+    PluginSpecHelper.run("cron", {"name" => "to remove", "job" => "/bin/true", "cron_file" => path, "user" => "root"})
 
-    result = PluginSpecHelper.run("cron", {"name" => "to remove", "state" => "absent", "cron_file" => path})
+    result = PluginSpecHelper.run("cron", {"name" => "to remove", "state" => "absent", "cron_file" => path, "user" => "root"})
 
     result["changed"].as_bool.must_equal(true)
     File.read(path).wont_include("to remove")
@@ -95,10 +95,10 @@ describe "cron plugin" do
 
   it "leaves other entries in the file untouched" do
     path = tmp_path("cron-multi.txt")
-    PluginSpecHelper.run("cron", {"name" => "a", "job" => "/bin/a", "cron_file" => path})
-    PluginSpecHelper.run("cron", {"name" => "b", "job" => "/bin/b", "cron_file" => path})
+    PluginSpecHelper.run("cron", {"name" => "a", "job" => "/bin/a", "cron_file" => path, "user" => "root"})
+    PluginSpecHelper.run("cron", {"name" => "b", "job" => "/bin/b", "cron_file" => path, "user" => "root"})
 
-    PluginSpecHelper.run("cron", {"name" => "a", "state" => "absent", "cron_file" => path})
+    PluginSpecHelper.run("cron", {"name" => "a", "state" => "absent", "cron_file" => path, "user" => "root"})
 
     content = File.read(path)
     content.wont_include("#Ansible: a")
@@ -113,7 +113,7 @@ describe "cron plugin" do
     result = PluginSpecHelper.run("cron", {
       "name"                => "would add",
       "job"                 => "/bin/true",
-      "cron_file"           => path,
+      "cron_file"           => path, "user" => "root",
       "_ansible_check_mode" => "true",
     })
 
@@ -129,17 +129,17 @@ describe "cron plugin" do
       "name"         => "on reboot",
       "job"          => "/bin/true",
       "special_time" => "reboot",
-      "cron_file"    => path,
+      "cron_file"    => path, "user" => "root",
     })
 
     result["changed"].as_bool.must_equal(true)
-    File.read(path).must_include("@reboot /bin/true")
+    File.read(path).must_include("@reboot root /bin/true")
   end
 
   it "fails with a clear message when job is missing for state=present" do
     result = PluginSpecHelper.run("cron", {
       "name"      => "no job",
-      "cron_file" => tmp_path("cron-missing-job.txt"),
+      "cron_file" => tmp_path("cron-missing-job.txt"), "user" => "root",
     })
 
     result["failed"].as_bool.must_equal(true)
@@ -150,13 +150,13 @@ describe "cron plugin" do
     it "writes a NAME=\"value\" line at the top of the file" do
       path = tmp_path("cron-env-create.txt")
       File.write(path, "MAILTO=root\n")
-      PluginSpecHelper.run("cron", {"name" => "OLD_JOB", "job" => "/bin/old", "cron_file" => path})
+      PluginSpecHelper.run("cron", {"name" => "OLD_JOB", "job" => "/bin/old", "cron_file" => path, "user" => "root"})
 
       result = PluginSpecHelper.run("cron", {
         "name"      => "PATH",
         "env"       => "true",
         "job"       => "/opt/bin",
-        "cron_file" => path,
+        "cron_file" => path, "user" => "root",
       })
 
       result["changed"].as_bool.must_equal(true)
@@ -169,7 +169,7 @@ describe "cron plugin" do
 
     it "is idempotent on a second identical env run" do
       path = tmp_path("cron-env-idempotent.txt")
-      params = {"name" => "PATH", "env" => "true", "job" => "/opt/bin", "cron_file" => path}
+      params = {"name" => "PATH", "env" => "true", "job" => "/opt/bin", "cron_file" => path, "user" => "root"}
 
       PluginSpecHelper.run("cron", params)
       second = PluginSpecHelper.run("cron", params)
@@ -180,9 +180,9 @@ describe "cron plugin" do
 
     it "updates the value in place when it changes" do
       path = tmp_path("cron-env-update.txt")
-      PluginSpecHelper.run("cron", {"name" => "PATH", "env" => "true", "job" => "/opt/bin", "cron_file" => path})
+      PluginSpecHelper.run("cron", {"name" => "PATH", "env" => "true", "job" => "/opt/bin", "cron_file" => path, "user" => "root"})
 
-      result = PluginSpecHelper.run("cron", {"name" => "PATH", "env" => "true", "job" => "/usr/bin", "cron_file" => path})
+      result = PluginSpecHelper.run("cron", {"name" => "PATH", "env" => "true", "job" => "/usr/bin", "cron_file" => path, "user" => "root"})
 
       result["changed"].as_bool.must_equal(true)
       File.read(path).must_equal("PATH=\"/usr/bin\"\n")
@@ -190,9 +190,9 @@ describe "cron plugin" do
 
     it "removes the variable when state=absent" do
       path = tmp_path("cron-env-absent.txt")
-      PluginSpecHelper.run("cron", {"name" => "PATH", "env" => "true", "job" => "/opt/bin", "cron_file" => path})
+      PluginSpecHelper.run("cron", {"name" => "PATH", "env" => "true", "job" => "/opt/bin", "cron_file" => path, "user" => "root"})
 
-      result = PluginSpecHelper.run("cron", {"name" => "PATH", "env" => "true", "state" => "absent", "cron_file" => path})
+      result = PluginSpecHelper.run("cron", {"name" => "PATH", "env" => "true", "state" => "absent", "cron_file" => path, "user" => "root"})
 
       result["changed"].as_bool.must_equal(true)
       File.read(path).wont_include("PATH=")
@@ -213,7 +213,7 @@ describe "cron plugin" do
           "env"       => "true",
           "value"     => "date +%Y%m%d",
           "user"      => "root",
-          "cron_file" => path,
+          "cron_file" => path, "user" => "root",
         })
 
         falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
@@ -223,7 +223,7 @@ describe "cron plugin" do
 
       it "is idempotent on a second identical value: run" do
         path = tmp_path("cron-env-alias-idempotent.txt")
-        params = {"name" => "CURRENT_DATE", "env" => "true", "value" => "date +%Y%m%d", "user" => "root", "cron_file" => path}
+        params = {"name" => "CURRENT_DATE", "env" => "true", "value" => "date +%Y%m%d", "user" => "root", "cron_file" => path, "user" => "root"}
 
         PluginSpecHelper.run("cron", params)
         second = PluginSpecHelper.run("cron", params)
@@ -234,9 +234,9 @@ describe "cron plugin" do
 
       it "removes the alias-defined variable when state=absent" do
         path = tmp_path("cron-env-alias-absent.txt")
-        PluginSpecHelper.run("cron", {"name" => "CURRENT_DATE", "env" => "true", "value" => "date +%Y%m%d", "cron_file" => path})
+        PluginSpecHelper.run("cron", {"name" => "CURRENT_DATE", "env" => "true", "value" => "date +%Y%m%d", "cron_file" => path, "user" => "root"})
 
-        result = PluginSpecHelper.run("cron", {"name" => "CURRENT_DATE", "env" => "true", "value" => "date +%Y%m%d", "state" => "absent", "cron_file" => path})
+        result = PluginSpecHelper.run("cron", {"name" => "CURRENT_DATE", "env" => "true", "value" => "date +%Y%m%d", "state" => "absent", "cron_file" => path, "user" => "root"})
 
         result["changed"].as_bool.must_equal(true)
         File.read(path).wont_include("CURRENT_DATE=")
@@ -249,11 +249,11 @@ describe "cron plugin" do
         result = PluginSpecHelper.run("cron", {
           "name"      => "aliased job",
           "value"     => "/bin/true",
-          "cron_file" => path,
+          "cron_file" => path, "user" => "root",
         })
 
         result["changed"].as_bool.must_equal(true)
-        File.read(path).must_include("* * * * * /bin/true")
+        File.read(path).must_include("* * * * * root /bin/true")
       end
     end
 
@@ -266,7 +266,7 @@ describe "cron plugin" do
         "env"         => "true",
         "job"         => "/opt/bin",
         "insertafter" => "MAILTO",
-        "cron_file"   => path,
+        "cron_file"   => path, "user" => "root",
       })
 
       File.read(path).must_equal("MAILTO=root\nPATH=\"/opt/bin\"\nSHELL=/bin/sh\n")
@@ -281,7 +281,7 @@ describe "cron plugin" do
         "env"          => "true",
         "job"          => "/opt/bin",
         "insertbefore" => "SHELL",
-        "cron_file"    => path,
+        "cron_file"    => path, "user" => "root",
       })
 
       File.read(path).must_equal("MAILTO=root\nPATH=\"/opt/bin\"\nSHELL=/bin/sh\n")
@@ -296,7 +296,7 @@ describe "cron plugin" do
         "env"         => "true",
         "job"         => "/opt/bin",
         "insertafter" => "NOPE",
-        "cron_file"   => path,
+        "cron_file"   => path, "user" => "root",
       })
 
       result["failed"].as_bool.must_equal(true)
@@ -309,7 +309,7 @@ describe "cron plugin" do
         "name"      => "MY VAR",
         "env"       => "true",
         "job"       => "/opt/bin",
-        "cron_file" => tmp_path("cron-env-space-name.txt"),
+        "cron_file" => tmp_path("cron-env-space-name.txt"), "user" => "root",
       })
 
       result["failed"].as_bool.must_equal(true)
@@ -325,7 +325,7 @@ describe "cron plugin" do
         "name"        => "a job",
         "job"         => "/bin/true",
         "insertafter" => "something",
-        "cron_file"   => path,
+        "cron_file"   => path, "user" => "root",
       })
 
       result["failed"].as_bool.must_equal(true)
@@ -339,7 +339,7 @@ describe "cron plugin" do
         "job"          => "/opt/bin",
         "insertafter"  => "MAILTO",
         "insertbefore" => "SHELL",
-        "cron_file"    => tmp_path("cron-insert-both.txt"),
+        "cron_file"    => tmp_path("cron-insert-both.txt"), "user" => "root",
       })
 
       result["failed"].as_bool.must_equal(true)
@@ -373,7 +373,7 @@ describe "cron plugin" do
           "name"      => "a job",
           "job"       => "/bin/true",
           "backup"    => "true",
-          "cron_file" => path,
+          "cron_file" => path, "user" => "root",
         })
 
         result["changed"].as_bool.must_equal(true)
@@ -390,14 +390,14 @@ describe "cron plugin" do
         path = tmp_path("cron-backup-noop.txt")
         marker = "# krikri-cron-backup-noop #{Random::Secure.hex(8)}"
         File.write(path, "#{marker}\n")
-        PluginSpecHelper.run("cron", {"name" => "a job", "job" => "/bin/true", "cron_file" => path})
+        PluginSpecHelper.run("cron", {"name" => "a job", "job" => "/bin/true", "cron_file" => path, "user" => "root"})
         before = Dir.glob("/tmp/crontab*").to_set
 
         result = PluginSpecHelper.run("cron", {
           "name"      => "a job",
           "job"       => "/bin/true",
           "backup"    => "true",
-          "cron_file" => path,
+          "cron_file" => path, "user" => "root",
         })
 
         result["changed"].as_bool.must_equal(false)
@@ -419,7 +419,7 @@ describe "cron plugin" do
           "job"                 => "/bin/true",
           "backup"              => "true",
           "_ansible_check_mode" => "true",
-          "cron_file"           => path,
+          "cron_file"           => path, "user" => "root",
         })
 
         result["changed"].as_bool.must_equal(true)
@@ -438,7 +438,7 @@ describe "cron plugin" do
         "env"       => "true",
         "job"       => "/usr/bin",
         "backup"    => "true",
-        "cron_file" => path,
+        "cron_file" => path, "user" => "root",
       })
 
       backup_file = result["backup_file"].as_s
@@ -456,8 +456,8 @@ describe "cron plugin" do
       path = tmp_path("cron-fields.txt")
       File.delete(path) if File.exists?(path)
 
-      PluginSpecHelper.run("cron", {"name" => "first job", "job" => "/bin/true", "cron_file" => path})
-      result = PluginSpecHelper.run("cron", {"name" => "second job", "job" => "/bin/ls", "cron_file" => path})
+      PluginSpecHelper.run("cron", {"name" => "first job", "job" => "/bin/true", "cron_file" => path, "user" => "root"})
+      result = PluginSpecHelper.run("cron", {"name" => "second job", "job" => "/bin/ls", "cron_file" => path, "user" => "root"})
 
       result["jobs"].as_a.map(&.as_s).must_equal(["first job", "second job"])
       result["envs"].as_a.must_be_empty
@@ -467,8 +467,8 @@ describe "cron plugin" do
       path = tmp_path("cron-fields-env.txt")
       File.delete(path) if File.exists?(path)
 
-      PluginSpecHelper.run("cron", {"name" => "a job", "job" => "/bin/true", "cron_file" => path})
-      result = PluginSpecHelper.run("cron", {"name" => "MAILTO", "env" => "true", "job" => "root", "cron_file" => path})
+      PluginSpecHelper.run("cron", {"name" => "a job", "job" => "/bin/true", "cron_file" => path, "user" => "root"})
+      result = PluginSpecHelper.run("cron", {"name" => "MAILTO", "env" => "true", "job" => "root", "cron_file" => path, "user" => "root"})
 
       result["envs"].as_a.map(&.as_s).must_equal(["MAILTO"])
       result["jobs"].as_a.map(&.as_s).must_equal(["a job"])
@@ -478,7 +478,7 @@ describe "cron plugin" do
       path = tmp_path("cron-fields-absent.txt")
       File.write(path, "#Ansible: gone job\n* * * * * /bin/true\n#Ansible: stays\n1 1 1 1 1 /bin/ls\n")
 
-      result = PluginSpecHelper.run("cron", {"name" => "gone job", "state" => "absent", "cron_file" => path})
+      result = PluginSpecHelper.run("cron", {"name" => "gone job", "state" => "absent", "cron_file" => path, "user" => "root"})
 
       result["changed"].as_bool.must_equal(true)
       result["jobs"].as_a.map(&.as_s).must_equal(["stays"])
@@ -486,7 +486,7 @@ describe "cron plugin" do
 
     it "carries the full lists on a no-op second run too (real ansible exits with them every time)" do
       path = tmp_path("cron-fields-noop.txt")
-      params = {"name" => "a job", "job" => "/bin/true", "cron_file" => path}
+      params = {"name" => "a job", "job" => "/bin/true", "cron_file" => path, "user" => "root"}
       PluginSpecHelper.run("cron", params)
 
       result = PluginSpecHelper.run("cron", params)
@@ -499,7 +499,7 @@ describe "cron plugin" do
       path = tmp_path("cron-fields-empty.txt")
       File.write(path, "MAILTO=root\n* * * * * /bin/true\n")
 
-      result = PluginSpecHelper.run("cron", {"name" => "brand new", "job" => "/bin/true", "cron_file" => path})
+      result = PluginSpecHelper.run("cron", {"name" => "brand new", "job" => "/bin/true", "cron_file" => path, "user" => "root"})
 
       result["jobs"].as_a.map(&.as_s).must_equal(["brand new"])
       result["envs"].as_a.map(&.as_s).must_equal(["MAILTO"])

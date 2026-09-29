@@ -80,10 +80,15 @@ module Krikri
       # ansible-core 2.19.11 registers changed=false+failed=true+msg for
       # a failed conditional, live-verified; see
       # ActionResult.conditional_error_result_json itself).
+      current_index = 0
       begin
-        failing = conditions.find do |condition|
+        failing = nil.as(String?)
+        conditions.each_with_index do |condition, idx|
+          current_index = idx
           substituted = substitutor.substitute(condition)
-          !ConditionalEvaluator.evaluate(substituted, @vars, strict: true, raise_undefined: true)
+          next if ConditionalEvaluator.evaluate(substituted, @vars, strict: true, raise_undefined: true)
+          failing = condition
+          break
         end
       rescue ex : ConditionalEvaluator::UndefinedVariableError
         # Real ansible-core 2.19.11 prefixes assert:'s undefined-
@@ -91,8 +96,11 @@ module Krikri
         # non-bool one (live-verified: `assert: that: x` on an undefined
         # var → fatal msg "Task failed: Error while evaluating
         # conditional: 'x' is undefined").
-        return ActionResult.final(ActionResult.conditional_error_result_json(
-          "Task failed: Error while evaluating conditional: #{ex.message}"))
+        result = ActionResult.conditional_error_result_json(
+          "Task failed: Error while evaluating conditional: #{ex.message}")
+        # which that: item failed - the [ERROR] block's second Origin points at it
+        result.as_h["_ansible_that_index"] = JSON::Any.new(current_index.to_i64)
+        return ActionResult.final(result)
       rescue ex : ConditionalEvaluator::ConditionalBooleanError
         # Real Ansible's assert: prefixes this specific failure
         # "Task failed: " rather than when:'s own "Error while
