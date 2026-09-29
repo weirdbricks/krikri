@@ -1876,6 +1876,13 @@ module Krikri
 
       @results[host.name]["ok"] += 1 unless task.is_static_import?
 
+      # Real v2_playbook_on_include line for a dynamic include_role.
+      unless task.is_static_import?
+        connection_name = host.vars["ansible_host"]?.try(&.as_s?) || host.name
+        suffix = item_label ? " => (item=#{item_label})" : ""
+        puts "included: #{role_name} for #{connection_name}#{suffix}".colorize(:cyan)
+      end
+
       # Round 26 originally had an eager re-render of each loaded task's
       # `name:` here (against just the include_role: `vars:` passed in) to
       # fix a role's tasks/main.yml `name: "Create group {{ _child_group

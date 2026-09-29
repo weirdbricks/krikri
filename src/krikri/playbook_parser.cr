@@ -2099,7 +2099,7 @@ module Krikri
       end
 
       if include_role_yaml = directive(task_hash, "include_role").try(&.as_h?)
-        return parse_include_role(name || "include_role", task_hash, include_role_yaml, play, file_dir)
+        return parse_include_role(name, task_hash, include_role_yaml, play, file_dir)
       end
 
       # import_role: - real Ansible resolves this statically at parse
@@ -2176,7 +2176,7 @@ module Krikri
           end
         end
 
-        return parse_include_role(name || "import_role", task_hash, import_role_yaml, play, file_dir, is_static: true)
+        return parse_include_role(name, task_hash, import_role_yaml, play, file_dir, is_static: true)
       end
 
       if meta_yaml = directive(task_hash, "meta")
@@ -3468,7 +3468,7 @@ module Krikri
     # allow_duplicates: isn't implemented either - every include_role call
     # loads the role fresh, matching its default (true) but not honoring
     # an explicit false.
-    private def self.parse_include_role(name : String, task_hash : Hash(YAML::Any, YAML::Any), include_role_yaml : Hash(YAML::Any, YAML::Any), play : Play, file_dir : String, is_static : Bool = false) : Task
+    private def self.parse_include_role(name : String?, task_hash : Hash(YAML::Any, YAML::Any), include_role_yaml : Hash(YAML::Any, YAML::Any), play : Play, file_dir : String, is_static : Bool = false) : Task
       # See parse_include_tasks above for the rationale; import_role:
       # (the is_static branch, also called from this same function) is
       # intentionally NOT validated, mirroring real ansible's
@@ -3478,7 +3478,10 @@ module Krikri
       role_name = include_role_yaml["name"]?.try(&.as_s)
       raise "include_role: missing required 'name'" unless role_name
 
-      task = Task.new(name, "_include_role")
+      # Real IncludeRole.get_name: an unnamed include_role/import_role is
+      # displayed as "<action> : <role name>".
+      display_name = name || "#{is_static ? "import_role" : "include_role"} : #{role_name}"
+      task = Task.new(display_name, "_include_role")
       task.is_static_import = is_static
       task.include_role_name = role_name
       task.include_role_dir = file_dir
