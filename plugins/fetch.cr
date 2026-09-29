@@ -24,32 +24,16 @@ module Krikri
       %w[fail_on_missing flat validate_checksum]
     end
 
-    def execute : PluginResult # ameba:disable Metrics/CyclomaticComplexity
+    def execute : PluginResult
       src = @params["src"]?
       dest = @params["dest"]?
-      return PluginResult.new(changed: false, failed: true, msg: "missing required argument: src") unless src
-      return PluginResult.new(changed: false, failed: true, msg: "missing required argument: dest") unless dest
+      return missing_arg_result("src") unless src
+      return missing_arg_result("dest") unless dest
       dest = expand_tilde(dest)
       validate_bool_params!
 
-      if !true?(@params["flat"]?) && unsafe_host_dir_name?(@host.name)
-        return PluginResult.new(
-          changed: false, failed: true,
-          msg: "inventory hostname '#{@host.name}' cannot be used as a fetch destination directory (path separators or '..' would escape dest)",
-          file: src,
-        )
-      end
-
-      if true?(@params["_ansible_check_mode"]?)
-        return PluginResult.new(changed: false, failed: false, msg: "check mode not (yet) supported for this module", skipped: true)
-      end
-
-      unless remote_file_exists?(src)
-        return missing_src_result(src)
-      end
-
-      if remote_dir_exists?(src)
-        return PluginResult.new(changed: false, failed: true, msg: "remote path is a directory, not a file", file: src)
+      if result = preflight_result(src)
+        return result
       end
 
       dest_check = resolve_dest_path(dest, src)
@@ -60,35 +44,79 @@ module Krikri
       remote_checksum = source_checksum(src)
 
       if unchanged?(dest_path, remote_checksum)
-        return PluginResult.new(changed: false, failed: false, msg: "file already present", checksum: remote_checksum, md5sum: native_checksum(dest_path, "md5"), dest: dest_path, file: src)
+        return unchanged_result(dest_path, remote_checksum, src)
       end
 
-      dest_dir = File.dirname(dest_path)
-      unless Dir.exists?(dest_dir)
-        begin
-          Dir.mkdir_p(dest_dir)
-        rescue e : File::Error
-          # Real fetch's dest-dir creation runs on the CONTROLLER
-          # (makedirs_safe inside the action plugin's run()) - a
-          # non-directory ancestor (flat: false into /etc/passwd/target/
-          # ... with /etc/passwd a file) escapes run() as an AnsibleError,
-          # so the failure result carries no `changed` key at all
-          # (registered `changed` is undefined, not false).
-          return PluginResult.new(
-            changed: false, failed: true, omit_changed: true,
-            msg: "Unable to create local directories(#{dest_dir}): #{e.message}",
-            file: src,
-          )
-        end
+      if result = ensure_dest_dir(dest_path, src)
+        return result
       end
       remote_download(src, dest_path)
 
+      success_result(dest_path, remote_checksum, src)
+    end
+
+    private def missing_arg_result(name : String) : PluginResult
+      PluginResult.new(changed: false, failed: true, msg: "missing required argument: #{name}")
+    end
+
+    # Everything that can fail before any destination resolution or
+    # checksum work happens, in the order real fetch performs the checks.
+    private def preflight_result(src : String) : PluginResult?
+      return unsafe_host_result(src) if !true?(@params["flat"]?) && unsafe_host_dir_name?(@host.name)
+      return check_mode_result if true?(@params["_ansible_check_mode"]?)
+      return missing_src_result(src) unless remote_file_exists?(src)
+      return directory_src_result(src) if remote_dir_exists?(src)
+      nil
+    end
+
+    private def unsafe_host_result(src : String) : PluginResult
+      PluginResult.new(
+        changed: false, failed: true,
+        msg: "inventory hostname '#{@host.name}' cannot be used as a fetch destination directory (path separators or '..' would escape dest)",
+        file: src,
+      )
+    end
+
+    private def check_mode_result : PluginResult
+      PluginResult.new(changed: false, failed: false, msg: "check mode not (yet) supported for this module", skipped: true)
+    end
+
+    private def directory_src_result(src : String) : PluginResult
+      PluginResult.new(changed: false, failed: true, msg: "remote path is a directory, not a file", file: src)
+    end
+
+    private def unchanged_result(dest_path : String, remote_checksum : String, src : String) : PluginResult
+      PluginResult.new(changed: false, failed: false, msg: "file already present", checksum: remote_checksum, md5sum: native_checksum(dest_path, "md5"), dest: dest_path, file: src)
+    end
+
+    private def success_result(dest_path : String, remote_checksum : String, src : String) : PluginResult
       PluginResult.new(
         changed: true, failed: false, msg: "OK",
         dest: dest_path, checksum: remote_checksum,
         md5sum: native_checksum(dest_path, "md5"),
         remote_checksum: remote_checksum, remote_md5sum: nil
       )
+    end
+
+    private def ensure_dest_dir(dest_path : String, src : String) : PluginResult?
+      dest_dir = File.dirname(dest_path)
+      return nil if Dir.exists?(dest_dir)
+      begin
+        Dir.mkdir_p(dest_dir)
+        nil
+      rescue e : File::Error
+        # Real fetch's dest-dir creation runs on the CONTROLLER
+        # (makedirs_safe inside the action plugin's run()) - a
+        # non-directory ancestor (flat: false into /etc/passwd/target/
+        # ... with /etc/passwd a file) escapes run() as an AnsibleError,
+        # so the failure result carries no `changed` key at all
+        # (registered `changed` is undefined, not false).
+        PluginResult.new(
+          changed: false, failed: true, omit_changed: true,
+          msg: "Unable to create local directories(#{dest_dir}): #{e.message}",
+          file: src,
+        )
+      end
     end
 
     private def missing_src_result(src : String) : PluginResult
