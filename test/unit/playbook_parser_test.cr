@@ -126,7 +126,10 @@ describe Krikri::PlaybookParser do
       result = Krikri::PlaybookParser.parse_string(playbook)
 
       result.plays[0].tasks.size.must_equal(1)
-      result.plays[0].tasks[0].params["uid"].must_equal("2147483659")
+      # The int literal now rides the parser's non-string-literal marker
+      # (NON_STRING_PARAM_PREFIX + JSON); BasePlugin demotes it back to the
+      # same "2147483659" text the plugin wire always carried.
+      result.plays[0].tasks[0].params["uid"].must_equal(Krikri::NON_STRING_PARAM_PREFIX + "2147483659")
     end
 
     it "recognizes listen: as a task keyword on a handler, not a module name" do

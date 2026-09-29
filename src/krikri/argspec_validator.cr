@@ -112,6 +112,29 @@ module Krikri
       return nil unless entry
       return nil if entry["no_validate"]?
 
+      # copy's action plugin (copy.py:428-430) likewise checks first, with its
+      # own two messages (a failed result, "Action failed." chain) - and its
+      # checks are PYTHON TRUTHINESS checks, not key-presence checks: a
+      # non-string YAML literal that is falsy (false, 0, 0.0 - the parser
+      # marks those, see NON_STRING_PARAM_PREFIX) or an empty string counts
+      # as "not provided" exactly like a missing key (live-verified vs
+      # 2.19.11: `dest: false`/`dest: 0`/`dest: ""` all fail
+      # "dest is required", `src: 0` with no content fails
+      # "src (or content) is required", while `src: 0` WITH content runs
+      # the content path - the falsy src is simply ignored).
+      if module_name == "ansible.builtin.copy"
+        unless params.has_key?("content") || Krikri.python_param_truthy?(params["src"]?)
+          return Failure.new("src (or content) is required", true)
+        end
+        return Failure.new("dest is required", true) unless params.has_key?("dest") && Krikri.python_param_truthy?(params["dest"]?)
+      end
+
+      # The parser's non-string-literal markers (NON_STRING_PARAM_PREFIX)
+      # are executor-internal wire dressing: demote them back to the plain
+      # string form every spec check has always seen, so a marked
+      # `follow: true` validates like the "true" text it always was.
+      params = Krikri.strip_non_string_param_markers(params)
+
       # assemble with remote_src: false: the controller-side action plugin's
       # isdir() check fails BEFORE any module argument validation runs.
       if module_name == "ansible.builtin.assemble" &&
@@ -142,12 +165,6 @@ module Krikri
       # a dest that is not a directory here defers to the plugin's own failure.
       if module_name == "ansible.builtin.unarchive" && (dest = params["dest"]?) && !Dir.exists?(dest)
         return nil
-      end
-      # copy's action plugin (copy.py:428-430) likewise checks first, with its
-      # own two messages (a failed result, "Action failed." chain).
-      if module_name == "ansible.builtin.copy"
-        return Failure.new("src (or content) is required", true) if !params.has_key?("src") && !params.has_key?("content")
-        return Failure.new("dest is required", true) unless params.has_key?("dest")
       end
 
       print_name, entry = resolve_entry(action_name, module_name, entry, vars_context)
@@ -184,6 +201,7 @@ module Krikri
       entry = table[module_name]?
       return nil unless entry
       return nil if entry["no_validate"]? || entry["supported"]? || entry["unsupported_kind"]?
+      params = Krikri.strip_non_string_param_markers(params)
       options = entry["options"]?.try(&.as_h?) || return nil
       return nil if options.empty?
       provided, _unsupported = collect_provided(params, options, consumed_keys(entry))

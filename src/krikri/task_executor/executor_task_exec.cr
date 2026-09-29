@@ -828,7 +828,10 @@ module Krikri
       return params if ["true", "yes", "1", "on"].includes?(params["remote_src"]?.try(&.downcase))
 
       src = params["src"]?
-      return params unless src && !src.empty?
+      # A falsy non-string literal src (false/0/0.0 - the parser marks
+      # those) is ignored by real's copy action plugin (`not source`),
+      # exactly like an absent or empty one.
+      return params unless src && Krikri.python_param_truthy?(src)
 
       # Real Ansible's copy action plugin resolves a relative src against
       # the role's files/ dir, the playbook dir, and the task's dir
@@ -1533,9 +1536,80 @@ module Krikri
     private def copy_src_content_conflict(task : Task, params : Hash(String, String)) : JSON::Any?
       return nil unless task.module_name == "ansible.builtin.copy"
       src = params["src"]?
-      return nil unless src && !src.empty?
+      # Real's check is Python truthiness (`source and content is not
+      # None`): a falsy non-string literal src (false/0/0.0 - the parser
+      # marks those) is simply ignored and the content path runs.
+      return nil unless Krikri.python_param_truthy?(src)
       return nil unless params.has_key?("content")
       JSON.parse({"changed" => false, "failed" => true, "msg" => "src and content are mutually exclusive"}.to_json)
+    end
+
+    # Real copy.py's action-plugin crashes on non-string YAML literal
+    # dest/src values (the parser marks those; see NON_STRING_PARAM_PREFIX):
+    # Python evaluates `dest.endswith(...)`/`source.endswith(...)` on the
+    # NATIVE int/float/bool and raises AttributeError, which the task
+    # executor wraps as fatal msg "Task failed: '<type>' object has no
+    # attribute '<attr>'" (live-verified vs 2.19.11: ints report
+    # _AnsibleTaggedInt, floats _AnsibleTaggedFloat, bools plain 'bool').
+    # Mirrors the three crash points that precede src resolution/content
+    # inlining, in real's order:
+    # - content + truthy non-string dest: `dest.endswith("/")` in the
+    #   required/conflict elif chain (copy.py:433);
+    # - no content, not remote_src: `source.endswith(os.path.sep)` before
+    #   find_needle (copy.py:469) - the src crash wins over a missing src;
+    # - a real directory src: `_shell.path_has_trailing_slash(dest)`
+    #   (copy.py:494) after find_needle succeeds.
+    # The remaining crash point - `_remote_expand_user(dest)`'s
+    # `user_path.startswith('~')` (copy.py:511) - fires only after the src
+    # lookup succeeded, so it is checked after inline_copy_source_content
+    # (copy_dest_expand_failure below): a missing src fails with real's
+    # "Could not find or access" wording first, exactly like real.
+    private def copy_literal_type_failure(task : Task, params : Hash(String, String)) : JSON::Any?
+      return nil unless task.module_name == "ansible.builtin.copy"
+      if params.has_key?("content")
+        if Krikri.python_param_truthy?(params["dest"]?) &&
+           (native = Krikri.non_string_scalar(params["dest"]?))
+          return literal_attribute_crash_result(native, "endswith")
+        end
+        return nil
+      end
+      return nil if remote_src_param?(params)
+      if (native = Krikri.non_string_scalar(params["src"]?))
+        return literal_attribute_crash_result(native, "endswith")
+      end
+      if Krikri.python_param_truthy?(params["dest"]?) &&
+         (native = Krikri.non_string_scalar(params["dest"]?)) &&
+         (src = params["src"]?) && !src.empty? && Dir.exists?(src)
+        return literal_attribute_crash_result(native, "endswith")
+      end
+      nil
+    end
+
+    # The last of real copy.py's non-string-literal crash points
+    # (`_remote_expand_user`, copy.py:511) - reached only when the src
+    # resolved fine, so it runs after inline_copy_source_content's own
+    # missing-src failure would have returned. See
+    # copy_literal_type_failure for the message shapes.
+    private def copy_dest_expand_failure(task : Task, params : Hash(String, String)) : JSON::Any?
+      return nil unless task.module_name == "ansible.builtin.copy"
+      return nil unless Krikri.python_param_truthy?(params["dest"]?)
+      return nil unless native = Krikri.non_string_scalar(params["dest"]?)
+      literal_attribute_crash_result(native, "startswith")
+    end
+
+    private def literal_attribute_crash_result(native : JSON::Any, attribute : String) : JSON::Any
+      bare = "'#{Krikri.python_scalar_type_name(native)}' object has no attribute '#{attribute}'"
+      JSON.parse({
+        "changed"               => false,
+        "failed"                => true,
+        "msg"                   => "Task failed: #{bare}",
+        "_ansible_error_detail" => bare,
+        "_ansible_action_level" => true,
+      }.to_json)
+    end
+
+    private def remote_src_param?(params : Hash(String, String)) : Bool
+      ["true", "yes", "1", "on"].includes?(params["remote_src"]?.try(&.downcase))
     end
 
     # Data-driven module argument validation (see ArgspecValidator): the

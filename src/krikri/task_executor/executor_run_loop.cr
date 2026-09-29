@@ -1453,6 +1453,9 @@ module Krikri
       if violation = copy_src_content_conflict(task, substituted_params)
         return apply_changed_failed_when(task, violation, vars_context, host)
       end
+      if violation = copy_literal_type_failure(task, substituted_params)
+        return apply_changed_failed_when(task, violation, vars_context, host)
+      end
       copied = inline_copy_source_content(task, substituted_params, host, vars_context)
       if copied.is_a?(JSON::Any)
         return apply_changed_failed_when(task, copied, vars_context, host)
@@ -1470,6 +1473,14 @@ module Krikri
       # Action-only directives: pre-action validation gate (see
       # execute_task_once's identical hook).
       if violation = argspec_validation_result(task, substituted_params, vars_context, action_level_only: true)
+        return apply_changed_failed_when(task, violation, vars_context, host)
+      end
+
+      # Real's dest expand crash fires only after the src lookup succeeded
+      # - here that is after inline_copy_source_content above - and after
+      # the required-argument checks (see execute_task_once's identical
+      # hook placement).
+      if violation = copy_dest_expand_failure(task, substituted_params)
         return apply_changed_failed_when(task, violation, vars_context, host)
       end
 
@@ -1733,11 +1744,20 @@ module Krikri
       if violation = copy_src_content_conflict(task, substituted_params)
         return apply_changed_failed_when(task, violation, vars_context, host)
       end
+      if violation = copy_literal_type_failure(task, substituted_params)
+        return apply_changed_failed_when(task, violation, vars_context, host)
+      end
       copied = inline_copy_source_content(task, substituted_params, exec_host, vars_context)
       if copied.is_a?(JSON::Any)
         return apply_changed_failed_when(task, copied, vars_context, host)
       end
       substituted_params = copied
+      # Real's dest expand crash fires only after the src lookup succeeded
+      # (inline_copy_source_content above) - the last of copy.py's
+      # non-string-literal crash points, see copy_literal_type_failure.
+      if violation = copy_dest_expand_failure(task, substituted_params)
+        return apply_changed_failed_when(task, violation, vars_context, host)
+      end
       staged = stage_unarchive_remote_src(task, substituted_params, exec_host, vars_context)
       if staged.is_a?(JSON::Any)
         return apply_changed_failed_when(task, staged, vars_context, host)

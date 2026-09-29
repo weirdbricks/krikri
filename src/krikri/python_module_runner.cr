@@ -173,7 +173,15 @@ module Krikri
       args["_ansible_verbosity"] = JSON::Any.new(0_i64)
       params.each do |key, value|
         next if key.in?("check_mode", "diff_mode", "_verbosity", "_environment")
-        args[key] = typed_value(value)
+        # A parser-marked non-string YAML literal (NON_STRING_PARAM_PREFIX)
+        # decodes straight to its native JSON value - exactly what
+        # typed_value would re-infer from the demoted text, so a role
+        # module sees the same typed arg either way.
+        if native = Krikri.non_string_scalar(value)
+          args[key] = native
+        else
+          args[key] = typed_value(value)
+        end
       end
       args.to_json
     end
@@ -182,7 +190,14 @@ module Krikri
     def build_kv_argv(params : Hash(String, String)) : Array(String)
       params.reject { |key, _| key.in?("check_mode", "diff_mode", "_verbosity", "_environment") }
         .map do |key, value|
-          "#{key}=#{value}"
+          # A parser-marked non-string YAML literal serializes the way
+          # real's str() would (bools as True/False) - see
+          # NON_STRING_PARAM_PREFIX.
+          if native = Krikri.non_string_scalar(value)
+            "#{key}=#{Krikri.python_str_scalar(native)}"
+          else
+            "#{key}=#{value}"
+          end
         end
     end
 

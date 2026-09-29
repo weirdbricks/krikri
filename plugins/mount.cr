@@ -248,8 +248,12 @@ module Krikri
       if state == "mounted"
         mount_changed, error = ensure_mounted(path, check_mode)
         # Real mount's failures are all bare fail_json(msg=...) - no
-        # name/fstab/backup_file echo (live-verified vs 2.19.11).
-        return PluginResult.new(changed: fstab_changed, failed: true, msg: error || "mount failed") if error
+        # name/fstab/backup_file echo, and NO changed either: fail_json's
+        # default is changed=False, so a mount that fails AFTER the fstab
+        # entry was written still reports changed: false (the fstab edit
+        # is not counted) - live-verified vs 2.19.11 with an unknown
+        # fstype (mount(8) rejects it after the fstab write succeeded).
+        return PluginResult.new(changed: false, failed: true, msg: error || "mount failed") if error
       else
         mount_changed = false
       end
@@ -266,7 +270,9 @@ module Krikri
       fstab_changed, backup_file = remove_fstab_entry(path, fstab, check_mode)
       if state == "absent"
         unmount_changed, error = ensure_unmounted(path, check_mode)
-        return PluginResult.new(changed: fstab_changed, failed: true, msg: error || "mount failed") if error
+        # Same fail_json shape as run_present: changed defaults to False
+        # on every real failure, even one after an fstab edit.
+        return PluginResult.new(changed: false, failed: true, msg: error || "mount failed") if error
       else
         unmount_changed = false
       end

@@ -171,7 +171,16 @@ module Krikri
             canon == canonical && raw_params.has_key?(alias_name)
           end.try(&.[0])
           next unless key
-          if msg = bool_param_error_msg(canonical, raw_params[key])
+          # A parser-marked non-string YAML literal (NON_STRING_PARAM_PREFIX)
+          # rides the raw wire as a prefixed STRING - decode it back to its
+          # native value so the bool check sees the bool/int/float real's
+          # check_type_bool would have seen (a literal `flat: false` is a
+          # real bool, not the string "nonstring:false").
+          raw = raw_params[key]
+          if (text = raw.as_s?) && (native = Krikri.non_string_scalar(text))
+            raw = native
+          end
+          if msg = bool_param_error_msg(canonical, raw)
             raise BoolParamError.new(msg)
           end
         end

@@ -64,9 +64,29 @@ module Krikri
     private def preflight_result(src : String) : PluginResult?
       return unsafe_host_result(src) if !true?(@params["flat"]?) && unsafe_host_dir_name?(@host.name)
       return check_mode_result if true?(@params["_ansible_check_mode"]?)
+      # Real fetch's action plugin type-checks src/dest BEFORE anything
+      # else (after only the check-mode skip): `if not isinstance(source,
+      # string_types)` - a non-string YAML literal (`dest: 89`, `src:
+      # true`) fails AnsibleActionFail. The dest message OVERWRITES the
+      # src message (the two plain `if`s run in that order), so dest wins
+      # when both are non-string (live-verified vs 2.19.11).
+      return invalid_type_result("dest") if non_string_param("dest")
+      return invalid_type_result("source") if non_string_param("src")
       return missing_src_result(src) unless remote_file_exists?(src)
       return directory_src_result(src) if remote_dir_exists?(src)
       nil
+    end
+
+    # Real fetch's AnsibleActionFail failure: the fatal dump carries the
+    # bare message (no "Task failed:" prefix) while the [ERROR] block shows
+    # "Task failed: <msg>" with no middle segment - the action-level
+    # _ansible_action_level shape (live-verified vs 2.19.11).
+    private def invalid_type_result(option : String) : PluginResult
+      PluginResult.new(
+        changed: false, failed: true,
+        msg: "Invalid type supplied for #{option} option, it must be a string",
+        _ansible_action_level: true,
+      )
     end
 
     private def unsafe_host_result(src : String) : PluginResult

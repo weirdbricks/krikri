@@ -15,6 +15,25 @@ module Krikri
     @render_error : String? = nil
 
     def execute : ActionResult
+      # The parser's non-string-literal markers (NON_STRING_PARAM_PREFIX)
+      # arrive intact here (execute_action deliberately exempts template:)
+      # because the src/dest conversions need the native type (src is
+      # coerced through Python str() here; dest rides the marker to the
+      # plugin binary, which applies the same coercion). Every OTHER
+      # param is demoted back to its plain string first, so the
+      # Jinja knob bools (`trim_blocks: true`) and strings see exactly the
+      # text they always did - the same contract BasePlugin's param parse
+      # gives the plugin binaries.
+      demoted = Hash(String, String).new
+      @params.each do |key, value|
+        if key != "src" && key != "dest" && (native = Krikri.non_string_scalar(value))
+          demoted[key] = Krikri.non_string_param_text(native)
+        else
+          demoted[key] = value
+        end
+      end
+      @params = demoted
+
       # newline_sequence: template-only param (real Ansible strips it from
       # the module args - it is consumed HERE, on the controller, by the
       # Jinja environment). Default "\n"; the three documented values are
@@ -44,6 +63,15 @@ module Krikri
       src = @params["src"]?
       unless src
         return ActionResult.failure("Missing required parameter: src")
+      end
+
+      # A non-string YAML literal src (`src: true`) is coerced through
+      # Python str() by real's action plugin before the search - bools
+      # render as "True"/"False" (live-verified: real searches for a file
+      # literally named "True"), so a bare `src: true` must look for
+      # "True", not the YAML text "true" (see NON_STRING_PARAM_PREFIX).
+      if native = Krikri.non_string_scalar(src)
+        src = Krikri.python_str_scalar(native)
       end
 
       # Check if template file exists on CONTROLLER - real Ansible's own

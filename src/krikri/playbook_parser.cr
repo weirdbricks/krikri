@@ -3772,6 +3772,22 @@ module Krikri
             # found immediately after the fix above, on the very next
             # task in the same real-host round.
             params[key.to_s] = "0" + raw.to_s(8)
+          elsif value.raw.is_a?(Int64 | Int32 | Float64 | Bool)
+            # A non-string scalar literal (`dest: 89`, `follow: true`,
+            # `ratio: 1.5`) keeps its YAML type across the strings-only
+            # param wire the same way set_fact's literal scalars already
+            # do - but under its own marker, NOT NATIVE_TYPED_PREFIX:
+            # BasePlugin would then strip it for EVERY module and break
+            # set_fact's own plugin-side decode. The marker rides to the
+            # plugin binary, where BasePlugin demotes it back to the
+            # exact string stringify_value produced (so every plugin that
+            # never asks is behavior-identical) while recording the native
+            # value for the plugins that mirror real's Python type
+            # checking (copy/fetch/template - see NON_STRING_PARAM_PREFIX).
+            # Templated values are never marked; the mode: octal branch
+            # above keeps precedence, since those plugins need the original
+            # digit text, not the pre-resolved int.
+            params[key.to_s] = Krikri::NON_STRING_PARAM_PREFIX + value.to_json
           else
             params[key.to_s] = Vault.maybe_decrypt(stringify_value(value))
           end

@@ -101,6 +101,19 @@ module Krikri
         return ActionResult.pass_through
       end
 
+      # The parser's non-string-literal markers (NON_STRING_PARAM_PREFIX)
+      # are plugin-wire dressing: in-process action plugins that never
+      # consult the native type get the demoted plain string, the same
+      # contract BasePlugin's param parse gives the plugin binaries
+      # (otherwise `debug: verbosity: 2` / `assert: quiet: true` /
+      # `pause: minutes: 5` would read the marker-prefixed text as their
+      # value). template: opts OUT - its action plugin coerces a marked
+      # non-string src through Python str() itself (a bool src must be
+      # searched for as "True", not "true"), so it needs the marker intact.
+      unless module_name == "ansible.builtin.template"
+        params = Krikri.strip_non_string_param_markers(params)
+      end
+
       # debug:'s own verbosity: gate (DebugActionPlugin) reads this back
       # out - previously never set on THIS path (only build_plugin_config's
       # remote-dispatch path set it, which the normal debug:/assert:/...

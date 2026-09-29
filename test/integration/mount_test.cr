@@ -187,6 +187,11 @@ describe "mount plugin" do
 
     result["failed"].as_bool.must_equal(true)
     result["msg"].as_s.must_include("mounting")
+    # Real mount.py's failures are bare fail_json(msg=...) - fail_json's
+    # changed default is False, so a mount that fails AFTER the fstab entry
+    # was successfully written still reports changed: false (live-verified
+    # vs 2.19.11 with an unknown fstype).
+    result["changed"].as_bool.must_equal(false)
   end
 
   it "fails the task when the real umount command fails, instead of silently reporting changed: true (state: unmounted)" do
@@ -201,6 +206,22 @@ describe "mount plugin" do
 
     result["failed"].as_bool.must_equal(true)
     result["msg"].as_s.must_include("unmounting")
+  end
+
+  it "state: absent reports changed: false when the umount fails after an fstab edit" do
+    # The state: absent twin of the changed:false fix above: real's
+    # fail_json never passes changed, so an unmount failure AFTER
+    # remove_fstab_entry edited the file reports changed: false, not the
+    # fstab edit's own changed: true (live-verified vs 2.19.11).
+    fstab = fresh_fstab("absent-umount-fail.fstab", "/ ext4 defaults 0 1\n")
+
+    result = PluginSpecHelper.run("mount", {
+      "path" => "/", "state" => "absent", "fstab" => fstab,
+    })
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_include("unmounting")
+    result["changed"].as_bool.must_equal(false)
   end
 
   it "does not actually write the fstab file in check mode (regression: check_mode only guarded the mount/umount step, not the fstab write)" do

@@ -178,8 +178,43 @@ module Krikri
     # NONE_SENTINEL for why this needs bookkeeping at all.
     @null_params = Set(String).new
 
+    # Params the parser marked as non-string YAML scalar literals (see
+    # NON_STRING_PARAM_PREFIX): key -> the decoded native value
+    # (Int64/Float64/Bool). @params itself holds the demoted plain string,
+    # so plugins that never ask see exactly the text they always did.
+    @non_string_params = Hash(String, JSON::Any).new
+
     def explicit_null_param?(key : String) : Bool
       @null_params.includes?(key)
+    end
+
+    # The native YAML value (JSON::Any) a param carried as a non-string
+    # scalar literal, or nil when it is a string/templated value - the
+    # plugin-side view of the parser's NON_STRING_PARAM_PREFIX marker, for
+    # mirroring real action plugins' Python type checking (copy/fetch/
+    # template dest/src).
+    def non_string_param(key : String) : JSON::Any?
+      @non_string_params[key]?
+    end
+
+    # Python truthiness of one param, native-type aware: a marked
+    # non-string literal carries its own truthiness (false/0/0.0 are
+    # falsy exactly like in Python), anything else is truthy unless it is
+    # absent or the empty string. Distinct from Krikri.python_param_truthy?
+    # because the demoted @params value has already lost the marker - the
+    # native value is consulted from @non_string_params instead.
+    protected def python_param_truthy?(key : String) : Bool
+      if native = @non_string_params[key]?
+        case native.raw
+        when Bool    then native.as_bool
+        when Int64   then native.as_i64 != 0
+        when Float64 then native.as_f != 0.0
+        else              true
+        end
+      else
+        value = @params[key]?
+        !value.nil? && !value.empty?
+      end
     end
 
     # module_utils get_bin_path(required=True) failure text: the module
@@ -225,6 +260,13 @@ module Krikri
           if value.raw.nil? || value.as_s? == NONE_SENTINEL
             @null_params << key
             @params[key] = ""
+          elsif (native = Krikri.non_string_scalar(value.as_s?))
+            # A parser-marked non-string YAML literal: demote to the same
+            # plain string stringify_value always produced (no plugin that
+            # never asks changes behavior) and remember the native value
+            # for #non_string_param.
+            @non_string_params[key] = native
+            @params[key] = Krikri.non_string_param_text(native)
           else
             @params[key] = value.to_s
           end
