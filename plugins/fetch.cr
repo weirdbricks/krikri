@@ -27,9 +27,11 @@ module Krikri
     def execute : PluginResult
       src = @params["src"]?
       dest = @params["dest"]?
-      return missing_arg_result("src") unless src
-      return missing_arg_result("dest") unless dest
-      dest = expand_tilde(dest)
+      if result = action_preflight_result(src, dest)
+        return result
+      end
+      src = src.as(String)
+      dest = expand_tilde(dest.as(String))
       validate_bool_params!
 
       if result = preflight_result(src)
@@ -55,23 +57,33 @@ module Krikri
       success_result(dest_path, remote_checksum, src)
     end
 
-    private def missing_arg_result(name : String) : PluginResult
-      PluginResult.new(changed: false, failed: true, msg: "missing required argument: #{name}")
+    # Real fetch's action-plugin failure order (fetch.py:44-64): the
+    # check-mode skip first, then the two isinstance checks (plain `if`s -
+    # dest's message OVERWRITES src's), then the presence check LAST
+    # overwrites both, and the single AnsibleActionFail carries whatever
+    # survived. The old module-level "missing required argument:
+    # src/dest" results were never real's shape - the action plugin fails
+    # before the module ever validates anything (live-verified vs
+    # 2.19.11). Real's presence check is a None check: an explicitly null
+    # param counts as absent, an empty string does not. krikri's own
+    # unsafe-dest-hostname guard stays ahead of it - it protects krikri's
+    # own dest handling and real has no equivalent failure.
+    private def action_preflight_result(src : String?, dest : String?) : PluginResult?
+      return unsafe_host_result(src ? src : "") if !true?(@params["flat"]?) && unsafe_host_dir_name?(@host.name)
+      return check_mode_result if true?(@params["_ansible_check_mode"]?)
+      msg = nil
+      msg = "Invalid type supplied for source option, it must be a string" if non_string_param("src")
+      msg = "Invalid type supplied for dest option, it must be a string" if non_string_param("dest")
+      if src.nil? || explicit_null_param?("src") || dest.nil? || explicit_null_param?("dest")
+        msg = "src and dest are required"
+      end
+      return action_fail_result(msg) if msg
+      nil
     end
 
     # Everything that can fail before any destination resolution or
     # checksum work happens, in the order real fetch performs the checks.
     private def preflight_result(src : String) : PluginResult?
-      return unsafe_host_result(src) if !true?(@params["flat"]?) && unsafe_host_dir_name?(@host.name)
-      return check_mode_result if true?(@params["_ansible_check_mode"]?)
-      # Real fetch's action plugin type-checks src/dest BEFORE anything
-      # else (after only the check-mode skip): `if not isinstance(source,
-      # string_types)` - a non-string YAML literal (`dest: 89`, `src:
-      # true`) fails AnsibleActionFail. The dest message OVERWRITES the
-      # src message (the two plain `if`s run in that order), so dest wins
-      # when both are non-string (live-verified vs 2.19.11).
-      return invalid_type_result("dest") if non_string_param("dest")
-      return invalid_type_result("source") if non_string_param("src")
       return missing_src_result(src) unless remote_file_exists?(src)
       return directory_src_result(src) if remote_dir_exists?(src)
       nil
@@ -81,10 +93,10 @@ module Krikri
     # bare message (no "Task failed:" prefix) while the [ERROR] block shows
     # "Task failed: <msg>" with no middle segment - the action-level
     # _ansible_action_level shape (live-verified vs 2.19.11).
-    private def invalid_type_result(option : String) : PluginResult
+    private def action_fail_result(msg : String) : PluginResult
       PluginResult.new(
         changed: false, failed: true,
-        msg: "Invalid type supplied for #{option} option, it must be a string",
+        msg: msg,
         _ansible_action_level: true,
       )
     end

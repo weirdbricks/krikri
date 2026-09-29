@@ -1510,7 +1510,7 @@ module Krikri
       # Same argspec-validation gates as execute_task_once (see there) -
       # batched tasks must fail on a typo'd option exactly like
       # non-batched ones.
-      if violation = argspec_validation_result(task, substituted_params, vars_context, action_level_only: false)
+      if violation = argspec_validation_result(task, substituted_params, vars_context, action_level_only: false, check_mode: resolve_task_check_mode(task, vars_context))
         return apply_changed_failed_when(task, violation, vars_context, host)
       end
 
@@ -1808,7 +1808,7 @@ module Krikri
       # template's Jinja knobs are consumed there, and copy/template's
       # source content is already inline for the failure dump's checksum.
       # Action-level entries were already handled above.
-      if violation = argspec_validation_result(task, substituted_params, vars_context, action_level_only: false)
+      if violation = argspec_validation_result(task, substituted_params, vars_context, action_level_only: false, check_mode: resolve_task_check_mode(task, vars_context))
         return apply_changed_failed_when(task, violation, vars_context, host)
       end
 

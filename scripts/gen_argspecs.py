@@ -329,9 +329,14 @@ VIRTUAL = {
         "action_level": True,
         "unsupported_kind": "module",
         "options": {
-            "fail_msg": {"aliases": ["msg"]},
+            # str_or_list_of_str is the action's own custom callable type
+            # (plugins/action/assert.py): a natively-typed int/bool fails
+            # "argument 'x' is of type int and we were unable to convert
+            # to str_or_list_of_str: a string or list of strings is
+            # required" BEFORE the unsupported-params error.
+            "fail_msg": {"aliases": ["msg"], "type": "str_or_list_of_str"},
             "quiet": {"type": "bool"},
-            "success_msg": {},
+            "success_msg": {"type": "str_or_list_of_str"},
             "that": {"required": True},
         },
         "print": {

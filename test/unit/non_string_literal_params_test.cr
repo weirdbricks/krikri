@@ -101,4 +101,25 @@ describe "non-string YAML literal param marker" do
     bool_ok = PluginSpecHelper.run("fetch", {"dest" => "/tmp", "src" => "/etc/hostname", "flat" => prefix + "false", "_ansible_check_mode" => "true"})
     bool_ok["skipped"].as_bool.must_equal(true)
   end
+
+  it "fetch reports a missing src/dest as real's action-level presence failure (over types)" do
+    # Real fetch's action plugin runs the presence check LAST, so it
+    # overwrites the isinstance messages - a non-string src with a
+    # missing dest reports "src and dest are required", and the old
+    # module-level "missing required argument: dest" shape never
+    # happens (live-verified vs 2.19.11).
+    prefix = Krikri::NON_STRING_PARAM_PREFIX
+    result = PluginSpecHelper.run("fetch", {"flat" => "true", "src" => "/etc/hostname", "edst" => "/tmp/x"})
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("src and dest are required")
+    result["_ansible_action_level"].as_bool.must_equal(true)
+
+    both = PluginSpecHelper.run("fetch", {"flat" => "true", "src" => prefix + "60", "edst" => "/tmp/x"})
+    both["msg"].as_s.must_equal("src and dest are required")
+    both["_ansible_action_level"].as_bool.must_equal(true)
+
+    missing_src = PluginSpecHelper.run("fetch", {"flat" => "true", "dest" => "/tmp"})
+    missing_src["msg"].as_s.must_equal("src and dest are required")
+    missing_src["_ansible_action_level"].as_bool.must_equal(true)
+  end
 end

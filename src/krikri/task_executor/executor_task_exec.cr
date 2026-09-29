@@ -1623,6 +1623,7 @@ module Krikri
       params : Hash(String, String),
       vars_context : Hash(String, JSON::Any),
       action_level_only : Bool,
+      check_mode : Bool = false,
     ) : JSON::Any?
       # Role-private library/ modules and the py_module runner run real
       # Python whose spec we don't know - nothing to validate against.
@@ -1634,6 +1635,15 @@ module Krikri
       # action-plugin-level failures; the post-action hook takes only
       # the module-level ones.
       return nil if failure.action_level? != action_level_only
+      # Real's copy action - which template: delegates to - short-circuits
+      # in check mode the moment the checksums differ (copy.py:288-293:
+      # "result['changed'] = True; return result"), so the copy module's
+      # own spec never rejects the template-only leftovers under --check
+      # (live-verified vs 2.19.11). The module-level failures of the
+      # template: delegation are therefore skipped in check mode; the
+      # action-level ones (src/dest presence) still fire, exactly like
+      # real's action plugin.
+      return nil if check_mode && !action_level_only && task.module_name == "ansible.builtin.template"
 
       result = {
         "changed" => JSON::Any.new(false),

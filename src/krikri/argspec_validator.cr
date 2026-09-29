@@ -75,15 +75,30 @@ module Krikri
     # emitted (used by ResultDisplay to pick the right error-block chain
     # shape - template's own file-not-found chain must not swallow these).
     def failure_kind?(module_name : String, msg : String) : Symbol?
+      return :action if action_level_fixed_msg?(module_name, msg)
       entry = table[module_name]?
       return nil unless entry
       return nil if entry["no_validate"]?
-      return :action if module_name == "ansible.builtin.template" && msg == "src and dest are required"
-      return :action if module_name == "ansible.builtin.package" && msg.starts_with?("Could not find a matching action for the")
-      return :action if module_name == "ansible.builtin.unarchive" &&
-                        {"parameters are mutually exclusive: ('copy', 'remote_src')", "src (or content) and dest are required"}.includes?(msg)
       return nil unless validation_msg?(msg)
       entry["action_level"]?.try(&.as_bool?) ? :action : :module
+    end
+
+    # The action-plugin-level failures whose text is not a spec-check
+    # message (real's action plugins check these before the module's own
+    # AnsibleModule init runs), keyed by module; every one of these
+    # modules has a table entry, so checking them before the entry
+    # lookup changes nothing.
+    private def action_level_fixed_msg?(module_name : String, msg : String) : Bool
+      case module_name
+      when "ansible.builtin.template", "ansible.builtin.assemble"
+        msg == "src and dest are required"
+      when "ansible.builtin.package"
+        msg.starts_with?("Could not find a matching action for the")
+      when "ansible.builtin.unarchive"
+        {"parameters are mutually exclusive: ('copy', 'remote_src')", "src (or content) and dest are required"}.includes?(msg)
+      else
+        false
+      end
     end
 
     private def validation_msg?(msg : String) : Bool
@@ -129,6 +144,31 @@ module Krikri
         return Failure.new("dest is required", true) unless params.has_key?("dest") && Krikri.python_param_truthy?(params["dest"]?)
       end
 
+      # assemble's action plugin (assemble.py:103-104) checks src/dest
+      # presence BEFORE the remote_src/isdir staging and before the module
+      # validates anything - a typo'd/missing src or dest fails with the
+      # action-level "src and dest are required", not the module spec's
+      # "missing required arguments" (live-verified vs 2.19.11). Real's
+      # check is a None check: an explicitly null param counts as absent,
+      # an empty string does not.
+      if module_name == "ansible.builtin.assemble" &&
+         (!provided_param?(params, "src") || !provided_param?(params, "dest"))
+        return Failure.new("src and dest are required", true)
+      end
+
+      # Custom callable spec types (assert's str_or_list_of_str) reject a
+      # natively-typed scalar where the demoted wire text would pass -
+      # capture the markers (alias-resolved to the canonical option name)
+      # BEFORE the strip below hides them.
+      alias_lookup = alias_map(entry["options"]?.try(&.as_h?) || Hash(String, JSON::Any).new)
+      non_string_natives = {} of String => JSON::Any
+      params.each do |key, value|
+        next if INTERNAL_KEYS.includes?(key)
+        if native = Krikri.non_string_scalar(value)
+          non_string_natives[alias_lookup[key]? || key] = native
+        end
+      end
+
       # The parser's non-string-literal markers (NON_STRING_PARAM_PREFIX)
       # are executor-internal wire dressing: demote them back to the plain
       # string form every spec check has always seen, so a marked
@@ -144,8 +184,15 @@ module Krikri
       end
 
       # template's controller-side action plugin checks src/dest presence
-      # BEFORE any module argument validation (AnsibleActionFail).
-      if module_name == "ansible.builtin.template" && (!params.has_key?("src") || !params.has_key?("dest"))
+      # BEFORE any module argument validation (AnsibleActionFail). The
+      # check only ever sees the ORIGINAL task params: once the action has
+      # run, src has been consumed into the rendered content (the copy
+      # module gets a real src tempfile), so a post-action run must fall
+      # through to the spec checks - that is where real surfaces the copy
+      # module's rejection of the template-only leftovers the action did
+      # not consume (a typo'd output_encoding etc.).
+      if module_name == "ansible.builtin.template" && !params.has_key?("content") &&
+         (!params.has_key?("src") || !params.has_key?("dest"))
         return Failure.new("src and dest are required", true)
       end
       # package's action plugin: an unknown `use:` manager fails before the
@@ -182,7 +229,7 @@ module Krikri
       provided, unsupported = collect_provided(params, options, consumed_keys(entry))
 
       defaults = default_values(options)
-      failure_msg = run_spec_checks(entry, options, provided, defaults, unsupported)
+      failure_msg = run_spec_checks(entry, options, provided, defaults, unsupported, non_string_natives)
       return Failure.new(failure_msg, entry["action_level"]?.try(&.as_bool?) || false) if failure_msg
 
       if unsupported.empty?
@@ -274,6 +321,15 @@ module Krikri
       entry["consumed_by_action"]?.try(&.as_a?.try(&.map(&.as_s))) || [] of String
     end
 
+    # Real's action-plugin presence checks are None checks
+    # (self._task.args.get('src', None)): the key must exist AND hold a
+    # non-None value - an explicitly null param counts as absent, an
+    # empty string does not.
+    private def provided_param?(params : Hash(String, String), key : String) : Bool
+      value = params[key]?
+      !value.nil? && value != Krikri::NONE_SENTINEL
+    end
+
     # The spec-check chain in real Ansible's ArgumentSpecValidator order;
     # only the FIRST failing check's message is ever surfaced (real's
     # AnsibleModule fails on errors[0]).
@@ -283,6 +339,7 @@ module Krikri
       provided : Hash(String, String),
       defaults : Hash(String, JSON::Any),
       unsupported : Array(String),
+      non_string_natives : Hash(String, JSON::Any),
     ) : String?
       # Real's ArgumentSpecValidator.validate runs its no_log value walk
       # (_list_no_log_values) immediately after alias resolution - before
@@ -303,7 +360,7 @@ module Krikri
       if msg = check_required(options, provided, defaults)
         return msg
       end
-      if msg = check_types(options, provided)
+      if msg = check_types(options, provided, non_string_natives)
         return msg
       end
       if msg = check_choices(options, provided)
@@ -415,15 +472,40 @@ module Krikri
       missing.empty? ? nil : "missing required arguments: #{missing.sort.join(", ")}"
     end
 
-    private def check_types(options : Hash(String, JSON::Any), provided : Hash(String, String)) : String?
+    private def check_types(options : Hash(String, JSON::Any), provided : Hash(String, String), non_string_natives : Hash(String, JSON::Any)) : String?
       options.each do |name, spec|
         raw = provided[name]?
         next unless raw
         wanted = spec["type"]?.try(&.as_s?) || "str"
-        error = type_error(name, wanted, raw, spec)
+        error = type_error(name, wanted, raw, spec, non_string_natives[name]?)
         return error if error
       end
       nil
+    end
+
+    # Real's custom callable type (assert action's str_or_list_of_str): a
+    # string passes, a list whose every element is a string passes, and
+    # anything else raises TypeError("a string or list of strings is
+    # required"), which _validate_argument_types wraps as "argument 'x' is
+    # of type <native type> and we were unable to convert to
+    # str_or_list_of_str: ...". The wire sees a marked non-string scalar
+    # (int/float/bool) where real sees the native Python value; a plain
+    # string wire value IS real's str case, and a JSON-encoded list is
+    # real's list case.
+    private def str_or_list_type_error(name : String, raw : String, native : JSON::Any?) : String?
+      tail = "a string or list of strings is required"
+      if list = (JSON.parse(raw) rescue nil).try(&.as_a?)
+        return nil if list.all?(&.as_s?)
+        return "argument '#{name}' is of type list and we were unable to convert to str_or_list_of_str: #{tail}"
+      end
+      kind = case native.try(&.raw)
+             when Int64, Int32 then "int"
+             when Float64      then "float"
+             when Bool         then "bool"
+             else                   "str"
+             end
+      return nil if kind == "str"
+      "argument '#{name}' is of type #{kind} and we were unable to convert to str_or_list_of_str: #{tail}"
     end
 
     # Real's _list_no_log_values walk: for every provided option that is
@@ -601,13 +683,17 @@ module Krikri
     # text). A YAML boolean rides as exactly "true"/"false" - real sees
     # a Python bool, which is an int subclass and passes int/float/list
     # checks but fails dict conversion.
-    private def type_error(name : String, wanted : String, raw : String, spec : JSON::Any) : String?
+    private def type_error(name : String, wanted : String, raw : String, spec : JSON::Any, native : JSON::Any? = nil) : String?
       is_null = raw == Krikri::NONE_SENTINEL
       # Real skips type conversion entirely for a None that is neither
       # required nor defaulted ("if value is None and not required and
       # default is None: continue").
       if is_null
         return none_type_error(name, wanted, spec)
+      end
+
+      if wanted == "str_or_list_of_str"
+        return str_or_list_type_error(name, raw, native)
       end
 
       json = (JSON.parse(raw) rescue nil)

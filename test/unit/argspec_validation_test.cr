@@ -285,6 +285,87 @@ describe Krikri::ArgspecValidator do
     failure.not_nil!.msg.must_equal("dictionary requested, could not parse JSON or key=value")
   end
 
+  it "fails assemble's missing src/dest at the action level, not the module spec" do
+    # Real's assemble action plugin checks src/dest presence before the
+    # remote_src staging and before the module validates anything
+    # (live-verified vs 2.19.11: a typo'd src with remote_src: true
+    # reports the action-level "src and dest are required", never the
+    # module's "missing required arguments: src").
+    failure = Krikri::ArgspecValidator.validate(
+      "assemble", "ansible.builtin.assemble",
+      {"dest" => "/tmp/x", "rsc" => "/tmp/src", "remote_src" => "true"}, vars)
+    failure.not_nil!.msg.must_equal("src and dest are required")
+    failure.not_nil!.action_level?.must_equal(true)
+
+    failure = Krikri::ArgspecValidator.validate(
+      "assemble", "ansible.builtin.assemble",
+      {"src" => "/tmp/src", "edst" => "/tmp/x"}, vars)
+    failure.not_nil!.msg.must_equal("src and dest are required")
+    Krikri::ArgspecValidator.failure_kind?("ansible.builtin.assemble", "src and dest are required").must_equal(:action)
+  end
+
+  it "keeps template's post-action params out of the src/dest presence check" do
+    # Once the template action has run, src is consumed into the rendered
+    # content - the post-action spec pass must fall through to the
+    # unsupported-params check (real's copy module rejects the leftover
+    # template-only params there, live-verified vs 2.19.11), while the
+    # pre-action pass with the ORIGINAL params still enforces presence.
+    failure = Krikri::ArgspecValidator.validate(
+      "template", "ansible.builtin.template",
+      {"dest" => "/tmp/x", "content" => "rendered\n", "outupt_encoding" => "utf-8"}, vars)
+    failure.not_nil!.msg.must_equal(
+      "Unsupported parameters for (ansible.legacy.copy) module: outupt_encoding. " \
+      "Supported parameters include: _original_basename, attributes, backup, checksum, " \
+      "content, dest, directory_mode, follow, force, group, local_follow, mode, owner, " \
+      "remote_src, selevel, serole, setype, seuser, src, unsafe_writes, validate (attr).")
+    failure.not_nil!.action_level?.must_equal(false)
+
+    failure = Krikri::ArgspecValidator.validate(
+      "template", "ansible.builtin.template",
+      {"dest" => "/tmp/x", "ownre" => "root", "src_bogus" => "t.j2", "trim_blocks_bogus" => "true"}, vars)
+    failure.not_nil!.msg.must_equal("src and dest are required")
+    failure.not_nil!.action_level?.must_equal(true)
+  end
+
+  it "rejects assert's natively-typed fail_msg before the unsupported-params error" do
+    # Real's assert action validates types (its own str_or_list_of_str
+    # callable) BEFORE the unsupported-params error is appended, so a
+    # wrong-type fail_msg wins over a typo'd key (live-verified vs
+    # 2.19.11 with fail_msg: 75 + that_bogus:). The wire carries the
+    # parser's non-string-literal marker; the demoted "75" text would
+    # wrongly pass as a str.
+    marked = Krikri::NON_STRING_PARAM_PREFIX + "75"
+    failure = Krikri::ArgspecValidator.validate(
+      "ansible.builtin.assert", "ansible.builtin.assert",
+      {"fail_msg" => marked, "quiet" => "true", "that" => "true", "that_bogus" => "true"}, vars)
+    failure.not_nil!.msg.must_equal(
+      "argument 'fail_msg' is of type int and we were unable to convert to " \
+      "str_or_list_of_str: a string or list of strings is required")
+    failure.not_nil!.action_level?.must_equal(true)
+
+    # Only the wrong type: same message shape, native bool this time.
+    failure = Krikri::ArgspecValidator.validate(
+      "ansible.builtin.assert", "ansible.builtin.assert",
+      {"fail_msg" => Krikri::NON_STRING_PARAM_PREFIX + "true", "that" => "true"}, vars)
+    failure.not_nil!.msg.must_equal(
+      "argument 'fail_msg' is of type bool and we were unable to convert to " \
+      "str_or_list_of_str: a string or list of strings is required")
+
+    # Only the unsupported param: the unsupported error still fires.
+    failure = Krikri::ArgspecValidator.validate(
+      "ansible.builtin.assert", "ansible.builtin.assert",
+      {"fail_msg" => "boom", "that" => "true", "that_bogus" => "true"}, vars)
+    failure.not_nil!.msg.must_equal(
+      "Unsupported parameters for (ansible_collections.ansible.builtin.plugins.action.assert) " \
+      "module: that_bogus. Supported parameters include: fail_msg, quiet, success_msg, that (msg).")
+
+    # A JSON-encoded list of strings passes real's callable.
+    Krikri::ArgspecValidator.validate(
+      "assert", "ansible.builtin.assert",
+      {"fail_msg" => %(["a", "b"]), "that" => "true"}, vars
+    ).must_be_nil
+  end
+
   it "classifies failure chain shapes for ResultDisplay's error blocks" do
     Krikri::ArgspecValidator.failure_kind?(
       "ansible.builtin.lineinfile",

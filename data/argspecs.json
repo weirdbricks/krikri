@@ -1581,12 +1581,15 @@
    "fail_msg": {
     "aliases": [
      "msg"
-    ]
+    ],
+    "type": "str_or_list_of_str"
    },
    "quiet": {
     "type": "bool"
    },
-   "success_msg": {},
+   "success_msg": {
+    "type": "str_or_list_of_str"
+   },
    "that": {
     "required": true
    }
