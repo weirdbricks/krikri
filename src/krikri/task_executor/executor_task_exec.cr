@@ -230,7 +230,7 @@ module Krikri
       # ignore_errors: stats semantics (ok+ignored, not failed) stay
       # identical to the rest of the engine.
       ignore_errors = resolve_task_ignore_errors(task)
-      ResultDisplay.display_result(host, result, @diff_mode, ignore_errors: ignore_errors, module_name: task.module_name)
+      ResultDisplay.display_result(host, result, @diff_mode, ignore_errors: ignore_errors, module_name: task.module_name, source_task: task)
       ResultDisplay.update_stats(@results[host.name], result, ignore_errors)
       @halted_hosts.add(host.name) if !errors.empty? && !ignore_errors
     end
@@ -566,7 +566,7 @@ module Krikri
       if @adhoc
         ResultDisplay.display_adhoc_result(host, result, @diff_mode, module_name: task.module_name)
       else
-        ResultDisplay.display_result(host, result, @diff_mode, ignore_errors: ignore_errors, no_log: no_log, module_name: task.module_name, delegate_target: exec_host && exec_host != host ? exec_host.connection_host : nil)
+        ResultDisplay.display_result(host, result, @diff_mode, ignore_errors: ignore_errors, no_log: no_log, module_name: task.module_name, delegate_target: exec_host && exec_host != host ? exec_host.connection_host : nil, source_task: task)
       end
       ResultDisplay.update_stats(@results[host.name], result, ignore_errors)
       halt_if_failed(task, host, failed)
@@ -821,7 +821,6 @@ module Krikri
     private def inline_copy_source_content(task : Task, params : Hash(String, String), host : Host, vars_context : Hash(String, JSON::Any)) : Hash(String, String) | JSON::Any
       return params unless task.module_name == "ansible.builtin.copy"
       return params if ["true", "yes", "1", "on"].includes?(params["remote_src"]?.try(&.downcase))
-      return params if PluginManager.local_connection?(host, vars_context)
 
       src = params["src"]?
       return params unless src && !src.empty?
@@ -835,6 +834,14 @@ module Krikri
       # against the same roots first_found uses, then rewrite src to the
       # absolute controller path so every downstream check (existence,
       # size, vault decrypt, directory staging) sees the real file.
+      #
+      # The resolution (and the missing-src failure) applies on a LOCAL
+      # connection too: the target IS the controller there, so real's
+      # action plugin still fails a src: that exists nowhere with its
+      # controller-side wording - previously the local early-return let
+      # the plugin binary run and report its own "Source file not found"
+      # msg instead (live-verified against 2.19.11 under -c local).
+      local_connection = PluginManager.local_connection?(host, vars_context)
       if !src.starts_with?('/')
         roots = [] of String
         task.role_files_dir.try { |dir| roots << dir }
@@ -847,8 +854,18 @@ module Krikri
           params = params.dup
           params["src"] = src
         else
+          return controller_missing_copy_local_result(src) if local_connection
           return params
         end
+      elsif local_connection
+        # Absolute src on a local connection: the controller-side
+        # existence check IS the whole story (same filesystem), so a
+        # miss fails here with real's wording instead of reaching the
+        # plugin binary.
+        is_directory = Dir.exists?(src) rescue false
+        return params if is_directory
+        return controller_missing_copy_local_result(src) unless File.exists?(src)
+        return params
       end
 
       # Real Ansible's copy action plugin fails the task on the
@@ -956,6 +973,18 @@ module Krikri
         "changed" => false,
         "failed"  => true,
         "msg"     => "Task failed: Could not find or access '#{src}' on the Ansible Controller.\nIf you are using a module and expect the file to exist on the remote, see the remote_src option",
+      }.to_json)
+    end
+
+    # copy:'s controller-side src: miss on a LOCAL connection: real
+    # 2.19.11's fatal msg carries the "Unexpected AnsibleActionFail
+    # error: " prefix itself, WITHOUT the "Task failed: " prefix the
+    # remote-host variant above carries (both live-verified).
+    private def controller_missing_copy_local_result(src : String) : JSON::Any
+      JSON.parse({
+        "changed" => false,
+        "failed"  => true,
+        "msg"     => "Unexpected AnsibleActionFail error: Could not find or access '#{src}' on the Ansible Controller.\nIf you are using a module and expect the file to exist on the remote, see the remote_src option",
       }.to_json)
     end
 

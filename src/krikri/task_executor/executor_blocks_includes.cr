@@ -150,7 +150,7 @@ module Krikri
           inherited = Play.new("", "")
           inherited.become = task.become?
           inherited.become_user = task.become_user
-          included_tasks = PlaybookParser.parse_tasks(yaml.as_a, inherited, "task in included #{resolved_path}", File.dirname(resolved_path), role_path: task.role_path, playbook_dir: @playbook_dir)
+          included_tasks = PlaybookParser.parse_tasks(yaml.as_a, inherited, "task in included #{resolved_path}", File.dirname(resolved_path), role_path: task.role_path, playbook_dir: @playbook_dir, source_file: File.expand_path(resolved_path), source_map: YamlSourceMap.scan(text))
 
           if include_vars = task.include_vars
             included_tasks.each do |included_task|
@@ -1435,7 +1435,7 @@ module Krikri
       inherited = Play.new("", "")
       inherited.become = task.become?
       inherited.become_user = task.become_user
-      included_tasks = PlaybookParser.parse_tasks(yaml.as_a, inherited, "task in included #{resolved_path}", File.dirname(resolved_path), role_path: task.role_path, playbook_dir: @playbook_dir)
+      included_tasks = PlaybookParser.parse_tasks(yaml.as_a, inherited, "task in included #{resolved_path}", File.dirname(resolved_path), role_path: task.role_path, playbook_dir: @playbook_dir, source_file: File.expand_path(resolved_path), source_map: YamlSourceMap.scan(text))
 
       # Role context (role_name/defaults/vars/dirs) must reach the
       # included tasks on THIS path too: an include_tasks: inside a role

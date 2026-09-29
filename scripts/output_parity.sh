@@ -86,7 +86,9 @@ run_engine() {
   rm -f /tmp/krikri-playbook-role-greeting.txt
   (
     cd "$cwd" || exit 99
-    env -u ANSIBLE_GATHERING -u ANSIBLE_CACHE_PLUGIN -u ANSIBLE_CACHE_PLUGIN_CONNECTION \
+    # A hung engine must never wedge the whole harness: 20s per run,
+    # reported as its own result via rc=124 (never masked away).
+    timeout 20 env -u ANSIBLE_GATHERING -u ANSIBLE_CACHE_PLUGIN -u ANSIBLE_CACHE_PLUGIN_CONNECTION \
       ANSIBLE_NOCOLOR=1 \
       "$bin" -i localhost, -c local "$@" "$pb" \
       </dev/null >"$prefix.stdout" 2>"$prefix.stderr"

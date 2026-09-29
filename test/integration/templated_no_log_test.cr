@@ -60,10 +60,11 @@ describe "templated no_log: re-resolved at runtime, not parse time" do
   end
 
   it "hides the failure message when the role-default no_log: resolves to true" do
-    # no_log: true suppresses EVERYTHING beyond the bare status line -
-    # no msg, no "...ignoring" note either (that only prints on the
-    # normal, non-no_log display path) - matching real Ansible's own
-    # `failed: [host]` with nothing else leaked.
+    # no_log: true suppresses everything that could carry the secret -
+    # the msg, the error block real 2.19 itself leaks on failed no_log
+    # tasks, per-item detail - while the censored fatal dump (which
+    # carries no secret) and any "...ignoring" note still print,
+    # matching real 2.19.11's shape minus its own leak.
     status, output = run_role_playbook("true")
 
     status.success?.must_equal(true, output)

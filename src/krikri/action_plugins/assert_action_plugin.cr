@@ -107,6 +107,13 @@ module Krikri
       if failing
         fail_msg = @params["fail_msg"]? || @params["msg"]? || "Assertion failed"
         extra = {"assertion" => JSON::Any.new(failing), "evaluated_to" => JSON::Any.new(false)}
+        # Real assert tags the FAILURE result _ansible_verbose_always too
+        # (its action sets it once up front for any non-quiet run), so
+        # the default callback dumps the failed assertion pretty-printed
+        # - 4-space indent, sorted keys (live-verified against 2.19.11).
+        unless true?(@params["quiet"]?)
+          extra["_ansible_verbose_always"] = JSON::Any.new(true)
+        end
         ActionResult.final(ActionResult.plugin_result_json(false, true, fail_msg, extra))
       else
         success_msg = @params["success_msg"]? || "All assertions passed"

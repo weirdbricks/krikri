@@ -238,7 +238,7 @@ module Krikri
         # sites - see resolve_task_no_log there), so a templated value
         # still falls back to the parse-time guess here specifically -
         # same pre-existing gap as before this fix, not a regression.
-        ResultDisplay.display_result(host, result, diff_mode, no_log: handler.no_log?, module_name: handler.module_name)
+        ResultDisplay.display_result(host, result, diff_mode, no_log: handler.no_log?, module_name: handler.module_name, source_task: handler)
         ResultDisplay.update_stats(stats, result)
       end
     end

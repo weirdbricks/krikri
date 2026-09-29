@@ -473,7 +473,7 @@ module Krikri
       with_executable_warning(PluginResult.new(
         changed: true,
         failed: exit_code != 0,
-        msg: exit_code == 0 ? "" : "Command failed with exit code #{exit_code}",
+        msg: exit_code == 0 ? "" : "non-zero return code",
         include_empty_msg: true,
         cmd: cmd_parts,
         stdout: final_stdout,

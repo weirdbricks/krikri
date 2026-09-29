@@ -428,7 +428,7 @@ module Krikri
       PluginResult.new(
         changed: true,
         failed: result[:exit_code] != 0,
-        msg: result[:exit_code] == 0 ? "" : "Command failed",
+        msg: result[:exit_code] == 0 ? "" : "non-zero return code",
         include_empty_msg: true,
         cmd: command_string,
         stdout: final_stdout,

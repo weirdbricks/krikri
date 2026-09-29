@@ -2045,6 +2045,54 @@ module Krikri
       nil
     end
 
+    # Real ansible-core 2.19 tracks each templated value's source origin
+    # ("data lineage") and labels a non-boolean conditional error with
+    # where the tested value was DEFINED:
+    #   "Conditional result (True) was derived from value of type 'str'
+    #   at '/path/playbook.yml:5:12'. Conditionals must have a boolean
+    #   result."
+    # Full lineage (set_fact/registered/inventory/hostvars sources,
+    # compound conditions) needs origin tracking through the whole
+    # templating pipeline; this covers the common narrow shape: a `when:`
+    # that is a single bare variable defined in the playbook file's own
+    # play-level `vars:`. The definition position comes from
+    # YamlSourceMap (the same libyaml pass that labels task origins);
+    # when the variable isn't found there the message is returned
+    # unchanged, never guessed at.
+    private def decorate_conditional_value_origin(task : Task, msg : String) : String
+      return msg unless msg.includes?("Conditionals must have a boolean result")
+      return msg if msg.includes?(" at '")
+      raw = task.when_condition.to_s.strip
+      return msg unless raw.matches?(/\A[A-Za-z_][A-Za-z0-9_]*\z/)
+      path = @playbook_file
+      return msg unless path && File.file?(path)
+      return msg unless pos = bare_var_definition_pos(path, task, raw)
+      msg.sub(/was derived from value of type '([a-zA-Z]+)'/) do
+        "was derived from value of type '#{$1}' at '#{path}:#{pos[0]}:#{pos[1]}'"
+      end
+    end
+
+    # Locates `name`'s value position in the playbook file: the play
+    # whose YAML mapping spans the task's own source line, then that
+    # play's `vars:` entry for the name.
+    private def bare_var_definition_pos(path : String, task : Task, name : String) : {Int32, Int32}?
+      return nil unless task.source_line > 0
+      # The play-range lookup below matches on the task's line within the
+      # playbook file itself - an include/role-sourced task's line refers
+      # to a different file, so its vars can't be located this way.
+      return nil unless task.source_file.try { |file| File.expand_path(file) == File.expand_path(path) }
+      map = Krikri::YamlSourceMap.scan(File.read(path))
+      play_starts = map.plays
+      play_idx = nil
+      play_starts.each_with_index do |(idx, start_line), i|
+        next unless start_line <= task.source_line
+        next_line = i + 1 < play_starts.size ? play_starts[i + 1][1] : Int32::MAX
+        play_idx = idx if task.source_line < next_line
+      end
+      return nil unless play_idx
+      map.at?("#{play_idx}/vars/#{name}")
+    end
+
     # Whether a WhenEvaluationError message is a conditional-EVALUATION
     # failure (the only shape real ansible-core 2.19.11 decorates with
     # the two-level [ERROR] chain block and the "Task failed: "-prefixed
@@ -2075,6 +2123,7 @@ module Krikri
     # emit_finalization_error_block); when either origin can't be located
     # (role/include-sourced task, folded when: list), no block is printed.
     private def emit_when_error_chain(task : Task, msg : String) : Nil
+      msg = decorate_conditional_value_origin(task, msg)
       inner = msg.starts_with?("Task failed: ") ? msg["Task failed: ".size..] : msg
       return unless conditional_evaluation_failure?(msg)
       path = @playbook_file

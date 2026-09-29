@@ -276,7 +276,7 @@ module Krikri
       end
 
       result = if ex = when_error
-                 when_error_result(ex)
+                 when_error_result(ex, handler)
                elsif items = loop_items
                  execute_handler_loop(handler, host, vars_context, items)
                else
@@ -400,7 +400,7 @@ module Krikri
         executed_count += 1
         any_changed ||= result["changed"]?.try(&.as_bool) || false
         any_failed ||= Krikri.result_failed_flag(result)
-        ResultDisplay.display_result(host, result, @diff_mode, item_label: item_display(item), ignore_errors: resolve_task_ignore_errors(handler, base_vars_context), no_log: resolve_task_no_log(handler, base_vars_context), module_name: handler.module_name)
+        ResultDisplay.display_result(host, result, @diff_mode, item_label: item_display(item), ignore_errors: resolve_task_ignore_errors(handler, base_vars_context), no_log: resolve_task_no_log(handler, base_vars_context), module_name: handler.module_name, source_task: handler, loop_item: item, loop_var_name: loop_var)
       end
 
       # A looped handler whose every item was skipped (per-item when:,
@@ -490,7 +490,7 @@ module Krikri
           begin
             reached = evaluate_when_items(handler, vars_context, host)
           rescue ex : WhenEvaluationError
-            return when_error_result(ex)
+            return when_error_result(ex, handler)
           end
         end
         reachable_unavailable_modules << module_name if reached
@@ -531,7 +531,7 @@ module Krikri
           # handler) exactly like the substitute_task_params rescue just
           # below - same shape when_error_result already builds for
           # execute_task_once.
-          return when_error_result(ex)
+          return when_error_result(ex, handler)
         end
 
         unless when_result
@@ -594,7 +594,7 @@ module Krikri
         inherited = Play.new("", "")
         inherited.become = handler.become?
         inherited.become_user = handler.become_user
-        included_tasks = PlaybookParser.parse_tasks(yaml.as_a, inherited, "task in included #{resolved_path}", File.dirname(resolved_path), role_path: handler.role_path, playbook_dir: @playbook_dir)
+        included_tasks = PlaybookParser.parse_tasks(yaml.as_a, inherited, "task in included #{resolved_path}", File.dirname(resolved_path), role_path: handler.role_path, playbook_dir: @playbook_dir, source_file: File.expand_path(resolved_path), source_map: YamlSourceMap.scan(text))
         propagate_role_context(handler, included_tasks)
 
         run_task_list(included_tasks, host)

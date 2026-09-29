@@ -1,6 +1,7 @@
 require "../minitest_helper"
 require "../../src/krikri/output_banner"
 require "../../src/krikri/task_executor/output_routing"
+require "../../src/krikri/playbook_parser"
 require "../../src/krikri/task_executor/result_display"
 
 # Byte-level output-parity regression tests for the console shapes shared
@@ -115,6 +116,58 @@ describe Krikri::ResultDisplay do
       result = JSON.parse(%({"changed": true, "failed": true, "msg": "non-zero return code", "rc": 1}))
       out = capture_output { Krikri::ResultDisplay.display_result(host, result, false) }
       out.must_equal("fatal: [localhost]: FAILED! => {\"changed\": true, \"msg\": \"non-zero return code\", \"rc\": 1}\n")
+    end
+
+    # Real 2.19.11 (live-verified): a task-level when:/loop-source
+    # failure's fatal line dumps ONLY the msg - no changed key - while
+    # the registered var keeps changed=false+failed=true+msg (the
+    # marker key is stripped at register with every other _ansible_*).
+    it "dumps only the msg for a task-level when-failure fatal" do
+      result = JSON.parse(%({"changed": false, "failed": true, "msg": "Task failed: 'x' is undefined", "_ansible_task_error_msg_only": true}))
+      out = capture_output { Krikri::ResultDisplay.display_result(host, result, false) }
+      out.must_equal("fatal: [localhost]: FAILED! => {\"msg\": \"Task failed: 'x' is undefined\"}\n")
+    end
+
+    # Real 2.19.11 (live-verified): assert: tags its FAILURE result
+    # _ansible_verbose_always (unless quiet:), so the fatal dump is
+    # pretty-printed - 4-space indent, sorted keys.
+    it "pretty-dumps a failed assert result tagged _ansible_verbose_always" do
+      result = JSON.parse(%({"assertion": "1 == 2", "changed": false, "evaluated_to": false, "failed": true, "msg": "Assertion failed", "_ansible_verbose_always": true}))
+      out = capture_output { Krikri::ResultDisplay.display_result(host, result, false, ignore_errors: true, module_name: "ansible.builtin.assert") }
+      out.must_equal("fatal: [localhost]: FAILED! => {\n    \"assertion\": \"1 == 2\",\n    \"changed\": false,\n    \"evaluated_to\": false,\n    \"msg\": \"Assertion failed\"\n}\n...ignoring\n")
+    end
+
+    # Real 2.19.11 (live-verified): the strategy merges the loop item
+    # into every per-item result, so a failed item's dump carries
+    # "ansible_loop_var" plus the item under the loop var's name.
+    it "restores ansible_loop_var and the item in a failed loop item's dump" do
+      result = JSON.parse(%({"changed": false, "failed": true, "msg": "same boom"}))
+      out = capture_output { Krikri::ResultDisplay.display_result(host, result, false, item_label: "x", module_name: "ansible.builtin.fail", loop_item: JSON::Any.new("x")) }
+      out.must_equal("failed: [localhost] (item=x) => {\"ansible_loop_var\": \"item\", \"changed\": false, \"item\": \"x\", \"msg\": \"same boom\"}\n")
+    end
+
+    it "uses the custom loop_var name in a failed loop item's dump" do
+      result = JSON.parse(%({"changed": false, "failed": true, "msg": "same boom"}))
+      out = capture_output { Krikri::ResultDisplay.display_result(host, result, false, item_label: "x", module_name: "ansible.builtin.fail", loop_item: JSON::Any.new("x"), loop_var_name: "p") }
+      out.must_equal("failed: [localhost] (item=x) => {\"ansible_loop_var\": \"p\", \"changed\": false, \"msg\": \"same boom\", \"p\": \"x\"}\n")
+    end
+
+    # Real 2.19.11 (live-verified): a when:-failed loop item is a
+    # task-level failure - msg only, no changed key, no loop-item keys.
+    it "dumps only the msg for a when-failed loop item" do
+      result = JSON.parse(%({"changed": false, "failed": true, "msg": "Task failed: 'x' is undefined", "_ansible_task_error_msg_only": true}))
+      out = capture_output { Krikri::ResultDisplay.display_result(host, result, false, item_label: "1", module_name: "ansible.builtin.debug", loop_item: JSON::Any.new(1)) }
+      out.must_equal("failed: [localhost] (item=1) => {\"msg\": \"Task failed: 'x' is undefined\"}\n")
+    end
+
+    # Real 2.19.11 (live-verified): a failed solo no_log task prints the
+    # CENSORED fatal dump (no secret) plus "...ignoring"; the error
+    # block real itself emits there is deliberately not replicated (it
+    # leaks the raw message this control exists to hide).
+    it "prints the censored fatal for a failed no_log task without leaking the msg" do
+      result = JSON.parse(%({"changed": false, "failed": true, "msg": "SECRET_SENTINEL"}))
+      out = capture_output { Krikri::ResultDisplay.display_result(host, result, false, no_log: true, ignore_errors: true) }
+      out.must_equal("fatal: [localhost]: FAILED! => {\"censored\": \"the output has been hidden due to the fact that 'no_log: true' was specified for this result\", \"changed\": false}\n...ignoring\n")
     end
   end
 end

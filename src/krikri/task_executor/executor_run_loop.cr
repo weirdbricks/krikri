@@ -487,7 +487,7 @@ module Krikri
           # exception instead of this one clean failed task (recapped
           # failed=1), the same degrade-to-failed-task shape the loop-
           # source resolution failure rescue below uses.
-          finish_single_task(task, host, when_error_result(WhenEvaluationError.new(ex.message || "Failed to render task vars")))
+          finish_single_task(task, host, when_error_result(WhenEvaluationError.new(ex.message || "Failed to render task vars"), task))
           return
         end
       end
@@ -549,7 +549,7 @@ module Krikri
                         register_skip_result(task, host)
                         return
                       end
-                      finish_single_task(task, host, when_error_result(ex), vars_context: vars_context)
+                      finish_single_task(task, host, when_error_result(ex, task), vars_context: vars_context)
                       return
                     end
                   else
@@ -593,7 +593,7 @@ module Krikri
         # "msg": "Task failed: 'no_such_list' is undefined"}).
         prefixed = ex.message.to_s.starts_with?("Task failed: ") ? ex.message.to_s : "Task failed: #{ex.message}"
         emit_when_error_chain(task, prefixed)
-        finish_single_task(task, host, when_error_result(WhenEvaluationError.new(prefixed)), vars_context: vars_context)
+        finish_single_task(task, host, when_error_result(WhenEvaluationError.new(prefixed), task), vars_context: vars_context)
         return
       end
 
@@ -612,7 +612,7 @@ module Krikri
           # source rescue above.
           prefixed = ex.message.to_s.starts_with?("Task failed: ") ? ex.message.to_s : "Task failed: #{ex.message}"
           emit_when_error_chain(task, prefixed)
-          finish_single_task(task, host, when_error_result(WhenEvaluationError.new(prefixed)), vars_context: vars_context)
+          finish_single_task(task, host, when_error_result(WhenEvaluationError.new(prefixed), task), vars_context: vars_context)
           return
         end
         return
@@ -941,11 +941,19 @@ module Krikri
     #
     # `changed: false` IS present - live-verified against ansible-core
     # 2.19.11: a `when:`-raising task with register: gives a registered
-    # var carrying changed=false+failed=true+msg, and the fatal line
-    # dumps {"changed": false, "msg": "Task failed: ..."} (a later task
-    # reading `<reg>.changed` sees false, not undefined).
-    private def when_error_result(ex : WhenEvaluationError) : JSON::Any
-      JSON.parse({"changed" => false, "failed" => true, "msg" => ex.message || "Error while evaluating conditional"}.to_json)
+    # var carrying changed=false+failed=true+msg. But the FATAL line for
+    # a task-level when:/loop-source failure dumps ONLY the msg
+    # ("{"msg": "Task failed: ..."}" - live-verified with and without
+    # register: and ignore_errors:, unlike assert:'s action-level
+    # conditional failure which keeps changed). The
+    # `_ansible_task_error_msg_only` marker tells ResultDisplay to drop
+    # everything but msg from the fatal dump; register strips it with
+    # every other `_ansible_*` key, so the registered var keeps the full
+    # changed+failed+msg shape.
+    private def when_error_result(ex : WhenEvaluationError, task : Task? = nil) : JSON::Any
+      msg = ex.message || "Error while evaluating conditional"
+      msg = decorate_conditional_value_origin(task, msg) if task
+      JSON.parse({"changed" => false, "failed" => true, "msg" => msg, "_ansible_task_error_msg_only" => true}.to_json)
     end
 
     # For a `when_passes?` call site with no real per-item result
@@ -961,7 +969,7 @@ module Krikri
     # ... ignored=1`, exit 0). Always returns `false`, the same "don't
     # run this task" signal every caller already treats a when:-skip as.
     private def swallow_when_error(task : Task, host : Host, ex : WhenEvaluationError, item_label : String? = nil, defer_stats : Bool = false, defer_display : Bool = false) : Bool
-      msg = ex.message || "Error while evaluating conditional"
+      msg = decorate_conditional_value_origin(task, ex.message || "Error while evaluating conditional")
       ignore_errors = resolve_task_ignore_errors(task)
       unless defer_stats
         if ignore_errors
@@ -997,7 +1005,10 @@ module Krikri
           if item_label
             puts "failed: [#{host.connection_host}] (item=#{item_label}) => {\"changed\": false, \"msg\": #{display_msg.to_json}}".colorize(:red)
           else
-            puts "fatal: [#{host.connection_host}]: FAILED! => {\"changed\": false, \"msg\": #{display_msg.to_json}}".colorize(:red)
+            # Task-level conditional failures dump the msg alone - real
+            # 2.19.11 shows {"msg": "Task failed: ..."} with no changed
+            # key (live-verified; see when_error_result).
+            puts "fatal: [#{host.connection_host}]: FAILED! => {\"msg\": #{display_msg.to_json}}".colorize(:red)
           end
         else
           puts "fatal: [#{host.connection_host}]#{suffix}: FAILED! => #{msg}".colorize(:red)
@@ -1141,7 +1152,7 @@ module Krikri
                            # named 'X'." - cache the failed result so the
                            # consumer reports it instead of the process
                            # crashing out of execute_batch_group entirely.
-                           cache[task] = {when_error_result(WhenEvaluationError.new(ex.message || "Failed to render task vars")), Hash(String, JSON::Any).new}
+                           cache[task] = {when_error_result(WhenEvaluationError.new(ex.message || "Failed to render task vars"), task), Hash(String, JSON::Any).new}
                            next
                          end
                        end
@@ -1162,7 +1173,7 @@ module Krikri
             next
           end
         rescue ex : WhenEvaluationError
-          cache[task] = {when_error_result(ex), vars_context}
+          cache[task] = {when_error_result(ex, task), vars_context}
           next
         end
 
@@ -1604,7 +1615,7 @@ module Krikri
         # chain itself dedups per distinct text, so a loop displays it
         # once, exactly like real.
         emit_when_error_chain(task, ex.message || "")
-        return when_error_result(ex)
+        return when_error_result(ex, task)
       end
 
       # Real Ansible resolves the task's effective connection type through

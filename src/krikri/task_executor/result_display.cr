@@ -3,6 +3,7 @@ require "colorize"
 require "../host"
 require "../timing_profile"
 require "../variable_substitutor/filter_core"
+require "./error_block"
 
 module Krikri
   # A module result's "failed" flag read the way real Ansible's Python
@@ -24,13 +25,18 @@ module Krikri
     # Display task result with appropriate formatting.
     # item_label is set for looped tasks, rendering `ok: [host] => (item=x)`
     # to match how Ansible annotates per-iteration output.
-    def self.display_result(host : Host, result : JSON::Any, diff_mode : Bool, item_label : String? = nil, ignore_errors : Bool = false, no_log : Bool = false, module_name : String? = nil, delegate_target : String? = nil) : Nil
+    # source_task carries the task's parsed source position and module
+    # identity so a failed result can render real ansible-core 2.19's
+    # `[ERROR]: Task failed:` block (see ErrorBlock) before the fatal/
+    # failed line; nil (or a task without a parsed position) suppresses
+    # the block.
+    def self.display_result(host : Host, result : JSON::Any, diff_mode : Bool, item_label : String? = nil, ignore_errors : Bool = false, no_log : Bool = false, module_name : String? = nil, delegate_target : String? = nil, source_task : Task? = nil, loop_item : JSON::Any? = nil, loop_var_name : String? = nil) : Nil
       TimingProfile.measure("display.result", "display") do
-        display_result_measured(host, result, diff_mode, item_label, ignore_errors, no_log, module_name, delegate_target)
+        display_result_measured(host, result, diff_mode, item_label, ignore_errors, no_log, module_name, delegate_target, source_task, loop_item, loop_var_name)
       end
     end
 
-    private def self.display_result_measured(host : Host, result : JSON::Any, diff_mode : Bool, item_label : String? = nil, ignore_errors : Bool = false, no_log : Bool = false, module_name : String? = nil, delegate_target : String? = nil) : Nil
+    private def self.display_result_measured(host : Host, result : JSON::Any, diff_mode : Bool, item_label : String? = nil, ignore_errors : Bool = false, no_log : Bool = false, module_name : String? = nil, delegate_target : String? = nil, source_task : Task? = nil, loop_item : JSON::Any? = nil, loop_var_name : String? = nil) : Nil
       # delegate_to: renders the host line as real Ansible does:
       # `ok: [source -> target]` - the task ran against the delegate
       # target even though it reports under the play host.
@@ -49,6 +55,19 @@ module Krikri
       # security control, so it is applied before any other branch below
       # can print part of the result.
       if no_log
+        # Real 2.19 DOES print the error block for a failed no_log task
+        # (with the raw, uncensored message - an upstream leak), but
+        # krikri deliberately does not replicate that leak: the block
+        # would echo the secret this control exists to hide. Everything
+        # else matches real 2.19.11: a solo failed no_log task prints the
+        # censored fatal dump (which carries no secret) plus "...ignoring"
+        # when ignore_errors: caught it; ok/changed and looped results
+        # stay bare status lines (live-verified against 2.19.11).
+        if failed && item_label.nil?
+          puts "fatal: [#{host_label}]: FAILED! => {\"censored\": \"the output has been hidden due to the fact that 'no_log: true' was specified for this result\", \"changed\": #{changed}}".colorize(:red)
+          puts "...ignoring".colorize(:red) if ignore_errors
+          return
+        end
         status_only = if failed
                         "failed".colorize(:red).bold
                       elsif changed
@@ -96,7 +115,24 @@ module Krikri
         # Real's stdout callbacks strip failed/skipped/_ansible_* before
         # dumping (as_callback_task_result), so the FAILED! dump carries
         # neither "failed": true nor any _ansible_* key.
-        puts "fatal: [#{host_label}]: FAILED! => #{ResultDisplay.python_json_dump(clean_for_display(result))}"
+        emit_task_error_block(source_task, result, msg)
+        # Real 2.19.11's fatal dump has three shapes:
+        # - a task-level when:/loop-source failure (marked by
+        #   when_error_result) dumps ONLY the msg:
+        #   {"msg": "Task failed: ..."} - no changed key (live-verified
+        #   with and without register:/ignore_errors:).
+        # - an action failure that tagged its result
+        #   _ansible_verbose_always (assert: does, unless quiet:) dumps
+        #   the whole result pretty-printed, 4-space indent, sorted keys
+        #   (live-verified: assert: failure).
+        # - every other failure dumps the whole result single-line.
+        if result["_ansible_task_error_msg_only"]?.try(&.as_bool) == true
+          puts "fatal: [#{host_label}]: FAILED! => {\"msg\": #{msg.to_json}}".colorize(:red)
+        elsif result["_ansible_verbose_always"]?.try(&.as_bool) == true
+          puts "fatal: [#{host_label}]: FAILED! => #{dump_pretty(clean_for_display(result))}".colorize(:red)
+        else
+          puts "fatal: [#{host_label}]: FAILED! => #{ResultDisplay.python_json_dump(clean_for_display(result))}".colorize(:red)
+        end
         # Real ansible-playbook prints a bare "...ignoring" line right
         # after a failed task's output when ignore_errors: caught it
         # (live-verified against a real run) - the single-line dump above
@@ -115,7 +151,38 @@ module Krikri
       # /`  Exit code:` detail block and a per-item `...ignoring` - a
       # different word-order, extra lines, and repeated suffix vs real.
       if failed && !item_label.nil?
-        puts "failed: [#{host_label}] (item=#{item_label}) => #{ResultDisplay.python_json_dump(clean_for_display(result))}"
+        # Real's default callback runs its exception handling (the error
+        # block) once per failed ITEM result, before that item's line;
+        # ErrorBlock's Display-level dedup collapses identical repeats.
+        emit_task_error_block(source_task, result, msg)
+        if result["_ansible_task_error_msg_only"]?.try(&.as_bool) == true
+          # A when:-failed loop item is a task-level failure: real dumps
+          # the msg alone, with no changed key and no loop-item keys
+          # (live-verified: a looped when: failure shows
+          # `failed: [host] (item=N) => {"msg": "Task failed: ..."}`).
+          puts "failed: [#{host_label}] (item=#{item_label}) => {\"msg\": #{msg.to_json}}".colorize(:red)
+          return
+        end
+        dumped = clean_for_display(result)
+        # Real's strategy merges the loop item itself into every per-item
+        # result before the callback dumps it, so a failed item's dump
+        # carries "ansible_loop_var" plus the item under the loop var's
+        # name (live-verified: a looped fail: item shows
+        # {"ansible_loop_var": "item", "changed": false, "item": "x",
+        # "msg": ...}). Module results reach display without those keys,
+        # so restore them here.
+        if item = loop_item
+          h = dumped.as_h.try(&.dup) || Hash(String, JSON::Any).new
+          var_name = loop_var_name.try { |name| !name.empty? ? name : nil } || "item"
+          h["ansible_loop_var"] = JSON::Any.new(var_name)
+          h[var_name] = item
+          dumped = JSON::Any.new(h)
+        end
+        if result["_ansible_verbose_always"]?.try(&.as_bool) == true
+          puts "failed: [#{host_label}] (item=#{item_label}) => #{dump_pretty(dumped)}".colorize(:red)
+        else
+          puts "failed: [#{host_label}] (item=#{item_label}) => #{ResultDisplay.python_json_dump(dumped)}".colorize(:red)
+        end
         return
       end
 
@@ -127,8 +194,8 @@ module Krikri
       # body - so the engine's old `  msg` display for successful tasks
       # is gone: a non-verbose success shows just `ok: [host]`.
       verbose_always = !failed &&
-        result["_ansible_verbose_always"]?.try(&.as_bool) == true &&
-        result["_ansible_verbose_override"]?.try(&.as_bool) != true
+                       result["_ansible_verbose_always"]?.try(&.as_bool) == true &&
+                       result["_ansible_verbose_override"]?.try(&.as_bool) != true
 
       if verbose_always
         cleaned = module_name.try(&.ends_with?("debug")) ? debug_clean_result(result) : clean_for_display(result)
@@ -190,6 +257,78 @@ module Krikri
       # Display diff if present and diff_mode enabled
       if diff_mode && result["diff"]?
         display_diff(result["diff"])
+      end
+    end
+
+    # Builds and prints real ansible-core 2.19's `[ERROR]: Task failed:`
+    # block for a failed task result, labeled with the task's parsed
+    # playbook origin. No-op when the task has no parsed position, the
+    # failure is a conditional-evaluation failure (whose two-level chain
+    # is emitted by TaskExecutor's own emit_when_error_chain, including
+    # the `when:` value's own Origin), or no_log is hiding the result.
+    private def self.emit_task_error_block(source_task : Task?, result : JSON::Any, msg : String) : Nil
+      return unless source_task
+      return if source_task.no_log?
+      return if msg.includes?("Error while evaluating conditional")
+      # Non-boolean conditional failures are likewise emitted by
+      # emit_when_error_chain (with the when: value's own Origin); a
+      # second block here would duplicate it wrapped in a bogus
+      # "Module failed:" segment.
+      return if msg.includes?("Conditional result")
+
+      origin = error_origin_context(source_task)
+      return unless origin
+
+      ErrorBlock.emit(task_error_chain(source_task.module_name, msg, origin))
+    end
+
+    private def self.error_origin_context(task : Task) : String?
+      path = task.source_file
+      return nil unless path && task.source_line > 0
+      ErrorBlock.origin_context(path, task.source_line, task.source_col > 0 ? task.source_col : nil)
+    end
+
+    # The cause chain real ansible-core 2.19 builds for each failure
+    # class, as an ErrorBlock event tree rooted at the task-level
+    # AnsibleTaskError ("Task failed."):
+    #
+    # - template (its action plugin re-raises the loader's file-not-found
+    #   inside `except` without `raise ... from`): the two-segment
+    #   handling chain - live-verified against 2.19.11.
+    # - fail/assert (action-level failures): "Action failed." + the
+    #   result message.
+    # - copy's controller-side src miss (its action raises
+    #   `AnsibleActionFail(result=result) from ex` with an empty message,
+    #   so the type name becomes the middle segment): collapsed chain
+    #   carrying real's exact wording.
+    # - every other module-level failure: "Module failed." + the result
+    #   message (the module API's own wrapper), collapsed.
+    private def self.task_error_chain(module_name : String?, msg : String, origin : String) : ErrorBlock::Node
+      root = ErrorBlock::Node.new("Task failed.", source_context: origin)
+
+      short = module_name.try { |name| name.split(".").last }
+      case short
+      when "template"
+        root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(msg).with_chain(ErrorBlock::HANDLING, false, ErrorBlock::Node.new(msg)))
+      when "fail", "assert"
+        root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new("Action failed.").with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(msg)))
+      else
+        if (match = msg.match(/\ATask failed: Could not find or access '([^']*)' on the Ansible Controller\./)) &&
+           msg.includes?("If you are using a module and expect the file to exist on the remote, see the remote_src option")
+          not_found = "Could not find or access '#{match[1]}' on the Ansible Controller.\nIf you are using a module and expect the file to exist on the remote, see the remote_src option"
+          root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new("Unexpected AnsibleActionFail error.").with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(not_found)))
+        elsif (match = msg.match(/\AUnexpected AnsibleActionFail error: Could not find or access '([^']*)' on the Ansible Controller\./)) &&
+              msg.includes?("If you are using a module and expect the file to exist on the remote, see the remote_src option")
+          # copy:'s controller-side src miss on a LOCAL connection: real
+          # 2.19.11's fatal msg carries the "Unexpected AnsibleActionFail
+          # error: " prefix itself (no "Task failed: " prefix), and the
+          # block chain is the same collapsed shape
+          # (live-verified: copy: with a missing src under -c local).
+          not_found = "Could not find or access '#{match[1]}' on the Ansible Controller.\nIf you are using a module and expect the file to exist on the remote, see the remote_src option"
+          root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new("Unexpected AnsibleActionFail error.").with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(not_found)))
+        else
+          root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new("Module failed.").with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(msg)))
+        end
       end
     end
 
@@ -624,20 +763,20 @@ module Krikri
         end
 
         host_field = if Colorize.enabled?
-          # Real's hostcolor colored branch pads the ANSI-wrapped name to
-          # 37 (26 visible + 11 for the escape bytes); failure or
-          # unreachability wins over changed, which wins over plain ok.
-          color = if stats["failed"] != 0 || unreachable != 0
-                    :red
-                  elsif stats["changed"] != 0
-                    :yellow
-                  else
-                    :green
-                  end
-          host.name.colorize(color).to_s.ljust(37)
-        else
-          host.name.ljust(26)
-        end
+                       # Real's hostcolor colored branch pads the ANSI-wrapped name to
+                       # 37 (26 visible + 11 for the escape bytes); failure or
+                       # unreachability wins over changed, which wins over plain ok.
+                       color = if stats["failed"] != 0 || unreachable != 0
+                                 :red
+                               elsif stats["changed"] != 0
+                                 :yellow
+                               else
+                                 :green
+                               end
+                       host.name.colorize(color).to_s.ljust(37)
+                     else
+                       host.name.ljust(26)
+                     end
 
         puts "#{host_field} : #{parts.join(" ")}"
       end

@@ -1,5 +1,6 @@
 require "yaml"
 require "./unsafe_values"
+require "./yaml_source_map"
 require "./module_registry"
 require "./loop_resolver"
 require "./python_module_runner"
@@ -98,6 +99,15 @@ module Krikri
     property debugger : String? = nil
     # Block- and task-scope `module_defaults:` - see Play#module_defaults.
     property module_defaults : Hash(String, Hash(String, String)) = Hash(String, Hash(String, String)).new
+    # Where this task's own YAML mapping starts in its source file -
+    # real Ansible's task-level `Origin:` position (the first key of the
+    # task mapping, e.g. `name` at column 5 of `  - name: x`). Sourced
+    # from YamlSourceMap during parsing; line/col 0 = unknown (scan
+    # failed or exotic structure), which suppresses origin-labeled error
+    # output rather than mislabeling it.
+    property source_file : String? = nil
+    property source_line : Int32 = 0
+    property source_col : Int32 = 0
     property when_condition : String?
     # The when: LIST's own per-item condition strings, kept alongside the
     # " and "-joined `when_condition` so the STRICT when: evaluation path
@@ -1190,6 +1200,26 @@ module Krikri
       parse_string(content, path)
     end
 
+    # The task-level source position lookup path for a task at `index`
+    # under a section prefix ("0/tasks" for a play's tasks:, "" for a
+    # bare task-file list).
+    private def self.task_source_prefix(source_prefix : String, index : Int32) : String
+      source_prefix.empty? ? index.to_s : "#{source_prefix}/#{index}"
+    end
+
+    # Stamps a parsed task with its source file and the YAML position of
+    # its own mapping (see YamlSourceMap). Best-effort: without a map or
+    # a matching path the task keeps line/col 0 and origin-labeled error
+    # output is suppressed for it.
+    private def self.stamp_task_source(task : Task, source_file : String?, source_map : YamlSourceMap?, source_prefix : String, index : Int32) : Nil
+      task.source_file = source_file
+      return unless source_map
+
+      if pos = source_map.at?(task_source_prefix(source_prefix, index))
+        task.source_line, task.source_col = pos
+      end
+    end
+
     # Parse playbook from string
     def self.parse_string(content : String, path : String = "playbook.yml") : Playbook
       playbook = Playbook.new(path)
@@ -1244,7 +1274,7 @@ module Krikri
         end
 
         begin
-          play = parse_play(play_yaml, index, playbook_dir)
+          play = parse_play(play_yaml, index, playbook_dir, File.expand_path(path), YamlSourceMap.scan(content))
           playbook.plays << play
         rescue ex : RemovedActionError
           # Bypasses the graceful per-play degradation below - see its
@@ -1406,7 +1436,7 @@ module Krikri
       end
     end
 
-    private def self.parse_play(yaml : YAML::Any, index : Int32, playbook_dir : String) : Play
+    private def self.parse_play(yaml : YAML::Any, index : Int32, playbook_dir : String, source_file : String? = nil, source_map : YamlSourceMap? = nil) : Play
       unless yaml.as_h?
         raise "Play must be a YAML mapping (hash)"
       end
@@ -1538,7 +1568,7 @@ module Krikri
       # actually broken - pre_tasks silently never ran at all) is exact.
       pre_tasks = [] of Task
       if pre_tasks_yaml = yaml["pre_tasks"]?.try(&.as_a?)
-        pre_tasks = parse_tasks(pre_tasks_yaml, play, "pre_task in play '#{name}'", playbook_dir, playbook_dir: playbook_dir)
+        pre_tasks = parse_tasks(pre_tasks_yaml, play, "pre_task in play '#{name}'", playbook_dir, playbook_dir: playbook_dir, source_file: source_file, source_map: source_map, source_prefix: "#{index}/pre_tasks")
       end
 
       # Parse roles: - their tasks/handlers run BEFORE the play's own
@@ -1552,12 +1582,12 @@ module Krikri
       # Parse tasks
       own_tasks = [] of Task
       if tasks_yaml = yaml["tasks"]?.try(&.as_a?)
-        own_tasks = parse_tasks(tasks_yaml, play, "task in play '#{name}'", playbook_dir, playbook_dir: playbook_dir)
+        own_tasks = parse_tasks(tasks_yaml, play, "task in play '#{name}'", playbook_dir, playbook_dir: playbook_dir, source_file: source_file, source_map: source_map, source_prefix: "#{index}/tasks")
       end
 
       post_tasks = [] of Task
       if post_tasks_yaml = yaml["post_tasks"]?.try(&.as_a?)
-        post_tasks = parse_tasks(post_tasks_yaml, play, "post_task in play '#{name}'", playbook_dir, playbook_dir: playbook_dir)
+        post_tasks = parse_tasks(post_tasks_yaml, play, "post_task in play '#{name}'", playbook_dir, playbook_dir: playbook_dir, source_file: source_file, source_map: source_map, source_prefix: "#{index}/post_tasks")
       end
 
       play.tasks = pre_tasks + role_tasks + own_tasks + post_tasks
@@ -1567,7 +1597,7 @@ module Krikri
       # Parse handlers
       own_handlers = [] of Task
       if handlers_yaml = yaml["handlers"]?.try(&.as_a?)
-        own_handlers = parse_tasks(handlers_yaml, play, "handler", playbook_dir, playbook_dir: playbook_dir)
+        own_handlers = parse_tasks(handlers_yaml, play, "handler", playbook_dir, playbook_dir: playbook_dir, source_file: source_file, source_map: source_map, source_prefix: "#{index}/handlers")
       end
       play.handlers = role_handlers + own_handlers
 
@@ -1591,15 +1621,17 @@ module Krikri
     # can run the SAME lookup at parse time and stay graceful for exactly
     # the tasks the runner would later execute - nil means "not
     # knowable at this call site", never a false "source exists".
-    def self.parse_tasks(tasks_yaml : Array(YAML::Any), play : Play, context : String, file_dir : String, known_vars : Hash(String, JSON::Any)? = nil, role_path : String? = nil, playbook_dir : String? = nil) : Array(Task)
+    def self.parse_tasks(tasks_yaml : Array(YAML::Any), play : Play, context : String, file_dir : String, known_vars : Hash(String, JSON::Any)? = nil, role_path : String? = nil, playbook_dir : String? = nil, source_file : String? = nil, source_map : YamlSourceMap? = nil, source_prefix : String = "") : Array(Task)
       tasks = [] of Task
 
       tasks_yaml.each_with_index do |task_yaml, index|
         begin
-          if imported = try_parse_import_tasks(task_yaml, play, file_dir, known_vars, role_path, playbook_dir)
+          if imported = try_parse_import_tasks(task_yaml, play, file_dir, known_vars, role_path, playbook_dir, source_file, source_map, source_prefix, index)
             tasks.concat(imported)
           else
-            tasks << parse_task(task_yaml, index, play, file_dir, role_path, playbook_dir)
+            task = parse_task(task_yaml, index, play, file_dir, role_path, playbook_dir, source_file, source_map, source_prefix)
+            stamp_task_source(task, source_file, source_map, source_prefix, index)
+            tasks << task
           end
         rescue ex : RemovedActionError
           # Bypasses the graceful per-task degradation below - see its
@@ -1748,7 +1780,7 @@ module Krikri
       parts[0...tasks_index].join(File::SEPARATOR)
     end
 
-    private def self.try_parse_import_tasks(yaml : YAML::Any, play : Play, file_dir : String, known_vars : Hash(String, JSON::Any)? = nil, role_path : String? = nil, playbook_dir : String? = nil) : Array(Task)?
+    private def self.try_parse_import_tasks(yaml : YAML::Any, play : Play, file_dir : String, known_vars : Hash(String, JSON::Any)? = nil, role_path : String? = nil, playbook_dir : String? = nil, source_file : String? = nil, source_map : YamlSourceMap? = nil, source_prefix : String = "", source_index : Int32 = 0) : Array(Task)?
       hash = yaml.as_h?
       return nil unless hash
 
@@ -1814,7 +1846,9 @@ module Krikri
         "Unable to retrieve file contents.\n" \
         "Could not find or access '#{resolved_path}' on the Ansible Controller.") unless File.exists?(resolved_path)
 
-      imported_yaml = YAML.parse(Vault.maybe_decrypt(File.read(resolved_path)))
+      imported_content = Vault.maybe_decrypt(File.read(resolved_path))
+      imported_yaml = YAML.parse(imported_content)
+      imported_source_map = YamlSourceMap.scan(imported_content)
       # A comment-only (or entirely blank) tasks file - real Ansible
       # treats this as zero tasks, not an error (ansistrano.deploy's own
       # tasks/empty.yml, a deliberate no-op include target - see
@@ -1852,7 +1886,7 @@ module Krikri
       # leak this import's escalation into every task parsed AFTER it
       # (same reasoning as parse_block_task's own ensure-restore).
       begin
-        imported_tasks = parse_tasks(imported_yaml.as_a, play, "task in imported #{resolved_path}", File.dirname(resolved_path), known_vars, role_path, playbook_dir)
+        imported_tasks = parse_tasks(imported_yaml.as_a, play, "task in imported #{resolved_path}", File.dirname(resolved_path), known_vars, role_path, playbook_dir, File.expand_path(resolved_path), imported_source_map)
       ensure
         play.become = saved_become
         play.become_user = saved_become_user
@@ -2032,7 +2066,7 @@ module Krikri
     end
 
     # Parse a single task
-    private def self.parse_task(yaml : YAML::Any, index : Int32, play : Play, file_dir : String, role_path : String? = nil, playbook_dir : String? = nil) : Task
+    private def self.parse_task(yaml : YAML::Any, index : Int32, play : Play, file_dir : String, role_path : String? = nil, playbook_dir : String? = nil, source_file : String? = nil, source_map : YamlSourceMap? = nil, source_prefix : String = "") : Task
       unless yaml.as_h?
         raise "Task must be a YAML mapping (hash)"
       end
@@ -2049,7 +2083,7 @@ module Krikri
       name = task_hash["name"]?.try(&.as_s)
 
       if block_yaml = task_hash["block"]?.try(&.as_a?)
-        return parse_block_task(name || "block", task_hash, block_yaml, play, file_dir, role_path, playbook_dir)
+        return parse_block_task(name || "block", task_hash, block_yaml, play, file_dir, role_path, playbook_dir, source_file, source_map, source_prefix, index)
       end
 
       if include_yaml = directive(task_hash, "include_tasks")
@@ -3005,7 +3039,7 @@ module Krikri
       end
     end
 
-    private def self.parse_block_task(name : String, task_hash : Hash(YAML::Any, YAML::Any), block_yaml : Array(YAML::Any), play : Play, file_dir : String, role_path : String? = nil, playbook_dir : String? = nil) : Task
+    private def self.parse_block_task(name : String, task_hash : Hash(YAML::Any, YAML::Any), block_yaml : Array(YAML::Any), play : Play, file_dir : String, role_path : String? = nil, playbook_dir : String? = nil, source_file : String? = nil, source_map : YamlSourceMap? = nil, source_prefix : String = "", source_index : Int32 = 0) : Task
       task = Task.new(name, "_block")
 
       # Resolve this block's own become:/become_user: FIRST, then
@@ -3054,14 +3088,15 @@ module Krikri
       # restored - a clobbered play.become would silently leak the
       # block's escalation into every play section parsed AFTER it.
       begin
-        task.block_tasks = parse_tasks(block_yaml, play, "task in block '#{name}'", file_dir, role_path: role_path, playbook_dir: playbook_dir)
+        block_prefix = "#{task_source_prefix(source_prefix, source_index)}/block"
+        task.block_tasks = parse_tasks(block_yaml, play, "task in block '#{name}'", file_dir, role_path: role_path, playbook_dir: playbook_dir, source_file: source_file, source_map: source_map, source_prefix: block_prefix)
 
         if rescue_yaml = task_hash["rescue"]?.try(&.as_a?)
-          task.rescue_tasks = parse_tasks(rescue_yaml, play, "task in rescue of block '#{name}'", file_dir, role_path: role_path, playbook_dir: playbook_dir)
+          task.rescue_tasks = parse_tasks(rescue_yaml, play, "task in rescue of block '#{name}'", file_dir, role_path: role_path, playbook_dir: playbook_dir, source_file: source_file, source_map: source_map, source_prefix: "#{task_source_prefix(source_prefix, source_index)}/rescue")
         end
 
         if always_yaml = task_hash["always"]?.try(&.as_a?)
-          task.always_tasks = parse_tasks(always_yaml, play, "task in always of block '#{name}'", file_dir, role_path: role_path, playbook_dir: playbook_dir)
+          task.always_tasks = parse_tasks(always_yaml, play, "task in always of block '#{name}'", file_dir, role_path: role_path, playbook_dir: playbook_dir, source_file: source_file, source_map: source_map, source_prefix: "#{task_source_prefix(source_prefix, source_index)}/always")
         end
       ensure
         play.become = saved_become
