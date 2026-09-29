@@ -43,7 +43,7 @@ describe "lvol plugin argument validation" do
 
     result["failed"].as_bool.must_equal(true)
     result["msg"].as_s.must_include("argument 'force' is of type <class 'str'> and we were unable to convert to bool: " \
-                                    "The value 'sometimes' is not a valid boolean.  Valid booleans include: ")
+                                    "The value 'sometimes' is not a valid boolean. Valid booleans include: ")
   end
 
   it "rejects a state outside real's [absent, present] choice list (LV5)" do

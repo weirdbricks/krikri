@@ -66,7 +66,7 @@ module Krikri
         unless valid_booleans.includes?(bad_bool.downcase)
           return PluginResult.new(changed: false, failed: true,
             msg: "argument 'ignore_selinux_state' is of type <class 'str'> and we were unable to convert to bool: " \
-                 "The value '#{bad_bool}' is not a valid boolean.  " \
+                 "The value '#{bad_bool}' is not a valid boolean. " \
                  "Valid booleans include: 'f', 'y', 1, 0, 'yes', 'false', 'on', '1', 'n', 'off', 't', 'true', '0', 'no'")
         end
       end

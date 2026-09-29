@@ -97,7 +97,7 @@ describe "pamd plugin - argument validation" do
     })
     result["failed"].as_bool.must_equal(true)
     result["msg"].as_s.must_include("argument 'backup' is of type <class 'str'> and we were unable to convert to bool")
-    result["msg"].as_s.must_include("The value 'bogus' is not a valid boolean.  Valid booleans include:")
+    result["msg"].as_s.must_include("The value 'bogus' is not a valid boolean. Valid booleans include:")
   end
 
   it "rejects unsupported params with the Unsupported parameters wording" do

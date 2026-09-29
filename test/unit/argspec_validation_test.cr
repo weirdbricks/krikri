@@ -99,7 +99,7 @@ describe Krikri::ArgspecValidator do
       {"path" => "/tmp/x", "create" => "notabool"}, vars)
     failure.not_nil!.msg.must_equal(
       "argument 'create' is of type str and we were unable to convert to bool: " \
-      "The value 'notabool' is not a valid boolean.  Valid booleans include: " \
+      "The value 'notabool' is not a valid boolean. Valid booleans include: " \
       "'off', 1, 'true', 'y', 0, 'false', 'on', 'no', '1', 'yes', '0', 'n', 'f', 't'")
   end
 

@@ -43,7 +43,7 @@ describe "mysql_query plugin argument validation" do
     result["failed"].as_bool.must_equal(true)
     result["msg"].as_s.must_include(
       "argument 'single_transaction' is of type <class 'str'> and we were unable to convert to bool: " \
-      "The value 'notabool' is not a valid boolean.  Valid booleans include: ")
+      "The value 'notabool' is not a valid boolean. Valid booleans include: ")
   end
 
   it "rejects an unknown parameter with the full spec tail" do

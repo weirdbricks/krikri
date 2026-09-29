@@ -59,7 +59,7 @@ describe "mysql_info plugin argument validation" do
     result["failed"].as_bool.must_equal(true)
     result["msg"].as_s.must_include(
       "argument 'return_empty_dbs' is of type <class 'str'> and we were unable to convert to bool: " \
-      "The value 'notabool' is not a valid boolean.  Valid booleans include: ")
+      "The value 'notabool' is not a valid boolean. Valid booleans include: ")
   end
 
   it "accepts the ssl_ca alias for ca_cert during validation" do

@@ -352,7 +352,7 @@ module Krikri
         normalized = raw.downcase.strip
         return nil if REAL_TRUE.includes?(normalized) || REAL_FALSE.includes?(normalized)
         return "argument '#{name}' is of type str and we were unable to convert to bool: " \
-               "The value '#{raw}' is not a valid boolean.  Valid booleans include: #{BOOLEANS_REPR.join(", ")}"
+               "The value '#{raw}' is not a valid boolean. Valid booleans include: #{BOOLEANS_REPR.join(", ")}"
       end
       if kind == :list || kind == :dict
         return "argument '#{name}' is of type #{kind} and we were unable to convert to bool: " \

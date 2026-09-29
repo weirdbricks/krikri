@@ -66,6 +66,10 @@ fi
 MASKS=(
   "/^\\[WARNING\\]: Host '[^']*' is using the discovered Python interpreter at '[^']*', but future installation of another Python interpreter could cause a different interpreter to be discovered\\. See .* for more information\\.$/d"
   "s/\"ansible_facts\": \\{\"discovered_interpreter_python\": \"[^\"]*\"\\}, //g"
+  # Third entry: convert_bool's "Valid booleans include: ..." lists Python's
+  # BOOLEANS set in per-process hash-randomized iteration order (two real
+  # ansible runs already disagree byte-for-byte); only the order is masked.
+  "s/(Valid booleans include: )[^\"]*/\\1<BOOLEAN-SET-ORDER>/g"
 )
 
 mask() {
