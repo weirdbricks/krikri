@@ -143,13 +143,13 @@ krikri-playbook -v playbook.yml                       # verbose
 krikri-playbook -l webservers -t deploy playbook.yml  # host limit / tag filter
 krikri-playbook --ask-vault-pass playbook.yml         # vault-encrypted playbooks/vars
 krikri-playbook --no-batching playbook.yml            # one SSH round trip per task
-krikri-playbook --forks 10 playbook.yml               # host concurrency (default: 25)
+krikri-playbook --forks 10 playbook.yml               # host concurrency (default: 5)
 krikri-playbook --gathering smart playbook.yml        # fact gathering policy
 ```
 
-`--forks` defaults to 25 here (a fork is a cheap fiber, not a forked
-Python interpreter); `--forks 5` matches ansible-playbook's default
-exactly, `--forks 1` runs one host at a time. `--gathering` takes
+`--forks` defaults to 5, like ansible-playbook. A fork here is a cheap
+fiber, not a forked Python interpreter, so larger values (e.g. `--forks 25`)
+are safe and faster on big inventories; `--forks 1` runs one host at a time. `--gathering` takes
 `implicit` (the default, every play re-gathers), `explicit` (only plays
 with `gather_facts: true`) or `smart`.
 

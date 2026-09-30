@@ -105,20 +105,12 @@ batching_enabled = true
 # functionality, only throughput. `become:` was on that fallback list
 # until item 1 gave privileged tasks a daemon of their own.
 persistent_daemon = true
-# real ansible-playbook's default (5) exists because a "fork" there is a
-# forked Python interpreter per host - expensive enough that 5 concurrent
-# ones is a real resource tradeoff. Here a "fork" is a Crystal fiber
-# gated by a channel (see TaskExecutor's per-task host fan-out), doing
-# pure SSH I/O wait - nothing about 5 is load-bearing for this
-# implementation, so this default diverges from real Ansible's own
-# (unlike `gathering`, which stays "implicit" specifically to match it -
-# see SUGGESTED_PERFORMANCE_IMPROVEMENTS.md's own item on why that one
-# was rejected). The real-host benchmark workflow (CLAUDE.md) should pin
-# `--forks 5` explicitly when diffing behavior against real
-# ansible-playbook, since interleaving under -v and target-side load
-# both change with concurrency even though no single host's own output
-# does.
-forks = 25
+# Default matches real ansible-playbook's (5). A "fork" here is a Crystal fiber
+# gated by a channel (see TaskExecutor's per-task host fan-out), doing pure SSH
+# I/O wait, not a forked Python interpreter - so a much larger value (e.g.
+# `--forks 25`) is safe and faster on big inventories; it is opt-in so the
+# default behaves (interleaving under -v, target-side load) like ansible-playbook.
+forks = 5
 # "implicit" (default, matching ansible-playbook): every play re-gathers
 # facts. "smart": each host is gathered at most once per run, so a
 # multi-play playbook stops paying N_plays x N_hosts fact round trips.
@@ -225,8 +217,8 @@ begin
       persistent_daemon = false
     end
 
-    parser.on("-f FORKS", "--forks=FORKS", "Run each task against up to FORKS hosts concurrently (default: 25 - higher than ansible-playbook's own default of 5, since a \"fork\" here is a cheap fiber, not a forked Python interpreter; --forks 5 matches real ansible-playbook's default exactly, --forks 1 restores one-host-at-a-time)") do |fval|
-      forks = fval.to_i? || 25
+    parser.on("-f FORKS", "--forks=FORKS", "Run each task against up to FORKS hosts concurrently (default: 5, like ansible-playbook; a \"fork\" here is a cheap fiber, not a forked Python interpreter, so larger values such as --forks 25 are fine on big inventories; --forks 1 restores one-host-at-a-time)") do |fval|
+      forks = fval.to_i? || 5
       Krikri::RunOptions.forks = fval.to_i?
     end
 
