@@ -2,6 +2,7 @@ require "../minitest_helper"
 require "../../src/krikri/output_banner"
 require "../../src/krikri/task_executor/output_routing"
 require "../../src/krikri/playbook_parser"
+require "../../src/krikri/run_options"
 require "../../src/krikri/task_executor/result_display"
 
 # Byte-level output-parity regression tests for the console shapes shared
@@ -111,6 +112,20 @@ describe Krikri::ResultDisplay do
       result = JSON.parse(%({"changed": false, "msg": "Command executed successfully"}))
       out = capture_output { Krikri::ResultDisplay.display_result(host, result, false, module_name: "ansible.builtin.command") }
       out.must_equal("ok: [localhost]\n")
+    end
+
+    # Real ansible-playbook labels every result line with the INVENTORY
+    # hostname, never the ansible_host address - even for a
+    # local-connection host (live-verified 2.19.11:
+    # `hA ansible_host=127.0.0.1 ansible_connection=local` prints
+    # `ok: [hA]`).
+    it "labels a result with the inventory name, not the ansible_host address" do
+      labeled = Krikri::Host.new("hA")
+      labeled.vars["ansible_host"] = JSON::Any.new("127.0.0.1")
+      labeled.vars["ansible_connection"] = JSON::Any.new("local")
+      result = JSON.parse(%({"changed": false, "msg": "Command executed successfully"}))
+      out = capture_output { Krikri::ResultDisplay.display_result(labeled, result, false, module_name: "ansible.builtin.command") }
+      out.must_equal("ok: [hA]\n")
     end
 
     it "formats a looped verbose result as 'ok: [host] => (item=x) => {json}'" do

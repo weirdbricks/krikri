@@ -572,7 +572,7 @@ module Krikri
           # Fails the task for this host instead of aborting the run -
           # the same "which tasks ran" divergence the role-private
           # custom-module scope cut already documents.
-          connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
+          connection_host = host.name
           puts "failed: [#{connection_host}]".colorize(:red)
           puts "  Cannot execute 'end_role' from outside of a role".colorize(:red)
           @results[host.name]["failed"] += 1

@@ -546,7 +546,7 @@ module Krikri
                       # used to produce at SSH time.
                       if when_skips_task?(task, vars_context, host, shared_sub)
                         @results[host.name]["skipped"] += 1
-                        puts "skipping: [#{host.connection_host}]#{Krikri::ResultDisplay.skip_line_suffix(task.when_condition)}".colorize(:cyan)
+                        puts "skipping: [#{host.name}]#{Krikri::ResultDisplay.skip_line_suffix(task.when_condition)}".colorize(:cyan)
                         register_skip_result(task, host)
                         return
                       end
@@ -931,7 +931,7 @@ module Krikri
         # can itself be the secret)
         shown = resolve_task_no_log(task) ? "(censored due to no_log)" : item_label
         suffix = shown ? " => (item=#{shown}) " : ""
-        puts "skipping: [#{host.connection_host}]#{suffix}#{Krikri::ResultDisplay.skip_line_suffix(task.when_condition, item)}".colorize(:cyan)
+        puts "skipping: [#{host.name}]#{suffix}#{Krikri::ResultDisplay.skip_line_suffix(task.when_condition, item)}".colorize(:cyan)
       end
       register_skip_result(task, host)
       false
@@ -997,7 +997,7 @@ module Krikri
         # shows the censored JSON - mirror that shape here.
         if resolve_task_no_log(task)
           suffix = item_label ? " => (item=(censored due to no_log))" : ""
-          puts %(fatal: [#{host.connection_host}]#{suffix}: FAILED! => {"censored": "the output has been hidden due to the fact that 'no_log: true' was specified for this result"}).colorize(:red)
+          puts %(fatal: [#{host.name}]#{suffix}: FAILED! => {"censored": "the output has been hidden due to the fact that 'no_log: true' was specified for this result"}).colorize(:red)
         elsif conditional_evaluation_failure?(msg)
           # Real ansible-core 2.19.11 (live-captured): a conditional-
           # evaluation failure prints a two-level [ERROR] chain block on
@@ -1011,15 +1011,15 @@ module Krikri
           emit_when_error_chain(task, msg) unless item_label
           display_msg = msg.starts_with?("Task failed: ") ? msg : "Task failed: #{msg}"
           if item_label
-            puts "failed: [#{host.connection_host}] (item=#{item_label}) => {\"changed\": false, \"msg\": #{display_msg.to_json}}".colorize(:red)
+            puts "failed: [#{host.name}] (item=#{item_label}) => {\"changed\": false, \"msg\": #{display_msg.to_json}}".colorize(:red)
           else
             # Task-level conditional failures dump the msg alone - real
             # 2.19.11 shows {"msg": "Task failed: ..."} with no changed
             # key (live-verified; see when_error_result).
-            puts "fatal: [#{host.connection_host}]: FAILED! => {\"msg\": #{display_msg.to_json}}".colorize(:red)
+            puts "fatal: [#{host.name}]: FAILED! => {\"msg\": #{display_msg.to_json}}".colorize(:red)
           end
         else
-          puts "fatal: [#{host.connection_host}]#{suffix}: FAILED! => #{msg}".colorize(:red)
+          puts "fatal: [#{host.name}]#{suffix}: FAILED! => #{msg}".colorize(:red)
         end
         puts "...ignoring".colorize(:red) if ignore_errors
       end
@@ -1047,7 +1047,7 @@ module Krikri
     # a *prior* iteration's real "changed" result into a later iteration
     # whose own task was skipped, wrongly running the dependent task.
     private def print_batched_skip(task : Task, host : Host, vars_context : Hash(String, JSON::Any)) : Nil
-      puts "skipping: [#{host.connection_host}]#{Krikri::ResultDisplay.skip_line_suffix(task.when_condition)}".colorize(:cyan)
+      puts "skipping: [#{host.name}]#{Krikri::ResultDisplay.skip_line_suffix(task.when_condition)}".colorize(:cyan)
       @results[host.name]["skipped"] += 1
     end
 

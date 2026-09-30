@@ -112,7 +112,7 @@ module Krikri
       run_hosts, skip_hosts = partition_by_when(task, hosts)
 
       skip_hosts.each do |host|
-        puts "skipping: [#{host.connection_host}]".colorize(:cyan)
+        puts "skipping: [#{host.name}]".colorize(:cyan)
         @results[host.name]["skipped"] += 1
       end
 
@@ -207,7 +207,7 @@ module Krikri
           # (verified live against ansible-core 2.19.11).
           group_hosts.each { |host| @results[host.name]["ok"] += 1 }
 
-          connection_names = group_hosts.map { |host| host.vars["ansible_host"]?.try(&.as_s?) || host.name }
+          connection_names = group_hosts.map { |host| host.name }
           puts "included: #{resolved_path} for #{connection_names.join(", ")}".colorize(:cyan)
 
           run_task_batch(included_tasks, group_hosts)
@@ -593,7 +593,7 @@ module Krikri
           begin
             next unless when_passes?(task, item_context, host, item_label: item_label, defer_stats: true, item: item)
           rescue ex : WhenEvaluationError
-            puts "failed: [#{host.connection_host}] => (item=#{item_label})".colorize(:red)
+            puts "failed: [#{host.name}] => (item=#{item_label})".colorize(:red)
             puts "  Message: #{ex.message}".colorize(:red)
             failed = true
             next
@@ -612,7 +612,7 @@ module Krikri
             # and then reports "file not found: undefined". Same cause-text
             # convention as every other module's undefined-arg failure
             # (see prepare_batch_step's own finalization rescue).
-            puts "failed: [#{host.connection_host}] => (item=#{item_label})".colorize(:red)
+            puts "failed: [#{host.name}] => (item=#{item_label})".colorize(:red)
             puts "  Message: #{ex.message}".colorize(:red)
             failed = true
             item_results << JSON::Any.new({"item" => item, "changed" => JSON::Any.new(false), "failed" => JSON::Any.new(true), "ansible_facts" => include_vars_failure_facts(name_key)} of String => JSON::Any)
@@ -629,7 +629,7 @@ module Krikri
           path = resolve_include_vars_path(task, candidate)
 
           unless path
-            puts "failed: [#{host.connection_host}] => (item=#{item_label})".colorize(:red)
+            puts "failed: [#{host.name}] => (item=#{item_label})".colorize(:red)
             puts "  Message: include_vars: file not found: #{candidate}".colorize(:red)
             failed = true
             item_results << JSON::Any.new({"item" => item, "changed" => JSON::Any.new(false), "failed" => JSON::Any.new(true), "ansible_facts" => include_vars_failure_facts(name_key)} of String => JSON::Any)
@@ -639,7 +639,7 @@ module Krikri
           loaded = begin
             RoleLoader.load_vars_file(path)
           rescue ex
-            puts "failed: [#{host.connection_host}] => (item=#{item_label})".colorize(:red)
+            puts "failed: [#{host.name}] => (item=#{item_label})".colorize(:red)
             puts "  Message: include_vars: could not parse #{path}: #{ex.message}".colorize(:red)
             failed = true
             item_results << JSON::Any.new({"item" => item, "changed" => JSON::Any.new(false), "failed" => JSON::Any.new(true), "ansible_facts" => include_vars_failure_facts(name_key)} of String => JSON::Any)
@@ -655,7 +655,7 @@ module Krikri
           @hv_generation += 1
           vars_context = item_context
 
-          puts "ok: [#{host.connection_host}] => (item=#{item_label})".colorize(:green)
+          puts "ok: [#{host.name}] => (item=#{item_label})".colorize(:green)
           executed = true
           item_results << JSON::Any.new({"item" => item, "changed" => JSON::Any.new(false), "failed" => JSON::Any.new(false), "ansible_facts" => include_vars_wrapped_facts(name_key, loaded)} of String => JSON::Any)
         end
@@ -1653,7 +1653,7 @@ module Krikri
         end
 
         unless when_result
-          connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
+          connection_host = host.name
           suffix = item_label ? " => (item=#{item_label}) " : ""
           puts "skipping: [#{connection_host}]#{suffix}#{Krikri::ResultDisplay.skip_line_suffix(task.when_condition)}".colorize(:cyan)
           @results[host.name]["skipped"] += 1
@@ -1822,7 +1822,7 @@ module Krikri
       # Real Ansible's v2_playbook_on_include line: `included: <path> for
       # <host>` (plus ` => (item=...)` for a looped include). Printed
       # after the load succeeds, before any included task runs.
-      connection_names = [host.vars["ansible_host"]?.try(&.as_s?) || host.name]
+      connection_names = [host.name]
       suffix = item_label ? " => (item=#{item_label})" : ""
       puts "included: #{resolved_path} for #{connection_names.join(", ")}#{suffix}".colorize(:cyan)
 
@@ -1842,7 +1842,7 @@ module Krikri
     end
 
     private def fail_include(task : Task, host : Host, message : String) : Nil
-      connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
+      connection_host = host.name
       puts "failed: [#{connection_host}]".colorize(:red)
       puts "  #{message}".colorize(:red)
       # Same ignore_errors: stats fix as finish_include_vars_failure -
@@ -1872,7 +1872,7 @@ module Krikri
                 "Could not find or access '#{resolved_path}' on the Ansible Controller.\n" \
                 "If you are using a module and expect the file to exist on the remote, see the remote_src option: [Errno 2] No such file or directory: '#{resolved_path}'"
       ErrorBlock.emit_stderr(ErrorBlock::Node.new(message))
-      connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
+      connection_host = host.name
       # Real echoes the file path under "include" as the playbook wrote
       # it: a non-string literal keeps its own JSON type there
       # (`"include": 21`) even though the path it resolved from was that
@@ -1895,7 +1895,7 @@ module Krikri
     # `failed=1 ignored=0`, the next task never runs, rc=2), unlike
     # every ordinary module failure.
     private def fail_include_role_not_found(task : Task, host : Host, message : String) : Nil
-      connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
+      connection_host = host.name
       node = if (origin_pos = task.include_role_name_origin) && (source_file = task.source_file)
                ErrorBlock::Node.new(message,
                  source_context: ErrorBlock.origin_context(source_file, origin_pos[0], origin_pos[1]))
@@ -1941,7 +1941,7 @@ module Krikri
           .with_chain(ErrorBlock::DIRECT_CAUSE, true, keyword))
       end
 
-      connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
+      connection_host = host.name
       brief = "Task failed: #{failure.brief}"
       if item_label
         puts "failed: [#{connection_host}] (item=#{item_label}) => {\"changed\": false, \"msg\": #{brief.to_json}}".colorize(:red)
@@ -2073,7 +2073,7 @@ module Krikri
         end
 
         unless when_result
-          connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
+          connection_host = host.name
           suffix = item_label ? " => (item=#{item_label}) " : ""
           puts "skipping: [#{connection_host}]#{suffix}#{Krikri::ResultDisplay.skip_line_suffix(task.when_condition)}".colorize(:cyan)
           @results[host.name]["skipped"] += 1
@@ -2213,7 +2213,7 @@ module Krikri
 
       # Real v2_playbook_on_include line for a dynamic include_role.
       unless task.is_static_import?
-        connection_name = host.vars["ansible_host"]?.try(&.as_s?) || host.name
+        connection_name = host.name
         suffix = item_label ? " => (item=#{item_label})" : ""
         puts "included: #{role_name} for #{connection_name}#{suffix}".colorize(:cyan)
       end

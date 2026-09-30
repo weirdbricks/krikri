@@ -904,7 +904,7 @@ module Krikri
         # (live-verified: `when: false` + an undefined loop item prints
         # "skipping:" and counts skipped=1, never an error).
         @results[host.name]["skipped"] += 1
-        puts "skipping: [#{host.connection_host}]".colorize(:cyan)
+        puts "skipping: [#{host.name}]".colorize(:cyan)
         register_skip_result(task, host)
         return
       end
@@ -1282,7 +1282,7 @@ module Krikri
         # task and never entered the registered `results`, so leaving it
         # out of both below preserves every count and the register shape.
         if (sk_lbl = skipped_labels[idx]?)
-          connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
+          connection_host = host.name
           shown = resolve_task_no_log(task, base_vars_context) ? "(censored due to no_log)" : sk_lbl
           puts "skipping: [#{connection_host}] => (item=#{shown}) #{Krikri::ResultDisplay.skip_line_suffix(task.when_condition, item)}".colorize(:cyan)
           next
@@ -1345,7 +1345,7 @@ module Krikri
         # jahrik.nerd_fonts round 813005 plus a live repro against real
         # ansible-playbook (ansible-core 2.19).
         if result["skipped"]?.try(&.as_bool) || false
-          connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
+          connection_host = host.name
           # no_log censors the loop item on the skipping line too (real
           # Ansible prints `(item=(censored due to no_log))` - the item
           # can itself be the secret)
@@ -1363,7 +1363,7 @@ module Krikri
           any_when_failed ||= failed && result["_ansible_task_error_msg_only"]?.try(&.as_bool) == true
 
           item_delegate = delegate_hosts.try(&.[idx])
-          delegate_target = item_delegate && item_delegate != host ? item_delegate.connection_host : nil
+          delegate_target = item_delegate && item_delegate != host ? item_delegate.name : nil
           ResultDisplay.display_result(host, result, @diff_mode, item_label: item_label, ignore_errors: resolve_task_ignore_errors(task, base_vars_context), no_log: resolve_task_no_log(task, base_vars_context), module_name: task.module_name, delegate_target: delegate_target, source_task: task, loop_item: item, loop_var_name: task.loop_var)
         end
 
@@ -1411,7 +1411,7 @@ module Krikri
         # (found via jahrik.nerd_fonts round 813005): real Ansible emits
         # the bare line in BOTH shapes, so both share this same
         # executed_count == 0 condition.
-        connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
+        connection_host = host.name
         # Real -v distinguishes the two shapes: an empty loop's trailing
         # line stays bare, while a loop whose every item was skipped
         # (by when: or by a check-mode/plugin-side skip) carries
@@ -1440,7 +1440,7 @@ module Krikri
           # with the task-level fatal (see any_when_failed) BEFORE the
           # ...ignoring line.
           if any_when_failed
-            connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
+            connection_host = host.name
             puts "fatal: [#{connection_host}]: FAILED! => {\"msg\": \"One or more items failed\"}".colorize(:red)
           end
           # A looped task with ignore_errors: that had at least one item

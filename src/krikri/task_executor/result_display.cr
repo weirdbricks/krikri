@@ -106,7 +106,7 @@ module Krikri
       # delegate_to: renders the host line as real Ansible does:
       # `ok: [source -> target]` - the task ran against the delegate
       # target even though it reports under the play host.
-      host_label = delegate_target ? "#{host.connection_host} -> #{delegate_target}" : host.connection_host
+      host_label = delegate_target ? "#{host.name} -> #{delegate_target}" : host.name
       changed = result["changed"]?.try(&.as_bool) || false
       failed = Krikri.result_failed_flag(result)
       # as_s? (not as_s): the debug action plugin keeps a whole-span
@@ -811,7 +811,7 @@ module Krikri
 
       state, color_code = adhoc_state_and_color(changed, failed, unreachable)
 
-      connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
+      connection_host = host.name
 
       rc = result["rc"]?.try(&.as_i?)
       stdout = result["stdout"]?.try(&.as_s?)

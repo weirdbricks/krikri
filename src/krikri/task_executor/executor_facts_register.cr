@@ -123,7 +123,7 @@ module Krikri
         success, error_message = outcomes[host.name]
 
         if success
-          puts "ok: [#{connection_host}]".colorize(:green)
+          puts "ok: [#{host.name}]".colorize(:green)
           # A successful implicit Gathering Facts task DOES count as ok=1 in
           # the recap - real ansible-core 2.19.11 recaps ok=2 for facts + one
           # command task, ok=1 for a task-less play, and ok=4 for 2 gathers +
@@ -136,7 +136,7 @@ module Krikri
           # `setup:` task counts normally.
           @results[host.name]["ok"] += 1
         else
-          puts "failed: [#{connection_host}]".colorize(:red)
+          puts "failed: [#{host.name}]".colorize(:red)
           puts "  Error gathering facts: #{error_message}".colorize(:red)
           @results[host.name]["failed"] += 1
         end

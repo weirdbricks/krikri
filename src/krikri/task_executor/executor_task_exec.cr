@@ -617,7 +617,7 @@ module Krikri
       # real Ansible correctly shows these as `skipping:` and counts
       # them under `skipped=`, not `ok=`.
       if result["skipped"]?.try(&.as_bool) == true
-        puts "skipping: [#{host.connection_host}]#{Krikri::ResultDisplay.skip_result_suffix(result)}".colorize(:cyan)
+        puts "skipping: [#{host.name}]#{Krikri::ResultDisplay.skip_result_suffix(result)}".colorize(:cyan)
         @results[host.name]["skipped"] += 1
         return
       end
@@ -633,7 +633,7 @@ module Krikri
       if @adhoc
         ResultDisplay.display_adhoc_result(host, result, @diff_mode, module_name: task.module_name)
       else
-        ResultDisplay.display_result(host, result, @diff_mode, ignore_errors: ignore_errors, no_log: no_log, module_name: task.module_name, delegate_target: exec_host && exec_host != host ? exec_host.connection_host : nil, source_task: task)
+        ResultDisplay.display_result(host, result, @diff_mode, ignore_errors: ignore_errors, no_log: no_log, module_name: task.module_name, delegate_target: exec_host && exec_host != host ? exec_host.name : nil, source_task: task)
       end
       ResultDisplay.update_stats(@results[host.name], result, ignore_errors)
       halt_if_failed(task, host, failed, result)
@@ -651,7 +651,7 @@ module Krikri
           next
         end
 
-        connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
+        connection_host = host.name
 
         # A static import_role: (Task#is_static_import), like a block:,
         # produces no result of its own when skipped either - real

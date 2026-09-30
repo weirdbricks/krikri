@@ -379,7 +379,7 @@ module Krikri
         # handler's module is never resolved, so an unimplemented module
         # behind an empty loop is a plain skip, not an
         # unavailable-modules exit-code report.
-        puts "skipping: [#{host.connection_host}]".colorize(:cyan)
+        puts "skipping: [#{host.name}]".colorize(:cyan)
         return JSON.parse({
           "changed" => false,
           "failed"  => false,
@@ -417,7 +417,7 @@ module Krikri
       # rule as the regular-task loop path in execute_looped_task's own
       # executed_count == 0 branch.
       if executed_count == 0
-        connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
+        connection_host = host.name
         puts "skipping: [#{connection_host}]".colorize(:cyan)
         return JSON.parse({
           "changed" => false,
@@ -494,7 +494,7 @@ module Krikri
           end
         end
         reachable_unavailable_modules << module_name if reached
-        connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
+        connection_host = host.name
         suffix = (item = vars_context["item"]?) ? " => (item=#{resolve_task_no_log(handler, vars_context) ? "(censored due to no_log)" : item_display(item)}) " : ""
         puts "skipping: [#{connection_host}]#{suffix}#{Krikri::ResultDisplay.skip_line_suffix(nil, item)}".colorize(:cyan)
         return JSON.parse({
@@ -535,7 +535,7 @@ module Krikri
         end
 
         unless when_result
-          connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
+          connection_host = host.name
           suffix = (item = vars_context["item"]?) ? " => (item=#{resolve_task_no_log(handler, vars_context) ? "(censored due to no_log)" : item_display(item)}) " : ""
           puts "skipping: [#{connection_host}]#{suffix}#{Krikri::ResultDisplay.skip_line_suffix(handler.when_condition, item)}".colorize(:cyan)
           return JSON.parse({
