@@ -31,7 +31,8 @@ structural exclusions called out below.
 | By the numbers | |
 |---|---|
 | Compatibility target | ansible-core 2.19.11 |
-| Real Galaxy roles tested on real hosts | 6,680 |
+| Real Galaxy roles tested on real hosts | 6,680 ([status per role](ROLES_TESTED.md)) |
+| Open gaps and deliberate scope cuts | [KNOWN_MISSING.md](KNOWN_MISSING.md) |
 | Third-party collection modules natively ported | 62 |
 | Automated tests | 6,408 passing, 0 failures |
 | Cold run vs. real `ansible-playbook` | 2.36x faster |
@@ -58,23 +59,6 @@ If you already know Ansible, here's what actually changes when you swap
 | SSH round trips | Consecutive tasks bound for the same host are batched into a single round trip by default (`--no-batching` to disable) instead of one per task. |
 | Third-party collection modules (deliberate exclusion, not a gap) | Not vendored wholesale: a `community.*`/etc. module runs only once natively ported into a compiled plugin binary (a role's own private `library/*.py` module is unaffected either way). Porting is usage-driven - the real Galaxy roles this project is benchmarked against surface whichever third-party modules real tasks actually call (counts in the table above; the list is `AVAILABLE_PLUGINS` in `src/krikri/playbook_parser.cr`). Anything else hard-stops cleanly (`"krikri does not yet have module 'x.y.z' implemented"`) rather than silently skipping. |
 | Cloud provider modules (deliberate exclusion, not a gap) | Out of scope, except AWS/EC2, which is fully supported (`ec2_instance` and its supporting cluster, plus the `aws_ec2` inventory plugin) - a scoped exception, not an opening of the whole category. |
-
----
-
-## ❓ What's missing
-
-Gaps here are found by running real production Ansible roles (from
-Galaxy) against both engines on real hosts and diffing the result, not
-from a pre-planned feature checklist:
-
-- **[KNOWN_MISSING.md](KNOWN_MISSING.md)** - the current, short,
-  up-to-date list of any open real gaps plus the full explicit scope-cut
-  list (cloud modules, role-private modules, a handful of untestable/
-  narrow module gaps, etc., each with the reasoning behind it).
-- **[ROLES_TESTED.md](ROLES_TESTED.md)** - the current status of every
-  real Ansible Galaxy role that's been benchmarked against a live host,
-  one line each, so you can check whether something resembling your own
-  playbooks has already been exercised.
 
 ---
 
