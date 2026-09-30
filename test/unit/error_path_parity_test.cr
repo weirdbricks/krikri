@@ -8,6 +8,11 @@ private def scratch_dir : String
   dir
 end
 
+# Shorthand for the validator's failure record, unwrapped with `as`
+# rather than `not_nil!` so a wrong expectation (the validator returned
+# nil) fails naming the value it actually produced.
+alias Failure = Krikri::ArgspecValidator::Failure
+
 # Error-path shapes found by the differential fuzzer (krikri-playbook-generator)
 # vs real ansible-core 2.19.11: every expectation below was checked against
 # real ansible's own module source / a live run, not guessed.
@@ -113,13 +118,13 @@ describe "error-path parity with real ansible (fuzzer findings)" do
   it "template/copy required-argument checks are action-level and come first" do
     vars = Hash(String, JSON::Any).new
     template = Krikri::ArgspecValidator.validate("template", "ansible.builtin.template", {"src" => "x"}, vars)
-    template.not_nil!.msg.must_equal("src and dest are required")
-    template.not_nil!.action_level?.must_equal(true)
+    template.as(Failure).msg.must_equal("src and dest are required")
+    template.as(Failure).action_level?.must_equal(true)
 
     copy_dest = Krikri::ArgspecValidator.validate("copy", "ansible.builtin.copy", {"src" => "x"}, vars)
-    copy_dest.not_nil!.msg.must_equal("dest is required")
+    copy_dest.as(Failure).msg.must_equal("dest is required")
     copy_src = Krikri::ArgspecValidator.validate("copy", "ansible.builtin.copy", {"dest" => "x"}, vars)
-    copy_src.not_nil!.msg.must_equal("src (or content) is required")
+    copy_src.as(Failure).msg.must_equal("src (or content) is required")
   end
 
   it "cron: cron_file without user and the cron_file basename warning follow cron.py" do
@@ -152,11 +157,11 @@ describe "error-path parity with real ansible (fuzzer findings)" do
   it "validator: systemd required_by keeps spec order; service validates its own spec without a systemd fact" do
     vars = Hash(String, JSON::Any).new
     systemd = Krikri::ArgspecValidator.validate("systemd", "ansible.builtin.systemd", {"state" => "started", "enabled" => "true"}, vars)
-    systemd.not_nil!.msg.must_equal("missing parameter(s) required by 'state': name")
+    systemd.as(Failure).msg.must_equal("missing parameter(s) required by 'state': name")
 
     service_vars = {"ansible_service_mgr" => JSON::Any.new("service")}
     service = Krikri::ArgspecValidator.validate("service", "ansible.builtin.service", {"zz" => "1", "name" => "x", "state" => "started"}, service_vars)
-    service.not_nil!.msg.must_equal(
+    service.as(Failure).msg.must_equal(
       "Unsupported parameters for (ansible.legacy.service) module: zz. " \
       "Supported parameters include: arguments, enabled, name, pattern, runlevel, sleep, state (args).")
     Krikri::ArgspecValidator.validate("service", "ansible.builtin.service", {"use" => "auto", "name" => "x", "state" => "started"}, service_vars).must_be_nil
@@ -171,16 +176,16 @@ describe "error-path parity with real ansible (fuzzer findings)" do
     vars = Hash(String, JSON::Any).new
     both = Krikri::ArgspecValidator.validate("unarchive", "ansible.builtin.unarchive",
       {"src" => "a.tar", "dest" => "/tmp", "copy" => "false", "remote_src" => "true"}, vars)
-    both.not_nil!.msg.must_equal("parameters are mutually exclusive: ('copy', 'remote_src')")
-    both.not_nil!.action_level?.must_equal(true)
-    Krikri::ArgspecValidator.failure_kind?("ansible.builtin.unarchive", both.not_nil!.msg).must_equal(:action)
+    both.as(Failure).msg.must_equal("parameters are mutually exclusive: ('copy', 'remote_src')")
+    both.as(Failure).action_level?.must_equal(true)
+    Krikri::ArgspecValidator.failure_kind?("ansible.builtin.unarchive", both.as(Failure).msg).must_equal(:action)
 
     missing = Krikri::ArgspecValidator.validate("unarchive", "ansible.builtin.unarchive", {"dest" => "/tmp"}, vars)
-    missing.not_nil!.msg.must_equal("src (or content) and dest are required")
+    missing.as(Failure).msg.must_equal("src (or content) and dest are required")
 
     typo = Krikri::ArgspecValidator.validate("unarchive", "ansible.builtin.unarchive",
       {"src" => "a.tar", "dest" => "/tmp", "remote_src" => "true", "zz" => "1"}, vars)
-    typo.not_nil!.msg.must_match(/\AUnsupported parameters for \(ansible\.legacy\.unarchive\) module: zz\./)
+    typo.as(Failure).msg.must_match(/\AUnsupported parameters for \(ansible\.legacy\.unarchive\) module: zz\./)
   end
 
   it "wait_for: a successful result echoes state/port/search_regex and the path's add_path_info fields" do
@@ -197,7 +202,7 @@ describe "error-path parity with real ansible (fuzzer findings)" do
   it "assert: unsupported parameters name the action plugin's module path like real" do
     vars = Hash(String, JSON::Any).new
     failure = Krikri::ArgspecValidator.validate("ansible.builtin.assert", "ansible.builtin.assert", {"that" => "true", "that_bogus" => "1"}, vars)
-    failure.not_nil!.msg.must_equal(
+    failure.as(Failure).msg.must_equal(
       "Unsupported parameters for (ansible_collections.ansible.builtin.plugins.action.assert) module: that_bogus. " \
       "Supported parameters include: fail_msg, quiet, success_msg, that (msg).")
   end
@@ -205,12 +210,12 @@ describe "error-path parity with real ansible (fuzzer findings)" do
   it "package: an unknown use: is an action-level failure; the delegate module validates the rest" do
     vars = Hash(String, JSON::Any).new
     use = Krikri::ArgspecValidator.validate("ansible.builtin.package", "ansible.builtin.package", {"name" => "x", "use" => "dqjdfl"}, vars)
-    use.not_nil!.msg.must_equal(%(Could not find a matching action for the "dqjdfl" package manager.))
-    use.not_nil!.action_level?.must_equal(true)
+    use.as(Failure).msg.must_equal(%(Could not find a matching action for the "dqjdfl" package manager.))
+    use.as(Failure).action_level?.must_equal(true)
 
     if File.exists?("/usr/bin/apt-get")
       state = Krikri::ArgspecValidator.validate("ansible.builtin.package", "ansible.builtin.package", {"name" => "x", "state" => "bogus"}, vars)
-      state.not_nil!.msg.must_equal("value of state must be one of: absent, build-dep, fixed, latest, present, got: bogus")
+      state.as(Failure).msg.must_equal("value of state must be one of: absent, build-dep, fixed, latest, present, got: bogus")
     end
   end
 

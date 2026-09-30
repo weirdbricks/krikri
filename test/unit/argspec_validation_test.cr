@@ -10,6 +10,11 @@ require "../../src/krikri/task_executor/result_display"
 # machine (non-tty, ANSIBLE_NOCOLOR=1) - see scripts/gen_print_names.py for
 # the probing harness and the sample differential run in the round notes.
 describe Krikri::ArgspecValidator do
+  # Shorthand for the validator's failure record, unwrapped with `as`
+  # rather than `not_nil!` so a wrong expectation (the validator
+  # returned nil) fails naming the value it actually produced.
+  alias Failure = Krikri::ArgspecValidator::Failure
+
   # A "vars context" with the service/pkg facts the fact-delegating
   # modules (service/package) resolve their spec target from.
   private def vars(facts = {} of String => JSON::Any)
@@ -23,20 +28,20 @@ describe Krikri::ArgspecValidator do
       "lineinfile", "ansible.builtin.lineinfile",
       {"path" => "/tmp/x", "bakcrefs" => "true"}, vars)
     failure.wont_be_nil
-    failure.not_nil!.msg.must_equal(
+    failure.as(Failure).msg.must_equal(
       "Unsupported parameters for (lineinfile) module: bakcrefs. " \
       "Supported parameters include: attributes, backrefs, backup, create, firstmatch, " \
       "group, insertafter, insertbefore, line, mode, owner, path, regexp, search_string, " \
       "selevel, serole, setype, seuser, state, unsafe_writes, validate " \
       "(attr, dest, destfile, name, regex, value).")
-    failure.not_nil!.action_level?.must_equal(false)
+    failure.as(Failure).action_level?.must_equal(false)
   end
 
   it "echoes the FQCN spelling the task used, not the resolved one" do
     failure = Krikri::ArgspecValidator.validate(
       "ansible.builtin.lineinfile", "ansible.builtin.lineinfile",
       {"path" => "/tmp/x", "bakcrefs" => "true"}, vars)
-    failure.not_nil!.msg.must_equal(
+    failure.as(Failure).msg.must_equal(
       "Unsupported parameters for (ansible.builtin.lineinfile) module: bakcrefs. " \
       "Supported parameters include: attributes, backrefs, backup, create, firstmatch, " \
       "group, insertafter, insertbefore, line, mode, owner, path, regexp, search_string, " \
@@ -48,7 +53,7 @@ describe Krikri::ArgspecValidator do
     failure = Krikri::ArgspecValidator.validate(
       "template", "ansible.builtin.template",
       {"src" => "t.j2", "dest" => "/tmp/x", "mdoe" => "0644"}, vars)
-    failure.not_nil!.msg.must_equal(
+    failure.as(Failure).msg.must_equal(
       "Unsupported parameters for (ansible.legacy.copy) module: mdoe. " \
       "Supported parameters include: _original_basename, attributes, backup, checksum, " \
       "content, dest, directory_mode, follow, force, group, local_follow, mode, owner, " \
@@ -67,7 +72,7 @@ describe Krikri::ArgspecValidator do
     failure = Krikri::ArgspecValidator.validate(
       "copy", "ansible.builtin.copy",
       {"content" => "hi", "dest" => "/tmp/x", "mdoe" => "0644", "vaildate" => "/bin/true %s"}, vars)
-    failure.not_nil!.msg.must_equal(
+    failure.as(Failure).msg.must_equal(
       "Unsupported parameters for (ansible.legacy.copy) module: mdoe, vaildate. " \
       "Supported parameters include: _original_basename, attributes, backup, checksum, " \
       "content, dest, directory_mode, follow, force, group, local_follow, mode, owner, " \
@@ -84,20 +89,20 @@ describe Krikri::ArgspecValidator do
   it "reports missing required arguments ahead of unsupported params (real priority)" do
     failure = Krikri::ArgspecValidator.validate(
       "file", "ansible.builtin.file", {"boguss" => "1"}, vars)
-    failure.not_nil!.msg.must_equal("missing required arguments: path")
+    failure.as(Failure).msg.must_equal("missing required arguments: path")
   end
 
   it "lists multiple missing required arguments sorted" do
     failure = Krikri::ArgspecValidator.validate(
       "dpkg_selections", "ansible.builtin.dpkg_selections", {"zz" => "1"}, vars)
-    failure.not_nil!.msg.must_equal("missing required arguments: name, selection")
+    failure.as(Failure).msg.must_equal("missing required arguments: name, selection")
   end
 
   it "emits real's exact bool-conversion failure wording" do
     failure = Krikri::ArgspecValidator.validate(
       "lineinfile", "ansible.builtin.lineinfile",
       {"path" => "/tmp/x", "create" => "notabool"}, vars)
-    failure.not_nil!.msg.must_equal(
+    failure.as(Failure).msg.must_equal(
       "argument 'create' is of type str and we were unable to convert to bool: " \
       "The value 'notabool' is not a valid boolean. Valid booleans include: " \
       "'off', 1, 'true', 'y', 0, 'false', 'on', 'no', '1', 'yes', '0', 'n', 'f', 't'")
@@ -107,7 +112,7 @@ describe Krikri::ArgspecValidator do
     failure = Krikri::ArgspecValidator.validate(
       "apt", "ansible.builtin.apt",
       {"name" => "x", "lock_timeout" => "abc"}, vars)
-    failure.not_nil!.msg.must_equal(
+    failure.as(Failure).msg.must_equal(
       "argument 'lock_timeout' is of type str and we were unable to convert to int: " \
       "\"'abc'\" cannot be converted to an int")
   end
@@ -125,31 +130,31 @@ describe Krikri::ArgspecValidator do
     failure = Krikri::ArgspecValidator.validate(
       "lineinfile", "ansible.builtin.lineinfile",
       {"path" => "/tmp/x", "state" => "bogus"}, vars)
-    failure.not_nil!.msg.must_equal("value of state must be one of: absent, present, got: bogus")
+    failure.as(Failure).msg.must_equal("value of state must be one of: absent, present, got: bogus")
 
     failure = Krikri::ArgspecValidator.validate(
       "async_status", "ansible.builtin.async_status",
       {"jid" => "123", "mode" => "bogus"}, vars)
-    failure.not_nil!.msg.must_equal("value of mode must be one of: status, cleanup, got: bogus")
+    failure.as(Failure).msg.must_equal("value of mode must be one of: status, cleanup, got: bogus")
   end
 
   it "enforces mutually exclusive options with real's pipe-joined wording" do
     failure = Krikri::ArgspecValidator.validate(
       "lineinfile", "ansible.builtin.lineinfile",
       {"path" => "/tmp/x", "insertbefore" => "a", "insertafter" => "b", "line" => "x"}, vars)
-    failure.not_nil!.msg.must_equal("parameters are mutually exclusive: insertbefore|insertafter")
+    failure.as(Failure).msg.must_equal("parameters are mutually exclusive: insertbefore|insertafter")
   end
 
   it "enforces required_one_of with real's wording" do
     failure = Krikri::ArgspecValidator.validate(
       "pip", "ansible.builtin.pip", {"zz" => "1"}, vars)
-    failure.not_nil!.msg.must_equal("one of the following is required: name, requirements")
+    failure.as(Failure).msg.must_equal("one of the following is required: name, requirements")
   end
 
   it "enforces required_if against spec defaults with real's wording" do
     failure = Krikri::ArgspecValidator.validate(
       "iptables", "ansible.builtin.iptables", {"zz" => "1"}, vars)
-    failure.not_nil!.msg.must_equal(
+    failure.as(Failure).msg.must_equal(
       "flush is False but all of the following are missing: chain")
   end
 
@@ -171,18 +176,18 @@ describe Krikri::ArgspecValidator do
   it "validates action-only directives with real's action-level wording" do
     failure = Krikri::ArgspecValidator.validate(
       "debug", "ansible.builtin.debug", {"zz" => "1"}, vars)
-    failure.not_nil!.msg.must_equal(
+    failure.as(Failure).msg.must_equal(
       "Unsupported parameters for (debug) module: zz. " \
       "Supported parameters include: msg, var, verbosity.")
-    failure.not_nil!.action_level?.must_equal(true)
-    failure.not_nil!.omit_changed?.must_equal(true)
+    failure.as(Failure).action_level?.must_equal(true)
+    failure.as(Failure).omit_changed?.must_equal(true)
   end
 
   it "uses real's Invalid-options wording for fail/group_by/wait_for_connection" do
     failure = Krikri::ArgspecValidator.validate(
       "fail", "ansible.builtin.fail", {"zz" => "1"}, vars)
-    failure.not_nil!.msg.must_equal("Invalid options for fail: zz")
-    failure.not_nil!.action_level?.must_equal(true)
+    failure.as(Failure).msg.must_equal("Invalid options for fail: zz")
+    failure.as(Failure).action_level?.must_equal(true)
   end
 
   it "accepts the options fail/group_by/wait_for_connection really take and lists only the unknown ones" do
@@ -197,14 +202,14 @@ describe Krikri::ArgspecValidator do
 
     failure = Krikri::ArgspecValidator.validate(
       "fail", "ansible.builtin.fail", {"msg" => "x", "bogus" => "1", "aaa" => "2"}, vars)
-    failure.not_nil!.msg.must_equal("Invalid options for fail: aaa,bogus")
+    failure.as(Failure).msg.must_equal("Invalid options for fail: aaa,bogus")
   end
 
   it "runs script's action-plugin spec including its required_one_of" do
     failure = Krikri::ArgspecValidator.validate(
       "script", "ansible.builtin.script", {"zz" => "1"}, vars)
-    failure.not_nil!.msg.must_equal("one of the following is required: _raw_params, cmd")
-    failure.not_nil!.action_level?.must_equal(true)
+    failure.as(Failure).msg.must_equal("one of the following is required: _raw_params, cmd")
+    failure.as(Failure).action_level?.must_equal(true)
   end
 
   it "delegates service validation to the service_mgr module's spec" do
@@ -212,7 +217,7 @@ describe Krikri::ArgspecValidator do
       "service", "ansible.builtin.service",
       {"name" => "ssh", "state" => "reloaded", "zz" => "1"},
       vars({"ansible_service_mgr" => JSON::Any.new("systemd")}))
-    failure.not_nil!.msg.must_equal(
+    failure.as(Failure).msg.must_equal(
       "Unsupported parameters for (ansible.legacy.systemd) module: zz. " \
       "Supported parameters include: daemon_reexec, daemon_reload, enabled, force, " \
       "masked, name, no_block, scope, state (daemon-reexec, daemon-reload, service, unit).")
@@ -222,7 +227,7 @@ describe Krikri::ArgspecValidator do
     failure = Krikri::ArgspecValidator.validate(
       "service", "ansible.builtin.service", {"name" => "ssh", "state" => "started", "zz" => "1"},
       {"ansible_service_mgr" => JSON::Any.new("sysvinit")})
-    failure.not_nil!.msg.starts_with?("Unsupported parameters for (ansible.legacy.service) module: zz.").must_equal(true)
+    failure.as(Failure).msg.starts_with?("Unsupported parameters for (ansible.legacy.service) module: zz.").must_equal(true)
   end
 
   it "never validates the modules real does not validate" do
@@ -255,8 +260,8 @@ describe Krikri::ArgspecValidator do
       "community.general.ini_file", "community.general.ini_file",
       {"path" => "/tmp/x", "section_has_values" => %(["fwtaiy"])}, vars)
     failure.wont_be_nil
-    failure.not_nil!.msg.must_equal("dictionary requested, could not parse JSON or key=value")
-    failure.not_nil!.action_level?.must_equal(false)
+    failure.as(Failure).msg.must_equal("dictionary requested, could not parse JSON or key=value")
+    failure.as(Failure).action_level?.must_equal(false)
   end
 
   it "lets dict-shaped string elements of a dict-elements option through" do
@@ -274,7 +279,7 @@ describe Krikri::ArgspecValidator do
     failure = Krikri::ArgspecValidator.validate(
       "community.general.ini_file", "community.general.ini_file",
       {"path" => "/tmp/x", "section_has_values" => %([5])}, vars)
-    failure.not_nil!.msg.must_equal(
+    failure.as(Failure).msg.must_equal(
       "Value '5' in the sub parameter field 'section_has_values' must be a list, not 'int'")
   end
 
@@ -282,7 +287,7 @@ describe Krikri::ArgspecValidator do
     failure = Krikri::ArgspecValidator.validate(
       "community.general.ini_file", "community.general.ini_file",
       {"path" => "/tmp/x", "section_has_values" => %(["fwtaiy"]), "value" => "a", "values" => %(["b"])}, vars)
-    failure.not_nil!.msg.must_equal("dictionary requested, could not parse JSON or key=value")
+    failure.as(Failure).msg.must_equal("dictionary requested, could not parse JSON or key=value")
   end
 
   it "fails assemble's missing src/dest at the action level, not the module spec" do
@@ -294,13 +299,13 @@ describe Krikri::ArgspecValidator do
     failure = Krikri::ArgspecValidator.validate(
       "assemble", "ansible.builtin.assemble",
       {"dest" => "/tmp/x", "rsc" => "/tmp/src", "remote_src" => "true"}, vars)
-    failure.not_nil!.msg.must_equal("src and dest are required")
-    failure.not_nil!.action_level?.must_equal(true)
+    failure.as(Failure).msg.must_equal("src and dest are required")
+    failure.as(Failure).action_level?.must_equal(true)
 
     failure = Krikri::ArgspecValidator.validate(
       "assemble", "ansible.builtin.assemble",
       {"src" => "/tmp/src", "edst" => "/tmp/x"}, vars)
-    failure.not_nil!.msg.must_equal("src and dest are required")
+    failure.as(Failure).msg.must_equal("src and dest are required")
     Krikri::ArgspecValidator.failure_kind?("ansible.builtin.assemble", "src and dest are required").must_equal(:action)
   end
 
@@ -313,18 +318,18 @@ describe Krikri::ArgspecValidator do
     failure = Krikri::ArgspecValidator.validate(
       "template", "ansible.builtin.template",
       {"dest" => "/tmp/x", "content" => "rendered\n", "outupt_encoding" => "utf-8"}, vars)
-    failure.not_nil!.msg.must_equal(
+    failure.as(Failure).msg.must_equal(
       "Unsupported parameters for (ansible.legacy.copy) module: outupt_encoding. " \
       "Supported parameters include: _original_basename, attributes, backup, checksum, " \
       "content, dest, directory_mode, follow, force, group, local_follow, mode, owner, " \
       "remote_src, selevel, serole, setype, seuser, src, unsafe_writes, validate (attr).")
-    failure.not_nil!.action_level?.must_equal(false)
+    failure.as(Failure).action_level?.must_equal(false)
 
     failure = Krikri::ArgspecValidator.validate(
       "template", "ansible.builtin.template",
       {"dest" => "/tmp/x", "ownre" => "root", "src_bogus" => "t.j2", "trim_blocks_bogus" => "true"}, vars)
-    failure.not_nil!.msg.must_equal("src and dest are required")
-    failure.not_nil!.action_level?.must_equal(true)
+    failure.as(Failure).msg.must_equal("src and dest are required")
+    failure.as(Failure).action_level?.must_equal(true)
   end
 
   it "rejects assert's natively-typed fail_msg before the unsupported-params error" do
@@ -338,16 +343,16 @@ describe Krikri::ArgspecValidator do
     failure = Krikri::ArgspecValidator.validate(
       "ansible.builtin.assert", "ansible.builtin.assert",
       {"fail_msg" => marked, "quiet" => "true", "that" => "true", "that_bogus" => "true"}, vars)
-    failure.not_nil!.msg.must_equal(
+    failure.as(Failure).msg.must_equal(
       "argument 'fail_msg' is of type int and we were unable to convert to " \
       "str_or_list_of_str: a string or list of strings is required")
-    failure.not_nil!.action_level?.must_equal(true)
+    failure.as(Failure).action_level?.must_equal(true)
 
     # Only the wrong type: same message shape, native bool this time.
     failure = Krikri::ArgspecValidator.validate(
       "ansible.builtin.assert", "ansible.builtin.assert",
       {"fail_msg" => Krikri::NON_STRING_PARAM_PREFIX + "true", "that" => "true"}, vars)
-    failure.not_nil!.msg.must_equal(
+    failure.as(Failure).msg.must_equal(
       "argument 'fail_msg' is of type bool and we were unable to convert to " \
       "str_or_list_of_str: a string or list of strings is required")
 
@@ -355,7 +360,7 @@ describe Krikri::ArgspecValidator do
     failure = Krikri::ArgspecValidator.validate(
       "ansible.builtin.assert", "ansible.builtin.assert",
       {"fail_msg" => "boom", "that" => "true", "that_bogus" => "true"}, vars)
-    failure.not_nil!.msg.must_equal(
+    failure.as(Failure).msg.must_equal(
       "Unsupported parameters for (ansible_collections.ansible.builtin.plugins.action.assert) " \
       "module: that_bogus. Supported parameters include: fail_msg, quiet, success_msg, that (msg).")
 
@@ -399,7 +404,7 @@ describe Krikri::ArgspecValidator do
     failure = Krikri::ArgspecValidator.validate(
       "apt", "ansible.builtin.apt",
       {"name" => "x", "force" => "teoqdi", "update_cache_retry_max_delay" => "phxszz"}, vars)
-    failure.not_nil!.msg.must_equal(
+    failure.as(Failure).msg.must_equal(
       "argument 'update_cache_retry_max_delay' is of type str and we were unable to convert to int: " \
       "\"'phxszz'\" cannot be converted to an int")
 
@@ -408,7 +413,7 @@ describe Krikri::ArgspecValidator do
     failure = Krikri::ArgspecValidator.validate(
       "apt", "ansible.builtin.apt",
       {"name" => "x", "allow_downgrade" => "zz", "force" => "yy"}, vars)
-    failure.not_nil!.msg.must_equal(
+    failure.as(Failure).msg.must_equal(
       "argument 'force' is of type str and we were unable to convert to bool: " \
       "The value 'yy' is not a valid boolean. Valid booleans include: " \
       "'off', 1, 'true', 'y', 0, 'false', 'on', 'no', '1', 'yes', '0', 'n', 'f', 't'")
@@ -422,10 +427,10 @@ describe Krikri::ArgspecValidator do
     failure = Krikri::ArgspecValidator.validate(
       "pause", "ansible.builtin.pause",
       {"seconds" => "lraeca", "miuntes" => "mngkxw"}, vars)
-    failure.not_nil!.msg.must_equal(
+    failure.as(Failure).msg.must_equal(
       "argument 'seconds' is of type str and we were unable to convert to int: " \
       "invalid literal for int() with base 10: 'lraeca'")
-    failure.not_nil!.action_level?.must_equal(true)
+    failure.as(Failure).action_level?.must_equal(true)
 
     # minutes/seconds are the int CALLABLE, not the 'int' string type: a
     # quoted float string goes through int(str) directly and fails with
@@ -433,7 +438,7 @@ describe Krikri::ArgspecValidator do
     # native float truncates (int(1.5) == 1) and a native bool passes.
     failure = Krikri::ArgspecValidator.validate(
       "pause", "ansible.builtin.pause", {"seconds" => "1.5"}, vars)
-    failure.not_nil!.msg.must_equal(
+    failure.as(Failure).msg.must_equal(
       "argument 'seconds' is of type str and we were unable to convert to int: " \
       "invalid literal for int() with base 10: '1.5'")
     Krikri::ArgspecValidator.validate(
@@ -448,13 +453,13 @@ describe Krikri::ArgspecValidator do
     failure = Krikri::ArgspecValidator.validate(
       "pause", "ansible.builtin.pause",
       {"minutes" => "aa", "seconds" => "bb"}, vars)
-    failure.not_nil!.msg.must_equal("parameters are mutually exclusive: minutes|seconds")
+    failure.as(Failure).msg.must_equal("parameters are mutually exclusive: minutes|seconds")
 
     # and the unsupported-params shape is unchanged
     failure = Krikri::ArgspecValidator.validate(
       "pause", "ansible.builtin.pause",
       {"prompt" => "uxpvfh", "prompt_bogus" => "uxpvfh"}, vars)
-    failure.not_nil!.msg.must_equal(
+    failure.as(Failure).msg.must_equal(
       "Unsupported parameters for (ansible_collections.ansible.builtin.plugins.action.pause) " \
       "module: prompt_bogus. Supported parameters include: echo, minutes, prompt, seconds.")
   end
@@ -469,24 +474,24 @@ describe Krikri::ArgspecValidator do
     failure = Krikri::ArgspecValidator.validate(
       "debug", "ansible.builtin.debug",
       {"msg" => "gddznp", "verbosity" => "epdfma", "msg_bogus" => "gddznp"}, vars)
-    failure.not_nil!.msg.must_equal(
+    failure.as(Failure).msg.must_equal(
       "argument 'verbosity' is of type str and we were unable to convert to int: " \
       "\"'epdfma'\" cannot be converted to an int")
-    failure.not_nil!.action_level?.must_equal(true)
+    failure.as(Failure).action_level?.must_equal(true)
     # ... and debug's callback result dump carries only msg, no changed.
-    failure.not_nil!.omit_changed?.must_equal(true)
+    failure.as(Failure).omit_changed?.must_equal(true)
 
     # ... while a msg+var pair beats both the type error and the typo.
     failure = Krikri::ArgspecValidator.validate(
       "debug", "ansible.builtin.debug",
       {"msg" => "hi", "var" => "ansible_hostname", "verbosity" => "zzz", "msg_bogus" => "x"}, vars)
-    failure.not_nil!.msg.must_equal("parameters are mutually exclusive: msg|var")
+    failure.as(Failure).msg.must_equal("parameters are mutually exclusive: msg|var")
 
     # A present-but-null msg is still "present" for that check.
     failure = Krikri::ArgspecValidator.validate(
       "debug", "ansible.builtin.debug",
       {"msg" => Krikri::NONE_SENTINEL, "var" => "ansible_hostname"}, vars)
-    failure.not_nil!.msg.must_equal("parameters are mutually exclusive: msg|var")
+    failure.as(Failure).msg.must_equal("parameters are mutually exclusive: msg|var")
 
     # The unsupported-params error is real's LAST, unchanged in wording
     # (and real echoes the FQCN the task was spelled with - the resolved
@@ -494,13 +499,13 @@ describe Krikri::ArgspecValidator do
     failure = Krikri::ArgspecValidator.validate(
       "ansible.builtin.debug", "ansible.builtin.debug",
       {"var" => "nosuchvar_zz", "zz_bogus" => "1"}, vars)
-    failure.not_nil!.msg.must_equal(
+    failure.as(Failure).msg.must_equal(
       "Unsupported parameters for (ansible_collections.ansible.builtin.plugins.action.debug) " \
       "module: zz_bogus. Supported parameters include: msg, var, verbosity.")
-    failure.not_nil!.omit_changed?.must_equal(true)
+    failure.as(Failure).omit_changed?.must_equal(true)
     Krikri::ArgspecValidator.validate(
       "debug", "ansible.builtin.debug",
-      {"var" => "nosuchvar_zz", "zz_bogus" => "1"}, vars).not_nil!.msg.must_equal(
+      {"var" => "nosuchvar_zz", "zz_bogus" => "1"}, vars).as(Failure).msg.must_equal(
       "Unsupported parameters for (debug) module: zz_bogus. " \
       "Supported parameters include: msg, var, verbosity.")
   end
@@ -524,7 +529,7 @@ describe Krikri::ArgspecValidator do
       failure = Krikri::ArgspecValidator.validate(
         "debug", "ansible.builtin.debug", {"msg" => "hi", "verbosity" => value}, vars)
       if expected
-        failure.not_nil!.msg.must_equal(expected)
+        failure.as(Failure).msg.must_equal(expected)
       else
         failure.must_be_nil
       end
@@ -547,7 +552,7 @@ describe Krikri::ArgspecValidator do
       failure = Krikri::ArgspecValidator.validate(
         "debug", "ansible.builtin.debug", {"var" => value}, vars)
       if expected
-        failure.not_nil!.msg.must_equal(expected)
+        failure.as(Failure).msg.must_equal(expected)
       else
         failure.must_be_nil
       end
@@ -557,7 +562,7 @@ describe Krikri::ArgspecValidator do
     failure = Krikri::ArgspecValidator.validate(
       "debug", "ansible.builtin.debug",
       {"var" => Krikri::NON_STRING_PARAM_PREFIX + "5", "verbosity" => "qqq"}, vars)
-    failure.not_nil!.msg.must_include("argument 'var' is of type int")
+    failure.as(Failure).msg.must_include("argument 'var' is of type int")
   end
 
   # copy's and template's ACTION plugins read `follow` through
@@ -571,7 +576,7 @@ describe Krikri::ArgspecValidator do
     # a typo'd key is the only thing left to fail on.
     failure = Krikri::ArgspecValidator.validate(
       "template", "ansible.builtin.template", template.merge({"gropu" => "root"}), vars)
-    failure.not_nil!.msg.must_equal(
+    failure.as(Failure).msg.must_equal(
       "Unsupported parameters for (ansible.legacy.copy) module: gropu. " \
       "Supported parameters include: _original_basename, attributes, backup, checksum, content, " \
       "dest, directory_mode, follow, force, group, local_follow, mode, owner, remote_src, " \
@@ -579,7 +584,7 @@ describe Krikri::ArgspecValidator do
     # ... and a wrong-typed option alongside it is reported instead.
     failure = Krikri::ArgspecValidator.validate(
       "template", "ansible.builtin.template", template.merge({"backup" => "notabool"}), vars)
-    failure.not_nil!.msg.must_equal(
+    failure.as(Failure).msg.must_equal(
       "argument 'backup' is of type str and we were unable to convert to bool: " \
       "The value 'notabool' is not a valid boolean. Valid booleans include: " \
       "#{Krikri::ArgspecValidator::BOOLEANS_REPR.join(", ")}")
@@ -590,8 +595,8 @@ describe Krikri::ArgspecValidator do
       failure = Krikri::ArgspecValidator.validate(
         "copy", "ansible.builtin.copy",
         template.merge({"gorup" => "root", "remote_src" => remote_src}), vars)
-      failure.not_nil!.msg.must_include("module: gorup.")
-      failure.not_nil!.msg.wont_include("argument 'follow'")
+      failure.as(Failure).msg.must_include("module: gorup.")
+      failure.as(Failure).msg.wont_include("argument 'follow'")
     end
     # ... but with a truthy remote_src the raw args go to the module, where
     # the strict spec does reject it - ahead of the typo'd key.
@@ -599,7 +604,7 @@ describe Krikri::ArgspecValidator do
       failure = Krikri::ArgspecValidator.validate(
         "copy", "ansible.builtin.copy",
         template.merge({"gorup" => "root", "remote_src" => remote_src}), vars)
-      failure.not_nil!.msg.must_include("argument 'follow' is of type str")
+      failure.as(Failure).msg.must_include("argument 'follow' is of type str")
     end
   end
 
@@ -609,19 +614,19 @@ describe Krikri::ArgspecValidator do
     failure = Krikri::ArgspecValidator.validate(
       "template", "ansible.builtin.template",
       {"src" => "/tmp/s.j2", "dest" => "/tmp/d", "state" => "present", "gropu" => "root"}, vars)
-    failure.not_nil!.msg.must_equal("'state' cannot be specified on a template")
-    failure.not_nil!.action_level?.must_equal(true)
+    failure.as(Failure).msg.must_equal("'state' cannot be specified on a template")
+    failure.as(Failure).action_level?.must_equal(true)
     failure = Krikri::ArgspecValidator.validate(
       "template", "ansible.builtin.template",
       {"src" => "/tmp/s.j2", "dest" => "/tmp/d", "state" => Krikri::NONE_SENTINEL, "gropu" => "root"}, vars)
-    failure.not_nil!.msg.must_include("Unsupported parameters for (ansible.legacy.copy) module: gropu")
+    failure.as(Failure).msg.must_include("Unsupported parameters for (ansible.legacy.copy) module: gropu")
 
     # `decrypt` is action-only: copy's action plugin drops it (and content)
     # from the module args, so it is never an unsupported parameter.
     failure = Krikri::ArgspecValidator.validate(
       "template", "ansible.builtin.template",
       {"src" => "/tmp/s.j2", "dest" => "/tmp/d", "decrypt" => "notabool", "gropu" => "root"}, vars)
-    failure.not_nil!.msg.must_equal(
+    failure.as(Failure).msg.must_equal(
       "Unsupported parameters for (ansible.legacy.copy) module: gropu. " \
       "Supported parameters include: _original_basename, attributes, backup, checksum, content, " \
       "dest, directory_mode, follow, force, group, local_follow, mode, owner, remote_src, " \

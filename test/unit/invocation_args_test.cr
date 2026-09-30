@@ -4,7 +4,7 @@ require "../../src/krikri/variable_substitutor"
 
 describe Krikri::ArgspecValidator do
   it "builds invocation.module_args with spec defaults for command" do
-    args = Krikri::ArgspecValidator.invocation_args("ansible.builtin.command", {"cmd" => "echo a"}).not_nil!
+    args = Krikri::ArgspecValidator.invocation_args("ansible.builtin.command", {"cmd" => "echo a"}).as(Hash(String, JSON::Any))
     args["cmd"].as_s.must_equal("echo a")
     args["argv"].raw.must_be_nil
     args["_uses_shell"].as_bool.must_equal(false)
