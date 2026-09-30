@@ -5,10 +5,10 @@ private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
-# Real Ansible (verified against ansible-core on Debian bookworm,
-# testing/podman-diff/cases/debug_edge_cases.yml) fails the task with
-# "'msg' and 'var' are incompatible options" when both are given; this
-# engine happily printed the var and succeeded.
+# Real Ansible (verified against ansible-core 2.19.11) fails the task
+# through debug's own argument-spec validation with "parameters are
+# mutually exclusive: msg|var" when both are given; this engine happily
+# printed the var and succeeded.
 describe "debug: msg and var mutually exclusive" do
   it "fails the task when both msg and var are given" do
     playbook = File.tempname("debug-exclusive", ".yml")
@@ -32,7 +32,7 @@ describe "debug: msg and var mutually exclusive" do
     status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
 
     status.success?.must_equal(true)
-    output.to_s.must_include("'msg' and 'var' are incompatible options")
+    output.to_s.must_include("parameters are mutually exclusive: msg|var")
     output.to_s.must_include("RESULT failed=True")
   ensure
     File.delete(playbook) if playbook && File.exists?(playbook)

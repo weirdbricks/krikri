@@ -458,6 +458,113 @@ describe Krikri::ArgspecValidator do
       "Unsupported parameters for (ansible_collections.ansible.builtin.plugins.action.pause) " \
       "module: prompt_bogus. Supported parameters include: echo, minutes, prompt, seconds.")
   end
+
+  # debug's own spec lives in its ACTION plugin (plugins/action/
+  # debug.py:40), which runs the same shared ArgumentSpecValidator before
+  # the task does anything else - so real reports errors[0] out of
+  # mutually_exclusive -> types in declaration order (msg, var,
+  # verbosity) -> unsupported LAST. All live-verified vs 2.19.11.
+  it "validates debug's own spec before its unsupported-parameter error" do
+    # A wrong-typed verbosity beats a typo'd key (msg_bogus) ...
+    failure = Krikri::ArgspecValidator.validate(
+      "debug", "ansible.builtin.debug",
+      {"msg" => "gddznp", "verbosity" => "epdfma", "msg_bogus" => "gddznp"}, vars)
+    failure.not_nil!.msg.must_equal(
+      "argument 'verbosity' is of type str and we were unable to convert to int: " \
+      "\"'epdfma'\" cannot be converted to an int")
+    failure.not_nil!.action_level?.must_equal(true)
+    # ... and debug's callback result dump carries only msg, no changed.
+    failure.not_nil!.omit_changed?.must_equal(true)
+
+    # ... while a msg+var pair beats both the type error and the typo.
+    failure = Krikri::ArgspecValidator.validate(
+      "debug", "ansible.builtin.debug",
+      {"msg" => "hi", "var" => "ansible_hostname", "verbosity" => "zzz", "msg_bogus" => "x"}, vars)
+    failure.not_nil!.msg.must_equal("parameters are mutually exclusive: msg|var")
+
+    # A present-but-null msg is still "present" for that check.
+    failure = Krikri::ArgspecValidator.validate(
+      "debug", "ansible.builtin.debug",
+      {"msg" => Krikri::NONE_SENTINEL, "var" => "ansible_hostname"}, vars)
+    failure.not_nil!.msg.must_equal("parameters are mutually exclusive: msg|var")
+
+    # The unsupported-params error is real's LAST, unchanged in wording
+    # (and real echoes the FQCN the task was spelled with - the resolved
+    # action-plugin path only for the ansible.builtin.debug spelling).
+    failure = Krikri::ArgspecValidator.validate(
+      "ansible.builtin.debug", "ansible.builtin.debug",
+      {"var" => "nosuchvar_zz", "zz_bogus" => "1"}, vars)
+    failure.not_nil!.msg.must_equal(
+      "Unsupported parameters for (ansible_collections.ansible.builtin.plugins.action.debug) " \
+      "module: zz_bogus. Supported parameters include: msg, var, verbosity.")
+    failure.not_nil!.omit_changed?.must_equal(true)
+    Krikri::ArgspecValidator.validate(
+      "debug", "ansible.builtin.debug",
+      {"var" => "nosuchvar_zz", "zz_bogus" => "1"}, vars).not_nil!.msg.must_equal(
+      "Unsupported parameters for (debug) module: zz_bogus. " \
+      "Supported parameters include: msg, var, verbosity.")
+  end
+
+  it "reports debug's verbosity/var type errors in real's per-type wording" do
+    # verbosity is an int: every natively-typed value fails with its own
+    # Python repr, a numeric string converts fine, a bool IS an int.
+    {
+      Krikri::NON_STRING_PARAM_PREFIX + "1.5" =>
+        "argument 'verbosity' is of type float and we were unable to convert to int: \"1.5\" cannot be converted to an int",
+      Krikri::NON_STRING_PARAM_PREFIX + "true" => nil,
+      "3" => nil,
+      "-1" => nil,
+      "[1, 2]" => "argument 'verbosity' is of type list and we were unable to convert to int: \"[1, 2]\" cannot be converted to an int",
+      # a comma-joined list wire whose members are non-string scalars
+      # (what the parser produces for `verbosity: [1, 2]`) is re-encoded
+      # as the JSON array it is, so real's list error - and repr - come out
+      "1," + Krikri::NON_STRING_MEMBER_PREFIX + "2" =>
+        "argument 'verbosity' is of type list and we were unable to convert to int: \"[1, 2]\" cannot be converted to an int",
+      "{\"a\": 1}" => "argument 'verbosity' is of type dict and we were unable to convert to int: \"{'a': 1}\" cannot be converted to an int",
+      Krikri::NONE_SENTINEL =>
+        "argument 'verbosity' is of type NoneType and we were unable to convert to int: \"None\" cannot be converted to an int",
+    }.each do |value, expected|
+      failure = Krikri::ArgspecValidator.validate(
+        "debug", "ansible.builtin.debug", {"msg" => "hi", "verbosity" => value}, vars)
+      if expected
+        failure.not_nil!.msg.must_equal(expected)
+      else
+        failure.must_be_nil
+      end
+    end
+
+    # var rides the _check_type_str_no_conversion CALLABLE: no coercion at
+    # all, the checker's own repr in the "unable to convert to" slot.
+    {
+      Krikri::NON_STRING_PARAM_PREFIX + "5" =>
+        "argument 'var' is of type int and we were unable to convert to _check_type_str_no_conversion: " \
+        "'5' is not a string and conversion is not allowed",
+      Krikri::NON_STRING_PARAM_PREFIX + "true" =>
+        "argument 'var' is of type bool and we were unable to convert to _check_type_str_no_conversion: " \
+        "'True' is not a string and conversion is not allowed",
+      "{\"a\": 1}" =>
+        "argument 'var' is of type dict and we were unable to convert to _check_type_str_no_conversion: " \
+        "'{'a': 1}' is not a string and conversion is not allowed",
+      # a None value is skipped by the validator itself (neither required
+      # nor defaulted) and real then prints "Hello world!".
+      Krikri::NONE_SENTINEL => nil,
+      "playbook_dir" => nil,
+    }.each do |value, expected|
+      failure = Krikri::ArgspecValidator.validate(
+        "debug", "ansible.builtin.debug", {"var" => value}, vars)
+      if expected
+        failure.not_nil!.msg.must_equal(expected)
+      else
+        failure.must_be_nil
+      end
+    end
+
+    # var is declared before verbosity, so its error wins when both fail.
+    failure = Krikri::ArgspecValidator.validate(
+      "debug", "ansible.builtin.debug",
+      {"var" => Krikri::NON_STRING_PARAM_PREFIX + "5", "verbosity" => "qqq"}, vars)
+    failure.not_nil!.msg.must_include("argument 'var' is of type int")
+  end
 end
 
 # End-to-end display shape: a validation failure flowing through

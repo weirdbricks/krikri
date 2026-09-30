@@ -185,6 +185,18 @@ module Krikri
         end
       end
 
+      # debug's spec (data/argspecs.json) types two of its three options as
+      # SCALARS, and a YAML list rides a comma-joined wire that no scalar
+      # check could tell from a plain string - unless one of its members was
+      # a non-string scalar, which the parser marks per member. Those marked
+      # values are re-encoded as the JSON array they really are (before the
+      # strip below drops the markers), so debug's type errors report real's
+      # list - and repr it with the same members. A list of strings only
+      # stays indistinguishable: nothing about its wire is marked.
+      if module_name == "ansible.builtin.debug"
+        params = params.map { |key, value| {key, marked_list_as_json(value)} }.to_h
+      end
+
       # The parser's non-string-literal markers (NON_STRING_PARAM_PREFIX)
       # are executor-internal wire dressing: demote them back to the plain
       # string form every spec check has always seen, so a marked
@@ -302,14 +314,39 @@ module Krikri
 
       defaults = default_values(options)
       failure_msg = run_spec_checks(entry, options, provided, defaults, unsupported, non_string_natives)
-      return Failure.new(failure_msg, entry["action_level"]?.try(&.as_bool?) || false) if failure_msg
+      if failure_msg
+        return Failure.new(failure_msg, entry["action_level"]?.try(&.as_bool?) || false,
+          omit_changed: result_keys_msg_only?(entry))
+      end
 
       if unsupported.empty?
         nil
       else
         Failure.new(unsupported_params_message(print_name, unsupported, options),
-          entry["action_level"]?.try(&.as_bool?) || false)
+          entry["action_level"]?.try(&.as_bool?) || false,
+          omit_changed: result_keys_msg_only?(entry))
       end
+    end
+
+    # An action-only directive whose real callback result carries ONLY msg
+    # (debug): its failure dump is {"msg": ...} with no changed key at
+    # all, unlike a module failure's {"changed": false, "msg": ...} - the
+    # task executor drops the key when this is set.
+    private def result_keys_msg_only?(entry : JSON::Any) : Bool
+      entry["result_keys"]?.try(&.as_a?) == ["msg"]
+    end
+
+    # The JSON array a comma-joined list wire really is, when at least one
+    # of its members carried the parser's non-string-scalar member marker;
+    # the value unchanged otherwise. See the debug branch in #validate.
+    private def marked_list_as_json(value : String) : String
+      return value unless value.includes?(Krikri::NON_STRING_MEMBER_PREFIX)
+      members = [] of JSON::Any
+      value.split(',').each do |part|
+        stripped = part.strip
+        members << (Krikri.non_string_member_scalar(stripped) || JSON::Any.new(stripped))
+      end
+      JSON::Any.new(members).to_json
     end
 
     # `invocation.module_args` of a module result: every spec option under
@@ -781,9 +818,11 @@ module Krikri
       if wanted == "bool"
         bool_type_error(name, raw, kind)
       elsif wanted == "int"
-        int_type_error(name, raw, kind)
+        int_type_error(name, raw, kind, native)
       elsif wanted == "int_callable"
         int_callable_type_error(name, raw, kind, native)
+      elsif wanted == "str_no_conversion"
+        str_no_conversion_type_error(name, raw, kind, native)
       elsif wanted == "float"
         float_type_error(name, raw, kind)
       elsif wanted == "dict"
@@ -832,7 +871,15 @@ module Krikri
       nil
     end
 
-    private def int_type_error(name : String, raw : String, kind : Symbol) : String?
+    private def int_type_error(name : String, raw : String, kind : Symbol, native : JSON::Any?) : String?
+      # A marked non-string YAML literal keeps its own class, which the
+      # demoted wire text alone cannot express: an int (and a bool, being
+      # an int subclass) converts, a float does not.
+      if native
+        return nil unless native.raw.is_a?(Float64)
+        return "argument '#{name}' is of type float and we were unable to convert to int: " \
+               "\"#{python_value_repr(native)}\" cannot be converted to an int"
+      end
       case kind
       when :bool
         nil # bool IS an int in Python
@@ -869,6 +916,23 @@ module Krikri
         "argument '#{name}' is of type #{kind} and we were unable to convert to int: " \
         "int() argument must be a string, a bytes-like object or a real number, not '#{kind}'"
       end
+    end
+
+    # debug's `var:` rides the _check_type_str_no_conversion CALLABLE
+    # (plugins/action/debug.py:44), not the 'str' type name: the checker
+    # accepts a string and NOTHING else - no int()/str() coercion - so any
+    # natively-typed value is rejected outright, with the checker's own
+    # repr in the "we were unable to convert to <name>" slot and its
+    # TypeError text behind it. A None value is skipped by the validator
+    # itself (neither required nor defaulted), so a bare `var:` never
+    # fails (live-verified vs 2.19.11: var: 5 / var: true / var: [a, b]).
+    private def str_no_conversion_type_error(name : String, raw : String, kind : Symbol, native : JSON::Any?) : String?
+      # A marked non-string YAML literal keeps its own class; an unmarked
+      # wire value that is not a plain string is a container.
+      return nil if native.nil? && kind == :str
+      reported = native ? python_value_repr(native) : (kind == :list || kind == :dict ? python_repr(kind, raw) : raw)
+      "argument '#{name}' is of type #{native ? python_class_name(native) : kind} and we were unable to convert to " \
+      "_check_type_str_no_conversion: '#{reported}' is not a string and conversion is not allowed"
     end
 
     private def float_type_error(name : String, raw : String, kind : Symbol) : String?
@@ -934,9 +998,10 @@ module Krikri
       :str
     end
 
-    # Python repr of a list/dict wire value, for the int-conversion
-    # error message (real embeds repr(value) there). Rough but only
-    # reachable for container values on numeric options.
+    # Python repr of a list/dict wire value, for the error messages that
+    # embed repr(value) (the int conversion's, debug's var conversion's).
+    # String members/values are single-quoted the way Python's repr does
+    # it; everything else goes through python_value_repr.
     private def python_repr(kind : Symbol, raw : String) : String
       return raw unless kind == :list || kind == :dict
       json = JSON.parse(raw) rescue return raw
@@ -947,17 +1012,21 @@ module Krikri
           json.as_a.each do |item|
             io << ", " unless first
             first = false
-            io << item.to_s
+            io << python_repr_value(item)
           end
         else
           json.as_h.each do |k, v|
             io << ", " unless first
             first = false
-            io << k << ": " << v.to_s
+            io << "'" << k << "': " << python_repr_value(v)
           end
         end
         io << (kind == :list ? "]" : "}")
       end
+    end
+
+    private def python_repr_value(value : JSON::Any) : String
+      value.as_s? || python_value_repr(value)
     end
 
     private def python_word(wanted : String) : String

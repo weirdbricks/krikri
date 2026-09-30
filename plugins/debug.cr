@@ -44,7 +44,7 @@ module Krikri
       end
 
       # Get verbosity level (default: 0)
-      required_verbosity = @params["verbosity"]?.try(&.to_i) || 0
+      required_verbosity = @params["verbosity"]?.try(&.to_i?) || 0
       current_verbosity = @params["_verbosity"]?.try(&.to_i) || 0
 
       # Skip if verbosity too low - real's registered result for a

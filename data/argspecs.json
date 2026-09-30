@@ -2215,16 +2215,30 @@
  },
  "ansible.builtin.debug": {
   "action_level": true,
+  "mutually_exclusive": [
+   [
+    "msg",
+    "var"
+   ]
+  ],
+  "options": {
+   "msg": {
+    "type": "raw",
+    "default": "Hello world!"
+   },
+   "var": {
+    "type": "str_no_conversion"
+   },
+   "verbosity": {
+    "type": "int",
+    "default": 0
+   }
+  },
   "print": {
    "ansible.builtin.debug": "ansible_collections.ansible.builtin.plugins.action.debug"
   },
   "result_keys": [
    "msg"
-  ],
-  "supported": [
-   "msg",
-   "var",
-   "verbosity"
   ],
   "unsupported_kind": "module"
  },

@@ -34,16 +34,16 @@ module Krikri
       end
 
       # msg and var are mutually exclusive in real ansible.builtin.debug -
-      # the action plugin fails the task with exactly this message before
-      # the verbosity gate or any output happens (verified live via
-      # testing/podman-diff/cases/debug_edge_cases.yml: real ansible-core
-      # prints fatal "'msg' and 'var' are incompatible options").
-      if msg && var_name
-        return ActionResult.final(result_json(changed: false, failed: true, msg: "'msg' and 'var' are incompatible options"))
-      end
+      # but that check (like every other option check) belongs to the
+      # action plugin's own argument-spec validation, which runs on the
+      # controller BEFORE this plugin is reached: ArgspecValidator's debug
+      # entry carries the (msg, var) mutually-exclusive pair and the real
+      # message ("parameters are mutually exclusive: msg|var",
+      # live-verified vs 2.19.11), reported with the action-level chain
+      # and the callback result's msg-only dump.
 
-      required_verbosity = @params["verbosity"]?.try(&.to_i) || 0
-      current_verbosity = @params["_verbosity"]?.try(&.to_i) || 0
+      required_verbosity = verbosity_level(@params["verbosity"]?)
+      current_verbosity = @params["_verbosity"]?.try(&.to_i?) || 0
 
       if current_verbosity < required_verbosity
         # Real Ansible's registered result for a verbosity-skipped debug
@@ -84,6 +84,18 @@ module Krikri
         }.to_json))
       end
       ActionResult.final(final)
+    end
+
+    # The task's own `verbosity:` threshold. Real's spec types it 'int' and
+    # a bool IS an int in Python, so a natively-typed `verbosity: true` is 1
+    # (the task then skips unless -v) and `false` is 0. The demoted wire
+    # text is the only signal left by the time the plugin runs - a QUOTED
+    # "true" is rejected by the spec check upstream and never gets here.
+    private def verbosity_level(value : String?) : Int32
+      return 0 unless value
+      return 1 if value == "true"
+      return 0 if value == "false"
+      value.to_i? || 0
     end
 
     private def debug_var(var_name : String) : ActionResult

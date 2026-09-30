@@ -290,7 +290,21 @@ VIRTUAL = {
     "ansible.builtin.debug": {
         "action_level": True,
         "unsupported_kind": "module",
-        "supported": ["msg", "var", "verbosity"],
+        # Real's debug action validates its OWN spec (plugins/action/
+        # debug.py validate_argument_spec) - msg raw / var
+        # _check_type_str_no_conversion / verbosity int, mutually
+        # exclusive (msg, var) - through the same ArgumentSpecValidator
+        # the module path uses, so the check order is mutually_exclusive
+        # -> types in declaration order -> unsupported parameters LAST,
+        # and only errors[0] is ever reported: a wrong-typed verbosity
+        # beats a typo'd key, a msg+var pair beats both (live-verified
+        # vs 2.19.11).
+        "options": {
+            "msg": {"type": "raw", "default": "Hello world!"},
+            "var": {"type": "str_no_conversion"},
+            "verbosity": {"type": "int", "default": 0},
+        },
+        "mutually_exclusive": [["msg", "var"]],
         # debug's fatal dump carries ONLY msg (real's callback shape).
         "result_keys": ["msg"],
         "print": {
