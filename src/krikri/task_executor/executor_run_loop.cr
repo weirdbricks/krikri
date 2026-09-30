@@ -1491,6 +1491,15 @@ module Krikri
         return apply_changed_failed_when(task, violation, vars_context, host)
       end
 
+      # Real's assemble action expands the destination's user path itself
+      # after the fragments are staged and before the copy module ever
+      # validates anything - so a non-string literal dest crashes the
+      # action instead of failing the copy spec. See
+      # assemble_dest_expand_failure.
+      if violation = assemble_dest_expand_failure(task, substituted_params)
+        return apply_changed_failed_when(task, violation, vars_context, host)
+      end
+
       # Real's dest expand crash fires only after the src lookup succeeded
       # - here that is after inline_copy_source_content above - and after
       # the required-argument checks (see execute_task_once's identical
@@ -1807,6 +1816,14 @@ module Krikri
         return apply_changed_failed_when(task, staged_assemble, vars_context, host)
       end
       substituted_params = staged_assemble
+      # Real's assemble action expands the destination's user path itself
+      # after the fragments are staged and before the copy module ever
+      # validates anything - so a non-string literal dest crashes the
+      # action instead of failing the copy spec. See
+      # assemble_dest_expand_failure.
+      if violation = assemble_dest_expand_failure(task, substituted_params)
+        return apply_changed_failed_when(task, violation, vars_context, host)
+      end
       # become_user: goes through the same {{ }} substitution as any
       # params: value (e.g. become_user: "{{ service_user }}", a common
       # real-playbook pattern) - task.become_user itself is never mutated

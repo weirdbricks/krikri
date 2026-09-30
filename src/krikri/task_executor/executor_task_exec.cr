@@ -1828,6 +1828,31 @@ module Krikri
       literal_crash_result("'#{Krikri.python_scalar_type_name(native)}' object has no attribute '#{attribute}'")
     end
 
+    # Real's assemble action plugin, on the branch that assembles the
+    # fragments on the controller (remote_src present and falsy, see
+    # assemble_action_local_path?), expands the destination's user path
+    # itself - `dest = self._remote_expand_user(dest)` - right after the
+    # fragments are assembled and BEFORE it hands the task to the copy
+    # module, and that expand calls path.startswith('~') on the value. A
+    # non-string YAML literal dest therefore crashes the ACTION plugin
+    # there, and that crash is what the task reports: the copy module's
+    # own spec checks (a typo'd option, a wrong-typed option) never run,
+    # so krikri must not let them report first (live-verified vs 2.19.11:
+    # an int dest crashes with '_AnsibleTaggedInt' and a bool one with
+    # plain 'bool' - and EVERY non-string literal crashes, 0 and false
+    # included, because the action's presence check is a None check, not a
+    # truthiness one). It fires only after the src lookup, the isdir check
+    # and the fragment assembly, which is why this runs after
+    # stage_assemble_dir and not next to the src crash above.
+    private def assemble_dest_expand_failure(task : Task, params : Hash(String, String)) : JSON::Any?
+      return nil unless task.module_name == "ansible.builtin.assemble"
+      return nil unless assemble_action_local_path?(params)
+      dest = params["dest"]?
+      return nil if dest.nil? || dest == Krikri::NONE_SENTINEL
+      return nil unless native = Krikri.non_string_scalar(dest)
+      literal_attribute_crash_result(native, "startswith")
+    end
+
     # os.path.expanduser(os.fspath(x)) on a non-string YAML literal - the
     # crash real's unarchive action hits on a non-string src
     # (`source = os.path.expanduser(source)`, unarchive.py action, both
