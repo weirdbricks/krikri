@@ -258,7 +258,12 @@ module Krikri
           dump = ResultDisplay.dump_suffix(JSON::Any.new({"msg" => JSON::Any.new(msg)}))
           puts "fatal: [#{host_label}]: FAILED! => #{dump}".colorize(:red)
         elsif result["_ansible_verbose_always"]?.try(&.as_bool) == true
-          puts "fatal: [#{host_label}]: FAILED! => #{dump_pretty(clean_for_display(result))}".colorize(:red)
+          # A debug task's own failed result (failed_when:) dumps msg-ONLY
+          # pretty (real 2.19.11: {"msg": "fw"} - the verbose-always path
+          # with debug's msg-only clean; live-verified) - the generic
+          # clean kept changed/failed_when_result in the dump.
+          cleaned = module_name.try(&.ends_with?("debug")) ? debug_clean_result(result) : clean_for_display(result)
+          puts "fatal: [#{host_label}]: FAILED! => #{dump_pretty(cleaned)}".colorize(:red)
         else
           # Real's _dump_results flips to pretty (indent=4) for every dump
           # at -vvv, fatal lines included - not just the ok/changed ones.
@@ -707,7 +712,10 @@ module Krikri
         else
           root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new("Module failed.").with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(msg)))
         end
-      when "fail", "assert"
+      when "fail", "assert", "debug"
+        # debug's failed_when rejection is an ACTION-level failure in real
+        # ("Task failed: Action failed: fw", live-verified vs 2.19.11) -
+        # the action plugin owns the whole result.
         root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new("Action failed.").with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(msg)))
       else
         # copy:'s controller-side src miss (both the remote-host variant,

@@ -1301,6 +1301,14 @@ module Krikri
                          label_context[loop_var] = item
                        end
                        label_context["ansible_loop"] = ansible_loop_vars(loop_items, idx) if task.loop_extended?
+                       # loop_control.index_var is bound during execution -
+                       # a label referencing it (`label: "LBL-{{ i }}"`)
+                       # rendered as "LBL-undefined" without the binding
+                       # here (live-verified vs 2.19.11: the label sees the
+                       # index).
+                       if index_var = task.index_var
+                         label_context[index_var] = JSON::Any.new(idx.to_i64)
+                       end
                        # Re-apply + re-render the task's own `vars:` with
                        # this item bound, same as both execution paths do -
                        # base_vars_context's copy was rendered once before
@@ -1569,7 +1577,7 @@ module Krikri
       if @adhoc
         ResultDisplay.display_adhoc_result(host, result, @diff_mode, module_name: task.module_name)
       else
-        ResultDisplay.display_result(host, result, @diff_mode, ignore_errors: resolve_task_ignore_errors(task, vars_context), no_log: resolve_task_no_log(task, vars_context), source_task: task)
+        ResultDisplay.display_result(host, result, @diff_mode, ignore_errors: resolve_task_ignore_errors(task, vars_context), no_log: resolve_task_no_log(task, vars_context), source_task: task, module_name: task.module_name)
       end
       ResultDisplay.update_stats(@results[host.name], result, resolve_task_ignore_errors(task, vars_context))
       halt_if_failed(task, host, failed, result)
