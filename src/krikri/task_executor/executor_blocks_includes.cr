@@ -107,6 +107,7 @@ module Krikri
 
     private def execute_include_tasks_multi(task : Task, hosts : Array(Host)) : Nil
       Krikri::OutputBanner.banner("TASK [#{task_role_prefix(task)}#{render_task_name_for_display(task, hosts.first)}]")
+      print_task_path(task)
 
       run_hosts, skip_hosts = partition_by_when(task, hosts)
 
@@ -272,6 +273,16 @@ module Krikri
       return "" unless role_name
       return "" if task.module_name == "_include_role"
       "#{role_name} : "
+    end
+
+    # Real ansible-playbook -vv prints `task path: <abs playbook>:<line>`
+    # right after each TASK banner (and for the implicit Gathering Facts
+    # task, the play's own location). Best-effort: tasks parsed without a
+    # source position print nothing.
+    private def print_task_path(task : Task) : Nil
+      return unless Krikri::RunOptions.verbosity >= 2
+      return unless (file = task.source_file) && task.source_line > 0
+      puts "task path: #{File.expand_path(file)}:#{task.source_line}"
     end
 
     # Substitutes each *notify_list* entry against *task*'s own

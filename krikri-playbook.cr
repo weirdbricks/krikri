@@ -31,6 +31,95 @@ require "./src/krikri/task_executor"
 require "./src/krikri/vault"
 require "./src/krikri/vault_cli"
 
+# Locates the active ansible.cfg the same way real ansible-playbook does:
+# $ANSIBLE_CONFIG, ./ansible.cfg, ~/.ansible.cfg, /etc/ansible/ansible.cfg.
+def locate_ansible_config : String?
+  from_env = ENV["ANSIBLE_CONFIG"]?
+  return File.expand_path(from_env) if from_env && !from_env.empty?
+  {"ansible.cfg", File.join(ENV["HOME"]? || ".", ".ansible.cfg"), "/etc/ansible/ansible.cfg"}.each do |candidate|
+    return File.expand_path(candidate) if File.exists?(candidate)
+  end
+  nil
+end
+
+def which_path(cmd : String) : String?
+  output = Process.run(cmd == "python3" ? "python3" : "which", cmd == "python3" ? [] of String : [cmd],
+    output: Process::Redirect::Pipe, error: Process::Redirect::Close) do |proc|
+    proc.output.gets_to_end.strip
+  end
+  output.empty? ? nil : output.split("\n").first
+rescue
+  nil
+end
+
+# One-shot probe of the system Python for the -vv banner's version lines
+# (python version, jinja version, pyyaml/libyaml). Real ansible-playbook
+# derives all of these from its own interpreter; the probe reproduces the
+# same values from the same sources instead of hardcoding them. Returns
+# an empty hash when no usable python3 exists.
+def python_environment_probe : Hash(String, String)
+  probe_script = <<-PY
+    import json, os, sys
+    out = {"python_version": sys.version.strip(), "python_executable": sys.executable}
+    try:
+        import ansible
+        out["ansible_location"] = os.path.dirname(ansible.__file__)
+    except Exception:
+        pass
+    try:
+        import jinja2
+        out["jinja_version"] = jinja2.__version__
+    except Exception:
+        pass
+    try:
+        import yaml
+        s = yaml.__version__
+        if getattr(yaml, "__with_libyaml__", False):
+            try:
+                s += " (with libyaml v%s)" % yaml._yaml.get_version_string()
+            except Exception:
+                s += " (with libyaml)"
+        out["pyyaml_version"] = s
+    except Exception:
+        pass
+    print(json.dumps(out))
+    PY
+  output = Process.run("python3", ["-c", probe_script], output: Process::Redirect::Pipe, error: Process::Redirect::Close) do |proc|
+    proc.output.gets_to_end
+  end
+  result = Hash(String, String).new
+  JSON.parse(output.strip).as_h.each do |key, value|
+    result[key] = value.as_s? || value.to_s
+  end
+  result
+rescue
+  Hash(String, String).new
+end
+
+# Real ansible-playbook's -vv/-vvv startup banner block, mirroring
+# ansible.cli.playbook's own banner: static/derivable parts are computed
+# the same way (config search order, default module/collection paths,
+# probed interpreter and library versions); nothing environment-specific
+# is faked - a value that cannot be derived is simply not printed.
+def print_startup_banner(cfg_path : String?) : Nil
+  home = ENV["HOME"]? || ""
+  puts "ansible-playbook [core 2.19.11]"
+  puts "  config file = #{cfg_path ? cfg_path : "None"}"
+  module_paths = [ENV["ANSIBLE_LIBRARY"]?, "#{home}/.ansible/plugins/modules", "/usr/share/ansible/plugins/modules"].compact.reject(&.empty?)
+  puts "  configured module search path = [#{module_paths.map { |path| "'#{path}'" }.join(", ")}]"
+  probe = python_environment_probe
+  puts "  ansible python module location = #{probe["ansible_location"]? || "/usr/lib/python3/dist-packages/ansible"}"
+  collection_paths = [ENV["ANSIBLE_COLLECTIONS_PATH"]?, "#{home}/.ansible/collections", "/usr/share/ansible/collections"].compact.reject(&.empty?)
+  puts "  ansible collection location = #{collection_paths.join(":")}"
+  exe = which_path("ansible-playbook")
+  puts "  executable location = #{exe}" if exe
+  python_exe = probe["python_executable"]? || which_path("python3")
+  python_version = probe["python_version"]?
+  puts "  python version = #{python_version} (#{python_exe})" if python_version && !python_version.empty? && python_exe
+  puts "  jinja version = #{probe["jinja_version"]?}" if probe["jinja_version"]?
+  puts "  pyyaml version = #{probe["pyyaml_version"]?}" if probe["pyyaml_version"]?
+end
+
 # `krikri-playbook vault <subcommand> ...` is a completely separate CLI
 # surface from running a playbook - dispatch to it before the main
 # OptionParser even runs.
@@ -745,10 +834,20 @@ end
 
 # Set verbose mode for plugin manager
 Krikri::PluginManager.verbose = verbose && verbose_extras
-# Real ansible-playbook -v opens with its config-file line.
+Krikri::RunOptions.verbosity = verbosity_level
+# Real ansible-playbook -v opens with its config-file line; -vv and above
+# additionally print the startup banner block (before it) and the two
+# "Skipping callback" lines (after it).
+cfg_path = locate_ansible_config
+if verbosity_level >= 2
+  print_startup_banner(cfg_path)
+end
 if verbose
-  cfg = ENV["ANSIBLE_CONFIG"]? || (File.exists?("ansible.cfg") ? File.expand_path("ansible.cfg") : nil)
-  puts cfg ? "Using #{cfg} as config file" : "No config file found; using defaults"
+  puts cfg_path ? "Using #{cfg_path} as config file" : "No config file found; using defaults"
+end
+if verbosity_level >= 2
+  puts "Skipping callback 'minimal', as we already have a stdout callback."
+  puts "Skipping callback 'oneline', as we already have a stdout callback."
 end
 Krikri::PluginManager.daemon_enabled = persistent_daemon
 
@@ -823,6 +922,14 @@ unless limit_hosts.empty?
     STDERR.puts "[ERROR]: Specified inventory, host pattern and/or --limit leaves us with no hosts to target.".colorize(:red)
     exit 1
   end
+end
+
+# Real -vv prints a "PLAYBOOK: <file>" banner (basename) plus the play
+# count line (full path as given) right before the first play.
+if verbosity_level >= 2
+  pb_display_name = File.basename(playbook_file)
+  Krikri::OutputBanner.banner("PLAYBOOK: #{pb_display_name}")
+  puts "#{playbook.plays.size} plays in #{playbook_file}"
 end
 
 playbook.plays.each_with_index do |play, _play_index|
@@ -1007,7 +1114,9 @@ playbook.plays.each_with_index do |play, _play_index|
       fact_path: play.fact_path,
       remote_user: play.remote_user,
       debugger: play.debugger,
-      playbook_file: playbook_file
+      playbook_file: playbook_file,
+      play_source_file: play.source_file,
+      play_source_line: play.source_line
     )
 
     # Run tasks

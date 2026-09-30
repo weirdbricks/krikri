@@ -229,6 +229,7 @@ module Krikri
         unless @adhoc || (task.include_role? && task.is_static_import?)
           display_host = active_hosts.first? || hosts.first
           Krikri::OutputBanner.banner("TASK [#{task_role_prefix(task)}#{render_task_name_for_display(task, display_host)}]")
+          print_task_path(task)
         end
 
         if @forks > 1 && task_forkable?(task) && active_hosts.size > 1 && task.throttle != 1 && (task.debugger || @debugger).nil?
@@ -2406,6 +2407,7 @@ module Krikri
         end
 
         Krikri::OutputBanner.banner("TASK [#{task_role_prefix(nested_task)}#{render_task_name_for_display(nested_task, host)}]")
+        print_task_path(nested_task)
         execute_task(nested_task, host)
       end
     end

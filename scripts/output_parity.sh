@@ -166,6 +166,13 @@ for pb in "${playbooks[@]}"; do
 
     extra=()
     [ "$mode" = check ] && extra+=(--check)
+    # Optional extra ansible-playbook args applied to BOTH engines
+    # identically, e.g. PARITY_ARGS="-vv" to compare verbosity levels.
+    # Word-split on purpose; a single level of quoting is enough here.
+    if [ -n "${PARITY_ARGS:-}" ]; then
+      # shellcheck disable=SC2206
+      extra+=($PARITY_ARGS)
+    fi
 
     run_engine "$REAL" "$pb" "$base/real" "$real_cwd" "${extra[@]+"${extra[@]}"}"
     run_engine "$KRIKRI" "$pb" "$base/krikri" "$krikri_cwd" "${extra[@]+"${extra[@]}"}"

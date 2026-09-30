@@ -8,5 +8,8 @@ module Krikri
     class_property inventory_sources : Array(String) = [] of String
     # nil = not given on the command line (real ansible's default is 5)
     class_property forks : Int32? = nil
+    # Numeric -v/-vv/... verbosity, readable from output paths that don't
+    # carry the executor (HandlerRunner, ResultDisplay).
+    class_property verbosity : Int32 = 0
   end
 end

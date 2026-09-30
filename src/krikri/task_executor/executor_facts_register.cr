@@ -43,6 +43,11 @@ module Krikri
       return if targets.empty?
 
       Krikri::OutputBanner.banner("TASK [Gathering Facts]")
+      # Real -vv labels the implicit facts task's `task path:` with the
+      # play's own location, not a task line.
+      if Krikri::RunOptions.verbosity >= 2 && (file = @play_source_file) && @play_source_line > 0
+        puts "task path: #{File.expand_path(file)}:#{@play_source_line}"
+      end
 
       # A host the pre-upload pass already found unreachable must NOT get
       # a second live SSH attempt here - real ansible-playbook only ever

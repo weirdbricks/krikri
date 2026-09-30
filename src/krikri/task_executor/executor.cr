@@ -413,6 +413,11 @@ module Krikri
       # #finalize_args_failure_message). nil (specs, ad-hoc) omits that
       # context block.
       @playbook_file : String? = nil,
+      # The play's own source position - real Ansible labels the implicit
+      # Gathering Facts task's `task path:` line with the play's location
+      # (see Play#source_file/#source_line).
+      @play_source_file : String? = nil,
+      @play_source_line : Int32 = 0,
     )
       @results = Hash(String, Hash(String, Int32)).new
       # The caller owns run-scoped stores and hands the same ones to every

@@ -691,6 +691,11 @@ module Krikri
     property name : String
     property hosts : String | Array(String)
     property tasks : Array(Task)
+    # Play-level source position (start of the play's own YAML mapping) -
+    # real Ansible labels the implicit Gathering Facts task's `task path:`
+    # line with the play's location, not a task's own.
+    property source_file : String? = nil
+    property source_line : Int32 = 0
     property vars : Hash(String, JSON::Any)
     property? become : Bool
     property become_user : String?
@@ -1603,6 +1608,12 @@ module Krikri
       name = explicit_name || (hosts.is_a?(Array) ? hosts.join(",") : hosts)
 
       play = Play.new(name, hosts)
+      # Stamp the play's own source position (start of its YAML mapping):
+      # feeds the implicit Gathering Facts task's `task path:` line at -vv.
+      play.source_file = source_file
+      if pos = source_map.try(&.at?(index.to_s))
+        play.source_line = pos[0]
+      end
 
       # Parse play-level settings
       play.become = parse_become_value(yaml["become"]?) || false
