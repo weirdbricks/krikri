@@ -5,6 +5,8 @@ require "./module_registry"
 require "./loop_resolver"
 require "./python_module_runner"
 require "./role_loader"
+require "./role_bool_keywords"
+require "./task_executor/error_block"
 require "./vault"
 require "./variable_substitutor"
 
@@ -527,6 +529,13 @@ module Krikri
     # source - the runtime role-not-found failure's Origin block points
     # there, not at the task's first key (live-verified vs 2.19.11).
     property include_role_name_origin : {Int32, Int32}?
+    # An include_role:'s own boolean keyword (public/allow_duplicates/
+    # rolespec_validate) whose value real cannot convert to a Python bool
+    # - real reports that before it resolves the role at all, as a normal
+    # task failure (see RoleBoolKeywords). nil for every convertible (or
+    # templated) value, and always nil for a static import_role:, where
+    # the same failure is a playbook-load abort instead.
+    property include_role_bool_failure : RoleBoolKeywords::Failure?
     # Synthesized by RoleLoader when a role has meta/argument_specs.yml -
     # only set when module_name == "_validate_argument_spec". Real Ansible
     # auto-inserts this as the role's first task ("Validating arguments
@@ -606,6 +615,7 @@ module Krikri
       @include_role_dir = nil
       @include_role_tasks_from = nil
       @include_role_name_origin = nil
+      @include_role_bool_failure = nil
       @validate_argument_spec_options = nil
     end
 
@@ -2287,6 +2297,19 @@ module Krikri
         # option or a missing name aborts the run with rc=4 even when
         # the role exists, live-verified vs 2.19.11).
         validate_include_role_args(written_directive_key(task_hash, "import_role"), import_role_args, source_file, source_map, source_prefix, index)
+        # Real converts an import_role:'s own boolean keywords (public,
+        # allow_duplicates, rolespec_validate) as part of loading it -
+        # BEFORE it resolves the role name, so an unconvertible value
+        # aborts the whole run (rc=4, no play banner) even when the role
+        # itself does not exist (live-verified vs 2.19.11). The dynamic
+        # include_role: form fails the same value at run time instead -
+        # see parse_include_role.
+        if (bool_failure = RoleBoolKeywords.failure(import_role_args))
+          if source_map && (pos = source_map.at?("#{task_source_prefix(source_prefix, index)}/#{written_directive_key(task_hash, "import_role")}/#{bool_failure.keyword}"))
+            bool_failure.origin = pos
+          end
+          raise IncludeDirectiveError.new(role_bool_keyword_render(bool_failure, source_file))
+        end
         # Like import_tasks:'s path, import_role:'s NAME is static - real
         # Ansible resolves it before the run and refuses the whole
         # playbook if it can only be known from a fact. This engine
@@ -3344,6 +3367,24 @@ module Krikri
       raise IncludeDirectiveError.new(render)
     end
 
+    # The stderr block real prints when an import_role:'s boolean keyword
+    # cannot be converted to a bool at playbook-load time: the same
+    # rendering as any other error block (collapsed brief, then the two
+    # non-collapsible cause links - "Error processing keyword 'x'." and
+    # the conversion error - each with the VALUE's own Origin block),
+    # minus the task-level "Task failed." link real's dynamic include_role:
+    # form has, because no task ever ran. Built here because the source
+    # map lives here.
+    private def self.role_bool_keyword_render(failure : RoleBoolKeywords::Failure, source_file : String?) : String
+      origin = if pos = failure.origin
+                 source_file.try { |path| ErrorBlock.origin_context(path, pos[0], pos[1]) }
+               end
+      conversion = ErrorBlock::Node.new(failure.conversion_message, source_context: origin)
+      keyword = ErrorBlock::Node.new(failure.keyword_message, source_context: origin)
+      keyword.with_chain(ErrorBlock::DIRECT_CAUSE, true, conversion)
+      "[ERROR]: " + ErrorBlock.format_event(keyword)
+    end
+
     # The native value of an include directive's file path when the
     # playbook wrote it as a non-string YAML literal (`file: 21`), or nil
     # when it was an ordinary string (the common case) or a shape this
@@ -3983,11 +4024,26 @@ module Krikri
 
       role_name = validate_include_role_args(action, role_args, source_file, source_map, source_prefix, source_index)
       raise "include_role: missing required 'name'" unless role_name
+
+      # Real converts include_role:'s own boolean keywords (public,
+      # allow_duplicates, rolespec_validate) before it resolves the role,
+      # in that order, and a value that is not a bool fails the task
+      # (the executor's own path, before the role lookup). Checked last
+      # so every other argument error is reported first, exactly like
+      # real (live-verified vs 2.19.11). A STATIC import_role: gets the
+      # same check at load time instead - see its own parse branch.
+      if (bool_failure = RoleBoolKeywords.failure(role_args))
+        if source_map && (pos = source_map.at?("#{task_source_prefix(source_prefix, source_index)}/#{action}/#{bool_failure.keyword}"))
+          bool_failure.origin = pos
+        end
+      end
+
       # Real IncludeRole.get_name: an unnamed include_role/import_role is
       # displayed as "<action> : <role name>".
       display_name = name || "#{is_static ? "import_role" : "include_role"} : #{role_name}"
       task = Task.new(display_name, "_include_role")
       task.is_static_import = is_static
+      task.include_role_bool_failure = bool_failure
       task.include_role_name = role_name
       task.include_role_dir = file_dir
       task.include_role_tasks_from = role_args["tasks_from"]?.try(&.as_s)

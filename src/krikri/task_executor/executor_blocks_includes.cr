@@ -1882,6 +1882,50 @@ module Krikri
       halt_if_failed(task, host, true, force_halt: true)
     end
 
+    # include_role:'s own boolean keyword (public/allow_duplicates/
+    # rolespec_validate) whose value is not convertible to a Python bool.
+    # Real 2.19.11 (live-verified): this is an ORDINARY task failure, not
+    # a role-resolution failure - the three-link chain ("Task failed." ->
+    # "Error processing keyword 'x'." -> "The value 'v' could not be
+    # converted to 'bool'.") prints on stdout, the task result is the
+    # two-key fatal dump, ignore_errors: DOES apply, and the play halts
+    # for that host like any other failed task (rc=2).
+    private def fail_include_role_bool_keyword(task : Task, host : Host, failure : RoleBoolKeywords::Failure, item_label : String?) : Nil
+      ignore_errors = resolve_task_ignore_errors(task)
+      if ignore_errors
+        @results[host.name]["ok"] += 1
+        @results[host.name]["ignored"] += 1
+      else
+        @results[host.name]["failed"] += 1
+      end
+
+      task_origin = if path = task.source_file
+                      if task.source_line > 0
+                        ErrorBlock.origin_context(path, task.source_line, task.source_col > 0 ? task.source_col : nil)
+                      end
+                    end
+      value_origin = if pos = failure.origin
+                       task.source_file.try { |path| ErrorBlock.origin_context(path, pos[0], pos[1]) }
+                     end
+      if task_origin
+        conversion = ErrorBlock::Node.new(failure.conversion_message, source_context: value_origin)
+        keyword = ErrorBlock::Node.new(failure.keyword_message, source_context: value_origin)
+        keyword.with_chain(ErrorBlock::DIRECT_CAUSE, true, conversion)
+        ErrorBlock.emit(ErrorBlock::Node.new("Task failed.", source_context: task_origin)
+          .with_chain(ErrorBlock::DIRECT_CAUSE, true, keyword))
+      end
+
+      connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
+      brief = "Task failed: #{failure.brief}"
+      if item_label
+        puts "failed: [#{connection_host}] (item=#{item_label}) => {\"changed\": false, \"msg\": #{brief.to_json}}".colorize(:red)
+      else
+        puts "fatal: [#{connection_host}]: FAILED! => {\"changed\": false, \"msg\": #{brief.to_json}}".colorize(:red)
+      end
+      puts "...ignoring".colorize(:red) if ignore_errors
+      halt_if_failed(task, host, true)
+    end
+
     # Runs an include_role: task - the dynamic counterpart to a roles:
     # list entry. Task-level keywords (when:/tags:/loop:) apply to the
     # include_role statement itself, same as include_tasks.
@@ -2041,6 +2085,17 @@ module Krikri
       # `ok=0 failed=1` (a fatal, unrescued include_role halts the play for
       # that host immediately, same as any other fatal task), crystal's was
       # `ok=1 failed=1`.
+
+      # Real converts this include_role:'s own boolean keywords (public,
+      # allow_duplicates, rolespec_validate) BEFORE it resolves the role,
+      # so an unconvertible value fails the task with the conversion
+      # error even when the role name would not have resolved either
+      # (live-verified vs 2.19.11). Placed after the when: check above,
+      # like every other task-body failure.
+      if (bool_failure = task.include_role_bool_failure)
+        fail_include_role_bool_keyword(task, host, bool_failure, item_label)
+        return
+      end
 
       substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
       role_name = substitutor.substitute(task.include_role_name.as(String))

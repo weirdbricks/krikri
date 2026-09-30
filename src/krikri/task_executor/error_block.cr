@@ -121,7 +121,15 @@ module Krikri
           break if child.events
 
           if child.source_context || child.help_text
-            break if child.source_context != event.source_context || child.help_text != event.help_text
+            # Real's SourceContext carries no value equality, so two
+            # events never share one: a child with its OWN source
+            # context always ends the collapsed segment, even when it
+            # renders byte-identical text to its parent's (its parent's
+            # is then simply repeated). Live-verified against 2.19.11 on
+            # include_role:'s bool-keyword conversion failure, whose
+            # last two links both point at the same value and still
+            # print as two segments.
+            break if !child.source_context.nil? || child.help_text != event.help_text
           end
 
           break if child.chain && link.chain_reason != child.chain_reason
