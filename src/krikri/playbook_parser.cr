@@ -507,6 +507,19 @@ module Krikri
     # execute_include_vars.
     property include_vars_invalid_arg : String?
     property? include_vars_mixed : Bool = false
+    # The Python type name of a TRUTHY non-string `file:`/`dir:` value.
+    # Real's include_vars action plugin touches that value itself there -
+    # os.path.join(current_dir, self.source_dir) for dir, and
+    # source.startswith('~') inside _find_needle for file - and crashes
+    # with the type name in the message, before any str() copy of the
+    # path is taken (live-verified vs 2.19.11). A FALSY non-string value
+    # (0, 0.0, false, "", [], {}, null) is not an error at all: real's
+    # `if not self.source_dir and not self.source_file` check discards it
+    # and the lookup goes on with a None needle, which is exactly the
+    # plain null-file failure this engine already produces. nil for every
+    # ordinary (string) value.
+    property include_vars_file_type_error : String?
+    property include_vars_dir_type_error : String?
     # vars: on an include_tasks: statement - visible to every task in the
     # included file (unlike import_tasks:'s vars:, which is merged
     # directly into each imported task at parse time, this has to be
@@ -610,6 +623,8 @@ module Krikri
       @include_vars_ignore_files = nil
       @include_vars_ignore_unknown_extensions = nil
       @include_vars_extensions = nil
+      @include_vars_file_type_error = nil
+      @include_vars_dir_type_error = nil
       @include_role_name = nil
       @include_role_vars = nil
       @include_role_dir = nil
@@ -2376,7 +2391,7 @@ module Krikri
       if include_vars_yaml = directive(task_hash, "include_vars")
         # An unnamed task's banner is the action AS WRITTEN (FQCN or short)
         written = ["include_vars", "ansible.builtin.include_vars", "ansible.legacy.include_vars"].find { |key| task_hash.has_key?(key) } || "include_vars"
-        return parse_include_vars_task(name || written, task_hash, include_vars_yaml)
+        return parse_include_vars_task(name || written, task_hash, include_vars_yaml, source_file, source_map, source_prefix, index)
       end
 
       # Find the module (first key that's not a special keyword). Built
@@ -3031,7 +3046,7 @@ module Krikri
     INCLUDE_VARS_FILE_ARGS = ["file", "_raw_params"]
     INCLUDE_VARS_ALL_ARGS  = ["name", "hash_behaviour"]
 
-    private def self.parse_include_vars_task(name : String, task_hash : Hash(YAML::Any, YAML::Any), value : YAML::Any) : Task
+    private def self.parse_include_vars_task(name : String, task_hash : Hash(YAML::Any, YAML::Any), value : YAML::Any, source_file : String? = nil, source_map : YamlSourceMap? = nil, source_prefix : String = "", source_index : Int32 = 0) : Task
       task = Task.new(name, "_include_vars")
 
       if hash = value.as_h?
@@ -3075,18 +3090,34 @@ module Krikri
 
         dir = hash["dir"]?
         if dir
-          task.include_vars_dir = safe_yaml_to_string(dir)
-          task.include_vars_depth = hash["depth"]?.try { |depth_val| safe_yaml_to_string(depth_val) }
-          task.include_vars_files_matching = hash["files_matching"]?.try { |pattern| safe_yaml_to_string(pattern) }
-          task.include_vars_ignore_files = hash["ignore_files"]?.try do |list|
-            list.as_a?.try(&.map { |entry| safe_yaml_to_string(entry) }) || [safe_yaml_to_string(list)]
-          end
-          task.include_vars_ignore_unknown_extensions = parse_become_value(hash["ignore_unknown_extensions"]?) || false
-          task.include_vars_extensions = hash["extensions"]?.try do |list|
-            list.as_a?.try(&.map { |entry| safe_yaml_to_string(entry) }) || [safe_yaml_to_string(list)]
+          # A dir: value is not automatically a path in real: a FALSY one
+          # (0, 0.0, false, "", [], {}, a bare `dir:`) is discarded by
+          # `if not self.source_dir and not self.source_file` and leaves
+          # the plain null-file failure, and a TRUTHY non-string one
+          # crashes os.path.join with its Python type name (see
+          # include_vars_path_kind). The dir:-only sibling options are
+          # only read when a real dir: is in play, exactly like real's
+          # _set_dir_defaults.
+          dir_str, task.include_vars_dir_type_error = include_vars_path_kind(dir)
+          if dir_str
+            task.include_vars_dir = dir_str
+            task.include_vars_depth = hash["depth"]?.try { |depth_val| safe_yaml_to_string(depth_val) }
+            task.include_vars_files_matching = hash["files_matching"]?.try { |pattern| safe_yaml_to_string(pattern) }
+            task.include_vars_ignore_files = hash["ignore_files"]?.try do |list|
+              list.as_a?.try(&.map { |entry| safe_yaml_to_string(entry) }) || [safe_yaml_to_string(list)]
+            end
+            task.include_vars_ignore_unknown_extensions = parse_become_value(hash["ignore_unknown_extensions"]?) || false
+            task.include_vars_extensions = hash["extensions"]?.try do |list|
+              list.as_a?.try(&.map { |entry| safe_yaml_to_string(entry) }) || [safe_yaml_to_string(list)]
+            end
           end
         elsif file = hash["file"]?
-          task.include_vars_file = file.as_s
+          # Same three-way split for file: (see above), with the crash
+          # landing in _find_needle's source.startswith instead of
+          # os.path.join. A bare YAML `file:` with no value lands here
+          # too, and is simply discarded.
+          file_str, task.include_vars_file_type_error = include_vars_path_kind(file)
+          task.include_vars_file = file_str
         end
         task.include_vars_name = hash["name"]?.try do |name_val|
           # The `name:` value becomes the FACTS KEY verbatim (real
@@ -3100,7 +3131,20 @@ module Krikri
           name_val.as_s? || (Krikri::NON_STRING_PARAM_PREFIX + name_val.to_json)
         end
       else
-        task.include_vars_file = value.as_s
+        # The free-form form (`include_vars: foo.yml`) is real's
+        # _raw_params. A non-string, non-mapping value never becomes one:
+        # mod_args refuses it before the action plugin is ever reached -
+        # "unexpected parameter type in action: <class '...'>", the same
+        # whole-playbook abort (rc=4, no play banner) import_tasks:/
+        # include_tasks:/include_role: already raise.
+        if !value.as_s? && !value.raw.nil?
+          type_name = unexpected_meta_param_type(value) ||
+            "ansible.module_utils._internal._datatag._AnsibleTaggedDict"
+          raise_include_directive_error(
+            "unexpected parameter type in action: <class '#{type_name}'>",
+            true, source_file, source_map, source_prefix, source_index)
+        end
+        task.include_vars_file = value.as_s?
       end
 
       parse_common_task_attributes(task, task_hash)
@@ -3351,7 +3395,40 @@ module Krikri
       when Float64  then raw != 0.0
       when String   then !raw.empty?
       when Hash(YAML::Any, YAML::Any) then !raw.empty?
+      when Array(YAML::Any) then !raw.empty?
       else true
+      end
+    end
+
+    # How real's include_vars action plugin treats a `file:`/`dir:` value,
+    # as {path, type_error}:
+    #
+    # - a non-empty STRING is the path,
+    # - a FALSY value (null, 0, 0.0, false, "", [], {}) is discarded by
+    #   real's `if not self.source_dir and not self.source_file` check
+    #   before any path code sees it, so the lookup goes on with a None
+    #   needle: {nil, nil}, the plain null-file failure this engine
+    #   already produces,
+    # - a TRUTHY non-string crashes the plugin where it uses the value as
+    #   a path - os.path.join for dir, source.startswith inside
+    #   _find_needle for file - and the crash text carries the value's
+    #   Python type name: {"_AnsibleTaggedInt"} and friends (live-
+    #   verified vs 2.19.11: int/float/list/dict ride the tagged
+    #   subclasses, bools are plain Python bools).
+    private def self.include_vars_path_kind(yaml : YAML::Any) : {String?, String?}
+      case raw = yaml.raw
+      when String
+        raw.empty? ? {nil, nil} : {raw, nil}
+      else
+        return {nil, nil} unless include_arg_truthy?(yaml)
+        type_name = case raw
+                    when Int64           then "_AnsibleTaggedInt"
+                    when Float64         then "_AnsibleTaggedFloat"
+                    when Bool            then "bool"
+                    when Array(YAML::Any) then "_AnsibleTaggedList"
+                    else                       "_AnsibleTaggedDict"
+                    end
+        {nil, type_name}
       end
     end
 

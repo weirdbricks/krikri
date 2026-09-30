@@ -434,6 +434,21 @@ module Krikri
         finish_include_vars_arg_failure(task, host, "You are mixing file only and dir only arguments, these are incompatible")
         return
       end
+      # A truthy non-string file:/dir: crashes real's own action plugin
+      # where it uses the value as a path (include_vars.py's
+      # _find_needle('vars', source_file) and _set_root_dir's
+      # os.path.join), which is AFTER the validation loop above but
+      # BEFORE the null-file warning/lookup below ever runs (a falsy
+      # non-string lands there instead - see
+      # include_vars_value_type_error).
+      if type_name = task.include_vars_dir_type_error
+        finish_include_vars_arg_failure(task, host, "join() argument must be str, bytes, or os.PathLike object, not '#{type_name}'")
+        return
+      end
+      if type_name = task.include_vars_file_type_error
+        finish_include_vars_arg_failure(task, host, "'#{type_name}' object has no attribute 'startswith'")
+        return
+      end
       name_key, name_unhashable = include_vars_name_shape(task)
       unless task.include_vars_dir || task.include_vars_file
         unless @include_vars_null_warned
