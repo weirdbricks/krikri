@@ -565,6 +565,74 @@ describe Krikri::ArgspecValidator do
       {"var" => Krikri::NON_STRING_PARAM_PREFIX + "5", "verbosity" => "qqq"}, vars)
     failure.not_nil!.msg.must_include("argument 'var' is of type int")
   end
+
+  # copy's and template's ACTION plugins read `follow` through
+  # boolean(strict=False) and hand the copy MODULE the coerced boolean, so
+  # a spelling real would reject never reaches that module's spec - except
+  # on copy's remote_src branch, which passes the raw args (live-verified
+  # vs 2.19.11).
+  it "never type-checks copy/template's follow the way their action plugin reads it" do
+    template = {"src" => "/tmp/s.j2", "dest" => "/tmp/d", "follow" => "hcsjhk"}
+    # template: the bad follow is coerced to False by the action plugin, so
+    # a typo'd key is the only thing left to fail on.
+    failure = Krikri::ArgspecValidator.validate(
+      "template", "ansible.builtin.template", template.merge({"gropu" => "root"}), vars)
+    failure.not_nil!.msg.must_equal(
+      "Unsupported parameters for (ansible.legacy.copy) module: gropu. " \
+      "Supported parameters include: _original_basename, attributes, backup, checksum, content, " \
+      "dest, directory_mode, follow, force, group, local_follow, mode, owner, remote_src, " \
+      "selevel, serole, setype, seuser, src, unsafe_writes, validate (attr).")
+    # ... and a wrong-typed option alongside it is reported instead.
+    failure = Krikri::ArgspecValidator.validate(
+      "template", "ansible.builtin.template", template.merge({"backup" => "notabool"}), vars)
+    failure.not_nil!.msg.must_equal(
+      "argument 'backup' is of type str and we were unable to convert to bool: " \
+      "The value 'notabool' is not a valid boolean. Valid booleans include: " \
+      "#{Krikri::ArgspecValidator::BOOLEANS_REPR.join(", ")}")
+    # copy: same on its controller-side path - which copy.py:422 picks with
+    # the SAME boolean(strict=False), so 'no' and the string "false" are
+    # falsy there too (live-verified vs 2.19.11).
+    {"no", "false", Krikri::NON_STRING_PARAM_PREFIX + "false"}.each do |remote_src|
+      failure = Krikri::ArgspecValidator.validate(
+        "copy", "ansible.builtin.copy",
+        template.merge({"gorup" => "root", "remote_src" => remote_src}), vars)
+      failure.not_nil!.msg.must_include("module: gorup.")
+      failure.not_nil!.msg.wont_include("argument 'follow'")
+    end
+    # ... but with a truthy remote_src the raw args go to the module, where
+    # the strict spec does reject it - ahead of the typo'd key.
+    {"true", "yes"}.each do |remote_src|
+      failure = Krikri::ArgspecValidator.validate(
+        "copy", "ansible.builtin.copy",
+        template.merge({"gorup" => "root", "remote_src" => remote_src}), vars)
+      failure.not_nil!.msg.must_include("argument 'follow' is of type str")
+    end
+  end
+
+  it "keeps template's own action-level checks ahead of the copy spec" do
+    # `state` is a None check in real's action plugin, so a `state:` with no
+    # value passes it and only the typo'd key is reported.
+    failure = Krikri::ArgspecValidator.validate(
+      "template", "ansible.builtin.template",
+      {"src" => "/tmp/s.j2", "dest" => "/tmp/d", "state" => "present", "gropu" => "root"}, vars)
+    failure.not_nil!.msg.must_equal("'state' cannot be specified on a template")
+    failure.not_nil!.action_level?.must_equal(true)
+    failure = Krikri::ArgspecValidator.validate(
+      "template", "ansible.builtin.template",
+      {"src" => "/tmp/s.j2", "dest" => "/tmp/d", "state" => Krikri::NONE_SENTINEL, "gropu" => "root"}, vars)
+    failure.not_nil!.msg.must_include("Unsupported parameters for (ansible.legacy.copy) module: gropu")
+
+    # `decrypt` is action-only: copy's action plugin drops it (and content)
+    # from the module args, so it is never an unsupported parameter.
+    failure = Krikri::ArgspecValidator.validate(
+      "template", "ansible.builtin.template",
+      {"src" => "/tmp/s.j2", "dest" => "/tmp/d", "decrypt" => "notabool", "gropu" => "root"}, vars)
+    failure.not_nil!.msg.must_equal(
+      "Unsupported parameters for (ansible.legacy.copy) module: gropu. " \
+      "Supported parameters include: _original_basename, attributes, backup, checksum, content, " \
+      "dest, directory_mode, follow, force, group, local_follow, mode, owner, remote_src, " \
+      "selevel, serole, setype, seuser, src, unsafe_writes, validate (attr).")
+  end
 end
 
 # End-to-end display shape: a validation failure flowing through

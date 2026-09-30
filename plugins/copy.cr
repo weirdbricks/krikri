@@ -24,8 +24,19 @@ module Krikri
     # declaration order (ansible-doc -j ansible.builtin.copy). Validated at
     # module setup by BasePlugin#validate_bool_params! - see its block
     # comment for the real-Ansible semantics and message wording.
+    #
+    # `follow` is conditional: real's copy ACTION plugin reads it through
+    # boolean(value, strict=False) and hands the MODULE the coerced boolean
+    # (copy.py:328-335) - so on that path an invalid spelling is silently
+    # False and the module never rejects it. Only the remote_src branch
+    # passes the raw args to the module, where the strict spec does apply
+    # (live-verified vs 2.19.11). copy.py:422 picks that branch with the
+    # SAME boolean(strict=False) as this predicate. Same condition, same
+    # reasoning in ArgspecValidator's copy follow normalisation.
     protected def bool_params : Array(String)
-      %w[backup decrypt follow force local_follow remote_src unsafe_writes]
+      params = %w[backup decrypt follow force local_follow remote_src unsafe_writes]
+      return params if Krikri.lenient_boolean_true?(@params["remote_src"]?)
+      params.reject { |name| name == "follow" }
     end
 
     # These default to None in real's argspec, so an explicit null

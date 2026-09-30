@@ -157,7 +157,12 @@ BOOL_PARAM_TABLE = {
   "assert"            => %w[quiet],
   "blockinfile"       => %w[append_newline backup create prepend_newline unsafe_writes],
   "command"           => %w[expand_argument_vars stdin_add_newline strip_empty_ends],
-  "copy"              => %w[backup decrypt follow force local_follow remote_src unsafe_writes],
+    # follow is validated only on copy's remote_src branch: real's copy
+    # ACTION plugin reads it through boolean(strict=False) and hands the
+    # MODULE the coerced boolean (copy.py:328-335), so a bad spelling is
+    # silently False on the controller-side path. Asserted by the
+    # dedicated case below.
+  "copy"              => %w[backup decrypt force local_follow remote_src unsafe_writes],
   "cron"              => %w[backup disabled env],
   "debconf"           => %w[unseen],
   "deb822_repository" => %w[allow_downgrade_to_insecure allow_insecure allow_weak by_hash check_date check_valid_until enabled pdiffs trusted],
@@ -190,7 +195,9 @@ BOOL_PARAM_TABLE = {
   "stat"              => %w[follow get_attributes get_checksum get_mime],
   "subversion"        => %w[checkout export force in_place switch update validate_certs],
   "systemd"           => %w[daemon_reexec daemon_reload enabled force masked no_block],
-  "template"          => %w[backup follow force unsafe_writes],
+    # ... and template's action plugin always coerces follow before it
+    # delegates to copy, so its spec never sees it either.
+  "template"          => %w[backup force unsafe_writes],
   "unarchive"         => %w[copy decrypt keep_newer list_files remote_src unsafe_writes validate_certs],
   "uri"               => %w[decompress force force_basic_auth remote_src return_content unsafe_writes use_gssapi use_netrc use_proxy validate_certs],
   "user"              => %w[append create_home force generate_ssh_key hidden local move_home non_unique password_lock remove system],
@@ -299,6 +306,29 @@ describe "core plugins' documented bool params (table sweep)" do
   it "template: trim_blocks/lstrip_blocks stay unvalidated, like real (action-plugin-consumed)" do
     result = PluginSpecHelper.run("template", {"dest" => "/tmp", "trim_blocks" => "blah"})
     msg_of(result).wont_include("unable to convert to bool")
+  end
+
+  it "copy/template: follow stays unvalidated on the action plugin's own path, like real" do
+    # real's copy action plugin reads follow through boolean(strict=False)
+    # and passes the COERCED boolean to the copy module, so an
+    # unrecognized spelling is simply False and the module never rejects
+    # it (live-verified vs 2.19.11: `follow: krikri-not-a-bool` copies
+    # fine). With a truthy remote_src copy's action hands the RAW args to
+    # the module, where the strict spec does apply - and template's own
+    # action plugin coerces follow before delegating, so the remote_src
+    # branch there still sees a real boolean.
+    result = PluginSpecHelper.run("copy", {"dest" => "/tmp/krikri-bool-probe-follow",
+      "src" => "/etc/hostname", "follow" => "krikri-not-a-bool"})
+    msg_of(result).wont_include("unable to convert to bool")
+
+    remote = PluginSpecHelper.run("copy", {"dest" => "/tmp/krikri-bool-probe-follow",
+      "src" => "/etc/hostname", "remote_src" => "true", "follow" => "krikri-not-a-bool"})
+    remote["failed"].as_bool.must_equal(true)
+    remote["msg"].as_s.must_equal(bool_error("follow", "str", "krikri-not-a-bool"))
+
+    tpl = PluginSpecHelper.run("template", {"dest" => "/tmp/krikri-bool-probe-follow",
+      "remote_src" => "true", "follow" => "krikri-not-a-bool"})
+    msg_of(tpl).wont_include("unable to convert to bool")
   end
 
   it "assemble: remote_src stays unvalidated, like real (the action reads it boolean(strict=False) first)" do

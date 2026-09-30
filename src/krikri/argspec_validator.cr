@@ -197,6 +197,37 @@ module Krikri
         params = params.map { |key, value| {key, marked_list_as_json(value)} }.to_h
       end
 
+      # copy's ACTION plugin builds the copy module's args with
+      # _create_remote_copy_args, which drops the two action-only keys
+      # `content` and `decrypt` (copy.py:47-49) - `decrypt` is not in the
+      # copy spec at all, so a template or copy task that sets it is never
+      # rejected for it (live-verified vs 2.19.11: `decrypt: notabool`
+      # plus a typo'd option reports the typo, not decrypt).
+      if module_name == "ansible.builtin.template" || module_name == "ansible.builtin.copy"
+        params = params.reject { |key, _| key == "decrypt" }
+      end
+
+      # copy's and template's ACTION plugins read `follow` themselves,
+      # through boolean(value, strict=False), and hand the copy MODULE the
+      # coerced boolean (copy.py:328-335 and :519-520; template.py does the
+      # same before it even delegates) - so the copy module never sees a
+      # non-boolean `follow`: an invalid spelling is simply False and can
+      # never fail the task, not even when a typo'd option is present
+      # alongside it (live-verified vs 2.19.11: template with
+      # `follow: hcsjhk` plus `gropu` fails with copy's
+      # Unsupported-parameters error, and a wrong-typed `backup:` alongside
+      # a bad `follow` reports the backup bool error). copy's own action
+      # plugin only takes that path when remote_src is FALSY under the very
+      # same boolean(strict=False) (copy.py:422) - a truthy one hands the
+      # raw args to the module, where a bad `follow` DOES fail the spec
+      # (live-verified vs 2.19.11).
+      if module_name == "ansible.builtin.template" ||
+         (module_name == "ansible.builtin.copy" && !Krikri.lenient_boolean_true?(params["remote_src"]?))
+        if follow = params["follow"]?
+          params = params.merge({"follow" => (Krikri.lenient_boolean_true?(follow) ? "true" : "false")})
+        end
+      end
+
       # The parser's non-string-literal markers (NON_STRING_PARAM_PREFIX)
       # are executor-internal wire dressing: demote them back to the plain
       # string form every spec check has always seen, so a marked
@@ -251,6 +282,15 @@ module Krikri
       if module_name == "ansible.builtin.template" && !params.has_key?("content") &&
          (!params.has_key?("src") || !params.has_key?("dest"))
         return Failure.new("src and dest are required", true)
+      end
+      # template's action plugin, in its own order: the string-typed option
+      # coercion, then the state check, then src/dest, then newline_sequence
+      # - all before the copy module ever sees the args. `state` is a None
+      # check, so a `state:` with no value passes (live-verified vs
+      # 2.19.11: `state: present` plus a typo'd option reports the state
+      # error, and copy's unsupported-parameter error never gets to run).
+      if module_name == "ansible.builtin.template" && provided_param?(params, "state")
+        return Failure.new("'state' cannot be specified on a template", true)
       end
       # package's action plugin: an unknown `use:` manager fails before the
       # delegated module ever validates anything.

@@ -2117,8 +2117,12 @@ module Krikri
       # (live-verified vs 2.19.11). The module-level failures of the
       # template: delegation are therefore skipped in check mode; the
       # action-level ones (src/dest presence) still fire, exactly like
-      # real's action plugin.
-      return nil if check_mode && !action_level_only && task.module_name == "ansible.builtin.template"
+      # real's action plugin. A truthy remote_src is the one exception:
+      # that branch dispatches the copy module right away (copy.py:466),
+      # so its spec - unsupported parameters included - does run under
+      # --check too.
+      return nil if check_mode && !action_level_only &&
+                    task.module_name == "ansible.builtin.template" && !remote_src_param?(params)
       # ... and outside check mode the copy MODULE only runs when the
       # bytes actually have to move. See copy_module_never_runs?.
       return nil if !action_level_only && copy_module_never_runs?(task, params, check_mode)
@@ -2134,14 +2138,14 @@ module Krikri
       # the fatal dump carries "checksum" for these two modules - but
       # only where real's action plugin actually reaches the
       # checksum-merging tail (live-verified vs 2.19.11): template:'s
-      # delegation always does, while copy:'s remote_src branch returns
-      # the module result directly (copy.py:466-468) and never adds a
-      # checksum - only the _copy_file path (content:, or a
-      # controller-side src with remote_src falsy) does. (Only for
-      # MODULE-level failures: the action plugin's own required-
-      # argument checks fail before it computes any checksum.)
+      # delegation reaches it unless the delegated copy took ITS
+      # remote_src branch, which returns the module result directly
+      # (copy.py:466-468) and never adds a checksum - only the _copy_file
+      # path (content:, or a controller-side src with remote_src falsy)
+      # does. (Only for MODULE-level failures: the action plugin's own
+      # required-argument checks fail before it computes any checksum.)
       if !action_level_only &&
-         (task.module_name == "ansible.builtin.template" ||
+         ((task.module_name == "ansible.builtin.template" && !remote_src_param?(params)) ||
            (task.module_name == "ansible.builtin.copy" &&
              (params.has_key?("content") || !remote_src_param?(params))))
         if checksum = argspec_source_checksum(params)
@@ -2193,7 +2197,10 @@ module Krikri
       if content = params["content"]?
         return Digest::SHA1.hexdigest(content)
       end
-      return nil if params["remote_src"]?.try(&.downcase) == "true"
+      # A truthy remote_src (in whatever spelling, marked literal
+      # included) means the action plugin handed the task to the module
+      # without ever computing a local checksum.
+      return nil if Krikri.lenient_boolean_true?(params["remote_src"]?)
       src = params["src"]?
       return nil unless src && File.exists?(src) && !File.directory?(src)
       Digest::SHA1.hexdigest(File.read(src))

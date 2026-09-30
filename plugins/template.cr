@@ -43,10 +43,16 @@ module Krikri
     # trim_blocks/lstrip_blocks are deliberately absent: the template
     # ACTION plugin consumes them before the module sees any args, so
     # real Ansible never argspec-validates them (live-verified against
-    # ansible-core 2.19.11: `trim_blocks: blah` renders fine). Validated
+    # ansible-core 2.19.11: `trim_blocks: blah` renders fine).
+    # `follow` is absent for the same reason: the action plugin reads it
+    # through boolean(value, strict=False) and passes the COERCED boolean
+    # to the copy module it delegates to (template.py), so a spelling real
+    # would reject never reaches that module's spec - `follow: hcsjhk`
+    # deploys the template (live-verified vs 2.19.11), and paired with a
+    # typo'd option it is that typo which fails the task. Validated
     # by BasePlugin#validate_bool_params! - see its block comment.
     protected def bool_params : Array(String)
-      %w[backup follow force unsafe_writes]
+      %w[backup force unsafe_writes]
     end
 
     property? check_mode : Bool
@@ -79,7 +85,14 @@ module Krikri
 
       # Real AnsibleModule validates bool-typed params at module setup,
       # after the required-args gate (see BasePlugin#validate_bool_params!).
-      validate_bool_params!
+      # Under --check real's copy action plugin returns as soon as it sees
+      # the checksums differ (copy.py:288-293) and otherwise dispatches the
+      # file module with copy's copy-only options stripped, so the copy
+      # spec never runs and cannot reject anything (live-verified vs
+      # 2.19.11: `template: backup: notabool` under --check reports
+      # changed, not a bool error). Same rule as the controller-side gate
+      # in TaskExecutor#argspec_validation_result.
+      validate_bool_params! unless @check_mode
       dest = expand_tilde(dest)
 
       # Real ansible.builtin.template, like copy: a dest that signals a
