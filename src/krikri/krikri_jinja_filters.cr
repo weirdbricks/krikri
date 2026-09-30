@@ -159,13 +159,40 @@ module Krikri
       end
     end
 
-    # Dotted-numeric version comparison for the `version` test: digit runs
-    # compare component by component ("8.9p1" is [8, 9, 1]).
+    # LooseVersion component parse for the `version` test - real
+    # ansible-core's version comparison walks distutils LooseVersion's
+    # component list: digit runs become ints, [a-z]+ runs stay strings,
+    # literal dots are kept as components, and EVERYTHING else is
+    # dropped. List comparison: prefix-exhaustion is less, and the first
+    # int-vs-str mismatch is a TypeError ("'<' not supported between
+    # instances of 'str' and 'int'" - always '<', Python list ordering
+    # bottoms out in __lt__ no matter which operator was asked for).
+    def self.loose_version_components(s : String) : Array(Int64 | String)
+      parts = [] of Int64 | String
+      s.scan(/\d+|[a-z]+|\./).each do |match|
+        text = match[0]
+        parts << (text.matches?(/\d+/) ? text.to_i64 : text)
+      end
+      parts
+    end
+
     def self.compare_versions(a : String, b : String) : Int32
-      a_parts = a.scan(/\d+/).map(&.[0].to_i64)
-      b_parts = b.scan(/\d+/).map(&.[0].to_i64)
+      a_parts = loose_version_components(a)
+      b_parts = loose_version_components(b)
       Math.max(a_parts.size, b_parts.size).times do |i|
-        cmp = (a_parts[i]? || 0_i64) <=> (b_parts[i]? || 0_i64)
+        x = a_parts[i]?
+        y = b_parts[i]?
+        return -1 if x.nil?
+        return 1 if y.nil?
+        x_int = x.is_a?(Int64)
+        y_int = y.is_a?(Int64)
+        cmp = if x_int == y_int
+                x_int ? (x.as(Int64) <=> y.as(Int64)) : (x.as(String) <=> y.as(String))
+              else
+                raise KrikriJinja::TemplateError.new(
+                  "Version comparison failed: '<' not supported between instances of '#{x_int ? "int" : "str"}' and '#{y_int ? "int" : "str"}'", 0
+                )
+              end
         return cmp unless cmp == 0
       end
       0

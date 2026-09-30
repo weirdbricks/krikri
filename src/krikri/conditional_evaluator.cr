@@ -19,6 +19,18 @@ module Krikri
   # - Existence: is defined, is not defined
   # - Truthiness: bare variable names
 
+  # A TEST PLUGIN's runtime failure - real ansible-core 2.19 wraps it as
+  # "The test plugin '<fqcn>' failed: <cause>" and the [ERROR] chain block
+  # shows the cause as its own innermost stanza. test_name carries the
+  # real FQCN spelling for the wrapper.
+  class TestPluginError < Exception
+    getter cause_text : String
+
+    def initialize(message : String, @cause_text : String)
+      super(message)
+    end
+  end
+
   module ConditionalEvaluator
     # Precompiled regular expressions for condition parsing.
     # Eliminates runtime regex compilation in hot `when:` and test paths.
@@ -32,7 +44,7 @@ module Krikri
     # same misparse started hard-failing the task ("'')' is undefined")
     # for the extremely common `x is version_compare(min, '>=')`
     # version-gate idiom.
-    REGEX_VERSION_TEST      = /\A(.+?)\s+is\s+version(?:_compare)?\(/
+    REGEX_VERSION_TEST      = /\A(.+?)\s+is\s+(version|version_compare)\(/
     REGEX_MATCH_SEARCH_TEST = /^(.+?)\s+is\s+(not\s+)?(match|search)\((.+)\)\s*$/
     REGEX_SUBSET_TEST       = /^(.+?)\s+is\s+(not\s+)?(issubset|issuperset|subset|superset|contains)\((.+)\)\s*$/
     REGEX_SAME_FILE_TEST    = /^(.+?)\s+is\s+(not\s+)?(?:is_)?same_file\((.+)\)\s*$/
@@ -447,7 +459,7 @@ module Krikri
         # end-anchored regex's non-match did).
         if rest.ends_with?(')')
           args = split_by_operator(rest[0...-1], ",")
-          return evaluate_version_test(version_test[1], args[0], args[1], vars, raise_undefined) if args.size == 2
+          return evaluate_version_test(version_test[1], version_test[2], args[0], args[1], vars, raise_undefined) if args.size == 2
         end
       end
 
@@ -2055,7 +2067,7 @@ module Krikri
       end
     end
 
-    private def self.evaluate_version_test(left_expr : String, compare_to_expr : String, operator_expr : String, vars : Hash(String, JSON::Any), raise_undefined : Bool = false) : Bool
+    private def self.evaluate_version_test(left_expr : String, test_name : String, compare_to_expr : String, operator_expr : String, vars : Hash(String, JSON::Any), raise_undefined : Bool = false) : Bool
       # A structured (Hash) left operand - the bare `ansible_version`
       # magic-var dict itself instead of its `ansible_version.string` /
       # `.full` dotted field - is a task-failing templating error in real
@@ -2097,7 +2109,7 @@ module Krikri
                      evaluate_value(compare_to_raw, vars, raise_undefined).to_s
                    end
       operator = unquote_literal(operator_expr.strip)
-      cmp = compare_versions(left, compare_to)
+      cmp = compare_versions(left, compare_to, test_name)
 
       case operator
       when "==", "="
@@ -2205,16 +2217,43 @@ module Krikri
     # dependency to pull into this evaluator (used by every `when:`
     # regardless of whether any template rendering is even involved) for
     # ten lines of arithmetic.
-    private def self.compare_versions(a : String, b : String) : Int32
-      a_parts = a.scan(REGEX_DIGITS).map(&.[0].to_i)
-      b_parts = b.scan(REGEX_DIGITS).map(&.[0].to_i)
+    private def self.compare_versions(a : String, b : String, test_name : String) : Int32
+      # LooseVersion component semantics, same as JinjaFilters'
+      # compare_versions (kept duplicated - this file must not pull the
+      # engine dependency): digit runs are ints, [a-z]+ runs are strings,
+      # literal dots are components, everything else is dropped; a
+      # prefix-exhausted list is less, and the first int-vs-str mismatch
+      # raises real's TypeError text (always '<' - Python list ordering
+      # bottoms out in __lt__ regardless of the operator).
+      a_parts = loose_version_components(a)
+      b_parts = loose_version_components(b)
       [a_parts.size, b_parts.size].max.times do |i|
-        a_val = a_parts[i]? || 0
-        b_val = b_parts[i]? || 0
-        cmp = a_val <=> b_val
+        x = a_parts[i]?
+        y = b_parts[i]?
+        return -1 if x.nil?
+        return 1 if y.nil?
+        x_int = x.is_a?(Int64)
+        y_int = y.is_a?(Int64)
+        cmp = if x_int == y_int
+                x_int ? (x.as(Int64) <=> y.as(Int64)) : (x.as(String) <=> y.as(String))
+              else
+                raise TestPluginError.new(
+                  "The test plugin 'ansible.builtin.#{test_name}' failed: Version comparison failed: '<' not supported between instances of '#{x_int ? "int" : "str"}' and '#{y_int ? "int" : "str"}'",
+                  "Version comparison failed: '<' not supported between instances of '#{x_int ? "int" : "str"}' and '#{y_int ? "int" : "str"}'"
+                )
+              end
         return cmp unless cmp == 0
       end
       0
+    end
+
+    private def self.loose_version_components(s : String) : Array(Int64 | String)
+      parts = [] of Int64 | String
+      s.scan(/\d+|[a-z]+|\./).each do |match|
+        text = match[0]
+        parts << (text.matches?(/\d+/) ? text.to_i64 : text)
+      end
+      parts
     end
 
     private def self.evaluate_in(condition : String, vars : Hash(String, JSON::Any), raise_undefined : Bool = false) : Bool
