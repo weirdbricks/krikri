@@ -177,11 +177,23 @@ krikri aims for byte-for-byte identical stdout/stderr/exit code to `ansible-play
   inventory/pattern order. `scripts/cli_output_parity.sh` therefore
   runs its execution cases against single-host play patterns and sorts
   the `hosts (N):` block in `--list-hosts` output on both sides.
-- A relative file-module `dest:`/`path:` on a local-connection host
-  resolves against the PLAYBOOK directory in real (the module process
-  itself still runs with the controller's cwd - a `command: pwd` task
-  proves it), while krikri resolves it against its own cwd. Absolute
-  paths are unaffected.
+- `group_vars/`/`host_vars/` directories adjacent to the PLAYBOOK:
+  real 2.19.11 (live-probed with local inline and file inventories)
+  does NOT load playbook-dir-adjacent group_vars/host_vars at all -
+  only inventory-adjacent ones - while krikri loads both. Playbooks
+  relying on playbook-dir group_vars show variables real Ansible leaves
+  undefined.
+- Degenerate quote-soup task arguments (single-quoted Jinja strings
+  with embedded escaped quotes written as YAML quote soup, e.g.
+  `msg="{{ 'has \"dq\" and 'sq'' | b64encode }}"`): krikri's YAML/arg
+  split keeps the backslashes verbatim where real's splitter unescapes
+  them, so both "succeed" with different bytes. Clean quoting (a vars
+  entry, or YAML single-quoted) is identical on both engines.
+- A broken `with_*` loop source (`with_subelements:` missing its subkey
+  term): real fails with the lookup-plugin error and a bare
+  `Origin: <unknown>` / `invoke_lookup()` block; krikri's error shape
+  differs (the loop degrades to a failed task with the finalization
+  chain instead).
 - `template:` with an `output_encoding:` written as a YAML list of plain strings
   (`[a, b]`) reports real's `unknown encoding: a,b` instead of real's
   `encode() argument 'encoding' must be str, not _AnsibleTaggedList`: the params
