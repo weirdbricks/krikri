@@ -194,7 +194,24 @@ module Krikri
         if value = structured_container(expr)
           return @lookup.format_value_output(value)
         end
+
+        # query()/q() always return lists (and lookup(..., wantlist=True) does
+        # too), but structured_container deliberately skips lookup calls so a
+        # side-effecting lookup never runs twice. The already-rendered result
+        # string is the JSON-compact form, so parse THAT and print it as
+        # Python repr like real Ansible's `[1, 2]` in mixed text. A plain
+        # lookup('file', ...) whose content merely looks like JSON is NOT
+        # converted: only the list-forcing forms are.
+        if list_forcing_lookup?(expr) && (value = (JSON.parse(rendered) rescue nil)) && value.as_a?
+          return @lookup.format_value_output(value)
+        end
         rendered
+      end
+
+      private def list_forcing_lookup?(expr : String) : Bool
+        stripped = expr.strip
+        return true if stripped.starts_with?("query(") || stripped.starts_with?("q(")
+        stripped.starts_with?("lookup(") && stripped.matches?(/wantlist\s*=\s*(True|true)/)
       end
 
       # The undefined-typed form of #evaluate: Undefined::INSTANCE when the

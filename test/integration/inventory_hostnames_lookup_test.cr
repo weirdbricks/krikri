@@ -14,7 +14,8 @@ require "file_utils"
 # (differential run, 12 patterns: group name, wantlist, query(), union,
 # exclusion, single index, INCLUSIVE range, glob, ungrouped, no-match,
 # groups['ungrouped'] magic var, &-intersection) before being pinned
-# here.
+# here. (t02/t03 re-pinned against ansible-core 2.19.11: list results embedded in
+# mixed text print as Python repr `['web1', 'web2']`, not compact JSON.)
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 
@@ -48,8 +49,8 @@ describe "lookup('inventory_hostnames', ...)" do
   {% begin %}
     {% cases = {
          "t01" => {"lookup('inventory_hostnames', 'webservers')", "web1,web2"},
-         "t02" => {"lookup('inventory_hostnames', 'webservers', wantlist=True)", "[\\\"web1\\\",\\\"web2\\\"]"},
-         "t03" => {"query('inventory_hostnames', 'all')", "[\\\"ungroupedhost\\\",\\\"web1\\\",\\\"web2\\\",\\\"db1\\\"]"},
+         "t02" => {"lookup('inventory_hostnames', 'webservers', wantlist=True)", "['web1', 'web2']"},
+         "t03" => {"query('inventory_hostnames', 'all')", "['ungroupedhost', 'web1', 'web2', 'db1']"},
          "t04" => {"lookup('inventory_hostnames', 'webservers:dbservers')", "web1,web2,db1"},
          "t05" => {"lookup('inventory_hostnames', 'all:!webservers')", "ungroupedhost,db1"},
          "t06" => {"lookup('inventory_hostnames', 'webservers[0]')", "web1"},
