@@ -68,10 +68,17 @@ describe Krikri::ResultDisplay do
       out.must_equal("web1                       : ok=44   changed=6    unreachable=0    failed=0    skipped=5    rescued=0    ignored=0   \n")
     end
 
-    it "prints a zeroed recap line for a host with no results" do
+    it "prints no recap line for a host with no results (real lists a host only once a counter is non-zero)" do
       host = Krikri::Host.new("db1")
       out = capture_output { Krikri::ResultDisplay.show_recap([host], {} of String => Hash(String, Int32)) }
-      out.must_equal("db1                        : ok=0    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \n")
+      out.must_equal("")
+    end
+
+    it "still prints a line for a host whose only result is a skipped task" do
+      host = Krikri::Host.new("db1")
+      stats = {"ok" => 0, "changed" => 0, "unreachable" => 0, "failed" => 0, "skipped" => 1, "rescued" => 0, "ignored" => 0}
+      out = capture_output { Krikri::ResultDisplay.show_recap([host], {"db1" => stats}) }
+      out.must_equal("db1                        : ok=0    changed=0    unreachable=0    failed=0    skipped=1    rescued=0    ignored=0   \n")
     end
   end
 

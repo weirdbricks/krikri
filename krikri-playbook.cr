@@ -503,6 +503,8 @@ begin
   warnings = Krikri::PlaybookParser.validate(playbook)
   if !warnings.empty?
     warnings.each do |warning|
+      # real ansible-playbook says nothing about a play without tasks
+      next if warning.ends_with?(" has no tasks")
       STDERR.puts "[WARNING]: #{warning}"
     end
   end
@@ -920,11 +922,7 @@ playbook.plays.each_with_index do |play, _play_index|
   end
 
   if tasks_to_run.empty? && tasks_before_tag_filter > 0
-    if !tags.empty? || skip_tags.any?
-      puts "Skipping play - no tasks match tags: #{(tags + skip_tags).join(", ")}".colorize(:yellow)
-    else
-      puts "Skipping play - every task is tagged 'never'".colorize(:yellow)
-    end
+    # real prints nothing between the PLAY banner and the recap here
     next
   end
 
@@ -941,7 +939,6 @@ playbook.plays.each_with_index do |play, _play_index|
   effective_gather_facts = gathering == "explicit" ? (play.gather_facts_set? && play.gather_facts?) : play.gather_facts?
 
   if tasks_to_run.empty? && !effective_gather_facts
-    puts "Skipping play - no tasks defined".colorize(:yellow)
     next
   end
 

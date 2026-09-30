@@ -1041,7 +1041,8 @@ module Krikri
         # whether the play has any tasks to run, so a playbook whose plays
         # are all skipped (no tasks, or none matching --tags) used to crash
         # here with `Missing hash key`. Zeroes are the honest recap for a
-        # host nothing ran on, and match what real ansible-playbook prints.
+        # host nothing ran on - but such a host is then left out of the printout
+        # (see the all-zero check below), like real ansible-playbook.
         stats = results[host.name]? || {
           "ok" => 0, "changed" => 0, "unreachable" => 0, "failed" => 0, "skipped" => 0, "rescued" => 0, "ignored" => 0,
         }
@@ -1050,6 +1051,12 @@ module Krikri
         skipped = stats["skipped"]? || 0
         rescued = stats["rescued"]? || 0
         ignored = stats["ignored"]? || 0
+
+        # Real only lists a host once some counter for it is non-zero: a play
+        # with no tasks, a --tags filter that matches nothing, or nothing but
+        # meta tasks (which record no stats) leaves the recap without that
+        # host's line, while a `when: false` task (skipped=1) still prints one.
+        next if [stats["ok"]? || 0, stats["changed"]? || 0, unreachable, stats["failed"]? || 0, skipped, rescued, ignored].all?(&.zero?)
 
         # Real's colorize(lead, num, color) shapes `lead=%-4s` and colors
         # the WHOLE field only when num != 0 (zero counters stay plain

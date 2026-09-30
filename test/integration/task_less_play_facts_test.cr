@@ -52,7 +52,9 @@ describe "a play with an empty tasks: list" do
     status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
 
     status.success?.must_equal(true)
-    output.to_s.must_include("Skipping play - no tasks defined")
+    # real prints nothing between the PLAY banner and the recap for a task-less play
+    output.to_s.wont_include("Skipping play")
+    output.to_s.must_include("PLAY [repro]")
     output.to_s.wont_include("TASK [Gathering Facts]")
   ensure
     File.delete(playbook) if playbook && File.exists?(playbook)
