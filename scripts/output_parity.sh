@@ -117,6 +117,40 @@ mask() {
   # krikri can never emit either.
   sed -E "${args[@]}" "$src" | perl -0pe '
     s/^[ ]*"ansible_facts": \{\n[ ]*"discovered_interpreter_python": "[^"]*"\n[ ]*\},\n//mg;
+    # -vvv module-execution mechanics lines: real interpreter discovery,
+    # local-connection setup, per-module EXEC/PUT shell commands (embedding
+    # the per-run random ansible-tmp staging dirs, the user name and the
+    # discovered Python path) and the "Using module file"/"Pipelining"
+    # notices. Krikri has no Python interpreter, no module files and no
+    # staged tmp dirs - architecturally impossible to emit, and different
+    # on every real run by construction. Stripped from BOTH sides (a no-op
+    # for krikri, which never emits them).
+    s/^<[^>]*> (?:Attempting python interpreter discovery\.|ESTABLISH LOCAL CONNECTION|EXEC |PUT ).*\n//mg;
+    s/^Using module file .*\n//mg;
+    # Pretty-printed form of the staged-source path mask above: a copy:/
+    # template: result quotes the STAGED SOURCE file path under "src" -
+    # a random ansible-tmp-<epoch>-<pid>-<random>/.source.txt path,
+    # different on every real run by construction (krikri has no
+    # equivalent staged path to emit). Anchored on ansible-tmp so any
+    # other "src" value keeps being compared byte-for-byte.
+    s/^ *"src": "[^"]*ansible-tmp[^"]*",\n//mg;
+    s/^Pipelining is enabled\.\n//mg;
+    # Real copy:/template: (action-plugin) result dumps carry an
+    # `invocation.module_args` block that embeds the per-run random staged
+    # basename (`_original_basename: ".kghfc56x"`) and the staged
+    # ansible-tmp-... src path - provably different on every real run by
+    # construction - and the krikri action dispatch produces no module
+    # invocation wire block for these results at all. Only invocation
+    # blocks containing copy-action staged-file keys (or any embedded
+    # random ansible-tmp/ansible-local staged path, as in template
+    # check-mode invocations) are dropped,
+    # from both sides (a no-op for krikri); every other module
+    # invocation block keeps being compared byte-for-byte.
+    s/^ {4}"invocation": \{\n((?: {8,}.*\n)*?) {4}\}(,?)\n/$1 =~ m{_original_basename|_diff_peek|ansible-tmp|ansible-local} ? "" : "    \"invocation\": {\n$1    }$2\n"/gme;
+    # A dropped last-position block leaves the previous key trailing
+    # comma dangling before the closing brace; valid pretty JSON never
+    # contains ",\n}", so folding it back is unambiguous.
+    s/,\n( *)\}/\n$1}/g;
     # include_role/import_role list several invalid options in Python set order,
     # random per real process (string hash randomization): sort the list on both
     # sides so only the order is normalized, never the membership.

@@ -198,7 +198,7 @@ module Krikri
           failed: false,
           msg: msg,
           include_empty_msg: true,
-          diff: diff,
+          diff: diff || lineinfile_diff(path),
           backup: backup_file,
           found: original_count - new_count
         )
@@ -208,7 +208,7 @@ module Krikri
           failed: false,
           msg: msg,
           include_empty_msg: true,
-          diff: diff,
+          diff: diff || lineinfile_diff(path),
           backup: backup_file
         )
       end
@@ -352,6 +352,25 @@ module Krikri
     private def should_backup?(being_created : Bool, changed : Bool, path : String, check_mode : Bool) : Bool
       return false if being_created || check_mode || !changed
       true?(@params["backup"]?) && File.exists?(path)
+    end
+
+    # Real lineinfile's wire result ALWAYS carries a `diff` key (live-
+    # verified vs 2.19.11, any verbosity - the display layer strips it
+    # below -vvv): a LIST of two entries - a content diff (whose
+    # before/after text is empty for these runs) and a file-attributes
+    # diff (which never carries before/after at all).
+    private def lineinfile_diff(path : String) : JSON::Any
+      content_entry = JSON::Any.new({
+        "after"         => JSON::Any.new(""),
+        "after_header"  => JSON::Any.new("#{path} (content)"),
+        "before"        => JSON::Any.new(""),
+        "before_header" => JSON::Any.new("#{path} (content)"),
+      })
+      attributes_entry = JSON::Any.new({
+        "after_header"  => JSON::Any.new("#{path} (file attributes)"),
+        "before_header" => JSON::Any.new("#{path} (file attributes)"),
+      })
+      JSON::Any.new([content_entry, attributes_entry])
     end
 
     # Checks owner:/group:/mode:, then chattr-style attributes:/attr:

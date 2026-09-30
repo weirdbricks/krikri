@@ -309,6 +309,23 @@ describe "lineinfile plugin" do
 
     result["backup"].as_s.must_be_empty
   end
+
+  it "always carries a diff list on the wire (content + file-attributes entries), like real ansible 2.19.11 at -vvv" do
+    path = PluginSpecHelper.tmp_path("lineinfile-wire-diff.txt")
+    File.write(path, "alpha\n")
+
+    result = PluginSpecHelper.run("lineinfile", {"path" => path, "line" => "beta"})
+
+    diff = result["diff"].as_a
+    diff.size.must_equal(2)
+    first = diff[0].as_h
+    first["after_header"].as_s.must_equal("#{path} (content)")
+    first["before_header"].as_s.must_equal("#{path} (content)")
+    second = diff[1].as_h
+    second["after_header"].as_s.must_equal("#{path} (file attributes)")
+    second["before_header"].as_s.must_equal("#{path} (file attributes)")
+    second["before"]?.must_be_nil
+  end
 end
 
 private def param_path(name : String) : String

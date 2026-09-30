@@ -66,6 +66,18 @@ module Krikri
     end
 
     def execute : PluginResult
+      result = execute_template
+      # Real template's wire result ALWAYS carries a `diff` key - an empty
+      # LIST when no diff data was computed (live-verified vs 2.19.11 at
+      # -vvv, run and --check alike; the display layer strips it below
+      # -vvv). A real diff payload (diff mode) keeps the computed content.
+      if result.diff.nil? && !result.failed?
+        result.diff = JSON::Any.new([] of JSON::Any)
+      end
+      result
+    end
+
+    private def execute_template : PluginResult
       # Get destination (required)
       dest = @params["dest"]?
       unless dest

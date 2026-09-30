@@ -255,11 +255,14 @@ module Krikri
         #   (live-verified: assert: failure).
         # - every other failure dumps the whole result single-line.
         if result["_ansible_task_error_msg_only"]?.try(&.as_bool) == true
-          puts "fatal: [#{host_label}]: FAILED! => {\"msg\": #{msg.to_json}}".colorize(:red)
+          dump = ResultDisplay.dump_suffix(JSON::Any.new({"msg" => JSON::Any.new(msg)}))
+          puts "fatal: [#{host_label}]: FAILED! => #{dump}".colorize(:red)
         elsif result["_ansible_verbose_always"]?.try(&.as_bool) == true
           puts "fatal: [#{host_label}]: FAILED! => #{dump_pretty(clean_for_display(result))}".colorize(:red)
         else
-          puts "fatal: [#{host_label}]: FAILED! => #{ResultDisplay.python_json_dump(clean_for_display(result))}".colorize(:red)
+          # Real's _dump_results flips to pretty (indent=4) for every dump
+          # at -vvv, fatal lines included - not just the ok/changed ones.
+          puts "fatal: [#{host_label}]: FAILED! => #{ResultDisplay.dump_suffix(clean_for_display(result))}".colorize(:red)
         end
         # Real ansible-playbook prints a bare "...ignoring" line right
         # after a failed task's output when ignore_errors: caught it

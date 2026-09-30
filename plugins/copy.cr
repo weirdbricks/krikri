@@ -55,6 +55,38 @@ module Krikri
     end
 
     def execute : PluginResult
+      result = execute_copy
+      # Real copy's wire result ALWAYS carries a `diff` key - an empty
+      # LIST when no diff data was computed (live-verified vs 2.19.11 at
+      # -vvv, run and --check alike; the display layer strips it below
+      # -vvv, so only -vvv sees it). A real diff payload (diff mode)
+      # keeps the computed content.
+      if result.diff.nil? && !result.failed?
+        result.diff = JSON::Any.new([] of JSON::Any)
+      end
+      # Real 2.19.11's CHECK-MODE content copy reports its module
+      # invocation in this exact censored shape (live-verified at -vvv):
+      # the outer raw task args with content no_log-censored, plus
+      # module_args where the content value is replaced by real's
+      # VALUE_SPECIFIED_IN_NO_LOG_PARAMETER sentinel. Deterministic - no
+      # random staged path (the module never stages in check mode).
+      if @check_mode && !result.failed? && result.changed? && @params.has_key?("content")
+        dest = @params["dest"]?
+        if dest
+          result.extra["invocation"] = JSON::Any.new({
+            "content"     => JSON::Any.new("CENSORED: content is a no_log parameter"),
+            "dest"        => JSON::Any.new(dest),
+            "module_args" => JSON::Any.new({
+              "content" => JSON::Any.new("VALUE_SPECIFIED_IN_NO_LOG_PARAMETER"),
+              "dest"    => JSON::Any.new(dest),
+            }),
+          })
+        end
+      end
+      result
+    end
+
+    private def execute_copy : PluginResult
       validate_bool_params! unless copy_module_never_runs?
       # Get destination (required)
       dest = @params["dest"]?
