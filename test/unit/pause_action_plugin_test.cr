@@ -114,4 +114,75 @@ describe "PauseActionPlugin" do
     final.as_h["delta"].as_i64.must_equal(1)
     final.as_h["user_input"].as_s.must_equal("")
   end
+
+  # The console lines below are real's OWN Display.display() writes from
+  # action/pause.py's duration branch, captured byte for byte against
+  # ansible-playbook 2.19.11 with stdin from /dev/null. They are carried
+  # on the result under an engine-internal key (never registered, never
+  # dumped) so ResultDisplay can put them immediately before the item's
+  # status line - the place real's own write lands, once per loop item.
+  it "announces the wait on the console when seconds are given" do
+    result = run_pause({"seconds" => "1"})
+
+    console_lines(result).must_equal(["Pausing for 1 seconds"])
+  end
+
+  it "announces the clamped second count, not the requested one" do
+    console_lines(run_pause({"seconds" => "0"})).must_equal(["Pausing for 1 seconds"])
+    console_lines(run_pause({"seconds" => "-5"})).must_equal(["Pausing for 1 seconds"])
+    # minutes convert to a SECOND count before the announcement.
+    console_lines(run_pause({"minutes" => "0"})).must_equal(["Pausing for 1 seconds"])
+  end
+
+  it "adds the ctrl+C hint only when a duration AND a prompt are both given" do
+    hint = "(ctrl+C then 'C' = continue early, ctrl+C then 'A' = abort)\r"
+
+    console_lines(run_pause({"prompt" => "kpg pause", "seconds" => "1"})).must_equal(["Pausing for 1 seconds", hint])
+    # No prompt: real REPLACES the (unwritten) prompt with the hint.
+    console_lines(run_pause({"seconds" => "1"})).must_equal(["Pausing for 1 seconds"])
+    # No duration: the hint is not printed at all, only the non-interactive
+    # stdin warning on stderr fires.
+    console_lines(run_pause({"prompt" => "kpg pause"})).must_be_empty
+  end
+
+  it "notes hidden output on the console when echo is false" do
+    console_lines(run_pause({"seconds" => "1", "echo" => "false"})).must_equal(["Pausing for 1 seconds (output is hidden)"])
+  end
+
+  it "treats a natively-typed bool duration as an int like real's int callable" do
+    # int(True) == 1 and int(False) == 0, and 0 clamps up to the same
+    # 1-second minimum - neither is a validation failure.
+    truthy = run_pause({"seconds" => marked("true")})
+    expect(falsey?(final_json(truthy).as_h["failed"]?.try(&.as_bool))).must_equal(true)
+    console_lines(truthy).must_equal(["Pausing for 1 seconds"])
+
+    falsy = run_pause({"seconds" => marked("false")})
+    expect(falsey?(final_json(falsy).as_h["failed"]?.try(&.as_bool))).must_equal(true)
+    console_lines(falsy).must_equal(["Pausing for 1 seconds"])
+  end
+
+  it "truncates a natively-typed float duration toward zero" do
+    console_lines(run_pause({"seconds" => marked("1.9")})).must_equal(["Pausing for 1 seconds"])
+  end
+
+  it "keeps the console lines out of the result's real-shaped keys" do
+    result = run_pause({"seconds" => "1"})
+
+    final = final_json(result)
+    expect(final.as_h.has_key?("_ansible_pause_console")).must_equal(true)
+    # Everything real's own pause result carries is still there.
+    %w(start stop delta stdout stderr rc echo user_input).each do |key|
+      final.as_h.has_key?(key).must_equal(true)
+    end
+  end
+end
+
+# A non-string YAML literal as the parser hands it to the plugin: the
+# native-typed marker plus the JSON encoding of the parsed scalar.
+private def marked(text : String) : String
+  "#{Krikri::NON_STRING_PARAM_PREFIX}#{text}"
+end
+
+private def console_lines(result : Krikri::ActionResult) : Array(String)
+  (final_json(result).as_h["_ansible_pause_console"]?.try(&.as_a) || [] of JSON::Any).map(&.as_s)
 end

@@ -99,12 +99,26 @@ module Krikri
       end
       emit_debug_template_error_warning(source_task, result)
 
+      # Console lines a controller-side action plugin produced ITSELF
+      # rather than through the result (pause's "Pausing for N seconds"
+      # and its ctrl+C hint). Real's action plugin writes those with
+      # Display.display() while the task is still running, so they always
+      # land between the task's own output and this item's status line -
+      # once per loop item, in iteration order. Displaying them here (the
+      # per-item display point for both the plain and the LOOPED path)
+      # reproduces that placement without the action plugin having to
+      # write to the shared output stream, which would put every item's
+      # banner ahead of the very first item's "ok:" on the looped path.
+      result["_ansible_pause_console"]?.try(&.as_a?).try &.each do |line|
+        puts line.as_s? || line.to_s
+      end
+
       # Real's callback (CallbackBase._dump_results) drops these top-level
       # keys before any dump at verbosity < 3: `warnings`/`deprecations` are
       # only ever shown as their own [WARNING] lines, `invocation` is hidden
       # unless -vvv (getent-style results carry one for `register`).
-      if (top = result.as_h?) && (top.has_key?("warnings") || top.has_key?("invocation") || top.has_key?("deprecations") || top.has_key?("_ansible_core_deprecations"))
-        result = JSON::Any.new(top.reject("warnings", "invocation", "deprecations", "_ansible_core_deprecations"))
+      if (top = result.as_h?) && (top.has_key?("warnings") || top.has_key?("invocation") || top.has_key?("deprecations") || top.has_key?("_ansible_core_deprecations") || top.has_key?("_ansible_pause_console"))
+        result = JSON::Any.new(top.reject("warnings", "invocation", "deprecations", "_ansible_core_deprecations", "_ansible_pause_console"))
       end
 
       # no_log: print the status line and NOTHING else - no msg, no

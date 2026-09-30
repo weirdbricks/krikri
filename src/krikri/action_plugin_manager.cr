@@ -116,7 +116,14 @@ module Krikri
       # marked non-string literal must reach it marked for the native type
       # to land in the wire result/fatal dump/registered var (live-verified
       # vs 2.19.11: `fail: {msg: 50}` fails with {"msg": 50}).
-      unless module_name == "ansible.builtin.template" || module_name == "ansible.builtin.fail"
+      # pause: opts out for the same reason, on a different param: its
+      # minutes/seconds ride real's int CALLABLE, under which a Python
+      # bool IS an int (`seconds: true` waits 1s, `seconds: false`
+      # clamps up to the same 1s minimum - both live-verified vs
+      # 2.19.11) and a float truncates (int(1.9) == 1). The demoted text
+      # alone makes "true" an unparseable string, so the native type has
+      # to survive the trip to the plugin.
+      unless module_name == "ansible.builtin.template" || module_name == "ansible.builtin.fail" || module_name == "ansible.builtin.pause"
         params = Krikri.strip_non_string_param_markers(params)
       end
 
