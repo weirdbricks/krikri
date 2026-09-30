@@ -1797,8 +1797,22 @@ module Krikri
     # resolved fine, so it runs after inline_copy_source_content's own
     # missing-src failure would have returned. See
     # copy_literal_type_failure for the message shapes.
+    #
+    # `remote_src: true` never reaches it: real's copy.py hands the whole
+    # task to the copy MODULE on the target the moment remote_src is
+    # truthy (the `elif remote_src:` branch right after the content
+    # tempfile), so the local path is never walked and no dest/src
+    # attribute is ever touched. That module's own argspec validation is
+    # then the FIRST thing to inspect the literal - a wrong-type bool or
+    # an unsupported key fails there, and a dest that survives
+    # validation is coerced by the module's `type: path` spec
+    # (check_type_path -> str()) rather than crashing. Live-verified vs
+    # 2.19.11: `remote_src: true` + `dest: 89` + `backup: notabool`
+    # reports the bool error, while the same dest with remote_src absent
+    # or false crashes with startswith.
     private def copy_dest_expand_failure(task : Task, params : Hash(String, String)) : JSON::Any?
       return nil unless task.module_name == "ansible.builtin.copy"
+      return nil if remote_src_param?(params)
       return nil unless Krikri.python_param_truthy?(params["dest"]?)
       return nil unless native = Krikri.non_string_scalar(params["dest"]?)
       literal_attribute_crash_result(native, "startswith")
@@ -2074,6 +2088,9 @@ module Krikri
       # action-level ones (src/dest presence) still fire, exactly like
       # real's action plugin.
       return nil if check_mode && !action_level_only && task.module_name == "ansible.builtin.template"
+      # ... and outside check mode the copy MODULE only runs when the
+      # bytes actually have to move. See copy_module_never_runs?.
+      return nil if !action_level_only && copy_module_never_runs?(task, params, check_mode)
 
       result = {
         "changed" => JSON::Any.new(false),
@@ -2101,6 +2118,40 @@ module Krikri
         end
       end
       JSON.parse(result.to_json)
+    end
+
+    # Whether real's copy ACTION plugin leaves the copy MODULE unexecuted
+    # for this task - in which case the copy module's own argument spec
+    # (its `type: bool` conversions, its unsupported-parameter check)
+    # never runs and can never fail the task. The two ways that happens
+    # (copy.py, live-verified vs 2.19.11):
+    #
+    # - remote_src is truthy: the opposite - the action plugin hands the
+    #   whole task straight to the module (copy.py:466), so the module
+    #   always runs and its spec always applies;
+    # - the action plugin's own _copy_file decides nothing has to be
+    #   transferred: under --check it returns changed=True as soon as the
+    #   checksums differ (copy.py:288-293), and when the destination
+    #   already holds the source's content it skips the transfer
+    #   altogether and dispatches ansible.legacy.file - with copy's
+    #   copy-only options (backup, local_follow, remote_src, validate,
+    #   checksum, directory_mode, content, src) STRIPPED, so they are
+    #   never validated either.
+    #
+    # The checksum comparison is only made when both paths are readable
+    # on the controller (a local connection, or a destination the
+    # executor can stat); for a genuinely remote destination the branch
+    # is left undecided, which keeps the module's spec applied.
+    private def copy_module_never_runs?(task : Task, params : Hash(String, String), check_mode : Bool) : Bool
+      return false unless {"ansible.builtin.copy", "ansible.builtin.template"}.includes?(task.module_name)
+      return false if remote_src_param?(params)
+      return true if check_mode
+      return false if params.has_key?("content")
+      src = params["src"]?
+      dest = params["dest"]?
+      return false unless src && dest && Krikri.non_string_scalar(src).nil? && Krikri.non_string_scalar(dest).nil?
+      return false unless File.file?(src) && File.file?(dest)
+      Digest::SHA1.hexdigest(File.read(src)) == Digest::SHA1.hexdigest(File.read(dest))
     end
 
     # SHA1 of the source content a copy/template task would deploy - the

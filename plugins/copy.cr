@@ -44,7 +44,7 @@ module Krikri
     end
 
     def execute : PluginResult
-      validate_bool_params!
+      validate_bool_params! unless copy_module_never_runs?
       # Get destination (required)
       dest = @params["dest"]?
       unless dest
@@ -174,6 +174,36 @@ module Krikri
         failed: true,
         msg: "Unexpected error in copy module"
       )
+    end
+
+    # Real's copy ACTION plugin hands the task to the copy MODULE only
+    # when there are bytes to move, so the module's own argument spec -
+    # and with it the strict `type: bool` conversion of backup/force/... -
+    # only ever runs in that case (copy.py, live-verified vs 2.19.11):
+    #
+    # - remote_src: the action plugin dispatches the module right away
+    #   (copy.py:466), so the spec always applies;
+    # - otherwise _copy_file returns changed=True as soon as it sees the
+    #   checksums differ, BEFORE the transfer and the module call, when
+    #   the run is a --check one (copy.py:288-293);
+    # - ... and when the destination already holds the source's exact
+    #   content it skips the transfer altogether and dispatches
+    #   ansible.legacy.file with copy's copy-only options stripped, so
+    #   those are never validated either - the task just reports ok.
+    #
+    # So a bad `backup:` spelling in either of those two states must NOT
+    # fail the task: it fails only when the module would really run. This
+    # is the same rule the controller-side gate applies before dispatch
+    # (TaskExecutor#copy_module_never_runs?); both layers have to agree
+    # or the same task would be validated twice.
+    private def copy_module_never_runs? : Bool
+      return false if true?(@params["remote_src"]?)
+      return true if @check_mode
+      src = @params["src"]?
+      dest = @params["dest"]?
+      return false unless src && dest
+      return false unless File.file?(src) && File.file?(dest)
+      File.size(src) == File.size(dest) && File.read(src) == File.read(dest)
     end
 
     # Copy inline content to destination

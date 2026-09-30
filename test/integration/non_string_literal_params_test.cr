@@ -1,3 +1,4 @@
+require "digest/sha1"
 require "../minitest_helper"
 
 # Runs the compiled binary against real playbooks: the non-string-YAML-
@@ -46,6 +47,58 @@ describe "non-string YAML literal module args (copy/fetch/template)" do
     output.must_include(%("msg": "Task failed: 'bool' object has no attribute 'startswith'"))
     output.must_include(%("msg": "Task failed: '_AnsibleTaggedFloat' object has no attribute 'startswith'"))
     Dir.children(scratch).reject { |file| file == "play.yml" }.must_equal([] of String)
+  end
+
+  # Real's copy.py hands the whole task to the copy MODULE the moment
+  # remote_src is truthy (the `elif remote_src:` branch), so the
+  # controller-side path is never walked: the module's own argspec
+  # validation is the first thing to look at the non-string dest, and a
+  # dest that survives it is coerced by the module's `type: path` spec.
+  # Live-verified vs 2.19.11: with remote_src the same `dest: 89` that
+  # crashes without it reports the bool error instead, and with no other
+  # error at all it writes the file named "89".
+  it "copy's remote_src branch hands a non-string dest to the module, which validates and coerces it" do
+    output, scratch = run_playbook(<<-YAML)
+          - copy:
+              dest: 89
+              remote_src: true
+              src: #{__DIR__}/../minitest_helper.cr
+              backup: notabool
+            ignore_errors: true
+          - copy:
+              dest: 89
+              remote_src: true
+              src: #{__DIR__}/../minitest_helper.cr
+              typo_destinatoin: x
+            ignore_errors: true
+          - copy:
+              dest: 89
+              remote_src: "false"
+              src: #{__DIR__}/../minitest_helper.cr
+              backup: notabool
+            ignore_errors: true
+          - copy:
+              dest: 89
+              remote_src: true
+              src: #{__DIR__}/../minitest_helper.cr
+    YAML
+
+    # remote_src: the module's own spec reports first - the bool error,
+    # the unsupported-parameter error, neither wrapped in the action
+    # plugin's "Task failed:" crash chain
+    output.must_include(%("msg": "argument 'backup' is of type str and we were unable to convert to bool: The value 'notabool' is not a valid boolean.))
+    output.must_include(%(Unsupported parameters for (ansible.legacy.copy) module: typo_destinatoin.))
+    # ... and a dest that survives both is used as the str() text, not
+    # as a path object
+    File.exists?(File.join(scratch, "89")).must_equal(true)
+    File.read(File.join(scratch, "89")).must_equal(File.read("#{__DIR__}/../minitest_helper.cr"))
+    # remote_src spelled falsy keeps the controller-side crash, which is
+    # reported ahead of the module's spec (so the bool error still comes
+    # from the remote_src: true task alone - one of each)
+    output.must_include(%("msg": "Task failed: '_AnsibleTaggedInt' object has no attribute 'startswith'"))
+    # one task, two occurrences ([ERROR] line + fatal dump)
+    output.scan("argument 'backup' is of type str and we were unable to convert to bool").size.must_equal(2)
+    output.to_s.wont_include("\u{E000}")
   end
 
   it "copy crashes on a non-string src before the dest check, like real's find_needle path" do

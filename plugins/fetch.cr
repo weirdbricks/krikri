@@ -16,13 +16,16 @@ module Krikri
   # this module" (verified against a real ansible-playbook --check run,
   # not the docs) - reused verbatim here.
   class FetchPlugin < BasePlugin
-    # ansible.builtin.fetch's `type: bool` options, in the real argument-spec
-    # declaration order (ansible-doc -j ansible.builtin.fetch). Validated at
-    # module setup by BasePlugin#validate_bool_params! - see its block
-    # comment for the real-Ansible semantics and message wording.
-    protected def bool_params : Array(String)
-      %w[fail_on_missing flat validate_checksum]
-    end
+    # Real's fetch ACTION plugin does the whole transfer itself and only
+    # ever executes slurp/copy behind the scenes, so the fetch MODULE's
+    # own `type: bool` argument spec (flat, fail_on_missing,
+    # validate_checksum) never runs and none of those three options can
+    # fail a task on a bad spelling - the action plugin reads all of them
+    # through boolean(value, strict=False) (fetch.py:45-48), under which
+    # an unrecognized spelling is simply truthy. Hence no strict bool
+    # params declared here, and #lenient_bool below (live-verified vs
+    # 2.19.11: a fetch with `flat: notabool` transfers flat, and one with
+    # an unsupported extra key transfers too).
 
     def execute : PluginResult
       src = @params["src"]?
@@ -57,6 +60,15 @@ module Krikri
       success_result(dest_path, remote_checksum, src)
     end
 
+    # real's boolean(value, strict=False) for the three options its action
+    # plugin reads (see the class comment): only the BOOLEANS spellings
+    # (and the native true/1/1.0) decide, anything else is truthy, and a
+    # missing option keeps the argspec's own default.
+    private def lenient_bool(value : String?, default : Bool = false) : Bool
+      return default unless value
+      Krikri.lenient_boolean_true?(value)
+    end
+
     # Real fetch's action-plugin failure order (fetch.py:44-64): the
     # check-mode skip first, then the two isinstance checks (plain `if`s -
     # dest's message OVERWRITES src's), then the presence check LAST
@@ -69,7 +81,7 @@ module Krikri
     # unsafe-dest-hostname guard stays ahead of it - it protects krikri's
     # own dest handling and real has no equivalent failure.
     private def action_preflight_result(src : String?, dest : String?) : PluginResult?
-      return unsafe_host_result(src ? src : "") if !true?(@params["flat"]?) && unsafe_host_dir_name?(@host.name)
+      return unsafe_host_result(src ? src : "") if !lenient_bool(@params["flat"]?) && unsafe_host_dir_name?(@host.name)
       return check_mode_result if true?(@params["_ansible_check_mode"]?)
       msg = nil
       msg = "Invalid type supplied for source option, it must be a string" if non_string_param("src")
@@ -153,7 +165,7 @@ module Krikri
 
     private def missing_src_result(src : String) : PluginResult
       msg = "the remote file does not exist, not transferring, ignored"
-      fail_on_missing = true?(@params["fail_on_missing"]?, default: true)
+      fail_on_missing = lenient_bool(@params["fail_on_missing"]?, default: true)
       # fail_on_missing (default): real 2.19.11's action plugin ends up with
       # the slurp module's failure - the fatal dump carries only changed+msg
       # (no `file` key) while the [ERROR] block shows the module's own text
@@ -165,9 +177,15 @@ module Krikri
       PluginResult.new(changed: false, failed: false, msg: msg, file: src)
     end
 
+    # The unchanged/changed decision itself is a plain checksum
+    # comparison (fetch.py:172) - real's validate_checksum only guards
+    # the POST-transfer re-check of what was just written (fetch.py:192),
+    # so a destination that already holds the source's content is
+    # reported ok whatever validate_checksum says (live-verified vs
+    # 2.19.11: fetching identical content with `validate_checksum: no`
+    # reports ok, not changed).
     private def unchanged?(dest_path : String, remote_checksum : String) : Bool
-      return false unless File.exists?(dest_path)
-      return false unless true?(@params["validate_checksum"]?, default: true)
+      return false unless File.file?(dest_path)
       native_checksum(dest_path, "sha1") == remote_checksum
     end
 
@@ -190,7 +208,7 @@ module Krikri
     # intended: a composed destination that escapes dest fails with the
     # message from that guard instead of writing outside it.
     private def resolve_dest_path(dest : String, src : String) : {path: String?, error: String?}
-      composed = if true?(@params["flat"]?)
+      composed = if lenient_bool(@params["flat"]?)
                    dest.ends_with?(File::SEPARATOR) ? File.join(dest, File.basename(src)) : dest
                  else
                    File.join(dest, @host.name, src)

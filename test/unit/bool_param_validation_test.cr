@@ -164,7 +164,13 @@ BOOL_PARAM_TABLE = {
   "dnf"               => %w[allow_downgrade allowerasing autoremove best bugfix cacheonly disable_gpg_check download_only install_repoquery install_weak_deps nobest security skip_broken sslverify update_cache update_only validate_certs],
   "dnf5"              => %w[allow_downgrade allowerasing auto_install_module_deps autoremove best bugfix cacheonly disable_gpg_check download_only install_repoquery install_weak_deps nobest security skip_broken sslverify update_cache update_only validate_certs],
   "expect"            => %w[echo],
-  "fetch"             => %w[fail_on_missing flat validate_checksum],
+  "fetch"             => %w[],
+    # ... because real's fetch ACTION plugin does the whole transfer
+    # itself (only slurp/copy ever run behind the scenes), so the fetch
+    # module's own bool spec - flat/fail_on_missing/validate_checksum -
+    # never runs; the action plugin reads all three through
+    # boolean(strict=False) (fetch.py:45-48), where an unrecognized
+    # spelling is simply truthy. Asserted by the dedicated case below.
   "file"              => %w[follow force recurse unsafe_writes],
   "find"              => %w[exact_mode follow get_checksum hidden read_whole_file recurse use_regex],
   "getent"            => %w[fail_key],
@@ -309,5 +315,33 @@ describe "core plugins' documented bool params (table sweep)" do
     result = PluginSpecHelper.run("assemble", {"dest" => "/tmp/krikri-bool-probe.cfg",
       "src" => "/nonexistent", "remote_src" => "krikri-not-a-bool"})
     msg_of(result).wont_include("unable to convert to bool")
+  end
+
+  it "fetch: flat/fail_on_missing/validate_checksum stay unvalidated, like real (the action reads them boolean(strict=False) first)" do
+    # real's fetch action plugin performs the whole transfer itself (only
+    # slurp/copy run behind the scenes), so the fetch module's own bool
+    # spec never runs: a bad spelling is simply truthy to the action
+    # plugin's boolean(strict=False) read. Live-verified vs 2.19.11 - a
+    # fetch whose bools are spelled wrong still transfers, and the
+    # spelling is read as falsy rather than rejected.
+    missing = PluginSpecHelper.run("fetch", {"src" => "/nonexistent/krikri-fetch-probe",
+      "dest" => "/tmp", "flat" => "krikri-not-a-bool"})
+    msg_of(missing).wont_include("unable to convert to bool")
+    missing["failed"].as_bool.must_equal(true)
+
+    # convert_bool's boolean(value, strict=False) returns False for an
+    # unrecognized spelling (only BOOLEANS_TRUE is True), so a misspelled
+    # fail_on_missing takes the "do not fail" branch instead of failing
+    # the task
+    ignored = PluginSpecHelper.run("fetch", {"src" => "/nonexistent/krikri-fetch-probe",
+      "dest" => "/tmp", "flat" => "krikri-not-a-bool", "fail_on_missing" => "krikri-not-a-bool"})
+    msg_of(ignored).wont_include("unable to convert to bool")
+    ignored["changed"].as_bool.must_equal(false)
+    ignored["msg"].as_s.must_equal("the remote file does not exist, not transferring, ignored")
+
+    # ... while the argspec default (the option absent) still fails
+    failed = PluginSpecHelper.run("fetch", {"src" => "/nonexistent/krikri-fetch-probe",
+      "dest" => "/tmp", "flat" => "krikri-not-a-bool"})
+    failed["failed"].as_bool.must_equal(true)
   end
 end
