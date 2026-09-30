@@ -1666,12 +1666,18 @@ module Krikri
       # for a typical templating-heavy task is tens to hundreds of KB of
       # JSON (up to ~570 KB seen after a package_facts: task) that would
       # otherwise be base64'd over SSH and immediately discarded by the
-      # plugin that receives it.
+      # plugin that receives it. `playbook_dir` is a fourth key, and not
+      # a connection detail: it is the module's own working directory
+      # under a local connection (real Ansible's local connection plugin
+      # runs every module with cwd = the playbook's directory, so any
+      # relative path a module resolves - tempfile's `path:`, for one -
+      # is relative to the playbook, not to the shell the playbook was
+      # launched from), and tempfile.cr needs it to reproduce that.
       wire_vars = if PluginManager.needs_full_vars?(task.module_name)
                     vars_context
                   else
                     pruned = Hash(String, JSON::Any).new
-                    {"ansible_connection", "ansible_host", "ansible_ssh_private_key_file"}.each do |key|
+                    {"ansible_connection", "ansible_host", "ansible_ssh_private_key_file", "playbook_dir"}.each do |key|
                       if v = vars_context[key]?
                         pruned[key] = v
                       end

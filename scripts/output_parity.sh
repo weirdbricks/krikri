@@ -75,6 +75,18 @@ MASKS=(
   # construction - only the values are masked, the keys still must match.
   "s/\"delta\": \"[0-9]+:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?\"/\"delta\": \"<DELTA>\"/g"
   "s/\"(start|end)\": \"[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9:.]+\"/\"\\1\": \"<TIMESTAMP>\"/g"
+  # Sixth entry: tempfile's failure message quotes the name Python's
+  # tempfile.mkstemp/mkdtemp would have picked - prefix, 8 random
+  # characters (lowercase letters, digits, underscore) and suffix - and
+  # those 8 characters are drawn at random per run on both engines, so
+  # they can never match byte for byte. Only that run is masked: it is
+  # anchored on the module's own default prefix `ansible.`, on exactly 8
+  # characters of mkstemp's [a-z0-9_] class, and on the rest of the
+  # single quoted path (the user's suffix) up to its closing quote, so a
+  # different prefix, a shorter/longer name or any unrelated text is left
+  # alone. A custom prefix is not masked - it is not random, so both
+  # engines must reproduce it verbatim.
+  "s/(ansible\\.)[a-z0-9_]{8}([^'\"]*)(')/\\1<RND>\\2\\3/g"
 )
 
 mask() {
