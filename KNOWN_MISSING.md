@@ -151,7 +151,37 @@ krikri aims for byte-for-byte identical stdout/stderr/exit code to `ansible-play
   `invocation.module_args` block naming that random staged file; krikri's action dispatch produces no
   module invocation block for those (except the deterministic check-mode content-copy shape, which IS
   reproduced). Masked in `scripts/output_parity.sh` - see above.
-- A malformed `-e '{...'` JSON argument produces a different error chain.
+- A malformed `-e '{...'` JSON argument produces a different error chain:
+  real prints a multi-part stderr chain (an inventory-plugin parse
+  warning quoting the extra-vars value, "Unable to parse ... as an
+  inventory source", the two implicit-localhost warnings, then the
+  `[ERROR]:` block with `Origin: <CLI option '-e'>` and a
+  `(source not shown: TypeError)` line - Python-internal wording) and
+  exits 4; krikri prints a one-line error and exits 1.
+- `--version` output: real's block names real's own version, its config
+  file, Python paths (`python version = 3.13...`, `jinja version`) and
+  the module search paths - facts about real's Python environment that a
+  non-Python engine cannot truthfully reproduce. Krikri prints its own
+  version block instead.
+- `--help` and unknown-option usage text: real's usage/option listing is
+  generated from real's own option set (including options krikri does
+  not have), and an unknown option is reported as Python argparse's
+  `usage: ...` + `ansible-playbook: error: unrecognized arguments: ...`
+  with exit code 2; krikri prints its own usage with exit code 1.
+  Matching byte-for-byte would mean embedding real's verbatim help text,
+  which documents real's options - not krikri's.
+- Multi-host task-line ordering: real's per-task result-line order for
+  2+ hosts comes out of Python's hash-randomized set iteration and
+  fork scheduling (two real runs already disagree byte-for-byte, and a
+  single real run mixes orders between tasks); krikri's order is the
+  inventory/pattern order. `scripts/cli_output_parity.sh` therefore
+  runs its execution cases against single-host play patterns and sorts
+  the `hosts (N):` block in `--list-hosts` output on both sides.
+- A relative file-module `dest:`/`path:` on a local-connection host
+  resolves against the PLAYBOOK directory in real (the module process
+  itself still runs with the controller's cwd - a `command: pwd` task
+  proves it), while krikri resolves it against its own cwd. Absolute
+  paths are unaffected.
 - `template:` with an `output_encoding:` written as a YAML list of plain strings
   (`[a, b]`) reports real's `unknown encoding: a,b` instead of real's
   `encode() argument 'encoding' must be str, not _AnsibleTaggedList`: the params
