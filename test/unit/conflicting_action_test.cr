@@ -20,7 +20,7 @@ describe "conflicting action statement detection" do
     # (parse_string's in-memory default path doesn't), so assert the
     # [ERROR] line; the full Origin block is covered live by
     # scripts/cli_output_parity.sh's syntax-check-kw-err case.
-    ex.render.not_nil!.lines.first.must_equal("[ERROR]: conflicting action statements: ansible.builtin.debug, any_bogus_keyword")
+    ex.render.as(String).lines.first.must_equal("[ERROR]: conflicting action statements: ansible.builtin.debug, any_bogus_keyword")
   end
 
   it "raises the conflict for a dict-valued unknown key after the action" do

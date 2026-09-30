@@ -31,7 +31,7 @@ describe "tag filter play-tag inheritance" do
     play = play_with_tasks("    - name: blk\n      block:\n        - name: inner\n          ansible.builtin.debug:\n            msg: x\n")
     kept = Krikri::TagFilter.apply(play.tasks, ["deploy"], [] of String, play.tags)
     kept.size.must_equal(1)
-    kept[0].block_tasks.not_nil!.map(&.name).must_equal(["inner"])
+    kept[0].block_tasks.as(Array(Krikri::Task)).map(&.name).must_equal(["inner"])
   end
 
   # Verified live against 2.19.11: with the PLAY tagged deploy, a
