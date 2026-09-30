@@ -78,6 +78,10 @@ module Krikri
   #
   # Read-only, never-`changed`, like stat.
   class FindPlugin < BasePlugin
+    # contains: with an unknown encoding: name - not a per-file miss but a
+    # path-level failure in real (see read_content)
+    class UnknownEncoding < Exception; end
+
     # ansible.builtin.find's `type: bool` options, in the real argument-spec
     # declaration order (ansible-doc -j ansible.builtin.find). Validated at
     # module setup by BasePlugin#validate_bool_params! - see its block
@@ -156,13 +160,32 @@ module Krikri
       # doesn't parse ("banana" etc.); it does NOT silently drop the
       # filter and return unfiltered matches.
       if (age = options.age_filter) && parse_age(age).nil?
-        return PluginResult.new(changed: false, failed: true, msg: "failed to process age")
+        return PluginResult.new(changed: false, failed: true, msg: "failed to process age", age: age)
       end
       if (size = options.size_filter) && parse_size(size).nil?
-        return PluginResult.new(changed: false, failed: true, msg: "failed to process size")
+        return PluginResult.new(changed: false, failed: true, msg: "failed to process size", size: size)
       end
 
       files, examined, skipped_paths = collect_matches(paths, options)
+
+      # find.py: module.warn("Skipped '%s' path due to this access issue: %s\n")
+      # per skipped path - the trailing newline stays in the registered
+      # warning text (the [WARNING] display strips it).
+      warnings = skipped_paths.map { |path, why| "Skipped '#{path}' path due to this access issue: #{why}\n" }
+      extra = warnings.empty? ? nil : warnings
+
+      if extra
+        return PluginResult.new(
+          changed: false,
+          failed: false,
+          msg: "All paths examined",
+          examined: examined,
+          matched: files.size,
+          files: files,
+          skipped_paths: skipped_paths,
+          warnings: extra
+        )
+      end
 
       PluginResult.new(
         changed: false,
@@ -186,7 +209,12 @@ module Krikri
           next
         end
 
-        examined += walk_path(search_path, options, files)
+        begin
+          examined += walk_path(search_path, options, files)
+        rescue ex : UnknownEncoding
+          skipped_paths[search_path] = JSON::Any.new(ex.message.to_s)
+          next
+        end
         break if (limit = options.limit) && files.size >= limit
       end
 
@@ -445,9 +473,15 @@ module Krikri
     # encoding.
     private def read_content(path : String, encoding : String?) : String
       if encoding
-        File.open(path) do |file|
-          file.set_encoding(normalize_encoding(encoding), invalid: :skip)
-          file.gets_to_end
+        begin
+          File.open(path) do |file|
+            file.set_encoding(normalize_encoding(encoding), invalid: :skip)
+            file.gets_to_end
+          end
+        rescue ArgumentError
+          # Python's LookupError text; find.py's per-path `except Exception`
+          # abandons the whole search path with this as the skip reason
+          raise UnknownEncoding.new("unknown encoding: #{encoding}")
         end
       else
         raw = File.read(path)

@@ -126,7 +126,10 @@ describe Krikri::PlaybookParser do
       result = Krikri::PlaybookParser.parse_string(playbook)
 
       result.plays[0].tasks.size.must_equal(1)
-      result.plays[0].tasks[0].params["uid"].must_equal("2147483659")
+      # The int literal now rides the parser's non-string-literal marker
+      # (NON_STRING_PARAM_PREFIX + JSON); BasePlugin demotes it back to the
+      # same "2147483659" text the plugin wire always carried.
+      result.plays[0].tasks[0].params["uid"].must_equal(Krikri::NON_STRING_PARAM_PREFIX + "2147483659")
     end
 
     it "recognizes listen: as a task keyword on a handler, not a module name" do
@@ -1101,7 +1104,9 @@ describe Krikri::PlaybookParser do
         YAML
 
       items = task.loop_items.as(Array(JSON::Any))
-      items.map(&.as_a.map(&.as_s)).must_equal([["0", "x"], ["1", "y"]])
+      # Int index - Python enumerate() semantics, live-verified vs real
+      # ansible-core 2.19.11.
+      items.map(&.as_a.map(&.raw)).must_equal([[0, "x"], [1, "y"]])
     end
 
     it "parses with_fileglob: into raw patterns (resolved at execution time)" do
@@ -1820,7 +1825,7 @@ describe Krikri::PlaybookParser do
             - does_not_exist
         YAML
 
-      assert_raises_message(Krikri::RoleNotFoundError, /Role not found/) do
+      assert_raises_message(Krikri::RoleNotFoundError, /the role 'does_not_exist' was not found in .*\/roles:/) do
         Krikri::PlaybookParser.parse_string(playbook_yaml, File.join(root, "site.yml"))
       end
     end
@@ -2584,16 +2589,22 @@ describe Krikri::PlaybookParser do
       task.include_role_name.must_equal("greeter")
     end
 
-    it "skips (with a warning) an include_role: with no name: rather than failing the whole play" do
-      playbook = Krikri::PlaybookParser.parse_string(<<-YAML)
-        - name: play
-          hosts: all
-          tasks:
-            - include_role:
-                allow_duplicates: true
-        YAML
-
-      playbook.plays[0].tasks.must_be_empty
+    it "refuses the whole playbook (real's IncludeRole.load, rc=4) for an include_role: with no name:" do
+      # Live-verified against real ansible-core 2.19.11: IncludeRole.load
+      # runs at playbook-load time, so a missing name aborts the run with
+      # "'name' is a required field for include_role." + the task's
+      # Origin block (rc=4, no play banner) - the old expectation (a soft
+      # per-task warning, play silently emptied) was wrong against real.
+      assert_raises_message(Krikri::IncludeDirectiveError,
+        "'name' is a required field for include_role.") do
+        Krikri::PlaybookParser.parse_string(<<-YAML)
+          - name: play
+            hosts: all
+            tasks:
+              - include_role:
+                  allow_duplicates: true
+          YAML
+      end
     end
 
     it "treats vars: as a sibling task keyword, not nested inside include_role: (per ansible-doc)" do

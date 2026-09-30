@@ -84,7 +84,12 @@ module Krikri
       #   for every remaining shape without this plugin needing to know
       #   anything about how its value was templated.
       content = @params["content"]?
-      src = @params["src"]?.presence
+      # A falsy non-string literal src (false/0/0.0 - the parser marks
+      # those, see NON_STRING_PARAM_PREFIX) is ignored by real's action
+      # plugin (`not source`), exactly like an absent or empty one - so
+      # `src: 0` with content: runs the content path (live-verified vs
+      # 2.19.11).
+      src = python_param_truthy?("src") ? @params["src"]?.presence : nil
 
       # Must have either src or content
       if !src && !content

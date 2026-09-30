@@ -33,7 +33,10 @@ private def with_systemd_shim(active_state : String, change_rc : Int32, &)
         # Real systemctl's `show X --property=ActiveState --value`
         # prints the bare state; the state-change verbs must be
         # observable failing with real systemctl's job-failure stderr.
-        printf '%s\n' "$KRIKRI_ACTIVE_STATE"
+        case "$*" in
+          *--value*) printf '%s\n' "$KRIKRI_ACTIVE_STATE" ;;
+          *) printf 'ActiveState=%s\n' "$KRIKRI_ACTIVE_STATE" ;;
+        esac
         exit 0
         ;;
       start|stop|restart|reload)

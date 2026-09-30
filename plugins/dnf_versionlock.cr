@@ -90,7 +90,7 @@ module Krikri
 
     private def check_preconditions : PluginResult?
       unless File.exists?(DNF_BIN)
-        return PluginResult.new(changed: false, failed: true, msg: "Failed to find required executable \"dnf\"")
+        return PluginResult.new(changed: false, failed: true, msg: missing_executable_message("dnf"))
       end
       # dnf5 keeps its locklist elsewhere and never reads the dnf4 plugin
       # config, so the missing-conf failure only applies to dnf4 hosts

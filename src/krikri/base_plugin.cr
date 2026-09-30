@@ -89,6 +89,15 @@ module Krikri
     property extra : Hash(String, JSON::Any)
     property? omit_changed : Bool
     property? include_empty_msg : Bool
+    # A NATIVE-typed msg override (JSON::Any): real modules that pass a
+    # non-string value to fail_json/exit_json keep its Python type in the
+    # wire result (fail's action puts the raw task arg in result['msg'],
+    # so `fail: {msg: 50}` registers and dumps the INT 50, not "50") -
+    # the strings-only @msg cannot carry that. When set it replaces @msg
+    # in the serialized result entirely; @msg stays "" (the display layer
+    # re-renders a non-string msg through Python repr for its error
+    # blocks).
+    property msg_native : JSON::Any?
 
     def initialize(
       changed : Bool,
@@ -97,6 +106,7 @@ module Krikri
       diff : JSON::Any? = nil,
       omit_changed : Bool = false,
       include_empty_msg : Bool = false,
+      native_msg : JSON::Any? = nil,
       **kwargs,
     )
       @changed = changed
@@ -105,6 +115,7 @@ module Krikri
       @diff = diff
       @omit_changed = omit_changed
       @include_empty_msg = include_empty_msg
+      @msg_native = native_msg
       @extra = Hash(String, JSON::Any).new
       kwargs.each do |key, value|
         @extra[key.to_s] = JSON.parse(value.to_json)
@@ -123,6 +134,10 @@ module Krikri
       # UNDEFINED, and `when: r.changed` on it raises the same
       # "has no attribute" error real Ansible raises.
       result["changed"] = @changed unless @omit_changed
+      # fail_json adds exception: "(traceback unavailable)" in 2.19 (seen only
+      # through a registered result - the display drops it); controller-side
+      # action failures (omit_changed / _ansible_action_level) never carry it
+      result["exception"] = "(traceback unavailable)" if @failed && !@omit_changed && !@extra.has_key?("_ansible_action_level")
       # Real Ansible's module protocol (module_utils/basic.py) only adds
       # `failed`/`msg` to the result dict on a fail_json exit - a
       # successful module's wire result never carries either key at all
@@ -131,7 +146,11 @@ module Krikri
       # (e.g. git_config's already-converged no-op) still gets the empty
       # key - include_empty_msg opts into that.
       result["failed"] = @failed if @failed
-      result["msg"] = @msg if !@msg.empty? || @include_empty_msg
+      if native = @msg_native
+        result["msg"] = native.raw
+      elsif !@msg.empty? || @include_empty_msg
+        result["msg"] = @msg
+      end
 
       # Add diff if present
       if diff = @diff
@@ -140,8 +159,11 @@ module Krikri
 
       # Add extra fields
       @extra.each do |key, value|
+        next if key == "failed_flag"
         result[key] = value.raw # Extract the raw value from JSON::Any
       end
+      # command.py-style modules report `failed: false` explicitly on success
+      result["failed"] = false if @extra.has_key?("failed_flag") && !@failed
 
       result.to_json(io)
     end
@@ -171,8 +193,71 @@ module Krikri
     # NONE_SENTINEL for why this needs bookkeeping at all.
     @null_params = Set(String).new
 
+    # Params the parser marked as non-string YAML scalar literals (see
+    # NON_STRING_PARAM_PREFIX): key -> the decoded native value
+    # (Int64/Float64/Bool). @params itself holds the demoted plain string,
+    # so plugins that never ask see exactly the text they always did.
+    @non_string_params = Hash(String, JSON::Any).new
+
     def explicit_null_param?(key : String) : Bool
       @null_params.includes?(key)
+    end
+
+    # The native YAML value (JSON::Any) a param carried as a non-string
+    # scalar literal, or nil when it is a string/templated value - the
+    # plugin-side view of the parser's NON_STRING_PARAM_PREFIX marker, for
+    # mirroring real action plugins' Python type checking (copy/fetch/
+    # template dest/src).
+    def non_string_param(key : String) : JSON::Any?
+      @non_string_params[key]?
+    end
+
+    # Python truthiness of one param, native-type aware: a marked
+    # non-string literal carries its own truthiness (false/0/0.0 are
+    # falsy exactly like in Python), anything else is truthy unless it is
+    # absent or the empty string. Distinct from Krikri.python_param_truthy?
+    # because the demoted @params value has already lost the marker - the
+    # native value is consulted from @non_string_params instead.
+    protected def python_param_truthy?(key : String) : Bool
+      if native = @non_string_params[key]?
+        case native.raw
+        when Bool    then native.as_bool
+        when Int64   then native.as_i64 != 0
+        when Float64 then native.as_f != 0.0
+        else              true
+        end
+      else
+        value = @params[key]?
+        !value.nil? && !value.empty?
+      end
+    end
+
+    # module_utils get_bin_path(required=True) failure text: the module
+    # process's PATH plus /sbin, /usr/sbin, /usr/local/sbin when missing from
+    # it and present on disk, with the executable name double-quoted.
+    protected def missing_executable_message(name : String) : String
+      paths = (ENV["PATH"]? || "").split(':')
+      {"/sbin", "/usr/sbin", "/usr/local/sbin"}.each do |dir|
+        paths << dir if !paths.includes?(dir) && Dir.exists?(dir)
+      end
+      %(Failed to find required executable "#{name}" in paths: #{paths.join(':')})
+    end
+
+    # Python str(timedelta) for a sub-day span: H:MM:SS.ffffff
+    protected def python_delta(span : Time::Span) : String
+      total_us = span.total_microseconds.to_i64
+      seconds, micros = total_us.divmod(1_000_000_i64)
+      minutes, secs = seconds.divmod(60_i64)
+      hours, mins = minutes.divmod(60_i64)
+      "#{hours}:#{mins.to_s.rjust(2, '0')}:#{secs.to_s.rjust(2, '0')}.#{micros.to_s.rjust(6, '0')}"
+    end
+
+    # command/shell's failed os.chdir(): real's fatal msg is the generic
+    # "Unable to change directory before execution." while the [ERROR] block
+    # shows the OSError text too (Python bytes repr of the path).
+    protected def chdir_error_detail(path : String) : String
+      errno = File.exists?(path) ? "[Errno 20] Not a directory" : "[Errno 2] No such file or directory"
+      "Unable to change directory before execution: #{errno}: b'#{path}'"
     end
 
     def initialize(@config : JSON::Any)
@@ -190,6 +275,19 @@ module Krikri
           if value.raw.nil? || value.as_s? == NONE_SENTINEL
             @null_params << key
             @params[key] = ""
+          elsif (native = Krikri.non_string_scalar(value.as_s?))
+            # A parser-marked non-string YAML literal: demote to the same
+            # plain string stringify_value always produced (no plugin that
+            # never asks changes behavior) and remember the native value
+            # for #non_string_param.
+            @non_string_params[key] = native
+            @params[key] = Krikri.non_string_param_text(native)
+          elsif (text = value.as_s?) && (text.includes?(Krikri::NON_STRING_PARAM_PREFIX) || text.includes?(Krikri::NON_STRING_MEMBER_PREFIX))
+            # Marked non-string MEMBERS inside a parser comma-joined list
+            # (see parse_module_params's list branch): demote them the
+            # same way, so every plugin's own split(',') keeps seeing the
+            # plain member text it always did.
+            @params[key] = Krikri.strip_non_string_markers_in_value(text)
           else
             @params[key] = value.to_s
           end

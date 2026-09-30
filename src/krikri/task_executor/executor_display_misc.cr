@@ -37,13 +37,98 @@ module Krikri
 
     # Execute a task on a host - dispatches to the loop, retry, or plain
     # single-execution path depending on what the task declares.
+    # Real Ansible templates a task's `name:` leniently through
+    # ReplacingMarkerBehavior (ansible/playbook/task.py
+    # _post_validate_name): every undefined span becomes a numbered
+    # `<< error N - 'x' is undefined >>` placeholder IN the displayed
+    # name, and each name-templating context exits by emitting one
+    # aggregated `[WARNING]: Encountered N template error(s).` block on
+    # stderr with the name value's YAML origin (file:line:column of the
+    # value token, 2 leading context lines, caret under the value start).
+    # Live-verified against ansible-core 2.19.11: the warning fires even
+    # when the task is when:-skipped, numbering restarts per task, and
+    # identical warning text dedups to one display per run.
+    @@name_warning_seen = Set(String).new
+
     private def render_task_name_for_display(task : Task, host : Host) : String
       return task.name unless task.name.includes?("{{")
+      return lenient_task_name(task, host) if task.name.includes?("{%") || task.name.includes?("{#")
 
+      vars_context = build_vars_context(task, host)
+      substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
+
+      errors = [] of String
+      rendered = String.build do |io|
+        pos = 0
+        while (start = task.name.index("{{", pos))
+          stop = task.name.index("}}", start) || break
+          io << task.name[pos...start]
+          span = task.name[start..stop + 1]
+          begin
+            io << substitutor.substitute(span, strict: true)
+          rescue e : UndefinedVariableError
+            errors << e.message.to_s
+            io << "<< error #{errors.size} - #{e.message} >>"
+          rescue
+            # A non-undefined span failure (bad filter, syntax) is not a
+            # Marker in real either - keep the old lenient render for it.
+            io << substitutor.substitute(span)
+          end
+          pos = stop + 2
+        end
+        io << task.name[pos..]
+      end
+
+      emit_name_template_error_warning(task, errors) unless errors.empty?
+      rendered
+    rescue
+      task.name
+    end
+
+    # The old lenient whole-name substitution - still used for names
+    # carrying `{%`/`{#` block tags, where real's marker behavior is not
+    # reproduced here.
+    private def lenient_task_name(task : Task, host : Host) : String
       vars_context = build_vars_context(task, host)
       VarSubstitutor.new(vars: vars_context, host_name: host.name).substitute(task.name)
     rescue
       task.name
+    end
+
+    private def emit_name_template_error_warning(task : Task, errors : Array(String)) : Nil
+      text = name_template_error_text(task, errors)
+      return if text.empty?
+      return unless @@name_warning_seen.add?(text)
+      STDERR.puts text
+    end
+
+    # Best-effort origin: the parser doesn't track per-task source
+    # positions, so the task is located by scanning the playbook file for
+    # its `- name:` line (same approach as task_arg_error_context), with
+    # the origin column at the name VALUE's first character - real points
+    # at the value token itself (quote included), not the `name:` key.
+    private def name_template_error_text(task : Task, errors : Array(String)) : String
+      path = @playbook_file
+      return "" unless path && File.file?(path)
+
+      lines = File.read_lines(path)
+      located = locate_name_line(lines, task)
+      return "" unless located
+      name_idx, column = located
+
+      String.build do |io|
+        io << "[WARNING]: Encountered #{errors.size} template error#{errors.size == 1 ? "" : "s"}.\n"
+        errors.each_with_index { |msg, i| io << "error #{i + 1} - #{msg}\n" }
+        # Real points the Origin at the name VALUE's first character (the
+        # quote included), not the `name:` key - column 13 for
+        # `    - name: "..."`.
+        if (name_key = lines[name_idx].index("name:"))
+          rest = lines[name_idx][(name_key + 5)..]
+          column = name_key + 5 + (rest.size - rest.lstrip.size) + 1
+        end
+        io << origin_context_block(path, lines, name_idx + 1, column)
+        io << "\n"
+      end
     end
 
     # The "myrole : " prefix real Ansible puts on a role-sourced task's
@@ -97,19 +182,18 @@ module Krikri
 
       poll = task.poll_seconds || 10
       if poll <= 0
-        # failed: 0 and finished: 0 are INTEGER zeros here, mirroring
-        # real ansible-core's TaskExecutor async launch result (it puts
-        # failed: 0/finished: 0 ints in the fire-and-forget result) -
-        # registered-var access to .failed/.finished must not be a
-        # missing-key error. Confirmed via the podman-diff
-        # async_status cases (D3).
+        # Real ansible-core 2.19.11's fire-and-forget registered shape
+        # (live-verified by dumping the registered var): ansible_job_id,
+        # changed=true, failed=false, finished=false, results_file,
+        # started=true - booleans, and NO "msg" (the old "Job started:
+        # <jid>" msg key is not something real produces).
         return JSON.parse({
-          "changed"        => true,
-          "failed"         => 0,
-          "started"        => 1,
-          "finished"       => 0,
           "ansible_job_id" => jid,
-          "msg"            => "Job started: #{jid}",
+          "changed"        => true,
+          "failed"         => false,
+          "finished"       => false,
+          "results_file"   => AsyncJobs.status_path(jid),
+          "started"        => true,
         }.to_json)
       end
 
@@ -281,6 +365,10 @@ module Krikri
     # inventory group parent/child nesting already has here.
     private def execute_set_stats(params : Hash(String, String), host : Host, vars_context : Hash(String, JSON::Any)) : JSON::Any
       data_json = params["data"]?
+      # A None data (`data:` with no value - the parser wires literal
+      # nulls as NONE_SENTINEL, same as a whole-span null template) is
+      # real's missing-required-argument shape, same as the empty string.
+      data_json = "" if data_json == Krikri::NONE_SENTINEL
       if data_json.nil? || data_json.empty?
         return JSON.parse({"changed" => false, "failed" => true, "msg" => "missing required argument: data"}.to_json)
       end
@@ -371,7 +459,21 @@ module Krikri
     # mode anyway, which would otherwise turn every retry loop into a slow,
     # guaranteed-to-fail wait for no reason.
     private def execute_meta(task : Task, host : Host) : Nil
-      case task.meta_action
+      # Real Ansible reads the meta action from the task args' _raw_params
+      # at strategy time and raises for anything it doesn't recognize -
+      # INCLUDING the literal None real reports when _raw_params is unset
+      # (a null value, an empty string, or the generator's
+      # `meta: {free_form: noop}` mapping shape). The raise happens after
+      # the PLAY/TASK banners and is a run-level AnsibleError, not a task
+      # result: the [ERROR] block goes to stderr with the task's Origin,
+      # nothing further runs, and there is no recap - rc 1 (live-verified
+      # vs 2.19.11). See PlaybookParser.parse_meta_task for the parse-time
+      # shapes this engine still refuses outright.
+      action = task.meta_action
+      unless action && Krikri::PlaybookParser::SUPPORTED_META_ACTIONS.includes?(action)
+        abort_invalid_meta_action(task, action || "None")
+      end
+      case action
       when "flush_handlers"
         # Called once per host by the outer per-task host loop in #run,
         # but @tasks.each is sequential across tasks - every active host
@@ -521,6 +623,28 @@ module Krikri
         @facts_dict_cache.delete(host.name)
         @hv_generation += 1
       end
+    end
+
+    # The strategy-time unknown-meta-action abort (see execute_meta's own
+    # comment): the [ERROR] block goes to STDERR - banners already on
+    # stdout - with the task's Origin (the task's own mapping position,
+    # the origin real's task-level errors carry), then the run stops with
+    # rc 1 and no recap. Real's block closes with one blank line.
+    # Process.exit rather than `exit`: this runs inside the executor's
+    # per-task exception paths (including the --forks worker fiber's
+    # generic rescue), which would swallow the ExitException `exit`
+    # raises; both streams are flushed explicitly first.
+    private def abort_invalid_meta_action(task : Task, action : String) : Nil
+      STDERR.puts "[ERROR]: invalid meta action requested: #{action}".colorize(:red)
+      path = task.source_file
+      if path && task.source_line > 0 && File.file?(path)
+        lines = File.read_lines(path)
+        STDERR.puts origin_context_block(path, lines, task.source_line, task.source_col)
+        STDERR.puts ""
+      end
+      STDOUT.flush
+      STDERR.flush
+      Process.exit(1)
     end
   end
 end

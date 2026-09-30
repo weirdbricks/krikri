@@ -141,6 +141,11 @@ module Krikri
         dest_path = expand_tilde(dest_param)
         last_mod_time = File.info(dest_path).modification_time if File.file?(dest_path)
       end
+      # A scheme-less URL never reaches an HTTP request in real: urllib falls
+      # through to a local-file open (live-verified message and result keys)
+      unless url.matches?(/\A[A-Za-z][A-Za-z0-9+.\-]*:/)
+        return PluginResult.new(changed: false, failed: true, msg: "Status code was -1 and not #{status_codes}: Connection failure: [Errno 2] No such file or directory", url: url, status: -1, elapsed: 0, redirected: false)
+      end
       begin
         status, headers, body, redirected, final_url, reason = request(url, method, username, password, src_body, last_mod_time: last_mod_time)
       rescue ex

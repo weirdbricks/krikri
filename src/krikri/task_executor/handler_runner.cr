@@ -80,8 +80,7 @@ module Krikri
     )
       return unless any_notified?
 
-      puts "RUNNING HANDLER".colorize(:white).bold
-      puts "*" * 70
+      bannered = Set(Int32).new
 
       # A handler runs at most once per host, no matter how many times
       # it was notified - and, since include_role: (possibly looped) can
@@ -109,15 +108,11 @@ module Krikri
 
       2.times do |pass|
         @handlers.each_with_index do |handler, handler_index|
-          handler_triggered = false
-
           @hosts.each do |host|
-            handler_triggered ||= run_handler_on_host(handler, handler_index, host, pass,
+            run_handler_on_host(handler, handler_index, host, pass,
               execute_callback, results, diff_mode, name_resolver, halted_hosts,
-              already_ran[host.name], second_pass[host.name])
+              already_ran[host.name], second_pass[host.name], bannered)
           end
-
-          puts "" if handler_triggered
         end
 
         # Anything notified during the SECOND pass is discarded, matching
@@ -140,7 +135,8 @@ module Krikri
                                     name_resolver : Proc(Task, Host, String)?,
                                     halted_hosts : Set(String)?,
                                     already_ran : Set(String),
-                                    second_pass : Set(String)) : Bool
+                                    second_pass : Set(String),
+                                    bannered : Set(Int32)) : Bool
       return false if halted_hosts.try(&.includes?(host.name))
 
       rendered_name = name_resolver.try(&.call(handler, host)) || handler.name
@@ -158,7 +154,10 @@ module Krikri
       # make a plain `notify: my handler` stop matching a
       # role handler's own bare notified name.
       role_prefix = (rn = handler.role_name) ? "#{rn} : " : ""
-      puts "HANDLER [#{role_prefix}#{rendered_name}]".colorize(:cyan).bold
+      unless bannered.includes?(handler_index)
+        Krikri::OutputBanner.banner("RUNNING HANDLER [#{role_prefix}#{rendered_name}]")
+        bannered << handler_index
+      end
 
       # Execute handler using the callback
       result = execute_callback.call(handler, host)
@@ -239,7 +238,7 @@ module Krikri
         # sites - see resolve_task_no_log there), so a templated value
         # still falls back to the parse-time guess here specifically -
         # same pre-existing gap as before this fix, not a regression.
-        ResultDisplay.display_result(host, result, diff_mode, no_log: handler.no_log?)
+        ResultDisplay.display_result(host, result, diff_mode, no_log: handler.no_log?, module_name: handler.module_name, source_task: handler)
         ResultDisplay.update_stats(stats, result)
       end
     end

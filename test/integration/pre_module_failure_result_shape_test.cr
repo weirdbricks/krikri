@@ -15,12 +15,14 @@ ensure
 end
 
 # A failure raised BEFORE any module runs (param templating, when:
-# evaluation, loop-source resolution) registers a msg-only result in
-# real ansible-core: no "changed" key at all, because there is no
-# module result to carry one. Live-verified against real ansible-core
-# 2.19 (fail_edge_cases.yml F2/F6/F7 in the podman-diff harness).
+# evaluation, loop-source resolution) registers changed=false in real
+# ansible-core 2.19.11: the fatal line dumps {"changed": false, "msg":
+# "Task failed: ..."} and the registered var reads back .changed as
+# False (live-verified against real ansible-playbook 2.19.11 for all
+# three shapes below). An older 2.19 build showed a changed-less shape;
+# 2.19.11 is the parity target.
 describe "pre-module failure registered result shape" do
-  it "fail msg with an undefined variable registers no changed key" do
+  it "fail msg with an undefined variable registers changed=false" do
     status, output = run_playbook(<<-YAML)
       - hosts: localhost
         connection: local
@@ -37,10 +39,10 @@ describe "pre-module failure registered result shape" do
       YAML
 
     status.success?.must_equal(true)
-    output.must_include("failed=True changed=none")
+    output.must_include("failed=True changed=False")
   end
 
-  it "when: with an undefined variable registers no changed key" do
+  it "when: with an undefined variable registers changed=false" do
     status, output = run_playbook(<<-YAML)
       - hosts: localhost
         connection: local
@@ -57,10 +59,10 @@ describe "pre-module failure registered result shape" do
       YAML
 
     status.success?.must_equal(true)
-    output.must_include("failed=True changed=none")
+    output.must_include("failed=True changed=False")
   end
 
-  it "undefined loop source registers no changed key" do
+  it "undefined loop source registers changed=false" do
     status, output = run_playbook(<<-YAML)
       - hosts: localhost
         connection: local
@@ -77,6 +79,6 @@ describe "pre-module failure registered result shape" do
       YAML
 
     status.success?.must_equal(true)
-    output.must_include("failed=True changed=none")
+    output.must_include("failed=True changed=False")
   end
 end

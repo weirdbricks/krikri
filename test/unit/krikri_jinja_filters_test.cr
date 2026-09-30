@@ -72,7 +72,7 @@ describe Krikri::KrikriJinjaFilters do
     render("{{ data | json_query('a.b') }}", {"data" => JSON.parse(%({"a": {"b": 7}}))}).must_equal("7")
     render("{{ '{\"a\": 1}' | from_json | tojson }}").must_equal(%({"a": 1}))
     render("{{ 'a: 1' | from_yaml | tojson }}").must_equal(%({"a": 1}))
-    render("{{ {'a': 1} | to_yaml }}").must_equal("a: 1")
+    render("{{ {'a': 1} | to_yaml }}").must_equal("{a: 1}\n")
   end
 
   it "resolves register-result tests against the host context scope" do

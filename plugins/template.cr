@@ -68,6 +68,14 @@ module Krikri
           msg: "Missing required parameter: dest"
         )
       end
+      # A non-string YAML literal dest (`dest: true`) is coerced through
+      # Python str() by real's action plugin - bools render as
+      # "True"/"False" (live-verified: real writes a file literally named
+      # "True"; int/float spellings already match the demoted text). See
+      # NON_STRING_PARAM_PREFIX.
+      if native = non_string_param("dest")
+        dest = Krikri.python_str_scalar(native)
+      end
 
       # Real AnsibleModule validates bool-typed params at module setup,
       # after the required-args gate (see BasePlugin#validate_bool_params!).

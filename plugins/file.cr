@@ -132,11 +132,16 @@ module Krikri
       # the same task against an existing DIRECTORY, or a genuinely
       # absent path, succeeds).
       if recurse && state != "directory"
-        return PluginResult.new(
+        result = PluginResult.new(
           changed: false,
           failed: true,
-          msg: "recurse option requires state to be 'directory'"
+          msg: "recurse option requires state to be 'directory'",
+          path: path
         )
+        # fail_json(path=...) runs add_path_info: an existing path's uid/gid/
+        # owner/group/mode/state/size ride along (live-verified vs 2.19.11)
+        add_path_info(result, path)
+        return result
       end
 
       # A path that is PRESENT but resolves to '' must fail like real

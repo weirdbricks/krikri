@@ -140,6 +140,16 @@ module Krikri
     end
 
     def execute : PluginResult
+      result = execute_inner
+      # user.py warns (deprecation-style) when append is set without groups
+      if true?(@params["append"]?) && @params["groups"]?.to_s.strip.empty? && @params["groups"]?.to_s != "[]"
+        existing = result.extra["warnings"]?.try(&.as_a?) || [] of JSON::Any
+        result.extra["warnings"] = JSON::Any.new(existing + [JSON::Any.new("'append' is set, but no 'groups' are specified. Use 'groups' for appending new groups.This will change to an error in Ansible 2.14.")])
+      end
+      result
+    end
+
+    def execute_inner : PluginResult
       # Real ansible.builtin.user's argument_spec declares `name` with
       # alias `user` (`name=dict(type='str', required=True,
       # aliases=['user'])`) - RedHatOfficial.rhel9_pci_dss (round 812000)
@@ -864,7 +874,9 @@ module Krikri
     end
 
     private def command_failure(action : String, result : NamedTuple(exit_code: Int32, stdout: String, stderr: String)) : PluginResult
-      PluginResult.new(changed: false, failed: true, msg: "Failed to #{action}: #{result[:stderr].empty? ? result[:stdout] : result[:stderr]}")
+      # real user.py: fail_json(name=self.name, msg=err, rc=rc) - the raw
+      # stderr as msg (no "Failed to ..." prefix), plus name and rc.
+      PluginResult.new(changed: false, failed: true, msg: result[:stderr], name: @params["name"]?, rc: result[:exit_code])
     end
 
     private def missing_param(name : String) : PluginResult

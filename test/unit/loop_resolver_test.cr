@@ -61,11 +61,15 @@ describe Krikri::LoopResolver do
   end
 
   describe ".with_indexed_items" do
-    it "pairs each item with its stringified index" do
+    # Real Ansible's with_indexed_items is Python's enumerate(): the
+    # index is an INT, not a string (live-verified vs ansible-core
+    # 2.19.11: debug shows `item=[0, 'x']` and `item[0] + 1` arithmetic
+    # works).
+    it "pairs each item with its integer index" do
       items = Krikri::LoopResolver.with_indexed_items([s("x"), s("y"), s("z")])
 
-      items.map(&.as_a.map(&.as_s)).must_equal([
-        ["0", "x"], ["1", "y"], ["2", "z"],
+      items.map(&.as_a.map(&.raw)).must_equal([
+        [0, "x"], [1, "y"], [2, "z"],
       ])
     end
   end

@@ -194,7 +194,24 @@ module Krikri
         if value = structured_container(expr)
           return @lookup.format_value_output(value)
         end
+
+        # query()/q() always return lists (and lookup(..., wantlist=True) does
+        # too), but structured_container deliberately skips lookup calls so a
+        # side-effecting lookup never runs twice. The already-rendered result
+        # string is the JSON-compact form, so parse THAT and print it as
+        # Python repr like real Ansible's `[1, 2]` in mixed text. A plain
+        # lookup('file', ...) whose content merely looks like JSON is NOT
+        # converted: only the list-forcing forms are.
+        if list_forcing_lookup?(expr) && (value = (JSON.parse(rendered) rescue nil)) && value.as_a?
+          return @lookup.format_value_output(value)
+        end
         rendered
+      end
+
+      private def list_forcing_lookup?(expr : String) : Bool
+        stripped = expr.strip
+        return true if stripped.starts_with?("query(") || stripped.starts_with?("q(")
+        stripped.starts_with?("lookup(") && stripped.matches?(/wantlist\s*=\s*(True|true)/)
       end
 
       # The undefined-typed form of #evaluate: Undefined::INSTANCE when the
@@ -281,7 +298,15 @@ module Krikri
       # A plain variable reference: name, dotted path, bracket index.
       # No filters, operators, calls or literals - matching
       # REGEX_BARE_VAR_REF's spirit in variable_substitutor.cr.
-      REGEX_PLAIN_REFERENCE = /\A[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*|\[(?:-?\d+|'[^']*'|"[^"]*")\])*\z/
+      # Dotted NUMERIC parts (`.0`, Jinja's list-index shorthand) are
+      # plain references too: excluding them sent `l.0.0` to the Jinja
+      # fallback, whose stringification loses the container's native
+      # shape (`structured_container` saw a JSON TEXT string, not a
+      # dict, so a mixed-text `parent={{ l.0.0 }}` rendered
+      # `{"name":"s1"}` where real Ansible renders Python repr
+      # `{'name': 's1'}` - live-verified vs 2.19.11). VariableLookup's
+      # apply_dotted_parts owns the Array-vs-Hash-key decision.
+      REGEX_PLAIN_REFERENCE = /\A[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*|\.[0-9]+|\[(?:-?\d+|'[^']*'|"[^"]*")\])*\z/
 
       def evaluate(expr : String) : String
         if ternary = split_ternary(expr)

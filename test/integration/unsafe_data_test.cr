@@ -954,8 +954,12 @@ private def matrix_expectation(shape : String, consumer : String, canary : Strin
     end
   when "f_list"
     case shape
-    when "scalar"               then {"\"t\",\"o\",\"u\",\"c\",\"h\"", ""}
-    when "dict", "dict_of_list" then {"[\"a\"]", hostile}
+    when "scalar"
+      # Real ansible-core 2.19.11 (live-captured) pretty-prints a native
+      # list msg across lines, one element per line at 8-space indent -
+      # never the old JSON-string dump this expectation used to match.
+      {"\"t\",\n        \"o\",\n        \"u\",\n        \"c\",\n        \"h\"", ""}
+    when "dict", "dict_of_list" then {"\"a\"", hostile}
     else                             {hostile, ""}
     end
   when "f_join"

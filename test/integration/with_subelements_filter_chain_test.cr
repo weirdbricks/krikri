@@ -79,7 +79,7 @@ end
 # Real ansible-core's subelements lookup hands the task a parent COPY with
 # the subelement key REMOVED (live-verified against 2.19.11:
 # `msg="{{ item.0 | to_json }}"` over {"name": "s1", "kids": [...]} prints
-# {"name": "s1"}). krikri used to hand the full parent dict through, so
+# the msg string `parent={"name": "s1"}`, JSON-escaped by the callback). krikri used to hand the full parent dict through, so
 # item.0 exposed the whole raw subelement list where real Ansible never
 # shows it.
 describe "with_subelements: parent dict shape" do
@@ -104,7 +104,12 @@ describe "with_subelements: parent dict shape" do
     status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
 
     status.success?.must_equal(true)
-    output.to_s.must_include(%({"name": "s1"}))
+    # The debug callback JSON-escapes the msg value (real ansible-core
+    # 2.19.11 prints `"msg": "parent={\"name\": \"s1\"}"` - the to_json
+    # quotes are escaped INSIDE the msg string), so the expected substring
+    # carries the backslashes. %-literals process \\ escapes, hence the
+    # doubled backslashes here.
+    output.to_s.must_include(%(parent={\\"name\\": \\"s1\\"}))
     output.to_s.wont_include("kids")
   ensure
     File.delete(playbook) if playbook && File.exists?(playbook)

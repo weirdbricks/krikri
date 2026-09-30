@@ -491,7 +491,10 @@ describe Krikri::RoleLoader do
   end
 
   it "raises with a clear message when the role directory can't be found" do
-    assert_raises_message(Exception, /Role not found: nonexistent/) do
+    # Real 2.19.11's message names the full search-path list it looked
+    # through (definition.py's "the role '<name>' was not found in
+    # <paths>").
+    assert_raises_message(Exception, /the role 'nonexistent' was not found in #{roles_root}\/roles:/) do
       Krikri::RoleLoader.load_roles(roles_yaml("- nonexistent"), fresh_play, roles_root)
     end
   end

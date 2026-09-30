@@ -226,6 +226,8 @@ module Krikri
     # stderr matches real Ansible's _stderr_failed regex - sysctl can exit
     # 0 yet still fail to set a value
     # (https://bugzilla.redhat.com/show_bug.cgi?id=1264080).
+    # Both this and reload_sysctl's failure are real Ansible's plain
+    # `fail_json(msg=...)` - msg only, no name/sysctl_file echo.
     private def set_token_value(token : String, value : String, sysctl_file : String) : PluginResult?
       ignore_flag = true?(@params["ignoreerrors"]?) ? "-e " : ""
       # Unquoted, a space-separated value (net.ipv4.ip_local_port_range:
@@ -238,9 +240,7 @@ module Krikri
         return PluginResult.new(
           changed: false,
           failed: true,
-          msg: "setting #{token} failed: #{result[:stdout]}#{result[:stderr]}",
-          name: token,
-          sysctl_file: sysctl_file
+          msg: "setting #{token} failed: #{result[:stdout]}#{result[:stderr]}"
         )
       end
       nil
@@ -253,7 +253,8 @@ module Krikri
     end
 
     # Real reload_sysctl: `sysctl [-e] -p <file>` under LANG=C; failure
-    # text is "Failed to reload sysctl: <out><err>".
+    # text is "Failed to reload sysctl: <out><err>" - fail_json(msg=...)
+    # only, no name/sysctl_file echo (live-verified vs 2.19.11).
     private def reload_sysctl(sysctl_file : String) : PluginResult?
       ignore_flag = true?(@params["ignoreerrors"]?) ? "-e" : ""
       result = remote_exec("LANG=C LC_ALL=C LC_MESSAGES=C sysctl #{ignore_flag} -p #{shell_single_quote(sysctl_file)}")
@@ -261,9 +262,7 @@ module Krikri
         return PluginResult.new(
           changed: false,
           failed: true,
-          msg: "Failed to reload sysctl: #{result[:stdout]}#{result[:stderr]}",
-          name: @params["name"]?,
-          sysctl_file: sysctl_file
+          msg: "Failed to reload sysctl: #{result[:stdout]}#{result[:stderr]}"
         )
       end
       nil

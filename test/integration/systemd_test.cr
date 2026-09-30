@@ -279,3 +279,77 @@ describe "systemd plugin" do
     end
   end
 end
+
+
+# Builds a throwaway fake `systemctl` that reproduces every
+# no-service-manager stderr shape (never touching the dev machine's own
+# systemd), first on the child's PATH.
+private def with_fake_systemctl(params : Hash(String, String)) : JSON::Any
+  bin_dir = PluginSpecHelper.tmp_path("fake-systemctl-bin")
+  FileUtils.mkdir_p(bin_dir)
+  fake = File.join(bin_dir, "systemctl")
+  File.write(fake, <<-SH)
+    #!/bin/sh
+    for arg in "$@"; do
+      case "$arg" in
+        --global) echo "--global is not supported for this operation." >&2; exit 1;;
+        --user) echo "Failed to connect to user scope bus via local transport: No such file or directory" >&2; exit 1;;
+      esac
+    done
+    echo "System has not been booted with systemd as init system (PID 1). Can't operate." >&2
+    echo "Failed to connect to system scope bus via local transport: Host is down" >&2
+    exit 1
+    SH
+  File.chmod(fake, 0o755)
+  PluginSpecHelper.run("systemd", params, env: {"PATH" => "#{bin_dir}:/usr/bin:/bin:/usr/sbin:/sbin"})
+end
+
+# The no-service-manager failure path (real's bare
+# `module.run_command(systemctl, check_rc=True)` fallback after
+# show/is-enabled/list-unit-files all fail): its echoed cmd carries the
+# FULL prefix the module builds once up front - scope flag, then
+# --no-block, then --force (systemd_service.py:377-386; live-verified vs
+# 2.19.11: force → "/usr/bin/systemctl --force", no_block+force →
+# "/usr/bin/systemctl --no-block --force", scope user+force →
+# "/usr/bin/systemctl --user --force").
+describe "systemd plugin - no-service-manager failure cmd" do
+  it "echoes --force in the failure cmd, with real's run_command result shape" do
+    result = with_fake_systemctl({"name" => "ssh.service", "force" => "true"})
+    result["failed"].as_bool.must_equal(true)
+    result["cmd"].as_s.must_equal("/usr/bin/systemctl --force")
+    result["rc"].as_i.must_equal(1)
+    result["msg"].as_s.must_equal("System has not been booted with systemd as init system (PID 1). Can't operate." \
+      "\nFailed to connect to system scope bus via local transport: Host is down")
+    result["stderr"].as_s.must_equal("System has not been booted with systemd as init system (PID 1). Can't operate." \
+      "\nFailed to connect to system scope bus via local transport: Host is down\n")
+    result["stderr_lines"].as_a.size.must_equal(2)
+    result["stdout"].as_s.must_equal("")
+    result["stdout_lines"].as_a.must_equal([] of JSON::Any)
+  end
+
+  it "echoes --no-block before --force" do
+    result = with_fake_systemctl({"name" => "ssh.service", "force" => "true", "no_block" => "true"})
+    result["cmd"].as_s.must_equal("/usr/bin/systemctl --no-block --force")
+  end
+
+  it "echoes the scope flag first for scope: user (with the user-bus failure msg)" do
+    result = with_fake_systemctl({"name" => "ssh.service", "scope" => "user", "force" => "true"})
+    result["failed"].as_bool.must_equal(true)
+    result["cmd"].as_s.must_equal("/usr/bin/systemctl --user --force")
+    result["msg"].as_s.must_equal("Failed to connect to user scope bus via local transport: No such file or directory")
+  end
+
+  it "fails scope: global with systemctl's own --global rejection and the prefix in cmd" do
+    result = with_fake_systemctl({"name" => "ssh.service", "scope" => "global", "no_block" => "true"})
+    result["failed"].as_bool.must_equal(true)
+    result["cmd"].as_s.must_equal("/usr/bin/systemctl --global --no-block")
+    result["msg"].as_s.must_equal("--global is not supported for this operation.")
+    result["stderr_lines"].as_a.size.must_equal(1)
+  end
+
+  it "keeps the state-management failure on the same failure path (cmd carries --force)" do
+    result = with_fake_systemctl({"name" => "ssh.service", "state" => "started", "force" => "true"})
+    result["failed"].as_bool.must_equal(true)
+    result["cmd"].as_s.must_equal("/usr/bin/systemctl --force")
+  end
+end

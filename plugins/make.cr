@@ -56,7 +56,7 @@ module Krikri
         # before falling back to system make, and get_bin_path returns
         # the ABSOLUTE resolved path - the `command` result echoes it.
         make_bin = which_bin("gmake") || which_bin("make")
-        return PluginResult.new(changed: false, failed: true, msg: "Failed to find required executable make") unless make_bin
+        return PluginResult.new(changed: false, failed: true, msg: missing_executable_message("make")) unless make_bin
       end
 
       command = [make_bin]

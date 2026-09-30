@@ -106,6 +106,55 @@ describe "mount plugin" do
     result["msg"].as_s.must_include("path")
   end
 
+  # Real ansible.posix.mount passes a `warnings` list to its single
+  # exit_json success exit, and ansible-core 2.19's _return_formatted
+  # deprecates that - every successful run carries the structured
+  # `deprecations` entry into registered vars plus the display marker
+  # ResultDisplay renders as the [DEPRECATION WARNING] stderr line
+  # (captured live against 2.19.11). Real's fail_json paths don't pass
+  # args, so failures carry neither.
+  it "carries the exit_json warnings deprecation on every successful result" do
+    fstab = fresh_fstab("deprecation.fstab")
+
+    result = PluginSpecHelper.run("mount", {
+      "path" => "/mnt/dep", "src" => "/dev/sdb1", "fstype" => "ext4", "state" => "present", "fstab" => fstab,
+    })
+
+    deprecations = result["deprecations"].as_a
+    deprecations.size.must_equal(1)
+    entry = deprecations[0].as_h
+    entry["msg"].as_s.must_equal("Passing `warnings` to `exit_json` or `fail_json` is deprecated.")
+    entry["version"].as_s.must_equal("2.23")
+    entry["collection_name"].as_s.must_equal("ansible.builtin")
+    entry["deprecator"].as_h["resolved_name"].as_s.must_equal("ansible.builtin")
+    result["_ansible_core_deprecations"].as_a.size.must_equal(1)
+    result["_ansible_core_deprecations"].as_a[0].as_s.must_equal(
+      "Passing `warnings` to `exit_json` or `fail_json` is deprecated. " \
+      "This feature will be removed from ansible-core version 2.23. " \
+      "Use `AnsibleModule.warn` instead.")
+  end
+
+  it "carries no deprecation on a failed result (real's fail_json passes no args)" do
+    fstab = fresh_fstab("deprecation-fail.fstab")
+
+    result = PluginSpecHelper.run("mount", {"path" => "/mnt/x", "state" => "present", "fstab" => fstab})
+
+    result["failed"].as_bool.must_equal(true)
+    result["deprecations"]?.must_be_nil
+    result["_ansible_core_deprecations"]?.must_be_nil
+  end
+
+  it "omits src/fstype from the result when the task did not pass them (real only copies non-None params)" do
+    fstab = fresh_fstab("no-fstype-param.fstab")
+
+    result = PluginSpecHelper.run("mount", {
+      "path" => "/mnt/nofstype", "src" => "/dev/sdb1", "state" => "absent", "fstab" => fstab,
+    })
+
+    result["src"]?.must_equal("/dev/sdb1")
+    result["fstype"]?.must_be_nil
+  end
+
   it "reports it would mount (check mode, no real mount attempted) for a path that isn't currently mounted" do
     fstab = fresh_fstab("mounted-check.fstab")
 
@@ -138,6 +187,11 @@ describe "mount plugin" do
 
     result["failed"].as_bool.must_equal(true)
     result["msg"].as_s.must_include("mounting")
+    # Real mount.py's failures are bare fail_json(msg=...) - fail_json's
+    # changed default is False, so a mount that fails AFTER the fstab entry
+    # was successfully written still reports changed: false (live-verified
+    # vs 2.19.11 with an unknown fstype).
+    result["changed"].as_bool.must_equal(false)
   end
 
   it "fails the task when the real umount command fails, instead of silently reporting changed: true (state: unmounted)" do
@@ -152,6 +206,22 @@ describe "mount plugin" do
 
     result["failed"].as_bool.must_equal(true)
     result["msg"].as_s.must_include("unmounting")
+  end
+
+  it "state: absent reports changed: false when the umount fails after an fstab edit" do
+    # The state: absent twin of the changed:false fix above: real's
+    # fail_json never passes changed, so an unmount failure AFTER
+    # remove_fstab_entry edited the file reports changed: false, not the
+    # fstab edit's own changed: true (live-verified vs 2.19.11).
+    fstab = fresh_fstab("absent-umount-fail.fstab", "/ ext4 defaults 0 1\n")
+
+    result = PluginSpecHelper.run("mount", {
+      "path" => "/", "state" => "absent", "fstab" => fstab,
+    })
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_include("unmounting")
+    result["changed"].as_bool.must_equal(false)
   end
 
   it "does not actually write the fstab file in check mode (regression: check_mode only guarded the mount/umount step, not the fstab write)" do
@@ -203,13 +273,71 @@ describe "mount plugin" do
     # "/" (this sandbox has no privilege to remount/umount/mount it, so
     # both the initial remount AND the umount+mount fallback genuinely
     # fail) - no real mount state is touched either way, and the plugin
-    # should now report a REAL failure (umount's own error) instead of
-    # silently reporting changed: true.
+    # should now report a REAL failure instead of silently reporting
+    # changed: true. Real's remounted-branch failure text is
+    # "Error remounting %s: %s" with the FALLBACK command's output -
+    # main()'s remounted branch wraps whatever remount() returned, it
+    # never re-words it as "Error unmounting"/"Error mounting"
+    # (mount.py source, live-verified vs 2.19.11).
     result = PluginSpecHelper.run("mount", {
       "path" => "/", "state" => "remounted",
     })
 
     result["failed"].as_bool.must_equal(true)
-    result["msg"].as_s.must_include("unmounting")
+    result["msg"].as_s.must_include("remounting")
+  end
+
+  # Real mount.py fails every mount/umount/remount error with a bare
+  # fail_json(msg=...) - no name echo (live-verified vs 2.19.11 in a
+  # privileged container: fatal => {"changed": false, "msg": "Error
+  # mounting ...: mount: ... unknown filesystem type ..."}).
+  it "fails a failed ephemeral mount with msg only - no name echo" do
+    path = PluginSpecHelper.tmp_path("ephemeral-fail-mount")
+    result = PluginSpecHelper.run("mount", {
+      "path" => path, "src" => "/opt/kpg-fixtures/template.j2",
+      "fstype" => "krikri_nonexistent_fs", "state" => "ephemeral",
+    })
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.starts_with?("Error mounting #{path}: ").must_equal(true)
+    result.as_h.has_key?("name").must_equal(false)
+  end
+
+  # Real mount.py creates a missing fstab file before any state handling
+  # (except ephemeral), even in check mode. A bare relative fstab
+  # filename has os.path.dirname() == '' and os.makedirs('') raises
+  # FileNotFoundError - an UNCAUGHT module exception real 2.19.11
+  # renders as "Task failed: Module failed: [Errno 2] No such file or
+  # directory: ''" in both the [ERROR] block and the fatal msg
+  # (live-verified). No fstab file may be left behind either.
+  it "reproduces real's uncaught os.makedirs('') crash for a bare relative fstab filename with state: remounted" do
+    dir = PluginSpecHelper.tmp_path("remount-bare-fstab")
+    FileUtils.mkdir_p(dir)
+
+    result = PluginSpecHelper.run("mount", {
+      "path" => File.join(dir, "sub"), "state" => "remounted", "fstab" => "uybxfa",
+    }, chdir: dir)
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("Task failed: Module failed: [Errno 2] No such file or directory: ''")
+    result["_ansible_error_detail"].as_s.must_equal("[Errno 2] No such file or directory: ''")
+    File.exists?(File.join(dir, "uybxfa")).must_equal(false)
+  end
+
+  # The same pre-state step's success side: a missing fstab under a
+  # missing parent directory gets mkdir -p'd and touched before the
+  # state handling runs - even in check mode (real's creation block is
+  # outside any check_mode guard).
+  it "creates a missing fstab file and its parent directories before state handling, even in check mode" do
+    fstab = PluginSpecHelper.tmp_path("nested", "dir", "created.fstab")
+    FileUtils.rm_rf(PluginSpecHelper.tmp_path("nested", "dir"))
+
+    result = PluginSpecHelper.run("mount", {
+      "path" => PluginSpecHelper.tmp_path("nested-mount-point"), "state" => "remounted",
+      "fstab" => fstab, "_ansible_check_mode" => "true",
+    })
+
+    result["changed"].as_bool.must_equal(true)
+    File.exists?(fstab).must_equal(true)
   end
 end

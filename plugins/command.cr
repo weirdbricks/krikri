@@ -145,6 +145,8 @@ module Krikri
       # the `unless cmd` check above via the OR, so this is unreachable
       # with cmd nil only via that path.
       argv_parts = argv.try { |raw| parse_argv_list(raw) }
+      # real returns the (shlex-split, unexpanded) argv list as `cmd` on every path
+      cmd_list = argv_parts || (cmd ? parse_command(cmd) : [] of String)
 
       # Check creates parameter (idempotency). Real Ansible reports this
       # as an ORDINARY "ok" result (changed: false), never a task-level
@@ -180,7 +182,11 @@ module Krikri
       # "must run" - where real ansible-playbook reported changed=0.
       chdir = @params["chdir"]?.try { |itm| expand_tilde(itm) }
 
-      if creates = @params["creates"]?
+      # real command.py os.chdir()s BEFORE its creates:/removes: checks, so a
+      # bad chdir fails the task even when creates:/removes: would skip it
+      chdir_invalid = !chdir.nil? && !File.directory?(chdir)
+
+      if !chdir_invalid && (creates = @params["creates"]?)
         if path_or_glob_exists?(resolve_against_chdir(creates, chdir))
           skipped_stdout = "skipped, since #{creates} exists"
           # Real ansible-core 2.19.11 words the check-mode variant of this
@@ -191,7 +197,7 @@ module Krikri
             changed: false,
             failed: false,
             msg: skip_msg,
-            cmd: cmd,
+            cmd: cmd_list,
             rc: 0,
             stdout: skipped_stdout,
             stdout_lines: [skipped_stdout],
@@ -207,7 +213,7 @@ module Krikri
       # Check removes parameter (conditional execution) - same real-
       # Ansible "ok", not "skipping:", shape as creates: above, with the
       # same full command-module result keys (see the creates: branch).
-      if removes = @params["removes"]?
+      if !chdir_invalid && (removes = @params["removes"]?)
         unless path_or_glob_exists?(resolve_against_chdir(removes, chdir))
           skipped_stdout = "skipped, since #{removes} does not exist"
           skip_msg = @check_mode ? "Would not run command since '#{removes}' does not exist" : "Did not run command since '#{removes}' does not exist"
@@ -215,7 +221,7 @@ module Krikri
             changed: false,
             failed: false,
             msg: skip_msg,
-            cmd: cmd,
+            cmd: cmd_list,
             rc: 0,
             stdout: skipped_stdout,
             stdout_lines: [skipped_stdout],
@@ -253,7 +259,7 @@ module Krikri
           failed: false,
           msg: "Command would have run if not in check mode",
           skipped: !gated,
-          cmd: cmd,
+          cmd: cmd_list,
           rc: 0,
           stdout: "",
           stdout_lines: [] of String,
@@ -293,7 +299,6 @@ module Krikri
       # every time (robertdebock.nextcloud's own `Configure nextcloud`
       # task, `chdir: /var/www/html/nextcloud`, `become_user: www-data`).
       if chdir && !File.directory?(chdir)
-        reason = File.exists?(chdir) ? "Not a directory" : "No such file or directory"
         # The result carries the FULL real command-module shape with
         # rc: NULL (not absent, not 0) - real Ansible's chdir failure
         # happens inside run_command, whose fail_json populates
@@ -308,8 +313,9 @@ module Krikri
         return with_executable_warning(PluginResult.new(
           changed: false,
           failed: true,
-          msg: "Failed to change directory to #{chdir}: #{reason}",
-          cmd: cmd,
+          msg: "Unable to change directory before execution.",
+          _ansible_error_detail: chdir_error_detail(chdir),
+          cmd: cmd_list,
           rc: nil,
           stdout: "",
           stdout_lines: [] of String,
@@ -334,6 +340,8 @@ module Krikri
       # itself (live-verified against 2.19.4: `cmd: ["echo", "hi"]`).
       cmd_parts = argv_parts || (cmd ? parse_command(cmd) : [] of String)
 
+      started_at = Time.utc
+      ended_at = started_at
       begin
         # Real Ansible's AnsibleModule.run_command (expand_user_and_vars,
         # driven by the command module's expand_argument_vars, default true)
@@ -414,6 +422,7 @@ module Krikri
 
         status = process.wait
         exit_code = status.exit_code
+        ended_at = Time.utc
       rescue ex
         # Real Ansible's command module never gets here at all - Python's
         # `subprocess`/`AnsibleModule.run_command` catches ENOENT (a
@@ -439,7 +448,6 @@ module Krikri
           msg: "Failed to execute command: #{ex.message}",
           stdout: "",
           stderr: ex.message || "",
-          exit_code: 2,
           rc: 2
         ))
       end
@@ -473,15 +481,20 @@ module Krikri
       with_executable_warning(PluginResult.new(
         changed: true,
         failed: exit_code != 0,
-        msg: exit_code == 0 ? "" : "Command failed with exit code #{exit_code}",
+        msg: exit_code == 0 ? "" : "non-zero return code",
         include_empty_msg: true,
         cmd: cmd_parts,
         stdout: final_stdout,
         stdout_lines: PluginHelpers::AnsibleSplitlines.split(final_stdout),
         stderr: final_stderr,
         stderr_lines: PluginHelpers::AnsibleSplitlines.split(final_stderr),
-        exit_code: exit_code,
-        rc: exit_code # Add rc as alias for Ansible compatibility
+        rc: exit_code,
+        # command.py's start/end/delta (str(datetime) forms, UTC-naive local
+        # time in real; never byte-matchable - the parity harness masks them)
+        start: started_at.to_s("%F %H:%M:%S.%6N"),
+        end: ended_at.to_s("%F %H:%M:%S.%6N"),
+        delta: python_delta(ended_at - started_at),
+        failed_flag: false
       ))
     end
 

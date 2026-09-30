@@ -88,7 +88,7 @@ module Krikri
       # quoted on its own.
       bin_ok = remote_exec("command -v #{Shell.quote_arg(executable)}")
       return censor(PluginResult.new(changed: false, failed: true,
-        msg: "Failed to find required executable #{executable} in paths: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")) if bin_ok[:exit_code] != 0
+        msg: missing_executable_message(executable.to_s))) if bin_ok[:exit_code] != 0
 
       exists = remote_exec("#{Shell.quote_arg(executable)} image exists #{Shell.quote_arg(reference)}")
       image_exists = exists[:exit_code] == 0

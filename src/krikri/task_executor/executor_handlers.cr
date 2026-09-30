@@ -276,7 +276,7 @@ module Krikri
       end
 
       result = if ex = when_error
-                 when_error_result(ex)
+                 when_error_result(ex, handler)
                elsif items = loop_items
                  execute_handler_loop(handler, host, vars_context, items)
                else
@@ -400,7 +400,7 @@ module Krikri
         executed_count += 1
         any_changed ||= result["changed"]?.try(&.as_bool) || false
         any_failed ||= Krikri.result_failed_flag(result)
-        ResultDisplay.display_result(host, result, @diff_mode, item_label: item_display(item), ignore_errors: resolve_task_ignore_errors(handler, base_vars_context), no_log: resolve_task_no_log(handler, base_vars_context))
+        ResultDisplay.display_result(host, result, @diff_mode, item_label: item_display(item), ignore_errors: resolve_task_ignore_errors(handler, base_vars_context), no_log: resolve_task_no_log(handler, base_vars_context), module_name: handler.module_name, source_task: handler, loop_item: item, loop_var_name: loop_var)
       end
 
       # A looped handler whose every item was skipped (per-item when:,
@@ -490,12 +490,12 @@ module Krikri
           begin
             reached = evaluate_when_items(handler, vars_context, host)
           rescue ex : WhenEvaluationError
-            return when_error_result(ex)
+            return when_error_result(ex, handler)
           end
         end
         reachable_unavailable_modules << module_name if reached
         connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
-        suffix = (item = vars_context["item"]?) ? " => (item=#{resolve_task_no_log(handler, vars_context) ? "(censored due to no_log)" : item_display(item)})" : ""
+        suffix = (item = vars_context["item"]?) ? " => (item=#{resolve_task_no_log(handler, vars_context) ? "(censored due to no_log)" : item_display(item)}) " : ""
         puts "skipping: [#{connection_host}]#{suffix}".colorize(:cyan)
         return JSON.parse({
           "changed" => false,
@@ -531,12 +531,12 @@ module Krikri
           # handler) exactly like the substitute_task_params rescue just
           # below - same shape when_error_result already builds for
           # execute_task_once.
-          return when_error_result(ex)
+          return when_error_result(ex, handler)
         end
 
         unless when_result
           connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
-          suffix = (item = vars_context["item"]?) ? " => (item=#{resolve_task_no_log(handler, vars_context) ? "(censored due to no_log)" : item_display(item)})" : ""
+          suffix = (item = vars_context["item"]?) ? " => (item=#{resolve_task_no_log(handler, vars_context) ? "(censored due to no_log)" : item_display(item)}) " : ""
           puts "skipping: [#{connection_host}]#{suffix}".colorize(:cyan)
           return JSON.parse({
             "changed" => false,
@@ -594,7 +594,7 @@ module Krikri
         inherited = Play.new("", "")
         inherited.become = handler.become?
         inherited.become_user = handler.become_user
-        included_tasks = PlaybookParser.parse_tasks(yaml.as_a, inherited, "task in included #{resolved_path}", File.dirname(resolved_path), role_path: handler.role_path, playbook_dir: @playbook_dir)
+        included_tasks = PlaybookParser.parse_tasks(yaml.as_a, inherited, "task in included #{resolved_path}", File.dirname(resolved_path), role_path: handler.role_path, playbook_dir: @playbook_dir, source_file: File.expand_path(resolved_path), source_map: YamlSourceMap.scan(text))
         propagate_role_context(handler, included_tasks)
 
         run_task_list(included_tasks, host)
@@ -615,11 +615,7 @@ module Krikri
         substituted_params = substitute_task_params(handler.params, substitutor, native_containers: handler.module_name.ends_with?("set_fact"), module_name: handler.module_name)
         substituted_env = substitute_task_environment(handler, substitutor)
       rescue ex
-        result = JSON.parse({
-          "changed" => false,
-          "failed"  => true,
-          "msg"     => finalize_args_failure_message(ex, handler),
-        }.to_json)
+        result = finalization_failure_json(ex, handler)
         # Not routed through apply_changed_failed_when - failed_when:/
         # changed_when: only reinterpret a MODULE result, and arg
         # finalization failed before any module ran (same reasoning as
@@ -658,6 +654,17 @@ module Krikri
         return result
       end
       substituted_params = copied
+      # Real's unarchive/assemble action plugins crash on non-string
+      # literal args at their own controller-side touch points, before
+      # the src staging paths could leak the marker into a message or
+      # upload path - see unarchive_assemble_literal_type_failure.
+      if violation = unarchive_assemble_literal_type_failure(handler, substituted_params)
+        result = apply_changed_failed_when(handler, violation, vars_context, host)
+        if register_name = handler.register
+          register_result(host, register_name, result) unless register_name.empty?
+        end
+        return result
+      end
       staged = stage_unarchive_remote_src(handler, substituted_params, host, vars_context)
       if staged.is_a?(JSON::Any)
         result = apply_changed_failed_when(handler, staged, vars_context, host)
@@ -667,8 +674,24 @@ module Krikri
         return result
       end
       substituted_params = staged
-      substituted_params = stage_script_src(handler, substituted_params, host, vars_context)
-      substituted_params = stage_assemble_dir(handler, substituted_params, host, vars_context)
+      staged_script = stage_script_src(handler, substituted_params, host, vars_context)
+      if staged_script.is_a?(JSON::Any)
+        result = apply_changed_failed_when(handler, staged_script, vars_context, host)
+        if register_name = handler.register
+          register_result(host, register_name, result) unless register_name.empty?
+        end
+        return result
+      end
+      substituted_params = staged_script
+      staged_assemble = stage_assemble_dir(handler, substituted_params, host, vars_context)
+      if staged_assemble.is_a?(JSON::Any)
+        result = apply_changed_failed_when(handler, staged_assemble, vars_context, host)
+        if register_name = handler.register
+          register_result(host, register_name, result) unless register_name.empty?
+        end
+        return result
+      end
+      substituted_params = staged_assemble
       substituted_become_user = handler.become_user.try { |raw_user| substitutor.substitute(raw_user) }
 
       # Real bug found benchmarking geerlingguy.jenkins: its own
@@ -695,11 +718,16 @@ module Krikri
         )
 
         unless action_result.success?
-          return JSON.parse({
+          failed = {
             "changed" => false,
             "failed"  => true,
             "msg"     => action_result.error_message || "Action plugin failed",
-          }.to_json)
+          }
+          # An ACTION-level failure (a bare AnsibleActionFail raised by
+          # the plugin itself) renders without the "Module failed." chain
+          # segment - see ActionResult#action_level.
+          failed["_ansible_action_level"] = true if action_result.action_level?
+          return JSON.parse(failed.to_json)
         end
 
         if final = action_result.final_result

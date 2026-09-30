@@ -27,9 +27,11 @@ module Krikri
     def execute : PluginResult
       src = @params["src"]?
       dest = @params["dest"]?
-      return missing_arg_result("src") unless src
-      return missing_arg_result("dest") unless dest
-      dest = expand_tilde(dest)
+      if result = action_preflight_result(src, dest)
+        return result
+      end
+      src = src.as(String)
+      dest = expand_tilde(dest.as(String))
       validate_bool_params!
 
       if result = preflight_result(src)
@@ -55,18 +57,48 @@ module Krikri
       success_result(dest_path, remote_checksum, src)
     end
 
-    private def missing_arg_result(name : String) : PluginResult
-      PluginResult.new(changed: false, failed: true, msg: "missing required argument: #{name}")
+    # Real fetch's action-plugin failure order (fetch.py:44-64): the
+    # check-mode skip first, then the two isinstance checks (plain `if`s -
+    # dest's message OVERWRITES src's), then the presence check LAST
+    # overwrites both, and the single AnsibleActionFail carries whatever
+    # survived. The old module-level "missing required argument:
+    # src/dest" results were never real's shape - the action plugin fails
+    # before the module ever validates anything (live-verified vs
+    # 2.19.11). Real's presence check is a None check: an explicitly null
+    # param counts as absent, an empty string does not. krikri's own
+    # unsafe-dest-hostname guard stays ahead of it - it protects krikri's
+    # own dest handling and real has no equivalent failure.
+    private def action_preflight_result(src : String?, dest : String?) : PluginResult?
+      return unsafe_host_result(src ? src : "") if !true?(@params["flat"]?) && unsafe_host_dir_name?(@host.name)
+      return check_mode_result if true?(@params["_ansible_check_mode"]?)
+      msg = nil
+      msg = "Invalid type supplied for source option, it must be a string" if non_string_param("src")
+      msg = "Invalid type supplied for dest option, it must be a string" if non_string_param("dest")
+      if src.nil? || explicit_null_param?("src") || dest.nil? || explicit_null_param?("dest")
+        msg = "src and dest are required"
+      end
+      return action_fail_result(msg) if msg
+      nil
     end
 
     # Everything that can fail before any destination resolution or
     # checksum work happens, in the order real fetch performs the checks.
     private def preflight_result(src : String) : PluginResult?
-      return unsafe_host_result(src) if !true?(@params["flat"]?) && unsafe_host_dir_name?(@host.name)
-      return check_mode_result if true?(@params["_ansible_check_mode"]?)
       return missing_src_result(src) unless remote_file_exists?(src)
       return directory_src_result(src) if remote_dir_exists?(src)
       nil
+    end
+
+    # Real fetch's AnsibleActionFail failure: the fatal dump carries the
+    # bare message (no "Task failed:" prefix) while the [ERROR] block shows
+    # "Task failed: <msg>" with no middle segment - the action-level
+    # _ansible_action_level shape (live-verified vs 2.19.11).
+    private def action_fail_result(msg : String) : PluginResult
+      PluginResult.new(
+        changed: false, failed: true,
+        msg: msg,
+        _ansible_action_level: true,
+      )
     end
 
     private def unsafe_host_result(src : String) : PluginResult
@@ -122,7 +154,15 @@ module Krikri
     private def missing_src_result(src : String) : PluginResult
       msg = "the remote file does not exist, not transferring, ignored"
       fail_on_missing = true?(@params["fail_on_missing"]?, default: true)
-      PluginResult.new(changed: false, failed: fail_on_missing, msg: msg, file: src)
+      # fail_on_missing (default): real 2.19.11's action plugin ends up with
+      # the slurp module's failure - the fatal dump carries only changed+msg
+      # (no `file` key) while the [ERROR] block shows the module's own text
+      # (carried in _ansible_error_detail, stripped from every dump).
+      if fail_on_missing
+        return PluginResult.new(changed: false, failed: true, msg: msg,
+          _ansible_error_detail: "File not found: #{src}: [Errno 2] No such file or directory: '#{src}'")
+      end
+      PluginResult.new(changed: false, failed: false, msg: msg, file: src)
     end
 
     private def unchanged?(dest_path : String, remote_checksum : String) : Bool

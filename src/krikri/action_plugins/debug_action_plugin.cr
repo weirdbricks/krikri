@@ -1,6 +1,7 @@
 require "json"
 require "../unsafe_values"
 require "../base_action_plugin"
+require "../param_sentinels"
 require "../variable_substitutor"
 require "../variable_substitutor/variable_lookup"
 
@@ -20,6 +21,17 @@ module Krikri
     def execute : ActionResult
       msg = @params["msg"]?
       var_name = @params["var"]?
+
+      # A natively typed msg (literal YAML number/bool, or a whole-span
+      # `{{ expr }}` evaluated structurally) arrives JSON-encoded behind the
+      # NATIVE_TYPED_PREFIX - real keeps that exact type in the result.
+      native_msg : JSON::Any? = nil
+      if msg && msg.starts_with?(Krikri::NATIVE_TYPED_PREFIX)
+        native_msg = (JSON.parse(msg[Krikri::NATIVE_TYPED_PREFIX.size..]) rescue nil)
+        if native_msg
+          msg = native_msg.as_s? || native_msg.to_json
+        end
+      end
 
       # msg and var are mutually exclusive in real ansible.builtin.debug -
       # the action plugin fails the task with exactly this message before
@@ -62,7 +74,16 @@ module Krikri
       # unconditional (see ResultDisplay's empty-msg branch).
       return debug_var(var_name) if var_name
 
-      ActionResult.final(result_json(false, false, msg.to_s, {"_ansible_verbose_always" => JSON::Any.new(true)}))
+      final = result_json(false, false, msg.to_s, {"_ansible_verbose_always" => JSON::Any.new(true)})
+      if (typed = native_msg) && typed.as_s?.nil?
+        return ActionResult.final(JSON.parse({
+          "changed"                 => false,
+          "failed"                  => false,
+          "msg"                     => typed,
+          "_ansible_verbose_always" => true,
+        }.to_json))
+      end
+      ActionResult.final(final)
     end
 
     private def debug_var(var_name : String) : ActionResult
@@ -70,7 +91,9 @@ module Krikri
       unless var_value
         return ActionResult.final(result_json(false, false, "", {
           "_ansible_verbose_always" => JSON::Any.new(true),
-          var_name                  => JSON::Any.new("VARIABLE IS NOT DEFINED!"),
+          # 2.19.11 renders the undefined var's error inline (older releases
+          # printed "VARIABLE IS NOT DEFINED!")
+          var_name                  => JSON::Any.new("<< error 1 - #{Krikri.strict_undefined_message(var_name, @vars)} >>"),
         }))
       end
 

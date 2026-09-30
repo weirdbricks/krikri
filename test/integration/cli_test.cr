@@ -132,7 +132,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -146,7 +145,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -156,7 +154,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -166,7 +163,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -176,7 +172,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -186,7 +181,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -196,7 +190,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -206,7 +199,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -216,7 +208,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -226,7 +217,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -236,7 +226,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -246,7 +235,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -256,7 +244,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -266,7 +253,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -276,7 +262,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -286,7 +271,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -296,7 +280,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -306,7 +289,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -316,7 +298,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -326,7 +307,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -336,7 +316,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -346,7 +325,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -356,7 +334,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -366,7 +343,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -376,7 +352,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -386,7 +361,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -396,7 +370,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -406,7 +379,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -416,7 +388,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -426,7 +397,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -436,7 +406,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -446,7 +415,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -456,7 +424,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -466,7 +433,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -476,7 +442,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -486,7 +451,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -496,7 +460,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -506,7 +469,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -516,7 +478,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -526,7 +487,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -536,7 +496,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -546,7 +505,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -556,7 +514,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -566,7 +523,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -576,7 +532,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -586,7 +541,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -596,7 +550,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -606,7 +559,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -616,7 +568,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -626,7 +577,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -636,7 +586,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -646,7 +595,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -656,7 +604,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -666,7 +613,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -676,7 +622,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -686,7 +631,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -696,7 +640,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -706,7 +649,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -716,7 +658,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -726,7 +667,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -736,7 +676,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -746,7 +685,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -756,7 +694,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -766,7 +703,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -776,7 +712,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -786,7 +721,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -796,7 +730,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -806,7 +739,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -816,7 +748,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -826,7 +757,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -836,7 +766,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -846,7 +775,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -856,7 +784,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -866,7 +793,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -876,7 +802,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -886,7 +811,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -896,7 +820,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -906,7 +829,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -916,7 +838,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -926,7 +847,6 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     output.must_include("PLAY RECAP")
-    output.must_include("Playbook execution complete")
     output.wont_include("Error parsing playbook")
     output.wont_include("Error loading inventory")
   end
@@ -935,7 +855,10 @@ describe "krikri-playbook CLI (--check mode)" do
     status, output = run_playbook("test-debug-quick.yml")
 
     status.success?.must_equal(true)
-    output.must_include("Mode: CHECK (dry-run)")
+    # Real ansible-playbook 2.19.11 prints no check-mode banner at all;
+    # its check mode is visible only through the command: task's own
+    # "skipping: [localhost]" line (command: never runs under --check).
+    output.must_include("skipping: [localhost]")
     output.must_include("ok: [localhost]")
     # shell.cr's check-mode skip now sets skipped: true (matching real
     # Ansible's own recap - `skipped=1`, verified against ansible-core
@@ -948,7 +871,6 @@ describe "krikri-playbook CLI (--check mode)" do
     # templating became strict (`test_result.stdout` must resolve to a
     # real empty string, not a missing key).
     output.must_include("skipping: [localhost]")
-    output.must_include("NOTE: Running in check mode - no changes were made")
   end
 
   it "iterates loop:, with_items:, with_dict:, with_nested:, with_sequence: and with_indexed_items:" do
@@ -967,8 +889,8 @@ describe "krikri-playbook CLI (--check mode)" do
     output.must_include(%(nested item: ['b', 'y']))
     output.must_include("sequence item: 1")
     output.must_include("sequence item: 3")
-    output.must_include(%(indexed item: ['0', 'x']))
-    output.must_include(%(indexed item: ['1', 'y']))
+    output.must_include(%(indexed item: [0, 'x']))
+    output.must_include(%(indexed item: [1, 'y']))
     output.must_include("var loop item: red")
     output.must_include("var loop item: green")
     output.must_include("var loop item: blue")
@@ -1050,7 +972,7 @@ describe "krikri-playbook CLI (--check mode)" do
     status, output = run_playbook(write_loop_counting_playbook, [] of String)
 
     status.success?.must_equal(true)
-    output.must_include(%(localhost            : ok=1  changed=1  unreachable=0  failed=0))
+    output.must_include(%(localhost                  : ok=1    changed=1    unreachable=0    failed=0))
   end
 
   it "always prints all 7 PLAY RECAP counters, even when 0, matching real ansible-playbook" do
@@ -1064,10 +986,20 @@ describe "krikri-playbook CLI (--check mode)" do
     status, output = run_playbook(write_loop_counting_playbook, [] of String)
 
     status.success?.must_equal(true)
-    output.must_include(%(unreachable=0  failed=0  skipped=0  rescued=0  ignored=0))
+    output.must_include(%(unreachable=0    failed=0    skipped=0    rescued=0    ignored=0))
   end
 
   it "runs a role: meta dependency first, applies defaults/vars/invocation-var precedence, resolves src: relative to the role's files/ dir, fires role handlers, then runs the play's own tasks" do
+    # Real ansible-playbook 2.19.11 never echoes the copy src path or any
+    # "Would copy" text - its --check copy of a MISSING dest reports plain
+    # `changed: [localhost]` and notifies the handler. The dest is removed
+    # first so the src-resolution assertion has a real, deterministic
+    # signal: a broken role-files/ resolution would fail the task with
+    # "Could not find or access", and a resolved one reports changed and
+    # fires the notified handler (verified byte-identical against real
+    # ansible-playbook 2.19.11 for both the missing-dest and existing-dest
+    # shapes).
+    File.delete("/tmp/krikri-playbook-role-greeting.txt") if File.exists?("/tmp/krikri-playbook-role-greeting.txt")
     status, output = run_playbook("test-roles-quick.yml")
 
     status.success?.must_equal(true)
@@ -1080,9 +1012,10 @@ describe "krikri-playbook CLI (--check mode)" do
 
     output.must_include("greeting target: krikri-playbook") # role invocation var overrides defaults/main.yml
     output.must_include("greeting style: friendly")         # from vars/main.yml
-    output.must_include("Would copy")
-    output.must_include("testing/roles/greeter/files/greeting.txt")
-    output.must_include("announce greeting") # role handler fired (copy task reported changed)
+    output.must_include("RUNNING HANDLER [greeter : announce greeting]")
+    output.must_include("greeting announced")
+    output.must_include(%(changed=1    unreachable=0))
+    output.wont_include("Could not find or access")
     output.must_include("SUCCESS: play task ran after role tasks")
   end
 
@@ -1239,7 +1172,7 @@ describe "krikri-playbook CLI (--check mode)" do
     status, output = run_playbook("test-include-role-okcount-quick.yml")
 
     status.success?.must_equal(true)
-    output.must_include("ok=5  changed=1")
+    output.must_include("ok=5    changed=1")
   end
 
   it "propagates ansible_parent_role_names through a role's own include_tasks: -> include_role: chain" do
@@ -1749,7 +1682,7 @@ describe "krikri-playbook CLI (--check mode)" do
       status, output = run_playbook("test-meta-flush-handlers-quick.yml", [] of String)
 
       status.success?.must_equal(true)
-      task_order = output.lines.select { |line| line.starts_with?("TASK [") || line.starts_with?("HANDLER [") }
+      task_order = output.lines.select { |line| line.starts_with?("TASK [") || line.starts_with?("HANDLER [") || line.starts_with?("RUNNING HANDLER [") }
       handler_index = task_order.index(&.includes?("HANDLER [my flush handler]"))
       after_index = task_order.index(&.includes?("TASK [after the flush]"))
       handler_index.wont_be_nil
@@ -1902,23 +1835,15 @@ describe "krikri-playbook CLI (--check mode)" do
     end
 
     it "reports an unsupported meta action instead of treating it as a no-op" do
-      # A meta action this engine does not model is rejected at parse time
-      # with a named error, rather than being accepted and silently doing
-      # nothing - a `meta: frobnicate` that quietly did nothing
-      # would change what the playbook means. (end_play/end_host/
-      # clear_host_errors/noop/refresh_inventory/end_batch/end_role/
-      # reset_connection are all real, supported actions now - see
-      # PlaybookParser::SUPPORTED_META_ACTIONS and
-      # TaskExecutor#execute_meta, each verified against real
-      # ansible-playbook.)
-      #
-      # It surfaces as a warning and the task is dropped, which is how the
-      # parser handles *every* parse error (see PlaybookParser.parse_tasks'
-      # rescue) - not as a non-zero exit. An earlier version of this spec
-      # asserted a failing exit code and passed for the wrong reason: the
-      # resulting task-less play then hit a crash in show_recap, which is
-      # what actually produced the non-zero status. That crash is fixed,
-      # so this now asserts the behavior that is really there.
+      # A meta action real Ansible does not recognize fails the RUN at
+      # strategy time - not at parse, and not as a silent no-op that
+      # would change what the playbook means. Live-verified against
+      # ansible-core 2.19.11: the PLAY/TASK banners print, then the
+      # strategy's own AnsibleError surfaces as "[ERROR]: invalid meta
+      # action requested: frobnicate" on stderr with the task's Origin
+      # block, rc 1, and NO recap (the raise happens before any task
+      # result exists, so ignore_errors: never applies - it is not the
+      # per-task "Warning: Skipping task" degradation either).
       tmp = File.tempname("meta-unsupported", ".yml")
       File.write(tmp, <<-YAML)
         - name: unsupported meta
@@ -1930,10 +1855,102 @@ describe "krikri-playbook CLI (--check mode)" do
         YAML
       begin
         captured = IO::Memory.new
-        Process.run(BINARY, ["-i", testservers_inventory, tmp], output: captured, error: captured)
-        captured.to_s.must_include("meta: frobnicate is not supported")
+        status = Process.run(BINARY, ["-i", testservers_inventory, tmp], output: captured, error: captured)
+        captured.to_s.must_include("TASK [frobnicate]")
+        captured.to_s.must_include("[ERROR]: invalid meta action requested: frobnicate")
+        captured.to_s.must_include("Origin: ")
         # and the task genuinely did not run
         captured.to_s.wont_include("frobnicate the florb")
+        # no recap - the run aborted before it could be printed
+        captured.to_s.wont_include("PLAY RECAP")
+        status.success?.must_equal(false)
+      ensure
+        File.delete(tmp) rescue nil
+      end
+    end
+
+    it "reports a null/mapping meta value as the literal None at strategy time" do
+      # Real Ansible reads the meta action from the task args' _raw_params
+      # (task.py's _get_meta): a null value, an empty string, or a
+      # mapping (`meta: {free_form: noop}` - the generator's happy shape)
+      # leaves _raw_params unset, and the strategy reports the action as
+      # the literal None - banners first, then "[ERROR]: invalid meta
+      # action requested: None" on stderr with the Origin, rc 1, no
+      # recap (live-verified vs 2.19.11). Not a parse-time skip.
+      tmp = File.tempname("meta-null", ".yml")
+      File.write(tmp, <<-YAML)
+        - name: null meta
+          hosts: testservers
+          gather_facts: false
+          tasks:
+            - name: frobnicate
+              ansible.builtin.meta:
+                free_form: noop
+        YAML
+      begin
+        captured = IO::Memory.new
+        status = Process.run(BINARY, ["-i", testservers_inventory, tmp], output: captured, error: captured)
+        captured.to_s.must_include("PLAY [null meta]")
+        captured.to_s.must_include("TASK [frobnicate]")
+        captured.to_s.must_include("[ERROR]: invalid meta action requested: None")
+        captured.to_s.wont_include("Warning: Skipping")
+        captured.to_s.wont_include("PLAY RECAP")
+        status.success?.must_equal(false)
+      ensure
+        File.delete(tmp) rescue nil
+      end
+    end
+
+    it "warns on stderr when pause would prompt with a non-interactive stdin" do
+      # Real 2.19.11, live-verified with stdin from /dev/null: `pause: {}`
+      # (no duration - the action always prompts for Enter) raises
+      # AnsiblePromptNoninteractive, the action warns ONCE globally
+      # (Display deduplicates warnings) and continues immediately - the
+      # task is ok. Krikri never blocks on stdin, so it must still emit
+      # the warning its behavior implies.
+      tmp = File.tempname("pause-noninteractive", ".yml")
+      File.write(tmp, <<-YAML)
+        - name: pause without duration
+          hosts: localhost
+          gather_facts: false
+          tasks:
+            - name: wait for enter
+              ansible.builtin.pause: {}
+        YAML
+      begin
+        captured = IO::Memory.new
+        status = Process.run(BINARY, ["-i", "localhost,", tmp], output: captured, error: captured)
+        captured.to_s.must_include(
+          "[WARNING]: Not waiting for response to prompt as stdin is not interactive")
+        captured.to_s.must_include("ok: [localhost]")
+        status.success?.must_equal(true)
+      ensure
+        File.delete(tmp) rescue nil
+      end
+    end
+
+    it "refuses a non-string free-form meta value at playbook-load time" do
+      # Real's mod_args refuses a non-string, non-mapping free-form value
+      # when loading the playbook - "[ERROR]: unexpected parameter type
+      # in action: <class 'ansible.module_utils._internal._datatag.
+      # _AnsibleTaggedInt'>", rc 4, no banners (live-verified vs 2.19.11).
+      tmp = File.tempname("meta-int", ".yml")
+      File.write(tmp, <<-YAML)
+        - name: int meta
+          hosts: testservers
+          gather_facts: false
+          tasks:
+            - name: frobnicate
+              ansible.builtin.meta: 5
+        YAML
+      begin
+        captured = IO::Memory.new
+        status = Process.run(BINARY, ["-i", testservers_inventory, tmp], output: captured, error: captured)
+        captured.to_s.must_include("[ERROR]: unexpected parameter type in action: " \
+                                   "<class 'ansible.module_utils._internal._datatag._AnsibleTaggedInt'>")
+        captured.to_s.must_include("Origin: ")
+        captured.to_s.wont_include("PLAY [")
+        status.exit_code.must_equal(4)
       ensure
         File.delete(tmp) rescue nil
       end
@@ -2090,12 +2107,20 @@ describe "krikri-playbook CLI (--check mode)" do
     )
 
     status.success?.must_equal(true)
-    # poll: > 0 blocks and returns the real (finished) module result.
-    output.must_include("polled_result finished=1 changed=True")
-    # poll: 0 returns immediately with a job id, not the real result yet.
-    output.must_match(/Job started: \S+/)
+    # poll: > 0 blocks and returns the real (finished) module result -
+    # real ansible-core 2.19.11 renders its registered .finished as the
+    # JSON boolean True (live-verified), not the integer 1.
+    output.must_include("polled_result finished=True changed=True")
+    # poll: 0 returns immediately with a job id, not the real result yet:
+    # real ansible prints no "Job started" console line at all (the old
+    # krikri-only msg key is gone), so the registered fire-and-forget
+    # shape itself is the assertion - real 2.19.11's bg_result is
+    # {ansible_job_id, changed: true, failed: false, finished: false,
+    # results_file, started: true}.
+    output.must_include("\"finished\": false")
+    output.must_include("\"results_file\"")
     # async_status: eventually sees the fire-and-forget job finish.
-    output.must_include("job_result finished=1")
+    output.must_include("job_result finished=True")
     output.must_include("async / poll / async_status smoke test complete!")
   end
 
@@ -2240,7 +2265,11 @@ describe "krikri-playbook CLI (--check mode)" do
     # used to wrap it unconditionally, which meant every `become: true`
     # task failed outright on a host with no sudo installed - a minimal
     # container or slimmed cloud image - where real Ansible succeeds.
-    output.must_match(/current_user=\S+ became_sudo_user=$/m)
+    # Real ansible-core 2.19.11's debug callback JSON-escapes the msg
+    # value, so the empty trailing var ends at the closing quote of the
+    # "msg": "..." line (the old $-anchored regex predates the escaped
+    # display and can never match real output).
+    output.must_match(/current_user=\S+ became_sudo_user="/m)
     output.must_include("become smoke test complete!")
 
     # ANSIBLE_BECOME_ALLOW_SAME_USER is real Ansible's own opt-out from
@@ -2255,7 +2284,7 @@ describe "krikri-playbook CLI (--check mode)" do
     )
 
     status.success?.must_equal(true)
-    match = forced.match(/current_user=(\S+) became_sudo_user=(\S+)/)
+    match = forced.match(/current_user=(\S+) became_sudo_user=([^\s"]+)/)
     match.wont_be_nil
     (match || raise "unexpected nil")[1].must_equal((match || raise "unexpected nil")[2])
 
@@ -2472,7 +2501,11 @@ describe "krikri-playbook CLI (--check mode)" do
     status, output = run_playbook("test-command.yml")
 
     status.success?.must_equal(true)
-    output.must_include("Skipping play - no hosts match pattern: testservers")
+    # Real ansible-playbook 2.19.11's own no-match wording (live-verified
+    # against the same empty fixture inventory): a bare "skipping: no
+    # hosts matched" line under the PLAY banner, not the old krikri-only
+    # "Skipping play - no hosts match pattern: ..." sentence.
+    output.must_include("skipping: no hosts matched")
   end
 
   it "--limit restricts a hosts: all play to just the named host, not every matching host" do

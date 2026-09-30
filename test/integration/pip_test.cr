@@ -303,7 +303,7 @@ describe "pip plugin" do
         })
 
         result["failed"].as_bool.must_equal(true)
-        result["msg"].as_s.must_include("Failed to find required executable no-such-venv-tool-xyz in paths:")
+        result["msg"].as_s.must_include(%(Failed to find required executable "no-such-venv-tool-xyz" in paths:))
         File.directory?(venv).must_equal(false)
       ensure
         FileUtils.rm_rf(venv)

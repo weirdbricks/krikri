@@ -54,8 +54,40 @@ module Krikri
       end
     end
 
+    # Role-file tasks carry their own source file + position map, the
+    # way real Ansible's task objects do - a task parsed from a role's
+    # tasks/main.yml reports Origins against THAT file (live-verified vs
+    # 2.19.11: an include_role: inside a role whose role name resolves
+    # nowhere points its runtime error's Origin at
+    # <role>/tasks/main.yml:<line>:<col> of the name value).
+    private def self.cached_source_map(path : String) : YamlSourceMap
+      @@source_map_cache.fetch(path) do
+        @@source_map_cache[path] = YamlSourceMap.scan(Vault.maybe_decrypt(File.read(path)))
+      end
+    end
+
+    @@source_map_cache = Hash(String, YamlSourceMap).new
+
     def self.role_exists?(name : String, playbook_dir : String) : Bool
       !resolve_role_dir(name, playbook_dir).nil?
+    end
+
+    # The role search path list exactly as real ansible-core's
+    # RoleDefinition._load_role_path builds and REPORTS it
+    # (definition.py: "the role '<name>' was not found in <paths>"):
+    # the playbook dir's own roles/ subtree first, then the configured
+    # roles paths (ANSIBLE_ROLES_PATH or the ~/.ansible:/usr/share:/
+    # /etc/ansible defaults), then the playbook dir itself. Live-verified
+    # against 2.19.11: a missing role errors as "the role 'x' was not
+    # found in /work/roles:/root/.ansible/roles:/usr/share/ansible/roles:
+    # /etc/ansible/roles:/work". Display-only - resolve_role_dir above
+    # keeps its own (superset) search order.
+    def self.role_search_display(playbook_dir : String) : String
+      basedir = File.expand_path(playbook_dir)
+      paths = [File.join(basedir, "roles")]
+      paths.concat(roles_paths)
+      paths << basedir
+      paths.join(":")
     end
 
     # Loads every entry in a play's `roles:` list (plus their meta/main.yml
@@ -195,7 +227,7 @@ module Krikri
     )
       role_dir = resolve_role_dir(name, playbook_dir)
       unless role_dir
-        raise RoleNotFoundError.new("Role not found: #{name} (looked under #{File.join(playbook_dir, "roles", name)} and #{File.join("roles", name)})")
+        raise RoleNotFoundError.new("the role '#{name}' was not found in #{role_search_display(playbook_dir)}")
       end
 
       # An already-loaded role contributes no defaults a second time -
@@ -718,7 +750,7 @@ module Krikri
       # `library/` search root, threaded through so the parse-time
       # unimplemented-module hard-stop finds a role-private module
       # source exactly where the executor later will.
-      PlaybookParser.parse_tasks(yaml.as_a, play, "task in #{path}", File.dirname(path), known_vars, role_dir, nil)
+      PlaybookParser.parse_tasks(yaml.as_a, play, "task in #{path}", File.dirname(path), known_vars, role_dir, nil, path, cached_source_map(path))
     end
   end
 end

@@ -168,7 +168,7 @@ module Krikri
       distribution_version dns effective_group_ids effective_user_id env
       facter fibre_channel_wwn fips hardware interfaces is_chroot iscsi
       kernel kernel_version loadavg local lsb machine machine_id mounts
-      hostnqn network nvme ohai os_family pkg_mgr platform processor
+      network nvme ohai os_family pkg_mgr platform processor
       processor_cores processor_count python python_version real_user_id
       selinux service_mgr ssh_host_key_dsa_public ssh_host_key_ecdsa_public
       ssh_host_key_ed25519_public ssh_host_key_rsa_public ssh_host_pub_keys

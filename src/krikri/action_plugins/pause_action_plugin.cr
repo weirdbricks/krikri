@@ -30,6 +30,10 @@ module Krikri
   # - delta is the integer elapsed seconds; never `changed`; runs under
   #   check mode (verified, not assumed).
   class PauseActionPlugin < ActionPlugin
+    # Real's Display deduplicates warnings globally - the non-interactive
+    # stdin warning fires once per run even across hosts/tasks.
+    @@stdin_warning_shown = false
+
     def execute : ActionResult
       seconds_param = @params["seconds"]?
       minutes_param = @params["minutes"]?
@@ -49,6 +53,19 @@ module Krikri
         value = parse_int_arg(minutes_param, "minutes")
         return validation_failure("minutes") unless value
         wait = value.to_f * 60
+      end
+
+      unless wait
+        # Real's pause always waits for Enter when no duration is given;
+        # with a non-interactive stdin, display.prompt_until raises
+        # AnsiblePromptNoninteractive and the action warns and continues
+        # immediately (pause.py's AnsiblePromptNoninteractive handler).
+        # Verified vs 2.19.11: `pause: {}` with stdin from /dev/null
+        # prints exactly this on stderr and the task is ok.
+        unless @@stdin_warning_shown
+          STDERR.puts "[WARNING]: Not waiting for response to prompt as stdin is not interactive".colorize(:yellow)
+          @@stdin_warning_shown = true
+        end
       end
 
       start = Time.local

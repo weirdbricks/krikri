@@ -91,7 +91,7 @@ describe "broken pipe (reader exits early)" do
 
       combined = stdout_io.to_s
       # Every loop item made it through - the fix must not truncate.
-      combined.scan(/^  line \d+$/m).size.must_equal(399)
+      combined.scan(/^\s{4}"msg": "line \d+"$/m).size.must_equal(399)
       # And the failing task's real exit code (2) is preserved, not
       # replaced by the broken-pipe path's 0.
       combined.must_include("RC=2")

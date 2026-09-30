@@ -15,6 +15,25 @@ module Krikri
     @render_error : String? = nil
 
     def execute : ActionResult
+      # The parser's non-string-literal markers (NON_STRING_PARAM_PREFIX)
+      # arrive intact here (execute_action deliberately exempts template:)
+      # because the src/dest conversions need the native type (src is
+      # coerced through Python str() here; dest rides the marker to the
+      # plugin binary, which applies the same coercion). Every OTHER
+      # param is demoted back to its plain string first, so the
+      # Jinja knob bools (`trim_blocks: true`) and strings see exactly the
+      # text they always did - the same contract BasePlugin's param parse
+      # gives the plugin binaries.
+      demoted = Hash(String, String).new
+      @params.each do |key, value|
+        if key != "src" && key != "dest" && (native = Krikri.non_string_scalar(value))
+          demoted[key] = Krikri.non_string_param_text(native)
+        else
+          demoted[key] = value
+        end
+      end
+      @params = demoted
+
       # newline_sequence: template-only param (real Ansible strips it from
       # the module args - it is consumed HERE, on the controller, by the
       # Jinja environment). Default "\n"; the three documented values are
@@ -23,7 +42,11 @@ module Krikri
       # literal two-character string - real Ansible's own
       # wrong_sequences normalization), anything else fails the task with
       # real Ansible's exact message before any template is touched
-      # (live-verified against ansible-core 2.19.4).
+      # (live-verified against ansible-core 2.19.4; the 2.19.11 bytes
+      # carry REAL control characters - the Python source literal
+      # "\n, \r or \r\n" - and real's error pipeline .strip()s the
+      # message, dropping the trailing " \r\n", which is what both the
+      # [ERROR] block and the fatal JSON then show).
       # `.presence` is deliberately NOT used on the raw value: it treats
       # a whitespace-only string as unset, and "\r"/"\r\n" are ALL
       # whitespace - newline_sequence: "\r\n" silently fell back to the
@@ -37,7 +60,7 @@ module Krikri
       when "\\r\\n" then newline_sequence = "\r\n"
       end
       unless ["\n", "\r", "\r\n"].includes?(newline_sequence)
-        return ActionResult.failure("newline_sequence needs to be one of: \\n, \\r or \\r\\n")
+        return ActionResult.failure("newline_sequence needs to be one of: \n, \r or")
       end
 
       # Get source template path
@@ -46,15 +69,30 @@ module Krikri
         return ActionResult.failure("Missing required parameter: src")
       end
 
-      # Check if template file exists on CONTROLLER - real Ansible's own
-      # _find_needle/copy action wording for a missing source (the
-      # newline is literal: real's msg is the two-line
-      # "Could not find or access '<path>' on the Ansible Controller.\n"
-      # "If you are using a module and expect the file to exist on the
-      # remote, see the remote_src option").
-      resolved_src = resolve_controller_src(src)
+      # An EMPTY src skips real's search entirely (its `source and ...`
+      # branch never runs, so no candidate list is built) and fails with
+      # the bare not-found wording.
+      if src.empty?
+        return ActionResult.failure(Krikri::NeedleLookup.not_found_message(src, [] of String))
+      end
+
+      # A non-string YAML literal src (`src: true`) is coerced through
+      # Python str() by real's action plugin before the search - bools
+      # render as "True"/"False" (live-verified: real searches for a file
+      # literally named "True"), so a bare `src: true` must look for
+      # "True", not the YAML text "true" (see NON_STRING_PARAM_PREFIX).
+      if native = Krikri.non_string_scalar(src)
+        src = Krikri.python_str_scalar(native)
+      end
+
+      # Real Ansible's own _find_needle/copy action wording for a missing
+      # source: a RELATIVE src reports the full searched-paths list (the
+      # task's search stack plus the playbook basedir, see NeedleLookup),
+      # an absolute one reports no list at all (real's absolute branch
+      # never populates one) - both live-verified against 2.19.11.
+      resolved_src, candidates = resolve_controller_src(src)
       unless resolved_src
-        return ActionResult.failure("Could not find or access '#{src}' on the Ansible Controller.\nIf you are using a module and expect the file to exist on the remote, see the remote_src option")
+        return ActionResult.failure(Krikri::NeedleLookup.not_found_message(src, candidates))
       end
       src = resolved_src
 
@@ -403,18 +441,44 @@ module Krikri
     # somewhere else entirely). Returns the resolved path, or nil when
     # every candidate is exhausted - the caller then fails the task with
     # real Ansible's exact "Could not find or access" wording.
-    private def resolve_controller_src(src : String) : String?
-      return src if File.exists?(src)
-      return nil if src.starts_with?('/')
+    # real Ansible's path_dwim_relative_stack shape: an absolute (or ~)
+    # src is checked as-is with NO candidate list, a relative one is
+    # searched through the task's search stack (ansible_search_path,
+    # minus the trailing basedir entry real's job var appends - the dwim
+    # lookup adds the basedir separately and unconditionally) plus the
+    # playbook basedir. Returns {resolved path or nil, candidate list}.
+    private def resolve_controller_src(src : String) : {String?, Array(String)}
+      if src.starts_with?('/') || src.starts_with?("~")
+        test_path = File.expand_path(src)
+        return {File.exists?(test_path) ? test_path : nil, [] of String}
+      end
 
       playbook_dir = @vars["playbook_dir"]?.try(&.as_s?)
-      return nil unless playbook_dir && !playbook_dir.empty?
+      return {nil, [] of String} unless playbook_dir && !playbook_dir.empty?
 
-      candidates = [
-        File.join(playbook_dir, src),
-        File.join(playbook_dir, "templates", src),
-      ]
-      candidates.find { |candidate| File.exists?(candidate) }
+      stack = raw_search_stack(playbook_dir)
+      candidates = Krikri::NeedleLookup.candidates(stack, File.expand_path(playbook_dir), "templates", src)
+      resolved = candidates.find { |candidate| File.exists?(candidate) }
+      {resolved, candidates}
+    end
+
+    # The raw dwim search stack reconstructed from ansible_search_path
+    # (which the executor builds in real's job-var shape: search stack
+    # plus the basedir appended when not already present). The dwim
+    # lookup itself must NOT see that appended basedir - it adds its own
+    # unconditionally - so a trailing entry equal to the playbook dir is
+    # dropped, but only when the stack has more than one entry (a plain
+    # playbook task's single entry IS the task dir, which the basedir
+    # append skipped as already-present).
+    private def raw_search_stack(playbook_dir : String) : Array(String)
+      paths = @vars["ansible_search_path"]?.try(&.as_a?).try do |entries|
+        entries.compact_map do |entry|
+          entry.as_s?
+        end
+      end
+      return [playbook_dir] unless paths && !paths.empty?
+      return paths[0...paths.size - 1] if paths.size > 1 && paths.last == playbook_dir
+      paths
     end
 
     # True when any of the six Jinja delimiter-string task params (real

@@ -93,9 +93,9 @@ describe "omit" do
     # A whole-span `{{ expr }}` module arg is natively typed like real
     # Ansible's own module args (live-verified vs ansible-playbook
     # 2.19.11: `debug: msg: "{{ [1, omit, 3] }}"` prints msg as a real
-    # LIST, pretty-printed by the callback) - the wire carries this
-    # codebase's double-quoted JSON container form.
-    output.must_include("[1,3]")
+    # LIST, pretty-printed by the callback - never a compact wire
+    # string).
+    output.must_include("\"msg\": [\n        1,\n        3\n    ]")
   end
 
   it "drops its whole key in a dict literal" do
@@ -105,8 +105,9 @@ describe "omit" do
             msg: "{{ {'a': 1, 'b': v_omit} }}"
       YAML
     # Same whole-span native typing as above (live-verified: real
-    # Ansible prints msg as a real dict with only the omit key dropped).
-    output.must_include(%({"a":1}))
+    # Ansible prints msg as a real dict with only the omit key dropped,
+    # pretty-printed).
+    output.must_include("\"msg\": {\n        \"a\": 1\n    }")
   end
 
   it "does not swallow genuinely falsy values alongside it" do
@@ -122,9 +123,10 @@ describe "omit" do
             msg: "{{ {'a': 0, 'b': false, 'c': '', 'd': v_omit} }}"
       YAML
     # Same whole-span native typing as above (live-verified: real
-    # Ansible keeps "", 0 and False in the natively-typed containers).
-    output.must_include(%(["kept","",0,false]))
-    output.must_include(%({"a":0,"b":false,"c":""}))
+    # Ansible keeps "", 0 and False in the natively-typed containers,
+    # pretty-printed).
+    output.must_include("\"msg\": [\n        \"kept\",\n        \"\",\n        0,\n        false\n    ]")
+    output.must_include("\"msg\": {\n        \"a\": 0,\n        \"b\": false,\n        \"c\": \"\"\n    }")
   end
 
   it "treats a block-tag template rendering to nothing as omitted, not empty" do

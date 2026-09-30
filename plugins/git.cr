@@ -63,7 +63,32 @@ module Krikri
     @separate_git_dir : String?
     @gpg_allowlist : Array(String) = [] of String
 
+    # run_command(..., check_rc=True) in git.py: a non-zero exit from the
+    # ls-remote branch/tag probes ends the module with basic.py's own
+    # {cmd, rc, stdout, stderr, msg=stderr.rstrip()} failure.
+    class CheckRcFailure < Exception
+      getter result : PluginResult
+
+      def initialize(@result : PluginResult)
+        super("check_rc failure")
+      end
+    end
+
     def execute : PluginResult
+      execute_checked
+    rescue ex : CheckRcFailure
+      ex.result
+    end
+
+    private def raise_check_rc(command : String, r) : NoReturn
+      git = Process.find_executable(@git_path) || @git_path
+      raise CheckRcFailure.new(PluginResult.new(changed: false, failed: true,
+        msg: r[:stderr].rstrip, cmd: "#{git} #{command}", rc: r[:exit_code],
+        stdout: r[:stdout], stdout_lines: r[:stdout].lines.map(&.chomp),
+        stderr: r[:stderr], stderr_lines: r[:stderr].lines.map(&.chomp)))
+    end
+
+    private def execute_checked : PluginResult
       validate_bool_params!
       if violation = validate_param_rules
         return violation
@@ -253,13 +278,23 @@ module Krikri
       end
       if params_any = @config["params"]?
         if raw_umask = params_any["umask"]?
-          unless raw_umask.raw.is_a?(String)
+          # A parser-marked non-string YAML literal (NON_STRING_PARAM_PREFIX)
+          # rides the raw wire as a prefixed STRING - real's
+          # isinstance(umask, string_types) sees the native int/float and
+          # fails "umask must be defined as a quoted octal integer", so the
+          # marker must decode to its native value before the str check,
+          # never pass as the marker text.
+          marked_native = raw_umask.as_s?.try { |text| Krikri.non_string_scalar(text) }
+          if marked_native || !raw_umask.raw.is_a?(String)
             return PluginResult.new(changed: false, failed: true,
               msg: "umask must be defined as a quoted octal integer")
           end
           if @params["umask"]?.try { |value| value.to_i?(8).nil? }
+            # git.py: fail_json(msg="umask must be an octal integer",
+            # details=to_text(e)) - Python's int(x, 8) ValueError text
             return PluginResult.new(changed: false, failed: true,
-              msg: "umask must be an octal integer")
+              msg: "umask must be an octal integer",
+              details: "invalid literal for int() with base 8: '#{@params["umask"]?}'")
           end
         end
       end
@@ -641,12 +676,14 @@ module Krikri
 
     private def remote_branch?(dest : String?, target : String, version : String) : Bool
       r = run_git("ls-remote #{sq(target)} -h refs/heads/#{sq(version)}", dest)
-      r[:exit_code] == 0 && r[:stdout].includes?(version)
+      raise_check_rc("ls-remote #{target} -h refs/heads/#{version}", r) unless r[:exit_code] == 0
+      r[:stdout].includes?(version)
     end
 
     private def remote_tag?(dest : String?, target : String, version : String) : Bool
       r = run_git("ls-remote #{sq(target)} -t refs/tags/#{sq(version)}", dest)
-      r[:exit_code] == 0 && r[:stdout].includes?(version)
+      raise_check_rc("ls-remote #{target} -t refs/tags/#{version}", r) unless r[:exit_code] == 0
+      r[:stdout].includes?(version)
     end
 
     private def local_branch?(d : String, branch : String) : Bool

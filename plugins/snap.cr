@@ -58,7 +58,7 @@ module Krikri
       snap_bin = find_snap_binary
       unless snap_bin
         return PluginResult.new(changed: false, failed: true,
-          msg: "Failed to find required executable \"snap\" in paths: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
+          msg: missing_executable_message("snap"))
       end
 
       check_mode = true?(@params["_ansible_check_mode"]?)

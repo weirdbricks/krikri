@@ -1,4 +1,5 @@
 require "json"
+require "./needle_lookup"
 require "./base_action_plugin"
 require "./template_action_plugin"
 require "./action_plugins/debug_action_plugin"
@@ -99,6 +100,24 @@ module Krikri
       unless plugin_class
         # No action plugin for this module - pass through
         return ActionResult.pass_through
+      end
+
+      # The parser's non-string-literal markers (NON_STRING_PARAM_PREFIX)
+      # are plugin-wire dressing: in-process action plugins that never
+      # consult the native type get the demoted plain string, the same
+      # contract BasePlugin's param parse gives the plugin binaries
+      # (otherwise `debug: verbosity: 2` / `assert: quiet: true` /
+      # `pause: minutes: 5` would read the marker-prefixed text as their
+      # value). template: opts OUT - its action plugin coerces a marked
+      # non-string src through Python str() itself (a bool src must be
+      # searched for as "True", not "true"), so it needs the marker intact.
+      # fail: opts out too - its action puts the task arg into
+      # result['msg'] VERBATIM (real action/fail.py has no coercion), so a
+      # marked non-string literal must reach it marked for the native type
+      # to land in the wire result/fatal dump/registered var (live-verified
+      # vs 2.19.11: `fail: {msg: 50}` fails with {"msg": 50}).
+      unless module_name == "ansible.builtin.template" || module_name == "ansible.builtin.fail"
+        params = Krikri.strip_non_string_param_markers(params)
       end
 
       # debug:'s own verbosity: gate (DebugActionPlugin) reads this back

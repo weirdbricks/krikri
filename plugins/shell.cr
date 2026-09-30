@@ -123,6 +123,7 @@ module Krikri
       # Bool-typed params: real AnsibleModule type-converts them at module
       # setup, after the required-args gate above - now via the shared
       # BasePlugin#validate_bool_params! (see its block comment).
+      started_at = Time.utc
       validate_bool_params!
 
       # `argv:` works identically on shell to command's argv: - real
@@ -166,7 +167,11 @@ module Krikri
       # divergence as command.cr's copy of this fix - see that one.
       chdir = @params["chdir"]?
 
-      if creates = @params["creates"]?
+      # real command.py os.chdir()s BEFORE its creates:/removes: checks, so a
+      # bad chdir fails the task even when creates:/removes: would skip it
+      chdir_invalid = !chdir.nil? && !File.directory?(expand_tilde(chdir))
+
+      if !chdir_invalid && (creates = @params["creates"]?)
         if path_or_glob_exists?(resolve_against_chdir(creates, chdir))
           skipped_stdout = "skipped, since #{creates} exists"
           # Real ansible-core 2.19.11 words the check-mode variant of this
@@ -193,7 +198,7 @@ module Krikri
       # Check removes parameter (conditional execution) - same real-
       # Ansible message shape as creates: above, with the same full
       # command-module result keys (see the creates: branch).
-      if removes = @params["removes"]?
+      if !chdir_invalid && (removes = @params["removes"]?)
         unless path_or_glob_exists?(resolve_against_chdir(removes, chdir))
           skipped_stdout = "skipped, since #{removes} does not exist"
           skip_msg = @check_mode ? "Would not run command since '#{removes}' does not exist" : "Did not run command since '#{removes}' does not exist"
@@ -275,11 +280,11 @@ module Krikri
       # run_command actually produces (live-verified against 2.19.4;
       # found via the podman-diff command_edge_cases C9 harness case).
       if chdir && !File.directory?(expand_tilde(chdir))
-        reason = File.exists?(expand_tilde(chdir)) ? "Not a directory" : "No such file or directory"
         return PluginResult.new(
           changed: false,
           failed: true,
-          msg: "Failed to change directory to #{chdir}: #{reason}",
+          msg: "Unable to change directory before execution.",
+          _ansible_error_detail: chdir_error_detail(expand_tilde(chdir)),
           cmd: command_string,
           rc: nil,
           stdout: "",
@@ -428,15 +433,18 @@ module Krikri
       PluginResult.new(
         changed: true,
         failed: result[:exit_code] != 0,
-        msg: result[:exit_code] == 0 ? "" : "Command failed",
+        msg: result[:exit_code] == 0 ? "" : "non-zero return code",
         include_empty_msg: true,
         cmd: command_string,
         stdout: final_stdout,
         stdout_lines: PluginHelpers::AnsibleSplitlines.split(final_stdout),
         stderr: final_stderr,
         stderr_lines: PluginHelpers::AnsibleSplitlines.split(final_stderr),
-        exit_code: result[:exit_code],
-        rc: result[:exit_code], # Add rc as alias for Ansible compatibility
+        rc: result[:exit_code],
+        start: started_at.to_s("%F %H:%M:%S.%6N"),
+        end: Time.utc.to_s("%F %H:%M:%S.%6N"),
+        delta: python_delta(Time.utc - started_at),
+        failed_flag: false,
         diff: diff_data
       )
     end

@@ -117,7 +117,11 @@ describe "async_status plugin result shapes" do
 
         result["failed"]?.must_be_nil
         result["changed"].as_bool.must_equal(true)
-        result["finished"].as_i.must_equal(1)
+        # Real ansible-core 2.19.11 normalizes started/finished to JSON
+        # booleans (live-verified: a finished poll's registered var reads
+        # finished=True), even when the underlying status file carried an
+        # int 1.
+        result["finished"].as_bool.must_equal(true)
         result["rc"].as_i.must_equal(0)
       ensure
         FileUtils.rm_r(home) if original_home != home

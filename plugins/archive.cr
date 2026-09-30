@@ -123,6 +123,21 @@ module Krikri
       candidate_paths = expanded_paths.reject { |path| expanded_excludes.includes?(path) }
       found_paths = candidate_paths.reject { |path| missing.includes?(path) }
 
+      # Real fails when NOTHING survives the exclude_path subtraction -
+      # `if not self.paths: module.fail_json(...)` - and note real's
+      # self.paths still CONTAINS missing (nonexistent) literal paths at
+      # this point: expand_paths keeps those, so "no source paths were
+      # found" fires only when the whole set was excluded (or was empty
+      # to begin with, e.g. only unmatched globs), not when the sources
+      # are merely absent on disk.
+      if candidate_paths.empty?
+        return PluginResult.new(changed: false, failed: true,
+          msg: "Error, no source paths were found",
+          path: requested_paths.join(", "),
+          expanded_paths: expanded_paths.join(", "),
+          expanded_exclude_paths: expanded_excludes.join(", "))
+      end
+
       return absent_result(dest, missing, expanded_paths) if found_paths.empty?
 
       single_compress = single_file_compress?(force_archive, format, candidate_paths, found_paths)

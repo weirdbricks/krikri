@@ -228,8 +228,7 @@ module Krikri
         # tasks do (see is_static_import's own comment).
         unless @adhoc || (task.include_role? && task.is_static_import?)
           display_host = active_hosts.first? || hosts.first
-          puts "TASK [#{task_role_prefix(task)}#{render_task_name_for_display(task, display_host)}]".colorize(:white).bold
-          puts "*" * 70
+          Krikri::OutputBanner.banner("TASK [#{task_role_prefix(task)}#{render_task_name_for_display(task, display_host)}]")
         end
 
         if @forks > 1 && task_forkable?(task) && active_hosts.size > 1 && task.throttle != 1 && (task.debugger || @debugger).nil?
@@ -238,7 +237,7 @@ module Krikri
           active_hosts.each { |host| execute_task(task, host) }
         end
 
-        puts "" unless @adhoc
+        puts "" if @adhoc
       end
     end
 
@@ -488,7 +487,7 @@ module Krikri
           # exception instead of this one clean failed task (recapped
           # failed=1), the same degrade-to-failed-task shape the loop-
           # source resolution failure rescue below uses.
-          finish_single_task(task, host, when_error_result(WhenEvaluationError.new(ex.message || "Failed to render task vars")))
+          finish_single_task(task, host, when_error_result(WhenEvaluationError.new(ex.message || "Failed to render task vars"), task))
           return
         end
       end
@@ -550,7 +549,7 @@ module Krikri
                         register_skip_result(task, host)
                         return
                       end
-                      finish_single_task(task, host, when_error_result(ex), vars_context: vars_context)
+                      finish_single_task(task, host, when_error_result(ex, task), vars_context: vars_context)
                       return
                     end
                   else
@@ -587,8 +586,14 @@ module Krikri
         # through finish_single_task (register/notify/display/stats/halt,
         # ignore_errors: and all), recapping failed=1 (never reached the
         # loop, so never skipped=1 either) - matching real Ansible's own
-        # degrade-to-one-clean-failed-task behavior.
-        finish_single_task(task, host, when_error_result(ex), vars_context: vars_context)
+        # degrade-to-one-clean-failed-task behavior. Real 2.19.11 also
+        # prefixes the loop-source error with "Task failed: " and prints
+        # the fatal JSON with changed=false (live-verified: `loop: "{{
+        # no_such_list }}"` on an undefined var → fatal {"changed": false,
+        # "msg": "Task failed: 'no_such_list' is undefined"}).
+        prefixed = ex.message.to_s.starts_with?("Task failed: ") ? ex.message.to_s : "Task failed: #{ex.message}"
+        emit_when_error_chain(task, prefixed)
+        finish_single_task(task, host, when_error_result(WhenEvaluationError.new(prefixed), task), vars_context: vars_context)
         return
       end
 
@@ -603,7 +608,11 @@ module Krikri
           # (igor_nikiforov.etcd's `{{ etcd_config['data-dir'] }}` on a
           # dict missing that key), so this is one failed task, recapped
           # failed=1, with register/notify/halt/ignore_errors applied.
-          finish_single_task(task, host, when_error_result(ex), vars_context: vars_context)
+          # Same "Task failed: " prefix + chain treatment as the loop-
+          # source rescue above.
+          prefixed = ex.message.to_s.starts_with?("Task failed: ") ? ex.message.to_s : "Task failed: #{ex.message}"
+          emit_when_error_chain(task, prefixed)
+          finish_single_task(task, host, when_error_result(WhenEvaluationError.new(prefixed), task), vars_context: vars_context)
           return
         end
         return
@@ -750,7 +759,13 @@ module Krikri
     # itself is about to use - it's cosmetic-only (a mistake here can't
     # affect what actually runs), so best-effort: on any substitution
     # error, fall back to the raw unrendered name rather than raising.
-    private def evaluate_when(when_condition : String, vars_context : Hash(String, JSON::Any), host : Host, substitutor : VarSubstitutor? = nil) : Bool
+    private def evaluate_when(when_condition : String, vars_context : Hash(String, JSON::Any), host : Host, substitutor : VarSubstitutor? = nil, task : Task? = nil) : Bool
+      # Real Ansible's conditional-as-template deprecation fires while the
+      # conditional is being evaluated (see
+      # maybe_conditional_delimiters_deprecation) - before the evaluation
+      # itself, matching real's warning-then-error order for a non-string
+      # whole-template result.
+      maybe_conditional_delimiters_deprecation(task, when_condition, "when", vars_context) if task
       sub = substitutor || VarSubstitutor.new(vars: vars_context, host_name: host.name)
       substituted_condition = sub.substitute(when_condition)
 
@@ -773,7 +788,7 @@ module Krikri
         # identical split lives in assert_action_plugin.cr).
         raise WhenEvaluationError.new("Task failed: #{ex.message}")
       rescue ex
-        raise WhenEvaluationError.new("Error while evaluating conditional: #{ex.message}")
+        raise WhenEvaluationError.new("Task failed: Error while evaluating conditional: #{ex.message}")
       end
     end
 
@@ -791,13 +806,20 @@ module Krikri
     # list (Task#when_condition_list) through the same strict path, in
     # order with early exit on the first false, restores it.
     private def evaluate_when_items(task : Task, vars_context : Hash(String, JSON::Any), host : Host, substitutor : VarSubstitutor? = nil) : Bool
+      @last_false_condition = nil
       if items = task.when_condition_list
         items.each do |item|
-          return false unless evaluate_when(item, vars_context, host, substitutor)
+          unless evaluate_when(item, vars_context, host, substitutor, task)
+            @last_false_condition = item
+            return false
+          end
         end
         true
       else
-        evaluate_when(task.when_condition.as(String), vars_context, host, substitutor)
+        condition = task.when_condition.as(String)
+        passed = evaluate_when(condition, vars_context, host, substitutor, task)
+        @last_false_condition = condition unless passed
+        passed
       end
     end
 
@@ -907,7 +929,7 @@ module Krikri
         # Ansible prints `(item=(censored due to no_log))` - the item
         # can itself be the secret)
         shown = resolve_task_no_log(task) ? "(censored due to no_log)" : item_label
-        suffix = shown ? " => (item=#{shown})" : ""
+        suffix = shown ? " => (item=#{shown}) " : ""
         puts "skipping: [#{host.connection_host}]#{suffix}".colorize(:cyan)
       end
       register_skip_result(task, host)
@@ -924,17 +946,21 @@ module Krikri
     # hand-rolling that bookkeeping a second time keeps it consistent
     # with every other failure path.
     #
-    # NO `changed` key - the conditional failed before any module ran,
-    # and real Ansible's registered var for this shape carries ONLY
-    # failed+msg (live-verified against ansible-core 2.19: `when: undef
-    # == 1` with register: gives keys=['failed', 'msg']; a later task
-    # reading `<reg>.changed` sees it as undefined and fails its own
-    # templating, it does not see `changed: false`).
-    private def when_error_result(ex : WhenEvaluationError) : JSON::Any
-      # No "changed" key, matching real Ansible: a conditional that raises
-      # registers a msg-only result (verified live, ansible-core 2.19 -
-      # fail_edge_cases.yml F6/F7 in the podman-diff harness).
-      JSON.parse({"failed" => true, "msg" => ex.message || "Error while evaluating conditional"}.to_json)
+    # `changed: false` IS present - live-verified against ansible-core
+    # 2.19.11: a `when:`-raising task with register: gives a registered
+    # var carrying changed=false+failed=true+msg. But the FATAL line for
+    # a task-level when:/loop-source failure dumps ONLY the msg
+    # ("{"msg": "Task failed: ..."}" - live-verified with and without
+    # register: and ignore_errors:, unlike assert:'s action-level
+    # conditional failure which keeps changed). The
+    # `_ansible_task_error_msg_only` marker tells ResultDisplay to drop
+    # everything but msg from the fatal dump; register strips it with
+    # every other `_ansible_*` key, so the registered var keeps the full
+    # changed+failed+msg shape.
+    private def when_error_result(ex : WhenEvaluationError, task : Task? = nil) : JSON::Any
+      msg = ex.message || "Error while evaluating conditional"
+      msg = decorate_conditional_value_origin(task, msg) if task
+      JSON.parse({"changed" => false, "failed" => true, "msg" => msg, "_ansible_task_error_msg_only" => true}.to_json)
     end
 
     # For a `when_passes?` call site with no real per-item result
@@ -950,7 +976,7 @@ module Krikri
     # ... ignored=1`, exit 0). Always returns `false`, the same "don't
     # run this task" signal every caller already treats a when:-skip as.
     private def swallow_when_error(task : Task, host : Host, ex : WhenEvaluationError, item_label : String? = nil, defer_stats : Bool = false, defer_display : Bool = false) : Bool
-      msg = ex.message || "Error while evaluating conditional"
+      msg = decorate_conditional_value_origin(task, ex.message || "Error while evaluating conditional")
       ignore_errors = resolve_task_ignore_errors(task)
       unless defer_stats
         if ignore_errors
@@ -971,6 +997,26 @@ module Krikri
         if resolve_task_no_log(task)
           suffix = item_label ? " => (item=(censored due to no_log))" : ""
           puts %(fatal: [#{host.connection_host}]#{suffix}: FAILED! => {"censored": "the output has been hidden due to the fact that 'no_log: true' was specified for this result"}).colorize(:red)
+        elsif conditional_evaluation_failure?(msg)
+          # Real ansible-core 2.19.11 (live-captured): a conditional-
+          # evaluation failure prints a two-level [ERROR] chain block on
+          # stdout BEFORE the fatal line, and the fatal line itself is the
+          # result JSON {"changed": false, "msg": "Task failed: ..."} - the
+          # error message prefixed with "Task failed: " - not the bare
+          # message. A looped task's per-item failure lines use real's
+          # loop-failure shape instead of the solo fatal: one
+          # (`failed: [host] (item=N) => {...}` - item BEFORE the =>),
+          # with the chain printed once per task, before the items.
+          emit_when_error_chain(task, msg) unless item_label
+          display_msg = msg.starts_with?("Task failed: ") ? msg : "Task failed: #{msg}"
+          if item_label
+            puts "failed: [#{host.connection_host}] (item=#{item_label}) => {\"changed\": false, \"msg\": #{display_msg.to_json}}".colorize(:red)
+          else
+            # Task-level conditional failures dump the msg alone - real
+            # 2.19.11 shows {"msg": "Task failed: ..."} with no changed
+            # key (live-verified; see when_error_result).
+            puts "fatal: [#{host.connection_host}]: FAILED! => {\"msg\": #{display_msg.to_json}}".colorize(:red)
+          end
         else
           puts "fatal: [#{host.connection_host}]#{suffix}: FAILED! => #{msg}".colorize(:red)
         end
@@ -978,12 +1024,14 @@ module Krikri
       end
       register_name = task.register
       unless register_name.nil? || register_name.empty?
-        # Same changed-less shape as when_error_result: real Ansible's
+        # Same changed-carrying shape as when_error_result: real Ansible's
         # registered var for a conditional-evaluation failure carries
-        # ONLY failed+msg (live-verified, ansible-core 2.19).
+        # changed=false+failed=true+msg (live-verified, ansible-core
+        # 2.19.11).
         register_result(host, register_name, JSON.parse({
-          "failed" => true,
-          "msg"    => msg,
+          "changed" => false,
+          "failed"  => true,
+          "msg"     => msg,
         }.to_json))
       end
       false
@@ -1111,7 +1159,7 @@ module Krikri
                            # named 'X'." - cache the failed result so the
                            # consumer reports it instead of the process
                            # crashing out of execute_batch_group entirely.
-                           cache[task] = {when_error_result(WhenEvaluationError.new(ex.message || "Failed to render task vars")), Hash(String, JSON::Any).new}
+                           cache[task] = {when_error_result(WhenEvaluationError.new(ex.message || "Failed to render task vars"), task), Hash(String, JSON::Any).new}
                            next
                          end
                        end
@@ -1132,7 +1180,7 @@ module Krikri
             next
           end
         rescue ex : WhenEvaluationError
-          cache[task] = {when_error_result(ex), vars_context}
+          cache[task] = {when_error_result(ex, task), vars_context}
           next
         end
 
@@ -1389,11 +1437,10 @@ module Krikri
         # UndefinedVariableError (or a lookup('url', ...) HTTP failure,
         # the pre-existing case this class of rescue was built for) would
         # have crashed the whole run instead of failing just this task.
-        failed = JSON.parse({
-          "changed" => false,
-          "failed"  => true,
-          "msg"     => finalize_args_failure_message(ex, task),
-        }.to_json)
+        # Same [ERROR] chain block + changed: false as
+        # execute_task_once's identical rescue (2.19.11 live-captured).
+        emit_finalization_error_block(task, ex) if ex.is_a?(UndefinedVariableError)
+        failed = finalization_failure_json(ex, task)
         # Not routed through apply_changed_failed_when - same reasoning as
         # execute_task_once's identical rescue: failed_when:/changed_when:
         # only reinterpret a MODULE result, and no module ran here.
@@ -1401,30 +1448,79 @@ module Krikri
       end
 
       substituted_params = resolve_role_relative_src(task, substituted_params)
+      # Same pre-inline copy src+content gate as execute_task_once (see
+      # there) - the batched path must fail identically.
+      if violation = copy_src_content_conflict(task, substituted_params)
+        return apply_changed_failed_when(task, violation, vars_context, host)
+      end
+      if violation = copy_literal_type_failure(task, substituted_params)
+        return apply_changed_failed_when(task, violation, vars_context, host)
+      end
       copied = inline_copy_source_content(task, substituted_params, host, vars_context)
       if copied.is_a?(JSON::Any)
         return apply_changed_failed_when(task, copied, vars_context, host)
       end
       substituted_params = copied
+      # Real's unarchive/assemble action plugins crash on non-string
+      # literal args at their own controller-side touch points, before
+      # the src staging paths could leak the marker into a message or
+      # upload path - see unarchive_assemble_literal_type_failure.
+      if violation = unarchive_assemble_literal_type_failure(task, substituted_params)
+        return apply_changed_failed_when(task, violation, vars_context, host)
+      end
       staged = stage_unarchive_remote_src(task, substituted_params, host, vars_context)
       if staged.is_a?(JSON::Any)
         return apply_changed_failed_when(task, staged, vars_context, host)
       end
       substituted_params = staged
-      substituted_params = stage_script_src(task, substituted_params, host, vars_context)
-      substituted_params = stage_assemble_dir(task, substituted_params, host, vars_context)
+      staged_script = stage_script_src(task, substituted_params, host, vars_context)
+      if staged_script.is_a?(JSON::Any)
+        return apply_changed_failed_when(task, staged_script, vars_context, host)
+      end
+      substituted_params = staged_script
+      staged_assemble = stage_assemble_dir(task, substituted_params, host, vars_context)
+      if staged_assemble.is_a?(JSON::Any)
+        return apply_changed_failed_when(task, staged_assemble, vars_context, host)
+      end
+      substituted_params = staged_assemble
       substituted_become_user = task.become_user.try { |raw_user| substitutor.substitute(raw_user) }
+
+      # Action-only directives: pre-action validation gate (see
+      # execute_task_once's identical hook).
+      if violation = argspec_validation_result(task, substituted_params, vars_context, action_level_only: true)
+        return apply_changed_failed_when(task, violation, vars_context, host)
+      end
+
+      # Real's dest expand crash fires only after the src lookup succeeded
+      # - here that is after inline_copy_source_content above - and after
+      # the required-argument checks (see execute_task_once's identical
+      # hook placement).
+      if violation = copy_dest_expand_failure(task, substituted_params)
+        return apply_changed_failed_when(task, violation, vars_context, host)
+      end
+
+      # Real's add_host: the name failure / groups failure (action stage)
+      # and the inventory.add_host name crash (result-processing stage,
+      # which aborts the whole run) - see add_host_literal_type_failure.
+      # Same hook as execute_task_once's own, for the batched path.
+      if violation = add_host_literal_type_failure(task, substituted_params)
+        return apply_changed_failed_when(task, violation, vars_context, host)
+      end
 
       if ActionPluginManager.has_action_plugin?(task.module_name)
         action_result = ActionPluginManager.execute_action(task.module_name, substituted_params, vars_context, host, @inventory, host, resolve_task_check_mode(task, vars_context))
 
         unless action_result.success?
-          failed = JSON.parse({
+          failed = {
             "changed" => false,
             "failed"  => true,
             "msg"     => action_result.error_message || "Action plugin failed",
-          }.to_json)
-          return apply_changed_failed_when(task, failed, vars_context, host)
+          }
+          # An ACTION-level failure (a bare AnsibleActionFail raised by
+          # the plugin itself) renders without the "Module failed." chain
+          # segment - see ActionResult#action_level.
+          failed["_ansible_action_level"] = true if action_result.action_level?
+          return apply_changed_failed_when(task, JSON.parse(failed.to_json), vars_context, host)
         end
 
         # debug:/assert:/fail:/set_fact:/pause: - the action plugin
@@ -1436,6 +1532,13 @@ module Krikri
         end
 
         substituted_params = action_result.modified_params || substituted_params
+      end
+
+      # Same argspec-validation gates as execute_task_once (see there) -
+      # batched tasks must fail on a typo'd option exactly like
+      # non-batched ones.
+      if violation = argspec_validation_result(task, substituted_params, vars_context, action_level_only: false, check_mode: resolve_task_check_mode(task, vars_context))
+        return apply_changed_failed_when(task, violation, vars_context, host)
       end
 
       become = resolve_task_become(task, substitutor)
@@ -1535,6 +1638,7 @@ module Krikri
 
       resolved_task = task.dup
       resolved_task.module_name = resolved
+      resolved_task.action_name = raw_name
       resolved_task.params = merged
       resolved_task
     end
@@ -1563,7 +1667,15 @@ module Krikri
         # in the recap (matching real Ansible's "One or more items
         # failed"), not `skipped=1` the way silently returning nil here
         # used to.
-        return when_error_result(ex)
+        #
+        # Real ansible-core 2.19.11 prints the [ERROR] chain block BEFORE
+        # the fatal line (see emit_when_error_chain) - here, at catch
+        # time, so it precedes whatever the pipeline prints. For a looped
+        # task every failing item raises through this same rescue; the
+        # chain itself dedups per distinct text, so a loop displays it
+        # once, exactly like real.
+        emit_when_error_chain(task, ex.message || "")
+        return when_error_result(ex, task)
       end
 
       # Real Ansible resolves the task's effective connection type through
@@ -1608,15 +1720,11 @@ module Krikri
         # "{{ lookup('url', ...) }}"` against a 404'd release checksums
         # file (a broken-upstream default, but real Ansible still
         # degrades to one clean failed task, not a crash).
-        # No "changed" key, matching real Ansible: a param-templating
-        # failure happens BEFORE the module runs, so there is no module
-        # result to carry a changed flag - the registered result is
-        # msg-only (verified live, ansible-core 2.19 - fail_edge_cases.
-        # yml F2 in the podman-diff harness).
-        result = JSON.parse({
-          "failed" => true,
-          "msg"    => finalize_args_failure_message(ex, task),
-        }.to_json)
+        # No "changed" key would match real Ansible's pre-2.19 display;
+        # 2.19.11 (live-captured) shows {"changed": false, "msg": ...},
+        # so the failed result carries changed: false.
+        emit_finalization_error_block(task, ex) if ex.is_a?(UndefinedVariableError)
+        result = finalization_failure_json(ex, task)
         # Deliberately NOT routed through apply_changed_failed_when:
         # failed_when:/changed_when: govern whether a MODULE RESULT counts
         # as failed/changed, and arg finalization failed before any module
@@ -1629,6 +1737,16 @@ module Krikri
         # downstream (real Ansible honors it here: ignored=1, play
         # continues), which this plain failed result preserves.
         return result
+      end
+
+      # Action-only directives (debug/assert/fail/pause/script/... and
+      # group_by) are validated by real's ACTION PLUGIN, before any
+      # action runs - this pre-action hook handles exactly those; the
+      # post-action hook below handles every module-level spec. Placed
+      # before the controller-side pseudo-module branches (group_by)
+      # so their action-level "Invalid options" check is not preempted.
+      if violation = argspec_validation_result(task, substituted_params, vars_context, action_level_only: true)
+        return apply_changed_failed_when(task, violation, vars_context, host)
       end
 
       if task.module_name == "ansible.builtin.reboot"
@@ -1647,23 +1765,60 @@ module Krikri
       end
 
       substituted_params = resolve_role_relative_src(task, substituted_params)
+      # Real's copy ACTION plugin rejects src+content together before
+      # anything else runs (even before the src file lookup) - live-
+      # verified ordering, see ArgspecValidator's module comment.
+      if violation = copy_src_content_conflict(task, substituted_params)
+        return apply_changed_failed_when(task, violation, vars_context, host)
+      end
+      if violation = copy_literal_type_failure(task, substituted_params)
+        return apply_changed_failed_when(task, violation, vars_context, host)
+      end
       copied = inline_copy_source_content(task, substituted_params, exec_host, vars_context)
       if copied.is_a?(JSON::Any)
         return apply_changed_failed_when(task, copied, vars_context, host)
       end
       substituted_params = copied
+      # Real's dest expand crash fires only after the src lookup succeeded
+      # (inline_copy_source_content above) - the last of copy.py's
+      # non-string-literal crash points, see copy_literal_type_failure.
+      if violation = copy_dest_expand_failure(task, substituted_params)
+        return apply_changed_failed_when(task, violation, vars_context, host)
+      end
+      # Real's unarchive/assemble action plugins crash on non-string
+      # literal args at their own controller-side touch points, before
+      # the src staging paths could leak the marker into a message or
+      # upload path - see unarchive_assemble_literal_type_failure.
+      if violation = unarchive_assemble_literal_type_failure(task, substituted_params)
+        return apply_changed_failed_when(task, violation, vars_context, host)
+      end
       staged = stage_unarchive_remote_src(task, substituted_params, exec_host, vars_context)
       if staged.is_a?(JSON::Any)
         return apply_changed_failed_when(task, staged, vars_context, host)
       end
       substituted_params = staged
-      substituted_params = stage_script_src(task, substituted_params, exec_host, vars_context)
-      substituted_params = stage_assemble_dir(task, substituted_params, exec_host, vars_context)
+      staged_script = stage_script_src(task, substituted_params, exec_host, vars_context)
+      if staged_script.is_a?(JSON::Any)
+        return apply_changed_failed_when(task, staged_script, vars_context, host)
+      end
+      substituted_params = staged_script
+      staged_assemble = stage_assemble_dir(task, substituted_params, exec_host, vars_context)
+      if staged_assemble.is_a?(JSON::Any)
+        return apply_changed_failed_when(task, staged_assemble, vars_context, host)
+      end
+      substituted_params = staged_assemble
       # become_user: goes through the same {{ }} substitution as any
       # params: value (e.g. become_user: "{{ service_user }}", a common
       # real-playbook pattern) - task.become_user itself is never mutated
       # here, since Task is shared/reused across hosts and loop iterations.
       substituted_become_user = task.become_user.try { |raw_user| substitutor.substitute(raw_user) }
+
+      # Real's add_host: the groups failure (action stage) and the
+      # inventory.add_host name crash (result-processing stage, which
+      # aborts the whole run) - see add_host_literal_type_failure.
+      if violation = add_host_literal_type_failure(task, substituted_params)
+        return apply_changed_failed_when(task, violation, vars_context, host)
+      end
 
       if ActionPluginManager.has_action_plugin?(task.module_name)
         action_result = ActionPluginManager.execute_action(
@@ -1677,12 +1832,16 @@ module Krikri
         )
 
         unless action_result.success?
-          result = JSON.parse({
+          failed = {
             "changed" => false,
             "failed"  => true,
             "msg"     => action_result.error_message || "Action plugin failed",
-          }.to_json)
-          return apply_changed_failed_when(task, result, vars_context, host)
+          }
+          # An ACTION-level failure (a bare AnsibleActionFail raised by
+          # the plugin itself) renders without the "Module failed." chain
+          # segment - see ActionResult#action_level.
+          failed["_ansible_action_level"] = true if action_result.action_level?
+          return apply_changed_failed_when(task, JSON.parse(failed.to_json), vars_context, host)
         end
 
         if final = action_result.final_result
@@ -1692,6 +1851,18 @@ module Krikri
         if modified_params = action_result.modified_params
           substituted_params = modified_params
         end
+      end
+
+      # Data-driven module argument validation against real Ansible's own
+      # argument specs (see ArgspecValidator) - the same checks the real
+      # module's AnsibleModule init runs, controller-side, before the
+      # plugin is dispatched (so a typo'd option fails without any file
+      # access, exactly like real). Runs after the action-plugin stage:
+      # template's Jinja knobs are consumed there, and copy/template's
+      # source content is already inline for the failure dump's checksum.
+      # Action-level entries were already handled above.
+      if violation = argspec_validation_result(task, substituted_params, vars_context, action_level_only: false, check_mode: resolve_task_check_mode(task, vars_context))
+        return apply_changed_failed_when(task, violation, vars_context, host)
       end
 
       # Same override execute_remote_plugin used to apply to the wire
@@ -1764,7 +1935,29 @@ module Krikri
         become_user
       )
 
+      result = attach_invocation(task, substituted_params, result)
       apply_changed_failed_when(task, result, vars_context, host)
+    end
+
+    # Modules whose registered per-item results (loop `results[]`) carry
+    # real's `invocation.module_args` and whose args this engine can
+    # reproduce from the argspec table (verified against ansible-core 2.19.11).
+    INVOCATION_MODULES = %w[command shell stat file ping slurp lineinfile replace blockinfile find getent]
+
+    private def attach_invocation(task : Task, params : Hash(String, String), result : JSON::Any) : JSON::Any
+      short = task.module_name.sub(/\Aansible\.(builtin|legacy)\./, "")
+      return result unless INVOCATION_MODULES.includes?(short)
+      hash = result.as_h? || return result
+      return result if hash.has_key?("invocation")
+      args = ArgspecValidator.invocation_args("ansible.builtin.#{short}", params) || return result
+      args["_uses_shell"] = JSON::Any.new(true) if short == "shell"
+      if free_form_raw_command?(task) && args["cmd"]?.try(&.raw.is_a?(String))
+        args["_raw_params"] = args["cmd"]
+        args["cmd"] = JSON::Any.new(nil)
+      end
+      copy = hash.dup
+      copy["invocation"] = JSON::Any.new({"module_args" => JSON::Any.new(args)} of String => JSON::Any)
+      JSON::Any.new(copy)
     end
 
     # Dispatches an unavailable-module task that has a role-private
@@ -1976,11 +2169,21 @@ module Krikri
           # reaching evaluate_value's own "not found" exit raises - a
           # `| default(...)`-guarded chain stays lenient, as it must.
           if changed_when
+            maybe_conditional_delimiters_deprecation(task, changed_when, "changed_when", eval_context)
             hash["changed"] = JSON::Any.new(ConditionalEvaluator.evaluate(substitutor.substitute(changed_when), eval_context, strict: true, raise_undefined: true))
           end
 
           if failed_when
-            hash["failed"] = JSON::Any.new(ConditionalEvaluator.evaluate(substitutor.substitute(failed_when), eval_context, strict: true, raise_undefined: true))
+            maybe_conditional_delimiters_deprecation(task, failed_when, "failed_when", eval_context)
+            failed_when_result = ConditionalEvaluator.evaluate(substitutor.substitute(failed_when), eval_context, strict: true, raise_undefined: true)
+            hash["failed"] = JSON::Any.new(failed_when_result)
+            # TaskExecutor: result['failed_when_result'] = <verdict> whenever failed_when: is set
+            hash["failed_when_result"] = JSON::Any.new(failed_when_result)
+            # a module failure that failed_when: overrides to "not failed" keeps its
+            # traceback marker under the suppressed-exception key
+            if !failed_when_result && (suppressed = hash.delete("exception"))
+              hash["failed_when_suppressed_exception"] = suppressed
+            end
           end
         rescue e : ConditionalEvaluator::ConditionalBooleanError | ConditionalEvaluator::UndefinedVariableError | VariableSubstitutor::FilterEngine::UnknownFilterError
           # Matches real Ansible: a changed_when:/failed_when: whose value
@@ -2023,9 +2226,14 @@ module Krikri
     # against real ansible-playbook 2.19.11: a run_once ansible.builtin.
     # fail in a 3-host play recaps failed=1 and no host reaches the next
     # task's banner).
-    private def halt_if_failed(task : Task, host : Host, failed : Bool) : Nil
-      return unless failed && !resolve_task_ignore_errors(task)
+    # force_halt skips the ignore_errors: check - for a dynamic
+    # include_role:'s role-resolution failure, which real Ansible halts
+    # on unconditionally (live-verified vs 2.19.11: `failed=1 ignored=0`
+    # even with ignore_errors: true on the include task).
+    private def halt_if_failed(task : Task, host : Host, failed : Bool, result : JSON::Any? = nil, force_halt : Bool = false) : Nil
+      return unless failed && (force_halt || !resolve_task_ignore_errors(task))
 
+      @failed_task_info[host.name] = {task, result} if result
       @halted_hosts.add(host.name)
       return unless task.run_once?
 
@@ -2170,10 +2378,8 @@ module Krikri
           next
         end
 
-        puts "TASK [#{task_role_prefix(nested_task)}#{render_task_name_for_display(nested_task, host)}]".colorize(:white).bold
-        puts "*" * 70
+        Krikri::OutputBanner.banner("TASK [#{task_role_prefix(nested_task)}#{render_task_name_for_display(nested_task, host)}]")
         execute_task(nested_task, host)
-        puts ""
       end
     end
 

@@ -171,7 +171,9 @@ module Krikri
       src, tmp_download_path = resolved
 
       if error = validate_src_and_dest(src, dest)
-        return PluginResult.new(changed: false, failed: true, msg: error)
+        # real: AnsibleActionFail in the controller-side action plugin - a bare
+        # "Task failed: <msg>" block with no "Module failed." segment
+        return PluginResult.new(changed: false, failed: true, msg: error, _ansible_action_level: true)
       end
 
       # Real AnsibleModule validates bool-typed params at module setup -

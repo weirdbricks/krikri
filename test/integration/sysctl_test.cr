@@ -188,4 +188,22 @@ describe "sysctl plugin" do
     result["failed"].as_bool.must_equal(true)
     result["msg"].as_s.must_include("name")
   end
+
+  # Real reload_sysctl's failure is a bare fail_json(msg="Failed to
+  # reload sysctl: ...") - no name/sysctl_file echo (live-verified vs
+  # 2.19.11: fatal => {"changed": false, "msg": "Failed to reload
+  # sysctl: sysctl: cannot stat /proc/sys/ajdstr: ..."}). The reload
+  # genuinely fails here either way: non-root gets permission denied,
+  # root gets "cannot stat" for the bogus key - no kernel state is
+  # touched in either case.
+  it "fails reload with msg only - no name/sysctl_file echo" do
+    conf = fresh_conf("reload-fail.conf")
+
+    result = PluginSpecHelper.run("sysctl", {"name" => "krikri.parity.probe", "value" => "1", "sysctl_file" => conf})
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.starts_with?("Failed to reload sysctl: ").must_equal(true)
+    result.as_h.has_key?("name").must_equal(false)
+    result.as_h.has_key?("sysctl_file").must_equal(false)
+  end
 end

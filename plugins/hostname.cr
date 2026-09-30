@@ -109,7 +109,11 @@ module Krikri
           failed: true,
           msg: "use: generic is broken in real Ansible's hostname module (its Base strategy raises NotImplementedError on every operation); failing for parity",
         )
-      when "freebsd", "macos", "macosx", "darwin", "openbsd", "solaris"
+      when "macos", "macosx", "darwin"
+        # DarwinStrategy.__init__ does get_bin_path('scutil', True) - never
+        # present on a Linux host, so real fails with get_bin_path's message
+        PluginResult.new(changed: false, failed: true, msg: missing_executable_message("scutil"))
+      when "freebsd", "openbsd", "solaris"
         PluginResult.new(
           changed: false,
           failed: true,

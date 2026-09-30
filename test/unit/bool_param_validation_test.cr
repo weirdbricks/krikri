@@ -149,7 +149,11 @@ BOOL_PARAM_TABLE = {
   "apt"               => %w[allow_change_held_packages allow_downgrade allow_unauthenticated auto_install_module_deps autoclean autoremove clean fail_on_autoremove force force_apt_get install_recommends only_upgrade purge update_cache],
   "apt_key"           => %w[validate_certs],
   "apt_repository"    => %w[install_python_apt update_cache validate_certs],
-  "assemble"          => %w[backup decrypt ignore_hidden remote_src unsafe_writes],
+    # remote_src deliberately absent (see the dedicated case at the bottom):
+  # real's assemble action reads it through boolean(strict=False) FIRST,
+  # so the module only ever receives BOOLEANS_TRUE values and its own
+  # strict conversion can never fail
+  "assemble"          => %w[backup decrypt ignore_hidden unsafe_writes],
   "assert"            => %w[quiet],
   "blockinfile"       => %w[append_newline backup create prepend_newline unsafe_writes],
   "command"           => %w[expand_argument_vars stdin_add_newline strip_empty_ends],
@@ -288,6 +292,22 @@ describe "core plugins' documented bool params (table sweep)" do
 
   it "template: trim_blocks/lstrip_blocks stay unvalidated, like real (action-plugin-consumed)" do
     result = PluginSpecHelper.run("template", {"dest" => "/tmp", "trim_blocks" => "blah"})
+    msg_of(result).wont_include("unable to convert to bool")
+  end
+
+  it "assemble: remote_src stays unvalidated, like real (the action reads it boolean(strict=False) first)" do
+    # real's action plugin dispatches the assemble module ONLY when
+    # boolean(remote_src, strict=False) is True - i.e. only for
+    # BOOLEANS_TRUE spellings/natives, where the module's own strict
+    # type: bool conversion then always succeeds. Every other value
+    # (falsy spellings, invalid strings like 'krikri-not-a-bool',
+    # explicit None, native 2) takes the action's controller-side branch
+    # and delegates the placement to the copy module with remote_src
+    # STRIPPED, so the assemble module - and its strict remote_src
+    # conversion with it - never runs at all (live-verified vs 2.19.11:
+    # `remote_src: krikri-not-a-bool` with a real fragment dir SUCCEEDS).
+    result = PluginSpecHelper.run("assemble", {"dest" => "/tmp/krikri-bool-probe.cfg",
+      "src" => "/nonexistent", "remote_src" => "krikri-not-a-bool"})
     msg_of(result).wont_include("unable to convert to bool")
   end
 end

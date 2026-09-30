@@ -42,8 +42,7 @@ module Krikri
       # the task banner entirely rather than printing an empty one.
       return if targets.empty?
 
-      puts "TASK [Gathering Facts]".colorize(:white).bold
-      puts "*" * 70
+      Krikri::OutputBanner.banner("TASK [Gathering Facts]")
 
       # A host the pre-upload pass already found unreachable must NOT get
       # a second live SSH attempt here - real ansible-playbook only ever
@@ -137,8 +136,6 @@ module Krikri
           @results[host.name]["failed"] += 1
         end
       end
-
-      puts ""
     end
 
     # Runs the facts plugin against one host and stores whatever it

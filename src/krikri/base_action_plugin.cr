@@ -63,9 +63,18 @@ module Krikri
     # params (template:'s own use).
     property final_result : JSON::Any?
 
+    # Set when the failure was raised by the controller-side ACTION
+    # plugin itself (a bare AnsibleActionFail): the [ERROR] block is the
+    # plain "Task failed: <msg>" chain with no "Module failed." middle
+    # segment and the fatal dump's msg stays un-prefixed, unlike a
+    # module-side failure. The executor's action-failure result builders
+    # turn this into the result's _ansible_action_level key (see
+    # ResultDisplay's own branch).
+    property? action_level : Bool
+
     def initialize(@success : Bool, @modified_params : Hash(String, String)? = nil,
                    @error_message : String? = nil, @changed : Bool = false,
-                   @final_result : JSON::Any? = nil)
+                   @final_result : JSON::Any? = nil, @action_level : Bool = false)
     end
 
     # Create success result
@@ -76,6 +85,14 @@ module Krikri
     # Create failure result
     def self.failure(error_message : String) : ActionResult
       new(success: false, error_message: error_message)
+    end
+
+    # Create a failure result raised by the ACTION plugin itself (a bare
+    # AnsibleActionFail - add_host's "name, host or hostname needs to be
+    # provided"): rendered action-level, not module-level (see
+    # #action_level).
+    def self.action_failure(error_message : String) : ActionResult
+      new(success: false, error_message: error_message, action_level: true)
     end
 
     # Create pass-through result (no modifications)
@@ -110,19 +127,17 @@ module Krikri
     end
 
     # The result shape for a CONDITIONAL-EVALUATION failure (assert:'s
-    # that: hitting an undefined reference or a non-bool result) - the
-    # conditional failed before any module ran, and real Ansible's
-    # registered var for this shape carries ONLY failed+msg, with no
-    # `changed` key at all (live-verified against ansible-core 2.19:
-    # `assert: that: undef_var == 1` with register: gives
-    # keys=['failed', 'msg']; a later task reading `<reg>.changed` sees
-    # it as undefined and fails its own templating, while an ordinary
-    # failing assertion still registers changed: false alongside).
-    # plugin_result_json can't express the missing key, so this builds
-    # the hash directly. The when:/ path's identical shape lives in
-    # Executor's when_error_result/swallow_when_error.
+    # that: hitting an undefined reference or a non-bool result). Real
+    # ansible-core 2.19.11 (live-verified: `assert: that: undef_var == 1`
+    # with register:) registers changed=false+failed=true+msg and dumps
+    # the fatal line as {"changed": false, "msg": "Task failed: ..."} -
+    # the same shape as the when:/ path's when_error_result; an older
+    # 2.19 build showed a changed-less registered var, but 2.19.11 is
+    # the parity target. An ordinary failing assertion still registers
+    # changed: false alongside via plugin_result_json.
     def self.conditional_error_result_json(msg : String) : JSON::Any
       h = Hash(String, JSON::Any).new
+      h["changed"] = JSON::Any.new(false)
       h["failed"] = JSON::Any.new(true)
       h["msg"] = JSON::Any.new(msg)
       JSON::Any.new(h)

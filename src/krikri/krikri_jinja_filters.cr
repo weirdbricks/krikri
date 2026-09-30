@@ -402,7 +402,8 @@ module Krikri
 
       KrikriJinja.register_default_json_filter("to_nice_json") do |value, _args, kwargs|
         sort_keys = kwargs["sort_keys"]? ? py_truthy(kwargs["sort_keys"]) : true
-        JSON::Any.new(JSON.parse(VariableSubstitutor::FilterCore.to_nice_json(value, sort_keys)).to_pretty_json(indent: "    "))
+        indent = kwargs["indent"]?.try(&.as_i?) || 4
+        JSON::Any.new(Krikri::PyDump.json(value, indent, sort_keys))
       end
 
       # Second batch: pure string/collection shaping filters whose JSON-level
@@ -631,7 +632,8 @@ module Krikri
 
       KrikriJinja.register_default_json_filter("to_nice_yaml") do |value, _args, kwargs|
         sort_keys = kwargs["sort_keys"]?.try { |flag| py_truthy(flag) }
-        JSON::Any.new(VariableSubstitutor::FilterCore.to_nice_yaml(value, sort_keys.nil? ? true : sort_keys))
+        indent = kwargs["indent"]?.try(&.as_i?) || 4
+        JSON::Any.new(Krikri::PyDump.yaml(value, indent, false, sort_keys.nil? ? true : sort_keys))
       end
 
       KrikriJinja.register_default_json_filter("relpath") do |value, args, kwargs|
@@ -823,7 +825,7 @@ module Krikri
       end
 
       KrikriJinja.register_default_json_filter("to_yaml") do |value, _args, _kwargs|
-        JSON::Any.new(VariableSubstitutor::FilterCore.to_yaml(value))
+        JSON::Any.new(Krikri::PyDump.yaml(value, 2, nil))
       end
 
       KrikriJinja.register_default_json_filter("from_json") do |value, _args, _kwargs|

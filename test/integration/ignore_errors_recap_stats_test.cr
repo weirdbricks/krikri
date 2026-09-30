@@ -50,13 +50,19 @@ describe "ignore_errors: on a controller-side failure counts as ok+ignored, not 
     output.must_match(/ignored=1\b/)
   end
 
-  it "include_tasks: on a missing file, ignore_errors: true" do
+  it "include_tasks: on a missing file fails fatally even under ignore_errors: (real 2.19.11)" do
+    # Live-verified against real ansible-core 2.19.11 (this expectation
+    # used to claim ok+ignored and "still going" - wrong): an
+    # include_tasks: whose file resolves nowhere is a fatal include
+    # failure that ignore_errors: does NOT apply to - the play halts for
+    # the host, failed=1 ignored=0, rc=2, with the DataLoader error block
+    # on stderr and the two-key fatal dump on stdout.
     status, output = run_playbook(<<-YAML)
       - hosts: localhost
         connection: local
         gather_facts: false
         tasks:
-          - name: include a file that doesn't exist, ignored
+          - name: include a file that doesn't exist
             include_tasks: "/nonexistent/does-not-exist-#{Random.rand(1_000_000)}.yml"
             ignore_errors: true
           - name: still runs after
@@ -64,10 +70,11 @@ describe "ignore_errors: on a controller-side failure counts as ok+ignored, not 
               msg: still going
       YAML
 
-    status.success?.must_equal(true)
-    output.must_include("still going")
-    output.must_match(/failed=0\b/)
-    output.must_match(/ignored=1\b/)
+    status.exit_code.must_equal(2)
+    output.wont_include("still going")
+    output.must_match(/failed=1\b/)
+    output.must_match(/ignored=0\b/)
+    output.must_include("{\"changed\": false, \"include\": \"/nonexistent/does-not-exist-")
   end
 
   it "include_vars: on a missing file, WITHOUT ignore_errors:, still fails and halts" do

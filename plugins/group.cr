@@ -172,7 +172,7 @@ module Krikri
       args ||= [] of String
       args << shell_single_quote(name)
       result = remote_exec("#{local? ? "lgroupdel" : "groupdel"} #{args.join(" ")}")
-      return command_failure("remove group", result) unless result[:exit_code] == 0
+      return command_failure(name, "remove group", result) unless result[:exit_code] == 0
 
       PluginResult.new(changed: true, failed: false, msg: "Group removed")
     end
@@ -192,7 +192,7 @@ module Krikri
         args = PluginHelpers::GroupState.groupadd_args(name, gid, system, non_unique,
           @params["gid_min"]?, @params["gid_max"]?, local?)
         result = remote_exec("#{local? ? "lgroupadd" : "groupadd"} #{args.join(" ")}")
-        return command_failure("create group", result) unless result[:exit_code] == 0
+        return command_failure(name, "create group", result) unless result[:exit_code] == 0
 
         return attach_facts(PluginResult.new(changed: true, failed: false, msg: "Group created"),
           name, state: "present", lookup_facts: true)
@@ -211,7 +211,7 @@ module Krikri
       end
 
       result = remote_exec("#{local? ? "lgroupmod" : "groupmod"} #{flags.join(" ")} #{shell_single_quote(name)}")
-      return command_failure("modify group", result) unless result[:exit_code] == 0
+      return command_failure(name, "modify group", result) unless result[:exit_code] == 0
 
       attach_facts(PluginResult.new(changed: true, failed: false, msg: "Group modified"),
         name, state: "present", lookup_facts: true)
@@ -234,8 +234,16 @@ module Krikri
       result
     end
 
-    private def command_failure(action : String, result : NamedTuple(exit_code: Int32, stdout: String, stderr: String)) : PluginResult
-      PluginResult.new(changed: false, failed: true, msg: "Failed to #{action}: #{result[:stderr].empty? ? result[:stdout] : result[:stderr]}")
+    # Real Ansible's group create/modify/delete failures are all
+    # `fail_json(name=group.name, msg=err)` - msg is the raw stderr
+    # (trailing newline included, live-verified vs 2.19.11: "groupadd:
+    # Invalid configuration: GID_MIN (1000), GID_MAX (86)\n"), plus the
+    # name echo. No "Failed to <action>: " prefix, no stdout fallback:
+    # real passes err (stderr) only, even when it is empty.
+    private def command_failure(name : String, action : String, result : NamedTuple(exit_code: Int32, stdout: String, stderr: String)) : PluginResult
+      failure = PluginResult.new(changed: false, failed: true, msg: result[:stderr])
+      failure.extra["name"] = JSON.parse(name.to_json)
+      failure
     end
 
     private def missing_param(name : String) : PluginResult

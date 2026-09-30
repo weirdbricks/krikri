@@ -51,6 +51,10 @@ module Krikri
       path = expand_tilde(raw_path)
       check_mode = true?(@params["_ansible_check_mode"]?)
 
+      if (supplied_key = @params["key"]?.presence) && (failure = sanity_check(name, supplied_key))
+        return failure
+      end
+
       existing = lookup_existing(name, path)
 
       return remove_host(name, path, existing, check_mode) if state == "absent"
@@ -59,6 +63,24 @@ module Krikri
       return PluginResult.new(changed: false, failed: true, msg: "No key specified when adding a host") unless key
 
       add_host(name, path, existing, key.strip, check_mode)
+    end
+
+    # known_hosts.py sanity_check(): whenever a key is supplied, let
+    # ssh-keygen -F look the host up in a temp file holding just that key -
+    # a garbage key (or one whose host field does not match) finds nothing.
+    private def sanity_check(host : String, key : String) : PluginResult?
+      if host =~ /\S+(\s+)?,(\s+)?/
+        return PluginResult.new(changed: false, failed: true,
+          msg: "Comma separated list of names is not supported. Please pass a single name to lookup in the known_hosts file.")
+      end
+
+      tmp = "/tmp/krikri_known_hosts_#{Random::Secure.hex(6)}"
+      remote_exec("printf '%s' #{shell_quote(key)} > #{shell_quote(tmp)}")
+      lookup = remote_exec("ssh-keygen -F #{shell_quote(host)} -f #{shell_quote(tmp)}")
+      remote_exec("rm -f #{shell_quote(tmp)}")
+      return nil unless lookup[:stdout].empty?
+
+      PluginResult.new(changed: false, failed: true, msg: "Host parameter does not match hashed host field in supplied key")
     end
 
     private def remove_host(name : String, path : String, existing : String?, check_mode : Bool) : PluginResult

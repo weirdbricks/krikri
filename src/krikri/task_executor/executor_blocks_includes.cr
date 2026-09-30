@@ -3,6 +3,30 @@ require "../unsafe_values"
 
 module Krikri
   class TaskExecutor
+    # ansible_failed_task / ansible_failed_result inside rescue: (and the
+    # always: that follows it); they stay bound until the next block failure
+    # replaces them, matching real, where they are ordinary host vars set when
+    # the rescue is entered.
+    private def bind_failure_vars(host : Host) : Nil
+      failed = @failed_task_info[host.name]?
+      return unless failed
+      failed_task, failed_result = failed
+      task_view = Hash(String, JSON::Any).new
+      # An unnamed task's default display name is its action as written; real's
+      # ansible_failed_task.name is the empty string for it.
+      unnamed = failed_task.name == (failed_task.action_name || failed_task.module_name) || failed_task.name == failed_task.module_name
+      task_view["name"] = JSON::Any.new(unnamed ? "" : failed_task.name)
+      task_view["action"] = JSON::Any.new(PlaybookParser.resolve_module_name(failed_task.module_name) || failed_task.module_name)
+      args = Hash(String, JSON::Any).new
+      failed_task.params.each { |key, value| args[key] = JSON::Any.new(value) }
+      task_view["args"] = JSON::Any.new(args)
+      @failure_vars[host.name] = {
+        "ansible_failed_task"   => JSON::Any.new(task_view),
+        "ansible_failed_result" => failed_result,
+      }
+      @hv_generation += 1
+    end
+
     private def execute_block_multi(task : Task, hosts : Array(Host)) : Nil
       # Propagate role context BEFORE the when: partition - a host whose
       # block when: is false prints each child's own "TASK [role : name]"
@@ -58,6 +82,7 @@ module Krikri
         end
 
         propagate_role_context(task, rescue_tasks)
+        rescue_hosts.each { |host| bind_failure_vars(host) }
         run_task_batch(rescue_tasks, rescue_hosts)
 
         rescue_hosts.each do |host|
@@ -81,8 +106,7 @@ module Krikri
     end
 
     private def execute_include_tasks_multi(task : Task, hosts : Array(Host)) : Nil
-      puts "TASK [#{task_role_prefix(task)}#{render_task_name_for_display(task, hosts.first)}]".colorize(:white).bold
-      puts "*" * 70
+      Krikri::OutputBanner.banner("TASK [#{task_role_prefix(task)}#{render_task_name_for_display(task, hosts.first)}]")
 
       run_hosts, skip_hosts = partition_by_when(task, hosts)
 
@@ -113,14 +137,12 @@ module Krikri
         resolved_path = PlaybookParser.resolve_include_path(file_rel, task.include_file_dir.as(String))
 
         unless File.exists?(resolved_path)
-          fail_include(task, host, "Included tasks file not found: #{resolved_path}")
+          fail_include_tasks_file_not_found(task, host, resolved_path)
           next
         end
 
         run_groups[resolved_path] << host
       end
-
-      puts ""
 
       run_groups.each do |resolved_path, group_hosts|
         begin
@@ -153,7 +175,7 @@ module Krikri
           inherited = Play.new("", "")
           inherited.become = task.become?
           inherited.become_user = task.become_user
-          included_tasks = PlaybookParser.parse_tasks(yaml.as_a, inherited, "task in included #{resolved_path}", File.dirname(resolved_path), role_path: task.role_path, playbook_dir: @playbook_dir)
+          included_tasks = PlaybookParser.parse_tasks(yaml.as_a, inherited, "task in included #{resolved_path}", File.dirname(resolved_path), role_path: task.role_path, playbook_dir: @playbook_dir, source_file: File.expand_path(resolved_path), source_map: YamlSourceMap.scan(text))
 
           if include_vars = task.include_vars
             included_tasks.each do |included_task|
@@ -186,7 +208,6 @@ module Krikri
 
           connection_names = group_hosts.map { |host| host.vars["ansible_host"]?.try(&.as_s?) || host.name }
           puts "included: #{resolved_path} for #{connection_names.join(", ")}".colorize(:cyan)
-          puts ""
 
           run_task_batch(included_tasks, group_hosts)
         rescue ex : HandlerNotFoundError
@@ -393,6 +414,44 @@ module Krikri
         return
       end
 
+      # Real's include_vars action validates its own arguments at the
+      # START of its run (plugins/action/include_vars.py's validate
+      # loop), before anything is looked up: the first unknown key fails
+      # the task ("<key> is not a valid option in include_vars"), then a
+      # file:-style key beside a dir:-style key fails ("You are mixing
+      # file only and dir only arguments, these are incompatible"), and
+      # with neither file nor dir the null source_file reaches
+      # _find_needle - which warns on stderr and fails with "Could not
+      # find file on the Ansible Controller. ...". The first two shapes
+      # are an AnsibleActionFail (fatal dump carries only changed + the
+      # wrapped msg); the null-file one is the action's own failed result
+      # (message + empty ansible_facts/ansible_included_var_files).
+      if invalid = task.include_vars_invalid_arg
+        finish_include_vars_arg_failure(task, host, "#{invalid} is not a valid option in include_vars")
+        return
+      end
+      if task.include_vars_mixed?
+        finish_include_vars_arg_failure(task, host, "You are mixing file only and dir only arguments, these are incompatible")
+        return
+      end
+      name_key, name_unhashable = include_vars_name_shape(task)
+      unless task.include_vars_dir || task.include_vars_file
+        unless @include_vars_null_warned
+          STDERR.puts "[WARNING]: Invalid request to find a file that matches a \"null\" value"
+          @include_vars_null_warned = true
+        end
+        # Real's scope assignment (`scope[self.return_results_as_name] =
+        # results`) happens AFTER _find_needle has already failed, so a
+        # truthy unhashable `name:` supersedes the null-file failure
+        # with the unhashable crash (see include_vars_name_shape).
+        if unhashable = name_unhashable
+          finish_include_vars_arg_failure(task, host, "unhashable type: '#{unhashable}'")
+        else
+          finish_include_vars_failure(task, host, "include_vars: null file")
+        end
+        return
+      end
+
       # The dir: form (load every vars file in a directory) runs through
       # its own path below - before the loop machinery, which keys off
       # include_vars_file and would have nothing to substitute for a
@@ -530,8 +589,16 @@ module Krikri
             puts "failed: [#{host.connection_host}] => (item=#{item_label})".colorize(:red)
             puts "  Message: #{ex.message}".colorize(:red)
             failed = true
-            item_results << JSON::Any.new({"item" => item, "changed" => JSON::Any.new(false), "failed" => JSON::Any.new(true), "ansible_facts" => JSON::Any.new({} of String => JSON::Any)} of String => JSON::Any)
+            item_results << JSON::Any.new({"item" => item, "changed" => JSON::Any.new(false), "failed" => JSON::Any.new(true), "ansible_facts" => include_vars_failure_facts(name_key)} of String => JSON::Any)
             next
+          end
+          # Real's scope assignment crashes on a truthy unhashable `name:`
+          # after the per-item path lookup, superseding every file error
+          # (see include_vars_name_shape); the whole task fails at the
+          # first item whose path resolved.
+          if unhashable = name_unhashable
+            finish_include_vars_arg_failure(task, host, "unhashable type: '#{unhashable}'")
+            return
           end
           path = resolve_include_vars_path(task, candidate)
 
@@ -539,7 +606,7 @@ module Krikri
             puts "failed: [#{host.connection_host}] => (item=#{item_label})".colorize(:red)
             puts "  Message: include_vars: file not found: #{candidate}".colorize(:red)
             failed = true
-            item_results << JSON::Any.new({"item" => item, "changed" => JSON::Any.new(false), "failed" => JSON::Any.new(true), "ansible_facts" => JSON::Any.new({} of String => JSON::Any)} of String => JSON::Any)
+            item_results << JSON::Any.new({"item" => item, "changed" => JSON::Any.new(false), "failed" => JSON::Any.new(true), "ansible_facts" => include_vars_failure_facts(name_key)} of String => JSON::Any)
             next
           end
 
@@ -549,14 +616,14 @@ module Krikri
             puts "failed: [#{host.connection_host}] => (item=#{item_label})".colorize(:red)
             puts "  Message: include_vars: could not parse #{path}: #{ex.message}".colorize(:red)
             failed = true
-            item_results << JSON::Any.new({"item" => item, "changed" => JSON::Any.new(false), "failed" => JSON::Any.new(true), "ansible_facts" => JSON::Any.new({} of String => JSON::Any)} of String => JSON::Any)
+            item_results << JSON::Any.new({"item" => item, "changed" => JSON::Any.new(false), "failed" => JSON::Any.new(true), "ansible_facts" => include_vars_failure_facts(name_key)} of String => JSON::Any)
             next
           end
 
           store = (@included_vars[host.name] ||= Hash(String, JSON::Any).new)
-          if name = task.include_vars_name
-            store[name] = JSON::Any.new(loaded)
-          else
+          if store_key = include_vars_store_key(task, name_key)
+            store[store_key] = JSON::Any.new(loaded)
+          elsif name_key.nil?
             loaded.each { |key, value| store[key] = value }
           end
           @hv_generation += 1
@@ -564,7 +631,7 @@ module Krikri
 
           puts "ok: [#{host.connection_host}] => (item=#{item_label})".colorize(:green)
           executed = true
-          item_results << JSON::Any.new({"item" => item, "changed" => JSON::Any.new(false), "failed" => JSON::Any.new(false), "ansible_facts" => JSON::Any.new(loaded)} of String => JSON::Any)
+          item_results << JSON::Any.new({"item" => item, "changed" => JSON::Any.new(false), "failed" => JSON::Any.new(false), "ansible_facts" => include_vars_wrapped_facts(name_key, loaded)} of String => JSON::Any)
         end
 
         if register_name = task.register
@@ -679,6 +746,13 @@ module Krikri
         finish_include_vars_failure(task, host, ex.message || "is undefined")
         return
       end
+      # Real's scope assignment crashes on a truthy unhashable `name:`
+      # after _find_needle has run, superseding every file error (see
+      # include_vars_name_shape).
+      if unhashable = name_unhashable
+        finish_include_vars_arg_failure(task, host, "unhashable type: '#{unhashable}'")
+        return
+      end
       path = resolve_include_vars_path(task, candidate)
 
       unless path
@@ -694,9 +768,9 @@ module Krikri
       end
 
       store = (@included_vars[host.name] ||= Hash(String, JSON::Any).new)
-      if name = task.include_vars_name
-        store[name] = JSON::Any.new(loaded)
-      else
+      if store_key = include_vars_store_key(task, name_key)
+        store[store_key] = JSON::Any.new(loaded)
+      elsif name_key.nil?
         loaded.each { |key, value| store[key] = value }
       end
       @hv_generation += 1
@@ -704,13 +778,15 @@ module Krikri
       # A non-looped `include_vars: ... register: some_var` - same
       # register: gap as the looped branch above, just the plain
       # (non-`.results`) shape real Ansible's own include_vars module
-      # returns: `{ansible_facts: {...loaded...}, changed: false}`.
+      # returns: `{ansible_facts: {...loaded...}, changed: false}` -
+      # wrapped under the `name:` key when one is set (real's scope
+      # assignment).
       if register_name = task.register
         unless register_name.empty?
           @registered_vars[host.name][register_name] = JSON::Any.new({
             "changed"       => JSON::Any.new(false),
             "failed"        => JSON::Any.new(false),
-            "ansible_facts" => JSON::Any.new(loaded),
+            "ansible_facts" => include_vars_wrapped_facts(name_key, loaded),
           } of String => JSON::Any)
           @hv_generation += 1
         end
@@ -752,6 +828,14 @@ module Krikri
         substitutor.substitute(raw_dir, strict: true).strip
       rescue ex : UndefinedVariableError
         finish_include_vars_failure(task, host, ex.message || "is undefined")
+        return
+      end
+      name_key, name_unhashable = include_vars_name_shape(task)
+      # Real's scope assignment crashes on a truthy unhashable `name:`
+      # after the directory checks, superseding every dir error (see
+      # include_vars_name_shape).
+      if unhashable = name_unhashable
+        finish_include_vars_arg_failure(task, host, "unhashable type: '#{unhashable}'")
         return
       end
 
@@ -819,9 +903,9 @@ module Krikri
       end
 
       store = (@included_vars[host.name] ||= Hash(String, JSON::Any).new)
-      if name = task.include_vars_name
-        store[name] = JSON::Any.new(combined)
-      else
+      if store_key = include_vars_store_key(task, name_key)
+        store[store_key] = JSON::Any.new(combined)
+      elsif name_key.nil?
         combined.each { |key, value| store[key] = value }
       end
       @hv_generation += 1
@@ -831,7 +915,7 @@ module Krikri
           @registered_vars[host.name][register_name] = JSON::Any.new({
             "changed"       => JSON::Any.new(false),
             "failed"        => JSON::Any.new(false),
-            "ansible_facts" => JSON::Any.new(combined),
+            "ansible_facts" => include_vars_wrapped_facts(name_key, combined),
           } of String => JSON::Any)
           @hv_generation += 1
         end
@@ -906,6 +990,72 @@ module Krikri
       nil
     end
 
+    # Real include_vars.py's `scope[self.return_results_as_name] =
+    # results` runs whenever the `name:` value is Python-TRUTHY,
+    # regardless of whether the file load succeeded - so a missing file
+    # with `name: 27` still reports `ansible_facts: {"27": {}}`. The
+    # value's own type decides: a truthy scalar (string, int, float, bool
+    # true) wraps the results under its key - the JSON dump stringifies
+    # the key the way Python's JSON encoder does non-string dict keys
+    # (int 27 -> "27", true -> "true", 27.5 -> "27.5"); a falsy value
+    # (0/0.0/false/""/null/[]/{}) skips the wrap entirely; a truthy
+    # unhashable container (list/dict) raises TypeError at the dict-key
+    # assignment - "unhashable type: '_AnsibleTaggedList' /
+    # '_AnsibleTaggedDict'" - which aborts the action AFTER the file
+    # lookup but BEFORE any result dict exists, superseding every
+    # file/dir error while still losing to arg validation and to the
+    # args-templating failures. Returns {wrapped key or nil, unhashable
+    # type name or nil}; the `name:` value itself rides the parser's
+    # NON_STRING_PARAM_PREFIX marker for non-string literals (see
+    # parse_include_vars_task).
+    private def include_vars_name_shape(task : Task) : {String?, String?}
+      name = task.include_vars_name
+      return {nil, nil} unless name
+      if native = Krikri.non_string_scalar(name)
+        case raw = native.raw
+        when Bool         then raw ? {"true", nil} : {nil, nil}
+        when Int64        then raw != 0 ? {raw.to_s, nil} : {nil, nil}
+        when Float64      then raw != 0.0 ? {raw.to_s, nil} : {nil, nil}
+        when Nil          then {nil, nil}
+        when Array        then raw.empty? ? {nil, nil} : {nil, "_AnsibleTaggedList"}
+        when Hash         then raw.empty? ? {nil, nil} : {nil, "_AnsibleTaggedDict"}
+        else                   {nil, nil}
+        end
+      else
+        name.empty? ? {nil, nil} : {name, nil}
+      end
+    end
+
+    # The ansible_facts dict an include_vars result carries: the loaded
+    # vars wrapped under the truthy `name:` key, or bare.
+    private def include_vars_wrapped_facts(name_key : String?, loaded : Hash(String, JSON::Any)) : JSON::Any
+      return JSON::Any.new(loaded) unless name_key
+      JSON::Any.new({name_key => JSON::Any.new(loaded)} of String => JSON::Any)
+    end
+
+    # The ansible_facts dict a FAILED include_vars result carries: the
+    # (empty) loaded dict, wrapped under the truthy `name:` key.
+    private def include_vars_failure_facts(name_key : String?) : JSON::Any
+      include_vars_wrapped_facts(name_key, Hash(String, JSON::Any).new)
+    end
+
+    # The variable-STORE key for the `name:` wrap - only a plain STRING
+    # name defines a variable krikri's string-keyed store can hold. A
+    # truthy non-string name (int/float/bool literal) stores the facts
+    # under the NATIVE key in real (Python dict key 27/True), which is
+    # unreachable through every string-keyed lookup (`lookup('vars',
+    # '27')` is undefined in real 2.19.11, live-verified) - so krikri
+    # records nothing rather than defining a string-keyed variable real
+    # does not have; the register and result ansible_facts still carry
+    # the wrapped key. A nil name_key (falsy or absent name) means real
+    # merges the file's own keys.
+    private def include_vars_store_key(task : Task, name_key : String?) : String?
+      return nil unless name_key
+      name = task.include_vars_name
+      return nil if name.nil? || name.empty? || !Krikri.non_string_scalar(name).nil?
+      name
+    end
+
     private def finish_include_vars_failure(task : Task, host : Host, message : String) : Nil
       # Real Ansible's own failed_when: override applies to include_vars:'s
       # OWN file-not-found failure exactly as to any module result - the
@@ -941,34 +1091,11 @@ module Krikri
       end
 
       if suppressed
-        store = (@included_vars[host.name] ||= Hash(String, JSON::Any).new)
-        # Real Ansible defines the `name:` var as an empty hash even on a
-        # suppressed missing-file include_vars: (`npm defined=True`,
-        # ansible_facts: {}) - the consumer's `when: npm is defined`
-        # guards rely on that shape.
-        if name = task.include_vars_name
-          store[name] = JSON::Any.new(Hash(String, JSON::Any).new)
-        end
-        # Bump the context-cache generation whenever anything changed -
-        # the included_vars store is generation-keyed, so a skipped bump
-        # leaves every later task reading the pre-include context.
-        @hv_generation += 1
-        if register_name = task.register
-          unless register_name.empty?
-            @registered_vars[host.name][register_name] = JSON::Any.new({
-              "changed"       => JSON::Any.new(false),
-              "failed"        => JSON::Any.new(false),
-              "ansible_facts" => JSON::Any.new({} of String => JSON::Any),
-            } of String => JSON::Any)
-          end
-        end
-        puts "ok: [#{host.name}]".colorize(:green)
-        @results[host.name]["ok"] += 1
+        include_vars_suppressed_success(task, host)
         return
       end
 
-      puts "failed: [#{host.name}]".colorize(:red)
-      puts "  Message: #{message}".colorize(:red)
+      display_include_vars_failure(task, host, message)
       # ignore_errors: on a failed include_vars: - matching real
       # Ansible's own strategy/__init__.py, which counts this as `ok`
       # AND `ignored`, never `failed`, and never halts the host. Found
@@ -979,6 +1106,69 @@ module Krikri
       # (the only include_vars: failure path that never consulted
       # ignore_errors: at all for its OWN stats, unlike every other
       # failure path in this file) showed `ok=9 failed=1 ignored=0`.
+      include_vars_failure_stats(task, host)
+    end
+
+    # The include_vars action's own argument-validation failures ("X is
+    # not a valid option in include_vars", "You are mixing file only and
+    # dir only arguments, these are incompatible") - real's
+    # AnsibleActionFail shape: the fatal dump carries ONLY changed + the
+    # wrapped "Task failed: ..." msg (no ansible_facts/message keys), the
+    # [ERROR] block is the single-level chain over the unwrapped text,
+    # and failed_when:/ignore_errors: apply as to any task failure.
+    private def finish_include_vars_arg_failure(task : Task, host : Host, message : String) : Nil
+      result_json = JSON::Any.new({
+        "changed"               => JSON::Any.new(false),
+        "failed"                => JSON::Any.new(true),
+        "msg"                   => JSON::Any.new("Task failed: #{message}"),
+        "_ansible_action_level" => JSON::Any.new(true),
+        "_ansible_error_detail" => JSON::Any.new(message),
+      } of String => JSON::Any)
+      suppressed = begin
+        vars_context = build_vars_context(task, host)
+        result = apply_changed_failed_when(task, result_json, vars_context, host)
+        !result["failed"].as_bool
+      rescue
+        false
+      end
+
+      if suppressed
+        include_vars_suppressed_success(task, host)
+        return
+      end
+
+      ResultDisplay.display_result(host, result_json, @diff_mode, ignore_errors: task.ignore_errors?, module_name: task.module_name, source_task: task)
+      include_vars_failure_stats(task, host)
+    end
+
+    # A suppressed (failed_when:-false) include_vars: failure still
+    # defines the `name:` var as an empty hash and registers a
+    # changed:false / failed:false result - real Ansible's own shapes
+    # (see finish_include_vars_failure's history note).
+    private def include_vars_suppressed_success(task : Task, host : Host) : Nil
+      store = (@included_vars[host.name] ||= Hash(String, JSON::Any).new)
+      name_key, _ = include_vars_name_shape(task)
+      if store_key = include_vars_store_key(task, name_key)
+        store[store_key] = JSON::Any.new(Hash(String, JSON::Any).new)
+      end
+      # Bump the context-cache generation whenever anything changed -
+      # the included_vars store is generation-keyed, so a skipped bump
+      # leaves every later task reading the pre-include context.
+      @hv_generation += 1
+      if register_name = task.register
+        unless register_name.empty?
+          @registered_vars[host.name][register_name] = JSON::Any.new({
+            "changed"       => JSON::Any.new(false),
+            "failed"        => JSON::Any.new(false),
+            "ansible_facts" => include_vars_wrapped_facts(name_key, Hash(String, JSON::Any).new),
+          } of String => JSON::Any)
+        end
+      end
+      puts "ok: [#{host.name}]".colorize(:green)
+      @results[host.name]["ok"] += 1
+    end
+
+    private def include_vars_failure_stats(task : Task, host : Host) : Nil
       if task.ignore_errors?
         @results[host.name]["ok"] += 1
         @results[host.name]["ignored"] += 1
@@ -986,6 +1176,67 @@ module Krikri
         @results[host.name]["failed"] += 1
         @halted_hosts.add(host.name)
       end
+    end
+
+    # include_vars failures through the standard result display (real 2.19.11,
+    # live-verified): a missing/unparsable file is the action's own failure -
+    # {ansible_facts: {}, ansible_included_var_files: [], changed: false,
+    # message: <detail>, msg: "Task failed: Action failed: Unknown error"} with
+    # a bare "Task failed: Action failed: Unknown error." block; an undefined
+    # variable in the args is the usual multi-level finalization failure.
+    # The ansible_facts dict carries the `name:` wrap (real's scope
+    # assignment happens regardless of the load outcome - see
+    # include_vars_name_shape). The unhashable-`name:` crash itself never
+    # reaches this display (every load-failure path pre-empts it before
+    # calling), and the undefined-var finalization path must keep its own
+    # shape - real's args templating fails before the action ever runs.
+    private def display_include_vars_failure(task : Task, host : Host, message : String) : Nil
+      name_key, _ = include_vars_name_shape(task)
+      h = Hash(String, JSON::Any).new
+      if message == "include_vars: null file"
+        # Real's _find_needle('vars', None) - the dataloader refuses a
+        # null lookup value WITHOUT the quoted-name form the missing-
+        # file case gets: "Could not find file on the Ansible
+        # Controller." (live-verified vs 2.19.11).
+        h["ansible_facts"] = include_vars_wrapped_facts(name_key, Hash(String, JSON::Any).new)
+        h["ansible_included_var_files"] = JSON::Any.new([] of JSON::Any)
+        h["changed"] = JSON::Any.new(false)
+        h["failed"] = JSON::Any.new(true)
+        h["message"] = JSON::Any.new("Could not find file on the Ansible Controller.\nIf you are using a module and expect the file to exist on the remote, see the remote_src option")
+        h["msg"] = JSON::Any.new("Task failed: Action failed: Unknown error.")
+        h["_ansible_action_level"] = JSON::Any.new(true)
+        h["_ansible_error_detail"] = JSON::Any.new("Action failed: Unknown error.")
+        result = JSON::Any.new(h)
+      elsif message.starts_with?("include_vars: file not found: ") || message.starts_with?("include_vars: could not parse ") || message.ends_with?(" directory does not exist")
+        detail = if message.starts_with?("include_vars: file not found: ")
+                   "Could not find or access '#{message.sub("include_vars: file not found: ", "")}' on the Ansible Controller.\nIf you are using a module and expect the file to exist on the remote, see the remote_src option"
+                 elsif message.ends_with?(" directory does not exist")
+                   message
+                 else
+                   # PyYAML's MarkedYAMLError text: "<While context> <problem>."
+                   raw = message.sub(/\Ainclude_vars: could not parse [^:]*: /, "")
+                   if m = raw.match(/\A(.*?) at line \d+, column \d+, (while [^,]*?) at line \d+, column \d+\z/)
+                     "YAML parsing failed: #{m[2].capitalize} #{m[1]}."
+                   else
+                     "YAML parsing failed: #{raw}"
+                   end
+                 end
+        h["ansible_facts"] = include_vars_wrapped_facts(name_key, Hash(String, JSON::Any).new)
+        h["ansible_included_var_files"] = JSON::Any.new([] of JSON::Any)
+        h["changed"] = JSON::Any.new(false)
+        h["failed"] = JSON::Any.new(true)
+        h["message"] = JSON::Any.new(detail)
+        h["msg"] = JSON::Any.new("Task failed: Action failed: Unknown error.")
+        h["_ansible_action_level"] = JSON::Any.new(true)
+        h["_ansible_error_detail"] = JSON::Any.new("Action failed: Unknown error.")
+        result = JSON::Any.new(h)
+      else
+        key = free_form_call?(task) ? "_raw_params" : "file"
+        ex = UndefinedVariableError.new("Error while resolving value for '#{key}': #{message}")
+        emit_finalization_error_block(task, ex)
+        result = finalization_failure_json(ex, task)
+      end
+      ResultDisplay.display_result(host, result, @diff_mode, ignore_errors: task.ignore_errors?, module_name: task.module_name, source_task: task)
     end
 
     # RoleLoader's auto-synthesized "Validating arguments against arg
@@ -1073,6 +1324,7 @@ module Krikri
         end
 
         propagate_role_context(task, rescue_tasks)
+        bind_failure_vars(host)
         run_task_list(rescue_tasks, host)
         block_failed = @halted_hosts.includes?(host.name)
       end
@@ -1266,6 +1518,7 @@ module Krikri
         end
         mark_unsafe_loop_items(loop_items) if unsafe_items
         looped_when_failed = false
+        deferred_iterations = [] of Array(Task)
         loop_items.each_with_index do |item, idx|
           vars_context = base_vars_context.dup
           # Render any string field of the item that is itself a template
@@ -1301,7 +1554,7 @@ module Krikri
           # ultimately skipped still got counted as `ok` AND `skipped`
           # for the same task. See the non-looped branch's comment below
           # for how this was found.
-          unless run_include_tasks_once(task, host, vars_context, item_display(item), defer_when_stats: true)
+          unless run_include_tasks_once(task, host, vars_context, item_display(item), defer_when_stats: true, defer_run: true, collected: deferred_iterations)
             looped_when_failed = true
           end
         end
@@ -1316,6 +1569,17 @@ module Krikri
           else
             @results[host.name]["failed"] += 1
           end
+        end
+        # Real Ansible runs a looped include in two phases: every
+        # iteration's `included: ... => (item=...)` line prints under the
+        # include's own banner FIRST, then the iterations' included tasks
+        # run in order (pluggero.upgrade round 601548; byte-verified
+        # against ansible-core 2.19.11 on testing/test-include-tasks-
+        # quick.yml). The old interleave printed each iteration's tasks
+        # before the next iteration's included: line - a different shape
+        # than anything real produces.
+        deferred_iterations.each do |included_tasks|
+          run_task_list(included_tasks, host)
         end
       else
         # Non-looped include_tasks: itself counts as one `ok` in the
@@ -1344,7 +1608,7 @@ module Krikri
       end
     end
 
-    private def run_include_tasks_once(task : Task, host : Host, vars_context : Hash(String, JSON::Any), item_label : String?, defer_when_stats : Bool = false) : Bool
+    private def run_include_tasks_once(task : Task, host : Host, vars_context : Hash(String, JSON::Any), item_label : String?, defer_when_stats : Bool = false, defer_run : Bool = false, collected : Array(Array(Task))? = nil) : Bool
       if task.when_condition
         begin
           when_result = evaluate_when_items(task, vars_context, host)
@@ -1364,7 +1628,7 @@ module Krikri
 
         unless when_result
           connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
-          suffix = item_label ? " => (item=#{item_label})" : ""
+          suffix = item_label ? " => (item=#{item_label}) " : ""
           puts "skipping: [#{connection_host}]#{suffix}".colorize(:cyan)
           @results[host.name]["skipped"] += 1
           return true
@@ -1403,7 +1667,7 @@ module Krikri
       resolved_path = PlaybookParser.resolve_include_path(file_rel, task.include_file_dir.as(String))
 
       unless File.exists?(resolved_path)
-        fail_include(task, host, "Included tasks file not found: #{resolved_path}")
+        fail_include_tasks_file_not_found(task, host, resolved_path)
         return true
       end
 
@@ -1427,7 +1691,7 @@ module Krikri
       inherited = Play.new("", "")
       inherited.become = task.become?
       inherited.become_user = task.become_user
-      included_tasks = PlaybookParser.parse_tasks(yaml.as_a, inherited, "task in included #{resolved_path}", File.dirname(resolved_path), role_path: task.role_path, playbook_dir: @playbook_dir)
+      included_tasks = PlaybookParser.parse_tasks(yaml.as_a, inherited, "task in included #{resolved_path}", File.dirname(resolved_path), role_path: task.role_path, playbook_dir: @playbook_dir, source_file: File.expand_path(resolved_path), source_map: YamlSourceMap.scan(text))
 
       # Role context (role_name/defaults/vars/dirs) must reach the
       # included tasks on THIS path too: an include_tasks: inside a role
@@ -1529,6 +1793,18 @@ module Krikri
       # buluma.tomcat case that moved this credit here).
       @results[host.name]["ok"] += 1
 
+      # Real Ansible's v2_playbook_on_include line: `included: <path> for
+      # <host>` (plus ` => (item=...)` for a looped include). Printed
+      # after the load succeeds, before any included task runs.
+      connection_names = [host.vars["ansible_host"]?.try(&.as_s?) || host.name]
+      suffix = item_label ? " => (item=#{item_label})" : ""
+      puts "included: #{resolved_path} for #{connection_names.join(", ")}#{suffix}".colorize(:cyan)
+
+      if defer_run
+        collected.try(&.push(included_tasks))
+        return true
+      end
+
       run_task_list(included_tasks, host)
       true
     rescue ex : HandlerNotFoundError
@@ -1556,6 +1832,48 @@ module Krikri
         @results[host.name]["failed"] += 1
       end
       halt_if_failed(task, host, true)
+    end
+
+    # include_tasks: whose file resolves nowhere at run time - real
+    # Ansible's own fatal include shape (live-verified vs 2.19.11):
+    # STDERR gets the DataLoader error block (no Origin), STDOUT gets
+    # the fatal dump with the as-written file under "include:", the
+    # task counts as failed only - ignore_errors: does NOT apply
+    # (live-verified: failed=1 ignored=0 with ignore_errors: true) -
+    # and the play halts for the host (rc=2).
+    private def fail_include_tasks_file_not_found(task : Task, host : Host, resolved_path : String) : Nil
+      message = "Could not find or access '#{resolved_path}' on the Ansible Controller: Unable to retrieve file contents.\n" \
+                "Could not find or access '#{resolved_path}' on the Ansible Controller.\n" \
+                "If you are using a module and expect the file to exist on the remote, see the remote_src option: [Errno 2] No such file or directory: '#{resolved_path}'"
+      ErrorBlock.emit_stderr(ErrorBlock::Node.new(message))
+      connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
+      puts "fatal: [#{connection_host}]: FAILED! => {\"changed\": false, \"include\": #{task.include_file.to_s.to_json}, \"reason\": #{message.to_json}}".colorize(:red)
+      @results[host.name]["failed"] += 1
+      halt_if_failed(task, host, true, force_halt: true)
+    end
+
+    # include_role: whose named role resolves nowhere - real Ansible's
+    # own fatal shape (live-verified vs 2.19.11, both from a play task
+    # and from inside a role's own tasks): the loader's AnsibleError is
+    # printed on STDERR as an "[ERROR]: the role 'x' was not found in
+    # <search paths>" block whose Origin points at the role-name VALUE,
+    # the task result line is the two-key fatal dump, the task counts as
+    # failed only, and the play halts for that host UNCONDITIONALLY -
+    # ignore_errors: does not apply to a role-resolution failure (real:
+    # `failed=1 ignored=0`, the next task never runs, rc=2), unlike
+    # every ordinary module failure.
+    private def fail_include_role_not_found(task : Task, host : Host, message : String) : Nil
+      connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
+      node = if (origin_pos = task.include_role_name_origin) && (source_file = task.source_file)
+               ErrorBlock::Node.new(message,
+                 source_context: ErrorBlock.origin_context(source_file, origin_pos[0], origin_pos[1]))
+             else
+               ErrorBlock::Node.new(message)
+             end
+      ErrorBlock.emit_stderr(node)
+      puts "fatal: [#{connection_host}]: FAILED! => {\"changed\": false, \"reason\": #{message.to_json}}".colorize(:red)
+      @results[host.name]["failed"] += 1
+      halt_if_failed(task, host, true, force_halt: true)
     end
 
     # Runs an include_role: task - the dynamic counterpart to a roles:
@@ -1680,7 +1998,7 @@ module Krikri
 
         unless when_result
           connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
-          suffix = item_label ? " => (item=#{item_label})" : ""
+          suffix = item_label ? " => (item=#{item_label}) " : ""
           puts "skipping: [#{connection_host}]#{suffix}".colorize(:cyan)
           @results[host.name]["skipped"] += 1
           return
@@ -1763,6 +2081,18 @@ module Krikri
         # "Failed to load role" failure. See UnresolvedModuleError's
         # own comment for the graceful/hard-stop boundary.
         raise ex
+      rescue ex : RoleNotFoundError
+        # include_role: naming a role that resolves nowhere is real
+        # Ansible's own fatal include failure shape (live-verified vs
+        # 2.19.11): the loader's AnsibleError goes to STDERR as an
+        # "[ERROR]: the role 'x' was not found in <search paths>" block
+        # with the role-name VALUE's own Origin, the task result is the
+        # two-key fatal dump `{"changed": false, "reason": ...}`, and
+        # the play HALTS for that host unconditionally - ignore_errors:
+        # does NOT apply (live-verified: `failed=1 ignored=0`, the next
+        # task never runs, rc=2), unlike every ordinary module failure.
+        fail_include_role_not_found(task, host, ex.message || "role not found")
+        return
       rescue ex
         fail_include(task, host, "Failed to load role '#{role_name}': #{ex.message}")
         return
@@ -1793,6 +2123,13 @@ module Krikri
       end
 
       @results[host.name]["ok"] += 1 unless task.is_static_import?
+
+      # Real v2_playbook_on_include line for a dynamic include_role.
+      unless task.is_static_import?
+        connection_name = host.vars["ansible_host"]?.try(&.as_s?) || host.name
+        suffix = item_label ? " => (item=#{item_label})" : ""
+        puts "included: #{role_name} for #{connection_name}#{suffix}".colorize(:cyan)
+      end
 
       # Round 26 originally had an eager re-render of each loaded task's
       # `name:` here (against just the include_role: `vars:` passed in) to
@@ -1880,6 +2217,11 @@ module Krikri
     # this matters for bare (non-`{{ }}`) when: conditions.
     private def resolve_role_relative_src(task : Task, params : Hash(String, String)) : Hash(String, String)
       src = params["src"]?
+      # A None src (`src:` with no value - the parser wires literal nulls
+      # as NONE_SENTINEL, same as a whole-span null template) behaves like
+      # the empty string always did here - the module's own required-
+      # argument check fails the task downstream.
+      src = "" if src == Krikri::NONE_SENTINEL
       return params if src.nil? || src.starts_with?('/')
 
       # synchronize (ansible.posix) shares the copy:/assemble: files/-

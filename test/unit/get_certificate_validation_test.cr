@@ -53,7 +53,7 @@ describe "get_certificate plugin argument validation" do
 
     result["failed"].as_bool.must_equal(true)
     result["msg"].as_s.must_include("argument 'get_certificate_chain' is of type <class 'str'> and we were unable to convert to bool: " \
-                                    "The value 'banana' is not a valid boolean.  Valid booleans include: ")
+                                    "The value 'banana' is not a valid boolean. Valid booleans include: ")
   end
 
   it "fails an invalid starttls choice" do

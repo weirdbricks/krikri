@@ -31,7 +31,7 @@ module Krikri
       def bool_type_error(param : String, raw : String) : PluginResult
         PluginResult.new(changed: false, failed: true,
           msg: "argument '#{param}' is of type <class 'str'> and we were unable to convert to bool: " \
-               "The value '#{raw}' is not a valid boolean.  Valid booleans include: #{BOOLEANS_REPR.join(", ")}")
+               "The value '#{raw}' is not a valid boolean. Valid booleans include: #{BOOLEANS_REPR.join(", ")}")
       end
 
       def int_type_error(param : String, raw : String) : PluginResult

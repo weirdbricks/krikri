@@ -596,7 +596,7 @@ describe Krikri::InventoryParser do
       write(File.join(root, "empty.ini"), "\n")
       inventory = Krikri::InventoryParser.parse(File.join(root, "empty.ini"))
 
-      Krikri::InventoryParser.validate(inventory).must_include("Inventory has no hosts")
+      Krikri::InventoryParser.validate(inventory).must_include("provided hosts list is empty, only localhost is available. Note that the implicit localhost does not match 'all'")
     end
   end
 end

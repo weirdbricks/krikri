@@ -9,6 +9,8 @@
 # writes straight to the real STDOUT (a fiber with no redirect
 # registered falls through unchanged) - this only matters once a
 # --forks > 1 run is actually in flight.
+require "./src/krikri/output_banner"
+require "./src/krikri/run_options"
 require "./src/krikri/task_executor/output_routing"
 
 require "option_parser"
@@ -57,7 +59,10 @@ if ARGV[0]? == "__async_run"
   # added below, so a shallow copy is equivalent to the round trip, and
   # the round trip's cost scales with the module's whole output.
   result_hash = result.as_h.dup
-  result_hash["finished"] = JSON::Any.new(1_i64)
+  # Real ansible-core 2.19.11 (live-verified by dumping the registered
+  # var of a poll>0 async task): finished is the JSON boolean true, not
+  # the integer 1.
+  result_hash["finished"] = JSON::Any.new(true)
 
   tmp_path = "#{status_path}.tmp"
   # Same 0600 discipline as AsyncJobs.write_status (status payloads can
@@ -144,6 +149,9 @@ gathering = {"implicit", "explicit", "smart"}.includes?(ENV["ANSIBLE_GATHERING"]
 # than taking the max of one.
 verbosity_level = ARGV.select { |arg| arg =~ /\A-v+\z/ }.sum(&.size.-(1))
 verbose = verbosity_level > 0
+# krikri's own extra -v output (statistics, host lists, upload progress) is
+# not part of ansible-playbook's output; opt in with KRIKRI_VERBOSE_EXTRAS=1.
+verbose_extras = ENV["KRIKRI_VERBOSE_EXTRAS"]? == "1"
 cli_args = ARGV.reject { |arg| arg =~ /\A-v+\z/ }
 limit_hosts = ""
 tags = [] of String
@@ -178,6 +186,7 @@ begin
     parser.on("-i INVENTORY", "--inventory=INVENTORY", "Specify inventory file") do |inv|
       inventory_file = inv
       inventory_explicit = true
+      Krikri::RunOptions.inventory_sources << (File.exists?(inv) ? File.expand_path(inv) : inv)
     end
 
     # Real Ansible's own deprecated long spelling for -i/--inventory
@@ -218,6 +227,7 @@ begin
 
     parser.on("-f FORKS", "--forks=FORKS", "Run each task against up to FORKS hosts concurrently (default: 25 - higher than ansible-playbook's own default of 5, since a \"fork\" here is a cheap fiber, not a forked Python interpreter; --forks 5 matches real ansible-playbook's default exactly, --forks 1 restores one-host-at-a-time)") do |fval|
       forks = fval.to_i? || 25
+      Krikri::RunOptions.forks = fval.to_i?
     end
 
     parser.on("--gathering=MODE", "Fact gathering policy, matching ansible-playbook: implicit (default, every play re-gathers), explicit (only plays with gather_facts: true), or smart (each host gathered at most once per run; use meta: clear_facts to force a re-gather)") do |mode|
@@ -327,9 +337,11 @@ begin
     end
     parser.on("--skip-tags=TAGS", "Only run tasks whose tags do NOT match these") do |tval|
       skip_tags = tval.split(",").map(&.strip).reject(&.empty?)
+      Krikri::RunOptions.skip_tags = skip_tags
     end
     parser.on("-t TAGS", "--tags=TAGS", "Only run tasks with these tags") do |tval|
       tags = tval.split(",").map(&.strip).reject(&.empty?)
+      Krikri::RunOptions.run_tags = tags
     end
 
     parser.on("--vault-password-file=FILE", "Vault password file") do |file|
@@ -440,37 +452,11 @@ elsif ask_vault_pass
   Krikri::Vault.password = Krikri::VaultCli.prompt_password
 end
 
-# Display banner. Skipped for --syntax-check/--list-tasks: real
-# ansible-playbook prints nothing but the listing itself in those modes,
-# and that output is routinely machine-read in CI, so this engine's own
-# banner/warnings would be noise in the middle of it.
+# Kept for the listing modes (--syntax-check/--list-tasks/--list-hosts/
+# --list-tags): real ansible-playbook emits nothing but the listing
+# itself in those modes, and that output is routinely machine-read in
+# CI, so warnings are suppressed there.
 quiet_listing_mode = syntax_check_only || list_tasks_only || list_hosts_only || list_tags_only
-unless quiet_listing_mode
-  puts ""
-  puts Krikri.banner.colorize(:cyan).bold
-  puts "=" * 70
-  puts "Playbook: #{playbook_file}".colorize(:white)
-  if check_mode
-    puts "Mode: CHECK (dry-run)".colorize(:yellow).bold
-  end
-  if diff_mode
-    puts "Diff: ENABLED".colorize(:green)
-  end
-  unless batching_enabled
-    puts "Batching: DISABLED".colorize(:yellow)
-  end
-  if !tags.empty?
-    puts "Tags: #{tags.join(", ")}".colorize(:cyan)
-  end
-  if !skip_tags.empty?
-    puts "Skip tags: #{skip_tags.join(", ")}".colorize(:cyan)
-  end
-  if start_at = start_at_task
-    puts "Start at task: #{start_at}".colorize(:cyan)
-  end
-  puts "=" * 70
-  puts ""
-end
 
 # Parse playbook
 playbook = nil
@@ -496,7 +482,7 @@ begin
     exit 0
   end
 
-  if verbose
+  if verbose && verbose_extras
     stats = Krikri::PlaybookParser.stats(playbook)
     puts "Playbook Statistics:".colorize(:green).bold
     puts "  Plays: #{stats["plays"]}".colorize(:white)
@@ -524,11 +510,9 @@ begin
   # Show warnings
   warnings = Krikri::PlaybookParser.validate(playbook)
   if !warnings.empty?
-    puts "Warnings:".colorize(:yellow).bold
     warnings.each do |warning|
-      puts "  ⚠️  #{warning}".colorize(:yellow)
+      STDERR.puts "[WARNING]: #{warning}"
     end
-    puts ""
   end
 rescue ex : Krikri::InvalidStrategyError
   # Real Ansible reports an unknown strategy and exits 1.
@@ -582,20 +566,52 @@ rescue ex : Krikri::ConflictingActionStatementsError
 rescue ex : Krikri::RoleNotFoundError
   # A `roles:` entry (play-level or a role's own meta/main.yml
   # dependency) naming a role not found on disk is real Ansible's own
-  # plain "[ERROR]: the role '<name>' was not found ..." at rc=1 -
-  # verified live (both cases give the identical rc=1) - not the
-  # parser-error 4 this engine fell back to when the missing role
-  # silently emptied the whole play list ("No valid plays found").
-  # Found benchmarking weareinteractive.sftp (round 178): its own
-  # meta/main.yml depends on franklinkim.ssh, a role no longer
-  # published anywhere.
-  puts "[ERROR]: #{ex.message}".colorize(:red)
+  # "[ERROR]: the role '<name>' was not found in <search paths>" block
+  # at rc=1, on STDERR, with an Origin block when the raise site had a
+  # source position (live-verified vs 2.19.11) - not the parser-error 4
+  # this engine fell back to when the missing role silently emptied the
+  # whole play list ("No valid plays found"). Found benchmarking
+  # weareinteractive.sftp (round 178): its own meta/main.yml depends on
+  # franklinkim.ssh, a role no longer published anywhere.
+  if render = ex.render
+    STDERR.print render
+  else
+    STDERR.puts "[ERROR]: #{ex.message}".colorize(:red)
+  end
+  exit 1
+rescue ex : Krikri::StaticImportMissingFileError
+  # import_tasks:' resolved file genuinely missing is real Ansible's
+  # own DataLoader AnsibleError - on STDERR, NO Origin block, and rc=1
+  # rather than the parser-error 4 (live-verified vs 2.19.11; the
+  # render carries the hint line, the chained OSError text and the
+  # trailing blank).
+  STDERR.print ex.render
   exit 1
 rescue ex : Krikri::YamlSyntaxError
   # Rendered the way real ansible-playbook renders a YAML syntax error -
   # [ERROR]: line, Origin: path:line:col, then the offending source line
   # with a caret. See YamlSyntaxError#render.
   print ex.render
+  exit 4
+rescue ex : Krikri::MetaActionTypeError
+  # A non-string free-form meta: value (`meta: 5`, `meta: [a]`) is real
+  # Ansible's own playbook-load refusal - mod_args.py's AnsibleParserError,
+  # "[ERROR]: unexpected parameter type in action: <class ...>" with the
+  # task's Origin block, parser-error rc=4 on STDERR (live-verified vs
+  # 2.19.11). The render was built at the raise site (it needs the source
+  # map); print it verbatim.
+  STDERR.print ex.render
+  exit 4
+rescue ex : Krikri::IncludeDirectiveError
+  # Bad arguments on an include/include-role directive (include_role:/
+  # import_role:/import_tasks:/include_tasks:) are real Ansible's own
+  # playbook-load refusal - TaskInclude.check_options / IncludeRole.load
+  # run at load time, so the "[ERROR]: ..." block (with the task's
+  # Origin block except for the FROM_ARGS "Expected a string" raise,
+  # live-verified vs 2.19.11) prints on STDERR with rc=4 before any
+  # play banner. The render was built at the raise site; print it
+  # verbatim.
+  STDERR.print ex.render
   exit 4
 rescue ex
   puts "Error parsing playbook:".colorize(:red).bold
@@ -619,7 +635,7 @@ inventory = Krikri::Inventory.new
 begin
   inventory = Krikri::TimingProfile.measure("parse.inventory") { Krikri::InventoryParser.parse(inventory_file, File.dirname(File.expand_path(playbook_file))) }
 
-  if verbose
+  if verbose && verbose_extras
     stats = Krikri::InventoryParser.stats(inventory)
     puts "Inventory Statistics:".colorize(:green).bold
     puts "  Hosts: #{stats["hosts"]}".colorize(:white)
@@ -628,16 +644,15 @@ begin
     puts ""
   end
 
-  # Show inventory warnings. Suppressed for the listing modes for the
-  # same reason the banner is - real ansible-playbook emits nothing but
-  # the listing there, and this output gets machine-read.
+  # Show inventory warnings (real ansible emits these on stderr as
+  # [WARNING]: lines). Suppressed for the listing modes for the same
+  # reason the banner was - real ansible-playbook emits nothing but the
+  # listing there, and this output gets machine-read.
   inv_warnings = quiet_listing_mode ? [] of String : Krikri::InventoryParser.validate(inventory)
   if !inv_warnings.empty?
-    puts "Inventory Warnings:".colorize(:yellow).bold
     inv_warnings.each do |warning|
-      puts "  ⚠️  #{warning}".colorize(:yellow)
+      STDERR.puts "[WARNING]: #{warning}"
     end
-    puts ""
   end
 rescue ex
   # Real Ansible does NOT abort when an inventory source can't be read:
@@ -655,13 +670,9 @@ rescue ex
   inventory = Krikri::Inventory.new
 
   unless quiet_listing_mode
-    puts "Inventory Warnings:".colorize(:yellow).bold
-    if inventory_explicit
-      puts "  ⚠️  Unable to parse #{inventory_file} as an inventory source: #{ex.message}".colorize(:yellow)
-    end
-    puts "  ⚠️  No inventory was parsed, only implicit localhost is available".colorize(:yellow)
-    puts "  ⚠️  provided hosts list is empty, only localhost is available. Note that the implicit localhost does not match 'all'".colorize(:yellow)
-    puts ""
+    STDERR.puts "[WARNING]: Unable to parse #{inventory_file} as an inventory source: #{ex.message}" if inventory_explicit
+    STDERR.puts "[WARNING]: No inventory was parsed, only implicit localhost is available"
+    STDERR.puts "[WARNING]: provided hosts list is empty, only localhost is available. Note that the implicit localhost does not match 'all'"
   end
 end
 
@@ -727,7 +738,7 @@ if list_hosts_only
   exit 0
 end
 
-if verbose
+if verbose && verbose_extras
   puts "Available Hosts:".colorize(:cyan).bold
   inventory.hosts.each do |_name, host|
     # An un-set port is not "22" - it's "ssh decides" (~/.ssh/config and
@@ -739,7 +750,12 @@ if verbose
 end
 
 # Set verbose mode for plugin manager
-Krikri::PluginManager.verbose = verbose
+Krikri::PluginManager.verbose = verbose && verbose_extras
+# Real ansible-playbook -v opens with its config-file line.
+if verbose
+  cfg = ENV["ANSIBLE_CONFIG"]? || (File.exists?("ansible.cfg") ? File.expand_path("ansible.cfg") : nil)
+  puts cfg ? "Using #{cfg} as config file" : "No config file found; using defaults"
+end
 Krikri::PluginManager.daemon_enabled = persistent_daemon
 
 # Batch upload plugins to all remote hosts before execution
@@ -800,11 +816,24 @@ run_registered_store = Hash(String, Hash(String, JSON::Any)).new
 # carries that forward across the per-play loop below.
 permanently_failed_hosts = Set(String).new
 
+# A --limit that matches nothing in the whole inventory aborts before any
+# play: one warning per unmatched pattern, then the no-hosts error, rc 1.
+unless limit_hosts.empty?
+  limit_tokens = limit_hosts.split(/[,:]/).map(&.strip).reject(&.empty?)
+  limit_tokens.each do |tok|
+    next if tok.starts_with?('!') || tok.starts_with?('&')
+    next unless inventory.get_hosts(tok).empty?
+    STDERR.puts "[WARNING]: Could not match supplied host pattern, ignoring: #{tok}".colorize(:yellow)
+  end
+  if inventory.get_hosts(limit_hosts).empty?
+    STDERR.puts "[ERROR]: Specified inventory, host pattern and/or --limit leaves us with no hosts to target.".colorize(:red)
+    exit 1
+  end
+end
+
 playbook.plays.each_with_index do |play, _play_index|
-  puts ""
-  puts "PLAY [#{play.name}]".colorize(:magenta).bold
-  puts "=" * 70
-  puts ""
+  Krikri::RunOptions.play_name = play.name
+  Krikri::OutputBanner.banner("PLAY [#{play.name}]")
 
   # Get hosts for this play from inventory, excluding any host that
   # already hard-failed in an earlier play this run.
@@ -826,17 +855,17 @@ playbook.plays.each_with_index do |play, _play_index|
   hosts = matched_hosts.reject { |host| permanently_failed_hosts.includes?(host.name) }
 
   if matched_hosts.empty?
-    puts "Skipping play - no hosts match pattern: #{play.hosts}".colorize(:yellow)
+    puts "skipping: no hosts matched".colorize(:cyan)
     next
   elsif hosts.empty?
-    puts "Skipping play - all matching hosts already failed in an earlier play".colorize(:yellow)
+    puts "skipping: no hosts matched".colorize(:cyan)
     next
   end
 
   # Track hosts for recap
   all_hosts.concat(hosts)
 
-  if verbose
+  if verbose && verbose_extras
     # Show connection hosts (IPs) if different from inventory names
     host_display = hosts.map do |host|
       connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
@@ -1061,10 +1090,7 @@ playbook.plays.each_with_index do |play, _play_index|
 end
 
 # Summary
-puts ""
-puts "=" * 70
-puts "PLAY RECAP".colorize(:cyan).bold
-puts "=" * 70
+Krikri::OutputBanner.banner("PLAY RECAP")
 
 # An unreachable host still gets a recap line - `unreachable=1`, all
 # other counters zero - exactly as real ansible-playbook reports it.
@@ -1079,7 +1105,8 @@ unreachable_hosts.each do |name|
   end
 end
 
-Krikri::ResultDisplay.show_recap(all_hosts.uniq(&.name), combined_results)
+# No task ever ran when --start-at-task matched nothing: real lists no hosts.
+Krikri::ResultDisplay.show_recap(all_hosts.uniq(&.name), combined_results) unless start_at_task && start_at_pending
 
 puts ""
 
@@ -1133,11 +1160,6 @@ Krikri::PluginManager.flush_host_state
 # unreachable run still gets its profile.
 Krikri::TimingProfile.report
 
-if check_mode
-  puts "NOTE: Running in check mode - no changes were made".colorize(:yellow).bold
-  puts ""
-end
-
 # An unavailable module outranks a failed host: real ansible-playbook
 # would have refused the playbook at parse time with rc=4 and never run
 # anything, so 4 is the more fundamental signal. This engine still RUNS
@@ -1149,20 +1171,14 @@ end
 # whether or not other hosts also failed (verified against ansible-core
 # 2.19.4 for all-unreachable, mixed-with-ok, and mixed-with-failed).
 unless unreachable_hosts.empty?
-  puts "✗ Playbook execution completed with unreachable hosts: #{unreachable_hosts.to_a.sort.join(", ")}".colorize(:red).bold
-  puts ""
   exit 4
 end
 
 unless unavailable_modules_found.empty?
-  puts "✗ Playbook execution completed with unavailable modules: #{unavailable_modules_found.join(", ")}".colorize(:red).bold
-  puts ""
   exit 4
 end
 
 if any_failed
-  puts "✗ Playbook execution completed with failures".colorize(:red).bold
-  puts ""
   exit 2
 end
 
@@ -1171,9 +1187,6 @@ end
 # 2.19.4) - it is a "nothing to do" outcome, not an error code.
 if (start_at = start_at_task) && start_at_pending
   puts %([ERROR]: No matching task "#{start_at}" found. Note: --start-at-task can only follow static includes.).colorize(:red)
-  puts ""
   exit 0
 end
 
-puts "✓ Playbook execution complete".colorize(:green).bold
-puts ""

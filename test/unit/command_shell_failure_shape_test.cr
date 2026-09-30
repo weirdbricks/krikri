@@ -26,7 +26,10 @@ describe "command/shell failure-path result shape" do
       result["stderr"].as_s.must_equal("")
       result["stdout_lines"].as_a.must_be_empty
       result["stderr_lines"].as_a.must_be_empty
-      result["msg"].as_s.must_include("/nonexistent-krikri-spec-dir-zzz")
+      # real 2.19.11's fatal msg is the generic text; the path lives only in
+      # the [ERROR] block's detail (carried in _ansible_error_detail)
+      result["msg"].as_s.must_equal("Unable to change directory before execution.")
+      result["_ansible_error_detail"].as_s.must_include("/nonexistent-krikri-spec-dir-zzz")
     end
   end
 
@@ -84,9 +87,10 @@ describe "command/shell failure-path result shape" do
         "executable" => "/bin/bash",
       })
 
-      # A successful module's wire result never carries `failed` at all
-      # (only fail_json adds it) - see BasePlugin#to_json.
-      result["failed"]?.must_be_nil
+      # command/shell are the exception to "success results carry no failed
+      # key": their exit_json result reports `failed: false` explicitly
+      # (live-compared against 2.19.11 via a registered result dump).
+      result["failed"].as_bool.must_equal(false)
       result["changed"].as_bool.must_equal(true)
       result["rc"].as_i.must_equal(0)
       result["stdout"].as_s.must_equal("shell-ok")

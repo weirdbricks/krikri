@@ -1,4 +1,5 @@
 require "./executor"
+require "../needle_lookup"
 require "../unsafe_values"
 require "krikri-jinja/krikri_jinja"
 require "../jinja_host_context"
@@ -230,7 +231,7 @@ module Krikri
       # ignore_errors: stats semantics (ok+ignored, not failed) stay
       # identical to the rest of the engine.
       ignore_errors = resolve_task_ignore_errors(task)
-      ResultDisplay.display_result(host, result, @diff_mode, ignore_errors: ignore_errors)
+      ResultDisplay.display_result(host, result, @diff_mode, ignore_errors: ignore_errors, module_name: task.module_name, source_task: task)
       ResultDisplay.update_stats(@results[host.name], result, ignore_errors)
       @halted_hosts.add(host.name) if !errors.empty? && !ignore_errors
     end
@@ -329,11 +330,16 @@ module Krikri
       register_name = task.register
       return if register_name.nil? || register_name.empty?
 
-      register_result(host, register_name, JSON.parse({
-        "changed"     => false,
-        "skipped"     => true,
-        "skip_reason" => "Conditional result was False",
-      }.to_json))
+      # false_condition: the when: expression that evaluated False (the bare
+      # literal `false` stays a bool, like YAML gives real)
+      condition = @last_false_condition
+      false_condition = condition == "false" ? JSON::Any.new(false) : JSON::Any.new(condition || "")
+      register_result(host, register_name, JSON::Any.new({
+        "changed"         => JSON::Any.new(false),
+        "false_condition" => false_condition,
+        "skipped"         => JSON::Any.new(true),
+        "skip_reason"     => JSON::Any.new("Conditional result was False"),
+      } of String => JSON::Any))
     end
 
     # Reports a when:-skipped batch member: the print and skipped counter
@@ -365,13 +371,70 @@ module Krikri
     # what execute_task_once returns for a skipped task.
     private def execute_group_by(params : Hash(String, String), host : Host) : JSON::Any
       key = params["key"]?
-      if key.nil? || key.empty?
-        return JSON.parse({"changed" => false, "failed" => true, "msg" => "missing required argument: key"}.to_json)
+      if key.nil?
+        # Real group_by.py returns a failed RESULT for a missing key (no
+        # raise): the fatal dump's msg stays bare while the [ERROR] chain
+        # wraps it as "Task failed: Action failed: <msg>" - the same
+        # shape include_vars's own failed results render through (see
+        # ResultDisplay's _ansible_action_level + _ansible_error_detail
+        # handling).
+        return JSON.parse({
+          "changed"               => false,
+          "failed"                => true,
+          "msg"                   => "the 'key' param is required when using group_by",
+          "_ansible_action_level" => true,
+          "_ansible_error_detail" => "Action failed: the 'key' param is required when using group_by",
+        }.to_json)
       end
 
       inventory = @inventory
       unless inventory
         return JSON.parse({"changed" => false, "failed" => true, "msg" => "group_by: no inventory available in this context"}.to_json)
+      end
+
+      # Real's group_by action crashes on non-string YAML literal args
+      # (the parser marks those; see NON_STRING_PARAM_PREFIX) while
+      # building its result dict: key hits `group_name.replace(' ', '-')`
+      # - "'<type>' object has no attribute 'replace'" - and parents, a
+      # non-list/non-string, hits the
+      # `[name.replace(' ', '-') for name in parent_groups]` comprehension
+      # - "'<type>' object is not iterable". Falsy literals crash too
+      # (args.get returns the value whenever the key is present), a None
+      # key (`key:` with no value - the parser wires literal nulls as
+      # NONE_SENTINEL - included); the key crash precedes the parents
+      # crash (add_group is assigned first).
+      if key == Krikri::NONE_SENTINEL
+        return literal_crash_result("'NoneType' object has no attribute 'replace'")
+      end
+      if native = Krikri.non_string_scalar(key)
+        return literal_attribute_crash_result(native, "replace")
+      end
+      if parents_raw = params["parents"]?
+        if parents_raw == Krikri::NONE_SENTINEL
+          return literal_crash_result("'NoneType' object is not iterable")
+        end
+        if native = Krikri.non_string_scalar(parents_raw)
+          return literal_crash_result("'#{Krikri.python_scalar_type_name(native)}' object is not iterable")
+        end
+        # A LIST parents arg whose MEMBERS aren't all strings crashes the
+        # same comprehension at the first non-string member - see
+        # list_member_attribute_crash. (The key-"" inventory abort comes
+        # only after this: real builds the whole result dict before the
+        # executor's add_group processing touches the inventory.)
+        if bare = list_member_attribute_crash(parents_raw, "replace")
+          return literal_crash_result(bare)
+        end
+      end
+
+      # An empty-string key passes the action's checks and aborts the
+      # whole run in the executor's add_group processing - real's
+      # inventory layer, rc 1, no recap, no further output (same stage
+      # and shape as add_host's empty-name abort below).
+      if key.empty?
+        STDERR.puts "[ERROR]: Invalid empty/false group name provided:".colorize(:red)
+        STDOUT.flush
+        STDERR.flush
+        Process.exit(1)
       end
 
       group_names = key.split(",").map(&.strip).reject(&.empty?)
@@ -419,8 +482,12 @@ module Krikri
       connect_timeout = params["connect_timeout"]?.try(&.to_i?) || 5
       pre_reboot_delay = params["pre_reboot_delay"]?.try(&.to_i?) || 2
       post_reboot_delay = params["post_reboot_delay"]?.try(&.to_i?) || 0
-      test_command = params["test_command"]?.try { |v| v.empty? ? nil : v } || "whoami"
-      reboot_command = params["reboot_command"]?.try { |v| v.empty? ? nil : v } || "systemctl reboot"
+      # A None test/reboot command (YAML `test_command:` with no value -
+      # the parser wires literal nulls as NONE_SENTINEL - or a whole-span
+      # null template) falls back to real's argspec defaults, same as an
+      # empty string always did.
+      test_command = params["test_command"]?.try { |v| v == Krikri::NONE_SENTINEL || v.empty? ? nil : v } || "whoami"
+      reboot_command = params["reboot_command"]?.try { |v| v == Krikri::NONE_SENTINEL || v.empty? ? nil : v } || "systemctl reboot"
 
       connection_host = PluginManager.get_connection_host(exec_host, vars_context)
       user = exec_host.user || "root"
@@ -566,10 +633,10 @@ module Krikri
       if @adhoc
         ResultDisplay.display_adhoc_result(host, result, @diff_mode, module_name: task.module_name)
       else
-        ResultDisplay.display_result(host, result, @diff_mode, ignore_errors: ignore_errors, no_log: no_log, module_name: task.module_name, delegate_target: exec_host && exec_host != host ? exec_host.connection_host : nil)
+        ResultDisplay.display_result(host, result, @diff_mode, ignore_errors: ignore_errors, no_log: no_log, module_name: task.module_name, delegate_target: exec_host && exec_host != host ? exec_host.connection_host : nil, source_task: task)
       end
       ResultDisplay.update_stats(@results[host.name], result, ignore_errors)
-      halt_if_failed(task, host, failed)
+      halt_if_failed(task, host, failed, result)
     end
 
     # Marks `host` as halted (no further tasks in this play run for it)
@@ -596,8 +663,7 @@ module Krikri
           next
         end
 
-        puts "TASK [#{task_role_prefix(nested_task)}#{render_task_name_for_display(nested_task, host)}]".colorize(:white).bold
-        puts "*" * 70
+        Krikri::OutputBanner.banner("TASK [#{task_role_prefix(nested_task)}#{render_task_name_for_display(nested_task, host)}]")
         puts "skipping: [#{connection_host}]".colorize(:cyan)
         # A skipped meta: task (e.g. a named meta: flush_handlers inside
         # a when:-false block) prints its "skipping:" line but is NOT
@@ -608,7 +674,6 @@ module Krikri
           @results[host.name]["skipped"] += 1
           register_skip_result(nested_task, host)
         end
-        puts ""
       end
     end
 
@@ -823,10 +888,15 @@ module Krikri
     private def inline_copy_source_content(task : Task, params : Hash(String, String), host : Host, vars_context : Hash(String, JSON::Any)) : Hash(String, String) | JSON::Any
       return params unless task.module_name == "ansible.builtin.copy"
       return params if ["true", "yes", "1", "on"].includes?(params["remote_src"]?.try(&.downcase))
-      return params if PluginManager.local_connection?(host, vars_context)
 
       src = params["src"]?
-      return params unless src && !src.empty?
+      # A falsy non-string literal src (false/0/0.0 - the parser marks
+      # those) is ignored by real's copy action plugin (`not source`),
+      # exactly like an absent or empty one - and so is a None one (a
+      # YAML `src:` with no value, wired as NONE_SENTINEL, same as a
+      # whole-span null template).
+      src = "" if src == Krikri::NONE_SENTINEL
+      return params unless src && Krikri.python_param_truthy?(src)
 
       # Real Ansible's copy action plugin resolves a relative src against
       # the role's files/ dir, the playbook dir, and the task's dir
@@ -837,6 +907,14 @@ module Krikri
       # against the same roots first_found uses, then rewrite src to the
       # absolute controller path so every downstream check (existence,
       # size, vault decrypt, directory staging) sees the real file.
+      #
+      # The resolution (and the missing-src failure) applies on a LOCAL
+      # connection too: the target IS the controller there, so real's
+      # action plugin still fails a src: that exists nowhere with its
+      # controller-side wording - previously the local early-return let
+      # the plugin binary run and report its own "Source file not found"
+      # msg instead (live-verified against 2.19.11 under -c local).
+      local_connection = PluginManager.local_connection?(host, vars_context)
       if !src.starts_with?('/')
         roots = [] of String
         task.role_files_dir.try { |dir| roots << dir }
@@ -849,8 +927,25 @@ module Krikri
           params = params.dup
           params["src"] = src
         else
-          return params
+          # real's _find_needle miss on the controller - a relative src,
+          # so the failure carries the full Searched-in list (both
+          # connection flavors live-verified against 2.19.11).
+          candidates = NeedleLookup.candidates(
+            NeedleLookup.search_stack(task.role_path, task.role_parent_paths, needle_task_file_dir(task)),
+            File.expand_path(@playbook_dir), "files", src)
+          return controller_missing_copy_local_result(src, candidates) if local_connection
+          return controller_missing_copy_result(src, candidates)
         end
+      elsif local_connection
+        # Absolute src on a local connection: the controller-side
+        # existence check IS the whole story (same filesystem), so a
+        # miss fails here with real's wording instead of reaching the
+        # plugin binary. An absolute src builds no searched-paths list
+        # in real (its absolute lookup branch never populates one).
+        is_directory = Dir.exists?(src) rescue false
+        return params if is_directory
+        return controller_missing_copy_local_result(src, [] of String) unless File.exists?(src)
+        return params
       end
 
       # Real Ansible's copy action plugin fails the task on the
@@ -866,7 +961,7 @@ module Krikri
       return stage_directory_copy_source(params, src, host, vars_context) if is_directory
 
       size = File.size(src) rescue nil
-      return controller_missing_copy_result(src) unless size
+      return controller_missing_copy_result(src, [] of String) unless size
 
       # Real Ansible's `copy:` auto-decrypts a vault-armored src on the
       # CONTROLLER before transfer (decrypt: true is the default;
@@ -952,12 +1047,27 @@ module Krikri
     # Real Ansible's own failure text for a controller-side src: miss
     # (copy action plugin) - byte-identical to the unarchive variant
     # below so divergence triage compares cleanly against a real
-    # ansible-playbook run of the same role.
-    private def controller_missing_copy_result(src : String) : JSON::Any
+    # ansible-playbook run of the same role. A relative src carries the
+    # full Searched-in list (real's AnsibleFileNotFound paths); an
+    # absolute one carries none (real's absolute lookup branch never
+    # populates one).
+    private def controller_missing_copy_result(src : String, candidates : Array(String)) : JSON::Any
       JSON.parse({
         "changed" => false,
         "failed"  => true,
-        "msg"     => "Task failed: Could not find or access '#{src}' on the Ansible Controller.\nIf you are using a module and expect the file to exist on the remote, see the remote_src option",
+        "msg"     => "Task failed: #{NeedleLookup.not_found_message(src, candidates)}",
+      }.to_json)
+    end
+
+    # copy:'s controller-side src: miss on a LOCAL connection: real
+    # 2.19.11's fatal msg carries the "Unexpected AnsibleActionFail
+    # error: " prefix itself, WITHOUT the "Task failed: " prefix the
+    # remote-host variant above carries (both live-verified).
+    private def controller_missing_copy_local_result(src : String, candidates : Array(String)) : JSON::Any
+      JSON.parse({
+        "changed" => false,
+        "failed"  => true,
+        "msg"     => "Unexpected AnsibleActionFail error: #{NeedleLookup.not_found_message(src, candidates)}",
       }.to_json)
     end
 
@@ -1193,7 +1303,7 @@ module Krikri
     # substitution rescue blocks build).
     private def stage_unarchive_remote_src(task : Task, params : Hash(String, String), host : Host, vars_context : Hash(String, JSON::Any)) : Hash(String, String) | JSON::Any
       return params unless task.module_name == "ansible.builtin.unarchive"
-      return params if ["true", "yes", "1", "on"].includes?(params["remote_src"]?.try(&.downcase))
+      return params if ansible_boolean_param?(params["remote_src"]?)
       # copy: is unarchive's OLDER param spelling, mutually exclusive
       # with remote_src: per real Ansible's own argument_spec, and
       # INVERTED - copy: false means the same thing as remote_src: true
@@ -1206,9 +1316,13 @@ module Krikri
       # CONTROLLER, found nothing, and failed the task where real
       # Ansible (which treats copy: no identically to remote_src: true)
       # succeeds.
-      return params if ["false", "no", "0", "off"].includes?(params["copy"]?.try(&.downcase))
+      return params if params.has_key?("copy") && !ansible_boolean_param?(params["copy"]?)
 
       src = params["src"]?
+      # A None src (`src:` with no value - NONE_SENTINEL, same as a
+      # whole-span null template) fails the module's own required-argument
+      # check downstream, exactly like the empty string always did.
+      src = "" if src == Krikri::NONE_SENTINEL
       return params if src.nil? || src.empty?
       # URL sources are downloaded by the plugin itself - never stage.
       return params if src.starts_with?("http://") || src.starts_with?("https://")
@@ -1230,10 +1344,10 @@ module Krikri
         # path relative to the controller's own cwd - if neither has it,
         # real Ansible's controller-side lookup has run out of places to
         # look and the task fails here, before the plugin ever runs.
-        return controller_missing_unarchive_result(original_src) unless resolved_local
+        return controller_missing_unarchive_result(original_src, unarchive_candidates(task, original_src)) unless resolved_local
         src = resolved_local
       end
-      return controller_missing_unarchive_result(original_src) unless File.exists?(src)
+      return controller_missing_unarchive_result(original_src, unarchive_candidates(task, original_src)) unless File.exists?(src)
 
       # A local connection runs the plugin on the controller itself -
       # hand it the resolved ABSOLUTE path, no staging (the transfer-
@@ -1270,13 +1384,21 @@ module Krikri
     # Real Ansible's own failure text for a controller-side src: miss
     # (unarchive action plugin, remote_src: false) - byte-identical so
     # divergence triage compares cleanly against a real ansible-playbook
-    # run of the same role.
-    private def controller_missing_unarchive_result(src : String) : JSON::Any
+    # run of the same role. A relative src carries the full Searched-in
+    # list (live-verified against 2.19.11); an absolute one none.
+    private def controller_missing_unarchive_result(src : String, candidates : Array(String)) : JSON::Any
       JSON.parse({
         "changed" => false,
         "failed"  => true,
-        "msg"     => "Task failed: Could not find or access '#{src}' on the Ansible Controller.\nIf you are using a module and expect the file to exist on the remote, see the remote_src option",
+        "msg"     => "Task failed: #{NeedleLookup.not_found_message(src, candidates)}",
       }.to_json)
+    end
+
+    private def unarchive_candidates(task : Task, src : String) : Array(String)
+      return [] of String if src.starts_with?('/') || src.starts_with?("~")
+      NeedleLookup.candidates(
+        NeedleLookup.search_stack(task.role_path, task.role_parent_paths, needle_task_file_dir(task)),
+        File.expand_path(@playbook_dir), "files", src)
     end
 
     # script:'s free-form `cmd` (or bare-string `_raw_params`, resolved to
@@ -1291,11 +1413,22 @@ module Krikri
     # (a role-relative name isn't meaningful relative to the plugin
     # process's own cwd otherwise) but never staged - the plugin process
     # already runs directly on the controller's filesystem in that case.
-    private def stage_script_src(task : Task, params : Hash(String, String), host : Host, vars_context : Hash(String, JSON::Any)) : Hash(String, String)
+    private def stage_script_src(task : Task, params : Hash(String, String), host : Host, vars_context : Hash(String, JSON::Any)) : Hash(String, String) | JSON::Any
       return params unless task.module_name == "ansible.builtin.script"
 
       cmd = params["cmd"]? || params["_raw_params"]?
       return params unless cmd
+      # Real's script action plugin runs the task args through
+      # validate_argument_spec (type str) before the _find_needle lookup,
+      # so a non-string YAML literal (the parser marks those; see
+      # NON_STRING_PARAM_PREFIX) renders through Python str() there - bools
+      # become "True"/"False" - and the file is searched for, and reported
+      # missing ("Could not find or access '75'"), under that text. Without
+      # this the internal marker prefix leaked into the message and every
+      # Searched-in path (live-verified vs 2.19.11).
+      if native = Krikri.non_string_scalar(cmd)
+        cmd = Krikri.python_str_scalar(native)
+      end
 
       parts = cmd.strip.split(/\s+/, 2)
       local_path = parts[0]?
@@ -1303,7 +1436,27 @@ module Krikri
       rest = parts[1]?
 
       resolved_local = resolve_script_path(local_path, task)
-      return params unless resolved_local
+      unless resolved_local
+        # real's script action plugin fails the task ON THE CONTROLLER
+        # when _find_needle can't find the file - an AnsibleActionFail
+        # carrying the loader's not-found text verbatim (no
+        # "Task failed: " prefix; the Searched-in list for a relative
+        # src, none for an absolute one - both live-verified against
+        # 2.19.11). Previously the task fell through to the plugin
+        # binary and failed with an unrelated transfer message.
+        candidates = if local_path.starts_with?('/') || local_path.starts_with?("~")
+                       [] of String
+                     else
+                       NeedleLookup.candidates(
+                         NeedleLookup.search_stack(task.role_path, task.role_parent_paths, needle_task_file_dir(task)),
+                         File.expand_path(@playbook_dir), "files", local_path)
+                     end
+        return JSON.parse({
+          "changed" => false,
+          "failed"  => true,
+          "msg"     => NeedleLookup.not_found_message(local_path, candidates),
+        }.to_json)
+      end
 
       if PluginManager.local_connection?(host, vars_context)
         resolved = params.dup
@@ -1340,13 +1493,60 @@ module Krikri
     # anywhere, in which case the caller leaves params untouched and the
     # normal "file not found on target" failure surfaces from script.cr
     # itself once uploaded/executed.
-    private def stage_assemble_dir(task : Task, params : Hash(String, String), host : Host, vars_context : Hash(String, JSON::Any)) : Hash(String, String)
+    # assemble with a remote_src the action plugin treats as falsy
+    # (boolean(strict=False) - see Krikri.lenient_boolean_true?): real's
+    # action assembles the fragments on the CONTROLLER and delegates the
+    # placement to the copy module, so the action's controller-side touch
+    # points run before anything else - live-verified vs 2.19.11:
+    # - _find_needle('files', src): a src that resolves nowhere fails the
+    #   task right there with the loader's not-found text ("Task failed:
+    #   Could not find or access ..." - Searched-in list for a relative
+    #   src, none for an absolute one), BEFORE the isdir() check and
+    #   before any module-level argument validation;
+    # - the fragment loop's codecs.escape_decode(delimiter): a TRUTHY
+    #   non-string literal delimiter raises TypeError
+    #   "a bytes-like object is required, not '<type>'" - but only once a
+    #   SECOND fragment is reached (the delimiter write is gated on the
+    #   previous fragment), so a single-fragment src assembles fine;
+    # - the isdir() failure ("Source (...) is not a directory") sits
+    #   between the two, so the plugin's own action-level emission still
+    #   wins over the delimiter crash for a src that exists but is not a
+    #   directory (guarded here by Dir.exists?).
+    private def stage_assemble_dir(task : Task, params : Hash(String, String), host : Host, vars_context : Hash(String, JSON::Any)) : Hash(String, String) | JSON::Any
       return params unless task.module_name == "ansible.builtin.assemble"
-      return params if ["true", "yes", "1", "on"].includes?(params["remote_src"]?.try(&.downcase)) || params["remote_src"]?.nil?
-      return params if PluginManager.local_connection?(host, vars_context)
+      return params if params["remote_src"]?.nil? || Krikri.lenient_boolean_true?(params["remote_src"]?)
 
       src = params["src"]?
+      if src && !src.empty? && src != Krikri::NONE_SENTINEL && !File.exists?(src)
+        candidates = assemble_candidates(task, src)
+        bare = NeedleLookup.not_found_message(src, candidates)
+        return JSON.parse({
+          "changed"               => false,
+          "failed"                => true,
+          "msg"                   => "Task failed: #{bare}",
+          "_ansible_error_detail" => bare,
+          "_ansible_action_level" => true,
+        }.to_json)
+      end
       return params unless src && Dir.exists?(src)
+
+      # re.compile(regexp) sits between the isdir() check and the fragment
+      # loop: a non-string LITERAL regexp (any non-None value - the check
+      # is `if regexp is not None`, so falsy literals crash too) fails
+      # here, before the delimiter write could (live-verified vs 2.19.11).
+      # An invalid regexp STRING raises Python's sre error text, which has
+      # no Crystal equivalent - not emulated (krikri treats it as no
+      # filter).
+      if (raw = params["regexp"]?) && raw != Krikri::NONE_SENTINEL &&
+         Krikri.non_string_scalar(raw)
+        return literal_crash_result("first argument must be string or compiled pattern")
+      end
+
+      if crash = assemble_delimiter_literal_crash(params, src)
+        return crash
+      end
+
+      return params if PluginManager.local_connection?(host, vars_context)
 
       connection_host = PluginManager.get_connection_host(host, vars_context)
       remote_tmp = "/tmp/.krikri-playbook-assemble-#{Random::Secure.hex(8)}"
@@ -1370,6 +1570,45 @@ module Krikri
       resolved["src"] = remote_tmp
       resolved["__cleanup_after_assemble"] = "true"
       resolved
+    end
+
+    # Real's assemble action resolves src through _find_needle('files',
+    # src) - the same role files/ search stack copy/script/unarchive use.
+    private def assemble_candidates(task : Task, src : String) : Array(String)
+      return [] of String if src.starts_with?('/') || src.starts_with?("~")
+      NeedleLookup.candidates(
+        NeedleLookup.search_stack(task.role_path, task.role_parent_paths, needle_task_file_dir(task)),
+        File.expand_path(@playbook_dir), "files", src)
+    end
+
+    # The delimiter crash real's assemble action hits on a TRUTHY
+    # non-string YAML literal delimiter (the parser marks those; see
+    # NON_STRING_PARAM_PREFIX): codecs.escape_decode(delimiter) inside
+    # _assemble_from_fragments raises TypeError "a bytes-like object is
+    # required, not '<type>'" - but only when a second fragment follows
+    # the first (the delimiter is written BETWEEN fragments), so the
+    # fragment filters (isfile, ignore_hidden truthiness, regexp) decide
+    # whether the crash fires at all. A falsy literal (0/0.0/false/None)
+    # skips the `if delimiter:` branch entirely, and a plain string
+    # decodes fine. Not emulated here: the regexp compile crash real
+    # raises first for a non-string/invalid regexp (its sre error text
+    # has no Crystal equivalent) - with both broken, real names the
+    # regexp, krikri the delimiter.
+    private def assemble_delimiter_literal_crash(params : Hash(String, String), src : String) : JSON::Any?
+      return nil unless native = Krikri.non_string_scalar(params["delimiter"]?)
+      return nil unless Krikri.python_param_truthy?(params["delimiter"]?)
+      ignore_hidden = params["ignore_hidden"]?
+      ignore_hidden = "" if ignore_hidden == Krikri::NONE_SENTINEL
+      ignore_hidden_truthy = Krikri.python_param_truthy?(ignore_hidden)
+      regexp = params["regexp"]?.try { |raw| Regex.new(raw) rescue nil }
+      fragments = Dir.children(src).sort.count do |name|
+        next false if ignore_hidden_truthy && name.starts_with?('.')
+        full = File.join(src, name)
+        next false unless File.file?(full)
+        regexp.nil? || regexp.matches?(name)
+      end
+      return nil unless fragments >= 2
+      literal_crash_result("a bytes-like object is required, not '#{Krikri.python_value_type_name(native)}'")
     end
 
     # Build plugin configuration
@@ -1490,6 +1729,392 @@ module Krikri
     # now also use for their own module-side *_lines keys.
     private def ansible_splitlines(text : String) : Array(String)
       PluginHelpers::AnsibleSplitlines.split(text)
+    end
+
+    # Real's copy action plugin rejects src+content together before the
+    # src file is even looked at (live-verified: the mutual-exclusion
+    # error wins over a MISSING src too, and an EMPTY src is simply
+    # ignored - `src: ""` + content runs the content path, no conflict).
+    # Runs before inline_copy_source_content so the task's own src wins
+    # the conflict detection instead of being consumed by the inliner.
+    private def copy_src_content_conflict(task : Task, params : Hash(String, String)) : JSON::Any?
+      return nil unless task.module_name == "ansible.builtin.copy"
+      src = params["src"]?
+      # Real's check is Python truthiness (`source and content is not
+      # None`): a falsy non-string literal src (false/0/0.0 - the parser
+      # marks those) is simply ignored and the content path runs, and so
+      # is a None one (a YAML `src:` with no value - the parser wires
+      # literal nulls as NONE_SENTINEL, same as a whole-span null
+      # template).
+      return nil unless src && src != Krikri::NONE_SENTINEL && Krikri.python_param_truthy?(src)
+      return nil unless params.has_key?("content")
+      JSON.parse({"changed" => false, "failed" => true, "msg" => "src and content are mutually exclusive"}.to_json)
+    end
+
+    # Real copy.py's action-plugin crashes on non-string YAML literal
+    # dest/src values (the parser marks those; see NON_STRING_PARAM_PREFIX):
+    # Python evaluates `dest.endswith(...)`/`source.endswith(...)` on the
+    # NATIVE int/float/bool and raises AttributeError, which the task
+    # executor wraps as fatal msg "Task failed: '<type>' object has no
+    # attribute '<attr>'" (live-verified vs 2.19.11: ints report
+    # _AnsibleTaggedInt, floats _AnsibleTaggedFloat, bools plain 'bool').
+    # Mirrors the three crash points that precede src resolution/content
+    # inlining, in real's order:
+    # - content + truthy non-string dest: `dest.endswith("/")` in the
+    #   required/conflict elif chain (copy.py:433);
+    # - no content, not remote_src: `source.endswith(os.path.sep)` before
+    #   find_needle (copy.py:469) - the src crash wins over a missing src;
+    # - a real directory src: `_shell.path_has_trailing_slash(dest)`
+    #   (copy.py:494) after find_needle succeeds.
+    # The remaining crash point - `_remote_expand_user(dest)`'s
+    # `user_path.startswith('~')` (copy.py:511) - fires only after the src
+    # lookup succeeded, so it is checked after inline_copy_source_content
+    # (copy_dest_expand_failure below): a missing src fails with real's
+    # "Could not find or access" wording first, exactly like real.
+    private def copy_literal_type_failure(task : Task, params : Hash(String, String)) : JSON::Any?
+      return nil unless task.module_name == "ansible.builtin.copy"
+      if params.has_key?("content")
+        if Krikri.python_param_truthy?(params["dest"]?) &&
+           (native = Krikri.non_string_scalar(params["dest"]?))
+          return literal_attribute_crash_result(native, "endswith")
+        end
+        return nil
+      end
+      return nil if remote_src_param?(params)
+      if (native = Krikri.non_string_scalar(params["src"]?))
+        return literal_attribute_crash_result(native, "endswith")
+      end
+      if Krikri.python_param_truthy?(params["dest"]?) &&
+         (native = Krikri.non_string_scalar(params["dest"]?)) &&
+         (src = params["src"]?) && !src.empty? && Dir.exists?(src)
+        return literal_attribute_crash_result(native, "endswith")
+      end
+      nil
+    end
+
+    # The last of real copy.py's non-string-literal crash points
+    # (`_remote_expand_user`, copy.py:511) - reached only when the src
+    # resolved fine, so it runs after inline_copy_source_content's own
+    # missing-src failure would have returned. See
+    # copy_literal_type_failure for the message shapes.
+    private def copy_dest_expand_failure(task : Task, params : Hash(String, String)) : JSON::Any?
+      return nil unless task.module_name == "ansible.builtin.copy"
+      return nil unless Krikri.python_param_truthy?(params["dest"]?)
+      return nil unless native = Krikri.non_string_scalar(params["dest"]?)
+      literal_attribute_crash_result(native, "startswith")
+    end
+
+    private def literal_attribute_crash_result(native : JSON::Any, attribute : String) : JSON::Any
+      literal_crash_result("'#{Krikri.python_scalar_type_name(native)}' object has no attribute '#{attribute}'")
+    end
+
+    # os.path.expanduser(os.fspath(x)) on a non-string YAML literal - the
+    # crash real's unarchive action hits on a non-string src
+    # (`source = os.path.expanduser(source)`, unarchive.py action, both
+    # remote_src flavors, live-verified vs 2.19.11).
+    private def literal_expanduser_crash_result(native : JSON::Any) : JSON::Any
+      literal_crash_result("expected str, bytes or os.PathLike object, not #{Krikri.python_scalar_type_name(native)}")
+    end
+
+    private def literal_crash_result(bare : String) : JSON::Any
+      JSON.parse({
+        "changed"               => false,
+        "failed"                => true,
+        "msg"                   => "Task failed: #{bare}",
+        "_ansible_error_detail" => bare,
+        "_ansible_action_level" => true,
+      }.to_json)
+    end
+
+    # convert_bool()-shaped truthiness for a param real reads through
+    # boolean(..., strict=False): a parser-marked non-string literal
+    # contributes its NATIVE truthiness (1/1.0/true truthy, 0/0.0/false
+    # falsy), a plain string the boolean-literal spelling check the plain
+    # wire always used.
+    private def ansible_boolean_param?(value : String?) : Bool
+      return false unless value
+      return Krikri.python_param_truthy?(value) if Krikri.non_string_scalar(value)
+      ["true", "yes", "1", "on"].includes?(value.downcase)
+    end
+
+    # Real's unarchive/assemble action plugins crash on non-string YAML
+    # literal args (the parser marks those; see NON_STRING_PARAM_PREFIX)
+    # at their own controller-side touch points, before the module or the
+    # "dest must be an existing dir"/isdir checks - all live-verified vs
+    # 2.19.11:
+    # - unarchive creates (when truthy): _remote_expand_user(creates)'s
+    #   `startswith('~')` - "'<type>' object has no attribute 'startswith'";
+    # - unarchive dest: the same _remote_expand_user call (unarchive.py:66),
+    #   firing for EVERY non-string literal dest, falsy ones included (the
+    #   presence check is a None check, not a truthiness check);
+    # - unarchive src: `os.path.expanduser(source)` right after the dest
+    #   expand (unarchive.py:67) - "expected str, bytes or os.PathLike
+    #   object, not <type>", in BOTH remote_src flavors;
+    # - assemble src (only when the action takes its controller-side
+    #   branch - remote_src present and boolean(strict=False) falsy, see
+    #   assemble_action_local_path?; the default delegates to the module,
+    #   whose path-typed spec coerces the literal to text instead):
+    #   _find_needle(src)'s startswith.
+    # Checked before the src staging paths so the marker text can never
+    # leak into a Searched-in list or an upload path; the src/dest presence
+    # guards keep real's ordering when either is genuinely absent (real
+    # fails "src (or content) and dest are required" / "src and dest are
+    # required" before touching any of them), as does skipping the
+    # unarchive checks when the copy/remote_src mutual exclusion applies.
+    private def unarchive_assemble_literal_type_failure(task : Task, params : Hash(String, String)) : JSON::Any?
+      if task.module_name == "ansible.builtin.unarchive"
+        return nil unless params.has_key?("src") && params.has_key?("dest")
+        return nil if params.has_key?("copy") && params.has_key?("remote_src")
+        if ansible_boolean_param?(params["creates"]?) && (native = Krikri.non_string_scalar(params["creates"]?))
+          return literal_attribute_crash_result(native, "startswith")
+        end
+        if native = Krikri.non_string_scalar(params["dest"]?)
+          return literal_attribute_crash_result(native, "startswith")
+        end
+        if native = Krikri.non_string_scalar(params["src"]?)
+          return literal_expanduser_crash_result(native)
+        end
+        return nil
+      end
+      if task.module_name == "ansible.builtin.assemble"
+        return nil unless params.has_key?("src") && params.has_key?("dest")
+        return nil unless assemble_action_local_path?(params)
+        if native = Krikri.non_string_scalar(params["src"]?)
+          return literal_attribute_crash_result(native, "startswith")
+        end
+      end
+      nil
+    end
+
+    # The assemble action's controller-side branch: remote_src is PRESENT
+    # and boolean(remote_src, strict=False) is not True - falsy spellings,
+    # invalid spellings ('timjjr'), explicit None and non-1 native numbers
+    # all land here (see Krikri.lenient_boolean_true? for the exact
+    # predicate, live-verified vs 2.19.11). An ABSENT remote_src takes the
+    # module branch (the action's default is the string 'yes').
+    private def assemble_action_local_path?(params : Hash(String, String)) : Bool
+      return false unless params.has_key?("remote_src")
+      !Krikri.lenient_boolean_true?(params["remote_src"]?)
+    end
+
+    private def remote_src_param?(params : Hash(String, String)) : Bool
+      ansible_boolean_param?(params["remote_src"]?)
+    end
+
+    # Real's add_host: non-string YAML literal args (the parser marks
+    # those; see NON_STRING_PARAM_PREFIX) crash the run at two different
+    # stages, both live-verified vs 2.19.11:
+    #
+    # - groups/group/groupname (real precedence, first present wins): a
+    #   TRUTHY non-list/non-string fails the task inside the action
+    #   plugin with AnsibleActionFail "Groups must be specified as a
+    #   list." - an un-prefixed fatal msg plus a two-segment [ERROR]
+    #   block whose cause carries the failing param value's own Origin
+    #   (see emit_task_error_block's _ansible_fail_param branch). A falsy
+    #   literal (0/0.0/false) is skipped by the action's `if groups:`
+    #   truthiness check entirely.
+    # - name/hostname/host (real precedence, the FIRST PRESENT key wins -
+    #   args.get returns a present key's value even when it is None or
+    #   ""): a None value - the key absent everywhere, a YAML `name:`
+    #   with no value (the parser wires literal nulls as NONE_SENTINEL),
+    #   or a whole-span null template - fails the task inside the action
+    #   plugin with AnsibleActionFail "name, host or hostname needs to be
+    #   provided" BEFORE the groups handling, an un-prefixed fatal msg
+    #   plus the plain "Task failed: <msg>" chain (no "Module failed."
+    #   segment, no "Action failed." one either - a raised
+    #   AnsibleActionFail, unlike group_by's returned failed result). An
+    #   empty-STRING value passes the action's `is None` check and aborts
+    #   the whole run at inventory.add_host with "Invalid empty host name
+    #   provided:" (rc 1, no recap), exactly like the falsy non-string
+    #   literals ("Invalid empty host name provided: 0") and the truthy
+    #   non-string ones ("Invalid host name supplied, expected a string
+    #   but got <class 'ansible.module_utils._internal._datatag
+    #   ._AnsibleTaggedInt'> for 5") below.
+    # - groups/group/groupname (real precedence, first present wins): a
+    #   TRUTHY non-list/non-string fails the task inside the action
+    #   plugin with AnsibleActionFail "Groups must be specified as a
+    #   list." - an un-prefixed fatal msg plus a two-segment [ERROR]
+    #   block whose cause carries the failing param value's own Origin
+    #   (see emit_task_error_block's _ansible_fail_param branch). A falsy
+    #   literal (0/0.0/false) is skipped by the action's `if groups:`
+    #   truthiness check entirely. A LIST whose MEMBERS aren't all
+    #   strings crashes the member loop's `group_name.strip()` at the
+    #   first non-string member - see list_member_attribute_crash.
+    #   The groups failure precedes the name crash (action stage before
+    #   result processing), and the name failure precedes the groups
+    #   failure (real's name check is the first raise in the action).
+    private def add_host_literal_type_failure(task : Task, params : Hash(String, String)) : JSON::Any?
+      return nil unless task.module_name == "ansible.builtin.add_host" || task.module_name == "add_host"
+
+      effective_name : String? = nil
+      {"name", "hostname", "host"}.each do |name_key|
+        if raw = params[name_key]?
+          effective_name = raw
+          break
+        end
+      end
+
+      if effective_name.nil? || effective_name == Krikri::NONE_SENTINEL
+        return JSON.parse({
+          "changed"               => false,
+          "failed"                => true,
+          "msg"                   => "name, host or hostname needs to be provided",
+          "_ansible_action_level" => true,
+        }.to_json)
+      end
+
+      {"groupname", "groups", "group"}.each do |group_key|
+        raw = params[group_key]? || next
+        if raw == Krikri::NONE_SENTINEL
+          next
+        end
+        if native = Krikri.non_string_scalar(raw)
+          next unless Krikri.python_param_truthy?(raw)
+          return JSON.parse({
+            "changed"               => false,
+            "failed"                => true,
+            "msg"                   => "Groups must be specified as a list.",
+            "_ansible_action_level" => true,
+            "_ansible_error_detail" => "Groups must be specified as a list.",
+            "_ansible_fail_param"   => group_key,
+          }.to_json)
+        end
+        if bare = list_member_attribute_crash(raw, "strip")
+          return literal_crash_result(bare)
+        end
+      end
+
+      if native = Krikri.non_string_scalar(effective_name)
+        if Krikri.python_param_truthy?(effective_name)
+          STDERR.puts "[ERROR]: Invalid host name supplied, expected a string but got <class '#{Krikri.python_scalar_class_path(native)}'> for #{Krikri.python_str_scalar(native)}".colorize(:red)
+        else
+          STDERR.puts "[ERROR]: Invalid empty host name provided: #{Krikri.python_str_scalar(native)}".colorize(:red)
+        end
+        # Same Process.exit reasoning as abort_invalid_meta_action: this
+        # runs inside the executor's per-task paths, which swallow `exit`'s
+        # ExitException; both streams are flushed explicitly first.
+        STDOUT.flush
+        STDERR.flush
+        Process.exit(1)
+      end
+      if effective_name.empty?
+        # Real's message carries the name's Python str() after the colon
+        # only when there IS one - an empty string renders the bare colon
+        # with no trailing space (live-verified byte-for-byte vs 2.19.11).
+        STDERR.puts "[ERROR]: Invalid empty host name provided:".colorize(:red)
+        STDOUT.flush
+        STDERR.flush
+        Process.exit(1)
+      end
+      nil
+    end
+
+    # Real's group_by/add_host action plugins iterate a YAML list arg's
+    # members with plain string ops (group_by's
+    # `[name.replace(' ', '-') for name in parent_groups]`, add_host's
+    # `group_name.strip()`), so a non-string MEMBER crashes the action -
+    # "'<type>' object has no attribute '<attr>'" - at the FIRST such
+    # member in list order (live-verified vs 2.19.11 for
+    # int/float/bool/nil/dict/list members on both params). Members reach
+    # these hooks as either the parser's JSON array wire (dict members
+    # present - native member types preserved in the JSON itself) or its
+    # comma-joined wire with NON_STRING_MEMBER_PREFIX-marked non-string
+    # members. Returns the bare crash message, or nil when every member
+    # is a string (or the value is a plain string that merely looks like
+    # a list - the same JSON-decode ambiguity the add_host plugin's own
+    # parse_group_names already accepts).
+    private def list_member_attribute_crash(raw : String, attribute : String) : String?
+      if raw.starts_with?('[') && (parsed = (JSON.parse(raw) rescue nil)) && (items = parsed.as_a?)
+        items.each do |item|
+          unless item.as_s?
+            return "'#{Krikri.python_value_type_name(item)}' object has no attribute '#{attribute}'"
+          end
+        end
+        return nil
+      end
+      return nil unless raw.includes?(Krikri::NON_STRING_MEMBER_PREFIX)
+      raw.split(',').each do |part|
+        next if part.empty? || !part.starts_with?(Krikri::NON_STRING_MEMBER_PREFIX)
+        if native = Krikri.non_string_member_scalar(part)
+          return "'#{Krikri.python_value_type_name(native)}' object has no attribute '#{attribute}'"
+        end
+      end
+      nil
+    end
+
+    # Data-driven module argument validation (see ArgspecValidator): the
+    # failing result JSON for this task's module args, or nil when
+    # validation passes or does not apply. Real Ansible runs these checks
+    # inside the module's own AnsibleModule init - i.e. after the action
+    # plugin stage, before any module-side file access - which is exactly
+    # where the two callers of this hook sit.
+    private def argspec_validation_result(
+      task : Task,
+      params : Hash(String, String),
+      vars_context : Hash(String, JSON::Any),
+      action_level_only : Bool,
+      check_mode : Bool = false,
+    ) : JSON::Any?
+      # Role-private library/ modules and the py_module runner run real
+      # Python whose spec we don't know - nothing to validate against.
+      return nil if task.unavailable_module
+      action_name = task.action_name || task.module_name
+      failure = ArgspecValidator.validate(action_name, task.module_name, params, vars_context)
+      return nil unless failure
+      # The pre-action hook (action_level_only) takes only the
+      # action-plugin-level failures; the post-action hook takes only
+      # the module-level ones.
+      return nil if failure.action_level? != action_level_only
+      # Real's copy action - which template: delegates to - short-circuits
+      # in check mode the moment the checksums differ (copy.py:288-293:
+      # "result['changed'] = True; return result"), so the copy module's
+      # own spec never rejects the template-only leftovers under --check
+      # (live-verified vs 2.19.11). The module-level failures of the
+      # template: delegation are therefore skipped in check mode; the
+      # action-level ones (src/dest presence) still fire, exactly like
+      # real's action plugin.
+      return nil if check_mode && !action_level_only && task.module_name == "ansible.builtin.template"
+
+      result = {
+        "changed" => JSON::Any.new(false),
+        "failed"  => JSON::Any.new(true),
+        "msg"     => JSON::Any.new(failure.msg),
+      } of String => JSON::Any
+      result.delete("changed") if failure.omit_changed?
+      # copy/template: real's action plugin computes the source SHA1
+      # before the module runs and merges it into the failed result, so
+      # the fatal dump carries "checksum" for these two modules - but
+      # only where real's action plugin actually reaches the
+      # checksum-merging tail (live-verified vs 2.19.11): template:'s
+      # delegation always does, while copy:'s remote_src branch returns
+      # the module result directly (copy.py:466-468) and never adds a
+      # checksum - only the _copy_file path (content:, or a
+      # controller-side src with remote_src falsy) does. (Only for
+      # MODULE-level failures: the action plugin's own required-
+      # argument checks fail before it computes any checksum.)
+      if !action_level_only &&
+         (task.module_name == "ansible.builtin.template" ||
+           (task.module_name == "ansible.builtin.copy" &&
+             (params.has_key?("content") || !remote_src_param?(params))))
+        if checksum = argspec_source_checksum(params)
+          result["checksum"] = JSON::Any.new(checksum)
+        end
+      end
+      JSON.parse(result.to_json)
+    end
+
+    # SHA1 of the source content a copy/template task would deploy - the
+    # value real's copy action plugin puts in its result (live-verified:
+    # sha1 of the content string, or of the source FILE's bytes when src
+    # is a controller file; nothing when src is remote or missing).
+    private def argspec_source_checksum(params : Hash(String, String)) : String?
+      if content = params["content"]?
+        return Digest::SHA1.hexdigest(content)
+      end
+      return nil if params["remote_src"]?.try(&.downcase) == "true"
+      src = params["src"]?
+      return nil unless src && File.exists?(src) && !File.directory?(src)
+      Digest::SHA1.hexdigest(File.read(src))
     end
 
     # Adds stdout_lines/stderr_lines (real Ansible behavior - each module

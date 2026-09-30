@@ -162,7 +162,8 @@ describe "command plugin" do
     result = PluginSpecHelper.run("command", {"cmd" => "echo should-not-run", "chdir" => missing})
 
     result["failed"].as_bool.must_equal(true)
-    result["msg"].as_s.must_include("Failed to change directory to #{missing}")
+    result["msg"].as_s.must_equal("Unable to change directory before execution.")
+    result["_ansible_error_detail"].as_s.must_include(missing)
   end
 
   it "expands a leading ~ in creates: before checking existence, matching real Ansible's expanduser" do

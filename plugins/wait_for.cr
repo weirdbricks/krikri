@@ -91,9 +91,23 @@ module Krikri
       poll_drained(drained_port, host_hex, timeout, started)
     end
 
+    # wait_for.py's own runtime checks, in its order, all failing with
+    # elapsed=0 (main(), before any waiting).
+    VALID_CONNECTION_STATES = %w[ESTABLISHED SYN_SENT SYN_RECV FIN_WAIT1 FIN_WAIT2 TIME_WAIT]
+
+    private def early_failure(msg : String) : PluginResult
+      PluginResult.new(changed: false, failed: true, msg: msg, elapsed: 0)
+    end
+
     private def validate(port : Int32?, path : String?, state : String) : PluginResult?
-      if port && path
-        return PluginResult.new(changed: false, failed: true, msg: "path and port are mutually exclusive parameters")
+      return early_failure("port and path parameter can not both be passed to wait_for") if port && path
+      return early_failure("state=stopped should only be used for checking a port in the wait_for module") if path && state == "stopped"
+      return early_failure("state=drained should only be used for checking a port in the wait_for module") if path && state == "drained"
+      return early_failure("exclude_hosts should only be with state=drained") if @params["exclude_hosts"]? && state != "drained"
+      if raw_states = @params["active_connection_states"]?
+        raw_states.split(',').map(&.strip).each do |candidate|
+          return early_failure("unknown active_connection_state (#{candidate}) defined") unless VALID_CONNECTION_STATES.includes?(candidate)
+        end
       end
 
       if state == "drained"
@@ -166,6 +180,15 @@ module Krikri
       groups = match.try(&.to_a[1..].compact.map { |group| JSON::Any.new(group) }) || [] of JSON::Any
       result.extra["match_groups"] = JSON::Any.new(groups)
       result.extra["match_groupdict"] = JSON::Any.new(Hash(String, JSON::Any).new)
+      # wait_for.py's exit_json(state=, port=, search_regex=, ...) echoes these
+      # three even when null/default (visible through a registered result).
+      result.extra["state"] = JSON::Any.new(@params["state"]?.presence || "started")
+      result.extra["port"] = (port_value = @params["port"]?.try(&.to_i64?)) ? JSON::Any.new(port_value) : JSON::Any.new(nil)
+      result.extra["search_regex"] = (regex = @params["search_regex"]?) ? JSON::Any.new(regex) : JSON::Any.new(nil)
+      # exit_json(path=...) runs add_path_info: an existing path's uid/gid/
+      # owner/group/mode/size land in the result and `state` becomes the
+      # path's own state ("file"/"directory"), overriding the wait state.
+      add_path_info(result, path) if path
       result
     end
 

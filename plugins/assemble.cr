@@ -48,8 +48,18 @@ module Krikri
     # declaration order (ansible-doc -j ansible.builtin.assemble). Validated at
     # module setup by BasePlugin#validate_bool_params! - see its block
     # comment for the real-Ansible semantics and message wording.
+    #
+    # remote_src is deliberately ABSENT: real's action plugin reads it
+    # through boolean(remote_src, strict=False) FIRST and only dispatches
+    # the assemble module when that answers True - i.e. only for
+    # BOOLEANS_TRUE spellings/natives, where the module's own strict
+    # type: bool conversion can then only ever succeed. Every other value
+    # (falsy spellings, invalid strings like 'timjjr', explicit None,
+    # native 2) takes the action's controller-side branch instead, so the
+    # assemble module - and its strict remote_src conversion with it -
+    # never runs at all (live-verified vs 2.19.11).
     protected def bool_params : Array(String)
-      %w[backup decrypt ignore_hidden remote_src unsafe_writes]
+      %w[backup decrypt ignore_hidden unsafe_writes]
     end
 
     def execute : PluginResult
@@ -59,8 +69,20 @@ module Krikri
       return PluginResult.new(changed: false, failed: true, msg: "missing required argument: src") unless src
       return PluginResult.new(changed: false, failed: true, msg: "missing required argument: dest") unless dest
 
+      # remote_src the action plugin treats as falsy (boolean(strict=False)
+      # - see Krikri.lenient_boolean_true? and the bool_params comment)
+      # runs assemble's controller-side action plugin first - its isdir()
+      # check is a plain AnsibleActionFail ("Source (..) is not a
+      # directory", no "Module failed." chain segment). With the default
+      # remote_src (or a BOOLEANS_TRUE value) the module itself reports
+      # missing vs not-a-dir separately (assemble.py:232/235).
       unless Dir.exists?(src)
-        return PluginResult.new(changed: false, failed: true, msg: "Source (#{src}) does not exist")
+        if remote_src_delegated?
+          return PluginResult.new(changed: false, failed: true, msg: "Source (#{src}) is not a directory",
+            _ansible_action_level: true)
+        end
+        msg = File.exists?(src) ? "Source (#{src}) is not a directory" : "Source (#{src}) does not exist"
+        return PluginResult.new(changed: false, failed: true, msg: msg)
       end
 
       ignore_hidden = true?(@params["ignore_hidden"]?)
@@ -85,7 +107,13 @@ module Krikri
         end
 
         unless check_mode
-          backup_file = write_assembled(dest, content, existing)
+          result = write_assembled(dest, content, existing)
+          # Real's module crashes INSIDE atomic_move for a dest whose
+          # parent directory doesn't exist (or a bare relative name) -
+          # the failure surfaces after the dest file itself was already
+          # renamed into place, and no attributes are ever applied.
+          return result if result.is_a?(PluginResult)
+          backup_file = result
         end
       end
 
@@ -111,6 +139,38 @@ module Krikri
       )
       add_path_info(result, dest) unless check_mode
       result
+    end
+
+    # Whether real's action plugin takes its controller-side branch for
+    # this task's remote_src: PRESENT and boolean(remote_src, strict=False)
+    # not True. The plugin-side view of Krikri.lenient_boolean_true? - the
+    # demoted @params text has already lost the parser's non-string marker,
+    # so native literals (1.0 is TRUE, 2 is not) come from
+    # #non_string_param instead of the plain spelling check.
+    private def remote_src_delegated? : Bool
+      return false unless @params.has_key?("remote_src")
+      truthy = if native = non_string_param("remote_src")
+        case native.raw
+        when Bool    then native.as_bool
+        when Int64   then native.as_i64 == 1
+        when Float64 then native.as_f == 1.0
+        else              false
+        end
+      else
+        %w[y yes on 1 true t].includes?(@params["remote_src"].downcase.strip)
+      end
+      !truthy
+    end
+
+    # An unhandled module exception (atomic_move's FileNotFoundError /
+    # the rename failure it wraps): real renders it as "Task failed:
+    # Module failed: <detail>" in both the [ERROR] block and the fatal
+    # msg, with base_plugin's own "exception": "(traceback unavailable)"
+    # bookkeeping - same shape mount.cr/apt.cr use for their module
+    # crashes.
+    private def module_crash_result(detail : String) : PluginResult
+      PluginResult.new(changed: false, failed: true,
+        msg: "Task failed: Module failed: #{detail}", _ansible_error_detail: detail)
     end
 
     # Runs validate: (with %s substituted by a temp file holding the
@@ -173,16 +233,50 @@ module Krikri
     end
 
     # Write the assembled content to dest, backing up the previous file
-    # when requested; returns the backup file path ("" when none)
-    private def write_assembled(dest : String, content : String, existing : String?) : String
+    # when requested; returns the backup file path ("" when none), or a
+    # failed PluginResult when real's atomic_move would crash the module
+    # (module_crash_result). Real's atomic_move (module_utils/basic.py):
+    # os.rename(temp, dest) first, then - only when dest did not exist
+    # ("creating") - os.stat(os.path.dirname(dest)). A dest whose parent
+    # directory is missing fails the rename with ENOENT ("Could not
+    # replace ..."), and a BARE relative filename's dirname is b'' -
+    # "[Errno 2] No such file or directory: b''" AFTER the rename already
+    # created the file (live-verified vs 2.19.11 for relative/int/bool/
+    # float/list dests; the dest file is left behind in both engines).
+    private def write_assembled(dest : String, content : String, existing : String?) : PluginResult | String
       backup_file = ""
       if existing && true?(@params["backup"]?)
         backup_file = "#{dest}.#{Process.pid}.#{Time.utc.to_s("%Y-%m-%d@%H:%M:%S")}~"
         File.write(backup_file, existing)
       end
 
+      return backup_file if File.exists?(dest)
+
       dest_dir = File.dirname(dest)
-      Dir.mkdir_p(dest_dir) unless Dir.exists?(dest_dir)
+      unless Dir.exists?(dest_dir)
+        # The rename fails ENOENT (not one of atomic_move's workaround
+        # errnos) and the module dies with the chained errno text. The
+        # temp source path is module-tmpdir-specific and differs between
+        # two real runs by construction, so byte parity is impossible
+        # here - krikri mirrors the message shape with its own temp name.
+        tmp_src = File.join(Dir.tempdir, "tmp#{Random::Secure.hex(5)}")
+        return module_crash_result(
+          "Could not replace '#{dest}' with '#{tmp_src}': " \
+          "[Errno 2] No such file or directory: b'#{tmp_src}' -> b'#{dest}'")
+      end
+
+      if dest_dir == "."
+        # A bare relative filename: the rename onto the bare name
+        # succeeds (creating the file in the cwd), then the creating-
+        # branch os.stat(os.path.dirname(b_dest)) stats b'' and fails.
+        # SECURITY: created EMPTY at 0600 and settled to its final mode
+        # (0644 & ~umask, narrowed by the task's numeric mode:) before
+        # the assembled content lands - see BasePlugin#create_staging_temp.
+        create_staging_temp(dest, staging_temp_mode(dest, 0o644, preserve_dest_mode: false))
+        File.write(dest, content, perm: 0o600)
+        return module_crash_result("[Errno 2] No such file or directory: b''")
+      end
+
       # SECURITY: a not-yet-existing dest is created EMPTY at 0600 and
       # settled to its final mode (0644 & ~umask, narrowed by the task's
       # numeric mode:) before the assembled content lands - see

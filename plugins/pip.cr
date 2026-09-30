@@ -137,6 +137,11 @@ module Krikri
       # binary already creates the venv (and fails there if that
       # itself doesn't work), so its own pip is guaranteed to exist by
       # the time this runs.
+      # pip.py converts umask before any virtualenv/pip resolution
+      if bad_umask = umask_error
+        return bad_umask
+      end
+
       if missing_binary = ensure_pip_binary
         return missing_binary
       end
@@ -156,8 +161,12 @@ module Krikri
       pip_bin = resolve_pip_binary
       return pip_bin if pip_bin.is_a?(PluginResult)
 
-      if bad_umask = umask_error
-        return bad_umask
+      # pip.py: version= with more than one package - after the virtualenv/pip
+      # resolution above, before any install (that order is real's)
+      if @params["version"]? && name && name.split(",").map(&.strip).reject(&.empty?).size > 1
+        return PluginResult.new(changed: false, failed: true,
+          msg: "'version' argument is ambiguous when installing multiple package distributions. " \
+               "Please specify version restrictions next to each package in 'name' argument.")
       end
 
       result = case state
@@ -224,7 +233,21 @@ module Krikri
     # check keeps working on hosts with no `which` binary at all.
     private def discover_system_pip : String | PluginResult
       if executable = @params["executable"]?
-        return executable if executable.starts_with?("/")
+        if executable.starts_with?("/")
+          # a missing absolute executable fails inside run_command (Errno 2)
+          unless remote_exec("test -e #{shell_single_quote(executable)}")[:exit_code] == 0
+            state = @params["state"]? || "present"
+            raw_names = @params["name"]?.to_s
+            names = (JSON.parse(raw_names).as_a.map(&.to_s) rescue raw_names.split(",").map(&.strip)).reject(&.empty?)
+            extra = @params["extra_args"]?.to_s.strip
+            verb = state == "absent" ? "uninstall -y" : (state == "latest" ? "install -U" : "install")
+            cmd_text = ([executable] + verb.split + (extra.empty? ? [] of String : extra.split) + names).join(" ")
+            return PluginResult.new(changed: false, failed: true, msg: "Error executing command.",
+              cmd: cmd_text, rc: 2, stdout: "", stdout_lines: [] of String, stderr: "", stderr_lines: [] of String,
+              _ansible_error_detail: "Error executing command: [Errno 2] No such file or directory: b'#{executable}'")
+          end
+          return executable
+        end
 
         unless remote_exec("sh -c #{Shell.single_quote("command -v #{executable}")}")[:exit_code] == 0
           return PluginResult.new(changed: false, failed: true, msg: "Unable to find any of #{executable} to use.  pip needs to be installed.")
@@ -314,7 +337,10 @@ module Krikri
     # result for an invalid (non-octal) value, or nil.
     private def umask_error : PluginResult?
       if umask = @params["umask"]?
-        return PluginResult.new(changed: false, failed: true, msg: "umask must be an octal integer") unless umask =~ /\A0?[0-7]{1,4}\z/
+        unless umask.to_i?(8)
+          return PluginResult.new(changed: false, failed: true, msg: "umask must be an octal integer",
+            details: "invalid literal for int() with base 8: '#{umask}'")
+        end
       end
       nil
     end
@@ -428,8 +454,7 @@ module Krikri
       unless cmd0.includes?('/')
         found = remote_exec("sh -c 'command -v #{Shell.single_quote(cmd0)}'")
         unless found[:exit_code] == 0
-          paths = remote_exec("echo $PATH")[:stdout].strip
-          return PluginResult.new(changed: false, failed: true, msg: "Failed to find required executable #{cmd0} in paths: #{paths}")
+          return PluginResult.new(changed: false, failed: true, msg: missing_executable_message(cmd0.to_s))
         end
         cmd0 = found[:stdout].strip
       end
@@ -475,7 +500,9 @@ module Krikri
 
     private def with_chdir(command : String) : String
       if chdir = @params["chdir"]?
-        "cd #{shell_single_quote(expand_tilde(chdir))} && #{command}"
+        # real's run_command only honors cwd when it is an existing directory
+        quoted = shell_single_quote(expand_tilde(chdir))
+        "{ [ ! -d #{quoted} ] || cd #{quoted}; } && #{command}"
       else
         command
       end

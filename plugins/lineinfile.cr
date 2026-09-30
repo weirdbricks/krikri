@@ -65,7 +65,7 @@ module Krikri
       # Found via konstruktoid-hardening's "Clean cron and at" task,
       # `state: absent` on /etc/at.allow/cron.allow, neither of which
       # exist on a stock image - failed outright instead of no-op'ing.
-      if state == "absent" && !File.exists?(path) && !true?(@params["create"]?)
+      if state == "absent" && !File.exists?(path)
         return PluginResult.new(changed: false, failed: false, msg: "file not present")
       end
 
@@ -93,7 +93,7 @@ module Krikri
           return PluginResult.new(changed: false, failed: true, msg: "regexp is required with backrefs=true")
         end
 
-        return PluginResult.new(changed: false, failed: true, msg: "line parameter required when state=present") unless line
+        return PluginResult.new(changed: false, failed: true, msg: "line is required with state=present") unless line
       end
 
       if state == "absent" && !regexp && !search_string && !line
@@ -113,7 +113,7 @@ module Krikri
       return {false, nil} if File.exists?(path)
 
       unless create
-        return {false, PluginResult.new(changed: false, failed: true, msg: "File #{path} does not exist. Use create: yes to create it.")}
+        return {false, PluginResult.new(changed: false, failed: true, msg: "Destination #{path} does not exist !", rc: 257)}
       end
 
       unless check_mode

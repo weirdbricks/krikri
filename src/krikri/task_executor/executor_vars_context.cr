@@ -1,6 +1,8 @@
+require "../run_options"
 require "./executor"
 require "krikri-jinja/krikri_jinja"
 require "../jinja_host_context"
+require "../needle_lookup"
 
 module Krikri
   class TaskExecutor
@@ -142,6 +144,17 @@ module Krikri
         vars_context["role_path"] = JSON::Any.new(role_path)
       end
 
+      # ansible_search_path - real Ansible's own job var
+      # (task_executor.py sets it to Task#get_search_path() plus the
+      # loader basedir when not already present): the role dependency
+      # chain, current role first, then the directory of the file the
+      # task lives in. The template action plugin's controller-side src
+      # lookup and its "Searched in:" list are built from this.
+      search_path = Krikri::NeedleLookup.search_stack(task.role_path, task.role_parent_paths, needle_task_file_dir(task))
+      basedir = File.expand_path(@playbook_dir)
+      search_path << basedir unless search_path.includes?(basedir)
+      vars_context["ansible_search_path"] = JSON::Any.new(search_path.map { |path| JSON::Any.new(path) })
+
       # `ansible_facts` - the same facts again, under their unprefixed
       # names, as one dict. Real Ansible exposes every fact both ways
       # (`ansible_os_family` *and* `ansible_facts.os_family`), and the
@@ -213,6 +226,12 @@ module Krikri
       # where real ansible-playbook just skips.
       vars_context["ansible_diff_mode"] = JSON::Any.new(@diff_mode)
       vars_context["ansible_verbosity"] = JSON::Any.new(@verbosity.to_i64)
+      vars_context["ansible_play_name"] = JSON::Any.new(Krikri::RunOptions.play_name)
+      vars_context["ansible_inventory_sources"] = JSON::Any.new(Krikri::RunOptions.inventory_sources.map { |t| JSON::Any.new(t) })
+      run_tags = Krikri::RunOptions.run_tags
+      vars_context["ansible_run_tags"] = JSON::Any.new((run_tags.empty? ? ["all"] : run_tags).map { |t| JSON::Any.new(t) })
+      vars_context["ansible_skip_tags"] = JSON::Any.new(Krikri::RunOptions.skip_tags.map { |t| JSON::Any.new(t) })
+      vars_context["ansible_forks"] = JSON::Any.new((Krikri::RunOptions.forks || 5).to_i64)
       apply_path_magic_vars(vars_context)
 
       # ansible_connection - real Ansible always resolves this magic var
@@ -532,6 +551,7 @@ module Krikri
 
       result = Hash(String, JSON::Any).new(initial_capacity: 128)
       @included_vars[host.name]?.try(&.each { |key, value| result[key] = value })
+      @failure_vars[host.name]?.try(&.each { |key, value| result[key] = value })
       # Only the set_fact subset rides at this high tier - see the
       # @set_facts ivar comment. Ordinary gathered facts (setup:/
       # package_facts:/service_facts:/etc) are filled in at the LOW
@@ -679,6 +699,25 @@ module Krikri
     # load a directory of inventory sources at all (it tries to execute
     # it as a dynamic inventory script). Those are separate, pre-existing
     # gaps in the loader, not in these magic vars.
+    # The directory of the file the task lives in - real's
+    # `dirname(task.get_path())`, the last entry of the search stack.
+    # Role-file tasks have no source_file stamp (role_loader passes
+    # none), so fall back to the including task file's directory and
+    # then the role's own tasks/ directory - real's task dir for a
+    # role's main.yml tasks.
+    private def needle_task_file_dir(task : Task) : String?
+      if file = task.source_file
+        return File.dirname(file)
+      end
+      if dir = task.include_file_dir
+        return dir
+      end
+      if role = task.role_path
+        return File.join(role, "tasks")
+      end
+      nil
+    end
+
     private def apply_path_magic_vars(vars_context : Hash(String, JSON::Any)) : Nil
       vars_context["playbook_dir"] = JSON::Any.new(File.expand_path(@playbook_dir))
 
@@ -1549,8 +1588,24 @@ module Krikri
         # stored the second run's output. Undefined/None/omit results fall
         # back to the plain substitution, which owns the strict-undefined
         # error and the NONE/OMIT sentinel flows.
-        native_typed = native_containers && whole_single_span ? native_typed_value(substitutor, stripped_value) : nil
-        substituted_value = native_typed || substitutor.substitute(value, strict: true, output: !whole_single_span && !native_containers, native: native_containers)
+        debug_msg = key == "msg" && module_name == "ansible.builtin.debug"
+        begin
+          # inside the begin: native_typed_value's strict-undefined check must
+          # get the same "Error while resolving value for '<key>'" wrapper
+          native_typed = (native_containers || debug_msg) && whole_single_span ? native_typed_value(substitutor, stripped_value) : nil
+          substituted_value = native_typed || substitutor.substitute(value, strict: true, output: !whole_single_span && !native_containers, native: native_containers)
+        rescue e : UndefinedVariableError
+          # Real ansible-core 2.19 wraps every undefined module-arg
+          # reference with the param it failed on: the task's fatal msg
+          # reads "Task failed: Finalization of task args for 'MOD'
+          # failed: Error while resolving value for 'KEY': 'var' is
+          # undefined" (live-verified). The KEY context is added here, at
+          # the only place that knows it; the caller's
+          # finalize_args_failure_message adds the Finalization wrapper.
+          already_wrapped = e.message.try(&.starts_with?("Error while resolving value for"))
+          raise e if already_wrapped
+          raise UndefinedVariableError.new("Error while resolving value for '#{key}': #{e.message}")
+        end
 
         # A block-tag template (`{%`/`{#`) that renders to a literally
         # EMPTY string is treated as OMITTED, not as an empty-string
@@ -1771,59 +1826,448 @@ module Krikri
       expanded
     end
 
-    # playbook file for its `- name:` line (or its module key line when
-    # nameless) - tasks defined in role/include files report the
-    # playbook file's block only when that search happens to find them,
-    # and otherwise get the prefix without the context. Non-undefined
-    # errors (lookup failures etc.) and already-wrapped environment:/
-    # name: keyword errors keep their own real-verified wording.
+    # Real ansible-core 2.19's task-arg undefined-variable failure
+    # (live-captured from 2.19.11, replacing the 2.14-era "The task
+    # includes an option with an undefined variable ..." wording): the
+    # fatal msg is
+    #
+    #   "Task failed: Finalization of task args for '<module>' failed:
+    #    Error while resolving value for '<key>': '<var>' is undefined"
+    #
+    # and BEFORE the fatal line real prints an `[ERROR]:` chain block
+    # (see emit_finalization_error_block). Non-undefined errors (lookup
+    # failures etc.) and already-wrapped environment:/name: keyword
+    # errors keep their own real-verified wording.
     private def finalize_args_failure_message(ex : Exception, task : Task) : String
       msg = ex.message || "Failed to resolve task arguments"
       return msg unless ex.is_a?(UndefinedVariableError)
       return msg if msg.starts_with?("Error processing keyword") || msg.starts_with?("Task failed:")
+      msg = msg.sub("Error while resolving value for 'cmd':", "Error while resolving value for '_raw_params':") if free_form_raw_command?(task)
 
-      base = "The task includes an option with an undefined variable. The error was: #{msg}. #{msg}"
-      base + task_arg_error_context(task)
+      "Task failed: Finalization of task args for '#{finalization_module_name(task)}' failed: #{msg}"
     end
 
-    private def task_arg_error_context(task : Task) : String
+    # The failed result for a task-arg finalization failure: `debug` (which
+    # templates its own msg inside the action plugin) fails with no `changed`
+    # key; every other module - action-only ones like fail/assert/set_fact
+    # included - carries changed: false. Live-verified vs 2.19.11 for
+    # set_fact/assert/add_host/group_by/include_vars/pause/stat/ping/debug.
+    private def finalization_failure_json(ex : Exception, task : Task) : JSON::Any
+      h = Hash(String, JSON::Any).new
+      h["changed"] = JSON::Any.new(false) unless finalization_module_name(task) == "ansible.builtin.debug"
+      h["failed"] = JSON::Any.new(true)
+      h["msg"] = JSON::Any.new(finalize_args_failure_message(ex, task))
+      JSON::Any.new(h)
+    end
+
+    # command/shell/script/raw written free-form (`command: echo {{ x }}`, also
+    # folded/literal blocks) name their argument `_raw_params` in real's error
+    # text, krikri's parser calls it `cmd`.
+    private def free_form_raw_command?(task : Task) : Bool
+      return false unless PlaybookParser::RAW_COMMAND_MODULES.includes?(task.module_name)
+      free_form_call?(task)
+    end
+
+    # True when the task's module key carries an inline value (`module: text`,
+    # `module: >`), i.e. the argument arrives as `_raw_params` rather than a
+    # `key: value` mapping.
+    private def free_form_call?(task : Task) : Bool
+      path = task.source_file
+      return false unless path && task.source_line > 0 && File.file?(path)
+      lines = File.read_lines(path)
+      short = Regex.escape(task.module_name.split(".").last)
+      matcher = /\A(?:ansible\.(?:builtin|legacy)\.)?#{short}:/
+      ((task.source_line - 1)...Math.min(lines.size, task.source_line + 40)).each do |idx|
+        stripped = lines[idx].strip.lchop("- ").strip
+        next unless stripped.matches?(matcher)
+        rest = stripped.split(":", 2)[1]?.to_s.strip
+        return !rest.empty? && !rest.starts_with?('{')
+      end
+      false
+    end
+
+    private def finalization_module_name(task : Task) : String
+      name = PlaybookParser.resolve_module_name(task.module_name) || task.module_name
+      # engine-internal pseudo modules (_include_vars, ...) are real actions
+      name = "ansible.builtin.#{name.lchop('_')}" if name.starts_with?('_')
+      name
+    end
+
+    # The `[ERROR]:` chain block real ansible-core 2.19.11 prints on
+    # stdout BEFORE the fatal: line for a task-arg undefined failure
+    # (live-captured; three levels, each with its own Origin at the
+    # playbook YAML and "<<< caused by >>>" between them):
+    #
+    #   [ERROR]: Task failed: Finalization of task args for 'M' failed: E
+    #
+    #   Task failed.
+    #   Origin: f.yml:5:7            <- the task's `name` key
+    #   ...2 context lines + caret
+    #
+    #   <<< caused by >>>
+    #
+    #   Finalization of task args for 'M' failed.
+    #   Origin: f.yml:6:7            <- the module key line
+    #
+    #   <<< caused by >>>
+    #
+    #   E (the "Error while resolving value for 'key': ..." inner error)
+    #   Origin: f.yml:7:23           <- the param's value token
+    #
+    # The parser doesn't track per-task source positions, so each level
+    # is located by scanning the playbook file (same best-effort approach
+    # the old task_arg_error_context used); if the task isn't found there
+    # (role/include-sourced task), no block is printed.
+    private def emit_finalization_error_block(task : Task, ex : UndefinedVariableError) : Nil
+      path = @playbook_file
+      return unless path && File.file?(path)
+
+      lines = File.read_lines(path)
+      msg = ex.message || ""
+      free_form = free_form_raw_command?(task)
+      msg = msg.sub("Error while resolving value for 'cmd':", "Error while resolving value for '_raw_params':") if free_form
+      l3 = msg
+      l2 = "Finalization of task args for '#{finalization_module_name(task)}' failed."
+      l1 = "Task failed: Finalization of task args for '#{finalization_module_name(task)}' failed: #{msg}"
+
+      name_line = locate_name_line(lines, task)
+      if name_line
+        name_idx, name_col = name_line
+        module_line = locate_module_key_line(lines, name_idx, task.module_name)
+        return unless module_line
+        module_idx, module_col = module_line
+        two_level = false
+      else
+        # A task without `name:` starts at its module key: the task-level
+        # and module-level origins are the same line, so real prints two
+        # levels - "Task failed: Finalization ... failed." then the cause.
+        return unless task.source_line > 0
+        module_idx = task.source_line - 1
+        module_col = task.source_col > 0 ? task.source_col : (lines[module_idx].size - lines[module_idx].lstrip.size + 1)
+        name_idx, name_col = module_idx, module_col
+        two_level = true
+      end
+
+      param_idx, param_col = free_form ? free_form_value_position(lines, module_idx, task.module_name) : (locate_param_value_line(lines, module_idx, msg) || {module_idx, module_col})
+
+      text = String.build do |io|
+        io << "[ERROR]: " << l1 << "\n"
+        if two_level
+          io << "\n" << "Task failed: Finalization of task args for '#{finalization_module_name(task)}' failed.\n"
+          io << origin_context_block(path, lines, module_idx + 1, module_col)
+        else
+          io << "\nTask failed.\n"
+          io << origin_context_block(path, lines, name_idx + 1, name_col)
+          io << "\n<<< caused by >>>\n\n"
+          io << l2 << "\n"
+          io << origin_context_block(path, lines, module_idx + 1, module_col)
+        end
+        io << "\n<<< caused by >>>\n\n"
+        io << l3 << "\n"
+        io << origin_context_block(path, lines, param_idx + 1, param_col)
+        io << "\n"
+      end
+      puts text
+    end
+
+    # The value token's position for a free-form module call: on the module
+    # key's own line, just past `<module>:` (real's origin for `_raw_params`).
+    private def free_form_value_position(lines : Array(String), module_idx : Int32, module_name : String) : {Int32, Int32}
+      line = lines[module_idx]
+      colon = line.index(':', line.index(module_name.split(".").last) || 0) || 0
+      rest = line[(colon + 1)..]
+      {module_idx, colon + 1 + (rest.size - rest.lstrip.size) + 1}
+    end
+
+    # Shared Origin renderer (also used by the task-name template-error
+    # warning): `Origin: path:line:col`, a blank line, then 2 leading
+    # context lines + the target line (right-aligned line numbers, tabs
+    # echoed as spaces, 120-column truncation with a `...` marker) and a
+    # caret line under the target column - byte-for-byte
+    # ansible-core 2.19 _error_utils.SourceContext.from_origin.
+    private def origin_context_block(path : String, lines : Array(String), line_num : Int, column : Int) : String
+      String.build do |io|
+        io << "Origin: " << File.expand_path(path) << ":" << line_num << ":" << column << "\n"
+        io << "\n"
+
+        label_width = line_num.to_s.size
+        max_src_line_len = 120 - label_width - 1
+        start_idx = Math.max(0, (line_num - 1) - 2)
+        (start_idx..(line_num - 1)).each do |idx|
+          line = lines[idx].chomp.gsub('\t', ' ')
+          line = line[0...max_src_line_len - 3] + "..." if line.size > max_src_line_len
+          io << (idx + 1).to_s.rjust(label_width) << (line.empty? ? "" : " ") << line << "\n"
+        end
+        io << " " * label_width << " " << " " * (column - 1) << "^ column " << column << "\n"
+      end
+    end
+
+    # The `- name:` line whose raw name (quotes stripped) equals the
+    # task's own; column is the `name` KEY's start (real's task-level
+    # origin points there, e.g. column 7 for `    - name:`).
+    private def locate_name_line(lines : Array(String), task : Task) : {Int32, Int32}?
+      lines.each_with_index do |line, idx|
+        stripped = line.strip
+        next unless stripped.starts_with?("- ")
+        next unless (name_match = stripped.match(/\A-\s*name:\s*(.+)\z/))
+        if name_match[1].strip.gsub(/\A["']|["']\z/, "") == task.name
+          col = line.index("name")
+          return {idx, (col || 0) + 1} if col
+        end
+      end
+      nil
+    end
+
+    # The task's module key line (first non-`- ` line after the name
+    # whose stripped text starts with the invoked or FQCN-stripped module
+    # name); column is the key's first character.
+    private def locate_module_key_line(lines : Array(String), from_idx : Int32, module_name : String) : {Int32, Int32}?
+      short = module_name.split(".").last
+      ((from_idx + 1)...lines.size).each do |idx|
+        line = lines[idx]
+        stripped = line.strip
+        break if stripped.starts_with?("- ")
+        if stripped.starts_with?("#{module_name}:") || stripped.starts_with?("#{short}:")
+          return {idx, line.size - line.lstrip.size + 1}
+        end
+      end
+      nil
+    end
+
+    # The failing param's line - located by parsing the wrapped message's
+    # "Error while resolving value for '<key>': ..." prefix; column is the
+    # value token's start (quote included). Returns nil when the message
+    # carries no key context or the key isn't found before the next task.
+    private def locate_param_value_line(lines : Array(String), from_idx : Int32, msg : String) : {Int32, Int32}?
+      return nil unless (m = msg.match(/\AError while resolving value for '([^']+)':/m))
+      key = m[1]
+      ((from_idx + 1)...lines.size).each do |idx|
+        line = lines[idx]
+        stripped = line.strip
+        break if stripped.starts_with?("- ")
+        if (key_idx = line.index("#{key}:"))
+          rest = line[(key_idx + key.size + 1)..]
+          column = key_idx + key.size + 1 + (rest.size - rest.lstrip.size) + 1
+          return {idx, column}
+        end
+      end
+      nil
+    end
+
+    # ansible-core 2.19's conditional-as-template deprecation (_engine.py
+    # _normalize_and_evaluate_conditional): a conditional whose stripped
+    # value starts AND ends with Jinja delimiters is first templated AS A
+    # WHOLE; when that whole-template result is a non-string, real emits
+    # one [DEPRECATION WARNING] ... Origin block naming the conditional's
+    # own YAML origin (live-captured 2.19.11). A string result is instead
+    # used as an expression with NO warning (the `{{ cexpr }}` indirection
+    # case), and a value that merely starts/ends with delimiters while
+    # carrying operator text between spans (`{{ a }} and {{ b }}`)
+    # templates to a string, so it never warns either - hence the
+    # single-span restriction here. Display-only: krikri's own conditional
+    # evaluation is untouched, this side channel fires at the same sites
+    # real evaluates a conditional. Deduped by full text (warning line +
+    # Origin) exactly like real's Display._deduplicate - the same
+    # conditional evaluated per host / per loop item displays once, while
+    # two different tasks with the same text but different origins each
+    # display. The one-time "Deprecation warnings can be disabled" hint
+    # real prints before the first deprecation (Display._deprecated's
+    # warning() call, itself deduped) is replicated below.
+    @@conditional_deprecation_hint_seen = false
+    @@conditional_deprecation_seen = Set(String).new
+    @@when_error_chain_seen = Set(String).new
+
+    private def maybe_conditional_delimiters_deprecation(task : Task, raw : String, key : String, vars_context : Hash(String, JSON::Any)) : Nil
+      conditional = raw.strip
+      return unless conditional.size > 4 &&
+                    conditional.starts_with?("{{") && conditional.ends_with?("}}") &&
+                    !conditional[2...-2].includes?("{{")
+      inner = conditional[2...-2].strip
+      # The value probe re-evaluates the expression a second time; skip
+      # side-effectful lookups so they never run twice.
+      return if inner.includes?("lookup(") || inner.includes?("query(")
+      value = VariableSubstitutor::JinjaRenderer.new(vars_context, decode: true).evaluate_value!(inner) rescue return
+      return unless value
+      return if value.as_s?
+
+      text = conditional_deprecation_text(task, key, raw)
+      return if text.empty?
+      return unless @@conditional_deprecation_seen.add?(text)
+      unless @@conditional_deprecation_hint_seen
+        @@conditional_deprecation_hint_seen = true
+        STDERR.puts "[WARNING]: Deprecation warnings can be disabled by setting `deprecation_warnings=False` in ansible.cfg."
+      end
+      STDERR.puts text
+    end
+
+    private def conditional_deprecation_text(task : Task, key : String, raw : String) : String
       path = @playbook_file
       return "" unless path && File.file?(path)
 
       lines = File.read_lines(path)
-      target_idx = nil
-      lines.each_with_index do |line, idx|
-        stripped = line.strip
-        if (name_match = stripped.match(/\A-\s*name:\s*(.+)\z/)) &&
-           name_match[1].strip.gsub(/\A["']|["']\z/, "") == task.name
-          target_idx = idx
-          break
-        end
-      end
-      unless target_idx
-        # Nameless task: real points at the module-key line the same way
-        # ("    - <module>:"), first key column of the task's mapping.
-        lines.each_with_index do |line, idx|
-          if line.strip == "- #{task.module_name}:"
-            target_idx = idx
-            break
-          end
-        end
-      end
-      return "" unless target_idx
+      located = locate_name_line(lines, task)
+      return "" unless located
+      name_idx, _ = located
 
-      target_line = lines[target_idx].chomp
-      column = target_line.size - target_line.lstrip.size + 3
-      prev_line = target_idx > 0 ? lines[target_idx - 1].chomp : nil
+      located_key = locate_conditional_origin(lines, name_idx, key, raw)
+      return "" unless located_key
+      key_idx, column = located_key
 
       String.build do |io|
-        io << "\n\nThe error appears to be in '" << File.expand_path(path) << "': line " << (target_idx + 1)
-        io << ", column " << column << ", but may\nbe elsewhere in the file depending on the exact syntax problem."
-        io << "\n\nThe offending line appears to be:\n\n"
-        io << prev_line << "\n" if prev_line
-        io << target_line << "\n"
-        io << (" " * (column - 1)) << "^ here\n"
+        io << "[DEPRECATION WARNING]: Conditionals should not be surrounded by templating delimiters such as {{ }} or {% %}. This feature will be removed from ansible-core version 2.23.\n"
+        io << origin_context_block(path, lines, key_idx + 1, column)
+        io << "\n"
       end
+    end
+
+    # The conditional's own YAML origin: the `key:` line's value token
+    # (column at the value's first character, quote included), or - for
+    # the folded list form - the list ITEM line whose content matches the
+    # raw conditional (real points each list item's origin at its own
+    # line). Best-effort: the parser doesn't track per-task source
+    # positions, so the task is located by its `- name:` line (same
+    # approach as locate_name_line's callers).
+    private def locate_conditional_origin(lines : Array(String), name_idx : Int32, key : String, raw : String) : {Int32, Int32}?
+      ((name_idx + 1)...lines.size).each do |idx|
+        line = lines[idx]
+        stripped = line.strip
+        break if stripped.starts_with?("- ")
+        next unless stripped.starts_with?("#{key}:")
+        rest = line[line.index("#{key}:").not_nil! + key.size + 1..]
+        if rest.lstrip.empty?
+          # Folded list form: scan the item lines for the raw conditional.
+          ((idx + 1)...lines.size).each do |item_idx|
+            item_line = lines[item_idx]
+            item_stripped = item_line.strip
+            break unless item_stripped.starts_with?("- ")
+            item = item_stripped[2..].strip
+            unquoted = item.gsub(/\A["']|["']\z/, "")
+            next unless unquoted == raw.strip
+            dash_idx = item_line.index("- ").not_nil!
+            item_rest = item_line[(dash_idx + 2)..]
+            column = dash_idx + 2 + (item_rest.size - item_rest.lstrip.size) + 1
+            return {item_idx, column}
+          end
+          return nil
+        end
+        column = line.size - line.lstrip.size + key.size + 1 + (rest.size - rest.lstrip.size) + 1
+        return {idx, column}
+      end
+      nil
+    end
+
+    # Real ansible-core 2.19 tracks each templated value's source origin
+    # ("data lineage") and labels a non-boolean conditional error with
+    # where the tested value was DEFINED:
+    #   "Conditional result (True) was derived from value of type 'str'
+    #   at '/path/playbook.yml:5:12'. Conditionals must have a boolean
+    #   result."
+    # Full lineage (set_fact/registered/inventory/hostvars sources,
+    # compound conditions) needs origin tracking through the whole
+    # templating pipeline; this covers the common narrow shape: a `when:`
+    # that is a single bare variable defined in the playbook file's own
+    # play-level `vars:`. The definition position comes from
+    # YamlSourceMap (the same libyaml pass that labels task origins);
+    # when the variable isn't found there the message is returned
+    # unchanged, never guessed at.
+    private def decorate_conditional_value_origin(task : Task, msg : String) : String
+      return msg unless msg.includes?("Conditionals must have a boolean result")
+      return msg if msg.includes?(" at '")
+      raw = task.when_condition.to_s.strip
+      return msg unless raw.matches?(/\A[A-Za-z_][A-Za-z0-9_]*\z/)
+      path = @playbook_file
+      return msg unless path && File.file?(path)
+      return msg unless pos = bare_var_definition_pos(path, task, raw)
+      msg.sub(/was derived from value of type '([a-zA-Z]+)'/) do
+        "was derived from value of type '#{$1}' at '#{path}:#{pos[0]}:#{pos[1]}'"
+      end
+    end
+
+    # Locates `name`'s value position in the playbook file: the play
+    # whose YAML mapping spans the task's own source line, then that
+    # play's `vars:` entry for the name.
+    private def bare_var_definition_pos(path : String, task : Task, name : String) : {Int32, Int32}?
+      return nil unless task.source_line > 0
+      # The play-range lookup below matches on the task's line within the
+      # playbook file itself - an include/role-sourced task's line refers
+      # to a different file, so its vars can't be located this way.
+      return nil unless task.source_file.try { |file| File.expand_path(file) == File.expand_path(path) }
+      map = Krikri::YamlSourceMap.scan(File.read(path))
+      play_starts = map.plays
+      play_idx = nil
+      play_starts.each_with_index do |(idx, start_line), i|
+        next unless start_line <= task.source_line
+        next_line = i + 1 < play_starts.size ? play_starts[i + 1][1] : Int32::MAX
+        play_idx = idx if task.source_line < next_line
+      end
+      return nil unless play_idx
+      map.at?("#{play_idx}/vars/#{name}")
+    end
+
+    # Whether a WhenEvaluationError message is a conditional-EVALUATION
+    # failure (the only shape real ansible-core 2.19.11 decorates with
+    # the two-level [ERROR] chain block and the "Task failed: "-prefixed
+    # {"msg": ...} fatal JSON). Var-render failures ("Failed to render
+    # task vars") keep their pre-existing display shape.
+    private def conditional_evaluation_failure?(msg : String) : Bool
+      inner = msg.starts_with?("Task failed: ") ? msg["Task failed: ".size..] : msg
+      inner.starts_with?("Error while evaluating conditional:") || inner.starts_with?("Conditional result (")
+    end
+
+    # The two-level [ERROR] chain real prints on stdout BEFORE the fatal
+    # line for a failing `when:` (live-captured 2.19.11):
+    #
+    #   [ERROR]: Task failed: <inner error>
+    #
+    #   Task failed.
+    #   Origin: f.yml:4:7            <- the task's `name` key
+    #
+    #   <<< caused by >>>
+    #
+    #   <inner error>
+    #   Origin: f.yml:7:13           <- the `when:` value token
+    #
+    # A non-boolean conditional result adds one help-text line after the
+    # block (real's ALLOW_BROKEN_CONDITIONALS hint). Best-effort origin:
+    # the parser doesn't track per-task source positions, so the task is
+    # located by its `- name:` line (same approach as
+    # emit_finalization_error_block); when either origin can't be located
+    # (role/include-sourced task, folded when: list), no block is printed.
+    private def emit_when_error_chain(task : Task, msg : String) : Nil
+      msg = decorate_conditional_value_origin(task, msg)
+      inner = msg.starts_with?("Task failed: ") ? msg["Task failed: ".size..] : msg
+      return unless conditional_evaluation_failure?(msg)
+      path = @playbook_file
+      return unless path && File.file?(path)
+
+      lines = File.read_lines(path)
+      located = locate_name_line(lines, task)
+      return unless located
+      name_idx, name_col = located
+
+      raw = task.when_condition.to_s
+      key_line = locate_conditional_origin(lines, name_idx, "when", raw)
+      return unless key_line
+      key_idx, key_col = key_line
+
+      text = String.build do |io|
+        io << "[ERROR]: Task failed: " << inner << "\n"
+        io << "\nTask failed.\n"
+        io << origin_context_block(path, lines, name_idx + 1, name_col)
+        io << "\n<<< caused by >>>\n\n"
+        io << inner << "\n"
+        io << origin_context_block(path, lines, key_idx + 1, key_col)
+        io << "\n"
+        unless inner.starts_with?("Error while evaluating conditional:")
+          io << "Broken conditionals can be temporarily allowed with the `ALLOW_BROKEN_CONDITIONALS` configuration option.\n"
+          io << "\n"
+        end
+      end
+      # Real's Display dedups by full formatted message; the Origin's
+      # file:line makes the text task-unique, so a looped task's failing
+      # items display the chain once.
+      return unless @@when_error_chain_seen.add?(text)
+      puts text
     end
 
     # environment: - strict-undefined substitution for both accepted

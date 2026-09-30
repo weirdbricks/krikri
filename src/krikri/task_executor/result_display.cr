@@ -3,6 +3,8 @@ require "colorize"
 require "../host"
 require "../timing_profile"
 require "../variable_substitutor/filter_core"
+require "../argspec_validator"
+require "./error_block"
 
 module Krikri
   # A module result's "failed" flag read the way real Ansible's Python
@@ -21,23 +23,89 @@ module Krikri
 
   # ResultDisplay - Handles displaying task results and diffs
   module ResultDisplay
+    # Warning texts already printed this run (real Display.warning dedups).
+    @@warned_texts = Set(String).new
+
+    # Core-emitted deprecation lines already printed this run (real
+    # Display._deprecated dedups on the formatted message) and the
+    # one-time "Deprecation warnings can be disabled" hint real prints
+    # before the first deprecation of a run - both shared across every
+    # deprecation source, exactly like real's Display state.
+    @@deprecation_texts = Set(String).new
+    @@deprecation_hint_seen = false
+
     # Display task result with appropriate formatting.
     # item_label is set for looped tasks, rendering `ok: [host] => (item=x)`
     # to match how Ansible annotates per-iteration output.
-    def self.display_result(host : Host, result : JSON::Any, diff_mode : Bool, item_label : String? = nil, ignore_errors : Bool = false, no_log : Bool = false, module_name : String? = nil, delegate_target : String? = nil) : Nil
+    # source_task carries the task's parsed source position and module
+    # identity so a failed result can render real ansible-core 2.19's
+    # `[ERROR]: Task failed:` block (see ErrorBlock) before the fatal/
+    # failed line; nil (or a task without a parsed position) suppresses
+    # the block.
+    def self.display_result(host : Host, result : JSON::Any, diff_mode : Bool, item_label : String? = nil, ignore_errors : Bool = false, no_log : Bool = false, module_name : String? = nil, delegate_target : String? = nil, source_task : Task? = nil, loop_item : JSON::Any? = nil, loop_var_name : String? = nil) : Nil
       TimingProfile.measure("display.result", "display") do
-        display_result_measured(host, result, diff_mode, item_label, ignore_errors, no_log, module_name, delegate_target)
+        display_result_measured(host, result, diff_mode, item_label, ignore_errors, no_log, module_name, delegate_target, source_task, loop_item, loop_var_name)
       end
     end
 
-    private def self.display_result_measured(host : Host, result : JSON::Any, diff_mode : Bool, item_label : String? = nil, ignore_errors : Bool = false, no_log : Bool = false, module_name : String? = nil, delegate_target : String? = nil) : Nil
+    private def self.display_result_measured(host : Host, result : JSON::Any, diff_mode : Bool, item_label : String? = nil, ignore_errors : Bool = false, no_log : Bool = false, module_name : String? = nil, delegate_target : String? = nil, source_task : Task? = nil, loop_item : JSON::Any? = nil, loop_var_name : String? = nil) : Nil
       # delegate_to: renders the host line as real Ansible does:
       # `ok: [source -> target]` - the task ran against the delegate
       # target even though it reports under the play host.
       host_label = delegate_target ? "#{host.connection_host} -> #{delegate_target}" : host.connection_host
       changed = result["changed"]?.try(&.as_bool) || false
       failed = Krikri.result_failed_flag(result)
-      msg = result["msg"]?.try(&.as_s) || ""
+      # as_s? (not as_s): the debug action plugin keeps a whole-span
+      # container msg natively (a real dict/list - see its own re-parse),
+      # so a naive as_s cast crashes the whole display fiber on it.
+      # A NON-STRING msg (fail's action puts the raw task arg in
+      # result['msg'] - `fail: {msg: 50}` carries the int 50;
+      # live-verified vs 2.19.11) renders through Python repr for the
+      # [ERROR] block: the block is TEXT, the fatal dump below uses the
+      # native result as-is.
+      msg = result["msg"]?.try { |raw| raw.as_s? || ResultDisplay.python_repr(raw) } || ""
+
+      # Core-emitted deprecations (a module's result carrying the
+      # `_ansible_core_deprecations` marker - e.g. ansible.posix.mount's
+      # `warnings`-in-exit_json deprecation) print on stderr BEFORE the
+      # module-warnings block: real emits the deprecation inside the
+      # module's own _return_formatted, before any self.warn() calls it
+      # makes afterwards. The formatted [DEPRECATION WARNING] line dedups
+      # like every Display message, and the "Deprecation warnings can be
+      # disabled" hint prints once per run before the first deprecation -
+      # both live-verified against 2.19.11 with two mount tasks back to
+      # back (second one silent). The marker itself is engine-internal
+      # (stripped below, like the `_ansible_*` register strip) - the
+      # result's real `deprecations` list stays untouched for register.
+      result["_ansible_core_deprecations"]?.try(&.as_a?).try &.each do |deprecation|
+        text = deprecation.as_s? || deprecation.to_s
+        line = "[DEPRECATION WARNING]: #{text}"
+        next unless @@deprecation_texts.add?(line)
+        unless @@deprecation_hint_seen
+          @@deprecation_hint_seen = true
+          STDERR.puts "[WARNING]: Deprecation warnings can be disabled by setting `deprecation_warnings=False` in ansible.cfg.".colorize(:light_magenta)
+        end
+        STDERR.puts line.colorize(:light_magenta)
+      end
+
+      # Module warnings (result["warnings"]) print as `[WARNING]: <text>` on
+      # stderr BEFORE the status line, each distinct text once per run - real
+      # ansible's Display.warning dedups on the message (live-verified vs
+      # 2.19.11 with find's "Skipped '<path>' path due to this access issue").
+      result["warnings"]?.try(&.as_a?).try &.each do |warning|
+        text = warning.as_s? || warning.to_s
+        next unless @@warned_texts.add?(text)
+        STDERR.puts "[WARNING]: #{text.strip}".colorize(:light_magenta)
+      end
+      emit_debug_template_error_warning(source_task, result)
+
+      # Real's callback (CallbackBase._dump_results) drops these top-level
+      # keys before any dump at verbosity < 3: `warnings`/`deprecations` are
+      # only ever shown as their own [WARNING] lines, `invocation` is hidden
+      # unless -vvv (getent-style results carry one for `register`).
+      if (top = result.as_h?) && (top.has_key?("warnings") || top.has_key?("invocation") || top.has_key?("deprecations") || top.has_key?("_ansible_core_deprecations"))
+        result = JSON::Any.new(top.reject("warnings", "invocation", "deprecations", "_ansible_core_deprecations"))
+      end
 
       # no_log: print the status line and NOTHING else - no msg, no
       # stdout, no diff, no error detail. Real ansible-playbook shows
@@ -46,6 +114,19 @@ module Krikri
       # security control, so it is applied before any other branch below
       # can print part of the result.
       if no_log
+        # Real 2.19 DOES print the error block for a failed no_log task
+        # (with the raw, uncensored message - an upstream leak), but
+        # krikri deliberately does not replicate that leak: the block
+        # would echo the secret this control exists to hide. Everything
+        # else matches real 2.19.11: a solo failed no_log task prints the
+        # censored fatal dump (which carries no secret) plus "...ignoring"
+        # when ignore_errors: caught it; ok/changed and looped results
+        # stay bare status lines (live-verified against 2.19.11).
+        if failed && item_label.nil?
+          puts "fatal: [#{host_label}]: FAILED! => {\"censored\": \"the output has been hidden due to the fact that 'no_log: true' was specified for this result\", \"changed\": #{changed}}".colorize(:red)
+          puts "...ignoring".colorize(:red) if ignore_errors
+          return
+        end
         status_only = if failed
                         "failed".colorize(:red).bold
                       elsif changed
@@ -90,7 +171,27 @@ module Krikri
       # a documented, deliberately-not-yet-matched cosmetic gap - so only
       # the NON-loop (no item_label) case takes the single-line dump.
       if failed && item_label.nil?
-        puts "fatal: [#{host_label}]: FAILED! => #{ResultDisplay.python_json_dump(result)}"
+        # Real's stdout callbacks strip failed/skipped/_ansible_* before
+        # dumping (as_callback_task_result), so the FAILED! dump carries
+        # neither "failed": true nor any _ansible_* key.
+        emit_task_error_block(source_task, result, msg)
+        # Real 2.19.11's fatal dump has three shapes:
+        # - a task-level when:/loop-source failure (marked by
+        #   when_error_result) dumps ONLY the msg:
+        #   {"msg": "Task failed: ..."} - no changed key (live-verified
+        #   with and without register:/ignore_errors:).
+        # - an action failure that tagged its result
+        #   _ansible_verbose_always (assert: does, unless quiet:) dumps
+        #   the whole result pretty-printed, 4-space indent, sorted keys
+        #   (live-verified: assert: failure).
+        # - every other failure dumps the whole result single-line.
+        if result["_ansible_task_error_msg_only"]?.try(&.as_bool) == true
+          puts "fatal: [#{host_label}]: FAILED! => {\"msg\": #{msg.to_json}}".colorize(:red)
+        elsif result["_ansible_verbose_always"]?.try(&.as_bool) == true
+          puts "fatal: [#{host_label}]: FAILED! => #{dump_pretty(clean_for_display(result))}".colorize(:red)
+        else
+          puts "fatal: [#{host_label}]: FAILED! => #{ResultDisplay.python_json_dump(clean_for_display(result))}".colorize(:red)
+        end
         # Real ansible-playbook prints a bare "...ignoring" line right
         # after a failed task's output when ignore_errors: caught it
         # (live-verified against a real run) - the single-line dump above
@@ -109,48 +210,57 @@ module Krikri
       # /`  Exit code:` detail block and a per-item `...ignoring` - a
       # different word-order, extra lines, and repeated suffix vs real.
       if failed && !item_label.nil?
-        puts "failed: [#{host_label}] (item=#{item_label}) => #{ResultDisplay.python_json_dump(clean_for_display(result))}"
+        # Real's default callback runs its exception handling (the error
+        # block) once per failed ITEM result, before that item's line;
+        # ErrorBlock's Display-level dedup collapses identical repeats.
+        emit_task_error_block(source_task, result, msg)
+        if result["_ansible_task_error_msg_only"]?.try(&.as_bool) == true
+          # A when:-failed loop item is a task-level failure: real dumps
+          # the msg alone, with no changed key and no loop-item keys
+          # (live-verified: a looped when: failure shows
+          # `failed: [host] (item=N) => {"msg": "Task failed: ..."}`).
+          puts "failed: [#{host_label}] (item=#{item_label}) => {\"msg\": #{msg.to_json}}".colorize(:red)
+          return
+        end
+        dumped = clean_for_display(result)
+        # Real's strategy merges the loop item itself into every per-item
+        # result before the callback dumps it, so a failed item's dump
+        # carries "ansible_loop_var" plus the item under the loop var's
+        # name (live-verified: a looped fail: item shows
+        # {"ansible_loop_var": "item", "changed": false, "item": "x",
+        # "msg": ...}). Module results reach display without those keys,
+        # so restore them here.
+        if item = loop_item
+          h = dumped.as_h.try(&.dup) || Hash(String, JSON::Any).new
+          var_name = loop_var_name.try { |name| !name.empty? ? name : nil } || "item"
+          h["ansible_loop_var"] = JSON::Any.new(var_name)
+          h[var_name] = item
+          dumped = JSON::Any.new(h)
+        end
+        if result["_ansible_verbose_always"]?.try(&.as_bool) == true
+          puts "failed: [#{host_label}] (item=#{item_label}) => #{dump_pretty(dumped)}".colorize(:red)
+        else
+          puts "failed: [#{host_label}] (item=#{item_label}) => #{ResultDisplay.python_json_dump(dumped)}".colorize(:red)
+        end
         return
       end
 
-      puts "#{status}: [#{host_label}]#{suffix}"
+      # Real ansible appends the full result JSON (pretty, 4-space indent,
+      # sorted keys) to the status line when the run is verbose OR the
+      # result carries _ansible_verbose_always (the debug and assert
+      # action plugins tag their results that way). At default verbosity
+      # without the tag, real prints ONLY the status line - never a msg
+      # body - so the engine's old `  msg` display for successful tasks
+      # is gone: a non-verbose success shows just `ok: [host]`.
+      verbose_always = !failed &&
+                       result["_ansible_verbose_always"]?.try(&.as_bool) == true &&
+                       result["_ansible_verbose_override"]?.try(&.as_bool) != true
 
-      # Show message for successful tasks if msg is present and meaningful
-      # This allows debug plugin output to be visible
-      #
-      # quiet: (assert:'s own option, tagged on the result by the assert
-      # plugins as the private `_ansible_quiet` key) suppresses ONLY the
-      # passing assert's message display - a failing one still reports
-      # msg/assertion/evaluated_to exactly as without quiet:. Live-verified
-      # against real ansible-core 2.19.4 (quiet success prints a bare
-      # `ok:` line; quiet failure output is unchanged).
-      quiet_success = result["_ansible_quiet"]?.try(&.as_bool) || false
-      # Real Ansible displays a successful debug task as a JSON dump, so
-      # a msg CONTAINING newlines arrives as ONE physical line with \n
-      # escapes - this engine's raw multi-line display could never line
-      # up with anything comparing real's single-line form (podman-diff
-      # set_fact_edge_cases S1: identical msg content, unmatchable
-      # shape). Keep the established raw-text display (single-line msgs
-      # print exactly as before), but for a debug result escape the
-      # newlines onto one line the way real's dump does. A var: result
-      # (no msg, payload under the var-name key) dumps as real does.
-      if !failed && module_name.try(&.ends_with?("debug")) && result["_ansible_verbose_always"]?.try(&.as_bool)
-        if msg.empty?
-          cleaned = clean_for_display(result)
-          if h = cleaned.as_h?
-            h.delete("changed")
-          end
-          puts dump_pretty(cleaned)
-        else
-          puts "  #{msg.gsub("\n", "\\n")}".colorize(:white)
-        end
-      elsif !failed && msg && !msg.empty? && !quiet_success && !["ok", "Command executed successfully", "File already exists with identical content"].includes?(msg)
-        # Format multi-line messages nicely
-        if msg.includes?("\n")
-          puts msg.split("\n").map { |line| "  #{line}" }.join("\n")
-        else
-          puts "  #{msg}".colorize(:white)
-        end
+      if verbose_always
+        cleaned = module_name.try(&.ends_with?("debug")) ? debug_clean_result(result) : clean_for_display(result)
+        puts "#{status}: [#{host_label}]#{suffix} => #{dump_pretty(cleaned)}"
+      else
+        puts "#{status}: [#{host_label}]#{suffix}"
       end
 
       # If failed, show additional error details
@@ -206,6 +316,328 @@ module Krikri
       # Display diff if present and diff_mode enabled
       if diff_mode && result["diff"]?
         display_diff(result["diff"])
+      end
+    end
+
+    # Builds and prints real ansible-core 2.19's `[ERROR]: Task failed:`
+    # block for a failed task result, labeled with the task's parsed
+    # playbook origin. No-op when the task has no parsed position, the
+    # failure is a conditional-evaluation failure (whose two-level chain
+    # is emitted by TaskExecutor's own emit_when_error_chain, including
+    # the `when:` value's own Origin), or no_log is hiding the result.
+    private def self.emit_task_error_block(source_task : Task?, result : JSON::Any, msg : String) : Nil
+      return unless source_task
+      return if source_task.no_log?
+      # Task-arg finalization failures ("Task failed: Finalization of task
+      # args for ...") get their own multi-level block from the executor
+      # (emit_finalization_error_block) before the fatal line.
+      return if msg.starts_with?("Task failed: Finalization of task args for")
+      # assert:'s that: conditional failure: two-level chain, the second
+      # Origin pointing at the failing that: item (index carried in the
+      # internal _ansible_that_index key; when: failures are emitted by
+      # TaskExecutor's own emit_when_error_chain instead).
+      if (idx = result["_ansible_that_index"]?.try(&.as_i64?)) && msg.starts_with?("Task failed: Error while evaluating conditional")
+        emit_assert_that_chain(source_task, msg["Task failed: ".size..], idx.to_i)
+        return
+      end
+      return if msg.includes?("Error while evaluating conditional")
+      # Non-boolean conditional failures are likewise emitted by
+      # emit_when_error_chain (with the when: value's own Origin); a
+      # second block here would duplicate it wrapped in a bogus
+      # "Module failed:" segment.
+      return if msg.includes?("Conditional result")
+
+      origin = error_origin_context(source_task)
+      return unless origin
+
+      # A plugin whose block text differs from the fatal msg (fetch's slurp
+      # failure) hands the block its own text via _ansible_error_detail.
+      msg = result["_ansible_error_detail"]?.try(&.as_s?) || msg
+      # failed_when: turned an otherwise successful module result into a
+      # failure: real's block is just "Task failed: Action failed."
+      if result["failed_when_result"]?.try(&.as_bool?) == true && result["msg"]?.try(&.as_s?).to_s.empty?
+        root = ErrorBlock::Node.new("Task failed.", source_context: origin)
+        ErrorBlock.emit(root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new("Action failed.")))
+        return
+      end
+      # A failed result carrying _ansible_fail_param names the task param
+      # whose VALUE real's action plugin attached as the raise's obj
+      # (add_host's "Groups must be specified as a list." AnsibleActionFail):
+      # the chain cannot collapse - real's cause event carries the param
+      # value's own Origin, producing the two-segment block with the
+      # brief "Task failed: <msg>." header line.
+      if (fail_param = result["_ansible_fail_param"]?.try(&.as_s?)) &&
+         (param_origin = task_param_value_origin(source_task, fail_param))
+        root = ErrorBlock::Node.new("Task failed.", source_context: origin)
+        cause = ErrorBlock::Node.new(msg, source_context: param_origin)
+        ErrorBlock.emit(root.with_chain(ErrorBlock::DIRECT_CAUSE, true, cause))
+        return
+      end
+      # A plugin flagging _ansible_action_level failed in real's controller-
+      # side ACTION plugin (a bare AnsibleActionFail: no "Module failed."
+      # middle segment), e.g. assemble's remote_src: false isdir() check.
+      if result["_ansible_action_level"]?.try(&.as_bool?) == true
+        root = ErrorBlock::Node.new("Task failed.", source_context: origin)
+        ErrorBlock.emit(root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(msg)))
+        return
+      end
+      # set_fact's validate_variable_name failure: real's cause carries
+      # the invalid key's own Origin (the mapping key inside the task)
+      # plus a fixed help_text paragraph, so the chain cannot collapse.
+      if (match = msg.match(/\ATask failed: Invalid variable name '(.*)'\.\z/)) &&
+         source_task.module_name.try { |name| name.split(".").last } == "set_fact"
+        key = match[1]
+        inner = "Invalid variable name '#{key}'."
+        root = ErrorBlock::Node.new("Task failed.", source_context: origin)
+        if key_origin = set_fact_key_origin(source_task, key)
+          cause = ErrorBlock::Node.new(inner, source_context: key_origin,
+            help_text: "Variable names must be strings starting with a letter or underscore character, and contain only letters, numbers and underscores.")
+        else
+          cause = ErrorBlock::Node.new(inner)
+        end
+        ErrorBlock.emit(root.with_chain(ErrorBlock::DIRECT_CAUSE, true, cause))
+        return
+      end
+      ErrorBlock.emit(task_error_chain(source_task.module_name, msg, origin))
+    end
+
+    # `debug: var: undefined_name` renders the error inline ("<< error 1 - ...
+    # >>", see DebugActionPlugin) and real ALSO prints a "[WARNING]:
+    # Encountered 1 template error." block on stderr naming the var: value's
+    # Origin (live-verified 2.19.11); deduped like every Display.warning.
+    private def self.emit_debug_template_error_warning(task : Task?, result : JSON::Any) : Nil
+      return unless task && (hash = result.as_h?)
+      hash.each_value do |value|
+        next unless (text = value.as_s?) && (m = text.match(/\A<< error (\d+) - (.*) >>\z/))
+        path = task.source_file
+        next unless path && task.source_line > 0 && File.file?(path)
+        lines = File.read_lines(path)
+        origin = nil
+        ((task.source_line - 1)...Math.min(lines.size, task.source_line + 40)).each do |idx|
+          line = lines[idx]
+          next unless (at = line.index(/\bvar:\s*/))
+          rest = line[(at + 4)..]
+          origin = ErrorBlock.origin_context(path, idx + 1, at + 4 + (rest.size - rest.lstrip.size) + 1)
+          break
+        end
+        next unless origin
+        warning = "[WARNING]: Encountered #{m[1]} template error.\nerror #{m[1]} - #{m[2]}\n#{origin}\n\n"
+        STDERR.puts warning if @@warned_texts.add?(warning)
+      end
+    end
+
+    private def self.emit_assert_that_chain(task : Task, inner : String, index : Int32) : Nil
+      task_origin = error_origin_context(task)
+      item_origin = assert_that_origin(task, index)
+      return unless task_origin && item_origin
+
+      root = ErrorBlock::Node.new("Task failed.", source_context: task_origin)
+      cause = ErrorBlock::Node.new(inner, source_context: item_origin)
+      ErrorBlock.emit(root.with_chain(ErrorBlock::DIRECT_CAUSE, true, cause))
+    end
+
+    # Origin context of assert's that: item number `index` (0-based): the
+    # scalar's own line/column, found by scanning the task's source lines
+    # (the parser tracks per-task, not per-list-item, positions).
+    private def self.assert_that_origin(task : Task, index : Int32) : String?
+      path = task.source_file
+      return nil unless path && task.source_line > 0 && File.file?(path)
+
+      lines = File.read_lines(path)
+      ((task.source_line - 1)...lines.size).each do |idx|
+        line = lines[idx]
+        key_at = line.index("that:")
+        next unless key_at && line[0...key_at].strip.empty?
+        rest = line[(key_at + 5)..]
+        unless rest.strip.empty?
+          column = key_at + 5 + (rest.size - rest.lstrip.size) + 1
+          return ErrorBlock.origin_context(path, idx + 1, column)
+        end
+
+        count = 0
+        ((idx + 1)...lines.size).each do |item_idx|
+          item_line = lines[item_idx]
+          stripped = item_line.strip
+          next if stripped.empty? || stripped.starts_with?('#')
+          break unless stripped.starts_with?("- ")
+          if count == index
+            dash = item_line.index("- ").not_nil!
+            item_rest = item_line[(dash + 2)..]
+            column = dash + 2 + (item_rest.size - item_rest.lstrip.size) + 1
+            return ErrorBlock.origin_context(path, item_idx + 1, column)
+          end
+          count += 1
+        end
+        return nil
+      end
+      nil
+    end
+
+    # Origin context of a set_fact mapping key named `key`: the key's own
+    # line/column inside the task, found by scanning the task's source
+    # lines for the key followed by ':' (a quoted key points at the
+    # opening quote, like real's per-key Origin).
+    private def self.set_fact_key_origin(task : Task, key : String) : String?
+      path = task.source_file
+      return nil unless path && task.source_line > 0 && File.file?(path)
+
+      lines = File.read_lines(path)
+      needle = "#{key}:"
+      ((task.source_line - 1)...lines.size).each do |idx|
+        line = lines[idx]
+        at = line.index(needle)
+        next unless at
+        prefix = line[0...at]
+        # only a mapping key: nothing but whitespace/quotes before it
+        stripped = prefix.strip
+        next unless stripped.empty? || (stripped.size == 1 && {"'", '"'}.includes?(stripped))
+        column = stripped.empty? ? at + 1 : at
+        return ErrorBlock.origin_context(path, idx + 1, column)
+      end
+      nil
+    end
+
+    # The Origin of a task param's VALUE (the position real's
+    # AnsibleActionFail obj= attaches as the failing event's source
+    # context - e.g. add_host's `groups: 5` points at the 5, column of
+    # the value, not the key). Same best-effort text scan as
+    # set_fact_key_origin above, but the caret lands on the first
+    # non-space character after `key:`.
+    private def self.task_param_value_origin(task : Task, key : String) : String?
+      path = task.source_file
+      return nil unless path && task.source_line > 0 && File.file?(path)
+
+      lines = File.read_lines(path)
+      needle = "#{key}:"
+      ((task.source_line - 1)...lines.size).each do |idx|
+        line = lines[idx]
+        at = line.index(needle)
+        next unless at
+        prefix = line[0...at]
+        # only a mapping key: nothing but whitespace/quotes before it
+        stripped = prefix.strip
+        next unless stripped.empty? || (stripped.size == 1 && {"'", '"'}.includes?(stripped))
+        col = at + needle.size
+        while col < line.size && line[col] == ' '
+          col += 1
+        end
+        return ErrorBlock.origin_context(path, idx + 1, col + 1)
+      end
+      nil
+    end
+
+    private def self.error_origin_context(task : Task) : String?
+      path = task.source_file
+      return nil unless path && task.source_line > 0
+      ErrorBlock.origin_context(path, task.source_line, task.source_col > 0 ? task.source_col : nil)
+    end
+
+    # The cause chain real ansible-core 2.19 builds for each failure
+    # class, as an ErrorBlock event tree rooted at the task-level
+    # AnsibleTaskError ("Task failed."):
+    #
+    # - template (its action plugin re-raises the loader's file-not-found
+    #   inside `except` without `raise ... from`): the two-segment
+    #   handling chain - live-verified against 2.19.11.
+    # - fail/assert (action-level failures): "Action failed." + the
+    #   result message.
+    # - copy's controller-side src miss (its action raises
+    #   `AnsibleActionFail(result=result) from ex` with an empty message,
+    #   so the type name becomes the middle segment): collapsed chain
+    #   carrying real's exact wording.
+    # - every other module-level failure: "Module failed." + the result
+    #   message (the module API's own wrapper), collapsed.
+    private def self.task_error_chain(module_name : String?, msg : String, origin : String) : ErrorBlock::Node
+      root = ErrorBlock::Node.new("Task failed.", source_context: origin)
+
+      # set_fact's strict cacheable: conversion failure (a plain
+      # convert_bool TypeError - no result contribution, no handling
+      # chain): the fatal msg is the whole collapsed-chain brief and the
+      # block is the single collapsed segment carrying the raw error.
+      if msg.starts_with?("Task failed: The value '") &&
+         msg.includes?(" is not a valid boolean. Valid booleans include: ") &&
+         module_name.try { |name| name.split(".").last } == "set_fact"
+        return root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(msg["Task failed: ".size..]))
+      end
+
+      # An argspec-validation failure we emitted has real's own chain
+      # shape, which differs from every other failure class: module-level
+      # validation (the generated spec table) is the generic collapsed
+      # "Module failed." chain - this matters for template:, whose usual
+      # two-segment handling chain would wrongly duplicate the message -
+      # while action-only directives (debug/assert/fail/...) fail with
+      # NO middle segment at all.
+      if kind = module_name.try { |name| ArgspecValidator.failure_kind?(name, msg) }
+        case kind
+        when :action
+          return root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(msg))
+        else
+          return root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new("Module failed.").with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(msg)))
+        end
+      end
+
+      short = module_name.try { |name| name.split(".").last }
+      case short
+      when "template"
+        # real's template action plugin raises AnsibleActionFail
+        # directly for every arg-validation failure (state/src+dest/
+        # newline_sequence) - a bare raise, no exception context, so
+        # real's renderer COLLAPSES the chain into one segment. Only the
+        # _find_needle failure is re-raised inside `except` (its
+        # AnsibleFileNotFound becomes the __context__), producing the
+        # two-segment handling chain (live-verified against 2.19.11:
+        # newline_sequence: 15 collapses, a missing relative src does
+        # not).
+        if msg.starts_with?("Could not find or access '")
+          root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(msg).with_chain(ErrorBlock::HANDLING, false, ErrorBlock::Node.new(msg)))
+        else
+          root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(msg))
+        end
+      when "set_fact"
+        # real's set_fact action plugin raises AnsibleActionFail
+        # directly (no key/value pairs) - bare action-level failure,
+        # collapsed chain, no middle segment.
+        root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(msg))
+      when "unarchive"
+        # real's unarchive action raises a non-contributing AnsibleError
+        # for a controller-side src miss (live-verified: the fatal msg
+        # carries the "Task failed: " brief prefix itself and the block
+        # is the single collapsed segment).
+        inner = msg.starts_with?("Task failed: ") ? msg["Task failed: ".size..] : msg
+        root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(inner))
+      when "script"
+        if msg.starts_with?("Could not find or access '")
+          # script:'s controller-side src miss: real re-raises the
+          # loader's file-not-found inside `except` - the same two-segment
+          # handling chain as template's (live-verified against 2.19.11).
+          root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(msg).with_chain(ErrorBlock::HANDLING, false, ErrorBlock::Node.new(msg)))
+        else
+          root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new("Module failed.").with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(msg)))
+        end
+      when "fail", "assert"
+        root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new("Action failed.").with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(msg)))
+      else
+        # copy:'s controller-side src miss (both the remote-host variant,
+        # whose fatal msg carries the "Task failed: " brief prefix, and
+        # the local-connection variant, whose fatal msg carries the
+        # "Unexpected AnsibleActionFail error: " prefix itself - both
+        # live-verified): the chain is the collapsed
+        # "Unexpected AnsibleActionFail error." shape carrying real's
+        # full not-found text (now including the Searched-in list).
+        if (msg.starts_with?("Task failed: Could not find or access '") ||
+           msg.starts_with?("Unexpected AnsibleActionFail error: Could not find or access '")) &&
+           msg.includes?("see the remote_src option")
+          not_found = msg.sub(/\A(?:Task failed: |Unexpected AnsibleActionFail error: )/, "")
+          root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new("Unexpected AnsibleActionFail error.").with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(not_found)))
+        elsif module_name.try(&.ends_with?(".copy")) &&
+              {"src and content are mutually exclusive", "src (or content) is required", "dest is required"}.includes?(msg)
+          # copy's action-level src/content conflict (raised before
+          # argspec validation, ordering live-verified against 2.19.11):
+          # real's chain is the action-level "Action failed." shape.
+          root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new("Action failed.").with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(msg)))
+        else
+          root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new("Module failed.").with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(msg)))
+        end
       end
     end
 
@@ -392,20 +824,42 @@ module Krikri
     # key from the callback-visible result, recursively
     # (executor/task_result.py's _IGNORE + vars/clean.py's
     # strip_internal_keys).
-    private def self.clean_for_display(value : JSON::Any) : JSON::Any
+    private def self.clean_for_display(value : JSON::Any, top_level : Bool = true) : JSON::Any
       case raw = value.raw
       when Hash
         cleaned = Hash(String, JSON::Any).new
         raw.each do |key, v|
-          next if key == "failed" || key == "skipped" || key.starts_with?("_ansible_")
-          cleaned[key] = clean_for_display(v)
+          # `failed`/`skipped` only leave the TOP-level result (a registered
+          # skipped result printed via debug var: keeps its nested `skipped`)
+          next if top_level && (key == "failed" || key == "skipped" || key == "exception")
+          next if key.starts_with?("_ansible_")
+          cleaned[key] = clean_for_display(v, false)
         end
         JSON::Any.new(cleaned)
       when Array
-        JSON::Any.new(raw.map { |item| clean_for_display(item) })
+        JSON::Any.new(raw.map { |item| clean_for_display(item, false) })
       else
         value
       end
+    end
+
+    # Real ansible's CallbackBase._clean_results for a debug action, run
+    # before the verbose dump: a msg: result keeps ONLY msg (plus keys
+    # real's own pipeline strips later - failed/skipped/_ansible_* are
+    # already gone via clean_for_display), a var: result additionally
+    # drops the _hide_in_debug bookkeeping keys. clean_for_display must
+    # run first - it strips exactly the keys _dump_results would.
+    private def self.debug_clean_result(result : JSON::Any) : JSON::Any
+      cleaned = clean_for_display(result)
+      if h = cleaned.as_h?
+        if result["msg"]?
+          h.select! { |key, _| {"msg", "exception", "warnings", "deprecations"}.includes?(key) || key.starts_with?('_') }
+        else
+          ["changed", "failed", "skipped", "invocation", "skip_reason",
+           "ansible_loop_var", "ansible_index_var", "ansible_loop"].each { |key| h.delete(key) }
+        end
+      end
+      cleaned
     end
 
     # _dump_results(indent=4, sort_keys=True) - real minimal-callback JSON
@@ -571,7 +1025,12 @@ module Krikri
       end
     end
 
-    # Show recap of all host results
+    # Show recap of all host results, matching real ansible-playbook's
+    # v2_playbook_on_stats byte-for-byte: host column padded to 26 plain
+    # (37 when colorized, padding applied AROUND the ANSI-wrapped name
+    # the way real's `%-37s` does), then " : ", then the seven counters
+    # each shaped `lead=%-4s` and joined with single spaces - so every
+    # counter carries trailing padding, including the last one.
     def self.show_recap(hosts : Array(Host), results : Hash(String, Hash(String, Int32))) : Nil
       # Sorted by host name, matching real ansible-playbook - this used
       # to print in inventory order, so a recap for db1/web1/web2 came
@@ -587,79 +1046,51 @@ module Krikri
           "ok" => 0, "changed" => 0, "unreachable" => 0, "failed" => 0, "skipped" => 0, "rescued" => 0, "ignored" => 0,
         }
 
-        status_parts = [] of String
-
-        # Real ansible-playbook's own recap ALWAYS prints all 7 counters,
-        # in this exact order, even when a given counter is 0 - never
-        # conditionally omitted. Verified directly against a real
-        # ansible-playbook run: `ok=44   changed=6    unreachable=0
-        # failed=0    skipped=5    rescued=0    ignored=0`. This recap
-        # used to omit `skipped=`/`rescued=`/`ignored=` entirely whenever
-        # they were 0, and never printed `unreachable=` at all (no key
-        # for it existed in the stats hash) - a purely cosmetic
-        # difference (the underlying pass/fail/skip behavior always
-        # matched), but one that made an otherwise byte-identical recap
-        # diff from real Ansible on every single run. Found repeatedly
-        # across benchmark rounds (buluma.openssl, geerlingguy.helm,
-        # robertdebock.types) and never fixed in one place before.
-
-        # OK count (green)
-        status_parts << "ok=#{stats["ok"]}".colorize(:green).to_s
-
-        # Changed count (yellow if any)
-        if stats["changed"] > 0
-          status_parts << "changed=#{stats["changed"]}".colorize(:yellow).to_s
-        else
-          status_parts << "changed=#{stats["changed"]}".colorize(:green).to_s
-        end
-
-        # Unreachable count (red if any) - always printed; this engine
-        # doesn't yet distinguish a genuinely unreachable host from an
-        # ordinary task failure (see KNOWN_MISSING.md), so this is
-        # currently always 0, matching what's actually true today.
         unreachable = stats["unreachable"]? || 0
-        if unreachable > 0
-          status_parts << "unreachable=#{unreachable}".colorize(:red).to_s
-        else
-          status_parts << "unreachable=#{unreachable}".colorize(:green).to_s
-        end
-
-        # Failed count (red if any)
-        if stats["failed"] > 0
-          status_parts << "failed=#{stats["failed"]}".colorize(:red).to_s
-        else
-          status_parts << "failed=#{stats["failed"]}".colorize(:green).to_s
-        end
-
-        # Skipped count (cyan if any, green at 0 - always printed)
         skipped = stats["skipped"]? || 0
-        if skipped > 0
-          status_parts << "skipped=#{skipped}".colorize(:cyan).to_s
-        else
-          status_parts << "skipped=#{skipped}".colorize(:green).to_s
-        end
-
-        # Rescued count (yellow if any, green at 0 - always printed) -
-        # block: failures recovered by rescue:
         rescued = stats["rescued"]? || 0
-        if rescued > 0
-          status_parts << "rescued=#{rescued}".colorize(:yellow).to_s
-        else
-          status_parts << "rescued=#{rescued}".colorize(:green).to_s
-        end
-
-        # Ignored count (yellow if any, green at 0 - always printed) -
-        # tasks that failed but were caught by ignore_errors:, matching
-        # real ansible-playbook's own ignored=N field (see #update_stats
-        # for the increment logic).
         ignored = stats["ignored"]? || 0
-        if ignored > 0
-          status_parts << "ignored=#{ignored}".colorize(:yellow).to_s
-        else
-          status_parts << "ignored=#{ignored}".colorize(:green).to_s
+
+        # Real's colorize(lead, num, color) shapes `lead=%-4s` and colors
+        # the WHOLE field only when num != 0 (zero counters stay plain
+        # even on a tty). rescued shares ok's green, ignored shares
+        # changed's warning color - both per real's own v2_playbook_on_stats.
+        counters = [
+          {"ok", stats["ok"], :green},
+          {"changed", stats["changed"], :yellow},
+          {"unreachable", unreachable, :red},
+          {"failed", stats["failed"], :red},
+          {"skipped", skipped, :cyan},
+          {"rescued", rescued, :green},
+          {"ignored", ignored, :yellow},
+        ] of {String, Int32, Symbol}
+
+        parts = counters.map do |label, num, color|
+          field = "#{label}=#{num}".ljust(label.size + 5)
+          if num != 0 && Colorize.enabled?
+            field.colorize(color).to_s
+          else
+            field
+          end
         end
 
-        puts "#{host.name.ljust(20)} : #{status_parts.join("  ")}"
+        host_field = if Colorize.enabled?
+                       # Real's hostcolor colored branch pads the ANSI-wrapped name to
+                       # 37 (26 visible + 11 for the escape bytes); failure or
+                       # unreachability wins over changed, which wins over plain ok.
+                       color = if stats["failed"] != 0 || unreachable != 0
+                                 :red
+                               elsif stats["changed"] != 0
+                                 :yellow
+                               else
+                                 :green
+                               end
+                       host.name.colorize(color).to_s.ljust(37)
+                     else
+                       host.name.ljust(26)
+                     end
+
+        puts "#{host_field} : #{parts.join(" ")}"
       end
     end
 

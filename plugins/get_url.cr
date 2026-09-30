@@ -57,6 +57,12 @@ module Krikri
       checksum = resolved_checksum(url)
       return checksum if checksum.is_a?(PluginResult)
 
+      # urllib's ValueError for a scheme-less URL, surfaced through fetch_url's
+      # info dict (live-verified: no dest/elapsed keys on this failure)
+      unless url.matches?(/\A[A-Za-z][A-Za-z0-9+.\-]*:/)
+        return PluginResult.new(changed: false, failed: true, msg: "unknown url type: '#{url}'", status: -1, url: url)
+      end
+
       force = true?(@params["force"]?, default: false)
 
       # Real get_url's pre-download dest-existence check (and its
@@ -111,6 +117,15 @@ module Krikri
     private def resolved_checksum(url : String) : {String, String}? | PluginResult
       checksum_param = @params["checksum"]?
       return nil if checksum_param.nil? || checksum_param.strip.empty?
+
+      # get_url.py: `algorithm, checksum = checksum.split(':', 1)` -> ValueError
+      # -> fail_json(msg=..., **result) with the module's initial result dict
+      unless checksum_param.includes?(':')
+        return PluginResult.new(changed: false, failed: true,
+          msg: "The checksum parameter has to be in format <algorithm>:<checksum>",
+          checksum_dest: nil, checksum_src: nil,
+          dest: expand_tilde(@params["dest"]? || ""), elapsed: 0, url: url)
+      end
 
       begin
         parse_checksum(checksum_param, url)

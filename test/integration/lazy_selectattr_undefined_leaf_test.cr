@@ -39,6 +39,11 @@ ensure
 end
 
 private def playbook_for(condition : String) : String
+  # The msg is built by concatenation, never written literally: real
+  # ansible-core 2.19.11 (like krikri) echoes the playbook's own source
+  # lines in a failing task's Origin block, so a literal "TASK-RAN" in
+  # the YAML would make the wont_include("TASK-RAN") assertions below
+  # match the error display of a correctly-FAILED task.
   <<-YAML
     - hosts: localhost
       connection: local
@@ -50,7 +55,7 @@ private def playbook_for(condition : String) : String
       tasks:
         - name: gated
           ansible.builtin.debug:
-            msg: "TASK-RAN"
+            msg: "{{ 'TASK-' ~ 'RAN' }}"
           when: #{condition}
     YAML
 end

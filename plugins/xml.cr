@@ -127,7 +127,7 @@ module Krikri
       {"count", "print_match", "pretty_print", "backup", "insertbefore", "insertafter"}.each do |bool_param|
         if (val = @params[bool_param]?) && !valid_bools.has_key?(val.downcase)
           return PluginResult.new(changed: false, failed: true,
-            msg: "argument '#{bool_param}' is of type <class 'str'> and we were unable to convert to bool: The value '#{val}' is not a valid boolean.  Valid booleans include: 0, 1, 'f', 'on', 'n', 't', '1', 'false', 'y', 'true', 'off', 'yes', '0', 'no'")
+            msg: "argument '#{bool_param}' is of type <class 'str'> and we were unable to convert to bool: The value '#{val}' is not a valid boolean. Valid booleans include: 0, 1, 'f', 'on', 'n', 't', '1', 'false', 'y', 'true', 'off', 'yes', '0', 'no'")
         end
       end
 

@@ -9,7 +9,7 @@ private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-ex
 # VARIABLE NAME key - never under msg (podman-diff debug_edge_cases
 # D1/D4: a follow-up `d.msg | default('none')` prints 'none' on real
 # for both a defined and an undefined var, and an unresolvable var:
-# succeeds with the literal string "VARIABLE IS NOT DEFINED!" under
+# succeeds with the inline marker "<< error 1 - 'x' is undefined >>" (2.19.11; older releases printed "VARIABLE IS NOT DEFINED!") under
 # that same key). A verbosity-skipped debug's registered result
 # carries skipped but NO msg key either (D3).
 describe "debug: var result key" do
@@ -40,7 +40,7 @@ describe "debug: var result key" do
     File.delete(playbook) if playbook && File.exists?(playbook)
   end
 
-  it "registers an undefined var as the VARIABLE IS NOT DEFINED! string and still succeeds" do
+  it "registers an undefined var as real 2.19.11's inline error marker and still succeeds" do
     playbook = File.tempname("debug-var-undefined", ".yml")
     File.write(playbook, <<-YAML)
       - name: repro
@@ -61,7 +61,7 @@ describe "debug: var result key" do
     status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
 
     status.success?.must_equal(true)
-    output.to_s.must_include("R failed=False msg=none val=VARIABLE IS NOT DEFINED!")
+    output.to_s.must_include("R failed=False msg=none val=<< error 1 - 'krikri_spec_undefined_var_zzz' is undefined >>")
   ensure
     File.delete(playbook) if playbook && File.exists?(playbook)
   end

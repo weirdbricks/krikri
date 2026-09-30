@@ -1,4 +1,6 @@
 require "json"
+require "../py_dump"
+require "../py_set"
 require "uri"
 require "openssl/digest"
 require "uuid"
@@ -344,7 +346,7 @@ module Krikri
       # to_json(**kwargs) - Python json.dumps() shape: default ", "/
       # ": " item/key separators, not Crystal's compact JSON::Builder.
       def self.to_json(value : JSON::Any) : String
-        String.build { |io| python_json_dump(value, io) }
+        Krikri::PyDump.json(value)
       end
 
       def self.python_json_dump(value : JSON::Any, io : IO) : Nil
@@ -418,15 +420,38 @@ module Krikri
       # not naive concatenation). Equality is by canonical JSON form so
       # nested dicts/arrays compare structurally.
       def self.union(a : Array(JSON::Any), b : Array(JSON::Any)) : Array(JSON::Any)
+        # Real: list(set(a) | set(b)). For plain integer lists CPython's set
+        # order is deterministic, so reproduce it exactly (see PySet); any
+        # other element type keeps first-seen order (string sets are
+        # hash-randomized per real process and cannot be matched).
+        if (ia = plain_int_list(a)) && (ib = plain_int_list(b))
+          return Krikri::PySet.union(ia, ib).map { |n| JSON::Any.new(n) }
+        end
         (a + b).uniq(&.to_json)
       end
 
+      private def self.plain_int_list(list : Array(JSON::Any)) : Array(Int64)?
+        ints = Array(Int64).new(list.size)
+        list.each do |item|
+          raw = item.raw
+          return nil unless raw.is_a?(Int64)
+          ints << raw
+        end
+        ints
+      end
+
       def self.intersect(a : Array(JSON::Any), b : Array(JSON::Any)) : Array(JSON::Any)
+        if (ia = plain_int_list(a)) && (ib = plain_int_list(b))
+          return Krikri::PySet.intersect(ia, ib).map { |n| JSON::Any.new(n) }
+        end
         bset = b.to_set
         a.uniq.select { |item| bset.includes?(item) }
       end
 
       def self.difference(a : Array(JSON::Any), b : Array(JSON::Any)) : Array(JSON::Any)
+        if (ia = plain_int_list(a)) && (ib = plain_int_list(b))
+          return Krikri::PySet.difference(ia, ib).map { |n| JSON::Any.new(n) }
+        end
         bset = b.to_set
         a.uniq.reject { |item| bset.includes?(item) }
       end

@@ -1042,6 +1042,22 @@ module Krikri
                          delegate_hosts[idx] = item_exec_host if task.delegate_to
 
                          item_label = item_label_for(task, item, vars_context, host)
+                         # A when:-false item defers its "skipping:" line to
+                         # finish_looped_task like the batched path does: the
+                         # executed items are displayed there too, so printing the
+                         # skip inline here would put every skip ahead of them
+                         # (real prints in iteration order).
+                         if task.when_condition
+                           passes = begin
+                             when_passes?(task, vars_context, host, item_label: item_label, defer_stats: true, defer_display: true)
+                           rescue WhenEvaluationError
+                             true # execute_task_once re-evaluates and turns the raise into a real failed result
+                           end
+                           unless passes
+                             skipped_labels[idx] = item_label
+                             next nil
+                           end
+                         end
                          result = if (until_condition = task.until_condition) && !resolve_task_check_mode(task, vars_context)
                                     # Real Ansible retries each loop item
                                     # independently under until:/retries: - the
@@ -1180,7 +1196,7 @@ module Krikri
           # a real failed result here (not a silent skip) lets
           # finish_looped_task's aggregation correctly count this as
           # failed=1, not skipped=1.
-          item_results[idx] = when_error_result(ex)
+          item_results[idx] = when_error_result(ex, task)
           next
         end
 
@@ -1227,6 +1243,15 @@ module Krikri
       any_changed = false
       any_failed = false
       any_unreachable = false
+      # True when at least one executed item failed at the TASK level (a
+      # when:-evaluation failure routed through when_error_result, whose
+      # marker ResultDisplay consumes) rather than at the module level -
+      # real 2.19.11 prints the aggregate fatal for that shape only:
+      # module item failures show per-item lines with no trailing fatal,
+      # while when-failed items end with
+      # `fatal: [host]: FAILED! => {"msg": "One or more items failed"}`
+      # (live-verified both ways).
+      any_when_failed = false
 
       executed_count = 0
       # The base context (everything except the per-item bindings) is
@@ -1259,7 +1284,7 @@ module Krikri
         if (sk_lbl = skipped_labels[idx]?)
           connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
           shown = resolve_task_no_log(task, base_vars_context) ? "(censored due to no_log)" : sk_lbl
-          puts "skipping: [#{connection_host}] => (item=#{shown})".colorize(:cyan)
+          puts "skipping: [#{connection_host}] => (item=#{shown}) ".colorize(:cyan)
           next
         end
 
@@ -1325,7 +1350,7 @@ module Krikri
           # Ansible prints `(item=(censored due to no_log))` - the item
           # can itself be the secret)
           item_shown = resolve_task_no_log(task, base_vars_context) ? "(censored due to no_log)" : item_label
-          puts "skipping: [#{connection_host}] => (item=#{item_shown})".colorize(:cyan)
+          puts "skipping: [#{connection_host}] => (item=#{item_shown}) ".colorize(:cyan)
         else
           executed_count += 1
           merge_ansible_facts(fact_hosts.try(&.[idx]) || host, result, task.module_name.ends_with?("set_fact"))
@@ -1335,10 +1360,11 @@ module Krikri
           any_changed ||= changed
           any_failed ||= failed
           any_unreachable ||= unreachable_task_result?(result)
+          any_when_failed ||= failed && result["_ansible_task_error_msg_only"]?.try(&.as_bool) == true
 
           item_delegate = delegate_hosts.try(&.[idx])
           delegate_target = item_delegate && item_delegate != host ? item_delegate.connection_host : nil
-          ResultDisplay.display_result(host, result, @diff_mode, item_label: item_label, ignore_errors: resolve_task_ignore_errors(task, base_vars_context), no_log: resolve_task_no_log(task, base_vars_context), delegate_target: delegate_target)
+          ResultDisplay.display_result(host, result, @diff_mode, item_label: item_label, ignore_errors: resolve_task_ignore_errors(task, base_vars_context), no_log: resolve_task_no_log(task, base_vars_context), module_name: task.module_name, delegate_target: delegate_target, source_task: task, loop_item: item, loop_var_name: task.loop_var)
         end
 
         result_hash = result.as_h.dup
@@ -1354,6 +1380,11 @@ module Krikri
         # Found benchmarking githubixx.containerd's own "Set
         # modprobe_location" (`loop_control: { loop_var: path }` +
         # `modprobe_locations.results | ... | map(attribute='path')`).
+        result_hash["ansible_loop_var"] = JSON::Any.new(task.loop_var || "item")
+        if index_var = task.index_var
+          result_hash["ansible_index_var"] = JSON::Any.new(index_var)
+          result_hash[index_var] = JSON::Any.new(idx.to_i64)
+        end
         if loop_var = task.loop_var
           result_hash[loop_var] = item
         else
@@ -1398,6 +1429,13 @@ module Krikri
             "failed"  => JSON::Any.new(any_failed),
           }.to_json)
           ResultDisplay.update_stats(@results[host.name], aggregate_result, resolve_task_ignore_errors(task, base_vars_context))
+          # A when:-failed item's aggregate: real closes the item list
+          # with the task-level fatal (see any_when_failed) BEFORE the
+          # ...ignoring line.
+          if any_when_failed
+            connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
+            puts "fatal: [#{connection_host}]: FAILED! => {\"msg\": \"One or more items failed\"}".colorize(:red)
+          end
           # A looped task with ignore_errors: that had at least one item
           # fail prints a single bare `...ignoring` after the per-item
           # lines (real prints it once for the whole task, not per item).
@@ -1427,9 +1465,13 @@ module Krikri
           if any_failed
             aggregate["failed"] = JSON::Any.new(true)
             aggregate["msg"] = JSON::Any.new("One or more items failed")
+          elsif executed_count == 0 && !results.empty?
+            aggregate["msg"] = JSON::Any.new("All items skipped")
+            aggregate["skipped"] = JSON::Any.new(true)
           else
             aggregate["msg"] = JSON::Any.new("All items completed")
           end
+          aggregate["skipped"] = JSON::Any.new(false) if executed_count > 0
           @registered_vars[host.name][register_name] = JSON::Any.new(aggregate)
           @hv_generation += 1
         end
@@ -1490,6 +1532,7 @@ module Krikri
         end
 
         substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
+        maybe_conditional_delimiters_deprecation(task, until_condition, "until", vars_context)
         substituted_condition = substitutor.substitute(until_condition)
         break if ConditionalEvaluator.evaluate(substituted_condition, vars_context)
 
@@ -1519,10 +1562,10 @@ module Krikri
       if @adhoc
         ResultDisplay.display_adhoc_result(host, result, @diff_mode, module_name: task.module_name)
       else
-        ResultDisplay.display_result(host, result, @diff_mode, ignore_errors: resolve_task_ignore_errors(task, vars_context), no_log: resolve_task_no_log(task, vars_context))
+        ResultDisplay.display_result(host, result, @diff_mode, ignore_errors: resolve_task_ignore_errors(task, vars_context), no_log: resolve_task_no_log(task, vars_context), source_task: task)
       end
       ResultDisplay.update_stats(@results[host.name], result, resolve_task_ignore_errors(task, vars_context))
-      halt_if_failed(task, host, failed)
+      halt_if_failed(task, host, failed, result)
     end
 
     # Prints and counts each of *tasks* as individually skipped - used

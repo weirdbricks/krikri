@@ -153,4 +153,40 @@ describe "ignore_errors: on an ordinary (non-when-related) task failure" do
   ensure
     File.delete(playbook) if playbook && File.exists?(playbook)
   end
+
+  # Real ansible-core 2.19 tracks where a conditional's tested value was
+  # DEFINED and labels the non-boolean error with that position:
+  #   "Conditional result (True) was derived from value of type 'str' at
+  #   '<playbook>:<line>:<col>'. Conditionals must have a boolean result."
+  # krikri covers the narrow bare-variable shape: `when: some_var` where
+  # some_var is defined in the play's own vars: - the position comes from
+  # YamlSourceMap's libyaml event pass (the same one that labels task
+  # origins). Live-verified against 2.19.11.
+  it "labels a non-boolean conditional error with the variable's definition position" do
+    playbook = File.tempname("when-value-origin", ".yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          bogus: undefined_var | selectattr('nope')
+        tasks:
+          - name: conditional fails
+            ansible.builtin.debug:
+              msg: never
+            when: bogus
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+
+    status.success?.must_equal(false)
+    status.exit_code.must_equal(2)
+    # vars: bogus sits on line 5, its value starting at column 12.
+    output.to_s.must_include("was derived from value of type 'str' at '#{File.expand_path(playbook)}:5:12'", output.to_s)
+    # The clause appears in the block AND the fatal dump.
+    output.to_s.must_include(%({"msg": "Task failed: Conditional result (True) was derived from value of type 'str' at '#{File.expand_path(playbook)}:5:12'. Conditionals must have a boolean result."}), output.to_s)
+  ensure
+    File.delete(playbook) if playbook && File.exists?(playbook)
+  end
 end

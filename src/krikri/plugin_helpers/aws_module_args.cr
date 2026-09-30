@@ -574,7 +574,7 @@ module Krikri
       def self.bool_type_error(name : String, value : JSON::Any) : Krikri::PluginResult
         PluginResult.new(changed: false, failed: true,
           msg: "argument '#{name}' is of type #{class_repr(python_class(value))} and we were unable to convert to bool: " \
-               "The value '#{sub_scalar_text(value)}' is not a valid boolean.  " \
+               "The value '#{sub_scalar_text(value)}' is not a valid boolean. " \
                "Valid booleans include: #{AnsibleArgValidation::BOOLEANS_REPR.join(", ")}")
       end
 
@@ -587,7 +587,7 @@ module Krikri
       private def self.sub_bool_type_error(param : String, name : String, value : JSON::Any) : Krikri::PluginResult
         PluginResult.new(changed: false, failed: true,
           msg: "argument '#{name}' is of type #{class_repr(python_class(value))} found in '#{param}'. and we were unable to convert to bool: " \
-               "The value '#{sub_scalar_text(value)}' is not a valid boolean.  " \
+               "The value '#{sub_scalar_text(value)}' is not a valid boolean. " \
                "Valid booleans include: #{AnsibleArgValidation::BOOLEANS_REPR.join(", ")}")
       end
 

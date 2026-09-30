@@ -23,11 +23,16 @@ module Krikri
       create = @params["create"]? ? true?(@params["create"]) : true
       exclusive = @params["exclusive"]? ? true?(@params["exclusive"]) : true
       no_extra_spaces = true?(@params["no_extra_spaces"]?)
+      allow_no_value = true?(@params["allow_no_value"]?)
       check_mode = true?(@params["_ansible_check_mode"]?)
 
       merged = merged_values(value, values_param)
       return merged if merged.is_a?(PluginResult)
       values = merged
+
+      if err = value_required_failure(values, state, allow_no_value)
+        return err
+      end
 
       if err = validate_inputs(path, section, option, values, state, create)
         return err
@@ -36,7 +41,7 @@ module Krikri
       original = File.exists?(path) ? File.read(path) : ""
       lines = initial_lines(original)
 
-      new_lines, changed, branch_msg = apply(lines, section, option, values, state, create, exclusive, no_extra_spaces)
+      new_lines, changed, branch_msg = apply(lines, section, option, values, state, create, exclusive, no_extra_spaces, allow_no_value)
 
       finish_execute(path, original, new_lines, changed, branch_msg, check_mode)
     end
@@ -137,27 +142,37 @@ module Krikri
 
     # `values` arrives as the JSON-stringified list form (params are
     # flattened to strings by BasePlugin); same parse convention as
-    # rhsm_repository.cr's name list. A non-list or malformed value is
-    # reported as nil so validate_inputs produces the value-required
-    # failure rather than a raw JSON parse crash.
+    # rhsm_repository.cr's name list. Real's type=list conversion also
+    # accepts a plain string (comma-split, check_type_list) and a bare
+    # number (single-element list), so those wire shapes map to lists
+    # too; a genuinely malformed container value stays nil (the argspec
+    # layer reports that shape's own failure before the plugin runs).
     private def parse_values_list(raw : String) : Array(String)?
-      parsed = JSON.parse(raw)
-      return nil unless parsed.as_a?
-      parsed.as_a.map(&.as_s)
+      parsed = JSON.parse(raw) rescue nil
+      if parsed
+        return parsed.as_a.map(&.as_s) if parsed.as_a?
+        return parsed.as_s.split(",") if parsed.as_s?
+        return nil
+      end
+      raw.split(",")
     rescue
       nil
     end
 
+    # Real main()'s own guard, BEFORE any file access:
+    # `if state == 'present' and not allow_no_value and value is None
+    # and not values` - note there is NO option requirement (a bare
+    # path/section call fails too) and an explicitly EMPTY values list
+    # fails the same way. allow_no_value=True skips the guard entirely
+    # and lets do_ini manage bare (no-value) option lines.
+    private def value_required_failure(values : Array(String)?, state : String, allow_no_value : Bool) : PluginResult?
+      return nil unless state == "present" && !allow_no_value && (values.nil? || values.empty?)
+      PluginResult.new(changed: false, failed: true,
+        msg: "Parameter 'value(s)' must be defined if state=present and allow_no_value=False.")
+    end
+
     private def validate_inputs(path : String, section : String?, option : String?, values : Array(String)?,
                                 state : String, create : Bool) : PluginResult?
-      # Real main(): `if state == 'present' and not allow_no_value and
-      # value is None and not values` - an EMPTY values list fails the
-      # same required check as an absent one (allow_no_value is not
-      # supported here at all, so the condition reduces to this).
-      if state == "present" && option && (values.nil? || values.try(&.empty?))
-        return PluginResult.new(changed: false, failed: true, msg: "Value must be set when state=present and option is defined")
-      end
-
       unless File.exists?(path) || create
         return PluginResult.new(changed: false, failed: true, msg: "Destination #{path} does not exist!")
       end
@@ -241,9 +256,15 @@ module Krikri
     # `Storage: absent` task on a fresh journald.conf whose `#Storage=auto`
     # is still commented out - krikri-playbook used to delete the comment
     # and report changed where real Ansible reports ok).
-    private def option_line_index?(line : String, option : String, active_only : Bool = false) : Bool
+    private def option_line_index?(line : String, option : String, active_only : Bool = false, bare_ok : Bool = false) : Bool
+      # bare_ok mirrors real match_opt's `(=|$)` terminator: a bare
+      # `option` line with no `=` at all counts as a match (reachable
+      # only via the allow_no_value no-values path, which is the only
+      # place real itself ever rewrites bare option lines).
       match = if active_only
-                line.match(/^\s*([^=;#\s][^=]*?)\s*=/)
+                line.match(/^\s*([^=;#\s][^=]*?)\s*(=)/)
+              elsif bare_ok
+                line.match(/^\s*[#;]?\s*([^=;#\s][^=]*?)\s*(=|$)/)
               else
                 line.match(/^\s*[#;]?\s*([^=;#\s][^=]*?)\s*=/)
               end
@@ -256,7 +277,8 @@ module Krikri
     end
 
     private def apply(lines : Array(String), section : String?, option : String?, values : Array(String)?,
-                      state : String, create : Bool, exclusive : Bool, no_extra_spaces : Bool) : {Array(String), Bool, String?}
+                      state : String, create : Bool, exclusive : Bool, no_extra_spaces : Bool,
+                      allow_no_value : Bool = false) : {Array(String), Bool, String?}
       new_lines = lines.dup
       changed = false
       msg = nil
@@ -268,7 +290,7 @@ module Krikri
       block_end = find_block_end(new_lines, block_start)
 
       if option
-        option_changed, option_msg = apply_option(new_lines, option, values, state, block_start, block_end, exclusive, no_extra_spaces)
+        option_changed, option_msg = apply_option(new_lines, option, values, state, block_start, block_end, exclusive, no_extra_spaces, allow_no_value)
         if option_changed
           changed = true
           msg = option_msg
@@ -336,13 +358,35 @@ module Krikri
     # could absorb.
     private def apply_option(new_lines : Array(String), option : String, values : Array(String)?,
                              state : String, block_start : Int32, block_end : Int32,
-                             exclusive : Bool, no_extra_spaces : Bool) : {Bool, String?}
+                             exclusive : Bool, no_extra_spaces : Bool, allow_no_value : Bool = false) : {Bool, String?}
       # state=absent only ever matches ACTIVE (uncommented) option lines,
       # per real Ansible's hard-coded match_active_opt in its absent branch.
       active_only = state == "absent"
       matches = (block_start...block_end).select { |i| option_line_index?(new_lines[i], option, active_only) }
 
       if state == "present"
+        # allow_no_value=True with NO values at all: real do_ini's first
+        # loop rewrites the FIRST matching line (match_opt matches bare
+        # `option` lines too - `(=|$)`) to a bare `option` line and
+        # breaks, and its insertion pass adds a bare `option` line at the
+        # end of the section only when no bare line was seen. The
+        # exclusive-override and deletion passes are skipped entirely
+        # (they only run `and not allow_no_value`).
+        if (values.nil? || values.empty?) && allow_no_value
+          bare_matches = (block_start...block_end).select { |i| option_line_index?(new_lines[i], option, active_only, bare_ok: true) }
+          if first = bare_matches.first?
+            formatted = option
+            if new_lines[first] != formatted
+              new_lines[first] = formatted
+              return {true, "option changed"}
+            end
+            return {false, nil}
+          end
+          insert_at = section_insert_index(new_lines, block_start, block_end)
+          new_lines.insert(insert_at, option)
+          return {true, "option added"}
+        end
+
         # do_ini dedupes the values list (values_unique) before any of
         # its matching passes run.
         remaining = dedupe_values(values || [] of String)

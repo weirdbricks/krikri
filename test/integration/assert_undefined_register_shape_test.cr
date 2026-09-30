@@ -14,22 +14,19 @@ ensure
   File.delete(playbook) if playbook && File.exists?(playbook)
 end
 
-# The registered var for a CONDITIONAL-EVALUATION failure carries ONLY
-# failed+msg - no `changed` key - because the conditional failed before
-# any module ran. Live-verified against ansible-core 2.19 (bookworm
-# podman differential run): both `assert: that: undef == 1` and the
-# equivalent `when: undef == 1` register keys=['failed', 'msg'], so a
-# later task reading `<reg>.changed` hits a genuine undefined (real
-# Ansible's debug task there FAILS with "'dict object' has no attribute
-# 'changed'"), while an ordinary failing assertion (the module ran and
-# returned failed itself) still registers changed: false alongside
-# assertion/evaluated_to. krikri used to stamp changed: false onto every
-# conditional-error result (when_error_result, swallow_when_error, and
-# assert's own undefined/non-bool rescues), so the later task saw
-# changed=False where real Ansible errors - found via the podman-diff
-# assert_edge_cases fixture (A1).
+# The registered var for a CONDITIONAL-EVALUATION failure carries
+# changed=false+failed=true+msg in real ansible-core 2.19.11 (live-
+# verified: both `assert: that: undef == 1` and the equivalent
+# `when: undef == 1` read back .changed as False, and the fatal line
+# dumps {"changed": false, "msg": "Task failed: ..."}), while an
+# ordinary failing assertion (the module ran and returned failed
+# itself) also registers changed: false alongside assertion/
+# evaluated_to. An older 2.19 build showed a changed-less registered
+# var; 2.19.11 is the parity target. krikri used to stamp changed:
+# false onto every conditional-error result, then briefly un-stamped
+# it - the 2.19.11 shape is changed=false everywhere.
 describe "conditional-evaluation failure register shape" do
-  it "assert: that: with an undefined var registers no changed key" do
+  it "assert: that: with an undefined var registers changed=false" do
     status, output = run_playbook(<<-YAML)
       - hosts: localhost
         connection: local
@@ -45,11 +42,11 @@ describe "conditional-evaluation failure register shape" do
       YAML
 
     status.success?.must_equal(true)
-    output.must_include("A1 failed=True changed=undef")
-    output.wont_include("changed=False changed=undef")
+    output.must_include("A1 failed=True changed=False")
+    output.wont_include("changed=undef")
   end
 
-  it "when: with an undefined var registers no changed key" do
+  it "when: with an undefined var registers changed=false" do
     status, output = run_playbook(<<-YAML)
       - hosts: localhost
         connection: local
@@ -66,7 +63,7 @@ describe "conditional-evaluation failure register shape" do
       YAML
 
     status.success?.must_equal(true)
-    output.must_include("W1 failed=True changed=undef")
+    output.must_include("W1 failed=True changed=False")
   end
 
   it "an ordinary failing assertion still registers changed: false" do

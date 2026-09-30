@@ -270,7 +270,7 @@ module Krikri
     private def bool_type_error(param : String, raw : String) : PluginResult
       PluginResult.new(changed: false, failed: true,
         msg: "argument '#{param}' is of type <class 'str'> and we were unable to convert to bool: " \
-             "The value '#{raw}' is not a valid boolean.  Valid booleans include: #{BOOLEANS_REPR.join(", ")}")
+             "The value '#{raw}' is not a valid boolean. Valid booleans include: #{BOOLEANS_REPR.join(", ")}")
     end
 
     # check_type_dict semantics for a TOP-LEVEL dict param (errors get
@@ -398,7 +398,7 @@ module Krikri
       return nil if bool_convertible?(raw.as_s)
       PluginResult.new(changed: false, failed: true,
         msg: "argument 'push' is of type <class 'str'> found in '#{param}'. and we were unable to convert to bool: " \
-             "The value '#{raw.as_s}' is not a valid boolean.  Valid booleans include: #{BOOLEANS_REPR.join(", ")}")
+             "The value '#{raw.as_s}' is not a valid boolean. Valid booleans include: #{BOOLEANS_REPR.join(", ")}")
     end
 
     private def sub_choices(param : String, sub : Hash(String, JSON::Any)) : PluginResult?

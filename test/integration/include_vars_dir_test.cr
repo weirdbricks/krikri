@@ -189,10 +189,13 @@ describe "include_vars: with dir:" do
 end
 
 describe "include_vars: with malformed parameters" do
-  it "hard-stops the run when neither file:/path:/dir: is given" do
-    # 0.9.903 policy: an unimplemented/malformed include_vars: form
-    # must refuse the whole run, never silently lose the task behind a
-    # "Warning: Skipping task" line.
+  it "fails the task when neither file:/dir: is given" do
+    # Real ansible-core 2.19.11 (live-verified): a file/dir-less
+    # include_vars: is NOT a playbook-load abort - the action runs, its
+    # null source_file reaches _find_needle, the dataloader warns on
+    # stderr, and the task fails with the action's own result shape
+    # ("Could not find file on the Ansible Controller." + the empty
+    # ansible_facts/ansible_included_var_files keys), recap failed=1.
     status, output = run_playbook(<<-YAML)
       - name: malformed include_vars
         include_vars:
@@ -200,13 +203,71 @@ describe "include_vars: with malformed parameters" do
       YAML
 
     status.success?.must_equal(false)
-    output.to_s.must_include("include_vars: requires a file or dir")
+    output.to_s.must_include("[WARNING]: Invalid request to find a file that matches a \"null\" value")
+    output.to_s.must_include("Could not find file on the Ansible Controller.")
+    output.to_s.must_include("Task failed: Action failed: Unknown error.")
     output.to_s.wont_include("Warning: Skipping")
   end
 
-  it "hard-stops the run when file:-style and dir:-style arguments are mixed" do
-    # Real ansible-core: "You are mixing file only and dir only
-    # arguments, these are incompatible" - verified live against 2.19.4.
+  it "fails the task on an unknown argument like free-form" do
+    # Real ansible-core 2.19.11 (live-verified): the include_vars action's
+    # own argument loop rejects the FIRST unknown key at RUN time -
+    # "free-form is not a valid option in include_vars" - an ordinary
+    # failed task (fatal dump carries only changed + the wrapped msg),
+    # not a playbook-load abort. The generator's include_vars chaos shape
+    # is exactly this.
+    status, output = run_playbook(<<-YAML)
+      - name: unknown include_vars arg
+        include_vars:
+          free-form: lraeca
+          hash_behaviour: replace
+      YAML
+
+    status.success?.must_equal(false)
+    output.to_s.must_include("free-form is not a valid option in include_vars")
+    output.to_s.must_include("Task failed: free-form is not a valid option in include_vars")
+    output.to_s.wont_include("Warning: Skipping")
+  end
+
+  it "reports an unknown argument before the missing-file error" do
+    # Real's validate loop runs BEFORE the file lookup, so an unknown key
+    # wins even when no file/dir was given either.
+    status, output = run_playbook(<<-YAML)
+      - name: unknown arg wins
+        include_vars:
+          free-form: lraeca
+      YAML
+
+    status.success?.must_equal(false)
+    output.to_s.must_include("free-form is not a valid option in include_vars")
+    output.to_s.wont_include("Could not find file on the Ansible Controller.")
+  end
+
+  it "reports the alphabetically-first unknown argument, not the YAML-first one" do
+    # Real 2.19's chain templar rebuilds the task args mapping with a
+    # SORTED keys() iteration, so the include_vars action's
+    # first-invalid-key report comes out in alphabetical key order, not
+    # YAML order: `files_macthing:` written AFTER `free-form:` is still
+    # the one reported ("files_macthing" < "free-form"), whichever order
+    # the playbook lists them in (live-verified vs 2.19.11 both ways).
+    status, output = run_playbook(<<-YAML)
+      - name: sorted unknown arg
+        include_vars:
+          file: /nonexistent-krikri-test.yml
+          free-form: uexnfi
+          files_macthing: hnarks
+      YAML
+
+    status.success?.must_equal(false)
+    output.to_s.must_include("files_macthing is not a valid option in include_vars")
+    output.to_s.wont_include("free-form is not a valid option in include_vars")
+  end
+
+  it "fails the task when file:-style and dir:-style arguments are mixed" do
+    # Real ansible-core 2.19.11 (live-verified): the mixing rejection is
+    # the include_vars ACTION's own runtime check - an ordinary failed
+    # task ("You are mixing file only and dir only arguments, these are
+    # incompatible"), not a parse-time hard stop.
     status, output = run_playbook(<<-YAML)
       - name: mixed include_vars
         include_vars:

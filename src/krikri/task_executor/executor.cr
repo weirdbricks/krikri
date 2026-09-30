@@ -18,6 +18,7 @@ require "../ssh_manager"
 require "../custom_stats"
 require "../timing_profile"
 require "../fact_cache"
+require "../argspec_validator"
 require "../python_module_runner"
 require "random/secure"
 
@@ -44,10 +45,10 @@ module Krikri
   # 2.x-shaped comparison target, not a sub-1.0 one - reporting crystal's
   # own version here would make EVERY such min-version check fail
   # unconditionally, a worse outcome than picking one fixed real version.
-  # 2.19.4 matches the exact ansible-core release this project's own
+  # 2.19.11 matches the exact ansible-core release this project's own
   # benchmark rounds compare against (see CLAUDE.md/ROLES_TESTED.md).
   ANSIBLE_VERSION_MAGIC_VAR = JSON.parse(%({
-    "full": "2.19.4", "major": 2, "minor": 19, "revision": 4, "string": "2.19.4"
+    "full": "2.19.11", "major": 2, "minor": 19, "revision": 11, "string": "2.19.11"
   }))
 
   # TaskExecutor - Executes tasks on hosts
@@ -84,6 +85,8 @@ module Krikri
     # every host this project benchmarks against (Ubuntu/RHEL-family).
     getter reachable_unavailable_modules = Set(String).new
     # Track registered variables per host
+    # the when: expression that last evaluated False (for register's false_condition)
+    @last_false_condition : String? = nil
     @registered_vars : Hash(String, Hash(String, JSON::Any))
     # Handler runner
     @handler_runner : HandlerRunner
@@ -242,6 +245,9 @@ module Krikri
     # wins - matching include_vars sitting below set_fact in real
     # Ansible's precedence ladder.
     @included_vars : Hash(String, Hash(String, JSON::Any))
+    # Real's Display deduplicates warnings globally; the include_vars
+    # null-file lookup warning fires once per run, not once per host.
+    @include_vars_null_warned = false
     # Per host, per task: the result already fetched via a batch's single
     # SSH round trip (nil = that task's when: was false, already handled
     # - see `execute_batch_group`), consumed lazily as the task-major
@@ -421,6 +427,12 @@ module Krikri
       # hostvars).
       @registered_vars = registered_store || Hash(String, Hash(String, JSON::Any)).new
       @halted_hosts = Set(String).new
+
+      # The failing task + result per host, for `rescue:`'s ansible_failed_task /
+      # ansible_failed_result vars (real exposes both inside rescue and always
+      # only after a block failure; cleared when the rescue finishes).
+    @failed_task_info = Hash(String, {Task, JSON::Any}).new
+      @failure_vars = Hash(String, Hash(String, JSON::Any)).new
       @ended_hosts = Set(String).new
       @cleared_error_hosts = Set(String).new
       @role_ended_hosts = Hash(String, Set(String)).new

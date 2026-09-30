@@ -55,7 +55,7 @@ describe "apt_repository plugin" do
     result = PluginSpecHelper.run("apt_repository", {"repo" => "not a valid repo line"})
 
     result["failed"].as_bool.must_equal(true)
-    result["msg"].as_s.must_include("Invalid repo line")
+    result["msg"].as_s.must_include("Invalid repository string")
   end
 
   # ppa: shorthand (see plugins/apt_repository.cr's own class doc for the
