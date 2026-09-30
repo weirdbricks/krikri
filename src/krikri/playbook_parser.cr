@@ -1007,6 +1007,11 @@ module Krikri
   # 4, not 1 - this used to raise RemovedActionError and got the wrong
   # exit code because of it).
   class ConflictingActionStatementsError < Exception
+    getter render : String?
+
+    def initialize(message : String, @render : String? = nil)
+      super(message)
+    end
   end
 
   # A bad argument on an include/include-role directive (`include_role:`,
@@ -2455,13 +2460,38 @@ module Krikri
         key_str = key.to_s
         if legacy_conflicting_keys.includes?(key_str)
           legacy_conflict_key = key_str
-        elsif !SPECIAL_KEYS.includes?(key_str) && !module_name && !key_str.starts_with?("with_")
+        elsif !SPECIAL_KEYS.includes?(key_str) && !key_str.starts_with?("with_")
           # with_-prefixed keys are legacy LOOP keywords in real Ansible
           # (any `with_<lookup>:`), never a module name - excluding them
           # here keeps a `with_url:` written before the module key from
           # being mistaken for the action itself.
+          #
+          # A SECOND non-keyword key beside the already-chosen action is
+          # real Ansible's own ModuleArgsParser conflict (live-verified
+          # vs 2.19.11: an unknown `any_bogus_keyword:` beside debug:
+          # refuses the whole playbook with "conflicting action
+          # statements: <first>, <second>", named in task-key order, rc=4)
+          # - not a silently-ignored extra key.
+          if module_name
+            raise ConflictingActionStatementsError.new(
+              "conflicting action statements: #{module_name}, #{key_str}",
+              origin_error_render(
+                "conflicting action statements: #{module_name}, #{key_str}",
+                source_file, source_map, task_source_prefix(source_prefix, index)))
+          end
           module_name = key_str
           module_params = value
+          # Real Ansible type-checks the chosen action's value right
+          # here - a non-string, non-mapping scalar (bool/int/list
+          # free-form value) is mod_args' "unexpected parameter type in
+          # action: <class '...'>" whole-playbook abort (rc=4,
+          # live-verified vs 2.19.11 with `any_bogus_keyword: yes`),
+          # BEFORE any later key's conflict can fire.
+          if class_name = unexpected_meta_param_type(value)
+            raise MetaActionTypeError.new(origin_error_render(
+              "unexpected parameter type in action: <class '#{class_name}'>",
+              source_file, source_map, task_source_prefix(source_prefix, index)))
+          end
         end
       end
 
@@ -2538,7 +2568,11 @@ module Krikri
       end
 
       if module_name && legacy_conflict_key
-        raise ConflictingActionStatementsError.new("conflicting action statements: #{module_name}, #{legacy_conflict_key}")
+        raise ConflictingActionStatementsError.new(
+          "conflicting action statements: #{module_name}, #{legacy_conflict_key}",
+          origin_error_render(
+            "conflicting action statements: #{module_name}, #{legacy_conflict_key}",
+            source_file, source_map, task_source_prefix(source_prefix, index)))
       end
 
       unless module_name
