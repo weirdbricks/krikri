@@ -4,6 +4,7 @@ require "json"
 require "http/client"
 require "uri"
 require "openssl"
+require "file_utils"
 require "../src/krikri/base_plugin"
 require "../src/krikri/plugin_helpers/authorized_keys_file"
 
@@ -120,7 +121,7 @@ module Krikri
       new_content, changed = PluginHelpers::AuthorizedKeysFile.ensure_keys(original_content, key_lines, state == "present", exclusive)
 
       if error = apply_write(new_content, path, changed, check_mode, manage_dir)
-        return PluginResult.new(changed: false, failed: true, msg: error)
+        return error
       end
 
       result = PluginResult.new(changed: changed, failed: false, msg: "")
@@ -312,24 +313,100 @@ module Krikri
     # (os.mkdir, a single level - a missing grandparent is the exact
     # "Failed to create directory" OSError real Ansible fails with, not
     # something to mkdir -p through), then chowns/chmods it 0700
-    # unconditionally, even when it already existed.
-    private def apply_write(new_content : String, path : String, changed : Bool, check_mode : Bool, manage_dir : Bool) : String?
+    # unconditionally, even when it already existed. Python's
+    # os.path.dirname of a bare relative filename ("9") is "" - NOT
+    # Crystal's "." - so an explicit `path: 9`-style path (the type: path
+    # spec coerces the native int to "9") has an empty sshdir: manage_dir
+    # fails mkdir("") with the "Failed to create directory  : [Errno 2]
+    # No such file or directory: ''" fail_json, and manage_dir false hits
+    # the keysfile branch's uncaught os.makedirs("") crash, whose bare
+    # OSError text IS the whole failure message (live-verified vs
+    # 2.19.11).
+    private def apply_write(new_content : String, path : String, changed : Bool, check_mode : Bool, manage_dir : Bool) : PluginResult?
       return nil unless changed && !check_mode
 
+      uid, gid = owner_uid_gid
+      sshdir = python_dirname(path)
       if manage_dir
-        dir = File.dirname(path)
-        unless Dir.exists?(dir)
-          begin
-            Dir.mkdir(dir)
-          rescue e : File::Error
-            return "Failed to create directory #{dir} : #{os_error_text(e, dir)}"
-          end
+        if failure = manage_sshdir(sshdir, uid, gid)
+          return failure
         end
-        File.chmod(dir, 0o700)
+      elsif !File.exists?(path) && !Dir.exists?(sshdir)
+        if failure = makedirs_basedir(sshdir)
+          return failure
+        end
       end
       File.write(path, new_content)
+      # keyfile()'s tail: chown(keysfile) wrapped in except OSError: pass,
+      # then chmod 0600.
+      begin
+        File.chown(path, uid, gid) unless uid == -1
+      rescue File::Error
+        # pass
+      end
       File.chmod(path, 0o600)
       nil
+    end
+
+    # keyfile()'s manage_dir branch: os.mkdir (a single level) when
+    # missing, then the UNCAUGHT chown (unlike the keysfile one - a
+    # failed chown crashes the module the same way os.mkdir's failure
+    # does) and the unconditional chmod 0700, existing dir or not.
+    private def manage_sshdir(sshdir : String, uid : Int32, gid : Int32) : PluginResult?
+      unless Dir.exists?(sshdir)
+        begin
+          Dir.mkdir(sshdir)
+        rescue e : File::Error
+          return PluginResult.new(changed: false, failed: true,
+            msg: "Failed to create directory #{sshdir} : #{os_error_text(e, sshdir)}")
+        end
+      end
+      begin
+        File.chown(sshdir, uid, gid) unless uid == -1
+      rescue e : File::Error
+        detail = os_error_text(e, sshdir)
+        return PluginResult.new(changed: false, failed: true,
+          msg: "Task failed: Module failed: #{detail}", _ansible_error_detail: detail)
+      end
+      File.chmod(sshdir, 0o700)
+      nil
+    end
+
+    # keyfile()'s basedir branch: os.makedirs (recursive), and an
+    # OSError there is NOT fail_json'd - the uncaught crash text alone
+    # is the failure message (see mount's makedirs('') twin).
+    private def makedirs_basedir(sshdir : String) : PluginResult?
+      begin
+        FileUtils.mkdir_p(sshdir)
+      rescue e : File::Error
+        detail = os_error_text(e, sshdir)
+        return PluginResult.new(changed: false, failed: true,
+          msg: "Task failed: Module failed: #{detail}", _ansible_error_detail: detail)
+      end
+      nil
+    end
+
+    # The uid/gid real's keyfile() chowns everything to -
+    # pwd.getpwnam(user)'s pw_uid/pw_gid. {-1, -1} (skip the chown) when
+    # no user param was given (a path-only call in check mode never
+    # reaches here) or the user has no passwd entry.
+    private def owner_uid_gid : {Int32, Int32}
+      user = @params["user"]?
+      if user && (sys_user = System::User.find_by?(name: user))
+        {sys_user.id.to_i32, sys_user.group_id.to_i32}
+      else
+        {-1, -1}
+      end
+    end
+
+    # Python's os.path.dirname: the head of the last-"/" split - "" when
+    # there is no separator at all (Crystal's File.dirname returns "."
+    # there, which would silently write a bare relative filename).
+    private def python_dirname(path : String) : String
+      idx = path.rindex('/')
+      return "" unless idx
+      return "/" if idx == 0
+      path[0...idx]
     end
 
     # Formats the Errno the way Python's str(OSError) does - that text
@@ -337,6 +414,7 @@ module Krikri
     private def os_error_text(e : File::Error, dir : String) : String
       errno = e.os_error.try(&.value)
       case errno
+      when  1 then "[Errno 1] Operation not permitted: '#{dir}'"
       when  2 then "[Errno 2] No such file or directory: '#{dir}'"
       when 13 then "[Errno 13] Permission denied: '#{dir}'"
       when 20 then "[Errno 20] Not a directory: '#{dir}'"
