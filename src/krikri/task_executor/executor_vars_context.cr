@@ -1605,6 +1605,12 @@ module Krikri
           already_wrapped = e.message.try(&.starts_with?("Error while resolving value for"))
           raise e if already_wrapped
           raise UndefinedVariableError.new("Error while resolving value for '#{key}': #{e.message}")
+        rescue e : VariableSubstitutor::FilterEngine::UnknownFilterError
+          raise UndefinedVariableError.new("Error while resolving value for '#{key}': Syntax error in template: #{e.message}")
+        rescue e : VariableSubstitutor::UnknownTestError
+          raise UndefinedVariableError.new("Error while resolving value for '#{key}': Syntax error in template: #{e.message}")
+        rescue e : VariableSubstitutor::TemplateSyntaxError
+          raise UndefinedVariableError.new("Error while resolving value for '#{key}': #{e.message}")
         end
 
         # A block-tag template (`{%`/`{#`) that renders to a literally
@@ -2041,6 +2047,17 @@ module Krikri
     private def locate_param_value_line(lines : Array(String), from_idx : Int32, msg : String) : {Int32, Int32}?
       return nil unless (m = msg.match(/\AError while resolving value for '([^']+)':/m))
       key = m[1]
+      # Flow style (`- debug: msg="..."`): the param sits on the module
+      # key's own line - real's inner Origin points at the param KEY's
+      # first character there (col 14 for `    - debug: msg=...`,
+      # live-verified vs 2.19.11), the same key-start convention the
+      # block-style scan below uses.
+      module_line = lines[from_idx]
+      ["#{key}:", "#{key}="].each do |needle|
+        if (key_idx = module_line.index(needle)) && key_idx > 0 && module_line[key_idx - 1].whitespace?
+          return {from_idx, key_idx + 1}
+        end
+      end
       ((from_idx + 1)...lines.size).each do |idx|
         line = lines[idx]
         stripped = line.strip
