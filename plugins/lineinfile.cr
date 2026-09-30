@@ -188,15 +188,17 @@ module Krikri
         msg += "ownership, perms or SE linux context changed"
       end
 
+      # Real ansible.builtin.lineinfile's return value carries no `path`,
+      # `line` or `state` keys in either state - only backup/changed/msg
+      # (plus `found` for state=absent). It also passes msg='' explicitly,
+      # so the empty-string `msg` key stays in the wire result.
       if state == "absent"
         PluginResult.new(
           changed: changed,
           failed: false,
           msg: msg,
+          include_empty_msg: true,
           diff: diff,
-          path: path,
-          line: line || "",
-          state: state,
           backup: backup_file,
           found: original_count - new_count
         )
@@ -205,10 +207,8 @@ module Krikri
           changed: changed,
           failed: false,
           msg: msg,
+          include_empty_msg: true,
           diff: diff,
-          path: path,
-          line: line || "",
-          state: state,
           backup: backup_file
         )
       end

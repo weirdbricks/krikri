@@ -16,6 +16,30 @@ describe "lineinfile plugin" do
     File.read(path).must_include("new line")
   end
 
+  it "returns only backup/changed/msg (plus found for absent) like real ansible 2.19.11 - no path/line/state keys" do
+    path = PluginSpecHelper.tmp_path("lineinfile-return-keys.txt")
+    File.write(path, "keep\ndrop\n")
+
+    added = PluginSpecHelper.run("lineinfile", {
+      "path"  => path,
+      "line"  => "keep",
+      "state" => "present",
+    })
+    added_keys = added.as_h.keys.map(&.to_s).reject { |k| k == "diff" }.sort!
+    added_keys.must_equal(["backup", "changed", "msg"])
+    added["msg"].as_s.must_equal("")
+
+    removed = PluginSpecHelper.run("lineinfile", {
+      "path"  => path,
+      "line"  => "drop",
+      "state" => "absent",
+    })
+    removed_keys = removed.as_h.keys.map(&.to_s).reject { |k| k == "diff" }.sort!
+    removed_keys.must_equal(["backup", "changed", "found", "msg"])
+    removed["found"].as_i.must_equal(1)
+    removed["msg"].as_s.must_equal("1 line(s) removed")
+  end
+
   it "is idempotent when the line already exists" do
     path = PluginSpecHelper.tmp_path("lineinfile-idempotent.txt")
     File.write(path, "hello world\n")
@@ -255,14 +279,14 @@ describe "lineinfile plugin" do
     result["found"].as_i.must_equal(2)
   end
 
-  it "reports an empty msg (no msg key on the wire) when nothing changed, like real ansible" do
+  it "reports an explicit empty-string msg on the wire when nothing changed, like real ansible 2.19.11" do
     path = PluginSpecHelper.tmp_path("lineinfile-msg-noop.txt")
     File.write(path, "alpha\n")
 
     result = PluginSpecHelper.run("lineinfile", {"path" => path, "line" => "alpha", "state" => "present"})
 
     result["changed"].as_bool.must_equal(false)
-    result["msg"]?.must_be_nil
+    result["msg"].as_s.must_equal("")
   end
 
   it "reports the backup path under the 'backup' key with backup: yes (regression: used to emit 'backup_file', real ansible's lineinfile exits with 'backup' - blockinfile keeps 'backup_file')" do
