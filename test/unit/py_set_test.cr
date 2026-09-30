@@ -47,6 +47,36 @@ describe Krikri::PySet do
     Krikri::PySet.py_hash(-1_i64).must_equal((-2_i64).to_u64!)
     Krikri::PySet.py_hash(5_i64).must_equal(5_u64)
   end
+
+  # CPython builds `set(a) ^ set(b)` as a copy of set(b) with every member of
+  # set(a) either tombstoned (when it is also in b) or inserted into it - the
+  # tombstoned slots stay occupied for probing and a later insert can reuse
+  # them, which is what makes the resulting order its own (it is not any of
+  # the other three operations' orders). The next two cases were picked from a
+  # 3200-pair randomized cross-check against real CPython 3.13 because they
+  # both hit that dummy-slot reuse, the second one also resizing mid-update.
+  it "reproduces CPython's symmetric_difference order, tombstones included" do
+    Krikri::PySet.symmetric_difference([3, 1, 2] of Int64, [2, 5, 4] of Int64)
+      .must_equal([1, 3, 4, 5] of Int64)
+    Krikri::PySet.symmetric_difference([] of Int64, [1, 2] of Int64)
+      .must_equal([1, 2] of Int64)
+    Krikri::PySet.symmetric_difference([2_i64 ** 62, -1, 0] of Int64, [-1, 5] of Int64)
+      .must_equal([0, 2_i64 ** 62, 5] of Int64)
+    Krikri::PySet.symmetric_difference([-2, 30, -11, -1] of Int64, [-1, -1] of Int64)
+      .must_equal([-11, -2, 30] of Int64)
+    Krikri::PySet.symmetric_difference(
+      [-1, -2, -2, -2, -2, -2, 2, -2, 1, -1, -1, 2, 2, 2, 1, -2, 1] of Int64,
+      [15, -12, 8, -26, -1, 14, 28, 21] of Int64
+    ).must_equal([1, 2, -26, 8, 14, 15, -12, 21, 28, -2] of Int64)
+    Krikri::PySet.symmetric_difference(
+      [17, 14, 4, 15, 0, 0, 0, 12, 19, 15] of Int64,
+      [1, 5, 4, 1, 1] of Int64
+    ).must_equal([0, 1, 5, 12, 14, 15, 17, 19] of Int64)
+    Krikri::PySet.symmetric_difference(
+      [4, 20, -23, -11, -1, 11, -15, 18, 18, 25, -10, -25, -28, 26, 18, 0] of Int64,
+      [5, 2, 6, 6, 4, 5, 1, 2] of Int64
+    ).must_equal([0, 1, 2, 5, 6, 11, 18, 20, 25, 26, -28, -25, -23, -15, -11, -10, -1] of Int64)
+  end
 end
 
 describe "query()/lookup() list results in mixed text" do
