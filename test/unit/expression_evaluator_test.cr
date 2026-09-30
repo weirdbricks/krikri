@@ -614,7 +614,7 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
   end
 
   # Real Ansible's own vars lookup plugin RAISES (AnsibleUndefinedVariable,
-  # "No variable found with this name: X") for a missing key with no
+  # "No variable named 'X' was found.") for a missing key with no
   # `default=` kwarg - it does not silently yield a placeholder. Found via
   # galaxyproject.galaxy's `set_fact: "{{ item }}": "{{ lookup('vars',
   # '__' ~ item) }}"`: krikri previously returned the literal string
@@ -624,7 +624,7 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
     v = Hash(String, JSON::Any).new
     evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
 
-    assert_raises_message(Krikri::UndefinedVariableError, /No variable found with this name: no_such_variable/) do
+    assert_raises_message(Krikri::UndefinedVariableError, /No variable named 'no_such_variable' was found\./) do
       evaluator.evaluate(%(lookup('vars', 'no_such_variable')))
     end
   end

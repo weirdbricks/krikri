@@ -72,7 +72,7 @@ module Krikri
           # `rescue ex` in the executor turns this into "Finalization
           # of task args ... failed", matching real Ansible's message
           # shape).
-          raise "The lookup plugin 'file' failed: Unable to access the file '#{path}': File not found"
+          raise "The lookup plugin 'file' failed: Unable to access the file '#{path}': File not found. Use -vvvvv to see paths searched."
         end
       end
 
@@ -266,14 +266,14 @@ module Krikri
           # table with no embedded delimiters.
           raw_arg = parts[1]?.try { |part| evaluate(part.strip) }
           return "undefined" unless raw_arg
-          evaluate_csvfile_lookup(raw_arg)
+          evaluate_csvfile_lookup(raw_arg, kwargs)
         when "ini"
           # lookup('ini', 'value section=section1 file=file.ini') - real
           # Ansible's own ini lookup: reads `value` under `section=`
           # (default DEFAULT) from a controller-side INI file.
           raw_arg = parts[1]?.try { |part| evaluate(part.strip) }
           return "undefined" unless raw_arg
-          evaluate_ini_lookup(raw_arg)
+          evaluate_ini_lookup(raw_arg, kwargs)
         when "unvault"
           # lookup('unvault', 'path/to/vaultfile') - real Ansible's own
           # unvault lookup: decrypts a vault-encrypted FILE (on the

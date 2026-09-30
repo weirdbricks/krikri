@@ -1611,16 +1611,22 @@ module Krikri
           raise UndefinedVariableError.new("Error while resolving value for '#{key}': Syntax error in template: #{e.message}")
         rescue e : VariableSubstitutor::TemplateSyntaxError
           raise UndefinedVariableError.new("Error while resolving value for '#{key}': #{e.message}")
-        rescue e : FilterPluginError
-          # mandatory's filter-plugin failure rides the same chain.
+        rescue e : Krikri::PipeLookupError | Krikri::FirstFoundLookupError | Krikri::PythonLookupRunner::LookupError | FilterPluginError | TestPluginError
+          # Lookup/filter/test-plugin failures ride the same finalization
+          # chain - real 2.19.11 fails the task with "Task failed:
+          # Finalization of task args for 'MOD' failed: Error while
+          # resolving value for 'KEY': <plugin error>" (live-verified
+          # for each shape), never the bare "Action failed" chain a
+          # non-wrapped raise fell into.
           raise UndefinedVariableError.new("Error while resolving value for '#{key}': #{e.message}")
-        rescue e : TestPluginError
-          # A test plugin's RUNTIME failure ("The test plugin 'FQCN'
-          # failed: <cause>") rides the same finalization chain - real
-          # 2.19.11's fatal msg reads "Task failed: Finalization of task
-          # args for 'MOD' failed: Error while resolving value for 'KEY':
-          # The test plugin 'FQCN' failed: <cause>" (live-verified).
-          raise UndefinedVariableError.new("Error while resolving value for '#{key}': #{e.message}")
+        rescue e : Exception
+          # Same routing for any LOOKUP plugin's failure ("The lookup
+          # plugin 'file' failed: Unable to access ..."); everything
+          # else keeps its own shape. MUST stay last: a generic rescue
+          # above this line would swallow the plugin-error classes'
+          # own routing.
+          raise UndefinedVariableError.new("Error while resolving value for '#{key}': #{e.message}") if e.message.try(&.starts_with?("The lookup plugin '"))
+          raise e
         end
 
         # A block-tag template (`{%`/`{#`) that renders to a literally

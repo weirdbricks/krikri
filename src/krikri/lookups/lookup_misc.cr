@@ -261,51 +261,67 @@ module Krikri
         result.to_json
       end
 
-      private def evaluate_csvfile_lookup(raw_arg : String) : String
+      # Keyword arguments (`file='x.csv', field=1, default='MISSING'`)
+      # join the inline key=value tokens; their VALUES are still
+      # expressions (quoted literals, vars) and get evaluated here.
+      private def parser_lookup_opts(tokens : Array(String), kwargs : Array(String)) : Hash(String, String)
+        opts = Hash(String, String).new
+        tokens.each do |token|
+          k, sep, v = token.partition('=')
+          opts[k] = v unless sep.empty?
+        end
+        kwargs.each do |term|
+          k, sep, v = term.partition('=')
+          next if sep.empty?
+          rendered = evaluate(v.strip) rescue nil
+          rendered = nil if rendered == "undefined"
+          opts[k] = rendered || v.strip
+        end
+        opts
+      end
+
+      private def evaluate_csvfile_lookup(raw_arg : String, kwargs : Array(String) = [] of String) : String
         tokens = raw_arg.strip.split(/\s+/)
         key = tokens[0]?
         return "undefined" unless key
 
-        opts = Hash(String, String).new
-        tokens[1..].each do |token|
-          k, sep, v = token.partition('=')
-          opts[k] = v unless sep.empty?
-        end
+        opts = parser_lookup_opts(tokens[1..], kwargs)
 
         file = opts["file"]?
         return "undefined" unless file
-        delimiter = opts["delimiter"]? || ","
+        # Real's csvfile lookup defaults to a TAB delimiter, not a comma
+        # (live-verified vs 2.19.11: a comma file with no delimiter= given
+        # finds nothing and answers default).
+        delimiter = opts["delimiter"]? || "\t"
         col = opts["col"]?.try(&.to_i) || 1
+        default = opts["default"]?
 
         begin
-          File.each_line(file) do |line|
+          File.each_line(resolve_lookup_path(file)) do |line|
             fields = line.split(delimiter)
             next unless fields[0]?.try(&.strip) == key
             return (fields[col]? || "").strip
           end
         rescue
         end
-        "undefined"
+        default || "undefined"
       end
 
-      private def evaluate_ini_lookup(raw_arg : String) : String
+      private def evaluate_ini_lookup(raw_arg : String, kwargs : Array(String) = [] of String) : String
         tokens = raw_arg.strip.split(/\s+/)
         value_key = tokens[0]?
         return "undefined" unless value_key
 
-        opts = Hash(String, String).new
-        tokens[1..].each do |token|
-          k, sep, v = token.partition('=')
-          opts[k] = v unless sep.empty?
-        end
+        opts = parser_lookup_opts(tokens[1..], kwargs)
 
         file = opts["file"]?
         return "undefined" unless file
         wanted_section = opts["section"]? || "DEFAULT"
+        default = opts["default"]?
 
         begin
           current_section = "DEFAULT"
-          File.each_line(file) do |raw_line|
+          File.each_line(resolve_lookup_path(file)) do |raw_line|
             line = raw_line.strip
             next if line.empty? || line.starts_with?(';') || line.starts_with?('#')
             if line.starts_with?('[') && line.ends_with?(']')
@@ -318,7 +334,7 @@ module Krikri
           end
         rescue
         end
-        "undefined"
+        default || "undefined"
       end
 
       private def evaluate_sequence_lookup(raw_arg : String) : String

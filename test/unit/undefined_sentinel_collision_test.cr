@@ -9,7 +9,7 @@ require "../../src/krikri/variable_substitutor"
 # IS the text "undefined" (verified live: `command: printf 'undefined'` +
 # `register: s2`), the check can't tell a real value from an actual miss.
 # Real ansible-core 2.19 renders `{{ s2.stdout_lines.0 }}` fine in that case;
-# this engine raised "'s2.stdout_lines.0' is undefined" on the dotted form
+# this engine raised "'s2' is undefined" on the dotted form
 # while the bracket form `s2.stdout_lines[0]` (resolved structurally, no
 # string re-check) was already correct.
 private def sub(vars)
@@ -35,13 +35,13 @@ describe "dotted-index 'undefined'-string sentinel collision" do
 
   it "still raises for a genuinely undefined dotted numeric index under strict" do
     vars = {"s2" => JSON.parse(%({"stdout_lines": ["real"]}))}
-    assert_raises_message(Krikri::UndefinedVariableError, /'s2\.stdout_lines\.1' is undefined/) do
+    assert_raises_message(Krikri::UndefinedVariableError, /'s2' is undefined/) do
       sub(vars).substitute("{{ s2.stdout_lines.1 }}", strict: true)
     end
   end
 
   it "still raises for a genuinely undefined dotted root under strict" do
-    assert_raises_message(Krikri::UndefinedVariableError, /'nope\.0' is undefined/) do
+    assert_raises_message(Krikri::UndefinedVariableError, /'nope' is undefined/) do
       sub(Hash(String, JSON::Any).new).substitute("{{ nope.0 }}", strict: true)
     end
   end

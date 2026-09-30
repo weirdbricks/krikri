@@ -528,6 +528,19 @@ unless File.exists?(playbook_file)
   exit 1
 end
 
+# Real ansible-playbook runs everything relative to the PLAYBOOK's own
+# directory: it chdirs there at startup (a local-connection module's cwd,
+# a relative copy:/template: dest, a lookup('file', relative) - all
+# resolve against the playbook dir, live-verified vs 2.19.11 with the
+# playbook invoked from a different cwd). Everything relative on the
+# COMMAND LINE (the playbook itself, -i, vault files) was resolved
+# against the invocation cwd before this point - expand those first.
+playbook_display_path = playbook_file
+playbook_file = File.expand_path(playbook_file)
+inventory_file = File.exists?(inventory_file) ? File.expand_path(inventory_file) : inventory_file
+vault_password_file = vault_password_file.try { |pf| File.exists?(pf) ? File.expand_path(pf) : pf }
+Dir.cd(File.dirname(playbook_file))
+
 # --vault-id label@source. The source is a password FILE, or "prompt"
 # to ask. An unlabeled `--vault-id file` is the default identity.
 vault_id_args.each do |spec|
@@ -540,7 +553,7 @@ vault_id_args.each do |spec|
     if source == "prompt"
       print "Vault password (#{label}): "
       Krikri::VaultCli.prompt_password
-    elsif File.exists?(source)
+    elsif File.exists?(File.exists?(File.expand_path(source)) ? File.expand_path(source) : source)
       File.read(source).strip
     else
       puts "Error: vault-id source not found: #{source}".colorize(:red)
@@ -793,6 +806,7 @@ end
 pattern_warnings = Set(String).new
 if quiet_listing_mode
   listing_playbook = playbook || raise "BUG: playbook not parsed"
+  listing_playbook.path = playbook_display_path
   playbook.plays.each do |play|
     warn_unmatched_play_patterns(inventory, play, pattern_warnings)
   end

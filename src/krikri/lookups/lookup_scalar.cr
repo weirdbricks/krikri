@@ -49,7 +49,16 @@ module Krikri
         when "first_found"
           params = parts[1]?.try { |part| first_found_params(part) }
           return "undefined" unless params
-          evaluate_first_found(params)
+          begin
+            evaluate_first_found(params)
+          rescue ex : FirstFoundLookupError | UndefinedVariableError
+            # The generic lookup `errors='ignore'` option: same
+            # empty-result tolerance the query()/with_ path already
+            # honors (real Ansible swallows the lookup error - a plain
+            # lookup renders EMPTY, not "[]").
+            return "" if first_found_errors_ignore?(kwargs)
+            raise ex
+          end
         when "env"
           # lookup('env', 'VAR_NAME') - real Ansible's own env lookup
           # plugin, reads an environment variable from the CONTROLLER
@@ -419,7 +428,7 @@ module Krikri
           # strict-undefined violations. NOTE: the message text is
           # ansible-core's own vars.py wording from reading its
           # source, NOT verified against a live ansible-playbook run.
-          raise UndefinedVariableError.new("No variable found with this name: #{var_name}")
+          raise UndefinedVariableError.new("No variable named '#{var_name}' was found.")
         end
       end
 
