@@ -42,7 +42,7 @@ module Krikri
         puts "    tasks:"
 
         TagFilter.apply(play.tasks, only, skip).each do |task|
-          emit(task, [] of String)
+          emit(task, play.tags)
         end
       end
     end
@@ -62,7 +62,7 @@ module Krikri
         # Without --tags/--skip-tags real lists every tag, `never` included.
         selected = only.empty? && skip.empty? ? play.tasks : TagFilter.apply(play.tasks, only, skip)
         selected.each do |task|
-          collect_tags(task, [] of String, tags)
+          collect_tags(task, play.tags, tags)
         end
         puts "      TASK TAGS: [#{tags.uniq.sort!.join(", ")}]"
       end

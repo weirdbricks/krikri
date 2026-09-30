@@ -42,6 +42,26 @@ def locate_ansible_config : String?
   nil
 end
 
+# Real ansible-playbook warns once per unmatched host-pattern token in a
+# play's `hosts:` - "[WARNING]: Could not match supplied host pattern,
+# ignoring: <token>" - in execution AND in every listing mode. Verified
+# against 2.19.11: the warning fires for named patterns that match no
+# host ('a', 'web', 'nosuch2' split on , and :), never for 'all',
+# 'ungrouped' or the ! / & restricted forms, and Display dedups repeats.
+def warn_unmatched_play_patterns(inventory : Krikri::Inventory, play : Krikri::Play, warned : Set(String)) : Nil
+  hosts_field = play.hosts
+  pattern = hosts_field.is_a?(Array) ? hosts_field.join(":") : hosts_field
+  pattern_tokens = pattern.split(/[,:]/).map(&.strip).reject(&.empty?)
+  pattern_tokens.each do |token|
+    next if token.starts_with?('!') || token.starts_with?('&')
+    next if token == "all" || token == "ungrouped"
+    next unless inventory.get_hosts(token).empty?
+    message = "Could not match supplied host pattern, ignoring: #{token}"
+    next unless warned.add?(message)
+    STDERR.puts "[WARNING]: #{message}".colorize(:yellow)
+  end
+end
+
 def which_path(cmd : String) : String?
   output = Process.run(cmd == "python3" ? "python3" : "which", cmd == "python3" ? [] of String : [cmd],
     output: Process::Redirect::Pipe, error: Process::Redirect::Close) do |proc|
@@ -548,21 +568,11 @@ begin
   # reported and exited 4 by this block's own rescue - which is exactly
   # what real ansible-playbook does for --syntax-check on a broken
   # playbook, so the failure path needs nothing extra here.
-  if syntax_check_only
-    Krikri::TaskLister.syntax_check(playbook)
-    exit 0
-  end
-
-  if list_tasks_only
-    Krikri::TaskLister.list_tasks(playbook, tags, skip_tags)
-    exit 0
-  end
-
-  if list_tags_only
-    Krikri::TaskLister.list_tags(playbook, tags, skip_tags)
-    exit 0
-  end
-
+  #
+  # The listing modes themselves dispatch AFTER the inventory is parsed:
+  # real ansible-playbook emits its inventory and unmatched-pattern
+  # warnings in these modes too (verified against 2.19.11), before the
+  # listing, so the dispatch sits below the inventory block.
   if verbose && verbose_extras
     stats = Krikri::PlaybookParser.stats(playbook)
     puts "Playbook Statistics:".colorize(:green).bold
@@ -588,8 +598,10 @@ begin
   # on at the end of the run, below.
   unavailable_modules_found = Set(String).new
 
-  # Show warnings
-  warnings = Krikri::PlaybookParser.validate(playbook)
+  # Show warnings. Suppressed in the listing modes: real ansible-playbook
+  # emits only the listing plus its inventory/pattern warnings there, and
+  # this output is routinely machine-read in CI.
+  warnings = quiet_listing_mode ? [] of String : Krikri::PlaybookParser.validate(playbook)
   if !warnings.empty?
     warnings.each do |warning|
       # real ansible-playbook says nothing about a play without tasks
@@ -728,10 +740,10 @@ begin
   end
 
   # Show inventory warnings (real ansible emits these on stderr as
-  # [WARNING]: lines). Suppressed for the listing modes for the same
-  # reason the banner was - real ansible-playbook emits nothing but the
-  # listing there, and this output gets machine-read.
-  inv_warnings = quiet_listing_mode ? [] of String : Krikri::InventoryParser.validate(inventory)
+  # [WARNING]: lines) - in the listing modes too, verified against
+  # 2.19.11: --syntax-check/--list-tasks print the same inventory
+  # warnings before their listing.
+  inv_warnings = Krikri::InventoryParser.validate(inventory)
   if !inv_warnings.empty?
     inv_warnings.each do |warning|
       STDERR.puts "[WARNING]: #{warning}"
@@ -752,11 +764,34 @@ rescue ex
   # `hosts: all` matches nothing and the play is skipped.
   inventory = Krikri::Inventory.new
 
-  unless quiet_listing_mode
-    STDERR.puts "[WARNING]: Unable to parse #{inventory_file} as an inventory source: #{ex.message}" if inventory_explicit
-    STDERR.puts "[WARNING]: No inventory was parsed, only implicit localhost is available"
-    STDERR.puts "[WARNING]: provided hosts list is empty, only localhost is available. Note that the implicit localhost does not match 'all'"
+  STDERR.puts "[WARNING]: Unable to parse #{inventory_file} as an inventory source: #{ex.message}" if inventory_explicit
+  STDERR.puts "[WARNING]: No inventory was parsed, only implicit localhost is available"
+  STDERR.puts "[WARNING]: provided hosts list is empty, only localhost is available. Note that the implicit localhost does not match 'all'"
+end
+
+# The listing modes dispatch here, after the inventory warnings: real
+# ansible-playbook prints the inventory and unmatched-pattern warnings
+# before their listing (verified against 2.19.11). The dedup set is
+# shared with the execution play loop below.
+pattern_warnings = Set(String).new
+if quiet_listing_mode
+  listing_playbook = playbook || raise "BUG: playbook not parsed"
+  playbook.plays.each do |play|
+    warn_unmatched_play_patterns(inventory, play, pattern_warnings)
   end
+
+  if syntax_check_only
+    Krikri::TaskLister.syntax_check(listing_playbook)
+  elsif list_tasks_only
+    Krikri::TaskLister.list_tasks(listing_playbook, tags, skip_tags)
+  elsif list_tags_only
+    Krikri::TaskLister.list_tags(listing_playbook, tags, skip_tags)
+  else
+    Krikri::TaskLister.list_hosts(listing_playbook) do |play|
+      inventory.get_hosts(play.hosts.to_s).map(&.name)
+    end
+  end
+  exit 0
 end
 
 # The connection/become flags are, in real Ansible, exactly "set this
@@ -953,6 +988,7 @@ if verbosity_level >= 2
 end
 
 playbook.plays.each_with_index do |play, _play_index|
+  warn_unmatched_play_patterns(inventory, play, pattern_warnings)
   Krikri::RunOptions.play_name = play.name
   Krikri::OutputBanner.banner("PLAY [#{play.name}]")
 
@@ -1034,7 +1070,7 @@ playbook.plays.each_with_index do |play, _play_index|
   end
 
   tasks_before_tag_filter = tasks_to_run.size
-  tasks_to_run = Krikri::TagFilter.apply(tasks_to_run, tags, skip_tags)
+  tasks_to_run = Krikri::TagFilter.apply(tasks_to_run, tags, skip_tags, play.tags)
 
   # --start-at-task: playbook-wide, so the "still looking" state carries
   # across plays and this stops filtering once the match is found.

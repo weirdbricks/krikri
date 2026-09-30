@@ -28,6 +28,15 @@ only_cases=("$@")
 # (--help: the full usage text documents each engine's own option set and
 # can never match byte-for-byte by design; the first lines still pin the
 # shape of the output). stderr and rc always compare in full.
+mask() {
+  local src="$1" dst="$2"
+  sed -E \
+    -e "/^\\[WARNING\\]: Host '[^']*' is using the discovered Python interpreter/d" \
+    "$src" | perl -0pe '
+      s/(^ {4}hosts \(\d+\):\n)((?:^ {6}\S.*\n)+)/$1 . join(q{}, sort split(m{^}, $2))/gme;
+    ' >"$dst"
+}
+
 run_case() {
   local name="$1" head_lines="$2"
   shift 2
@@ -56,15 +65,19 @@ run_case() {
   done
 
   local ok=1
+  mask "$base/real.stdout" "$base/real.stdout.masked"
+  mask "$base/krikri.stdout" "$base/krikri.stdout.masked"
+  mask "$base/real.stderr" "$base/real.stderr.masked"
+  mask "$base/krikri.stderr" "$base/krikri.stderr.masked"
   if [ "$head_lines" -gt 0 ]; then
-    head -n "$head_lines" "$base/real.stdout" >"$base/real.stdout.cmp"
-    head -n "$head_lines" "$base/krikri.stdout" >"$base/krikri.stdout.cmp"
+    head -n "$head_lines" "$base/real.stdout.masked" >"$base/real.stdout.cmp"
+    head -n "$head_lines" "$base/krikri.stdout.masked" >"$base/krikri.stdout.cmp"
   else
-    cp "$base/real.stdout" "$base/real.stdout.cmp"
-    cp "$base/krikri.stdout" "$base/krikri.stdout.cmp"
+    cp "$base/real.stdout.masked" "$base/real.stdout.cmp"
+    cp "$base/krikri.stdout.masked" "$base/krikri.stdout.cmp"
   fi
   if ! diff -u "$base/real.stdout.cmp" "$base/krikri.stdout.cmp" >"$base/stdout.diff"; then ok=0; fi
-  if ! diff -u "$base/real.stderr" "$base/krikri.stderr" >"$base/stderr.diff"; then ok=0; fi
+  if ! diff -u "$base/real.stderr.masked" "$base/krikri.stderr.masked" >"$base/stderr.diff"; then ok=0; fi
   if [ "$(cat "$base/real.rc")" != "$(cat "$base/krikri.rc")" ]; then
     ok=0
     printf 'real rc=%s, krikri rc=%s\n' "$(cat "$base/real.rc")" "$(cat "$base/krikri.rc")" >"$base/rc.diff"
@@ -83,6 +96,8 @@ run_case() {
 fail=0
 run_case list-tasks            0 --list-tasks "$CORPUS/multi_play_tags.yml" || fail=1
 run_case list-tags             0 --list-tags "$CORPUS/multi_play_tags.yml" || fail=1
+run_case list-tasks-include    0 --list-tasks "$CORPUS/include_tasks.yml" || fail=1
+run_case list-tasks-import     0 --list-tasks "$CORPUS/import_tasks.yml" || fail=1
 run_case list-hosts            0 --list-hosts -i "$CORPUS/inventory.ini" "$CORPUS/host_pattern.yml" || fail=1
 run_case list-hosts-all        0 --list-hosts -i "$CORPUS/inventory.ini" "$CORPUS/with_roles.yml" || fail=1
 run_case syntax-check-ok       0 --syntax-check -i "$CORPUS/inventory.ini" "$CORPUS/blocks_handlers.yml" || fail=1

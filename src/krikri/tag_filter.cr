@@ -35,10 +35,10 @@ module Krikri
     #
     # --skip-tags is applied AFTER the above and wins, including over
     # `always` (real Ansible lets `--skip-tags always` drop those too).
-    def self.apply(tasks : Array(Task), only : Array(String), skip : Array(String)) : Array(Task)
+    def self.apply(tasks : Array(Task), only : Array(String), skip : Array(String), play_tags : Array(String) = [] of String) : Array(Task)
       kept = Array(Task).new
       tasks.each do |task|
-        if selected = filter(task, only, skip, Array(String).new)
+        if selected = filter(task, only, skip, play_tags)
           kept << selected
         end
       end
@@ -47,9 +47,9 @@ module Krikri
 
     # Returns the task (with its nested lists filtered in place) if it
     # survives selection, or nil if it is filtered out. *inherited* is the
-    # union of every enclosing block's tags - real Ansible pushes a
-    # block's tags down onto its children rather than treating the block
-    # as an atomic unit.
+    # union of the play's own tags and every enclosing block's tags -
+    # real Ansible pushes a play's tags and a block's tags down onto
+    # their children rather than treating the block as an atomic unit.
     private def self.filter(task : Task, only : Array(String), skip : Array(String), inherited : Array(String)) : Task?
       effective = (task.tags + inherited).uniq
 
