@@ -683,7 +683,15 @@ module Krikri
         return result
       end
       substituted_params = staged_script
-      substituted_params = stage_assemble_dir(handler, substituted_params, host, vars_context)
+      staged_assemble = stage_assemble_dir(handler, substituted_params, host, vars_context)
+      if staged_assemble.is_a?(JSON::Any)
+        result = apply_changed_failed_when(handler, staged_assemble, vars_context, host)
+        if register_name = handler.register
+          register_result(host, register_name, result) unless register_name.empty?
+        end
+        return result
+      end
+      substituted_params = staged_assemble
       substituted_become_user = handler.become_user.try { |raw_user| substitutor.substitute(raw_user) }
 
       # Real bug found benchmarking geerlingguy.jenkins: its own

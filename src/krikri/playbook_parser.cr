@@ -3755,6 +3755,23 @@ module Krikri
             # templates msg through the native-typing Templar); the strings-only
             # wire would otherwise turn it into "1"/"true"
             params[key.to_s] = fact_literal_wire_value(value)
+          elsif module_name == "ansible.builtin.fail" && key.to_s == "msg" && (value.raw.is_a?(Hash) || value.raw.is_a?(Array))
+            # fail: msg keeps CONTAINER literals native too: real's fail
+            # action puts the task arg into result['msg'] verbatim, so
+            # `fail: {msg: [1, 'a']}` fails with {"msg": [1, "a"]} and
+            # `msg: {a: 1}` with {"msg": {"a": 1}} (live-verified vs
+            # 2.19.11). The generic container wires would erase that: a
+            # scalar list comma-joins (indistinguishable from the STRING
+            # "1,a"), a dict/JSON-bearing list renders as bare JSON text
+            # (indistinguishable from a string that looks like JSON), and
+            # an empty list collapses to "[]". The whole-value
+            # NON_STRING_PARAM_PREFIX marker keeps the native JSON payload
+            # reachable (FailActionPlugin/fail.cr decode it back) while
+            # every demotion site reduces it to plain text for anything
+            # that never asks. Placed ahead of the generic
+            # empty-list/dict-member-list/JSON branches so every fail msg
+            # container takes this wire. Templated values are never marked.
+            params[key.to_s] = Krikri::NON_STRING_PARAM_PREFIX + value.to_json
           elsif module_name == "ansible.builtin.set_fact" && fact_literal_scalar?(value)
             # A literal (non-templated) YAML SCALAR set_fact value keeps its
             # YAML type across the strings-only param wire the same way a

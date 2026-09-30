@@ -218,15 +218,23 @@ module Krikri
       end
 
       # enabled:/masked: probe the unit first; with no systemd running real's
-      # run_command result becomes the failure (cmd is the bare systemctl path)
+      # run_command result becomes the failure. Its cmd is the bare
+      # `module.run_command(systemctl, check_rc=True)` call the module
+      # reaches after show/is-enabled/list-unit-files all fail - the FULL
+      # prefix real builds once up front (systemd_service.py:377-386:
+      # scope flag, then --no-block, then --force - live-verified vs
+      # 2.19.11: force → "/usr/bin/systemctl --force",
+      # no_block+force → "/usr/bin/systemctl --no-block --force",
+      # scope user+force → "/usr/bin/systemctl --user --force").
       # (a unit with a SysV init script counts as found and skips this)
       if name && !File.exists?("/etc/init.d/#{name.to_s.sub(/\.service\z/, "")}")
         probe = remote_exec("#{scope_env_prefix}systemctl#{scope_flag} show #{shell_single_quote(name.to_s)}")
-        if probe[:stderr].includes?("System has not been booted with systemd")
+        if no_bus_failure?(probe[:stderr])
           bin = remote_exec("command -v systemctl")[:stdout].strip
           bin = "/usr/bin/systemctl" if bin.empty?
           err = probe[:stderr]
-          return PluginResult.new(changed: false, failed: true, msg: err.strip, cmd: bin, rc: probe[:exit_code],
+          return PluginResult.new(changed: false, failed: true, msg: err.strip,
+            cmd: "#{bin}#{scope_flag}#{no_block_flag}#{force_flag}", rc: probe[:exit_code],
             stdout: probe[:stdout], stdout_lines: probe[:stdout].lines.map(&.chomp),
             stderr: err, stderr_lines: err.lines.map(&.chomp))
         end
@@ -569,6 +577,27 @@ module Krikri
       when "global" then " --global"
       else               ""
       end
+    end
+
+    # The stderr shapes a `systemctl` probe produces when it cannot reach
+    # a service manager at all - the failure real's module re-raises
+    # through its bare `run_command(systemctl, check_rc=True)` fallback:
+    # - system scope without systemd: "System has not been booted with
+    #   systemd as init system (PID 1). Can't operate." (+ the
+    #   "Failed to connect to system scope bus via local transport" tail);
+    # - user scope without a user bus: "Failed to connect to user scope
+    #   bus via local transport: No such file or directory";
+    # - ANY scope:global verb systemctl does not support: "--global is
+    #   not supported for this operation." (real fails a scope: global
+    #   task on a healthy systemd host the same way - every command the
+    #   module runs rejects the flag);
+    # - the older "Failed to connect to bus:" wording some systemctl
+    #   builds emit for the same condition.
+    private def no_bus_failure?(stderr : String) : Bool
+      stderr.includes?("System has not been booted with systemd") ||
+        stderr.includes?("scope bus via local transport") ||
+        stderr.includes?("Failed to connect to bus") ||
+        stderr.includes?("--global is not supported for this operation")
     end
 
     # `systemctl --user` needs a reachable per-user D-Bus session, which

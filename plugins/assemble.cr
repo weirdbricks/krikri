@@ -48,8 +48,18 @@ module Krikri
     # declaration order (ansible-doc -j ansible.builtin.assemble). Validated at
     # module setup by BasePlugin#validate_bool_params! - see its block
     # comment for the real-Ansible semantics and message wording.
+    #
+    # remote_src is deliberately ABSENT: real's action plugin reads it
+    # through boolean(remote_src, strict=False) FIRST and only dispatches
+    # the assemble module when that answers True - i.e. only for
+    # BOOLEANS_TRUE spellings/natives, where the module's own strict
+    # type: bool conversion can then only ever succeed. Every other value
+    # (falsy spellings, invalid strings like 'timjjr', explicit None,
+    # native 2) takes the action's controller-side branch instead, so the
+    # assemble module - and its strict remote_src conversion with it -
+    # never runs at all (live-verified vs 2.19.11).
     protected def bool_params : Array(String)
-      %w[backup decrypt ignore_hidden remote_src unsafe_writes]
+      %w[backup decrypt ignore_hidden unsafe_writes]
     end
 
     def execute : PluginResult
@@ -59,13 +69,15 @@ module Krikri
       return PluginResult.new(changed: false, failed: true, msg: "missing required argument: src") unless src
       return PluginResult.new(changed: false, failed: true, msg: "missing required argument: dest") unless dest
 
-      # remote_src: false runs assemble's controller-side action plugin
-      # first - its isdir() check is a plain AnsibleActionFail ("Source (..)
-      # is not a directory", no "Module failed." chain segment). With the
-      # default remote_src the module itself reports missing vs not-a-dir
-      # separately (assemble.py:232/235).
+      # remote_src the action plugin treats as falsy (boolean(strict=False)
+      # - see Krikri.lenient_boolean_true? and the bool_params comment)
+      # runs assemble's controller-side action plugin first - its isdir()
+      # check is a plain AnsibleActionFail ("Source (..) is not a
+      # directory", no "Module failed." chain segment). With the default
+      # remote_src (or a BOOLEANS_TRUE value) the module itself reports
+      # missing vs not-a-dir separately (assemble.py:232/235).
       unless Dir.exists?(src)
-        if {"false", "no", "n", "0", "off", "f"}.includes?(@params["remote_src"]?.to_s.downcase)
+        if remote_src_delegated?
           return PluginResult.new(changed: false, failed: true, msg: "Source (#{src}) is not a directory",
             _ansible_action_level: true)
         end
@@ -127,6 +139,27 @@ module Krikri
       )
       add_path_info(result, dest) unless check_mode
       result
+    end
+
+    # Whether real's action plugin takes its controller-side branch for
+    # this task's remote_src: PRESENT and boolean(remote_src, strict=False)
+    # not True. The plugin-side view of Krikri.lenient_boolean_true? - the
+    # demoted @params text has already lost the parser's non-string marker,
+    # so native literals (1.0 is TRUE, 2 is not) come from
+    # #non_string_param instead of the plain spelling check.
+    private def remote_src_delegated? : Bool
+      return false unless @params.has_key?("remote_src")
+      truthy = if native = non_string_param("remote_src")
+        case native.raw
+        when Bool    then native.as_bool
+        when Int64   then native.as_i64 == 1
+        when Float64 then native.as_f == 1.0
+        else              false
+        end
+      else
+        %w[y yes on 1 true t].includes?(@params["remote_src"].downcase.strip)
+      end
+      !truthy
     end
 
     # An unhandled module exception (atomic_move's FileNotFoundError /

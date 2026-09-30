@@ -89,6 +89,15 @@ module Krikri
     property extra : Hash(String, JSON::Any)
     property? omit_changed : Bool
     property? include_empty_msg : Bool
+    # A NATIVE-typed msg override (JSON::Any): real modules that pass a
+    # non-string value to fail_json/exit_json keep its Python type in the
+    # wire result (fail's action puts the raw task arg in result['msg'],
+    # so `fail: {msg: 50}` registers and dumps the INT 50, not "50") -
+    # the strings-only @msg cannot carry that. When set it replaces @msg
+    # in the serialized result entirely; @msg stays "" (the display layer
+    # re-renders a non-string msg through Python repr for its error
+    # blocks).
+    property msg_native : JSON::Any?
 
     def initialize(
       changed : Bool,
@@ -97,6 +106,7 @@ module Krikri
       diff : JSON::Any? = nil,
       omit_changed : Bool = false,
       include_empty_msg : Bool = false,
+      native_msg : JSON::Any? = nil,
       **kwargs,
     )
       @changed = changed
@@ -105,6 +115,7 @@ module Krikri
       @diff = diff
       @omit_changed = omit_changed
       @include_empty_msg = include_empty_msg
+      @msg_native = native_msg
       @extra = Hash(String, JSON::Any).new
       kwargs.each do |key, value|
         @extra[key.to_s] = JSON.parse(value.to_json)
@@ -135,7 +146,11 @@ module Krikri
       # (e.g. git_config's already-converged no-op) still gets the empty
       # key - include_empty_msg opts into that.
       result["failed"] = @failed if @failed
-      result["msg"] = @msg if !@msg.empty? || @include_empty_msg
+      if native = @msg_native
+        result["msg"] = native.raw
+      elsif !@msg.empty? || @include_empty_msg
+        result["msg"] = @msg
+      end
 
       # Add diff if present
       if diff = @diff

@@ -1493,13 +1493,60 @@ module Krikri
     # anywhere, in which case the caller leaves params untouched and the
     # normal "file not found on target" failure surfaces from script.cr
     # itself once uploaded/executed.
-    private def stage_assemble_dir(task : Task, params : Hash(String, String), host : Host, vars_context : Hash(String, JSON::Any)) : Hash(String, String)
+    # assemble with a remote_src the action plugin treats as falsy
+    # (boolean(strict=False) - see Krikri.lenient_boolean_true?): real's
+    # action assembles the fragments on the CONTROLLER and delegates the
+    # placement to the copy module, so the action's controller-side touch
+    # points run before anything else - live-verified vs 2.19.11:
+    # - _find_needle('files', src): a src that resolves nowhere fails the
+    #   task right there with the loader's not-found text ("Task failed:
+    #   Could not find or access ..." - Searched-in list for a relative
+    #   src, none for an absolute one), BEFORE the isdir() check and
+    #   before any module-level argument validation;
+    # - the fragment loop's codecs.escape_decode(delimiter): a TRUTHY
+    #   non-string literal delimiter raises TypeError
+    #   "a bytes-like object is required, not '<type>'" - but only once a
+    #   SECOND fragment is reached (the delimiter write is gated on the
+    #   previous fragment), so a single-fragment src assembles fine;
+    # - the isdir() failure ("Source (...) is not a directory") sits
+    #   between the two, so the plugin's own action-level emission still
+    #   wins over the delimiter crash for a src that exists but is not a
+    #   directory (guarded here by Dir.exists?).
+    private def stage_assemble_dir(task : Task, params : Hash(String, String), host : Host, vars_context : Hash(String, JSON::Any)) : Hash(String, String) | JSON::Any
       return params unless task.module_name == "ansible.builtin.assemble"
-      return params if ansible_boolean_param?(params["remote_src"]?) || params["remote_src"]?.nil?
-      return params if PluginManager.local_connection?(host, vars_context)
+      return params if params["remote_src"]?.nil? || Krikri.lenient_boolean_true?(params["remote_src"]?)
 
       src = params["src"]?
+      if src && !src.empty? && src != Krikri::NONE_SENTINEL && !File.exists?(src)
+        candidates = assemble_candidates(task, src)
+        bare = NeedleLookup.not_found_message(src, candidates)
+        return JSON.parse({
+          "changed"               => false,
+          "failed"                => true,
+          "msg"                   => "Task failed: #{bare}",
+          "_ansible_error_detail" => bare,
+          "_ansible_action_level" => true,
+        }.to_json)
+      end
       return params unless src && Dir.exists?(src)
+
+      # re.compile(regexp) sits between the isdir() check and the fragment
+      # loop: a non-string LITERAL regexp (any non-None value - the check
+      # is `if regexp is not None`, so falsy literals crash too) fails
+      # here, before the delimiter write could (live-verified vs 2.19.11).
+      # An invalid regexp STRING raises Python's sre error text, which has
+      # no Crystal equivalent - not emulated (krikri treats it as no
+      # filter).
+      if (raw = params["regexp"]?) && raw != Krikri::NONE_SENTINEL &&
+         Krikri.non_string_scalar(raw)
+        return literal_crash_result("first argument must be string or compiled pattern")
+      end
+
+      if crash = assemble_delimiter_literal_crash(params, src)
+        return crash
+      end
+
+      return params if PluginManager.local_connection?(host, vars_context)
 
       connection_host = PluginManager.get_connection_host(host, vars_context)
       remote_tmp = "/tmp/.krikri-playbook-assemble-#{Random::Secure.hex(8)}"
@@ -1523,6 +1570,45 @@ module Krikri
       resolved["src"] = remote_tmp
       resolved["__cleanup_after_assemble"] = "true"
       resolved
+    end
+
+    # Real's assemble action resolves src through _find_needle('files',
+    # src) - the same role files/ search stack copy/script/unarchive use.
+    private def assemble_candidates(task : Task, src : String) : Array(String)
+      return [] of String if src.starts_with?('/') || src.starts_with?("~")
+      NeedleLookup.candidates(
+        NeedleLookup.search_stack(task.role_path, task.role_parent_paths, needle_task_file_dir(task)),
+        File.expand_path(@playbook_dir), "files", src)
+    end
+
+    # The delimiter crash real's assemble action hits on a TRUTHY
+    # non-string YAML literal delimiter (the parser marks those; see
+    # NON_STRING_PARAM_PREFIX): codecs.escape_decode(delimiter) inside
+    # _assemble_from_fragments raises TypeError "a bytes-like object is
+    # required, not '<type>'" - but only when a second fragment follows
+    # the first (the delimiter is written BETWEEN fragments), so the
+    # fragment filters (isfile, ignore_hidden truthiness, regexp) decide
+    # whether the crash fires at all. A falsy literal (0/0.0/false/None)
+    # skips the `if delimiter:` branch entirely, and a plain string
+    # decodes fine. Not emulated here: the regexp compile crash real
+    # raises first for a non-string/invalid regexp (its sre error text
+    # has no Crystal equivalent) - with both broken, real names the
+    # regexp, krikri the delimiter.
+    private def assemble_delimiter_literal_crash(params : Hash(String, String), src : String) : JSON::Any?
+      return nil unless native = Krikri.non_string_scalar(params["delimiter"]?)
+      return nil unless Krikri.python_param_truthy?(params["delimiter"]?)
+      ignore_hidden = params["ignore_hidden"]?
+      ignore_hidden = "" if ignore_hidden == Krikri::NONE_SENTINEL
+      ignore_hidden_truthy = Krikri.python_param_truthy?(ignore_hidden)
+      regexp = params["regexp"]?.try { |raw| Regex.new(raw) rescue nil }
+      fragments = Dir.children(src).sort.count do |name|
+        next false if ignore_hidden_truthy && name.starts_with?('.')
+        full = File.join(src, name)
+        next false unless File.file?(full)
+        regexp.nil? || regexp.matches?(name)
+      end
+      return nil unless fragments >= 2
+      literal_crash_result("a bytes-like object is required, not '#{Krikri.python_value_type_name(native)}'")
     end
 
     # Build plugin configuration
@@ -1764,9 +1850,11 @@ module Krikri
     # - unarchive src: `os.path.expanduser(source)` right after the dest
     #   expand (unarchive.py:67) - "expected str, bytes or os.PathLike
     #   object, not <type>", in BOTH remote_src flavors;
-    # - assemble src (only when remote_src is explicitly falsy - the
-    #   default delegates to the module, whose path-typed spec coerces the
-    #   literal to text instead): _find_needle(src)'s startswith.
+    # - assemble src (only when the action takes its controller-side
+    #   branch - remote_src present and boolean(strict=False) falsy, see
+    #   assemble_action_local_path?; the default delegates to the module,
+    #   whose path-typed spec coerces the literal to text instead):
+    #   _find_needle(src)'s startswith.
     # Checked before the src staging paths so the marker text can never
     # leak into a Searched-in list or an upload path; the src/dest presence
     # guards keep real's ordering when either is genuinely absent (real
@@ -1790,7 +1878,7 @@ module Krikri
       end
       if task.module_name == "ansible.builtin.assemble"
         return nil unless params.has_key?("src") && params.has_key?("dest")
-        return nil unless assemble_remote_src_explicitly_falsy?(params)
+        return nil unless assemble_action_local_path?(params)
         if native = Krikri.non_string_scalar(params["src"]?)
           return literal_attribute_crash_result(native, "startswith")
         end
@@ -1798,10 +1886,15 @@ module Krikri
       nil
     end
 
-    private def assemble_remote_src_explicitly_falsy?(params : Hash(String, String)) : Bool
-      value = params["remote_src"]? || return false
-      return !Krikri.python_param_truthy?(value) if Krikri.non_string_scalar(value)
-      {"false", "no", "n", "0", "off", "f"}.includes?(value.downcase)
+    # The assemble action's controller-side branch: remote_src is PRESENT
+    # and boolean(remote_src, strict=False) is not True - falsy spellings,
+    # invalid spellings ('timjjr'), explicit None and non-1 native numbers
+    # all land here (see Krikri.lenient_boolean_true? for the exact
+    # predicate, live-verified vs 2.19.11). An ABSENT remote_src takes the
+    # module branch (the action's default is the string 'yes').
+    private def assemble_action_local_path?(params : Hash(String, String)) : Bool
+      return false unless params.has_key?("remote_src")
+      !Krikri.lenient_boolean_true?(params["remote_src"]?)
     end
 
     private def remote_src_param?(params : Hash(String, String)) : Bool

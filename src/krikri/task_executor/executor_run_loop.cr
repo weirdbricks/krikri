@@ -1478,7 +1478,11 @@ module Krikri
         return apply_changed_failed_when(task, staged_script, vars_context, host)
       end
       substituted_params = staged_script
-      substituted_params = stage_assemble_dir(task, substituted_params, host, vars_context)
+      staged_assemble = stage_assemble_dir(task, substituted_params, host, vars_context)
+      if staged_assemble.is_a?(JSON::Any)
+        return apply_changed_failed_when(task, staged_assemble, vars_context, host)
+      end
+      substituted_params = staged_assemble
       substituted_become_user = task.become_user.try { |raw_user| substitutor.substitute(raw_user) }
 
       # Action-only directives: pre-action validation gate (see
@@ -1798,7 +1802,11 @@ module Krikri
         return apply_changed_failed_when(task, staged_script, vars_context, host)
       end
       substituted_params = staged_script
-      substituted_params = stage_assemble_dir(task, substituted_params, exec_host, vars_context)
+      staged_assemble = stage_assemble_dir(task, substituted_params, exec_host, vars_context)
+      if staged_assemble.is_a?(JSON::Any)
+        return apply_changed_failed_when(task, staged_assemble, vars_context, host)
+      end
+      substituted_params = staged_assemble
       # become_user: goes through the same {{ }} substitution as any
       # params: value (e.g. become_user: "{{ service_user }}", a common
       # real-playbook pattern) - task.become_user itself is never mutated

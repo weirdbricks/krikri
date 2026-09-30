@@ -58,7 +58,12 @@ module Krikri
       # as_s? (not as_s): the debug action plugin keeps a whole-span
       # container msg natively (a real dict/list - see its own re-parse),
       # so a naive as_s cast crashes the whole display fiber on it.
-      msg = result["msg"]?.try(&.as_s?) || ""
+      # A NON-STRING msg (fail's action puts the raw task arg in
+      # result['msg'] - `fail: {msg: 50}` carries the int 50;
+      # live-verified vs 2.19.11) renders through Python repr for the
+      # [ERROR] block: the block is TEXT, the fatal dump below uses the
+      # native result as-is.
+      msg = result["msg"]?.try { |raw| raw.as_s? || ResultDisplay.python_repr(raw) } || ""
 
       # Core-emitted deprecations (a module's result carrying the
       # `_ansible_core_deprecations` marker - e.g. ansible.posix.mount's

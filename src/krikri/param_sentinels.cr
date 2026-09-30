@@ -168,6 +168,32 @@ module Krikri
     end
   end
 
+  # real's boolean(value, strict=False) (module_utils/parsing/
+  # convert_bool.py) answering TRUE - the exact predicate the assemble
+  # action plugin applies to remote_src to pick between its module branch
+  # (truthy: the assemble module itself runs and re-converts remote_src
+  # with its own strict type: bool, which can then only ever succeed) and
+  # its controller-side branch (everything else: falsy spellings, invalid
+  # spellings like 'timjjr', explicit None, native 2/0.5 - boolean()
+  # returns False for all of them under strict=False, so the action
+  # assembles locally and delegates the placement to the copy module,
+  # whose spec - with remote_src STRIPPED - is what validates the rest).
+  # Only BOOLEANS_TRUE counts: the spellings y/yes/on/1/true/t
+  # (lowercased, whitespace-stripped) and the native true/1/1.0.
+  def self.lenient_boolean_true?(value : String?) : Bool
+    return false if value.nil? || value.empty? || value == NONE_SENTINEL
+    if native = non_string_scalar(value)
+      case native.raw
+      when Bool    then native.as_bool
+      when Int64   then native.as_i64 == 1
+      when Float64 then native.as_f == 1.0
+      else              false
+      end
+    else
+      %w[y yes on 1 true t].includes?(value.downcase.strip)
+    end
+  end
+
   # Python str() of a marked non-string scalar - the coercion real's action
   # plugins effectively put dest/src through when they use a non-string
   # literal as text (template's `dest: true` writes a file named "True",

@@ -539,3 +539,196 @@ describe "add_host name-chain failure shapes (missing/null/empty name)" do
     output.wont_include("PLAY RECAP")
   end
 end
+
+describe "fail msg keeps its native type (real's action puts the raw arg in result['msg'])" do
+  it "fails with an int/float/bool msg natively, in the fatal dump, the block and the registered var" do
+    output, _scratch = run_playbook(<<-YAML)
+          - fail:
+              msg: 50
+            register: r_int
+            ignore_errors: true
+          - fail:
+              msg: 1.5
+            ignore_errors: true
+          - fail:
+              msg: true
+            ignore_errors: true
+          - fail:
+              msg: false
+            ignore_errors: true
+          - fail:
+              msg: 0
+            ignore_errors: true
+          - debug:
+              var: r_int.msg
+    YAML
+
+    output.must_include(%(fatal: [localhost]: FAILED! => {"changed": false, "msg": 50}))
+    output.must_include(%(fatal: [localhost]: FAILED! => {"changed": false, "msg": 1.5}))
+    output.must_include(%(fatal: [localhost]: FAILED! => {"changed": false, "msg": true}))
+    output.must_include(%(fatal: [localhost]: FAILED! => {"changed": false, "msg": false}))
+    output.must_include(%(fatal: [localhost]: FAILED! => {"changed": false, "msg": 0}))
+    output.must_include("[ERROR]: Task failed: Action failed: 50")
+    output.must_include("[ERROR]: Task failed: Action failed: 1.5")
+    output.must_include("[ERROR]: Task failed: Action failed: True")
+    output.must_include("[ERROR]: Task failed: Action failed: False")
+    output.must_include("[ERROR]: Task failed: Action failed: 0")
+    # the registered var carries the native int, exactly like real's debug
+    output.must_include(%("r_int.msg": 50))
+  end
+
+  it "keeps an explicit null / empty-string msg, and containers natively" do
+    output, _scratch = run_playbook(<<-YAML)
+          - fail:
+              msg:
+            ignore_errors: true
+          - fail:
+              msg: ""
+            ignore_errors: true
+          - fail:
+              msg: [1, 'a']
+            ignore_errors: true
+          - fail:
+              msg: {'a': 1}
+            ignore_errors: true
+    YAML
+
+    # `msg:` with no value is args.get's explicit None - NOT the default
+    # message, which only applies when the key is absent entirely
+    output.must_include(%(fatal: [localhost]: FAILED! => {"changed": false, "msg": null}))
+    output.must_include(%(fatal: [localhost]: FAILED! => {"changed": false, "msg": ""}))
+    output.must_include(%(fatal: [localhost]: FAILED! => {"changed": false, "msg": [1, "a"]}))
+    output.must_include(%(fatal: [localhost]: FAILED! => {"changed": false, "msg": {"a": 1}}))
+    output.must_include("[ERROR]: Task failed: Action failed: None")
+    # the empty string renders the bare "Action failed." block like real
+    output.must_include("[ERROR]: Task failed: Action failed.")
+    output.must_include("[ERROR]: Task failed: Action failed: [1, 'a']")
+    output.must_include("[ERROR]: Task failed: Action failed: {'a': 1}")
+  end
+
+  it "keeps the default message when msg is absent entirely" do
+    output, _scratch = run_playbook(<<-YAML)
+          - fail:
+            ignore_errors: true
+    YAML
+
+    output.must_include(%(fatal: [localhost]: FAILED! => {"changed": false, "msg": "Failed as requested from task"}))
+    output.must_include("[ERROR]: Task failed: Action failed: Failed as requested from task")
+  end
+end
+
+describe "assemble's action-branch remote_src semantics (boolean(strict=False), not a falsy-spelling list)" do
+  it "delegates an invalid/None/non-1 remote_src to copy's spec, like real's action plugin" do
+    scratch = PluginSpecHelper.tmp_path("nonstring-assemble-delegate-cwd")
+    FileUtils.mkdir_p(File.join(scratch, "frags"))
+    File.write(File.join(scratch, "frags", "01-a.txt"), "frag one\n")
+    File.write(File.join(scratch, "frags", "02-b.txt"), "frag two\n")
+    playbook = File.join(scratch, "play.yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          # an invalid spelling boolean(strict=False) answers False for:
+          # the action assembles locally and copy's spec (remote_src
+          # STRIPPED) rejects the typo - the assemble module, and its
+          # strict remote_src bool conversion with it, never runs
+          - assemble:
+              dest: #{scratch}/o1.cfg
+              remote_src: timjjr
+              src: #{scratch}/frags
+              gorup: root
+            ignore_errors: true
+          # the same invalid spelling with NO typo succeeds - the file
+          # gets assembled and placed by the copy module
+          - assemble:
+              dest: #{scratch}/o2.cfg
+              remote_src: timjjr
+              src: #{scratch}/frags
+            ignore_errors: true
+          # an explicit None and a non-1 native int answer False too
+          - assemble:
+              dest: #{scratch}/o3.cfg
+              remote_src:
+              src: #{scratch}/frags
+              gorup: root
+            ignore_errors: true
+          - assemble:
+              dest: #{scratch}/o4.cfg
+              remote_src: 2
+              src: #{scratch}/frags
+              gorup: root
+            ignore_errors: true
+          # a BOOLEANS_TRUE value takes the module branch instead, where
+          # assemble's own spec names (ansible.legacy.assemble)
+          - assemble:
+              dest: #{scratch}/o5.cfg
+              remote_src: true
+              src: #{scratch}/frags
+              gorup: root
+            ignore_errors: true
+      YAML
+    output = IO::Memory.new
+    Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output, chdir: scratch)
+
+    # each of the three failures carries the message twice: the [ERROR]
+    # block and the fatal dump
+    output.to_s.scan(/Unsupported parameters for \(ansible\.legacy\.copy\) module: gorup\. Supported parameters include: _original_basename/).size.must_equal(6)
+    output.to_s.must_include(%(Unsupported parameters for (ansible.legacy.assemble) module: gorup. ))
+    # the typo-free invalid-remote_src task assembled and placed the file
+    output.to_s.must_include("changed: [localhost]")
+    File.read(File.join(scratch, "o2.cfg")).must_equal("frag one\nfrag two\n")
+    output.to_s.wont_include("unable to convert to bool")
+  end
+
+  it "crashes on a truthy non-string delimiter/regexp at the action's own touch points" do
+    scratch = PluginSpecHelper.tmp_path("nonstring-assemble-delimiter-cwd")
+    FileUtils.mkdir_p(File.join(scratch, "frags"))
+    File.write(File.join(scratch, "frags", "01-a.txt"), "frag one\n")
+    File.write(File.join(scratch, "frags", "02-b.txt"), "frag two\n")
+    playbook = File.join(scratch, "play.yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - assemble:
+              delimiter: 50
+              dest: #{scratch}/o1.cfg
+              remote_src: false
+              src: #{scratch}/frags
+            ignore_errors: true
+          - assemble:
+              dest: #{scratch}/o2.cfg
+              regexp: true
+              remote_src: false
+              src: #{scratch}/frags
+            ignore_errors: true
+      YAML
+    output = IO::Memory.new
+    Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output, chdir: scratch)
+
+    # codecs.escape_decode(50) inside the fragment loop - only once a
+    # SECOND fragment is reached, and after the re.compile(regexp) call
+    output.to_s.must_include(%(fatal: [localhost]: FAILED! => {"changed": false, "msg": "Task failed: a bytes-like object is required, not '_AnsibleTaggedInt'"}))
+    output.to_s.must_include("[ERROR]: Task failed: a bytes-like object is required, not '_AnsibleTaggedInt'")
+    output.to_s.must_include(%("msg": "Task failed: first argument must be string or compiled pattern"))
+    File.exists?(File.join(scratch, "o1.cfg")).must_equal(false)
+    File.exists?(File.join(scratch, "o2.cfg")).must_equal(false)
+    output.to_s.wont_include("\u{E000}")
+  end
+
+  it "fails a missing delegated src with real's _find_needle text, before the isdir check" do
+    output, _scratch = run_playbook(<<-YAML)
+          - assemble:
+              dest: /tmp/krikri-nonstring-assemble-missing.cfg
+              remote_src: false
+              src: /nonexistent-krikri-assemble-src
+            ignore_errors: true
+    YAML
+
+    output.must_include(%("msg": "Task failed: Could not find or access '/nonexistent-krikri-assemble-src' on the Ansible Controller.\\nIf you are using a module and expect the file to exist on the remote, see the remote_src option"))
+    output.must_include("[ERROR]: Task failed: Could not find or access '/nonexistent-krikri-assemble-src' on the Ansible Controller.")
+    output.wont_include("is not a directory")
+  end
+end

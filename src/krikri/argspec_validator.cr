@@ -47,6 +47,17 @@ module Krikri
     # remote_src: is falsy (assemble.py action's clean-up loop).
     ASSEMBLE_ACTION_CONSUMED = ["remote_src", "regexp", "delimiter", "ignore_hidden", "decrypt"]
 
+    # The assemble action's controller-side branch: remote_src is PRESENT
+    # and boolean(remote_src, strict=False) is not True - falsy spellings,
+    # invalid spellings ('timjjr'), explicit None and non-1 native numbers
+    # all land here (see Krikri.lenient_boolean_true? for the exact
+    # predicate, live-verified vs 2.19.11). An ABSENT remote_src takes the
+    # module branch (the action's default is the string 'yes').
+    private def assemble_action_local_path?(params : Hash(String, String)) : Bool
+      return false unless params.has_key?("remote_src")
+      !Krikri.lenient_boolean_true?(params["remote_src"]?)
+    end
+
     # convert_bool.py's BOOLEANS as real's error message reprs them (a
     # Python set iteration - order differs between module processes, so
     # this fixed order is one real emits; only the membership is stable).
@@ -180,26 +191,37 @@ module Krikri
       # `follow: true` validates like the "true" text it always was.
       params = Krikri.strip_non_string_param_markers(params)
 
-      # assemble with remote_src: false: the controller-side action plugin's
-      # isdir() check fails BEFORE any module argument validation runs.
+      # assemble with a remote_src the action plugin treats as falsy
+      # (boolean(strict=False) - every non-BOOLEANS_TRUE value, invalid
+      # spellings included): the controller-side action plugin's isdir()
+      # check fails BEFORE any module argument validation runs.
       if module_name == "ansible.builtin.assemble" &&
-         {"false", "no", "n", "0", "off", "f"}.includes?(params["remote_src"]?.to_s.downcase) &&
+         assemble_action_local_path?(params) &&
          (src = params["src"]?) && !Dir.exists?(src)
         return nil
       end
 
-      # assemble with remote_src: false (and a src that IS a directory):
-      # real's action plugin assembles the fragments on the controller and
-      # delegates the file placement to the COPY module
-      # (assemble.py action: _execute_module('ansible.legacy.copy')) after
-      # stripping the assemble-only options (remote_src/regexp/delimiter/
-      # ignore_hidden/decrypt) - so the module-level argument validation
-      # that rejects anything is COPY's spec, not assemble's: the message
-      # names (ansible.legacy.copy) and lists copy's own supported
-      # parameters (live-verified vs 2.19.11: a typo'd ignoer_hidden/
-      # mode_bogus fails through copy's spec, not assemble's).
+      # assemble with a remote_src the action plugin treats as falsy (and
+      # a src that IS a directory): real's action plugin assembles the
+      # fragments on the controller and delegates the file placement to
+      # the COPY module (assemble.py action:
+      # _execute_module('ansible.legacy.copy')) after stripping the
+      # assemble-only options (remote_src/regexp/delimiter/ignore_hidden/
+      # decrypt) - so the module-level argument validation that rejects
+      # anything is COPY's spec, not assemble's: the message names
+      # (ansible.legacy.copy) and lists copy's own supported parameters
+      # (live-verified vs 2.19.11: a typo'd ignoer_hidden/mode_bogus
+      # fails through copy's spec, not assemble's). The branch predicate
+      # is NOT boolean(remote_src, strict=False), not a falsy-spelling
+      # list: an INVALID spelling ('timjjr') or an explicit None returns
+      # False from boolean() without raising, so it delegates exactly
+      # like 'false' does - and the copy module never sees remote_src at
+      # all, which is why real's fatal for a typo'd gorup + non-bool
+      # 'timjjr' remote_src is copy's Unsupported-parameters error, not
+      # assemble's remote_src bool-conversion error (the assemble module,
+      # and its strict remote_src conversion with it, never runs).
       if module_name == "ansible.builtin.assemble" &&
-         {"false", "no", "n", "0", "off", "f"}.includes?(params["remote_src"]?.to_s.downcase) &&
+         assemble_action_local_path?(params) &&
          (copy_entry = table["ansible.builtin.copy"]?)
         delegated = params.reject { |key, _| ASSEMBLE_ACTION_CONSUMED.includes?(key) }
         return validate_spec_entry("ansible.builtin.copy", "ansible.builtin.copy", delegated,

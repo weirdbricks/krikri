@@ -111,7 +111,12 @@ module Krikri
       # value). template: opts OUT - its action plugin coerces a marked
       # non-string src through Python str() itself (a bool src must be
       # searched for as "True", not "true"), so it needs the marker intact.
-      unless module_name == "ansible.builtin.template"
+      # fail: opts out too - its action puts the task arg into
+      # result['msg'] VERBATIM (real action/fail.py has no coercion), so a
+      # marked non-string literal must reach it marked for the native type
+      # to land in the wire result/fatal dump/registered var (live-verified
+      # vs 2.19.11: `fail: {msg: 50}` fails with {"msg": 50}).
+      unless module_name == "ansible.builtin.template" || module_name == "ansible.builtin.fail"
         params = Krikri.strip_non_string_param_markers(params)
       end
 
