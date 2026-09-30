@@ -30,7 +30,7 @@
 
     - name: include vars from the existing varloader fixture file
       ansible.builtin.include_vars:
-        file: testing/roles/varloader/vars/Linux.yml
+        file: roles/varloader/vars/Linux.yml
 
     - name: read the included var on the very next task (baseB)
       ansible.builtin.debug:
