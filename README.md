@@ -101,6 +101,9 @@ shards install
 ./build.sh
 ```
 
+The binaries are written to `./bin/` - add that directory to your `PATH` (or
+prefix the commands below with `./bin/`).
+
 ### Example playbook
 
 ```yaml
@@ -121,7 +124,7 @@ shards install
 Run it against an inventory:
 
 ```bash
-./bin/krikri-playbook -i inventory.ini playbook.yml
+krikri-playbook -i inventory.ini playbook.yml
 ```
 
 Playbook syntax is standard Ansible's - see the
@@ -132,16 +135,16 @@ Playbook syntax is standard Ansible's - see the
 ## 🎯 Command Reference
 
 ```bash
-./bin/krikri-playbook playbook.yml                          # basic run
-./bin/krikri-playbook -i inventory.ini playbook.yml         # inventory
-./bin/krikri-playbook --check playbook.yml                  # dry-run
-./bin/krikri-playbook --diff playbook.yml                   # show file diffs
-./bin/krikri-playbook -v playbook.yml                       # verbose
-./bin/krikri-playbook -l webservers -t deploy playbook.yml  # host limit / tag filter
-./bin/krikri-playbook --ask-vault-pass playbook.yml         # vault-encrypted playbooks/vars
-./bin/krikri-playbook --no-batching playbook.yml            # one SSH round trip per task
-./bin/krikri-playbook --forks 10 playbook.yml               # host concurrency (default: 25)
-./bin/krikri-playbook --gathering smart playbook.yml        # fact gathering policy
+krikri-playbook playbook.yml                          # basic run
+krikri-playbook -i inventory.ini playbook.yml         # inventory
+krikri-playbook --check playbook.yml                  # dry-run
+krikri-playbook --diff playbook.yml                   # show file diffs
+krikri-playbook -v playbook.yml                       # verbose
+krikri-playbook -l webservers -t deploy playbook.yml  # host limit / tag filter
+krikri-playbook --ask-vault-pass playbook.yml         # vault-encrypted playbooks/vars
+krikri-playbook --no-batching playbook.yml            # one SSH round trip per task
+krikri-playbook --forks 10 playbook.yml               # host concurrency (default: 25)
+krikri-playbook --gathering smart playbook.yml        # fact gathering policy
 ```
 
 `--forks` defaults to 25 here (a fork is a cheap fiber, not a forked
@@ -152,16 +155,16 @@ with `gather_facts: true`) or `smart`.
 
 Everything else - `--syntax-check`, `--list-hosts`, `-e`, `--start-at-task`,
 vault subcommands and the rest - is documented in
-`./bin/krikri-playbook --help`.
+`krikri-playbook --help`.
 
 ### Ad-hoc commands (`krikri`)
 
 ```bash
-./bin/krikri all -m ping
-./bin/krikri webservers -a 'uptime'
-./bin/krikri all -m command -a 'systemctl status nginx'
-./bin/krikri all -m copy -a 'src=foo.conf dest=/etc/foo.conf' -b
-./bin/krikri db -i inventory.ini -m service -a 'name=postgresql state=restarted' -b
+krikri all -m ping
+krikri webservers -a 'uptime'
+krikri all -m command -a 'systemctl status nginx'
+krikri all -m copy -a 'src=foo.conf dest=/etc/foo.conf' -b
+krikri db -i inventory.ini -m service -a 'name=postgresql state=restarted' -b
 ```
 
 The `krikri` binary is the ad-hoc counterpart of `krikri-playbook` (real
@@ -182,10 +185,10 @@ rather than against its documentation. It's static analysis only: no host
 connection, no execution, no SSH.
 
 ```bash
-./bin/krikri-lint playbook.yml
-./bin/krikri-lint -p roles/                # parseable output
-./bin/krikri-lint --fix playbook.yml       # autofix the mechanically-fixable rules
-./bin/krikri-lint --list-rules
+krikri-lint playbook.yml
+krikri-lint -p roles/                # parseable output
+krikri-lint --fix playbook.yml       # autofix the mechanically-fixable rules
+krikri-lint --list-rules
 ```
 
 See [KNOWN_MISSING.md](KNOWN_MISSING.md) for the rules it deliberately
