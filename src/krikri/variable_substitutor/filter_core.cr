@@ -289,20 +289,113 @@ module Krikri
       # supports (sha512/sha256/md5 = $6$/$5$/$1$); passlib-only schemes
       # like bcrypt aren't available without a real passlib port.
       def self.password_hash(s : String, hashtype : String, salt : String? = nil) : String
-        openssl_flag = case hashtype.downcase
-                       when "md5"    then "-1"
-                       when "sha256" then "-5"
-                       when "sha512" then "-6"
-                       else
-                         raise "password_hash: unsupported hashtype '#{hashtype}' (supported: md5, sha256, sha512)"
-                       end
-        salt = salt.presence || Random::Secure.hex(8)
+        case hashtype.downcase
+        when "md5"
+          salt = salt.presence || Random::Secure.hex(8)
+          output = IO::Memory.new
+          status = Process.run("openssl", ["passwd", "-1", "-salt", salt, "-stdin"],
+            input: IO::Memory.new(s), output: output)
+          raise "password_hash: openssl passwd failed" unless status.success?
+          output.to_s.strip
+        when "sha256", "sha512"
+          # Real Ansible hashes through passlib, whose own DEFAULT rounds
+          # (535000 for sha256-crypt, 656000 for sha512-crypt) show in the
+          # output's rounds= prefix even when only a salt was given -
+          # openssl passwd's fixed 5000-round hash diverged byte for byte
+          # (live-verified vs 2.19.11 for both types).
+          sha512 = hashtype.downcase == "sha512"
+          rounds = sha512 ? 656000 : 535000
+          salt = salt.presence || Random::Secure.hex(8)
+          prefix = "$#{sha512 ? "6" : "5"}$rounds=#{rounds}$#{salt}$"
+          prefix + sha_crypt(s, salt, rounds, sha512)
+        else
+          raise "password_hash: unsupported hashtype '#{hashtype}' (supported: md5, sha256, sha512)"
+        end
+      end
 
-        output = IO::Memory.new
-        status = Process.run("openssl", ["passwd", openssl_flag, "-salt", salt, "-stdin"],
-          input: IO::Memory.new(s), output: output)
-        raise "password_hash: openssl passwd failed" unless status.success?
-        output.to_s.strip
+      # The $5$/$6$ (sha256-crypt / sha512-crypt) algorithm - Drepper's
+      # spec via passlib's own pure-python implementation, verified
+      # byte-for-byte against passlib's output ("hello"/"mysalt" at both
+      # default round counts, and Drepper's own "Hello world!" vector).
+      private def self.sha_crypt(pw : String, salt : String, rounds : Int64, sha512 : Bool) : String
+        name = sha512 ? "sha512" : "sha256"
+        dlen = sha512 ? 64 : 32
+        pw_b = pw.to_slice
+        salt_b = salt.to_slice
+        pwd_len = pw_b.size
+
+        b = OpenSSL::Digest.new(name).update(pw_b).update(salt_b).update(pw_b).final
+        a = OpenSSL::Digest.new(name)
+        a.update(pw_b)
+        a.update(salt_b)
+        cnt = pwd_len
+        while cnt > dlen
+          a.update(b)
+          cnt -= dlen
+        end
+        a.update(b[0, cnt])
+        bits = pwd_len
+        while bits > 0
+          bits.odd? ? a.update(b) : a.update(pw_b)
+          bits >>= 1
+        end
+        da = a.final
+
+        rep = (pwd_len.to_f / dlen).ceil.to_i
+        dp_buf = IO::Memory.new
+        dp_digest = OpenSSL::Digest.new(name).update(pw * pwd_len).final
+        rep.times { dp_buf.write(dp_digest) }
+        dp_full = dp_buf.to_slice[0, pwd_len]
+        ds_full = OpenSSL::Digest.new(name).update(salt * (16 + da[0])).final[0, salt_b.size]
+
+        cur = sha_crypt_rounds(name, da, dp_full, ds_full, rounds)
+
+        # passlib's h64 encoding: the digest's bytes are read in the
+        # transpose-map order, then each 3-byte group packs
+        # LITTLE-ENDIAN (last byte in the high bits) and emits its
+        # 6-bit groups low-first, alphabet "./0-9A-Za-z".
+        alphabet = "./0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+        perm = sha512 ? [42, 21, 0, 1, 43, 22, 23, 2, 44, 45, 24, 3, 4, 46, 25, 26, 5, 47, 48, 27, 6, 7, 49, 28, 29, 8, 50, 51, 30, 9, 10, 52, 31, 32, 11, 53, 54, 33, 12, 13, 55, 34, 35, 14, 56, 57, 36, 15, 16, 58, 37, 38, 17, 59, 60, 39, 18, 19, 61, 40, 41, 20, 62, 63] : [20, 10, 0, 11, 1, 21, 2, 22, 12, 23, 13, 3, 14, 4, 24, 5, 25, 15, 26, 16, 6, 17, 7, 27, 8, 28, 18, 29, 19, 9, 30, 31]
+        transposed = perm.map { |idx| cur[idx] }
+        result_b64 = IO::Memory.new
+        (transposed.size // 3).times do |group_index|
+          base = 3 * group_index
+          b64_triple(result_b64, alphabet, transposed[base + 2], transposed[base + 1], transposed[base], 4)
+        end
+        if (tail = transposed.size % 3) == 1
+          b64_triple(result_b64, alphabet, 0u8, 0u8, transposed[transposed.size - 1], 2)
+        elsif tail == 2
+          w = transposed[transposed.size - 2].to_u32 | (transposed[transposed.size - 1].to_u32 << 8)
+          3.times do
+            result_b64 << alphabet[w & 0x3f]
+            w >>= 6
+          end
+        end
+        result_b64.to_s
+      end
+
+      # The rounds burn loop: each round mixes the previous digest with
+      # the expanded password (dp) and salt (ds) digests per the
+      # 3/7-divisibility schedule.
+      private def self.sha_crypt_rounds(name : String, da : Bytes, dp_full : Bytes, ds_full : Bytes, rounds : Int64) : Bytes
+        cur = da
+        rounds.times do |i|
+          d = OpenSSL::Digest.new(name)
+          i.odd? ? d.update(dp_full) : d.update(cur)
+          d.update(ds_full) if i % 3 != 0
+          d.update(dp_full) if i % 7 != 0
+          i.odd? ? d.update(cur) : d.update(dp_full)
+          cur = d.final
+        end
+        cur
+      end
+
+      private def self.b64_triple(io : IO::Memory, alphabet : String, b2 : UInt8, b1 : UInt8, b0 : UInt8, n : Int32) : Nil
+        w = (b2.to_u32 << 16) | (b1.to_u32 << 8) | b0.to_u32
+        n.times do
+          io << alphabet[w & 0x3f]
+          w >>= 6
+        end
       end
 
       # to_uuid(namespace=ANSIBLE_NAMESPACE) - deterministic UUID5
