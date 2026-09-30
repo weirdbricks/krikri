@@ -3,7 +3,7 @@
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
 [![Version](https://img.shields.io/badge/version-0.9.1374-blue)](https://github.com/weirdbricks/krikri)
-[![Compatibility](https://img.shields.io/badge/ansible--core-2.19.11-brightgreen)](#-compatibility-target)
+[![Compatibility](https://img.shields.io/badge/ansible--core-2.19.11-brightgreen)](#-what-this-is)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 [![Homebrew](https://img.shields.io/badge/homebrew-tap-blue)](#install-via-homebrew-macoslinux-prebuilt-binaries)
 
@@ -30,7 +30,7 @@ structural exclusions called out below.
 
 | By the numbers | |
 |---|---|
-| Compatibility target | ansible-core 2.19.11 |
+| Compatibility target | ansible-core 2.19.11 (byte-for-byte console output) |
 | Real Galaxy roles tested on real hosts | 6,680 ([status per role](ROLES_TESTED.md)) |
 | Open gaps and deliberate scope cuts | [KNOWN_MISSING.md](KNOWN_MISSING.md) |
 | Third-party collection modules natively ported | 62 |
@@ -38,13 +38,6 @@ structural exclusions called out below.
 | Cold run vs. real `ansible-playbook` | 2.36x faster |
 | Warm run vs. real `ansible-playbook` | 7.17x faster |
 | Fastest of the three benchmarked engines | 57 of 61 roles (93%) |
-
----
-
-## 🎯 Compatibility target
-
-**krikri targets `ansible-core` 2.19.11** and aims for byte-for-byte identical console output (stdout, stderr, exit code) to `ansible-playbook` 2.19.11, checked with `scripts/output_parity.sh` and a per-module generator of valid and mutated playbooks.
-Known unavoidable differences: no Python interpreter-discovery warning, no `-vv` environment banner, and values that are random per real run (temp file names, string-set ordering).
 
 ---
 

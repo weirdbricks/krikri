@@ -131,6 +131,21 @@ attached. Nothing here is waiting on anyone. Do not re-litigate without
 new evidence - and if new evidence turns up, move the entry to "Open
 gaps" rather than arguing with the note in place.
 
+### Console-output differences from ansible-core 2.19.11 that cannot be matched
+
+krikri aims for byte-for-byte identical stdout/stderr/exit code to `ansible-playbook` 2.19.11 (checked with
+`scripts/output_parity.sh` and the per-module `krikri-playbook-generator`). The known exceptions:
+
+- Python interpreter-discovery warnings (`Host ... is using the discovered Python interpreter ...`) are not
+  emulated - krikri has no Python interpreter to discover.
+- `-vv` and higher: real ansible's environment banner (Python/Jinja/PyYAML versions, module search paths,
+  `task path:` lines) is not reproduced.
+- Values that are random per real run: temp file/dir names, the order of string sets (`union`/`intersect`/...
+  on lists of strings) and the order of several invalid options in one error message. Integer set order
+  *is* reproduced.
+- A malformed `-e '{...'` JSON argument produces a different error chain.
+- Other `ansible-core` releases may differ in wording or edge cases; 2.19.11 is the reference.
+
 ### Differential-fuzz residual leniency between the two Jinja evaluators
 
 - `bin/differential_fuzz` (the seeded ExpressionEvaluator-vs-krikri-jinja
