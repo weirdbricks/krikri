@@ -106,6 +106,10 @@ mask() {
   # krikri can never emit either.
   sed -E "${args[@]}" "$src" | perl -0pe '
     s/^[ ]*"ansible_facts": \{\n[ ]*"discovered_interpreter_python": "[^"]*"\n[ ]*\},\n//mg;
+    # include_role/import_role list several invalid options in Python set order,
+    # random per real process (string hash randomization): sort the list on both
+    # sides so only the order is normalized, never the membership.
+    s/(Invalid options for [\w.]+: )([\w,]+)/$1.join(",", sort split(",", $2))/ge;
     s/,\n[ ]*"warnings": \[\n[ ]*"Host \x27[^\x27]*\x27 is using the discovered Python interpreter[^\n]*"\n[ ]*\]//g;
     s/^[ ]*"warnings": \[\n[ ]*"Host \x27[^\x27]*\x27 is using the discovered Python interpreter[^\n]*"\n[ ]*\],\n//mg;
   ' >"$dst"
