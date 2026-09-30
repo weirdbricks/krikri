@@ -25,13 +25,8 @@ module Krikri
       # A natively typed msg (literal YAML number/bool, or a whole-span
       # `{{ expr }}` evaluated structurally) arrives JSON-encoded behind the
       # NATIVE_TYPED_PREFIX - real keeps that exact type in the result.
-      native_msg : JSON::Any? = nil
-      if msg && msg.starts_with?(Krikri::NATIVE_TYPED_PREFIX)
-        native_msg = (JSON.parse(msg[Krikri::NATIVE_TYPED_PREFIX.size..]) rescue nil)
-        if native_msg
-          msg = native_msg.as_s? || native_msg.to_json
-        end
-      end
+      native_msg = native_typed_msg(msg)
+      msg = native_msg.as_s? || native_msg.to_json if native_msg
 
       # msg and var are mutually exclusive in real ansible.builtin.debug -
       # but that check (like every other option check) belongs to the
@@ -84,6 +79,14 @@ module Krikri
         }.to_json))
       end
       ActionResult.final(final)
+    end
+
+    # The decoded value behind a NATIVE_TYPED_PREFIX `msg`, or nil for an
+    # ordinary string one (or an unparsable payload, which real would
+    # never produce - the prefix is only ever written by this engine).
+    private def native_typed_msg(msg : String?) : JSON::Any?
+      return nil unless msg && msg.starts_with?(Krikri::NATIVE_TYPED_PREFIX)
+      JSON.parse(msg[Krikri::NATIVE_TYPED_PREFIX.size..]) rescue nil
     end
 
     # The task's own `verbosity:` threshold. Real's spec types it 'int' and

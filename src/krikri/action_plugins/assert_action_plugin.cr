@@ -112,34 +112,40 @@ module Krikri
           "Task failed: #{ex.message}"))
       end
 
-      if failing
-        fail_msg = @params["fail_msg"]? || @params["msg"]? || "Assertion failed"
-        # a bare YAML bool item (`that: [false]`) is reported as the bool itself
-        assertion = failing == "false" ? JSON::Any.new(false) : (failing == "true" ? JSON::Any.new(true) : JSON::Any.new(failing))
-        extra = {"assertion" => assertion, "evaluated_to" => JSON::Any.new(false)}
-        # Real assert tags the FAILURE result _ansible_verbose_always too
-        # (its action sets it once up front for any non-quiet run), so
-        # the default callback dumps the failed assertion pretty-printed
-        # - 4-space indent, sorted keys (live-verified against 2.19.11).
-        unless true?(@params["quiet"]?)
-          extra["_ansible_verbose_always"] = JSON::Any.new(true)
-        end
-        ActionResult.final(ActionResult.plugin_result_json(false, true, fail_msg, extra))
-      else
-        success_msg = @params["success_msg"]? || "All assertions passed"
-        if true?(@params["quiet"]?)
-          extra = {"_ansible_quiet" => JSON::Any.new(true)}
-          ActionResult.final(ActionResult.plugin_result_json(false, false, success_msg, extra))
-        else
-          # Real assert tags its successful result _ansible_verbose_always
-          # so the default callback dumps it (`ok: [host] => {"changed":
-          # false, "msg": ...}`); a quiet: success is dumped by nothing
-          # and prints a bare `ok: [host]` (both live-verified against
-          # ansible-core 2.19.11).
-          extra = {"_ansible_verbose_always" => JSON::Any.new(true)}
-          ActionResult.final(ActionResult.plugin_result_json(false, false, success_msg, extra))
-        end
+      failing ? failure_result(failing) : success_result
+    end
+
+    # A condition that evaluated false: the first failing `that:` entry
+    # decides the message, and the result echoes it as `assertion` /
+    # `evaluated_to` so the callback can dump the failed assertion.
+    private def failure_result(failing : String) : ActionResult
+      fail_msg = @params["fail_msg"]? || @params["msg"]? || "Assertion failed"
+      # a bare YAML bool item (`that: [false]`) is reported as the bool itself
+      assertion = failing == "false" ? JSON::Any.new(false) : (failing == "true" ? JSON::Any.new(true) : JSON::Any.new(failing))
+      extra = {"assertion" => assertion, "evaluated_to" => JSON::Any.new(false)}
+      # Real assert tags the FAILURE result _ansible_verbose_always too
+      # (its action sets it once up front for any non-quiet run), so
+      # the default callback dumps the failed assertion pretty-printed
+      # - 4-space indent, sorted keys (live-verified against 2.19.11).
+      unless true?(@params["quiet"]?)
+        extra["_ansible_verbose_always"] = JSON::Any.new(true)
       end
+      ActionResult.final(ActionResult.plugin_result_json(false, true, fail_msg, extra))
+    end
+
+    # Every `that:` condition held. Real assert tags its successful result
+    # _ansible_verbose_always so the default callback dumps it (`ok: [host]
+    # => {"changed": false, "msg": ...}`); a quiet: success is dumped by
+    # nothing and prints a bare `ok: [host]` (both live-verified against
+    # ansible-core 2.19.11).
+    private def success_result : ActionResult
+      success_msg = @params["success_msg"]? || "All assertions passed"
+      extra = if true?(@params["quiet"]?)
+                {"_ansible_quiet" => JSON::Any.new(true)}
+              else
+                {"_ansible_verbose_always" => JSON::Any.new(true)}
+              end
+      ActionResult.final(ActionResult.plugin_result_json(false, false, success_msg, extra))
     end
 
     private def true?(value : String?, default : Bool = false) : Bool

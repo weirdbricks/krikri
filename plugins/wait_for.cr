@@ -110,6 +110,17 @@ module Krikri
         end
       end
 
+      if failure = validate_drained(port, state)
+        return failure
+      end
+
+      nil
+    end
+
+    # state=drained is the only mode that polls /proc/net/tcp, and it
+    # needs a literal IPv4 port:/host: pair; exclude_hosts belongs to it
+    # alone.
+    private def validate_drained(port : Int32?, state : String) : PluginResult?
       if state == "drained"
         unless port
           return PluginResult.new(changed: false, failed: true, msg: "state: drained should only be used for checking a port in the wait_for module")

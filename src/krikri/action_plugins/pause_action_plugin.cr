@@ -76,16 +76,7 @@ module Krikri
       end
 
       unless wait
-        # Real's pause always waits for Enter when no duration is given;
-        # with a non-interactive stdin, display.prompt_until raises
-        # AnsiblePromptNoninteractive and the action warns and continues
-        # immediately (pause.py's AnsiblePromptNoninteractive handler).
-        # Verified vs 2.19.11: `pause: {}` with stdin from /dev/null
-        # prints exactly this on stderr and the task is ok.
-        unless @@stdin_warning_shown
-          STDERR.puts "[WARNING]: Not waiting for response to prompt as stdin is not interactive".colorize(:yellow)
-          @@stdin_warning_shown = true
-        end
+        warn_noninteractive_stdin
       end
 
       start = Time.local
@@ -97,23 +88,7 @@ module Krikri
       # to the end of the loop (executor_loops.cr's finish_looped_task)
       # and writing here would print every item's banner before the very
       # first item's "ok:".
-      console_lines : Array(JSON::Any)? = nil
-      if requested = wait
-        # Real clamps the CONVERTED second count up to 1 before both the
-        # console line and the sleep, so `seconds: 0`, `minutes: 0` and any
-        # negative all announce and wait the same 1 second.
-        clamped = requested < 1 ? 1_i64 : requested
-        console = ["Pausing for #{clamped} seconds#{echo_note}"]
-        # The interrupt hint is the PROMPT's slot, not an extra line: with
-        # a prompt real prints it after the "Pausing for" line, and with
-        # no prompt it REPLACES the prompt instead - which is never
-        # written at all with non-interactive stdin.
-        if prompt_given?
-          console << INTERRUPT_HINT
-        end
-        console_lines = console.map { |line| JSON::Any.new(line) }
-        sleep clamped.to_f
-      end
+      console_lines = pause_console(wait, echo_note)
       stop = Time.local
 
       elapsed = (stop - start).total_seconds
@@ -135,6 +110,36 @@ module Krikri
       # strip the prefix).
       extra["_ansible_pause_console"] = JSON::Any.new(console_lines) if console_lines
       ActionResult.final(ActionResult.plugin_result_json(false, false, "", extra))
+    end
+
+    # Real's pause always waits for Enter when no duration is given; with
+    # a non-interactive stdin, display.prompt_until raises
+    # AnsiblePromptNoninteractive and the action warns and continues
+    # immediately (pause.py's AnsiblePromptNoninteractive handler).
+    # Verified vs 2.19.11: `pause: {}` with stdin from /dev/null
+    # prints exactly this on stderr and the task is ok. Warned once per
+    # process, like real.
+    private def warn_noninteractive_stdin : Nil
+      return if @@stdin_warning_shown
+      STDERR.puts "[WARNING]: Not waiting for response to prompt as stdin is not interactive".colorize(:yellow)
+      @@stdin_warning_shown = true
+    end
+
+    # A duration pause's console lines (empty for a bare `pause:`), doing
+    # the sleep itself. Real clamps the CONVERTED second count up to 1
+    # before both the console line and the sleep, so `seconds: 0`,
+    # `minutes: 0` and any negative all announce and wait the same 1
+    # second. The interrupt hint is the PROMPT's slot, not an extra line:
+    # with a prompt real prints it after the "Pausing for" line, and with
+    # no prompt it REPLACES the prompt instead - which is never written at
+    # all with non-interactive stdin.
+    private def pause_console(wait : Int64?, echo_note : String) : Array(JSON::Any)?
+      return nil unless wait
+      clamped = wait < 1 ? 1_i64 : wait
+      console = ["Pausing for #{clamped} seconds#{echo_note}"]
+      console << INTERRUPT_HINT if prompt_given?
+      sleep clamped.to_f
+      console.map { |line| JSON::Any.new(line) }
     end
 
     # Real's own `if new_module_args['prompt']` truthiness test on the

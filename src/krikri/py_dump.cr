@@ -19,53 +19,66 @@ module Krikri
       when Int    then io << raw.to_s
       when Float  then io << py_float_repr(raw)
       when String then json_string(io, raw)
-      when Array
-        if raw.empty?
-          io << "[]"
-        elsif indent
-          io << "[\n"
-          raw.each_with_index do |item, idx|
-            io << " " * (indent * (level + 1))
-            write_json(io, item, indent, sort_keys, level + 1)
-            io << (idx == raw.size - 1 ? "\n" : ",\n")
-          end
-          io << " " * (indent * level) << "]"
-        else
-          io << "["
-          raw.each_with_index do |item, idx|
-            io << ", " if idx > 0
-            write_json(io, item, indent, sort_keys, level + 1)
-          end
-          io << "]"
-        end
-      when Hash
-        if raw.empty?
-          io << "{}"
-        else
-          pairs = raw.to_a
-          pairs = pairs.sort_by { |(k, _)| k } if sort_keys
-          if indent
-            io << "{\n"
-            pairs.each_with_index do |(k, v), idx|
-              io << " " * (indent * (level + 1))
-              json_string(io, k)
-              io << ": "
-              write_json(io, v, indent, sort_keys, level + 1)
-              io << (idx == pairs.size - 1 ? "\n" : ",\n")
-            end
-            io << " " * (indent * level) << "}"
-          else
-            io << "{"
-            pairs.each_with_index do |(k, v), idx|
-              io << ", " if idx > 0
-              json_string(io, k)
-              io << ": "
-              write_json(io, v, indent, sort_keys, level + 1)
-            end
-            io << "}"
-          end
-        end
+      when Array  then write_json_array(io, raw, indent, sort_keys, level)
+      when Hash   then write_json_object(io, raw, indent, sort_keys, level)
       end
+    end
+
+    private def self.write_json_array(io : IO, raw : Array(JSON::Any), indent : Int32?, sort_keys : Bool, level : Int32) : Nil
+      if raw.empty?
+        io << "[]"
+        return
+      end
+
+      unless indent
+        io << "["
+        raw.each_with_index do |item, idx|
+          io << ", " if idx > 0
+          write_json(io, item, indent, sort_keys, level + 1)
+        end
+        io << "]"
+        return
+      end
+
+      io << "[\n"
+      raw.each_with_index do |item, idx|
+        io << " " * (indent * (level + 1))
+        write_json(io, item, indent, sort_keys, level + 1)
+        io << (idx == raw.size - 1 ? "\n" : ",\n")
+      end
+      io << " " * (indent * level) << "]"
+    end
+
+    private def self.write_json_object(io : IO, raw : Hash(String, JSON::Any), indent : Int32?, sort_keys : Bool, level : Int32) : Nil
+      if raw.empty?
+        io << "{}"
+        return
+      end
+
+      pairs = raw.to_a
+      pairs = pairs.sort_by { |(k, _)| k } if sort_keys
+
+      unless indent
+        io << "{"
+        pairs.each_with_index do |(k, v), idx|
+          io << ", " if idx > 0
+          json_string(io, k)
+          io << ": "
+          write_json(io, v, indent, sort_keys, level + 1)
+        end
+        io << "}"
+        return
+      end
+
+      io << "{\n"
+      pairs.each_with_index do |(k, v), idx|
+        io << " " * (indent * (level + 1))
+        json_string(io, k)
+        io << ": "
+        write_json(io, v, indent, sort_keys, level + 1)
+        io << (idx == pairs.size - 1 ? "\n" : ",\n")
+      end
+      io << " " * (indent * level) << "}"
     end
 
     # json.dumps(ensure_ascii=True) string encoding
@@ -307,75 +320,133 @@ module Krikri
       private def analyze(text : String) : Analysis
         return Analysis.new(true, false, false, true, true, true) if text.empty?
 
-        block_indicators = flow_indicators = line_breaks = special = false
-        leading_space = leading_break = trailing_space = trailing_break = false
-        break_space = space_break = false
-        previous_space = previous_break = false
-        chars = text.chars
+        scan = ScalarScan.new
         if text.starts_with?("---") || text.starts_with?("...")
-          block_indicators = flow_indicators = true
+          scan.flow_indicators = true
+          scan.block_indicators = true
         end
+        scan_chars(text, scan)
+
+        allowed_styles(scan)
+      end
+
+      # The flags analyze's per-character walk accumulates, in their
+      # own object so analyze itself stays a straight port of PyYAML's
+      # analyze_scalar instead of a dozen locals.
+      private class ScalarScan
+        property? flow_indicators = false
+        property? block_indicators = false
+        property? line_breaks = false
+        property? special = false
+        property? leading_space = false
+        property? leading_break = false
+        property? trailing_space = false
+        property? trailing_break = false
+        property? break_space = false
+        property? space_break = false
+        property? previous_space = false
+        property? previous_break = false
+
+        def scan_indicators(ch : Char, index : Int32, preceded_by_ws : Bool, followed_by_ws : Bool) : Nil
+          if index == 0
+            scan_leading_indicators(ch, followed_by_ws)
+          else
+            scan_inner_indicators(ch, preceded_by_ws, followed_by_ws)
+          end
+        end
+
+        # The first character of a scalar: the full indicator set, plus
+        # the leading '?'/':'/- that only count at the start.
+        private def scan_leading_indicators(ch : Char, followed_by_ws : Bool) : Nil
+          if "#,[]{}&*!|>'\"%@`".includes?(ch)
+            @flow_indicators = @block_indicators = true
+          end
+          if ch == '?' || ch == ':'
+            @flow_indicators = true
+            @block_indicators = true if followed_by_ws
+          end
+          if ch == '-' && followed_by_ws
+            @flow_indicators = @block_indicators = true
+          end
+        end
+
+        # Every later character: only ',?[]{}', a followed-by-space ':'
+        # and a preceded-by-space '#' count.
+        private def scan_inner_indicators(ch : Char, preceded_by_ws : Bool, followed_by_ws : Bool) : Nil
+          @flow_indicators = true if ",?[]{}".includes?(ch)
+          if ch == ':'
+            @flow_indicators = true
+            @block_indicators = true if followed_by_ws
+          end
+          if ch == '#' && preceded_by_ws
+            @flow_indicators = @block_indicators = true
+          end
+        end
+
+        def scan_printable(ch : Char) : Nil
+          @line_breaks = true if line_break?(ch)
+          unless ch == '\n' || (' ' <= ch && ch <= '~')
+            @special = true unless printable_unicode?(ch.ord)
+          end
+        end
+
+        def scan_whitespace(ch : Char, index : Int32, size : Int32) : Nil
+          if ch == ' '
+            @leading_space = true if index == 0
+            @trailing_space = true if index == size - 1
+            @break_space = true if @previous_break
+            @previous_space = true
+            @previous_break = false
+          elsif line_break?(ch)
+            @leading_break = true if index == 0
+            @trailing_break = true if index == size - 1
+            @space_break = true if @previous_space
+            @previous_space = false
+            @previous_break = true
+          else
+            @previous_space = false
+            @previous_break = false
+          end
+        end
+
+        private def line_break?(ch : Char) : Bool
+          ch == '\n' || ch == '\u0085' || ch == ' ' || ch == ' '
+        end
+
+        private def printable_unicode?(code : Int32) : Bool
+          (code == 0x85 || (0xA0 <= code && code <= 0xD7FF) || (0xE000 <= code && code <= 0xFFFD) || (0x10000 <= code && code < 0x10FFFF)) && code != 0xFEFF
+        end
+      end
+
+      # PyYAML's analyze_scalar walk over one scalar's characters.
+      private def scan_chars(text : String, scan : ScalarScan) : Nil
+        chars = text.chars
         preceded_by_ws = true
         followed_by_ws = chars.size == 1 || whitespace_char?(chars[1])
         index = 0
+
         while index < chars.size
           ch = chars[index]
-          if index == 0
-            if "#,[]{}&*!|>'\"%@`".includes?(ch)
-              flow_indicators = block_indicators = true
-            end
-            if ch == '?' || ch == ':'
-              flow_indicators = true
-              block_indicators = true if followed_by_ws
-            end
-            if ch == '-' && followed_by_ws
-              flow_indicators = block_indicators = true
-            end
-          else
-            flow_indicators = true if ",?[]{}".includes?(ch)
-            if ch == ':'
-              flow_indicators = true
-              block_indicators = true if followed_by_ws
-            end
-            if ch == '#' && preceded_by_ws
-              flow_indicators = block_indicators = true
-            end
-          end
-          line_breaks = true if ch == '\n' || ch == '\u0085' || ch == ' ' || ch == ' '
-          unless ch == '\n' || (' ' <= ch && ch <= '~')
-            code = ch.ord
-            printable_unicode = (code == 0x85 || (0xA0 <= code && code <= 0xD7FF) || (0xE000 <= code && code <= 0xFFFD) || (0x10000 <= code && code < 0x10FFFF)) && code != 0xFEFF
-            special = true unless printable_unicode
-          end
-          if ch == ' '
-            leading_space = true if index == 0
-            trailing_space = true if index == chars.size - 1
-            break_space = true if previous_break
-            previous_space = true
-            previous_break = false
-          elsif ch == '\n' || ch == '\u0085' || ch == ' ' || ch == ' '
-            leading_break = true if index == 0
-            trailing_break = true if index == chars.size - 1
-            space_break = true if previous_space
-            previous_space = false
-            previous_break = true
-          else
-            previous_space = false
-            previous_break = false
-          end
+          scan.scan_indicators(ch, index, preceded_by_ws, followed_by_ws)
+          scan.scan_printable(ch)
+          scan.scan_whitespace(ch, index, chars.size)
           index += 1
           preceded_by_ws = whitespace_char?(ch)
           followed_by_ws = index + 1 >= chars.size || whitespace_char?(chars[index + 1])
         end
+      end
 
+      # Which of plain/single/double styles survive the flags the
+      # walk collected (PyYAML's own tail of analyze_scalar).
+      private def allowed_styles(scan : ScalarScan) : Analysis
         allow_flow_plain = allow_block_plain = allow_single = allow_double = true
-        allow_flow_plain = allow_block_plain = false if leading_space || leading_break || trailing_space || trailing_break
-        allow_flow_plain = allow_block_plain = allow_single = false if break_space
-        allow_flow_plain = allow_block_plain = allow_single = false if space_break || special
-        allow_flow_plain = allow_block_plain = false if line_breaks
-        allow_flow_plain = false if flow_indicators
-        allow_block_plain = false if block_indicators
-        Analysis.new(false, line_breaks, allow_flow_plain, allow_block_plain, allow_single, allow_double)
+        allow_flow_plain = allow_block_plain = false if scan.leading_space? || scan.leading_break? || scan.trailing_space? || scan.trailing_break?
+        allow_flow_plain = allow_block_plain = allow_single = false if scan.break_space?
+        allow_flow_plain = allow_block_plain = allow_single = false if scan.space_break? || scan.special?
+        allow_flow_plain = allow_block_plain = false if scan.line_breaks?
+        allow_flow_plain = false if scan.flow_indicators?
+        allow_block_plain = false if scan.block_indicators?
+        Analysis.new(false, scan.line_breaks?, allow_flow_plain, allow_block_plain, allow_single, allow_double)
       end
 
       private def whitespace_char?(ch : Char) : Bool
@@ -432,6 +503,9 @@ module Krikri
         @io << data
       end
 
+      # PyYAML's write_plain. The three branch helpers hold the chunk
+      # loop's own logic so the loop itself stays readable; each returns
+      # the new start offset for the next chunk.
       private def write_plain(text : String, split : Bool) : Nil
         @open_ended = true if @root_context
         return if text.empty?
@@ -448,44 +522,56 @@ module Krikri
         idx = 0
         while idx <= chars.size
           ch = idx < chars.size ? chars[idx] : nil
-          if spaces
-            if ch != ' '
-              if start + 1 == idx && @column > @best_width && split
-                write_indent
-                @whitespace = false
-                @indention = false
-              else
-                data = chars[start...idx].join
-                @column += data.size
-                @io << data
-              end
-              start = idx
-            end
-          elsif breaks
-            if ch.nil? || !(ch == '\n' || ch == '\u0085' || ch == ' ' || ch == ' ')
-              write_line_break if chars[start] == '\n'
-              chars[start...idx].each { |line_break| line_break == '\n' ? write_line_break : write_line_break(line_break.to_s) }
-              write_indent
-              @whitespace = false
-              @indention = false
-              start = idx
-            end
-          else
-            if ch.nil? || ch == ' ' || ch == '\n' || ch == '\u0085' || ch == ' ' || ch == ' '
-              data = chars[start...idx].join
-              @column += data.size
-              @io << data
-              start = idx
-            end
-          end
+          start = if spaces
+                    ch == ' ' ? start : plain_spaces_flush(chars, start, idx, split)
+                  elsif breaks
+                    plain_breaks_flush(chars, start, idx, ch)
+                  else
+                    plain_run_flush(chars, start, idx, ch)
+                  end
           if ch
             spaces = ch == ' '
-            breaks = ch == '\n' || ch == '\u0085' || ch == ' ' || ch == ' '
+            breaks = line_break?(ch)
           end
           idx += 1
         end
       end
 
+      # A plain scalar's run of spaces, ended: either the wrap point
+      # (write_indent) or the characters themselves.
+      private def plain_spaces_flush(chars : Array(Char), start : Int32, idx : Int32, split : Bool) : Int32
+        if start + 1 == idx && @column > @best_width && split
+          write_indent
+          @whitespace = false
+          @indention = false
+        else
+          write_run(chars, start, idx)
+        end
+        idx
+      end
+
+      # A plain scalar's run of line breaks, ended: each break is
+      # re-emitted in the form PyYAML uses, then the indent.
+      private def plain_breaks_flush(chars : Array(Char), start : Int32, idx : Int32, ch : Char?) : Int32
+        return start if ch && line_break?(ch)
+        write_line_break if chars[start] == '\n'
+        write_breaks(chars[start...idx])
+        write_indent
+        @whitespace = false
+        @indention = false
+        idx
+      end
+
+      # A plain scalar's run of ordinary characters, ended at the next
+      # space, line break or the end of the scalar.
+      private def plain_run_flush(chars : Array(Char), start : Int32, idx : Int32, ch : Char?) : Int32
+        return start unless ch.nil? || ch == ' ' || line_break?(ch)
+        write_run(chars, start, idx)
+        idx
+      end
+
+      # PyYAML's write_single_quoted, which additionally doubles every
+      # literal quote it passes.
       private def write_single_quoted(text : String, split : Bool) : Nil
         write_indicator("'", true)
         chars = text.chars
@@ -494,34 +580,13 @@ module Krikri
         idx = 0
         while idx <= chars.size
           ch = idx < chars.size ? chars[idx] : nil
-          if spaces
-            if ch.nil? || ch != ' '
-              if start + 1 == idx && @column > @best_width && split && start != 0 && idx != chars.size
-                write_indent
-              else
-                data = chars[start...idx].join
-                @column += data.size
-                @io << data
-              end
-              start = idx
-            end
-          elsif breaks
-            if ch.nil? || !(ch == '\n' || ch == '\u0085' || ch == ' ' || ch == ' ')
-              write_line_break if chars[start] == '\n'
-              chars[start...idx].each { |line_break| line_break == '\n' ? write_line_break : write_line_break(line_break.to_s) }
-              write_indent
-              start = idx
-            end
-          else
-            if ch.nil? || ch == ' ' || ch == '\n' || ch == '\u0085' || ch == ' ' || ch == ' ' || ch == '\''
-              if start < idx
-                data = chars[start...idx].join
-                @column += data.size
-                @io << data
-                start = idx
-              end
-            end
-          end
+          start = if spaces
+                    ch && ch == ' ' ? start : single_spaces_flush(chars, start, idx, ch, split)
+                  elsif breaks
+                    single_breaks_flush(chars, start, idx, ch)
+                  else
+                    single_run_flush(chars, start, idx, ch)
+                  end
           if ch == '\''
             @column += 2
             @io << "''"
@@ -529,11 +594,36 @@ module Krikri
           end
           if ch
             spaces = ch == ' '
-            breaks = ch == '\n' || ch == '\u0085' || ch == ' ' || ch == ' '
+            breaks = line_break?(ch)
           end
           idx += 1
         end
         write_indicator("'", false)
+      end
+
+      private def single_spaces_flush(chars : Array(Char), start : Int32, idx : Int32, ch : Char?, split : Bool) : Int32
+        return start if ch && ch == ' '
+        if start + 1 == idx && @column > @best_width && split && start != 0 && idx != chars.size
+          write_indent
+        else
+          write_run(chars, start, idx)
+        end
+        idx
+      end
+
+      private def single_breaks_flush(chars : Array(Char), start : Int32, idx : Int32, ch : Char?) : Int32
+        return start if ch && line_break?(ch)
+        write_line_break if chars[start] == '\n'
+        write_breaks(chars[start...idx])
+        write_indent
+        idx
+      end
+
+      private def single_run_flush(chars : Array(Char), start : Int32, idx : Int32, ch : Char?) : Int32
+        return start unless ch.nil? || ch == ' ' || line_break?(ch) || ch == '\''
+        return start if start >= idx
+        write_run(chars, start, idx)
+        idx
       end
 
       ESCAPES = {
@@ -542,52 +632,97 @@ module Krikri
         '\u0085' => "N", ' ' => "_", ' ' => "L", ' ' => "P",
       }
 
+      # PyYAML's write_double_quoted.
       private def write_double_quoted(text : String, split : Bool) : Nil
         write_indicator("\"", true)
         chars = text.chars
         start = idx = 0
         while idx <= chars.size
           ch = idx < chars.size ? chars[idx] : nil
-          code = ch.try(&.ord) || 0
-          if ch.nil? || ch == '"' || ch == '\\' || ch == '\u0085' || ch == ' ' || ch == ' ' || ch == '﻿' ||
-             !(ch == '\n' || (' ' <= ch && ch <= '~') || (code >= 0xA0 && code <= 0xD7FF) || (code >= 0xE000 && code <= 0xFFFD) || code >= 0x10000)
-            if start < idx
-              data = chars[start...idx].join
-              @column += data.size
-              @io << data
-              start = idx
-            end
-            if ch
-              data = if ESCAPES.has_key?(ch)
-                       "\\" + ESCAPES[ch]
-                     elsif code <= 0xFF
-                       "\\x" + code.to_s(16).upcase.rjust(2, '0')
-                     elsif code <= 0xFFFF
-                       "\\u" + code.to_s(16).upcase.rjust(4, '0')
-                     else
-                       "\\U" + code.to_s(16).upcase.rjust(8, '0')
-                     end
-              @column += data.size
-              @io << data
-              start = idx + 1
-            end
-          end
-          if 0 < idx && idx < chars.size - 1 && (ch == ' ' || start >= idx) && @column + (idx - start) > @best_width && split
-            data = chars[start...idx].join + "\\"
-            start = idx if start < idx
-            @column += data.size
-            @io << data
-            write_indent
-            @whitespace = false
-            @indention = false
-            if start < chars.size && chars[start] == ' '
-              @column += 1
-              @io << "\\"
-            end
-          end
+          start = double_escape_flush(chars, start, idx, ch)
+          start = double_split_flush(chars, start, idx, ch, split)
           idx += 1
         end
         write_indicator("\"", false)
+      end
+
+      # The escape/flush half of the double-quoted writer's loop: the
+      # run of ordinary characters before a character that needs an
+      # escape, then the escape itself.
+      private def double_escape_flush(chars : Array(Char), start : Int32, idx : Int32, ch : Char?) : Int32
+        code = ch.try(&.ord) || 0
+        return start unless double_escape_needed?(ch, code)
+        if start < idx
+          write_run(chars, start, idx)
+          start = idx
+        end
+        if ch
+          data = escape_data(ch, code)
+          @column += data.size
+          @io << data
+          start = idx + 1
+        end
+        start
+      end
+
+      # The line-splitting half: a backslash continuation when the line
+      # has run past the wrap width.
+      private def double_split_flush(chars : Array(Char), start : Int32, idx : Int32, ch : Char?, split : Bool) : Int32
+        return start unless 0 < idx && idx < chars.size - 1 && (ch == ' ' || start >= idx) && @column + (idx - start) > @best_width && split
+        data = chars[start...idx].join + "\\"
+        start = idx if start < idx
+        @column += data.size
+        @io << data
+        write_indent
+        @whitespace = false
+        @indention = false
+        if start < chars.size && chars[start] == ' '
+          @column += 1
+          @io << "\\"
+        end
+        start
+      end
+
+      private def double_escape_needed?(ch : Char?, code : Int32) : Bool
+        return true if ch.nil? || ch == '"' || ch == '\\' || line_break?(ch) || ch == '\uFEFF'
+        !double_printable?(ch, code)
+      end
+
+      # PyYAML's own "printable" test: everything outside the escape set
+      # and outside the BMP-representable ranges goes out as \\x/\\u/\\U.
+      private def double_printable?(ch : Char, code : Int32) : Bool
+        ch == '\n' || (' ' <= ch && ch <= '~') || (code >= 0xA0 && code <= 0xD7FF) || (code >= 0xE000 && code <= 0xFFFD) || code >= 0x10000
+      end
+
+      private def escape_data(ch : Char, code : Int32) : String
+        if ESCAPES.has_key?(ch)
+          "\\" + ESCAPES[ch]
+        elsif code <= 0xFF
+          "\\x" + code.to_s(16).upcase.rjust(2, '0')
+        elsif code <= 0xFFFF
+          "\\u" + code.to_s(16).upcase.rjust(4, '0')
+        else
+          "\\U" + code.to_s(16).upcase.rjust(8, '0')
+        end
+      end
+
+      # ---- shared low-level chunk writers --------------------------------
+      private def write_run(chars : Array(Char), start : Int32, idx : Int32) : Nil
+        data = chars[start...idx].join
+        @column += data.size
+        @io << data
+      end
+
+      # PyYAML writes each line break in a run back out in its own form
+      # (a bare \n first when the run started with one, then the others
+      # verbatim).
+      private def write_breaks(run : Array(Char)) : Nil
+        run.each { |line_break| line_break == '\n' ? write_line_break : write_line_break(line_break.to_s) }
+      end
+
+      # The four characters YAML treats as line breaks.
+      private def line_break?(ch : Char) : Bool
+        ch == '\n' || ch == '\u0085' || ch == '\u2028' || ch == '\u2029'
       end
     end
   end

@@ -143,16 +143,65 @@ module Krikri
       return nil unless entry
       return nil if entry["no_validate"]?
 
-      # copy's action plugin (copy.py:428-430) likewise checks first, with its
-      # own two messages (a failed result, "Action failed." chain) - and its
-      # checks are PYTHON TRUTHINESS checks, not key-presence checks: a
-      # non-string YAML literal that is falsy (false, 0, 0.0 - the parser
-      # marks those, see NON_STRING_PARAM_PREFIX) or an empty string counts
-      # as "not provided" exactly like a missing key (live-verified vs
-      # 2.19.11: `dest: false`/`dest: 0`/`dest: ""` all fail
-      # "dest is required", `src: 0` with no content fails
-      # "src (or content) is required", while `src: 0` WITH content runs
-      # the content path - the falsy src is simply ignored).
+      if failure = action_plugin_required_params(module_name, params)
+        return failure
+      end
+
+      # Custom callable spec types (assert's str_or_list_of_str) reject a
+      # natively-typed scalar where the demoted wire text would pass -
+      # capture the markers (alias-resolved to the canonical option name)
+      # BEFORE the strip below hides them.
+      non_string_natives = collect_non_string_natives(entry, params)
+
+      params = prepare_module_params(module_name, params, entry)
+
+      outcome = action_plugin_preflight(module_name, params, entry, non_string_natives, vars_context)
+      return outcome.failure if outcome.failure
+      return nil if outcome.defer?
+
+      if failure = action_plugin_option_failures(module_name, params)
+        return failure
+      end
+
+      # unarchive's action plugin checks that dest is an existing directory
+      # (AnsibleActionFail) before the module ever validates its arguments;
+      # a dest that is not a directory here defers to the plugin's own failure.
+      return nil if defers_to_unarchive_action?(module_name, params)
+
+      print_name, entry = resolve_entry(action_name, module_name, entry, vars_context)
+      return nil unless entry
+
+      validate_spec_entry_tail(action_name, print_name, entry, params, non_string_natives)
+    end
+
+    # What the action-plugin checks that run BEFORE module argument
+    # validation decided for a task: a `failure` to report, or `defer`
+    # when the action plugin settled the outcome itself (a delegated
+    # copy-spec result, or a check the module must not run past) and
+    # there is nothing further for validate to do.
+    private class ActionOutcome
+      getter failure : Failure?
+      getter? defer : Bool
+
+      def initialize(@failure : Failure?, @defer : Bool = false)
+      end
+    end
+
+    # copy's action plugin (copy.py:428-430) and assemble's
+    # (assemble.py:103-104) both check required params BEFORE the module
+    # validates anything - each with its own two messages (a failed
+    # result, "Action failed." chain) - and their checks are PYTHON
+    # TRUTHINESS checks, not key-presence checks: a non-string YAML
+    # literal that is falsy (false, 0, 0.0 - the parser marks those, see
+    # NON_STRING_PARAM_PREFIX) or an empty string counts as "not
+    # provided" exactly like a missing key (live-verified vs 2.19.11:
+    # `dest: false`/`dest: 0`/`dest: ""` all fail "dest is required",
+    # `src: 0` with no content fails "src (or content) is required",
+    # while `src: 0` WITH content runs the content path - the falsy src
+    # is simply ignored). assemble's own check is a None check instead:
+    # an explicitly null param counts as absent, an empty string does
+    # not.
+    private def action_plugin_required_params(module_name : String, params : Hash(String, String)) : Failure?
       if module_name == "ansible.builtin.copy"
         unless params.has_key?("content") || Krikri.python_param_truthy?(params["src"]?)
           return Failure.new("src (or content) is required", true)
@@ -160,22 +209,17 @@ module Krikri
         return Failure.new("dest is required", true) unless params.has_key?("dest") && Krikri.python_param_truthy?(params["dest"]?)
       end
 
-      # assemble's action plugin (assemble.py:103-104) checks src/dest
-      # presence BEFORE the remote_src/isdir staging and before the module
-      # validates anything - a typo'd/missing src or dest fails with the
-      # action-level "src and dest are required", not the module spec's
-      # "missing required arguments" (live-verified vs 2.19.11). Real's
-      # check is a None check: an explicitly null param counts as absent,
-      # an empty string does not.
       if module_name == "ansible.builtin.assemble" &&
          (!provided_param?(params, "src") || !provided_param?(params, "dest"))
         return Failure.new("src and dest are required", true)
       end
 
-      # Custom callable spec types (assert's str_or_list_of_str) reject a
-      # natively-typed scalar where the demoted wire text would pass -
-      # capture the markers (alias-resolved to the canonical option name)
-      # BEFORE the strip below hides them.
+      nil
+    end
+
+    # The natively-typed params captured under their canonical (alias
+    # resolved) option name, before the markers below are stripped.
+    private def collect_non_string_natives(entry : JSON::Any, params : Hash(String, String)) : Hash(String, JSON::Any)
       alias_lookup = alias_map(entry["options"]?.try(&.as_h?) || Hash(String, JSON::Any).new)
       non_string_natives = {} of String => JSON::Any
       params.each do |key, value|
@@ -184,7 +228,18 @@ module Krikri
           non_string_natives[alias_lookup[key]? || key] = native
         end
       end
+      non_string_natives
+    end
 
+    # The params as the action plugin leaves them for the module: debug's
+    # marked list members re-encoded as the array they are, copy's
+    # action-only `content`/`decrypt` keys dropped, `follow` pre-coerced
+    # to the boolean copy's action plugin hands the module, and the
+    # parser's non-string-literal markers (NON_STRING_PARAM_PREFIX)
+    # demoted back to the plain string form every spec check has always
+    # seen (so a marked `follow: true` validates like the "true" text it
+    # always was).
+    private def prepare_module_params(module_name : String, params : Hash(String, String), entry : JSON::Any) : Hash(String, String)
       # debug's spec (data/argspecs.json) types two of its three options as
       # SCALARS, and a YAML list rides a comma-joined wire that no scalar
       # check could tell from a plain string - unless one of its members was
@@ -228,93 +283,124 @@ module Krikri
         end
       end
 
-      # The parser's non-string-literal markers (NON_STRING_PARAM_PREFIX)
-      # are executor-internal wire dressing: demote them back to the plain
-      # string form every spec check has always seen, so a marked
-      # `follow: true` validates like the "true" text it always was.
-      params = Krikri.strip_non_string_param_markers(params)
+      Krikri.strip_non_string_param_markers(params)
+    end
 
-      # assemble with a remote_src the action plugin treats as falsy
-      # (boolean(strict=False) - every non-BOOLEANS_TRUE value, invalid
-      # spellings included): the controller-side action plugin's isdir()
-      # check fails BEFORE any module argument validation runs.
-      if module_name == "ansible.builtin.assemble" &&
-         assemble_action_local_path?(params) &&
-         (src = params["src"]?) && !Dir.exists?(src)
-        return nil
+    # assemble's controller-side action plugin, which either swallows the
+    # task (its isdir() check fails before any module argument validation
+    # runs) or hands the placement to the COPY module instead:
+    #
+    # A remote_src the action plugin treats as falsy
+    # (boolean(strict=False) - every non-BOOLEANS_TRUE value, invalid
+    # spellings included) and a src that is NOT a directory: real's
+    # action plugin assembles the fragments on the controller and
+    # delegates the file placement to the COPY module (assemble.py
+    # action: _execute_module('ansible.legacy.copy')) after stripping
+    # the assemble-only options (remote_src/regexp/delimiter/
+    # ignore_hidden/decrypt) - so the module-level argument validation
+    # that rejects anything is COPY's spec, not assemble's: the message
+    # names (ansible.legacy.copy) and lists copy's own supported
+    # parameters (live-verified vs 2.19.11: a typo'd
+    # ignoer_hidden/mode_bogus fails through copy's spec, not
+    # assemble's). The branch predicate is NOT boolean(remote_src,
+    # strict=False), not a falsy-spelling list: an INVALID spelling
+    # ('timjjr') or an explicit None returns False from boolean()
+    # without raising, so it delegates exactly like 'false' does - and
+    # the copy module never sees remote_src at all, which is why real's
+    # fatal for a typo'd gorup + non-bool 'timjjr' remote_src is copy's
+    # Unsupported-parameters error, not assemble's remote_src
+    # bool-conversion error (the assemble module, and its strict
+    # remote_src conversion with it, never runs).
+    private def action_plugin_preflight(
+      module_name : String,
+      params : Hash(String, String),
+      entry : JSON::Any,
+      non_string_natives : Hash(String, JSON::Any),
+      vars_context : Hash(String, JSON::Any),
+    ) : ActionOutcome
+      if module_name == "ansible.builtin.assemble" && assemble_action_local_path?(params)
+        return ActionOutcome.new(nil, true) unless (src = params["src"]?) && Dir.exists?(src)
+        if copy_entry = table["ansible.builtin.copy"]?
+          delegated = params.reject { |key, _| ASSEMBLE_ACTION_CONSUMED.includes?(key) }
+          return ActionOutcome.new(validate_spec_entry("ansible.builtin.copy", "ansible.builtin.copy", delegated,
+            copy_entry, non_string_natives, vars_context), true)
+        end
       end
 
-      # assemble with a remote_src the action plugin treats as falsy (and
-      # a src that IS a directory): real's action plugin assembles the
-      # fragments on the controller and delegates the file placement to
-      # the COPY module (assemble.py action:
-      # _execute_module('ansible.legacy.copy')) after stripping the
-      # assemble-only options (remote_src/regexp/delimiter/ignore_hidden/
-      # decrypt) - so the module-level argument validation that rejects
-      # anything is COPY's spec, not assemble's: the message names
-      # (ansible.legacy.copy) and lists copy's own supported parameters
-      # (live-verified vs 2.19.11: a typo'd ignoer_hidden/mode_bogus
-      # fails through copy's spec, not assemble's). The branch predicate
-      # is NOT boolean(remote_src, strict=False), not a falsy-spelling
-      # list: an INVALID spelling ('timjjr') or an explicit None returns
-      # False from boolean() without raising, so it delegates exactly
-      # like 'false' does - and the copy module never sees remote_src at
-      # all, which is why real's fatal for a typo'd gorup + non-bool
-      # 'timjjr' remote_src is copy's Unsupported-parameters error, not
-      # assemble's remote_src bool-conversion error (the assemble module,
-      # and its strict remote_src conversion with it, never runs).
-      if module_name == "ansible.builtin.assemble" &&
-         assemble_action_local_path?(params) &&
-         (copy_entry = table["ansible.builtin.copy"]?)
-        delegated = params.reject { |key, _| ASSEMBLE_ACTION_CONSUMED.includes?(key) }
-        return validate_spec_entry("ansible.builtin.copy", "ansible.builtin.copy", delegated,
-          copy_entry, non_string_natives, vars_context)
+      if failure = action_plugin_option_failures(module_name, params)
+        return ActionOutcome.new(failure)
       end
 
-      # template's controller-side action plugin checks src/dest presence
-      # BEFORE any module argument validation (AnsibleActionFail). The
-      # check only ever sees the ORIGINAL task params: once the action has
-      # run, src has been consumed into the rendered content (the copy
-      # module gets a real src tempfile), so a post-action run must fall
-      # through to the spec checks - that is where real surfaces the copy
-      # module's rejection of the template-only leftovers the action did
-      # not consume (a typo'd output_encoding etc.).
-      if module_name == "ansible.builtin.template" && !params.has_key?("content") &&
-         (!params.has_key?("src") || !params.has_key?("dest"))
+      ActionOutcome.new(nil)
+    end
+
+    # The option checks template's, package's and unarchive's own action
+    # plugins run before the module validates anything, each in its own
+    # order.
+    private def action_plugin_option_failures(module_name : String, params : Hash(String, String)) : Failure?
+      case module_name
+      when "ansible.builtin.template"
+        return template_action_failure(params)
+      when "ansible.builtin.package"
+        return package_action_failure(params)
+      when "ansible.builtin.unarchive"
+        return unarchive_arg_failure(params)
+      end
+      nil
+    end
+
+    # template's controller-side action plugin checks src/dest presence
+    # BEFORE any module argument validation (AnsibleActionFail). The
+    # check only ever sees the ORIGINAL task params: once the action has
+    # run, src has been consumed into the rendered content (the copy
+    # module gets a real src tempfile), so a post-action run must fall
+    # through to the spec checks - that is where real surfaces the copy
+    # module's rejection of the template-only leftovers the action did
+    # not consume (a typo'd output_encoding etc.).
+    #
+    # Its own order: the string-typed option coercion, then the state
+    # check, then src/dest, then newline_sequence - all before the copy
+    # module ever sees the args. `state` is a None check, so a `state:`
+    # with no value passes (live-verified vs 2.19.11: `state: present`
+    # plus a typo'd option reports the state error, and copy's
+    # unsupported-parameter error never gets to run).
+    private def template_action_failure(params : Hash(String, String)) : Failure?
+      if !params.has_key?("content") && (!params.has_key?("src") || !params.has_key?("dest"))
         return Failure.new("src and dest are required", true)
       end
-      # template's action plugin, in its own order: the string-typed option
-      # coercion, then the state check, then src/dest, then newline_sequence
-      # - all before the copy module ever sees the args. `state` is a None
-      # check, so a `state:` with no value passes (live-verified vs
-      # 2.19.11: `state: present` plus a typo'd option reports the state
-      # error, and copy's unsupported-parameter error never gets to run).
-      if module_name == "ansible.builtin.template" && provided_param?(params, "state")
+      if provided_param?(params, "state")
         return Failure.new("'state' cannot be specified on a template", true)
       end
-      # package's action plugin: an unknown `use:` manager fails before the
-      # delegated module ever validates anything.
-      if module_name == "ansible.builtin.package" && (use = params["use"]?) && use != "auto" && !PACKAGE_MANAGERS.includes?(use)
+      nil
+    end
+
+    # package's action plugin: an unknown `use:` manager fails before the
+    # delegated module ever validates anything.
+    private def package_action_failure(params : Hash(String, String)) : Failure?
+      if (use = params["use"]?) && use != "auto" && !PACKAGE_MANAGERS.includes?(use)
         return Failure.new(%(Could not find a matching action for the "#{use}" package manager.), true)
       end
-      # unarchive's action plugin, in order: copy+remote_src conflict, src/dest
-      # required, then (below) dest must be an existing dir - all before the
-      # module validates anything.
-      if module_name == "ansible.builtin.unarchive"
-        return Failure.new("parameters are mutually exclusive: ('copy', 'remote_src')", true) if params.has_key?("copy") && params.has_key?("remote_src")
-        return Failure.new("src (or content) and dest are required", true) unless params.has_key?("src") && params.has_key?("dest")
-      end
-      # unarchive's action plugin checks that dest is an existing directory
-      # (AnsibleActionFail) before the module ever validates its arguments;
-      # a dest that is not a directory here defers to the plugin's own failure.
-      if module_name == "ansible.builtin.unarchive" && (dest = params["dest"]?) && !Dir.exists?(dest)
-        return nil
-      end
+      nil
+    end
 
-      print_name, entry = resolve_entry(action_name, module_name, entry, vars_context)
-      return nil unless entry
+    # unarchive's action plugin, in order: copy+remote_src conflict, then
+    # src/dest required - all before the module validates anything.
+    private def unarchive_arg_failure(params : Hash(String, String)) : Failure?
+      if params.has_key?("copy") && params.has_key?("remote_src")
+        return Failure.new("parameters are mutually exclusive: ('copy', 'remote_src')", true)
+      end
+      unless params.has_key?("src") && params.has_key?("dest")
+        return Failure.new("src (or content) and dest are required", true)
+      end
+      nil
+    end
 
-      validate_spec_entry_tail(action_name, print_name, entry, params, non_string_natives)
+    # Whether unarchive's own dest-is-a-directory check (below its
+    # arg-shape checks) settles the task instead of the module.
+    private def defers_to_unarchive_action?(module_name : String, params : Hash(String, String)) : Bool
+      return false unless module_name == "ansible.builtin.unarchive"
+      dest = params["dest"]?
+      !dest.nil? && !Dir.exists?(dest)
     end
 
     # The spec-check tail shared by the direct path and the assemble ->
@@ -417,21 +503,13 @@ module Krikri
     private def convert_invocation_value(raw : String, type : String) : JSON::Any
       case type
       when "bool"
-        down = raw.downcase
-        return JSON::Any.new(true) if REAL_TRUE.includes?(down)
-        return JSON::Any.new(false) if REAL_FALSE.includes?(down)
-        JSON::Any.new(raw)
+        convert_invocation_bool(raw)
       when "int"
         raw.to_i64?.try { |v| JSON::Any.new(v) } || JSON::Any.new(raw)
       when "float"
         raw.to_f64?.try { |v| JSON::Any.new(v) } || JSON::Any.new(raw)
       when "list"
-        parsed = (JSON.parse(raw) rescue nil)
-        if parsed && parsed.as_a?
-          parsed
-        else
-          JSON::Any.new(raw.split(",").map { |part| JSON::Any.new(part.strip) })
-        end
+        convert_invocation_list(raw)
       when "dict"
         (JSON.parse(raw) rescue JSON::Any.new(raw))
       when "path"
@@ -439,6 +517,25 @@ module Krikri
       else
         JSON::Any.new(raw)
       end
+    end
+
+    # A bool-typed wire value: real's own TRUE/FALSE words convert, and
+    # anything else rides through as the plain string (real's
+    # boolean(value, strict=False) leaves an unrecognized spelling
+    # alone rather than failing here).
+    private def convert_invocation_bool(raw : String) : JSON::Any
+      down = raw.downcase
+      return JSON::Any.new(true) if REAL_TRUE.includes?(down)
+      return JSON::Any.new(false) if REAL_FALSE.includes?(down)
+      JSON::Any.new(raw)
+    end
+
+    # A list-typed wire value: the JSON form first, then the
+    # comma-joined one the demoter produces for a YAML list.
+    private def convert_invocation_list(raw : String) : JSON::Any
+      parsed = (JSON.parse(raw) rescue nil)
+      return parsed if parsed && parsed.as_a?
+      JSON::Any.new(raw.split(",").map { |part| JSON::Any.new(part.strip) })
     end
 
     # Wire params, alias-normalized: canonical name -> raw wire string.
@@ -536,28 +633,8 @@ module Krikri
     # the spec target cannot be determined (no host fact), so validation
     # is skipped rather than guessed.
     private def resolve_entry(action_name : String, module_name : String, entry : JSON::Any, vars_context : Hash(String, JSON::Any)) : {String, JSON::Any?}
-      if fact_delegate = entry["fact_delegate"]?
-        fact = fact_delegate["fact"].as_s
-        fact_value = vars_context[fact]?.try(&.as_s?) || ""
-        # Facts not gathered: real's action plugin runs setup for just the
-        # delegating fact on demand. service: systemd only when PID 1 is
-        # systemd, any other manager runs the service module ITSELF against
-        # its own spec. package: the host's package manager (apt on Debian).
-        if fact_value.empty?
-          case fact
-          when "ansible_service_mgr"
-            fact_value = File.read("/proc/1/comm").strip == "systemd" ? "systemd" : "service" rescue "service"
-          when "ansible_pkg_mgr"
-            fact_value = File.exists?("/usr/bin/apt-get") ? "apt" : ""
-          end
-        end
-        target = fact_delegate["map"].as_h[fact_value]?.try(&.as_s)
-        if target && (target_entry = table[target]?)
-          return {"ansible.legacy.#{target.split(".").last}", target_entry}
-        end
-        return {action_name, nil} unless fact == "ansible_service_mgr"
-
-        return {"ansible.legacy.#{module_name.split(".").last}", entry}
+      if delegated = resolve_fact_delegate(action_name, module_name, entry, vars_context)
+        return delegated
       end
 
       print_name = action_name
@@ -569,6 +646,40 @@ module Krikri
         end
       end
       {print_name, entry}
+    end
+
+    # The fact-delegating half of resolve_entry, or nil for a spec that
+    # isn't fact-delegated at all.
+    private def resolve_fact_delegate(action_name : String, module_name : String, entry : JSON::Any, vars_context : Hash(String, JSON::Any)) : {String, JSON::Any?}?
+      fact_delegate = entry["fact_delegate"]?
+      return nil unless fact_delegate
+      fact = fact_delegate["fact"].as_s
+      fact_value = delegating_fact(fact, vars_context)
+      target = fact_delegate["map"].as_h[fact_value]?.try(&.as_s)
+      if target && (target_entry = table[target]?)
+        return {"ansible.legacy.#{target.split(".").last}", target_entry}
+      end
+      return {action_name, nil} unless fact == "ansible_service_mgr"
+
+      {"ansible.legacy.#{module_name.split(".").last}", entry}
+    end
+
+    # Facts not gathered: real's action plugin runs setup for just the
+    # delegating fact on demand. service: systemd only when PID 1 is
+    # systemd, any other manager runs the service module ITSELF against
+    # its own spec. package: the host's package manager (apt on Debian).
+    # An unknown fact stays empty, which no map entry resolves.
+    private def delegating_fact(fact : String, vars_context : Hash(String, JSON::Any)) : String
+      fact_value = vars_context[fact]?.try(&.as_s?) || ""
+      return fact_value unless fact_value.empty?
+      case fact
+      when "ansible_service_mgr"
+        File.read("/proc/1/comm").strip == "systemd" ? "systemd" : "service" rescue "service"
+      when "ansible_pkg_mgr"
+        File.exists?("/usr/bin/apt-get") ? "apt" : ""
+      else
+        ""
+      end
     end
 
     private def alias_map(options : Hash(String, JSON::Any)) : Hash(String, String)

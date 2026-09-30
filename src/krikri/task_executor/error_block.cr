@@ -114,29 +114,7 @@ module Krikri
       event = original
 
       while event
-        messages = [event.msg]
-        link = event
-
-        while (child = link.chain) && link.chain_follow?
-          break if child.events
-
-          if child.source_context || child.help_text
-            # Real's SourceContext carries no value equality, so two
-            # events never share one: a child with its OWN source
-            # context always ends the collapsed segment, even when it
-            # renders byte-identical text to its parent's (its parent's
-            # is then simply repeated). Live-verified against 2.19.11 on
-            # include_role:'s bool-keyword conversion failure, whose
-            # last two links both point at the same value and still
-            # print as two segments.
-            break if !child.source_context.nil? || child.help_text != event.help_text
-          end
-
-          break if child.chain && link.chain_reason != child.chain_reason
-
-          messages << child.msg
-          link = child
-        end
+        messages, link = collapse_messages(event)
 
         msg = deduplicate_message_parts(messages)
         segment = message_lines(msg, event.help_text, event.source_context).join('\n') + '\n'
@@ -152,6 +130,39 @@ module Krikri
 
       segments.insert(0, brief_message(original) + "\n\n") if segments.size > 1
       segments.join
+    end
+
+    # The collapsed half of the walk above: from a segment's first node,
+    # follow the chain for as long as the links fold into ONE rendered
+    # segment. Returns every message folded into that segment and the
+    # last link reached (the owner of the next chain hop, or the final
+    # node when the chain ends here).
+    private def self.collapse_messages(event : Node) : {Array(String), Node}
+      messages = [event.msg]
+      link = event
+
+      while (child = link.chain) && link.chain_follow?
+        break if child.events
+
+        if child.source_context || child.help_text
+          # Real's SourceContext carries no value equality, so two
+          # events never share one: a child with its OWN source
+          # context always ends the collapsed segment, even when it
+          # renders byte-identical text to its parent's (its parent's
+          # is then simply repeated). Live-verified against 2.19.11 on
+          # include_role:'s bool-keyword conversion failure, whose
+          # last two links both point at the same value and still
+          # print as two segments.
+          break if !child.source_context.nil? || child.help_text != event.help_text
+        end
+
+        break if child.chain && link.chain_reason != child.chain_reason
+
+        messages << child.msg
+        link = child
+      end
+
+      {messages, link}
     end
 
     # Port of `_event_utils.deduplicate_message_parts`.

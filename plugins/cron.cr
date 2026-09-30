@@ -102,6 +102,26 @@ module Krikri
       env = true?(@params["env"]?)
       insertafter = @params["insertafter"]?
       insertbefore = @params["insertbefore"]?
+      if failure = cron_param_failure(name, env, insertafter, insertbefore)
+        return failure
+      end
+      state = @params["state"]? || "present"
+      job = @params["job"]?
+
+      cron_file = @params["cron_file"]?
+      if env
+        cron_file ? execute_env_file(cron_file, name, job, state, insertafter, insertbefore) : execute_env_user_crontab(name, job, state, insertafter, insertbefore)
+      else
+        cron_file ? execute_file(name, cron_file) : execute_user_crontab(name)
+      end
+    end
+
+    # cron.py's own option checks, in source order: the
+    # insertafter/insertbefore exclusion, `value:`'s alias overwrite of
+    # `job:`, the cron_file/user pairing, the present-mode schedule-field
+    # validation, and env mode's name check. Returns the first failure
+    # any of them produces (nil when the params are acceptable).
+    private def cron_param_failure(name : String, env : Bool, insertafter : String?, insertbefore : String?) : PluginResult?
       if insertafter && insertbefore
         return PluginResult.new(changed: false, failed: true, msg: "parameters are mutually exclusive: insertafter|insertbefore")
       end
@@ -138,12 +158,7 @@ module Krikri
         return PluginResult.new(changed: false, failed: true, msg: "Invalid name for environment variable")
       end
 
-      cron_file = @params["cron_file"]?
-      if env
-        cron_file ? execute_env_file(cron_file, name, job, state, insertafter, insertbefore) : execute_env_user_crontab(name, job, state, insertafter, insertbefore)
-      else
-        cron_file ? execute_file(name, cron_file) : execute_user_crontab(name)
-      end
+      nil
     end
 
     # Real cron.py's special_time vs time-fields mutual exclusion: any of

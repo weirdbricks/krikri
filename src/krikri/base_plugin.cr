@@ -146,11 +146,7 @@ module Krikri
       # (e.g. git_config's already-converged no-op) still gets the empty
       # key - include_empty_msg opts into that.
       result["failed"] = @failed if @failed
-      if native = @msg_native
-        result["msg"] = native.raw
-      elsif !@msg.empty? || @include_empty_msg
-        result["msg"] = @msg
-      end
+      add_msg(result)
 
       # Add diff if present
       if diff = @diff
@@ -166,6 +162,17 @@ module Krikri
       result["failed"] = false if @extra.has_key?("failed_flag") && !@failed
 
       result.to_json(io)
+    end
+
+    # A non-string `msg` (a YAML list/dict/bool) has to reach the wire
+    # with its own type, not stringified; an absent one is omitted
+    # unless the module explicitly passed an empty msg.
+    private def add_msg(result : Hash(String, JSON::Any::Type)) : Nil
+      if native = @msg_native
+        result["msg"] = native.raw
+      elsif !@msg.empty? || @include_empty_msg
+        result["msg"] = @msg
+      end
     end
   end
 
