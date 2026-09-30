@@ -41,12 +41,6 @@ What changes when you swap `ansible-playbook` for `krikri-playbook`:
 | Third-party collection modules | Not vendored wholesale: a `community.*` module runs only once ported to a native plugin (list: `AVAILABLE_PLUGINS` in `src/krikri/playbook_parser.cr`); anything else fails with `krikri does not yet have module 'x.y.z' implemented`. A role's own `library/*.py` modules work as usual. |
 | Cloud provider modules | Out of scope, except AWS/EC2 (`ec2_instance` and its supporting modules, `aws_ec2` inventory). |
 
----|---|
-| Module execution | Real Ansible ships a module's source, templates it, and starts a fresh Python interpreter on the target **for every task, every run**, even when nothing changes. krikri compiles each module (`apt`, `copy`, `service`, ...) into a small native binary once, uploads it (cached after the first run) and runs it directly - no interpreter startup, no module templating, no `AnsiballZ` wrapper. This is the single biggest practical difference, and what the wall-clock numbers in **Performance** are made of. |
-| SSH round trips | Consecutive tasks bound for the same host are batched into a single round trip by default (`--no-batching` to disable) instead of one per task. |
-| Third-party collection modules (deliberate exclusion, not a gap) | Not vendored wholesale: a `community.*`/etc. module runs only once natively ported into a compiled plugin binary (a role's own private `library/*.py` module is unaffected either way). Porting is usage-driven - the real Galaxy roles this project is benchmarked against surface whichever third-party modules real tasks actually call (counts in the table above; the list is `AVAILABLE_PLUGINS` in `src/krikri/playbook_parser.cr`). Anything else hard-stops cleanly (`"krikri does not yet have module 'x.y.z' implemented"`) rather than silently skipping. |
-| Cloud provider modules (deliberate exclusion, not a gap) | Out of scope, except AWS/EC2, which is fully supported (`ec2_instance` and its supporting cluster, plus the `aws_ec2` inventory plugin) - a scoped exception, not an opening of the whole category. |
-
 ---
 
 ## ⚡ Performance
