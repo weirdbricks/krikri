@@ -414,11 +414,14 @@ module Krikri
         end
       end
 
-      # Set operations over JSON arrays - real Ansible's own filters,
-      # set semantics preserving first-seen order and deduplicating
-      # within each source list (Ansible's own `_unique_dedupe` approach,
-      # not naive concatenation). Equality is by canonical JSON form so
-      # nested dicts/arrays compare structurally.
+      # Set operations over JSON arrays - real Ansible's own filters
+      # (`list(set(a) OP set(b))`). For plain integer lists CPython's set
+      # order is deterministic, so it is reproduced exactly (see PySet);
+      # any other element type falls back to set semantics preserving
+      # first-seen order and deduplicating within each source list
+      # (Ansible's own `_unique_dedupe` approach, not naive
+      # concatenation). Equality is by canonical JSON form so nested
+      # dicts/arrays compare structurally.
       def self.union(a : Array(JSON::Any), b : Array(JSON::Any)) : Array(JSON::Any)
         # Real: list(set(a) | set(b)). For plain integer lists CPython's set
         # order is deterministic, so reproduce it exactly (see PySet); any
@@ -457,6 +460,9 @@ module Krikri
       end
 
       def self.symmetric_difference(a : Array(JSON::Any), b : Array(JSON::Any)) : Array(JSON::Any)
+        if (ia = plain_int_list(a)) && (ib = plain_int_list(b))
+          return Krikri::PySet.symmetric_difference(ia, ib).map { |n| JSON::Any.new(n) }
+        end
         left = a.uniq(&.to_json)
         right = b.uniq(&.to_json)
         left_json = left.map(&.to_json).to_set
