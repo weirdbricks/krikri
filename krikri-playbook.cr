@@ -845,6 +845,11 @@ end
 if verbose
   puts cfg_path ? "Using #{cfg_path} as config file" : "No config file found; using defaults"
 end
+if verbosity_level >= 2
+  # Real -vv prints one "statically imported: <path>" line per
+  # import_tasks: file, in load order, right after the config-file line.
+  Krikri::PlaybookParser.drain_static_import_notices.each { |notice| puts notice }
+end
 if verbosity_level >= 3
   # Real -vvv prints one "Parsed <source> inventory source with <plugin>
   # plugin" line per inventory source, right after the config-file line.

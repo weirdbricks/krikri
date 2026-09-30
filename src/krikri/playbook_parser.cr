@@ -1225,6 +1225,24 @@ module Krikri
 
   # Parser for Ansible YAML playbooks
   class PlaybookParser
+    # Real ansible's load_list_of_blocks displays "statically imported:
+    # <path>" (display.vv, so -vv and above) once per import_tasks: file
+    # it loads, in load order, before descending into the file's own
+    # nested imports. The parser records one notice per successful static
+    # import; the CLI drains and prints them at -vv alongside the rest of
+    # real's startup banner output.
+    @@static_import_notices = [] of String
+
+    def self.record_static_import(path : String) : Nil
+      @@static_import_notices << "statically imported: #{path}"
+    end
+
+    def self.drain_static_import_notices : Array(String)
+      notices = @@static_import_notices.dup
+      @@static_import_notices.clear
+      notices
+    end
+
     # Task-level special (non-module) keywords parse_task must skip when
     # hunting for the module key, plus the same names fully qualified
     # (directive() accepts either spelling) and the ansible.legacy.*
@@ -2033,6 +2051,10 @@ module Krikri
         "Could not find or access '#{resolved_path}' on the Ansible Controller.\n" \
         "If you are using a module and expect the file to exist on the remote, see the remote_src option: [Errno 2] No such file or directory: '#{resolved_path}'\n\n"
       ) unless File.exists?(resolved_path)
+
+      # Matches real's ordering: the notice prints (at -vv) before any
+      # nested imports inside the file itself are loaded.
+      record_static_import(resolved_path)
 
       imported_content = Vault.maybe_decrypt(File.read(resolved_path))
       imported_yaml = YAML.parse(imported_content)

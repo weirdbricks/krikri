@@ -14,6 +14,12 @@ module Krikri
     # Track which handlers have been notified for each host
     @notified_handlers : Hash(String, Set(String))
 
+    # True while #run's handler flush is executing - suppresses the
+    # "Notification for handler ... has been saved." -vv line for
+    # notifications raised by handlers themselves (real only prints it
+    # for regular-task results).
+    @in_flush = false
+
     def initialize(@handlers : Array(Task), @hosts : Array(Host))
       @notified_handlers = Hash(String, Set(String)).new
 
@@ -26,6 +32,12 @@ module Krikri
     # Handlers can be notified multiple times but only run once
     def notify(host : Host, handler_name : String) : Nil
       @notified_handlers[host.name].add(handler_name)
+      # Real's strategy prints this (display.vv) per notification saved
+      # from a REGULAR task's result - but not from within the handlers
+      # phase itself, where the notification applies immediately instead.
+      if !@in_flush && Krikri::RunOptions.verbosity >= 2
+        puts "Notification for handler #{handler_name} has been saved."
+      end
     end
 
     # Check if any handlers were notified
@@ -81,6 +93,7 @@ module Krikri
       return unless any_notified?
 
       bannered = Set(Int32).new
+      @in_flush = true
 
       # A handler runs at most once per host, no matter how many times
       # it was notified - and, since include_role: (possibly looped) can
@@ -121,6 +134,7 @@ module Krikri
         break if pass == 1
       end
 
+      @in_flush = false
       clear_notified!
     end
 
@@ -154,10 +168,7 @@ module Krikri
       # make a plain `notify: my handler` stop matching a
       # role handler's own bare notified name.
       role_prefix = (rn = handler.role_name) ? "#{rn} : " : ""
-      unless bannered.includes?(handler_index)
-        Krikri::OutputBanner.banner("RUNNING HANDLER [#{role_prefix}#{rendered_name}]")
-        bannered << handler_index
-      end
+      print_handler_display(handler, handler_index, rendered_name, host, bannered, role_prefix)
 
       # Execute handler using the callback
       result = execute_callback.call(handler, host)
@@ -199,6 +210,26 @@ module Krikri
       record_handler_result(result, results[host.name], host, handler, diff_mode)
 
       true
+    end
+
+    # The -vv/console display block for one handler run: real's default
+    # callback prints one "NOTIFIED HANDLER <name> for <host>" line per
+    # host the handler was newly notified on, then the RUNNING HANDLER
+    # banner (once per handler), then the same `task path:` line a
+    # regular task gets under its banner.
+    private def print_handler_display(handler : Task, handler_index : Int32,
+                                      rendered_name : String, host : Host,
+                                      bannered : Set(Int32), role_prefix : String) : Nil
+      if Krikri::RunOptions.verbosity >= 2
+        puts "NOTIFIED HANDLER #{rendered_name} for #{host.name}"
+      end
+      unless bannered.includes?(handler_index)
+        Krikri::OutputBanner.banner("RUNNING HANDLER [#{role_prefix}#{rendered_name}]")
+        bannered << handler_index
+      end
+      if Krikri::RunOptions.verbosity >= 2 && (file = handler.source_file) && handler.source_line > 0
+        puts "task path: #{File.expand_path(file)}:#{handler.source_line}"
+      end
     end
 
     # Whether *handler* runs for *host* on this pass. Pass one is the
