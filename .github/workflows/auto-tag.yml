@@ -32,7 +32,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          VERSION=$(grep -oP 'VERSION = "\K[^"]+' src/krikri/version.cr)
+          VERSION=$(grep -oP '^\s*VERSION = "\K[^"]+' src/krikri/version.cr)
           TAG="v${VERSION}"
 
           if git rev-parse "$TAG" >/dev/null 2>&1 || git ls-remote --tags origin | grep -q "refs/tags/$TAG$"; then
