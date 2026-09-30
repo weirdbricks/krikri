@@ -55,6 +55,27 @@ describe "slurp plugin" do
     result["msg"].as_s.must_include("File not found")
   end
 
+  it "appends CPython's errno text to a missing file's error block text" do
+    missing = tmp_path("does-not-exist-slurp-errno.txt")
+
+    result = PluginSpecHelper.run("slurp", {"src" => missing})
+
+    result["msg"].as_s.must_equal("File not found: #{missing}")
+    result["_ansible_error_detail"].as_s.must_equal(
+      "File not found: #{missing}: [Errno 2] No such file or directory: '#{missing}'")
+  end
+
+  it "appends CPython's errno text when src is a directory" do
+    dir = tmp_path("slurp_dir_errno")
+    Dir.mkdir_p(dir)
+
+    result = PluginSpecHelper.run("slurp", {"src" => dir})
+
+    result["msg"].as_s.must_equal("Source is a directory and must be a file: #{dir}")
+    result["_ansible_error_detail"].as_s.must_equal(
+      "Source is a directory and must be a file: #{dir}: [Errno 21] Is a directory: '#{dir}'")
+  end
+
   it "fails with a clear message when src is a directory" do
     dir = tmp_path("slurp_dir")
     Dir.mkdir_p(dir)

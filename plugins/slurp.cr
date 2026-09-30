@@ -35,14 +35,34 @@ module Krikri
         )
       end
 
-      return PluginResult.new(changed: false, failed: true, msg: "Source is a directory and must be a file: #{src}") if Dir.exists?(src)
+      # Real 2.19.11's slurp fails the task with msg "File not found: <src>"
+      # (etc.) in the result dict, but the module process's OSError is what
+      # the [ERROR] block renders, appended to that same text: "File not
+      # found: <src>: [Errno 2] No such file or directory: '<src>'". The
+      # errno wording is CPython's, not Crystal's ("Error opening file with
+      # mode 'r': ..."), so it is spelled out here; _ansible_error_detail
+      # carries the block text and is stripped from every result dump, so
+      # the fatal JSON keeps real's msg verbatim.
+      return PluginResult.new(
+        changed: false, failed: true,
+        msg: "Source is a directory and must be a file: #{src}",
+        _ansible_error_detail: "Source is a directory and must be a file: #{src}: [Errno 21] Is a directory: '#{src}'"
+      ) if Dir.exists?(src)
 
       begin
         bytes = File.read(src).to_slice
       rescue File::NotFoundError
-        return PluginResult.new(changed: false, failed: true, msg: "File not found: #{src}")
+        return PluginResult.new(
+          changed: false, failed: true,
+          msg: "File not found: #{src}",
+          _ansible_error_detail: "File not found: #{src}: [Errno 2] No such file or directory: '#{src}'"
+        )
       rescue File::AccessDeniedError
-        return PluginResult.new(changed: false, failed: true, msg: "File is not readable: #{src}")
+        return PluginResult.new(
+          changed: false, failed: true,
+          msg: "File is not readable: #{src}",
+          _ansible_error_detail: "File is not readable: #{src}: [Errno 13] Permission denied: '#{src}'"
+        )
       rescue ex
         return PluginResult.new(changed: false, failed: true, msg: "Unable to slurp file: #{src}: #{ex.message}")
       end
