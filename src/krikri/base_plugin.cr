@@ -206,6 +206,13 @@ module Krikri
     # so plugins that never ask see exactly the text they always did.
     @non_string_params = Hash(String, JSON::Any).new
 
+    # Params the parser comma-joined from a YAML list whose members were
+    # marked non-string scalars (NON_STRING_MEMBER_PREFIX): key -> the
+    # decoded members in wire order. @params holds the demoted comma
+    # join, which is indistinguishable from a plain string, so a plugin
+    # mirroring real's str()/repr() of a list-valued arg needs this.
+    @non_string_member_lists = Hash(String, Array(JSON::Any)).new
+
     def explicit_null_param?(key : String) : Bool
       @null_params.includes?(key)
     end
@@ -217,6 +224,13 @@ module Krikri
     # template dest/src).
     def non_string_param(key : String) : JSON::Any?
       @non_string_params[key]?
+    end
+
+    # The decoded members of a param the parser comma-joined from a YAML
+    # list with at least one marked non-string member (see the
+    # @non_string_member_lists comment), or nil.
+    def non_string_member_list(key : String) : Array(JSON::Any)?
+      @non_string_member_lists[key]?
     end
 
     # Python truthiness of one param, native-type aware: a marked
@@ -294,6 +308,9 @@ module Krikri
             # (see parse_module_params's list branch): demote them the
             # same way, so every plugin's own split(',') keeps seeing the
             # plain member text it always did.
+            if members = Krikri.non_string_list_members(text)
+              @non_string_member_lists[key] = members
+            end
             @params[key] = Krikri.strip_non_string_markers_in_value(text)
           else
             @params[key] = value.to_s

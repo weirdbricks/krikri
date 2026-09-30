@@ -498,10 +498,14 @@ module Krikri
         # itself (the executor deliberately skips all controller-side
         # staging for remote_src, so nothing has run before this point)
         # - real Ansible 2.19.4's exact message is "Source <src> not
-        # found" (live-verified). The local-src variant never reaches
-        # the module in real Ansible (the controller-side action plugin
-        # fails first), so its message stays as it was.
-        missing_src_msg = true?(@params["remote_src"]?) ? "Source #{src} not found" : "Source file not found: #{src}"
+        # found" (live-verified), with <src> formatted by Python str()
+        # of the module arg - so a non-string YAML literal reports its
+        # native text (a bool prints True/False, not the demoted
+        # "true"/"false") and a list its Python repr. The local-src
+        # variant never reaches the module in real Ansible (the
+        # controller-side action plugin fails first), so its message
+        # stays as it was.
+        missing_src_msg = true?(@params["remote_src"]?) ? "Source #{python_module_src_text(src)} not found" : "Source file not found: #{src}"
         return PluginResult.new(
           changed: false,
           failed: true,
@@ -695,6 +699,35 @@ module Krikri
     # `src:` counterpart aren't removed) - narrowly scoped to what
     # actually copies a directory tree correctly, matching several other
     # deliberately-scoped gaps already in this codebase.
+    # The module-arg src as real's copy module formats it into its
+    # missing-src message: Python str() of the value. A parser-marked
+    # non-string literal keeps its native text (bools print True/False,
+    # see Krikri.python_str_scalar) and a comma-joined list with marked
+    # members reports its Python list repr - the demoted wire text alone
+    # would print "true"/"false" or the bare join.
+    private def python_module_src_text(src : String) : String
+      if members = non_string_member_list("src")
+        return python_list_repr(members)
+      end
+      if native = non_string_param("src")
+        return Krikri.python_str_scalar(native)
+      end
+      src
+    end
+
+    private def python_list_repr(members : Array(JSON::Any)) : String
+      "[" + members.join(", ") do |member|
+        case raw = member.raw
+        when String
+          raw.includes?("'") && !raw.includes?('"') ? %("#{raw}") : "'#{raw}'"
+        when Bool    then raw ? "True" : "False"
+        when Nil     then "None"
+        when Float64 then raw.to_s
+        else              raw.to_s
+        end
+      end + "]"
+    end
+
     private def handle_directory_copy(src : String, dest : String) : PluginResult
       dest_root = src.ends_with?('/') ? dest : File.join(dest, File.basename(src.rstrip('/')))
 

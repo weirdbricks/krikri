@@ -887,7 +887,17 @@ module Krikri
     # Substitute variables in task parameters
     private def inline_copy_source_content(task : Task, params : Hash(String, String), host : Host, vars_context : Hash(String, JSON::Any)) : Hash(String, String) | JSON::Any
       return params unless task.module_name == "ansible.builtin.copy"
-      return params if ["true", "yes", "1", "on"].includes?(params["remote_src"]?.try(&.downcase))
+      # A truthy remote_src (in ANY boolean(strict=False) spelling or its
+      # marked non-string literal form) hands the whole task to the copy
+      # MODULE on the target (copy.py:466) - no controller-side src
+      # resolution happens at all, not even a relative one: the module's
+      # own missing-src failure ("Source <src> not found") is the whole
+      # story. Previously only the four plain spellings matched here, so
+      # a YAML-bool `remote_src: true` (wired as a marked non-string
+      # literal) fell through to the controller lookup and reported
+      # "Could not find or access" with the internal non-string marker
+      # leaked into the searched paths, where real fails on the target.
+      return params if remote_src_param?(params)
 
       src = params["src"]?
       # A falsy non-string literal src (false/0/0.0 - the parser marks
@@ -1943,7 +1953,14 @@ module Krikri
     end
 
     private def remote_src_param?(params : Hash(String, String)) : Bool
-      ansible_boolean_param?(params["remote_src"]?)
+      # real's own predicate for the action plugin's remote_src branch
+      # (copy.py:422): boolean(value, strict=False) - the full
+      # BOOLEANS_TRUE spelling list (y/yes/on/1/true/t and the native
+      # true/1/1.0), everything else - invalid spellings, explicit None,
+      # other natives - falsy. Previously a narrower four-spelling
+      # string check that missed both the 'y'/'t' spellings and the
+      # parser's marked non-string literal form of `remote_src: true`.
+      Krikri.lenient_boolean_true?(params["remote_src"]?)
     end
 
     # Real's add_host: non-string YAML literal args (the parser marks
